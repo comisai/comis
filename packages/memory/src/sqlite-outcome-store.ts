@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * SqliteOutcomeStore: the SOLE adapter for the segregated `OutcomeSignalPort`
- * (@comis/core, v2.26 Verified Learning WS1). It owns ALL the `outcome_events`
+ * (@comis/core). It owns ALL the `outcome_events`
  * SQL — the idempotent `observe()` write (one raw observation per signal source),
  * the scoped `resolve()` read+fusion (precedence-first then confidence,
  * fail-closed `unknown`), and the age-based `prune()`.
  *
- * ## Idempotency (OUTCOME-01 / T-198-09)
+ * ## Idempotency
  *
  * `observe()` derives the row `id` as a deterministic sha256 hash of the UNIQUE
  * tuple `(tenant_id, agent_id, trajectory_id, source, observed_at)` in CODE
@@ -15,7 +15,7 @@
  * upsert the same primary key even if the row was deleted, and the `UNIQUE`
  * backstop catches it regardless.
  *
- * ## Isolation is the load-bearing security boundary (SEC-01 / T-198-05)
+ * ## Isolation is the load-bearing security boundary
  *
  * Comis runs many agents in one DB. EVERY statement (both `observe` and
  * `resolve`) filters on `(tenant_id, agent_id)` — parameterized — and the table
@@ -23,7 +23,7 @@
  * visible to a read under another even when `trajectory_id` is byte-identical. An
  * UNRESOLVED `(tenant, agent)` scope (empty id) on `resolve()` fails-closed with
  * `err(...)` — it NEVER widens to a shared/global pool (the hindsight
- * `get_current_schema()` leak vector, design §9).
+ * `get_current_schema()` leak vector).
  *
  * ## Untrusted input
  *
@@ -89,7 +89,7 @@ function parseIdList(raw: string | null): string[] {
 }
 
 /**
- * Source-tier precedence for `resolve()` fusion (OUTCOME-05): LOWER rank = HIGHER
+ * Source-tier precedence for `resolve()` fusion: LOWER rank = HIGHER
  * precedence. The deterministic `tool`/`pipeline` signals outrank everything —
  * a high-confidence reaction NEVER beats a tool result. `judge` sits below the
  * deterministic tier; `correction`/`explicit` are grouped with the `reaction`
@@ -112,7 +112,7 @@ function tierRank(source: string): number {
 }
 
 /**
- * Outcome-severity ordering for the same-tier EQUAL-confidence tie-break (WR-01):
+ * Outcome-severity ordering for the same-tier EQUAL-confidence tie-break:
  * HIGHER value wins a tie. A `failure` (then a `corrected` soft-failure) beats a
  * `success`/`unknown` of equal confidence within the SAME tier — the conservative
  * verdict, so a real tool/node failure is NEVER silently masked by an
@@ -186,9 +186,9 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
   );
 
   // Scoped read for resolve(): the `tenant_id = ? AND agent_id = ?` filter is the
-  // load-bearing isolation boundary (SEC-01); every value is a bound `?` param.
-  // `ORDER BY observed_at ASC, id ASC` makes the multi-row scan STABLE across runs
-  // (WR-01): without it an unindexed scan can return same-tier rows in any order, so
+  // load-bearing isolation boundary; every value is a bound `?` param.
+  // `ORDER BY observed_at ASC, id ASC` makes the multi-row scan STABLE across runs:
+  // without it an unindexed scan can return same-tier rows in any order, so
   // an equal-confidence tie-break that keyed on `rows[0]` flipped run-to-run.
   const readStmt = db.prepare(
     "SELECT id, session_id, trajectory_id, outcome, source, confidence, sender_trust, recalled_ids, used_skill_ids, observed_at " +
@@ -197,11 +197,11 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
   );
 
   // Age-based prune: DELETE every row older than the cutoff, wrapped in a
-  // transaction (mirror observability-reset.ts:54-67). Implemented in Task 3.
+  // transaction (mirror observability-reset.ts:54-67).
   const pruneStmt = db.prepare("DELETE FROM outcome_events WHERE observed_at < ?");
   const pruneTx = db.transaction((cutoff: number) => pruneStmt.run(cutoff).changes);
 
-  // Per-turn enumeration for the WS2 synthesis source: the DISTINCT
+  // Per-turn enumeration for the synthesis source: the DISTINCT
   // (trajectory_id, session_id) pairs for the scope, most-recent-first, bounded
   // (anti-DoS, mirrors the review source's DEFAULT_MAX_CONVERSATIONS cap). GROUP BY
   // collapses one turn's multiple source rows to a single pair; MAX(observed_at)
@@ -266,7 +266,7 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
       const startMs = systemNowMs();
       const { tenantId, agentId } = scope;
       // Fail-closed on an unresolved (tenant, agent) scope — NEVER widen to a
-      // shared/global pool (SEC-01 / T-198-05, the get_current_schema() leak
+      // shared/global pool (the get_current_schema() leak
       // vector). An empty id is a precondition violation, surfaced as err().
       if (tenantId === "" || agentId === "") {
         logger?.warn(
@@ -285,8 +285,8 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
         const rows = parsed.value;
 
         // Fail-closed unknown: a finished trajectory with no resolvable signal
-        // fuses to `unknown` and derives NO learning (OUTCOME-05); the coverage
-        // metric (Plan 04) must NOT count this as resolved.
+        // fuses to `unknown` and derives NO learning; the coverage
+        // metric must NOT count this as resolved.
         if (rows.length === 0) {
           logger?.debug(
             { step: "outcome-resolve", resolved: false, durationMs: systemNowMs() - startMs },
@@ -295,19 +295,17 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
           return ok({ outcome: "unknown", confidence: 0, sources: [], recalledIds: [], usedSkillIds: [] });
         }
 
-        // Precedence-first, then confidence, then RECENCY (OUTCOME-05 / WR-01 /
-        // live-2026-06-18 fix): pick the highest-precedence tier present, then the
-        // MAX-confidence row WITHIN that tier, and on a same-tier EQUAL-confidence TIE
-        // prefer the MOST RECENT observation (the turn's TERMINAL state). So a transient
-        // tool failure the turn RECOVERED from (failure → later success) resolves to
-        // `success`, not `failure`. Pre-fix this was severity-wins (`failure` always beat
-        // an equal-confidence `success`), which mis-resolved EVERY self-corrected turn to
-        // failure → excluded it from skill synthesis AND penalized the memories/skills
-        // that produced the correct answer (live VPS: ~half of successful turns, because
-        // Comis's own tool-policy guards manufacture transient failures). On an EXACT
-        // observed_at tie (genuinely simultaneous signals — e.g. concurrent DAG-node
-        // siblings) severity STILL wins, so a real concurrent failure is never masked. A
-        // high-confidence reaction still never overrides a deterministic tool result.
+        // Precedence-first, then confidence, then RECENCY: pick the highest-precedence
+        // tier present, then the MAX-confidence row WITHIN that tier, and on a same-tier
+        // EQUAL-confidence TIE prefer the MOST RECENT observation (the turn's TERMINAL
+        // state). So a transient tool failure the turn RECOVERED from (failure → later
+        // success) resolves to `success`, not `failure` — resolving a self-corrected turn
+        // to failure would wrongly exclude it from skill synthesis AND penalize the
+        // memories/skills that produced the correct answer (Comis's own tool-policy guards
+        // routinely manufacture transient failures). On an EXACT observed_at tie (genuinely
+        // simultaneous signals — e.g. concurrent DAG-node siblings) severity STILL wins, so
+        // a real concurrent failure is never masked. A high-confidence reaction still never
+        // overrides a deterministic tool result.
         let winner = rows[0]!;
         for (const row of rows) {
           const rt = tierRank(row.source);
@@ -330,7 +328,7 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
         // Attribution: union+dedup recalledIds AND usedSkillIds across ALL rows (any
         // source may carry either). The used_skill_ids column is written at observe()
         // (:199) when the daemon threads a memory:skill_used attribution into the call
-        // (setup-learning.ts, Plan 07) — the loop is no longer write-only. The two loops
+        // (setup-learning.ts) — the loop is no longer write-only. The two loops
         // are byte-mirrors (same parseIdList graceful-degrade over the JSON TEXT column).
         const recalledSet = new Set<string>();
         for (const row of rows) for (const id of parseIdList(row.recalled_ids)) recalledSet.add(id);
@@ -371,16 +369,16 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
       }
     },
 
-    // prune() — implemented in Task 3 (age-based housekeeping). Wired here so the
-    // port type is total; the proven cutoff math + transaction land in Task 3.
+    // prune() — age-based housekeeping. Deletes every row older than the cutoff in
+    // one transaction.
     prune(retentionDays: number): OutcomePruneResult {
       const cutoff = systemNowMs() - retentionDays * 86400000;
       return { changes: pruneTx(cutoff) };
     },
 
     // READ. The per-turn trajectory identities the ledger holds for this scope —
-    // see the port doc + the live-2026-06-18 synthesis-source fix. Fail-closed on
-    // an unresolved scope exactly like resolve() (never a shared/global pool).
+    // see the port doc. Fail-closed on an unresolved scope exactly like resolve()
+    // (never a shared/global pool).
     async listTrajectoryIds(
       scope: LearningScope,
     ): Promise<Result<Array<{ trajectoryId: string; sessionId: string }>, Error>> {

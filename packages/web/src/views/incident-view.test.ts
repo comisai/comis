@@ -120,7 +120,7 @@ async function createElement(
   el.rpcClient = rpc;
   if (props.sessionKey !== undefined) el.sessionKey = props.sessionKey;
   if (props.traceId !== undefined) el.traceId = props.traceId;
-  // MD-01: the single `ref` the route (#/observe/incident?ref=<ref>) passes —
+  // The single `ref` the route (#/observe/incident?ref=<ref>) passes —
   // a sessionKey OR a traceId; the view classifies which.
   if (props.ref !== undefined) (el as unknown as { ref: string }).ref = props.ref;
   document.body.appendChild(el);
@@ -172,15 +172,15 @@ describe("IcIncidentView (first obs.explain SPA consumer)", () => {
     expect((cards?.length ?? 0)).toBeGreaterThan(0);
   });
 
-  /* ---- MD-01: the route's single `ref` resolves to the RIGHT obs.explain shape ---- */
+  /* ---- the route's single `ref` resolves to the RIGHT obs.explain shape ---- */
 
-  it("MD-01: a traceId-shaped (UUID) ref reaches obs.explain as { traceId }, not { sessionKey }", async () => {
+  it("a traceId-shaped (UUID) ref reaches obs.explain as { traceId }, not { sessionKey }", async () => {
     const { rpc, call } = createIncidentMock(() => fixtureReport());
     const traceId = "f942d38c-1111-2222-3333-444455556666";
     await createElement(rpc, { ref: traceId });
 
-    // The UUID-shaped ref is classified as a traceId — the bug was the route
-    // forcing every ref into the sessionKey slot, so a traceId never resolved.
+    // The UUID-shaped ref is classified as a traceId and must reach obs.explain
+    // as { traceId }; forcing it into the sessionKey slot never resolves.
     expect(call).toHaveBeenCalledWith(
       "obs.explain",
       expect.objectContaining({ traceId, depth: "summary" }),
@@ -192,7 +192,7 @@ describe("IcIncidentView (first obs.explain SPA consumer)", () => {
     expect(sentAsSessionKey).toBe(false);
   });
 
-  it("MD-01: a sessionKey-shaped (colon-segmented) ref reaches obs.explain as { sessionKey }", async () => {
+  it("a sessionKey-shaped (colon-segmented) ref reaches obs.explain as { sessionKey }", async () => {
     const { rpc, call } = createIncidentMock(() => fixtureReport());
     const sessionKey = "agent:default:telegram:12345";
     await createElement(rpc, { ref: sessionKey });
@@ -296,7 +296,7 @@ describe("IcIncidentView (first obs.explain SPA consumer)", () => {
     expect(text).not.toContain(PLANTED_MARKER);
   });
 
-  /* -- Grafana link-out: a link, NEVER an embed (locked §14) -------- */
+  /* -- Grafana link-out: a link, NEVER an embed -------- */
 
   it("renders an 'Open in Grafana' <a href target=_blank rel=noopener> when prometheus.enabled", async () => {
     const { rpc } = createIncidentMock(() => fixtureReport(), /* prometheusEnabled */ true);
@@ -327,7 +327,7 @@ describe("IcIncidentView (first obs.explain SPA consumer)", () => {
     const { rpc } = createIncidentMock(() => fixtureReport(), /* prometheusEnabled */ true);
     const el = await createElement(rpc, { sessionKey: "agent:default:telegram:12345" });
 
-    // The locked §14 invariant: zero-dependency SPA — link out, never embed.
+    // Invariant: zero-dependency SPA — link out, never embed.
     expect(el.shadowRoot?.querySelector("iframe")).toBeNull();
     expect((el.shadowRoot?.innerHTML ?? "").toLowerCase()).not.toContain("<iframe");
   });

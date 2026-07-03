@@ -21,7 +21,7 @@ export interface OpenAISttConfig {
   /** Maximum file size in megabytes (default: 25). */
   readonly maxFileSizeMb?: number;
   /**
-   * SEC-02 (Surface B): when `true`, the `baseUrl` is validated by
+   * SSRF guard (Surface B): when `true`, the `baseUrl` is validated by
    * `validateLocalServerUrl` (the inverse SSRF guard — ALLOW loopback + an
    * explicit allowlist, DENY public/private egress, keep the cloud-metadata
    * deny) INSIDE `transcribe`, BEFORE the runtime fetch. Set ONLY by the
@@ -70,7 +70,7 @@ export function createOpenAISttAdapter(config: OpenAISttConfig): TranscriptionPo
         );
       }
 
-      // SEC-02 (Surface B): validate-then-PINNED-fetch. When this adapter is
+      // SSRF guard (Surface B): validate-then-PINNED-fetch. When this adapter is
       // built for a local whisper server (the stt-factory local.baseUrl branch
       // sets `localServerGuard`), the `baseUrl` is SSRF-validated BEFORE the
       // runtime fetch — an explicit transcription.provider:"local" bypasses the
@@ -79,7 +79,7 @@ export function createOpenAISttAdapter(config: OpenAISttConfig): TranscriptionPo
       // here, BEFORE the fetch fires. The cloud OpenAI path leaves the flag
       // unset, so api.openai.com is never validated by the local guard.
       //
-      // CR-01: capture the resolved IP and PIN the connection to it (below) so a
+      // Capture the resolved IP and PIN the connection to it (below) so a
       // hostname that resolves to loopback HERE cannot be rebound to a different
       // IP at connect time (the DNS-rebinding/TOCTOU gap a plain re-resolving
       // fetch leaves open). `validatedIp` stays undefined on the cloud path → the
@@ -126,7 +126,7 @@ export function createOpenAISttAdapter(config: OpenAISttConfig): TranscriptionPo
             body: formData,
             signal: controller.signal,
           };
-          // CR-01: the local-server path fetches through an undici dispatcher
+          // The local-server path fetches through an undici dispatcher
           // PINNED to the IP `validateLocalServerUrl` already resolved (no DNS
           // rebind window; TLS SNI preserved by keeping the hostname in `url`).
           // The cloud path (validatedIp undefined) uses the unmodified global

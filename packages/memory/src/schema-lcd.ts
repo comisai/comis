@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LCD (Lossless Context DAG) lossless-store schema (Phase 127, F1).
+ * LCD (Lossless Context DAG) lossless-store schema.
  *
  * Extracted from `schema.ts` so the LCD DDL stays cohesive and the umbrella
  * schema module stays under the file-size gate. `initSchema` (in `schema.ts`)
@@ -16,40 +16,38 @@ import type Database from "better-sqlite3";
 import { ensureTrigramTwins } from "./schema-trigram.js";
 
 /**
- * Idempotently create the LCD (Lossless Context DAG) lossless message store
- * (Phase 127, F1): `lcd_messages` (one row per turn) + `lcd_message_parts` (one
- * row per structured block) — plus the Phase-129 (C3) compaction tables:
- * `lcd_summaries` (one row per leaf/condensed summary), `lcd_summary_messages`
- * (the leaf→message link, `ON DELETE RESTRICT` on the message FK to ENFORCE
- * losslessness) and `lcd_context_items` (the ordered, dense model-facing view) —
- * plus the Phase-130 (C2) condensed tier table `lcd_summary_parents` (the
- * condensed→child summary edge, `ON DELETE RESTRICT` on the child FK so a
- * condensed child summary is never deleted — losslessness for the multi-tier
- * DAG). Forward-only, re-run-safe — `CREATE … IF NOT EXISTS` only; NO `DROP
- * TABLE` / down-migration (design §9).
+ * Idempotently create the LCD (Lossless Context DAG) lossless message store:
+ * `lcd_messages` (one row per turn) + `lcd_message_parts` (one row per
+ * structured block) — plus the compaction tables: `lcd_summaries` (one row per
+ * leaf/condensed summary), `lcd_summary_messages` (the leaf→message link,
+ * `ON DELETE RESTRICT` on the message FK to ENFORCE losslessness) and
+ * `lcd_context_items` (the ordered, dense model-facing view) — plus the
+ * condensed tier table `lcd_summary_parents` (the condensed→child summary edge,
+ * `ON DELETE RESTRICT` on the child FK so a condensed child summary is never
+ * deleted — losslessness for the multi-tier DAG). Forward-only, re-run-safe —
+ * `CREATE … IF NOT EXISTS` only; NO `DROP TABLE` / down-migration.
  *
- * ## What it persists (F1)
+ * ## What it persists
  *
  * Every structured block — `text` / `tool_use` / `tool_result` / `reasoning` /
  * `file` — is stored as an `lcd_message_parts` row with its typed tool columns
  * (`tool_call_id` / `tool_name` / `tool_input` / `tool_output` / `is_error`) AND
  * the verbatim canonical pi-ai block in the JSON `metadata` column (which also
- * carries the F2 message envelope + the F3 reasoning marker). The typed columns
+ * carries the message envelope + the reasoning marker). The typed columns
  * are the queryable projection; `metadata.raw` is the lossless source of truth.
  *
- * ## Isolation scope (R4 — ENFORCED Phase 132-03)
+ * ## Isolation scope
  *
  * `lcd_messages` carries `conversation_id` (the tenant+agent+session composite)
  * plus the three broken-out `tenant_id` / `agent_id` / `session_key` columns and
- * the `(conversation_id, seq)` UNIQUE index from day 1. Phase 132-03 (R4) now
- * FILTERS every read by `agent_id` AND `tenant_id` (not just `conversation_id`),
- * closing the Phase-131 WR-02 cross-agent gap (two agents legitimately share one
- * `conversation_id` since `formatSessionKey` omits agentId). The FTS5 vtables
- * carry an `agent_id UNINDEXED` column so the MATCH path filters agent_id too
+ * the `(conversation_id, seq)` UNIQUE index from day 1. Every read FILTERS by
+ * `agent_id` AND `tenant_id` (not just `conversation_id`), closing the
+ * cross-agent gap (two agents legitimately share one `conversation_id` since
+ * `formatSessionKey` omits agentId). The FTS5 vtables carry an
+ * `agent_id UNINDEXED` column so the MATCH path filters agent_id too
  * (forward-only `CREATE VIRTUAL TABLE IF NOT EXISTS` — a pre-existing dev DB
- * created before 132-03 lacks the column and needs a wipe; no migration per
- * design §9). A missing scoping column would be a latent cross-tenant hole
- * (threat T-127-06).
+ * created before the column was added lacks it and needs a wipe; no migration).
+ * A missing scoping column would be a latent cross-tenant hole.
  *
  * ## Cascade
  *
@@ -61,7 +59,7 @@ import { ensureTrigramTwins } from "./schema-trigram.js";
  *
  * The DDL is a single static `db.exec(...)` with no interpolated identifiers or
  * values — the data-write boundary (INSERT/SELECT with user data) is the
- * `createLcdStore` adapter, which uses static `prepare()` only (threat T-127-07).
+ * `createLcdStore` adapter, which uses static `prepare()` only.
  *
  * @param db - An open better-sqlite3 Database. LCD has no FK into `memories`, so
  *   it may be created in any order relative to the other ensure* tables.
@@ -70,22 +68,22 @@ export function ensureLcdTables(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS lcd_messages (
       id              TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,            -- tenant+agent+session composite (R4 scoping; enforce Phase 132)
+      conversation_id TEXT NOT NULL,            -- tenant+agent+session composite (isolation scoping)
       tenant_id       TEXT NOT NULL,
       agent_id        TEXT NOT NULL,
       session_key     TEXT NOT NULL,
       seq             INTEGER NOT NULL,         -- monotonic PER conversation
       role            TEXT NOT NULL
-        CHECK (role IN ('user', 'assistant', 'toolResult')),  -- IN-01: defense-in-depth; matches LcdRole + the unchecked read-path cast
+        CHECK (role IN ('user', 'assistant', 'toolResult')),  -- defense-in-depth; matches LcdRole + the unchecked read-path cast
       token_count     INTEGER NOT NULL,         -- pre-computed agent-side; the store never computes it
       created_at      INTEGER NOT NULL          -- caller-supplied epoch ms (the store does not stamp it)
     );
-    -- R4 (132-03): seq is monotonic PER (conversation, agent, tenant). Two agents
+    -- seq is monotonic PER (conversation, agent, tenant). Two agents
     -- legitimately share one conversation_id (formatSessionKey omits agentId), so
     -- each agent owns an independent seq sequence (its agent-scoped high-water
     -- mark) — a conversation-global (conversation_id, seq) index would collide
-    -- when both agents append. Per-agent uniqueness; the per-conversation R3
-    -- serializer (132-04/05) still guards interleaved writes. For the common
+    -- when both agents append. Per-agent uniqueness; the per-conversation
+    -- serializer still guards interleaved writes. For the common
     -- one-agent-per-conversation case this is identical to the old index.
     CREATE UNIQUE INDEX IF NOT EXISTS idx_lcd_messages_conv_agent_seq
       ON lcd_messages(conversation_id, agent_id, tenant_id, seq);
@@ -95,7 +93,7 @@ export function ensureLcdTables(db: Database.Database): void {
       message_id   TEXT NOT NULL REFERENCES lcd_messages(id) ON DELETE CASCADE,
       ordinal      INTEGER NOT NULL,            -- block order within the message
       kind         TEXT NOT NULL
-        CHECK (kind IN ('text', 'tool_use', 'tool_result', 'reasoning', 'file')),  -- IN-01: defense-in-depth; matches LcdPartKind + the unchecked read-path cast
+        CHECK (kind IN ('text', 'tool_use', 'tool_result', 'reasoning', 'file')),  -- defense-in-depth; matches LcdPartKind + the unchecked read-path cast
       tool_call_id TEXT,                         -- ToolCall.id / ToolResultMessage.toolCallId (NULL for non-tool)
       tool_name    TEXT,                         -- ToolCall.name / ToolResultMessage.toolName
       tool_input   TEXT,                         -- JSON: ToolCall.arguments
@@ -105,18 +103,18 @@ export function ensureLcdTables(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_lcd_parts_msg ON lcd_message_parts(message_id, ordinal);
 
-    -- ── LCD compaction tables (Phase 129, C3) ──────────────────────────────
+    -- ── LCD compaction tables ──────────────────────────────
     -- The depth-0 leaf-summary half of the contract. lcd_summaries holds one
     -- row per leaf summary (a condensation of a contiguous run of messages);
     -- lcd_summary_messages links a summary to the messages it covers; and
     -- lcd_context_items is the ordered model-facing view the assembler walks
     -- (each item references either a raw message or a leaf summary). Condensed
-    -- kinds (depth>0) are Phase 130. Forward-only, re-run-safe (CREATE … IF NOT
-    -- EXISTS only); NO DROP / down-migration (design §9).
+    -- kinds (depth>0) are the condensed tier. Forward-only, re-run-safe (CREATE … IF NOT
+    -- EXISTS only); NO DROP / down-migration.
 
     CREATE TABLE IF NOT EXISTS lcd_summaries (
       summary_id       TEXT PRIMARY KEY,
-      conversation_id  TEXT NOT NULL,            -- tenant+agent+session composite (R4 scoping; enforce Phase 132)
+      conversation_id  TEXT NOT NULL,            -- tenant+agent+session composite (isolation scoping)
       tenant_id        TEXT NOT NULL,
       agent_id         TEXT NOT NULL,
       session_key      TEXT NOT NULL,
@@ -129,7 +127,7 @@ export function ensureLcdTables(db: Database.Database): void {
       token_count      INTEGER NOT NULL,         -- pre-computed agent-side; the store never computes it
       content          TEXT NOT NULL,            -- leaf summary plaintext (never logged)
       file_ids         TEXT NOT NULL DEFAULT '[]', -- JSON string[]
-      taint            INTEGER NOT NULL DEFAULT 0, -- 0/1 untrusted-content flag (enforced Phase 132)
+      taint            INTEGER NOT NULL DEFAULT 0, -- 0/1 untrusted-content flag
       fallback         INTEGER NOT NULL DEFAULT 0, -- 0/1 Level-3 deterministic-truncation marker
       created_at       INTEGER NOT NULL          -- caller-supplied epoch ms (the store does not stamp it)
     );
@@ -137,12 +135,12 @@ export function ensureLcdTables(db: Database.Database): void {
 
     CREATE TABLE IF NOT EXISTS lcd_summary_messages (
       summary_id TEXT NOT NULL REFERENCES lcd_summaries(summary_id) ON DELETE CASCADE,
-      message_id TEXT NOT NULL REFERENCES lcd_messages(id) ON DELETE RESTRICT,  -- RESTRICT ENFORCES losslessness (Pitfall 5)
+      message_id TEXT NOT NULL REFERENCES lcd_messages(id) ON DELETE RESTRICT,  -- RESTRICT ENFORCES losslessness
       PRIMARY KEY (summary_id, message_id)
     );
     CREATE INDEX IF NOT EXISTS idx_lcd_summary_messages_msg ON lcd_summary_messages(message_id);
 
-    -- ── LCD condensed tier (Phase 130, C2) ─────────────────────────────────
+    -- ── LCD condensed tier ─────────────────────────────────
     -- lcd_summary_parents is the condensed→child summary edge: one row per
     -- (condensed parent summary, child summary it links). It mirrors
     -- lcd_summary_messages but BOTH endpoints are lcd_summaries rows — the
@@ -159,7 +157,7 @@ export function ensureLcdTables(db: Database.Database): void {
 
     CREATE TABLE IF NOT EXISTS lcd_context_items (
       id              TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,             -- tenant+agent+session composite (R4 scoping; enforce Phase 132)
+      conversation_id TEXT NOT NULL,             -- tenant+agent+session composite (isolation scoping)
       tenant_id       TEXT NOT NULL,
       agent_id        TEXT NOT NULL,
       session_key     TEXT NOT NULL,
@@ -168,7 +166,7 @@ export function ensureLcdTables(db: Database.Database): void {
         CHECK (ref_kind IN ('message','summary')),  -- closed discriminator (AGENTS.md §2.8)
       ref_id          TEXT NOT NULL              -- lcd_messages.id OR lcd_summaries.summary_id
     );
-    -- R4 (132-03): the model-facing view is per (conversation, agent, tenant) —
+    -- The model-facing view is per (conversation, agent, tenant) —
     -- each agent's ordinals are dense + gap-free over ITS OWN items. A
     -- conversation-global (conversation_id, ordinal) index would collide when two
     -- agents sharing a conversation_id each seed a dense 0..N-1 sequence; scoping
@@ -177,14 +175,14 @@ export function ensureLcdTables(db: Database.Database): void {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_lcd_ctx_items_conv_agent_ord
       ON lcd_context_items(conversation_id, agent_id, tenant_id, ordinal);
 
-    -- ── Phase 164 (RR1): durable per-conversation ingest cursor ────────────────
+    -- ── Durable per-conversation ingest cursor ────────────────
     -- Stores the durable per-conversation epoch cursor used by the afterTurn
     -- ingest to detect JSONL re-bases (a fresh/disjoint live transcript) and
     -- continue-append without a gap. Primary key = (conversation_id, agent_id,
-    -- tenant_id) — the same three-column R4 isolation scope as lcd_messages.
+    -- tenant_id) — the same three-column isolation scope as lcd_messages.
     -- updated_at is caller-supplied epoch ms (the store never reads the clock).
     -- Forward-only, re-run-safe (CREATE … IF NOT EXISTS only; NO DROP TABLE /
-    -- down-migration — design §9). An existing memory.db gains the empty table at
+    -- down-migration). An existing memory.db gains the empty table at
     -- the next boot; existing conversations have no cursor row (first-turn after
     -- upgrade detects null → treats as epoch A with ingestedLiveLen=0, correct).
     CREATE TABLE IF NOT EXISTS lcd_ingest_cursor (
@@ -198,33 +196,33 @@ export function ensureLcdTables(db: Database.Database): void {
     );
   `);
 
-  // ── Phase 172 (DIST-01/03/05): LCD→LTM distillation provenance ─────────
+  // ── LCD→LTM distillation provenance ─────────
   // Links a distilled episodic memory to the LCD condensed summary it came from.
-  // Additive (CREATE IF NOT EXISTS only, forward-only — design §9).
+  // Additive (CREATE IF NOT EXISTS only, forward-only).
   //
-  // FK design decisions (from design/lcd-v3-unified-substrate.md §6.2):
+  // FK design decisions:
   //   memory_id → memories(id) ON DELETE CASCADE:
   //     Auto-deletes provenance row when the distilled memory is deleted.
-  //     This is the correct direction for DIST-05 (--memory cleanup) — a
+  //     This is the correct direction for the --memory cleanup path — a
   //     deleteBySessionKey call removes memories rows and their provenance rows
   //     are swept automatically by the CASCADE.
   //   superseded_by → memories(id) ON DELETE SET NULL:
   //     If the subsuming distilled memory is later deleted, the superseded
   //     provenance row becomes "dormant-eligible" again rather than being
-  //     deleted (conservative / reversible by design — §14 decision 3).
+  //     deleted (conservative / reversible by design).
   //   summary_id is intentionally NOT a FK into lcd_summaries:
   //     Provenance rows must survive LCD resets (which wipe lcd_summaries) so
-  //     that DIST-05 --memory delete can still query source_session_key.
+  //     that the --memory delete path can still query source_session_key.
   db.exec(`
     CREATE TABLE IF NOT EXISTS lcd_memory_provenance (
       provenance_id      TEXT    PRIMARY KEY,
       memory_id          TEXT    NOT NULL
         REFERENCES memories(id) ON DELETE CASCADE,
       summary_id         TEXT    NOT NULL,     -- NOT FK into lcd_summaries (survives LCD resets)
-      source_session_key TEXT    NOT NULL,     -- for DIST-05 --memory delete path
-      conversation_id    TEXT    NOT NULL,     -- R4 isolation column
-      agent_id           TEXT    NOT NULL,     -- R4 isolation column
-      tenant_id          TEXT    NOT NULL,     -- R4 isolation column
+      source_session_key TEXT    NOT NULL,     -- for the --memory delete path
+      conversation_id    TEXT    NOT NULL,     -- tenant/agent isolation column
+      agent_id           TEXT    NOT NULL,     -- tenant/agent isolation column
+      tenant_id          TEXT    NOT NULL,     -- tenant/agent isolation column
       created_at         INTEGER NOT NULL,
       superseded_by      TEXT                 -- memory_id of subsuming distilled memory (pyramid rule)
         REFERENCES memories(id) ON DELETE SET NULL
@@ -240,15 +238,15 @@ export function ensureLcdTables(db: Database.Database): void {
       WHERE superseded_by IS NOT NULL;
   `);
 
-  // ── LCD full-text search (Phase 131, E1 ctx_search) ────────────────────────
-  // TWO FTS5 virtual tables over the lossless store (RESEARCH Open Q1 → two
-  // tables: origin parity, clean per-`scope` query, and PATTERNS gap #1 forces
+  // ── LCD full-text search (ctx_search) ────────────────────────
+  // TWO FTS5 virtual tables over the lossless store (two
+  // tables: origin parity, clean per-`scope` query, and the two tables force
   // different mechanisms — summaries HAVE a `content` column, messages do NOT).
   //
   //   - lcd_summaries_fts : external-content over lcd_summaries.content (mirrors
   //       memory_fts over memories.content, schema.ts:531-565). Kept in sync by
   //       AFTER INSERT/DELETE triggers; the 'rebuild' idiom backfills pre-index
-  //       history (A5).
+  //       history.
   //   - lcd_messages_fts  : SELF-CONTAINED — it stores its OWN content (no
   //       `content=` option), because lcd_messages has NO content column (the
   //       message text is JSON in lcd_message_parts.tool_input/tool_output + text
@@ -258,20 +256,20 @@ export function ensureLcdTables(db: Database.Database): void {
   //       table to 'rebuild' from, so pre-index message history is covered by
   //       searchLcd's LIKE fallback (and new appends populate it going forward —
   //       a documented tradeoff). (Storing its own content is also why orphaned
-  //       rows stay matchable until an explicit scoped DELETE — the G10 hole the
-  //       Phase-180 wipe-list close addresses.)
+  //       rows stay matchable until an explicit scoped DELETE — the hole the
+  //       scoped-wipe path closes.)
   //
   // The WHOLE section is wrapped in a try/catch so a host whose better-sqlite3
-  // lacks compiled FTS5 still BOOTS (Pitfall 4 — initSchema must not throw):
+  // lacks compiled FTS5 still BOOTS (initSchema must not throw):
   // searchLcd then detects the missing table and degrades to a LIKE scan. The
   // CREATE statements use `IF NOT EXISTS` (forward-only, re-run-safe — the file's
-  // discipline; NO DROP). No interpolated identifiers/values (T-127-09).
+  // discipline; NO DROP). No interpolated identifiers/values.
   try {
     db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS lcd_summaries_fts USING fts5(
         content,
         conversation_id UNINDEXED,
-        agent_id UNINDEXED,          -- R4: per-agent read isolation (WR-02); flat AND agent_id = ?
+        agent_id UNINDEXED,          -- per-agent read isolation; flat AND agent_id = ?
         summary_id UNINDEXED,
         content='lcd_summaries',
         content_rowid='rowid',
@@ -282,13 +280,13 @@ export function ensureLcdTables(db: Database.Database): void {
       CREATE VIRTUAL TABLE IF NOT EXISTS lcd_messages_fts USING fts5(
         content,
         conversation_id UNINDEXED,
-        agent_id UNINDEXED,          -- R4: per-agent read isolation (WR-02); adapter-populated on append
+        agent_id UNINDEXED,          -- per-agent read isolation; adapter-populated on append
         message_id UNINDEXED,
         tokenize='porter unicode61'
       );
     `);
-    // A5 backfill: cover summaries written BEFORE the index existed (RESEARCH A5,
-    // MEDIUM risk if skipped). External-content 'rebuild' idiom (mirror
+    // Backfill: cover summaries written BEFORE the index existed (MEDIUM risk if
+    // skipped). External-content 'rebuild' idiom (mirror
     // schema.ts:545-549) — safe on an empty/just-created table.
     try {
       db.exec(`INSERT INTO lcd_summaries_fts(lcd_summaries_fts) VALUES('rebuild')`);
@@ -314,7 +312,7 @@ export function ensureLcdTables(db: Database.Database): void {
     // searchLcd detects the missing table and uses a LIKE scan (never hard-fails).
   }
 
-  // ── Phase 180 (FTS-01): trigram twins for multilingual search ───────────────
+  // ── Trigram twins for multilingual search ───────────────
   // The self-contained trigram twins (lcd_messages_fts_tri / lcd_summaries_fts_tri
   // / memory_fts_tri) + their base-table delete-mirror triggers. Created LAST, so
   // the LCD/memories base tables exist by now; schema.ts:initSchema picks this up

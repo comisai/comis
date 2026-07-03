@@ -127,7 +127,7 @@ test.describe("Models view", () => {
     const view = page.locator("ic-models-view");
     await expect(view).toBeVisible({ timeout: 10_000 });
 
-    // Navigate to the model catalog tab (renamed from "Available Models").
+    // Navigate to the model catalog tab.
     await view.getByRole("tab", { name: "Catalog" }).click();
 
     // Verify all three models are listed

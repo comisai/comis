@@ -148,7 +148,7 @@ export async function runLogOracle(
   }
 
   // ── Check 5: Cross-stream token agreement ────────────────────────────────
-  // FND-10 invariant: token disagreement THROWS (not warns) when billingSnapshot is provided.
+  // Invariant: token disagreement THROWS (not warns) when billingSnapshot is provided.
   if (opts?.billingSnapshot?.totalTokens !== undefined) {
     const turnEntry = entries.find(
       (e) => (e as Record<string, unknown>)["event"] === "turn_completed",

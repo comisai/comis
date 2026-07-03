@@ -462,7 +462,7 @@ describe("checkStorageModeConsistency", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Group D — Structured findings return (I3): the probe RETURNS its
+  // Group D — Structured findings return: the probe RETURNS its
   // stranded-secret COUNTS (additive — the WARNs are preserved) so the boot
   // config_posture snapshot records counts, never secret values.
   // ---------------------------------------------------------------------------

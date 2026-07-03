@@ -10,11 +10,11 @@
  * auto-resolved endpoint surfaced by discoveryState.
  *
  * Test fixtures use neutral hosts (example.com / operator.example) — NEVER the
- * real Higgsfield hosts (those land in plan 09-03 E2E coverage).
+ * real Higgsfield hosts, which are exercised only in E2E coverage.
  *
- * All tests assert NO logged value contains the fixture device_code string —
- * proves Pitfall 5 in 09-RESEARCH.md (device_code is bearer-equivalent for the
- * polling round-trip and is closure-only).
+ * All tests assert NO logged value contains the fixture device_code string:
+ * device_code is bearer-equivalent for the polling round-trip and MUST stay
+ * closure-only (never logged).
  *
  * @module
  */
@@ -180,8 +180,8 @@ function makeBaseDeps(overrides: Partial<RunDeviceFlowDeps>): RunDeviceFlowDeps 
 
 /**
  * Assert no log call payload or message contains the fixture device_code.
- * Pitfall 5 in 09-RESEARCH.md: device_code is bearer-equivalent and is
- * closure-only — must NEVER appear in logs.
+ * device_code is bearer-equivalent and is closure-only — it must NEVER appear
+ * in logs.
  */
 function assertNoDeviceCodeLogged(
   logger: ReturnType<typeof makeLogger>,

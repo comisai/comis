@@ -13,7 +13,7 @@ import type { SecurityEvent, InputSecurityGuardSummary, ProviderHealthCard, Fail
 interface SecurityConfig {
   logRedaction?: boolean;
   auditLog?: boolean;
-  /** Credential storage mode — runtime-immutable (D17); operator must edit config + restart. */
+  /** Credential storage mode — runtime-immutable; operator must edit config + restart to change it. */
   storage?: string;
   permission?: {
     enableNodePermissions?: boolean;
@@ -608,7 +608,7 @@ export class IcSecurityView extends LitElement {
   // --- Secrets tab (kept in coordinator -- small, tightly coupled) ---
 
   private _renderSecretsTab() {
-    // security.storage is runtime-immutable (D17) — mode change requires
+    // security.storage is runtime-immutable — a mode change requires
     // a config.yaml edit + daemon restart. Display as read-only; no write
     // control offered here.
     const storageMode = this._securityConfig.storage ?? "encrypted";
@@ -748,9 +748,9 @@ export class IcSecurityView extends LitElement {
           .inputGuardSummary=${this._inputGuardSummary}
         ></ic-security-event-feed>`;
       case "audit":
-        // The durable, queryable obs.audit.query view REPLACES the live SSE
-        // feed in this tab (Plan 179-06 / Pitfall 2) — audit history survives a
-        // daemon restart. The live SSE Security Events tab (above) is unchanged.
+        // The audit tab renders the durable, queryable obs.audit.query view so
+        // audit history survives a daemon restart. The events tab (above) uses
+        // the live SSE feed, which does not persist across restarts.
         return html`<ic-durable-audit-log .rpcClient=${this.rpcClient}></ic-durable-audit-log>`;
       case "tokens":
         return html`<ic-token-manager .rpc=${this.rpcClient}></ic-token-manager>`;

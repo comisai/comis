@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: the worker IS the frame error-mapping boundary — `dispatch` wraps every handler in a try/catch that maps a thrown error to an `ok:false` reply (the registry's error-reply path). The sole `throw` is `handleCreate` re-raising a fail-closed JailUnavailableError (after dropping the half-registered session) so it reaches that boundary; never an unjailed fallback.
 /**
- * The supervised Terminal Worker entry (spec §2.1/§2.2/§2.3).
+ * The supervised Terminal Worker entry.
  *
  * The worker is the one net-new process boundary: a daemon-supervised child that
  * owns the PTY (node-pty, optional) + the driven CLI. The registry spawns
@@ -60,7 +60,7 @@ import { createAttentionEmitter } from "./terminal-attention-emitter.js";
 import { reattachWorkerSession } from "./terminal-worker-reattach.js";
 import { observeSettledFrame, statusReplyFromState, type WorkerStatusPerception } from "./terminal-worker-classify.js";
 // The worker's structural contracts the entry BODY references (deps/defaults/closures)
-// type-imported from the neutral leaf terminal-worker-types.ts (124-01 cycle break).
+// type-imported from the neutral leaf terminal-worker-types.ts (breaks the import cycle).
 // FakePtyLike is no longer referenced in the body (its consumers PtyModuleLike +
 // SessionState moved to the leaf) — it is still re-exported for the public surface below.
 import type {
@@ -94,18 +94,17 @@ import {
 
 // SCROLLBACK_DEFAULT / STUCK_DEFAULT_MS + the production-default ports
 // (defaultLoadPty/defaultSpawnPipe/defaultFsPort) + the BRACKETED_PASTE_* constants
-// moved to ./terminal-worker-defaults.ts (165-REVIEW BL-01 — cap headroom for the
-// `reattach` dispatch path); imported above + defaultLoadPty re-exported below so the
-// public surface is unchanged.
+// live in ./terminal-worker-defaults.ts so this file stays under the line cap;
+// imported above + defaultLoadPty re-exported below so the public surface is unchanged.
 
 // ---------------------------------------------------------------------------
 // Injected dependency contracts
 // ---------------------------------------------------------------------------
 //
 // WorkerLogger + FakePtyLike + PtyModuleLike + PipeChildLike + WorkerBackend +
-// SessionState + WorkerFsPort moved to the neutral leaf terminal-worker-types.ts (124-01;
-// WorkerFsPort in 165-REVIEW) to break the import cycles (the entry value-imports
-// attachBackend + terminal-worker-defaults, both of which need these types back).
+// SessionState + WorkerFsPort live in the neutral leaf terminal-worker-types.ts to
+// break the import cycles (the entry value-imports attachBackend +
+// terminal-worker-defaults, both of which need these types back).
 // Type-imported above; re-exported below so the public surface (TerminalWorkerDeps + the
 // worker tests' structural-type imports) is unchanged.
 
@@ -117,11 +116,11 @@ import {
 // factory default (or daemon-injected), overridden ONLY by a test or the composition root.
 // Tightening any to required would force every call site to fabricate a port it never
 // exercises. The "(a) genuinely conditional" classification, not a cluster-split — one
-// cohesive worker deps bag. 124-05 added writeFd3+stuckMs; 124-08 added loadTmux (OPS-05).
+// cohesive worker deps bag.
 export interface TerminalWorkerDeps {
   /** Load node-pty. Default: a guarded `createRequire` load in a try — NEVER a top-level static import (crashes module load on a no-prebuild host); a throw → the pipe backend. */
   loadPty: () => PtyModuleLike;
-  /** 124-08 (OPS-05): the tmux named-session backend loader — the 3rd option behind the same FakePtyLike seam as node-pty | pipe. Used ONLY when a create frame requests `backend:"tmux"`; the daemon binds it (resolved tmux path + has-session probe + runTmux). Absent ⇒ a tmux request falls back to pty/pipe. */
+  /** The tmux named-session backend loader — the 3rd option behind the same FakePtyLike seam as node-pty | pipe. Used ONLY when a create frame requests `backend:"tmux"`; the daemon binds it (resolved tmux path + has-session probe + runTmux). Absent ⇒ a tmux request falls back to pty/pipe. */
   loadTmux?: TmuxBackendLike;
   /** Spawn the pipe-backend child. Default: `child_process.spawn` with stdio pipes. */
   spawnPipe?: (
@@ -141,7 +140,7 @@ export interface TerminalWorkerDeps {
   setTimer?: (cb: () => void, ms: number) => unknown;
   /** Cancel a `setTimer` handle (default: `systemClearTimeout`). */
   clearTimer?: (handle: unknown) => void;
-  /** Construct a per-session @xterm emulator. Default: `createSessionEmulator`. Injectable so a test can assert the wiring (mirrors loadPty/spawnPipe). `transformSnapshot` is the selected platform profile's read-side render hook (RENDER-01), passed through verbatim. */
+  /** Construct a per-session @xterm emulator. Default: `createSessionEmulator`. Injectable so a test can assert the wiring (mirrors loadPty/spawnPipe). `transformSnapshot` is the selected platform profile's read-side render hook, passed through verbatim. */
   createEmulator?: (opts: {
     cols: number;
     rows: number;
@@ -149,21 +148,21 @@ export interface TerminalWorkerDeps {
     transformSnapshot?: (snap: EmulatorSnapshot) => EmulatorSnapshot;
   }) => SessionEmulator;
   /**
-   * Write a length-prefixed frame to fd3 — the no-poll attention push channel (124-05,
-   * TR-11). Production wraps `fs.writeSync(3, b)` (the worker spawns with fd3 reserved,
+   * Write a length-prefixed frame to fd3 — the no-poll attention push channel.
+   * Production wraps `fs.writeSync(3, b)` (the worker spawns with fd3 reserved,
    * `terminal-worker-launch.ts`); tests inject a capturing fake. ABSENT ⇒ the attention
    * emit is a no-op (the worker still settles normally — the emit is best-effort, never
    * required for correctness). The fd3 frame carries a redaction-safe summary ONLY.
    */
   writeFd3?: (b: Buffer) => void;
   /**
-   * The operator stuck threshold in ms (`worker.stuckMs`, OPS-04) the classifier compares
+   * The operator stuck threshold in ms (`worker.stuckMs`) the classifier compares
    * to a session's no-progress window. Default {@link STUCK_DEFAULT_MS}; the daemon threads
    * the config value. Stuck is by PROGRESS, never elapsed session wall-clock.
    */
   stuckMs?: number;
-  // -- 122-06 scope-jail composition (injected; heavy logic is terminal-spawn-plan.ts) --
-  /** Scope->bwrap argv composer (122-03). Default: the module export. */
+  // -- Scope-jail composition (injected; heavy logic is terminal-spawn-plan.ts) --
+  /** Scope->bwrap argv composer. Default: the module export. */
   buildScopeArgs?: typeof defaultBuildScopeArgs;
   /** Child-env blocklist scrubber. Default: the module export. */
   scrubChildEnv?: typeof defaultScrubChildEnv;
@@ -181,8 +180,7 @@ export interface TerminalWorkerDeps {
 //
 // WorkerBackend + SessionState + the four per-method reply shapes (CreateResult /
 // SendResult / ResizeResult / WaitResult) live in the neutral leaf
-// terminal-worker-types.ts (the reply shapes moved there in 124-08 to keep this file
-// under the 800-line cap once the tmux seam landed). Type-imported here for the handler
+// terminal-worker-types.ts to keep this file under the 800-line cap. Type-imported here for the handler
 // bodies + RE-EXPORTED below so every existing `from "./terminal-worker-entry.js"`
 // importer (the worker tests, the render-live harness) keeps working — type-only, no churn.
 import type {
@@ -210,8 +208,8 @@ export interface TerminalWorker {
 }
 
 // The production-default ports (defaultLoadPty / defaultSpawnPipe / defaultFsPort) +
-// the bracketed-paste delimiters moved to ./terminal-worker-defaults.ts (165-REVIEW
-// BL-01 cap headroom); imported above. defaultLoadPty is re-exported at the file tail.
+// the bracketed-paste delimiters live in ./terminal-worker-defaults.ts to keep this
+// file under the line cap; imported above. defaultLoadPty is re-exported at the file tail.
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -247,12 +245,12 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
   // The per-session @xterm emulator factory. Default: the real pure-JS
   // wrapper; a test injects a recording emulator to assert the wiring.
   const createEmulator = deps.createEmulator ?? createSessionEmulator;
-  // 124-05: the no-poll attention plumbing. `writeFd3` is the push-channel sink (a
+  // The no-poll attention plumbing. `writeFd3` is the push-channel sink (a
   // production worker wraps `fs.writeSync(3, …)`; absent ⇒ the emit is a no-op). `stuckMs`
-  // is the operator stuck threshold (OPS-04) the classifier compares no-progress against.
+  // is the operator stuck threshold the classifier compares no-progress against.
   const { writeFd3 } = deps;
   const stuckMs = deps.stuckMs ?? STUCK_DEFAULT_MS;
-  // 122-06: the scope-jail composers, threaded into planSpawnFromCreateFrame at the
+  // The scope-jail composers, threaded into planSpawnFromCreateFrame at the
   // spawn seam. bwrapPath/egressControl have NO default — the daemon injects them.
   const spawnComposers: SpawnPlanComposers = {
     buildScopeArgs: deps.buildScopeArgs ?? defaultBuildScopeArgs,
@@ -263,9 +261,9 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
   };
 
   // appendRing (ring + emulator feed + settle ring-change notify) and markExited (not-alive
-  // flip + once-only egress dispose + settle exit notify) moved to terminal-worker-backend-attach.ts
-  // (124-01) — their ONLY callers are the backend stream handlers there, so they ride with
-  // attachBackend; behavior is byte-for-byte identical.
+  // flip + once-only egress dispose + settle exit notify) live in terminal-worker-backend-attach.ts
+  // — their ONLY callers are the backend stream handlers there, so they ride with
+  // attachBackend.
 
   /** Resolve the backend write sink: pty.write for the pty backend, else pipe.stdin.write. */
   function writeToBackend(state: SessionState, bytes: string): void {
@@ -303,7 +301,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     };
     const result = await runSettle(settleDeps, params);
 
-    // 124-05 (TR-11, the no-poll mechanism): after the settle resolves, classify the
+    // The no-poll mechanism: after the settle resolves, classify the
     // settled frame and hand the verdict to the per-session emitter — which writes a fd3
     // attention frame ONLY on a state TRANSITION. EDGE-triggered (driven by the settle the
     // worker already runs), NEVER a poll. `settled` is true unless the settle timed out
@@ -316,7 +314,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
         settled: result.reason !== "timeout",
         nowMs,
         stuckMs,
-        // LIVE-04 (#4): a foreground `wait` settle suppresses the fd3 attention write (the wait
+        // A foreground `wait` settle suppresses the fd3 attention write (the wait
         // reply is the agent's signal); act-then-return settles (create/send) emit normally.
         suppressEmit: suppressAttentionEmit,
       });
@@ -352,7 +350,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     const workspace = typeof p["workspace"] === "string" ? p["workspace"] : undefined;
     const cwd = typeof p["cwd"] === "string" ? p["cwd"] : undefined;
     // The operator-declared allowId (registry-threaded from the create request). It selects the
-    // read-side platform profile (RENDER-01 / §5/INV-3) — by allowId ONLY, never content-sniffed,
+    // read-side platform profile — by allowId ONLY, never content-sniffed,
     // so the driven program cannot choose its own profile. `undefined` ⇒ the agnostic default.
     const allowId = typeof p["allowId"] === "string" ? p["allowId"] : undefined;
     const profile = allowId !== undefined ? getPlatformProfile(allowId) : undefined;
@@ -376,10 +374,10 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     // (so the first chunk is rendered). Built for BOTH backends; the
     // scrollback is threaded from the create frame (DEFAULT_SCROLLBACK / config, never agent input).
     // The selected profile's read-side `transformSnapshot` (e.g. the Claude ghost-strip) is injected
-    // as a GENERIC hook — the emulator stays platform-agnostic; identity when no profile (INV-1).
+    // as a GENERIC hook — the emulator stays platform-agnostic; identity when no profile.
     state.emu = createEmulator({ cols, rows, scrollback, transformSnapshot: profile?.transformSnapshot });
 
-    // 124-05 (TR-11): a per-session transition-only attention emitter over the injected
+    // A per-session transition-only attention emitter over the injected
     // fd3 push channel. Built only when `writeFd3` is wired (the production worker; tests
     // inject a fake). The worker hands each SETTLED frame's classification to
     // `emitter.observe` (in settleSession) — which writes a fd3 frame ONLY on a state
@@ -387,8 +385,8 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     if (writeFd3 !== undefined) {
       const emitter = createAttentionEmitter({ sessionId, writeFd3 });
       state.emitter = emitter;
-      // The exit wake (124-05 gap-close): `markExited` fires this so a child that exits
-      // with NO settle pending still pushes its exited transition on fd3 — TR-11's
+      // The exit wake: `markExited` fires this so a child that exits
+      // with NO settle pending still pushes its exited transition on fd3 — the
       // no-poll wake holds for completion, not just prompts (without it an event-driven
       // agent whose long command finished while it sat idle is NEVER woken; the
       // `claude --help` soak run is exactly that shape). Same single-homed classify
@@ -433,11 +431,11 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
 
     // Attach the backend (PTY or the degraded pipe fallback) — the EXACT try-loadPty /
     // wire-onData/onExit / pipe-close-error block, lifted into a sibling so this file
-    // keeps headroom under the 800-line cap (124-01). appendRing/markExited moved with it
+    // keeps headroom under the 800-line cap. appendRing/markExited moved with it
     // (their only callers were those stream handlers); the rest ride in as explicit params.
-    // 124-08 (OPS-05): only an explicit create-frame `backend:"tmux"` (allow-entry,
-    // daemon-threaded in 124-09) + a wired `loadTmux` diverges to the tmux survival
-    // backend; everything else takes the node-pty → pipe path (attachBackend decides).
+    // Only an explicit create-frame `backend:"tmux"` (allow-entry, daemon-threaded) + a
+    // wired `loadTmux` diverges to the tmux survival backend; everything else takes the
+    // node-pty → pipe path (attachBackend decides).
     const requestedBackend: WorkerBackend | undefined = p["backend"] === "tmux" ? "tmux" : undefined;
     attachBackend({
       plan: { bin: plan.bin, argv: plan.argv, env: plan.env },
@@ -462,7 +460,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
 
   /**
    * Handle a `read` frame. AWAITS the pending emulator write-parse
-   * ({@link SessionState.writeFlush}, the §2.4 stability flush — resolves on the
+   * ({@link SessionState.writeFlush}, the stability flush — resolves on the
    * @xterm parse callback) so the snapshot reflects every emitted byte, then
    * serializes the @xterm grid (real cursor+alt) in the requested format/scrollback.
    * The emulator is the SOLE source when present; the raw ring is the emulator-absent
@@ -498,8 +496,8 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
   }
 
   /**
-   * §2.7: one bounded INFO line per interaction handler (method + durationMs). ALSO
-   * the single chokepoint that advances the per-session interaction counter (124-06):
+   * One bounded INFO line per interaction handler (method + durationMs). ALSO
+   * the single chokepoint that advances the per-session interaction counter:
    * every send_text / send_key / wait / resize lands here (read/status are read-only
    * and do NOT call this), so `interactions` increments in exactly one place.
    */
@@ -602,7 +600,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
 
   /**
    * Handle a `wait` frame — the explicit parameterized settle. Runs {@link runSettle} and
-   * replies `{matched,isComplete,reason,producing,hint,screen,cursor}` (T1.1 adds producing/hint);
+   * replies `{matched,isComplete,reason,producing,hint,screen,cursor}`;
    * an absent session is gone (reason `exit`, not-complete). CRITICAL: `isComplete` passes from
    * runSettle VERBATIM — `false` on timeout (attention model resumes the turn), NEVER hard-coded true.
    */
@@ -621,7 +619,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       forExit: frame.params["forExit"] === true ? true : undefined,
       timeoutMs: typeof frame.params["timeoutMs"] === "number" ? frame.params["timeoutMs"] : undefined,
     };
-    // LIVE-04 (#4): suppress the fd3 attention emit for this foreground `wait` settle — the wait
+    // Suppress the fd3 attention emit for this foreground `wait` settle — the wait
     // reply below IS the agent's attention signal (it unblocks + drives), so a fd3 woken turn would
     // race it (the launch escalation). The progress clock + the emitter's edge-state still advance.
     const r = await settleSession(state, params, true);
@@ -632,21 +630,21 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       matched: r.matched,
       isComplete: r.isComplete, // VERBATIM from runSettle — false on timeout.
       reason: r.reason,
-      producing: r.producing, // T1.1: was output still arriving at a not-complete timeout?
-      hint: settleHint(r), // T1.1: branched, actionable not-complete-timeout hint
+      producing: r.producing, // was output still arriving at a not-complete timeout?
+      hint: settleHint(r), // branched, actionable not-complete-timeout hint
       ...perceptionScreen(state.emu?.snapshot(), state.ring),
     };
   }
 
   /**
-   * Handle a `status` frame (124-06, spec §5; TR-11 perception) — the classifier
-   * stays SINGLE-HOMED in the worker (RESEARCH Open Q2). Delegates to the read-only
+   * Handle a `status` frame (perception) — the classifier
+   * stays SINGLE-HOMED in the worker. Delegates to the read-only
    * {@link statusReplyFromState} (it classifies the CURRENT grid; see its doc). An
    * absent session is gone → `exited`. `settled:true` (a point-in-time snapshot).
    */
   async function handleStatus(frame: TerminalRequestFrame): Promise<WorkerStatusPerception> {
     const state = sessions.get(String(frame.params["sessionId"] ?? frame.sessionId));
-    // Absent session → gone (`exited`, the safe direction). CLASS-02 confidence+reason stay TOTAL here too (an absent session IS exited; mirrors notFoundStatus — never an undefined field). Else classify the live grid.
+    // Absent session → gone (`exited`, the safe direction). Confidence+reason stay TOTAL here too (an absent session IS exited; mirrors notFoundStatus — never an undefined field). Else classify the live grid.
     if (state === undefined) return { state: "exited", cursorParked: false, screenDiffEmpty: true, interactions: 0, confidence: "high", reason: "exited" };
     return statusReplyFromState({ state, settled: true, nowMs, stuckMs });
   }
@@ -660,9 +658,9 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
           result = await handleCreate(frame); // awaits the scope-jail composition; fail-closed throw → ok:false
           break;
         case "reattach": {
-          // BL-01 (165-REVIEW): recover-on-boot re-attach (sibling-owned for cap headroom) —
+          // Recover-on-boot re-attach (sibling-owned for cap headroom) —
           // ok:false when the tmux session is gone (the registry flips lost), so it rides the
-          // reply.ok channel directly (the surviving pane is read, never re-spawned, I10).
+          // reply.ok channel directly (the surviving pane is read, never re-spawned).
           const r = await reattachWorkerSession({
             frame, sessions, createEmulator, writeFd3, nowMs, stuckMs, logger,
             loadPty: deps.loadPty, spawnPipe, loadTmux: deps.loadTmux, envSnapshot,

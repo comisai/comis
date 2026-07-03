@@ -259,7 +259,7 @@ export class IcBillingView extends LitElement {
   @state() private _providers: BillingByProvider[] = [];
   @state() private _agentBillings: BillingByAgent[] = [];
   @state() private _sessionBillings: BillingBySession[] = [];
-  // COST-01/02 granularity (agent level) + the typed-query DSL filter state.
+  // Per-tool/per-subagent granularity (agent level) + the typed-query DSL filter state.
   @state() private _toolCosts: ToolCostBreakdown[] = [];
   @state() private _subagentCosts: SubagentCostBreakdown[] = [];
   @state() private _filterQuery = "";
@@ -424,8 +424,8 @@ export class IcBillingView extends LitElement {
     this._loadData();
   }
 
-  /** 179-08: drill a session row to the native Incident view (the E7 twin) —
-   *  obs.explain keyed on this session's sessionKey (a valid obs.explain ref). */
+  /** Drill a session row to the native Incident view — obs.explain keyed on this
+   *  session's sessionKey (a valid obs.explain ref). */
   private _explainSession(sessionKey: string): void {
     window.location.hash = `#/observe/incident?ref=${encodeURIComponent(sessionKey)}`;
   }
@@ -656,7 +656,7 @@ export class IcBillingView extends LitElement {
    * Build the content-free export rows from the CURRENTLY-FILTERED agent rows
    * and download them as CSV or JSON via the `<a download>` blob mechanism
    * (the diagnostics-view.ts twin). Columns are an explicit allowlist — no
-   * body/secret can leak (T-179-14).
+   * body/secret can leak.
    */
   private _exportBilling(format: "csv" | "json"): void {
     const rows: BillingExportRow[] = this._filteredAgentBillings.map((a) => ({

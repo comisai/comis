@@ -198,12 +198,11 @@ export function allocateSessionWorkspace(
 /**
  * The stable per-agent terminal projects root, a subdir of the agent's OWN workspace dir.
  *
- * PROJECTS-MOVE (live VPS 2026-06-17): renamed `terminal` → `projects` so a driven project lands
- * at the operator-legible `<agentWorkspaceDir>/projects/<slug>` rather than the redundant
- * `<agentWorkspaceDir>/terminal/projects/<slug>`. This subtree IS the jail's bind-root (the
- * registry threads it as the session `workspace`, which `buildScopeArgs` always binds + re-binds),
- * so the agent's SIBLING `sessions/` (conversation trajectories), `memory.db`, and secrets stay
- * masked by the `~/.comis` carve-out — least-privilege is preserved by the move, not weakened.
+ * A driven project lands at the operator-legible `<agentWorkspaceDir>/projects/<slug>`.
+ * This subtree IS the jail's bind-root (the registry threads it as the session `workspace`,
+ * which `buildScopeArgs` always binds + re-binds), so the agent's SIBLING `sessions/`
+ * (conversation trajectories), `memory.db`, and secrets stay masked by the `~/.comis`
+ * carve-out — least-privilege is preserved.
  */
 export const AGENT_PROJECTS_SUBDIR = "projects";
 
@@ -212,7 +211,7 @@ export const AGENT_PROJECTS_SUBDIR = "projects";
  * (a stable subdir of the agent's OWN workspace — the same dir the agent's read/write/exec
  * tools operate on). Unlike {@link allocateSessionWorkspace} (a throwaway `mkdtemp` removed
  * on kill), the daemon injects THIS as `allocateWorkspace` together with a NO-OP
- * `cleanupWorkspace`, so a driven session's work (e.g. a full GSD milestone's TODO app)
+ * `cleanupWorkspace`, so a driven session's work (e.g. a multi-step project like a TODO app)
  * PERSISTS across session end and the agent can see it under its workspace.
  *
  * Created idempotently (recursive) so reuse across the agent's sessions is safe, and still

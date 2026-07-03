@@ -74,8 +74,7 @@ const INSTRUCTIONS_TRUNCATED_SUFFIX = " [truncated]";
  * Wrap a stdio command so:
  *   1. NODE_OPTIONS strip — child Node process does NOT inherit the daemon's
  *      `--permission` flags. `env -u NODE_OPTIONS` clears it before Node reads
- *      it. Non-Node servers (uvx, Python) pass through as no-op. See
- *      COMIS-E2E-FOLLOWUP-DESIGN.md Issue 2.
+ *      it. Non-Node servers (uvx, Python) pass through as no-op.
  *   2. Per-server rlimits via `prlimit(1)`. When `rlimits`
  *      is set AND prlimit is available, prepends `prlimit --as=N --nofile=N
  *      --cpu=N --`. Partial overrides accepted (`{ cpu: 600 }` → only `--cpu`).

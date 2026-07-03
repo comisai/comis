@@ -21,8 +21,8 @@ import { detectLocalSttEngine } from "./local-stt-probe.js";
 // without a real dep load. Inert for the tests above (they inject canImportEngine).
 vi.mock("@huggingface/transformers", () => ({ env: {}, pipeline: vi.fn() }));
 
-// Mock undici so the SEC-02 pinned reachability fetch is observable without real
-// network/DNS (CR-01). `Agent` is a real class with a `close` spy and captures
+// Mock undici so the pinned reachability fetch is observable without real
+// network/DNS. `Agent` is a real class with a `close` spy and captures
 // the IP createPinnedAgent pinned; `fetch` delegates to `globalThis.fetch` so the
 // existing `globalThis.fetch` orchestration still drives `defaultReachable`, while
 // the dispatcher each call receives is recorded to prove the validated IP is pinned.
@@ -159,12 +159,12 @@ describe("detectLocalSttEngine", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // SEC-02 (Surface A): the reachability check is SSRF-guarded BEFORE the fetch.
+  // SSRF guard (Surface A): the reachability check is SSRF-guarded BEFORE the fetch.
   // A non-loopback / unconfigured baseUrl must be treated as not-reachable
   // (the guard rejects it before any fetch fires); a loopback baseUrl still
   // resolves to mode "baseUrl". validateLocalServerUrl runs first.
   // ---------------------------------------------------------------------------
-  describe("SEC-02 SSRF guard on the baseUrl reachability (Surface A)", () => {
+  describe("SSRF guard on the baseUrl reachability (Surface A)", () => {
     it("treats a cloud-metadata baseUrl as NOT reachable and never invokes the reachability fetch", async () => {
       const fetchProbe = vi.fn(async () => true);
       const canImportEngine = vi.fn(async () => true);
@@ -250,7 +250,7 @@ describe("detectLocalSttEngine — default seams (real fetch + real lazy import)
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("PINS the default reachability fetch to the validated IP (DNS-rebinding/TOCTOU closed — the CR-01 RED-proof)", async () => {
+  it("PINS the default reachability fetch to the validated IP (DNS-rebinding/TOCTOU closed)", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 404 }));
 
     const result = await detectLocalSttEngine({
@@ -261,7 +261,7 @@ describe("detectLocalSttEngine — default seams (real fetch + real lazy import)
     expect(result).toMatchObject({ available: true, mode: "baseUrl" });
     // defaultReachable must fetch through undici with a dispatcher pinned to the
     // IP `validateLocalServerUrl` resolved (loopback) — NOT a plain global
-    // re-resolving fetch (the pre-fix code, which carries no dispatcher → RED).
+    // re-resolving fetch, which would carry no dispatcher and reopen the rebind gap.
     expect(undiciFetchCalls).toHaveLength(1);
     const call = undiciFetchCalls[0]!;
     expect(call.url).toBe("http://127.0.0.1:8123");

@@ -299,7 +299,7 @@ describe("createSqliteMemoryEntityStore", () => {
       const res = await store.associativeLane([m1], LANE_SCOPE, 50);
       expect(res.ok).toBe(true);
       if (!res.ok) return;
-      // m2 is evicted → it must NOT surface in the lane (was leaking on HEAD).
+      // m2 is evicted → it must NOT surface in the lane.
       expect(res.value.map((r) => r.entry.id)).not.toContain("m2");
 
       // Reversibility: the raw inspect/asOf read does NOT add the evicted_at filter.

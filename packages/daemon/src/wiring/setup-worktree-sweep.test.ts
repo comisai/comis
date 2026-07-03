@@ -2,8 +2,7 @@
 /**
  * The worktree-orphan-sweep subsystem wiring.
  *
- * These cases fail on the pre-patch tree (`./setup-worktree-sweep.js` does not
- * exist) — RED proof. They assert:
+ * These cases assert:
  *   (a) the WorktreeRegistry tracks created entries + marks them completed;
  *   (b) the ExecGitFn → lifecycle-GitExec adapter maps a Result<string,string>
  *       onto the lifecycle's `{ stdout, exitCode }` shape (ok ⇒ exit 0, err ⇒

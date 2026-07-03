@@ -109,7 +109,7 @@ export function createImageProviderSelector(deps: {
    * (encrypted-store mode), which the sync `hasCredentials` could not — the bug
    * that froze a Codex agent's image generation unavailable despite text working.
    * When omitted (callers/tests that don't pre-resolve it) the gate falls back to
-   * the sync `oauthManager.hasCredentials` (the pre-fix behavior).
+   * the sync `oauthManager.hasCredentials`.
    */
   codexCredentialsAvailable?: boolean;
   /**

@@ -534,7 +534,7 @@ describe("expanded header stripping on cross-origin redirect", () => {
 });
 
 // =============================================================================
-// SSRF guard on cross-host redirects (v2.20 review finding).
+// SSRF guard on cross-host redirects.
 //
 // A malicious/compromised MCP server (untrusted per THREAT_MODEL §5.7) can
 // answer any request with a 3xx whose Location points at an internal address.

@@ -24,7 +24,7 @@ interface SessionIndexEventBase {
   readonly schemaVersion: 1;
   /** ISO 8601 timestamp of when the event was written. */
   readonly ts: string;
-  /** True for harness/bench/test-injected sessions — excluded from obs.* by default (D9). */
+  /** True for harness/bench/test-injected sessions — excluded from obs.* by default. */
   readonly synthetic?: boolean;
   /** Provenance of the session: "runtime" (production), "test" (VITEST), "bench" (harness). */
   readonly source?: "test" | "bench" | "runtime";

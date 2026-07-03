@@ -147,7 +147,7 @@ export function auditKeystroke(
   outcome: "attempted" | "rejected",
 ): void {
   const { text: redactedText, redactions } = scrubSecretsFromText(payload);
-  // DEBUG (not INFO): the keystroke audit is a §2.7 step-tagged intermediate-stage record;
+  // DEBUG (not INFO): the keystroke audit is a step-tagged intermediate-stage record;
   // the send completion INFO line (with durationMs) stays the one INFO per send. Keeping
   // the audit at DEBUG also avoids shadowing that completion line for log consumers.
   deps.logger.debug(

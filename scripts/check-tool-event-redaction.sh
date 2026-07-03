@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# CI grep gate — emit-site redaction lock (AGENT-TRANSPARENCY-SPEC §16.1).
+# CI grep gate — emit-site redaction lock.
 #
 # THE durable regression lock for tool-param redaction at the producer boundary. Every
 # `eventBus.emit("tool:executed", …)` / `eventBus.emit("tool:started", …)` site

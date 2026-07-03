@@ -3,7 +3,7 @@
  * Stage-A unit tests for cassette.ts — two-speed replay/record seam.
  *
  * Filesystem I/O via tmpdir — no real HTTP, no real provider calls.
- * Must run with COMIS_LIVE unset (additive test tooling, §critical_project_rules).
+ * Must run with COMIS_LIVE unset — additive test tooling that never requires a live daemon or real provider calls.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";

@@ -2,7 +2,7 @@
 /**
  * Unit tests for the OAuth metadata discovery cascade.
  *
- * RED→GREEN coverage (against an in-process mock OAuth server serving the RFC
+ * Coverage (against an in-process mock OAuth server serving the RFC
  * 8414 + RFC 9728 well-known routes — the same surface as
  * `test/support/mock-oauth-server.ts`, inlined here so this stays a hermetic
  * skills-package UNIT test):

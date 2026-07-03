@@ -38,14 +38,14 @@ export type DeliverDeps = Pick<
    * Optional injected clock. When present, `deliveredAtMs` is read from it
    * (deterministic in tests). When absent, the sanctioned-root `systemNowMs()`
    * is used — this stage is one of the sanctioned roots for `systemNowMs`
-   * (it already uses it for delivery metrics). §16.6.
+   * (it already uses it for delivery metrics).
    */
   clock?: ClockPort;
 };
 
 /**
- * `delivery.visibleReplies` policy threaded into the delivery stage
- * (§16.3). The resolved per-chat-type mode + whether the `message` tool acted
+ * `delivery.visibleReplies` policy threaded into the delivery stage.
+ * The resolved per-chat-type mode + whether the `message` tool acted
  * (`send`/`reply`/`attach`) this turn. When the policy for the inbound chat type
  * is `"message_tool"` and the tool did NOT act, the final assistant text is
  * suppressed (the activity/approval surfaces and lifecycle reactions are
@@ -57,7 +57,7 @@ export interface VisibleRepliesEnforcement {
   messageToolActed: boolean;
 }
 
-/** Truncation cap for the failure receipt's `lastError` (§ DeliveryFailureReceipt). */
+/** Truncation cap for the failure receipt's `lastError`. */
 const MAX_LAST_ERROR_CHARS = 200;
 
 /** A success receipt for a turn where delivery was intentionally suppressed (visibleReplies). */
@@ -90,7 +90,7 @@ export async function deliverExecutionResponse(
   typingLifecycle: TypingLifecycleController | undefined,
   enforcement?: VisibleRepliesEnforcement,
 ): Promise<DeliveryStageResult> {
-  // === VISIBLE-REPLIES ENFORCEMENT (§16.3) ===
+  // === VISIBLE-REPLIES ENFORCEMENT ===
   // Runs AFTER the response filter (the caller passes the post-filter
   // finalDeliveryText) and BEFORE any assistant-text delivery. When the chat
   // type's policy is "message_tool" and the model did not call the `message`
@@ -272,7 +272,7 @@ export async function deliverExecutionResponse(
     activePacers.delete(pacer);
   }
 
-  // §16.6: capture the settle timestamp the moment the last chunk's send-promise
+  // Capture the settle timestamp the moment the last chunk's send-promise
   // resolved — i.e. right after pacer.deliver settles, before any post-delivery
   // bookkeeping. Injected ClockPort when present (deterministic tests); otherwise
   // the sanctioned-root systemNowMs (this stage is a sanctioned root). Used as
@@ -308,7 +308,7 @@ export async function deliverExecutionResponse(
     typingLifecycle.markRunComplete();
   }
 
-  // === DELIVERY RECEIPT (§16.6) ===
+  // === DELIVERY RECEIPT ===
   // Any failed chunk => err(DeliveryFailureReceipt) so the coordinator can
   // classify the turn as kind:"failure" and keep the activity trail.
   if (failedChunks > 0 || firstFailure) {

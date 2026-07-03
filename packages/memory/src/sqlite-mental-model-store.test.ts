@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Unit tests for `createSqliteMentalModelStore` — the @comis/memory SQLite
- * adapter for the segregated `MentalModelStorePort` (@comis/core, the v2.31
- * Mental Model doc store generalized from the v2.26 Verified Learning WS2 /
- * SKILL-01 procedural store). The store owns ALL `mental_models` SQL: the
+ * adapter for the segregated `MentalModelStorePort` (@comis/core) — the Mental
+ * Model doc store that holds learned skill/profile/topic docs. The store owns ALL
+ * `mental_models` SQL: the
  * idempotent `admit()` upsert (deterministic-hash id of the UNIQUE
  * `(tenant_id, agent_id, kind, topic_key, name)` tuple + `ON CONFLICT(id) DO
  * UPDATE`), the scoped `(tenant, agent)`-isolated `get`/`list` reads (the
@@ -16,10 +16,10 @@
  * memories needed (the `sqlite-outcome-store.test.ts` / no-FK precedent).
  *
  * The two load-bearing security invariants under test:
- *  - SEC-01 trust ceiling: a raw `INSERT … trust_level='system'` THROWS (the DB
+ *  - trust ceiling: a raw `INSERT … trust_level='system'` THROWS (the DB
  *    `CHECK (trust_level IN ('learned'))` rejects any non-'learned' value) — a
  *    learned mental-model doc can NEVER be `system`.
- *  - SEC-01 (tenant, agent) isolation: a doc admitted under (tenantA, agentA)
+ *  - (tenant, agent) isolation: a doc admitted under (tenantA, agentA)
  *    is INVISIBLE to a read under (tenantB, agentB); an empty/unresolved scope
  *    fails-closed with `err(...)` (never widens to a shared pool).
  *
@@ -53,12 +53,12 @@ function makeInput(overrides: Partial<AdmitMentalModelInput> = {}): AdmitMentalM
     body: overrides.body ?? "1. run the build\n2. ship it",
     mutating: overrides.mutating ?? false,
     // kind/topicKey are OPTIONAL — omitted ⇒ the adapter applies 'skill'/'' so a
-    // skill admit stays byte-identical to the pre-generalization store. A test
-    // that exercises a non-skill kind overrides these explicitly.
+    // skill admit needs neither field. A test that exercises a non-skill kind
+    // overrides these explicitly.
     ...(overrides.kind !== undefined ? { kind: overrides.kind } : {}),
     ...(overrides.topicKey !== undefined ? { topicKey: overrides.topicKey } : {}),
-    // structuredBody is OPTIONAL — forwarded only when a test supplies it, so a
-    // legacy admit (no AST) stays byte-identical to the pre-Phase-223 shape.
+    // structuredBody is OPTIONAL — forwarded only when a test supplies it, so an
+    // admit without an AST omits the field entirely.
     ...(overrides.structuredBody !== undefined ? { structuredBody: overrides.structuredBody } : {}),
     proofCount: overrides.proofCount ?? 1,
     confidence: overrides.confidence ?? 0.8,
@@ -132,10 +132,10 @@ describe("createSqliteMentalModelStore", () => {
   });
 
   // -------------------------------------------------------------------------
-  // MODEL-01: the generalized doc shape. The `mental_models` table carries the
-  // NEW kind/topic_key/structured_body/history columns and DROPS the executable
-  // `scripts` column (the v2.31 advisory-doc-only generalization removes the
-  // executable payload entirely). The dead `trigger` column is dropped too.
+  // The generalized doc shape. The `mental_models` table carries the
+  // kind/topic_key/structured_body/history columns and has no executable
+  // `scripts` column (mental models are advisory docs — no learned code) and
+  // no `trigger` column.
   // -------------------------------------------------------------------------
 
   it("the mental_models table has kind/topic_key/structured_body/history and NO scripts (nor trigger) column", () => {
@@ -147,14 +147,14 @@ describe("createSqliteMentalModelStore", () => {
     expect(cols.has("topic_key")).toBe(true);
     expect(cols.has("structured_body")).toBe(true);
     expect(cols.has("history")).toBe(true);
-    // The executable `scripts` column is GONE (advisory-doc-only — no learned code).
+    // There is no executable `scripts` column (advisory-doc-only — no learned code).
     expect(cols.has("scripts")).toBe(false);
-    // The dead `trigger` column (zero readers at HEAD) is dropped alongside `scripts`.
+    // There is no `trigger` column (mental models carry no executable payload).
     expect(cols.has("trigger")).toBe(false);
   });
 
   // -------------------------------------------------------------------------
-  // WR-04: the mental_models_fts word-lane twin rebuilds + matches on a body
+  // The mental_models_fts word-lane twin rebuilds + matches on a body
   // token. The external-content FTS column must name the REAL source column
   // (`body`) — naming it `content` (no such column on `mental_models`) makes
   // FTS5 'rebuild' throw "no such column: content" on every boot, leaving the
@@ -181,9 +181,9 @@ describe("createSqliteMentalModelStore", () => {
   });
 
   // -------------------------------------------------------------------------
-  // MODEL-02: the store admits/gets ANY kind, and `kind`/`topicKey` round-trip
-  // through get(). An omitted kind defaults to 'skill' (the skill admit is
-  // unchanged); a 'topic'/'profile' admit carries its kind + topicKey.
+  // The store admits/gets ANY kind, and `kind`/`topicKey` round-trip
+  // through get(). An omitted kind defaults to 'skill'; a 'topic'/'profile'
+  // admit carries its kind + topicKey.
   // -------------------------------------------------------------------------
 
   it("a skill admit (kind omitted) round-trips kind='skill', topicKey='' through get()", async () => {
@@ -221,7 +221,7 @@ describe("createSqliteMentalModelStore", () => {
   });
 
   // -------------------------------------------------------------------------
-  // MODEL-02: list(scope) returns ALL kinds; list(scope, kind) filters by kind.
+  // list(scope) returns ALL kinds; list(scope, kind) filters by kind.
   // -------------------------------------------------------------------------
 
   it("list(scope) returns all kinds; list(scope, 'skill') returns only kind='skill' rows", async () => {
@@ -246,15 +246,15 @@ describe("createSqliteMentalModelStore", () => {
   });
 
   // -------------------------------------------------------------------------
-  // MODEL-01 / D-04: forward-only copy-forward REBUILD. A pre-existing
-  // `learned_skills` table (the OLD shape, with `scripts`) is copied forward
+  // Forward-only copy-forward REBUILD. A pre-existing
+  // `learned_skills` table (the older shape, with `scripts`) is copied forward
   // into `mental_models` as kind='skill' and DROPPED. Row count is preserved;
-  // the old table no longer exists. (Prod is empty — this is the dev/test path.)
+  // the old table no longer exists.
   // -------------------------------------------------------------------------
 
   it("ensureMentalModelsTable copies a pre-existing learned_skills row forward as kind='skill' and drops the old table", () => {
-    // A fresh in-memory db, then hand-build the OLD `learned_skills` table with
-    // the pre-generalization DDL (the `scripts` + `trigger` columns present) and
+    // A fresh in-memory db, then hand-build the older `learned_skills` table with
+    // its DDL (the `scripts` + `trigger` columns present) and
     // insert one row, BEFORE the mental_models table exists.
     const old = new Database(":memory:");
     try {
@@ -324,10 +324,10 @@ describe("createSqliteMentalModelStore", () => {
   });
 
   // -------------------------------------------------------------------------
-  // SEC-01 trust ceiling: the CHECK rejects any non-'learned' trust_level
+  // Trust ceiling: the CHECK rejects any non-'learned' trust_level
   // -------------------------------------------------------------------------
 
-  it("REJECTS a raw INSERT with trust_level='system' (the SEC-01 DB trust ceiling)", () => {
+  it("REJECTS a raw INSERT with trust_level='system' (the DB trust ceiling)", () => {
     const insertSystem = () =>
       db
         .prepare(
@@ -348,7 +348,7 @@ describe("createSqliteMentalModelStore", () => {
   });
 
   // -------------------------------------------------------------------------
-  // SKILL-01 idempotency: deterministic id + ON CONFLICT — a replay is a no-op
+  // Idempotency: deterministic id + ON CONFLICT — a replay is a no-op
   // -------------------------------------------------------------------------
 
   it("derives the row id as a deterministic sha256 of the (tenant, agent, name) tuple", async () => {
@@ -432,8 +432,8 @@ describe("createSqliteMentalModelStore", () => {
     if (r.ok) expect(r.value?.sourceTrajIds).toEqual([]);
   });
 
-  // A placeholder so SCOPE_B/TENANT_B/AGENT_B are referenced in Task 1 already
-  // (the full isolation matrix lands in Task 2).
+  // A skill admitted under scope A must not inflate scope B's row count — the
+  // scope filter isolates the two.
   it("a skill admitted under scope A does not appear in scope B's row count", async () => {
     await store.admit(makeInput({ name: "scoped" }), SCOPE_A);
     expect(rowCount(TENANT_A, AGENT_A)).toBe(1);
@@ -443,7 +443,7 @@ describe("createSqliteMentalModelStore", () => {
 });
 
 // ===========================================================================
-// SEC-01 isolation matrix + fail-closed scope + soft lifecycle (Task 2)
+// Isolation matrix + fail-closed scope + soft lifecycle
 // ===========================================================================
 describe("createSqliteMentalModelStore — (tenant, agent) isolation + lifecycle", () => {
   let db: Database.Database;
@@ -459,7 +459,7 @@ describe("createSqliteMentalModelStore — (tenant, agent) isolation + lifecycle
     db.close();
   });
 
-  // --- T-201-06: cross-scope reads see nothing -----------------------------
+  // --- Cross-scope reads see nothing -----------------------------
 
   it("a skill admitted under (tenantA, agentA) is INVISIBLE to get() under (tenantB, agentB)", async () => {
     await store.admit(makeInput({ name: "isolated" }), SCOPE_A);
@@ -494,7 +494,7 @@ describe("createSqliteMentalModelStore — (tenant, agent) isolation + lifecycle
     if (fromB.ok) expect(fromB.value?.body).toBe("B's body");
   });
 
-  // --- T-201-07: unresolved scope fails closed (never widens to a pool) -----
+  // --- Unresolved scope fails closed (never widens to a pool) -----
 
   const EMPTY_TENANT: LearningScope = { tenantId: "", agentId: AGENT_A };
   const EMPTY_AGENT: LearningScope = { tenantId: TENANT_A, agentId: "" };
@@ -587,12 +587,10 @@ describe("createSqliteMentalModelStore — (tenant, agent) isolation + lifecycle
 });
 
 // ===========================================================================
-// D2 / SURFACE-04 / T-202-04: promote() threshold gate — proof_count bumps every
-// call but candidate→active fires ONLY when proof_count + 1 >= promoteAtProofCount
-// (NOT on the first call). The §12 first-RED: today's unconditional CASE flips on
-// call 1, so the "stays candidate after call 1" assertions are RED on pre-patch.
+// promote() threshold gate — proof_count bumps every call but candidate→active
+// fires ONLY when proof_count + 1 >= promoteAtProofCount (NOT on the first call).
 // ===========================================================================
-describe("createSqliteMentalModelStore — promote() proof-bar threshold gate (D2)", () => {
+describe("createSqliteMentalModelStore — promote() proof-bar threshold gate", () => {
   let db: Database.Database;
   let store: ReturnType<typeof createSqliteMentalModelStore>;
 
@@ -620,7 +618,7 @@ describe("createSqliteMentalModelStore — promote() proof-bar threshold gate (D
     const after = await store.get("threshold-3", SCOPE_A);
     expect(after.ok).toBe(true);
     if (after.ok) {
-      expect(after.value?.state).toBe("candidate"); // RED today: the unconditional CASE flips to 'active' here
+      expect(after.value?.state).toBe("candidate"); // proof_count + 1 = 1 is still < 3, so it stays candidate
       expect(after.value?.proofCount).toBe(1);
     }
   });
@@ -673,7 +671,7 @@ describe("createSqliteMentalModelStore — promote() proof-bar threshold gate (D
     }
   });
 
-  it("promote() NEVER touches trust_level — it stays 'learned' across the whole proof ladder (SEC-01 / T-202-05)", async () => {
+  it("promote() NEVER touches trust_level — it stays 'learned' across the whole proof ladder", async () => {
     const id = await admitCandidate("trust-untouched");
     await store.promote(id, SCOPE_A, 3);
     await store.promote(id, SCOPE_A, 3);
@@ -684,7 +682,7 @@ describe("createSqliteMentalModelStore — promote() proof-bar threshold gate (D
     expect(raw.trust_level).toBe("learned"); // no promote path raises trust
   });
 
-  it("promote() with an unresolved (empty) scope fails-closed on the widened 3-arg signature (T-202-06)", async () => {
+  it("promote() with an unresolved (empty) scope fails-closed on the widened 3-arg signature", async () => {
     const r = await store.promote("some-id", { tenantId: "", agentId: AGENT_A }, 3);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toBeInstanceOf(Error);
@@ -692,8 +690,8 @@ describe("createSqliteMentalModelStore — promote() proof-bar threshold gate (D
 });
 
 // ===========================================================================
-// CR-01: name-keyed promote/demote — the reuse-outcome loop holds skill NAMES
-// (ATTR-01), not the hash id. promoteByName/demoteByName resolve name→id
+// name-keyed promote/demote — the reuse-outcome loop holds skill NAMES,
+// not the hash id. promoteByName/demoteByName resolve name→id
 // INTERNALLY (one place — the same derivation admit() uses) and REPORT
 // rows-changed so a 0-row write (an unknown/evicted name) is detectable and the
 // caller can stop the telemetry from lying.
@@ -766,7 +764,7 @@ describe("createSqliteMentalModelStore — promoteByName / demoteByName (name→
     if (r.ok) expect(r.value.changed).toBe(false);
   });
 
-  it("WR-06: demoteByName of an ALREADY-stale skill reports changed=false (no state delta → telemetry must not over-count)", async () => {
+  it("demoteByName of an ALREADY-stale skill reports changed=false (no state delta → telemetry must not over-count)", async () => {
     await store.admit(makeInput({ name: "already-stale", proofCount: 0 }), SCOPE_A);
     await store.promoteByName("already-stale", SCOPE_A, 1); // → active
     const first = await store.demoteByName("already-stale", SCOPE_A); // active → stale (a REAL transition)
@@ -776,11 +774,11 @@ describe("createSqliteMentalModelStore — promoteByName / demoteByName (name→
     // (the demote UPDATE rewriting only updated_at must NOT be reported as a transition).
     const second = await store.demoteByName("already-stale", SCOPE_A);
     expect(second.ok).toBe(true);
-    if (second.ok) expect(second.value.changed).toBe(false); // RED on HEAD: changes===1 from updated_at rewrite
+    if (second.ok) expect(second.value.changed).toBe(false); // a no-op UPDATE that only rewrites updated_at must not report changed
     expect(await stateOf("already-stale")).toBe("stale"); // state unchanged
   });
 
-  it("WR-06: demoteByName of an ALREADY-archived (evicted) skill reports changed=false", async () => {
+  it("demoteByName of an ALREADY-archived (evicted) skill reports changed=false", async () => {
     await store.admit(makeInput({ name: "already-archived", proofCount: 0 }), SCOPE_A);
     const id = expectedId(TENANT_A, AGENT_A, "already-archived");
     await store.evict(id, SCOPE_A); // → archived (+ evicted_at set)
@@ -790,7 +788,7 @@ describe("createSqliteMentalModelStore — promoteByName / demoteByName (name→
     if (r.ok) expect(r.value.changed).toBe(false);
   });
 
-  it("WR-06: the active→stale demote DOES report changed=true (the real transition still works)", async () => {
+  it("the active→stale demote DOES report changed=true (the real transition still works)", async () => {
     await store.admit(makeInput({ name: "real-demote", proofCount: 0 }), SCOPE_A);
     await store.promoteByName("real-demote", SCOPE_A, 1); // → active
     const r = await store.demoteByName("real-demote", SCOPE_A); // active → stale
@@ -798,7 +796,7 @@ describe("createSqliteMentalModelStore — promoteByName / demoteByName (name→
     expect(await stateOf("real-demote")).toBe("stale");
   });
 
-  it("WR-06: a candidate→stale demote reports changed=true (candidate is a non-terminal demote source)", async () => {
+  it("a candidate→stale demote reports changed=true (candidate is a non-terminal demote source)", async () => {
     await store.admit(makeInput({ name: "cand-demote", proofCount: 0 }), SCOPE_A); // stays candidate
     const r = await store.demoteByName("cand-demote", SCOPE_A); // candidate → stale
     expect(r.ok && r.value.changed).toBe(true);
@@ -812,19 +810,17 @@ describe("createSqliteMentalModelStore — promoteByName / demoteByName (name→
     expect(d.ok).toBe(false);
   });
 
-  // SKILL-04 (the never-run A→B loop, live-2026-06-26): a REFLECTED skill doc is
-  // admitted with a NON-EMPTY topicKey (the reflection engine names a doc
-  // `skill-<full-topicKey>` and admits it WITH that topicKey — WR-01 / REFLECT-06).
-  // The reuse loop holds only the skill NAME (ATTR-01), so promoteByName /
-  // demoteByName MUST resolve the row by `(tenant, agent, name)` — NOT by
-  // re-deriving the id with a hardcoded `topicKey:''`. Pre-fix promoteByName
-  // hashed `(tenant, agent, 'skill', '', name)`, which MISSES a row admitted with
-  // a non-empty topicKey → `changed:false` and the row never promotes — so the
-  // entire reflect→reuse→promote loop was silently dead on its real input (it only
-  // ever passed for hand-authored docs whose topicKey happened to be ''). The name
+  // A REFLECTED skill doc is admitted with a NON-EMPTY topicKey (the reflection
+  // engine names a doc `skill-<full-topicKey>` and admits it WITH that topicKey).
+  // The reuse loop holds only the skill NAME, so promoteByName / demoteByName MUST
+  // resolve the row by `(tenant, agent, name)` — NOT by re-deriving the id with a
+  // hardcoded `topicKey:''`. Re-deriving `(tenant, agent, 'skill', '', name)` MISSES
+  // a row admitted with a non-empty topicKey → `changed:false` and the row never
+  // promotes, so the reflect→reuse→promote loop would be dead on its real input
+  // (only hand-authored docs whose topicKey happens to be '' would work). The name
   // embeds the FULL topicKey, so it is unique per (tenant, agent, kind) (the same
   // get() resolves by), making a name-keyed transition the authoritative reconciliation.
-  it("SKILL-04: promoteByName promotes a doc admitted with a NON-EMPTY topicKey (the reflection-engine shape)", async () => {
+  it("promoteByName promotes a doc admitted with a NON-EMPTY topicKey (the reflection-engine shape)", async () => {
     // Admit exactly as the reflection job does: a non-empty topicKey + proofCount 1.
     const admitted = await store.admit(
       makeInput({ name: "skill-abc123def456", topicKey: "abc123def456", proofCount: 1 }),
@@ -838,7 +834,7 @@ describe("createSqliteMentalModelStore — promoteByName / demoteByName (name→
     // threshold 1 ⇒ proof_count 1 + 1 = 2 >= 1 ⇒ candidate→active AND a real row move.
     const r = await store.promoteByName("skill-abc123def456", { ...SCOPE_A, now: 2_000 }, 1);
     expect(r.ok).toBe(true);
-    expect(r.ok && r.value.changed).toBe(true); // RED pre-fix: hardcoded topicKey:'' misses → false
+    expect(r.ok && r.value.changed).toBe(true); // name-keyed resolution finds the non-empty-topicKey row
 
     const after = await store.get("skill-abc123def456", SCOPE_A);
     expect(after.ok && after.value?.state).toBe("active"); // the row ACTUALLY moved
@@ -846,7 +842,7 @@ describe("createSqliteMentalModelStore — promoteByName / demoteByName (name→
 
     // demoteByName must ALSO resolve the same non-empty-topicKey row by name.
     const d = await store.demoteByName("skill-abc123def456", { ...SCOPE_A, now: 3_000 });
-    expect(d.ok && d.value.changed).toBe(true); // RED pre-fix: misses the row → false
+    expect(d.ok && d.value.changed).toBe(true); // name-keyed resolution finds the same row
     const afterDemote = await store.get("skill-abc123def456", SCOPE_A);
     expect(afterDemote.ok && afterDemote.value?.state).toBe("stale");
   });
@@ -908,14 +904,12 @@ describe("createSqliteMentalModelStore — error handling (catch branches)", () 
 });
 
 // ===========================================================================
-// REFLECT-04: structuredBody round-trip. Phase 222 provisioned the
-// `structured_body` column + the row schema but left it DB-only — NOT bound in
-// the admit INSERT, NOT mapped in rowToMentalModel, NOT on the MentalModel /
-// AdmitMentalModelInput domain interface. Phase 223 widens all three IN ONE DIFF
-// so delta-ops have a prior AST to read and a place to write. `history` stays
-// NULL (Phase 224 owns supersession — A5).
+// structuredBody round-trip. The `structured_body` column is bound in the admit
+// INSERT, mapped in rowToMentalModel, and exposed on the MentalModel /
+// AdmitMentalModelInput domain interface, so delta-ops have a prior AST to read
+// and a place to write. `history` stays NULL on admit (supersede() owns it).
 // ===========================================================================
-describe("createSqliteMentalModelStore — structuredBody round-trip (REFLECT-04)", () => {
+describe("createSqliteMentalModelStore — structuredBody round-trip", () => {
   let db: Database.Database;
   let store: ReturnType<typeof createSqliteMentalModelStore>;
 
@@ -963,8 +957,8 @@ describe("createSqliteMentalModelStore — structuredBody round-trip (REFLECT-04
     expect(rawCols("no-ast").structured_body).toBeNull();
   });
 
-  it("a kind:'skill' admit WITHOUT structuredBody behaves exactly as before (MODEL-05 no-regression)", async () => {
-    // The pre-Phase-223 skill admit shape — no structuredBody field at all.
+  it("a kind:'skill' admit WITHOUT structuredBody round-trips the full skill fields with structuredBody undefined", async () => {
+    // A skill admit with no structuredBody field at all.
     await store.admit(makeInput({ name: "legacy-skill", proofCount: 2, sourceTrajIds: ["a", "b"] }), SCOPE_A);
     const r = await store.get("legacy-skill", SCOPE_A);
     expect(r.ok).toBe(true);
@@ -1011,7 +1005,7 @@ describe("createSqliteMentalModelStore — structuredBody round-trip (REFLECT-04
     if (r.ok) expect(r.value?.structuredBody).toBeUndefined();
   });
 
-  it("history stays NULL on a freshly-admitted doc (Phase 224 owns supersession — A5)", async () => {
+  it("history stays NULL on a freshly-admitted doc", async () => {
     const ast: StructuredBody = { sections: [{ id: "s1", heading: "H", body: "B" }] };
     await store.admit(makeInput({ name: "no-history", structuredBody: ast }), SCOPE_A);
     expect(rawCols("no-history").history).toBeNull();
@@ -1023,22 +1017,19 @@ describe("createSqliteMentalModelStore — structuredBody round-trip (REFLECT-04
       "UPDATE mental_models SET structured_body = '{not json' WHERE tenant_id = ? AND agent_id = ? AND name = ?",
     ).run(TENANT_A, AGENT_A, "corrupt-ast");
     const r = await store.get("corrupt-ast", SCOPE_A);
-    expect(r.ok).toBe(true); // never throws on a garbage AST (T-223-09)
+    expect(r.ok).toBe(true); // never throws on a garbage AST
     if (r.ok) expect(r.value?.structuredBody).toBeUndefined();
   });
 });
 
 // ===========================================================================
-// FOLD-01 (Phase 225, GAP-1): MentalModel.history supersede — the history-WRITE
-// the store lacked (admit hardcoded `history` NULL; `:166`/`:193` said "Phase 224
-// owns supersession"). Mirrors SqliteMemoryAdapter.supersede (224 FORGET-04):
-// validateMemoryWrite BEFORE the txn, SELECT the scoped incumbent, APPEND
-// {previousContent, changedAt} to `history` (never delete the row), UPDATE
-// body/structured_body/history/updated_at, atomic transaction, (tenant,agent)-scoped.
-// RED on pre-patch: `store.supersede` does not exist (undefined → call throws /
-// compile-fails). The MentalModel.history surface (rowToMentalModel) is also RED.
+// MentalModel.history supersede — the history-WRITE path. Mirrors
+// SqliteMemoryAdapter.supersede: validateMemoryWrite BEFORE the txn, SELECT the
+// scoped incumbent, APPEND {previousContent, changedAt} to `history` (never delete
+// the row), UPDATE body/structured_body/history/updated_at, atomic transaction,
+// (tenant,agent)-scoped.
 // ===========================================================================
-describe("createSqliteMentalModelStore — supersede (FOLD-01 history-append, non-destructive)", () => {
+describe("createSqliteMentalModelStore — supersede (history-append, non-destructive)", () => {
   let db: Database.Database;
   let store: ReturnType<typeof createSqliteMentalModelStore>;
 
@@ -1065,8 +1056,8 @@ describe("createSqliteMentalModelStore — supersede (FOLD-01 history-append, no
       | undefined;
   }
 
-  // -- Test E: history-append ------------------------------------------------
-  it("Test E: supersede UPDATES body, APPENDS {previousContent, changedAt} to history, and DELETES no row", async () => {
+  // -- history-append ------------------------------------------------
+  it("supersede UPDATES body, APPENDS {previousContent, changedAt} to history, and DELETES no row", async () => {
     // Admit a profile doc, then supersede it with a corrected body.
     await store.admit(makeInput({ name: "profile-userA", kind: "profile", body: "user prefers tea" }), SCOPE_A);
 
@@ -1105,7 +1096,7 @@ describe("createSqliteMentalModelStore — supersede (FOLD-01 history-append, no
     ).toBe(1);
   });
 
-  it("Test E': supersede updates structured_body in lockstep with body when supplied", async () => {
+  it("supersede updates structured_body in lockstep with body when supplied", async () => {
     const first: StructuredBody = { sections: [{ id: "s1", heading: "Identity", body: "OLD" }] };
     const next: StructuredBody = { sections: [{ id: "s1", heading: "Identity", body: "NEW" }] };
     await store.admit(makeInput({ name: "profile-ast", kind: "profile", body: "OLD body", structuredBody: first }), SCOPE_A);
@@ -1123,7 +1114,7 @@ describe("createSqliteMentalModelStore — supersede (FOLD-01 history-append, no
     if (g.ok) expect(g.value?.structuredBody).toEqual(next);
   });
 
-  it("Test E'': a second supersede appends a SECOND history entry (oldest-first), still no delete", async () => {
+  it("a second supersede appends a SECOND history entry (oldest-first), still no delete", async () => {
     await store.admit(makeInput({ name: "profile-multi", kind: "profile", body: "v1" }), SCOPE_A);
     await store.supersede({ name: "profile-multi", body: "v2" }, SCOPE_A, 5_000);
     await store.supersede({ name: "profile-multi", body: "v3" }, SCOPE_A, 9_000);
@@ -1137,8 +1128,8 @@ describe("createSqliteMentalModelStore — supersede (FOLD-01 history-append, no
     ).toBe(1);
   });
 
-  // -- Test F: no-op on a missing incumbent ----------------------------------
-  it("Test F: supersede of a name with no scoped incumbent returns 'not-found' and writes nothing", async () => {
+  // -- no-op on a missing incumbent ----------------------------------
+  it("supersede of a name with no scoped incumbent returns 'not-found' and writes nothing", async () => {
     const res = await store.supersede({ name: "does-not-exist", body: "anything" }, SCOPE_A, 5_000);
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.value).toBe("not-found");
@@ -1148,8 +1139,8 @@ describe("createSqliteMentalModelStore — supersede (FOLD-01 history-append, no
     ).toBe(0);
   });
 
-  // -- Test G: scope isolation -----------------------------------------------
-  it("Test G: supersede under a foreign (tenant, agent) scope does NOT touch another scope's row (returns 'not-found')", async () => {
+  // -- scope isolation -----------------------------------------------
+  it("supersede under a foreign (tenant, agent) scope does NOT touch another scope's row (returns 'not-found')", async () => {
     await store.admit(makeInput({ name: "profile-scoped", kind: "profile", body: "A's profile" }), SCOPE_A);
 
     // Supersede the SAME name under SCOPE_B — the scoped WHERE finds no incumbent.
@@ -1163,8 +1154,8 @@ describe("createSqliteMentalModelStore — supersede (FOLD-01 history-append, no
     expect(aRow!.history).toBeNull();
   });
 
-  // -- Test H: the redaction firewall ----------------------------------------
-  it("Test H: supersede with a CRITICAL body (validateMemoryWrite) returns err and leaves the incumbent unchanged", async () => {
+  // -- the redaction firewall ----------------------------------------
+  it("supersede with a CRITICAL body (validateMemoryWrite) returns err and leaves the incumbent unchanged", async () => {
     await store.admit(makeInput({ name: "profile-firewall", kind: "profile", body: "user prefers tea" }), SCOPE_A);
 
     // A dangerous-command body trips validateMemoryWrite → critical → rejected BEFORE the txn.

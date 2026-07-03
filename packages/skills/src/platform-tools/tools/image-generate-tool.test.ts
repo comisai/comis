@@ -29,9 +29,9 @@ describe("createImageGenerateTool", () => {
     expect(schema.properties.size).toBeDefined();
   });
 
-  // ─── CFG-02 (185): optional model + reference_image params ──────────────────
+  // ─── optional model + reference_image params ────────────────────────────────
 
-  it("exposes an optional model parameter describing the provider's default override (CFG-02)", () => {
+  it("exposes an optional model parameter describing the provider's default override", () => {
     const rpcCall = vi.fn();
     const tool = createImageGenerateTool(rpcCall);
 
@@ -44,7 +44,7 @@ describe("createImageGenerateTool", () => {
     expect(desc).toMatch(/model|provider's default|default/);
   });
 
-  it("exposes an optional reference_image parameter for edit/img2img (CFG-02 / IN-01)", () => {
+  it("exposes an optional reference_image parameter for edit/img2img", () => {
     const rpcCall = vi.fn();
     const tool = createImageGenerateTool(rpcCall);
 

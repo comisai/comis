@@ -8,7 +8,7 @@
  * This is the in-process, $0, deterministic proof that `runSoak` drives traffic +
  * parses the daemon health line correctly.
  *
- * The REAL multi-hour soak is the operator step (a Linux VPS, §18.5): run `runSoak`
+ * The REAL multi-hour soak is the operator step (a Linux VPS): run `runSoak`
  * with COMIS_LIVE + provider keys + many iterations over a long window; the
  * health-line watcher then gates RSS/heap trend + zero stuck/deadLetter/promptTimeouts
  * + empty degradedProviders over hours. Held below in the gated Stage-C/operator block.
@@ -106,7 +106,7 @@ describe("PROVE-03 Stage-B — short deterministic soak smoke (the harness drive
 
 describe.skipIf(!isLive)("PROVE-03 — real multi-hour soak (operator, gated)", () => {
   it.skip(
-    "multi-hour real-LLM journey traffic; the health-line watcher gates no RSS/heap trend + zero stuck/deadLetter/promptTimeouts + empty degradedProviders over hours — SKIPPED(operator: multi-hour Linux VPS soak). Run `runSoak` with COMIS_LIVE + provider keys + many iterations on a Linux VPS (§18.5). The harness + the short smoke + parseHealthLine are covered above.",
+    "multi-hour real-LLM journey traffic; the health-line watcher gates no RSS/heap trend + zero stuck/deadLetter/promptTimeouts + empty degradedProviders over hours — SKIPPED(operator: multi-hour Linux VPS soak). Run `runSoak` with COMIS_LIVE + provider keys + many iterations on a Linux VPS. The harness + the short smoke + parseHealthLine are covered above.",
     () => {
       // Operator: const result = await runSoak({ driver, iterations: <many>,
       //   stories: getStories().filter(s => s.status === "active") }); over a long

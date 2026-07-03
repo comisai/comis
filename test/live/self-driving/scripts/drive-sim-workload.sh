@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # drive-sim-workload.sh — the per-workload ACC→REFLECT composition for the memory/learning sim catalog.
 #
-# Born from memory-learning-stress-catalog-codex-20260629 (the framework-improvement loop): RUN1+RUN2 each
-# hand-orchestrated this exact loop ~14x (restart→connect→reset→2 byte-identical feeders→reflect→read).
-# This is the missing COMPOSITION over the primitives (restart-m1.sh / drive.mjs / reflect-run.mjs / db.mjs).
+# This loop was hand-orchestrated ~14x per run (restart→connect→reset→2 byte-identical feeders→reflect→read)
+# before being standardized here — the missing COMPOSITION over the primitives
+# (restart-m1.sh / drive.mjs / reflect-run.mjs / db.mjs).
 #
 # Runs ON the box, AS ROOT (it orchestrates restart-m1 as comis + the gateway-token RPCs). Needs the
 # revoke.mjs env: COMIS_CONFIG_PATHS + COMIS_GATEWAY_TOKEN (export them, or this sources ~/.comis/.env).
 #
 #   bash drive-sim-workload.sh <workload> [variant=A] [feeder1=678314279] [feeder2=678314280]
 #
-# Steps: restart-m1 (resets the per-root meter — the RUN1 spurious-abort lesson) → disconnect ALL sim
+# Steps: restart-m1 (resets the per-root meter — avoids a spurious-abort from an accumulated meter) → disconnect ALL sim
 # servers + connect THIS workload's server (one server at a time, no tool confusion) → reset the 2 feeder
 # sessions (clear cross-workload LCD) → 2 BYTE-IDENTICAL feeders (the topicKey card-2 bar) → reflect-run →
 # read GROUND TRUTH (mental_models delta + the newest skill row + a grounding grep of its body).
@@ -77,7 +77,7 @@ if [ -z "$SRV" ] || [ -z "$P" ]; then
 fi
 echo "== drive-sim-workload: $WL (server=$SRV variant=$VARIANT feeders=$F1,$F2) =="
 
-# 1) restart-m1 — fresh per-root meter (RUN1: a reused sender's accumulated meter spuriously aborts later turns).
+# 1) restart-m1 — fresh per-root meter (a reused sender's accumulated meter spuriously aborts later turns).
 su - comis -c 'bash /home/comis/restart-m1.sh' >/dev/null 2>&1
 for i in $(seq 1 30); do ss -ltnp 2>/dev/null | grep -q ':4766' && break; sleep 2; done
 

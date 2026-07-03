@@ -3,7 +3,7 @@
 #
 # phase0-check.sh — PREFLIGHT readiness gate for a webhook→claude TERMINAL-DRIVE test. Run ON THE VPS.
 #
-# WHY: the webhook-claude-gsd-snake-20260702 run burned turns discovering the rig wasn't ready ONE
+# WHY: a webhook→claude run can burn turns discovering the rig wasn't ready ONE
 # check at a time — a FATAL config (the terminal schema needs a full `worker` + `defaults` block, not
 # optional), webhooks that were off, a missing terminal allow-entry, the daemon pinned to a stale dist.
 # Each was a hand-grep after a failed drive. This gate runs ALL of them BEFORE you POST, so a red rig
@@ -67,8 +67,8 @@ fi
 # 4) webhook route mounted + HMAC active — UNSIGNED POST must be 401 (mounted+auth), NOT 404 (route
 #    absent → webhooks off / wrong path) and NOT a refused connection (gateway down). Needs no secret.
 # NOTE: the env vars MUST precede `node` — after `node -e 'script'` they become argv, not env
-# (process.env.P would be undefined → port NaN → a bogus ECONNREFUSED). Caught live,
-# webhook-claude-gsd-snake-20260702: gateway-port PASSed but this probe "ECONNREFUSED"'d the SAME port.
+# (process.env.P would be undefined → port NaN → a bogus ECONNREFUSED). Caught live: gateway-port
+# PASSed but this probe "ECONNREFUSED"'d the SAME port.
 status=$(H="$GW_HOST" P="$GW_PORT" PP="$WH_BASE/$WH_PATH" node -e '
   const http=require("http");
   const body=Buffer.from("{}");

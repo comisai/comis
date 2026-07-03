@@ -16,7 +16,7 @@ import { registerActivityLabelSpec } from "@comis/core";
 import { createPlatformActionTool, type PlatformActionDescriptor } from "../platform-action-tool.js";
 import type { RpcCall } from "./cron-tool.js";
 
-// Activity label spec (§17.6). Descriptor name == emitted name. The
+// Activity label spec. Descriptor name == emitted name. The
 // 19-action enum is summarized by the tool-level label; the per-channel action
 // surfaces in the action arg rather than 19 inline overrides.
 registerActivityLabelSpec("discord_action", {

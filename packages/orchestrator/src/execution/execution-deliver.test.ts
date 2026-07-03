@@ -2,7 +2,7 @@
 /**
  * execution-deliver.test.
  *
- * Pins the void→Result migration of `deliverExecutionResponse`:
+ * Pins the `Result` return contract of `deliverExecutionResponse`:
  *  - a fully-successful multi-chunk delivery returns `ok(FinalDeliveryReceipt)`
  *    with the real last-chunk message id + a `deliveredAtMs` captured AFTER the
  *    last chunk's send-promise resolves (proven via the injected ClockPort fake),
@@ -13,9 +13,8 @@
  *    `message` tool acted; `automatic` always delivers; the suppression never
  *    touches the channel adapter.
  *
- * RED on the pre-patch `Promise<void>` signature: the receipt assertions read
- * `result.ok` / `result.value.*`, which is `undefined` until the stage returns a
- * Result.
+ * The receipt assertions read `result.ok` / `result.value.*`, so the stage
+ * must return a Result rather than `Promise<void>`.
  */
 import type { ChannelPort, NormalizedMessage } from "@comis/core";
 import { ok, err } from "@comis/shared";

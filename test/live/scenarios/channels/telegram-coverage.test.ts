@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * COVER-01/02 — the Tier-3 group-admin platformAction round-trips + slash-command
- * session control + the forum-service NEGATIVE test (Phase 208, Plan 03 — the
- * surfaces the chat API structurally cannot reach: there are no group-admin
- * actions, no /command bot_command entities, and no forum service messages in
- * /v1/chat/completions).
+ * session control + the forum-service NEGATIVE test (the surfaces the chat API
+ * structurally cannot reach: there are no group-admin actions, no /command
+ * bot_command entities, and no forum service messages in /v1/chat/completions).
  *
  * The Tier-3 platformAction switch (pin/poll/sticker/getChat/get_admins/
  * sendTyping/ban/promote/forum-topic CRUD), the TELEGRAM_BOT_COMMANDS slash list,
@@ -12,14 +11,14 @@
  * scenario DRIVES + ASSERTS them through the REAL bare grammy adapter against
  * emulator-built wire shapes — it never re-implements them.
  *
- * ── COVER honest-coverage contract (HARD constraint 3) ──
+ * ── COVER honest-coverage contract ──
  *   A Tier-3 method the emulator has NOT implemented on demand LOGS an honest
  *   `[tg-emulator] unimplemented Bot-API method: <name>` line + is surfaced via
  *   emu.unimplementedCalls() — NEVER a silent no-op that would FALSELY report
- *   coverage (the no-false-success principle, T-208-10). The COVER-01 leg drives
+ *   coverage (the no-false-success principle). The COVER-01 leg drives
  *   an unimplemented Tier-3 action and asserts the honest log fired.
  *
- * ── THE CI vs COMIS_LIVE SPLIT (the 204/205/206 pattern — copied VERBATIM) ──
+ * ── THE CI vs COMIS_LIVE SPLIT ──
  *
  *   • Stage-B (ALWAYS runs, in-process, NO COMIS_LIVE, NO model): the WIRING
  *     proofs, deterministic. The REAL bare grammy adapter (createTelegramPlugin)
@@ -37,7 +36,7 @@
  *
  *   • Stage-C (describe.skipIf(!isLive), COMIS_LIVE): buildRig(keyless) -> a /reset
  *     slash drives real session control through the full daemon (the command is
- *     handled, NOT replied to as chat). NO-FALSE-SUCCESS (I5): a non-closing leg
+ *     handled, NOT replied to as chat). NO-FALSE-SUCCESS: a non-closing leg
  *     emits a reason-coded finding, NEVER a faked green. SKIPPED (skip != fail)
  *     without COMIS_LIVE + a reachable model.
  *
@@ -202,7 +201,7 @@ describe("COVER-01 Stage-B — Tier-3 platformAction round-trips against a seede
     expect(recorded[0]!.messageThreadId).toBe(1);
   });
 
-  it("an UNIMPLEMENTED Tier-3 action fires the honest unimplemented-log — NOT a silent pass (the COVER honest-coverage contract, T-208-10)", async () => {
+  it("an UNIMPLEMENTED Tier-3 action fires the honest unimplemented-log — NOT a silent pass (the COVER honest-coverage contract)", async () => {
     const booted = await bootAdapter();
     emu = booted.emu;
     adapter = booted.adapter;
@@ -219,7 +218,7 @@ describe("COVER-01 Stage-B — Tier-3 platformAction round-trips against a seede
     const calls = emu.unimplementedCalls();
     // The honest unimplemented-log fired: banChatMember is surfaced via the
     // ledger (the scenario can DETECT the gap — not a silent okEnvelope that
-    // would falsely report coverage, T-208-10).
+    // would falsely report coverage).
     expect(calls.length).toBe(before + 1);
     expect(calls).toContain("banChatMember");
   });
@@ -344,8 +343,8 @@ describe("COVER-02 Stage-B — a forum service message is NOT dispatched to the 
     );
     // The adapter FILTERED the forum service message at telegram-inbound.ts:50 —
     // it was NOT dispatched to the agent (a non-message that could be mis-treated
-    // as a prompt cannot be smuggled in, T-208-09). A dispatch here would be a
-    // product defect (Defect-Watch: close it test-first in packages/*/src).
+    // as a prompt cannot be smuggled in). A dispatch here would be a product
+    // defect (close it test-first in packages/*/src).
     expect(serviceArrived).toBe(false);
     // The capture count did NOT grow — the service message was filtered, so only
     // the real message was ever dispatched. This proves the filter held.
@@ -389,8 +388,7 @@ describe("SEC-02 Stage-B — the never-published guard re-verifies + the phase d
   it("git status --porcelain shows NO packages source change (the milestone premise)", () => {
     // The Tier-3 platformAction switch + the slash list + the forum-service filter
     // are already wired in packages/channels/src and verified at HEAD — the harness
-    // DRIVES what they consume. If this fails, a product file was touched (a
-    // Defect-Watch may have fired — see the SUMMARY) — STOP.
+    // DRIVES what they consume. If this fails, a product file was touched — STOP.
     const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();
     const porcelain = execFileSync("git", ["status", "--porcelain"], { cwd: repoRoot, encoding: "utf-8" });
     const offending = porcelain
@@ -421,7 +419,7 @@ describe.skipIf(!isLive)("COVER-02 Stage-C — a /reset slash drives real sessio
   });
 
   it(
-    "send a normal turn, then /reset -> the session-control command is handled (a reply or a session reset), OR an honest reason-coded finding (no-false-success I5)",
+    "send a normal turn, then /reset -> the session-control command is handled (a reply or a session reset), OR an honest reason-coded finding (no-false-success)",
     async () => {
       const r = built;
       expect(r, "rig booted").toBeDefined();
@@ -445,7 +443,7 @@ describe.skipIf(!isLive)("COVER-02 Stage-C — a /reset slash drives real sessio
       const resetReply = await r.waitForReply(resetId, 600_000);
       expect(
         resetReply,
-        "FINDING: no response to /reset — the slash command was not handled by the session-control pipeline (check command routing). NOT a faked green (I5).",
+        "FINDING: no response to /reset — the slash command was not handled by the session-control pipeline (check command routing). NOT a faked green.",
       ).toBeDefined();
     },
     1_800_000,

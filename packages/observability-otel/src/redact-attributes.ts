@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OTEL-03 / E3 — content-free re-redaction at the exporter boundary.
+ * Content-free re-redaction at the exporter boundary.
  *
  * Every attribute object and every log-record body the extension emits passes
  * through {@link redactAttributes} FIRST — independent of whatever upstream
- * scrubbing happened. This is the additive E3 guarantee: even if a future
+ * scrubbing happened. This is the additive guarantee: even if a future
  * careless attribute addition (or the `captureContent`/`genaiSemconv` content
  * path) tries to smuggle a secret/message body into a span attribute, a metric
  * label, or a log body, the boundary strips it here.
  *
- * The boundary enforces a CLOSED ALLOWLIST (CR-02). `sanitizeForPersistence`
+ * The boundary enforces a CLOSED ALLOWLIST. `sanitizeForPersistence`
  * masks credential-KEYED fields (`apiKey`/`password`/`token`/`secret`/…) and
  * prefix-patterned secret VALUES (`sk-…`/`ghp_…`/`Bearer …`), but it canNOT
  * catch a high-entropy secret under a BENIGN key with no recognisable prefix
@@ -25,7 +25,7 @@
  * `token` — is still masked).
  *
  * Mirrors the `obs-audit-sink.ts` usage (`sanitizeForPersistence(...)` at the
- * 176 durable-sink boundary) — the same single chokepoint, here behind the
+ * durable-sink boundary) — the same single chokepoint, here behind the
  * allowlist gate.
  *
  * @module
@@ -68,8 +68,8 @@ const KNOWN_SPAN_ATTRIBUTE_KEYS = [
 ] as const;
 
 /**
- * The CLOSED allowlist of attribute keys permitted past the exporter boundary
- * (CR-02). Built ONCE from the {@link METRIC_LABELS} union (the metric labels)
+ * The CLOSED allowlist of attribute keys permitted past the exporter boundary.
+ * Built ONCE from the {@link METRIC_LABELS} union (the metric labels)
  * plus {@link KNOWN_SPAN_ATTRIBUTE_KEYS}. Adding a NEW emitted attribute is a
  * deliberate act: the new key must be added here (and is necessarily a
  * content-free id/count/enum to belong). A key absent from this set is DROPPED —
@@ -83,7 +83,7 @@ const ATTRIBUTE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
 /**
  * Re-redact an attribute object / log body at the exporter boundary.
  *
- * Two layers (CR-02): (1) the CLOSED ALLOWLIST — every key NOT in
+ * Two layers: (1) the CLOSED ALLOWLIST — every key NOT in
  * {@link ATTRIBUTE_ALLOWLIST} is DROPPED (the only posture that survives a
  * benign-keyed, no-prefix, high-entropy secret value); (2) `sanitizeForPersistence`
  * on the surviving allowed values as defense-in-depth (a credential keyed under

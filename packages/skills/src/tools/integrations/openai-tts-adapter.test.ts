@@ -163,7 +163,7 @@ describe("createOpenAITTSAdapter", () => {
     }
   });
 
-  it("should sanitize network/timeout errors in the catch branch (SEC-01, mirrors the HTTP branch + edge-tts)", async () => {
+  it("should sanitize network/timeout errors in the catch branch (mirrors the HTTP branch + edge-tts)", async () => {
     globalThis.fetch = vi.fn().mockRejectedValue(new Error("Connection refused"));
 
     const adapter = createOpenAITTSAdapter({ apiKey: "sk-test" });
@@ -171,7 +171,7 @@ describe("createOpenAITTSAdapter", () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      // The catch is now routed through sanitizeApiError (status 0) like the
+      // The catch is routed through sanitizeApiError (status 0) like the
       // edge-tts sibling and the in-file HTTP-error branch — NOT returned raw.
       expect(result.error.message).toContain("OpenAI TTS error (0)");
       expect(result.error.message).toContain("Connection refused");

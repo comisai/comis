@@ -33,8 +33,8 @@ export function isVecAvailable(): boolean {
 
 /**
  * Additively ensure the `memories` table carries every column the current code
- * expects, adding any absent. The package's forward-only, additive column-add path
- * (design §4.1): SQLite has no `ADD COLUMN IF NOT EXISTS`, so each add is guarded by a
+ * expects, adding any absent. The package's forward-only, additive column-add path:
+ * SQLite has no `ADD COLUMN IF NOT EXISTS`, so each add is guarded by a
  * `PRAGMA table_info(memories)` presence check. Safe on every boot, including a live
  * `~/.comis` DB created before a column existed — existing rows get the column NULL (a
  * nullable add is O(1); no rewrite, no backfill).
@@ -90,8 +90,8 @@ export function ensureMemoryColumns(db: Database.Database): void {
  *
  * ## The UNIQUE index keys on `canonical_key`, NOT a SQL lower() expression
  *
- * RESEARCH Pitfall 3: SQLite's built-in `lower()` is ASCII-only (it leaves
- * `İSTANBUL`/`CAFÉ`/`ПРИВЕТ` unchanged), so the original §4.2 spec's UNIQUE index
+ * SQLite's built-in `lower()` is ASCII-only (it leaves
+ * `İSTANBUL`/`CAFÉ`/`ПРИВЕТ` unchanged), so a UNIQUE index
  * over a SQL `lower(...)` of the display name would NOT dedup Turkish/CJK/Cyrillic
  * case-variants → duplicate entities. Instead the resolver computes a
  * locale-independent `canonical_key` in TypeScript (`normalizeEntityKey` in
@@ -105,8 +105,8 @@ export function ensureMemoryColumns(db: Database.Database): void {
  * ENTIRE link-maintenance story (no orphan-sweep job). It fires
  * automatically because `openSqliteDatabase` already sets `PRAGMA foreign_keys = ON`
  * (sqlite-adapter-base.ts:52). NB: the parent `memory_entities` row is intentionally
- * NOT cascaded by a memory delete (entities are per-concept and may be re-linked;
- * RESEARCH Pitfall 7), so a stale `mention_count` is by-design, not an orphan bug.
+ * NOT cascaded by a memory delete (entities are per-concept and may be re-linked),
+ * so a stale `mention_count` is by-design, not an orphan bug.
  *
  * @param db - An open better-sqlite3 Database whose `memories` table exists (the FK
  *   target). Call AFTER the base `memories` CREATE.
@@ -118,7 +118,7 @@ export function ensureEntityTables(db: Database.Database): void {
       tenant_id TEXT NOT NULL,
       agent_id TEXT NOT NULL,
       canonical_name TEXT NOT NULL,            -- display form (first-seen casing)
-      canonical_key  TEXT NOT NULL,            -- normalized key (TS lower+NFKD+strip-marks; NOT sqlite lower(), Pitfall 3)
+      canonical_key  TEXT NOT NULL,            -- normalized key (TS lower+NFKD+strip-marks; NOT sqlite lower())
       mention_count INTEGER NOT NULL DEFAULT 1,
       first_seen INTEGER NOT NULL,
       last_seen  INTEGER NOT NULL
@@ -228,7 +228,7 @@ export function ensureUsefulnessTable(db: Database.Database): void {
   // The `failure_count` column is part of this table's complete contract (the
   // adapter's recordFailure upsert references it eagerly at construction) — add it
   // here so EVERY caller that ensures the usefulness table gets it, not only
-  // initSchema (v2.26 WS4, FORGET-02; distinct from ignored_count).
+  // initSchema (distinct from ignored_count).
   ensureUsefulnessFailureColumn(db);
 }
 
@@ -344,11 +344,11 @@ export function ensureTripleTable(db: Database.Database): void {
 }
 
 // (The `relationship` table — the sole storage for the directional social-modeling
-//  subsystem — was DELETED in Phase 226 SIMPLIFY-03 with the rest of that subsystem
+//  subsystem — was DELETED with the rest of that subsystem
 //  (the __SOCIAL_MODELING__ cron, the RelationshipStore port + adapter, the
 //  relationship-block prompt injection). A fresh DB no longer creates it; an existing
 //  DB's orphaned `relationship` table is inert (never read/written) — no migration, no
-//  read path. No alias, I1.)
+//  read path. No alias.)
 
 /**
  * Initialize the full memory schema on the given SQLite database.
@@ -488,30 +488,30 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
     CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at);
   `);
 
-  // NOTE: the DAG context-store tables (ctx_*) were removed in v2.12 (Phase 126,
-  // LCD reimplementation) — only the schema-create call is gone (no reverse migration; existing DBs keep harmless orphaned tables, design §9).
+  // NOTE: the DAG context-store tables (ctx_*) were removed when the LCD store
+  // replaced them — only the schema-create call is gone (no reverse migration; existing DBs keep harmless orphaned tables).
   // The calls below run in dependency order AFTER the `memories` table (the FK
   // target) exists; each is idempotent, and every `ON DELETE CASCADE` fires via
   // the `PRAGMA foreign_keys = ON` already set by `openSqliteDatabase`. Per-table contracts (schema shape, isolation scope, trust floor) live in each fn JSDoc.
-  ensureMemoryColumns(db); // additive memory columns (forward-only; design §4.1)
+  ensureMemoryColumns(db); // additive memory columns (forward-only)
   ensureEntityTables(db); // entity junction tables
-  ensureUsefulnessTable(db); // recall-utility usefulness + intent bucket + failure_count (v2.26 WS4, FORGET-02)
+  ensureUsefulnessTable(db); // recall-utility usefulness + intent bucket + failure_count
   ensureCausalTables(db); // causal-edge table
   ensureTripleTable(db); // bi-temporal KG triples
-  // (ensureRelationshipTable — the directional social-modeling table — was DELETED in
-  //  Phase 226 SIMPLIFY-03 with the rest of that subsystem; orphaned tables on existing
+  // (ensureRelationshipTable — the directional social-modeling table — was DELETED
+  //  with the rest of that subsystem; orphaned tables on existing
   //  DBs are inert, no migration.)
-  ensureLcdTables(db); // LCD lossless message + parts store (Phase 127)
-  ensurePinnedColumn(db); // pinned-memory column + partial index (forward-only; design §4.1)
-  ensureVideoJobTable(db); // durable async video-job store (Phase 189, JOB-01/JOB-03)
-  ensureDurableRunTable(db); // durable run checkpoint store (Phase 216, DUR-01)
-  ensureOutwardLedgerTable(db); // exactly-once outward send ledger (Phase 216, ONCE-01)
-  ensureOutcomeEventsTable(db); // outcome_events ledger (v2.26 WS1, OUTCOME-01) — no FK, (tenant,agent)-scoped
-  ensureMentalModelsTable(db, embeddingDimensions, localVecAvailable); // mental_models doc store + FTS/vec/trigram twins (v2.31; generalized from v2.26 WS2 SKILL-01) — trust CHECK IN ('learned'), (tenant,agent)-scoped; copies a pre-existing learned_skills table forward as kind='skill'
+  ensureLcdTables(db); // LCD lossless message + parts store
+  ensurePinnedColumn(db); // pinned-memory column + partial index (forward-only)
+  ensureVideoJobTable(db); // durable async video-job store
+  ensureDurableRunTable(db); // durable run checkpoint store
+  ensureOutwardLedgerTable(db); // exactly-once outward send ledger
+  ensureOutcomeEventsTable(db); // outcome_events ledger — no FK, (tenant,agent)-scoped
+  ensureMentalModelsTable(db, embeddingDimensions, localVecAvailable); // mental_models doc store + FTS/vec/trigram twins (generalized from the learned_skills store) — trust CHECK IN ('learned'), (tenant,agent)-scoped; copies a pre-existing learned_skills table forward as kind='skill'
 
-  // --- Observation partial indexes (design §4.1) --- created AFTER ensureMemoryColumns (indexed columns must exist first).
+  // --- Observation partial indexes --- created AFTER ensureMemoryColumns (indexed columns must exist first).
   // `idx_memories_unconsol` serves the candidate scan (consolidated_at IS NULL); `idx_memories_observations` serves the observation lookup (proof_count IS NOT NULL).
-  // The design's third "live" index (exact-dup-retirement) is OMITTED — deferred to a later phase.
+  // A third "live" index (exact-dup-retirement) is intentionally OMITTED for now.
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_memories_unconsol
       ON memories(agent_id, created_at) WHERE consolidated_at IS NULL;
@@ -542,8 +542,8 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
       cost_cache_write REAL NOT NULL DEFAULT 0,
       cache_saved REAL NOT NULL DEFAULT 0,
       latency_ms INTEGER NOT NULL,
-      -- PERSIST-02 cost-correctness columns (fresh DB; ensureObsTokenColumns ALTERs an
-      -- existing DB). The dead cache_retention column is intentionally ABSENT (OQ3 DROP).
+      -- Cost-correctness columns (fresh DB; ensureObsTokenColumns ALTERs an
+      -- existing DB). The dead cache_retention column is intentionally ABSENT.
       warmup_turn INTEGER,
       cache_eligible INTEGER,
       cost_correction REAL,
@@ -555,7 +555,7 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
     CREATE INDEX IF NOT EXISTS idx_obs_token_provider ON obs_token_usage(provider, timestamp);
     CREATE INDEX IF NOT EXISTS idx_obs_token_session ON obs_token_usage(session_key, timestamp);
   `);
-  // PERSIST-02 + AUDIT-01/02 (both in schema-obs-token.ts, 800L cap). Called HERE,
+  // Both migrations live in schema-obs-token.ts (800L cap). Called HERE,
   // after the obs_token_usage CREATE — NOT in the ensure-call sequence above (runs
   // first). ensureObsTokenColumns: forward-only EXISTING-DB upgrade (drop dead
   // cache_retention + add the 5 cols). ensureObsAuditTable: obs_audit_events + indexes.

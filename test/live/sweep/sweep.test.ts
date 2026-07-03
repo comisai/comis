@@ -209,10 +209,10 @@ describe("runSweep — orchestration (unit, mock probes)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WR-01: prefix matching — COMIS_LIVE_PROBES=search must select all search-* probes
+// Prefix matching — COMIS_LIVE_PROBES=search must select all search-* probes
 // ---------------------------------------------------------------------------
 
-describe("runSweep — probeIds prefix matching (WR-01)", () => {
+describe("runSweep — probeIds prefix matching", () => {
   it("COMIS_LIVE_PROBES=search selects all search-* probes (prefix match)", async () => {
     const searchBrave: Probe = {
       id: "search-brave",

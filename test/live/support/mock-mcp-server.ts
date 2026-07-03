@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Mock MCP server fixture for Phase-140 live-fire tests.
+ * Mock MCP server fixture for live-fire tests.
  *
  * Controllable in-process HTTP server that speaks the MCP JSON-RPC 2.0
  * protocol (initialize + tools/list + tools/call) over HTTP and SSE
@@ -13,10 +13,10 @@
  *   // Send MCP JSON-RPC requests to baseUrl/mcp/v1 ...
  *   await mock.stop();
  *
- * Security posture (T-140-01-02): binds to 127.0.0.1 only — never 0.0.0.0 —
+ * Security posture: binds to 127.0.0.1 only — never 0.0.0.0 —
  * so the mock is unreachable from the LAN. Kernel allocates the port via
  * `server.listen(0)` to avoid port-collision races. Mirrors
- * test/support/mock-oauth-server.ts (T-MOCK-EXPOSED-PORT pattern).
+ * test/support/mock-oauth-server.ts (bind loopback-only, kernel-allocated port).
  *
  * @module
  */
@@ -85,7 +85,7 @@ export interface MockMcpServer {
 
 /**
  * Options for createMockMcpServer — discriminated union so auth="bearer"
- * requires bearerToken at compile time (WR-02: silent accept-any was unsafe).
+ * requires bearerToken at compile time (silent accept-any was unsafe).
  */
 export type MockMcpServerOptions =
   | {
@@ -106,7 +106,7 @@ export type MockMcpServerOptions =
       auth: "bearer";
       /**
        * Expected bearer token. Hardcoded test-fixture values only — never real
-       * secrets (T-140-01-01). Required when auth="bearer" (compile-time enforced).
+       * secrets. Required when auth="bearer" (compile-time enforced).
        */
       bearerToken: string;
     };

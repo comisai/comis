@@ -5,8 +5,8 @@
  * `.gitignore` only stops UNTRACKED files from being added — a file that was
  * force-added (`git add -f`) or committed before its ignore rule existed stays
  * tracked forever and is invisible to a normal `git status`. That is exactly
- * how internal `.planning/` GSD handoff docs (#135) and daemon-generated
- * `test/config/*.last-good.yaml` snapshots (#125) leaked into the public repo.
+ * how internal handoff docs (#135) and daemon-generated
+ * `test/config/*.last-good.yaml` snapshots (#125) leaked into the repo.
  *
  * `git ls-files -i -c --exclude-standard` lists tracked-but-ignored files;
  * the set must be empty. To fix a failure: `git rm --cached <file>` (keeps the

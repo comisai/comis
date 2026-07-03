@@ -6,7 +6,7 @@
  * `recordRecall`. A near-verbatim sibling of `createCacheTrace`
  * (`cache-trace/runtime.ts`), simplified to a single method:
  *
- *   - The recall trace is ONE rich record per recall (Assumption A1), not a
+ *   - The recall trace is ONE rich record per recall, not a
  *     per-stage stage machine — so there is no `stage` argument, no
  *     token-usage stash, and no `session:after` terminal-emit lifecycle.
  *   - Crucially, the recall trace has NO opt-in raw-content slot (unlike

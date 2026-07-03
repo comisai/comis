@@ -49,7 +49,7 @@ describe("terminal-worker-main helpers", () => {
     expect(durableDir()).toBe(resolve("/data/x", "terminal-worker"));
   });
 
-  it("resolveTmuxSocketPath = <durableDir>/tmux.sock — a STABLE socket under the data dir, NEVER /tmp (DUR-01 PrivateTmp survival)", () => {
+  it("resolveTmuxSocketPath = <durableDir>/tmux.sock — a STABLE socket under the data dir, NEVER /tmp (PrivateTmp survival)", () => {
     // The tmux server's socket MUST live on the persistent, shared data dir — NOT the
     // default /tmp. systemd `PrivateTmp=yes` gives every daemon start a FRESH private
     // /tmp, so a /tmp socket is unreachable from the restarted daemon and re-attach
@@ -88,15 +88,15 @@ describe("terminal-worker-main helpers", () => {
 });
 
 // ---------------------------------------------------------------------------
-// DUR-01 (165-06) §7.1.5 — the durable-vs-fallback WARN. tmux availability is a
-// RUNTIME property (not a config-validation hard-require, the LOCKED decision): a
+// The durable-vs-fallback WARN. tmux availability is a
+// RUNTIME property (not a config-validation hard-require): a
 // `drive.durable:true` drive on a host with no tmux DEGRADES to a non-durable drive +
 // a logged WARN, and a restart then ends the session `lost` (with the journal
-// preserved — the user-facing `failed` OUTCOME is Phase-166's). The worker logs this
+// preserved — the user-facing `failed` outcome is derived downstream). The worker logs this
 // at boot when tmux cannot be resolved, so an operator sees WHY a durable drive will
-// not survive a restart. RED on pre-patch: warnIfDurableTmuxUnavailable is not exported.
+// not survive a restart.
 // ---------------------------------------------------------------------------
-describe("warnIfDurableTmuxUnavailable — the §7.1.5 durable-vs-fallback WARN (DUR-01)", () => {
+describe("warnIfDurableTmuxUnavailable — the durable-vs-fallback WARN", () => {
   function makeSpyLogger() {
     return { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   }

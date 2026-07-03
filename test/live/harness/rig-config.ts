@@ -2,10 +2,10 @@
 /**
  * `rig-config.ts` — the THROWAWAY daemon-config writer + its load-bearing
  * constants, extracted from `rig.ts` so BOTH the in-process rig (`rig.ts`) and
- * the DETACHED-subprocess rig (`rig-daemon.ts`, Phase 208 Plan 08 — the
- * cold-shell Option-A stretch) share ONE config-shape source of truth.
+ * the DETACHED-subprocess rig (`rig-daemon.ts`, the cold-shell variant) share
+ * ONE config-shape source of truth.
  *
- * WHY A SEPARATE MODULE (the Option-A constraint). `rig.ts` statically imports
+ * WHY A SEPARATE MODULE (the detached-subprocess constraint). `rig.ts` statically imports
  * `@comis/core` (`validateLocalServerUrl`) — a BARE specifier that resolves only
  * under the vitest live-config alias map, NOT under the plain `tsx` the detached
  * subprocess runs as (a standalone `node_modules/@comis/core` has no `exports`
@@ -24,7 +24,7 @@
 /**
  * The ≥32-char LITERAL gateway token the temp config carries.
  *
- * Pitfall 4 (RESEARCH / schema-gateway.ts:45 `z.string().min(32)`;
+ * The gateway schema requires it (schema-gateway.ts:45 `z.string().min(32)`;
  * token-auth.ts `timingSafeEqual`): a literal must be ≥32 chars and an env-ref
  * does NOT resolve for the test gateway. This is the canonical 38-char
  * `config.test.yaml` literal — reused verbatim.
@@ -54,10 +54,10 @@ export const MEMORY_DB_FILE = "test-memory-channel-emu.db";
  *   posts to `${baseUrl}/chat/completions`; bare ollama 404s without it). No
  *   secret entry (ollama is keyless → the daemon uses the `ollama-no-auth`
  *   sentinel; omitting the key avoids a "Missing env var" FATAL at boot).
- * - `gateway.tokens[0].secret` is the ≥32-char LITERAL (Pitfall 4).
+ * - `gateway.tokens[0].secret` is the ≥32-char LITERAL token (see GATEWAY_TOKEN).
  * - `dataDir: ""` resolves to `COMIS_DATA_DIR` (set per-rig by the caller).
  *
- * LEARNING (REACT-03 / Plan 206-03, GOTCHA C+D): the Verified-Learning loop is
+ * LEARNING (REACT-03, GOTCHA C+D): the Verified-Learning loop is
  * byte-identical-OFF by default (setup-learning-reactions.ts:651-656,720). The
  * `agents.default` block ENABLES it (learningOutcome/learning) and grants
  * the reactor trust ≥ `known`
@@ -67,14 +67,14 @@ export const MEMORY_DB_FILE = "test-memory-channel-emu.db";
  * synthesis. This is RIG-config ONLY — it does NOT flip a product default; the
  * scenario's git-porcelain guard re-asserts zero product source change.
  *
- * EXPORTED so the Task-1 config-shape test (`rig.test.ts`) can assert the gotchas
+ * EXPORTED so the config-shape test (`rig.test.ts`) can assert the gotchas
  * on the produced YAML (test-infra-only).
  */
 export function buildConfigYaml(apiRoot: string, gatewayPort: number, model: string): string {
   // The keyless leg uses ollama; an explicit non-keyless model string is passed
   // through as the provider model id (operator/live.env path).
   const providerModelId = model === "keyless" ? "qwen3.6:35b" : model;
-  return `# THROWAWAY config — Phase 204 channel-emulation walking skeleton (rig.ts).
+  return `# THROWAWAY config — channel-emulation rig (rig.ts).
 # Written AFTER the emulator starts so channels.telegram.apiRoot carries the
 # kernel-allocated emulator port. The daemon reads this via COMIS_CONFIG_PATHS.
 tenantId: "test"
@@ -144,7 +144,7 @@ agents:
     # 0.6 (REACTION_BASE_CONFIDENCE) x 0.05 (trustWeight external) = 0.03 <
     # 0.05 (REACTION_MIN_CONFIDENCE_TO_WRITE) -> the thumbs-up SILENTLY persists
     # no row. "known" -> 0.6 x 0.4 = 0.24 >= 0.05 (single-user DM; the group
-    # spoof guard is Phase 208). Rig config ONLY — never a product-default flip.
+    # spoof guard is handled separately). Rig config ONLY — never a product-default flip.
     elevatedReply:
       defaultTrustLevel: "known"
 
@@ -191,7 +191,7 @@ monitoring:
 }
 
 /**
- * Build the throwaway daemon YAML for a SIGNAL rig (CHAN2-02, Phase 209-05). The
+ * Build the throwaway daemon YAML for a SIGNAL rig (CHAN2-02). The
  * Signal sibling of {@link buildConfigYaml}: identical in every respect EXCEPT
  * the channel block — it writes a `channels.signal` block carrying the dynamic
  * `baseUrl` redirect seam instead of `channels.telegram` with `apiRoot`.
@@ -206,7 +206,7 @@ monitoring:
  * - NO `account` — the daemon boot is the health-check ONLY (the adapter's
  *   `validateSignalConnection` skips `listAccounts` when no account is
  *   configured, `credential-validator.ts:56`), so the rig boots account-less
- *   ($0/offline/isolated — no real Signal account, no real network, T-209-12).
+ *   ($0/offline/isolated — no real Signal account, no real network).
  * - keyless `ollama` provider, `models.defaultProvider: ollama`, the
  *   `agents.default` learning block, and the ≥32-char LITERAL `gateway` token —
  *   ALL byte-identical to {@link buildConfigYaml} (the only difference is the
@@ -215,9 +215,9 @@ monitoring:
  * CONSTRAINT (the same as {@link buildConfigYaml}): this module — and therefore
  * this writer — stays `@comis/*`-FREE (the detached `rig-daemon.ts` imports it
  * under a bare `tsx`; a `@comis/*` import would break that AND is a
- * published-graph concern, T-209-13). It is plain-string only.
+ * published-graph concern). It is plain-string only.
  *
- * EXPORTED so the Task-1 config-shape test (`rig.test.ts`) asserts the seam +
+ * EXPORTED so the config-shape test (`rig.test.ts`) asserts the seam +
  * the no-account posture on the produced YAML, and so `rig.ts`'s channel→factory
  * map registers it as the Signal config writer (the ONE-LINE registration).
  */
@@ -226,7 +226,7 @@ export function buildSignalConfigYaml(baseUrl: string, gatewayPort: number, mode
   // through as the provider model id (operator/live.env path) — identical to
   // buildConfigYaml.
   const providerModelId = model === "keyless" ? "qwen3.6:35b" : model;
-  return `# THROWAWAY config — Phase 209 channel-emulation, SIGNAL rig (rig.ts).
+  return `# THROWAWAY config — channel-emulation, SIGNAL rig (rig.ts).
 # Written AFTER the emulator starts so channels.signal.baseUrl carries the
 # kernel-allocated emulator port. The daemon reads this via COMIS_CONFIG_PATHS.
 tenantId: "test"

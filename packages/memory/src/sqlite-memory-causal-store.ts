@@ -195,7 +195,7 @@ export function createSqliteMemoryCausalStore(deps: MemoryCausalStoreDeps): Memo
           return ok([]);
         }
 
-        // The scoped one-hop UNION (RESEARCH Pattern 3 — verified). The
+        // The scoped one-hop UNION. The
         // `tenant_id = ? AND agent_id = ?` on BOTH arms is the load-bearing
         // ISOLATION boundary — a cross-scope edge sharing a memory id is
         // excluded. The first arm walks source→effect (PK prefix); the second walks
@@ -227,7 +227,7 @@ export function createSqliteMemoryCausalStore(deps: MemoryCausalStoreDeps): Memo
         }
 
         // Hydrate each linked memory (scoped) into a MemorySearchResult; score =
-        // edge confidence (RESEARCH Pattern 3 intra-lane order).
+        // edge confidence (intra-lane order).
         const scored: Array<{ result: MemorySearchResult; score: number }> = [];
         for (const [linkedId, score] of bestConfidence) {
           const memParsed = memoryRowMapper.parseOptionalRow(

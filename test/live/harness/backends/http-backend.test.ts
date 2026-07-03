@@ -1,24 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Stage-A unit tests for the shared `http-backend` base (FOUND-02 + SEC-01
- * bind half, Phase 204).
+ * Stage-A unit tests for the shared `http-backend` base.
  *
  * Drives a REAL `node:http` loopback server (no daemon, fast). The base is the
- * protocol-class foundation Wave-2's `tg-emulator.ts` composes (it registers
- * its Bot-API method table) and the control API (Plan 04) composes (it
+ * protocol-class foundation `tg-emulator.ts` composes (it registers
+ * its Bot-API method table) and the control API composes (it
  * registers `/control/*`). These tests assert the load-bearing contract every
- * later plan rests on:
+ * consumer rests on:
  *   - `start()` binds `127.0.0.1` ONLY (never `0.0.0.0`), kernel-allocated
  *     port, returns `{ apiRoot: "http://127.0.0.1:<port>", port }`; `stop()`
- *     closes the server (SEC-01).
+ *     closes the server.
  *   - a registered native (Bot-API) route handler fires for its path; a
  *     registered `/control/*` handler fires for a `/control/...` path; a
  *     registered file route fires for `GET /file/bot<token>/<path>` — all on
- *     the SAME loopback port (FOUND-02 dual+file routing).
+ *     the SAME loopback port (dual + file routing).
  *   - an unmatched path returns HTTP 404 with the `{ ok:false, error_code:404,
  *     description }` envelope, and a malformed/empty body does NOT crash the
- *     server — the next request still succeeds (V5 / T-204-02).
- *   - the handler receives the raw request body as a string (so Plan 03's dual
+ *     server — the next request still succeeds.
+ *   - the handler receives the raw request body as a string (so the dual
  *     JSON/form parse can consume it).
  *
  * @module
@@ -43,10 +42,10 @@ afterEach(async () => {
 });
 
 // ---------------------------------------------------------------------------
-// SEC-01 — loopback bind (the load-bearing assertion)
+// Loopback bind (the load-bearing assertion)
 // ---------------------------------------------------------------------------
 
-describe("http-backend loopback bind (SEC-01)", () => {
+describe("http-backend loopback bind (127.0.0.1 only)", () => {
   it("binds 127.0.0.1 only and returns a matching apiRoot + kernel-allocated port", async () => {
     const be = createHttpBackend();
     active = be;
@@ -81,10 +80,10 @@ describe("http-backend loopback bind (SEC-01)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// FOUND-02 — dual (native + /control/*) + file routing on one server
+// Dual (native + /control/*) + file routing on one server
 // ---------------------------------------------------------------------------
 
-describe("http-backend dual + file routing on one loopback port (FOUND-02)", () => {
+describe("http-backend dual + file routing on one loopback port", () => {
   it("invokes a registered native Bot-API route handler for a matching /bot<token>/<method> path", async () => {
     const be = createHttpBackend();
     active = be;
@@ -134,7 +133,7 @@ describe("http-backend dual + file routing on one loopback port (FOUND-02)", () 
     expect(json.echoed).toBe("/control/chats/42/messages");
   });
 
-  it("invokes a registered file route for GET /file/bot<token>/<path> (EMU-05 shape, no 404 at boot)", async () => {
+  it("invokes a registered file route for GET /file/bot<token>/<path> (no 404 at boot)", async () => {
     const be = createHttpBackend();
     active = be;
     let seenFilePath: string | undefined;
@@ -175,10 +174,10 @@ describe("http-backend dual + file routing on one loopback port (FOUND-02)", () 
 });
 
 // ---------------------------------------------------------------------------
-// V5 / T-204-02 — malformed input must not crash the server
+// Malformed input must not crash the server
 // ---------------------------------------------------------------------------
 
-describe("http-backend hardening: malformed input does not crash (V5)", () => {
+describe("http-backend hardening: malformed input does not crash", () => {
   it("returns a 404 envelope on an unmatched path", async () => {
     const be = createHttpBackend();
     active = be;
@@ -241,9 +240,9 @@ describe("http-backend hardening: malformed input does not crash (V5)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// MEDIA-01/02 (Phase 207) — the BINARY response path.
+// The BINARY response path.
 //
-// The 204 `send()` ALWAYS JSON-stringifies + sets `content-type:
+// The base `send()` ALWAYS JSON-stringifies + sets `content-type:
 // application/json`. Raw file bytes cannot survive that path: `JSON.stringify(a
 // Buffer)` yields `{"type":"Buffer","data":[...]}`, not the bytes. The file
 // route (`GET /file/bot<token>/<file_path>`) must serve the stored RAW bytes
@@ -253,7 +252,7 @@ describe("http-backend hardening: malformed input does not crash (V5)", () => {
 // under `test/live/` — ZERO product change.)
 // ---------------------------------------------------------------------------
 
-describe("http-backend binary response path (MEDIA-01/02 — a Buffer body serves raw bytes)", () => {
+describe("http-backend binary response path (a Buffer body serves raw bytes)", () => {
   it("serves a Buffer route body as RAW bytes (NOT JSON-wrapped) with the route-supplied content-type", async () => {
     const be = createHttpBackend();
     active = be;
@@ -316,21 +315,20 @@ describe("http-backend binary response path (MEDIA-01/02 — a Buffer body serve
 });
 
 // ---------------------------------------------------------------------------
-// CHAN2-02 FIX #1 (Phase 209) — the native-route matcher is telegram-shaped.
+// Generalized native-route matcher — the default matcher is telegram-shaped.
 //
-// The 204 base discriminates the native surface with a single hard-coded
+// The base discriminates the native surface with a single hard-coded
 // `BOT_PATH = /^\/bot[^/]+\/([^?]+).../` matcher — it matches ONLY
 // `/bot<token>/<method>`. A second HTTP-class channel (Signal) serves its native
 // wire surface under a DIFFERENT path shape — `/api/v1/{check,rpc,events}` — which
-// `BOT_PATH` will never match, so it 404s on the pre-patch base. The fix
-// generalizes surface discrimination so a channel registers its OWN path
-// predicate (`registerPathRoute(matcher, handler)`, RESEARCH Open-Q2), checked
+// `BOT_PATH` will never match. So a channel registers its OWN path
+// predicate (`registerPathRoute(matcher, handler)`), checked
 // BEFORE the preserved Telegram `BOT_PATH` default. NO channel's path shape is
 // baked into the base beyond the Telegram default (the regression guard).
 // (Test-infra under `test/live/` — ZERO product change.)
 // ---------------------------------------------------------------------------
 
-describe("http-backend generalized native matcher (CHAN2-02 FIX #1)", () => {
+describe("http-backend generalized native matcher (arbitrary channel path routes)", () => {
   it("dispatches a channel-registered arbitrary path (Signal POST /api/v1/rpc) with body + query", async () => {
     const be = createHttpBackend();
     active = be;
@@ -426,13 +424,13 @@ describe("http-backend generalized native matcher (CHAN2-02 FIX #1)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// CHAN2-02 FIX #2 (Phase 209) — the base has no SSE streaming.
+// SSE streaming route — the base's default responder has no SSE streaming.
 //
-// The 204 `send()` responder writes ONE JSON/Buffer body + `res.end()` — it
+// The base `send()` responder writes ONE JSON/Buffer body + `res.end()` — it
 // cannot hold a `text/event-stream` connection open. Signal inbound REQUIRES a
 // kept-open SSE response (`GET /api/v1/events`) the emulator emits frames on
-// over time. The fix adds a DEDICATED streaming-route surface
-// (`registerStreamRoute(matcher, (req,res) => void)`, RESEARCH Open-Q1) that
+// over time. A DEDICATED streaming-route surface
+// (`registerStreamRoute(matcher, (req,res) => void)`) that
 // hands the handler the raw `ServerResponse` so it can set the SSE content-type,
 // write frames, and register `res.on("close", …)` for cleanup — the dispatcher
 // does NOT route a stream request through `send()`. The existing JSON/Buffer
@@ -464,7 +462,7 @@ async function readSseFrame(
   return frame;
 }
 
-describe("http-backend SSE streaming surface (CHAN2-02 FIX #2)", () => {
+describe("http-backend SSE streaming surface (kept-open text/event-stream routes)", () => {
   it("holds a text/event-stream connection open and writes SSE frames a client reads incrementally", async () => {
     const be = createHttpBackend();
     active = be;

@@ -25,18 +25,18 @@ import type { InboundPipelineDeps } from "./inbound-pipeline.js";
 /**
  * Minimal deps for the resolve-and-preprocess phase.
  *
- * Union of the former ResolveDeps (5 fields) + PreprocessDeps (4 fields)
- * with `logger` shared across both sub-phases — 8 unique fields total.
+ * Covers both sub-phases — agent resolution and media preprocessing — with
+ * `logger` shared across both; 8 unique fields total.
  */
 export type ResolveAndPreprocessDeps = Pick<
   InboundPipelineDeps,
-  // From inbound-resolve.ts:
+  // Agent resolution sub-phase:
   | "logger" // shared with preprocess
   | "eventBus"
   | "messageRouter"
   | "sessionManager"
   | "createExecutor"
-  // From inbound-preprocess.ts:
+  // Media preprocessing sub-phase:
   | "audioPreflight"
   | "preprocessMessage"
   | "autoReplyEngineConfig"
@@ -71,7 +71,7 @@ export async function resolveAndPreprocess(
   adapter: ChannelPort,
   msg: NormalizedMessage,
 ): Promise<ResolveAndPreprocessResult | undefined> {
-  // ===== Phase 1A: Agent resolution (from inbound-resolve.ts:53-90) =====
+  // ===== Phase 1A: Agent resolution =====
 
   // 1. Resolve agent FIRST (only needs RoutableMessage, not SessionKey)
   const agentId = deps.messageRouter.resolve({
@@ -104,7 +104,7 @@ export async function resolveAndPreprocess(
   // Load or create session
   deps.sessionManager.loadOrCreate(sessionKey);
 
-  // ===== Phase 1B: Audio preflight + media preprocessing (from inbound-preprocess.ts:37-114) =====
+  // ===== Phase 1B: Audio preflight + media preprocessing =====
 
   let processedMsg = effectiveMsg;
   const channelType = adapter.channelType;

@@ -8,8 +8,8 @@
  * connect → list → status → reconnect → disconnect round-trip plus the
  * test-probe (non-persisting) path and the missing-token negative case.
  *
- * Criterion 5 (restart durability): after `mcp connect` persists a server to
- * the daemon's config YAML, the daemon is town down and re-started against the
+ * Restart durability: after `mcp connect` persists a server to
+ * the daemon's config YAML, the daemon is torn down and re-started against the
  * SAME config file. The daemon auto-connects persisted MCP servers at boot
  * (setup-mcp.ts), so `mcp list` after restart shows the server reconnected —
  * proving the YAML round-trip survived a restart.
@@ -144,7 +144,7 @@ describe("E2E: comis mcp CLI ↔ real daemon", () => {
     // stage-1 SENSITIVE_PREFIXES scrub, the daemon's STAGE-2 scrub deletes every
     // config-referenced SecretRef name (`container.platformSecretNames`) from
     // process.env after parse, and this config carries `secret: "${COMIS_GATEWAY_TOKEN}"`.
-    // So the Criterion-5 in-process restart RE-SETS it before re-boot (a real process
+    // So the restart-durability test's in-process restart RE-SETS it before re-boot (a real process
     // restart's service manager / setup wizard re-provides the env identically).
     priorGatewayToken = process.env["COMIS_GATEWAY_TOKEN"];
     process.env["COMIS_GATEWAY_TOKEN"] = GATEWAY_TOKEN_SECRET;
@@ -367,11 +367,11 @@ describe("E2E: comis mcp CLI ↔ real daemon", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Criterion 5 — restart durability: persisted YAML survives a daemon restart
+  // Restart durability: persisted YAML survives a daemon restart
   // and the server auto-reconnects on the fresh daemon.
   // -------------------------------------------------------------------------
 
-  it("Criterion 5: connected server is persisted to config YAML (durability precondition)", () => {
+  it("connected server is persisted to config YAML (durability precondition for restart)", () => {
     // mcp.connect persisted the entry earlier; assert the on-disk YAML carries
     // it (the round-trip durability proof, independent of runtime state).
     const persisted = parseYaml(readFileSync(configPath, "utf-8")) as {
@@ -384,7 +384,7 @@ describe("E2E: comis mcp CLI ↔ real daemon", () => {
     expect(entry!.command).toBe(process.execPath);
   });
 
-  it("Criterion 5: after a daemon restart, the persisted server auto-reconnects (mcp list shows it)", async () => {
+  it("after a daemon restart, the persisted server auto-reconnects (mcp list shows it)", async () => {
     // Tear down the running daemon (releases the double-start guard + port).
     await handle.cleanup();
 

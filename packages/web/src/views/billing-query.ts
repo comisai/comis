@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Typed-query DSL for the Billing view (OpenClaw `/usage` parity).
+ * Typed-query DSL for the Billing view.
  *
  * A pure, dependency-free parser that maps a query string like
  * `agent:foo provider:openai minTokens:100 maxCost:0.5 has:errors tool:bash`
@@ -8,10 +8,10 @@
  * `Array.prototype.filter` predicate over already-fetched billing rows.
  *
  * Two cross-cutting invariants are guaranteed by construction:
- * - **Injection-safe (T-179-15):** the parser produces a plain typed object;
+ * - **Injection-safe:** the parser produces a plain typed object;
  *   it builds no database query and no query string. Values are captured as
  *   data and only ever compared (`===`, `>=`, `<=`) in {@link applyBillingFilter}.
- * - **Content-free (T-179-14):** the filter axes are a CLOSED set of
+ * - **Content-free:** the filter axes are a CLOSED set of
  *   ids/enums/numbers — there is no free-text/body axis, so a message body can
  *   never become a filter.
  *

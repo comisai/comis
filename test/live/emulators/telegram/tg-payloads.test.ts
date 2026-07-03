@@ -1,25 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Stage-A unit tests for the grammy-typed Telegram payload builders
- * (`tg-payloads.ts`, TEST-01 / invariant I4, Phase 204).
+ * (`tg-payloads.ts`).
  *
  * Pure type/structural tests — no daemon, no key, no network, fast. These
- * builders are the ones the emulator's `getUpdates` serves (Plan 03) and the
- * scenario contract test round-trips (Plan 05). They import grammy 1.43's OWN
+ * builders are the ones the emulator's `getUpdates` serves and the
+ * scenario contract test round-trips. They import grammy 1.43's OWN
  * exported `Update`/`Message` types, so a shape drift becomes a COMPILE error,
- * not a silent runtime mismatch (the Go-emulator drift problem the milestone
- * exists to avoid, design §1.3). These tests assert:
+ * not a silent runtime mismatch (the hand-rolled-emulator drift problem this
+ * harness exists to avoid). These tests assert:
  *   - `makeMessageUpdate(...)` returns a value whose STATIC type is grammy's
- *     `Update` (the function's return annotation IS the grammy type — the I4
+ *     `Update` (the function's return annotation IS the grammy type — the
  *     drift tripwire: a grammy shape change fails to compile here).
  *   - the runtime shape matches what the adapter's `mapGrammyToNormalized`
  *     parses (`update_id`, `message.{message_id,from,chat,date,text}`).
  *   - `message.date` is integer UNIX SECONDS (`Math.floor(now/1000)`), NOT
- *     milliseconds — the mapper multiplies ×1000 (message-mapper.ts, §4.2).
- *   - the builder emits ONLY the `message` update kind 204 consumes (no
- *     `channel_post`/`inline_query`/… literal appears — §4.2 scope guard).
+ *     milliseconds — the mapper multiplies ×1000 (message-mapper.ts).
+ *   - the builder emits ONLY the `message` update kind (no
+ *     `channel_post`/`inline_query`/… literal appears — the scope guard).
  *   - `nextUpdateId()` is strictly monotonic (the emulator relies on it for
- *     offset/ack, Plan 03).
+ *     offset/ack).
  *
  * @module
  */
@@ -70,7 +70,7 @@ describe("makeMessageUpdate runtime shape", () => {
     expect(message?.chat.id).toBe(555);
     expect(message?.chat.type).toBe("private");
     expect(message?.text).toBe("hi");
-    // The human sender — never a bot (design §4.2: from.is_bot === false).
+    // The human sender — never a bot (from.is_bot === false).
     expect(message?.from?.is_bot).toBe(false);
     expect(message?.from?.id).toBe(200);
     expect(message?.from?.first_name).toBe("alice");
@@ -89,7 +89,7 @@ describe("makeMessageUpdate runtime shape", () => {
     expect(update.message?.message_id).toBe(9001);
   });
 
-  it("emits ONLY the `message` kind — no other update kind is populated (§4.2 scope guard)", () => {
+  it("emits ONLY the `message` kind — no other update kind is populated (the scope guard)", () => {
     const from = makeUser({ id: 1, firstName: "c" });
     const update = makeMessageUpdate({
       updateId: 1,
@@ -111,7 +111,7 @@ describe("makeMessageUpdate runtime shape", () => {
 });
 
 // ---------------------------------------------------------------------------
-// date semantics — UNIX SECONDS, not milliseconds (design §4.2)
+// date semantics — UNIX SECONDS, not milliseconds
 // ---------------------------------------------------------------------------
 
 describe("makeMessageUpdate date is unix seconds (not milliseconds)", () => {
@@ -136,13 +136,13 @@ describe("makeMessageUpdate date is unix seconds (not milliseconds)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// grammy-type fidelity (I4) — the drift tripwire
+// grammy-type fidelity — the drift tripwire
 // ---------------------------------------------------------------------------
 
-describe("grammy-type fidelity (I4 — compile-level drift tripwire)", () => {
+describe("grammy-type fidelity (compile-level drift tripwire)", () => {
   it("the builder return is assignable to grammy `Update` and `Message`", () => {
     const from = makeUser({ id: 5, firstName: "d", username: "d" });
-    // These two annotations are the I4 tripwire: if grammy's Update/Message
+    // These two annotations are the drift tripwire: if grammy's Update/Message
     // shape drifts, THIS file fails to COMPILE (not at runtime).
     const u: Update = makeMessageUpdate({
       updateId: 3,
@@ -191,9 +191,8 @@ describe("nextUpdateId monotonic counter", () => {
 
 // ---------------------------------------------------------------------------
 // makeReactionUpdate — runtime shape the message_reaction adapter handler parses
-// (REACT-01: the inbound half of reactions; the outbound setMessageReaction
-// landed in 204. The adapter handler at telegram-inbound.ts:266 is ALREADY
-// wired — these tests pin the builder produces exactly the ADD it consumes.)
+// (the inbound half of reactions). The adapter handler at telegram-inbound.ts:266
+// is ALREADY wired — these tests pin the builder produces exactly the ADD it consumes.
 // ---------------------------------------------------------------------------
 
 describe("makeReactionUpdate runtime shape", () => {
@@ -208,7 +207,7 @@ describe("makeReactionUpdate runtime shape", () => {
     });
 
     expect(update.update_id).toBe(1);
-    // `message_reaction` is the only populated update kind (the REACT-01 ADD).
+    // `message_reaction` is the only populated update kind (the reaction ADD).
     const mr = update.message_reaction;
     expect(mr).toBeDefined();
     expect(mr?.message_id).toBe(100);
@@ -288,13 +287,13 @@ describe("makeReactionUpdate produces the ADD the adapter detects (telegram-inbo
 });
 
 // ---------------------------------------------------------------------------
-// grammy-type fidelity (I4) — the drift tripwire for the reaction builder
+// grammy-type fidelity — the drift tripwire for the reaction builder
 // ---------------------------------------------------------------------------
 
-describe("makeReactionUpdate grammy-type fidelity (I4 — compile-level drift tripwire)", () => {
+describe("makeReactionUpdate grammy-type fidelity (compile-level drift tripwire)", () => {
   it("the builder return is assignable to grammy `Update` and `MessageReactionUpdated`", () => {
     const user = makeUser({ id: 5, firstName: "e", username: "e" });
-    // These two annotations are the I4 tripwire: if grammy's
+    // These two annotations are the drift tripwire: if grammy's
     // Update/MessageReactionUpdated shape drifts, THIS file fails to COMPILE.
     const u: Update = makeReactionUpdate({
       updateId: 3,
@@ -311,7 +310,7 @@ describe("makeReactionUpdate grammy-type fidelity (I4 — compile-level drift tr
 });
 
 // ---------------------------------------------------------------------------
-// makeMediaUpdate — runtime shape buildAttachments parses (MEDIA-03, Phase 207)
+// makeMediaUpdate — runtime shape buildAttachments parses
 // (the inbound media half: a `message` Update carrying exactly the per-kind
 // grammy field buildAttachments reads (media-handler.ts:84-108), each via a
 // caller-supplied file_id. The keyless handler short-circuits BEFORE download,
@@ -508,7 +507,7 @@ describe("makeMediaUpdate runtime shape (per-kind, mirrors buildAttachments)", (
     expect(date).toBeLessThan(1e12);
   });
 
-  it("the builder return is assignable to grammy `Update`/`Message` (I4 drift tripwire)", () => {
+  it("the builder return is assignable to grammy `Update`/`Message` (a drift tripwire)", () => {
     const from = makeUser({ id: 5, firstName: "d" });
     const u: Update = makeMediaUpdate({
       updateId: 3,
@@ -579,7 +578,7 @@ describe("makeLocationUpdate runtime shape (mirrors message-mapper.ts location/v
     expect(update.message?.location).toBeUndefined();
   });
 
-  it("the builder return is assignable to grammy `Update` (I4 drift tripwire)", () => {
+  it("the builder return is assignable to grammy `Update` (a drift tripwire)", () => {
     const from = makeUser({ id: 5, firstName: "d" });
     const u: Update = makeLocationUpdate({
       updateId: 3,
@@ -593,8 +592,8 @@ describe("makeLocationUpdate runtime shape (mirrors message-mapper.ts location/v
 });
 
 // ---------------------------------------------------------------------------
-// makeCallbackUpdate — the callback_query Update the adapter handler consumes
-// (INTERACT-01, Phase 207). telegram-inbound.ts:165 reads
+// makeCallbackUpdate — the callback_query Update the adapter handler consumes.
+// telegram-inbound.ts:165 reads
 // ctx.callbackQuery.{message?.chat.id, data}, ctx.from.id,
 // ctx.callbackQuery.message.message_id — the synthetic isButtonCallback message.
 // ---------------------------------------------------------------------------
@@ -638,7 +637,7 @@ describe("makeCallbackUpdate runtime shape (mirrors telegram-inbound.ts:165)", (
     // The handler reads ctx.from.id (the tapper, NOT the bot).
     expect(cbq?.from.id).toBe(200);
     expect(cbq?.from.is_bot).toBe(false);
-    // ctx.callbackQuery.data — the button payload, a scalar string (IN-04 safe).
+    // ctx.callbackQuery.data — the button payload, a scalar string (kept scalar so it cannot smuggle structured input).
     expect(cbq?.data).toBe("approve");
     // ctx.callbackQuery.message?.chat.id + .message_id (the existing bot reply).
     expect(cbq?.message?.chat.id).toBe(42);
@@ -666,7 +665,7 @@ describe("makeCallbackUpdate runtime shape (mirrors telegram-inbound.ts:165)", (
     expect(cbq.from.is_bot).toBe(false);
   });
 
-  it("the builder return is assignable to grammy `Update`/`CallbackQuery` (I4 drift tripwire)", () => {
+  it("the builder return is assignable to grammy `Update`/`CallbackQuery` (a drift tripwire)", () => {
     const botUser = makeBotUser({ id: 999, firstName: "b" });
     const botMessage = makeBotMessage({ messageId: 30, chatId: 300, botUser });
     const u: Update = makeCallbackUpdate({
@@ -684,7 +683,7 @@ describe("makeCallbackUpdate runtime shape (mirrors telegram-inbound.ts:165)", (
 
 // ---------------------------------------------------------------------------
 // makeEditUpdate — the edited_message Update the adapter routes through
-// handleInboundMessage (INTERACT-02, telegram-inbound.ts:117). Same inner shape
+// handleInboundMessage (telegram-inbound.ts:117). Same inner shape
 // as makeMessageUpdate's `message`, under `edited_message`, plus edit_date.
 // ---------------------------------------------------------------------------
 
@@ -731,7 +730,7 @@ describe("makeEditUpdate runtime shape (mirrors telegram-inbound.ts:117)", () =>
     expect(edited.edit_date!).toBeLessThan(1e12);
   });
 
-  it("the builder return is assignable to grammy `Update`/`Message` (I4 drift tripwire)", () => {
+  it("the builder return is assignable to grammy `Update`/`Message` (a drift tripwire)", () => {
     const u: Update = makeEditUpdate({
       updateId: 3,
       messageId: 30,
@@ -746,12 +745,11 @@ describe("makeEditUpdate runtime shape (mirrors telegram-inbound.ts:117)", () =>
 
 // ---------------------------------------------------------------------------
 // Scope guard — `message` + `message_reaction` + `callback_query` +
-// `edited_message` are IN-SCOPE (the last two LIFTED by INTERACT-01/02,
-// Phase 207); the §4.2 Out-of-Scope kinds (channel_post / inline_query /
+// `edited_message` are IN-SCOPE; the Out-of-Scope kinds (channel_post / inline_query /
 // poll_answer / my_chat_member / chat_join_request) stay forbidden.
 // ---------------------------------------------------------------------------
 
-describe("tg-payloads.ts scope guard (message/reaction/callback/edit in scope; §4.2 out-of-scope kinds forbidden)", () => {
+describe("tg-payloads.ts scope guard (message/reaction/callback/edit in scope; out-of-scope kinds forbidden)", () => {
   it("makeReactionUpdate populates only `message_reaction` — no callback/edit/inline kind", () => {
     const user = makeUser({ id: 1, firstName: "c" });
     const update = makeReactionUpdate({
@@ -763,7 +761,7 @@ describe("tg-payloads.ts scope guard (message/reaction/callback/edit in scope; �
     });
     // Exactly the two keys the reaction ADD needs — nothing else.
     expect(Object.keys(update).sort()).toEqual(["message_reaction", "update_id"]);
-    // None of the still-deferred (207) kinds are present at runtime.
+    // No other update kind is present at runtime.
     const u = update as unknown as Record<string, unknown>;
     expect(u["channel_post"]).toBeUndefined();
     expect(u["edited_message"]).toBeUndefined();
@@ -795,26 +793,25 @@ describe("tg-payloads.ts scope guard (message/reaction/callback/edit in scope; �
     expect(edu["callback_query"]).toBeUndefined();
   });
 
-  it("imports grammy's OWN types (I4); callback_query/edited_message are now IN scope; §4.2 out-of-scope kinds stay forbidden", () => {
+  it("imports grammy's OWN types; callback_query/edited_message are in scope; out-of-scope kinds stay forbidden", () => {
     const src = readFileSync(PAYLOADS_SOURCE, "utf8");
-    // I4: the builders import grammy's exported Update/Message types.
+    // The builders import grammy's exported Update/Message types.
     expect(src).toMatch(/import type \{[^}]*Update[^}]*\} from ["']grammy\/types["']/);
-    // date = unix seconds (design §4.2).
+    // date = unix seconds.
     expect(src).toMatch(/Math\.floor\(Date\.now\(\)\s*\/\s*1000\)/);
     // Strip comment lines so a doc-comment naming a kind is not a false hit.
     const code = src
       .split("\n")
       .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
       .join("\n");
-    // REACT-01 lifted `message_reaction` into scope; INTERACT-01/02 (Phase 207)
-    // now lift `callback_query` + `edited_message` — assert all three ARE code
-    // literals (the builders write them), proving the §4.2 guard was lifted on
-    // purpose for exactly these kinds.
+    // `message_reaction`, `callback_query`, and `edited_message` are all in
+    // scope — assert all three ARE code literals (the builders write them),
+    // proving the scope guard permits exactly these kinds.
     expect(code).toMatch(/message_reaction/);
     expect(code).toMatch(/callback_query/);
     expect(code).toMatch(/edited_message/);
-    // The §4.2 Out-of-Scope kinds stay blocklisted (the harness must not mint an
-    // update kind the adapter does not handle — T-207-03).
+    // The Out-of-Scope kinds stay blocklisted (the harness must not mint an
+    // update kind the adapter does not handle).
     expect(code).not.toMatch(/channel_post/);
     expect(code).not.toMatch(/inline_query/);
     expect(code).not.toMatch(/poll_answer/);
@@ -824,13 +821,13 @@ describe("tg-payloads.ts scope guard (message/reaction/callback/edit in scope; �
 });
 
 // ---------------------------------------------------------------------------
-// makeGroupChat — a grammy Chat of type group/supergroup (+is_forum) — GROUP-01
-// (Phase 208). The group/supergroup/forum chat shape the mapper derives
+// makeGroupChat — a grammy Chat of type group/supergroup (+is_forum).
+// The group/supergroup/forum chat shape the mapper derives
 // chatType + the thread context from (message-mapper.ts:147-148,194). Every
 // prior builder hardcoded `type: "private"`; makeGroupChat is the group seed.
 // ---------------------------------------------------------------------------
 
-describe("makeGroupChat runtime shape (the group/supergroup/forum chat seed, GROUP-01)", () => {
+describe("makeGroupChat runtime shape (the group/supergroup/forum chat seed)", () => {
   it("type:'group' → a grammy GroupChat (no is_forum)", () => {
     const chat = makeGroupChat({ id: -100123, type: "group" });
     expect(chat.id).toBe(-100123);
@@ -853,7 +850,7 @@ describe("makeGroupChat runtime shape (the group/supergroup/forum chat seed, GRO
     expect((chat as { is_forum?: boolean }).is_forum).toBeUndefined();
   });
 
-  it("the builder return is assignable to grammy `Chat` (I4 drift tripwire)", () => {
+  it("the builder return is assignable to grammy `Chat` (a drift tripwire)", () => {
     const chat: Chat = makeGroupChat({ id: -100, type: "supergroup", isForum: true });
     expect(chat.type).toBe("supergroup");
   });
@@ -861,17 +858,17 @@ describe("makeGroupChat runtime shape (the group/supergroup/forum chat seed, GRO
 
 // ---------------------------------------------------------------------------
 // makeMessageUpdate addressing extensions — chat / entities / replyToMessage /
-// messageThreadId (GROUP-01/02). The DM literal stays the default (back-compat);
+// messageThreadId. The DM literal stays the default when they are absent;
 // a passed group `chat` + a mention/bot_command entity + a reply_to_message +
 // a message_thread_id are exactly what detectBotAddressing + the thread
 // resolver read (message-mapper.ts:40-104,147-150).
 // ---------------------------------------------------------------------------
 
-describe("makeMessageUpdate addressing extensions (chat/entities/replyToMessage/messageThreadId, GROUP-01/02)", () => {
-  it("with no chat override the DM `private` literal is preserved (back-compat — the DM path is unbroken)", () => {
+describe("makeMessageUpdate addressing extensions (chat/entities/replyToMessage/messageThreadId)", () => {
+  it("with no chat override the DM `private` literal is preserved (the DM path is unbroken)", () => {
     const from = makeUser({ id: 1, firstName: "dm" });
     const update = makeMessageUpdate({ updateId: 1, messageId: 1, from, chatId: 424242, text: "hi" });
-    // The default chat is the private literal — exactly the pre-208 behaviour.
+    // The default chat is the private literal — the DM behaviour.
     expect(update.message?.chat.type).toBe("private");
     expect(update.message?.chat.id).toBe(424242);
     // No entities/reply/thread when not supplied (exactOptional — never `: undefined`).
@@ -959,7 +956,7 @@ describe("makeMessageUpdate addressing extensions (chat/entities/replyToMessage/
     expect(update.message?.message_thread_id).toBe(7);
   });
 
-  it("imports grammy's OWN Chat/MessageEntity types (I4) — drift fails the compile", () => {
+  it("imports grammy's OWN Chat/MessageEntity types — drift fails the compile", () => {
     const src = readFileSync(PAYLOADS_SOURCE, "utf8");
     // The addressing extensions reference grammy's Chat + MessageEntity types.
     expect(src).toMatch(/import type \{[^}]*Chat[^}]*\} from ["']grammy\/types["']/);
@@ -968,16 +965,16 @@ describe("makeMessageUpdate addressing extensions (chat/entities/replyToMessage/
 });
 
 // ---------------------------------------------------------------------------
-// makeServiceMessageUpdate — a forum-service `message` Update (COVER-02
-// negative, Phase 208). The adapter FILTERS these six kinds before the agent
+// makeServiceMessageUpdate — a forum-service `message` Update (the negative
+// case). The adapter FILTERS these six kinds before the agent
 // (telegram-inbound.ts:50-58); the harness must be able to MINT one so the
-// scenario proves it is NOT dispatched. §4.2 scope guard: service messages ARE
+// scenario proves it is NOT dispatched. The scope guard: service messages ARE
 // handled (filtered) → permitted; channel_post/inline_query/poll_answer stay
 // forbidden. A service message is a `message` with NO `text`, carrying exactly
 // one of the named forum-service fields.
 // ---------------------------------------------------------------------------
 
-describe("makeServiceMessageUpdate runtime shape (the forum-service negative builder, COVER-02)", () => {
+describe("makeServiceMessageUpdate runtime shape (the forum-service negative builder)", () => {
   const FORUM_SERVICE_KINDS = [
     "forum_topic_created",
     "forum_topic_edited",
@@ -1022,7 +1019,7 @@ describe("makeServiceMessageUpdate runtime shape (the forum-service negative bui
     expect(update.update_id).toBe(4242);
   });
 
-  it("§4.2 scope guard: a service message is a `message` kind — it does NOT mint a forbidden update kind", () => {
+  it("scope guard: a service message is a `message` kind — it does NOT mint a forbidden update kind", () => {
     const update = makeServiceMessageUpdate("general_forum_topic_hidden", { chatId: -100777, messageId: 903 });
     const u = update as unknown as Record<string, unknown>;
     expect(u["channel_post"]).toBeUndefined();

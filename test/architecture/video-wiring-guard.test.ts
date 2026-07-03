@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Built-but-not-wired SOURCE GUARD for the video-generation stack (Phase 188 /
- * Plan 04). Mirrors the image wiring + the `startup-invariants.test.ts`
+ * Built-but-not-wired SOURCE GUARD for the video-generation stack.
+ * Mirrors the image wiring + the `startup-invariants.test.ts`
  * precedent: a shrink-only daemon.ts source-grep with NO allowlist.
  *
- * "Built but not wired" has been THIS milestone's #1 recurring blocker (caught by
- * code review every prior phase): a port/handler can exist, compile, and pass its
+ * "Built but not wired" is a recurring blocker: a port/handler can exist, compile, and pass its
  * own unit tests while the LIVE daemon never wires it, so the agent's
  * `video_generate` call silently no-ops. These assertions pin the live wiring so
  * a future refactor cannot regress the path to unwired without turning this test
@@ -90,7 +89,7 @@ describe("video-generation built-but-not-wired source guard", () => {
     expect(code).toMatch(/deps\.videoHandlerDeps\s*\?[\s\S]*?createVideoHandlers\s*\(\s*deps\.videoHandlerDeps\s*\)/);
   });
 
-  // ─── Phase 189 (JOB-02/JOB-03): the background poller + store wiring ───
+  // ─── The background poller + store wiring ───
   // The keystone anti-built-but-not-wired assertions. The store + poller are
   // constructed in buildVideoGenBundle (main-helpers), STARTED after setupChannels
   // (wirePostChannelsLifecycle), and SHUT DOWN via setupShutdown. A regression to
@@ -148,7 +147,7 @@ describe("video-generation built-but-not-wired source guard", () => {
     expect(code).toMatch(/shutdownVideoPoller/);
   });
 
-  // ─── Phase 189 Plan 03 (JOB-04): the video.status query surface wiring ───
+  // ─── The video.status query surface wiring ───
   // The read side of the async lifecycle. The contract↔handler parity gate
   // covers the dispatch registration structurally; these source-guard
   // assertions pin the LIVE tool + boot-signal + dispatch-deps threading so a
@@ -190,15 +189,14 @@ describe("video-generation built-but-not-wired source guard", () => {
     expect(toolsCode).toMatch(/videoStatusEnabled/);
   });
 
-  // ─── Phase 190 (VEO/GROK/CRED-01): live-adapter swap + oauthManager thread ───
-  // The 188 selector returned an honest-unavailable "lands in Phase 190" port for
+  // ─── Live-adapter swap + oauthManager thread ───
+  // The selector once returned an honest-unavailable "lands in Phase 190" port for
   // the veo/grok SELECTION (built-but-not-wired by design until the adapters
-  // existed). Plan 03 swaps that branch for the LIVE createVeoVideoAdapter /
-  // createGrokVideoAdapter (Plans 01/02) and threads the DEFAULT agent's
-  // oauthManager (bundle → selector → daemon) for the Grok key-or-OAuth path
-  // (CRED-01). These assertions pin every edge so a future refactor cannot regress
-  // veo/grok back to the placeholder without turning this test red (Pitfall 5 —
-  // the milestone's #1 recurring blocker).
+  // existed). That branch now uses the LIVE createVeoVideoAdapter /
+  // createGrokVideoAdapter and threads the DEFAULT agent's
+  // oauthManager (bundle → selector → daemon) for the Grok key-or-OAuth path.
+  // These assertions pin every edge so a future refactor cannot regress
+  // veo/grok back to the placeholder without turning this test red.
 
   it("setup-video-provider.ts veo branch CALLS createVeoVideoAdapter and grok branch CALLS createGrokVideoAdapter (not the placeholder)", () => {
     const content = readFileSync(SETUP_VIDEO_PROVIDER_TS, "utf8");
@@ -213,12 +211,12 @@ describe("video-generation built-but-not-wired source guard", () => {
     // And CALLED in the resolved branch (the swap — not just imported, not a comment).
     expect(code).toMatch(/createVeoVideoAdapter\s*\(/);
     expect(code).toMatch(/createGrokVideoAdapter\s*\(/);
-    // The Phase-188 placeholder hint must be GONE from the live branch (the swap
+    // The old placeholder hint must be GONE from the live branch (the swap
     // removed it — a residual "lands in Phase 190" means the placeholder survived).
     expect(code).not.toMatch(/lands in Phase 190/);
   });
 
-  it("main-helpers.ts buildVideoGenBundle threads oauthManager + oauthProfiles into createVideoProviderSelector (CRED-01 grok OAuth)", () => {
+  it("main-helpers.ts buildVideoGenBundle threads oauthManager + oauthProfiles into createVideoProviderSelector (grok OAuth)", () => {
     const code = stripComments(readFileSync(MAIN_HELPERS_TS, "utf8"));
     // The selector call must carry oauthManager + oauthProfiles (mirroring the
     // buildImageGenBundle precedent at :331-332). The bounded {0,600} window keeps
@@ -241,14 +239,13 @@ describe("video-generation built-but-not-wired source guard", () => {
     expect(code).toMatch(/buildVideoGenBundle\s*\(\{[\s\S]{0,250}?oauthManager/);
   });
 
-  // ─── Phase 191 (IN-03): the runtime-built tool description wiring ───
+  // ─── The runtime-built tool description wiring ───
   // The video_generate description is built at registration from the ACTIVE
   // backend's VIDEO_MODELS matrix (listVideoModelCaps) — but ONLY if the registry
   // build callback threads ctx.videoGenProvider into createVideoGenerateTool. The
   // tool factory + the matrix lookup can exist, compile, and pass their unit tests
   // while the registry still calls createVideoGenerateTool(ctx.rpcCall) single-arg,
-  // leaving the agent with the STATIC_FALLBACK forever (built-but-not-wired,
-  // Pitfall 5 — the milestone's #1 recurring blocker). These assertions pin the
+  // leaving the agent with the STATIC_FALLBACK forever (built-but-not-wired). These assertions pin the
   // two-arg wiring (registry → tool) and the matrix import (tool → @comis/core) so
   // a future refactor that drops either turns this test red.
 
@@ -262,9 +259,9 @@ describe("video-generation built-but-not-wired source guard", () => {
 
   it("video-generate-tool.ts imports listVideoModelCaps from @comis/core (the matrix the description is built from)", () => {
     const content = readFileSync(VIDEO_GENERATE_TOOL_TS, "utf8");
-    // The IN-03 description is built from the active backend's capability matrix;
-    // the accessor MUST be imported from the @comis/core barrel (Plan 01 surfaced
-    // it there — NOT a @comis/core/media subpath, which does not exist).
+    // The description is built from the active backend's capability matrix;
+    // the accessor MUST be imported from the @comis/core barrel
+    // (NOT a @comis/core/media subpath, which does not exist).
     expect(content).toMatch(
       /import\s*(?:type\s*)?\{[^}]*listVideoModelCaps[^}]*\}\s*from\s*["']@comis\/core["']/,
     );
@@ -273,14 +270,14 @@ describe("video-generation built-but-not-wired source guard", () => {
     expect(code).toMatch(/listVideoModelCaps\s*\(/);
   });
 
-  // ─── Phase 192 (OBS-04): the obs-deps wiring for the off-turn poller emits ───
+  // ─── The obs-deps wiring for the off-turn poller emits ───
   // The poller best-effort live-emits video.generated/delivered/failed off-turn
   // via getRecorder(record.sessionKey) — but ONLY if buildVideoGenBundle threads
   // trajectoryRegistry + eventBus into createVideoPoller, and daemon.ts threads
   // them into buildVideoGenBundle. The poller + the emitter can exist, compile,
   // and pass their unit tests while the LIVE daemon never wires the obs deps, so
   // `comis explain` shows nothing for a background-completed turn (built-but-not-
-  // wired, Pitfall 5 — the milestone's #1 recurring blocker). Bounded windows
+  // wired). Bounded windows
   // keep each match scoped to the relevant call body — a far-away
   // trajectoryRegistry/eventBus token (the image bundle / buildVideoHandlerDeps,
   // both well outside the window) cannot satisfy it, so each fails RED until the

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * SKILL-03 no-drift gate (Phase 214) — the bundled `autonomy` SKILL.md may name
+ * Autonomy SKILL.md no-drift gate — the bundled `autonomy` SKILL.md may name
  * ONLY capabilities and tools that exist in the runtime closed sets. The skill
- * teaches the model what the 210–213 orchestration surface lets it do; if the
+ * teaches the model what the orchestration surface lets it do; if the
  * doc names a cap/tool the gate doesn't have, it misleads the model (wasted
- * turns / 404s / confused operators — T-214-01/T-214-03). This test fails the
+ * turns / 404s / confused operators). This test fails the
  * build on any such drift.
  *
  * The truth is IMPORTED, never hardcoded — `AGENT_CAPABILITIES` +
@@ -23,12 +23,12 @@
  *     `AGENT_CAPABILITIES`. (`orch:browse` is in the union but OFF in every
  *     default profile — the skill must not teach it; if it ever names it the
  *     token is still a real member so Test 1 passes, but the contract review +
- *     the manual grep in the plan's verification catch it.)
+ *     a manual grep catch it.)
  *
  *   Test 2 (in-script tools): every `comis_tools.<name>` token names a real key
- *     of `TOOL_CAPABILITY_MAP` (the §3.6 read/web in-script SDK surface).
+ *     of `TOOL_CAPABILITY_MAP` (the read/web in-script SDK surface).
  *
- *   Test 3 (model-facing tools — the Pitfall-1 / `tool.invoke` guard): the
+ *   Test 3 (model-facing tools — the `tool.invoke` guard): the
  *     orchestration tools the skill teaches the model to CALL (`orchestrate`,
  *     `sessions_spawn`, `pipeline`, `cron`, `message`) are all real, AND the body
  *     never frames `tool.invoke` / `tool_invoke` as a model-facing call (it is
@@ -63,7 +63,7 @@ const SKILL_PATH = resolve(
 
 /** The closed `orch:*` cap union as a runtime Set (no typo'd-cap lookups). */
 const CAP_SET: ReadonlySet<string> = new Set<string>(AGENT_CAPABILITIES);
-/** The §3.6 read/web in-script tool names (the `comis_tools.*` SDK surface). */
+/** The read/web in-script tool names (the `comis_tools.*` SDK surface). */
 const TOOL_SET: ReadonlySet<string> = new Set<string>(
   Object.keys(TOOL_CAPABILITY_MAP),
 );
@@ -108,7 +108,7 @@ const TAUGHT_MODEL_FACING_TOOLS = [
   "message",
 ] as const;
 
-describe("autonomy SKILL.md names only real caps + tools (SKILL-03 — no drift)", () => {
+describe("autonomy SKILL.md names only real caps + tools (no drift)", () => {
   // RED before the SKILL.md exists: readFileSync throws here → the whole suite fails.
   const body = readFileSync(SKILL_PATH, "utf8");
 
@@ -143,7 +143,7 @@ describe("autonomy SKILL.md names only real caps + tools (SKILL-03 — no drift)
     ).toEqual([]);
   });
 
-  it("teaches only real model-facing orchestration tools, and never frames tool.invoke as a model call (Pitfall-1)", () => {
+  it("teaches only real model-facing orchestration tools, and never frames tool.invoke as a model call", () => {
     const real = deriveRealModelFacingTools();
 
     // Non-vacuity: the derivation actually produced the orchestration tools (a
@@ -171,7 +171,7 @@ describe("autonomy SKILL.md names only real caps + tools (SKILL-03 — no drift)
       `skill does not mention these orchestration tools it should teach: ${missingFromBody.join(", ")}`,
     ).toEqual([]);
 
-    // THE load-bearing assertion (Pitfall-1): the body must NOT present a
+    // THE load-bearing assertion: the body must NOT present a
     // model-facing `tool_invoke(...)` CALL. Model-facing tools are snake_case
     // (`sessions_spawn`, `web_search`), so the UNDERSCORE call-form `tool_invoke(`
     // is precisely the mistyped fake-tool class to catch. The DOTTED `tool.invoke`

@@ -11,10 +11,10 @@
 import { createRequire } from 'node:module';
 // COMIS_SRC overrides the better-sqlite3 resolution root (VPS default /root/comis-src; set to a local
 // checkout for a LOCAL daemon run). COMIS_DB_PATH / COMIS_DATA_DIR target a NON-default data dir (a local
-// isolated daemon — package-delivery-20260628); VPS default stays ~/.comis/memory.db.
+// isolated daemon); VPS default stays ~/.comis/memory.db.
 const require = createRequire((process.env.COMIS_SRC || '/root/comis-src') + '/packages/daemon/package.json');
 const Database = require('better-sqlite3');
-// ROOT-HOME GUARD (memory-learning-stress-catalog-20260629 framework loop): the daemon runs as the
+// ROOT-HOME GUARD: the daemon runs as the
 // `comis` user, so its data dir is /home/comis/.comis. If this helper is invoked as ROOT (HOME=/root —
 // the common `ssh root@vps 'node db.mjs …'` mistake) WITHOUT an explicit override, HOME resolution would
 // point at /root/.comis (which throws fileMustExist here, and SILENTLY returns 0 rows in the obs assembler
@@ -40,7 +40,7 @@ try {
     case 'pick':   sql = `select ${ident(b)} from ${ident(a)} order by rowid desc limit ${parseInt(c) || 8}`; break;
     // pickw <table> <c1,c2,..> <whereCol> <whereVal> [n] — filter by ONE column = value, the value
     // bound as a PARAMETER (?), so a string literal NEVER rides the SQL text. Fixes the ssh→su→node
-    // quoted-literal trap that breaks `db.mjs sql "… WHERE x='lit'"` (hindsight-reflection-20260626).
+    // quoted-literal trap that breaks `db.mjs sql "… WHERE x='lit'"`.
     case 'pickw':  sql = `select ${ident(b)} from ${ident(a)} where ${ident(c)} = ? order by rowid desc limit ${parseInt(e) || 8}`; break;
     case 'sql':    sql = process.argv.slice(3).join(' '); break;
     default: throw new Error('usage: tables|schema|cols|count|rows|pick|pickw|sql');

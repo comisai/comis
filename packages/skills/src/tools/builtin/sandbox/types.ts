@@ -30,9 +30,9 @@ export interface SandboxOptions {
    * "broker-only" = --unshare-net + unix-socket bind for broker-only egress.
    * "none" = --unshare-net with NO socket and NO proxy (kernel-enforced deny-all
    *   egress; the skill-validation jail uses this so a synthesized script cannot
-   *   reach the network to exfiltrate during dynamic validation, T-201-35).
+   *   reach the network to exfiltrate during dynamic validation).
    * "cap-socket" = --unshare-net + unix-socket bind for the capability-lease
-   *   loopback endpoint (Phase 211, ENDPOINT-03). Mirrors broker-only arg-order:
+   *   loopback endpoint. Mirrors broker-only arg-order:
    *   the bound unix socket stays reachable under netns (netns affects IP sockets
    *   only) so the jailed orchestrate child can dial the lease endpoint while all
    *   general IP egress stays cut.
@@ -52,18 +52,18 @@ export interface SandboxOptions {
    */
   secureCredentialHome?: boolean;
   /**
-   * Open file descriptor to a precompiled raw-BPF seccomp blob (JAIL-01).
+   * Open file descriptor to a precompiled raw-BPF seccomp blob.
    * bwrap `--seccomp N` takes an FD to raw BPF bytecode (NOT a JSON profile).
    * The caller/provider resolves this via loadSeccompProfileFd() (so buildArgs
    * stays a PURE arg generator with no live fs probe). When a number, buildArgs
    * emits `--seccomp <fd>`; when undefined/null the blob is absent and buildArgs
-   * OMITS --seccomp (graceful degrade — the other §4.7 controls still apply).
+   * OMITS --seccomp (graceful degrade — the other sandbox controls still apply).
    * Consumed by BwrapProvider.buildArgs(); other providers ignore it.
    */
   seccompFd?: number | null;
   /**
-   * The user HOME against which the JAIL-03 credential-denylist backstop
-   * screens caller-supplied binds (WR-05). `validateBindMount(hostPath, home)`
+   * The user HOME against which the credential-denylist backstop
+   * screens caller-supplied binds. `validateBindMount(hostPath, home)`
    * treats `home` as the trusted base for the `~/.ssh`/`~/.config`/… denylist —
    * so it MUST be an explicit, trusted value, not an ambient read buried inside
    * the otherwise-pure `buildArgs` generator. Resolve it once from trusted
@@ -76,7 +76,7 @@ export interface SandboxOptions {
    */
   home?: string;
   /**
-   * Resolved Node-runtime placement for the jail (JAIL-04 / v8 §4.6).
+   * Resolved Node-runtime placement for the jail.
    * The provider resolves this via resolveJailNode() (probe node on the jail
    * PATH → bind process.execPath → mark unavailable) and passes the result in,
    * so buildArgs stays a pure arg generator (no live fs probe). buildArgs emits
@@ -89,7 +89,7 @@ export interface SandboxOptions {
    */
   jailNode?: JailNodeResolution;
   /**
-   * Resolved comis-agent CLI-binary placement for the jail (CLI-05/06).
+   * Resolved comis-agent CLI-binary placement for the jail.
    * The provider resolves this via resolveJailAgentCli() — hash-verify the
    * comis-built `comis-agent-entry.js` against the committed manifest pin, then
    * bind / unavailable-missing / unavailable-hash-mismatch — and passes the
@@ -98,7 +98,7 @@ export interface SandboxOptions {
    * binary is bound READ-ONLY — a writable binary is a host-RCE vector, and
    * src==dest so COMIS_AGENT_BIN/PATH resolves it in-jail). "unavailable" (a
    * missing OR tampered binary) emits NO bind — the orchestrate-tool then makes
-   * ONLY the CLI surface unavailable with a loud signal (CLI-06), while the
+   * ONLY the CLI surface unavailable with a loud signal, while the
    * orchestrate SCRIPT surface still runs. Unlike jailNode, an unavailable
    * comis-agent binary does NOT refuse the whole jail (the script surface is
    * independent of the CLI surface).
@@ -108,8 +108,8 @@ export interface SandboxOptions {
 }
 
 /**
- * The three-mode result of resolveJailNode() (JAIL-04). Exhaustive: there is no
- * "bundled Node" mode — that claim is a spoofing vector (T-211-21).
+ * The three-mode result of resolveJailNode(). Exhaustive: there is no
+ * "bundled Node" mode — that claim is a spoofing vector.
  */
 export type JailNodeResolution =
   | { mode: "path" }
@@ -117,12 +117,11 @@ export type JailNodeResolution =
   | { mode: "unavailable"; hint: string };
 
 /**
- * The two-mode result of resolveJailAgentCli() (CLI-05/06). "bind" only when the
+ * The two-mode result of resolveJailAgentCli(). "bind" only when the
  * comis-agent binary EXISTS and its sha256 matches the committed manifest pin;
  * "unavailable" (with a content-free operator hint) when the binary is MISSING
  * or its bytes do NOT match the pin (tamper). There is no silent third state —
- * a missing/tampered binary is always a LOUD unavailable, never a silent bind
- * (T-219-22 tampering / T-219-24 silent-degrade).
+ * a missing/tampered binary is always a LOUD unavailable, never a silent bind.
  */
 export type JailAgentCliResolution =
   | { mode: "bind"; binPath: string }

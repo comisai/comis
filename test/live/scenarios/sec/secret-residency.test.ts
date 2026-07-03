@@ -2,7 +2,7 @@
 /**
  * SEC-04 — secret-residency scan (THE load-bearing binding-constraint gate).
  *
- * Binding constraint (design §12): "no secret ever reaches a report, ledger, or log."
+ * Binding constraint: "no secret ever reaches a report, ledger, or log."
  * This certifies it deterministically:
  *
  *   1. POSITIVE CONTROL (FIRST, mandatory): the rig's expectNoSecretLeak / assertNoSecrets
@@ -24,7 +24,7 @@
  *   plant the canary as a real provider credential; scan ALL streams → zero residency. (The rig's
  *   in-process ConversationDriver boots with disableRedaction:true to OBSERVE raw payloads, so it
  *   is NOT suitable for a residency=0 assertion — that proof requires a redaction-ON daemon and is
- *   deferred to the operator / PROVE-148. Asserting residency=0 on a disableRedaction'd stream would
+ *   deferred to the operator. Asserting residency=0 on a disableRedaction'd stream would
  *   be a rigged pass and is deliberately avoided here.)
  *
  * costTier: "$0" (Stage-B); Stage-C "¢" (one real completion).
@@ -136,7 +136,7 @@ describe.skipIf(!isLive)(
         "cache-trace + session-index + config-audit + obs.billing), then expectNoSecretLeak over EVERY persisted " +
         "stream + report + ledger → zero residency (SKIPPED(no-creds): needs COMIS_LIVE + a real provider AND a " +
         "redaction-ON daemon — the in-process rig forces disableRedaction:true for raw-payload observation, so the " +
-        "production-true residency=0 proof is deferred to the operator / PROVE-148; the deterministic redaction→" +
+        "production-true residency=0 proof is deferred to the operator; the deterministic redaction→" +
         "residency chain + positive control + report/ledger scan are proven in Stage-B above)",
       () => {
         // Stage-C (operator): boot a redaction-ON daemon, plant the canary as a provider key, drive one real

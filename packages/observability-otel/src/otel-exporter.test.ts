@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OTEL-01/02 / PROM-01 — `registerOtelExporter` construction + lifecycle.
+ * `registerOtelExporter` construction + lifecycle.
  *
  * Asserts: each surface is gated INDEPENDENTLY (prometheus.enabled works with
  * otel.enabled:false and vice-versa); `shutdown()` resolves and closes the
@@ -100,7 +100,7 @@ describe("registerOtelExporter (construction + lifecycle)", () => {
     handle = undefined;
   });
 
-  it("grpc protocol falls back to http/protobuf with a WARN+hint (a documented later addition — T-178-09)", async () => {
+  it("grpc protocol falls back to http/protobuf with a WARN+hint", async () => {
     const warns: Array<{ obj: Record<string, unknown>; msg: string }> = [];
     // All OTLP signals off so no exporter network-flushes on shutdown; the grpc
     // fallback WARN is gated only on otel.enabled && protocol==='grpc'.

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * PERSIST-01 (Phase 176 Plan 04): `cacheBreakEventToRow` row-builder tests.
+ * `cacheBreakEventToRow` row-builder tests.
  *
  * A detected `observability:cache_break` becomes a content-free
  * `obs_diagnostics category:'cache_break'` DiagnosticRow whose `details` carries
  * the 15-reason discriminator, the prev/cur/delta cache-read tokens, a
  * changed-dims DIGEST (counts only — never the tool-name arrays or system text),
- * and a COMPUTED est-$ (the event carries no `$` field — Landmine L1).
+ * and a COMPUTED est-$ (the event carries no `$` field).
  *
  * The est-$ is `tokenDrop × resolveModelPricing(provider, model).cacheRead`:
  * non-zero for a catalog-priced model, 0 for an unknown model (ZERO_COST.cacheRead).
@@ -59,8 +59,8 @@ function makeCacheBreak(
   };
 }
 
-describe("cacheBreakEventToRow (PERSIST-01 — category:'cache_break', computed est-$)", () => {
-  it("Test 1: returns a DiagnosticRow with category 'cache_break' (NOT 'health_signal') and a message naming the event", () => {
+describe("cacheBreakEventToRow (category:'cache_break', computed est-$)", () => {
+  it("returns a DiagnosticRow with category 'cache_break' (NOT 'health_signal') and a message naming the event", () => {
     const row = cacheBreakEventToRow(makeCacheBreak());
     expect(row.category).toBe("cache_break");
     expect(row.category).not.toBe("health_signal");
@@ -70,7 +70,7 @@ describe("cacheBreakEventToRow (PERSIST-01 — category:'cache_break', computed 
     expect(row.agentId).toBe("agent-1");
   });
 
-  it("Test 2: the details JSON carries reason, prev/cur/delta, a changed-dims digest, and estCostUsd", () => {
+  it("the details JSON carries reason, prev/cur/delta, a changed-dims digest, and estCostUsd", () => {
     const row = cacheBreakEventToRow(makeCacheBreak());
     const details = JSON.parse(row.details ?? "{}");
     expect(details.reason).toBe("tools_changed");
@@ -86,7 +86,7 @@ describe("cacheBreakEventToRow (PERSIST-01 — category:'cache_break', computed 
     expect(details.changedDimsDigest.systemCharDelta).toBe(42);
   });
 
-  it("Test 3 (decision #1 — the computed est-$): non-zero for a priced model, 0 for an unknown model", () => {
+  it("the computed est-$ is non-zero for a priced model, 0 for an unknown model", () => {
     const pricedRow = cacheBreakEventToRow(
       makeCacheBreak({ provider: PRICED_PROVIDER, model: PRICED_MODEL, tokenDrop: 1000 }),
     );
@@ -103,7 +103,7 @@ describe("cacheBreakEventToRow (PERSIST-01 — category:'cache_break', computed 
     expect(unknownDetails.estCostUsd).toBe(0);
   });
 
-  it("Test 4 (I3 content-free): the details JSON contains NO tool-name arrays and NO system/query text", () => {
+  it("content-free: the details JSON contains NO tool-name arrays and NO system/query text", () => {
     const row = cacheBreakEventToRow(makeCacheBreak());
     const serialized = row.details ?? "";
     // The verbatim tool names from toolsAdded/Removed/SchemaChanged must NOT appear.
@@ -119,7 +119,7 @@ describe("cacheBreakEventToRow (PERSIST-01 — category:'cache_break', computed 
     expect(Array.isArray(details.changedDimsDigest.added)).toBe(false);
   });
 
-  it("Test 5: model_changed reason round-trips (one of the 15 CacheBreakReason values)", () => {
+  it("model_changed reason round-trips (one of the 15 CacheBreakReason values)", () => {
     const row = cacheBreakEventToRow(makeCacheBreak({ reason: "ttl_expiry_long" }));
     const details = JSON.parse(row.details ?? "{}");
     expect(details.reason).toBe("ttl_expiry_long");

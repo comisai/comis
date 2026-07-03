@@ -129,14 +129,13 @@ describe("buildAutonomyToolWiring", () => {
     expect(mockCreateOrchestrateTool).not.toHaveBeenCalled();
   });
 
-  // Live defect, 2026-06-23: when the host
-  // namespace preflight FAILED the jail cannot be built, so an autonomy-bearing
-  // agent must genuinely degrade to `assistant` HERE — no orchestrate tool, no
-  // lease mint — not merely in the boot WARN. Pre-patch, buildAutonomyToolWiring
-  // resolved the RAW (un-degraded) posture, so on a non-Linux host (or a Linux
-  // host without unprivileged userns) `orchestrate` was still offered and ran
-  // network-unrestricted under sandbox-exec (`allow network*`), contradicting the
-  // boot WARN's "autonomy surfaces are disabled (no silent unjailed fallback)".
+  // When the host namespace preflight FAILS the jail cannot be built, so an
+  // autonomy-bearing agent must genuinely degrade to `assistant` HERE — no orchestrate
+  // tool, no lease mint — not merely in the boot WARN. buildAutonomyToolWiring must
+  // resolve the DEGRADED posture: were it to resolve the RAW (un-degraded) posture, then
+  // on a non-Linux host (or a Linux host without unprivileged userns) `orchestrate` would
+  // still be offered and run network-unrestricted under sandbox-exec (`allow network*`),
+  // contradicting the boot WARN's "autonomy surfaces are disabled (no silent unjailed fallback)".
   it("yields NO orchestrate tool + NO lease mint when the host namespace preflight FAILED (jail unbuildable), even for a standard agent with a sandbox", () => {
     const input = baseInput({ namespacePreflightOk: false });
     const { brokerSpawnEnv, orchestrateTool } = buildAutonomyToolWiring(input);

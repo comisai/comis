@@ -2,13 +2,13 @@
 /**
  * US-07 / J7 — Terminal-driven (Linux + bwrap).
  *
- * §7.7 flow: agent drives a real interactive CLI to complete a task.
+ * Flow: agent drives a real interactive CLI to complete a task.
  * Subsystems composed: A core-loop, B LLM, T terminal-driver, F tools, O security/sandbox.
  *
  * **The KEY gate is `requires.platform: "linux"`** — the terminal-driving path is
  * Linux+bwrap ONLY; on this macOS host runJourney returns SKIPPED(linux-only). The
  * story SHAPE (platform:linux, the terminal-driving steps) registers + validates
- * here; the real CLI drive runs on a Linux+bwrap operator host / PROVE-148.
+ * here; the real CLI drive runs on a Linux+bwrap operator host.
  *
  * @module
  */

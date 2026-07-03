@@ -88,7 +88,7 @@ interface ToolLogger {
 
 /**
  * Dependencies for the process tool factory. Backward compatibility is NOT
- * preserved (see CLAUDE.md user-memory `feedback_no_backward_compat`).
+ * preserved.
  *
  * `toolCapabilityPort` is REQUIRED — read inside the `case "status":` branch
  * to decide whether to augment the result envelope with the retroactive

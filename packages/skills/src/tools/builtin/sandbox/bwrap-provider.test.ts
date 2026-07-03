@@ -106,8 +106,8 @@ describe("BwrapProvider", () => {
       vi.mocked(execFileSync).mockReturnValue("/usr/bin/bwrap\n");
       const provider = new BwrapProvider();
       // Deliberately NOT calling available() — mirrors orchestrate-jail.linux.test.ts:156,
-      // where the jail builds args on a fresh provider. Pre-fix this returned a null
-      // bin → spawn(null) → "TypeError: file argument must be string" on Linux.
+      // where the jail builds args on a fresh provider. Without self-priming this would return a
+      // null bin → spawn(null) → "TypeError: file argument must be string" on Linux.
       const args = provider.buildArgs(makeOpts());
       expect(args[0]).toBe("/usr/bin/bwrap");
     });
@@ -274,7 +274,7 @@ describe("BwrapProvider", () => {
     // credential dir under the INJECTED home (~/.ssh) must be screened and
     // rejected — proving buildArgs screens against opts.home. The ambient
     // os.homedir() is mocked to a DIFFERENT path (/home/testuser), so if
-    // buildArgs still read the ambient home (pre-fix) the bind would NOT match
+    // buildArgs read the ambient home instead, the bind would NOT match
     // the denylist and would be wrongly emitted instead of throwing.
     it("screens caller binds against the injected opts.home, not the ambient homedir", () => {
       vi.mocked(os.homedir).mockReturnValue("/home/testuser"); // ambient (must be ignored)

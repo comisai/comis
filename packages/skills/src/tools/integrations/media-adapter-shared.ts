@@ -2,8 +2,8 @@
 /**
  * Shared helpers for TTS and STT adapters.
  *
- * Centralizes sanitizeApiError (previously duplicated across 6 adapters)
- * and mimeToExtension (previously duplicated across OpenAI STT and Groq STT).
+ * Centralizes sanitizeApiError (shared across 6 adapters) and mimeToExtension
+ * (shared by the OpenAI STT and Groq STT adapters) so there is a single definition.
  *
  * @module media-adapter-shared
  */
@@ -11,8 +11,8 @@
 import { redactErrorMessage } from "@comis/core";
 
 /**
- * Re-export of the SEC-01 free-text error scrubber, relocated to
- * `@comis/core/security` in Phase 197 so `@comis/channels` (the voice-OUT
+ * Re-export of the free-text error scrubber, which lives in
+ * `@comis/core/security` so `@comis/channels` (the voice-OUT
  * pipeline, which deliberately does NOT import `@comis/skills`) can share the
  * SINGLE definition. This re-export keeps the ~6 existing adapter callers
  * (`media-handler-audio.ts`) and {@link sanitizeApiError} below importing it

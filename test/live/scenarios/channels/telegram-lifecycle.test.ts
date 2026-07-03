@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * AUTO-02/03 + the §10A.6 unattended sequence — the AUTONOMY KEYSTONE
- * (Phase 205, Plan 06): restart preserves the emulator + handle (no double-start
+ * AUTO-02/03 + the unattended sequence — the AUTONOMY KEYSTONE:
+ * restart preserves the emulator + handle (no double-start
  * deadlock); reset --deep is an isolated clean slate; `tg wait` blocks on a
- * trajectory signal with a settle-timeout fallback; and the §10A.6 shell-only
+ * trajectory signal with a settle-timeout fallback; and the shell-only
  * sequence (reset --deep -> rpc -> send -> wait -> explain) runs end-to-end with
  * NO human step and honest exits.
  *
- * ── DRIVEN IN-PROCESS (the W1 boundary from 205-04/205-05) ──
+ * ── DRIVEN IN-PROCESS ──
  *
- * The rig controller is IN-PROCESS (205-04): a true cross-process cold-shell
- * `tg restart` is a Phase-208 deliverable (the CLI returns
- * `lifecycle_in_process_only` honestly). So the §10A sequence drives the
+ * The rig controller is IN-PROCESS: a true cross-process cold-shell
+ * `tg restart` is a separate deliverable (the CLI returns
+ * `lifecycle_in_process_only` honestly). So the sequence drives the
  * CONTROLLER directly (restart / reset --deep) + the rig (send) + the harness
- * waiter (wait) — this is exactly the §10A.3 "vitest calls the launcher
+ * waiter (wait) — this is exactly the "vitest calls the launcher
  * functions in-process" path. The rpc / explain legs go over WEBSOCKET
  * (`ws-helpers.ts`), the transport the gateway actually serves for the generic
  * dispatch (see telegram-rpc-passthrough.test.ts: `POST /rpc` 404s at HEAD).
@@ -24,13 +24,13 @@
  *     ORDERING proof — a `createRigController` with a fake daemonHandle + an
  *     injected bootFn spy asserts `cleanup()` resolved BEFORE the boot
  *     (`['cleanup','boot']`), so the activeHandle double-start guard can never
- *     deadlock (Pitfall 1) — deterministically, with NO real daemon.
+ *     deadlock — deterministically, with NO real daemon.
  *
  *   • Stage-C (describe.skipIf(!isLive), COMIS_LIVE): `startStandaloneRig` ->
  *     `controller.restart()` -> a second `/health` passes (probeHealth) AND the
  *     emulator instance + the handle file are PRESERVED; `controller.resetDeep()`
  *     -> a clean slate scoped to the isolated dataDir (never ~/.comis); then the
- *     §10A.6 sequence (reset --deep -> rpc observe -> send -> wait
+ *     unattended sequence (reset --deep -> rpc observe -> send -> wait
  *     model.completed -> obs.explain) runs in-proc with honest exits and NO hang.
  *
  * Run:
@@ -81,7 +81,7 @@ describe("AUTO-02 Stage-B — restart() awaits cleanup() before the re-boot (the
     delete process.env["COMIS_DATA_DIR"];
   });
 
-  it("restart() resolves cleanup() BEFORE bootFn is called (so the activeHandle double-start guard can never deadlock, Pitfall 1)", async () => {
+  it("restart() resolves cleanup() BEFORE bootFn is called (so the activeHandle double-start guard can never deadlock)", async () => {
     // A throwaway isolated dir so the controller's COMIS_DATA_DIR re-pin is real.
     const dataDir = mkdtempSync(join(tmpdir(), "tg-lifecycle-data-"));
     const memoryDbPath = join(dataDir, "test-memory-channel-emu.db");
@@ -120,11 +120,11 @@ describe("AUTO-02 Stage-B — restart() awaits cleanup() before the re-boot (the
 
     // The load-bearing ordering: cleanup() resolved BEFORE boot was called (so a
     // real startTestDaemon would never throw "Test daemon already running" — the
-    // activeHandle double-start guard can never deadlock, Pitfall 1).
+    // activeHandle double-start guard can never deadlock).
     expect(order).toEqual(["cleanup", "boot"]);
     expect(cleanup).toHaveBeenCalledTimes(1);
     expect(bootFn).toHaveBeenCalledTimes(1);
-    // The emulator instance is PRESERVED across the re-boot (success-criterion #5).
+    // The emulator instance is PRESERVED across the re-boot.
     expect(controller.emulator).toBe(emulator);
     // The new handle was swapped in (a later cleanup tears down the CURRENT daemon).
     expect(controller.daemonHandle).toBe(newHandle);
@@ -132,10 +132,10 @@ describe("AUTO-02 Stage-B — restart() awaits cleanup() before the re-boot (the
 });
 
 // ---------------------------------------------------------------------------
-// Stage-C — restart preserves emulator+handle; reset --deep clean slate; §10A.6
+// Stage-C — restart preserves emulator+handle; reset --deep clean slate; sequence
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!isLive)("AUTO-02/03 Stage-C — restart preserves emulator+handle, reset --deep clean slate, the §10A.6 unattended sequence (COMIS_LIVE)", () => {
+describe.skipIf(!isLive)("AUTO-02/03 Stage-C — restart preserves emulator+handle, reset --deep clean slate, the unattended sequence (COMIS_LIVE)", () => {
   let rig: StandaloneRig | undefined;
   let baseDir: string | undefined;
 
@@ -166,8 +166,8 @@ describe.skipIf(!isLive)("AUTO-02/03 Stage-C — restart preserves emulator+hand
     expect(await probeHealth(gatewayUrl)).toBe(true);
     expect(existsSync(handleFile)).toBe(true);
 
-    // The Pitfall-1 proof live: restart() does cleanup() -> re-pin -> boot WITHOUT
-    // throwing "Test daemon already running".
+    // The double-start-guard proof live: restart() does cleanup() -> re-pin ->
+    // boot WITHOUT throwing "Test daemon already running".
     await r.controller.restart();
 
     // A second /health passes (no deadlock, the daemon re-booted on the same port).
@@ -185,7 +185,7 @@ describe.skipIf(!isLive)("AUTO-02/03 Stage-C — restart preserves emulator+hand
     if (r === undefined || r.controller === undefined) return;
 
     // The isolation guarantee: the rig's dataDir is a throwaway mkdtemp dir, NEVER
-    // the operator's real ~/.comis (the resetDeep T-205-10 guard enforces this —
+    // the operator's real ~/.comis (the resetDeep guard enforces this —
     // it THROWS on a non-isolated dataDir before any I/O).
     const dataDir = r.handle.dataDir;
     expect(dataDir).not.toBe(join(homedir(), ".comis"));
@@ -203,7 +203,7 @@ describe.skipIf(!isLive)("AUTO-02/03 Stage-C — restart preserves emulator+hand
   });
 
   it(
-    "the §10A.6 unattended sequence runs end-to-end in-proc with NO human step: reset --deep -> rpc -> send -> wait -> explain, all honest-exit",
+    "the unattended sequence runs end-to-end in-proc with NO human step: reset --deep -> rpc -> send -> wait -> explain, all honest-exit",
     async () => {
       const r = rig;
       expect(r?.controller, "controller present").toBeDefined();
@@ -235,7 +235,7 @@ describe.skipIf(!isLive)("AUTO-02/03 Stage-C — restart preserves emulator+hand
         const inboundId = controller.emulator.injectMessage(
           { chatId },
           { id: 100, firstName: "Tester", username: "tester" },
-          "hello from the §10A unattended sequence",
+          "hello from the unattended sequence",
         );
         expect(inboundId).toBeGreaterThan(0);
 
@@ -252,7 +252,7 @@ describe.skipIf(!isLive)("AUTO-02/03 Stage-C — restart preserves emulator+hand
             timeoutMs: 90_000,
           });
           // ALWAYS resolves — matched OR an honest settle_timeout/timeout (never a hang,
-          // never a fabricated match). The honest-exit contract (§10A.4).
+          // never a fabricated match). The honest-exit contract.
           expect(["matched", "settle_timeout", "timeout"]).toContain(waited.reason);
         }
 
@@ -286,10 +286,10 @@ describe.skipIf(!isLive)("AUTO-02/03 Stage-C — restart preserves emulator+hand
 
   /**
    * Poll for the session JSONL file the daemon writes under
-   * `<dataDir>/workspace/sessions/<tenant>/<channel>/` after a send (Pitfall 3:
-   * the file appears asynchronously). Returns the FIRST `.jsonl` (excluding the
+   * `<dataDir>/workspace/sessions/<tenant>/<channel>/` after a send (the file
+   * appears asynchronously). Returns the FIRST `.jsonl` (excluding the
    * `.trajectory.jsonl` derivative), or undefined on timeout (honest absence —
-   * the §10A.6 wait step then simply skips, never hangs / never false-matches).
+   * the wait step then simply skips, never hangs / never false-matches).
    */
   async function pollForSessionFile(dataDir: string, timeoutMs: number): Promise<string | undefined> {
     const base = join(dataDir, "workspace", "sessions");
@@ -323,11 +323,11 @@ describe.skipIf(!isLive)("AUTO-02/03 Stage-C — restart preserves emulator+hand
 
 // ---------------------------------------------------------------------------
 // Stage-B — resetDeep() isolated-dir guard (deterministic, no daemon) —
-// the §10A "never destroy what you didn't spawn / never ~/.comis" property.
+// the "never destroy what you didn't spawn / never ~/.comis" property.
 // ---------------------------------------------------------------------------
 
 describe("AUTO-02 Stage-B — reset --deep REFUSES a non-isolated dataDir (the ~/.comis guard, no daemon)", () => {
-  it("resetDeep() THROWS on the operator's real ~/.comis BEFORE any cleanup/boot/IO (T-205-10)", async () => {
+  it("resetDeep() THROWS on the operator's real ~/.comis BEFORE any cleanup/boot/IO", async () => {
     const cleanup = vi.fn(async () => undefined);
     const handle = { cleanup, gatewayUrl: "http://127.0.0.1:1", authToken: "t" } as unknown as TestDaemonHandle;
     const bootFn = vi.fn(async () => handle) as unknown as typeof startTestDaemon;

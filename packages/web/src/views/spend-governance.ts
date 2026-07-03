@@ -60,18 +60,18 @@ interface SpendSnapshot {
 
 /**
  * `ic-spend-governance-view` — the native mirror of the Grafana Cost/Governance
- * dashboard, no Grafana required (WEBUI-02, 179-07). Renders the per-agent /
+ * dashboard, no Grafana required. Renders the per-agent /
  * tenant / global spend-vs-ceiling headroom gauges + the three-state
  * pricing-coverage (priced / free / unknown) + the governed-scope table.
  *
- * LOCKED A1: it consumes the LIVE `obs.spend.snapshot` (the threaded
+ * It consumes the LIVE `obs.spend.snapshot` (the threaded
  * `spendAccumulator.getSnapshot()`, NOT the lagging SQL) — so the rendered figure
- * CANNOT disagree with `comis fleet` / the dollars kill-switch (T-179-24).
+ * CANNOT disagree with `comis fleet` / the dollars kill-switch.
  *
- * Admin-gating rides the admin-gated 179-04 RPC (an "Admin access required"
+ * Admin-gating rides the admin-gated snapshot RPC (an "Admin access required"
  * rejection surfaces the error path). Honest-degradation: an `{ enabled: false }`
  * snapshot OR a snapshot whose every ceiling is null renders "spend governance not
- * configured" rather than a misleading $0 gauge (T-179-23). Content-free: scope
+ * configured" rather than a misleading $0 gauge. Content-free: scope
  * KEYS (config ids) + dollar/count NUMBERS + pricing enums ONLY.
  *
  * Data flow: `obs.spend.snapshot` RPC -> this view (the `diagnostics-view.ts`

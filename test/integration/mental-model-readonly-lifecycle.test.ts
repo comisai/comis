@@ -1,53 +1,49 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * INTEGRATION (the Phase 202 CLOSING GATE, carried forward to `mental_models` in
- * Phase 222): the end-to-end READ-ONLY learned-skill lifecycle PLUS the Phase-222
- * MODEL-04 source-agnostic characterization, both driven through the PUBLIC
+ * INTEGRATION: the end-to-end READ-ONLY learned-skill lifecycle PLUS the
+ * source-agnostic downstream characterization, both driven through the PUBLIC
  * `@comis/memory` + `@comis/daemon` dist barrels against a real temp SQLite
- * database (NOT `~/.comis`). The store table is now `mental_models` (kind='skill'
- * rows); the surface/promote/demote behavior is byte-identical to the pre-rename
- * `learned_skills` path (Phase 222 is a no-behavior-change generalization).
+ * database (NOT `~/.comis`). The store table is `mental_models` (kind='skill'
+ * rows); the surface/promote/demote behavior is shared across every doc kind.
  *
- * This is the durable, store-observable proof of the v2.26 Verified Learning P3
- * read-only path: a `success` trajectory's synthesized + sandbox-validated,
- * READ-ONLY procedure is
+ * This is the durable, store-observable proof of the read-only learned-skill
+ * path: a `success` trajectory's synthesized + sandbox-validated, READ-ONLY
+ * procedure is
  *
  *   admit (state=candidate, trust=learned, mutating=false, proof_count low)
  *     → surface-eligible-WHEN-active (a candidate is filtered by the active-only
- *       surface until promoted — matches Plan 04's `state==='active'` derive filter)
+ *       surface until promoted — the surface derive filter is `state==='active'`)
  *     → attributed SUCCESSFUL reuse promotes candidate→active PAST the proof bar
- *       (Plan 02's threshold-gated CASE: proof_count bumps every call, the flip
+ *       (the threshold-gated CASE: proof_count bumps every call, the flip
  *       fires only at proof_count + 1 >= promoteAtProofCount)
  *     → it is now surface-eligible (active ∧ !mutating ∧ !evicted)
- *     → FAILING reuse demotes active→stale (Plan 05's corroboration+trend loop
+ *     → FAILING reuse demotes active→stale (the corroboration+trend loop
  *       calls demote()), then evict→archived (the soft-close that drops it from
  *       the read-only surface)
  *     → (tenant, agent) isolation holds (a second scope sees NONE of agent A's
  *       skills)
- *     → trust stays 'learned' throughout (SEC-01 ceiling — never `system`).
+ *     → trust stays 'learned' throughout (the trust ceiling — never `system`).
  *
  * The store-observable lifecycle is what this test drives (the @comis/memory
  * dist contract). The LIVE model turn — an agent READING a surfaced SKILL.md on a
  * real daemon and performing the steps via the governed tool path — is
- * MANUAL-ONLY (see 202-VALIDATION.md); the surfacing-render, the per-session
- * freeze, and the run-time-governance halves are covered by the Plan 04/05 unit
- * tests. The promote/demote POLICY (the corroboration + decay-aware-trend
- * WHEN-to-demote decision) is unit-tested in Plan 05; this test drives the store
- * transitions that policy ultimately calls.
+ * MANUAL-ONLY; the surfacing-render, the per-session freeze, and the
+ * run-time-governance halves are covered by unit tests. The promote/demote POLICY
+ * (the corroboration + decay-aware-trend WHEN-to-demote decision) is unit-tested
+ * separately; this test drives the store transitions that policy ultimately calls.
  *
  * No daemon needed — `mental_models` has no foreign key, so an `openSqliteDatabase`
- * + `initSchema` temp db is sufficient (the memory-persistence-roundtrip /
- * sqlite-mental-model-store precedent, scaled to the dist contract).
+ * + `initSchema` temp db is sufficient.
  *
- * MODEL-04 (the Phase-223 de-risk keystone): the second describe block proves the
- * surface→attribute→promote downstream is INDEPENDENT of how a doc was created — it
- * hand-authors a `kind='skill'` doc directly via `store.admit` (NO synthesis, NO
- * clustering), then drives the REAL `applySkillOutcomeTransitions` (imported from
- * the `@comis/daemon` dist barrel) with a synthetic success outcome attributing
- * that name, and asserts `promoteByName` fired and actually moved a row. The
- * transition path reads only the skill NAME (ATTR-01), never a `kind`/synthesis
- * marker — so Phase 223 can swap the admission SOURCE (synthesis → reflection)
- * knowing promote/demote/surface need zero change.
+ * The second describe block proves the surface→attribute→promote downstream is
+ * INDEPENDENT of how a doc was created — it hand-authors a `kind='skill'` doc
+ * directly via `store.admit` (NO synthesis, NO clustering), then drives the REAL
+ * `applySkillOutcomeTransitions` (imported from the `@comis/daemon` dist barrel)
+ * with a synthetic success outcome attributing that name, and asserts
+ * `promoteByName` fired and actually moved a row. The transition path reads only
+ * the skill NAME, never a `kind`/synthesis marker — so the admission SOURCE
+ * (synthesis, reflection, hand-authored) can vary while promote/demote/surface
+ * stay unchanged.
  *
  * @module
  */
@@ -57,11 +53,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSqliteMentalModelStore, openSqliteDatabase, initSchema } from "@comis/memory";
-// MODEL-04 drives the REAL resolve-seam transition (NOT a store-only fallback):
-// applySkillOutcomeTransitions + createSkillTrendTracker are surfaced through the
-// @comis/daemon dist barrel (Task 2 (a), mirroring the skill-bundle-install
-// test-driven export precedent at packages/daemon/src/index.ts) so this
-// characterization test can call the production promote loop body directly.
+// The source-agnostic block drives the REAL resolve-seam transition (NOT a
+// store-only fallback): applySkillOutcomeTransitions + createSkillTrendTracker
+// are surfaced through the @comis/daemon dist barrel so this characterization
+// test can call the production promote loop body directly.
 import { applySkillOutcomeTransitions, createSkillTrendTracker } from "@comis/daemon";
 import type {
   AdmitMentalModelInput,
@@ -97,7 +92,7 @@ function readOnlyAdmission(over: Partial<AdmitMentalModelInput> = {}): AdmitMent
   };
 }
 
-describe("INTEGRATION: learned-skill READ-ONLY lifecycle (Phase 202 closing gate)", () => {
+describe("INTEGRATION: learned-skill READ-ONLY lifecycle", () => {
   let tmpDir: string;
   let db: ReturnType<typeof openSqliteDatabase>;
   let store: ReturnType<typeof createSqliteMentalModelStore>;
@@ -142,7 +137,7 @@ describe("INTEGRATION: learned-skill READ-ONLY lifecycle (Phase 202 closing gate
     expect(admitted!.proofCount).toBe(0);
 
     // 2. SURFACE-ELIGIBILITY: a candidate is listed but is NOT yet active — the
-    //    read-only surface (Plan 04) derives ONLY `state==='active' ∧ !mutating`,
+    //    read-only surface derives ONLY `state==='active' ∧ !mutating`,
     //    so a candidate is filtered out until promoted.
     const listedAtCandidate = await store.list(SCOPE_A);
     expect(listedAtCandidate.ok).toBe(true);
@@ -152,7 +147,7 @@ describe("INTEGRATION: learned-skill READ-ONLY lifecycle (Phase 202 closing gate
 
     // 3. Attributed SUCCESSFUL reuse: promote() three times at the proof bar.
     //    proof_count bumps every call; the candidate→active flip fires ONLY when
-    //    proof_count + 1 >= PROMOTE_AT (the Plan 02 threshold gate).
+    //    proof_count + 1 >= PROMOTE_AT (the threshold gate).
     expect((await store.promote(id, SCOPE_A, PROMOTE_AT)).ok).toBe(true); // proof 1
     expect(await stateOf(store, "deploy-the-thing", SCOPE_A)).toBe("candidate"); // not yet
     expect((await store.promote(id, SCOPE_A, PROMOTE_AT)).ok).toBe(true); // proof 2
@@ -164,7 +159,7 @@ describe("INTEGRATION: learned-skill READ-ONLY lifecycle (Phase 202 closing gate
     const active = promotedRow.ok ? promotedRow.value : undefined;
     expect(active!.state).toBe("active");
     expect(active!.proofCount).toBe(3);
-    expect(active!.trustLevel).toBe("learned"); // SEC-01: trust never moved on promote
+    expect(active!.trustLevel).toBe("learned"); // trust ceiling: never moves on promote
 
     // 4. The active read-only skill IS now surface-eligible (active ∧ !mutating ∧ !evicted).
     const listedActive = await store.list(SCOPE_A);
@@ -177,7 +172,7 @@ describe("INTEGRATION: learned-skill READ-ONLY lifecycle (Phase 202 closing gate
     expect((await store.demote(id, SCOPE_A)).ok).toBe(true);
     const demoted = await store.get("deploy-the-thing", SCOPE_A);
     expect(demoted.ok && demoted.value!.state).toBe("stale");
-    expect(demoted.ok && demoted.value!.trustLevel).toBe("learned"); // SEC-01 holds through demote
+    expect(demoted.ok && demoted.value!.trustLevel).toBe("learned"); // trust ceiling holds through demote
     expect(surfaceEligible(demoted.ok ? demoted.value! : activeRow!)).toBe(false); // stale → off the surface
 
     // evict() is the SOFT close → state='archived' + evicted_at set. get()/list()
@@ -197,7 +192,7 @@ describe("INTEGRATION: learned-skill READ-ONLY lifecycle (Phase 202 closing gate
       .get(id) as { state: string; trust_level: string; evicted_at: number | null } | undefined;
     expect(archivedRow).toBeDefined();
     expect(archivedRow!.state).toBe("archived");
-    expect(archivedRow!.trust_level).toBe("learned"); // SEC-01: never `system`, even archived
+    expect(archivedRow!.trust_level).toBe("learned"); // trust ceiling: never `system`, even archived
     expect(archivedRow!.evicted_at).not.toBeNull(); // soft-evict timestamp set
   });
 
@@ -229,24 +224,23 @@ describe("INTEGRATION: learned-skill READ-ONLY lifecycle (Phase 202 closing gate
 });
 
 // ===========================================================================
-// MODEL-04 — source-agnostic downstream (hand-authored doc, no synthesis).
+// Source-agnostic downstream (hand-authored doc, no synthesis).
 //
-// The Phase-223 de-risk KEYSTONE: prove the surface→attribute→promote downstream
-// is INDEPENDENT of how a doc was created. A `kind='skill'` doc is hand-authored
-// directly via `store.admit` (NO synthesis, NO clustering, NO embeddings), then
-// the REAL `applySkillOutcomeTransitions` (the production resolve-seam promote
-// loop body, imported from the @comis/daemon dist barrel — NOT a re-implemented
-// stub) is driven with a synthetic success outcome attributing that name. The
-// transition reads ONLY the skill NAME (ATTR-01) and never a `kind`/synthesis
-// marker, so a hand-authored (later: reflected) doc promotes EXACTLY as a
-// synthesized skill would. Passing this means Phase 223 can swap the admission
-// SOURCE (synthesis → reflection) with confidence that promote/demote/surface
-// need zero change.
+// Prove the surface→attribute→promote downstream is INDEPENDENT of how a doc was
+// created. A `kind='skill'` doc is hand-authored directly via `store.admit` (NO
+// synthesis, NO clustering, NO embeddings), then the REAL
+// `applySkillOutcomeTransitions` (the production resolve-seam promote loop body,
+// imported from the @comis/daemon dist barrel — NOT a re-implemented stub) is
+// driven with a synthetic success outcome attributing that name. The transition
+// reads ONLY the skill NAME and never a `kind`/synthesis marker, so a
+// hand-authored (or reflected) doc promotes EXACTLY as a synthesized skill would.
+// The admission SOURCE (synthesis, reflection, hand-authored) can therefore vary
+// with confidence that promote/demote/surface need zero change.
 // ===========================================================================
 
 const SCOPE_MM: LearningScope = { tenantId: "tenant_mm", agentId: "agent_mm", now: 5_000 };
 
-describe("INTEGRATION: MODEL-04 — source-agnostic downstream (hand-authored doc, no synthesis)", () => {
+describe("INTEGRATION: source-agnostic downstream — hand-authored doc, no synthesis", () => {
   let tmpDir: string;
   let db: ReturnType<typeof openSqliteDatabase>;
   let store: ReturnType<typeof createSqliteMentalModelStore>;
@@ -276,9 +270,9 @@ describe("INTEGRATION: MODEL-04 — source-agnostic downstream (hand-authored do
   it("a hand-authored kind='skill' doc promotes via the REAL applySkillOutcomeTransitions exactly as a synthesized skill", async () => {
     // GIVEN a hand-authored doc — NO synthesis, NO clustering, NO embeddings.
     // `kind` is omitted ⇒ the adapter defaults it to 'skill' (proving a plain
-    // skill admit is unchanged); the same admit a Phase-223 reflection doc will
-    // make. trust_level is NEVER passed — the store coerces 'learned' (INV-1/I2
-    // keystone, the security half of the source-agnostic proof: T-222-10).
+    // skill admit is unchanged); the same admit a reflection doc would make.
+    // trust_level is NEVER passed — the store coerces 'learned' (the security
+    // half of the source-agnostic proof: an admitted doc cannot self-escalate trust).
     const admitR = await store.admit(
       {
         name: "hand-authored-play",
@@ -302,7 +296,7 @@ describe("INTEGRATION: MODEL-04 — source-agnostic downstream (hand-authored do
     const candidate = beforeReuse.ok ? beforeReuse.value : undefined;
     expect(candidate).toBeDefined();
     expect(candidate!.state).toBe("candidate");
-    expect(candidate!.trustLevel).toBe("learned"); // T-222-10: hand-authored cannot escalate trust
+    expect(candidate!.trustLevel).toBe("learned"); // hand-authored cannot escalate trust
     expect(candidate!.kind).toBe("skill"); // omitted kind ⇒ 'skill' (a skill admit unchanged)
     expect(candidate!.proofCount).toBe(0);
 
@@ -349,8 +343,8 @@ describe("INTEGRATION: MODEL-04 — source-agnostic downstream (hand-authored do
     // THEN (PRIMARY — the strong path) the REAL loop fired promoteByName against
     // the hand-inserted doc: it emitted `learning:skill_promoted` (count ≥ 1) AND
     // the row actually moved — proof_count bumped, candidate→active at threshold 1.
-    // This characterizes the source-agnostic downstream: Phase 223 swaps the
-    // admission SOURCE with confidence that this path is unchanged.
+    // This characterizes the source-agnostic downstream: the admission SOURCE
+    // can change with confidence that this path is unchanged.
     const promotedEmits = emit.mock.calls.filter(([event]) => event === "learning:skill_promoted");
     expect(promotedEmits.length).toBeGreaterThanOrEqual(1);
     const promotedPayload = promotedEmits[0]?.[1] as { agentId: string; count: number } | undefined;
@@ -363,7 +357,7 @@ describe("INTEGRATION: MODEL-04 — source-agnostic downstream (hand-authored do
     expect(promoted).toBeDefined();
     expect(promoted!.proofCount).toBeGreaterThanOrEqual(1); // a row actually changed
     expect(promoted!.state).toBe("active"); // crossed the proof bar (threshold 1)
-    expect(promoted!.trustLevel).toBe("learned"); // SEC-01: trust never moved on promote
+    expect(promoted!.trustLevel).toBe("learned"); // trust ceiling: never moves on promote
 
     // SECONDARY (kept as a direct store-level check) — the idempotent name-keyed
     // promote reports a real row move. NOTE the loop above already promoted it to
@@ -378,7 +372,7 @@ describe("INTEGRATION: MODEL-04 — source-agnostic downstream (hand-authored do
 });
 
 // ---------------------------------------------------------------------------
-// Surface-eligibility mirror — the Plan 04 derive filter, expressed locally so a
+// Surface-eligibility mirror — the surface derive filter, expressed locally so a
 // drift in the surface rule is caught here at the dist contract: a learned skill
 // is surfaced ONLY when it is `active`, NOT `mutating`, and NOT soft-evicted.
 // ---------------------------------------------------------------------------

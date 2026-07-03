@@ -1,22 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `TgEmulator` — the Tier-1 Telegram Bot API wire backend (EMU-01..05 + SEC-01,
- * Phase 204), built ON the Plan-01 `http-backend` base and `extends
- * ChannelEmulator` (foundation-real-from-day-one, design §3A.7).
+ * `TgEmulator` — the Tier-1 Telegram Bot API wire backend, built ON the
+ * `http-backend` base and `extends ChannelEmulator`.
  *
  * This is the fake `api.telegram.org` the REAL production grammy adapter hits
- * over loopback HTTP. The rig (Plan 05) boots an isolated Comis daemon pointed
+ * over loopback HTTP. The rig boots an isolated Comis daemon pointed
  * at this emulator via `channels.telegram.apiRoot`; an injected inbound message
  * round-trips through the daemon and the bot's reply lands in `outbound()`.
  *
  * It composes the shared loopback server (`createHttpBackend()`) and registers
  * its Bot-API method table on the base's native-route dispatch — it does NOT
- * spin up its own `node:http` server (SEC-02 success-criterion #5: built ON the
- * base, not a bespoke server). The base owns the loopback bind (127.0.0.1 only,
- * SEC-01), the raw-body read, and the 404-on-unmatched hardening.
+ * spin up its own `node:http` server (built ON the
+ * base, not a bespoke server). The base owns the loopback bind (127.0.0.1 only),
+ * the raw-body read, and the 404-on-unmatched hardening.
  *
- * The genuinely new mechanic over the proven `mock-telegram-server.ts` is the
- * §9 "trickiest bit": a TRUE long-poll `getUpdates` (offset/limit/timeout/ack
+ * The genuinely new mechanic over the proven `mock-telegram-server.ts` is a
+ * TRUE long-poll `getUpdates` (offset/limit/timeout/ack
  * with a blocking waiter and NO dropped or duplicated updates) — NOT the mock's
  * empty-the-queue-on-every-poll shortcut (the anti-pattern this emulator
  * deliberately avoids).
@@ -27,14 +26,14 @@
  *   - setMyCommands — fire-and-forget; the adapter only `.catch()`-warns
  *                     (telegram-lifecycle.ts).
  *   - sendMessage   — mints a monotonic `message_id`, records a full
- *                     `RecordedOutbound` to the chat oracle (EMU-03).
- *   - getUpdates    — the TRUE long-poll (EMU-02 — see `serveGetUpdates`).
- *   - setMessageReaction — set (non-empty) / clear (empty), recorded (EMU-04).
+ *                     `RecordedOutbound` to the chat oracle.
+ *   - getUpdates    — the TRUE long-poll (see `serveGetUpdates`).
+ *   - setMessageReaction — set (non-empty) / clear (empty), recorded.
  *   - getFile       — file descriptor from the REAL file_id store (file_size =
  *                     bytes.length, file_path = the stored key) + a
  *                     `GET /file/bot<token>/<file_path>` route that serves the
  *                     stored RAW bytes; a miss / `../`-laden path → 404, never a
- *                     disk read (MEDIA-01/02, Phase 207 — was the EMU-05 stub).
+ *                     disk read.
  *
  * TEST-HARNESS — lives under `test/`, never `packages`; ZERO production code
  * change. `test/` is outside every `packages` source-tree ESLint/architecture
@@ -73,7 +72,7 @@ import {
 import { tgCaps } from "./tg-caps.js";
 
 /**
- * The Telegram webhook secret-token header (AUTO-05, Phase 208). When a bot is
+ * The Telegram webhook secret-token header. When a bot is
  * registered with a `secret_token`, Telegram stamps every delivered Update with
  * this header; the host's ingestion route is expected to reject a POST whose
  * header is wrong/absent. The emulator's webhook-POST mode
@@ -82,13 +81,13 @@ import { tgCaps } from "./tg-caps.js";
  * single source of truth shared by the POST side and the receiver side.
  *
  * ⚠ The PRODUCT does NOT check this header at HEAD — there is no Telegram
- * webhook ingestion route (the AUTO-05 finding); the gate proven here is the
+ * webhook ingestion route; the gate proven here is the
  * HARNESS-side one. See `webhook-receiver.ts` for the full honest-gap note.
  */
 export const TELEGRAM_WEBHOOK_SECRET_TOKEN_HEADER = "X-Telegram-Bot-Api-Secret-Token";
 
 /**
- * The harness-side webhook secret-token gate (AUTO-05) as a pure predicate.
+ * The harness-side webhook secret-token gate as a pure predicate.
  *
  * Returns `true` IFF the presented `X-Telegram-Bot-Api-Secret-Token` header is
  * present AND exactly equals the configured `expected` token. A `undefined`
@@ -98,7 +97,7 @@ export const TELEGRAM_WEBHOOK_SECRET_TOKEN_HEADER = "X-Telegram-Bot-Api-Secret-T
  * 200/401 response).
  *
  * This mirrors the discipline a REAL ingestion route must enforce; the product
- * has no such route at HEAD (the AUTO-05 finding), so this gate lives on the
+ * has no such route at HEAD, so this gate lives on the
  * harness side. NOT a timing-safe compare — a test fixture, not production auth
  * (the real grammy `webhookCallback({ secretToken })` owns the production check
  * IF a route is ever added).
@@ -110,13 +109,12 @@ export function checkWebhookSecretToken(expected: string, presented: string | un
 
 /**
  * A `RecordedOutbound` — the full option set captured for every outbound the
- * agent pushes to the channel (design §4.4). Later phases assert on the FULL
- * set; the 204 round-trip only needs `text` + `messageId`, but recording
- * everything now avoids a later refactor.
+ * agent pushes to the channel. The round-trip only needs `text` + `messageId`,
+ * but recording everything avoids a later refactor.
  *
  * This is the telegram-specific SUPERSET of the channel-agnostic
- * {@link AgnosticRecordedOutbound} lifted to `harness/recorded-outbound.ts`
- * (the foundation-fix, CHAN2-02). It `extends` the lifted subset so the
+ * {@link AgnosticRecordedOutbound} lifted to `harness/recorded-outbound.ts`.
+ * It `extends` the lifted subset so the
  * superset relationship is a compile-time guarantee: the channel-neutral
  * `method`/`messageId`/`text?` come from the base; the telegram-specific extras
  * below are additive. The generic `control-api` + the dual oracle consume only
@@ -132,7 +130,7 @@ export interface RecordedOutbound extends AgnosticRecordedOutbound {
   parseMode?: string;
   /** Inline buttons + callback_data. */
   replyMarkup?: unknown;
-  /** Media kind, when an attachment is sent (Phase 207). */
+  /** Media kind, when an attachment is sent. */
   mediaKind?: string;
   /** Attachment caption. */
   caption?: string;
@@ -151,7 +149,7 @@ export interface RecordedOutbound extends AgnosticRecordedOutbound {
 }
 
 /**
- * Optional per-file metadata carried alongside the stored bytes (MEDIA-01).
+ * Optional per-file metadata carried alongside the stored bytes.
  * Mirrors the subset of grammy media fields the builders echo + the resolver
  * may read; all optional (the test author supplies what a scenario needs).
  */
@@ -175,16 +173,16 @@ export interface MediaMeta {
 /**
  * The {@link TgEmulator.injectLocation} argument — exactly one of `location` /
  * `venue` (a discriminated either, matching the mapper's venue-WINS `else if`).
- * `LocationInput`/`VenueInput` are the Plan-01 builder input shapes reused here.
+ * `LocationInput`/`VenueInput` are the builder input shapes reused here.
  */
 export type PlaceInput =
   | { readonly location: LocationInput; readonly venue?: never }
   | { readonly venue: VenueInput; readonly location?: never };
 
 /**
- * A file held in the bot-global store (MEDIA-01, Pattern 1). `getFile` is keyed
+ * A file held in the bot-global store. `getFile` is keyed
  * by `fileId` (the request body); the file route is keyed by `filePath` (the
- * URL segment) — Pitfall 3: BOTH indexes point at the SAME `StoredFile`, so the
+ * URL segment) — BOTH indexes point at the SAME `StoredFile`, so the
  * size getFile reports and the bytes the route serves can never diverge.
  */
 export interface StoredFile {
@@ -204,7 +202,7 @@ export interface StoredFile {
 
 /**
  * The handle {@link TgEmulator.storeFile} returns — the minted ids + path the
- * caller (a Task-1 test, or {@link TgEmulator.injectMedia}) threads into a media
+ * caller (a test, or {@link TgEmulator.injectMedia}) threads into a media
  * `Update` (the `file_id` the agent later resolves via `getFile`).
  */
 export interface StoredFileHandle {
@@ -217,7 +215,7 @@ export interface StoredFileHandle {
 }
 
 /**
- * A chat reference. For the 204 DM round-trip a chat is identified by its
+ * A chat reference. For the DM round-trip a chat is identified by its
  * numeric `chatId`; the emulator keys its per-chat ORACLE state (outbound log +
  * reactions) on it. The long-poll pending queue is bot-global, not per-chat
  * (see {@link ChatOracle}).
@@ -228,7 +226,7 @@ export interface ChatRef {
 }
 
 /**
- * The Telegram error envelope a fault returns (FAULT-01). Mirrors the real Bot
+ * The Telegram error envelope a fault returns. Mirrors the real Bot
  * API's failure shape `{ ok:false, error_code, description, parameters? }` —
  * NOT `okEnvelope`'s `{ ok:true, result }`. The real grammy adapter turns this
  * into a thrown `GrammyError` (`.error_code`/`.description`/`.parameters`
@@ -245,7 +243,7 @@ export interface TgFault {
 }
 
 /**
- * Options for {@link TgEmulator.fail} (FAULT-01).
+ * Options for {@link TgEmulator.fail}.
  *   - `once`     — fail only the NEXT matching call, then auto-clear so the
  *                  adapter's RETRY (the second call) succeeds; the recorded
  *                  retry outbound is what a fallback assertion reads.
@@ -261,9 +259,9 @@ export interface FailOpts {
 }
 
 /**
- * A group member / sender shape (GROUP-01). The same loose `{ id, firstName,
+ * A group member / sender shape. The same loose `{ id, firstName,
  * username? }` the inject verbs accept — `createGroupChat` records the member
- * set + the admin subset so COVER-01's `getChatAdministrators` (Plan 03) can
+ * set + the admin subset so `getChatAdministrators` can
  * report the seed and the rig can drive multi-user cross-talk.
  */
 export interface GroupMember {
@@ -273,10 +271,10 @@ export interface GroupMember {
 }
 
 /**
- * Options for {@link TgEmulator.createGroupChat} (GROUP-01). `supergroup`
+ * Options for {@link TgEmulator.createGroupChat}. `supergroup`
  * upgrades the chat to a supergroup; `forum: true` (always a supergroup) sets
  * the `is_forum` flag the mapper reads. `admins` seeds the admin subset
- * (recorded for a Plan-03 `getChatAdministrators`); `chatId` pins a specific
+ * (recorded for a `getChatAdministrators` call); `chatId` pins a specific
  * NEGATIVE id (else one is minted).
  */
 export interface CreateGroupChatOptions {
@@ -288,14 +286,14 @@ export interface CreateGroupChatOptions {
   readonly supergroup?: boolean;
   /** Mark as a forum (sets `is_forum`; implies supergroup). */
   readonly forum?: boolean;
-  /** The admin subset (recorded for the Plan-03 `getChatAdministrators` seed). */
+  /** The admin subset (recorded for the `getChatAdministrators` seed). */
   readonly admins?: readonly GroupMember[];
   /** Pin a specific NEGATIVE chat id (else one is minted in the `-100…` form). */
   readonly chatId?: number;
 }
 
 /**
- * A reference to a forum topic (GROUP-01) — the `message_thread_id` an
+ * A reference to a forum topic — the `message_thread_id` an
  * {@link TgEmulator.injectMessage} `thread` opt routes to.
  */
 export interface ThreadRef {
@@ -308,9 +306,9 @@ export interface ThreadRef {
 }
 
 /**
- * Addressing/threading options for {@link TgEmulator.injectMessage} (GROUP-02).
+ * Addressing/threading options for {@link TgEmulator.injectMessage}.
  * Every field is OPTIONAL — an empty/absent `InjectOpts` is byte-identical to the
- * pre-208 single-arg DM call. Mutually composable.
+ * single-arg DM call. Mutually composable.
  */
 export interface InjectOpts {
   /** Add a `mention` entity over `@<bot.username>` (→ `isBotMentioned`). */
@@ -335,23 +333,23 @@ export interface InjectOpts {
 export interface TgEmulator extends ChannelEmulator {
   /**
    * The SHARED loopback http-backend base this emulator composes. Exposed so the
-   * control API (Plan 04, `registerControlApi(emulator.backend, emulator)`) can
+   * control API (`registerControlApi(emulator.backend, emulator)`) can
    * register its `/control/*` routes on the SAME loopback port as the Bot API
-   * (SEC-01: one port, namespaced). The emulator still owns the base's
+   * (one port, namespaced). The emulator still owns the base's
    * lifecycle — `start()`/`stop()` delegate to it; callers MUST NOT call
    * `backend.start()`/`stop()` directly.
    */
   readonly backend: HttpBackend;
   /**
-   * Create a group/supergroup/forum chat (GROUP-01) — records the member set +
-   * the admin subset (for a Plan-03 `getChatAdministrators` seed) + the
+   * Create a group/supergroup/forum chat — records the member set +
+   * the admin subset (for a `getChatAdministrators` seed) + the
    * forum/bot metadata, and returns a {@link ChatRef} carrying a NEGATIVE chat
    * id (the `-100…` supergroup form). The recorded chat shape is what
    * {@link injectMessage} stamps onto group message updates.
    */
   createGroupChat(opts: CreateGroupChatOptions): ChatRef;
   /**
-   * Create a forum topic in a (forum) supergroup (GROUP-01) — mints a
+   * Create a forum topic in a (forum) supergroup — mints a
    * `message_thread_id` and returns a {@link ThreadRef} the
    * {@link injectMessage} `thread` opt routes to.
    */
@@ -360,8 +358,8 @@ export interface TgEmulator extends ChannelEmulator {
    * Queue an inbound text message from `from` in `chat` for the next
    * `getUpdates` long-poll (builds a grammy-typed `Update` via `tg-payloads`).
    *
-   * With no `opts` (or an empty one) this is the pre-208 DM call — the chat is
-   * the `private` literal and no addressing fields are set (back-compat). When
+   * With no `opts` (or an empty one) this is the DM call — the chat is
+   * the `private` literal and no addressing fields are set. When
    * `chat` is a group created via {@link createGroupChat}, the recorded group/
    * forum chat shape is stamped on; `opts` threads the addressing entities
    * (mention/command), the `reply_to_message` (replyTo/replyToUser), and the
@@ -375,7 +373,7 @@ export interface TgEmulator extends ChannelEmulator {
     opts?: InjectOpts,
   ): number;
   /**
-   * The webhook-POST mode (AUTO-05): instead of queuing the inbound for the next
+   * The webhook-POST mode: instead of queuing the inbound for the next
    * `getUpdates` long-poll (the default polling path of {@link injectMessage}),
    * POST the SAME grammy `message` `Update` (built by the SAME `tg-payloads`
    * builders, so its shape is identical to the polled one) to the emulator's
@@ -388,8 +386,8 @@ export interface TgEmulator extends ChannelEmulator {
    * ⚠ This requires the emulator to be constructed with a `webhook` option (the
    * URL of a {@link createWebhookReceiver}-style target). Calling it without one
    * throws — the webhook-POST mode is opt-in; the default inject path is
-   * unchanged. The PRODUCT has no webhook ingestion route at HEAD (the AUTO-05
-   * finding) — this drives the harness-side gate, never a real agent delivery.
+   * unchanged. The PRODUCT has no webhook ingestion route at HEAD — this drives
+   * the harness-side gate, never a real agent delivery.
    *
    * @param secretOverride when set, POST this token in the header INSTEAD of the
    *   configured `webhook.secret` — so a scenario can drive the WRONG-token and
@@ -403,7 +401,7 @@ export interface TgEmulator extends ChannelEmulator {
     secretOverride?: string,
   ): Promise<number>;
   /**
-   * Queue an inbound forum-service `message` update of `kind` (COVER-02) for the
+   * Queue an inbound forum-service `message` update of `kind` for the
    * next `getUpdates` long-poll (builds it via {@link makeServiceMessageUpdate}).
    * The adapter's message handler FILTERS these six kinds at
    * `telegram-inbound.ts:50-58` — so the negative scenario proves the service
@@ -416,12 +414,12 @@ export interface TgEmulator extends ChannelEmulator {
    */
   injectServiceMessage(chat: ChatRef, kind: ForumServiceKind): number;
   /**
-   * The Bot-API method names a UC called that are NOT implemented on demand —
-   * each routed through the honest unimplemented-log fallback (COVER-01, HARD
-   * constraint 3). A Tier-3 method the harness has not wired logs
+   * The Bot-API method names a scenario called that are NOT implemented on demand —
+   * each routed through the honest unimplemented-log fallback. A Tier-3 method the
+   * harness has not wired logs
    * `[tg-emulator] unimplemented Bot-API method: <name>` AND is appended here, so
    * a scenario can DETECT it instead of a silent no-op falsely reporting coverage
-   * (the no-false-success principle — T-208-10). Names appear in call order, with
+   * (the no-false-success principle). Names appear in call order, with
    * duplicates (one entry per call).
    */
   unimplementedCalls(): readonly string[];
@@ -441,7 +439,7 @@ export interface TgEmulator extends ChannelEmulator {
     emoji: ReactionTypeEmoji["emoji"],
   ): void;
   /**
-   * Store `bytes` (MEDIA-01) and queue an inbound media `message` update of
+   * Store `bytes` and queue an inbound media `message` update of
    * `kind` carrying the minted `file_id` for the next `getUpdates` poll (builds
    * a grammy-typed `Update` via `makeMediaUpdate`). Mints a `message_id` like
    * {@link injectMessage} — a media message IS a new message.
@@ -498,16 +496,16 @@ export interface TgEmulator extends ChannelEmulator {
   resetChat(chat: ChatRef): void;
   /**
    * Store `bytes` in the bot-global file store under a freshly-minted
-   * `file_id`/`file_unique_id`/`file_path` (MEDIA-01). Indexes the file under
+   * `file_id`/`file_unique_id`/`file_path`. Indexes the file under
    * BOTH `filesById` (the getFile key) and `filesByPath` (the route key). The
    * returned handle carries the ids/path so the caller can thread the `file_id`
-   * into a media `Update` (a Task-1 test seeds the store directly; Task-2's
+   * into a media `Update` (a test can seed the store directly;
    * {@link injectMedia} calls this before building the media update).
    * @returns the minted `{ fileId, fileUniqueId, filePath }`.
    */
   storeFile(kind: MediaKind, bytes: Buffer, meta?: MediaMeta): StoredFileHandle;
   /**
-   * Inject a fault (FAULT-01): make the Bot-API `method` return the Telegram
+   * Inject a fault: make the Bot-API `method` return the Telegram
    * error envelope `{ ok:false, error_code, description, parameters? }` instead
    * of its normal `okEnvelope`, so the REAL adapter hits the error and runs its
    * fallback (parse_mode retry / thread-not-found retry / voice→document /
@@ -521,11 +519,11 @@ export interface TgEmulator extends ChannelEmulator {
 }
 
 /**
- * The webhook-POST configuration (AUTO-05). When set, {@link TgEmulator.postWebhookMessage}
+ * The webhook-POST configuration. When set, {@link TgEmulator.postWebhookMessage}
  * POSTs the built Update to `url` carrying the `X-Telegram-Bot-Api-Secret-Token:
  * <secret>` header (instead of queuing for `getUpdates`). The `url` is a
  * harness-side receiver (`createWebhookReceiver`), NOT a product ingestion route
- * — Comis has none at HEAD (the AUTO-05 finding).
+ * — Comis has none at HEAD.
  */
 export interface WebhookConfig {
   /** The loopback webhook target the POST mode delivers to (a `createWebhookReceiver` URL). */
@@ -542,11 +540,11 @@ export interface CreateTgEmulatorOptions {
    * Emulator-side cap on the long-poll block (ms). Defaults to 10s; the
    * scenario's request `timeout` (seconds) is honored but never exceeds this
    * cap, keeping tests deterministic regardless of the runner's request
-   * timeout (RESEARCH A1/A3).
+   * timeout.
    */
   readonly maxPollMs?: number;
   /**
-   * Opt-in webhook-POST mode config (AUTO-05). When present,
+   * Opt-in webhook-POST mode config. When present,
    * {@link TgEmulator.postWebhookMessage} POSTs Updates to `url` with the
    * secret-token header instead of queuing for `getUpdates`. Absent (the
    * default) → the emulator is polling-only and `postWebhookMessage` throws.
@@ -570,8 +568,8 @@ interface PollWaiter {
  * polls `getUpdates` once per bot with a SINGLE offset — it is not chat-scoped.
  * The `update_id` is globally monotonic (`nextUpdateId`), so a single
  * bot-global pending queue is naturally ordered. The ack is not retained state:
- * each poll's `offset` is applied at serve time, so the per-(bot,chat) ack the
- * plan describes is just the bot-global serve filter for the spike's single DM.
+ * each poll's `offset` is applied at serve time, so the per-(bot,chat) ack is
+ * just the bot-global serve filter for a single DM.
  */
 interface ChatOracle {
   /** Recorded outbounds, in send order. */
@@ -588,7 +586,7 @@ const DEFAULT_MAX_POLL_MS = 10_000;
  * `name="<field>"` part carries either a scalar value (e.g. `chat_id`,
  * `caption`) or an `attach://…` reference / the file bytes. We read ONLY the
  * scalar text fields (the ones the oracle records — `chat_id`, `caption`) and
- * skip the binary file part (FAULT-01 (c): the voice→document fallback's caption
+ * skip the binary file part (the voice→document fallback's caption
  * "Voice message (sent as file)" rides as a `caption` field). A field whose
  * value is an `attach://…` reference is a file pointer, not a scalar — skipped.
  */
@@ -620,7 +618,7 @@ function parseMultipart(body: string): Record<string, unknown> {
  * Parse a Bot-API request body. grammy's HTTP client sends method args as a
  * JSON body, form-encoded, OR (for file methods) multipart/form-data; read
  * defensively from all three (mock-telegram-server dual parse + the multipart
- * extension for FAULT-01 (c)). A malformed body yields `{}` (the base already
+ * extension for file sends). A malformed body yields `{}` (the base already
  * guarantees the server stays up).
  */
 function parseBody(body: string): Record<string, unknown> {
@@ -665,12 +663,12 @@ function readNum(
 const okEnvelope = (result: unknown): RouteResult => ({ status: 200, body: { ok: true, result } });
 
 /**
- * The COMPLETE Tier-3 group-admin Bot-API method set (design Appendix-A). The
- * emulator implements the ones the COVER-01 UC drives on demand (see the
- * `dispatch` switch); EVERY other name in this set, when a UC calls it, routes
+ * The COMPLETE Tier-3 group-admin Bot-API method set. The
+ * emulator implements the ones a scenario drives on demand (see the
+ * `dispatch` switch); EVERY other name in this set, when a scenario calls it, routes
  * through the honest unimplemented-log fallback (`[tg-emulator] unimplemented
  * Bot-API method: <name>` + an `unimplementedCalls()` record) — NEVER a silent
- * `okEnvelope({})` (HARD constraint 3, T-208-10). A method NOT in this set (e.g.
+ * `okEnvelope({})`. A method NOT in this set (e.g.
  * an unrelated boot call like `deleteWebhook`) stays the benign generic default
  * so it does not pollute the coverage ledger or break boot.
  */
@@ -703,7 +701,7 @@ const TIER3_METHODS: ReadonlySet<string> = new Set([
 const EMULATOR_BOT_IDENTITY = { id: 12345, firstName: "TestBot", username: "test_bot" } as const;
 
 /**
- * Build the GROUP-02 addressing fields (`entities` + `reply_to_message`) for an
+ * Build the addressing fields (`entities` + `reply_to_message`) for an
  * injected group message from its {@link InjectOpts}. Mirrors exactly what the
  * REAL adapter's `detectBotAddressing` reads (message-mapper.ts:40-104):
  *  - `mention`     → a `mention` entity spanning `@<bot.username>` in the text.
@@ -776,7 +774,7 @@ function buildInjectAddressing(
 }
 
 /**
- * The per-kind `file_path` segment + default content-type (MEDIA-01). The path
+ * The per-kind `file_path` segment + default content-type. The path
  * is what Telegram's `getFile` returns and the route is keyed on; the
  * content-type is what the binary file route serves (overridable by an explicit
  * `meta.mimeType`). One directory + extension per {@link MediaKind} (a closed
@@ -800,12 +798,12 @@ function fileRouteForKind(kind: MediaKind, id: string): { filePath: string; cont
 /**
  * Create the Telegram emulator. COMPOSES the loopback http-backend base and
  * registers its Bot-API method table — it never spins up its own loopback
- * listener (that lives in the http-backend base; SEC-02 success-criterion #5).
+ * listener (that lives in the http-backend base).
  */
 export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   const backend: HttpBackend = createHttpBackend();
   const maxPollMs = opts.maxPollMs ?? DEFAULT_MAX_POLL_MS;
-  // AUTO-05: the opt-in webhook-POST target (URL + secret). Absent → the
+  // The opt-in webhook-POST target (URL + secret). Absent → the
   // emulator is polling-only and `postWebhookMessage` throws (the default inject
   // path is unchanged). When present, `postWebhookMessage` POSTs the built
   // Update to `webhook.url` with the `X-Telegram-Bot-Api-Secret-Token` header.
@@ -813,11 +811,11 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
 
   // Per-chat ORACLE state only (outbound log + reactions).
   const chats = new Map<number, ChatOracle>();
-  // BOT-GLOBAL file store (MEDIA-01, Pattern 1). `getFile` is keyed by file_id
+  // BOT-GLOBAL file store. `getFile` is keyed by file_id
   // (the request body); the file route is keyed by file_path (the URL segment)
-  // — Pitfall 3: keep BOTH lookups so the size getFile reports and the bytes the
+  // — keep BOTH lookups so the size getFile reports and the bytes the
   // route serves can never diverge. A `../`-laden / unknown path is a Map miss
-  // → 404 (the route NEVER touches the filesystem; T-207-04 / V12).
+  // → 404 (the route NEVER touches the filesystem).
   const filesById = new Map<string, StoredFile>();
   const filesByPath = new Map<string, StoredFile>();
   // BOT-GLOBAL long-poll state. grammy's runner polls `getUpdates` once per bot
@@ -825,15 +823,15 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   // waiters are bot-global. `update_id` is globally monotonic, so the single
   // queue stays ordered. There is NO retained ack pointer: the ack is applied
   // at serve time per poll — `takeDeliverable` serves `update_id >= offset` and
-  // removes exactly the delivered updates — so the per-(bot,chat) ack the plan
-  // describes is just the bot-global serve filter for the spike's single DM.
+  // removes exactly the delivered updates — so the per-(bot,chat) ack is
+  // just the bot-global serve filter for a single DM.
   let pending: Update[] = [];
   const waiters: PollWaiter[] = [];
   let nextMessageId = 100;
-  // GROUP-01: per-chat group metadata (the recorded chat shape + members +
+  // Per-chat group metadata (the recorded chat shape + members +
   // admins + bot identity). `injectMessage` stamps the recorded `Chat` onto a
   // group message so the mapper derives chatType group|forum + reads is_forum;
-  // a chat with no group record is a DM (the `private` literal — back-compat).
+  // a chat with no group record is a DM (the `private` literal).
   const groupChats = new Map<
     number,
     { chat: Chat.GroupChat | Chat.SupergroupChat; members: GroupMember[]; admins: GroupMember[]; bot?: GroupMember }
@@ -845,20 +843,20 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   // Group chat id source (the NEGATIVE `-100…` Telegram supergroup form) when a
   // caller does not pin one. Decrements so successive groups get distinct ids.
   let nextGroupChatSeq = 1;
-  // FAULT-01: per-method fault map. Before a Bot-API method returns its
+  // Per-method fault map. Before a Bot-API method returns its
   // okEnvelope, `maybeFault` consults this map; a matching fault (honoring
   // once/matchChat) returns the Telegram error envelope instead so the REAL
   // adapter runs its fallback. An empty map (the default) leaves every method
   // unchanged — existing scenarios are unaffected.
   const faults = new Map<string, { error: TgFault; once?: boolean; matchChat?: number }>();
-  // COVER-01 (HARD constraint 3): the ordered list of Tier-3 Bot-API methods a
-  // UC drove that are NOT implemented on demand. Each such call routes through
+  // The ordered list of Tier-3 Bot-API methods a
+  // scenario drove that are NOT implemented on demand. Each such call routes through
   // `logUnimplemented` (an honest `[tg-emulator] unimplemented Bot-API method:
   // <name>` log) and is appended here so a scenario can DETECT it — a silent
-  // no-op would FALSELY report coverage (the no-false-success principle,
-  // T-208-10). Surfaced via `unimplementedCalls()`.
+  // no-op would FALSELY report coverage (the no-false-success principle).
+  // Surfaced via `unimplementedCalls()`.
   const unimplemented: string[] = [];
-  // De-risk (RESEARCH A1/A2): optionally log the FIRST getUpdates request once
+  // Optionally log the FIRST getUpdates request once
   // to confirm the offset transport + the runner's timeout by observation. Off
   // by default — only prints when `COMIS_EMULATOR_DEBUG` is set (see
   // serveGetUpdates) — and guarded so it fires at most once per emulator.
@@ -879,13 +877,13 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   }
 
   /**
-   * Store `bytes` under a freshly-minted file_id/file_unique_id/file_path
-   * (MEDIA-01). The ids are minted the same way the production adapter mints its
+   * Store `bytes` under a freshly-minted file_id/file_unique_id/file_path.
+   * The ids are minted the same way the production adapter mints its
    * ids (`randomUUID`/`randomBytes`, telegram-inbound.ts), so the store's ids are
    * shaped like real Telegram ids. The file is indexed under BOTH `filesById`
    * (the getFile key) and `filesByPath` (the route key) so the two lookups can
-   * never disagree (Pitfall 3). Internal closure — exposed on the interface as
-   * {@link TgEmulator.storeFile}; Task-2's `injectMedia` calls it before building
+   * never disagree. Internal closure — exposed on the interface as
+   * {@link TgEmulator.storeFile}; `injectMedia` calls it before building
    * the media `Update`.
    */
   function storeFile(kind: MediaKind, bytes: Buffer, meta?: MediaMeta): StoredFileHandle {
@@ -906,7 +904,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   }
 
   // -------------------------------------------------------------------------
-  // EMU-02 — the TRUE long-poll core (bot-global)
+  // The TRUE long-poll core (bot-global)
   // -------------------------------------------------------------------------
 
   /**
@@ -921,7 +919,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
    * place (a concurrently-blocked waiter carrying a lower/undefined offset may
    * still be entitled to them). That is what makes the bot-global queue safe
    * when ≥2 waiters carry DIVERGENT offsets — the per-waiter ack of one waiter
-   * can no longer drop/starve another (WR-01). In the live single-consumer
+   * can no longer drop/starve another. In the live single-consumer
    * grammy path the runner sends `offset = max(update_id) + 1`, so everything
    * below was already delivered+removed by the prior poll and this degrades to
    * the previous "ack-then-serve" behavior with no observable difference.
@@ -949,7 +947,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
     const limit = limitRaw === undefined || limitRaw <= 0 ? 100 : limitRaw;
     const timeoutSec = readNum(body, query, "timeout") ?? 0;
 
-    // One-shot observation of the offset transport + runner timeout (A1/A2) so
+    // One-shot observation of the offset transport + runner timeout so
     // the REAL grammy runner's transport/timeout can be confirmed by
     // observation when de-risking. GATED behind `COMIS_EMULATOR_DEBUG`: Node's
     // `console.debug` is NOT suppressed at the default level (it writes to
@@ -974,7 +972,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
     }
 
     // Empty queue → block until an update is injected OR ~timeout elapses.
-    // Cap the emulator-side wait small for determinism (RESEARCH A1/A3).
+    // Cap the emulator-side wait small for determinism.
     const waitMs = Math.min(maxPollMs, Math.max(0, timeoutSec * 1000));
     if (waitMs === 0) {
       return Promise.resolve(okEnvelope([]));
@@ -1016,7 +1014,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
    * Walk the waiter list rather than draining from the head: a waiter that has
    * nothing deliverable (e.g. its offset is past everything pending) is SKIPPED
    * (`continue`) — never `break` — so it cannot starve a later waiter that IS
-   * entitled to the pending updates (WR-01). And selection goes through
+   * entitled to the pending updates. And selection goes through
    * {@link takeDeliverable}, which removes only the updates actually delivered
    * to this waiter, so one waiter's per-waiter ack can never drop the updates a
    * concurrently-blocked waiter (with a lower/undefined offset) is owed. No dup
@@ -1024,7 +1022,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
    *
    * On the live grammy path `waiters.length` is ≤ 1, so this is just a FIFO
    * single-waiter resolve; the walk matters only for the manual concurrent
-   * `getUpdates` the foundation (and Phase 209) invites.
+   * `getUpdates` the foundation invites.
    */
   function wakeWaiters(): void {
     if (pending.length === 0 || waiters.length === 0) return;
@@ -1049,7 +1047,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   // -------------------------------------------------------------------------
 
   /**
-   * FAULT-01 — if a fault is set for `method` and it applies to this call
+   * If a fault is set for `method` and it applies to this call
    * (`matchChat` unset OR equal to the request `chat_id`), return the Telegram
    * error envelope `{ ok:false, error_code, description, parameters? }` and, when
    * `once`, delete the entry so the NEXT call (the adapter's retry) succeeds.
@@ -1078,7 +1076,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
     const body = parseBody(ctx.body);
     const query = new URLSearchParams(ctx.query);
 
-    // FAULT-01: consult the fault map BEFORE the method runs. A matching fault
+    // Consult the fault map BEFORE the method runs. A matching fault
     // returns the Telegram error envelope so the REAL adapter hits the error and
     // runs its fallback; no fault → the method proceeds to its okEnvelope.
     const faulted = maybeFault(method, body);
@@ -1086,7 +1084,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
 
     switch (method) {
       case "getMe":
-        // EMU-01 — AWAITED, blocks boot. Shape from mock-telegram-server.
+        // AWAITED, blocks boot. Shape from mock-telegram-server.
         return okEnvelope({
           id: 12345,
           is_bot: true,
@@ -1098,11 +1096,11 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
         });
 
       case "setMyCommands":
-        // EMU-01 — fire-and-forget; answer so grammy does not warn.
+        // Fire-and-forget; answer so grammy does not warn.
         return okEnvelope(true);
 
       case "getUpdates":
-        // EMU-02 — the TRUE long-poll (bot-global: one pending queue, one
+        // The TRUE long-poll (bot-global: one pending queue, one
         // waiter set, ack applied per-poll at serve time — as grammy's runner
         // polls per-bot with a single offset).
         return serveGetUpdates(body, query);
@@ -1117,13 +1115,13 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
         return getFile(body);
 
       case "answerCallbackQuery":
-        // INTERACT-01 — the adapter answers EVERY callback FIRST +
-        // UNCONDITIONALLY (telegram-inbound.ts:168). RECORD it (Pattern 5) so the
-        // ack is provable on the oracle, then return result:true (A5).
+        // The adapter answers EVERY callback FIRST +
+        // UNCONDITIONALLY (telegram-inbound.ts:168). RECORD it so the
+        // ack is provable on the oracle, then return result:true.
         return answerCallbackQuery(body);
 
       case "editMessageText":
-        // INTERACT-02 outbound — RECORD the edit + echo a Message (grammy's
+        // Edit outbound — RECORD the edit + echo a Message (grammy's
         // return type is Message-or-true).
         return editMessageText(body);
 
@@ -1134,19 +1132,19 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
       case "sendDocument":
         // Media OUTBOUND delivery. The real grammy adapter (telegram-outbound.ts)
         // calls sendPhoto (image-gen), sendAudio (TTS/music), sendVideo (video-gen),
-        // sendVoice (voice note), sendDocument (file / the FAULT-01 (c) voice→document
+        // sendVoice (voice note), sendDocument (file / the voice→document
         // fallback). RECORD all so media delivery is assertable on the chat oracle —
         // grammy sends these as multipart; `parseBody` extracted the scalar
         // caption/chat_id fields.
-        // (openclaw-usecases 2026-06-25: image-gen produced a real 1536×1024 PNG and
-        // TTS a real MP3, but delivery was UNOBSERVABLE — sendPhoto/sendAudio fell to
-        // the default `okEnvelope({})` → no message_id minted (`messageId:"undefined"`
-        // in the adapter log) and nothing recorded, so the channel oracle showed 0
-        // media sends. Routing them through sendMediaMethod mints the id + records.)
+        // Without this, sendPhoto/sendAudio fall to the default `okEnvelope({})` →
+        // no message_id minted (`messageId:"undefined"` in the adapter log) and
+        // nothing recorded, so the channel oracle shows 0 media sends even when the
+        // agent produced real media. Routing them through sendMediaMethod mints the
+        // id + records.
         return sendMediaMethod(method, body);
 
-      // COVER-01 — the Tier-3 group-admin methods implemented ON DEMAND (the set
-      // the COVER UC drives). `getChatAdministrators` reports the createGroupChat
+      // The Tier-3 group-admin methods implemented ON DEMAND (the set
+      // scenarios drive). `getChatAdministrators` reports the createGroupChat
       // admins[] seed; `pinChatMessage`/`sendChatAction` record the round-trip;
       // `getChat`/`getChatMemberCount` are the read round-trips. Every OTHER
       // Tier-3 method (TIER3_METHODS) falls to `default` → the honest log.
@@ -1166,7 +1164,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
         return getChatMemberCount(body);
 
       default: {
-        // HARD constraint 3 (T-208-10): a Tier-3 method NOT implemented on demand
+        // A Tier-3 method NOT implemented on demand
         // must LOG honestly + be surfaced via unimplementedCalls() — NEVER a
         // silent okEnvelope. An unrelated boot call (not in TIER3_METHODS) stays
         // the benign accept-and-record so it does not fail boot or pollute the
@@ -1178,7 +1176,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   }
 
   /**
-   * The honest unimplemented-Tier-3 fallback (HARD constraint 3). Logs
+   * The honest unimplemented-Tier-3 fallback. Logs
    * `[tg-emulator] unimplemented Bot-API method: <name>` and appends the method
    * to `unimplemented` (surfaced via {@link TgEmulator.unimplementedCalls}) so a
    * scenario can DETECT the gap — a silent no-op would falsely report coverage.
@@ -1199,7 +1197,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   }
 
   function sendMessage(body: Record<string, unknown>): RouteResult {
-    // EMU-03 — mint a message_id, record the FULL option set, return the echo.
+    // Mint a message_id, record the FULL option set, return the echo.
     const chatId = Number(body["chat_id"] ?? 0) || 0;
     const text = typeof body["text"] === "string" ? body["text"] : undefined;
     const messageId = nextMessageId++;
@@ -1227,7 +1225,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   }
 
   function setMessageReaction(body: Record<string, unknown>): RouteResult {
-    // EMU-04 — set (non-empty) / clear (empty) a reaction, record it.
+    // Set (non-empty) / clear (empty) a reaction, record it.
     const chatId = Number(body["chat_id"] ?? 0) || 0;
     const messageId = Number(body["message_id"] ?? 0) || 0;
     const reactionArr = Array.isArray(body["reaction"]) ? (body["reaction"] as unknown[]) : [];
@@ -1249,10 +1247,10 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   }
 
   function answerCallbackQuery(body: Record<string, unknown>): RouteResult {
-    // INTERACT-01 — the adapter calls ctx.answerCallbackQuery() FIRST +
+    // The adapter calls ctx.answerCallbackQuery() FIRST +
     // UNCONDITIONALLY (telegram-inbound.ts:168). grammy sends ONLY
     // `callback_query_id` (no chat_id/message_id), so this records on the chat-0
-    // oracle with messageId 0 — but it RECORDS (Pattern 5), so the unconditional
+    // oracle with messageId 0 — but it RECORDS, so the unconditional
     // ack is provable on the oracle instead of vanishing into the `default:`.
     // Tolerates a missing field (the setMessageReaction precedent).
     record(0, {
@@ -1260,12 +1258,12 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
       messageId: 0,
       raw: body,
     });
-    // The adapter awaits the call and grammy expects `result: true` (A5).
+    // The adapter awaits the call and grammy expects `result: true`.
     return okEnvelope(true);
   }
 
   function editMessageText(body: Record<string, unknown>): RouteResult {
-    // INTERACT-02 outbound — RECORD the edit, then echo a realistic Message
+    // Edit outbound — RECORD the edit, then echo a realistic Message
     // (grammy's editMessageText return type is Message-or-true). grammy sends
     // chat_id/message_id positionally as a JSON body.
     const chatId = Number(body["chat_id"] ?? 0) || 0;
@@ -1290,7 +1288,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   }
 
   function sendMediaMethod(method: string, body: Record<string, unknown>): RouteResult {
-    // FAULT-01 (c) — sendVoice / sendDocument. Mint a message_id + RECORD the
+    // sendVoice / sendDocument. Mint a message_id + RECORD the
     // outbound (method + caption) so the voice→document fallback's recorded
     // sendDocument (caption "Voice message (sent as file)") is assertable on the
     // chat oracle. The bytes themselves are not stored (the fallback only needs
@@ -1324,7 +1322,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   }
 
   function getFile(body: Record<string, unknown>): RouteResult {
-    // MEDIA-01 — descriptor from the REAL store (file_size = bytes.length,
+    // Descriptor from the REAL store (file_size = bytes.length,
     // file_path = the stored route key). A file_id the store has never seen is a
     // Telegram-shaped not-found (the resolver tolerates `!file.file_path`).
     const fileId = typeof body["file_id"] === "string" ? body["file_id"] : "";
@@ -1341,7 +1339,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   }
 
   function getChatAdministrators(body: Record<string, unknown>): RouteResult {
-    // COVER-01 keystone — report the createGroupChat admins[] seed for this
+    // Report the createGroupChat admins[] seed for this
     // chat_id. grammy's getChatAdministrators returns an array of
     // ChatMemberOwner|ChatMemberAdministrator; the production platformAction
     // reads a.user.{id,first_name,is_bot} + a.status. The FIRST seeded admin is
@@ -1382,7 +1380,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   }
 
   function pinChatMessage(body: Record<string, unknown>): RouteResult {
-    // COVER-01 — a Tier-3 mutation round-trip. RECORD the pin on the chat oracle
+    // A Tier-3 mutation round-trip. RECORD the pin on the chat oracle
     // (provable) + return `true` (grammy expects a boolean result; the adapter's
     // `pin` action maps it to `{ pinned: true }`).
     const chatId = Number(body["chat_id"] ?? 0) || 0;
@@ -1392,7 +1390,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   }
 
   function sendChatAction(body: Record<string, unknown>): RouteResult {
-    // COVER-01 — the typing side of the General-Topic id=1 asymmetry. RECORD the
+    // The typing side of the General-Topic id=1 asymmetry. RECORD the
     // action + its message_thread_id VERBATIM (including id=1, which sendMessage
     // omits) so the asymmetry's typing half is assertable on the oracle.
     const chatId = Number(body["chat_id"] ?? 0) || 0;
@@ -1404,7 +1402,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   }
 
   function getChatInfo(body: Record<string, unknown>): RouteResult {
-    // COVER-01 — a Tier-3 read round-trip. Echo the recorded group chat shape (a
+    // A Tier-3 read round-trip. Echo the recorded group chat shape (a
     // ChatFullInfo-shaped descriptor: id + type [+ title/is_forum]); the
     // production `chat_info` action returns the chat verbatim. An unseeded chat
     // returns a minimal private descriptor (no group record).
@@ -1417,7 +1415,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   }
 
   function getChatMemberCount(body: Record<string, unknown>): RouteResult {
-    // COVER-01 — a Tier-3 read round-trip. Return the recorded member count + the
+    // A Tier-3 read round-trip. Return the recorded member count + the
     // bot (the seeded members plus the bot identity), like Telegram counts the
     // bot itself. grammy expects a number; the adapter maps it to `{ count }`.
     const chatId = Number(body["chat_id"] ?? 0) || 0;
@@ -1426,11 +1424,11 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
     return okEnvelope(count);
   }
 
-  // MEDIA-02 file route — serve the stored RAW bytes by `file_path`. A hit
+  // File route — serve the stored RAW bytes by `file_path`. A hit
   // returns a Buffer body (the http-backend binary path writes it verbatim with
   // the per-kind content-type, overridable by `meta.mimeType`); a miss — an
   // unknown OR a `../`-laden path — is a Map lookup that returns nothing → a 404
-  // envelope. The route NEVER touches the filesystem (T-207-04 / V12): the
+  // envelope. The route NEVER touches the filesystem: the
   // crafted path can only ever be a key the store does not hold.
   backend.registerFileRoute((ctx) => {
     const rec = filesByPath.get(ctx.filePath);
@@ -1447,8 +1445,8 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
 
   const emulator: TgEmulator = {
     caps: tgCaps satisfies ChannelCaps,
-    // The shared base — the control API (Plan 04) registers /control/* on it so
-    // the control surface and the Bot API share ONE loopback port (SEC-01).
+    // The shared base — the control API registers /control/* on it so
+    // the control surface and the Bot API share ONE loopback port.
     backend,
 
     start() {
@@ -1471,12 +1469,12 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
         firstName: from.firstName,
         ...(from.username !== undefined ? { username: from.username } : {}),
       });
-      // GROUP-01: if this chat was created via createGroupChat, stamp the recorded
+      // If this chat was created via createGroupChat, stamp the recorded
       // group/forum `Chat` so the mapper derives chatType group|forum + reads
       // is_forum. A chat with no group record is a DM (the builder's `private`
-      // literal default — back-compat).
+      // literal default).
       const group = groupChats.get(chat.chatId);
-      // GROUP-02 addressing: build the entities / reply_to_message the mapper's
+      // Build the entities / reply_to_message the mapper's
       // detectBotAddressing reads, from the InjectOpts.
       const addressing = buildInjectAddressing(text, opts, group?.bot);
       const update = makeMessageUpdate({
@@ -1502,7 +1500,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
     },
 
     async postWebhookMessage(chat, from, text, secretOverride) {
-      // AUTO-05 — the webhook-POST mode. Requires the opt-in `webhook` config;
+      // The webhook-POST mode. Requires the opt-in `webhook` config;
       // the default (polling) emulator has none → throw (this mode is opt-in,
       // the polling inject path is untouched).
       if (webhook === undefined) {
@@ -1518,7 +1516,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
       });
       // Build the SAME grammy `message` Update the polling path would queue
       // (identical shape — a webhook-delivered message Update is the same shape
-      // as a polled one; §4.2 scope guard: no new update kind). The recorded
+      // as a polled one; the scope guard forbids a new update kind). The recorded
       // group chat (if any) is stamped on, like injectMessage.
       const group = groupChats.get(chat.chatId);
       const update = makeMessageUpdate({
@@ -1575,7 +1573,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
     },
 
     injectServiceMessage(chat, kind) {
-      // COVER-02 — queue a forum-service `message` update the adapter FILTERS
+      // Queue a forum-service `message` update the adapter FILTERS
       // (telegram-inbound.ts:50-58). Mints a message_id (the service message IS a
       // message), like injectMessage; the negative scenario asserts it never
       // reaches the captured onMessage.
@@ -1627,7 +1625,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
     },
 
     injectMedia(chat, from, kind, bytes, meta) {
-      // MEDIA-01 — store the bytes FIRST so the emitted update's file_id resolves
+      // Store the bytes FIRST so the emitted update's file_id resolves
       // to real bytes via getFile + the route, then mint a message_id (a media
       // message IS a new message, like injectMessage — NOT like injectReaction).
       const handle = storeFile(kind, bytes, meta);
@@ -1663,7 +1661,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
     },
 
     injectLocation(chat, from, place) {
-      // MEDIA-01 — a location/venue is a `message` update (no file store); mint a
+      // A location/venue is a `message` update (no file store); mint a
       // message_id like injectMessage and return it.
       const messageId = nextMessageId++;
       const user = makeUser({
@@ -1686,7 +1684,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
     },
 
     injectCallback(chat, from, botMessageId, data) {
-      // INTERACT-01 — a callback taps an EXISTING bot reply: reconstruct that
+      // A callback taps an EXISTING bot reply: reconstruct that
       // bot Message (chat.id + message_id) and emit a callback_query. Mints NO
       // message_id (like injectReaction — the tapped reply already exists).
       const user = makeUser({
@@ -1717,7 +1715,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
     },
 
     injectEdit(chat, messageId, newText, from) {
-      // INTERACT-02 — an edit references the EXISTING messageId (the adapter
+      // An edit references the EXISTING messageId (the adapter
       // routes edited_message through the same handleInboundMessage). No mint.
       const user = makeUser({
         id: from.id,
@@ -1754,8 +1752,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
     resetChat(chat) {
       chats.delete(chat.chatId);
       // Also drop this chat's pending updates from the bot-global queue.
-      // WR-02 (206-05 review fix, EXTENDED for the Phase-207 inbound kinds): the
-      // filter must clear EVERY update kind keyed to the reset chat —
+      // The filter must clear EVERY update kind keyed to the reset chat —
       //   - `message`         (text / media / location — `u.message.chat.id`)
       //   - `message_reaction` (injectReaction — `u.message_reaction.chat.id`)
       //   - `edited_message`   (injectEdit — `u.edited_message.chat.id`)
@@ -1763,7 +1760,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
       //                         `u.callback_query.message.chat.id`)
       // The prior predicate keyed only on `u.message`/`u.message_reaction`, so a
       // queued edit or callback for the reset chat fell to the `: true` tail and
-      // SURVIVED — bleeding into a later test that reuses resetChat (the 207/208
+      // SURVIVED — bleeding into a later test that reuses resetChat (the
       // interactivity scenarios). A bot-global update with no resolvable chat is
       // still KEPT by the `: true` tail.
       pending = pending.filter((u) => {

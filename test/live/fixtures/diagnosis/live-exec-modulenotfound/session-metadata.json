@@ -3,5 +3,5 @@
   "endReason": "completed_with_tool_errors",
   "degraded": true,
   "failingTool": "exec",
-  "note": "Synthesized: an exec/code-run tool invoked a script importing an uninstalled Python dependency (pandas); the runtime raised ModuleNotFoundError, surfaced via exitCode 1 + stderr. A dependency/environment failure (classified by exit_code/stderr), NOT a misclassification. RESEARCH.md Pitfall 5 candidate: may already be 1-call diagnosable via obs.diagnostics — Plan-03's gating table tests this and it may TRIM a downstream phase."
+  "note": "Synthesized: an exec/code-run tool invoked a script importing an uninstalled Python dependency (pandas); the runtime raised ModuleNotFoundError, surfaced via exitCode 1 + stderr. A dependency/environment failure (classified by exit_code/stderr), NOT a misclassification. It may already be 1-call diagnosable via obs.diagnostics — the gating table tests this."
 }

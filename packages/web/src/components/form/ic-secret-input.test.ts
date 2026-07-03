@@ -83,7 +83,7 @@ describe("IcSecretInput", () => {
     expect(hint!.textContent).toContain("file:/path/to/secret");
     // explanatory suffix explains what env mode means (no writable store)
     expect(hint!.textContent).toContain("env mode");
-    // must NOT contain the old false claim
+    // must NOT falsely claim file: refs are unavailable — they resolve in every storage mode
     expect(hint!.textContent).not.toContain("file: refs not available");
   });
 

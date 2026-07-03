@@ -2,7 +2,7 @@
 /**
  * RecallTraceEventSchema tests — schema-versioned closed-union envelope.
  *
- * The recall trace is ONE rich per-recall record (Assumption A1 — NOT a
+ * The recall trace is ONE rich per-recall record (NOT a
  * per-stage stage enum like cache-trace). The schema parses a well-formed
  * record, fences the `traceSchema` literal + `schemaVersion` literal, and
  * closes the rerank-outcome + include/exclude-reason unions.

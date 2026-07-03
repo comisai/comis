@@ -45,5 +45,5 @@ function c3() {
 const docs = "Don't: stmt.all() as Foo[]";
 
 // CLEAN: comment containing the forbidden pattern
-// We migrated stmt.all() as Foo[] to mapper.parseRows(stmt.all()) in Phase D.
+// We migrated stmt.all() as Foo[] to mapper.parseRows(stmt.all()).
 function c4() {}

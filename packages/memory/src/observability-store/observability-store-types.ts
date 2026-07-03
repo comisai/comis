@@ -49,7 +49,7 @@ export const channelSnapshotMapper = createRowMapper(ChannelSnapshotDbRowSchema)
 export const providerAggMapper = createRowMapper(ProviderAggDbRowSchema);
 export const agentAggMapper = createRowMapper(AgentAggDbRowSchema);
 /**
- * LOW-1 (177-obs-loop): the spend-accumulator BOOT-read row — `SELECT agent_id,
+ * The spend-accumulator BOOT-read row — `SELECT agent_id,
  * SUM(cost_total) AS total_cost ... GROUP BY agent_id`. Store-local (the
  * SessionSummaryRollupDbRowSchema precedent) since only `rollingSpendMapper` consumes
  * it and row-schemas.ts is `export *`'d (a public schema there would be dead).
@@ -63,12 +63,12 @@ export const RollingSpendDbRowSchema = z.strictObject({
 export const rollingSpendMapper = createRowMapper(RollingSpendDbRowSchema);
 export const sessionAggMapper = createRowMapper(SessionAggDbRowSchema);
 export const hourlyBucketMapper = createRowMapper(HourlyBucketDbRowSchema);
-// COST-03 (Phase 179): the quarter-hour/hourly-cost bucket row schema + mapper live in
+// The quarter-hour/hourly-cost bucket row schema + mapper live in
 // the sibling `observability-aggregates.ts` (their ONLY consumer) to keep THIS file under
-// the 500-line subdir cap — the Plan-01 row-shapes extraction precedent (shrink, no allowlist).
+// the 500-line subdir cap (the row-shapes extraction precedent).
 /**
- * Schema for the per-session GROUP-BY result of `aggregateSessionsInWindow` (A1,
- * Phase 159) over `obs_diagnostics` `category='session_summary'`. Health fields live
+ * Schema for the per-session GROUP-BY result of `aggregateSessionsInWindow`
+ * over `obs_diagnostics` `category='session_summary'`. Health fields live
  * INSIDE the `details` JSON (parsed in the query layer), so this row carries only the
  * grouping key + latest timestamp + raw `details`/`severity`. Distinct from
  * `DiagnosticDbRowSchema` — strict mode rejects the extra `last_ts`/missing columns.
@@ -79,7 +79,7 @@ export const SessionSummaryRollupDbRowSchema = z.strictObject({
   details: z.string(),
   severity: z.string(),
 });
-/** Per-session GROUP-BY rollup row mapper (A1 `aggregateSessionsInWindow`). */
+/** Per-session GROUP-BY rollup row mapper (`aggregateSessionsInWindow`). */
 export const sessionSummaryRollupMapper = createRowMapper(SessionSummaryRollupDbRowSchema);
 export const deliveryStatsMapper = createRowMapper(DeliveryStatsDbRowSchema);
 /** SystemPromptReport row mapper. */
@@ -111,7 +111,7 @@ export interface TokenUsageRow {
   costCacheWrite: number;
   cacheSaved: number;
   latencyMs: number;
-  // PERSIST-02 cost-correctness fields (already emitted on observability:token_usage;
+  // Cost-correctness fields (already emitted on observability:token_usage;
   // persisted via insertTokenUsageStmt + the obs_token_usage columns). All optional —
   // omission persists as NULL and reads back undefined.
   /** Whether this turn was a cache-warmup turn (the first, uncached request of a session). */
@@ -122,10 +122,10 @@ export interface TokenUsageRow {
   costCorrection?: number;
   /** Estimated cache investment not yet recouped at this point in the session ($). */
   pendingCacheInvestmentUsd?: number;
-  /** The honest three-state pricing signal for this provider/model (PERSIST-03). */
+  /** The honest three-state pricing signal for this provider/model. */
   pricingState?: "priced" | "free" | "unknown";
   /**
-   * COST-01: the DISTINCT tool names (content-free ids — never args/output) that fired
+   * The DISTINCT tool names (content-free ids — never args/output) that fired
    * during this usage row's turn. Persisted JSON-stringified on the `tool_tag` column;
    * omission persists as NULL and reads back undefined. The per-tool $ attribution is
    * the best-effort/labeled even-split (`aggregateToolCostByAgent`) — the tag is just the set.
@@ -134,7 +134,7 @@ export interface TokenUsageRow {
 }
 
 /**
- * A security-audit event row (AUDIT-01/02) — the camelCase shape of an
+ * A security-audit event row — the camelCase shape of an
  * `obs_audit_events` table row. `tenantId` is the trace-resolved tenant, else the
  * `''` system-scope sentinel (NOT NULL). `agentId` is NULL for tenant/agent-less
  * sources (e.g. `command:blocked`). `refs` is a scrubbed JSON blob (the `audit:event`
@@ -234,10 +234,10 @@ export interface AgentAggregation {
 }
 
 /**
- * Per-tool cost attribution for one agent (HG-01, the COST-01 `tool_tag`
+ * Per-tool cost attribution for one agent (the `tool_tag`
  * even-split). For a row whose `tool_tag` lists N distinct tools, `cost_total/N`
  * (+ `total_tokens/N`, `1/N` call share) is attributed to EACH tool, summed per
- * tool — best-effort/labeled (N3), conserving Σ per-tool cost === Σ row
+ * tool — best-effort/labeled, conserving Σ per-tool cost === Σ row
  * `cost_total` (never exactness). `calls` is fractional (a tool's share of its
  * co-fired turns). Content-free: tool names + numbers only.
  */
@@ -249,7 +249,7 @@ export interface ToolCostAggregation {
 }
 
 /**
- * Per-agent rolling spend (SPEND-03) — the minimal boot-rehydration shape the spend
+ * Per-agent rolling spend — the minimal boot-rehydration shape the spend
  * accumulator seeds from: the agent + its windowed SUM(cost_total). Distinct from
  * {@link AgentAggregation} (tokens/callCount/cache) — the accumulator needs ONLY the
  * dollar total, so it stays a 2-field row.
@@ -278,12 +278,12 @@ export interface HourlyBucket {
 }
 
 /**
- * Quarter-hour (15-min) time bucket aggregation (COST-03). The {@link HourlyBucket}
- * shape — keyed on a 900000-ms `bucket` instead of `hour` — PLUS the E1 pricing
+ * Quarter-hour (15-min) time bucket aggregation. The {@link HourlyBucket}
+ * shape — keyed on a 900000-ms `bucket` instead of `hour` — PLUS the pricing
  * coverage (`totalCostCorrection` = SDK-vs-corrected delta; `pricingState` = the
  * DOMINANT priced>free>unknown signal; `missingPricingCount` = the unknown/NULL row
  * count whose dollars are NOT catalog-backed). Content-free: counts + the enum only.
- * The four buckets inside an hour SUM to that hour's {@link HourlyBucket} (the WS6
+ * The four buckets inside an hour SUM to that hour's {@link HourlyBucket} (the
  * conservation invariant). Field semantics also documented in observability-aggregates.ts.
  */
 export interface QuarterHourBucket {
@@ -298,7 +298,7 @@ export interface QuarterHourBucket {
 }
 
 /**
- * The export's SPA-equivalent filter for the cost-bucket aggregates (COST-03).
+ * The export's SPA-equivalent filter for the cost-bucket aggregates.
  * Every field is optional; an absent field widens the scan. All become BOUND
  * parameters in a parameterized WHERE (never interpolated SQL) — so the export
  * honors agent/provider/model isolation safely.
@@ -324,7 +324,7 @@ export interface SessionSummaryRollup {
   turnCount: number;
   topErrorKinds: Record<string, number>;
   source: string;
-  /** Mapped terminal `endReason` (NAMED cause, QT2/QT3); missing/blank → `"unknown"`. A2 `degradedByCause` buckets on it. */
+  /** Mapped terminal `endReason` (NAMED cause); missing/blank → `"unknown"`. `degradedByCause` buckets on it. */
   endReason: string;
 }
 
@@ -361,12 +361,12 @@ export interface DeliveryQueryParams {
 }
 
 /**
- * Filter surface for `queryAuditEvents` (AUDIT-01) — mirrors the
- * `obs_query {action:"audit"}` filter shape (decision #4). Every field is
+ * Filter surface for `queryAuditEvents` — mirrors the
+ * `obs_query {action:"audit"}` filter shape. Every field is
  * optional; absent fields widen the scan. All filters become bound parameters
  * in a parameterized WHERE (never interpolated SQL). Declared HERE (beside the
  * interface that consumes it) rather than in audit-mutations.ts so the store
- * interface does not form a types↔impl `.d.ts` import cycle (the Plan-01
+ * interface does not form a types↔impl `.d.ts` import cycle (the
  * row-shapes precedent).
  */
 export interface AuditQueryParams {
@@ -406,20 +406,20 @@ export interface ObservabilityStore extends CacheStatsQueriesSlice, CacheBreakQu
   aggregateBySession(sessionKey: string, sinceMs?: number): SessionAggregation;
   aggregateHourly(sinceMs?: number): HourlyBucket[];
   /**
-   * COST-03: the 900000-ms (15-min) bucket aggregate, each bucket carrying the E1
+   * The 900000-ms (15-min) bucket aggregate, each bucket carrying the
    * pricing coverage (see {@link QuarterHourBucket}). The four buckets inside an hour
    * SUM to the matching `aggregateHourly` bucket (conservation). `sinceMs` = lower
    * bound; `filter` isolates one agent/provider/model.
    */
   aggregateQuarterHourly(sinceMs?: number, filter?: CostBucketFilter): QuarterHourBucket[];
   /**
-   * COST-03: the 3600000-ms (60-min) variant of {@link aggregateQuarterHourly} —
+   * The 3600000-ms (60-min) variant of {@link aggregateQuarterHourly} —
    * IDENTICAL columns, the `comis cost export` default granularity (stable CSV header
    * across granularities). Same `sinceMs` + optional `filter`.
    */
   aggregateHourlyCost(sinceMs?: number, filter?: CostBucketFilter): QuarterHourBucket[];
   /**
-   * HG-01: the per-tool even-split for ONE agent — turns the persisted COST-01
+   * The per-tool even-split for ONE agent — turns the persisted
    * `tool_tag` distinct-tool set into a per-tool cost share (see
    * {@link ToolCostAggregation}). NULL-tag rows are excluded. `sinceMs` = lower bound.
    */
@@ -427,8 +427,8 @@ export interface ObservabilityStore extends CacheStatsQueriesSlice, CacheBreakQu
   /**
    * Per-agent rolling SUM(cost_total) over the last `windowMs` (window bound derived
    * from the current time INSIDE the method — the prune() precedent). The spend
-   * accumulator's BOOT rehydration read (SPEND-03), NOT a per-check read; the rows
-   * ARE the durability. Grouped by agent_id only (obs_token_usage has no tenant_id, L1).
+   * accumulator's BOOT rehydration read, NOT a per-check read; the rows
+   * ARE the durability. Grouped by agent_id only (obs_token_usage has no tenant_id).
    */
   getRollingSpendUsd(windowMs: number): AgentRollingSpend[];
 
@@ -444,7 +444,7 @@ export interface ObservabilityStore extends CacheStatsQueriesSlice, CacheBreakQu
   insertDiagnostic(entry: DiagnosticRow): void;
   queryDiagnostics(params?: DiagnosticQueryParams): DiagnosticRow[];
 
-  // Security audit (AUDIT-01/02). Insert/query the dedicated obs_audit_events
+  // Security audit. Insert/query the dedicated obs_audit_events
   // table. `refs` is a pre-scrubbed JSON blob — the sink routes the
   // `audit:event` metadata free-map through sanitizeForPersistence before
   // building the row. AuditQueryParams is defined alongside the impl

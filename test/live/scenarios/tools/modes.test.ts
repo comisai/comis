@@ -169,8 +169,8 @@ describe("TOOL-02 Stage-A — modes constants + event-bus wiring (no COMIS_LIVE)
 // and read the resolved container config to assert mode propagation. No LLM
 // provider call is made — daemon boot + config inspection only.
 //
-// CR-02 / CR-03 fix: these un-gated tests make deferredTools.mode=always and
-// =never honestly "covered" in the coverage matrix (sandbox-safe, always runs).
+// These un-gated tests make deferredTools.mode=always and =never honestly
+// "covered" in the coverage matrix (sandbox-safe, always runs).
 // The behavioral assertions that require a real model (e.g. 0 tool:executed
 // events during a prompting turn for "always") remain in Stage-B below
 // behind describe.skipIf(!isLive).

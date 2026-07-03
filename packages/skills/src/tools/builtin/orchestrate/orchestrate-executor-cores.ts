@@ -456,7 +456,7 @@ export function createOrchestrateExecutorCores(
                 missing
                   ? "duckdb is not installed on the host"
                   : // Scrub absolute host paths + bound length before the error
-                    // crosses the jail boundary (IN-04): a duckdb diagnostic can
+                    // crosses the jail boundary: a duckdb diagnostic can
                     // echo the offending SQL/path; the jailed client must not see
                     // daemon-side host paths.
                     `duckdb error: ${scrubDuckDbStderr(stderr) || "non-zero exit"}`,

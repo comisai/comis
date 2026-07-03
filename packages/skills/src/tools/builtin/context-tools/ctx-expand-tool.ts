@@ -3,20 +3,19 @@
  * `ctx_expand` — recover the underlying detail of a compressed summary region
  * of THIS conversation, via the injected `ContextStorePort`.
  *
- * DEPTH-02: a bounded in-process MULTI-HOP walk. Where the v2.12 tool recovered a
- * single leaf summary's messages, this descends the summary-parent (T2)
+ * A bounded in-process MULTI-HOP walk that descends the summary-parent (T2)
  * hierarchy (condensed → child summaries → leaf summaries → messages) with
  * depth/token/node-visit caps, returning a RANKED CITED evidence bundle. The
  * walk runs READ-ONLY inside the single-flight `runOnConversation` serializer and
  * delegates the BFS to `ctxExpandWalk` (`ctx-expand-walk.ts`). It is NOT a
- * sub-agent (EXPF-01 deferred). When the knowledge graph is empty/default-off
+ * sub-agent. When the knowledge graph is empty/default-off
  * (no `spreadLane` threaded), the walk runs T2-only (the live floor).
  *
  * Walk + reconstruct + taint + budget-cap (the read-tool + exec-externalization
  * blueprint):
  *   1. SCOPE: conversation derived per-call from `tryGetContext().sessionKey`
  *      (fail-closed `permission_denied` with no live session) — never cached,
- *      never a caller-supplied id (E2 isolation).
+ *      never a caller-supplied id (conversation isolation).
  *   2. WALK: a bounded BFS over `getSummaryChildren` (T2 descent) +
  *      `getSummaryMessages` (leaf → message ids), re-joined via `getMessages`
  *      (id-keyed map). Depth is tier-gated (`maxExpandDepth`); the bundle is
@@ -71,26 +70,26 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
 
     async execute(toolCallId: string, params: Record<string, unknown>): Promise<AgentToolResult<unknown>> {
       // (1) SCOPE — build the (conversation, agent, tenant) read scope from the
-      //     LIVE context per-call (R4 / WR-02); fail closed without a fully-scoped
-      //     session. NEVER a wiring closure (multi-agent-safe, Pitfall 4).
+      //     LIVE context per-call; fail closed without a fully-scoped
+      //     session. NEVER a wiring closure (multi-agent-safe).
       const ctxScope = requireCtxScope();
       const conversationId = ctxScope.conversationId;
       const summaryId = readStringParam(params, "summaryId", true)!;
       const t0 = deps.nowMs();
 
-      // (2) WALK + RECONSTRUCT — DEPTH-02 bounded multi-hop BFS over the
+      // (2) WALK + RECONSTRUCT — a bounded multi-hop BFS over the
       //     summary-parent (T2) hierarchy (condensed → child summaries → leaf
       //     summaries → messages), depth/token/node-visit capped, returning a
       //     RANKED CITED evidence bundle. T2-only floor: no spreadLane is threaded
       //     into the tool deps today, so the KG (T4) lane is absent and the walk
-      //     runs T2-only (the live default — §15 degradation). A drifted id is
+      //     runs T2-only (the live default — graceful degradation). A drifted id is
       //     SKIPPED (counted unrecoverable), never thrown.
       //
       //     The walk is READ-ONLY and runs INSIDE the single-flight
-      //     `runOnConversation` serializer (Pitfall 5) so a deferred compaction
-      //     write cannot rewrite the DAG ordinals mid-walk. R4 scope-inheritance:
+      //     `runOnConversation` serializer so a deferred compaction
+      //     write cannot rewrite the DAG ordinals mid-walk. Scope-inheritance:
       //     EVERY edge read passes `ctxScope` (an out-of-scope node is unreachable
-      //     by construction, WR-02) — the depth cap is a wiring-time CAPACITY knob,
+      //     by construction) — the depth cap is a wiring-time CAPACITY knob,
       //     but scope is ALWAYS per-call.
       const bundle = await deps.store.runOnConversation(conversationId, () =>
         ctxExpandWalk(deps.store, ctxScope, summaryId, {
@@ -106,18 +105,18 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
       // (3) BUDGET + SPILL — oversized regions are ALWAYS secret-scrubbed, then
       //     either written to a file handle (when a session dir exists) OR, when
       //     NO dir is available (heartbeat/cron/ephemeral context, or a resolver
-      //     parse failure), inlined TRUNCATED to the cap. WR-04: the scrub AND the
-      //     size bound must NOT be conditional on a dir being present — the prior
-      //     `if (oversized && dir)` let the no-dir case fall through to the inline
-      //     path and return the FULL rawBody UNBOUNDED and UNSCRUBBED, an
+      //     parse failure), inlined TRUNCATED to the cap. The scrub AND the
+      //     size bound must NOT be conditional on a dir being present — otherwise
+      //     the no-dir case falls through to the inline
+      //     path and returns the FULL rawBody UNBOUNDED and UNSCRUBBED, an
       //     unbounded-inline + unscrubbed-egress leak the cap exists to prevent.
       const dir = deps.getToolResultsDir();
       const oversized = estimateTokens(rawBody) > deps.maxExpandTokens;
       if (oversized) {
         // Defense-in-depth on the broadest egress surface — ALWAYS, regardless of
-        // whether the body spills to a file or is inlined-truncated (WR-04).
+        // whether the body spills to a file or is inlined-truncated.
         const scrubbed = scrubSecretsFromText(rawBody).text;
-        // WR-03: read the end-instant ONCE for the DEBUG durationMs AND the emit
+        // Read the end-instant ONCE for the DEBUG durationMs AND the emit
         // durationMs + timestamp, so the three are a single consistent snapshot
         // (the afterTurn triggers' one-read pattern).
         const endMs = deps.nowMs();
@@ -139,9 +138,9 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
             },
             "ctx_expand spilled",
           );
-          // O1: content-free expansion-hit metric (ids/counts/durationMs only —
+          // Content-free expansion-hit metric (ids/counts/durationMs only —
           // NEVER the recovered body; the lossless store, AGENTS.md §2.2/§2.7).
-          // WR-02: GUARDED — a throwing subscriber must never fail this completed
+          // GUARDED — a throwing subscriber must never fail this completed
           // spill recovery (see emitExpansionMetric).
           emitExpansionMetric(deps, "ctx_expand", {
             conversationId: ctxScope.conversationId,
@@ -160,7 +159,7 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
         }
 
         // No dir: inline the SCRUBBED body TRUNCATED to the cap rather than
-        // returning it whole (WR-04). The cap mirrors `estimateTokens` (chars/4),
+        // returning it whole. The cap mirrors `estimateTokens` (chars/4),
         // so `maxExpandTokens` tokens ⇒ `maxExpandTokens * 4` chars. The truncation
         // happens on the already-scrubbed text, then the bounded slice is
         // taint-wrapped — never inlined raw/unbounded/unscrubbed.
@@ -182,7 +181,7 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
           },
           "ctx_expand inlined oversized body truncated (no tool-results dir)",
         );
-        // O1: content-free expansion-hit metric (WR-02 GUARDED; ids/counts only).
+        // Content-free expansion-hit metric (GUARDED; ids/counts only).
         emitExpansionMetric(deps, "ctx_expand", {
           conversationId: ctxScope.conversationId,
           agentId: ctxScope.agentId,
@@ -197,12 +196,12 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
 
       // (4) INLINE — scrub secrets, THEN taint-wrap the recovered body before it
       //     leaves the tool. The egress scrub mirrors the oversized spill branch:
-      //     the recovered region can legitimately contain a credential (the F1
+      //     the recovered region can legitimately contain a credential (the
       //     lossless store keeps the raw conversation), but it must never reach the
       //     model context / be re-injected via summaries verbatim. The base store is
       //     untouched — only this derived egress copy is scrubbed.
       const body = wrapExternalContent(scrubSecretsFromText(rawBody).text, { source: "unknown" });
-      // WR-03: read the end-instant ONCE for the DEBUG durationMs AND the emit
+      // Read the end-instant ONCE for the DEBUG durationMs AND the emit
       // durationMs + timestamp (the afterTurn triggers' one-read pattern).
       const endMs = deps.nowMs();
       deps.logger.debug(
@@ -218,9 +217,9 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
         },
         "ctx_expand complete",
       );
-      // O1: content-free expansion-hit metric (ids/counts/durationMs only —
+      // Content-free expansion-hit metric (ids/counts/durationMs only —
       // NEVER the recovered body; the lossless store, AGENTS.md §2.2/§2.7).
-      // WR-02: GUARDED — a throwing subscriber must never fail this completed
+      // GUARDED — a throwing subscriber must never fail this completed
       // inline recovery (see emitExpansionMetric).
       emitExpansionMetric(deps, "ctx_expand", {
         conversationId: ctxScope.conversationId,

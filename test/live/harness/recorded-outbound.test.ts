@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Stage-A unit tests for the LIFTED channel-agnostic `RecordedOutbound` subset
- * (FOUNDATION-FIX / CHAN2-02, Phase 209).
+ * (CHAN2-02).
  *
  * The foundation-design bug this proves fixed: the channel-agnostic outbound
  * oracle subset (`{ method, messageId, text? }` — the bit the dual oracle +
  * the generic `control-api` actually consume) was anchored INSIDE the Telegram
  * emulator (`emulators/telegram/tg-emulator.ts`), so the "generic" control plane
- * had a type edge on a specific channel. A second channel (Phase 209 Signal)
+ * had a type edge on a specific channel. A second channel (Signal)
  * could not feed `assertChannelTrace` / `control-api` without depending on the
  * Telegram emulator. This module lifts the agnostic subset UP to `harness/` so
  * BOTH channels share a channel-neutral type.

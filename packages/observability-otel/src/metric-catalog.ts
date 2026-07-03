@@ -1,26 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The SINGLE metric catalog (design §6 WS7; OTEL-02 / PROM-01).
+ * The SINGLE metric catalog.
  *
  * ONE definition of every Comis metric — its dotted OTel `otelName`, the rendered
  * Prometheus `promName`, the instrument `type`, the base `unit`, and the
- * low-cardinality `labels`. Plan 02's OTLP push surface (`PeriodicExportingMetricReader`)
+ * low-cardinality `labels`. The OTLP push surface (`PeriodicExportingMetricReader`)
  * and Prometheus pull surface (`PrometheusExporter`) BOTH read this catalog, so
- * the two surfaces render the SAME series and can never drift (Pitfall 2 — one
+ * the two surfaces render the SAME series and can never drift (one
  * `MeterProvider`, two readers, one catalog).
  *
- * Two invariants are enforced HERE, at the source, so Plans 02/03 cannot regress them:
+ * Two invariants are enforced HERE, at the source, so later wiring cannot regress them:
  *
  *   1. **No high-cardinality label.** {@link MetricLabel} is a CLOSED union and
  *      deliberately EXCLUDES `session`/`trace`/`user` (and every id variant). The
  *      UUID `traceId` rides as a Prometheus EXEMPLAR / span attribute, never a
- *      series label (Pitfall 4; threat T-178-03 — a label-cardinality DoS + PII
- *      surface). `metric-catalog.test.ts` asserts no entry uses a forbidden label.
+ *      series label (a label-cardinality DoS + PII surface).
+ *      `metric-catalog.test.ts` asserts no entry uses a forbidden label.
  *
  *   2. **`comis_build_info` carries `version` only — no `commit`.** No
- *      `git rev-parse` runs at daemon boot (verified — Pitfall 7 / decision #5),
- *      so a `commit` label would be a runtime-unavailable phantom. `version`
- *      comes from `pkgJson.version` (`setup-logging.ts`).
+ *      `git rev-parse` runs at daemon boot (verified), so a `commit` label would
+ *      be a runtime-unavailable phantom. `version` comes from `pkgJson.version`
+ *      (`setup-logging.ts`).
  *
  * The dotted `otelName` ENCODES the Prometheus stem (minus the counter `_total`
  * suffix): e.g. the histogram `comis.run.duration.seconds` renders
@@ -36,7 +36,7 @@
 /**
  * The CLOSED low-cardinality label union. Adding a label here is a deliberate act;
  * `session`/`trace`/`user`/`sessionKey`/`traceId`/`userId` are intentionally
- * absent (ids ride as exemplars — Pitfall 4). The union being closed IS the
+ * absent (ids ride as exemplars). The union being closed IS the
  * no-high-cardinality guard at the type level; the catalog test is the runtime guard.
  */
 export type MetricLabel =
@@ -61,7 +61,7 @@ export type MetricLabel =
 
 /**
  * The runtime mirror of {@link MetricLabel} (a frozen tuple). Used by the catalog
- * test + Plan 02's instrument construction to validate a label set at runtime
+ * test + the instrument construction to validate a label set at runtime
  * (the type union is erased at runtime). MUST stay in lockstep with the union.
  */
 export const METRIC_LABELS = Object.freeze([
@@ -142,8 +142,7 @@ function def(
 }
 
 /**
- * The comprehensive metric catalog — the design §6 WS7 table + the RESEARCH
- * §"Metric Catalog + Sources" dotted names. Counts/enums only; every label is a
+ * The comprehensive metric catalog. Counts/enums only; every label is a
  * {@link MetricLabel} (no high-cardinality id). The render-time `_total` suffix on
  * counters and the histogram `_bucket`/`_sum`/`_count` sub-series are the
  * exporter's job; this is the source set those derive from.
@@ -193,14 +192,13 @@ export const METRIC_CATALOG: readonly MetricDef[] = Object.freeze([
     ["reason", "scope"],
     "Prompt-cache breaks by reason (one of the 15 cache-break reasons) and scope.",
   ),
-  // NOTE: comis.cache.break.cost.usd was REMOVED (CR-01). The
+  // NOTE: there is no comis.cache.break.cost.usd metric. The
   // `observability:cache_break` bus event carries NO cost field — `estCostUsd`
   // is COMPUTED downstream in obs-explain-signals.ts from persisted records, not
-  // emitted on the bus. Wiring it would require a NEW emit (violates N1 — the
-  // extension only subscribes existing signals), so the metric was genuinely
-  // unsourced and is removed from the catalog + every dashboard panel + every
-  // Prometheus rule (the cost-by-reason view lives in `comis explain`, not here).
-  // ── Pricing coverage (E1) ─────────────────────────────────────────────────
+  // emitted on the bus. Wiring it would require a NEW emit (this extension only
+  // subscribes to existing signals), so the metric would be genuinely unsourced;
+  // the cost-by-reason view lives in `comis explain`, not here.
+  // ── Pricing coverage ─────────────────────────────────────────────────
   def(
     "comis.pricing.turns",
     "counter",
@@ -215,7 +213,7 @@ export const METRIC_CATALOG: readonly MetricDef[] = Object.freeze([
     ["provider", "model"],
     "Turns whose pricing state is unknown (the pricing-gap subset of pricing.turns).",
   ),
-  // ── Spend kill-switch (WS3) ───────────────────────────────────────────────
+  // ── Spend kill-switch ───────────────────────────────────────────────
   def(
     "comis.spend.usd",
     "observableGauge",
@@ -308,7 +306,7 @@ export const METRIC_CATALOG: readonly MetricDef[] = Object.freeze([
     ["agent", "severity"],
     "Degraded sessions by agent and severity (fleet rollup).",
   ),
-  // ── Security / audit (WS1) ────────────────────────────────────────────────
+  // ── Security / audit ────────────────────────────────────────────────
   def(
     "comis.audit_events",
     "counter",
@@ -352,7 +350,7 @@ export const METRIC_CATALOG: readonly MetricDef[] = Object.freeze([
     // (registered in metric-mapping's wireMetaGauges).
     "observableGauge",
     "",
-    // version ONLY — NO commit (Pitfall 7 / decision #5: no git rev-parse at runtime).
+    // version ONLY — NO commit (no git rev-parse at runtime).
     ["version"],
     "Build info gauge (constant 1) carrying the daemon version label.",
   ),

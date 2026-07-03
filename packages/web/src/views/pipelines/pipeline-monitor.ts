@@ -12,7 +12,7 @@
  * - Starts polling and subscribes to reactive state changes
  * - Routes events between sub-components
  * - Handles cancel (graph.cancel) and steer (subagent.steer) RPCs
- * - Provides ARIA live region for screen reader announcements (A11Y-03)
+ * - Provides an ARIA live region for screen reader announcements
  * - Cleans up all timers and subscriptions on disconnect
  */
 
@@ -289,7 +289,7 @@ export class IcPipelineMonitor extends LitElement {
       const snap = this._monitorState!.getSnapshot();
       this._snapshot = snap;
 
-      // A11Y-03: Detect node status changes for ARIA live announcements
+      // Detect node status changes so they can be announced via the ARIA live region.
       this._announceNodeChanges(snap.nodes);
     });
 
@@ -571,7 +571,7 @@ export class IcPipelineMonitor extends LitElement {
   }
 
   // ---------------------------------------------------------------------------
-  // A11Y-03: Screen reader announcements
+  // Screen reader announcements
   // ---------------------------------------------------------------------------
 
   private _announceNodeChanges(nodes: ReadonlyArray<MonitorNodeState>): void {
@@ -762,7 +762,7 @@ export class IcPipelineMonitor extends LitElement {
             `}
       </div>
 
-      <!-- A11Y-03: ARIA live region for execution event announcements -->
+      <!-- ARIA live region for execution event announcements -->
       <div class="sr-only" role="status" aria-live="polite" aria-atomic="true">
         ${this._liveAnnouncement}
       </div>

@@ -27,10 +27,10 @@ export interface LiveProfile {
 }
 
 /**
- * The seeded profile registry. Three canonical profiles cover the §7.1 golden
- * production profiles (P-A/P-B/P-C) without real provider calls in Phase 134.
+ * The seeded profile registry. Three canonical profiles cover the golden
+ * production profiles without real provider calls.
  *
- * Further profiles are added by later phases as they certify specific subsystems.
+ * Further profiles are added as new subsystems are certified.
  */
 export const PROFILES: readonly LiveProfile[] = [
   {

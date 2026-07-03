@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // gate-probe.mjs — DETERMINISTIC security-gate / jail oracle prover (run on the VPS).
 //
-// WHY THIS EXISTS (hermes-usecases run 2026-06-25 — saved ~6 turns of fighting refusals):
+// WHY THIS EXISTS (a cautious frontier model can cost ~6 turns of fighting refusals):
 // capable frontier models (claude-sonnet-4-6 et al.) REFUSE every adversarial-framed
 // jail/secret/SSRF/destructive probe at the reasoning layer — even a *genuinely benign*
 // "verify network isolation" framing — and PRIME across turns ("this is the second request in

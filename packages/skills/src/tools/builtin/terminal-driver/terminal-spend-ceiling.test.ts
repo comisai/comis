@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first unit tests for the pure ENDURE-01 spend-ceiling check
- * (terminal-spend-ceiling.ts) — design §4 Phase C, CONTEXT ENDURE-01.
+ * Unit tests for the pure spend-ceiling check (terminal-spend-ceiling.ts).
  *
- * RED-first: `terminal-spend-ceiling.ts` does not exist when this file is first
+ * Written test-first: `terminal-spend-ceiling.ts` does not exist when this file is first
  * committed — the import fails, every case is RED. The production module turns
  * them GREEN. (Mirrors terminal-drive-journal.test.ts:1-9 / terminal-dialog-detector.test.ts
  * — the "module does not exist on first commit" banner.)
@@ -11,10 +10,10 @@
  * `checkSpendCeiling(costUsd, maxCostUsd)` answers ONE question over the drive
  * journal's accumulated run-total cost: has the drive spent MORE than its operator
  * spend ceiling (`drive.maxCostUsd`)? On a breach it returns the typed discriminant
- * `{ breach: "spend_ceiling" }` so the caller (165-07 / the wake-turn driver)
+ * `{ breach: "spend_ceiling" }` so the caller (the wake-turn driver)
  * escalates/stops with the figure — a 40h thrashing-misclassification loop can NEVER
- * burn cost silently unbounded (ENDURE-01). PREDICATE-ONLY (Q1): it reads the journal's
- * honest `costUsd` (hardcoded `0` at the canned-keystroke seam, I6) and adds NO cost
+ * burn cost silently unbounded. PREDICATE-ONLY: it reads the journal's
+ * honest `costUsd` (hardcoded `0` at the canned-keystroke seam) and adds NO cost
  * producer — it becomes load-bearing the day a real LLM-in-the-loop turn writes a
  * non-zero `costUsd`.
  *
@@ -23,13 +22,13 @@
  * `cap === undefined ⇒ undefined`. These tests pin the FULL contract:
  *
  *   - over the cap → `{ breach: "spend_ceiling" }` (escalate/stop, never silent overspend).
- *   - `null` maxCostUsd → undefined (uncapped — today's behavior is byte-identical, I1).
+ *   - `null` maxCostUsd → undefined (uncapped).
  *   - AT the cap (`costUsd === maxCostUsd`) → undefined (strict `>`: not yet over —
  *     mirrors checkWallClock).
  *   - under the cap → undefined (no breach).
  *   - TOTAL / never throws: a degenerate cost (NaN / negative / Infinity) OR a degenerate
  *     cap → undefined (the SAFE direction — never a spurious breach that kills a healthy
- *     drive, I9).
+ *     drive).
  *
  * @module
  */
@@ -52,7 +51,7 @@ describe("checkSpendCeiling — over the cap breaches (escalate/stop, never sile
   });
 });
 
-describe("checkSpendCeiling — null maxCostUsd is uncapped (today's behavior, I1)", () => {
+describe("checkSpendCeiling — null maxCostUsd is uncapped", () => {
   it("returns undefined for any cost when the cap is null, however large", () => {
     expect(checkSpendCeiling(999, null)).toBeUndefined();
     expect(checkSpendCeiling(0, null)).toBeUndefined();
@@ -73,7 +72,7 @@ describe("checkSpendCeiling — strict > boundary (AT the cap is not yet over)",
   });
 });
 
-describe("checkSpendCeiling — TOTAL / safe-direction default (degenerate input → no spurious breach, I9)", () => {
+describe("checkSpendCeiling — TOTAL / safe-direction default (degenerate input → no spurious breach)", () => {
   it("a degenerate COST (NaN / negative / Infinity) → undefined, never a spurious breach", () => {
     // A forged/garbage cost must NOT kill a healthy drive — the safe direction is no breach.
     expect(checkSpendCeiling(Number.NaN, 10)).toBeUndefined();

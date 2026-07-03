@@ -4,7 +4,7 @@
  *
  * Certifies the security.storage backend selection + credential resolution (deterministic, $0):
  *   - encrypted: a valid SECRETS_MASTER_KEY opens secrets.db; set+getDecrypted round-trips the canary
- *     credential (AES); an ABSENT master key ⇒ err (fail-fast); FND-11 db-oracle on secrets.db;
+ *     credential (AES); an ABSENT master key ⇒ err (fail-fast); db-oracle on secrets.db;
  *   - file: a sync-atomic secrets.json (mode 0o600); set+getDecrypted round-trips;
  *   - env: a read-only snapshot of ONLY the declared sensitiveNames; getDecrypted resolves a snapshotted
  *     name, undefined for an un-snapshotted one (PATH never exposed); set/delete ⇒ err (read-only);
@@ -66,7 +66,7 @@ describe("PLAT-03 Stage-B — encrypted secrets backend", () => {
       const got = store.getDecrypted("OPENAI_API_KEY");
       expect(got.ok).toBe(true);
       if (got.ok) expect(got.value).toBe(SECRET_CANARY);
-      // FND-11 persistence oracle on the encrypted secrets.db.
+      // Persistence oracle on the encrypted secrets.db.
       await runDbOracle(path.join(dataDir, "secrets.db"));
     } finally {
       store.close();
@@ -172,7 +172,7 @@ describe("PLAT-03 Stage-B — secret no-leak (binding constraint)", () => {
 
 describe.skipIf(!isLive)("PLAT-03 Stage-C — real-boot credential auth (COMIS_LIVE)", () => {
   it.skip("SKIPPED(no-creds) — the daemon opens a real provider connection using the credential resolved from each {encrypted,file,env} backend; needs COMIS_LIVE + a real provider key + a daemon container", () => {
-    // Deferred to a COMIS_LIVE operator run + PROVE-148. The store-layer credential resolution (does the
+    // Deferred to a COMIS_LIVE operator run. The store-layer credential resolution (does the
     // backend return the value?) — exactly what the security.storage matrix cell tracks — is Stage-B above.
   });
 });

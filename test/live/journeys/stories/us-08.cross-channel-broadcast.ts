@@ -2,11 +2,11 @@
 /**
  * US-08 / J8 — Cross-channel / broadcast.
  *
- * §7.7 flow: message in one channel → agent acts → delivers to a broadcast group.
+ * Flow: message in one channel → agent acts → delivers to a broadcast group.
  * Subsystems composed: A core-loop, B LLM, K channels, S broadcast/delivery,
  * I multi-agent.
  *
- * Gated behind CHAN Stage-C cert (144) + a real broadcast group
+ * Gated behind CHAN Stage-C cert + a real broadcast group
  * (`channelAccounts:["broadcast-group"]`). In sandbox: shape validated +
  * requires-skip (no broadcast group); the real fan-out runs at Stage-D.
  *

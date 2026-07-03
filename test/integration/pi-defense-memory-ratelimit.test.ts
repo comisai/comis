@@ -357,9 +357,9 @@ describe("PI Defense Memory + Rate Limiter E2E", () => {
           );
           const auditPromise = awaiter.waitFor("audit:event", {
             timeoutMs: 30_000,
-            // v2.28 #176 reshaped AuditEvent: `classification` is now the access
-            // class (read/mutate/destructive) and security-signal kinds leave it
-            // UNSET — the event family is now carried by the closed `kind` union.
+            // On AuditEvent, `classification` is the access class
+            // (read/mutate/destructive) and security-signal kinds leave it
+            // UNSET — the event family is carried by the closed `kind` union.
             filter: (payload) =>
               payload.actionType === "injection_rate_exceeded" &&
               payload.kind === "injection_rate_exceeded",

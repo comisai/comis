@@ -300,13 +300,13 @@ export async function setupMemory(deps: {
   // through setupAgents -> createPiExecutor -> setupContextEngine so
   // `getSummarizerDeps` wraps the leaf seam with `gate(tenantId, inner)`; ONE
   // instance partitions internally by tenantId so it bounds AGGREGATE per-tenant
-  // summarizer spend across all of a tenant's sessions/agents (Pitfall 1). The
+  // summarizer spend across all of a tenant's sessions/agents. The
   // breaker/spend KNOBS are the daemon-level ContextEngine defaults
   // (failureThreshold 5; 500k tok/h, 5M tok/day) — a per-tenant aggregate cannot
   // coherently read a single agent's per-agent override since a tenant's sessions
   // span many agents, so the schema default is the daemon-global source. Token
-  // estimates reuse the agent `estimateMessageTokens` heuristic (RESEARCH
-  // "Don't Hand-Roll the estimator").
+  // estimates reuse the agent `estimateMessageTokens` heuristic rather than
+  // hand-rolling a separate estimator.
   const ceDefaults = ContextEngineConfigSchema.parse({});
   const summarizerSpendBreaker = createSummarizerSpendBreaker({
     breakerConfig: ceDefaults.summarizerBreaker,

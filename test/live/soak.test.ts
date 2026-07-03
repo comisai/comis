@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for soak.ts — parseHealthLine, assessHealthTrend, and runSoak
- * (PROVE-03). All deterministic: synthetic health lines + a stub driver, NO
+ * Unit tests for soak.ts — parseHealthLine, assessHealthTrend, and runSoak.
+ * All deterministic: synthetic health lines + a stub driver, NO
  * daemon boot, NO provider.
  *
  * @module

@@ -177,7 +177,7 @@ describe("ORCH-01 Stage-B — DAG coordinator via graph.execute RPC (dummy keys,
   });
 
   afterEach(async () => {
-    // Flush daemon log buffer before snapshotting (T-134-flush).
+    // Flush daemon log buffer before snapshotting.
     await flushDaemonLogs(driver);
 
     // graph.execute with dummy keys: LLM provider failure emits "JSON-RPC method error" ERROR.
@@ -185,7 +185,7 @@ describe("ORCH-01 Stage-B — DAG coordinator via graph.execute RPC (dummy keys,
       expectedErrors: ["JSON-RPC method error"],
     });
 
-    // FND-11 persistence oracle — only run if memory.db was created.
+    // Persistence oracle — only run if memory.db was created.
     const dbPath = join(driver.getDataDir(), "memory.db");
     if (existsSync(dbPath)) {
       await runDbOracle(dbPath, {});
@@ -233,7 +233,7 @@ describe("ORCH-01 Stage-B — DAG coordinator via graph.execute RPC (dummy keys,
       expect(errMsg).not.toMatch(/method not found/i);
       // Only silently skip for known policy-rejection strings (agentToAgent disabled,
       // node-schema validation, or explicit policy guard). Unknown errors must FAIL so
-      // the test does not silently skip under unexpected conditions (WR-03 fix).
+      // the test does not silently skip under unexpected conditions.
       if (/node.?validation|policy|disabled/i.test(errMsg)) {
         // Known acceptable rejection before coordinator starts — skip event assertions.
         return;

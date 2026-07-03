@@ -18,8 +18,8 @@
 #
 # GREP HYGIENE (load-bearing): this gate scopes every content grep to an
 # explicit PUBLISHED_SURFACES allow-list. It NEVER greps itself (the forbidden
-# tokens are named in this header) and NEVER greps the .planning/ drafts (which
-# legitimately discuss the cut claims). Missing surfaces SKIP — so while
+# tokens are named in this header) and NEVER greps benchmarks/CLAIMS.md (whose
+# CUT table legitimately names the cut claims). Missing surfaces SKIP — so while
 # memory.astro / the launch post do not yet exist, the gate still exits 0.
 #
 # Usage:
@@ -48,8 +48,8 @@ NC=$'\033[0m'
 # --- The published surfaces (the ONLY files this gate greps) --------------
 # Today only README.md + the methodology page exist; memory.astro + the
 # launch blog post are not yet written. check_no_match SKIPs the missing
-# ones, so the gate exits 0 today. NEVER add a .planning/ draft or CLAIMS.md
-# here — the drafts and CLAIMS.md's CUT table legitimately name the cut tokens.
+# ones, so the gate exits 0 today. NEVER add benchmarks/CLAIMS.md here —
+# its CUT table legitimately names the cut tokens.
 PUBLISHED_SURFACES=(
   "$REPO_ROOT/README.md"
   "$REPO_ROOT/docs/agents/memory-benchmarks.mdx"

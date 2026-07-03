@@ -7,7 +7,7 @@
  * packages/comis/package.json:bundledDependencies) into the tarball under
  * node_modules/@comis/. A fake channel server (a Telegram Bot-API emulator, the
  * control-plane rig, or the eventual chan/tg CLI) must NEVER cross into that
- * published graph -- it is a test-only artifact (invariant I2 / N3, CLAUDE.md
+ * published graph -- it is a test-only artifact (per CLAUDE.md
  * "Supply-chain invariants": @comis/x packages are private + bundled, nothing
  * else is published).
  *
@@ -40,7 +40,7 @@
  * the harness.
  *
  * FORWARD-PROTECTIVE: it asserts about the PUBLISHED surface, which is unaffected
- * by whether the harness files (Plans 01-05) exist yet -- so it is green on the
+ * by whether the harness files exist yet -- so it is green on the
  * current tree and stays green as those test/live files land.
  *
  * Runs under the architecture vitest project (test/architecture/vitest.config.ts)
@@ -61,8 +61,8 @@ const REPO_ROOT = resolve(here, "../..");
 
 /**
  * The harness lives entirely under `test/live/`. These are the directories that
- * hold the channel-emulation harness (Plans 01-05) + the CLI names it would carry
- * (Phase 205). The guard asserts none of these ever intersects the published
+ * hold the channel-emulation harness + the CLI names it would carry.
+ * The guard asserts none of these ever intersects the published
  * surface — derived independently below from `pnpm-workspace.yaml`,
  * `bundledDependencies`, the CLI registry, and per-package deps/imports.
  */
@@ -72,7 +72,7 @@ const HARNESS_DIRS = [
   "test/live/scenarios",
 ] as const;
 
-/** CLI subcommand names the harness would register (Phase 205) — never on `comis`. */
+/** CLI subcommand names the harness would register — never on `comis`. */
 const HARNESS_CLI_NAMES = ["chan", "tg"] as const;
 
 /** Path fragments / package names that betray a harness edge into a published package. */
@@ -171,7 +171,7 @@ describe("harness-never-published — SEC-02 supply-chain boundary (4 dimensions
         ],
         suggestedFix:
           "Keep pnpm-workspace.yaml at `packages/*` only and delete any package.json under test/live/**. The harness is a test consumer, never a workspace member.",
-        designRef: "SEC-02 / CLAUDE.md supply-chain invariants (I2/N3)",
+        designRef: "SEC-02 / CLAUDE.md supply-chain invariants",
       }),
     ).toEqual({ testGlobs: [], stray: [] });
   });
@@ -239,7 +239,7 @@ describe("harness-never-published — SEC-02 supply-chain boundary (4 dimensions
   // ── Dimension 3 — chan/tg is NOT a comis CLI subcommand ───────────────────
   // The `comis` CLI registers subcommands in packages/cli/src/cli.ts via
   // `register<Name>Command(program)` and the modules under
-  // packages/cli/src/commands/. The harness CLI (`chan`/`tg`, Phase 205) lives
+  // packages/cli/src/commands/. The harness CLI (`chan`/`tg`) lives
   // under test/live/bin/ and must NEVER be a comis subcommand. Word-boundary
   // matching so the existing `channel` product command (which contains "chan")
   // is NOT a false positive.
@@ -287,7 +287,7 @@ describe("harness-never-published — SEC-02 supply-chain boundary (4 dimensions
         ],
         suggestedFix:
           "Keep the chan/tg harness CLI under test/live/bin/ as a standalone tsx entrypoint. Never add a chan.ts/tg.ts under packages/cli/src/commands or register it in cli.ts.",
-        designRef: "SEC-02 / harness CLI is test-only (Phase 205, test/live/bin)",
+        designRef: "SEC-02 / harness CLI is test-only (test/live/bin)",
       }),
     ).toEqual({ harnessCommandFiles: [], registrationHits: [] });
   });

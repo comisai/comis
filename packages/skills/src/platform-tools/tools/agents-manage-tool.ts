@@ -18,7 +18,7 @@ import { readStringParam } from "../tool-helpers.js";
 import { createAdminManageTool } from "../admin-manage-factory.js";
 import type { RpcCall } from "./cron-tool.js";
 
-// Activity label spec (§17.6). Descriptor name == emitted name.
+// Activity label spec. Descriptor name == emitted name.
 // Per-action overrides use the tool's REAL action enum.
 registerActivityLabelSpec("agents_manage", {
   semanticPhase: "tool",
@@ -337,7 +337,7 @@ function coerceConfig(p: Record<string, unknown>): Record<string, unknown> | und
  * @param logger - Required structured logger. Used to emit a per-create
  *   INFO log pinning the next-step contract emission.
  *   Mirrors the gateway-tool required-logger position; no overload-with-
- *   default-logger compat shim (per `feedback_no_backward_compat.md`).
+ *   default-logger compat shim (the project does not ship backward-compat shims).
  * @param approvalGate - Optional approval gate for create/delete actions
  * @returns AgentTool implementing the agent management interface
  */

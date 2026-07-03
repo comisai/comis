@@ -6,7 +6,7 @@
 # - RAG disabled (no embeddings needed for messaging tests)
 # - Cron disabled (not testing scheduler)
 # - All monitoring disabled
-# - security.agentToAgent.enabled: true (needed for session tests in 32-02)
+# - security.agentToAgent.enabled: true (needed for session tests)
 
 tenantId: "test"
 logLevel: "debug"

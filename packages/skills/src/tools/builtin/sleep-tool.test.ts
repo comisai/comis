@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first contract for the `sleep` primitive (STREAM-03).
+ * RED-first contract for the `sleep` primitive.
  *
  * The sleep builtin lets the model pace itself between turns with a SINGLE
  * deferral keyed to the ~5-min prompt-cache TTL, instead of polling in a
@@ -83,7 +83,7 @@ function textOf(result: AgentToolResult<unknown>): string {
   return block && "text" in block ? block.text : "";
 }
 
-describe("createSleepTool — STREAM-03 sleep primitive", () => {
+describe("createSleepTool — sleep primitive", () => {
   it("resolves only AFTER the requested duration advances on the injected clock", async () => {
     const fake = createFakeTimer();
     const tool = createSleepTool({ timer: fake.timer });
@@ -204,7 +204,7 @@ describe("createSleepTool — STREAM-03 sleep primitive", () => {
     await p;
   });
 
-  it("WR-02: a NUMERIC-STRING ms (LLMs emit `{ ms: \"1500\" }`) is coerced, not thrown", async () => {
+  it("a NUMERIC-STRING ms (LLMs emit `{ ms: \"1500\" }`) is coerced, not thrown", async () => {
     const fake = createFakeTimer();
     const tool = createSleepTool({ timer: fake.timer });
 
@@ -219,7 +219,7 @@ describe("createSleepTool — STREAM-03 sleep primitive", () => {
     await expect(p).resolves.toBeDefined();
   });
 
-  it("WR-02: an UNPARSEABLE string duration falls back to the clamped default, never a throw", async () => {
+  it("an UNPARSEABLE string duration falls back to the clamped default, never a throw", async () => {
     const fake = createFakeTimer();
     const tool = createSleepTool({ timer: fake.timer });
 
@@ -233,7 +233,7 @@ describe("createSleepTool — STREAM-03 sleep primitive", () => {
     await expect(p).resolves.toBeDefined();
   });
 
-  it("WR-02: a numeric-string `seconds` coerces (and ms-string still wins over seconds-string)", async () => {
+  it("a numeric-string `seconds` coerces (and ms-string still wins over seconds-string)", async () => {
     const fake = createFakeTimer();
     const tool = createSleepTool({ timer: fake.timer });
 

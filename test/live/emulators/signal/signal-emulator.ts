@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `SignalEmulator` — the signal-cli wire backend (CHAN2-01, Phase 209), built ON
- * the Plan-01 generalized `http-backend` base and `extends ChannelEmulator`
- * (foundation-real-from-day-one, design §3A.7).
+ * `SignalEmulator` — the signal-cli wire backend, built ON
+ * the generalized `http-backend` base and `extends ChannelEmulator`
+ * (foundation-real-from-day-one).
  *
  * This is the fake signal-cli daemon the REAL production Signal adapter hits over
- * loopback HTTP. The rig (Plan 05/06) boots an isolated Comis daemon pointed at
+ * loopback HTTP. The rig boots an isolated Comis daemon pointed at
  * this emulator via `channels.signal.baseUrl`; an injected inbound message
  * round-trips through the daemon and the bot's reply lands in `outbound()`.
  *
  * It composes the shared loopback server (`createHttpBackend()`) and registers
  * the Signal wire surface on the base's GENERALIZED route surfaces — it does NOT
- * spin up its own `node:http` server (SEC-02 success-criterion #5: built ON the
+ * spin up its own `node:http` server (SEC-02: built ON the
  * base, not a bespoke server). The base owns the loopback bind (127.0.0.1 only,
  * SEC-01), the raw-body read, and the 404-on-unmatched hardening.
  *
@@ -19,7 +19,7 @@
  * consumes — mirrored from the proven `test/e2e/mocks/signal/mock-signal-server.ts`):
  *   - GET  /api/v1/check  — the boot health-check (`signalHealthCheck` AWAITS it
  *     → blocks `start()`); returns `{ ok: true }`. Registered via the base's
- *     `registerPathRoute` (Plan 01, CHAN2-02 FIX #1).
+ *     `registerPathRoute`.
  *   - POST /api/v1/rpc    — JSON-RPC 2.0:
  *       - `send`         — mints a monotonic `timestamp` (the Signal messageId —
  *         the adapter reads `String(result.timestamp)`, signal-adapter.ts:256),
@@ -30,14 +30,14 @@
  *       - `listAccounts` — returns the configured account list.
  *       - any other      — the generic `result:{}` envelope (never crashes).
  *   - GET  /api/v1/events — the SSE inbound stream (the Signal analog of
- *     Telegram's getUpdates long-poll). Registered via `registerStreamRoute`
- *     (Plan 01, CHAN2-02 FIX #2). `injectMessage`/`injectReaction` emit a
- *     `SignalEnvelope` on the open stream (queue-or-emit). [Task 2.]
+ *     Telegram's getUpdates long-poll). Registered via `registerStreamRoute`.
+ *     `injectMessage`/`injectReaction` emit a
+ *     `SignalEnvelope` on the open stream (queue-or-emit).
  *
- * The genuinely-new mechanic over the proven `mock-signal-server.ts` is the I4
- * discipline: the inbound envelopes are built by the `signal-payloads.ts` typed
- * builders (return-annotated against the adapter's OWN `SignalEnvelope`), so a
- * wire-shape drift is a COMPILE error (Task 2).
+ * The genuinely-new mechanic over the proven `mock-signal-server.ts` is the
+ * compile-time discipline: the inbound envelopes are built by the
+ * `signal-payloads.ts` typed builders (return-annotated against the adapter's
+ * OWN `SignalEnvelope`), so a wire-shape drift is a COMPILE error.
  *
  * The structural twin of `tg-emulator.ts`: where Telegram mints a `message_id`
  * on `sendMessage` and queues an `Update` for `getUpdates`, Signal mints a
@@ -81,7 +81,7 @@ export interface CreateSignalEmulatorOptions {
 /**
  * Addressing options for {@link SignalEmulator.injectMessage}. Every field is
  * OPTIONAL — an absent/empty `InjectMessageOpts` is the plain DM/group text
- * inject. Threads through to the `signal-payloads.ts` builder (the I4 typed
+ * inject. Threads through to the `signal-payloads.ts` builder (the typed
  * envelope source).
  */
 export interface InjectMessageOpts {
@@ -136,7 +136,7 @@ export interface SignalEmulator extends ChannelEmulator {
    * Inject an inbound REACTION from `from` in `chat` targeting an existing
    * message (`targetSentTimestamp`), by emitting a `SignalEnvelope` carrying
    * `dataMessage.reaction { emoji, targetSentTimestamp }` on the SSE stream (the
-   * WS1-relevant react FLOW Signal supports — NOT a button callback). Queue-or-
+   * react FLOW Signal supports — NOT a button callback). Queue-or-
    * emit like {@link injectMessage}.
    *
    * @returns the emitted reaction envelope's own `timestamp`.
@@ -177,7 +177,7 @@ const DEFAULT_ACCOUNT = "+15555550100";
 /**
  * A minimal JSON-RPC 2.0 request shape (the fields the emulator reads from the
  * `/api/v1/rpc` body). `params` is read defensively — a malformed body yields an
- * empty object so the base never crashes (V5; mirrors mock-signal-server.ts:132).
+ * empty object so the base never crashes (mirrors mock-signal-server.ts:132).
  */
 interface RpcRequest {
   readonly jsonrpc?: string;
@@ -233,7 +233,7 @@ export function createSignalEmulator(opts: CreateSignalEmulatorOptions = {}): Si
   // connected so an inject before any connect is not lost (the queue-or-emit
   // discipline, mock-signal-server.ts:261-270). The base tracks each live
   // response in its own `openStreams` set and drains it on stop(), so a kept-open
-  // stream cannot hang stop() (Plan 01, T-209-09).
+  // stream cannot hang stop().
   const sseClients = new Set<ServerResponse>();
   const queuedEnvelopes: SignalEnvelope[] = [];
 
@@ -326,7 +326,7 @@ export function createSignalEmulator(opts: CreateSignalEmulatorOptions = {}): Si
   // -------------------------------------------------------------------------
 
   // GET /api/v1/check — the boot health-check (mock-signal-server.ts:95-104).
-  // Registered via the arbitrary-path matcher (Plan 01, CHAN2-02 FIX #1). The
+  // Registered via the arbitrary-path matcher. The
   // base only routes the path (no query); the matcher is a string prefix so
   // `/api/v1/check?account=…` matches too.
   backend.registerPathRoute("/api/v1/check", () => ({ status: 200, body: { ok: true } }));
@@ -350,7 +350,7 @@ export function createSignalEmulator(opts: CreateSignalEmulatorOptions = {}): Si
   });
 
   // GET /api/v1/events — the SSE inbound stream (mock-signal-server.ts:106-128).
-  // Registered via the base's `registerStreamRoute` (Plan 01, CHAN2-02 FIX #2):
+  // Registered via the base's `registerStreamRoute`:
   // the base hands the raw (req, res), keeps the connection OPEN (does NOT route
   // it through send()), tracks the live response for stop()-drain, and fires the
   // on-close cleanup. The emulator sets the text/event-stream content-type +
@@ -380,7 +380,7 @@ export function createSignalEmulator(opts: CreateSignalEmulatorOptions = {}): Si
 
   const emulator: SignalEmulator = {
     caps: signalCaps satisfies ChannelCaps,
-    // The shared base — the rig (Plan 06) writes channels.signal.baseUrl =
+    // The shared base — the rig writes channels.signal.baseUrl =
     // apiRoot so the real adapter's RPC + SSE hit this loopback port (SEC-01).
     backend,
 
@@ -389,9 +389,9 @@ export function createSignalEmulator(opts: CreateSignalEmulatorOptions = {}): Si
     },
 
     async stop() {
-      // The base drains every tracked open SSE response on stop() (Plan 01
+      // The base drains every tracked open SSE response on stop() (its
       // stop-drain via openStreams), so stop() cannot hang on a kept-open
-      // /api/v1/events connection (T-209-09). Clear the local registry too so a
+      // /api/v1/events connection. Clear the local registry too so a
       // post-stop inject is a no-op (queued, never written to a dead socket).
       sseClients.clear();
       queuedEnvelopes.length = 0;
@@ -399,7 +399,7 @@ export function createSignalEmulator(opts: CreateSignalEmulatorOptions = {}): Si
     },
 
     injectMessage(chat, from, text, opts) {
-      // Build the I4-typed envelope (signal-payloads.ts — return-annotated
+      // Build the typed envelope (signal-payloads.ts — return-annotated
       // against the adapter's OWN SignalEnvelope) and EMIT it on the open SSE
       // stream (else queue). `chat` is the channel (a group:<id> sets groupInfo;
       // a DM's channel id IS the sender). Mints the Signal message id from the
@@ -417,7 +417,7 @@ export function createSignalEmulator(opts: CreateSignalEmulatorOptions = {}): Si
     },
 
     injectReaction(chat, from, targetSentTimestamp, emoji) {
-      // The react FLOW (the WS1-relevant verb Signal supports): a SignalEnvelope
+      // The react FLOW (the verb Signal supports): a SignalEnvelope
       // carrying dataMessage.reaction { emoji, targetSentTimestamp }, emitted the
       // same way (queue-or-emit). NOT a button callback.
       const envelope = makeReactionEnvelope({

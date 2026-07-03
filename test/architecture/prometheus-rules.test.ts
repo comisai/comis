@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Prometheus RULES validity + single-source-threshold guard (PROM-02; design §6 WS7).
+ * Prometheus RULES validity + single-source-threshold guard.
  *
  * Two macOS-verifiable invariants over `prometheus/rules/*.yml`:
  *
@@ -14,8 +14,8 @@
  *   2. **Single source of truth for the 80% spend line.** The
  *      `ComisSpendApproachingCeiling` alert threshold literal (0.8) EQUALS
  *      `ObservabilityConfigSchema.parse({}).spend.warnAtFraction` (the in-process
- *      kill-switch `spend_warning` line, WS3). The dashboard alert and the
- *      kill-switch MUST fire off the same number (threat T-178-12).
+ *      kill-switch `spend_warning` line). The dashboard alert and the
+ *      kill-switch MUST fire off the same number so they cannot diverge.
  *
  * **Operator/CI-deferred (NOT faked here):** `promtool check rules` — the
  * *semantic* PromQL lint (does the expr parse as PromQL? do the recorded series
@@ -81,7 +81,7 @@ function parseRuleFile(file: string): PromRuleFile {
   return parseYaml(readFileSync(file, "utf-8")) as PromRuleFile;
 }
 
-describe("prometheus-rules — PROM-02 rule-file validity + single-source threshold", () => {
+describe("prometheus-rules — rule-file validity + single-source threshold", () => {
   const ruleFiles = listRuleFiles();
 
   it("sanity: found at least the recording + alert rule files", () => {
@@ -124,7 +124,7 @@ describe("prometheus-rules — PROM-02 rule-file validity + single-source thresh
     }
   });
 
-  it("the ComisSpendApproachingCeiling alert threshold EQUALS warnAtFraction (single source, T-178-12)", () => {
+  it("the ComisSpendApproachingCeiling alert threshold EQUALS warnAtFraction (single source of truth)", () => {
     const warnAtFraction = ObservabilityConfigSchema.parse({}).spend.warnAtFraction;
     expect(warnAtFraction, "warnAtFraction default changed — keep the alert in lockstep").toBe(0.8);
 

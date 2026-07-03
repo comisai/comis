@@ -1,30 +1,29 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure recurrence/gate scorer — THE TDD CORE of Phase 158 (PROVE & gate:
- * fleet-triage baseline, requirement M2).
+ * Pure recurrence/gate scorer — the TDD core of the fleet-triage baseline gate.
  *
- * THE deliverable that gates Phase 160 (the I-track reorder/trim signal). The Plan-03
- * measurement reads the real `~/.comis` (read-only) and counts how often each
+ * The deliverable that gates the downstream instrument/trim decision (the reorder/trim
+ * signal). The measurement reads the real `~/.comis` (read-only) and counts how often each
  * currently-log-only signal recurs; this module turns those counts into a per-signal
- * INSTRUMENT/SKIP verdict table: a signal that recurs enough is worth instrumenting in
- * Phase 160; one that never fires is not ("don't event a WARN that never fires").
+ * INSTRUMENT/SKIP verdict table: a signal that recurs enough is worth instrumenting;
+ * one that never fires is not ("don't event a WARN that never fires").
  *
  * This is metric-bearing logic (not scaffolding), so it is RED→GREEN unit-tested in
  * fleet-recurrence-gate.test.ts (TDD mode) BEFORE the script consumes it — the EXACT
- * analog of Phase-149's diagnosis-gating-report.ts (GatingRow + buildGatingTable +
- * renderGatingMarkdown), MINUS the LLM-judge apparatus: 158 spends zero tokens, so
+ * analog of diagnosis-gating-report.ts (GatingRow + buildGatingTable +
+ * renderGatingMarkdown), MINUS the LLM-judge apparatus: this gate spends zero tokens, so
  * there is NO CostGovernor, NO judgeAnswer, NO COMIS_LIVE gate.
  *
- * THE LOAD-BEARING DISTINCTION (RESEARCH Pitfall 4 / Anti-Pattern): a `realCount === 0`
+ * THE LOAD-BEARING DISTINCTION: a `realCount === 0`
  * is NOT automatically a confident SKIP. It is a CONFIDENT SKIP (SKIP-NEVER-RECURS)
  * only when the emitting code path was EXERCISED but the WARN never fired; otherwise it
  * is INCONCLUSIVE (0 observed because the path was never hit on this light dev machine
- * — NOT evidence it never recurs). A false confident-SKIP on the milestone's flagship
- * signal (LCD ×7) would silently gut Phase 160 — so the two cases produce DIFFERENT
- * verdicts. The measured dev `~/.comis` is light (LCD=0, budget=0), so this guard is
- * what stops the gate from trimming the whole I-track on a false negative.
+ * — NOT evidence it never recurs). A false confident-SKIP on the flagship
+ * signal (LCD ×7) would silently gut the downstream instrumentation — so the two cases
+ * produce DIFFERENT verdicts. The measured dev `~/.comis` is light (LCD=0, budget=0), so
+ * this guard is what stops the gate from trimming the whole signal set on a false negative.
  *
- * SECURITY (T-158-01-01): renderGapGateMarkdown runs `assertNoSecrets` over its output
+ * SECURITY: renderGapGateMarkdown runs `assertNoSecrets` over its output
  * before returning — defense-in-depth. The table carries only counts / signal names /
  * typed verdicts (never raw WARN bodies), but the residency rule is applied uniformly
  * to every persisted-bound string. The secret-sweep lives in cost.ts and is imported,
@@ -38,7 +37,7 @@ import type { FleetSignal } from "./fleet-triage-corpus.js";
 
 /**
  * Closed gate-verdict union (never a bare `string`):
- *   - INSTRUMENT-160     — recurs enough in real data → worth instrumenting in Phase 160.
+ *   - INSTRUMENT-160     — recurs enough in real data → worth instrumenting.
  *   - SKIP-NEVER-RECURS  — CONFIDENT skip: emitting path exercised, WARN never fired.
  *   - ALREADY-STRUCTURED — already queryable cross-session (session_summary/billing) — a contrast item.
  *   - OUT-OF-SCOPE       — deferred (model-health native stdout) — noted, never scored.
@@ -52,22 +51,21 @@ export type GateVerdict =
   | "INCONCLUSIVE";
 
 /**
- * One row of the gap-gate table — a per-signal verdict on whether Phase 160 should
- * instrument it. Carries only counts / a signal name / a typed verdict — no raw WARN
- * bodies — so JSON.stringify(row) and the rendered markdown pass assertNoSecrets
- * (T-158-01-01).
+ * One row of the gap-gate table — a per-signal verdict on whether the downstream work
+ * should instrument it. Carries only counts / a signal name / a typed verdict — no raw
+ * WARN bodies — so JSON.stringify(row) and the rendered markdown pass assertNoSecrets.
  */
 export interface GapGateRow {
   signal: FleetSignal["signal"];
-  /** What THIS session's v2.14 review found by hand — from the M1 corpus. */
+  /** What the by-hand review found — the reference count from the corpus. */
   byHandCount: number;
-  /** Measured recurrence in the REAL `~/.comis` (Plan 03). */
+  /** Measured recurrence in the REAL `~/.comis`. */
   realCount: number;
   /** realCount >= RECURRENCE_THRESHOLD. */
   recurs: boolean;
   /** Queryable cross-session today? (true → ALREADY-STRUCTURED contrast item). */
   alreadyStructured: boolean;
-  /** Did the emitting code path run on the measured machine? (the Pitfall-4 discriminator). */
+  /** Did the emitting code path run on the measured machine? (the confident-SKIP discriminator). */
   pathExercised: boolean;
   /** The deterministic gate verdict. */
   verdict: GateVerdict;
@@ -75,14 +73,14 @@ export interface GapGateRow {
 
 /**
  * Recurrence threshold — a candidate "recurs enough to instrument" at >= this many
- * occurrences in the measured window. A LOW named constant (RESEARCH A2) because this
+ * occurrences in the measured window. A LOW named constant because this
  * machine's data is light (~5 mcp lines / the ×7 LCD by-hand); the operator can
  * override it when re-running on a busier production daemon for high-traffic numbers.
  */
 export const RECURRENCE_THRESHOLD = 3;
 
 /**
- * The deterministic verdict function — the load-bearing Pitfall-4 distinction.
+ * The deterministic verdict function — the load-bearing confident-SKIP distinction.
  *
  * Order matters: OUT-OF-SCOPE and ALREADY-STRUCTURED short-circuit BEFORE the count is
  * consulted (a deferred / already-structured signal is never instrumented regardless of
@@ -102,17 +100,17 @@ function verdict(r: {
   return r.pathExercised ? "SKIP-NEVER-RECURS" : "INCONCLUSIVE";
 }
 
-/** True for the signals deferred OUT of the milestone (native node-llama-cpp stdout). */
+/** True for the signals deferred OUT of scope (native node-llama-cpp stdout). */
 function isOutOfScope(signal: FleetSignal["signal"]): boolean {
   return signal === "model-health-deferred";
 }
 
 /**
- * Map M1 corpus signals + measured recurrence counts into raw {@link GapGateRow}s.
+ * Map corpus signals + measured recurrence counts into raw {@link GapGateRow}s.
  *
  * For each corpus signal, look up its measured `{ realCount, pathExercised, outOfScope? }`
  * (a MISSING entry defaults to realCount 0 / pathExercised false → INCONCLUSIVE, never a
- * crash — the tolerant-counter rule, Security V5, mirroring diagnosis-harness.ts
+ * crash — the tolerant-counter rule, mirroring diagnosis-harness.ts
  * recordMetrics skip-not-throw on untrusted input). `model-health-deferred` is ALWAYS
  * out-of-scope. The verdict + recurs flags are computed here; buildGapGateTable
  * normalizes/recomputes them so the verdict logic is also unit-testable on a raw row.
@@ -144,7 +142,7 @@ export function recordSignalRecurrence(
 /**
  * Normalize a set of raw {@link GapGateRow}s: recompute `recurs` and `verdict` from the
  * row's inputs (realCount / alreadyStructured / pathExercised / signal) so the verdict
- * logic is exercised on a row-in → row-out boundary (mirroring the 149
+ * logic is exercised on a row-in → row-out boundary (mirroring the
  * buildGatingTable(rows)→rows signature). Idempotent: feeding rows from
  * recordSignalRecurrence back through this yields identical verdicts.
  *
@@ -170,15 +168,14 @@ export function buildGapGateTable(rows: GapGateRow[]): GapGateRow[] {
 /**
  * Render the gap-gate table as markdown: a title, a data-scoped CAVEAT block, one row
  * per signal, and a summary line counting INSTRUMENT-160 verdicts (the reorder/trim
- * signal the Phase-160 planner reads).
+ * signal the downstream planner reads).
  *
- * The CAVEAT block (the WARNING-PARTIAL-GATE analog, diagnosis-gating-report.ts:180-188)
+ * The CAVEAT block (the WARNING-PARTIAL-GATE analog in diagnosis-gating-report.ts)
  * makes the gate's data-dependence explicit: a 0 on a lightly-used dev daemon is
- * INCONCLUSIVE, not a confident SKIP — re-run on production for high-traffic numbers
- * (Pitfall 4).
+ * INCONCLUSIVE, not a confident SKIP — re-run on production for high-traffic numbers.
  *
- * Runs `assertNoSecrets` over the output before returning (T-158-01-01,
- * defense-in-depth — the residency rule applied to every persisted-bound string).
+ * Runs `assertNoSecrets` over the output before returning (defense-in-depth — the
+ * residency rule applied to every persisted-bound string).
  */
 export function renderGapGateMarkdown(
   rows: GapGateRow[],
@@ -210,7 +207,7 @@ export function renderGapGateMarkdown(
       "these are the log-only signals Phase 160 should instrument.",
   );
   if (inconclusiveCount > 0) {
-    // Pitfall 4: an INCONCLUSIVE is NOT a confident SKIP. Surface the count so the
+    // An INCONCLUSIVE is NOT a confident SKIP. Surface the count so the
     // reorder/trim decision is not made on absence-of-evidence from a light daemon.
     lines.push("");
     lines.push(
@@ -222,7 +219,7 @@ export function renderGapGateMarkdown(
   lines.push("");
 
   const output = lines.join("\n");
-  // T-158-01-01: never persist/return a string that carries a credential shape.
+  // Never persist/return a string that carries a credential shape.
   assertNoSecrets(output, "gap-gate table");
   return output;
 }

@@ -602,7 +602,7 @@ export class IcApp extends LitElement implements AppHost {
       case "ic-spend-governance-view":
         return html`<ic-spend-governance-view .rpcClient=${this._rpcClient} .eventDispatcher=${this._eventDispatcher}></ic-spend-governance-view>`;
       case "ic-incident-view":
-        // MD-01: the drill ref (a sessionKey | traceId) rides the query string
+        // The drill ref (a sessionKey | traceId) rides the query string
         // (#/observe/incident?ref=<ref>). Pass it as the single `ref` — the view
         // classifies the shape (UUID → traceId, else sessionKey) so a traceId-shaped
         // ref resolves. Previously forced into `.sessionKey`, so a traceId never did.

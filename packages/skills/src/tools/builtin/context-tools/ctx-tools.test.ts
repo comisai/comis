@@ -85,7 +85,7 @@ function liveCtx(overrides: Partial<RequestContext> = {}): RequestContext {
     tenantId: "default",
     userId: "user_a",
     sessionKey: "default:user_a:chan_a",
-    agentId: "agent_a", // R4: the ctx tools read the live agentId per-call (WR-02)
+    agentId: "agent_a", // the ctx tools read the live agentId per-call, never a wiring closure
     traceId: randomUUID(),
     startedAt: 1_000_000,
     trustLevel: "user",
@@ -137,20 +137,20 @@ function makeSummary(overrides: Partial<LcdSummary> = {}): LcdSummary {
  * given SUT touches need to be set; the rest stay no-ops (cast to the port).
  */
 interface StoreStub {
-  /** Records the FULL ContextStoreScope each searchLcd call received (R4 — proves the live-context scope). */
+  /** Records the FULL ContextStoreScope each searchLcd call received (proves the live-context scope). */
   searchLcdArgs: Array<{ scope: ContextStoreScope; query: string; opts: unknown }>;
   /** Records the scope of every scoped read (getSummaries/Children/Messages/getMessages) for multi-agent assertions. */
   readScopes: ContextStoreScope[];
   searchLcdReturn: LcdSearchHit[];
   cjkZeroHit: boolean;
-  /** 180-05-widened LcdSearchResult fields the searchLcd stub returns (lane + matchErrored REQUIRED). */
+  /** Widened LcdSearchResult fields the searchLcd stub returns (lane + matchErrored REQUIRED). */
   lane: "word" | "tri" | "scan";
   matchErrored: boolean;
   getSummariesReturn: LcdSummary[];
   getSummaryChildrenReturn: LcdSummary[];
   getSummaryMessagesReturn: string[];
   getMessagesReturn: LcdMessage[];
-  /** Records the conversationId of every runOnConversation call (DEPTH-02 single-flight proof). */
+  /** Records the conversationId of every runOnConversation call (single-flight proof). */
   serializedConversationIds: string[];
 }
 
@@ -190,9 +190,10 @@ function makeStore(over: Partial<StoreStub> = {}): { stub: StoreStub; store: Con
       stub.readScopes.push(scope);
       return stub.getMessagesReturn;
     },
-    // DEPTH-02: ctx_expand now runs its multi-hop walk INSIDE the single-flight
-    // serializer (Pitfall 5). The stub runs `fn` immediately (no real queue) and
-    // records the conversationId so the wrap is asserted at the tool level.
+    // ctx_expand runs its multi-hop walk INSIDE the single-flight serializer so
+    // a deferred compaction write cannot rewrite the DAG mid-walk. The stub runs
+    // `fn` immediately (no real queue) and records the conversationId so the wrap
+    // is asserted at the tool level.
     async runOnConversation<T>(conversationId: string, fn: () => T | Promise<T>): Promise<T> {
       stub.serializedConversationIds.push(conversationId);
       return fn();
@@ -243,7 +244,7 @@ describe("ctx_search tool", () => {
   });
 
   it("ctx_search sanitizes the query before calling store.searchLcd", async () => {
-    const raw = 'release "v2.12" AND (lossless OR dag)';
+    const raw = 'topic "context recovery" AND (lossless OR dag)';
     const { stub, store } = makeStore({
       searchLcdReturn: [{ kind: "message", refId: "m1", snippet: "hit text", rank: -1.2 }],
     });
@@ -258,11 +259,11 @@ describe("ctx_search tool", () => {
     expect(stub.searchLcdArgs[0].scope.conversationId).toBe("default:user_a:chan_a");
   });
 
-  it("ctx_search builds its store scope from the live context agentId + tenantId, not a wiring closure (multi-agent safety, WR-02)", async () => {
+  it("ctx_search builds its store scope from the live context agentId + tenantId, not a wiring closure (multi-agent safety)", async () => {
     // ONE wired tool, TWO different live RequestContexts → TWO different scopes.
     // The tool must read the LIVE agentId/tenantId per-call (tryGetContext()), not
-    // a wiring-time closure that would serve every agent the same scope (the exact
-    // WR-02 cross-agent threat, Pitfall 4).
+    // a wiring-time closure that would serve every agent the same scope — the
+    // cross-agent leak threat.
     const { stub, store } = makeStore({
       searchLcdReturn: [{ kind: "message", refId: "m1", snippet: "hit", rank: -1 }],
     });
@@ -294,9 +295,9 @@ describe("ctx_search tool", () => {
     expect(stub.searchLcdArgs[0].scope.agentId).not.toBe(stub.searchLcdArgs[1].scope.agentId);
   });
 
-  it("ctx_search fails closed with permission_denied when the live context lacks an agentId (R4 fail-closed)", async () => {
+  it("ctx_search fails closed with permission_denied when the live context lacks an agentId", async () => {
     // A session with sessionKey but NO agentId must REFUSE — never read
-    // conversation-wide (the partially-built-scope leak, T-132-03-04).
+    // conversation-wide (the partially-built-scope leak).
     const { store } = makeStore();
     const { deps } = makeDeps(store);
     const tool = createCtxSearchTool(deps);
@@ -590,9 +591,9 @@ describe("ctx_expand tool", () => {
     expect(fields).toContain("step");
   });
 
-  it("ctx_expand (DEPTH-02) descends a condensed seed multi-hop INSIDE runOnConversation", async () => {
+  it("ctx_expand descends a condensed seed multi-hop INSIDE runOnConversation", async () => {
     // A condensed seed (sum-root) → one condensed child (sum-a) → a leaf
-    // (sum-a-leaf) → a message. The pre-DEPTH-02 single-hop tool would recover
+    // (sum-a-leaf) → a message. A single-hop expansion would recover
     // ZERO (the seed is condensed, getSummaryMessages(seed) is empty); the
     // multi-hop walk recovers the deep message. Keyed children drive the descent.
     const childrenByParent = new Map<string, LcdSummary[]>([
@@ -759,10 +760,10 @@ describe("ctx_* tools emit a content-free context:dag_expanded metric on a hit (
 });
 
 // ---------------------------------------------------------------------------
-// WR-02: a throwing context:dag_expanded subscriber must NOT fail the recovery
+// A throwing context:dag_expanded subscriber must NOT fail the recovery
 // ---------------------------------------------------------------------------
 
-describe("ctx_* tools: a throwing context:dag_expanded subscriber never fails the tool (WR-02)", () => {
+describe("ctx_* tools: a throwing context:dag_expanded subscriber never fails the tool", () => {
   // TypedEventBus.emit delegates to Node's EventEmitter.emit, which propagates the
   // first subscriber exception synchronously back to the emitter. An unguarded emit
   // in the success path therefore converts a fully-completed recovery into a tool
@@ -833,16 +834,16 @@ describe("ctx_* tools: a throwing context:dag_expanded subscriber never fails th
 });
 
 // ---------------------------------------------------------------------------
-// WR-03: durationMs and timestamp must be a SINGLE consistent clock snapshot
+// durationMs and timestamp must be a SINGLE consistent clock snapshot
 // ---------------------------------------------------------------------------
 
-describe("ctx_* tools: the O1 emit reads the end-instant ONCE so durationMs + timestamp agree (WR-03)", () => {
+describe("ctx_* tools: the emit reads the end-instant ONCE so durationMs + timestamp agree", () => {
   // A monotonic stepping clock: each nowMs() read returns a strictly larger value.
-  // t0 is the FIRST read in every ctx_* execute(), so post-fix the emit reads the
+  // t0 is the FIRST read in every ctx_* execute(). The emit reads the
   // end-instant ONCE (endMs) and reports durationMs = endMs - t0 with timestamp =
-  // endMs — hence (timestamp - durationMs) === t0 === BASE. Pre-fix the emit reads
-  // the clock TWICE (durationMs off one read, timestamp off a later read), so
-  // (timestamp - durationMs) === BASE + STEP, NOT BASE — the RED state.
+  // endMs — hence (timestamp - durationMs) === t0 === BASE. Reading the clock
+  // TWICE (durationMs off one read, timestamp off a later read) would instead
+  // give (timestamp - durationMs) === BASE + STEP, NOT BASE.
   const BASE = 5_000_000;
   const STEP = 1_000;
 
@@ -896,17 +897,17 @@ describe("ctx_* tools: the O1 emit reads the end-instant ONCE so durationMs + ti
 });
 
 // ---------------------------------------------------------------------------
-// WR-04: oversized recovered body with NO tool-results dir must still be
+// An oversized recovered body with NO tool-results dir must still be
 //        bounded AND secret-scrubbed — never inlined raw/unbounded/unscrubbed.
 // ---------------------------------------------------------------------------
 
-describe("ctx_expand: an oversized body with no tool-results dir is bounded + scrubbed, not inlined raw (WR-04)", () => {
-  // The spill guard is `if (oversized && dir)`: when getToolResultsDir() returns
-  // undefined (a heartbeat/cron/ephemeral context, or a parse failure), the
-  // oversized branch is skipped and control falls through to the INLINE path,
-  // which wraps and returns the FULL rawBody — unbounded AND skipping the
-  // scrubSecretsFromText defense that only runs on the spill branch. That is an
-  // unbounded-inline + unscrubbed-egress leak the cap exists to prevent.
+describe("ctx_expand: an oversized body with no tool-results dir is bounded + scrubbed, not inlined raw", () => {
+  // If the oversized-spill path were gated on a dir being present
+  // (`if (oversized && dir)`), a context with no tool-results dir (heartbeat/
+  // cron/ephemeral, or a parse failure) would fall through to the INLINE path
+  // and return the FULL rawBody — unbounded AND skipping the
+  // scrubSecretsFromText defense. That is an unbounded-inline + unscrubbed-egress
+  // leak the cap exists to prevent.
 
   it("bounds an oversized no-dir body to the maxExpandTokens cap rather than inlining it whole", async () => {
     const maxExpandTokens = 100;
@@ -928,7 +929,7 @@ describe("ctx_expand: an oversized body with no tool-results dir is bounded + sc
     expect(result.details.body).toBeDefined();
     // The whole 40_000-char raw body must NOT be inlined; the body is bounded by
     // the cap (plus the wrapExternalContent envelope overhead, which is small and
-    // fixed). The pre-patch code inlines all 40_000 chars → this FAILS (RED).
+    // fixed).
     expect((result.details.body as string).length).toBeLessThan(capChars + 2_000);
     expect(result.details.truncated).toBe(true);
   });
@@ -948,15 +949,15 @@ describe("ctx_expand: an oversized body with no tool-results dir is bounded + sc
       details: { body?: string };
     };
     // The secret must be redacted in the inlined body (the spill-branch scrub must
-    // also run on the no-dir inline path). Pre-patch inlines it raw → this FAILS.
+    // also run on the no-dir inline path).
     expect(result.details.body).toBeDefined();
     expect(result.details.body).not.toContain(secret);
     expect(result.details.body).toContain("[REDACTED]");
   });
 
-  it("leaves a small no-dir body inlined verbatim (the WR-04 fix only affects the OVERSIZED no-dir case)", async () => {
+  it("leaves a small no-dir body inlined verbatim (the bound + scrub apply only to the OVERSIZED no-dir case)", async () => {
     // Regression guard: the bound + scrub apply ONLY when oversized. A small body
-    // with no dir must still inline verbatim (taint-wrapped), unchanged by the fix.
+    // with no dir must still inline verbatim (taint-wrapped).
     const small = "an ordinary small recovered body";
     const { store } = makeStore({
       getSummaryMessagesReturn: ["m1"],

@@ -35,7 +35,7 @@ import { scrubChildEnv } from "../terminal-driver/terminal-env-scrub.js";
 
 // ---------------------------------------------------------------------------
 // Gate function — mirrors the canRealBwrapSandbox() idiom from exec-tool.test.ts
-// but WITHOUT the opt-in env flag: these spike tests use only the local broker
+// but WITHOUT the opt-in env flag: these tests use only the local broker
 // (no public network), so no cost-gate is needed.
 // ---------------------------------------------------------------------------
 
@@ -88,7 +88,7 @@ const createdSocketPaths: string[] = [];
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!egressIntegrationAvailable)(
-  "egress spike: rootless --unshare-net broker-only egress (Linux only)",
+  "rootless --unshare-net broker-only egress (Linux only)",
   () => {
     // -----------------------------------------------------------------------
     // Group A: GO criterion — Unix socket bind-mount reachable from inside

@@ -76,15 +76,14 @@ lightweight analysis needed to enrich the prompt — do NOT run the test, stand 
 1. Resolve + read the target.
    - A spec / design-doc / milestone → read the doc. Extract the workstreams/requirements, the
      success-criteria, the security/honesty INVARIANTS (the threat/floor table), the config knobs, and the
-     explicit out-of-scope/deferred items. For a milestone phrase, locate its doc (grep .planning/design,
-     .planning/phases).
+     explicit out-of-scope/deferred items. For a milestone phrase, locate its roadmap/plan doc.
    - A use case / user story / bare prompt → name the capabilities it exercises + the matching domain UCs
      in 05-CATALOG.md; note the real-world flow + the edge/abuse it implies.
 2. VERIFY implementation state at HEAD — the doc drifts BOTH ways. Grep the codebase: does each
    table/job/event/port/RPC/flag exist, is it wired/scheduled/default-ON or shipped-gated-off, what are the
    config defaults? Note every spec→code DEVIATION (renamed/moved config keys, a different mechanism, a
-   feature the doc calls "dormant/absent" that actually SHIPPED). Check .planning/live-tests/ for an
-   existing test plan to start from, and recent git log for fixes already landed in this surface.
+   feature the doc calls "dormant/absent" that actually SHIPPED). Check for an existing test plan to
+   start from, and recent git log for fixes already landed in this surface.
 3. Classify the drive surface: CHANNEL-driven (DAG / messaging / agent tools via the emulator) vs
    OFFLINE / cron / DB / event-resident (memory, learning, scheduler — driven via cron triggers + scripts/
    db.mjs + the *:* events) vs MIXED. Name the worked example to model (targets/EXAMPLE-nvda-dag.md =
@@ -130,7 +129,7 @@ observability. (Worked target spec: targets/EXAMPLE-nvda-dag.md.)
 
 ## TARGET
 Spec: `design/new/verified-learning.md`. Test every implementation, success-criterion, security invariant,
-and config knob — verifying implementation state at HEAD FIRST (the draft predates the v2.26 ship; much of
+and config knob — verifying implementation state at HEAD FIRST (the draft predates its ship; much of
 it is live + default-ON). It is an OFFLINE/cron/DB/event-resident capability — drive via tool/graph turns +
 cron triggers, observe via `comis memory learning|skills`, the `outcome_events`/`learned_skills`/
 `tuned_alpha` tables (scripts/db.mjs), and the `learning:*` trajectory events. (Worked target spec:

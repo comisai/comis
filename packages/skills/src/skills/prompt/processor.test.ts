@@ -155,7 +155,7 @@ describe("formatAvailableSkillsXml", () => {
     expect(result).toContain("<name>explicit-false</name>");
   });
 
-  // SURFACE-02: <source> renders the learned-trust distinction the model SEES.
+  // <source> renders the learned-trust distinction the model SEES.
 
   it("renders <source>learned</source> for a learned-source skill", () => {
     const skills: PromptSkillDescription[] = [
@@ -196,10 +196,10 @@ describe("formatAvailableSkillsXml", () => {
     expect(result).toContain("<source>a&lt;b</source>");
   });
 
-  it("ATTR-01 non-regression: the new <source> line keeps <name>/<location> parseable per <skill> block", () => {
+  it("keeps <name>/<location> parseable per <skill> block despite the <source> line", () => {
     // Mirrors parseSkillLocationIndex (agent/executor/prompt-assembly.ts:213):
     // a block regex pulls <name> + <location> from each <skill>…</skill>. The
-    // new <source> line lives INSIDE <skill> and must not break that keying.
+    // <source> line lives INSIDE <skill> and must not break that keying.
     const skills: PromptSkillDescription[] = [
       { name: "alpha", description: "First", location: "/skills/alpha", source: "learned" },
       { name: "beta", description: "Second", location: "/skills/beta" },

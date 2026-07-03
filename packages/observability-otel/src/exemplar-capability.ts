@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Build-time exemplar-capability probe (PROM-04 / Open Question A2).
+ * Build-time exemplar-capability probe.
  *
  * Exemplars (a `trace_id` riding on a sample) are the Grafana → `comis explain`
- * drill-down primitive (E7) on the Prometheus PULL surface. They are exported
+ * drill-down primitive on the Prometheus PULL surface. They are exported
  * ONLY in OpenMetrics format, and only when the exporter is configured for it —
  * the OTel Collector's Prometheus exporter has an `enable_open_metrics` switch,
  * but the JS SDK's `@opentelemetry/exporter-prometheus` has historically lagged.
  *
  * This module PROBES the installed exporter for an OpenMetrics/exemplar affordance
  * and records the verdict in {@link PROMETHEUS_EXEMPLARS_SUPPORTED}. The verdict
- * GATES Plan 03's PROM-04 test:
- *   - `true`  → Plan 03 writes a STRICT exemplar-presence assertion on `/metrics`.
- *   - `false` → Plan 03 documents the `/metrics`-pull limitation and realizes the
- *               chart→explain drill-down via a panel data-link templated on a
- *               `trace_id`-bearing alternative (the OTLP→collector path carries
+ * The verdict gates the exemplar test:
+ *   - `true`  → a STRICT exemplar-presence assertion on `/metrics`.
+ *   - `false` → the `/metrics`-pull limitation is documented and the
+ *               chart→explain drill-down is realized via a panel data-link templated
+ *               on a `trace_id`-bearing alternative (the OTLP→collector path carries
  *               exemplars regardless).
  *
  * The probe is conservative and NON-THROWING: a missing affordance is a `false`,
@@ -117,8 +117,8 @@ const PROBE = probePrometheusExemplarSupport();
 /**
  * Whether the installed Prometheus pull surface can render OpenMetrics exemplars
  * (a `trace_id` on a sample). Derived at build/load time by probing the installed
- * exporter; `false` for `@opentelemetry/exporter-prometheus@0.219.0`. Gates Plan
- * 03's PROM-04 exemplar test (strict vs documented-limitation).
+ * exporter; `false` for `@opentelemetry/exporter-prometheus@0.219.0`. Gates the
+ * exemplar test (strict vs documented-limitation).
  */
 export const PROMETHEUS_EXEMPLARS_SUPPORTED: boolean = PROBE.supported;
 

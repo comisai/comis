@@ -7,8 +7,8 @@
  * connectOverCDP(). Provides page resolution by targetId and
  * console/error tracking per page.
  *
- * Ported from Comis browser/pw-session.ts, simplified to single-
- * profile operation without extension relay or multi-profile caching.
+ * Scope is deliberately limited to single-profile operation: no
+ * extension relay or multi-profile caching.
  *
  * @module
  */

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * WEB-03 — document-extraction certification (the Stage-B keystone of Phase 143).
+ * WEB-03 — document-extraction certification (the Stage-B keystone).
  *
  * Drives the REAL public extractors from `@comis/skills`
  * (createFileExtractor / createPdfExtractor / createCompositeFileExtractor) with small

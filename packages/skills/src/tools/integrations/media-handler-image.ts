@@ -17,7 +17,7 @@ import type { MediaProcessorLogger } from "./media-preprocessor.js";
 import { resolveMediaAttachment } from "./media-handler-factory.js";
 
 /**
- * MEDIA-TYPE (30uc-20260624 UC-05): determine the VERIFIED image MIME from the actual bytes.
+ * MEDIA-TYPE: determine the VERIFIED image MIME from the actual bytes.
  * Telegram's `.jpg` file_path mislabels PNG bytes as image/jpeg, and the model vision API rejects
  * a declared type that mismatches the bytes (Anthropic 400 "specified image/jpeg, but the image
  * appears to be image/png"). The buffer-only resolve seam (`resolveMediaAttachment`) discards the

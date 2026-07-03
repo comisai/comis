@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * `ChannelEmulator` — the shared, channel-agnostic control-plane contract every
- * per-channel emulator implements (FOUND-01, Phase 204).
+ * per-channel emulator implements.
  *
  * This is the 1-contract analog of the product's `ChannelPort`
  * (packages/core/src/ports/channel.ts) on the EMULATOR side: instead of an
  * adapter that plugs a real platform into Comis, a `ChannelEmulator` is a fake
  * of a real platform's wire surface that the real adapter talks to over
- * loopback HTTP (design §3A.2 symmetry). Channel #2 (Phase 209) implements the
- * SAME port unchanged so the harness is additive, not a per-channel rewrite.
+ * loopback HTTP (the same wire-surface symmetry as production). A second channel
+ * implements the SAME port unchanged so the harness is additive, not a per-channel rewrite.
  *
- * Scope (Phase 204): the MINIMAL contract surface — `start()`/`stop()` + a
- * `readonly caps` descriptor. `TgEmulator extends ChannelEmulator` (Wave 2,
- * `test/live/emulators/telegram/tg-emulator.ts`) adds the Telegram-specific
- * verbs (`createForumTopic`, the typed inject/read verbs, …) — out of 204 scope.
+ * Scope: the MINIMAL contract surface — `start()`/`stop()` + a
+ * `readonly caps` descriptor. `TgEmulator extends ChannelEmulator`
+ * (`test/live/emulators/telegram/tg-emulator.ts`) adds the Telegram-specific
+ * verbs (`createForumTopic`, the typed inject/read verbs, …) — out of this file's scope.
  *
  * Hard constraint: this file is the SHARED port, so it depends on NOTHING
  * channel-specific — no `grammy`, no `@comis/channels`. It mirrors `ChannelPort`
@@ -25,24 +25,23 @@
  */
 
 /**
- * The kinds of inbound media an emulated channel can carry (design §3A.4).
+ * The kinds of inbound media an emulated channel can carry.
  * A closed union so a typo in a caps descriptor is a compile error.
  */
 export type MediaKind = "photo" | "voice" | "document" | "video" | "video_note";
 
 /**
- * `ChannelCaps` — the FLAT capability descriptor every emulator publishes
- * (design §3A.4).
+ * `ChannelCaps` — the FLAT capability descriptor every emulator publishes.
  *
  * Deliberately flat (`inbound{}` / `outbound{}` / `protocol`) and distinct from
  * the adapter's NESTED `ChannelCapability`
  * (packages/core/src/domain/channel-capability.ts, `features{}`/`limits{}`).
- * Plan 03 (`tg-caps.ts`, FOUND-03) reconciles the overlapping fields between
- * the two shapes and is the drift tripwire; Plan 01 only DEFINES this flat
+ * `tg-caps.ts` (the drift tripwire) reconciles the overlapping fields between
+ * the two shapes; this file only DEFINES this flat
  * emulator-side shape.
  *
  * `protocol` tags the transport class so the right protocol-base backend is
- * chosen (`http` → `backends/http-backend.ts`); Signal/LINE in Phase 209 reuse
+ * chosen (`http` → `backends/http-backend.ts`); Signal/LINE reuse
  * the same `http` base.
  */
 export interface ChannelCaps {
@@ -84,20 +83,19 @@ export interface ChannelCaps {
 }
 
 /**
- * `ChannelEmulator` — the channel-agnostic verbs every emulator shares
- * (design §4.4).
+ * `ChannelEmulator` — the channel-agnostic verbs every emulator shares.
  *
  * `start()` boots the emulator's wire surface on a kernel-allocated loopback
  * port and returns the `apiRoot` the rig writes into the daemon's channel
  * config (the redirect seam) plus the resolved `port`. `stop()` tears the
  * server down. `caps` is the static capability descriptor for feature
- * negotiation + the FOUND-03 drift contract.
+ * negotiation + the drift contract.
  *
  * Per-channel emulators EXTEND this with their own typed inject/read verbs
  * (e.g. `TgEmulator` adds `injectMessage` + `outbound()` over the `/control/*`
- * surface, Wave 2). Keeping those off the shared port is deliberate — the
+ * surface). Keeping those off the shared port is deliberate — the
  * read/inject payload types are channel-specific (`RecordedOutbound` is defined
- * with `tg-emulator.ts` in Plan 03).
+ * with `tg-emulator.ts`).
  */
 export interface ChannelEmulator {
   /**
@@ -107,6 +105,6 @@ export interface ChannelEmulator {
   start(): Promise<{ apiRoot: string; port: number }>;
   /** Tear down the emulator server, releasing the port. */
   stop(): Promise<void>;
-  /** Static capability descriptor (feature negotiation + FOUND-03 drift contract). */
+  /** Static capability descriptor (feature negotiation + the drift contract). */
   readonly caps: ChannelCaps;
 }

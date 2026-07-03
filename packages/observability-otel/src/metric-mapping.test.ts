@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OTEL-02 / PROM-01 — the bus-event → OTel-instrument subscriber.
+ * The bus-event → OTel-instrument subscriber.
  *
  * `wireMetricMapping(deps)` builds one instrument per `METRIC_CATALOG` entry off
  * the injected `meter`, subscribes the source bus events (the `wireAuditSink`
  * shape — one `eventBus.on` per event), and maps each typed payload to a
  * CONTENT-FREE, low-cardinality instrument increment (catalog labels only — no
  * traceId/sessionKey/userId in the label object). The spend `observableGauge`s
- * read `spendAccumulator.getSnapshot()` (Pitfall 3); headroom = ceiling − spend.
+ * read `spendAccumulator.getSnapshot()`; headroom = ceiling − spend.
  *
  * Driven here with a FAKE meter (capturing `.add`/`.record`/observable
  * callbacks) + a REAL `TypedEventBus`, so the assertions are deterministic with
@@ -121,7 +121,7 @@ function tokenUsagePayload(overrides: Record<string, unknown> = {}) {
   };
 }
 
-describe("wireMetricMapping (OTEL-02 — bus → content-free instruments)", () => {
+describe("wireMetricMapping (bus → content-free instruments)", () => {
   it("token_usage → comis_cost_usd_total with the CORRECTED cost.total + content-free labels", () => {
     const meter = makeFakeMeter();
     const eventBus = new TypedEventBus();
@@ -195,7 +195,7 @@ describe("wireMetricMapping (OTEL-02 — bus → content-free instruments)", () 
     assertNoHighCardinalityLabel(cb!.attributes);
   });
 
-  it("MD-02: an UNKNOWN cache-break reason maps to 'other' (a new/unexpected reason cannot explode cardinality)", () => {
+  it("an UNKNOWN cache-break reason maps to 'other' (a new/unexpected reason cannot explode cardinality)", () => {
     const meter = makeFakeMeter();
     const eventBus = new TypedEventBus();
     wireMetricMapping({ meter: meter as never, eventBus });
@@ -232,7 +232,7 @@ describe("wireMetricMapping (OTEL-02 — bus → content-free instruments)", () 
     assertNoHighCardinalityLabel(cb!.attributes);
   });
 
-  it("MD-02: a KNOWN cache-break reason (one of the closed 15) passes through verbatim", () => {
+  it("a KNOWN cache-break reason (one of the closed 15) passes through verbatim", () => {
     const meter = makeFakeMeter();
     const eventBus = new TypedEventBus();
     wireMetricMapping({ meter: meter as never, eventBus });
@@ -336,7 +336,7 @@ describe("wireMetricMapping (OTEL-02 — bus → content-free instruments)", () 
     expect(spendObs, "no spend gauge should observe without an accumulator").toHaveLength(0);
   });
 
-  // ── CR-01: the previously-unwired catalog metrics now have producers ─────────
+  // ── The previously-unwired catalog metrics now have producers ─────────
 
   it("token_usage → comis_pricing_turns_total{state} (priced when cost>0, free when 0)", () => {
     const meter = makeFakeMeter();

@@ -551,7 +551,7 @@ describe("createImageProviderSelector openai/google routing (wiring keystone)", 
   });
 
   it("Test F (source guard): registerComisImageProviders registers BOTH new apis AND the selector builds the adapter (not the guard)", () => {
-    // Built-but-not-wired guard (the milestone's #1 recurring blocker): the two
+    // Built-but-not-wired guard: the two
     // transports are only DONE when (1) getImagesApiProvider(api) round-trips
     // after registerComisImageProviders() AND (2) the LIVE selector builds the
     // adapter for each (NOT makeUnavailableImagePort).
@@ -706,7 +706,7 @@ describe("The selector keystone is wired into the LIVE daemon.ts composition roo
     // The composition-root threading gap: the per-agent OAuthTokenManager must
     // reach the image selector through the LIVE daemon.ts wiring — not just be
     // defined where a test imports it. A parallel copy / a stranded manager
-    // would fail this (the milestone's #1 recurring blocker).
+    // would fail this (a built-but-not-wired regression).
     // (1) daemon.ts surfaces oauthManagers from setupAgents …
     expect(daemonSrc).toContain("oauthManagers");
     // (2) … and threads the DEFAULT agent's manager into the LIVE bundle call.
@@ -740,8 +740,8 @@ describe("The selector keystone is wired into the LIVE daemon.ts composition roo
     // a logged-in Codex profile counts as available even with a cold in-memory
     // cache at boot. main-helpers must (1) call hasStoredCredentials("openai-codex")
     // and (2) thread the resolved flag into the selector as codexCredentialsAvailable.
-    // A parallel copy / a stranded resolution would fail this guard (the
-    // milestone's #1 recurring blocker; the original bug was exactly a gate that
+    // A parallel copy / a stranded resolution would fail this guard (a
+    // built-but-not-wired regression; the original bug was exactly a gate that
     // used the cold-cache-only hasCredentials).
     expect(helpersSrc).toContain('hasStoredCredentials("openai-codex")');
     const selStart = helpersSrc.indexOf("createImageProviderSelector({");

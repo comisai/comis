@@ -92,7 +92,7 @@ describe("registerRpcMethods", () => {
     registerRpcMethods(deps);
 
     // Use obs.billing.total (a DAEMON-WIDE admin passthrough). NB: obs.diagnostics is no
-    // longer admin (OBS-SELF-DEAD re-scope to rpc), so it's no longer an admin passthrough.
+    // longer admin (re-scoped to rpc), so it's no longer an admin passthrough.
     const calls = registerMethod.mock.calls;
     const call = calls.find(([m]: [string]) => m === "obs.billing.total");
     const handler = call![2];
@@ -378,7 +378,7 @@ describe("registerRpcMethods", () => {
   }
 
   it("admin branch strips a forged _agentId but re-injects _trustLevel and keeps user fields", async () => {
-    // obs.billing.total is a DAEMON-WIDE admin method (obs.diagnostics is now rpc — OBS-SELF-DEAD).
+    // obs.billing.total is a DAEMON-WIDE admin method (obs.diagnostics is now rpc).
     const handler = handlerFor("obs.billing.total");
 
     await handler({ _agentId: "forged", marker: "keep" });
@@ -413,7 +413,7 @@ describe("registerRpcMethods", () => {
   });
 
   it("strips every INTERNAL_FIELD_NAMES entry forged by an external admin caller", async () => {
-    const handler = handlerFor("obs.billing.total"); // admin (obs.diagnostics is now rpc — OBS-SELF-DEAD)
+    const handler = handlerFor("obs.billing.total"); // admin (obs.diagnostics is now rpc)
 
     const forged: Record<string, unknown> = { marker: "keep" };
     for (const name of INTERNAL_FIELD_NAMES) {

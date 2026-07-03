@@ -5,26 +5,26 @@
  * DETERMINISTICALLY from the single source of truth `TOOL_CAPABILITY_MAP`
  * (+ `TOOL_ROUTE_MAP` / `RESULT_REF_THRESHOLDS`) in `@comis/core`.
  *
- * ORCH-03 — because the SDK is emitted from the SAME cap-map as the
- * `tool.invoke` gate (Plan 02), the SDK and the gate CANNOT drift: a hand-edit
+ * Because the SDK is emitted from the SAME cap-map as the
+ * `tool.invoke` gate, the SDK and the gate CANNOT drift: a hand-edit
  * surfacing a tool the gate denies (or hiding one it allows) fails the
  * byte-identical drift gate (`test/architecture/orchestrate-sdk-drift.test.ts`).
  *
- * Progressive disclosure (v8 §6.1): the emitted `.d.ts` IS the full typed
+ * Progressive disclosure: the emitted `.d.ts` IS the full typed
  * contract (one async method per cap-mapped tool); the runtime `describe()`
  * is the small discovery surface (tool names + one-line summaries +
  * capability), so an agent can list the surface cheaply and reach for the full
  * per-tool types on demand. The high-volume tools (the `RESULT_REF_THRESHOLDS`
  * set — web fetch/search, document extraction, recursive grep, file read)
  * return a `ResultRef` whose `.grep()/.jq()/.read()` extraction keeps the big
- * (untrusted) payload on disk and out of context (REF-01/02, v8 §23.9).
+ * (untrusted) payload on disk and out of context.
  *
  * Pipeline:
  *   1. Sort the cap-map tool names (the SINGLE sort point) so the emit is
  *      stable regardless of source declaration order.
  *   2. Emit the `.d.ts` (typed methods + ResultRef + the SDK interface).
  *   3. Emit the thin `.js` runtime (each method delegates to the stable
- *      `./orchestrate-sdk-runtime.js` shim that Plan 04 provides; `describe()`
+ *      `./orchestrate-sdk-runtime.js` shim; `describe()`
  *      returns the static discovery list).
  *   4. `writeFileSync` both into `outDir`, AND return the two strings so the
  *      drift test can compare in-memory == disk without re-reading.
@@ -34,12 +34,12 @@
  *   - 2-space indentation; trailing newline (POSIX).
  *   - A single sort point: alphabetical-by-tool-name over `TOOL_CAPABILITY_MAP`.
  *
- * Runtime contract (the generated `.js` depends on it): Plan 04 ships
+ * Runtime contract (the generated `.js` depends on it):
  * `packages/skills/src/tools/builtin/orchestrate/orchestrate-sdk-runtime.ts`
- * exporting `invoke(tool, args)` (one `tool.invoke` RPC over the cap socket)
+ * exports `invoke(tool, args)` (one `tool.invoke` RPC over the cap socket)
  * and `wrapResultRef(handle)` (attaches the in-jail `.grep/.jq/.read`
  * extraction). The generated `.js` imports them by that STABLE name, so the
- * emitted bytes are stable and Plan 04 fills the behavior.
+ * emitted bytes are stable and the runtime module fills the behavior.
  *
  * Usage:
  *   pnpm sdk:generate
@@ -231,7 +231,7 @@ export default comis_tools;
 
 /**
  * Emit the thin `.js` runtime. Each method delegates to the stable
- * `./orchestrate-sdk-runtime.js` shim (Plan 04); high-volume returns are
+ * `./orchestrate-sdk-runtime.js` shim; high-volume returns are
  * wrapped so the ResultRef carries its `.grep/.jq/.read`. `describe()` returns
  * the static discovery list emitted from the cap-map.
  */

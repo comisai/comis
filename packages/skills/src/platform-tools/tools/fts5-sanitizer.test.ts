@@ -100,15 +100,15 @@ describe("sanitizeFts5Query", () => {
   });
 
   // -------------------------------------------------------------------------
-  // CHARACTERIZATION (Phase 180-08, RESEARCH §Probe Results 7 / Pitfall 8) —
-  // typed Hebrew acronyms with the ASCII double-quote gershayim stand-in.
+  // CHARACTERIZATION — typed Hebrew acronyms with the ASCII double-quote
+  // gershayim stand-in.
   //
   // These pin the CURRENT behavior; they DOCUMENT a known degradation, they do
   // NOT fix it. The sanitizer guards the word lane's FTS5 injection surface and
-  // must stay as-is this phase. All glyphs are assembled from codepoints (WR-01)
-  // so a shell/editor mojibake can never silently desync the fixture.
+  // must stay as-is. All glyphs are assembled from codepoints so a shell/editor
+  // mojibake can never silently desync the fixture.
   // -------------------------------------------------------------------------
-  describe("Hebrew acronym characterization (probe 7 — known degradation, NOT fixed)", () => {
+  describe("Hebrew acronym characterization (known degradation, NOT fixed)", () => {
     // Hebrew letters by codepoint.
     const TSADI = String.fromCodePoint(0x05e6); // צ
     const HE = String.fromCodePoint(0x05d4); // ה

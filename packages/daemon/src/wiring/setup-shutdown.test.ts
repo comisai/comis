@@ -312,7 +312,7 @@ describe("setupShutdown", () => {
     );
   });
 
-  it("WR-01: invokes destroyReactionWiring() on shutdown (cancels the reaction/session map + reaction limiter timers)", async () => {
+  it("invokes destroyReactionWiring() on shutdown (cancels the reaction/session map + reaction limiter timers)", async () => {
     const destroyReactionWiring = vi.fn();
     const deps = createMinimalDeps({ destroyReactionWiring });
 
@@ -361,7 +361,7 @@ describe("setupShutdown", () => {
   });
 
   // 8b. Exit code is set EARLY so it survives an event-loop drain during teardown.
-  // FULL INCIDENT (UC-29 daemon-down regression, fresh-VPS run 2026-06-14): a SIGUSR2
+  // The failure mode this guards against: a SIGUSR2
   // config-change restart (triggered by `comis config apply` / token mutations) shut
   // down gracefully, but the event loop emptied during the (unref'd-timer) flush wait
   // BEFORE the explicit exitFnLocal() at the end ran — so the process exited NATURALLY

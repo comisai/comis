@@ -11,5 +11,5 @@
   "provider": "openai-codex",
   "model": "gpt-5.5",
   "toolFailureCount": 14,
-  "note": "endReason is a DERIVED classification: the raw log carries finishReason:\"stop\" (no literal endReason field). The 14 web_fetch tool failures + finishReason stop make this a completed_with_tool_errors session per the v2.14 design (§1.1). durationMs/totalTokens/sessionCostUsd are real non-secret telemetry pulled from the extracted lines (max tokensTotal 735800; final cumulative sessionCostUsd 1.320669; first-turn ts → idle-cleanup span 247740ms)."
+  "note": "endReason is a DERIVED classification: the raw log carries finishReason:\"stop\" (no literal endReason field). The 14 web_fetch tool failures + finishReason stop make this a completed_with_tool_errors session (the derived endReason classification). durationMs/totalTokens/sessionCostUsd are real non-secret telemetry pulled from the extracted lines (max tokensTotal 735800; final cumulative sessionCostUsd 1.320669; first-turn ts → idle-cleanup span 247740ms)."
 }

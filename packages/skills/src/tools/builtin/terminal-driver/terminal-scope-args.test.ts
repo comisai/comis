@@ -214,7 +214,7 @@ describe("buildScopeArgs — credentialPaths dimension (tool-agnostic)", () => {
     expect(args).not.toContain("--ro-bind-try");
   });
 
-  // EROFS-03 vs credentialPaths conflict (live-reproduced on the VPS): when an
+  // Read-only-filesystem vs credentialPaths conflict (live-reproduced on the VPS): when an
   // operator RO-binds ~/.claude (or an ancestor), bwrap cannot mkdir the
   // session-env tmpfs mountpoint inside the now-read-only subtree and the WHOLE
   // jail fails to launch ("Can't mkdir …/.claude/session-env: Read-only file

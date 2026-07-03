@@ -458,14 +458,14 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
           );
         });
 
-        // REACT-01: register the inbound-reaction fanout if the adapter exposes
+        // Register the inbound-reaction fanout if the adapter exposes
         // it (Discord/Slack/Telegram). No-op adapters omit onReaction → the
         // optional-call form registers nothing (honest no-op, NOT a gap).
         adapter.onReaction?.((reaction: NormalizedReaction) => {
-          // WR-02: validate the binder-built reaction at the trust boundary (the
+          // Validate the binder-built reaction at the trust boundary (the
           // single fanout chokepoint all three platform binders converge on)
           // through the domain `parseReaction` strictObject — it rejects an
-          // empty/missing platform id or any smuggled field (V5) BEFORE the
+          // empty/missing platform id or any smuggled field BEFORE the
           // content-free event reaches the bus. A reaction is UNTRUSTED inbound;
           // an invalid one is a fail-closed DROP (WARN, non-fatal), never an emit.
           const parsed = parseReaction(reaction);
@@ -481,10 +481,10 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
             return;
           }
           // A reaction is NOT an inbound turn — do NOT mint a request context.
-          // Emit the capture event (ids/emoji only); the daemon (Plan 04)
+          // Emit the capture event (ids/emoji only); the daemon
           // resolves the messageId→trajectory and observes the outcome. PLAIN
           // emit (not ?.) so the architecture gate's regex + the type system
-          // both see it (RESEARCH Pitfall 6).
+          // both see it.
           deps.eventBus.emit("channel:reaction_received", {
             messageId: parsed.value.messageId,
             reactorId: parsed.value.reactorId,

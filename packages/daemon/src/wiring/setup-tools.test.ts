@@ -1397,7 +1397,7 @@ describe("setupTools", () => {
       expect(resolvedShared).toEqual([]);
       // readOnlyPaths is routed through resolveSkillDiscoveryPaths, which force-includes the
       // bundled-skill install target <dataDir>/skills (so a surfaced skill's SKILL.md is readable
-      // even when discoveryPaths omits ./skills — the 5ba0aa76 Issue-A fix).
+      // even when discoveryPaths omits ./skills).
       expect(sandboxArg.readOnlyPaths).toEqual(["/workspace/agent-1/skills", "/test/data/skills", "/test/data/logs"]);
       expect(sandboxArg.configReadOnlyPaths).toEqual(["/test/data/logs"]);
     });
@@ -1566,7 +1566,7 @@ describe("setupTools", () => {
       const sandboxArg = mockCreateExecTool.mock.calls[0][0].sandboxConfig;
       expect(sandboxArg).toBeDefined();
       // The bundled-skill install target <dataDir>/skills is force-included (lowest precedence),
-      // even with a custom absolute discoveryPaths that omits it (5ba0aa76 Issue-A fix).
+      // even with a custom absolute discoveryPaths that omits it.
       expect(sandboxArg.readOnlyPaths).toEqual(["/workspace/agent-1/skills", "/abs/skills", "/test/data/skills", "/test/data/logs"]);
     });
 
@@ -1641,7 +1641,7 @@ describe("setupTools", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 19. Admin cross-workspace sharedPaths (Quick 165)
+  // 19. Admin cross-workspace sharedPaths
   // -------------------------------------------------------------------------
 
   describe("admin cross-workspace sharedPaths", () => {

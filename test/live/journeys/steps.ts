@@ -2,7 +2,7 @@
 /**
  * E2E-02 — the shared, channel-agnostic step-vocabulary interpreter.
  *
- * Each §7.7 verb maps to a backing call on the bound driver (echo in sandbox, a
+ * Each step verb maps to a backing call on the bound driver (echo in sandbox, a
  * real channel at Stage-D — bound at run time, authored once). The interpreter
  * is channel-agnostic: it talks to a structural `ConversationDriverLike` subset,
  * so a story runs on the echo `ConversationDriver` (no account, CI-breadth) or a
@@ -185,8 +185,8 @@ export async function interpretStep(step: JourneyStep, ctx: StepContext): Promis
     case "expect_event": {
       // capturedEvents() carries payload:unknown; expectEvent wants
       // ObservedEvent ({ name, payload?: Record<string,unknown> }). Coerce the
-      // object-shaped payloads (event-bus payloads are metadata objects per
-      // T-138-02-01); non-object payloads map to undefined (expectEvent then
+      // object-shaped payloads (event-bus payloads are metadata objects);
+      // non-object payloads map to undefined (expectEvent then
       // matches by name only when no payloadSubset is given).
       const observed: ObservedEvent[] = ctx.driver.capturedEvents().map((e) => ({
         name: e.name,

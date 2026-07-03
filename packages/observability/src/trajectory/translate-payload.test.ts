@@ -3,21 +3,16 @@
  * Direct unit tests for `translatePayload` — the per-event payload massaging
  * that decides which fields cross into the persisted trajectory `data`.
  *
- * Focused here on the OBS-01 / Phase 180 multilingual signals
+ * Focused here on the multilingual signals
  * (`context:script_zero_hit`, `context:summary_language_mismatch`): the
  * translator MUST forward ONLY the closed-union/identifier fields and STRIP the
  * envelope fields (`agentId`, `sessionKey`, `timestamp`) per the
  * `context:budget_computed` precedent (translate-payload.ts SECURITY INVARIANT).
- *
- * RED: the two event names are not keys of TRAJECTORY_BRIDGE_MAPPING yet, so
- * `TrajectoryBridgedEventName` does not include them and these calls fail to
- * type-check / return the populated shape until Task 2 wires the mapping +
- * translator cases.
  */
 import { describe, it, expect } from "vitest";
 import { translatePayload } from "./translate-payload.js";
 
-describe("translatePayload — OBS-01 script signals (envelope stripping)", () => {
+describe("translatePayload — script signals (envelope stripping)", () => {
   it("forwards context:script_zero_hit as exactly {scriptClass, lane, conversationId}", () => {
     const data = translatePayload("context:script_zero_hit", {
       conversationId: "t1:u1:c1",
@@ -50,12 +45,12 @@ describe("translatePayload — OBS-01 script signals (envelope stripping)", () =
   });
 });
 
-// SURFACE-06 (Phase 202 Plan 03): the promote/demote telemetry folds into the
-// shared { count } translator case (the FORGET-06/SKILL-09 precedent). The
+// The skill promote/demote telemetry folds into the
+// shared { count } translator case (the memory-eviction precedent). The
 // translator forwards the COUNT ONLY — NEVER an id-list, procedure body, script,
 // or description; agentId/timestamp are envelope ids and are stripped. The record
 // TYPE (learning.skill_promoted vs learning.skill_demoted) conveys the direction.
-describe("translatePayload — SURFACE-06 skill promote/demote (counts-only, SEC-01 firewall)", () => {
+describe("translatePayload — skill promote/demote (counts-only, content-free firewall)", () => {
   it("forwards learning:skill_promoted as exactly {count}, stripping agentId/timestamp", () => {
     const data = translatePayload("learning:skill_promoted", {
       agentId: "agent-1",
@@ -99,7 +94,7 @@ describe("translatePayload — SURFACE-06 skill promote/demote (counts-only, SEC
   });
 });
 
-describe("translatePayload — reflect:funnel (OBS: why-0-admitted, counts-only, renamed Phase 226)", () => {
+describe("translatePayload — reflect:funnel (why-0-admitted, counts-only)", () => {
   it("forwards the funnel counts (synthesized/validated/admitted/maxClusterCardinality + admissionOutcome), strips the envelope", () => {
     const data = translatePayload("reflect:funnel", {
       agentId: "agent-1",
@@ -107,7 +102,7 @@ describe("translatePayload — reflect:funnel (OBS: why-0-admitted, counts-only,
       validated: 2,
       admitted: 0,
       maxClusterCardinality: 1,
-      // OBS-1: the funnel magnitudes (counts only) ride the bridged trajectory event.
+      // The funnel magnitudes (counts only) ride the bridged trajectory event.
       untrustedDrops: 3,
       nameLengthRejections: 0,
       skipped: 1,
@@ -184,13 +179,13 @@ describe("translatePayload — T2.2 background_task lifecycle (F9: now visible o
   });
 });
 
-// VIS-04 (Phase 187): the vision translators forward ONLY content-free
+// The vision translators forward ONLY content-free
 // labels/numbers (provider/mainProvider/model/path/costUsd/outcome/errorKind) and
 // STRIP the envelope fields (agentId/sessionKey/timestamp), mirroring the
-// image:* cases. costUsd/model spread presence-conditionally (Pitfall 4 — the
+// image:* cases. costUsd/model spread presence-conditionally (the
 // registry/gemini-video tiers return no cost). NEVER the image bytes, the prompt,
-// or the model's answer (T-187-12).
-describe("translatePayload — VIS-04 vision signals (content-free + envelope stripping)", () => {
+// or the model's answer.
+describe("translatePayload — vision signals (content-free + envelope stripping)", () => {
   it("forwards media.vision:requested as exactly {provider, mainProvider}", () => {
     const data = translatePayload("media.vision:requested", {
       provider: "anthropic",
@@ -230,7 +225,7 @@ describe("translatePayload — VIS-04 vision signals (content-free + envelope st
     expect(data.timestamp).toBeUndefined();
   });
 
-  it("media.vision:completed without costUsd (registry tier) omits the key entirely (Pitfall 4)", () => {
+  it("media.vision:completed without costUsd (registry tier) omits the key entirely", () => {
     const data = translatePayload("media.vision:completed", {
       provider: "gemini",
       mainProvider: "anthropic",
@@ -265,14 +260,14 @@ describe("translatePayload — VIS-04 vision signals (content-free + envelope st
   });
 });
 
-// OBS-04 (Phase 192): the five video:* arms forward ONLY content-free ids /
+// The five video:* arms forward ONLY content-free ids /
 // labels / numbers / booleans (provider/mainProvider/model/jobId/costUsd/
 // sizeBytes/durationSecs/channelType/delivered/errorKind) and STRIP the envelope
 // (agentId/sessionKey/timestamp), mirroring the image:*/media.vision:* cases.
 // costUsd/model/sizeBytes/durationSecs spread presence-conditionally (the FAL
-// no-actual-cost case omits the key — Pitfall 4). NEVER the prompt, the video
+// no-actual-cost case omits the key). NEVER the prompt, the video
 // bytes, a credential, or the Veo keyed-download-URL (the content-free invariant).
-describe("translatePayload — OBS-04 video signals (content-free + envelope stripping)", () => {
+describe("translatePayload — video signals (content-free + envelope stripping)", () => {
   it("forwards video:requested as exactly {provider, mainProvider}", () => {
     const data = translatePayload("video:requested", {
       provider: "veo",
@@ -326,7 +321,7 @@ describe("translatePayload — OBS-04 video signals (content-free + envelope str
     expect(data.timestamp).toBeUndefined();
   });
 
-  it("video:generated without optionals (FAL no-actual-cost) omits costUsd/model/sizeBytes/durationSecs entirely (Pitfall 4)", () => {
+  it("video:generated without optionals (FAL no-actual-cost) omits costUsd/model/sizeBytes/durationSecs entirely", () => {
     const data = translatePayload("video:generated", {
       provider: "fal",
       outcome: "ok",
@@ -370,19 +365,19 @@ describe("translatePayload — OBS-04 video signals (content-free + envelope str
   });
 });
 
-// OBS-02/03 (Phase 196): the six voice (STT/TTS) arms forward ONLY content-free
+// The six voice (STT/TTS) arms forward ONLY content-free
 // ids / labels / numbers / booleans / closed-enum reasons (provider/keyless/
 // model/durationMs/audioBytes/costUsd/outcome/errorKind/source/onSkip) and STRIP
 // the envelope (agentId/sessionKey/traceId/timestamp), mirroring the image:*/
 // media.vision:*/video:* cases. costUsd/model/durationMs/audioBytes spread
 // presence-conditionally; the keyless emitter passes costUsd:0 so it IS present
-// (FLAG 4 — keyless "$0" is load-bearing visibility, never stripped). The
+// (keyless "$0" is load-bearing visibility, never stripped). The
 // onSkip reasons (a closed rung-list, no free text) ride the *:requested arms —
-// the OBS-03 "selection rung AND the onSkip reasons observable" obligation; the
+// the "selection rung AND the onSkip reasons observable" obligation; the
 // `source` field alone names only the chosen rung, not why the others skipped.
 // NEVER the audio bytes, transcript text, synthesized audio, or a credential.
-describe("translatePayload — OBS-02/03 voice (STT/TTS) signals (content-free + envelope stripping)", () => {
-  it("forwards media.stt:requested as {provider, keyless, source} + the onSkip reasons (OBS-03), stripping the envelope", () => {
+describe("translatePayload — voice (STT/TTS) signals (content-free + envelope stripping)", () => {
+  it("forwards media.stt:requested as {provider, keyless, source} + the onSkip reasons, stripping the envelope", () => {
     const data = translatePayload("media.stt:requested", {
       provider: "local",
       keyless: true,
@@ -530,7 +525,7 @@ describe("translatePayload — OBS-02/03 voice (STT/TTS) signals (content-free +
   });
 });
 
-describe("translatePayload — WR-4 (177-obs-loop) spend kill-switch (content-free: scope/$ numbers only)", () => {
+describe("translatePayload — spend kill-switch (content-free: scope/$ numbers only)", () => {
   it("forwards observability:spend_warning as exactly {scope, spentUsd, capUsd, fraction}, stripping the envelope", () => {
     const data = translatePayload("observability:spend_warning", {
       scope: "tenant",
@@ -595,7 +590,7 @@ describe("translatePayload — WR-4 (177-obs-loop) spend kill-switch (content-fr
   });
 });
 
-describe("translatePayload — DRIVE-02 terminal drive promotion (content-free, envelope-stripped)", () => {
+describe("translatePayload — terminal drive promotion (content-free, envelope-stripped)", () => {
   it("translates terminal:drive_promoted to the reason enum ONLY (sessionId/agentId/timestamp are envelope)", () => {
     const data = translatePayload("terminal:drive_promoted", {
       sessionId: "term-abc-123",
@@ -612,7 +607,7 @@ describe("translatePayload — DRIVE-02 terminal drive promotion (content-free, 
   });
 });
 
-describe("translatePayload — EVICT-01 terminal drive eviction (content-free, envelope-stripped)", () => {
+describe("translatePayload — terminal drive eviction (content-free, envelope-stripped)", () => {
   it("translates terminal:session_evicted to the reason enum + durationMs ONLY (sessionId/agentId/timestamp are envelope)", () => {
     const data = translatePayload("terminal:session_evicted", {
       sessionId: "term-abc-123",

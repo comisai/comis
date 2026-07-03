@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Multilingual token-fixture ground-truth generator (TOK-02 —
- * design/multilingual-excellence.md §4).
+ * Multilingual token-fixture ground-truth generator.
  *
  * Measures the committed corpus (corpus.mjs) against >=2 REAL tokenizers and
  * writes packages/core/src/text/__fixtures__/token-counts.json. Operator-run
@@ -18,10 +17,10 @@
  * Merge semantics: an existing token-counts.json is loaded and only the
  * requested leg's fields are (re)filled by entry id, so the two legs can run
  * at different times / on different machines. Carried-forward counts are kept
- * ONLY when the entry's committed text still equals the corpus text (review
- * WR-04: counts measured against an older revision of an entry must never
- * silently attach to edited text — the conservativeness suite would then
- * assert against corrupted ground truth); on a text change the stale counts
+ * ONLY when the entry's committed text still equals the corpus text (counts
+ * measured against an older revision of an entry must never silently attach
+ * to edited text — the conservativeness suite would then assert against
+ * corrupted ground truth); on a text change the stale counts
  * are dropped with a WARN and the entry must be re-measured. maxTokenCount is
  * recomputed as the max over the PRESENT legs after every merge; an un-run
  * leg stays null.
@@ -29,7 +28,7 @@
  * Config via env (see token-fixtures.env.example):
  *   ANTHROPIC_API_KEY      leg A credential — never printed, never committed
  *   ANTHROPIC_COUNT_MODEL  CURRENT-tokenizer model id (older ids use the old
- *                          tokenizer and under-measure by ~30% — Pitfall 7)
+ *                          tokenizer and under-measure by ~30%)
  *   QWEN_GGUF_PATH         local qwen-class GGUF for leg B (see README.md for
  *                          the `ollama show ... --modelfile` discovery trick;
  *                          only its BASENAME is recorded in the output)
@@ -89,7 +88,7 @@ const existing = existsSync(OUTPUT_PATH) ? JSON.parse(readFileSync(OUTPUT_PATH, 
 const existingById = new Map((existing?.entries ?? []).map((e) => [e.id, e]));
 const entries = CORPUS.map((c) => {
   const prev = existingById.get(c.id);
-  // Review WR-04: a merge by id alone silently attaches counts measured
+  // A merge by id alone silently attaches counts measured
   // against an OLDER text revision to edited corpus text — corrupted ground
   // truth the conservativeness suite then asserts against (can false-pass on
   // shortened text, false-fail on lengthened). The fixture stores the full
@@ -152,7 +151,7 @@ async function runAnthropicLeg() {
     console.error("ERROR: ANTHROPIC_COUNT_MODEL is not set — use a CURRENT-tokenizer model id (see token-fixtures.env.example).");
     process.exit(1);
   }
-  // Baseline-delta (Pitfall 7): the endpoint counts the WHOLE request (role
+  // Baseline-delta: the endpoint counts the WHOLE request (role
   // wrapper + system additions). Count a 1-char marker once and subtract the
   // overhead from every measurement so short strings are not inflated.
   const markerCount = await countTokensOnce(apiKey, model, "a");
@@ -179,7 +178,7 @@ async function runQwenLeg() {
     process.exit(1);
   }
   // Resolve node-llama-cpp from the packages/memory pin — NO new dependency
-  // anywhere (179-RESEARCH Code Example 3, verified working 2026-06-12).
+  // anywhere.
   const req = createRequire(new URL("../../packages/memory/package.json", import.meta.url).pathname);
   const { getLlama } = await import("file://" + req.resolve("node-llama-cpp"));
   console.log("Qwen leg: loading llama.cpp (first gpu:false run may compile a CPU addon, ~2 min)...");

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the FAL queue-API video adapter (DIVERGENCE 1).
+ * Tests for the FAL queue-API video adapter.
  *
  * The `@fal-ai/client` MODULE mock is built INSIDE `vi.hoisted()` so the import
- * binding resolves at hoist time (the Phase-185 SDK-mock lesson). FAL exports a
+ * binding resolves at hoist time (the mock must exist before the static import binds). FAL exports a
  * SINGLETON object (not a class), so the mock is a plain object —
  * `{ config, queue: { submit, status, result } }` — NOT a class default export.
  *
@@ -78,10 +78,10 @@ describe("submit", () => {
     }
   });
 
-  // CAP-02 (ROADMAP SC#2 oracle): a normalized durationSecs reaches FAL as the
+  // A normalized durationSecs reaches FAL as the
   // STRING form "8s" — NOT the bare number Veo/Grok use. Pins the per-backend
   // duration wire-encoding divergence at the FAL leg.
-  it("CAP-02: encodes durationSecs as the FAL string form (8 → \"8s\")", async () => {
+  it("encodes durationSecs as the FAL string form (8 → \"8s\")", async () => {
     falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-dur-8" });
     const adapter = createFalVideoAdapter({ apiKey: "k" });
 
@@ -93,7 +93,7 @@ describe("submit", () => {
     );
   });
 
-  it("VPORT-03: the jobId is the opaque request_id and contains NO secret", async () => {
+  it("the jobId is the opaque request_id and contains NO secret", async () => {
     falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-opaque-xyz" });
     const adapter = createFalVideoAdapter({ apiKey: "super-secret-key-9999" });
 
@@ -107,10 +107,10 @@ describe("submit", () => {
     }
   });
 
-  // IN-01 / Pitfall 4 (the headline oracle): a referenceImage present makes the
+  // A referenceImage present makes the
   // adapter SWAP the endpoint id to the DISTINCT /image-to-video endpoint — the
   // t2v endpoint REJECTS image_url, so a param toggle (Veo/Grok) is WRONG for FAL.
-  it("IN-01: with a referenceImage present, swaps fal.queue.submit to the /image-to-video endpoint and sets image_url as a data-URI", async () => {
+  it("with a referenceImage present, swaps fal.queue.submit to the /image-to-video endpoint and sets image_url as a data-URI", async () => {
     falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-i2v-1" });
     const adapter = createFalVideoAdapter({ apiKey: "k" });
 
@@ -119,7 +119,7 @@ describe("submit", () => {
       referenceImage: { data: "aGVsbG8=", mimeType: "image/png" },
     });
 
-    // The endpoint id ACTUALLY CHANGED (not just a param toggle) — Pitfall 4.
+    // The endpoint id ACTUALLY CHANGED (not just a param toggle).
     expect(falMock.queue.submit).toHaveBeenCalledWith(
       "fal-ai/veo3.1/fast/image-to-video",
       expect.objectContaining({
@@ -136,9 +136,9 @@ describe("submit", () => {
     }
   });
 
-  // IN-01 non-regression: WITHOUT a referenceImage the endpoint stays the t2v
-  // default and NO image_url is set (the :63 default-endpoint test stays green).
-  it("IN-01: without a referenceImage, keeps the t2v endpoint and sets NO image_url", async () => {
+  // WITHOUT a referenceImage the endpoint stays the t2v
+  // default and NO image_url is set (the default-endpoint path stays intact).
+  it("without a referenceImage, keeps the t2v endpoint and sets NO image_url", async () => {
     falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-t2v-1" });
     const adapter = createFalVideoAdapter({ apiKey: "k" });
 
@@ -152,10 +152,10 @@ describe("submit", () => {
     expect(submittedInput).not.toHaveProperty("image_url");
   });
 
-  // IN-01: an EXPLICIT opts.model wins — a caller-named endpoint is NOT swapped to
+  // An EXPLICIT opts.model wins — a caller-named endpoint is NOT swapped to
   // /image-to-video even when a referenceImage is present (the operator override
   // is authoritative; they may have named an i2v endpoint themselves).
-  it("IN-01: an explicit opts.model endpoint is used verbatim even with a referenceImage (no swap)", async () => {
+  it("an explicit opts.model endpoint is used verbatim even with a referenceImage (no swap)", async () => {
     falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-i2v-explicit" });
     const adapter = createFalVideoAdapter({ apiKey: "k", model: "fal-ai/kling/image-to-video" });
 
@@ -171,13 +171,13 @@ describe("submit", () => {
     expect(res.ok && res.value.model).toBe("fal-ai/kling/image-to-video");
   });
 
-  // WR-03: a per-request input.model is the RESOLVED model the handler validated
+  // A per-request input.model is the RESOLVED model the handler validated
   // against (`params.model ?? config.model`) — the adapter MUST render it so
-  // validation and execution AGREE. Pre-fix the adapter ignored input.model and
-  // used the construction-bound opts.model, so an explicit per-request model
-  // validated against one cell but rendered another. RED on pre-fix code: the
-  // submit targets the construction default, not input.model.
-  it("WR-03: a per-request input.model overrides the construction default (validate↔execute agree)", async () => {
+  // validation and execution AGREE. If the adapter ignored input.model and
+  // used the construction-bound opts.model, an explicit per-request model would
+  // validate against one endpoint but render another; the submit must target
+  // input.model, not the construction default.
+  it("a per-request input.model overrides the construction default (validate↔execute agree)", async () => {
     falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-model-override" });
     const adapter = createFalVideoAdapter({ apiKey: "k" }); // no construction model → default
 
@@ -191,9 +191,9 @@ describe("submit", () => {
     expect(res.ok && res.value.model).toBe("fal-ai/kling-video/v2/standard");
   });
 
-  // WR-03: a per-request input.model wins over a construction opts.model too (the
+  // A per-request input.model wins over a construction opts.model too (the
   // request is the most-specific override; it is what the handler validated).
-  it("WR-03: a per-request input.model wins over the construction opts.model", async () => {
+  it("a per-request input.model wins over the construction opts.model", async () => {
     falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-model-win" });
     const adapter = createFalVideoAdapter({ apiKey: "k", model: "fal-ai/veo3.1/fast" });
 
@@ -267,12 +267,12 @@ describe("fetchResult", () => {
     expect(res.ok).toBe(false);
   });
 
-  // CR-01: a non-ok HTTP status on the result download (an expired/4xx FAL CDN
+  // A non-ok HTTP status on the result download (an expired/4xx FAL CDN
   // URL) must become a FAILURE — NEVER a success carrying the error body as the
-  // "video" buffer. The sibling image adapter has this check; this one dropped
-  // it. (fetchResult itself returns the raw thrown Error; execute() classifies
-  // it — see the execute-level CR-01 test below for the typed errorKind.)
-  it("CR-01: a non-ok (403) download is rejected (failure, NOT a success with the error body)", async () => {
+  // "video" buffer. (fetchResult itself returns the raw thrown Error; execute()
+  // classifies it — see the execute-level download-rejection test below for the
+  // typed errorKind.)
+  it("a non-ok (403) download is rejected (failure, NOT a success with the error body)", async () => {
     falMock.queue.result.mockResolvedValueOnce({
       data: { video: { url: "https://cdn.fal.ai/expired.mp4" } },
       requestId: "req-403",
@@ -294,8 +294,8 @@ describe("fetchResult", () => {
     expect(res.ok).toBe(false);
   });
 
-  // CR-01 corollary: an OK response with an EMPTY body is not a valid video.
-  it("CR-01: an ok response with an empty body is rejected (not a zero-byte success)", async () => {
+  // An OK response with an EMPTY body is not a valid video.
+  it("an ok response with an empty body is rejected (not a zero-byte success)", async () => {
     falMock.queue.result.mockResolvedValueOnce({
       data: { video: { url: "https://cdn.fal.ai/empty.mp4" } },
       requestId: "req-empty",
@@ -309,9 +309,9 @@ describe("fetchResult", () => {
     expect(res.ok).toBe(false);
   });
 
-  // WR-01: an oversized Content-Length must be rejected BEFORE buffering the
+  // An oversized Content-Length must be rejected BEFORE buffering the
   // body (an OOM guard for a hostile/buggy CDN), mirroring ssrf-image-fetch.
-  it("WR-01: a Content-Length exceeding the cap is rejected pre-buffer (body never read)", async () => {
+  it("a Content-Length exceeding the cap is rejected pre-buffer (body never read)", async () => {
     falMock.queue.result.mockResolvedValueOnce({
       data: { video: { url: "https://cdn.fal.ai/huge.mp4" } },
       requestId: "req-huge",
@@ -339,9 +339,9 @@ describe("fetchResult", () => {
     expect(arrayBuffer).not.toHaveBeenCalled();
   });
 
-  // WR-06: the delivered mimeType must reflect the actual CDN content-type, not
+  // The delivered mimeType must reflect the actual CDN content-type, not
   // a hard-coded video/mp4, so non-mp4 outputs are not mislabeled.
-  it("WR-06: a video/webm content-type yields a video/webm mimeType", async () => {
+  it("a video/webm content-type yields a video/webm mimeType", async () => {
     falMock.queue.result.mockResolvedValueOnce({
       data: { video: { url: "https://cdn.fal.ai/out.webm" } },
       requestId: "req-webm",
@@ -358,8 +358,8 @@ describe("fetchResult", () => {
     }
   });
 
-  // WR-06: with no content-type header the mimeType falls back to video/mp4.
-  it("WR-06: falls back to video/mp4 when no content-type header is present", async () => {
+  // With no content-type header the mimeType falls back to video/mp4.
+  it("falls back to video/mp4 when no content-type header is present", async () => {
     falMock.queue.result.mockResolvedValueOnce({
       data: { video: { url: "https://cdn.fal.ai/out.mp4" } },
       requestId: "req-nomime",
@@ -376,9 +376,9 @@ describe("fetchResult", () => {
     }
   });
 
-  // WR-01: an already-aborted signal must reject the download (respect the
+  // An already-aborted signal must reject the download (respect the
   // operator deadline on a hung CDN), threaded from execute()'s runOpts.signal.
-  it("WR-01: an aborted signal rejects the download", async () => {
+  it("an aborted signal rejects the download", async () => {
     falMock.queue.result.mockResolvedValueOnce({
       data: { video: { url: "https://cdn.fal.ai/slow.mp4" } },
       requestId: "req-abort",
@@ -435,11 +435,11 @@ describe("execute — the inline submit -> poll -> download loop", () => {
     }
   });
 
-  // IN-01 reachability (Pitfall 5 — built-but-not-wired guard): the i2v endpoint
+  // The i2v endpoint
   // swap must be reachable from the WHOLE submit→poll→fetchResult loop, not just
   // submit. With a referenceImage, every fal.queue.* call targets the swapped
   // /image-to-video endpoint (the swap round-trips on job.model).
-  it("IN-01: an i2v execute() drives poll AND result against the swapped /image-to-video endpoint", async () => {
+  it("an i2v execute() drives poll AND result against the swapped /image-to-video endpoint", async () => {
     falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-i2v-loop" });
     falMock.queue.status.mockResolvedValueOnce({ status: "COMPLETED" });
     falMock.queue.result.mockResolvedValueOnce({
@@ -468,7 +468,7 @@ describe("execute — the inline submit -> poll -> download loop", () => {
     });
   });
 
-  it("FAL-02: COMPLETED with no video.url -> empty_response with a hint", async () => {
+  it("COMPLETED with no video.url -> empty_response with a hint", async () => {
     falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-e" });
     falMock.queue.status.mockResolvedValueOnce({ status: "COMPLETED" });
     falMock.queue.result.mockResolvedValueOnce({ data: {}, requestId: "req-e" });
@@ -484,7 +484,7 @@ describe("execute — the inline submit -> poll -> download loop", () => {
     }
   });
 
-  it("FAL-02: a thrown 401 from status -> auth_required with a FAL_KEY hint", async () => {
+  it("a thrown 401 from status -> auth_required with a FAL_KEY hint", async () => {
     falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-a" });
     falMock.queue.status.mockRejectedValueOnce(new Error("Request failed with status 401"));
     const adapter = createFalVideoAdapter({ apiKey: "k" });
@@ -499,7 +499,7 @@ describe("execute — the inline submit -> poll -> download loop", () => {
     }
   });
 
-  it("FAL-02: a thrown moderation error from status -> content_blocked", async () => {
+  it("a thrown moderation error from status -> content_blocked", async () => {
     falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-m" });
     falMock.queue.status.mockRejectedValueOnce(new Error("blocked by moderation policy"));
     const adapter = createFalVideoAdapter({ apiKey: "k" });
@@ -513,7 +513,7 @@ describe("execute — the inline submit -> poll -> download loop", () => {
     }
   });
 
-  it("VPORT-02: an always-pending job exceeds timeoutMs -> job_timeout, hint carries the jobId", async () => {
+  it("an always-pending job exceeds timeoutMs -> job_timeout, hint carries the jobId", async () => {
     falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-timeout-77" });
     falMock.queue.status.mockResolvedValue({ status: "IN_PROGRESS" });
     const adapter = createFalVideoAdapter({ apiKey: "k" });
@@ -528,7 +528,7 @@ describe("execute — the inline submit -> poll -> download loop", () => {
     }
   });
 
-  it("WR-05: a successful execute() populates durationSecs from the requested/effective duration", async () => {
+  it("a successful execute() populates durationSecs from the requested/effective duration", async () => {
     falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-dur" });
     falMock.queue.status.mockResolvedValueOnce({ status: "COMPLETED" });
     falMock.queue.result.mockResolvedValueOnce({
@@ -552,7 +552,7 @@ describe("execute — the inline submit -> poll -> download loop", () => {
     }
   });
 
-  it("WR-05: a provider-reported duration in the result data wins over the requested duration", async () => {
+  it("a provider-reported duration in the result data wins over the requested duration", async () => {
     falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-dur2" });
     falMock.queue.status.mockResolvedValueOnce({ status: "COMPLETED" });
     // FAL reports an actual clip duration of 7s in the result payload.
@@ -575,7 +575,7 @@ describe("execute — the inline submit -> poll -> download loop", () => {
     }
   });
 
-  it("CR-01: a non-ok (403) download through execute() surfaces a CLASSIFIED VideoGenError, not a fake success", async () => {
+  it("a non-ok (403) download through execute() surfaces a CLASSIFIED VideoGenError, not a fake success", async () => {
     falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-dl-403" });
     falMock.queue.status.mockResolvedValueOnce({ status: "COMPLETED" });
     falMock.queue.result.mockResolvedValueOnce({
@@ -604,7 +604,7 @@ describe("execute — the inline submit -> poll -> download loop", () => {
     }
   });
 
-  it("VPORT-03: neither the job nor the output (nor the error) leaks the apiKey on the happy path", async () => {
+  it("neither the job nor the output (nor the error) leaks the apiKey on the happy path", async () => {
     falMock.queue.submit.mockResolvedValueOnce({ request_id: "req-clean" });
     falMock.queue.status.mockResolvedValueOnce({ status: "COMPLETED" });
     falMock.queue.result.mockResolvedValueOnce({

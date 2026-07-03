@@ -3,8 +3,8 @@
  * Activation seam tests: brokerContext on ToolsDeps + conditional
  * wiring into createExecTool (network: broker-only, secureCredentialHome, brokerSpawnEnv).
  *
- * RED phase: ToolsDeps.brokerContext does not exist yet — tests fail to compile.
- * GREEN phase: add brokerContext to ToolsDeps + conditional wiring in assembleToolsForAgent.
+ * These assert brokerContext exists on ToolsDeps and drives the conditional
+ * wiring in assembleToolsForAgent.
  *
  * Tests cover:
  *   - sandboxCfg.network.mode === "broker-only" when brokerContext present

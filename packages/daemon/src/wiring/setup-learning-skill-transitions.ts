@@ -96,25 +96,25 @@ export async function applySkillOutcomeTransitions(
   const skillStart = deps.clock.now();
   let promoted = 0;
   let demoted = 0;
-  // REFLECT-03: count of successful reuses whose promotion credit was VALUE-GATED (the skill
+  // Count of successful reuses whose promotion credit was VALUE-GATED (the skill
   // was in a sustained-failure standing → it must earn back trust before accruing proof).
   let promotionGated = 0;
-  // Finding C: collect the demoted skill NAMES (not just the count) so the emit can name WHICH
+  // Collect the demoted skill NAMES (not just the count) so the emit can name WHICH
   // skills demoted (id-class, never a body).
   const demotedNames: string[] = [];
-  // REFLECT-03: the skill NAMES whose promotion was value-gated this resolve (id-class, never a body)
+  // The skill NAMES whose promotion was value-gated this resolve (id-class, never a body)
   // — so "why didn't my skill promote despite a successful reuse?" is answerable from obs.
   const gatedNames: string[] = [];
 
   for (const skillName of verdict.usedSkillIds) {
-    // WR-05: never key the in-process gauges on the bare name (cross-tenant alias).
+    // Never key the in-process gauges on the bare name (cross-tenant alias).
     const gaugeKey = skillGaugeKey(scope.tenantId, scope.agentId, skillName);
     if (verdict.outcome === "success") {
-      // REFLECT-03 VALUE-GATED PROMOTION: PEEK the skill's standing BEFORE folding this success.
+      // VALUE-GATED PROMOTION: PEEK the skill's standing BEFORE folding this success.
       // A skill in a SUSTAINED-failure ("weakening") standing must EARN BACK trust — an interleaved
       // success recovers the trend but does NOT accrue promotion credit (proof_count), so promotion
-      // reflects a reliable track record, not raw reuse count (the package-delivery finding: a skill
-      // promoted on usage even when its reuses didn't help). A fresh/clean or single-failure skill is
+      // reflects a reliable track record, not raw reuse count (otherwise a skill promotes on usage
+      // even when its reuses did not help). A fresh/clean or single-failure skill is
       // "stable" (never "weakening") → promotes normally (no regression on the healthy loop).
       const standingBefore = skillTrend.peekSkillTrend(gaugeKey, deps.clock.now());
       // The success ALWAYS feeds the trend (so a recovering procedure re-strengthens) — peek was BEFORE.
@@ -123,17 +123,17 @@ export async function applySkillOutcomeTransitions(
         promotionGated += 1;
         gatedNames.push(skillName);
       } else {
-        // SURFACE-04: promoteByName bumps proof_count; candidate→active at the proof bar
-        // (store-side CASE). Count ONLY when a real row changed (CR-01).
+        // promoteByName bumps proof_count; candidate→active at the proof bar
+        // (store-side CASE). Count ONLY when a real row changed.
         const changed = await runSkillTransition(deps, scope.agentId, "skill_promote", () =>
           skillStore.promoteByName(skillName, skillScope, threshold),
         );
         if (changed) promoted += 1;
       }
     } else if (verdict.outcome === "failure" || verdict.outcome === "corrected") {
-      // SURFACE-05: corroboration gate (≥2 distinct-session OR 1 deterministic), THEN
+      // Corroboration gate (≥2 distinct-session OR 1 deterministic), THEN
       // the decay-aware trend — demote ONLY on a WEAKENING standing so a single
-      // corroborated failure on a well-reused skill stays put (§12 first-RED).
+      // corroborated failure on a well-reused skill stays put.
       if (failureCorroborated(gaugeKey, scope.sessionId, verdict.sources, skillFailureCorroborationTally)) {
         const trend = skillTrend.updateSkillTrend(gaugeKey, "failure", deps.clock.now());
         if (trend === "weakening") {
@@ -149,21 +149,21 @@ export async function applySkillOutcomeTransitions(
     }
   }
 
-  // SURFACE-06 emits — plain eventBus.emit (Plan 03 typed the keys + bridged them).
+  // Skill-transition emits — plain eventBus.emit (the keys are typed + bridged).
   // COUNTS ONLY — a body/script/id-list field is a compile error. Emitted ONLY on a
-  // REAL transition count (CR-01: a 0-row write never reaches here).
+  // REAL transition count (a 0-row write never reaches here).
   if (promoted > 0) deps.eventBus.emit("learning:skill_promoted", { agentId: scope.agentId, count: promoted, timestamp: deps.clock.now() });
   if (demoted > 0)
     deps.eventBus.emit("learning:skill_demoted", {
       agentId: scope.agentId,
       count: demoted,
-      // Finding C: name WHICH skills demoted + the trigger trajectory (the WHY) — content-free ids.
+      // Name WHICH skills demoted + the trigger trajectory (the WHY) — content-free ids.
       demotedSkillNames: demotedNames,
       triggerTrajectoryId: scope.trajectoryId,
       timestamp: deps.clock.now(),
     });
-  // OBS-01: one INFO completion line per resolve that moved a skill OR value-gated a promotion,
-  // with durationMs (counts/ids only — never a procedure body). REFLECT-03 adds promotionGated +
+  // One INFO completion line per resolve that moved a skill OR value-gated a promotion,
+  // with durationMs (counts/ids only — never a procedure body). Adds promotionGated +
   // the gated skill NAMES so a stalled-but-succeeding skill is diagnosable ("why no promote?").
   if (promoted > 0 || demoted > 0 || promotionGated > 0) {
     deps.logger.info(
@@ -178,8 +178,8 @@ export async function applySkillOutcomeTransitions(
       "Learned-skill promote/demote complete",
     );
   }
-  // WR-01: a real transition changed the active set — refresh the per-agent surface cache so the
-  // NEXT session's freeze captures it (next-session pickup, SURFACE-03). A value-GATED promotion
+  // A real transition changed the active set — refresh the per-agent surface cache so the
+  // NEXT session's freeze captures it (next-session pickup). A value-GATED promotion
   // moved NO row → no refresh.
   if (promoted > 0 || demoted > 0) {
     refreshSurface?.(scope.agentId);

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# Comis Prometheus RECORDING rules (PROM-02; design §6 WS7).
+# Comis Prometheus RECORDING rules.
 #
 # Pre-computes the three derived series the dashboards + alerts consume, so a
 # panel/alert references one recorded series instead of re-deriving a ratio every
@@ -34,6 +34,6 @@ groups:
         expr: sum(rate(comis_cost_usd_total[1h]))
 
       # Pricing-gap rate: turns whose pricing state is unknown, per 15m.
-      # The acute "we are flying blind on cost" signal (E1).
+      # The acute "we are flying blind on cost" signal.
       - record: comis:pricing_unknown:rate15m
         expr: sum(rate(comis_pricing_turns_total{state="unknown"}[15m]))

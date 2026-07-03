@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: appendAuditJsonl surfaces a JSONL-write failure as a throw so the daemon audit subscriber (obs-audit-sink.ts persistAuditRow) can try/catch it, log ERROR with hint+errorKind, and continue — the SQLite half still drains and the event is never silently dropped (T-176-11). The throw fires only on a filesystem failure (permissions/space/symlink-rejection), never on user data; the writer's signature is void (single-shot per the config-audit append analog), so Result.err would force every caller into an unwrap the subscriber does not need.
+// @allow-throw: appendAuditJsonl surfaces a JSONL-write failure as a throw so the daemon audit subscriber (obs-audit-sink.ts persistAuditRow) can try/catch it, log ERROR with hint+errorKind, and continue — the SQLite half still drains and the event is never silently dropped. The throw fires only on a filesystem failure (permissions/space/symlink-rejection), never on user data; the writer's signature is void (single-shot per the config-audit append analog), so Result.err would force every caller into an unwrap the subscriber does not need.
 /**
- * Security-audit sink helpers (AUDIT-01) — the only genuinely-new machinery in
- * Phase 176. Composes TWO existing analogs rather than inventing storage:
+ * Security-audit sink helpers. Composes TWO existing analogs rather than inventing storage:
  *
  *   1. **SQLite half** (mirrors `observability-mutations.ts`): `insertAuditEvent`
  *      / `queryAuditEvents` over the dedicated `obs_audit_events` table
- *      (DDL + indexes shipped by Plan 01 via `ensureObsAuditTable`). Bound
+ *      (DDL + indexes shipped via `ensureObsAuditTable`). Bound
  *      params only — `refs` is a `JSON.stringify`'d scrubbed blob, never
- *      interpolated SQL (T-176-12).
+ *      interpolated SQL.
  *
  *   2. **JSONL half** (clones `@comis/observability` `config-audit/append.ts`):
  *      `appendAuditJsonl` writes one scrubbed JSON line per event to
@@ -42,7 +41,7 @@ import type {
 } from "./observability-store-types.js";
 
 /**
- * Schema for the `obs_audit_events` security-audit table (AUDIT-01) — the SSOT
+ * Schema for the `obs_audit_events` security-audit table — the SSOT
  * for the snake_case raw row, co-located with its sole `createRowMapper`
  * consumer (the SessionSummaryRollupDbRowSchema precedent — declared beside its
  * mapper, NOT in the row-schemas.ts SSOT file, which is at the 800-line cap).

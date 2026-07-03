@@ -3,7 +3,7 @@
  * Architecture gate: the `comis-agent` CLI surface reaches NO admin/control-plane
  * method AND no denylisted closed door — so an admin/denylisted attempt is denied
  * IDENTICALLY to the orchestrate-script path (deny-by-origin + the cap-socket
- * denylist), never via a CLI-only weaker affordance (CLI-03, v8 §7).
+ * denylist), never via a CLI-only weaker affordance.
  *
  * The `comis-agent` CLI is shell fluency over the SAME handlers as the typed
  * tools and the orchestrate script. The admin surface is unreachable for an agent
@@ -14,16 +14,16 @@
  * cap socket's pre-check throws before `validate()`). The CLI must therefore NOT
  * offer any admin/closed-door verb, and its table's intersection with both the
  * admin set AND the denylist must be empty — this test makes a future admin /
- * denylisted subcommand a `pnpm test:architecture` BUILD failure (T-219-19).
+ * denylisted subcommand a `pnpm test:architecture` BUILD failure.
  *
- * Both sets are DERIVED (T-219-21 — no stale hand-copied literal that drifts):
+ * Both sets are DERIVED (no stale hand-copied literal that drifts):
  *   - `ADMIN_METHODS` is derived from `API_CONTRACTS_ORDERED` filtered on
  *     `scopes.includes("admin")` — the EXACT derivation the deny-by-origin
  *     chokepoint uses (mirrors `admin-handlers-deny-by-origin.test.ts`).
  *   - `DENYLISTED_RPC_METHODS` is the compiled `@comis/daemon` export — the SAME
  *     closed-door set the cap socket's pre-check uses.
  *
- * Negative fixtures (T-219-20) prove the intersection checks DISCRIMINATE:
+ * Negative fixtures prove the intersection checks DISCRIMINATE:
  * `tokens.create` (admin AND denylisted) is flagged by BOTH checks; `skills.create`
  * (denylisted but NOT admin) is flagged by the DENYLIST check ALONE — proving the
  * denylist check catches a closed door the admin check would miss.
@@ -59,7 +59,7 @@ const METHOD_ENTRIES: ReadonlyArray<readonly [string, string]> = CLI_ENTRIES.fil
 
 /**
  * The admin/control-plane front-door verbs + the `skill` closed door that the CLI
- * does NOT offer (CLI-03). `skill` is included by design — its `orch:skill`
+ * does NOT offer. `skill` is included by design — its `orch:skill`
  * methods are denylisted, so it is a closed door, not a gap. (`memory`/`sessions`
  * are likewise absent as TOP-LEVEL verbs: only the specific self-scoped reads
  * `status`/`list`/`whoami` exist, not a `memory`/`sessions` management verb.)
@@ -80,7 +80,7 @@ const ADMIN_AND_CLOSED_DOOR_VERBS: readonly string[] = [
   "skill",
 ];
 
-describe("comis-agent CLI reaches no admin or denylisted method (admin denied identically to the script, CLI-03)", () => {
+describe("comis-agent CLI reaches no admin or denylisted method (admin denied identically to the script)", () => {
   it("derives both the admin set and the denylist from source (not hardcoded literals)", () => {
     // Soundness anchors: both derived sets are non-empty (so an intersection
     // check cannot vacuously pass against an accidentally-empty set), and each

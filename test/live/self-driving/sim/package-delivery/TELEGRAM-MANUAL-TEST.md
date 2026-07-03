@@ -40,7 +40,7 @@ cd test/live/self-driving/sim
 bash deploy-sim.sh                                  # → /home/comis/sim on the VPS
 
 # 1. Wipe learning state + cron store, restart on the fresh dist
-#    (re-registers exactly the 3 v2.31 learning crons; empties memory.db)
+#    (re-registers exactly the 3 learning crons; empties memory.db)
 WIPE_CRONS=1 bash /root/clean-restart.sh
 ```
 
@@ -124,7 +124,7 @@ Verify the second success the same way (`outcome_events` → another `success`),
 
 ### Trigger learning ("Back in Hindsight, our agent has started to learn")
 
-Reflection is a fire-and-forget cron in v2.31. To **force it and wait for the exact admit marker** instead of
+Reflection is a fire-and-forget cron. To **force it and wait for the exact admit marker** instead of
 guessing when the cron fires:
 
 ```bash
@@ -136,7 +136,7 @@ node /root/reflect-run.mjs        # → "DONE after ~22s:" + {admissionOutcome:"
 ```bash
 node /root/db.mjs pick mental_models name,kind,state,trust_level,proof_count
 #   → a kind='skill', state='candidate', trust_level='learned' row.
-#     trust_level is NEVER above 'learned' (INV-1) — the agent's own experience is "learned", not "user"-trusted.
+#     trust_level is NEVER above 'learned' — the agent's own experience is "learned", not "user"-trusted.
 ```
 
 The courier just turned its successful deliveries into a **reusable behavioral skill** — "go to the lobby
@@ -205,7 +205,7 @@ node /root/db.mjs pick outcome_events source,outcome 10
 |---|---|---|
 | `mental_models` count | `0` | ≥ 1 `kind='skill'` row |
 | skill `state` | — | `candidate` → `active` after enough reuse |
-| skill `trust_level` | — | `learned` (never higher — INV-1) |
+| skill `trust_level` | — | `learned` (never higher) |
 | delivery moves | well above par 4, may wander/mis-deliver | ~par, `efficient:true` |
 | `explain.learning.skillsUsed` | `[]` | the learned skill id |
 | transfer | n/a | works on variant B **after** offices were reshuffled |

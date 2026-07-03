@@ -27,7 +27,7 @@ const memoryConfig: MemoryConfig = {
   enabled: true,
   dbPath: ":memory:",
   walMode: false,
-  // Phase 226: the recall keepers nest under memory.recall (design §5).
+  // The recall settings nest under memory.recall.
   recall: {
     embeddingModel: "test-model",
     embeddingDimensions: 4,
@@ -129,12 +129,12 @@ describe("createSqliteMemoryCausalStore", () => {
       expect(read.value.map((r) => r.entry.id)).toEqual(["cause"]);
     });
 
-    // CR-01 (lane gap): the causal lane hydrates a full memory row that flows straight
+    // The causal lane hydrates a full memory row that flows straight
     // into createMemoryRecall → the prompt with NO downstream evicted_at re-validation.
     // A soft-evicted counterpart MUST be excluded; the asOf raw read still resolves it
     // (soft eviction is reversible). NB: the edge itself is unaffected — only the
     // recall-side hydration filters; the asOf/inspect raw read does not.
-    it("CR-01: a soft-evicted causal counterpart is EXCLUDED from the lane (asOf raw read still resolves it)", async () => {
+    it("a soft-evicted causal counterpart is EXCLUDED from the lane (asOf raw read still resolves it)", async () => {
       const cause = await seedMemory({ id: "cause", content: "deployment triggered a cascading outage" });
       await seedMemory({ id: "effect", content: "regional blackout affected every datacenter" });
 

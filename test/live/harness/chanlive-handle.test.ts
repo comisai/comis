@@ -1,26 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit coverage for `chanlive-handle.ts` — the CLI-01 lifecycle primitives the
- * `chan`/`tg` CLI (Plan 05) and the standalone-rig launcher (Plan 04) both use
- * (Phase 205, Plan 03).
+ * Unit coverage for `chanlive-handle.ts` — the lifecycle primitives the
+ * `chan`/`tg` CLI and the standalone-rig launcher both use.
  *
  * Two suites:
  *   1. `handlePath` / `writeHandle` / `readHandle` — the per-channel handle file
  *      (`~/.comis-chanlive/<channel>.json`) round-trip: path shape, write→read
  *      equality, the `0600` mode bits (the admin-scoped gateway token must not
- *      leak off-box — T-205-07), and the honest `undefined` on absence (never a
+ *      leak off-box), and the honest `undefined` on absence (never a
  *      throw). The home-dir base is INJECTABLE so the test never touches the
  *      operator's real `~/.comis-chanlive`.
  *   2. `resolveEndpoint` / `probeHealth` — the resolution precedence
  *      (`--endpoint` › `COMIS_CHANLIVE_ENDPOINT` env › handle file, `undefined`
- *      when none — the honest dead-handle, T-205-08) + the bounded GET /health
+ *      when none — the honest dead-handle) + the bounded GET /health
  *      discover-or-spawn signal (true on 200, false on any throw / non-200 /
  *      timeout).
  *
  * Pure file-I/O against temp dirs + a throwaway loopback `node:http` server —
  * no daemon, no key, no real network (the only "network" is loopback `fetch`
  * against `127.0.0.1:<port>`). The handle shape is the contract the launcher
- * (Plan 04) writes and the CLI (Plan 05) reads.
+ * writes and the CLI reads.
  *
  * TEST-HARNESS — lives under the test tree, never the packages source tree;
  * ZERO production code change. `mkdtempSync` / `writeFileSync` / `statSync` /
@@ -77,7 +76,7 @@ function makeHandle(overrides: Partial<ChanliveHandle> = {}): ChanliveHandle {
   };
 }
 
-describe("chanlive-handle — handle file write/read round-trip (CLI-01)", () => {
+describe("chanlive-handle — handle file write/read round-trip", () => {
   let baseDir: string;
 
   beforeEach(() => {
@@ -101,7 +100,7 @@ describe("chanlive-handle — handle file write/read round-trip (CLI-01)", () =>
     expect(handlePath("telegram", baseDir)).toBe(join(baseDir, "telegram.json"));
   });
 
-  it("handlePath honors the COMIS_CHANLIVE_DIR env override (the cross-process isolation seam, Plan 208-08)", () => {
+  it("handlePath honors the COMIS_CHANLIVE_DIR env override (the cross-process isolation seam)", () => {
     // The cold-shell acceptance test points every separate-process `tg` + the
     // detached rig-daemon at ONE throwaway dir via COMIS_CHANLIVE_DIR — so they
     // share the handle WITHOUT a --baseDir flag and never touch ~/.comis-chanlive.
@@ -133,7 +132,7 @@ describe("chanlive-handle — handle file write/read round-trip (CLI-01)", () =>
   it("writeHandle chmods the handle file 0600 so the gateway token cannot leak off-box", () => {
     writeHandle(makeHandle(), baseDir);
     const path = join(baseDir, "telegram.json");
-    // The admin-scoped gateway token must be owner-only (T-205-07 / §13-Q7 / V12).
+    // The admin-scoped gateway token must be owner-only.
     expect(statSync(path).mode & 0o777).toBe(0o600);
   });
 
@@ -148,7 +147,7 @@ describe("chanlive-handle — handle file write/read round-trip (CLI-01)", () =>
   });
 });
 
-describe("chanlive-handle — resolveEndpoint precedence + probeHealth (CLI-01, discover-or-spawn)", () => {
+describe("chanlive-handle — resolveEndpoint precedence + probeHealth (discover-or-spawn)", () => {
   let baseDir: string;
   let priorEnv: string | undefined;
   let hadEnv: boolean;
@@ -190,7 +189,7 @@ describe("chanlive-handle — resolveEndpoint precedence + probeHealth (CLI-01, 
 
   it("resolveEndpoint returns undefined with no flag, no env, no file (honest dead-handle)", () => {
     // → the CLI maps this to a dead-handle error suggesting `tg up`, NEVER a
-    //   silent spawn (T-205-08 / design §5.1).
+    //   silent spawn.
     expect(resolveEndpoint("telegram", { baseDir })).toBeUndefined();
   });
 

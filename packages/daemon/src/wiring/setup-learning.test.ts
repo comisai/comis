@@ -13,7 +13,7 @@
  * - tool:executed { success:false } → observe outcome "failure", source "tool",
  *   trajectoryId === traceId; { success:true } → "success"
  * - graph:completed { status:"completed" } → observe "success" + emit; { status:"failed" }
- *   → observe "failure" (SC#1: success ONLY on a clean DAG completion)
+ *   → observe "failure" (success ONLY on a clean DAG completion)
  * - the WRONG field (is_error) is NOT used; the REAL fields (success / status) are
  * - a resolve returning unknown does NOT increment the coverage `resolved` tally
  * - a failing observe (err) WARNs and does NOT throw out of the handler
@@ -284,7 +284,7 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     );
   });
 
-  it("graph:completed { status:'failed' } records a 'failure' pipeline outcome (SC#1 clean-completion gate)", async () => {
+  it("graph:completed { status:'failed' } records a 'failure' pipeline outcome (clean-completion gate)", async () => {
     const bus = new TypedEventBus();
     const { store, observe } = makeStubStore(baseVerdict({ outcome: "failure" }));
     wireLearningOutcome({
@@ -1081,7 +1081,7 @@ describe("wireLearningOutcome — learned-skill promote/demote at resolve()", ()
     // keying them on the BARE skill name aliases two (tenant, agent) scopes that each
     // surface a skill literally named "deploy" — so A's failures could weaken B's
     // standing and demote B's skill. With scope-qualified keys (tenant+agent+name)
-    // the two are independent. RED on a bare-name key: B demotes on its FIRST failure
+    // the two are independent. With a bare-name key, B would demote on its FIRST failure
     // (inheriting A's weakening trend).
     const ls = mockLearnedSkillStore();
     const bus = new TypedEventBus();
@@ -1308,7 +1308,7 @@ describe("wireLearningOutcome — SINGLE-AGENT turn resolve via diagnostic:messa
     expect(observe).toHaveBeenCalled(); // the rows were written
 
     // …then the per-turn completion event fires (NO graph:completed for a single-agent
-    // turn). On pre-fix HEAD nothing resolves; with the fix it resolves off the PAYLOAD.
+    // turn). The resolve keys off this PAYLOAD, so a single-agent turn resolves too.
     bus.emit("diagnostic:message_processed", diagnosticPayload());
     await flushMicrotasks();
 
@@ -1525,7 +1525,7 @@ describe("the learned-skill daemon files add no execution path + no trust escala
   });
 
   it("writes NO trust level other than the store-owned 'learned' (promotion never raises trust)", () => {
-    // No 202 daemon file touches trust_level/trustLevel at all (that is the store's
+    // No learned-skill daemon file touches trust_level/trustLevel at all (that is the store's
     // job, and the DB CHECK pins it to 'learned'). Assert there is no trust write of
     // any other literal here.
     for (const file of FILES_202) {

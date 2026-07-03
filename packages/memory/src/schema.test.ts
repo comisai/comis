@@ -223,11 +223,11 @@ describe("initSchema", () => {
     expect(tables).toHaveLength(2);
   });
 
-  // ── LCD lossless store: lcd_messages + lcd_message_parts (Phase 127, F1) ──
+  // ── LCD lossless store: lcd_messages + lcd_message_parts ──
   // The schema must persist every structured block with its tool columns + the
   // verbatim block JSON, and carry the tenant/agent/session isolation columns
-  // NOW (Phase 132 R4 enforces on the same schema, no migration — threat
-  // T-127-06). DDL is forward-only (no down-migration; design §9) and idempotent.
+  // (the read paths enforce per-agent/tenant isolation on the same schema, no
+  // migration). DDL is forward-only (no down-migration) and idempotent.
 
   it("initSchema creates the lcd_messages and lcd_message_parts tables", () => {
     initSchema(db, 1536);
@@ -248,7 +248,7 @@ describe("initSchema", () => {
     const colNames = columns.map((c) => c.name);
 
     expect(colNames).toContain("id");
-    // R4 scoping columns (threat T-127-06): present from day 1.
+    // Tenant/agent scoping columns: present from day 1.
     expect(colNames).toContain("conversation_id");
     expect(colNames).toContain("tenant_id");
     expect(colNames).toContain("agent_id");
@@ -259,7 +259,7 @@ describe("initSchema", () => {
     expect(colNames).toContain("created_at");
   });
 
-  it("lcd_message_parts carries the F1 block columns (kind + tool fields + metadata)", () => {
+  it("lcd_message_parts carries the block columns (kind + tool fields + metadata)", () => {
     initSchema(db, 1536);
 
     const columns = db
@@ -276,19 +276,19 @@ describe("initSchema", () => {
     expect(colNames).toContain("tool_input");
     expect(colNames).toContain("tool_output");
     expect(colNames).toContain("is_error");
-    // The verbatim-block JSON column (carries metadata.raw + messageEnvelope, F1/F2).
+    // The verbatim-block JSON column (carries metadata.raw + messageEnvelope).
     expect(colNames).toContain("metadata");
   });
 
-  it("lcd_messages has the per-(conversation, agent, tenant) UNIQUE seq index (R4 132-03)", () => {
+  it("lcd_messages has the per-(conversation, agent, tenant) UNIQUE seq index", () => {
     initSchema(db, 1536);
 
     const indexes = db
       .prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='lcd_messages'")
       .all() as Array<{ name: string }>;
 
-    // R4 (132-03): seq is monotonic PER (conversation, agent, tenant) so two
-    // agents sharing one conversation_id own independent seq sequences (WR-02).
+    // seq is monotonic PER (conversation, agent, tenant) so two
+    // agents sharing one conversation_id own independent seq sequences.
     expect(indexes.map((i) => i.name)).toContain("idx_lcd_messages_conv_agent_seq");
 
     // The SAME (conversation_id, seq) for the SAME agent collides...
@@ -302,7 +302,7 @@ describe("initSchema", () => {
         )
         .run(),
     ).toThrow(/UNIQUE constraint/i);
-    // ...but a DIFFERENT agent in the SAME conversation may reuse seq 0 (R4).
+    // ...but a DIFFERENT agent in the SAME conversation may reuse seq 0.
     expect(() =>
       db
         .prepare(
@@ -317,12 +317,12 @@ describe("initSchema", () => {
     expect(() => ensureLcdTables(db)).not.toThrow();
     expect(() => ensureLcdTables(db)).not.toThrow();
 
-    // The eight LCD BUSINESS tables: lcd_messages + lcd_message_parts (Phase 127),
-    // the three Phase-129 compaction tables (summaries / summary_messages /
-    // context_items), the Phase-130 lcd_summary_parents condensed→child edge,
-    // the Phase-164 lcd_ingest_cursor (epoch-cursor continue-append state),
-    // plus the Phase-172 lcd_memory_provenance (LCD→LTM distillation provenance).
-    // The Phase-131 FTS5 virtual tables (lcd_*_fts) + their shadow tables
+    // The eight LCD BUSINESS tables: lcd_messages + lcd_message_parts,
+    // the three compaction tables (summaries / summary_messages /
+    // context_items), the lcd_summary_parents condensed→child edge,
+    // the lcd_ingest_cursor (epoch-cursor continue-append state),
+    // plus lcd_memory_provenance (LCD→LTM distillation provenance).
+    // The FTS5 virtual tables (lcd_*_fts) + their shadow tables
     // (lcd_*_fts_data/_idx/_content/_docsize/_config) are EXCLUDED here — they are
     // an index, not a business table; their presence is asserted separately below.
     const tables = db
@@ -330,8 +330,8 @@ describe("initSchema", () => {
       .all() as Array<{ name: string }>;
     expect(tables).toHaveLength(8);
 
-    // The two Phase-131 FTS5 virtual tables exist after ensureLcdTables (E1
-    // ctx_search). On a host whose better-sqlite3 lacks compiled FTS5 the guarded
+    // The two FTS5 virtual tables exist after ensureLcdTables (ctx_search).
+    // On a host whose better-sqlite3 lacks compiled FTS5 the guarded
     // DDL skips them — this assertion documents the FTS5-present expectation; the
     // FTS5-absent boot-safety path is covered by lcd-fts.test.ts.
     const ftsTables = db
@@ -370,10 +370,10 @@ describe("initSchema", () => {
   });
 
   // ── LCD compaction tables: lcd_summaries + lcd_summary_messages +
-  //    lcd_context_items (Phase 129, C3) ──
+  //    lcd_context_items ──
   // The three forward-only compaction tables. lcd_summaries holds the depth-0
-  // leaf summary row (R4 scoping NOW); lcd_summary_messages is the leaf→message
-  // link with ON DELETE RESTRICT on the message FK (Pitfall 5 — RESTRICT
+  // leaf summary row (tenant/agent scoping); lcd_summary_messages is the
+  // leaf→message link with ON DELETE RESTRICT on the message FK (RESTRICT
   // ENFORCES losslessness; the store never deletes a summarized lcd_messages
   // row); lcd_context_items is the ordered model-facing view with a UNIQUE
   // (conversation_id, ordinal) index keeping ordinals dense + gap-free.
@@ -393,7 +393,7 @@ describe("initSchema", () => {
     expect(names).toContain("lcd_context_items");
   });
 
-  it("lcd_summaries carries the R4 scoping columns + the leaf summary fields (kind/depth/time-range/counts/content/flags)", () => {
+  it("lcd_summaries carries the tenant/agent scoping columns + the leaf summary fields (kind/depth/time-range/counts/content/flags)", () => {
     initSchema(db, 1536);
 
     const colNames = (
@@ -401,7 +401,7 @@ describe("initSchema", () => {
     ).map((c) => c.name);
 
     expect(colNames).toContain("summary_id");
-    // R4 scoping columns (threat T-129-04): present from day 1.
+    // Tenant/agent scoping columns: present from day 1.
     expect(colNames).toContain("conversation_id");
     expect(colNames).toContain("tenant_id");
     expect(colNames).toContain("agent_id");
@@ -419,7 +419,7 @@ describe("initSchema", () => {
     expect(colNames).toContain("created_at");
   });
 
-  it("lcd_summaries.kind CHECK accepts leaf + condensed and rejects an out-of-union kind (Phase 130 widened closed union)", () => {
+  it("lcd_summaries.kind CHECK accepts leaf + condensed and rejects an out-of-union kind", () => {
     initSchema(db, 1536);
 
     // An out-of-union kind is still rejected (the constraint is not removed).
@@ -440,7 +440,7 @@ describe("initSchema", () => {
         .run("s_leaf", "conv-1", "t1", "a1", "sess-1", "leaf", 0, 1, 2, 3, 10, "x", "[]", 0, 0, 1000);
     expect(insertLeaf).not.toThrow();
 
-    // A condensed kind now ALSO inserts (Phase 130 widened the union).
+    // A condensed kind also inserts (the union covers both tiers).
     const insertCondensed = () =>
       db
         .prepare(
@@ -568,7 +568,7 @@ describe("initSchema", () => {
     ).toBe(1);
   });
 
-  it("lcd_context_items carries id + R4 columns + ordinal/ref_kind/ref_id", () => {
+  it("lcd_context_items carries id + tenant/agent columns + ordinal/ref_kind/ref_id", () => {
     initSchema(db, 1536);
 
     const colNames = (
@@ -607,7 +607,7 @@ describe("initSchema", () => {
     }
   });
 
-  it("lcd_context_items has the per-(conversation, agent, tenant) UNIQUE ordinal index (R4 dense gap-free per-agent guard)", () => {
+  it("lcd_context_items has the per-(conversation, agent, tenant) UNIQUE ordinal index (dense gap-free per-agent guard)", () => {
     initSchema(db, 1536);
 
     const indexes = (
@@ -615,8 +615,8 @@ describe("initSchema", () => {
         .prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='lcd_context_items'")
         .all() as Array<{ name: string }>
     ).map((i) => i.name);
-    // R4 (132-03): the model-facing view is per (conversation, agent, tenant);
-    // each agent's ordinals are dense + gap-free over ITS OWN items (WR-02).
+    // The model-facing view is per (conversation, agent, tenant);
+    // each agent's ordinals are dense + gap-free over ITS OWN items.
     expect(indexes).toContain("idx_lcd_ctx_items_conv_agent_ord");
 
     // The index is UNIQUE: same (conversation_id, agent_id, tenant_id, ordinal) collides.
@@ -638,8 +638,8 @@ describe("initSchema", () => {
         )
         .run(),
     ).not.toThrow();
-    // R4: the SAME ordinal in the SAME conversation but a DIFFERENT agent is now
-    // allowed — two agents sharing a conversation each keep a dense view (WR-02).
+    // The SAME ordinal in the SAME conversation but a DIFFERENT agent is
+    // allowed — two agents sharing a conversation each keep a dense view.
     expect(() =>
       db
         .prepare(
@@ -664,7 +664,7 @@ describe("initSchema", () => {
     expect(tables).toContain("lcd_context_items");
   });
 
-  it("ensureLcdTables uses no DROP / down-migration (forward-only, design §9)", () => {
+  it("ensureLcdTables uses no DROP / down-migration (forward-only)", () => {
     initSchema(db, 1536);
     // Each LCD CREATE statement is reconstructable from sqlite_master; assert none
     // of the tables carry a destructive down-migration artifact (a belt-and-braces
@@ -791,7 +791,7 @@ describe("initSchema", () => {
 
   // ── observation additive columns ────────
   //
-  // The column-flag data model (design §4.1): an observation is a `memories`
+  // The column-flag data model: an observation is a `memories`
   // row with `proof_count IS NOT NULL` (NOT a separate table, NOT a
   // memory_type CHECK change). ensureMemoryColumns must add all 5 nullable
   // columns idempotently on a live DB that predates them (existing rows get
@@ -1168,18 +1168,16 @@ describe("initSchema", () => {
     });
   });
 
-  // ── memory_usefulness.failure_count migration (FORGET-02 source) ─────
+  // ── memory_usefulness.failure_count migration ─────
   //
   // `failure_count` is the outcome-attributed task-failure signal the lifecycle
-  // sweep JOINs on (Phase 224 FORGET-02; distinct from `ignored_count`). Its
-  // migration (`ensureUsefulnessFailureColumn`) is the CRITICAL relocation
-  // HAZARD of this phase: at HEAD it co-lived in `schema-tuned-alpha.ts`, the
-  // file Plan 04 DELETES. This canary boots a fresh DB via initSchema and proves
-  // the column exists + the sweep's SUM(failure_count) JOIN-shape resolves — it
-  // must stay green THROUGH the relocation (Plan 224-01) AND the eventual
-  // schema-tuned-alpha.ts deletion (Plan 224-04). A red here means a fresh DB
-  // throws `no such column: failure_count` and FORGET-02 silently never fires.
-  describe("memory_usefulness.failure_count migration (FORGET-02 source)", () => {
+  // sweep JOINs on (distinct from `ignored_count`). Its migration
+  // (`ensureUsefulnessFailureColumn`) was relocated out of `schema-tuned-alpha.ts`
+  // (deleted when the bandit is cut) into its own keeper module. This canary
+  // boots a fresh DB via initSchema and proves the column exists + the sweep's
+  // SUM(failure_count) JOIN-shape resolves. A red here means a fresh DB throws
+  // `no such column: failure_count` and the failure signal silently never fires.
+  describe("memory_usefulness.failure_count migration", () => {
     it("a fresh DB booted via initSchema has the memory_usefulness.failure_count column", () => {
       initSchema(db, 1536);
 
@@ -1225,7 +1223,7 @@ describe("initSchema", () => {
 // =====================================================================
 // ensureEntityTables — the entity junction DDL
 //
-// Pitfall 1: a raw `new Database(":memory:")` does NOT enable FK enforcement,
+// A raw `new Database(":memory:")` does NOT enable FK enforcement,
 // so `ON DELETE CASCADE` would silently no-op. These tests set
 // `foreign_keys=ON` explicitly (production's openSqliteDatabase sets it for
 // us — sqlite-adapter-base.ts:52).
@@ -1253,7 +1251,7 @@ describe("ensureEntityTables", () => {
     expect(names).toContain("memory_entity_links");
   });
 
-  it("gives memory_entities the canonical_key column (the Pitfall-3 dedup key)", () => {
+  it("gives memory_entities the canonical_key column (the locale-independent dedup key)", () => {
     initSchema(db, 1536);
     const cols = (
       db.prepare("PRAGMA table_info(memory_entities)").all() as Array<{ name: string }>
@@ -1326,7 +1324,7 @@ describe("ensureEntityTables", () => {
 
     db.prepare("DELETE FROM memories WHERE id = 'm1'").run();
     expect(linkCount()).toBe(0);
-    // The entity row itself survives (not cascade-deleted — RESEARCH Pitfall 7).
+    // The entity row itself survives (not cascade-deleted).
     expect(
       (db.prepare("SELECT COUNT(*) AS c FROM memory_entities").get() as { c: number }).c,
     ).toBe(1);
@@ -1512,7 +1510,7 @@ describe("ensureTripleTable", () => {
 // column; a pre-intent DB (the old 3-col PK + rows) gets a guarded
 // ALTER ADD COLUMN (the PRAGMA table_info precedent) so existing rows
 // survive AS the global ('') bucket — the headline PK-widening-on-
-// existing-DB safety (RESEARCH Pitfall 3). Both paths gain the idempotent
+// existing-DB safety. Both paths gain the idempotent
 // `idx_usefulness_intent` unique index so the adapter's 4-col ON CONFLICT
 // target resolves on a pre-intent DB too.
 // =====================================================================
@@ -1646,7 +1644,7 @@ describe("ensureUsefulnessTable intent column", () => {
     expect(usefulnessIndexes()).toContain("idx_usefulness_intent");
   });
 
-  // --- pre-intent (existing) DB: the PK-widening-on-existing-DB safety (Pitfall 3) ---
+  // --- pre-intent (existing) DB: the PK-widening-on-existing-DB safety ---
 
   it("EXISTING (pre-intent) DB: a guarded ALTER adds `intent` with default '' WITHOUT corrupting the seeded row — the row survives as the GLOBAL bucket", () => {
     createPre110UsefulnessTable(db);

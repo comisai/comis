@@ -232,8 +232,8 @@ export function searchLcdImpl(
     result = searchTrigram(db, conversationId, agentId, route.match, scope, limit);
   } else {
     // Either the router chose "scan" (all tokens below the trigram floor), OR the
-    // host lacks the trigram tokenizer (tri route but isTriAvailable false —
-    // Pitfall 11). Both degrade to the bounded normalized scan floor over the
+    // host lacks the trigram tokenizer (tri route but isTriAvailable false).
+    // Both degrade to the bounded normalized scan floor over the
     // query's non-operator tokens.
     lane = "scan";
     const scanTokens =

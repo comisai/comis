@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the settle engine (spec §5 wait, §4.3 attention model).
+ * Unit tests for the settle engine (the wait tool + the attention model).
  *
  * RED-first: `terminal-settle.ts` does not exist when this file is first
  * committed — the import fails, every case is RED. The production module turns
@@ -384,9 +384,9 @@ describe("runSettle — CAP (DoS bound)", () => {
   });
 
   it("HONORS a sub-cap timeoutMs (AI-CLI driving): a 120s wait is NOT clamped to the 15s default", async () => {
-    // The v2.11 regression: SETTLE_MAX was 15_000, so a realistic AI-CLI wait
-    // (driven `claude` takes 60-90s+) was clamped to 15s and timed out before the CLI
-    // finished — stranding the agent. A sub-cap timeoutMs must be honored verbatim.
+    // A realistic AI-CLI wait (driven `claude` takes 60-90s+) must NOT be clamped to
+    // the 15s default: a too-small cap would time out before the CLI finished, stranding
+    // the agent. A sub-cap timeoutMs must be honored verbatim.
     const sched = makeScheduler();
     const source = makeSource("");
     const p = runSettle(makeDeps(sched, source), { timeoutMs: 120_000, forIdleMs: 300_000 });
@@ -423,7 +423,7 @@ describe("runSettle — CAP (DoS bound)", () => {
   });
 });
 
-describe("runSettle — producing diagnostic (T1.1: a not-complete timeout explains itself)", () => {
+describe("runSettle — producing diagnostic (a not-complete timeout explains itself)", () => {
   it("reports producing:true when output changed within the last window before the timeout", async () => {
     // The live friction: a wait returned not-complete with no signal that the driven
     // CLI was STILL WORKING. `producing` distinguishes "keep waiting" from "idle/stuck".
@@ -577,17 +577,16 @@ describe("runSettle — isSettleable gate (below-the-fold re-arm)", () => {
 });
 
 // ===========================================================================
-// Plan 124-03: the ADAPTIVE N-CONSECUTIVE-STABLE-WINDOWS debounce (spec §4.3,
-// the #1-de-risk substrate). The 120ms single-window settle is far too short for
-// an AI CLI that pauses for SECONDS mid-generation: a sub-idleMs burst gap would
-// falsely resolve idle and let the P5 classifier read a thinking pause as a
+// The ADAPTIVE N-CONSECUTIVE-STABLE-WINDOWS debounce. The 120ms single-window settle
+// is far too short for an AI CLI that pauses for SECONDS mid-generation: a sub-idleMs
+// burst gap would falsely resolve idle and let the classifier read a thinking pause as a
 // prompt. `stableWindows: N` makes idle resolve only after N CONSECUTIVE quiet
 // windows — a ring-change mid-count RE-ARMS (resets the count to 0). It is
 // SAFE-direction only: more windows can DELAY settle (bounded by timeoutMs), never
 // falsely declare it settled; exit/text/timeout paths are UNCHANGED.
 // ===========================================================================
 
-describe("runSettle — adaptive N-stable-window debounce (stableWindows, spec §4.3)", () => {
+describe("runSettle — adaptive N-stable-window debounce (stableWindows)", () => {
   it("with stableWindows:3, a byte before the 3rd window RE-ARMS — idle resolves only after 3 CONSECUTIVE quiet windows", async () => {
     const sched = makeScheduler();
     const source = makeSource("thinking\n");
@@ -634,7 +633,7 @@ describe("runSettle — adaptive N-stable-window debounce (stableWindows, spec �
   it("stableWindows omitted preserves the EXACT single-window behavior (regression guard)", async () => {
     const sched = makeScheduler();
     const source = makeSource("boot\n");
-    // No stableWindows → default 1 → ONE quiet window resolves idle (120-02 shape).
+    // No stableWindows → default 1 → ONE quiet window resolves idle (single-window shape).
     const p = runSettle(makeDeps(sched, source), { forIdleMs: 100 });
     sched.advance(100);
     const result = await p;

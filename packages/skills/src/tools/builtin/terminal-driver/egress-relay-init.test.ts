@@ -8,7 +8,7 @@
  * `setgid`/`setuid` to the net-new uid (65534). On the root-worker VPS the bwrap
  * user namespace maps a SINGLE uid (host-root → userns-root), so 65534 is NOT a
  * mapped target and `process.setuid(65534)` throws EINVAL/EPERM. The egress transport
- * spike PROVED the egress transport working as userns-root with NO uid drop.
+ * works as userns-root with NO uid drop.
  *
  * The fix makes {@link dropPrivileges} best-effort: it attempts the drop, and on a
  * failure (the not-mapped EPERM/EINVAL case) it emits a STRUCTURED audit WARN and
@@ -73,7 +73,7 @@ describe("egress-relay-init dropPrivileges — best-effort under the unmapped us
     // the drop target is not mapped) — the no-silent-degrade requirement.
     expect(joined.toLowerCase()).toContain("listed-hosts");
     expect(joined.toLowerCase()).toMatch(/not\s*mapped|unmapped|userns/);
-    // It carries an errorKind for the §2.7 log matrix.
+    // It carries an errorKind for the structured-log matrix.
     expect(audit.some((r) => typeof r.errorKind === "string")).toBe(true);
   });
 
@@ -113,7 +113,7 @@ describe("egress-relay-init dropPrivileges — best-effort under the unmapped us
 
 describe("egress-relay-init buildRelayChildEnv — points the driven child at the in-jail relay", () => {
   it("sets HTTPS_PROXY/HTTP_PROXY (+ lowercase) to http://127.0.0.1:<relayPort> so the child egresses through the allowlist", () => {
-    // The bug this guards (live VPS 2026-06-14): the relay materialized + bound the
+    // The bug this guards: the relay materialized + bound the
     // loopback relay, but execChild spawned the driven CLI with NO proxy env, so
     // curl/claude tried a DIRECT connection that --unshare-net blocks ("could not
     // resolve host" / claude hangs). The relay-init KNOWS the bound port, so it must

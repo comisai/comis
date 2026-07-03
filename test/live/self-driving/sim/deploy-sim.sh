@@ -16,8 +16,8 @@ VPS="${VPS:?set VPS=user@host in scripts/.live-env (see .live-env.example) or pa
 DEST="${SIM_DEST:-/home/comis/sim}"     # where the daemon (comis) will read the sim from
 
 echo "Shipping sim/ → $VPS:$DEST"
-# ROBUST tar-pipe (mirrors scripts/deploy-dist.sh), NOT scp -r. Two reasons it replaced scp -rq
-# (package-delivery-20260628): (a) `scp -rq` HANGS on a high-latency link (a 2-min timeout on a 508K
+# ROBUST tar-pipe (mirrors scripts/deploy-dist.sh), NOT scp -r. Two reasons it replaced scp -rq:
+# (a) `scp -rq` HANGS on a high-latency link (a 2-min timeout on a 508K
 # tree) — tar-over-ssh streams in one connection and does not; (b) the old order was DESTRUCTIVE on
 # failure — it `rm -rf $DEST` then `mv $DEST.tmp $DEST`, so a failed/incomplete scp left the live sim
 # dir WIPED (the "sim vanished" detour). Here the `rm $DEST && mv` runs ONLY after a successful extract

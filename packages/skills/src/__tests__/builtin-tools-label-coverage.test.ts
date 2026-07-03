@@ -12,7 +12,7 @@
  *
  * Why `hasRegisteredLabelSpec` (not `resolveLabelSpec`): `resolveLabelSpec`
  * is TOTAL — it always returns a humanized fallback — so "did resolution
- * succeed?" passes for every tool and is a no-op gate (RESEARCH Pitfall 3).
+ * succeed?" passes for every tool and is a no-op gate.
  * The coverage check must ask "was a spec explicitly registered?".
  *
  * Why side-effect imports in `beforeAll`: each tool module's
@@ -30,8 +30,8 @@
  *   - `web-search-tool/index.ts:114`→ `"web_search"`
  * A registration on the file-basename ("notebook-edit") would key the wrong
  * entry and the activity stream would silently fall back to the humanized
- * default (RESEARCH Pitfall 2). The list below MUST stay in the underscore
- * form so that pitfall fails this test loudly if someone reintroduces it.
+ * default. The list below MUST stay in the underscore form so that this
+ * test fails loudly if someone reintroduces the hyphenated form.
  *
  * @module
  */

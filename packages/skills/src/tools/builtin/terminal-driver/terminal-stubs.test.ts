@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the (formerly "stubs") `terminal-tools-stubs.ts` surface. After Phase
- * 124-06 there is NO remaining `not_implemented` stub: `terminal_session_status` is a
+ * Tests for the (formerly "stubs") `terminal-tools-stubs.ts` surface. There is NO
+ * remaining `not_implemented` stub: `terminal_session_status` is a
  * real, classifier-backed, owner-scoped tool whose body lives in
  * `terminal-status-tool.ts`; this module re-exports it (so the barrel import path is
  * unchanged).
  *
  * Asserts:
  *   - the re-exported `createTerminalSessionStatusTool` is the REAL deps-taking factory
- *     (it carries the canonical name + the spec §5 schema and does NOT throw
+ *     (it carries the canonical name + the schema and does NOT throw
  *     `not_implemented`);
  *   - the four interaction factories remain NOT exported from this module (they live in
  *     `terminal-tools.ts` — no dual path).
@@ -48,7 +48,7 @@ function makeDeps(): TerminalToolDeps {
   } as unknown as TerminalToolDeps;
 }
 
-describe("terminal-tools-stubs — status is now a real tool (124-06; no remaining stub)", () => {
+describe("terminal-tools-stubs — status is now a real tool (no remaining stub)", () => {
   it("the re-exported createTerminalSessionStatusTool is the REAL deps-taking factory (no not_implemented throw)", async () => {
     const tool = createTerminalSessionStatusTool(makeDeps());
     expect(tool.name).toBe("terminal_session_status");

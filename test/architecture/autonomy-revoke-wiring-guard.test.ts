@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Built-but-not-wired SOURCE GUARD for the autonomy REVOKE control plane
- * (Phase 213-06: `lease.revoke` + `run.kill`). Mirrors `audio-wiring-guard.test.ts`.
+ * (`lease.revoke` + `run.kill`). Mirrors `audio-wiring-guard.test.ts`.
  *
- * LIVE FINDING (VPS, openai-codex, 2026-06-23): with the capability lease layer
+ * Regression this guards: with the capability lease layer
  * ACTIVE ("lease minted per spawn", cap socket bound), `lease.revoke` and
  * `run.kill` both returned **"Unknown RPC method"** — so REVOKE, the design's
  * "live control" differentiator (revoke a lease / kill a run-tree, external to and
@@ -49,7 +49,7 @@ function stripComments(src: string): string {
 }
 
 describe("autonomy REVOKE (lease.revoke / run.kill) built-but-not-wired source guard", () => {
-  it("rpc-dispatch gates the autonomy handlers on deps.leaseManager (sanity: the gate that needs the thread)", () => {
+  it("rpc-dispatch gates the autonomy handlers on deps.leaseManager (the gate that needs the thread)", () => {
     const code = stripComments(readFileSync(RPC_DISPATCH_TS, "utf8"));
     // The autonomy handlers (lease.revoke + run.kill) register ONLY when
     // deps.leaseManager is truthy — so the dispatch-deps assembly MUST set it.

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * ORCH-03 drift gate: `pnpm sdk:generate` produces zero diff against the
+ * Drift gate: `pnpm sdk:generate` produces zero diff against the
  * committed `comis_tools.{d.ts,js}`. Because the SDK is emitted from the SAME
- * `TOOL_CAPABILITY_MAP` as the `tool.invoke` gate (Plan 02), this gate makes
+ * `TOOL_CAPABILITY_MAP` as the `tool.invoke` gate, this gate makes
  * SDK ↔ gate drift a BUILD failure — a hand-edit surfacing a tool the gate
  * denies (or hiding one it allows) no longer compiles past CI.
  *
@@ -13,7 +13,7 @@
  *   3. Compare byte-for-byte. Any mismatch indicates either:
  *      - The cap-map changed without rerunning `pnpm sdk:generate`.
  *      - A non-determinism regression in the codegen.
- *      - A hand-edit of the committed SDK (the tampering threat T-212-12).
+ *      - A hand-edit of the committed SDK (a tampering vector).
  *
  * Why a temp dir (not the committed paths): the same cross-project parallel-fork
  * write race documented at `contract-codegen-drift.test.ts:16-22`. Writing to a
@@ -32,7 +32,7 @@ import {
   OUT_JS,
 } from "../../scripts/orchestrate-sdk/generate-comis-tools-sdk.js";
 
-describe("orchestrate comis_tools SDK drift gate (ORCH-03)", () => {
+describe("orchestrate comis_tools SDK drift gate", () => {
   it("the comis_tools SDK is byte-identical to a fresh regen from the cap-map", () => {
     // Snapshot the committed artifacts.
     const committedDts = readFileSync(OUT_DTS, "utf8");

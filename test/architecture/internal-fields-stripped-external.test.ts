@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * ORIGIN-02 — the external WS/REST boundary strips INTERNAL_FIELD_NAMES.
+ * The external WS/REST boundary strips INTERNAL_FIELD_NAMES.
  *
  * `packages/daemon/src/wiring/setup-gateway-api.ts` is the single registration
  * loop that wires every API contract method onto the gateway's dynamic router.
@@ -9,18 +9,18 @@
  * dispatch — and on the admin branch BEFORE re-injecting the trusted
  * `_trustLevel`. After that strip, the PRESENCE of `_agentId`/`_capabilities` in
  * params is an unforgeable agent-origin signal, which is the security
- * prerequisite that makes deny-by-origin sound (v8 ORIGIN-02 / section 3.1).
+ * prerequisite that makes deny-by-origin sound.
  *
  * This is an ARCHITECTURE-tier guard (a cross-cutting trust-boundary invariant)
  * placed in test/architecture/ so the full-workspace gate catches it — per-package
- * runs hide cross-cutting gates (the feedback_full_workspace_gates_per_phase note).
+ * runs hide cross-cutting gates.
  *
  * LOAD-BEARING (proven RED-first against pre-patch code, which spread
  * `{ ...(params ?? {}), _trustLevel: "admin" }` and passed `params ?? {}`
  * unstripped): if EITHER registration branch stops wrapping caller params in
  * `stripInternalFields`, both the AST assertion and the negative source-text
  * assertion FAIL — proving this is not a tautology and a future refactor cannot
- * silently reintroduce the unstripped spread (threat T-210-11).
+ * silently reintroduce the unstripped spread.
  *
  * Mechanism: AST walk via `ts.createSourceFile` (the established arch-test
  * idiom — `api-contracts-bidirectional.test.ts`). The file has exactly two
@@ -47,7 +47,7 @@ const SETUP_GATEWAY_API_TS = resolve(
 );
 const REL = "packages/daemon/src/wiring/setup-gateway-api.ts";
 
-const DESIGN_REF = "v8 ORIGIN-02 / section 3.1";
+const DESIGN_REF = "the external boundary strips internal fields before dispatch";
 const SUGGESTED_FIX =
   "Wrap external caller params in stripInternalFields() at BOTH registerMethod " +
   "branches, with any server-trusted field (_trustLevel, the CAP-03 _capabilities " +
@@ -147,7 +147,7 @@ function findUnstrippedRegistrations(
   return violations;
 }
 
-describe("ORIGIN-02 — setup-gateway-api strips internal fields at the external boundary", () => {
+describe("setup-gateway-api strips internal fields at the external boundary", () => {
   it("imports stripInternalFields from @comis/core", () => {
     const code = stripComments(readFileSync(SETUP_GATEWAY_API_TS, "utf8"));
     expect(code).toMatch(
@@ -185,7 +185,7 @@ describe("ORIGIN-02 — setup-gateway-api strips internal fields at the external
     expect(code).toMatch(
       /stripInternalFields\(params \?\? \{\}\),\s*_trustLevel:\s*["']admin["']/,
     );
-    // The rpc branch strips FIRST, then spreads the CAP-03 server-side cap
+    // The rpc branch strips FIRST, then spreads the server-side cap
     // injection (...capInject) AFTER (#240) — so a forged client `_capabilities`
     // is stripped before the trusted one is added (strip-THEN-inject).
     expect(code).toMatch(

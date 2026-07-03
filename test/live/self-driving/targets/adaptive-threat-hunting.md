@@ -1,8 +1,8 @@
-# TARGET — Adaptive Threat-Hunting agent as a STRESS workload for the v2.31 Reflection engine
+# TARGET — Adaptive Threat-Hunting agent as a STRESS workload for the Reflection engine
 
 > An **OFFLINE / DB / event-resident** target. The "threat-hunting agent" is **not a new capability** and
 > there is **no SOC subsystem to find** — it is a deliberately complex, adversarial *workload* chosen to
-> stress the SHIPPED v2.31 reflection/learning engine in every dimension that breaks a naive memory: an
+> stress the SHIPPED reflection/learning engine in every dimension that breaks a naive memory: an
 > adversary that actively invalidates what was learned, poisoned/conflicting evidence, delayed credit, and
 > beliefs that must be *superseded but retained*. **Drive surface + oracles are identical to
 > `EXAMPLE-verified-learning.md`** — drive via tool/graph turns + cron triggers, observe via `db.mjs` +
@@ -13,19 +13,18 @@
 > the Telegram emulator; "containment" is the agent's decision in the trajectory. The capability under test
 > is the *learning* — reflect → recall → reuse/promote → supersede → evict → trust-tier — NOT a detection
 > product. The cyber framing only supplies a RICH, distinctive, fabrication-free transcript (the kind the
-> SYNTH-YIELD lesson says you NEED for a grounded admit).
+> content-yield lesson says you NEED for a grounded admit).
 
 ## Target
-`design/new/memory-learning-reflection-redesign.md` — the v2.31 **one-reflection-engine** (the same engine
-as `EXAMPLE-verified-learning.md`), exercised by the adaptive-threat-hunting workload below. **§3** the
-engine (one `MentalModel` doc + Loops A/B/C/D), **§6** the INV-1..6 register. This design SUPERSEDES the old
-`design/new/verified-learning.md` draft (deleted/folded WS subsystems) — test the SHIPPED reflect engine.
+The **one-reflection-engine** design (the same engine as `EXAMPLE-verified-learning.md`), exercised by the
+adaptive-threat-hunting workload below: the engine (one `MentalModel` doc + Loops A/B/C/D) and the INV-1..6
+register. Test the SHIPPED reflect engine — the earlier deleted/folded "WS"-numbered subsystems are not the target.
 
 ## STEP 1 — Verify impl-state at HEAD FIRST (same anchors as the worked example)
-The reflect engine SHIPPED (v2.31, phases 222–226, **default-on** under master `memory.enabled`). Confirm on
+The reflect engine is **default-on** under master `memory.enabled`. Confirm on
 the box BEFORE driving:
 - `db.mjs tables` shows **`mental_models`** (NOT the deleted skill-synthesis / per-intent-tuning /
-  social-modeling tables — all removed in v2.31).
+  social-modeling tables — all removed).
 - `db.mjs schema mental_models` shows `trust_level TEXT NOT NULL CHECK (trust_level IN ('learned'))`,
   `kind ... CHECK (kind IN ('skill','profile','topic'))`, `state ... CHECK (state IN ('candidate','active',
   'stale','archived'))`, the `topic_key`/`structured_body`/`history`/`proof_count`/`pinned`/`evicted_at`
@@ -36,7 +35,7 @@ the box BEFORE driving:
   usefulness-judge / triple-extraction / skill-synthesis / online-tuning crons.
 - config carries the **`memory.enabled`** master + per-agent **`agents.<id>.learning.{enabled, reflect.
   {schedule,minConfidence,promoteAtProofCount,maxDocsPerRun}, forget.{maxDormantDays,failureEvictionFloor,
-  highProofFloor}}`** block — NOT any deleted v2.26-era key (those are now `z.strictObject`-REJECTED →
+  highProofFloor}}`** block — NOT any deleted legacy key (those are now `z.strictObject`-REJECTED →
   Bootstrap FATAL; migrate the config FIRST, see Known traps).
 
 ## The use-case → engine mapping (this is the "challenge" — each dimension stresses a real predicate)
@@ -107,15 +106,15 @@ The deterministic **accumulate / recall / supersede / evict** loops (TH-01/02/05
 ## Known traps for this target (carry from `EXAMPLE-verified-learning.md` — don't re-discover)
 - **Not channel-shaped:** the chat reply tells you nothing. Read GROUND TRUTH — `db.mjs`, `comis explain`,
   the `reflect:*` events + the funnel. A false success is the worst outcome.
-- **Deploy a FRESH dist + migrate the config FIRST.** The box may run a STALE pre-v2.31 dist (no
+- **Deploy a FRESH dist + migrate the config FIRST.** The box may run a STALE dist (no
   `schema-mental-models.js`) — prove on new code (fresh `memory.db` has `mental_models`, NOT `learned_skills`;
-  the 3 crons via `cron.list`). A leftover v2.26 `memory.costFeatures.enabled` is an unknown key under the
+  the 3 crons via `cron.list`). A leftover legacy `memory.costFeatures.enabled` is an unknown key under the
   `z.strictObject` schema → Bootstrap FATAL; cfg-patch `{"memory":{"costFeatures":"__DELETE__","enabled":
-  true}}` before the first v2.31 restart.
+  true}}` before the first restart.
 - **Clean-slate MUST replace `memory.db` AND wipe the cron store:** the LCD + the learning state
   (`mental_models`, `outcome_events`, `memories`) live in `memory.db` (a `session.reset_conversation` does
   NOT clear them); crons persist in `<workspace>/.scheduler/cron-jobs.json` and SURVIVE the db wipe. Use
-  `clean-restart.sh WIPE_CRONS=1` (also wipes `execution.jsonl`) so exactly the 3 v2.31 crons re-register.
+  `clean-restart.sh WIPE_CRONS=1` (also wipes `execution.jsonl`) so exactly the 3 crons re-register.
 - **`cron.run` takes the job NAME:** `cron.run jobName "Reflection"` / `"Memory lifecycle"`; pass an explicit
   `agentId` for a non-default agent (TARGET-01).
 - **Poll for the EXACT `"Reflection complete (all kinds)"` line — POLL, don't fixed-sleep.** `cron.run`
@@ -128,7 +127,7 @@ The deterministic **accumulate / recall / supersede / evict** loops (TH-01/02/05
   `"external"` → `selected:0, untrustedDrops≥2, outcome:untrusted_origin, no-grow`.
 - **The `explain` learning block is at `report.learning` (TOP-LEVEL), NOT `report.signals.learning`.** OBS
   oracle: `comis explain <S> --offline --format json` → `.learning.{skillsUsed,skillsPromoted}`.
-- **REFL-3 surface RACES the async boot-refresh (SURFACE-RACE).** A freshly-admitted skill surfaces on the
+- **REFL-3 surface RACES the async boot-refresh.** A freshly-admitted skill surfaces on the
   NEXT session, and the per-session `promptSkillsXml` freezes on the session's FIRST turn. Confirm
   `surfacedCount:N` in the log and use a FRESH session AFTER the refresh settles, else the agent lists only
   the bundled skills (a false "the learned skill doesn't surface").
@@ -137,20 +136,20 @@ The deterministic **accumulate / recall / supersede / evict** loops (TH-01/02/05
   failureEvictionFloor(3)` on 3 memories (low-proof / high-proof≥5 / pinned) via the daemon's better-sqlite3
   (read-WRITE), run the REAL `cron.run jobName "Memory lifecycle"`, read `evicted_at` — low-proof EVICTS,
   high-proof+pinned SURVIVE. Do NOT conclude "eviction is dead" from a default-dormant sweep.
-- **Seeding a grounded skill for the reuse→promote chain (SYNTH-YIELD makes a reflected admit flaky):** if
+- **Seeding a grounded skill for the reuse→promote chain (the content-yield caveat makes a reflected admit flaky):** if
   the reflection LLM distills the transcript into an ungrounded doc or returns `empty_reflection`, seed the
   candidate directly — `INSERT INTO mental_models (...kind='skill', state='candidate',
   proof_count=promoteAtProofCount-1, mutating=0, trust_level='learned', pinned=0, source_who NOT NULL...)`
   via better-sqlite3, restart (boot materializes `<workspace>/.learned-skills/<name>/SKILL.md` + logs
   `surfacedCount`), then drive the rotated-IOC reuse turn. **But first attempt the genuine admit** — the
   threat-hunting transcript is RICH/distinctive/fabrication-free, the IDEAL case for a grounded reflection;
-  a clean grounded admit here is itself a result (it answers SYNTH-YIELD's content-quality question).
+  a clean grounded admit here is itself a result (it answers the content-yield question).
 - **A capable model REFUSES adversarial INV probes:** frame INV-5 / INV-2 **benignly** — "a planted
   transcript" / "a single repeated session", NOT "poison the agent." The invariant under test is
   admission-refusal observed in the funnel verdict, not the model's willingness to be attacked.
 - **The `topicKey` is deterministic + content-light** (normalized opening request / topic tag), NOT an
   embedding cluster. If genuine corroboration on the off-hours-pivot topic shows `uncorroborated` /
   `maxClusterCardinality:1` DESPITE 2 distinct senders, the pre-authorized escalation is the LLM topic-tag
-  fallback (cite `227-CONTEXT.md` Deferred Ideas) — don't burn cycles forcing a merge on the deterministic key.
+  fallback — don't burn cycles forcing a merge on the deterministic key.
 - **System-health sweep WILL find unrelated bugs** while driving basic teach/triage turns (non-negotiable
   #6) — close each one test-first per `02-DISCIPLINE.md` before continuing.

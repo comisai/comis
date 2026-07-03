@@ -9,17 +9,17 @@
  *   - log oracle passes (no unexpected ERRORs)
  *   - persistence oracle passes (SQLite integrity on fresh data dir)
  *
- * Transport note (205-07): `rpcRequest` drives the gateway over WebSocket
+ * Transport note: `rpcRequest` drives the gateway over WebSocket
  * (`/ws?token=`), the SAME transport the production `comis` CLI uses — the
  * generic JSON-RPC dispatch has no `POST /rpc` route. The liveness check calls
  * `system.ping` (a REAL registered dispatch method → `{pong:true}`); the prior
  * bare `"health"` was NOT a registered method (it is an HTTP route, not a WS
  * dispatch key — it returns `-32601` over WS), so that assertion was latent-
  * broken and only masked because this whole file is COMIS_LIVE-gated (it never
- * ran in CI). Fixed to a real method as part of the AUTO-01 transport repair.
+ * ran in CI). Fixed to a real method as part of the transport repair.
  *
  * costTier: "$0" — no real LLM or provider calls are made.
- * Uses the in-process daemon harness with an isolated temp data dir (T-134-21).
+ * Uses the in-process daemon harness with an isolated temp data dir.
  *
  * @module
  */

@@ -9,7 +9,7 @@
  * coordinator orchestration surface (`resolveAutonomy().coordinatorToolGroups`);
  * an explicit `tool_groups` (or "full") still wins (operator intent —
  * progressive disclosure); `role:worker` (the default) leaves the
- * surface untouched (byte-identical to today). This narrows the TOOL SURFACE
+ * surface untouched. This narrows the TOOL SURFACE
  * only — the resolved capability set is unchanged.
  *
  * @module

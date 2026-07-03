@@ -148,13 +148,13 @@ describe("createTTSProvider", () => {
   });
 
   // ===========================================================================
-  // TTS-02 (SHIP): the local/piper case routes to the in-process keyless
+  // The local/piper case routes to the in-process keyless
   // transformers.js text-to-audio adapter (createLocalTtsAdapter) with the
   // scoped dataDir threaded — NOT the raw "Unknown TTS provider: local" default
-  // error a wizard option (195) would otherwise expose. Mutation-proven: drop
+  // error the wizard option would otherwise expose. Mutation-proven: drop
   // the case and these route to the default → fail.
   // ===========================================================================
-  describe("local/piper offline TTS (TTS-02)", () => {
+  describe("local/piper offline TTS", () => {
     it("routes provider 'local' to createLocalTtsAdapter with the threaded dataDir", async () => {
       const { createLocalTtsAdapter } = await import("./local-tts-adapter.js");
       const secretManager = createMockSecretManager({});

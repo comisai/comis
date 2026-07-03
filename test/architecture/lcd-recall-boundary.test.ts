@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * I2 — the LCD context-engine ↮ recall/RAG clean-port lock.
+ * The LCD context-engine ↮ recall/RAG clean-port lock.
  *
  * Inside `packages/agent/src/`, the Lossless Context DAG (LCD) context engine
  * (`context-engine/`, the `lcd-*` modules) and the recall/RAG layer
@@ -8,7 +8,7 @@
  * budget boundary — and that coupling is DATA, not a code import: the engine
  * reads a recall-token count via the optional `getRecallTokensEstimate` dep
  * (`context-engine/types-core.ts` → consumed in `lcd-assembler.ts`, wired from
- * `executor/executor-context-engine-setup.ts` in Plan 01). No source file in
+ * `executor/executor-context-engine-setup.ts`). No source file in
  * the engine imports the recall/RAG surface, and no recall/RAG source imports
  * the engine — that is what makes it a clean port rather than a shared module.
  *

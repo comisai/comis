@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * AUTO-04 — `tg reconfigure` (rewrite the throwaway config + restart — the
- * Track-K model sweep) + `tg trigger cron/heartbeat/wake` (fire the real
- * time-based RPCs NOW over WS, no real-time wait), proven end-to-end (Phase 208,
- * Plan 05).
+ * model sweep) + `tg trigger cron/heartbeat/wake` (fire the real
+ * time-based RPCs NOW over WS, no real-time wait), proven end-to-end.
  *
- * These are the §10A.1 autonomy enablers the ACCEPT-01 §10A.2 loop needs: a
+ * These are the autonomy enablers the ACCEPT-01 loop needs: a
  * clean-slate-with-a-pinned-model (reconfigure) and firing the time-based UCs
  * immediately (trigger), so an unattended agent never waits on a wall clock or
  * hand-rewrites a config. The building blocks all exist at HEAD — this scenario
@@ -13,18 +12,18 @@
  *   • trigger → the gateway RPCs the daemon registers: `cron.run`
  *     (cron-handlers.ts), `heartbeat.trigger` (heartbeat-handlers.ts),
  *     `scheduler.wake` (cron-handlers.ts) — driven over the SAME WS `rpcRequest`
- *     the production `comis` CLI uses (the 205-07 transport fix), NEVER `POST
+ *     the production `comis` CLI uses, NEVER `POST
  *     /rpc` (404 at HEAD — the dispatch is ws-only).
  *   • reconfigure → `RigController.reconfigure(overrides)` rewrites the isolated
  *     YAML via `buildConfigYaml` then `restart()` (the cleanup-before-reboot
- *     Pitfall-1 ordering, same gateway port).
+ *     ordering, same gateway port).
  *
- * ── THE CI vs COMIS_LIVE SPLIT (the 204/205 pattern — copied VERBATIM) ──
+ * ── THE CI vs COMIS_LIVE SPLIT ──
  *
  *   • Stage-B (ALWAYS runs, in-process, NO COMIS_LIVE, NO real model): the
  *     deterministic proofs that need no daemon — (1) the reconfigure rewrite
  *     STRUCTURE: `buildConfigYaml(apiRoot, port, <new>)` produces a YAML that
- *     names the NEW model (the Track-K sweep) while keeping the exact telegram
+ *     names the NEW model (the model sweep) while keeping the exact telegram
  *     schema keys + the ≥32-char literal gateway token; (2) the `tg trigger`
  *     RPC WIRING: each sub-target maps to the right registered method
  *     (`cron.run`/`heartbeat.trigger`/`scheduler.wake`) over an injected rpc
@@ -40,7 +39,7 @@
  *     `tg trigger wake` over the DEFAULT seam round-trips. The reconfigure leg:
  *     `controller.reconfigure({ "agents.default.model": <new> })` rewrites the
  *     on-disk config (it now names the new model) and the daemon re-boots on the
- *     SAME gateway port (the rewrite+restart STRUCTURE). NO-FALSE-SUCCESS (I5):
+ *     SAME gateway port (the rewrite+restart STRUCTURE). NO-FALSE-SUCCESS:
  *     an honest `rpc_error` (e.g. `tg trigger cron <unregistered>` → "Job not
  *     found") proves the handler is REACHED and fails honestly — never a faked
  *     success.
@@ -89,10 +88,10 @@ function fakeHandle(over: Partial<ChanliveHandle> = {}): ChanliveHandle {
 }
 
 // ---------------------------------------------------------------------------
-// Stage-B — the reconfigure rewrite STRUCTURE (the Track-K model sweep), no daemon
+// Stage-B — the reconfigure rewrite STRUCTURE (the model sweep), no daemon
 // ---------------------------------------------------------------------------
 
-describe("AUTO-04 Stage-B — reconfigure rewrites the throwaway config to name a NEW model (the Track-K sweep)", () => {
+describe("AUTO-04 Stage-B — reconfigure rewrites the throwaway config to name a NEW model (the model sweep)", () => {
   it("buildConfigYaml(apiRoot, port, <new>) produces a config that NAMES the new model + keeps the telegram seam + the ≥32-char literal token", () => {
     const apiRoot = "http://127.0.0.1:54321";
     const gatewayPort = 4766;
@@ -161,7 +160,7 @@ describe("AUTO-04 Stage-B — `tg trigger` fires the real time-based RPCs over t
 });
 
 // ---------------------------------------------------------------------------
-// Stage-B — the honest-error contracts (CLI-04 / V5) — no daemon.
+// Stage-B — the honest-error contracts — no daemon.
 // (Reuses the telegram-rpc-passthrough.test.ts rpc_error/bad_json contracts.)
 // ---------------------------------------------------------------------------
 
@@ -311,7 +310,7 @@ describe.skipIf(!isLive)("AUTO-04 Stage-C — the live trigger RPCs + the reconf
     expect(r, "rig booted").toBeDefined();
     if (r === undefined) return;
     // The genuine CLI path with NO injected rpc — runVerb falls through to the
-    // default rpcRequest, which routes over WS (205-07). This is exactly the
+    // default rpcRequest, which routes over WS. This is exactly the
     // `tg trigger wake` an agent runs against a live rig.
     const handle: ChanliveHandle = {
       channel: "telegram",
@@ -383,7 +382,7 @@ describe.skipIf(!isLive)("AUTO-04 Stage-C — the live trigger RPCs + the reconf
     // First /health is green (boot already awaited it).
     expect((await fetch(`${gatewayUrl}/health`)).ok).toBe(true);
 
-    // The Track-K sweep: rewrite the config to a new model, then re-boot.
+    // The model sweep: rewrite the config to a new model, then re-boot.
     const newModel = "qwen3.6:14b";
     await controller.reconfigure({ "agents.default.model": newModel });
 

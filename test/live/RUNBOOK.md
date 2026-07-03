@@ -6,8 +6,8 @@ The **real-account send → agent → reply round-trip** per channel (CHAN-02) *
 in CI** — there are no real channel accounts in the sandbox — so it is recorded here.
 
 This tier is **operator-run**, **env-gated** (`COMIS_LIVE=1` + the channel's credentials), and
-**skip ≠ fail**: an absent account is `SKIPPED(no-account)`, **never a failure**. §18.1 of the
-milestone spec (launch-set selection) is the operator's call; this runbook treats **all 9 real
+**skip ≠ fail**: an absent account is `SKIPPED(no-account)`, **never a failure**. Launch-set
+selection is the operator's call; this runbook treats **all 9 real
 channels** as the launch set (Discord, Telegram, Slack, WhatsApp, Signal, iMessage, LINE, IRC,
 Email).
 

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Dedup Detector Load Test — design §8.4
+ * Dedup Detector Load Test
  *
  * Exercises the bounded-LRU duplicate detector at 10× expected production
  * throughput (~300 msg/s synthetic) using the injectable `now` clock for
  * full determinism (no real-timer dependency — CI-safe).
  *
- * Design §8.4 targets:
+ * Targets:
  *   - sub-millisecond per-check overhead at ~300 msg/s (10× expected)
  *   - bounded memory: Map never exceeds maxEntries (1024) — verified via
  *     eviction behavior (old IDs outside the window become fresh again)
@@ -42,7 +42,7 @@ const WINDOW_MS = 10_000; // 10 seconds
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("dedup-detector load test — 10× expected production throughput (design §8.4)", () => {
+describe("dedup-detector load test — 10× expected production throughput", () => {
 
   it("all TOTAL_MESSAGES checks complete under the 100ms wall-clock ceiling (throughput guard)", () => {
     // This test only checks timing — no duplicates injected, just N unique IDs.

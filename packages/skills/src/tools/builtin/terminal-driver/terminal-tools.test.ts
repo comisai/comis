@@ -129,7 +129,7 @@ interface FakeRegistry extends TerminalSessionRegistry {
   readCalls: string[];
   /** The `opts` arg each `read` was called with (the render-param forwarding). */
   readOptsCalls: Array<ReadOptions | undefined>;
-  /** 124-06: the sessionIds each `status` round-trip was called with. */
+  /** The sessionIds each `status` round-trip was called with. */
   statusCalls: string[];
   killCalls: string[];
   sendTextCalls: SendTextCall[];
@@ -195,7 +195,7 @@ function makeFakeRegistry(overrides?: {
       if (overrides?.readImpl) return overrides.readImpl(id, opts);
       return { screen: "hello", cursor: { x: 0, y: 0 }, cols: 120, rows: 40, alt: false, alive: true };
     },
-    // 124-06: the owner-scoped status round-trip (the new tool delegates to this).
+    // The owner-scoped status round-trip (the new tool delegates to this).
     async status(id: string, owner: SessionOwner): Promise<TerminalStatusView> {
       statusCalls.push(id);
       capturedOwners.push({ method: "status", owner });
@@ -379,8 +379,8 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
     expect((result.details as CreateResult).sessionId).toBe("sess-1");
   });
 
-  it("FINDING-B (DUR-01): a durable-configured create tool stamps req.durable on the CreateRequest (→ the registry engages tmux)", async () => {
-    // Live VPS finding 2026-06-16: drive.durable:true never engaged tmux because the create tool
+  it("a durable-configured create tool stamps req.durable on the CreateRequest (→ the registry engages tmux)", async () => {
+    // drive.durable:true never engaged tmux because the create tool
     // never set req.durable (terminal-tools.ts) — so every session ran on the pty backend and the
     // headline survive-a-daemon-restart drive was unreachable. The daemon supplies deps.durable
     // (from config.drive.durable); the tool must thread it onto the CreateRequest.
@@ -391,7 +391,7 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
     expect(registry.createCalls[0]!.durable, "drive.durable:true must thread to req.durable").toBe(true);
   });
 
-  it("FINDING-B: a non-durable create tool leaves req.durable unset (I1 — today's spawn session)", async () => {
+  it("a non-durable create tool leaves req.durable unset (today's spawn session)", async () => {
     const registry = makeFakeRegistry();
     const tool = createTerminalSessionCreateTool(baseDeps(registry));
     await tool.execute("call-1", { allowId: "bash", command: realBashPath() });
@@ -503,10 +503,10 @@ describe("terminal-tools — scope is sourced from the entry, never the agent pa
     expect(Object.keys(props)).not.toContain("scope");
   });
 
-  it("PROJECTS-02: the create tool STEERS a coding project to the `project` param (named, retrievable <workspace>/projects/<name> folder) — not cwd/name", () => {
-    // Live Telegram drive 2026-06-17: the agent built a full snake game but passed cwd+name and
+  it("the create tool STEERS a coding project to the `project` param (named, retrievable <workspace>/projects/<name> folder) — not cwd/name", () => {
+    // The agent built a full snake game but passed cwd+name and
     // NOT `project`, so it landed FLAT in the session workspace (no retrievable projects/<name>
-    // folder). The mechanism (PROJECTS-01) works — the agent just never invoked it. The fix is
+    // folder). The mechanism works — the agent just never invoked it. The fix is
     // guidance: the tool description + cwd/name param hints must point coding work at `project`.
     const tool = createTerminalSessionCreateTool(baseDeps(makeFakeRegistry()));
     const props = (tool.parameters as { properties: Record<string, { description?: string }> }).properties;
@@ -634,7 +634,7 @@ describe("terminal-tools — read forwards format/scrollback/includeAltBuffer", 
     expect(registry.readOptsCalls[0]).toEqual({ format: "ansi", scrollback: 25, includeAltBuffer: false });
   });
 
-  it("applies the spec §5 defaults (format=text, scrollback=0, includeAltBuffer=true) when params are absent", async () => {
+  it("applies the render defaults (format=text, scrollback=0, includeAltBuffer=true) when params are absent", async () => {
     const registry = makeFakeRegistry();
     const tool = createTerminalSessionReadTool(baseDeps(registry));
 
@@ -678,16 +678,16 @@ describe("terminal-tools — create passes a non-agent-dialable scrollback", () 
 });
 
 // ===========================================================================
-// READ-01 (164-06 Task 3): the read tool delegates to boundedReadDigest — a
+// The read tool delegates to boundedReadDigest — a
 // BOUNDED DIGEST of the current screen by default (readMode: digest|diff|full),
-// with an over-cap `truncated`/`truncations` breadcrumb (never a silent trim, I7),
+// with an over-cap `truncated`/`truncations` breadcrumb (never a silent trim),
 // while PRESERVING the redact + wrap prompt-injection defense (the digest is
 // inserted BEFORE redact+wrap, not instead). The tool description NAMES the
 // digest default. RED on pre-patch: the read tool does not call boundedReadDigest;
 // the description does not name the digest default; there is no truncated breadcrumb.
 // ===========================================================================
 
-describe("terminal-tools — READ-01 read tool delegates to boundedReadDigest", () => {
+describe("terminal-tools — the read tool delegates to boundedReadDigest", () => {
   it("delegates to boundedReadDigest — digest default, the result carries the truncated breadcrumb", async () => {
     const registry = makeFakeRegistry({
       readImpl: async () => ({ screen: "small screen", cursor: { x: 0, y: 0 }, cols: 80, rows: 24, alt: false, alive: true }),
@@ -703,7 +703,7 @@ describe("terminal-tools — READ-01 read tool delegates to boundedReadDigest", 
     expect(view.screen).toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/);
   });
 
-  it("an over-cap screen → truncated:true + a truncations count (never a silent trim, I7)", async () => {
+  it("an over-cap screen → truncated:true + a truncations count (never a silent trim)", async () => {
     // A pathological screen far beyond the 8192-byte cap.
     const huge = "x".repeat(20_000);
     const registry = makeFakeRegistry({
@@ -756,7 +756,7 @@ describe("terminal-tools — READ-01 read tool delegates to boundedReadDigest", 
 // ---------------------------------------------------------------------------
 // The four interaction tools (send_text / send_key / resize / wait).
 // Each is a THIN delegation to the registry method (the read/kill precedent):
-// it reads its params, calls the one registry method, logs durationMs (§2.7), and
+// it reads its params, calls the one registry method, logs durationMs, and
 // returns the registry's returned shape VERBATIM. No re-gating (the session was
 // gated at create); no detectProvider touch.
 // ---------------------------------------------------------------------------
@@ -793,7 +793,7 @@ describe("terminal-tools — send_text delegation", () => {
     expect(registry.sendTextCalls[0].args.text).toBe("");
   });
 
-  it("logs an INFO with durationMs (§2.7)", async () => {
+  it("logs an INFO with durationMs", async () => {
     const registry = makeFakeRegistry();
     const logger = makeCapturingLogger();
     let t = 1000;
@@ -830,7 +830,7 @@ describe("terminal-tools — send_key delegation", () => {
     expect(registry.sendKeyCalls[0].args.keys).toEqual([]);
   });
 
-  it("logs an INFO with durationMs (§2.7)", async () => {
+  it("logs an INFO with durationMs", async () => {
     const registry = makeFakeRegistry();
     const logger = makeCapturingLogger();
     let t = 2000;
@@ -863,7 +863,7 @@ describe("terminal-tools — resize delegation", () => {
     expect(res.details).toEqual({ ok: false });
   });
 
-  it("logs an INFO with durationMs (§2.7)", async () => {
+  it("logs an INFO with durationMs", async () => {
     const registry = makeFakeRegistry();
     const logger = makeCapturingLogger();
     let t = 3000;
@@ -950,7 +950,7 @@ describe("terminal-tools — wait delegation", () => {
       screen: "quiet",
       cursor: { x: 2, y: 2 },
     });
-    // FINDING-3: a settle-COMPLETE result carries the model-facing scope note (so the driver does
+    // A settle-COMPLETE result carries the model-facing scope note (so the driver does
     // not over-read `isComplete:true` as "task done" and drop later steps).
     expect((res.details as { note?: string }).note).toMatch(/SETTLED.*not.*overall task is done/is);
   });
@@ -978,7 +978,7 @@ describe("terminal-tools — wait delegation", () => {
     expect(body.matched).toBe(false);
   });
 
-  // LOOP-CLOSURE recovery (webhook-claude-cli-tdd-20260701): the agent waited on a LIVE drive it
+  // The agent waited on a LIVE drive it
   // NEVER tasked (handle exists, everSentText=false) — the dominant flub (create → clear gate →
   // wait, before send_text). The wait tool returns a JIT task-not-delivered directive steering it
   // to deliver the task now (or report honestly), instead of the idle result it reads as "nothing to do".
@@ -998,14 +998,14 @@ describe("terminal-tools — wait delegation", () => {
     expect(note).not.toMatch(/overall task is done/i);
   });
 
-  it("wait on a TASKED drive (handle.everSentText=true) → NO directive (byte-identical; only the FINDING-3 scope note)", async () => {
+  it("wait on a TASKED drive (handle.everSentText=true) → NO directive (byte-identical; only the settle-scope note)", async () => {
     const taskedHandle: SessionHandle = { ...NEVER_TASKED_HANDLE, everSentText: true };
     const registry = makeFakeRegistry({ waitImpl: async () => COMPLETE_INLINE, handles: new Map([["s1", taskedHandle]]) });
     const tool = createTerminalSessionWaitTool(baseDeps(registry));
     const res = await tool.execute("call-1", { sessionId: "s1", forIdleMs: 100 });
     const note = (res.details as { note?: string }).note;
     expect(note).not.toMatch(/have NOT delivered a task/i);
-    expect(note).toMatch(/SETTLED/); // COMPLETE_INLINE is isComplete → the existing FINDING-3 note
+    expect(note).toMatch(/SETTLED/); // COMPLETE_INLINE is isComplete → the existing settle-scope note
   });
 
   it("wait with NO handle (gone/unknown session) → NO directive (a missing handle is not the never-tasked-live-drive case)", async () => {
@@ -1015,7 +1015,7 @@ describe("terminal-tools — wait delegation", () => {
     expect((res.details as { note?: string }).note).not.toMatch(/have NOT delivered a task/i);
   });
 
-  it("logs a DEBUG with durationMs (wait is readOnly) (§2.7)", async () => {
+  it("logs a DEBUG with durationMs (wait is readOnly)", async () => {
     const registry = makeFakeRegistry();
     const logger = makeCapturingLogger();
     let t = 4000;
@@ -1029,16 +1029,16 @@ describe("terminal-tools — wait delegation", () => {
 });
 
 // ===========================================================================
-// DRIVE-02 (164-04, v2.24) — the wait tool emits a CONTENT-FREE
+// The wait tool emits a CONTENT-FREE
 // terminal:drive_promoted on a qualifying wait, via the pure shouldPromoteDrive
-// predicate (164-02). The skills layer is STATELESS — it emits on EVERY
-// qualifying wait; the promote-once guarantee is the daemon's promoted-Set dedupe
-// (164-04 Task 2). The returned `out` is UNCHANGED (the agent still gets the
+// predicate. The skills layer is STATELESS — it emits on EVERY
+// qualifying wait; the promote-once guarantee is the daemon's promoted-Set dedupe.
+// The returned `out` is UNCHANGED (the agent still gets the
 // honest WaitResult). Content-free: the event carries sessionId/agentId/reason-
-// enum/timestamp ONLY — never the screen (I3).
+// enum/timestamp ONLY — never the screen.
 // ===========================================================================
 
-/** A producing-but-not-complete settle result (the honest DRIVE-02 promotion signal). */
+/** A producing-but-not-complete settle result (the honest promotion signal). */
 const PRODUCING_TIMEOUT: WaitResult = {
   matched: false,
   isComplete: false,
@@ -1048,7 +1048,7 @@ const PRODUCING_TIMEOUT: WaitResult = {
   cursor: { x: 0, y: 0 },
 };
 
-/** A completed-inline settle result (the I1 short-drive path — no promotion). */
+/** A completed-inline settle result (the short-drive path — no promotion). */
 const COMPLETE_INLINE: WaitResult = {
   matched: true,
   isComplete: true,
@@ -1061,7 +1061,7 @@ function drivePromotedEvents(bus: ReturnType<typeof makeCapturingBus>): Captured
   return bus.events.filter((e) => e.event === "terminal:drive_promoted");
 }
 
-describe("terminal-tools — DRIVE-02 the wait tool emits terminal:drive_promoted (auto/attached/detached matrix)", () => {
+describe("terminal-tools — the wait tool emits terminal:drive_promoted (auto/attached/detached matrix)", () => {
   it("auto + {isComplete:false,producing:true} → emits EXACTLY ONE terminal:drive_promoted with reason 'producing'", async () => {
     const registry = makeFakeRegistry({ waitImpl: async () => PRODUCING_TIMEOUT });
     const bus = makeCapturingBus();
@@ -1074,12 +1074,12 @@ describe("terminal-tools — DRIVE-02 the wait tool emits terminal:drive_promote
     expect(promoted[0]!.payload).toMatchObject({ sessionId: "s1", agentId: "agent-1", reason: "producing" });
   });
 
-  it("promotion agentId is the REAL agentId (deps.agentId), NOT ctx.userId — DRIVE-01/I5 journal + owner routing (RED on pre-patch)", async () => {
-    // Regression for the 2026-06-16 live VPS finding: a chat-API drive
+  it("promotion agentId is the REAL agentId (deps.agentId), NOT ctx.userId — journal + owner routing (RED on pre-patch)", async () => {
+    // Regression: a chat-API drive
     // (sessionKey "default:openai-api:openai") promoted with agentId="openai-api" —
     // the USERID, not the agent "default". The daemon keys the per-agent durable
-    // journal dir (`terminal-drive/<agentId>/journals/`, DUR-02) AND the detached
-    // drive-owner's inherited allow-entry (DRIVE-01/I5) on the REAL agentId. The
+    // journal dir (`terminal-drive/<agentId>/journals/`) AND the detached
+    // drive-owner's inherited allow-entry on the REAL agentId. The
     // owner-KEY is userId-based for registry owner-scoping ONLY; the content-free
     // terminal:drive_promoted event must carry deps.agentId, never ctx.userId.
     const registry = makeFakeRegistry({ waitImpl: async () => PRODUCING_TIMEOUT });
@@ -1106,7 +1106,7 @@ describe("terminal-tools — DRIVE-02 the wait tool emits terminal:drive_promote
     expect(agentId).not.toBe("openai-api"); // never the userId/owner-key
   });
 
-  it("auto + {isComplete:true} → NO emit (I1 short-drive byte-identical)", async () => {
+  it("auto + {isComplete:true} → NO emit (short-drive byte-identical)", async () => {
     const registry = makeFakeRegistry({ waitImpl: async () => COMPLETE_INLINE });
     const bus = makeCapturingBus();
     const tool = createTerminalSessionWaitTool(baseDeps(registry, { eventBus: bus, driveMode: "auto" }));
@@ -1116,7 +1116,7 @@ describe("terminal-tools — DRIVE-02 the wait tool emits terminal:drive_promote
     expect(drivePromotedEvents(bus)).toHaveLength(0);
   });
 
-  it("attached + {isComplete:false,producing:true} → NO emit (I1 explicit opt-out, never promote)", async () => {
+  it("attached + {isComplete:false,producing:true} → NO emit (explicit opt-out, never promote)", async () => {
     const registry = makeFakeRegistry({ waitImpl: async () => PRODUCING_TIMEOUT });
     const bus = makeCapturingBus();
     const tool = createTerminalSessionWaitTool(baseDeps(registry, { eventBus: bus, driveMode: "attached" }));
@@ -1127,7 +1127,7 @@ describe("terminal-tools — DRIVE-02 the wait tool emits terminal:drive_promote
   });
 
   it("detached + first wait + NEVER TASKED → NO emit (loop-closure: an un-tasked drive must not background)", async () => {
-    // webhook-claude-cli-tdd (2026-06-30): the pre-fix behavior promoted at the first wait
+    // The pre-fix behavior promoted at the first wait
     // UNCONDITIONALLY, so a durable claude drive backgrounded at its initial gate/idle wait —
     // BEFORE the agent delivered any task — stranding a work-less terminal + persisting a wake-state
     // that RESURRECTS on the next boot. With no handle (never-tasked), get(...)?.everSentText is
@@ -1141,9 +1141,9 @@ describe("terminal-tools — DRIVE-02 the wait tool emits terminal:drive_promote
     expect(drivePromotedEvents(bus)).toHaveLength(0);
   });
 
-  it("detached + wait + TASKED (handle.everSentText) → emits mode_detached (DELIVER-02 tracking preserved once work lands)", async () => {
-    // Once the agent has delivered a task — a durable claude BUILD that then idles, the DELIVER-02
-    // scenario — the detached drive promotes at the next wait so the daemon backstop tracks it and
+  it("detached + wait + TASKED (handle.everSentText) → emits mode_detached (tracking preserved once work lands)", async () => {
+    // Once the agent has delivered a task — a durable claude BUILD that then idles —
+    // the detached drive promotes at the next wait so the daemon backstop tracks it and
     // fires a completion. everTasked rides the registry handle's everSentText (set by sendText on the
     // first delivered send_text). Even a completed-inline wait promotes under detached, once tasked.
     const taskedHandle: SessionHandle = {
@@ -1197,7 +1197,7 @@ describe("terminal-tools — DRIVE-02 the wait tool emits terminal:drive_promote
     expect(body.reason).toBe("timeout");
   });
 
-  it("the emitted payload is CONTENT-FREE — sessionId/agentId/reason/timestamp ONLY, no screen key (I3)", async () => {
+  it("the emitted payload is CONTENT-FREE — sessionId/agentId/reason/timestamp ONLY, no screen key", async () => {
     const registry = makeFakeRegistry({ waitImpl: async () => PRODUCING_TIMEOUT });
     const bus = makeCapturingBus();
     const tool = createTerminalSessionWaitTool(baseDeps(registry, { eventBus: bus, driveMode: "auto" }));
@@ -1213,7 +1213,7 @@ describe("terminal-tools — DRIVE-02 the wait tool emits terminal:drive_promote
     expect(JSON.stringify(payload)).not.toContain("secret-token-on-screen");
   });
 
-  it("emits exactly ONE content-free INFO record on promotion (§2.7) — sessionId + agentId + reason, never the screen", async () => {
+  it("emits exactly ONE content-free INFO record on promotion — sessionId + agentId + reason, never the screen", async () => {
     const registry = makeFakeRegistry({ waitImpl: async () => PRODUCING_TIMEOUT });
     const logger = makeCapturingLogger();
     const tool = createTerminalSessionWaitTool(baseDeps(registry, { logger, driveMode: "auto" }));
@@ -1231,7 +1231,7 @@ describe("terminal-tools — DRIVE-02 the wait tool emits terminal:drive_promote
   });
 
   it("the wait tool calls the pure shouldPromoteDrive predicate (it does not re-implement the decision)", () => {
-    // The emit decision must delegate to the 164-02 predicate (one import + one call),
+    // The emit decision must delegate to the pure shouldPromoteDrive predicate (one import + one call),
     // not duplicate the isComplete/producing/mode truth table inline.
     const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "./terminal-tools.ts"), "utf8");
     expect(src, "must import shouldPromoteDrive from the pure predicate sibling").toMatch(
@@ -1242,7 +1242,7 @@ describe("terminal-tools — DRIVE-02 the wait tool emits terminal:drive_promote
   });
 });
 
-describe("TerminalEventBus — DRIVE-02 terminal:drive_promoted overload (164-04)", () => {
+describe("TerminalEventBus — terminal:drive_promoted overload", () => {
   const here = dirname(fileURLToPath(import.meta.url));
 
   it("terminal-tools.ts widens TerminalEventBus with the terminal:drive_promoted emit overload (source RED on pre-patch)", () => {
@@ -1297,7 +1297,7 @@ describe("TerminalEventBus — DRIVE-02 terminal:drive_promoted overload (164-04
 
 // ===========================================================================
 // session_read redacts secrets then wraps the screen as untrusted
-// external content (the screen is a prompt-injection vector, §3.6).
+// external content (the screen is a prompt-injection vector).
 // ===========================================================================
 
 describe("terminal-tools — read redacts + wraps the screen as untrusted external content", () => {
@@ -1404,7 +1404,7 @@ describe("terminal-tools — read redacts + wraps the screen as untrusted extern
 
 // ===========================================================================
 // approveOnCreate gates session_create on the approval gate (consent
-// + audit, §3.7). A denied request rejects BEFORE any spawn (registry.create
+// + audit). A denied request rejects BEFORE any spawn (registry.create
 // 0 calls — the reject-before-spawn discipline of the allowlist + fail-closed gates).
 // ===========================================================================
 
@@ -2035,13 +2035,13 @@ describe("terminal-tools — audit-on-cap-breach + outcome tag", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 124 P5 (124-02) — site 2 of the 3-site closed-event plumbing: widen the
+// Site 2 of the 3-site closed-event plumbing: widen the
 // skills-side structural TerminalEventBus with the four attention/audit emit
 // overloads (terminal:input_needed / terminal:stuck / terminal:escalated /
-// terminal:auto_answered) so the downstream emitters (124-05/07/09) typecheck.
+// terminal:auto_answered) so the downstream emitters typecheck.
 //
 // `TerminalEventBus` is a CLOSED structural interface — an emit for an
-// undeclared event fails to compile (RESEARCH Pitfall 4). vitest transpiles via
+// undeclared event fails to compile. vitest transpiles via
 // esbuild (types stripped) so a bare overload is not a runtime-observable RED;
 // this block therefore SOURCE-INTROSPECTS terminal-tools.ts (the genuinely-RED
 // layer) for the four overload lines, then exercises a capturing fake against a
@@ -2050,10 +2050,10 @@ describe("terminal-tools — audit-on-cap-breach + outcome tag", () => {
 // is at the 800-line cap) and are redaction-safe BY CONSTRUCTION — Object.keys
 // proves no text/keys/screen/payload field can ride an emit even by mistake.
 // ---------------------------------------------------------------------------
-describe("TerminalEventBus — P5 attention/audit overloads (124-02 site 2)", () => {
+describe("TerminalEventBus — attention/audit overloads", () => {
   const here = dirname(fileURLToPath(import.meta.url));
 
-  it("terminal-tools.ts widens TerminalEventBus with the four P5 emit overloads (source RED on pre-patch)", () => {
+  it("terminal-tools.ts widens TerminalEventBus with the four attention emit overloads (source RED on pre-patch)", () => {
     const src = readFileSync(resolve(here, "./terminal-tools.ts"), "utf8");
     expect(src, "terminal:input_needed overload must exist").toMatch(
       /emit\(event:\s*"terminal:input_needed"/,
@@ -2067,7 +2067,7 @@ describe("TerminalEventBus — P5 attention/audit overloads (124-02 site 2)", ()
     );
   });
 
-  it("a capturing fake accepts each P5 emit against the strongly-typed TerminalEventBus", () => {
+  it("a capturing fake accepts each attention emit against the strongly-typed TerminalEventBus", () => {
     // The fake is typed as the REAL TerminalEventBus — if an overload were
     // missing, one of these emits would fail to typecheck (the closed-union
     // proof; esbuild strips it but `tsc` over the package build catches it).
@@ -2119,7 +2119,7 @@ describe("TerminalEventBus — P5 attention/audit overloads (124-02 site 2)", ()
     ]);
   });
 
-  it("the four P5 event interfaces are redaction-safe by construction — no text/keys/screen/payload field", () => {
+  it("the four attention event interfaces are redaction-safe by construction — no text/keys/screen/payload field", () => {
     const inputNeeded: TerminalInputNeededEvent = {
       sessionId: "s",
       agentId: "a",
@@ -2162,7 +2162,7 @@ describe("TerminalEventBus — P5 attention/audit overloads (124-02 site 2)", ()
     ]);
 
     // Source guard on the sibling decl file: none of the four interface blocks
-    // may carry a raw text/keys/screen/payload field (T-124-03). RED on pre-patch
+    // may carry a raw text/keys/screen/payload field. RED on pre-patch
     // (the sibling file does not exist yet).
     const attnSrc = readFileSync(resolve(here, "./terminal-events-attention.ts"), "utf8");
     for (const iface of [

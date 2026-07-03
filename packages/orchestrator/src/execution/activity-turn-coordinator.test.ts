@@ -5,15 +5,13 @@
  * The per-turn coordinator: subscribe on start, unsubscribe on end (and on an
  * aborted turn via try/finally), debounce renderer.apply to ≤1/800ms, feed the
  * projection per event, translate ActivityRenderError into operator WARNs, and
- * — the milestone's anti-orphan-state guarantee — gate the finalize delete:
+ * — the anti-orphan-state guarantee — gate the finalize delete:
  *   • success: renderer.finalize fires ONLY after outcome.delivery.deliveredAtMs,
  *   • failure / silent / aborted: NO success-delete (keep the trail),
  *   • any observed ActivityEvent{status:"failed"} reclassifies the outcome to
  *     kind:"failure" with the no-delete branch, even when delivery succeeded,
  *   • the activity message is DISTINCT from the assistant message (finalize
  *     operates on the activity surface only; never edits the assistant msg).
- *
- * RED on the absent module: `Cannot find module './activity-turn-coordinator.js'`.
  */
 import type {
   ActivityEvent,
@@ -383,9 +381,9 @@ describe("createActivityTurnCoordinator — delete gate", () => {
 // Active sub-agent stack + parentActivityId resolution
 // ---------------------------------------------------------------------------
 //
-// Linkage seam (Open Question 2 / Assumption A2): the ActivityStream emits a
+// Linkage seam: the ActivityStream emits a
 // kind:"subagent" event WITHOUT a parentActivityId (it has no turn state). The
-// coordinator — the §4.5 per-turn single owner — maintains a `runId →
+// coordinator — the per-turn single owner — maintains a `runId →
 // parentActivityId` map plus an active-subagent stack and annotates the parent
 // link in onEvent: on a phase:"start" subagent event lacking parentActivityId,
 // it sets parentActivityId to the turn's root activity id (minted once at
@@ -816,18 +814,18 @@ describe("createActivityTurnCoordinator — circuit-breaker gate", () => {
 
 // ---------------------------------------------------------------------------
 // planStream subscription + PlanUpdate→PlanSnapshot adapter
-// with Security V9 description redaction (Pitfall 3 lock).
+// with description redaction.
 //
 // The coordinator subscribes the injected `planStream` inside start(ctx) and
 // caches the most recent PlanSnapshot. The adapter maps the observability
 // PlanUpdate shape `{index, description, status}` to the core PlanSnapshot
-// shape `{id, label, status}` (Pitfall 3: silent shape mismatch). The
-// description is LLM-extracted SEP text and could echo a user message
-// verbatim — the adapter MUST run `redactValue(description)` and use the
-// redacted string as the snapshot label (Security V9).
+// shape `{id, label, status}` (the two shapes differ; a mismatch would fail
+// silently). The description is LLM-extracted SEP text and could echo a user
+// message verbatim — the adapter MUST run `redactValue(description)` and use
+// the redacted string as the snapshot label (never leak raw user content).
 //
 // The cached snapshot reaches the renderer as the projection's 4th argument
-// on the next flushApply (Pitfall 6 — the projection's `latestPlanSnapshot`
+// on the next flushApply (the projection's `latestPlanSnapshot`
 // arg supersedes the silent `prev.planSnapshot` forward). Cross-turn leakage
 // is prevented by an in-handler `(agentId, sessionKey)` filter and the per-
 // turn `planUnsubscribe` cleanup in releaseSubscription.
@@ -878,7 +876,7 @@ describe("createActivityTurnCoordinator — planStream subscription", () => {
     expect(planStream.unsubscribeCalls()).toBe(1);
   });
 
-  it("threads a PlanSnapshot via the projection's 4th arg after a PlanUpdate is delivered (Pitfall 3 shape adapter)", () => {
+  it("threads a PlanSnapshot via the projection's 4th arg after a PlanUpdate is delivered", () => {
     const planStream = makePlanStream();
     const projection = vi.fn(
       (
@@ -979,13 +977,13 @@ describe("createActivityTurnCoordinator — planStream subscription", () => {
     coord.dispose();
   });
 
-  it("REGRESSION LOCK (Pitfall 3 + Security V9): runs redactValue on each description before exposing it as PlanSnapshot.label", () => {
+  it("REGRESSION LOCK: runs redactValue on each description before exposing it as PlanSnapshot.label", () => {
     // The SEP extractor reads the LLM's response and pulls step descriptions
     // verbatim — the LLM could echo a user message including a secret. The
     // adapter MUST redact each description before the renderer sees it; this
     // test pins a real sk-test-* literal and asserts it never reaches the
     // label. Without the redactValue call, the literal would render verbatim
-    // on every chat surface (Security V9).
+    // on every chat surface.
     const planStream = makePlanStream();
     const projection = vi.fn(
       (

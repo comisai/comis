@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * buildWebSearchConfig / buildLinkConfig / buildDocExtractionConfig — shared helpers
- * for the Phase 143 (WEB) scenario tests.
+ * for the WEB scenario tests.
  *
  * These return REAL @comis product config OBJECTS (not temp YAML files, unlike
- * media-config.ts) because the Wave-2 WEB scenarios drive product FUNCTIONS
+ * media-config.ts) because the WEB scenarios drive product FUNCTIONS
  * directly (createWebSearchTool / createLinkRunner / createFileExtractor) rather
  * than a booted daemon.
  *

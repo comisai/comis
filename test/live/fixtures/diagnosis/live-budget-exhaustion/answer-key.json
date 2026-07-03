@@ -5,7 +5,7 @@
     "rising costUsd",
     "endReason budget_exhausted"
   ],
-  "hiddenMechanism": "The per-session cost rollup must be summed by hand across token_usage records today (the D5 flight-recorder gap). No single surface reports the running total against the ceiling at the moment of the stop.",
+  "hiddenMechanism": "The per-session cost rollup must be summed by hand across token_usage records today (the flight-recorder gap). No single surface reports the running total against the ceiling at the moment of the stop.",
   "surfaceCeiling": [
     "trajectory JSONL (read file)",
     "obs_query tool (diagnostics/billing/delivery/channels only)",

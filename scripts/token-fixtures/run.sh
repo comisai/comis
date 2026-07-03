@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Token-fixture ground-truth runner (TOK-02 — design/multilingual-excellence.md §4).
+# Token-fixture ground-truth runner.
 # Sources token-fixtures.env (if present), pre-flights the requested legs, then
 # execs generate.mjs. Mirrors scripts/bench-small-model/run.sh.
 #

@@ -76,18 +76,18 @@ export interface SessionRow {
 }
 
 /**
- * Raw row shape for the `lcd_messages` table (LCD lossless store, Phase 127, F1).
+ * Raw row shape for the `lcd_messages` table (LCD lossless store).
  *
  * Snake_case DB-row shape — NOT the public API (consumers use the `LcdMessage`
- * DTO from `@comis/core`, reconstructed via the parts-codec). Carries the R4
+ * DTO from `@comis/core`, reconstructed via the parts-codec). Carries the
  * tenant/agent/session isolation columns (`conversation_id` is the composite,
- * the three broken-out columns let Phase 132 filter on the SAME schema without
- * a migration — threat T-127-06). Paired 1:1 with `LcdMessageRowSchema` in
+ * the three broken-out columns let a scoped read filter on the SAME schema without
+ * a migration). Paired 1:1 with `LcdMessageRowSchema` in
  * `./row-schemas.js` via the `row-schemas.test.ts` drift guard.
  */
 export interface LcdMessageRow {
   id: string;
-  /** tenant+agent+session composite scope key (R4; enforced Phase 132). */
+  /** tenant+agent+session composite scope key. */
   conversation_id: string;
   tenant_id: string;
   agent_id: string;
@@ -103,11 +103,11 @@ export interface LcdMessageRow {
 }
 
 /**
- * Raw row shape for the `lcd_message_parts` table (LCD lossless store, Phase 127, F1).
+ * Raw row shape for the `lcd_message_parts` table (LCD lossless store).
  *
  * One row per structured block. The typed tool columns are the queryable
- * projection; the verbatim canonical pi-ai block (plus the F3 reasoning marker
- * and the F2 message envelope) always lives JSON-encoded in `metadata`. Paired
+ * projection; the verbatim canonical pi-ai block (plus the reasoning marker
+ * and the message envelope) always lives JSON-encoded in `metadata`. Paired
  * 1:1 with `LcdMessagePartRowSchema` in `./row-schemas.js` via the drift guard.
  */
 export interface LcdMessagePartRow {
@@ -165,26 +165,26 @@ export interface NamedGraphRow {
 }
 
 /**
- * Raw row shape for the `lcd_summaries` table (LCD compaction store, Phase 129, C3).
+ * Raw row shape for the `lcd_summaries` table (LCD compaction store).
  *
  * Snake_case DB-row shape — NOT the public API (consumers use the `LcdSummary`
- * DTO from `@comis/core`). One row per depth-0 LEAF summary; carries the R4
- * tenant/agent/session isolation columns so Phase 132 filters on the SAME
- * schema with no migration (threat T-129-04). `taint`/`fallback` are the SQLite
+ * DTO from `@comis/core`). One row per depth-0 LEAF summary; carries the
+ * tenant/agent/session isolation columns so a scoped read filters on the SAME
+ * schema with no migration. `taint`/`fallback` are the SQLite
  * bool 0/1 integers; `file_ids` is JSON-encoded TEXT. Paired 1:1 with
  * `LcdSummaryRowSchema` in `./row-schemas.js` via the `row-schemas.test.ts`
  * drift guard.
  */
 export interface LcdSummaryRow {
   summary_id: string;
-  /** tenant+agent+session composite scope key (R4; enforced Phase 132). */
+  /** tenant+agent+session composite scope key. */
   conversation_id: string;
   tenant_id: string;
   agent_id: string;
   session_key: string;
-  /** Closed union TEXT: `leaf` (depth-0) for 129. */
+  /** Closed union TEXT: `leaf` (depth-0). */
   kind: string;
-  /** 0 for 129 (leaf); depth>0 is Phase 130. */
+  /** 0 for a leaf; depth>0 is the condensed tier. */
   depth: number;
   /** Min `created_at` of the covered messages. */
   earliest_at: number;
@@ -198,7 +198,7 @@ export interface LcdSummaryRow {
   content: string;
   /** JSON-encoded string[] of covered file references. */
   file_ids: string;
-  /** 0/1 untrusted-content flag (enforcement is Phase 132). */
+  /** 0/1 untrusted-content flag. */
   taint: number;
   /** 0/1 deterministic Level-3-truncation marker. */
   fallback: number;
@@ -207,12 +207,11 @@ export interface LcdSummaryRow {
 }
 
 /**
- * Raw row shape for the `lcd_summary_messages` table (LCD compaction store,
- * Phase 129, C3).
+ * Raw row shape for the `lcd_summary_messages` table (LCD compaction store).
  *
  * The leaf→message link — one row per (summary, covered message). The
  * `message_id` FK is `ON DELETE RESTRICT` so a summarized `lcd_messages` row can
- * never be deleted (losslessness; Pitfall 5). Paired 1:1 with
+ * never be deleted (losslessness). Paired 1:1 with
  * `LcdSummaryMessageRowSchema` via the drift guard.
  */
 export interface LcdSummaryMessageRow {
@@ -221,8 +220,7 @@ export interface LcdSummaryMessageRow {
 }
 
 /**
- * Raw row shape for the `lcd_summary_parents` table (LCD condensed tier,
- * Phase 130, C2).
+ * Raw row shape for the `lcd_summary_parents` table (LCD condensed tier).
  *
  * The condensed→child summary edge — one row per (condensed parent summary,
  * child summary it links). Mirrors `LcdSummaryMessageRow` but BOTH endpoints
@@ -237,10 +235,9 @@ export interface LcdSummaryParentRow {
 }
 
 /**
- * Raw row shape for the `lcd_context_items` table (LCD compaction store,
- * Phase 129, C3).
+ * Raw row shape for the `lcd_context_items` table (LCD compaction store).
  *
- * One row per item of the ordered model-facing view; carries the R4 scoping
+ * One row per item of the ordered model-facing view; carries the scoping
  * columns. `ordinal` is dense + gap-free per conversation (a UNIQUE
  * `(conversation_id, ordinal)` index enforces it); `ref_kind` is the closed
  * `message`|`summary` discriminator; `ref_id` points at the referenced
@@ -249,7 +246,7 @@ export interface LcdSummaryParentRow {
  */
 export interface LcdContextItemRow {
   id: string;
-  /** tenant+agent+session composite scope key (R4; enforced Phase 132). */
+  /** tenant+agent+session composite scope key. */
   conversation_id: string;
   tenant_id: string;
   agent_id: string;

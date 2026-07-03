@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * ORIGIN-01 + ORIGIN-03 deny-by-origin chokepoint architecture invariants
- * (v8 §3.1 / §22.3 floor item 1).
+ * Deny-by-origin chokepoint architecture invariants.
  *
- * ORIGIN-01 (one chokepoint, full admin set, no scatter):
+ * Chokepoint (one chokepoint, full admin set, no scatter):
  *   1. The deny-by-origin chokepoint EXISTS in `rpc-dispatch.ts` — it derives
  *      its admin-method set from `API_CONTRACTS_ORDERED` filtered on
  *      `scopes.includes("admin")` AND calls `assertNotAgentOrigin`. The check
@@ -15,13 +14,13 @@
  *      `assertNotAgentOrigin` (single-chokepoint invariant: guards against a
  *      future half-migration that adds BOTH a chokepoint AND per-handler calls).
  *
- * ORIGIN-03 (sole `_agentId` injector):
+ * Sole `_agentId` injector:
  *   The ONLY daemon production site that injects `_agentId:` into an
  *   `rpcCall(...)` params object is `createAgentRpcCall` in
  *   `wiring/setup-tools.ts` (a one-entry allowlist pinned by file path).
  *
- * Soundness chain (documented for the next reader): Plan 03 strips external
- * `_agentId` at the gateway boundary, so at the dispatch seam `_agentId`
+ * Soundness chain (documented for the next reader): the gateway boundary strips
+ * external `_agentId`, so at the dispatch seam `_agentId`
  * PRESENCE == agent-origin; this chokepoint then denies it for EVERY admin
  * method → no agent-origin call reaches an admin handler. Residual: a NEW
  * control-plane method that forgets to declare `scopes:["admin"]` would not be
@@ -116,8 +115,8 @@ function lineOf(sf: ts.SourceFile, node: ts.Node): number {
   return sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
 }
 
-describe("ORIGIN-01 — single deny-by-origin chokepoint in createRpcDispatch", () => {
-  it("ORIGIN-01-A1: rpc-dispatch.ts derives the admin set from API_CONTRACTS_ORDERED (scopes.includes('admin')) AND calls assertNotAgentOrigin", () => {
+describe("single deny-by-origin chokepoint in createRpcDispatch", () => {
+  it("rpc-dispatch.ts derives the admin set from API_CONTRACTS_ORDERED (scopes.includes('admin')) AND calls assertNotAgentOrigin", () => {
     const src = readFileSync(RPC_DISPATCH, "utf8");
     const violations: ViolationCitation[] = [];
 
@@ -144,16 +143,16 @@ describe("ORIGIN-01 — single deny-by-origin chokepoint in createRpcDispatch", 
       violations,
       formatViolations({
         description:
-          "ORIGIN-01: the deny-by-origin chokepoint must exist in the createRpcDispatch dispatch closure, keyed on the registry-derived admin-scope Set.",
+          "The deny-by-origin chokepoint must exist in the createRpcDispatch dispatch closure, keyed on the registry-derived admin-scope Set.",
         violations,
         suggestedFix:
           "In rpc-dispatch.ts build `const ADMIN_METHODS = new Set(API_CONTRACTS_ORDERED.filter(c => c.scopes.includes('admin')).map(c => c.method))` and, in the dispatch closure, `if (ADMIN_METHODS.has(method)) assertNotAgentOrigin(params, deps, method)`.",
-        designRef: "v8 ORIGIN-01 / §3.1 / §22.3 floor item 1",
+        designRef: "deny-by-origin chokepoint in packages/daemon/src/api/rpc-dispatch.ts",
       }),
     ).toEqual([]);
   });
 
-  it("ORIGIN-01-A2: the chokepoint is gated on admin-Set membership (not a hardcoded handful of method names)", () => {
+  it("the chokepoint is gated on admin-Set membership (not a hardcoded handful of method names)", () => {
     const src = readFileSync(RPC_DISPATCH, "utf8");
     // Membership-keyed: an `ADMIN_METHODS.has(method)` (or equivalent Set
     // `.has(...)`) guards the assertNotAgentOrigin call — proving the deny set
@@ -172,22 +171,22 @@ describe("ORIGIN-01 — single deny-by-origin chokepoint in createRpcDispatch", 
       violations,
       formatViolations({
         description:
-          "ORIGIN-01: the chokepoint must fire for the FULL admin set via a Set membership test, never a hardcoded subset of method names.",
+          "The chokepoint must fire for the FULL admin set via a Set membership test, never a hardcoded subset of method names.",
         violations,
         suggestedFix:
           "Gate the guard on `if (ADMIN_METHODS.has(method)) assertNotAgentOrigin(...)` where ADMIN_METHODS is the registry-derived admin set.",
-        designRef: "v8 ORIGIN-01 / §3.1",
+        designRef: "deny-by-origin chokepoint in packages/daemon/src/api/rpc-dispatch.ts",
       }),
     ).toEqual([]);
   });
 
-  it("ORIGIN-01-A3: the admin set is non-trivial (sanity: the registry actually declares admin-scoped methods)", () => {
+  it("the admin set is non-trivial (the registry actually declares admin-scoped methods)", () => {
     // A guard against a vacuous test: if the registry had zero admin methods,
-    // the chokepoint would be a no-op and ORIGIN-01 would be silently empty.
+    // the chokepoint would be a no-op and this invariant would be silently empty.
     expect(EXPECTED_ADMIN.size).toBeGreaterThan(50);
   });
 
-  it("ORIGIN-01-A4 (no scatter): NO *-handlers.ts file contains assertNotAgentOrigin (single chokepoint, not per-handler)", () => {
+  it("no *-handlers.ts file contains assertNotAgentOrigin (single chokepoint, not per-handler scatter)", () => {
     const files = listHandlerFiles(HANDLER_DIR);
     const violations: ViolationCitation[] = [];
     for (const rel of files) {
@@ -211,26 +210,26 @@ describe("ORIGIN-01 — single deny-by-origin chokepoint in createRpcDispatch", 
       violations,
       formatViolations({
         description:
-          "ORIGIN-01: deny-by-origin must be ONE chokepoint in rpc-dispatch.ts — no per-handler assertNotAgentOrigin scatter (a half-migration adding both is a coverage-drift hazard).",
+          "Deny-by-origin must be ONE chokepoint in rpc-dispatch.ts — no per-handler assertNotAgentOrigin scatter (a half-migration adding both is a coverage-drift hazard).",
         violations,
         suggestedFix:
           "Remove the per-handler assertNotAgentOrigin call. The single chokepoint in rpc-dispatch.ts covers every admin-scoped method via ADMIN_METHODS.",
-        designRef: "v8 ORIGIN-01 / T-210-24",
+        designRef: "single deny-by-origin chokepoint (no per-handler scatter) in rpc-dispatch.ts",
       }),
     ).toEqual([]);
   });
 });
 
-describe("210-GAP — the deny-by-origin set is the TRUE control plane (orch/agent-reachable methods are NOT denied)", () => {
+describe("the deny-by-origin set is the TRUE control plane (orch/agent-reachable methods are NOT denied)", () => {
   /** The runtime admin-method set the chokepoint derives (scopes.includes("admin")). */
   const ADMIN: ReadonlySet<string> = EXPECTED_ADMIN;
   const CAP_SET: ReadonlySet<string> = new Set<string>(AGENT_CAPABILITIES);
 
-  it("210-GAP CR-01/MD-01: NO method classified gated (orch:*) or ungated in HANDLER_CAPABILITY_MAP is in the deny-by-origin (admin) set", () => {
+  it("NO method classified gated (orch:*) or ungated in HANDLER_CAPABILITY_MAP is in the deny-by-origin (admin) set", () => {
     // The keystone reconciliation: a method the capability model OWNS (a held cap
     // gates it) or an agent-self read (ungated) MUST be agent-reachable — i.e.
     // NOT in the admin deny set, else deny-by-origin throws before the cap gate /
-    // before the read runs. This is exactly the CR-01 regression (message.send /
+    // before the read runs. This is exactly the regression class (message.send /
     // skills.* / session.list were scopes:["admin"] while the gate/read expected
     // them reachable). Drift-proof: re-scoping any of them back to admin fails here.
     const violations: ViolationCitation[] = Object.entries(HANDLER_CAPABILITY_MAP)
@@ -245,18 +244,18 @@ describe("210-GAP — the deny-by-origin set is the TRUE control plane (orch/age
       violations,
       formatViolations({
         description:
-          "A capability-gated or agent-read orchestration method is in the deny-by-origin (admin) set, so an agent origin is denied before its own cap gate / self-read can run (the CR-01/MD-01 regression).",
+          "A capability-gated or agent-read orchestration method is in the deny-by-origin (admin) set, so an agent origin is denied before its own cap gate / self-read can run (this regression class).",
         violations,
         suggestedFix:
-          "Re-scope the method's contract scopes admin→rpc. The deny-by-origin set must be the TRUE control plane (secrets/tokens/config/agents/mcp/auth + the message §3.5 admin subset + arbitrary-session lifecycle), never the orchestration surface the capability model governs.",
-        designRef: "210-GAP CR-01/MD-01 / v8 §3.1 (in-process bypass) / §3.5",
+          "Re-scope the method's contract scopes admin→rpc. The deny-by-origin set must be the TRUE control plane (secrets/tokens/config/agents/mcp/auth + the admin message subset + arbitrary-session lifecycle), never the orchestration surface the capability model governs.",
+        designRef: "deny-by-origin (admin) set vs agent-reachable capability classification",
       }),
     ).toEqual([]);
   });
 
-  it("210-GAP: every method classified deny-by-origin in HANDLER_CAPABILITY_MAP IS in the admin deny set (kept control plane)", () => {
+  it("every method classified deny-by-origin in HANDLER_CAPABILITY_MAP IS in the admin deny set (kept control plane)", () => {
     // The inverse drift guard: a method the map declares control-plane-only
-    // (message.edit/delete/fetch/attach per §3.5; session.delete/export/
+    // (message.edit/delete/fetch/attach; session.delete/export/
     // reset_conversation per the in-handler admin check) MUST keep scopes:["admin"]
     // so the chokepoint actually denies an agent origin. Dropping its admin scope
     // would silently open it to agents.
@@ -276,31 +275,31 @@ describe("210-GAP — the deny-by-origin set is the TRUE control plane (orch/age
         violations,
         suggestedFix:
           "Keep the method's contract scopes as [\"admin\"] so it stays in the deny-by-origin set covered by the chokepoint.",
-        designRef: "210-GAP / v8 §3.1 / §3.5",
+        designRef: "deny-by-origin classification coverage by the admin chokepoint",
       }),
     ).toEqual([]);
   });
 
-  it("210-GAP (non-vacuity): the deny-by-origin class is populated AND the agent-reachable class is populated", () => {
+  it("non-vacuity: the deny-by-origin class is populated AND the agent-reachable class is populated", () => {
     // Guard against a vacuous pass if the map were emptied/restructured.
     const denyByOrigin = Object.values(HANDLER_CAPABILITY_MAP).filter((c) => c === "deny-by-origin");
     const reachable = Object.values(HANDLER_CAPABILITY_MAP).filter(
       (c) => CAP_SET.has(c) || c === "ungated",
     );
-    expect(denyByOrigin.length, "deny-by-origin class must be non-empty (210-GAP populated it)").toBeGreaterThan(0);
+    expect(denyByOrigin.length, "deny-by-origin class must be non-empty (the classification populates it)").toBeGreaterThan(0);
     expect(reachable.length, "agent-reachable class must be non-empty").toBeGreaterThan(0);
   });
 });
 
-describe("ORIGIN-03 — the sole legitimate _agentId injector reaches no admin handler", () => {
-  it("ORIGIN-03-A1: the ONLY daemon production site injecting `_agentId:` into an rpcCall(...) params object is wiring/setup-tools-capabilities.ts (createAgentRpcCall)", () => {
+describe("the sole legitimate _agentId injector reaches no admin handler", () => {
+  it("the ONLY daemon production site injecting `_agentId:` into an rpcCall(...) params object is wiring/setup-tools-capabilities.ts (createAgentRpcCall)", () => {
     // Walk daemon/wiring/*.ts (the in-process dispatch wiring) and find every
     // `_agentId:` PropertyAssignment whose enclosing CallExpression is
     // `rpcCall(...)` — i.e. a fresh agent-origin injection into a dispatched
     // params object. (Parameter-type decls like `_agentId: string,` and
     // within-handler forwards of an already-present `params._agentId` are NOT
     // injections and must not match. The web client injects `_agentId` into
-    // its OWN external requests, which the ORIGIN-02 gateway strip removes
+    // its OWN external requests, which the gateway strip removes
     // before dispatch — that is a different package + an external origin.)
     const injectorFiles = new Set<string>();
     const sites: ViolationCitation[] = [];
@@ -345,14 +344,12 @@ describe("ORIGIN-03 — the sole legitimate _agentId injector reaches no admin h
     // SAME createRpcDispatch deny-by-origin chokepoint):
     //   1. createAgentRpcCall (wiring/setup-tools-capabilities.ts) — the in-process
     //      agent path; extracted from setup-tools.ts for the file-size cap.
-    //   2. createCapabilityEndpoint (wiring/setup-capability-endpoint.ts, Phase 211
-    //      ENDPOINT-01/02) — the loopback capability endpoint. It injects
-    //      `_agentId: lease.agentId` (after a successful lease validate) PRECISELY
-    //      so the shipped assertNotAgentOrigin chokepoint denies admin methods by
-    //      origin (RESEARCH Pitfall 2). internals.ts:27-30 names "the 211 lease
-    //      endpoint" as a legitimate injector. Both inject ONLY after their own
-    //      origin authentication (resolveAutonomy / lease validate), so neither
-    //      creates an un-audited agent-origin path.
+    //   2. createCapabilityEndpoint (wiring/setup-capability-endpoint.ts) — the
+    //      loopback capability endpoint. It injects `_agentId: lease.agentId`
+    //      (after a successful lease validate) PRECISELY so the shipped
+    //      assertNotAgentOrigin chokepoint denies admin methods by origin. Both
+    //      inject ONLY after their own origin authentication (resolveAutonomy /
+    //      lease validate), so neither creates an un-audited agent-origin path.
     const expectedInjectors = new Set([
       resolve(WIRING_DIR, "setup-tools-capabilities.ts"),
       resolve(WIRING_DIR, "setup-capability-endpoint.ts"),
@@ -366,11 +363,11 @@ describe("ORIGIN-03 — the sole legitimate _agentId injector reaches no admin h
       violations,
       formatViolations({
         description:
-          "ORIGIN-03: the ONLY legitimate _agentId injectors into an rpcCall(...) are createAgentRpcCall (setup-tools-capabilities.ts) and createCapabilityEndpoint (setup-capability-endpoint.ts, Phase 211). A new injector site would create an un-audited agent-origin path; route the call through one of those instead.",
+          "The ONLY legitimate _agentId injectors into an rpcCall(...) are createAgentRpcCall (setup-tools-capabilities.ts) and createCapabilityEndpoint (setup-capability-endpoint.ts). A new injector site would create an un-audited agent-origin path; route the call through one of those instead.",
         violations,
         suggestedFix:
           "Inject _agentId only via createAgentRpcCall or createCapabilityEndpoint. Any other in-process rpcCall must not set _agentId.",
-        designRef: "v8 ORIGIN-03 / §3.1 / Phase 211 ENDPOINT-02",
+        designRef: "sole _agentId injectors: setup-tools-capabilities.ts and setup-capability-endpoint.ts",
       }),
     ).toEqual([]);
 

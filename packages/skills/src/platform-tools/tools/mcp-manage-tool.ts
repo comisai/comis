@@ -21,9 +21,9 @@ import { readStringParam, throwToolError } from "../tool-helpers.js";
 import { createAdminManageTool } from "../admin-manage-factory.js";
 import type { RpcCall } from "./cron-tool.js";
 
-// Activity label spec (§17.6). Descriptor name == emitted name.
+// Activity label spec. Descriptor name == emitted name.
 // Per-action overrides use the tool's REAL action enum
-// (list/status/connect/disconnect/reconnect — NOT the spec §6.1 example).
+// (list/status/connect/disconnect/reconnect), not a placeholder example.
 registerActivityLabelSpec("mcp_manage", {
   semanticPhase: "tool",
   label: "managing MCP servers",

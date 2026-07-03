@@ -1,5 +1,5 @@
 // reflect-run.mjs — trigger a fire-and-forget learning cron AND wait for its REAL completion, then
-// print the funnel verdict. Born from the reflect-obs-20260627 run: `cron.run jobName "Reflection"` is
+// print the funnel verdict. `cron.run jobName "Reflection"` is
 // fire-and-forget — the scheduler logs "Job dispatched (fire-and-forget)" in ~1s while the reflection
 // LLM call lands ~20s later, so a naive grep/fixed-sleep reads a FALSE count:0. This polls the EXACT
 // completion marker (never the dispatch line) and parses the content-free funnel in one call.
@@ -18,7 +18,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 // COMIS_SRC overrides the daemon src root (VPS default /root/comis-src; set to a local checkout for a
-// LOCAL daemon run — package-delivery-20260628). Dynamic import so the path is env-resolvable.
+// LOCAL daemon run). Dynamic import so the path is env-resolvable.
 const { withClient } = await import((process.env.COMIS_SRC || "/root/comis-src") + "/packages/cli/dist/client/rpc-client.js");
 
 const [, , jobName = "Reflection", maxWaitArg, agentId] = process.argv;

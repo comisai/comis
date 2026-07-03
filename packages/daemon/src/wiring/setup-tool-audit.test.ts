@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Neighbor test for the `tool:executed` audit-log subscription (extracted from
- * setup-tools.ts, 124-09). Asserts a DEBUG audit line is emitted per tool execution, the
+ * setup-tools.ts). Asserts a DEBUG audit line is emitted per tool execution, the
  * params preview is log-sanitized + length-capped (never a verbatim dump), and the origin
  * fields ride the structured payload.
  *

@@ -409,7 +409,7 @@ describe("setupSingleAgent GBNF compat threading (production wiring guard)", () 
   });
 
   it("pins the resolver bodies so the deps keys cannot be wired to stubs", () => {
-    // The milestone's #1 failure class is built-but-not-wired: a key present
+    // A recurring failure class is built-but-not-wired: a key present
     // but resolving nothing. getProviderType must read the provider entry's
     // declared config `type`; getModelCompat must look the model up in
     // models[] and return its comisCompat.
@@ -521,11 +521,10 @@ describe("setupSingleAgent rerank auto-on precedence", () => {
 });
 
 // ---------------------------------------------------------------------------
-// AuthStorage hot-swap RED tests
+// AuthStorage hot-swap wiring guards
 //
-// These tests describe behaviour that will be wired into
-// setup-agents-runtime.ts (or setup-agents-registry.ts). They MUST fail
-// RED because the subscription does not exist in production code yet.
+// These tests assert the secret-rotation hot-swap subscription is present in
+// the wiring source (setup-agents-runtime.ts or setup-agents-registry.ts).
 //
 // Design: the subscription fires when secret:changed { action: "upserted" }
 // and the changed key maps to a known provider (e.g. ANTHROPIC_API_KEY →
@@ -534,7 +533,7 @@ describe("setupSingleAgent rerank auto-on precedence", () => {
 // A non-provider key (e.g. MY_DATABASE_URL) is a no-op.
 // ---------------------------------------------------------------------------
 
-describe("AuthStorage secret:changed hot-swap wiring (RED — not yet implemented)", () => {
+describe("AuthStorage secret:changed hot-swap wiring", () => {
   const runtimeSrc = readFileSync(
     join(__dirname, "setup-agents-runtime.ts"),
     "utf-8",
@@ -544,21 +543,19 @@ describe("AuthStorage secret:changed hot-swap wiring (RED — not yet implemente
     "utf-8",
   );
 
-  it("secret:changed subscription is wired in setup-agents wiring source (RED)", () => {
-    // Asserts that the production source contains the hot-swap subscription.
-    // Fails RED because the subscription has not landed yet.
-    // Once wired, one of these sources will subscribe to secret:changed.
+  it("secret:changed subscription is wired in setup-agents wiring source", () => {
+    // Asserts that the production source contains the hot-swap subscription:
+    // one of these sources subscribes to secret:changed.
     const runtimeContains = runtimeSrc.includes('"secret:changed"');
     const registryContains = registrySrc.includes('"secret:changed"');
     expect(runtimeContains || registryContains).toBe(true);
   });
 
-  it("setup-agents wiring calls setRuntimeApiKey in response to secret:changed upserted event (RED)", () => {
+  it("setup-agents wiring calls setRuntimeApiKey in response to secret:changed upserted event", () => {
     // When secret:changed fires for a provider key (e.g. ANTHROPIC_API_KEY),
     // the wiring must call piAuthStorage.setRuntimeApiKey(provider, newValue).
-    // Fails RED because the wiring-level hot-swap call is not implemented yet.
-    // Currently only auth-rotation-adapter.ts calls setRuntimeApiKey at runtime
-    // (not at boot wiring). The composition-root subscription will add it.
+    // The composition-root subscription adds this at boot wiring;
+    // auth-rotation-adapter.ts also calls setRuntimeApiKey at runtime.
     const runtimeContains = runtimeSrc.includes("secret:changed") && runtimeSrc.includes("setRuntimeApiKey");
     const registryContains = registrySrc.includes("secret:changed") && registrySrc.includes("setRuntimeApiKey");
     expect(runtimeContains || registryContains).toBe(true);

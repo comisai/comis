@@ -191,8 +191,8 @@ export type { SandboxProvider, SandboxOptions } from "../tools/builtin/sandbox/t
 // Built-in tools -- Exec sandbox detection
 export { detectSandboxProvider } from "../tools/builtin/sandbox/detect-provider.js";
 export type { DetectLogger } from "../tools/builtin/sandbox/detect-provider.js";
-// JAIL-03 namespace preflight (Phase 211) — the boot probe consumed by the
-// daemon (211-06) to feed the shipped degradeAutonomy. See tools/index.ts.
+// Namespace preflight — the boot probe consumed by the daemon to feed
+// degradeAutonomy. See tools/index.ts.
 export { namespacePreflight } from "../tools/builtin/sandbox/detect-provider.js";
 export type { NamespacePreflightResult } from "../tools/builtin/sandbox/detect-provider.js";
 
@@ -265,8 +265,8 @@ export { createCompositeFileExtractor } from "../tools/integrations/document/com
 export { createImageGenProvider, createImageGenRateLimiter } from "../tools/integrations/image-gen/index.js";
 export type { ImageGenRateLimiter } from "../tools/integrations/image-gen/index.js";
 
-// Video generation (FAL queue adapter, factory, rate limiter) — Phase 188 / Plan
-// 04 consumes these from the bare @comis/skills barrel exactly like the image
+// Video generation (FAL queue adapter, factory, rate limiter) — the daemon
+// consumes these from the bare @comis/skills barrel exactly like the image
 // route (the daemon bundle imports the factory + rate limiter; the deps type
 // imports VideoGenRateLimiter).
 export { createVideoGenProvider, createVideoGenRateLimiter } from "../tools/integrations/video-gen/index.js";

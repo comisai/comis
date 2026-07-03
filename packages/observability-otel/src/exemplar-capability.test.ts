@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first contract for the exemplar-capability probe (PROM-04 / A2).
+ * The contract for the exemplar-capability probe.
  *
- * Open Question A2: whether `@opentelemetry/exporter-prometheus@0.219.0` can
+ * The question: whether `@opentelemetry/exporter-prometheus@0.219.0` can
  * render OpenMetrics exemplars on the `/metrics` pull surface. The answer GATES
- * how Plan 03 writes PROM-04's exemplar test — a STRICT exemplar-presence
- * assertion if supported, or a documented-limitation + data-link fallback if not.
+ * how the exemplar test is written — a STRICT exemplar-presence assertion if
+ * supported, or a documented-limitation + data-link fallback if not.
  *
  * The probe inspects the installed exporter's surface (its `ExporterConfig`
  * options / serializer) for an OpenMetrics/exemplar affordance and records the
@@ -15,11 +15,10 @@
  * withoutScopeInfo?, withoutTargetInfo? }` — no `enableOpenMetrics`, no exemplar
  * switch) the expected result is `false`.
  *
- * This pin fails on pre-patch code because `./exemplar-capability.js` does not
- * exist. The test does NOT hardcode-expect a value — it asserts the constant is a
+ * The test does NOT hardcode-expect a value — it asserts the constant is a
  * boolean and REPORTS the actual probe result in the assertion message, so the
- * SUMMARY records the finding that gates Plan 03 without baking in an assumption
- * that a future exporter version could falsify.
+ * verdict is recorded without baking in an assumption that a future exporter
+ * version could falsify.
  *
  * @module
  */
@@ -43,7 +42,7 @@ describe("exemplar-capability", () => {
     expect(typeof EXEMPLAR_CAPABILITY_NOTE).toBe("string");
     expect(
       EXEMPLAR_CAPABILITY_NOTE.length,
-      "the note must document the probe + result for the SUMMARY / Plan 03 gate",
+      "the note must document the probe + result",
     ).toBeGreaterThan(0);
   });
 

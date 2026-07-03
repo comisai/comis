@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * DELIV-01 + ORACLE-02 — the delivery round-trip on BOTH oracles + dedupe
- * (Phase 205, Plan 06 — the agent-driver KEYSTONE that proves the real
- * adapter -> delivery path end-to-end, NOT the chat-API path).
+ * (the agent-driver KEYSTONE that proves the real adapter -> delivery path
+ * end-to-end, NOT the chat-API path).
  *
  * A send that yields an agent reply traverses the REAL adapter -> delivery path
  * (createDeliveryService.deliverToChannel): (1) enqueueInFlight -> a
@@ -14,14 +14,14 @@
  * deliverToChannel — which is exactly why DELIV-01 needs the real
  * adapter -> delivery path.
  *
- * ── THE CI vs COMIS_LIVE SPLIT (the 204 pattern — copied VERBATIM) ──
+ * ── THE CI vs COMIS_LIVE SPLIT ──
  *
  *   • Stage-B (ALWAYS runs, in-process, NO COMIS_LIVE, NO real model): a
  *     file-backed memory.db with the REAL delivery_queue + delivery_mirror DDL
  *     proves the round-trip STRUCTURE deterministically — the two tables are
- *     asserted SEPARATELY (Pitfall 4: a status='acknowledged' is valid for the
+ *     asserted SEPARATELY (a status='acknowledged' is valid for the
  *     mirror, a CHECK violation for the queue), the HARD dual-oracle cross-check
- *     (assertChannelTrace, 205-01) PASSES on wire==mirror and THROWS on a
+ *     (assertChannelTrace) PASSES on wire==mirror and THROWS on a
  *     mismatch, a same-second identical-text replay DEDUPES via the unique
  *     idempotency index, and `runDbOracle` confirms the store survived
  *     uncorrupted with exactly the expected delta. The zero-product-change
@@ -29,7 +29,7 @@
  *
  *   • Stage-C (describe.skipIf(!isLive), COMIS_LIVE) is the agent-authored
  *     round-trip: startRig boots an isolated daemon, rig.send -> rig.waitForReply
- *     (the SYNC POINT, Pitfall 3 — read the mirror only AFTER the outbound
+ *     (the SYNC POINT — read the mirror only AFTER the outbound
  *     landed), then a delivery_queue row (status + attempt_count) AND a
  *     delivery_mirror row (idempotency_key + status in {pending,acknowledged})
  *     exist, assertChannelTrace holds (wire==mirror.text), and a same-second
@@ -202,7 +202,7 @@ function fakeEmulator(text: string | undefined): {
 // ---------------------------------------------------------------------------
 
 describe("DELIV-01/ORACLE-02 Stage-B — both delivery oracles + the HARD cross-check + dedupe (no COMIS_LIVE)", () => {
-  it("asserts the delivery_queue (status + attempt_count) and delivery_mirror (idempotency_key + pending->acknowledged) SEPARATELY (Pitfall 4)", () => {
+  it("asserts the delivery_queue (status + attempt_count) and delivery_mirror (idempotency_key + pending->acknowledged) SEPARATELY (the two tables use distinct status lifecycles)", () => {
     const dbPath = freshDeliveryDb();
 
     // The QUEUE half — status in the queue lifecycle + attempt_count.
@@ -236,7 +236,7 @@ describe("DELIV-01/ORACLE-02 Stage-B — both delivery oracles + the HARD cross-
       db.close();
     }
 
-    // Pitfall 4 PROOF: 'acknowledged' is a CHECK violation on the QUEUE (the two
+    // PROOF: 'acknowledged' is a CHECK violation on the QUEUE (the two
     // lifecycles are distinct) — asserting it on the queue would be wrong.
     const w = new Database(dbPath);
     try {
@@ -369,7 +369,7 @@ describe("DELIV-01 Stage-B — the whole phase diff is test/-only (zero producti
 // Stage-C — the AGENT-AUTHORED delivery round-trip via the full daemon (COMIS_LIVE)
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!isLive)("DELIV-01/ORACLE-02 Stage-C — UC-F2 delivery round-trip on BOTH oracles + dedupe (COMIS_LIVE)", () => {
+describe.skipIf(!isLive)("DELIV-01/ORACLE-02 Stage-C — delivery round-trip on BOTH oracles + dedupe (COMIS_LIVE)", () => {
   let rig: RigHandle | undefined;
   // The rig's isolated memory.db is internal to RigHandle's projection — but the
   // scenario reads it for the table assertions. startRig hides it; resolve it
@@ -405,7 +405,7 @@ describe.skipIf(!isLive)("DELIV-01/ORACLE-02 Stage-C — UC-F2 delivery round-tr
    * Resolve the single delivery_mirror.session_key for the fixed test chat
    * (there is exactly one session) — the cross-check uses it for both halves.
    * Polls (bounded) because the mirror row is written by the fire-and-forget
-   * after_delivery hook, AFTER the outbound landed (Pitfall 3).
+   * after_delivery hook, AFTER the outbound landed.
    */
   function resolveSessionKey(dbPath: string): string | undefined {
     const db = new Database(dbPath, { readonly: true });
@@ -419,7 +419,7 @@ describe.skipIf(!isLive)("DELIV-01/ORACLE-02 Stage-C — UC-F2 delivery round-tr
     }
   }
 
-  /** Bounded poll for the mirror row (Pitfall 3 — the hook is not synchronous). */
+  /** Bounded poll for the mirror row (the hook is not synchronous). */
   async function pollForSessionKey(dbPath: string, timeoutMs = 5000): Promise<string | undefined> {
     const start = Date.now();
     let key = resolveSessionKey(dbPath);
@@ -439,10 +439,10 @@ describe.skipIf(!isLive)("DELIV-01/ORACLE-02 Stage-C — UC-F2 delivery round-tr
       expect(dbPath, "memoryDbPath resolved").toBeDefined();
       if (r === undefined || dbPath === undefined) return;
 
-      // success-criterion #2: inject -> the agent authors a reply -> the real
-      // adapter->delivery path writes the tables. waitForReply is the SYNC POINT
-      // (Pitfall 3): the outbound landed, so deliverToChannel has run its
-      // after_delivery hook — only THEN read the mirror.
+      // Inject -> the agent authors a reply -> the real adapter->delivery path
+      // writes the tables. waitForReply is the SYNC POINT: the outbound landed,
+      // so deliverToChannel has run its after_delivery hook — only THEN read
+      // the mirror.
       const inboundId = await r.send("hello from the delivery round-trip");
       const reply = await r.waitForReply(inboundId, 45_000);
       // Honest no-reply -> undefined (never fabricated). Needs a reachable keyless model.
@@ -452,12 +452,12 @@ describe.skipIf(!isLive)("DELIV-01/ORACLE-02 Stage-C — UC-F2 delivery round-tr
       ).toBeDefined();
       if (reply === undefined) return;
 
-      // Resolve the session key from the single mirror row (bounded poll — Pitfall 3).
+      // Resolve the session key from the single mirror row (bounded poll).
       const sessionKey = await pollForSessionKey(dbPath);
       expect(sessionKey, "a delivery_mirror row was written for the session (the after_delivery hook fired)").toBeDefined();
       if (sessionKey === undefined) return;
 
-      // The QUEUE half — a row with a valid status + attempt_count (asserted SEPARATELY, Pitfall 4).
+      // The QUEUE half — a row with a valid status + attempt_count (asserted SEPARATELY).
       const db = new Database(dbPath, { readonly: true });
       try {
         const queueRow = db

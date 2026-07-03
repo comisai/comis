@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * M2 deterministic fleet-gap-gate measurement (Phase 158 — PROVE & gate, M2).
+ * Deterministic fleet-gap-gate measurement.
  *
- * THE GATE for Phase 160. A standalone `tsx` one-shot that reads the REAL
+ * A standalone `tsx` one-shot that reads the REAL
  * `~/.comis` READ-ONLY, counts how often each currently-log-only signal recurs
  * (structured `session_summary` rows via the typed `ObservabilityStore`; the
  * log-only candidates via a bounded ONE-TIME `daemon.log` substring scan — the
  * ONLY sanctioned grep, because deciding whether to instrument is its whole
- * purpose), feeds the counts to the Plan-01 scorers, and writes the gap-gate
+ * purpose), feeds the counts to the recurrence scorers, and writes the gap-gate
  * decision in TWO places: the git-ignored machine ledger
- * (`benchmarks/live/<date>-<sha>/`) and the human `158-GAP-GATE.md` the
- * Phase-160 planner reads.
+ * (`benchmarks/live/<date>-<sha>/`) and the human-readable gap-gate markdown doc.
  *
  * RUN:
  *   pnpm build                                  # required: imports the @comis/memory dist
@@ -20,8 +19,9 @@
  *  - `memory.db` is opened `{ readonly: true, fileMustExist: true }`.
  *  - it calls NO data-dir writer (no session-index append, no store mutation, no
  *    file write into the data dir); the only persisted writes target `benchmarks/`
- *    + `.planning/`. The Phase-155 no-prod-datadir rule is WRITE-only, and this is
- *    a `scripts/` one-shot (NOT under vitest), so the D9 VITEST branch is moot.
+ *    + `.planning/`. The no-prod-datadir rule applies to WRITES into the data dir,
+ *    and this is a `scripts/` one-shot (NOT under vitest), so its vitest-specific
+ *    branch does not apply here.
  *  - NO LLM, NO key, NO live-gate flag, NO new env var — the datadir resolves from
  *    `os.homedir()` or the explicit `--datadir` arg only.
  *
@@ -29,9 +29,8 @@
  * to the built dist (`../../packages/memory/dist/index.js`) rather than the bare
  * `@comis/memory` specifier — at the repo root only `@comis/core` is symlinked
  * into `node_modules/@comis/`, so a bare `npx tsx` (which has no vitest
- * dist-alias) cannot resolve `@comis/memory`. The direct-dist import is the
- * 149-02 one-off precedent (a direct packages-dist import in a one-off).
- * Requires `pnpm build` first so the dist exists.
+ * dist-alias) cannot resolve `@comis/memory`. Requires `pnpm build` first so the
+ * dist exists.
  *
  * @module
  */
@@ -64,14 +63,14 @@ const GAP_GATE_DOC = resolve(
 
 /**
  * The HOST label embedded in the written artifact is a NON-PII placeholder, NOT
- * `os.hostname()`. A real hostname (e.g. `Moshes-MacBook-Pro-2.local`) is operator
+ * `os.hostname()`. A real hostname (e.g. `dev-laptop.local`) is operator
  * PII that slips past `SECRET_PATTERN` (it is not credential-shaped), so it must
- * never be written into a persisted artifact (T-158-03-02).
+ * never be written into a persisted artifact.
  */
 const HOST_LABEL = "operator-daemon";
 
 // ---------------------------------------------------------------------------
-// Arg parsing — no env var (RESEARCH §Secrets/env, A1).
+// Arg parsing — no env var; the datadir resolves from --datadir or the home dir only.
 // ---------------------------------------------------------------------------
 
 function parseArgs(argv: string[]): { sinceHours: number; datadir: string } {
@@ -95,14 +94,14 @@ function parseArgs(argv: string[]): { sinceHours: number; datadir: string } {
 
 /**
  * Count a log-only signal's recurrence as a SUBSTRING count over the rendered
- * Pino lines. Tolerant by construction (Security V5): a substring count over
+ * Pino lines. Tolerant by construction: a substring count over
  * `split("\n")` is line-tolerant — a hostile/malformed WARN body cannot crash
  * the counter, and we never `JSON.parse` a line. Returns 0 (not a throw) when
  * the log file is absent (rotated away / a different machine).
  *
  * Scans BOTH the live `daemon.log` and the rotated `daemon.1.log` when present —
  * the daemon log rotates, and on a lightly-used dev box the current signal may
- * live only in the rotated file (RESEARCH §Environment Availability).
+ * live only in the rotated file.
  */
 function countLogOnlySignal(logsDir: string, needles: string[]): number {
   let total = 0;
@@ -124,12 +123,12 @@ function countLogOnlySignal(logsDir: string, needles: string[]): number {
 
 /**
  * Per-signal measured recurrence + whether the emitting path was EXERCISED on
- * the measured machine. `pathExercised` is the Pitfall-4 discriminator: a 0 on
+ * the measured machine. `pathExercised` is the discriminator: a 0 on
  * an EXERCISED path is a confident SKIP, a 0 on an UN-exercised path is
  * INCONCLUSIVE. It is defaulted CONSERVATIVELY — TRUE only with positive
  * evidence the relevant subsystem ran — so a 0 on a FLAGSHIP signal (LCD ×7,
  * MCP churn) yields INCONCLUSIVE, never a false confident SKIP that would gut
- * Phase 160.
+ * the downstream instrumentation decision.
  */
 interface Measured {
   realCount: number;
@@ -146,8 +145,8 @@ function measure(datadir: string, sinceHours: number): {
 
   // --- STRUCTURED recurrence (the sanctioned typed path) -------------------
   // session_summary is the ALREADY-STRUCTURED contrast item (queryable today).
-  // Wrap the DB open so an absent memory.db degrades to INCONCLUSIVE (non-fatal,
-  // RESEARCH §Environment Availability) rather than crashing the gate.
+  // Wrap the DB open so an absent memory.db degrades to INCONCLUSIVE (non-fatal)
+  // rather than crashing the gate.
   let structuredSummaryCount = 0;
   let structuredAvailable = false;
   const dbPath = resolve(datadir, "memory.db");
@@ -181,7 +180,7 @@ function measure(datadir: string, sinceHours: number): {
   });
 
   // --- LOG-ONLY recurrence (the bounded one-time grep) ---------------------
-  // VERIFIED emit strings (RESEARCH §"Code Examples" + re-confirmed on disk):
+  // VERIFIED emit strings (re-confirmed on disk):
   //   "LCD ingest skipped: live/store divergence"  -> lcd-ingest.ts:276 (errorKind "precondition")
   //   "LCD leaf pass skipped: ordinal-window divergence" -> lcd-compaction-trigger.ts:398 (the twin)
   //   "reconnect_failed" / "MCP client error"      -> mcp-client-reconnect.ts:379 / :117
@@ -208,8 +207,8 @@ function measure(datadir: string, sinceHours: number): {
   measured.set("budget-exceeded", { realCount: budgetCount, pathExercised: false });
   measured.set("config-posture", { realCount: configCount, pathExercised: false });
 
-  // model-health-deferred: native node-llama-cpp stdout is OUT of the milestone
-  // (deferred). We do NOT instrument/capture it — the corpus signal name makes the
+  // model-health-deferred: native node-llama-cpp stdout is deferred and out of
+  // scope. We do NOT instrument/capture it — the corpus signal name makes the
   // verdict OUT-OF-SCOPE. No measured entry needed (the scorer derives it).
 
   return { measured, structuredSummaryCount, structuredAvailable };
@@ -229,7 +228,7 @@ function ledgerStatus(verdict: GapGateRow["verdict"]): "passed" | "failed" | "sk
   return "failed"; // SKIP-NEVER-RECURS (confident trim) | INCONCLUSIVE (no evidence)
 }
 
-/** The human "Findings for Phase 160" section the Phase-160 planner consumes. */
+/** The human-readable findings section rendered into the gap-gate doc. */
 function renderFindings(rows: GapGateRow[], meta: { structuredAvailable: boolean }): string {
   const lines: string[] = [];
   lines.push("## Findings for Phase 160");
@@ -314,7 +313,7 @@ function main(): void {
 
   const { measured, structuredSummaryCount, structuredAvailable } = measure(datadir, sinceHours);
 
-  // The Plan-01 scorers own the verdict logic. recordSignalRecurrence builds the
+  // The recurrence scorers own the verdict logic. recordSignalRecurrence builds the
   // raw rows; buildGapGateTable normalizes/recomputes (row-in → row-out). The
   // FLAGSHIP-protection invariant — a flagship signal is NEVER post-processed down
   // to SKIP-NEVER-RECURS on a 0 count — holds because we pass pathExercised:false
@@ -323,7 +322,7 @@ function main(): void {
   // rows here.
   const rows = buildGapGateTable(recordSignalRecurrence(corpus.signals, measured));
 
-  // Defense-in-depth assertion of the flagship invariant (Pitfall 4): assert no
+  // Defense-in-depth assertion of the flagship invariant: assert no
   // flagship signal landed on a confident SKIP. (renderGapGateMarkdown also sweeps
   // for secrets; this guards the GATE INTEGRITY contract.)
   for (const r of rows) {
@@ -365,7 +364,7 @@ function main(): void {
   // rule). writeFileSync here targets ONLY benchmarks/ — never the data dir.
   writeFileSync(resolve(ledgerDir, "gap-gate-table.md"), tableDoc, "utf-8");
 
-  // --- human artifact: the .planning/ doc (git-ignored; Phase-160 planner reads) -
+  // --- human artifact: the gap-gate doc (git-ignored) ---------------------
   // NEVER `git add -f` this file. writeFileSync targets ONLY .planning/ — never the
   // data dir.
   mkdirSync(dirname(GAP_GATE_DOC), { recursive: true });

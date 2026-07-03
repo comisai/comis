@@ -1,31 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * FLEET-gate substrate (Phase 158 — PROVE & gate: fleet-triage baseline, M1 + M2).
+ * FLEET-gate substrate — fleet-triage baseline.
  *
  * The keyless, always-on, DETERMINISTIC substrate — the direct twin of the
- * Stage-A/B half of `diagnosis-baseline.test.ts` (Phase 149), but with the
- * Stage-C LLM apparatus REMOVED ENTIRELY: 158 spends ZERO tokens, so there is
+ * Stage-A/B half of `diagnosis-baseline.test.ts`, but with the
+ * Stage-C LLM apparatus REMOVED ENTIRELY: this substrate spends ZERO tokens, so there is
  * NO live-gate env flag, NO conditional skip, NO cost-governor, NO LLM judge,
- * and NO environment read of any kind (RESEARCH Anti-Pattern: cargo-culting the
- * 149 live-gate shape — this file intentionally contains none of those tokens).
- * Every assertion below is a pure function of the frozen Plan-02 corpus + a
+ * and NO environment read of any kind — this file intentionally omits the
+ * live-gate apparatus rather than cargo-culting it.
+ * Every assertion below is a pure function of the frozen corpus + a
  * SYNTHETIC measured-count map (fixed test inputs — NOT the real `~/.comis`).
  *
- * What it proves: the Plan-01 scorers (`loadCorpus` → `recordSignalRecurrence`
+ * What it proves: the scorers (`loadCorpus` → `recordSignalRecurrence`
  * → `buildGapGateTable` → `renderGapGateMarkdown`) are correct END-TO-END over
  * the real frozen corpus, every `GateVerdict` class renders, and the rendered
  * table passes the secret sweep — keeping the gate numbers honest the same way
- * 149-03's substrate "keeps the baseline numbers honest in pnpm validate,
- * keyless". It MUST NOT spend tokens, boot a daemon, or read the real `~/.comis`.
+ * the baseline substrate keeps the baseline numbers honest in pnpm validate,
+ * keyless. It MUST NOT spend tokens, boot a daemon, or read the real `~/.comis`.
  *
- * PLACEMENT DECISION (RESEARCH A1 / Pitfall 6): the `test/live` tree is NOT in
+ * PLACEMENT DECISION: the `test/live` tree is NOT in
  * the root vitest workspace (`vitest.config.ts:10` -> projects:
  * "packages/*", "test/architecture", "scripts/contracts"), so this file does
  * NOT run in the bare `pnpm test` / root `pnpm validate` run. It runs under the
  * LIVE config (`test/live/vitest.config.ts`, whose include glob covers the live
  * tree) via `pnpm test:live`. The pure scorers
  * it exercises are ALSO RED-first unit-tested in their own
- * `fleet-recurrence-gate.test.ts` / `fleet-triage-corpus.test.ts` (Plan 01),
+ * `fleet-recurrence-gate.test.ts` / `fleet-triage-corpus.test.ts`,
  * which is the placement that guarantees the verdict logic is covered keylessly;
  * this substrate adds the end-to-end "scorers over the real frozen corpus" pass
  * the live tier exercises. It is intentionally KEYLESS so it stays green under
@@ -60,10 +60,10 @@ const __dirnameLocal = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = join(__dirnameLocal, "../../fixtures/fleet-triage");
 
 // ===========================================================================
-// The frozen Plan-02 corpus loads and carries the load-bearing M1 signals.
+// The frozen corpus loads and carries the load-bearing signals.
 // ===========================================================================
 
-describe("FLEET-gate substrate — the frozen M1 corpus loads and is well-formed", () => {
+describe("FLEET-gate substrate — the frozen corpus loads and is well-formed", () => {
   it("loadCorpus returns all 6 FleetSignal members with the by-hand reference counts", () => {
     const corpus = loadCorpus(FIXTURES_DIR);
     expect(corpus.signals.length).toBe(6);
@@ -166,15 +166,15 @@ describe("FLEET-gate substrate — the scorers render every verdict class over t
     expect(md).toContain("SKIP-NEVER-RECURS");
     expect(md).toContain("OUT-OF-SCOPE");
 
-    // Residency (T-158-01-01, defense-in-depth — renderGapGateMarkdown already
+    // Residency (defense-in-depth — renderGapGateMarkdown already
     // sweeps internally; this is the substrate's own second sweep point).
     expect(() => assertNoSecrets(md, "gap-gate table")).not.toThrow();
   });
 
-  it("a FLAGSHIP signal at realCount 0 on an un-exercised path is INCONCLUSIVE, never a confident SKIP (Pitfall 4)", () => {
+  it("a FLAGSHIP signal at realCount 0 on an un-exercised path is INCONCLUSIVE, never a confident SKIP", () => {
     // The load-bearing guard: a 0 on the milestone's flagship LCD signal — when the
     // emitting path was NOT shown to run — must NOT be a confident SKIP-NEVER-RECURS,
-    // or the gate would silently gut Phase 160. This is the false-negative the whole
+    // or the gate would silently gut the instrumentation work. This is the false-negative the whole
     // confident-SKIP-vs-INCONCLUSIVE distinction exists to prevent.
     const corpus = loadCorpus(FIXTURES_DIR);
     const measured = new Map([

@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * ActivityCircuitBreaker — auto-managed per-agent×channel breaker
- * (spec §17.7). A permission storm against a forbidden channel API must
+ * ActivityCircuitBreaker — auto-managed per-agent×channel breaker.
+ * A permission storm against a forbidden channel API must
  * auto-quiesce without operator intervention while staying visible to ops.
  *
  * Two independent failure modes, classified on the `ActivityRenderError.kind`
  * union produced by `renderer.apply()` (`channel-activity-renderer.ts:85-90`) —
  * NOT the log error-kind union, which has no `permission`/transient-network
- * member (Pitfall 5):
+ * member:
  *   • `permission`                        → 3 consecutive → STICKY trip. The
  *     clock-based half-open NEVER applies; only `reset(key)` (the config-reload
  *     path) clears it.
@@ -41,7 +41,7 @@ import type { Result } from "@comis/shared";
 const DEFAULT_PERMISSION_THRESHOLD = 3;
 /** Default consecutive `internal`|`transient_network` count that trips a half-open breaker. */
 const DEFAULT_TRANSIENT_THRESHOLD = 5;
-/** Default half-open probe delay for a transient trip — 5 minutes (spec §17.7). */
+/** Default half-open probe delay for a transient trip — 5 minutes. */
 const DEFAULT_HALF_OPEN_MS = 300_000;
 
 /**

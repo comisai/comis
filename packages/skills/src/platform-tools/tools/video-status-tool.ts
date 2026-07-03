@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Video Status tool (Phase 189 / JOB-04): check the progress + result of a
+ * Video Status tool: check the progress + result of a
  * video-generation job by its job handle.
  *
  * The read side of the async video lifecycle. `video_generate` returns a job
@@ -10,10 +10,10 @@
  *
  * Delegates to the daemon-side `video.status` RPC handler (createVideoStatusHandlers),
  * which reads the agent-scoped VideoJobStore — a job belonging to another agent
- * returns not-found, never the other agent's data (JOB-04 / TARGET-01).
+ * returns not-found, never the other agent's data.
  *
  * SECURITY: this tool is `mcpExportPolicy:"never-export"` (reserved in
- * tool-metadata-registry.ts; SEC-01) — it reads daemon-side job state and is
+ * tool-metadata-registry.ts) — it reads daemon-side job state and is
  * NOT exposed to external MCP clients. This module only adds the tool descriptor;
  * it does NOT touch the metadata reservation.
  *

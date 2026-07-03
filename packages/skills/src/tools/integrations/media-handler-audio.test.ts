@@ -227,14 +227,13 @@ describe("processAudioAttachment", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // OBS-01 §2.7 structured logging (Phase 196)
+  // Structured logging
   // ---------------------------------------------------------------------------
 
-  // RED-proof #1: the WARN failure branches must log the CANONICAL `err:` key
-  // (the Pino `err` serializer fires on `err`, NOT on `error` — the latter is
-  // silently dropped). The DEBUG twins at :91/:95 already use `err:`; the WARN
-  // lines drifted to `error:`. Fails today on both WARN calls (result.err path +
-  // thrown-exception path).
+  // The WARN failure branches must log the CANONICAL `err:` key (the Pino `err`
+  // serializer fires on `err`, NOT on `error` — the latter is silently dropped).
+  // Both WARN calls (the result.err path and the thrown-exception path) must use
+  // `err:`.
   it("logs the canonical err: key (not error:) on the STT-result-error WARN branch", async () => {
     const transcriber: TranscriptionPort = {
       transcribe: vi.fn().mockResolvedValue(err(new Error("API rate limited"))),
@@ -278,12 +277,11 @@ describe("processAudioAttachment", () => {
     expect(warnObj.hint).toBeDefined();
   });
 
-  // OBS-01 INFO extension: the completion line carries the voice fields this
-  // skills tier CAN see — durationMs (wall-clock) + audioBytes (inbound buffer
-  // length) — alongside the existing language. provider/keyless/model are NOT
-  // visible at this pure-TranscriptionPort tier (the daemon RPC path, Plan 03,
-  // owns the full field set on the trajectory). Fails today (INFO logs only
-  // { url, language }).
+  // The INFO completion line carries the voice fields this skills tier CAN see —
+  // durationMs (wall-clock) + audioBytes (inbound buffer length) — alongside the
+  // existing language. provider/keyless/model are NOT visible at this
+  // pure-TranscriptionPort tier (the daemon RPC path owns the full field set on
+  // the trajectory).
   it("logs an INFO completion line carrying durationMs + audioBytes on success", async () => {
     const logger = makeLogger();
     const deps: AudioHandlerDeps = {
@@ -301,10 +299,10 @@ describe("processAudioAttachment", () => {
     expect(infoObj.audioBytes).toBe(Buffer.from("fake-audio-data").byteLength);
   });
 
-  // SEC-01: the extended INFO/WARN lines must never re-introduce a credential
+  // The extended INFO/WARN lines must never re-introduce a credential
   // when the handler spreads result fields into the log. Drive a failure whose
   // sanitized message still cannot leak a key/Bearer/full-URL.
-  it("never leaks a credential, Bearer, or full URL in any emitted log line (SEC-01)", async () => {
+  it("never leaks a credential, Bearer, or full URL in any emitted log line", async () => {
     const credentialBearingMessage =
       "request to https://api.example.com/v1/audio?key=sk-SECRET123456789012345 failed with Bearer sk-SECRET123456789012345";
     const transcriber: TranscriptionPort = {

@@ -96,7 +96,7 @@ function resolveStampedOwner(
  * the per-agent durability wiring + the daemon-wide wake backstop share ONE `which tmux`).
  * Mirrors the `which bwrap` probe in `buildTerminalEgressDeps`. `undefined` ⇒ no tmux on this
  * host ⇒ the `isTmuxAlive` probe is always-false (a durable drive degrades to the lost floor at
- * runtime, §7.1.5). The blocking `which` runs at most once; never on the hot path.
+ * runtime). The blocking `which` runs at most once; never on the hot path.
  */
 let cachedTmuxPath: string | undefined | "unresolved" = "unresolved";
 export function resolveDaemonTmuxPath(): string | undefined {
@@ -113,9 +113,8 @@ export function resolveDaemonTmuxPath(): string | undefined {
 /**
  * Build the daemon-side `has-session` liveness probe: `tmux -S <socket> has-session -t
  * comis-<id>` (exit 0 ⇒ alive). Returns `false` on ANY non-zero exit / throw (the SAFE
- * direction — a probe that cannot confirm alive must never assert it, mirroring 165-01's
- * bias). Absent `tmuxPath` ⇒ always-false (a durable session falls back to the lost floor
- * at runtime, I1).
+ * direction — a probe that cannot confirm alive must never assert it). Absent `tmuxPath` ⇒
+ * always-false (a durable session falls back to the lost floor at runtime).
  *
  * The probe MUST target the SAME `-S` socket the worker binds
  * (`<dataDir>/terminal-worker/tmux.sock`) — NOT tmux's default /tmp socket. systemd
@@ -245,7 +244,7 @@ function defaultReadDaemonMntNs(): string | undefined {
 export function recreateStrandedTmuxServerOnBoot(deps: RecreateStrandedTmuxDeps): { stranded: boolean; killed: boolean } {
   const { socketPath, tmuxPath, logger } = deps;
   // No tmux on this host → there is no durable server to strand (durable already degrades to the
-  // lost floor at runtime, §7.1.5). Nothing to recreate.
+  // lost floor at runtime). Nothing to recreate.
   if (tmuxPath === undefined) return { stranded: false, killed: false };
   const readServerMntNs = deps.readServerMntNs ?? ((s: string) => defaultReadServerMntNs(s, tmuxPath));
   const readDaemonMntNs = deps.readDaemonMntNs ?? defaultReadDaemonMntNs;
@@ -316,7 +315,7 @@ export interface AgentTerminalDurabilityInputs {
  * Build the per-agent registry `durability` dep + the reaper `isBusy` predicate.
  *
  * `durability` (→ `createTerminalSessionRegistry`): the descriptor store + the `has-session`
- * probe + the two content-free hooks. `onReattached` → `terminal:drive_reattached` (I5 — the
+ * probe + the two content-free hooks. `onReattached` → `terminal:drive_reattached` (the
  * re-attach runs under the SAME persisted allow-entry; the emit carries ids only). On a
  * genuinely-gone durable session `onUnrecoverable` → the EXISTING `terminal:session_state(
  * state:"lost")` + a content-free unrecoverable reason (NO `failed` member; the wake notify layer adds it).
@@ -521,7 +520,7 @@ export function buildWakeDurabilityDeps(i: WakeDurabilityInputs): {
     const idleClockBeforeProbe = handle.lastActivity;
     const isUnattended = owner.sessionKey === "";
     // The SINGLE liveness check: the worker `status` round-trip (CLASSIFIER perception, NOT a
-    // screen read — I2). It also refreshes the handle's lastActivity as a side effect.
+    // screen read). It also refreshes the handle's lastActivity as a side effect.
     const status = await registry.status(sessionId, owner);
     const stuckMs = i.workerStuckMs;
     if (status.state === "exited") { screenDigests.delete(sessionId); return { alive: false, noProgressMs: 0, stuckMs }; }

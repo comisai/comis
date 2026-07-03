@@ -20,9 +20,9 @@ const MAX_TEXT_LENGTH = 5000;
  * OpenAI TTS voice names. The shared `media.tts.voice` config default is "alloy"
  * (an OpenAI voice) but applies across ALL providers — so when the keyless-default
  * provider is "edge", "alloy" leaks here and Edge rejects it ("Invalid voice
- * 'alloy'"), breaking keyless TTS out-of-the-box (v2.25 keyless-default-voice
- * regression, live 2026-06-20). Mapping a known OpenAI voice name to the Edge
- * default keeps keyless TTS working while an explicit *Edge* voice still passes through.
+ * 'alloy'"), breaking keyless TTS out-of-the-box. Mapping a known OpenAI voice name
+ * to the Edge default keeps keyless TTS working while an explicit *Edge* voice still
+ * passes through.
  */
 const OPENAI_VOICE_NAMES: ReadonlySet<string> = new Set([
   "alloy", "echo", "fable", "onyx", "nova", "shimmer",

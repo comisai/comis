@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED-first unit tests for the PURE diagnosis-harness scorers (Phase 149, Plan 01).
+ * RED-first unit tests for the PURE diagnosis-harness scorers.
  *
- * This is the TDD core of the PROVE phase: the Plan-03 baseline RUN is only as
+ * This is the TDD core: the baseline RUN is only as
  * credible as these deterministic scorers, so the metric logic is proven RED→GREEN
- * here (the `--selftest` discipline, scripts/bench-small-model/run.mjs:120-182)
+ * here (the `--selftest` discipline)
  * BEFORE a single live token is spent. No daemon, no COMIS_LIVE, no network, no key —
  * a Stage-A unit file mirroring the sibling test/live/support/mock-mcp-server.test.ts.
  *
@@ -96,7 +96,7 @@ describe("diagnosis-harness loadFixture — reads a frozen fixture directory int
     expect(() => loadFixture(dir)).toThrow(/session-metadata\.json/);
   });
 
-  it("loadFixture throws path-only on a JSON-valid answer-key missing mechanismTokens (WR-05)", () => {
+  it("loadFixture throws path-only on a JSON-valid answer-key missing mechanismTokens", () => {
     const dir = seedDir("diag-loadfixture-ak-missing-");
     writeFileSync(join(dir, "trajectory.jsonl"), '{"type":"tool_call"}\n');
     writeFileSync(join(dir, "session-metadata.json"), JSON.stringify({ endReason: "completed_with_tool_errors" }));
@@ -109,18 +109,18 @@ describe("diagnosis-harness loadFixture — reads a frozen fixture directory int
     expect(() => loadFixture(dir)).toThrow(/answer-key\.json/);
   });
 
-  it("loadFixture throws on an answer-key whose mechanismTokens is an empty array (WR-05)", () => {
+  it("loadFixture throws on an answer-key whose mechanismTokens is an empty array", () => {
     const dir = seedDir("diag-loadfixture-ak-empty-");
     writeFileSync(join(dir, "trajectory.jsonl"), '{"type":"tool_call"}\n');
     writeFileSync(join(dir, "session-metadata.json"), JSON.stringify({ endReason: "completed_with_tool_errors" }));
     // Empty mechanismTokens would make compareToAnswerKey vacuously reached:true
-    // for every answer — reject the bundle at construction (same root as WR-06).
+    // for every answer — reject the bundle at construction.
     writeFileSync(join(dir, "answer-key.json"), JSON.stringify({ ...MECHANISM_KEY, mechanismTokens: [] }));
 
     expect(() => loadFixture(dir)).toThrow(/answer-key\.json/);
   });
 
-  it("loadFixture throws on an answer-key missing the rootCause string (WR-05)", () => {
+  it("loadFixture throws on an answer-key missing the rootCause string", () => {
     const dir = seedDir("diag-loadfixture-ak-rootcause-");
     writeFileSync(join(dir, "trajectory.jsonl"), '{"type":"tool_call"}\n');
     writeFileSync(join(dir, "session-metadata.json"), JSON.stringify({ endReason: "completed_with_tool_errors" }));
@@ -187,17 +187,17 @@ describe("diagnosis-harness recordMetrics — counts tokens and DISTINCT tool/RP
     expect(m.distinctSourceReads).toBe(1);
   });
 
-  it("recordMetrics treats a zero totalTokens as missing and sums prompt+completion instead (WR-01)", () => {
+  it("recordMetrics treats a zero totalTokens as missing and sums prompt+completion instead", () => {
     // A provider that emits `total_tokens: 0` with populated prompt/completion
     // (streaming-off Ollama, some OpenAI-compatible proxies) must NOT under-count
-    // M2a to 0 — `?? ` only falls back on null/undefined, so a real 0 was kept.
+    // the token total to 0 — `?? ` only falls back on null/undefined, so a real 0 was kept.
     const transcript: AgentTurn[] = [
       { role: "assistant", usage: { totalTokens: 0, promptTokens: 10, completionTokens: 5 } },
     ];
     expect(recordMetrics(transcript).totalTokens).toBe(15);
   });
 
-  it("recordMetrics keeps a positive totalTokens verbatim and does not double-count components (WR-01)", () => {
+  it("recordMetrics keeps a positive totalTokens verbatim and does not double-count components", () => {
     // The fallback only fires when the total is absent/zero — a usable positive
     // total wins over the prompt+completion sum (which may be partial).
     const transcript: AgentTurn[] = [
@@ -206,10 +206,10 @@ describe("diagnosis-harness recordMetrics — counts tokens and DISTINCT tool/RP
     expect(recordMetrics(transcript).totalTokens).toBe(30);
   });
 
-  it("recordMetrics excludes a nameless tool call from the distinct-tool count (WR-02)", () => {
+  it("recordMetrics excludes a nameless tool call from the distinct-tool count", () => {
     // A model can emit a tool call with no function.name (malformed/partial —
     // common with small local models). It must NOT join the distinct-tool set as
-    // "" and inflate M2b, which can flip a TRIM-candidate to a false BUILD.
+    // "" and inflate the distinct-tool count, which can flip a TRIM-candidate to a false BUILD.
     const transcript: AgentTurn[] = [
       {
         role: "assistant",
@@ -245,7 +245,7 @@ describe("diagnosis-harness compareToAnswerKey — requires the causal mechanism
     expect(compareToAnswerKey(answer, MECHANISM_KEY).reached).toBe(true);
   });
 
-  it("compareToAnswerKey throws on an empty mechanismTokens list rather than vacuously passing (WR-06)", () => {
+  it("compareToAnswerKey throws on an empty mechanismTokens list rather than vacuously passing", () => {
     // `[].filter(...)` is `[]` so `missing.length === 0` would make `reached`
     // vacuously true for ANY answer (even ""), defeating the measure-first lever.
     // A zero-token key is a programmer error in the scorer, not a clean pass.
@@ -255,7 +255,7 @@ describe("diagnosis-harness compareToAnswerKey — requires the causal mechanism
   });
 });
 
-describe("diagnosis-harness makeReadSourceTool — a counted read_source tool for the M2c metric", () => {
+describe("diagnosis-harness makeReadSourceTool — a counted read_source tool for the distinct-source-reads metric", () => {
   it("makeReadSourceTool records distinct paths and returns file contents", () => {
     const repoRoot = seedDir("diag-readsource-");
     mkdirSync(join(repoRoot, "nested"), { recursive: true });

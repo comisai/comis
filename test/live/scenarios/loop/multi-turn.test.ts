@@ -65,7 +65,7 @@ describe("LOOP-01 Stage-A — multi-turn flow (mock provider, no COMIS_LIVE)", (
   });
 
   afterEach(async () => {
-    // Flush daemon log buffer before snapshotting (T-134-flush).
+    // Flush daemon log buffer before snapshotting.
     await flushDaemonLogs(driver);
 
     // "JSON-RPC method error" is expected in Stage-A: rpc-dispatch.ts emits this
@@ -76,7 +76,7 @@ describe("LOOP-01 Stage-A — multi-turn flow (mock provider, no COMIS_LIVE)", (
       expectedErrors: ["JSON-RPC method error"],
     });
 
-    // FND-11 persistence oracle — only run if memory.db was created by the turn
+    // Persistence oracle — only run if memory.db was created by the turn
     const dbPath = join(driver.getDataDir(), "memory.db");
     if (existsSync(dbPath)) {
       await runDbOracle(dbPath, {});
@@ -174,7 +174,7 @@ describe.skipIf(!isLive)("Live — LOOP-01 multi-turn (Stage-C, real LLM)", () =
   });
 
   afterEach(async () => {
-    // Flush daemon log buffer before snapshotting (T-134-flush).
+    // Flush daemon log buffer before snapshotting.
     await flushDaemonLogs(driver);
 
     // Real successful turns emit no ERROR/FATAL lines

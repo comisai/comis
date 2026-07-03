@@ -6,8 +6,8 @@
  * Finds installed Chrome/Chromium binaries on Linux and macOS, then
  * launches Chrome with the --remote-debugging-port flag for CDP access.
  *
- * Ported from Comis browser/chrome.executables.ts + chrome.ts,
- * stripped of Windows support, extension relay, and profile decoration.
+ * Scope is deliberately limited to Linux and macOS: Windows, extension
+ * relay, and profile decoration are out of scope.
  *
  * @module
  */

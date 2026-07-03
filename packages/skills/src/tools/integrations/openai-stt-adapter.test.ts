@@ -2,13 +2,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createOpenAISttAdapter } from "./openai-stt-adapter.js";
 
-// Mock undici so the SEC-02 pinned local-server fetch is observable without real
+// Mock undici so the pinned local-server fetch is observable without real
 // network/DNS. `Agent` is a real class with a `close` spy (so the pinned-agent
 // lifecycle holds); `fetch` delegates to `globalThis.fetch` so the existing
 // `globalThis.fetch = vi.fn()` orchestration drives BOTH the cloud path (plain
 // global fetch) and the pinned local path (undici fetch with a dispatcher). The
 // dispatcher every undici call receives is captured so the pinned-IP wiring is
-// asserted (CR-01 RED-proof). vi.hoisted makes the refs available in the factory.
+// asserted. vi.hoisted makes the refs available in the factory.
 const { mockAgentClose, undiciFetchCalls } = vi.hoisted(() => {
   const mockAgentClose = vi.fn().mockResolvedValue(undefined);
   const undiciFetchCalls: Array<{ url: unknown; init: Record<string, unknown> | undefined; pinnedIp?: string }> = [];
@@ -225,15 +225,15 @@ describe("createOpenAISttAdapter", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // SEC-02 Surface B: the validate-then-fetch SSRF guard, OPT-IN via
+  // Surface B: the validate-then-fetch SSRF guard, OPT-IN via
   // `localServerGuard`. It is set ONLY by the stt-factory local.baseUrl branch
   // (an explicit transcription.provider:"local" bypasses the boot probe, so the
   // runtime fetch is the SSRF surface). The guard fires inside the already-async
   // transcribe(), BEFORE the runtime fetch. createOpenAISttAdapter is SHARED with
   // the cloud OpenAI path — the flag MUST NOT fire on api.openai.com.
   // ---------------------------------------------------------------------------
-  describe("SEC-02 local-server SSRF guard (localServerGuard) — Surface B", () => {
-    it("BLOCKS a non-loopback/metadata baseUrl and never invokes the runtime fetch (the BLOCKER RED-proof)", async () => {
+  describe("local-server SSRF guard (localServerGuard) — Surface B", () => {
+    it("BLOCKS a non-loopback/metadata baseUrl and never invokes the runtime fetch", async () => {
       const fetchSpy = vi.fn<typeof globalThis.fetch>();
       globalThis.fetch = fetchSpy;
 
@@ -288,7 +288,7 @@ describe("createOpenAISttAdapter", () => {
       expect(url).toBe("http://127.0.0.1:9000/v1/audio/transcriptions");
     });
 
-    it("PINS the runtime fetch to the validated IP on the local path (DNS-rebinding/TOCTOU closed — the CR-01 RED-proof)", async () => {
+    it("PINS the runtime fetch to the validated IP on the local path (DNS-rebinding/TOCTOU closed)", async () => {
       mockFetch(200, { text: "local hello" });
 
       const adapter = createOpenAISttAdapter({
@@ -301,8 +301,8 @@ describe("createOpenAISttAdapter", () => {
       expect(result.ok).toBe(true);
       // The runtime fetch went through undici with a pinned dispatcher whose
       // connect.lookup returns the IP `validateLocalServerUrl` already resolved
-      // (loopback). A plain global re-resolving fetch (the pre-fix code) carries
-      // NO dispatcher → this assertion fails RED on it.
+      // (loopback). A plain global re-resolving fetch would carry NO dispatcher,
+      // which this assertion rejects.
       expect(undiciFetchCalls).toHaveLength(1);
       const call = undiciFetchCalls[0]!;
       expect(call.url).toBe("http://127.0.0.1:9000/v1/audio/transcriptions");

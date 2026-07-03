@@ -139,8 +139,8 @@ describe("buildOutcomeJudgeWiring — daemon construction behind the byte-identi
   }
 
   it("KEYLESS-CUSTOM-NAME: a custom-NAMED keyless provider (type: ollama) BUILDS the judge keyless (not a no-op)", () => {
-    // package-delivery-20260628 (local qwen3.6:35b): keyless was checked by provider NAME, but
-    // KEYLESS_PROVIDER_TYPES holds TYPEs. A user-named ollama entry failed the check → no apiKey →
+    // A local keyless daemon (e.g. qwen3.6:35b) exposes the bug: keyless was checked by provider NAME,
+    // but KEYLESS_PROVIDER_TYPES holds TYPEs. A user-named ollama entry failed the check → no apiKey →
     // resolveOutcomeJudge returned undefined → the outcome judge was a silent no-op on a local keyless
     // daemon. The completion path keys keyless-ness off entry.type, so this must too.
     const built = buildOutcomeJudgeWiring(
@@ -153,7 +153,7 @@ describe("buildOutcomeJudgeWiring — daemon construction behind the byte-identi
       createMockLogger(),
       makeLcdStore(),
     );
-    expect(built.outcomeJudge).toBeDefined(); // PRE-FIX: undefined (keyless-by-name fails) → the silent no-op
+    expect(built.outcomeJudge).toBeDefined(); // keyless-by-name would leave this undefined → the silent no-op
   });
 
   it("byte-identity: NO agent has the judge on → outcomeJudge + readTurnTranscript are undefined (no construction)", () => {

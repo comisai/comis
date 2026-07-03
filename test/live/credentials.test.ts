@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Stage-A TDD unit tests for the CredentialRegistry and capability registry.
+ * Stage-A unit tests for the CredentialRegistry and capability registry.
  *
- * These tests import from ./credentials.ts which does not yet exist — they MUST FAIL
- * on the pre-patch codebase (RED phase). No real API calls; no real budget consumed.
+ * No real API calls; no real budget consumed.
  *
  * @module
  */
@@ -174,7 +173,7 @@ describe("CredentialRegistry — key-to-category mapping (XAI_API_KEY + JINA_API
     expect(registry.getSkipVerdict("CACHE(Anthropic)")).toBeNull();
   });
 
-  it("ANTHROPIC_API_KEY present → vision(anthropic) unlocked (CR-02)", () => {
+  it("ANTHROPIC_API_KEY present → vision(anthropic) unlocked", () => {
     process.env["ANTHROPIC_API_KEY"] = "test-key";
     const registry = buildCredentialRegistry();
     expect(registry.getSkipVerdict("vision(anthropic)")).toBeNull();
@@ -182,10 +181,10 @@ describe("CredentialRegistry — key-to-category mapping (XAI_API_KEY + JINA_API
 });
 
 // ---------------------------------------------------------------------------
-// CR-01: keyless categories — always runnable regardless of credentials
+// keyless categories — always runnable regardless of credentials
 // ---------------------------------------------------------------------------
 
-describe("buildCredentialRegistry — keyless categories (CR-01)", () => {
+describe("buildCredentialRegistry — keyless categories", () => {
   let saved: Record<string, string | undefined> = {};
 
   beforeEach(() => {
@@ -242,10 +241,10 @@ describe("buildCredentialRegistry — keyless categories (CR-01)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WR-02: canonical Brave env var is SEARCH_API_KEY (not BRAVE_API_KEY)
+// canonical Brave env var is SEARCH_API_KEY (not BRAVE_API_KEY)
 // ---------------------------------------------------------------------------
 
-describe("buildCredentialRegistry — SEARCH_API_KEY unlocks search(brave) (WR-02)", () => {
+describe("buildCredentialRegistry — SEARCH_API_KEY unlocks search(brave)", () => {
   let savedSearchKey: string | undefined;
 
   beforeEach(() => {

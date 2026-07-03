@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the DEPTH-02 bounded in-process multi-hop `ctx_expand` walk
+ * Unit tests for the bounded in-process multi-hop `ctx_expand` walk
  * (`ctxExpandWalk` + `depthForTier`).
  *
  * Pure-JS / macOS-green: a hand-built stub `ContextStorePort` exposing only the
@@ -9,8 +9,8 @@
  * `spreadLane` (T4). No real DB / FTS / filesystem. The walk is read-only, so
  * the stub records reads only — there is NO append/upsert surface to assert.
  *
- * Load-bearing REDs (DEPTH-02 success criterion #3):
- *   - T2 multi-hop descent recovers deep messages (more than the single-hop tool)
+ * Load-bearing behaviors covered:
+ *   - T2 multi-hop descent recovers deep messages (more than a single-hop expansion)
  *   - depth cap bounds the walk (depthReached + capped)
  *   - node-visit cap bounds the walk (nodesVisited ≤ maxNodes)
  *   - token cap bounds the bundle (estimate ≤ maxTokens)
@@ -132,8 +132,8 @@ function makeStore(over: Partial<StoreStub> = {}): { stub: StoreStub; store: Con
 
 /**
  * A 3-level DAG: a condensed root → two condensed children → leaf summaries →
- * messages. Mirrors the "zoom into a compressed region" descent the design
- * mandates (Pitfall 4: descend parent→child via getSummaryChildren).
+ * messages. Mirrors the "zoom into a compressed region" descent: descend
+ * parent→child via getSummaryChildren.
  *
  *   sum-root (condensed, d2)
  *     ├── sum-a (condensed, d1) ── sum-a-leaf (leaf) ── [m-a1, m-a2]
@@ -336,7 +336,7 @@ describe("ctxExpandWalk performs a bounded multi-hop BFS over summary-parent (T2
     expect(bundle.unrecoverable).toBeGreaterThanOrEqual(2);
   });
 
-  it("every edge read is performed under the per-call R4 scope (WR-02 scope-inheritance)", async () => {
+  it("performs every edge read under the exact per-call scope, never a widened one", async () => {
     const stub = makeThreeLevelDag();
     const { store } = makeStore(stub);
     await ctxExpandWalk(store, SCOPE, "sum-root", { maxDepth: 3, maxTokens: 100_000, maxNodes: 64 });

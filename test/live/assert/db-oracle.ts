@@ -8,7 +8,7 @@
  *   3. Zod row validation on the `memories` table via parseRows (RowMapper has no singular parse method)
  *   4. Row-delta diff (snapshot before/after via opts.expectedDeltas + opts.beforeCounts)
  *
- * T-134-12 (Tampering): Database opened with { readonly: true } — any write
+ * Tampering mitigation: Database opened with { readonly: true } — any write
  * attempt throws immediately.
  *
  * @module
@@ -22,13 +22,12 @@ import { createRowMapper, MemoryRowSchema } from "@comis/memory";
  * Open a READONLY connection with the sqlite-vec extension loaded, mirroring
  * how the product reads the store (packages/memory schema.ts initSchema).
  *
- * 260611 live-fire fix: MEM Stage-B daemons create vec_memories as a REAL vec0
- * virtual table; a plain readonly connection threw
- * "SqliteError: no such module: vec0" from snapshotRowCounts and silently
- * skipped runDbOracle check 3d. Loading the extension is connection-level (not
- * a DB write) so the readonly guarantee (T-134-12) is unchanged. Load failure
- * is tolerated — vec-dependent reads then fall back to the existing
- * "no such module: vec0" skip paths instead of failing the oracle.
+ * MEM Stage-B daemons create vec_memories as a REAL vec0 virtual table; a plain
+ * readonly connection throws "SqliteError: no such module: vec0" from
+ * snapshotRowCounts and silently skips runDbOracle check 3d. Loading the
+ * extension is connection-level (not a DB write) so the readonly guarantee is
+ * unchanged. Load failure is tolerated — vec-dependent reads then fall back to
+ * the existing "no such module: vec0" skip paths instead of failing the oracle.
  */
 function openReadonlyWithVec(dbPath: string): Database.Database {
   const db = new Database(dbPath, { readonly: true });
@@ -72,7 +71,7 @@ export async function runDbOracle(
   dbPath: string,
   opts?: DbOracleOptions,
 ): Promise<void> {
-  // Open READONLY — oracle never writes (T-134-12). sqlite-vec is loaded so
+  // Open READONLY — oracle never writes. sqlite-vec is loaded so
   // vec0 virtual tables are first-class ground truth (check 3d executes).
   const db = openReadonlyWithVec(dbPath);
   try {
@@ -134,7 +133,7 @@ export async function runDbOracle(
     // filter (see packages/memory/src/schema.ts lines 553-565). The correct
     // invariant is COUNT(*) FROM memory_fts == COUNT(*) FROM memories (total),
     // NOT the has_embedding=1 subset. A desynced FTS means text-search queries
-    // return stale/missing results. Per FND-11 (§5.2 point 4): memory_fts/vec
+    // return stale/missing results. memory_fts/vec
     // desync is a production risk.
     // Only runs when both "memories" and "memory_fts" tables exist in the DB.
     if (tables.includes("memories") && tables.includes("memory_fts")) {
@@ -269,8 +268,8 @@ export function countRowsLike(
 
 /**
  * Count consolidation OBSERVATION rows in the `memories` table — rows with
- * `proof_count IS NOT NULL` (the observation signature per the v2.12 store;
- * memory_type stays 'semantic'). The precise invariant for MEM-07: with
+ * `proof_count IS NOT NULL` (the observation signature; memory_type stays
+ * 'semantic'). The precise invariant for MEM-07: with
  * costFeatures.enabled=false the LLM-bearing consolidation cron is OFF, so this
  * count MUST be 0 — independent of how many raw user/agent/extracted turns the
  * conversation produced (those are nondeterministic; an observation is not).
@@ -303,7 +302,7 @@ export function snapshotRowCounts(
   try {
     // Mirror the sqlite_master allowlist guard used in runDbOracle check 4
     // to prevent caller-supplied table names from being interpolated directly
-    // into SQL without validation (WR-03 — injection hardening + consistency).
+    // into SQL without validation (injection hardening + consistency).
     const existingTables = new Set<string>(
       (
         db

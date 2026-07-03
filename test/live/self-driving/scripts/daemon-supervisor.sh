@@ -5,7 +5,7 @@
 # create/rotate/revoke, skills_manage → config persistence) call process.kill(pid,"SIGUSR2") on
 # success; the SIGUSR2 handler exits 42 (setup-shutdown.ts:695) expecting a supervisor (systemd
 # Restart=on-failure / pm2) to relaunch. The bare `setsid node &` launch had none → a config-mutating
-# RPC left the daemon DEAD (F-RIG-1, 30uc-20260624 UC-03). This loop is that missing supervisor.
+# RPC left the daemon DEAD. This loop is that missing supervisor.
 #
 # Relaunch ONLY on 42 (the restart hint). Any other exit — 0 (clean SIGINT), a crash, or 137 (SIGKILL
 # from restart-m1.sh's pkill) — breaks the loop so a real stop stays stopped. Reads SRC/DATA/HOME from

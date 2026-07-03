@@ -510,9 +510,9 @@ describe("no-backward-compat", () => {
     ).toEqual([]);
   });
 
-  // Phase 151 no-BC: resolveModelTier is deleted — not present in packages/*/src/**/*.ts
-  // RED until Plan 03 deletes resolveModelTier from tool-deferral.ts.
-  it("resolveModelTier is deleted — not present in packages/*/src/**/*.ts (Phase 151 no-BC)", () => {
+  // resolveModelTier is deleted — it must not be present in any
+  // packages/*/src/**/*.ts file (no backward-compat shim survives).
+  it("resolveModelTier is deleted — not present in packages/*/src/**/*.ts", () => {
     const allFiles = listAllProductionFiles();
     const hits: string[] = [];
     for (const file of allFiles) {
@@ -527,23 +527,21 @@ describe("no-backward-compat", () => {
     ).toHaveLength(0);
   });
 
-  // Phase 226 SIMPLIFY-01: `memory.costFeatures.enabled` was RENAMED to the
-  // top-level `memory.enabled` master kill-switch, and `z.strictObject` now
-  // REJECTS the old key (the D-01a operator-update path). So no SHIPPED runtime
-  // string an operator reads — a daemon boot-notice hint, a `comis memory` help
-  // line, a `memory.ask` abstain hint — may instruct them to set the deleted
-  // `costFeatures.enabled` key: following it would write a config that fails at
-  // next boot. This guard pins the post-rename invariant (the verifier WARNING +
-  // the 226-01 SUMMARY's "broad plan-06 scrub" that plan-06 scoped to docs/ only).
+  // `memory.costFeatures.enabled` was RENAMED to the top-level `memory.enabled`
+  // master kill-switch, and `z.strictObject` now REJECTS the old key. So no
+  // SHIPPED runtime string an operator reads — a daemon boot-notice hint, a
+  // `comis memory` help line, a `memory.ask` abstain hint — may instruct them to
+  // set the deleted `costFeatures.enabled` key: following it would write a config
+  // that fails at next boot. This guard pins the post-rename invariant.
   //
   // SCOPE: only the OPERATOR-FACING config-key STRING (`costFeatures.enabled`,
   // i.e. the dotted key path) appearing OUTSIDE a comment. JSDoc/line-comment
-  // tombstones that document the rename ("renamed from `memory.costFeatures.enabled`
-  // in Phase 226") are the established 223/224/225 tombstone convention and are
+  // tombstones that document the rename ("renamed from `memory.costFeatures.enabled`")
+  // are the established tombstone convention and are
   // dev-facing — they are NOT operator-visible and are intentionally allowed
   // (comment-stripped before the scan). The internal `costFeaturesEnabled`
   // variable name carries no dot, so it never matches the dotted key pattern.
-  it("no shipped operator-facing runtime string names the deleted `costFeatures.enabled` config key (Phase 226 SIMPLIFY-01)", () => {
+  it("no shipped operator-facing runtime string names the deleted `costFeatures.enabled` config key", () => {
     // Match the DOTTED dead config-key path only (`costFeatures.enabled`, with
     // optional `memory.` prefix). Tolerates whitespace around the dot. Does NOT
     // match the comment-only prose nor the `costFeaturesEnabled` identifier.
@@ -580,7 +578,7 @@ describe("no-backward-compat", () => {
         suggestedFix:
           "Rewrite the operator-facing string to name the live key `memory.enabled` (e.g. `memory.enabled: false`). Per-loop opt-outs are `agents.<id>.learning.enabled` (skills) and `agents.<id>.learningOutcome.enabled` (outcome). Comment-only tombstones documenting the rename are allowed (they are not operator-visible).",
         designRef:
-          "Phase 226 SIMPLIFY-01 (costFeatures→memory.enabled rename) + CLAUDE.md Docs-Current / troubleshooting feedback-loop (\"name the exact config key\")",
+          "costFeatures.enabled was renamed to memory.enabled; operator-facing strings must name the live key (CLAUDE.md Docs-Current: name the exact config key)",
       }),
     ).toEqual([]);
   });

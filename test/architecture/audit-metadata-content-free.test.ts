@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * AUDIT-04 — the content-free invariant for the durable security-audit sink.
+ * The content-free invariant for the durable security-audit sink.
  *
  * The `audit:event` `metadata: Record<string, unknown>` free-map (and the
  * tenant-less events' `refs` map) is where a careless (or hostile) emit site
@@ -8,13 +8,12 @@
  * obs_audit_events row + the security-audit.jsonl line). This test pins that the
  * sink is content-free BY CONSTRUCTION so a planted value appears in NEITHER the
  * persisted row NOR the JSONL bytes — for BOTH a credential-KEYED field AND a
- * sensitive value under a BENIGN key (the H1/H2 leak shape the live review found:
+ * sensitive value under a BENIGN key (the leak shape found in review:
  * a no-prefix secret config `value` and the command:blocked `commandPrefix`).
  *
  * It is an ARCHITECTURE-tier test (a cross-cutting content-free invariant)
  * placed in test/architecture/ so the full-workspace gate catches it —
- * per-package runs hide cross-cutting gates (Pitfall 6 / the
- * feedback_full_workspace_gates_per_phase note).
+ * per-package runs hide cross-cutting gates.
  *
  * LOAD-BEARING: if the scrub/digest is removed from `auditEventToRow` /
  * `buildAuditRow`, the relevant test FAILS (the planted value reaches the
@@ -22,10 +21,11 @@
  * test asserts the scrubbed row is not reduced to an empty husk (structural
  * keys/counts survive).
  *
- * INCIDENT (Phase 176 follow-up): a code review of the durable audit sink found
+ * INCIDENT: a code review of the durable audit sink found
  * that the sink persisted free-form secret-bearing values under BENIGN keys —
- * the raw config `value` (H1, config-write.ts) and the `command:blocked`
- * `commandPrefix` (H2, ≤200 chars of command body) — defeating AUDIT-04. The
+ * the raw config `value` (config-write.ts) and the `command:blocked`
+ * `commandPrefix` (≤200 chars of command body) — defeating the content-free
+ * invariant. The
  * pre-fix sink only dropped credential-KEYED fields and pattern-matched
  * prefixed/keyworded secrets, so a 32-hex key / DB password / inline
  * `mysql -pSecret` landed UNREDACTED. The benign-key cases below reproduce that
@@ -87,7 +87,7 @@ interface WireAuditSinkDeps {
 }
 type WireAuditSink = (deps: WireAuditSinkDeps) => void;
 
-describe("AUDIT-04 — a planted audit:event metadata value never persists (content-free)", () => {
+describe("a planted audit:event metadata value never persists (content-free)", () => {
   let auditEventToRow: AuditEventToRow;
   let wireAuditSink: WireAuditSink;
   let dir: string;
@@ -112,7 +112,7 @@ describe("AUDIT-04 — a planted audit:event metadata value never persists (cont
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it("Test 1: planted secrets at ≥2 nesting levels appear in NEITHER the row NOR the JSONL", () => {
+  it("planted secrets at ≥2 nesting levels appear in NEITHER the row NOR the JSONL", () => {
     const planted = {
       password: "PLANTED",
       token: "sk-PLANTED",
@@ -152,7 +152,7 @@ describe("AUDIT-04 — a planted audit:event metadata value never persists (cont
     }
   });
 
-  it("Test 2: the scrubbed row is still USEFUL — structural keys survive (not an empty husk)", () => {
+  it("the scrubbed row is still USEFUL — structural keys survive (not an empty husk)", () => {
     const row = auditEventToRow(
       {
         timestamp: 1000,
@@ -185,14 +185,14 @@ describe("AUDIT-04 — a planted audit:event metadata value never persists (cont
   });
 
   // -------------------------------------------------------------------------
-  // H1/H2 (Phase 176 review) — a sensitive value under a BENIGN key. These
+  // A sensitive value under a BENIGN key. These
   // exercise the EXACT leak shape the credential-key-drop path misses: a
   // no-prefix secret value (a 32-hex key / DB password) under `value`, and the
-  // command body under `commandPrefix`. RED on pre-fix code, GREEN after the
-  // content-free-by-construction digest at the sink chokepoint.
+  // command body under `commandPrefix`. The content-free-by-construction digest
+  // at the sink chokepoint drops them from both the row and the JSONL.
   // -------------------------------------------------------------------------
 
-  it("H1: a no-prefix secret under the benign `value` key (config.patch shape) never persists", () => {
+  it("a no-prefix secret under the benign `value` key (config.patch shape) never persists", () => {
     // A 32-hex key + a DB password + an internal hostname — none match a
     // credential-KEYED field name and none match a prefixed/keyworded redact
     // pattern, so the pattern redactor lets them through. The sink must drop
@@ -252,7 +252,7 @@ describe("AUDIT-04 — a planted audit:event metadata value never persists (cont
     }
   });
 
-  it("H2: the command:blocked `commandPrefix` (command body) never persists in the durable row/JSONL", () => {
+  it("the command:blocked `commandPrefix` (command body) never persists in the durable row/JSONL", () => {
     // Drive the REAL command:blocked subscriber via wireAuditSink — that path
     // (buildAuditRow with raw refs) is the leak site, not auditEventToRow. An
     // inline-secret command is the worst case (`mysql -p<pass>`).
@@ -295,7 +295,6 @@ describe("AUDIT-04 — a planted audit:event metadata value never persists (cont
   });
 });
 
-// NOTE (Plan 04 coordination): this phase introduces the audit via SQLite +
-// JSONL, NOT a trajectory record — so there is no `audit.*` trajectory type to
-// enumerate in trajectory-event-types-known.test.ts. The `cache.break`
-// trajectory type is Plan 04's responsibility. Verified N/A for audit here.
+// NOTE: the audit is persisted via SQLite + JSONL, NOT a trajectory record —
+// so there is no `audit.*` trajectory type to enumerate in
+// trajectory-event-types-known.test.ts.

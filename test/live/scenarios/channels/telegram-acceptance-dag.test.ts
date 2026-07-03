@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * ACCEPT-01 scenario 2 — a DAG pipeline driven via `graph.status` / `graph.outputs`
- * over WS, FULLY UNATTENDED (Phase 208, Plan 07 — the SECOND of the three hard
- * ACCEPT-01 scenarios, THE AUTONOMY CAPSTONE).
+ * over WS, FULLY UNATTENDED (the SECOND of the three hard ACCEPT-01 scenarios,
+ * THE AUTONOMY CAPSTONE).
  *
- * The §10A.2 per-scenario loop applied to a DAG pipeline, scored *works (verified
+ * The per-scenario loop applied to a DAG pipeline, scored *works (verified
  * in ground truth)* OR *fails-honestly* — a FALSE SUCCESS is a HARD FAIL. The
  * pipeline is defined + executed over the REAL WS `rpcRequest` (`graph.execute`),
  * then its terminal state + node outputs are read via `graph.status {graphId}` +
  * `graph.outputs {graphId}` (the read-side RPCs). The score is STRUCTURE — the
  * pipeline reached a TERMINAL state and produced the expected node OUTPUT KEYS —
- * NOT model wording (S5). A keyless DAG that can't complete reliably is an HONEST
- * finding + pass@k, never a faked pass (A3).
+ * NOT model wording. A keyless DAG that can't complete reliably is an HONEST
+ * finding + pass@k, never a faked pass.
  *
- * The §10A.2 loop (no human step at any point):
+ * The loop (no human step at any point):
  *   clean-slate (the rig's isolated COMIS_DATA_DIR) -> set up (buildRig keyless +
  *   the WS rpc) -> drive (graph.execute a 3-node A+B->C DAG over WS) -> ground-
  *   truth observe (graph.status: isTerminal + the node keys; graph.outputs: the
@@ -30,9 +30,9 @@
  *   - graph.outputs  request: `{ graphId? }`; response: `{ graphId, outputs, source }`
  *     where `outputs` is a nodeId -> string|null record. A missing graphId throws
  *     "Missing required parameter: graphId".
- *   The transport is WS (`rpcRequest`); `POST /rpc` is 404 at HEAD (205-07).
+ *   The transport is WS (`rpcRequest`); `POST /rpc` is 404 at HEAD.
  *
- * ── THE CI vs COMIS_LIVE SPLIT (the 204/205/206 pattern — copied VERBATIM) ──
+ * ── THE CI vs COMIS_LIVE SPLIT ──
  *
  *   • Stage-B (ALWAYS runs, in-process, NO COMIS_LIVE, NO real model): the
  *     graph-RPC WIRING + the honest-error contracts, deterministic — a structural
@@ -98,20 +98,20 @@ const EXPECTED_NODE_KEYS = ["A", "B", "C"] as const;
 
 describe("ACCEPT-01 scenario 2 Stage-B — the DAG structure-scoring contract + the node shape (no COMIS_LIVE)", () => {
   it("the DAG defines a non-trivial pipeline (A+B parallel -> C depends on both) the structure-score asserts", () => {
-    // The score is STRUCTURE (S5): the loop asserts the pipeline produced THESE
+    // The score is STRUCTURE: the loop asserts the pipeline produced THESE
     // node keys, never the model's exact wording. Pin the contract the loop scores.
     expect(DAG_NODES.map((n) => n.nodeId).sort()).toEqual([...EXPECTED_NODE_KEYS].sort());
     const c = DAG_NODES.find((n) => n.nodeId === "C");
     expect(c, "the DAG has a join node C").toBeDefined();
     // C depends on BOTH A and B (a real join — the structure the score proves
-    // completed; not a flat fan-out). This is the structure-only predicate (A3).
+    // completed; not a flat fan-out). This is the structure-only predicate.
     expect(c!.dependsOn?.sort()).toEqual(["A", "B"]);
     // A and B have no deps (the parallel front — the concurrency the DAG exercises).
     expect(DAG_NODES.find((n) => n.nodeId === "A")!.dependsOn).toBeUndefined();
     expect(DAG_NODES.find((n) => n.nodeId === "B")!.dependsOn).toBeUndefined();
   });
 
-  it("the structure-score asserts TERMINAL + the expected node OUTPUT KEYS, never model wording (the S5 predicate)", () => {
+  it("the structure-score asserts TERMINAL + the expected node OUTPUT KEYS, never model wording", () => {
     // Factor the EXACT scoring predicate the Stage-C loop applies so Stage-B pins
     // it deterministically: given a graph.status snapshot + a graph.outputs result,
     // the loop scores `isTerminal === true` AND every expected node key present in
@@ -128,11 +128,11 @@ describe("ACCEPT-01 scenario 2 Stage-B — the DAG structure-scoring contract + 
     // find — a terminal verdict for an unfinished run would be a faked pass). (RED
     // asserted `true`.)
     expect(scoreDagStructure({ ...fakeStatus, isTerminal: false }, fakeOutputs, EXPECTED_NODE_KEYS)).toBe(false);
-    // A missing node key is NOT a pass (a partial DAG is an honest finding, not a faked pass — A3).
+    // A missing node key is NOT a pass (a partial DAG is an honest finding, not a faked pass).
     expect(
       scoreDagStructure(fakeStatus, { ...fakeOutputs, outputs: { A: "A", B: "B" } }, EXPECTED_NODE_KEYS),
     ).toBe(false);
-    // The output VALUES are NEVER scored (S5) — wrong wording still scores structurally true.
+    // The output VALUES are NEVER scored — wrong wording still scores structurally true.
     expect(
       scoreDagStructure(fakeStatus, { ...fakeOutputs, outputs: { A: "x", B: "y", C: "zzz" } }, EXPECTED_NODE_KEYS),
     ).toBe(true);
@@ -140,7 +140,7 @@ describe("ACCEPT-01 scenario 2 Stage-B — the DAG structure-scoring contract + 
 });
 
 /**
- * The STRUCTURE-only DAG scoring predicate (S5/A3) — factored so Stage-B and the
+ * The STRUCTURE-only DAG scoring predicate — factored so Stage-B and the
  * Stage-C loop score on the SAME function. Returns true iff the graph reached a
  * terminal state AND every expected node key is present in BOTH the status nodes
  * and the outputs. NEVER inspects the output VALUES (model wording is not scored).
@@ -191,8 +191,8 @@ describe("ACCEPT-01 scenario 2 Stage-B — the never-published guard re-verifies
 
   it("git status --porcelain shows NO packages source change (the milestone premise)", () => {
     // ACCEPT-01 scenario 2 drives the already-registered graph RPCs over WS with NO
-    // product edit. If this fails, a product file was touched — STOP (a Defect-Watch
-    // must be RED-first + full validate before any product change).
+    // product edit. If this fails, a product file was touched — STOP (any product
+    // change must be test-first + pass full validate before landing).
     const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();
     const porcelain = execFileSync("git", ["status", "--porcelain"], { cwd: repoRoot, encoding: "utf-8" });
     const offending = porcelain
@@ -277,7 +277,7 @@ describe.skipIf(!isLive)("ACCEPT-01 scenario 2 Stage-C — a DAG pipeline driven
 
       // ── Bounded-poll graph.status {graphId} until isTerminal (a long DAG turn on
       // a keyless model — waitForTrajectorySignal-style bounded poll, never a fixed
-      // setTimeout). A non-terminal DAG at the deadline is an HONEST finding (A3).
+      // setTimeout). A non-terminal DAG at the deadline is an HONEST finding.
       let statusSnapshot: Record<string, unknown> | undefined;
       const start = Date.now();
       const DEADLINE_MS = 600_000;
@@ -297,7 +297,7 @@ describe.skipIf(!isLive)("ACCEPT-01 scenario 2 Stage-C — a DAG pipeline driven
       if (statusSnapshot.isTerminal !== true) {
         // eslint-disable-next-line no-console -- the operator-facing honest finding
         console.warn(
-          `ACCEPT-01 scenario 2 Stage-C FINDING (honest, pass@k): the DAG did not reach a terminal state within ${DEADLINE_MS}ms on the keyless model (status=${String(statusSnapshot.status)}). A keyless DAG that can't complete reliably is an HONEST finding (A3), NOT a faked pass. The WIRING + the structure-scoring are proven in Stage-B.`,
+          `ACCEPT-01 scenario 2 Stage-C FINDING (honest, pass@k): the DAG did not reach a terminal state within ${DEADLINE_MS}ms on the keyless model (status=${String(statusSnapshot.status)}). A keyless DAG that can't complete reliably is an HONEST finding, NOT a faked pass. The WIRING + the structure-scoring are proven in Stage-B.`,
         );
         return;
       }
@@ -312,7 +312,7 @@ describe.skipIf(!isLive)("ACCEPT-01 scenario 2 Stage-C — a DAG pipeline driven
 
       // ── SCORE STRUCTURE via the SAME predicate Stage-B pins: terminal + every
       // expected node key present in BOTH the status nodes and the outputs. NOT the
-      // model wording (S5). A FALSE SUCCESS is a HARD FAIL.
+      // model wording. A FALSE SUCCESS is a HARD FAIL.
       const scored = scoreDagStructure(
         statusSnapshot as { isTerminal?: unknown; nodes?: Record<string, unknown> },
         outputsResult as { outputs?: Record<string, unknown> },

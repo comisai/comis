@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED test for the OpenClaw shell-label-parser (spec §6.3 / §13.1).
+ * Unit tests for the shell-label-parser.
  *
- * Fails on pre-patch code: `./shell-label-parser.js` does not exist.
- *
- * The parser is a deterministic port of `summarizeKnownExec()` — it turns a
+ * The parser is deterministic — it turns a
  * `bash`/`exec`/`shell` command string into a concise human label. Pipelines
  * append a `(+N steps)` counter for the extra stages. No `eval`, no LLM.
  *
@@ -13,7 +11,7 @@
 import { describe, it, expect } from "vitest";
 import { parseShellCommand } from "./shell-label-parser.js";
 
-describe("parseShellCommand (spec §6.3)", () => {
+describe("parseShellCommand (shell command summarizer)", () => {
   it("summarizes `head -n N file` as showing the first N lines", () => {
     expect(parseShellCommand("head -n 20 file.txt")).toBe("show first 20 lines of file.txt");
   });
@@ -87,11 +85,11 @@ describe("parseShellCommand — secret redaction in the produced label", () => {
   });
 
   it("redacts a ghp_* GitHub PAT that reaches the label through a grep pattern", () => {
-    // `ghp_*` is named explicitly as the secret shape the
-    // shell-label cases must cover; the sibling sk-/Bearer cases above did not.
-    // The shipped parser already masks it (it runs `redactValue`, whose
+    // `ghp_*` is a secret shape the shell-label cases must cover; the sibling
+    // sk-/Bearer cases above did not.
+    // The parser already masks it (it runs `redactValue`, whose
     // `SECRET_SHAPE_PATTERNS` includes `GITHUB_TOKEN_FULL` = /\bgh[pousr]_…/),
-    // so this is a regression-lock for the named shape — GREEN on first run.
+    // so this is a regression-lock for the named shape.
     // A neutral 36-char PAT body (NOT a real token, AGENTS.md §2.2).
     const pat = "ghp_" + "A".repeat(36);
     const label = parseShellCommand(`grep ${pat} audit.log`);

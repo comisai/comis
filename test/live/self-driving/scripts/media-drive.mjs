@@ -4,8 +4,8 @@
 //
 // Usage:  node media-drive.mjs <chatId> <file-or-base64> <kind> ["<caption>"] [maxMs=180000]
 //   <file-or-base64>: AUTO-DETECTED — if it's an existing file PATH, the file is read + base64-encoded;
-//                     otherwise it's treated as INLINE base64. (hermes-usecases run 2026-06-25: the old
-//                     box one-off only accepted a path → passing inline base64 hit `ENAMETOOLONG` on open.)
+//                     otherwise it's treated as INLINE base64. (An earlier version only accepted a path,
+//                     so passing inline base64 hit `ENAMETOOLONG` on open.)
 //   <kind>: photo | voice | audio | document | video  (the emulator media kind)
 //
 // Examples:
@@ -14,7 +14,7 @@
 //
 // NOTE (rig limitation): on the loopback rig, a media INPUT is fetched by the daemon from the emulator
 // apiRoot. That fetch is SSRF-guarded; the emulator host is allowlisted (`trustedFetchOrigins`) so the
-// fetch succeeds (MEDIA-INPUT-SSRF resolved 2026-06-25). Transcription/vision ACCURACY still needs real
+// fetch succeeds. Transcription/vision ACCURACY still needs real
 // media that survives the daemon's ffmpeg/decode pipeline — a synthetic/silent blob fails-honestly
 // ("transcription failed; send as text") which is a coverage-gap, NOT a Comis bug. (`05-CATALOG.md`.)
 import { readFileSync, existsSync, statSync } from "node:fs";

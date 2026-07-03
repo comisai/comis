@@ -1,9 +1,9 @@
 # Small-Model Excellence benchmark
 
-The **Phase 1 PROVE / M1–M2** instrument for `.planning/SMALL_MODEL_EXCELLENCE_DESIGN.md`:
-quantifies how small/local models behave on the failure modes from the 2026-06-06
-snake-game incident, so later phases can be gated/reordered by measured impact and
-the final re-measure (M3) can prove lift.
+Quantifies how small/local models behave on the executive-behavior failure modes
+(goal derailment, false-success claims, context poisoning) that the agent scaffold
+must compensate for, so scaffold work can be prioritized and re-measured by its
+measured impact.
 
 It drives models directly through Ollama's OpenAI-compatible API with a Comis-style
 system prompt + tools and a minimal ReAct loop. It deliberately isolates **model
@@ -42,12 +42,12 @@ Output: `results/<timestamp>/report.md` + `raw.json`, and `results/latest.md`.
 ### First baseline finding (2026-06-07)
 
 `qwen3.6:35b` and `gemma4:31b` both score **6/6 correctness** here (qwen also 4/4 in
-`bare` mode) — i.e. these 30B models are *not* the problem in isolation; the snake
-incident needs the **full Comis context** to reproduce (see design §7.1). The one
+`bare` mode) — i.e. these 30B models are *not* the problem in isolation; reproducing
+the derailment failures needs the **full Comis context**. The one
 real failure found: `gemma4:31b` **runaway generation** (16× latency, 3.6× tokens;
 one scenario 810 s / 56 K tokens). Next: a capability gradient (add `gpt-oss:20b`,
 `qwen2.5:32b`, `llama3.2`) + a tokens/latency budget gate, then graduate to the
-real executor (M1).
+real Comis executor.
 
 ## Scenarios (the failure taxonomy)
 
@@ -64,9 +64,9 @@ Metrics (per model × scenario): `success`, `constraintAdherence`, `derailed`,
 `falseSuccess`, `poisoned`, malformed tool calls, tokens, latency. Lower
 derail/false-success/poison = better; higher pass/adherence/success = better.
 
-## Graduating into the milestone
+## Graduating to the real executor
 
-This is the standalone baseline (model capability in isolation). Phase 1 proper
+This is the standalone baseline (model capability in isolation). The next stage
 points the same scenarios + scorers at the **real Comis executor** (daemon + an
 Ollama provider) so the numbers measure the platform+scaffold, not just the model.
 The scenario/scorer contract is stable so both share one source of truth.

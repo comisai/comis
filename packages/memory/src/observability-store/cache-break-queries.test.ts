@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * PERSIST-01 (Phase 176 Plan 04): `queryCacheBreakRateByReason` query tests.
+ * `queryCacheBreakRateByReason` query tests.
  *
  * "rate by reason over time" is a clean `GROUP BY json_extract(details,'$.reason')`
  * over the existing `obs_diagnostics` table + `idx_obs_diag_category` — NO new
- * table (§14). Inserting several `category:'cache_break'` rows then querying
+ * table. Inserting several `category:'cache_break'` rows then querying
  * returns per-reason counts; an optional since/until window is honored.
  */
 import { describe, it, expect, beforeEach } from "vitest";
@@ -30,7 +30,7 @@ function insertCacheBreak(
   });
 }
 
-describe("queryCacheBreakRateByReason (PERSIST-01 — rate by reason via GROUP BY)", () => {
+describe("queryCacheBreakRateByReason (rate by reason via GROUP BY)", () => {
   let db: Database.Database;
   let store: ObservabilityStore;
 
@@ -84,10 +84,10 @@ describe("queryCacheBreakRateByReason (PERSIST-01 — rate by reason via GROUP B
     expect(queryCacheBreakRateByReason(db, {})).toEqual([]);
   });
 
-  // WEBUI-02 (179-04): the $-lost SUM is net-new — the query returned {reason,count}
-  // ONLY before this. The IncidentReport `cacheBreaks?` type already declares
-  // estCostUsd (incident-report.ts:379), so this closes a latent shape gap.
-  it("sums the per-reason estCostUsd ($ lost) from the details JSON (net-new)", () => {
+  // The $-lost SUM is derived from the details JSON. The IncidentReport
+  // `cacheBreaks?` type declares estCostUsd (incident-report.ts), so the query
+  // must surface it too.
+  it("sums the per-reason estCostUsd ($ lost) from the details JSON", () => {
     insertCacheBreak(store, "tools_changed", 1_000, 0.002);
     insertCacheBreak(store, "tools_changed", 2_000, 0.003);
     insertCacheBreak(store, "system_changed", 3_000, 0.01);

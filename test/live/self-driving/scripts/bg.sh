@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # bg.sh — run a long box command DETACHED + pollable (the flaky-VPS-link prescription, as a helper).
 #
-# memory-learning-stress-catalog-20260629: RUN1's W-10 dropped a 300s foreground drive on an ssh hiccup,
-# and RUN2 hand-rolled `nohup … >/tmp/x.out & … poll /tmp/x.done` three times. The kit DOCUMENTED the
-# pattern but shipped no helper. This standardizes it so a long orchestration (esp. drive-sim-workload.sh)
-# survives the ssh link dropping — launch detached, then poll in short ssh calls.
+# A dropped ssh link can lose a 300s foreground drive, and hand-rolling
+# `nohup … >/tmp/x.out & … poll /tmp/x.done` every time is error-prone. This standardizes the pattern
+# so a long orchestration (esp. drive-sim-workload.sh) survives the ssh link dropping — launch detached,
+# then poll in short ssh calls.
 #
 #   bash bg.sh <tag> <command...>        launch <command> detached (setsid+nohup); writes
 #                                        /tmp/bg-<tag>.out (stdout+stderr) and /tmp/bg-<tag>.done (on exit,

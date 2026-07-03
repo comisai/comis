@@ -381,9 +381,9 @@ describe("detectShellSubstitutions", () => {
     expect(detectShellSubstitutions("git log --oneline")).toBeNull();
   });
 
-  // F-18 (live 2026-06-12, Anthropic UC-12): $((...)) is ARITHMETIC expansion (no command
-  // execution) — it must NOT be flagged as command substitution. The old `$(` check
-  // over-blocked `echo $((6*7))`. A nested REAL substitution inside arithmetic is still caught.
+  // $((...)) is ARITHMETIC expansion (no command execution) — it must NOT be
+  // flagged as command substitution (a bare `$(` check over-blocks `echo $((6*7))`).
+  // A nested REAL substitution inside arithmetic is still caught.
   it("allows arithmetic expansion $((6*7)) (not command substitution)", () => {
     expect(detectShellSubstitutions("echo OK-$((6*7))")).toBeNull();
   });

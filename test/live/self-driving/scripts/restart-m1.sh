@@ -5,7 +5,7 @@
 #
 # Launches the daemon UNDER A SUPERVISOR (daemon-supervisor.sh) that relaunches on exit 42 — Comis's
 # SIGUSR2 restart-hint, fired by config.patch/apply, heartbeat.update, gateway.restart, token ops, and
-# skills_manage. Without it, the first config-mutating RPC leaves the daemon dead (F-RIG-1).
+# skills_manage. Without it, the first config-mutating RPC leaves the daemon dead.
 #
 # Override via env: SRC (src tree), DATA (data dir). GWTOKEN (the ≥32-char gateway token) is read from
 # the env or the sourced ~/.comis/.env below — NO literal default in the repo (set it per box; see

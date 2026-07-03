@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * ACCEPT-01 (Option A, Plan 208-08 — the OPTIONAL cold-shell stretch, the
+ * ACCEPT-01 (Option A — the OPTIONAL cold-shell stretch, the
  * milestone HEADLINE): a REAL cold-shell `tg up`(process 1) → `tg send`/`tg rpc`/
  * `tg status`(process 2) → `tg down`(process 3) sequence that works ACROSS SEPARATE
  * PROCESSES, proven by spawning the `tg` CLI as honest OS subprocesses.
  *
- * THE CROSS-PROCESS PROOF (what the in-process spine, Plan 207, cannot show): the
- * three ACCEPT-01 scenarios run the §10A.2 loop UNATTENDED but IN-PROCESS (the rig
+ * THE CROSS-PROCESS PROOF (what the in-process spine cannot show): the
+ * three ACCEPT-01 scenarios run the loop UNATTENDED but IN-PROCESS (the rig
  * lives in the vitest fork). Option A detaches the rig into its OWN process tree so
  * a SEPARATE shell reaches it — the literal "Claude Code drives shell-only,
  * unattended" claim. This file spawns:
@@ -17,8 +17,8 @@
  *   • process 3 — `tg down` (SIGTERMs the rig's process group → the rig-daemon + its
  *     daemon grandchild are reaped → the handle removed → NO leaked daemon/port).
  *
- * THE W1 NO-FALSE-SUCCESS ABSOLUTE (binding): the headline "shell-only unattended"
- * claim (DOC-01) is made ONLY IF this cross-process test ships GREEN. A flaky /
+ * THE NO-FALSE-SUCCESS ABSOLUTE (binding): the headline "shell-only unattended"
+ * claim is made ONLY IF this cross-process test ships GREEN. A flaky /
  * half-working detached rig is WORSE than an honest documented gap — so the
  * Stage-C leg asserts a SEPARATE-process command reaches the rig AND `tg down`
  * leaves NO leaked daemon/port (the pid is gone, the gateway port is free).
@@ -27,7 +27,7 @@
  * ONE throwaway handle dir via `COMIS_CHANLIVE_DIR` — the operator's real
  * `~/.comis-chanlive` is never touched.
  *
- * ── THE CI vs COMIS_LIVE SPLIT (the 204–207 pattern — copied VERBATIM) ──
+ * ── THE CI vs COMIS_LIVE SPLIT ──
  *
  *   • Stage-B (ALWAYS runs, in-process, NO COMIS_LIVE, NO real model): the
  *     deterministic WIRING proof — the cold-shell lifecycle is reachable + fails
@@ -203,7 +203,7 @@ describe("ACCEPT-01 Option A Stage-B — the cold-shell lifecycle fails honestly
 
   it("git status --porcelain shows NO packages source change (the milestone premise)", () => {
     // Option A is the cold-shell detached-subprocess rig — test/-only. If this fails,
-    // a product file was touched — STOP (a Defect-Watch must be RED-first + full validate).
+    // a product file was touched — STOP (any product change must be test-first + pass full validate).
     const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();
     const porcelain = execFileSync("git", ["status", "--porcelain"], { cwd: repoRoot, encoding: "utf-8" });
     const offending = porcelain
@@ -297,7 +297,7 @@ describe.skipIf(!isLive)("ACCEPT-01 Option A Stage-C — a cold-shell tg up(p1)�
       // ── NO LEAK (the headline's no-false-success absolute): the rig PROCESS is
       //    gone, the gateway PORT is free, and the handle is removed.
       expect(pidAlive(handle.pid), "the detached rig process must be GONE after tg down (no zombie daemon)").toBe(false);
-      // INFO-3: poll for the port to free (TIME_WAIT/LAST_ACK can linger briefly after
+      // Poll for the port to free (TIME_WAIT/LAST_ACK can linger briefly after
       // the daemon process exits) rather than a fixed real-clock settle — consistent with
       // the rig's own isPortFree oracle, and not timing-fragile on a loaded host.
       expect(

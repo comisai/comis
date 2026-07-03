@@ -3,7 +3,7 @@
  * (Linux/VPS) — the LIVE **separate-process** worker fork the production daemon
  * actually uses: `buildProductionSpawnWorker(resolveWorkerMainPath(), dataDir)`
  * forks `node <--permission posture> terminal-worker-main.js`, and the registry
- * drives create→read→kill over the REAL §2.3 stdio IPC.
+ * drives create→read→kill over the REAL stdio IPC.
  *
  * This is the coverage that was missing: every other terminal test injects the
  * in-process `makeBridgedPtyWorkerChild` double, so the production fork path
@@ -14,7 +14,7 @@
  * the `.ts` source), so it `skipIf`s when the dist isn't built. Two tiers:
  *   - Part A (any Linux): NO bwrapPath → the worker forks, the IPC round-trips,
  *     and the worker FAIL-CLOSES (`ok:false`, session not alive) — proving the
- *     fork + frame-pump + IPC server half work end-to-end (SEC-16, no unjailed spawn).
+ *     fork + frame-pump + IPC server half work end-to-end (no unjailed spawn).
  *   - Part B (`skipIf` no bwrap): real bwrapPath → create a jailed bash PTY, read
  *     its grid, kill it — the full jailed round-trip through the real fork.
  *
@@ -122,7 +122,7 @@ describe.skipIf(!isLinux() || !distBuilt)(
       const created = await createTool.execute("create-a", { allowId: "bash", command: shell, cols: 80, rows: 24 });
       const details = created.details as { sessionId?: string; alive?: boolean };
       // The real worker forked + the create frame round-tripped over IPC; with no
-      // bwrap the worker fail-closed, so no live session exists (SEC-16). The
+      // bwrap the worker fail-closed, so no live session exists (no unjailed spawn). The
       // fail-close is ASYNC: the registry fires the create frame WITHOUT blocking the
       // turn (so `create` returns with the session still optimistically `running`),
       // then an out-of-band `ok:false` reply ("no sandbox provider: cannot materialize
@@ -171,7 +171,7 @@ describe.skipIf(!isLinux() || !distBuilt)(
           if (screen.includes("FORK_JAIL_OK")) break;
           await new Promise((r) => setTimeout(r, 25));
         }
-        // The read goes through the tool layer → §3.6 untrusted-content wrap + the
+        // The read goes through the tool layer → the untrusted-content wrap + the
         // live PTY genuinely rendered the marker inside it.
         expect(screen).toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/);
         expect(screen).toContain("FORK_JAIL_OK");

@@ -505,17 +505,16 @@ comis:
 });
 
 // ---------------------------------------------------------------------------
-// SkillSource union (SURFACE-01)
+// SkillSource union
 // ---------------------------------------------------------------------------
 //
-// The widening of the `SkillSource` union to include `'learned'` is a
-// type-level contract that compiles away under vitest's esbuild transform
-// (a literal-assignability assertion produces no runtime artifact). We assert
-// it with a source-grep guard so the RED state is reproducible from the
-// pre-patch source alone (the 201-01/03 reproducible-RED-for-type-contracts
-// precedent). The verified-learning surface (Plan 04) sets `source: 'learned'`
-// explicitly from `learnedSkillStore.list()`, so the union MUST accept it.
-describe("SkillSource union (SURFACE-01)", () => {
+// The `SkillSource` union's inclusion of `'learned'` is a type-level contract
+// that compiles away under vitest's esbuild transform (a literal-assignability
+// assertion produces no runtime artifact). We assert it with a source-grep
+// guard so the contract is enforced from the source text itself. The
+// verified-learning surface sets `source: 'learned'` explicitly from
+// `learnedSkillStore.list()`, so the union MUST accept it.
+describe("SkillSource union", () => {
   it("includes the 'learned' verified-learning procedural source", () => {
     const discoverySrc = fs.readFileSync(
       path.join(__dirname, "discovery.ts"),

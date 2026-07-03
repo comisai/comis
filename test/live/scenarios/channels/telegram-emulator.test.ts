@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RIG-01/02 + TEST-01 + SEC-01 — the Phase-204 walking-skeleton scenario (THE
+ * RIG-01/02 + TEST-01 + SEC-01 — the walking-skeleton scenario (THE
  * phase keystone). One text round-trips from the `TgEmulator` through the REAL
  * grammy Telegram adapter, an isolated `$0`/offline Comis daemon, back to the
  * emulator's recorded `outbound()` — with the SSRF/file-route caveat settled and
@@ -8,7 +8,7 @@
  *
  * ── THE CI vs COMIS_LIVE SPLIT (the resolved highest-execution-risk decision) ──
  *
- * Success-criterion #2 ("an AGENT-AUTHORED reply lands in outbound()") needs the
+ * The reply criterion ("an AGENT-AUTHORED reply lands in outbound()") needs the
  * agent to PRODUCE a reply, which needs a reachable keyless model. CI has none,
  * and there is NO in-tree stub LLM provider (DaemonOverrides exposes no completion
  * seam; every existing full-daemon live scenario gates its real-model leg behind
@@ -21,25 +21,25 @@
  *         adapter (createTelegramPlugin({ apiRoot })) token-validates (getMe),
  *         registers commands (setMyCommands), long-polls (getUpdates), and an
  *         injected update round-trips to its onMessage → the adapter's
- *         sendMessage lands a RecordedOutbound in emu.outbound() (success-crit #3).
+ *         sendMessage lands a RecordedOutbound in emu.outbound().
  *         This is an *adapter-authored* send via an in-memory onMessage (mirrors
  *         test/e2e/telegram-dm.test.ts) — NOT the agent (that is the ANTI-PATTERN
  *         for the agent leg; here it is the contract tripwire, which is correct).
  *       - the SEC-01 loopback verdict: both HTTP surfaces bind 127.0.0.1; the
- *         §13-Q1 file-route caveat is settled (see the SEC-01 describe below).
+ *         file-route caveat is settled (see the SEC-01 describe below).
  *
  *   • Stage-C (describe.skipIf(!isLive), COMIS_LIVE) is the AGENT-AUTHORED
- *     round-trip (success-criterion #2 FULL): startRig boots the isolated daemon,
+ *     round-trip (the FULL agent-authored version): startRig boots the isolated daemon,
  *     rig.send(text) injects, rig.waitForReply() asserts a bot reply landed in
  *     emulator.outbound() (content via "a reply arrived", not exact wording — the
  *     model is non-deterministic). On no-reply the waiter returns undefined and
- *     the leg fails HONESTLY (reason-coded), NEVER green-by-fabrication (I5).
+ *     the leg fails HONESTLY (reason-coded), NEVER green-by-fabrication.
  *     SKIPPED (skip≠fail) when COMIS_LIVE is unset — the operator path (a real
  *     ollama on localhost:11434, or live.env) is in test/live/RUNBOOK.md.
  *
- * IMPORTANT: ROADMAP success-criterion #2's agent-authored half is COMIS_LIVE-
- * gated BY DESIGN (an accepted plan-checker interpretation), NOT an unmet
- * criterion — the CI leg never depends on a model reply.
+ * IMPORTANT: the agent-authored half of the reply criterion is COMIS_LIVE-
+ * gated BY DESIGN, NOT an unmet criterion — the CI leg never depends on a
+ * model reply.
  *
  * Run:
  *   CI (Stage-B only, offline, deterministic):
@@ -148,7 +148,7 @@ describe("RIG/TEST-01 Stage-B — real grammy adapter ↔ TgEmulator contract ro
     }
 
     const out = emu.outbound(TEST_CHAT);
-    // success-criterion #3: the round-trip lands a recorded outbound (sendMessage)
+    // The round-trip lands a recorded outbound (sendMessage)
     // on the channel oracle — the grammy-drift tripwire (if grammy's wire shape
     // drifted, getMe/getUpdates/sendMessage would not round-trip and this fails).
     const sent = out.find((o) => o.method === "sendMessage");
@@ -161,10 +161,10 @@ describe("RIG/TEST-01 Stage-B — real grammy adapter ↔ TgEmulator contract ro
 });
 
 // ---------------------------------------------------------------------------
-// Stage-B — SEC-01 loopback + §13-Q1 file-route verdict (in-process)
+// Stage-B — SEC-01 loopback + file-route verdict (in-process)
 // ---------------------------------------------------------------------------
 
-describe("SEC-01 Stage-B — loopback bind + the §13-Q1 file-route verdict (no COMIS_LIVE)", () => {
+describe("SEC-01 Stage-B — loopback bind + the file-route verdict (no COMIS_LIVE)", () => {
   let emu: TgEmulator | undefined;
 
   afterEach(async () => {
@@ -178,24 +178,24 @@ describe("SEC-01 Stage-B — loopback bind + the §13-Q1 file-route verdict (no 
     emu = createTgEmulator({ botToken: "12345:test" });
     const { apiRoot } = await emu.start();
 
-    // SEC-01: the loopback bind — both the Bot API and (Plan 04) /control/* ride
+    // SEC-01: the loopback bind — both the Bot API and /control/* ride
     // this ONE 127.0.0.1 server. Never a wildcard host.
     expect(apiRoot).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
 
-    // §13-Q1 VERDICT (settled for Phase 204):
+    // File-route verdict:
     //   getFile is a plain `bot.api.getFile()` call (telegram-resolver.ts:75) —
     //   SEAM-ROUTED with NO SSRF guard — so it reaches the loopback apiRoot fine.
     //   The byte-DOWNLOAD URL is HARDCODED to https://api.telegram.org/file/...
     //   (telegram-resolver.ts:95) and routed through an SSRF-guarded fetcher that
-    //   BLOCKS loopback — but that byte download is MEDIA-02 / Phase 207, NOT 204.
-    //   For 204 we need only the getFile method + the GET /file/bot<token>/<path>
+    //   BLOCKS loopback — but that byte download is MEDIA-02, not this scenario.
+    //   Here we need only the getFile method + the GET /file/bot<token>/<path>
     //   route SHAPE (no 404 at boot). The inverse-SSRF primitive
-    //   validateLocalServerUrl (ssrf-guard.ts:198) already exists for the Phase-207
+    //   validateLocalServerUrl (ssrf-guard.ts:198) already exists for the
     //   test-only host allowance — it never relaxes production validateUrl.
-    // Phase-207 NOTE: getFile now resolves against the REAL file store (207-02);
+    // NOTE: getFile now resolves against the REAL file store;
     // an UNSTORED file_id is a Telegram-shaped not-found (`ok:false`, error_code 400)
     // — so seed a file first, then assert getFile answers a well-formed descriptor
-    // for a KNOWN id over loopback (the 204 boot-reachability intent, store-aware).
+    // for a KNOWN id over loopback (the boot-reachability intent, store-aware).
     const seeded = emu.storeFile("document", Buffer.from("getfile-shape-probe", "utf8"));
     const getFileRes = await fetch(`${apiRoot}/bot12345:test/getFile`, {
       method: "POST",
@@ -258,7 +258,7 @@ describe.skipIf(!isLive)("RIG Stage-C — agent-authored round-trip via startRig
   it(
     "startRig boots an isolated daemon (apiRoot seam, /health green) and an agent reply lands in outbound() — or fails honestly (no fabrication)",
     async () => {
-      // success-criterion #1: startRig boots green. startTestDaemon already awaited
+      // startRig boots green. startTestDaemon already awaited
       // the gateway /health (10×500ms) and the real grammy adapter token-validated
       // (getMe) + registered commands (setMyCommands) + began long-polling
       // (getUpdates) against the emulator — boot would have thrown otherwise.
@@ -270,13 +270,13 @@ describe.skipIf(!isLive)("RIG Stage-C — agent-authored round-trip via startRig
       const health = await fetch(`${rig.gatewayUrl}/health`);
       expect(health.ok).toBe(true);
 
-      // success-criterion #2 (FULL): inject a DM → the daemon's agent authors a
-      // reply → it lands in the emulator's outbound() oracle.
+      // The FULL agent-authored round-trip: inject a DM → the daemon's agent
+      // authors a reply → it lands in the emulator's outbound() oracle.
       const inboundId = await rig.send("hello from the emulator");
       const reply = await rig.waitForReply(inboundId, 45_000);
 
       // HONEST on no-reply: undefined means the keyless model produced nothing
-      // within the window (reason-coded), NEVER a fabricated success (I5). When a
+      // within the window (reason-coded), NEVER a fabricated success. When a
       // keyless model IS reachable the reply lands; the assertion is STRUCTURAL
       // ("a reply arrived"), not exact wording (the model is non-deterministic).
       expect(

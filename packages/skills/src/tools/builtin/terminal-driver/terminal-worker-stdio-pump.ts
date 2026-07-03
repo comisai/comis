@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * terminal-worker-stdio-pump — the SERVER half of the §2.3 worker IPC, extracted
+ * terminal-worker-stdio-pump — the SERVER half of the worker IPC, extracted
  * from `terminal-worker-main.ts` so it is unit-testable WITHOUT a fork (the
  * bootstrap just wires real process IO into it).
  *
@@ -49,7 +49,7 @@ function errorMessage(err: unknown): string {
  * `push` decodes synchronously (so a decoder throw is caught here, never
  * buffered toward a DoS) and fires `handle` asynchronously per frame; replies
  * are written in `handle`'s resolution order — the daemon correlates by
- * `requestId`, never arrival order (§2.3), so out-of-order replies are correct
+ * `requestId`, never arrival order, so out-of-order replies are correct
  * by construction.
  */
 export function createStdioPump(deps: StdioPumpDeps): StdioPump {

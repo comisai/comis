@@ -2,12 +2,12 @@
 /**
  * `rig` — `startRig({ channel, model })`: the boot orchestration that wires the
  * `TgEmulator` to a REAL, isolated Comis daemon and returns the round-trip
- * driver handle (RIG-01 + RIG-02, Phase 204 — the phase KEYSTONE glue).
+ * driver handle (RIG-01 + RIG-02).
  *
- * This is the whole walking-skeleton integration in one function:
+ * This is the whole integration in one function:
  *
- *   1. start the `TgEmulator` (Plan 03) → `{ apiRoot: "http://127.0.0.1:P", port }`;
- *   2. register the generic control API (Plan 04) on the emulator's SHARED
+ *   1. start the `TgEmulator` → `{ apiRoot: "http://127.0.0.1:P", port }`;
+ *   2. register the generic control API on the emulator's SHARED
  *      http-backend base → the in-proc `ControlClient` (inject + reply-wait);
  *   3. pick a free gateway port G;
  *   4. write a THROWAWAY YAML config (the daemon resolves config ONLY from
@@ -18,7 +18,7 @@
  *      a keyless `ollama` provider ($0/offline), and a ≥32-char LITERAL gateway
  *      token (env-refs do NOT resolve for the test gateway);
  *   5. boot the daemon via `startTestDaemon({ configPath, gatewayPort })` — REUSED
- *      directly (A4) so the rig inherits its `process.exit`→throw guard, the
+ *      directly so the rig inherits its `process.exit`→throw guard, the
  *      `/health` poll, the double-start guard, and the per-fork data-dir isolation;
  *   6. return `{ emulator, controlClient, chat, gatewayUrl, authToken, send,
  *      waitForReply, cleanup }`.
@@ -29,7 +29,8 @@
  * to BOTH `validateBotToken` (the boot `getMe`) and `createTelegramPlugin` (the
  * runtime grammy client). So the real grammy adapter token-validates + long-polls
  * against the emulator with NO production code change. If any `packages` source-tree
- * edit ever seems required to make this work, STOP — it contradicts the milestone.
+ * edit ever seems required to make this work, STOP — it contradicts the
+ * zero-production-code-change contract this rig depends on.
  *
  * Boot $0/offline: `models.defaultProvider: ollama` + a keyless provider entry
  * (ollama is in `KEYLESS_PROVIDER_TYPES`; the daemon registers the
@@ -43,7 +44,7 @@
  * change. `test/` is outside every `packages` source-tree ESLint/architecture
  * rule, so `mkdtempSync` / `writeFileSync` / raw `throw` are fine here. Build
  * first: this file boots `@comis/daemon` from `dist/` (a stale `dist/` silently
- * masks `src/`); the milestone changes no `packages/*` source, so `dist` stays
+ * masks `src/`); this harness changes no `packages/*` source, so `dist` stays
  * valid.
  *
  * @module
@@ -62,8 +63,8 @@ import { createSignalEmulator, type SignalEmulator } from "../emulators/signal/s
 import type { ChannelEmulator } from "./channel-emulator.js";
 import type { HttpBackend } from "./backends/http-backend.js";
 import { registerControlApi, type ControlClient } from "./control-api.js";
-// `RigHandle.waitForReply` is the GENERIC round-trip driver surface (Phase 209
-// channel #2 reuses it), so it surfaces the channel-agnostic outbound subset
+// `RigHandle.waitForReply` is the GENERIC round-trip driver surface (channel #2
+// reuses it), so it surfaces the channel-agnostic outbound subset
 // lifted to harness/ (the foundation-fix, CHAN2-02) — NOT the telegram superset.
 // It delegates to the generic control client, which returns this same subset.
 import type { RecordedOutbound } from "./recorded-outbound.js";
@@ -76,7 +77,7 @@ import type { RecordedOutbound } from "./recorded-outbound.js";
 // cannot be reconstructed by hand — so a relative `dist/` import is the sanctioned
 // escape hatch (the SAME staleness contract as the alias: `pnpm build` first). This
 // keeps the SSRF allowance entirely test-scoped — ZERO `packages/*/src/**` change
-// (no barrel edit, no resolver/validateUrl edit). See 207-05-PLAN.md SEC-01 / I1.
+// (no barrel edit, no resolver/validateUrl edit).
 import { setupMedia, type MediaResult } from "../../../packages/daemon/dist/wiring/index.js";
 import { fetchPinned } from "../../../packages/skills/dist/tools/integrations/pinned-fetch.js";
 import {
@@ -88,7 +89,7 @@ import {
 } from "./chanlive-handle.js";
 import { createRigController, type RigController } from "./rig-control.js";
 // `buildConfigYaml` + its constants live in their OWN `@comis/*`-free module so
-// the DETACHED-subprocess rig (`rig-daemon.ts`, Plan 208-08) can import the SAME
+// the DETACHED-subprocess rig (`rig-daemon.ts`) can import the SAME
 // config writer under a bare `tsx` (where `rig.ts`'s `@comis/core` import does not
 // resolve). Re-export `buildConfigYaml` below so `rig.ts`'s public surface (and
 // `rig.test.ts`) is unchanged.
@@ -104,7 +105,7 @@ export { buildConfigYaml, buildSignalConfigYaml } from "./rig-config.js";
 
 /**
  * The FIXED test chat id the round-trip injects into. A fabricated id far from
- * any real operator chat (T-204-15 / I6) — the throwaway daemon never touches a
+ * any real operator chat — the throwaway daemon never touches a
  * real Telegram account, but a fixed, unmistakable id keeps the oracle clear.
  */
 const DEFAULT_CHAT_ID = 424242;
@@ -116,12 +117,12 @@ const DEFAULT_FROM_USER_ID = 100;
  * The body-size cap the loopback SSRF fetcher enforces (MEDIA-02, a second-line
  * guard behind the resolver's pre-download `file_size > maxBytes` check). 50 MiB —
  * generous enough for any driver-injected fixture, far below an OOM risk; the
- * emulator only ever serves loopback fixtures the driver itself supplied (T-207-13).
+ * emulator only ever serves loopback fixtures the driver itself supplied.
  */
 const RIG_MEDIA_MAX_BYTES = 50 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
-// CHAN2-01 + CHAN2-02 (Phase 209) — the channel→{emulator-factory, config-writer}
+// CHAN2-01 + CHAN2-02 — the channel→{emulator-factory, config-writer}
 // dispatch MAP. THE foundation-fix: the telegram-first rig hard-coded the channel
 // (a `"telegram"` literal type), THREW on any other channel, hard-constructed
 // `createTgEmulator`, and hard-wrote `buildConfigYaml`. This map IS the
@@ -134,7 +135,7 @@ const RIG_MEDIA_MAX_BYTES = 50 * 1024 * 1024;
 // cleanup, `rebindDaemonHandle` — is channel-agnostic and reused UNCHANGED.
 // ---------------------------------------------------------------------------
 
-/** The channels the rig can emulate. Telegram (204/205) + Signal (209). */
+/** The channels the rig can emulate. Telegram + Signal. */
 export type RigChannel = "telegram" | "signal";
 
 /**
@@ -167,9 +168,9 @@ export interface ChannelRigEntry {
  * registration point). The `signal:` entry is the ONE-LINE registration
  * (CHAN2-01): `createSignalEmulator` + `buildSignalConfigYaml`. The `telegram:`
  * entry MUST produce the byte-identical `createTgEmulator` + `buildConfigYaml`
- * output (the public surface is inviolate, 205-04).
+ * output (the public surface is inviolate).
  *
- * EXPORTED so the Task-2 dispatch tests assert the registration + the per-channel
+ * EXPORTED so the dispatch tests assert the registration + the per-channel
  * factory/writer wiring deterministically (no daemon).
  */
 export const RIG_CHANNELS: Record<RigChannel, ChannelRigEntry> = {
@@ -199,10 +200,10 @@ export const RIG_CHANNELS: Record<RigChannel, ChannelRigEntry> = {
  * gets a thin client backed by the emulator's OWN inject/outbound verbs for the
  * round-trip (`injectMessage`/`waitForReply`), with the Telegram-only verbs
  * (media/location/callback/edit/fault) throwing an honest `unsupported_on_channel`
- * rather than a silent no-op (§3A.4 / I5).
+ * rather than a silent no-op.
  *
- * The Signal round-trip wiring is exercised by the 209-06/07 scenario; this plan
- * proves the DISPATCH (a Signal rig boots + the seam wires). The Signal control
+ * The Signal round-trip wiring is exercised by the COMIS_LIVE Stage-C scenario; these
+ * tests prove the DISPATCH (a Signal rig boots + the seam wires). The Signal control
  * client keys on a fixed Signal chat string (the rig's `chat`), so `send` injects
  * an inbound the booted daemon's real Signal adapter pulls from the SSE stream.
  */
@@ -240,16 +241,16 @@ export const SIGNAL_RIG_CHAT = "+15555550199";
  * so the numeric `chatId` the control API passes is mapped to that one Signal
  * string; `from.firstName` carries the Signal sender identifier.
  *
- * Exported (test visibility) so the 209-07 foundation-proof scenario can drive
+ * Exported (test visibility) so the Signal foundation-proof scenario can drive
  * the REAL adapter inject path deterministically (the Stage-C round-trip
  * keystone) without booting a daemon.
  *
  * The CORE round-trip verbs (`injectMessage`/`injectReaction`/`outbound`) delegate
  * to the emulator's own string-keyed verbs. The Telegram-ONLY verbs
  * (`injectMedia`/`injectLocation`/`injectCallback`/`injectEdit`/`fail`/
- * `clearFaults`) throw an honest `unsupported_on_channel` — NEVER a silent no-op
- * (§3A.4 / I5). Signal's media/edit/fault round-trips are NOT part of this
- * foundation-fix; the 209-06/07 scenario exercises the Signal send/react path.
+ * `clearFaults`) throw an honest `unsupported_on_channel` — NEVER a silent no-op.
+ * Signal's media/edit/fault round-trips are NOT part of this
+ * foundation-fix; the COMIS_LIVE Stage-C scenario exercises the Signal send/react path.
  */
 export function adaptSignalToControlEmulator(
   emulator: SignalEmulator,
@@ -268,7 +269,7 @@ export function adaptSignalToControlEmulator(
       // reply lands under the SAME key `outbound(SIGNAL_RIG_CHAT)`/`waitForReply`
       // poll — else the reply lands under the all-zero placeholder uuid sourceUuid
       // would otherwise default to, and waitForReply times out (the round-trip
-      // keystone — 209-07). `from.firstName` rides as the display name.
+      // keystone). `from.firstName` rides as the display name.
       return emulator.injectMessage(SIGNAL_RIG_CHAT, from.firstName, text, {
         sourceUuid: SIGNAL_RIG_CHAT,
         sourceName: from.firstName,
@@ -292,7 +293,7 @@ export function adaptSignalToControlEmulator(
 
 /** Options for {@link startRig}. */
 export interface StartRigOptions {
-  /** The channel to emulate. Telegram (204/205) or Signal (209). */
+  /** The channel to emulate. Telegram or Signal. */
   readonly channel: RigChannel;
   /**
    * The model the booted daemon's agent runs. `"keyless"` → a keyless `ollama`
@@ -300,10 +301,10 @@ export interface StartRigOptions {
    * other string is treated as the provider/model id verbatim (operator/live.env).
    */
   readonly model: "keyless" | string;
-  /** Reserved for a future group/forum round-trip (Phase 206+); unused in 204. */
+  /** Reserved for a future group/forum round-trip; currently unused. */
   readonly group?: boolean;
   /**
-   * MEDIA-02 / SEC-01 (Plan 207-05): opt into the test-scoped SSRF-loopback
+   * MEDIA-02 / SEC-01: opt into the test-scoped SSRF-loopback
    * allowance — the daemon boots with a {@link buildLoopbackMediaOverride}
    * `setupMedia` override so the real SSRF-guarded byte download reaches the
    * loopback emulator (the Stage-C byte-download leg). DEFAULT falsy → NO
@@ -326,7 +327,7 @@ export interface RigHandle<E extends RigEmulator = TgEmulator> {
   /**
    * The running channel emulator (the channel oracle: `outbound()` etc.).
    * Generic over the emulator type, defaulting to `TgEmulator` so every existing
-   * Telegram caller keeps the full Telegram surface unchanged (205-04); a
+   * Telegram caller keeps the full Telegram surface unchanged; a
    * `{channel:"signal"}` rig is `RigHandle<SignalEmulator>`.
    */
   readonly emulator: E;
@@ -347,7 +348,7 @@ export interface RigHandle<E extends RigEmulator = TgEmulator> {
   /**
    * Block up to `waitMs` for a NEW bot outbound after `afterMessageId`. Returns
    * the first new `RecordedOutbound`, or `undefined` on timeout — an HONEST
-   * no-reply, NEVER a fabricated success (I5). The agent-authored reply needs a
+   * no-reply, NEVER a fabricated success. The agent-authored reply needs a
    * reachable model (the COMIS_LIVE leg).
    */
   waitForReply(afterMessageId: number, waitMs?: number): Promise<RecordedOutbound | undefined>;
@@ -377,7 +378,7 @@ export interface BuiltRig<E extends RigEmulator = TgEmulator> extends RigHandle<
   readonly configPath: string;
   /** The gateway port the daemon binds (kept fixed across `restart()` so the handle URL is stable). */
   readonly gatewayPort: number;
-  /** The live test-daemon handle (its `cleanup()` clears the `activeHandle` double-start guard — Pitfall 1). */
+  /** The live test-daemon handle (its `cleanup()` clears the `activeHandle` double-start guard). */
   readonly daemonHandle: TestDaemonHandle;
   /** `<dataDir>/<memory.dbPath>` — the isolated `memory.db` `resetDeep()` replaces + the oracles read. */
   readonly memoryDbPath: string;
@@ -412,9 +413,9 @@ function pickFreePort(): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
-// MEDIA-02 / SEC-01 — the test-scoped SSRF-loopback allowance (Plan 207-05).
+// MEDIA-02 / SEC-01 — the test-scoped SSRF-loopback allowance.
 //
-// The Telegram byte-download has TWO INDEPENDENT blocks (Pitfall 1), and BOTH
+// The Telegram byte-download has TWO INDEPENDENT blocks, and BOTH
 // must be addressed for the real SSRF-guarded download to reach the loopback
 // emulator:
 //   #1 the resolver's download URL is HARDCODED to
@@ -424,7 +425,7 @@ function pickFreePort(): Promise<number> {
 //   #2 the injected `ssrfFetcher` runs production `validateUrl` (ssrf-fetcher.ts)
 //      whose `BLOCKED_RANGES` includes "loopback" → a 127.0.0.1 download is denied.
 //
-// The override is a THIN wrapper (decision A2): call the REAL `setupMedia(deps)`,
+// The override is a THIN wrapper: call the REAL `setupMedia(deps)`,
 // then return `{ ...result, ssrfFetcher: <loopbackFetcher> }`. `ssrfFetcher` is the
 // ONLY download dependency the Telegram resolver receives
 // (setup-channels-media.ts:221 `tgPlugin.createResolver({ ssrfFetcher })`), so the
@@ -434,12 +435,12 @@ function pickFreePort(): Promise<number> {
 // ALLOWS loopback while KEEPING the cloud-metadata DENY (#2) — and downloads via
 // the SAME DNS-pinned `fetchPinned` production uses.
 //
-// SECURITY (SEC-01 / I1 / T-207-11): this is TEST-SCOPED. Production `validateUrl`,
+// SECURITY (SEC-01): this is TEST-SCOPED. Production `validateUrl`,
 // `setupMedia`, and the hardcoded resolver URL are NOT edited (the hardcoded URL is
 // correct for production where Telegram serves from api.telegram.org). The override
 // is OPT-IN (`mediaLoopbackOverride`), OFF by default, and the loopback fetcher
 // allows loopback ONLY — a non-loopback / non-allowlisted host (incl. a cloud-
-// metadata IP) STILL fails (T-207-12). The Plan-05 rig.test.ts no-widening assertion
+// metadata IP) STILL fails. The rig.test.ts no-widening assertion
 // HARD-proves production `validateUrl(loopbackUrl)` still returns `!ok`.
 // ---------------------------------------------------------------------------
 
@@ -450,7 +451,7 @@ export interface LoopbackMediaOverrideOptions {
    * `new URL(apiRoot).host`). Block #1 rewrites the hardcoded
    * `https://api.telegram.org` origin → `http://<emulatorHost>`; block #2 derives
    * the allowlist HOSTNAME (the bare `127.0.0.1`, matched against the URL's literal
-   * `hostname` per validateLocalServerUrl's IN-01 contract — though a loopback IP
+   * `hostname` per validateLocalServerUrl's hostname contract — though a loopback IP
    * already passes via the isLoopback branch, so the allowlist is belt-and-braces).
    */
   readonly emulatorHost: string;
@@ -477,16 +478,16 @@ const TELEGRAM_FILE_ORIGIN = "https://api.telegram.org";
  * A URL whose host is NOT `api.telegram.org` is left un-rewritten and then must
  * pass `validateLocalServerUrl` on its OWN merits — so a public/private host that
  * is neither loopback nor the allowlisted emulator host STILL fails (loopback-only,
- * not an arbitrary-URL hole — T-207-12).
+ * not an arbitrary-URL hole).
  *
- * EXPORTED so the Plan-05 rig.test.ts can drive the fetcher directly (the rewrite +
+ * EXPORTED so rig.test.ts can drive the fetcher directly (the rewrite +
  * validate + loopback-download proof) without a daemon.
  */
 export function buildLoopbackSsrfFetcher(
   opts: LoopbackMediaOverrideOptions,
 ): MediaResult["ssrfFetcher"] {
   const { emulatorHost, maxBytes } = opts;
-  // The allowlist matches the URL's literal `hostname` (IN-01), so strip the port.
+  // The allowlist matches the URL's literal `hostname`, so strip the port.
   const allowedHostname = emulatorHost.split(":")[0] ?? emulatorHost;
   return {
     async fetch(url: string) {
@@ -636,7 +637,7 @@ export async function buildRig(opts: StartRigOptions): Promise<BuiltRig<RigEmula
   const priorDataDir = process.env["COMIS_DATA_DIR"];
   process.env["COMIS_DATA_DIR"] = dataDir;
 
-  // 5. Boot the daemon (REUSED directly — A4: inherits process.exit→throw, the
+  // 5. Boot the daemon (REUSED directly — inherits process.exit→throw, the
   //    /health poll, the double-start guard, and per-fork isolation).
   //
   //    MEDIA-02 / SEC-01: when `mediaLoopbackOverride` is set, thread the
@@ -754,11 +755,11 @@ export async function startRig(opts: StartRigOptions): Promise<RigHandle<RigEmul
 
 /** Options for {@link startStandaloneRig}. */
 export interface StandaloneRigOptions {
-  /** The channel to emulate. Telegram (204/205) or Signal (209). */
+  /** The channel to emulate. Telegram or Signal. */
   readonly channel: RigChannel;
   /** The model the booted daemon's agent runs (`"keyless"` → keyless ollama; else the provider/model id). */
   readonly model: "keyless" | string;
-  /** Reserved for a future group/forum rig (Phase 206+). */
+  /** Reserved for a future group/forum rig. */
   readonly group?: boolean;
   /**
    * The handle-file base dir (default `~/.comis-chanlive`). Injected by the unit
@@ -766,13 +767,13 @@ export interface StandaloneRigOptions {
    */
   readonly baseDir?: string;
   /**
-   * DETACHED mode (Plan 208-08, Option A — the cold-shell stretch). When `true`,
+   * DETACHED mode (the cold-shell variant). When `true`,
    * spawn a DETACHED subprocess rig (`rig-daemon.ts`) that OUTLIVES this process,
    * recording a handle with a real `pid` + a dedicated rig-control HTTP
    * `rigControlEndpoint` (≠ gateway) — so a SEPARATE-process `tg send`/`tg down`
    * can drive it. DEFAULT falsy → the in-process rig (the daemon dies with this
    * process; `rigControlEndpoint` = the gateway anchor). The in-process spine is
-   * the certified autonomy path; detached is the optional headline stretch.
+   * the certified autonomy path; detached is optional.
    */
   readonly detached?: boolean;
 }
@@ -782,17 +783,17 @@ export interface StandaloneRigOptions {
  *
  * - `reused: true` → a HEALTHY recorded rig was discovered; `handle` is its
  *   recorded handle, and there is NO `controller`/`cleanup` (we do NOT own a rig
- *   we merely reused — tearing it down is the owner's job, T-205-12).
+ *   we merely reused — tearing it down is the owner's job).
  * - `reused: false` → a fresh rig was SPAWNED; `controller` drives its lifecycle
  *   (restart / reset-deep) and `cleanup()` tears the rig down AND removes the
  *   handle file.
  *
- * W1 HONESTY (cross-process scope): `controller` is an IN-PROCESS owner — it dies
+ * HONESTY (cross-process scope): `controller` is an IN-PROCESS owner — it dies
  * with the launching process. The recorded `handle.rigControlEndpoint` is set to
  * the gateway URL as the discover-or-spawn ANCHOR (the health signal a later
  * `tg up` probes), NOT a cross-process rig-control HTTP surface. A true cold-shell
  * `tg restart` (a SEPARATE process driving the rig) needs a DETACHED subprocess
- * rig, which is NOT built here (deferred to Phase 208). This handle never claims
+ * rig, which is NOT built here. This handle never claims
  * otherwise: it only advertises the gateway anchor it can honestly serve.
  */
 export interface StandaloneRig {
@@ -807,8 +808,8 @@ export interface StandaloneRig {
 }
 
 /**
- * The result of {@link spawnDetachedRig} — a live DETACHED-subprocess rig (Plan
- * 208-08, Option A). Unlike {@link BuiltRig} (an in-process rig), this carries a
+ * The result of {@link spawnDetachedRig} — a live DETACHED-subprocess rig (the
+ * cold-shell variant). Unlike {@link BuiltRig} (an in-process rig), this carries a
  * cross-process `pid` + the dedicated rig-control HTTP `rigControlEndpoint`; the
  * daemon lives in a SEPARATE process tree (the subprocess + its daemon grandchild)
  * that OUTLIVES the launcher. `cleanup()` SIGTERMs the subprocess (which reaps its
@@ -856,7 +857,7 @@ export interface StandaloneRigDeps {
  *
  * Discover: `readHandle(channel)` → if present AND `probeFn(gatewayUrl)` is true,
  * return `{ reused: true, handle }` WITHOUT spawning (never a second daemon over a
- * healthy one — T-205-12). Spawn: `buildRig(opts)` → assemble the
+ * healthy one). Spawn: `buildRig(opts)` → assemble the
  * {@link ChanliveHandle} from its internals → `writeHandle` (`0600`) → wrap a
  * {@link createRigController} → return `{ reused: false, handle, controller,
  * cleanup }` where `cleanup` tears the rig down AND removes the handle file.
@@ -875,7 +876,7 @@ export async function startStandaloneRig(
     return { reused: true, handle: existing };
   }
 
-  // DETACHED SPAWN (Plan 208-08, Option A) — boot a SEPARATE-process rig that
+  // DETACHED SPAWN — boot a SEPARATE-process rig that
   // OUTLIVES this launcher, record a handle with a real pid + the dedicated
   // rig-control HTTP endpoint (≠ gateway). The detached subprocess writes its OWN
   // handle (it knows its pid + rig-control port), so here we just project the
@@ -917,10 +918,10 @@ export async function startStandaloneRig(
     ...(opts.group !== undefined ? { group: opts.group } : {}),
   });
 
-  // Assemble the handle from the spawned rig's internals. W1: rigControlEndpoint =
+  // Assemble the handle from the spawned rig's internals. rigControlEndpoint =
   // the gateway URL (the discover-or-spawn anchor — what a later `tg up` probes),
   // NOT a cross-process rig-control HTTP surface (the in-proc controller can't be
-  // driven cross-process; a detached-subprocess rig is Phase 208).
+  // driven cross-process; that needs the detached-subprocess rig).
   const handle: ChanliveHandle = {
     channel: opts.channel,
     controlEndpoint: built.controlEndpoint,
@@ -935,7 +936,7 @@ export async function startStandaloneRig(
 
   // Wrap the lifecycle controller (restart / reset-deep / reconfigure).
   // onDaemonHandle keeps the rig's cleanup() pointed at the post-restart daemon
-  // (never a stale one). configYamlFor wires AUTO-04's Track-K model sweep: it
+  // (never a stale one). configYamlFor wires AUTO-04's model sweep: it
   // closes over the CHANNEL's config writer + the rig's apiRoot (controlEndpoint) +
   // gatewayPort so reconfigure can rewrite a new `agents.default.model` (the only
   // --set key the sweep needs) while keeping the exact channel schema keys + the
@@ -982,7 +983,7 @@ export async function startStandaloneRig(
 }
 
 // ---------------------------------------------------------------------------
-// DETACHED-subprocess rig (Plan 208-08, Option A — the cold-shell stretch).
+// DETACHED-subprocess rig (the cold-shell variant).
 // ---------------------------------------------------------------------------
 
 /** The `rig-daemon.ts` entrypoint, resolved relative to THIS file. */

@@ -30,10 +30,9 @@ export {
   type TerminalEvictedEvent,
 } from "./terminal-tools.js";
 
-// 124-06: terminal_session_status is now a REAL, classifier-backed, owner-scoped tool
-// (the lone P0 not_implemented stub is closed). Its body lives in terminal-status-tool.ts;
-// terminal-tools-stubs.ts re-exports it so this import path is unchanged. Still never-export
-// (the tool-metadata-registry entry is unchanged — default-deny preserved).
+// terminal_session_status is a REAL, classifier-backed, owner-scoped tool. Its body lives in
+// terminal-status-tool.ts; terminal-tools-stubs.ts re-exports it so this import path is unchanged.
+// Still never-export (the tool-metadata-registry entry is unchanged — default-deny preserved).
 export { createTerminalSessionStatusTool } from "./terminal-tools-stubs.js";
 export type { TerminalStatusView } from "./terminal-session-registry.js";
 
@@ -53,10 +52,10 @@ export {
   type SessionOwner,
 } from "./terminal-session-registry.js";
 
-// Deterministic unattended honest-fail backstop (webhook-claude-cli-tdd-20260701): reap a turn's
-// LIVE never-tasked drives at an unattended (webhook/cron) turn-end so the origin records an honest
-// failure instead of a silent success with a leaked idle drive (the model-independent floor beneath
-// the wait-tool `WAIT_TASK_NOT_DELIVERED_NOTE` best-effort recovery).
+// Deterministic unattended honest-fail backstop: reap a turn's LIVE never-tasked drives at an
+// unattended (webhook/cron) turn-end so the origin records an honest failure instead of a silent
+// success with a leaked idle drive (the model-independent floor beneath the wait-tool
+// `WAIT_TASK_NOT_DELIVERED_NOTE` best-effort recovery).
 export { reapNeverTaskedDrives, type ReapUntaskedRegistry } from "./terminal-reap-untasked.js";
 
 // The production worker-spawn posture helper (extracted from the registry to keep it
@@ -67,12 +66,12 @@ export {
   WORKER_PERMISSION_ARGS,
 } from "./terminal-worker-launch.js";
 
-// DUR-01 socket-path helpers (PURE) — re-exported so the daemon's recover-on-boot
+// Socket-path helpers (PURE) — re-exported so the daemon's recover-on-boot
 // liveness probe derives the SAME `<dataDir>/terminal-worker/tmux.sock` the worker binds.
 // Importing for the re-export runs no side effect: worker-main's `main()` is `isEntryScript`-guarded.
 export { terminalWorkerDir, resolveTmuxSocketPath } from "./terminal-worker-main.js";
 
-// The no-secret host-allowlist egress proxy (EgressControlPort impl, spec §3.5),
+// The no-secret host-allowlist egress proxy (EgressControlPort impl),
 // moved here from @comis/daemon so the standalone worker process can construct
 // its OWN egress for `network: listed-hosts` (the worker runs outside the jail
 // and has network; the daemon also constructs one for the in-process test path).
@@ -143,14 +142,14 @@ export {
   type TmuxBackendLike,
 } from "./terminal-worker-entry.js";
 
-// P5 124-08 (OPS-05, spec §4.6): the tmux worker backend — the THIRD loadBackend option
-// (node-pty | pipe | tmux) for milestone-length runs. tmux owns the PTY in a
-// DETERMINISTICALLY-named session (comis-<sessionId>) so the server outlives the worker and
-// a restart RE-ATTACHES (has-session → read the existing pane) rather than re-creating
-// (RESEARCH Pitfall 6). The daemon (124-09) binds the resolved tmux path + has-session probe
-// into the loadTmux seam. Pure command builders + the FakePtyLike-shaped factory (a node-pty
-// `tmux attach` that streams + drives); dependency-free (the one-shot runner + attach-pty
-// spawner are injected). The live drive/survival test is Linux-gated.
+// The tmux worker backend — the THIRD loadBackend option (node-pty | pipe | tmux) for
+// long-running sessions. tmux owns the PTY in a DETERMINISTICALLY-named session
+// (comis-<sessionId>) so the server outlives the worker and a restart RE-ATTACHES
+// (has-session → read the existing pane) rather than re-creating. The daemon binds the
+// resolved tmux path + has-session probe into the loadTmux seam. Pure command builders +
+// the FakePtyLike-shaped factory (a node-pty `tmux attach` that streams + drives);
+// dependency-free (the one-shot runner + attach-pty spawner are injected). The live
+// drive/survival test is Linux-gated.
 export {
   createTmuxBackend,
   tmuxSessionName,
@@ -162,10 +161,9 @@ export {
   type TmuxBackendDeps,
 } from "./terminal-tmux-backend.js";
 
-// P5 124-03 (spec §4.3, the #1 de-risk): the pure state classifier + the
-// load-bearing cursor-parked gate. The worker (124-05/06) drives classifyFrame each
-// settled frame; the session_status tool surfaces its state. Pure + infra-free + no
-// raw clock — value-imports only node builtins + the render snapshot type.
+// The pure state classifier + the load-bearing cursor-parked gate. The worker drives
+// classifyFrame each settled frame; the session_status tool surfaces its state. Pure +
+// infra-free + no raw clock — value-imports only node builtins + the render snapshot type.
 export {
   classifyFrame,
   isCursorParked,
@@ -175,21 +173,21 @@ export {
   type Classification,
 } from "./terminal-classifier.js";
 
-// P5 124-04 (spec §4.5/§4.6, SEC-12): the pure safe-only auto-answer policy. The woken
-// turn (124-09) calls decideAutoAnswer on a settled prompt — a safe-pattern match sends
-// a canned keystroke via the P4 send-guards; everything else (incl. auth/destructive/
-// approval, escalate-always) escalates with no keystroke. Operator-dialable, never
-// model-dialable; pure + infra-free (only @comis/core's scrubSecretsFromText).
+// The pure safe-only auto-answer policy. The woken turn calls decideAutoAnswer on a settled
+// prompt — a safe-pattern match sends a canned keystroke via the send-guards; everything else
+// (incl. auth/destructive/approval, escalate-always) escalates with no keystroke.
+// Operator-dialable, never model-dialable; pure + infra-free (only @comis/core's
+// scrubSecretsFromText).
 export {
   decideAutoAnswer,
   type AutoAnswerMode,
   type AutoAnswerDecision,
 } from "./terminal-auto-answer.js";
 
-// v2.26 (Terminal Platform Profiles): the read-side per-platform perception/render profile
-// registry. The daemon woken turn resolves a session's profile by its operator-declared allowId
-// to feed `decideAutoAnswer` the profile's dialogs (DIALOG-01); the worker/classifier consume the
-// render transform + perception package-internally. Selection is by allowId only (§5/INV-3).
+// Terminal Platform Profiles: the read-side per-platform perception/render profile registry.
+// The daemon woken turn resolves a session's profile by its operator-declared allowId to feed
+// `decideAutoAnswer` the profile's dialogs; the worker/classifier consume the render transform +
+// perception package-internally. Selection is by allowId only.
 export {
   getPlatformProfile,
   type TerminalPlatformProfile,
@@ -198,21 +196,20 @@ export {
   type KeySpec,
 } from "./platforms/index.js";
 
-// P5 124-04 (spec §4.6, SEC-11): the normalized region-scoped loop guard. The woken
-// turn (124-09) calls observe() on a settled prompt region — a repeated NORMALIZED
-// prompt (spinner/timestamp/progress-only diff) escalates (terminal:escalated, reason
-// loop_detected) and COMPOSES with the P4 maxInteractions EVICT. Closure-local ring,
-// injected clock, never-throw typed result; infra-free (only node:crypto).
+// The normalized region-scoped loop guard. The woken turn calls observe() on a settled prompt
+// region — a repeated NORMALIZED prompt (spinner/timestamp/progress-only diff) escalates
+// (terminal:escalated, reason loop_detected) and COMPOSES with the maxInteractions EVICT.
+// Closure-local ring, injected clock, never-throw typed result; infra-free (only node:crypto).
 export {
   createLoopGuard,
   type LoopGuard,
   type LoopGuardDeps,
 } from "./terminal-loop-guard.js";
 
-// 164-01 (DRIVE-01, design §7.1.6): the pure bounded content-free drive-state journal —
-// a promoted drive's CROSS-WAKE MEMORY. The daemon woken-turn driver (164-06) reads+updates
-// it per wake via the closure-local Map<sessionId, DriveJournal> holder in setupTerminalWake.
-// Pure shape + (de)serialize/append/oldest-trim; content-free (I3), bounded (I7).
+// The pure bounded content-free drive-state journal — a promoted drive's CROSS-WAKE MEMORY.
+// The daemon woken-turn driver reads+updates it per wake via the closure-local
+// Map<sessionId, DriveJournal> holder in setupTerminalWake. Pure shape +
+// (de)serialize/append/oldest-trim; content-free and bounded.
 export {
   emptyJournal,
   appendAnswered,
@@ -226,11 +223,10 @@ export {
   type DriveJournal,
 } from "./terminal-drive-journal.js";
 
-// 164-03 (READ-01, design §7.1 OD-3): the pure bounded digest/diff read selector + the
-// content-free one-line screen digest. The daemon woken-turn read (164-06) applies
-// boundedReadDigest to the returned view + threads screenDigestLine into the journal's
-// lastScreenDigest (run through scrubSecretsFromText); the read tool delegates to
-// boundedReadDigest (digest default). Pure, byte-capped (I7), never throws.
+// The pure bounded digest/diff read selector + the content-free one-line screen digest.
+// The daemon woken-turn read applies boundedReadDigest to the returned view + threads
+// screenDigestLine into the journal's lastScreenDigest (run through scrubSecretsFromText);
+// the read tool delegates to boundedReadDigest (digest default). Pure, byte-capped, never throws.
 export {
   boundedReadDigest,
   screenDigestLine,
@@ -239,11 +235,11 @@ export {
   type ReadDigest,
 } from "./terminal-read-digest.js";
 
-// 165-01 (DUR-01): the pure re-attach DECISION + the persisted durable session IDENTITY.
-// The registry's recover-on-boot (165-06) consumes reattachDecision; the daemon (165-07)
-// (de)serializes descriptors via serialize/deserialize for the durable descriptor store.
-// Pure, total, infra-free (injected has-session probe); the descriptor (de)serialize rejects
-// a malformed/partial identity to undefined (corrupt-skip, never partial-trust authorization).
+// The pure re-attach DECISION + the persisted durable session IDENTITY. The registry's
+// recover-on-boot consumes reattachDecision; the daemon (de)serializes descriptors via
+// serialize/deserialize for the durable descriptor store. Pure, total, infra-free (injected
+// has-session probe); the descriptor (de)serialize rejects a malformed/partial identity to
+// undefined (corrupt-skip, never partial-trust authorization).
 export {
   reattachDecision,
   serializeDescriptor,
@@ -252,11 +248,11 @@ export {
   type ReattachDecision,
 } from "./terminal-reattach-match.js";
 
-// 165-06 (DUR-01): the recover-on-boot SCAN orchestrator + the injected descriptor-store
-// port + the rehydrate/persist/durable-lost helpers the registry delegates to (kept here so
-// the 800-line registry stays lean). The daemon (165-07) implements SessionDescriptorStorePort
-// as the fs-safe durable descriptor store + injects it onto the registry deps. Pure via the
-// injected port; consumes 165-01's reattachDecision; the bulk lives here, not the registry.
+// The recover-on-boot SCAN orchestrator + the injected descriptor-store port + the
+// rehydrate/persist/durable-lost helpers the registry delegates to (kept here so the
+// 800-line registry stays lean). The daemon implements SessionDescriptorStorePort as the
+// fs-safe durable descriptor store + injects it onto the registry deps. Pure via the injected
+// port; consumes reattachDecision; the bulk lives here, not the registry.
 export {
   recoverSessionDescriptors,
   rehydrateHandleFromDescriptor,
@@ -270,19 +266,18 @@ export {
   type TerminalDurabilityDeps,
 } from "./terminal-session-reattach.js";
 
-// 165-02 (LIVE-01 / ENDURE-01): the pure busy-vs-hung predicate the LIVE-01 backstop
-// (165-07) turns into a synthesized `stuck` ONLY on `"hung"` + the ENDURE-01 reaper idle
-// exclusion consumes on `"busy"` — ONE shared definition of "alive and making progress".
-// Promoted to the barrel here (165-07 is its first cross-package consumer).
+// The pure busy-vs-hung predicate: the liveness backstop turns it into a synthesized `stuck`
+// ONLY on `"hung"`, and the reaper idle exclusion consumes it on `"busy"` — ONE shared
+// definition of "alive and making progress". Promoted to the barrel here as its first
+// cross-package consumer.
 export { busyOrHung, type BusySignal, type BusyVerdict } from "./terminal-busy-predicate.js";
 
-// 165-03 (ENDURE-01): the pure spend-ceiling check over the drive journal's run-total cost
-// — the 165-07 wake-turn loop escalates/stops on a breach (never a silent overspend).
+// The pure spend-ceiling check over the drive journal's run-total cost — the wake-turn loop
+// escalates/stops on a breach (never a silent overspend).
 export { checkSpendCeiling, type SpendBreach } from "./terminal-spend-ceiling.js";
 
-// 166-01 (NOTIFY-01): the pure three-way wake decision + the I9-safe terminal-outcome map
-// (done/needs-you/failed — the failed outcome deferred from Phase 165 lands here). The
-// daemon wake-notify wiring (plan 03) is their first consumer.
+// The pure three-way wake decision + the terminal-outcome map (done/needs-you/failed). The
+// daemon wake-notify wiring is their first consumer.
 export {
   decideWakeAction,
   mapTerminalOutcome,
@@ -290,20 +285,19 @@ export {
   type EscalationReason,
 } from "./terminal-drive-outcome.js";
 
-// 166-01 (NOTIFY-01): the pure drive.notify gate — needs-you ALWAYS fires (I4); done/failed
-// suppressed only under "none". Consumed by the plan-03 outcome-notify wiring.
+// The pure drive.notify gate — needs-you ALWAYS fires; done/failed suppressed only under
+// "none". Consumed by the outcome-notify wiring.
 export { shouldNotifyOutcome, type NotifyPolicy } from "./terminal-notify-policy.js";
 
-// 166-02 (NOTIFY-02): the pure content-free heartbeat one-liner from the drive journal (I3).
-// The plan-03 heartbeat cadence timer notifies it for each promoted drive.
+// The pure content-free heartbeat one-liner from the drive journal. The heartbeat cadence
+// timer notifies it for each promoted drive.
 export { heartbeatLine } from "./terminal-heartbeat-digest.js";
 
-// P5 124-05 (spec §2.3, TR-11): the transition-only in-worker attention emitter — the
-// WORKER half of the no-poll mechanism. The worker (124-05 Task 2) calls observe() with
-// each settled frame's classification; the emitter writes a redaction-safe
-// TerminalEventFrame to the injected fd3-writer ONLY on a state TRANSITION (edge-, not
-// level-triggered) — NO timer, NO clock. Closure-local last-state; infra-free (only the
-// terminal-ipc framer).
+// The transition-only in-worker attention emitter — the WORKER half of the no-poll mechanism.
+// The worker calls observe() with each settled frame's classification; the emitter writes a
+// redaction-safe TerminalEventFrame to the injected fd3-writer ONLY on a state TRANSITION
+// (edge-, not level-triggered) — NO timer, NO clock. Closure-local last-state; infra-free
+// (only the terminal-ipc framer).
 export {
   createAttentionEmitter,
   type AttentionEmitter,

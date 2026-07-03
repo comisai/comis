@@ -10,9 +10,9 @@ Point an agent at `self-driving/` with **one** of these as the target. The agent
 1. **A use case** — a sentence. *"Test the orchestrate/DAG pipeline."* · *"Test memory recall across sessions."* · *"Test STT/TTS round-trip."* · *"Test the security gauntlet."*
    For anything non-trivial, drop a `<name>.md` here (copy `EXAMPLE-nvda-dag.md`) so the scenario + must-pass predicates are pinned.
 
-2. **A milestone** — *"Test v2.29 M1."* · *"Test v2.28 channel-emulation."* The agent locates the roadmap/plan (`grep -rn "<version>" .planning/design .planning/phases`) and tests every requirement + success-criterion.
+2. **A milestone** — a named release milestone. The agent locates its roadmap/plan and tests every requirement + success-criterion.
 
-3. **A spec / design document** — a path: *`.planning/design/SECURE-AGENT-AUTONOMY-M1-platform-foundation.md`*. The agent reads it and tests every implementation, success-criterion, security invariant, and config knob (verifying each claim at HEAD first).
+3. **A spec / design document** — a path to a design or spec document. The agent reads it and tests every implementation, success-criterion, security invariant, and config knob (verifying each claim at HEAD first).
 
 4. **A user story** — *"As a trader, I want four analysts to debate NVDA so I get a grounded call."* The agent treats each acceptance criterion as a requirement and tests the acceptance path **plus** the alternate/error paths + edge cases the story implies (`../04-DERIVE-TESTS.md §A4`).
 

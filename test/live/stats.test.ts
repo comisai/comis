@@ -3,13 +3,13 @@
  * Stage-A unit tests for stats.ts — statistical gating module.
  *
  * Pure math tests: no filesystem, no network, no real provider calls.
- * Must run with COMIS_LIVE unset (additive test tooling, §critical_project_rules).
+ * Must run with COMIS_LIVE unset (additive test tooling).
  *
  * Note on Clopper-Pearson CI expectations: for small N=3, exact CI bounds
  * are counter-intuitive. 3/3 lower bound ~0.292 (not > 0.5) and 0/3 upper
  * bound ~0.708 (not < 0.5) — both correct given the small sample size.
- * The tests verify the statistically correct bounds (Rule 1 fix: plan spec
- * contained incorrect expectations for a well-defined mathematical function).
+ * The tests verify the statistically correct bounds, which for such a small
+ * sample differ from the intuitive expectation for this well-defined function.
  */
 import { describe, it, expect } from "vitest";
 import {

@@ -2,7 +2,7 @@
 
 Each workload here gives a Comis agent a set of **realistic, agent-callable tools** (over a stateful, seeded
 simulated world) plus a **skill** that teaches how to use them — so a live drive produces the rich,
-fabrication-free transcripts the **v2.31 reflection/learning engine** needs to learn a strategy and reuse
+fabrication-free transcripts the **reflection/learning engine** needs to learn a strategy and reuse
 it. These are the runnable companions to
 [`../targets/MEMORY-LEARNING-STRESS-CATALOG.md`](../targets/MEMORY-LEARNING-STRESS-CATALOG.md); the design
 rationale (and why MCP, not `exec`) is in [`DESIGN-DRAFT.md`](./DESIGN-DRAFT.md).
@@ -78,13 +78,13 @@ ssh root@$VPS 'printf "%s" "{\"agents\":{\"default\":{\"skills\":{\"discoveryPat
 A from-scratch memory/learning drive restarts anyway (next section), so the skill comes up with it.
 
 > **Driving ALL 14 (or several) workloads? Set EVERY sim dir in `discoveryPaths` ONCE + restart ONCE**
-> (memory-learning-stress-catalog-20260629 RUN2 cadence — far less friction than a per-workload
+> (far less friction than a per-workload
 > discoveryPath+restart). The skills are namespaced + distinctly-described, so a capable model picks the
 > right one per task; `drive-sim-workload.sh` then only swaps the MCP *server* (live, no restart) per
 > workload. Patch all 14: `{"agents":{"default":{"skills":{"discoveryPaths":["/home/comis/sim/package-delivery","/home/comis/sim/threat-hunting", … all 14 … ]}}}}`.
 
 > **Not wiping `memory.db` between workloads (accumulating tools in ONE session) is a useful STRESS** — it
-> surfaced OBS-TOOLSTATS-SENTINEL (a >64-distinct-tool `toolStats` tripped the bounding backstop's
+> surfaced a toolStats-sentinel bug (a >64-distinct-tool `toolStats` tripped the bounding backstop's
 > object-key cap → schema-invalid `explain`; since FIXED by the toolStats count-cap). But it makes per-session
 > reads noisier (the trajectory unions every workload's tools). For a CLEAN per-workload admit read, use the
 > mental_models count DELTA (before/after — `drive-sim-workload.sh` prints it) or reflect-per-workload.
@@ -93,7 +93,7 @@ A from-scratch memory/learning drive restarts anyway (next section), so the skil
 
 ## Worked end-to-end: drive ONE memory/learning test on the running daemon
 
-> **The one-command path (use this — born memory-learning-stress-catalog-20260629).** The whole per-workload
+> **The one-command path (use this).** The whole per-workload
 > ACC→REFLECT loop below is now `scripts/drive-sim-workload.sh`:
 > ```bash
 > ssh root@$VPS 'export COMIS_GATEWAY_TOKEN=<GWTOKEN> COMIS_CONFIG_PATHS=/home/comis/.comis/config.yaml; \
@@ -101,8 +101,8 @@ A from-scratch memory/learning drive restarts anyway (next section), so the skil
 > # for the REUSE/TRANSFER step, re-run on a rotated variant: … drive-sim-workload.sh threat-hunting B
 > # flaky link? wrap it: bash /root/bg.sh th 'bash /root/drive-sim-workload.sh threat-hunting'  then  bash /root/bg.sh --poll th
 > ```
-> It embeds the canonical byte-identical feeder prompt per workload, restarts-m1 (fresh per-root meter — the
-> RUN1 spurious-abort lesson), connects ONE sim server at a time, and reads the ground truth (mm delta + the
+> It embeds the canonical byte-identical feeder prompt per workload, restarts-m1 (fresh per-root meter —
+> avoids a spurious-abort), connects ONE sim server at a time, and reads the ground truth (mm delta + the
 > newest skill + a grounding grep). The manual walkthrough below is the breakdown of what it does.
 >
 > Read the per-session diagnosis with `scripts/explain.mjs <sessionKey>` (the offline IncidentReport oracle —
@@ -116,7 +116,7 @@ applies to any workload. Oracle = ground truth (`db.mjs` / `comis explain` / `sc
 and the spec [`../targets/adaptive-threat-hunting.md`](../targets/adaptive-threat-hunting.md).
 
 **0. Deploy + a true from-scratch daemon** (fresh `memory.db` so the agent starts with NOTHING learned, and
-WIPE_CRONS so exactly the 3 v2.31 learning crons re-register):
+WIPE_CRONS so exactly the 3 learning crons re-register):
 ```bash
 bash deploy-sim.sh                                                  # sim → /home/comis/sim
 # on the box (via the rig): wipe learning state + cron store, then restart on the fresh dist
@@ -205,7 +205,7 @@ node packages/cli/dist/cli.js mcp disconnect th-sim
 (skill `name:` shown where authored; each workload ships its own `SKILL.md` — the table lists the canonical
 one for the exemplar.)
 
-## Live-run findings (package-delivery on the VPS, 2026-06-27 — don't re-discover)
+## Live-run findings (package-delivery on the VPS — don't re-discover)
 - **`mcp connect --args` is VARIADIC (space-separated), not comma-joined.** `--args "path,workload"` is passed
   as ONE arg → the child node throws `Cannot find module '…/mcp-server.mjs,workload'` → `mcp list` shows the
   server `error`/`Connection closed (-32000)`. Correct: `--args /abs/mcp-server.mjs <workload> [variant]`. (The
@@ -233,18 +233,18 @@ Fixes landed (test-first, selftest-guarded):
 - **threat-hunting** grader required the literal "pivot" token → a correct MITRE/behavioral finding scored `failure`. Now matches the behavioral identification (`pivot|lateral|t1021|off-hours`), gated by correct entity + containment.
 - **icu-clinical** discriminator-gate state was process-global `ctx` → never resolved over `--state`, and leaked across concurrent sessions over MCP. Moved into the case (per-episode, persisted, isolated).
 - **wildfire-command** `assign_crew` silently recorded a ground crew sent into a blow-up zone (irreversible, sank the grade even after reassigning). Now **refuses** unsafe ground assignments (not recorded) so posture can be probed safely.
-- **customer-success / tutoring** "you don't need to thread the case id" is now true (FIX-A) — handlers already default to `lastCase`; the `--state` persistence gap was the only cause of fragmentation.
+- **customer-success / tutoring** "you don't need to thread the case id" is now true — handlers already default to `lastCase`; the `--state` persistence gap was the only cause of fragmentation.
 - **market-making / grid-operator** keep episode state on process-global `ctx` (book/PnL/reserve/strategy), not in a case. They **win over the real long-lived MCP transport** (and `--selftest`), but are NOT drivable over the per-call `--state` CLI and are not isolated for *same-workload* concurrent sessions. Drive them over the MCP server (real Comis) or `--selftest`; "different use cases in parallel" is unaffected (separate server processes). *(Ideal future fix: move their state into an ensured case like `customer-success`.)*
 
 ## Phase B/C findings — real Comis learning loop (isolated local keyless daemon, qwen3.6:27b)
 Stood up an isolated daemon (`dataDir` + own gateway/emulator, `provider: ollama` qwen3.6:27b, `memory.enabled` +
-`learning.enabled`) — clean-restart/wipe freely, zero risk to a shared VPS. Proven end-to-end on real v2.31 Comis:
+`learning.enabled`) — clean-restart/wipe freely, zero risk to a shared VPS. Proven end-to-end on real Comis:
 - **MCP integration**: the daemon connects the sim servers and the agent EXECUTES the tools — `mcp__depot-sim--
   accept_package/read_directory/move/take_elevator/whereami` all succeeded (real round-trips through Comis's MCP
   bridge into the sim handlers).
 - **Accumulate (Loop A / REFL-1)**: sim tool turns → `outcome_events` (`source='tool', outcome='success'`) +
   `memories`. The sim's outcomes flow into the learning engine.
-- **Crons**: the 3 v2.31 learning crons register (`Reflection` / `Memory lifecycle` / `Memory review`).
+- **Crons**: the 3 learning crons register (`Reflection` / `Memory lifecycle` / `Memory review`).
 - **Reflect gate (INV-2)**: `cron.run Reflection` on a single-source set → `admissionOutcome:"uncorroborated"`
   (`maxTopicCardinality:1`), `mental_models` stays 0 — the engine correctly refuses to admit from one source,
   with a content-free verdict.
@@ -257,16 +257,16 @@ Stood up an isolated daemon (`dataDir` + own gateway/emulator, `provider: ollama
 local model set `agents.<id>.capabilityClass: small` (defers the ~75-tool corpus to ~900-token stubs +
 `discover_tools`) and raise the model `contextWindow` (the 8192 fallback can't hold the tool schemas).
 
-**Operator-deferred drive — NOW COMPLETED (package-delivery-20260628, VPS + Opus `claude-opus-4-8`).** The full
+**Operator-deferred drive — COMPLETED (VPS + Opus `claude-opus-4-8`).** The full
 capable-model **rich-transcript cold→ADMIT→reuse→promote→TRANSFER** loop is verified end-to-end in ground truth
-(the local 27b was too slow/loopy + under-yielded on thin transcripts — SYNTH-YIELD; a capable model resolves it):
+(the local 27b was too slow/loopy + under-yielded on thin transcripts; a capable model resolves it):
 cold delivery to Priya@3-01 (variant A) → 2nd corroborating sender (byte-identical opening, card 2) → `cron.run
 Reflection` admits a **behavioral** `kind=skill` doc (trust=learned, candidate) — the body is a GENERAL navigation
 playbook ("consult the directory → plan route → verify nameplate → deliver"), recipient name only in `topicTokens`,
 NOT a memorized "go to 3-01" → reuse on variant B (Dana@2-02) bumps `proof 1→2` → reuse on variant C (Marco@3-02)
 bumps `proof 2→3` and flips **candidate→active**. One skill learned on A delivered to 3 rotated recipients/offices
 the stored facts never saw = TRANSFER. So **a capable model produces a grounded, transferable reflected skill** —
-refuting the prior SYNTH-YIELD content-quality worry for this workload. See `runs/package-delivery-20260628/`.
+refuting the prior content-quality worry for this workload.
 
 - **Phase-0 PONG contamination (don't re-discover):** the rig's Phase-0 PONG round-trip drives into `CHATID`
   (678314278); if you then drive the FIRST delivery into that SAME session, the agent treats the delivery as

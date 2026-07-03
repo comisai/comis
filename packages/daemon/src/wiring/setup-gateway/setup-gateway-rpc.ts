@@ -43,7 +43,7 @@ import {
 } from "./setup-gateway-admin.js";
 
 /**
- * Non-secret section allowlist for the `getConfig` RPC (§17.8 security
+ * Non-secret section allowlist for the `getConfig` RPC (a security
  * sign-off). Exactly the scalar/projected fields the safe default object
  * emits — sections carrying credentials (`agents` auth/model profiles,
  * `security.secrets`, `channels` tokens, `providers` keys, raw `gateway.tokens`)
@@ -433,7 +433,7 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
       return { stats: stats as unknown as Record<string, unknown> };
     },
     getConfig: async (params) => {
-      // A non-secret section ALLOWLIST is enforced (§17.8 sign-off).
+      // A non-secret section ALLOWLIST is enforced.
       // The prior top-level-key passthrough returned ANY requested section
       // verbatim — including `agents` (per-provider auth/model profiles) and
       // `security.secrets` — a real secret-egress path. Only the
@@ -553,7 +553,7 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
       // If session reset command succeeded, try LLM greeting
       if (result.handled && (parsed.command === "new" || parsed.command === "reset") && greetingGenerator) {
         const greetingAgentConfig = agents[params.agentId ?? defaultAgentId] ?? agents[defaultAgentId];
-        // Interactivity signal (spec §12): a concrete channel surface
+        // Interactivity signal: a concrete channel surface
         // (Discord/Telegram/…) is interactive; the bare "gateway" sentinel
         // (the headless RPC default applied when no channelId is supplied —
         // see `sk` above) marks the non-interactive/onboarding-limited path.

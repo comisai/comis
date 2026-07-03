@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Build-time DRIFT GUARD (v2.26 PROFILE-03 / design §11 D2): every terminal platform profile's
+ * Build-time DRIFT GUARD: every terminal platform profile's
  * `platformVersion` MUST equal the `version` in its paired bundled SKILL.md.
  *
- * A perception/render change (the profile) and a guidance change (the skill) usually pair — the
- * FINDING-3 ghost-strip and the sole-driver skill guidance were one incident. The profile and the
+ * A perception/render change (the profile) and a guidance change (the skill) usually pair — a
+ * ghost-strip and the sole-driver skill guidance were one such incident. The profile and the
  * skill ship by DIFFERENT mechanisms (the skill is boot-seeded by version; the profile is compiled
  * into the daemon build), so the shared `platformVersion` is enforced at BUILD time (here) — never
- * a runtime gate (it would be fragile and add failure modes, D2).
+ * a runtime gate (it would be fragile and add failure modes).
  *
  * Source-level (not an import): the profiles are package-internal (not on the @comis/skills barrel)
  * and the SKILL.md files live in @comis/daemon, so this reads BOTH as text — no build, deterministic,
@@ -55,7 +55,7 @@ function discoverProfiles(): Array<{ dir: string; source: string }> {
     .map((e) => ({ dir: e.dir, source: readFileSync(e.file, "utf8") }));
 }
 
-describe("terminal platform-profile ↔ SKILL.md version parity (PROFILE-03 build-time drift guard)", () => {
+describe("terminal platform-profile ↔ SKILL.md version parity (build-time drift guard)", () => {
   const profiles = discoverProfiles();
 
   it("discovers at least the claude-code and codex profiles", () => {

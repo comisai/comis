@@ -3,16 +3,16 @@
  * activity-kill-switch.emergency.test — emergency stop + hot-reload.
  *
  * `agents.<id>.activity.emergencyDisabled:true` is the agent-wide emergency
- * stop (§22.2): it suppresses ALL activity rendering for the agent regardless
+ * stop: it suppresses ALL activity rendering for the agent regardless
  * of any per-renderer `channels.<key>.enabled`. The gate inside `flushApply()`
  * reads a LIVE getter on every flush, so an operator `config.write` flip of
  * `emergencyDisabled` takes effect WITHOUT reconstructing the coordinator
- * (Comis "config-watcher" = the in-memory config.write RPC propagation, A4).
+ * (Comis "config-watcher" = the in-memory config.write RPC propagation).
  *
  * Observable: with `emergencyDisabled:true` the `renderer.apply` spy is NOT
  * called even though the per-renderer switch is enabled; after flipping the
- * SAME backing object to `false` mid-run, the next flush DOES call apply. RED
- * on the un-gated coordinator (apply fires on the first flush regardless).
+ * SAME backing object to `false` mid-run, the next flush DOES call apply.
+ * Without the gate, apply fires on the first flush regardless.
  */
 import type {
   ActivityEvent,

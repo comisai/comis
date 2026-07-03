@@ -5,7 +5,7 @@
     "request timed out",
     "tool call stalled"
   ],
-  "hiddenMechanism": "The timeout classification provenance (classifiedFailureBy) is not recorded today (GA1). The log shows the deadline breach but not which rule/field assigned the prompt_timeout category, nor whether a retry was attempted on the same stalled endpoint.",
+  "hiddenMechanism": "The timeout classification provenance (classifiedFailureBy) is not recorded today. The log shows the deadline breach but not which rule/field assigned the prompt_timeout category, nor whether a retry was attempted on the same stalled endpoint.",
   "surfaceCeiling": [
     "trajectory JSONL (read file)",
     "obs_query tool (diagnostics/billing/delivery/channels only)",

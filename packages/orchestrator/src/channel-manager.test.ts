@@ -176,9 +176,9 @@ function makeSessionManager(): SessionLifecycle {
 
 /**
  * The orchestrator reads `replyToMetaKey` via
- * `deps.channelRegistry?.getCapabilities(channelType)`. The hardcoded
- * REPLY_TO_META_KEY Record fallback was deleted, so tests that previously
- * relied on the implicit telegram/discord/slack/whatsapp fallback must
+ * `deps.channelRegistry?.getCapabilities(channelType)`. There is no hardcoded
+ * REPLY_TO_META_KEY fallback, so tests that exercise the
+ * telegram/discord/slack/whatsapp reply-to paths must
  * inject this fake registry to keep those code paths covered.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only stub
@@ -1174,10 +1174,10 @@ describe("createChannelManager", () => {
     });
 
     it("regression pin: onMessageReceived fires while processing is still in flight", async () => {
-      // Previously, the only callback (onMessageProcessed) fired AFTER
-      // processInboundMessage resolved -- so a SIGUSR2 mid-execution
-      // observed an empty continuation tracker. Wiring tracker.track to
-      // onMessageReceived closes that timing window.
+      // onMessageReceived must fire while processInboundMessage is still in
+      // flight: if the only callback fired AFTER it resolved, a SIGUSR2
+      // mid-execution would observe an empty continuation tracker. Wiring
+      // tracker.track to onMessageReceived closes that timing window.
       const deferred = (() => {
         let resolveFn: (v: {
           response: string;

@@ -1280,7 +1280,7 @@ describe("agents_manage tool", () => {
   // failed before mapWorkspaceProfile ever ran.
   // ---------------------------------------------------------------------------
   describe("workspace.profile", () => {
-    it("E1: round-trips MANAGED_SECTIONS.exampleArgs.agents through TypeBox", async () => {
+    it("round-trips MANAGED_SECTIONS.exampleArgs.agents through TypeBox", async () => {
       const { MANAGED_SECTIONS } = await import("@comis/core");
       const agentsEntry = MANAGED_SECTIONS.find((s) => s.pathPrefix === "agents");
       expect(agentsEntry, "agents entry missing from MANAGED_SECTIONS").toBeDefined();
@@ -1297,7 +1297,7 @@ describe("agents_manage tool", () => {
       expect(ok, `MANAGED_SECTIONS.exampleArgs.agents round-trip failed: ${JSON.stringify(args)}`).toBe(true);
     });
 
-    it("E2: flat workspace_profile -> mapWorkspaceProfile produces nested workspace.profile (TypeBox passes flat)", async () => {
+    it("flat workspace_profile -> mapWorkspaceProfile produces nested workspace.profile (TypeBox passes flat)", async () => {
       const tool = createAgentsManageTool(mockRpcCall, mockLogger);
       // Flat shape: TypeBox accepts it (workspace_profile is a declared field).
       const args = {
@@ -1338,7 +1338,7 @@ describe("agents_manage tool", () => {
       }
     });
 
-    it("E3: nested workspace.profile = 'specialist' is accepted by both TypeBox and downstream Zod (the bug)", async () => {
+    it("nested workspace.profile = 'specialist' is accepted by both TypeBox and downstream Zod", async () => {
       const tool = createAgentsManageTool(mockRpcCall, mockLogger);
       const args = {
         action: "create" as const,
@@ -1377,7 +1377,7 @@ describe("agents_manage tool", () => {
       }
     });
 
-    it("E4: nested workspace.profile = 'full' is accepted", async () => {
+    it("nested workspace.profile = 'full' is accepted by both TypeBox and downstream Zod", async () => {
       const tool = createAgentsManageTool(mockRpcCall, mockLogger);
       const args = {
         action: "create" as const,
@@ -1405,7 +1405,7 @@ describe("agents_manage tool", () => {
       }
     });
 
-    it("E5: invalid workspace.profile value still rejected (enum validation preserved)", async () => {
+    it("invalid workspace.profile value still rejected (enum validation preserved)", async () => {
       const tool = createAgentsManageTool(mockRpcCall, mockLogger);
       const args = {
         action: "create" as const,
@@ -1427,7 +1427,7 @@ describe("agents_manage tool", () => {
       expect(Value.Check(tool.parameters, args)).toBe(false);
     });
 
-    it("E6: JSON-string config carrying nested workspace still works", async () => {
+    it("JSON-string config carrying nested workspace still works", async () => {
       const tool = createAgentsManageTool(mockRpcCall, mockLogger);
       const args = {
         action: "create" as const,
@@ -1455,7 +1455,7 @@ describe("agents_manage tool", () => {
       });
     });
 
-    it("E7: mapWorkspaceProfile is idempotent and a no-op on already-nested config", () => {
+    it("mapWorkspaceProfile is idempotent and a no-op on already-nested config", () => {
       // Direct invariant test on the side-effect of running create twice.
       // Running the tool twice with the same flat-shape input must produce
       // identical config payloads to the RPC layer (no double-nesting).
@@ -1486,7 +1486,7 @@ describe("agents_manage tool", () => {
       expect(Value.Check(tool.parameters, args2)).toBe(true);
     });
 
-    it("E8: precedence -- flat workspace_profile wins when both flat and nested are present", async () => {
+    it("precedence -- flat workspace_profile wins when both flat and nested are present", async () => {
       const tool = createAgentsManageTool(mockRpcCall, mockLogger);
       // Both shapes provided: flat="full", nested.profile="specialist".
       // Pinned behavior: flat workspace_profile WINS (the spread in

@@ -248,13 +248,13 @@ describe("IcObserveView", () => {
     expect(tabDefs).toHaveLength(8);
     expect(tabDefs.map((t: { id: string }) => t.id)).toEqual([
       "overview", "billing", "delivery", "channels", "diagnostics",
-      // 179-07: nav-only tabs -> standalone Cache Health / Spend & Governance.
-      // 179-08: nav-only Incident tab -> the obs.explain drill-down view.
+      // Nav-only tabs: Cache Health / Spend & Governance / the obs.explain
+      // Incident drill-down. They route to standalone views instead of rendering inline.
       "cache", "spend", "incident",
     ]);
   });
 
-  it("3b - selecting a nav-only tab (cache/spend/incident) dispatches a bubbling navigate event, not an inline render (179-07/08)", async () => {
+  it("selecting a nav-only tab (cache/spend/incident) dispatches a bubbling navigate event, not an inline render", async () => {
     const rpc = createObserveMockRpcClient();
     const el = await createElement({ rpcClient: rpc });
     await flush(el);

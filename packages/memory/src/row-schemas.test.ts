@@ -226,13 +226,13 @@ describe("row-schemas — internal DB row runtime parses", () => {
       cost_cache_write: 0.0002,
       cache_saved: 0.0001,
       latency_ms: 150,
-      // PERSIST-02 cost-correctness columns (cache_retention DROPPED).
+      // Cost-correctness columns (cache_retention DROPPED).
       warmup_turn: 1,
       cache_eligible: 0,
       cost_correction: 0.0005,
       pending_cache_investment_usd: 0.001,
       pricing_state: "priced",
-      // COST-01: the JSON distinct-tool array column (nullable).
+      // The JSON distinct-tool array column (nullable).
       tool_tag: JSON.stringify(["bash", "read"]),
     };
     expect(TokenUsageDbRowSchema.safeParse(sample).success).toBe(true);
@@ -802,7 +802,7 @@ describe("row-schemas — strictObject rejects unexpected columns", () => {
     ).toBe(false);
   });
 
-  // --- LCD store row schemas (Phase 127, F1) ---
+  // --- LCD store row schemas ---
   // lcd_messages carries the tenant/agent/session isolation columns; the strict
   // schema rejects an extra column (drift catch) and accepts NULL on the
   // nullable tool columns (SQLite NULL ≠ undefined for non-tool_result parts).
@@ -882,11 +882,11 @@ describe("row-schemas — strictObject rejects unexpected columns", () => {
     ).toBe(false);
   });
 
-  // --- LCD compaction row schemas (Phase 129, C3) ---
-  // lcd_summaries / lcd_summary_messages / lcd_context_items carry the R4
-  // scoping columns; the strict schema rejects an extra column (drift catch) and
-  // a missing scoping column (a dropped scope column would be a cross-tenant hole
-  // — threat T-129-04).
+  // --- LCD compaction row schemas ---
+  // lcd_summaries / lcd_summary_messages / lcd_context_items carry the
+  // tenant/agent scoping columns; the strict schema rejects an extra column
+  // (drift catch) and a missing scoping column (a dropped scope column would be
+  // a cross-tenant hole).
 
   const fullLcdSummaryRow = {
     summary_id: "sum-1",
@@ -926,7 +926,7 @@ describe("row-schemas — strictObject rejects unexpected columns", () => {
     ).toBe(false);
   });
 
-  it("LcdSummaryRowSchema rejects a row missing the agent_id scoping column (T-129-04 cross-tenant guard)", () => {
+  it("LcdSummaryRowSchema rejects a row missing the agent_id scoping column (cross-tenant guard)", () => {
     const { agent_id: _omit, ...withoutAgentId } = fullLcdSummaryRow;
     expect(LcdSummaryRowSchema.safeParse(withoutAgentId).success).toBe(false);
   });
@@ -997,7 +997,7 @@ describe("row-schemas — strictObject rejects unexpected columns", () => {
     ).toBe(false);
   });
 
-  it("LcdContextItemRowSchema rejects a row missing the session_key scoping column (T-129-04 cross-tenant guard)", () => {
+  it("LcdContextItemRowSchema rejects a row missing the session_key scoping column (cross-tenant guard)", () => {
     const { session_key: _omit, ...withoutSessionKey } = fullLcdContextItemRow;
     expect(LcdContextItemRowSchema.safeParse(withoutSessionKey).success).toBe(false);
   });

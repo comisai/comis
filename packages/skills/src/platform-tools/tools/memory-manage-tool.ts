@@ -22,7 +22,7 @@ import {
 } from "../tool-helpers.js";
 import type { RpcCall } from "./cron-tool.js";
 
-// Activity label spec (§17.6). Descriptor name == emitted name.
+// Activity label spec. Descriptor name == emitted name.
 // Per-action overrides use the tool's REAL action enum.
 registerActivityLabelSpec("memory_manage", {
   semanticPhase: "memory",

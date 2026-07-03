@@ -10,7 +10,7 @@
  * script fail with `ERR_MODULE_NOT_FOUND` the moment it `import`s `comis_tools` —
  * i.e. the entire headline orchestrate happy-path silently breaks.
  *
- * Live VPS finding (2026-06-23): `orchestrate-sdk-runtime.ts` imported
+ * A concrete failure this guards against: `orchestrate-sdk-runtime.ts` imported
  * `systemGetEnv` from `@comis/core` (a trivial `process.env` accessor). It passed
  * every unit test (the test runner CAN resolve `@comis/core`) but the real bwrap
  * jail — which cannot — failed each run with exit 1 ("comis_tools import not

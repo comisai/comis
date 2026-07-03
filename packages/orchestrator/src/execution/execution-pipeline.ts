@@ -26,7 +26,7 @@ import type { SendMessageOptions } from "@comis/core";
 import { formatSessionKey, runWithContext, tryGetContext, createDeliveryOrigin, systemNowMs, narrowChatType } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 // The orchestrator imports ONLY the core activity port + types (never
-// the @comis/observability implementation — see §4.7). The ActivityStreamPort
+// the @comis/observability implementation). The ActivityStreamPort
 // impl + the per-channel renderer are injected at the daemon composition root.
 import type { ActivityStreamPort, TurnActivityContext, TurnOutcome } from "@comis/core";
 import type { ActivityTurnCoordinator } from "./activity-turn-coordinator.js";
@@ -125,10 +125,10 @@ export interface ExecutionPipelineDeps {
   /** When true, only content inside <final> blocks reaches users. */
   enforceFinalTag?: boolean;
   /**
-   * The orchestrator-facing activity stream port (§17.7). Injected at
+   * The orchestrator-facing activity stream port. Injected at
    * the daemon composition root (the observability `createActivityStream` impl).
    * Optional — when absent (or `coordinatorFactory` is absent) the turn runs
-   * exactly as before with no activity coordinator. The orchestrator depends ONLY
+   * with no activity coordinator. The orchestrator depends ONLY
    * on this core port shape; it never imports `@comis/observability`.
    */
   activityStreamPort?: ActivityStreamPort;
@@ -136,7 +136,7 @@ export interface ExecutionPipelineDeps {
    * Per-turn coordinator factory. `executeAndDeliver` calls this once
    * per turn with the turn's {@link TurnActivityContext}, returning an unstarted
    * {@link ActivityTurnCoordinator}; the pipeline `start()`s it on turn begin and
-   * `finalize(outcome)`s it after delivery (gated on the §16.6 receipt). The
+   * `finalize(outcome)`s it after delivery (gated on the delivery receipt). The
    * factory captures the per-channel renderer + TimerPort/ClockPort/logger at the
    * composition root and resolves the renderer by `ctx.channelType`.
    * Optional — present only when activity rendering is wired for the turn.
@@ -225,7 +225,7 @@ export async function executeAndDeliver(
       channelType: adapter.channelType,
       agentId,
       sessionKey: formatSessionKey(sessionKey),
-      // CR-02: carry the turn's trajectory id so the Verified Learning correction
+      // Carry the turn's trajectory id so the Verified Learning correction
       // writer can record the prior completed trajectory for a single-agent turn
       // off the PAYLOAD (this emit runs outside the executor's runWithContext). The
       // ingress context reuses the trajectory traceId; absent only on non-context
@@ -324,7 +324,7 @@ export async function executeAndDeliver(
         traceId: tryGetContext()?.traceId ?? randomUUID(),
         tenantId: sessionKey.tenantId,
         userId: sessionKey.userId,
-        // REACT-04 (206-04): stamp the resolved agentId onto the ALS for
+        // Stamp the resolved agentId onto the ALS for
         // context-consistency with the main execute path (execution-execute.ts).
         // This branch skips the SEND, but keeping agentId on the context avoids a
         // divergent ALS shape between the two executor entry points.
@@ -397,11 +397,11 @@ export async function executeAndDeliver(
   // this turn (after the send-policy gate — denied turns deliver nothing, so
   // they get no coordinator) and subscribe it to the activity stream BEFORE
   // execution so it observes every tool:*/model:* event emitted during the
-  // run. The coordinator is finalized after delivery (gated on the §16.6
+  // run. The coordinator is finalized after delivery (gated on the delivery
   // receipt) and disposed in the finally (aborted/error turns still
   // unsubscribe). Active only when BOTH the stream port and the factory are
   // injected (the daemon composition root supplies them); otherwise the turn
-  // runs exactly as before.
+  // runs without the activity coordinator.
   // ===================================================================
   let coordinator: ActivityTurnCoordinator | undefined;
   if (deps.activityStreamPort && deps.coordinatorFactory) {
@@ -442,7 +442,7 @@ export async function executeAndDeliver(
   try {
     if (execResult.timedOut) {
       emitDiagnostic(0, 0, "timeout");
-      // Aborted turn (timeout): the renderer keeps the diagnostic trail (§7.3).
+      // Aborted turn (timeout): the renderer keeps the diagnostic trail.
       await finalizeCoordinator({ kind: "aborted", reason: "timeout" });
       return;
     }
@@ -471,10 +471,10 @@ export async function executeAndDeliver(
     );
 
     if (!filterResult.deliver) {
-      // Nothing reaches the user this turn → a silent outcome (§4.3). "filtered"
+      // Nothing reaches the user this turn → a silent outcome. "filtered"
       // = the model produced no user-visible reply (NO_REPLY); a voice-only
       // delivery or any other non-deliver reason reads as SILENT. The renderer
-      // deletes the transient scaffolding on silent (§7.3).
+      // deletes the transient scaffolding on silent.
       const silentReason: "NO_REPLY" | "SILENT" =
         filterResult.reason === "filtered" ? "NO_REPLY" : "SILENT";
       if (filterResult.reason === "filtered") {
@@ -494,7 +494,7 @@ export async function executeAndDeliver(
     // Stage 4: Chunking, coalescing, block pacing, delivery.
     // deliverExecutionResponse now returns a delivery receipt.
     //
-    // REACT-04 (206-04): the delivery runs OUTSIDE the executor's
+    // The delivery runs OUTSIDE the executor's
     // runWithContext (executeLlm returns the text; delivery happens here), so it
     // would otherwise inherit the channel-ingress ALS — which carries NO agentId
     // (context.ts:38: "NOT known at channel ingress"). deliverToChannel reads
@@ -502,7 +502,7 @@ export async function executeAndDeliver(
     // (b) bind the minted reply id → trajectory (the reaction-attribution
     // keystone). Without agentId on THIS context, ctx.agentId is undefined → the
     // reply's agentId is never recorded and both binding paths fail-closed → a
-    // reaction on the reply map-misses (the 206-03 Stage-C live finding). Wrap
+    // reaction on the reply map-misses. Wrap
     // the delivery in a context that inherits the ingress traceId/tenant/session
     // and ADDS the resolved agentId so the binding fires on the primary path.
     const deliveryReceipt = await runWithContext(
@@ -545,7 +545,7 @@ export async function executeAndDeliver(
       });
     }
 
-    // Finalize the activity coordinator from the §16.6 delivery receipt.
+    // Finalize the activity coordinator from the delivery receipt.
     // Success → the gate inside finalize defers the renderer's
     // delete until deliveredAtMs; any observed status:"failed" event reclassifies
     // to failure (no delete). A delivery failure receipt → kind:"failure" so the

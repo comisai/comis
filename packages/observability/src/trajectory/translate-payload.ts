@@ -60,7 +60,7 @@ export function translatePayload(
         ...(payload.errorKind !== undefined ? { errorKind: payload.errorKind } : {}),
         ...(payload.errorMessage !== undefined ? { errorMessage: payload.errorMessage } : {}),
         ...(payload.truncated !== undefined ? { truncated: payload.truncated } : {}),
-        // D1 provenance forwarding (Phase 153 obs.explain reads it).
+        // Provenance forwarding (obs.explain reads it).
         // matchedToken is already sanitized+bounded at the emit (pi-event-bridge),
         // so every field is forwarded verbatim here.
         ...(payload.classifiedFailureBy !== undefined ? { classifiedFailureBy: payload.classifiedFailureBy } : {}),
@@ -70,7 +70,7 @@ export function translatePayload(
         ...(payload.matchedToken !== undefined ? { matchedToken: payload.matchedToken } : {}),
         ...(payload.resultBytes !== undefined ? { resultBytes: payload.resultBytes } : {}),
         ...(payload.resultDigest !== undefined ? { resultDigest: payload.resultDigest } : {}),
-        // F-OBS-2: content-free web_search/web_fetch grounding summary (count +
+        // Content-free web_search/web_fetch grounding summary (count +
         // source hosts only) so grounding is verifiable from the trajectory.
         ...(payload.resultCount !== undefined ? { resultCount: payload.resultCount } : {}),
         ...(payload.domains !== undefined ? { domains: payload.domains } : {}),
@@ -91,7 +91,7 @@ export function translatePayload(
 
     case "tool:breaker_opened":
       // ids/counts/typed-reason only — errorTag is the breaker's normalized
-      // tag, never raw error text (§2.7 / T-151-01).
+      // tag, never raw error text.
       return {
         toolName: payload.toolName,
         consecutiveFailures: payload.consecutiveFailures,
@@ -109,7 +109,7 @@ export function translatePayload(
 
     case "tool:result_offloaded":
       // ids/counts + the WORKSPACE-RELATIVE pointer only — never the offloaded
-      // result body and never the absolute host path (§2.7 / T-151-05/06).
+      // result body and never the absolute host path.
       return {
         toolName: payload.toolName,
         toolCallId: payload.toolCallId,
@@ -186,17 +186,17 @@ export function translatePayload(
         args: payload.args,
       };
 
-    // IMP-3 / PD-OBS-1: the per-turn used-skill attribution (inline-surfaced reuse credit). IDS + COUNT
-    // ONLY — opaque skill ids (same id-class as skill.prompt_invoked.skillName), never a procedure body
-    // (§2.7 / SEC-01). The fold (accumulateSkillUsedRecord) reads usedSkillIds into explain.skillsUsed.
+    // The per-turn used-skill attribution (inline-surfaced reuse credit). IDS + COUNT
+    // ONLY — opaque skill ids (same id-class as skill.prompt_invoked.skillName), never a procedure body.
+    // The fold (accumulateSkillUsedRecord) reads usedSkillIds into explain.skillsUsed.
     case "memory:skill_used":
       return {
         usedSkillIds: payload.usedSkillIds,
         usedCount: payload.usedCount,
       };
 
-    // Finding A: the per-turn topic-match reuse census. Content-free — skill NAMES (id-class) +
-    // coverage/sharedCount NUMBERS + credited/hasTopicTokens flags; never a procedure body (SEC-01).
+    // The per-turn topic-match reuse census. Content-free — skill NAMES (id-class) +
+    // coverage/sharedCount NUMBERS + credited/hasTopicTokens flags; never a procedure body.
     // The fold (accumulateSkillSurfacedRecord) reads the uncredited-with-overlap entries into
     // explain.learning.skillsSurfacedButUncredited.
     case "memory:skill_surfaced":
@@ -234,7 +234,7 @@ export function translatePayload(
 
     case "session:summary":
       // Counts/flags ONLY — agentId/sessionKey/traceId are envelope
-      // correlation ids handled separately, never in the record data (§2.7).
+      // correlation ids handled separately, never in the record data.
       return {
         degraded: payload.degraded,
         turnCount: payload.turnCount,
@@ -251,9 +251,9 @@ export function translatePayload(
       };
 
     case "memory:recalled":
-      // RECALL-01: per-recall lane/candidate/final counts (the #1 blind spot, now on
-      // the explain/trace timeline). Counts/booleans ONLY — never query text or memory
-      // bodies; agentId/sessionKey/traceId are envelope correlation ids (§2.7 / H1).
+      // Per-recall lane/candidate/final counts, on the explain/trace timeline.
+      // Counts/booleans ONLY — never query text or memory
+      // bodies; agentId/sessionKey/traceId are envelope correlation ids.
       return {
         lanes: payload.lanes,
         ftsCandidates: payload.ftsCandidates,
@@ -265,8 +265,8 @@ export function translatePayload(
       };
 
     case "memory:reranked":
-      // RECALL-01: rerank candidate/hit counts + the graceful-degradation flags
-      // (timedOut/fellBack) — counts/booleans ONLY (§2.7 / H1).
+      // Rerank candidate/hit counts + the graceful-degradation flags
+      // (timedOut/fellBack) — counts/booleans ONLY.
       return {
         candidateCount: payload.candidateCount,
         hitCount: payload.hitCount,
@@ -277,9 +277,9 @@ export function translatePayload(
       };
 
     case "memory:generation_quality":
-      // GENQ-01: which pass + the source/output dominant scripts + the issue flags.
+      // Which pass + the source/output dominant scripts + the issue flags.
       // Closed enums + booleans ONLY — never the source or generated body; agentId/
-      // sessionKey are envelope correlation ids (§2.7 / H1).
+      // sessionKey are envelope correlation ids.
       return {
         pass: payload.pass,
         sourceScript: payload.sourceScript,
@@ -289,54 +289,51 @@ export function translatePayload(
         formatViolation: payload.formatViolation,
       };
 
-    // PERSIST-01 (+AUDIT-05 est-$): content-free reason/counts/digest + computed est-$;
+    // Content-free reason/counts/digest + computed est-$;
     // delegated to translate-cache-break-payload.ts (file-size split).
     case "observability:cache_break":
       return translateCacheBreakPayload(payload);
 
-    // ---- v2.27 authoring / sub-agent orchestration (TELEM-01 + AUTHOR-01/02 + STEER-01) ---- delegated to translate-orchestration-payload.ts (file-size split, Phase 175; content-free + envelope-stripped — closed enums + numbers/booleans + a run id ONLY, never a graph body, the synthesis INTENT TEXT, or the steer MESSAGE BODY; §2.7 / H1).
-    // ORCH-OBS appends three previously-dark sub-agent-lifecycle events (sandbox-downgrade
-    // refusal / dead-lettered delivery / per-node budget breach) to the SAME content-free,
+    // ---- Authoring / sub-agent orchestration ---- delegated to translate-orchestration-payload.ts (file-size split; content-free + envelope-stripped — closed enums + numbers/booleans + a run id ONLY, never a graph body, the synthesis INTENT TEXT, or the steer MESSAGE BODY).
+    // Three sub-agent-lifecycle events (sandbox-downgrade
+    // refusal / dead-lettered delivery / per-node budget breach) join the SAME content-free,
     // orchestration-translator-delegated group.
-    // AUDIT-01 / TREE (215): capability:audited joins the orchestration-translator group (content-free: caps/tool-NAME/decision/lease-root ids ONLY, never args/body/secret).
-    // TREE-01 (finding D): graph:node_spawned joins it too (content-free: graph/node ids + child agentId + rootRunId + token cap).
+    // capability:audited joins the orchestration-translator group (content-free: caps/tool-NAME/decision/lease-root ids ONLY, never args/body/secret).
+    // graph:node_spawned joins it too (content-free: graph/node ids + child agentId + rootRunId + token cap).
     case "pipeline:authored":
     case "graph:repaired":
     case "graph:synthesized_from_intent":
     case "subagent:steered":
     case "security:sandbox_downgrade_refused":
     case "subagent:delivery_deadlettered":
-    case "subagent:delivery_retried": // OE-6b: the self-healing transient retry (sibling of delivery_deadlettered) — content-free {runId, channelType, attempt, transient}
+    case "subagent:delivery_retried": // The self-healing transient retry (sibling of delivery_deadlettered) — content-free {runId, channelType, attempt, transient}
     case "subagent:budget_exceeded":
     case "capability:audited":
     case "graph:node_spawned":
       return translateOrchestrationPayload(eventName, payload);
 
-    case "learning:outcome_observed": // OUTCOME-08: trajectoryId + closed-enum outcome/source + numeric confidence ONLY (no body/alpha/recalled ids; agentId/sessionKey/traceId envelope-only — §2.7 / SEC-01).
+    case "learning:outcome_observed": // trajectoryId + closed-enum outcome/source + numeric confidence ONLY (no body/alpha/recalled ids; agentId/sessionKey/traceId envelope-only).
       return { trajectoryId: payload.trajectoryId, outcome: payload.outcome, source: payload.source, confidence: payload.confidence };
     case "learning:memory_demoted":
     case "learning:memory_evicted":
-    case "learning:memory_failure_attributed": // OBS-4b: corroborated-failure accrual COUNT ONLY — the eviction-causation precursor (never a memory id-list/body, SEC-01).
-    case "reflect:admitted": // REFLECT (Phase 226): admitted COUNT ONLY (renamed from learning:skill_synthesized)
-    case "learning:skill_promoted": // SURFACE-06: counts ONLY (SEC-01)
-      // FORGET-06 / REFLECT / SURFACE-06: the soft-eviction / failure-accrual / admitted / promoted COUNT ONLY — never an id-list, procedure body, or script (§2.7 / SEC-01); the record TYPE conveys which transition.
+    case "learning:memory_failure_attributed": // Corroborated-failure accrual COUNT ONLY — the eviction-causation precursor (never a memory id-list/body).
+    case "reflect:admitted": // Admitted COUNT ONLY.
+    case "learning:skill_promoted": // Counts ONLY.
+      // The soft-eviction / failure-accrual / admitted / promoted COUNT ONLY — never an id-list, procedure body, or script; the record TYPE conveys which transition.
       return { count: payload.count };
     case "learning:skill_demoted":
-      // SURFACE-06 + finding C: count + the demoted skill NAMES (id-class, same as
+      // Count + the demoted skill NAMES (id-class, same as
       // skill.prompt_invoked.skillName) + the trigger trajectory id, so `explain` answers "which
-      // skill demoted and why" in one call (was count-only). NAMES/ids ONLY — never a body (SEC-01).
+      // skill demoted and why" in one call. NAMES/ids ONLY — never a body.
       return {
         count: payload.count,
         ...(Array.isArray(payload.demotedSkillNames) ? { demotedSkillNames: payload.demotedSkillNames } : {}),
         ...(typeof payload.triggerTrajectoryId === "string" ? { triggerTrajectoryId: payload.triggerTrajectoryId } : {}),
       };
-    case "reflect:funnel": // REFLECT (Phase 226, renamed from the old synthesis funnel): the reflection FUNNEL COUNTS + the acute admissionOutcome verdict (RC-4) — never a procedure body/script (SEC-01). Answers "why 0 admitted" from the trajectory in ONE field. OBS-1: the funnel MAGNITUDES (untrustedDrops / source counts) ride too — all counts, never bodies.
+    case "reflect:funnel": // The reflection FUNNEL COUNTS + the acute admissionOutcome verdict — never a procedure body/script. Answers "why 0 admitted" from the trajectory in ONE field. The funnel MAGNITUDES (untrustedDrops / source counts) ride too — all counts, never bodies.
       return { synthesized: payload.synthesized, validated: payload.validated, admitted: payload.admitted, maxClusterCardinality: payload.maxClusterCardinality, distinctTopicKeys: payload.distinctTopicKeys, untrustedDrops: payload.untrustedDrops, nameLengthRejections: payload.nameLengthRejections, skipped: payload.skipped, sourceTrajectoryCount: payload.sourceTrajectoryCount, totalSourceChars: payload.totalSourceChars, admissionOutcome: payload.admissionOutcome };
-    // Phase 226 SIMPLIFY-04: the 3 vestigial translator cases (sandbox-validation + user-rep-revision
-    // + generalization) were DELETED with their 0-emit events (sandbox deleted in 223; the other two
-    // folded into the reflection engine in 225).
-    // T2.2 (F9): closed ids + durationMs ONLY — agentId/origin are envelope ids; no result/
-    // error body crosses the bus (§2.7 / H1); the record TYPE conveys promoted/completed/failed.
+    // Background task lifecycle: closed ids + durationMs ONLY — agentId/origin are envelope ids; no result/
+    // error body crosses the bus; the record TYPE conveys promoted/completed/failed.
     case "background_task:promoted":
       return { taskId: payload.taskId, toolName: payload.toolName };
     case "background_task:completed":
@@ -345,13 +342,13 @@ export function translatePayload(
       return { taskId: payload.taskId, toolName: payload.toolName, durationMs: payload.durationMs };
 
     case "terminal:drive_promoted":
-      // DRIVE-02 → trajectory (was daemon-log-only). Content-free: the reason enum
+      // Terminal drive promotion → trajectory. Content-free: the reason enum
       // ONLY. The terminal sessionId, agentId, and raw timestamp are envelope/
       // correlation ids (the recorder envelope carries the agent session) — never echoed.
       return { reason: payload.reason };
 
     case "terminal:session_evicted":
-      // EVICT-01 → trajectory (was a daemon WARN only). Content-free: the closed cap
+      // Terminal drive eviction → trajectory. Content-free: the closed cap
       // reason enum + durationMs (the session's total lifetime at eviction) ONLY. The
       // terminal sessionId, agentId, and raw timestamp are envelope/correlation ids
       // (the recorder envelope carries the agent session) — never echoed.
@@ -452,7 +449,7 @@ export function translatePayload(
     case "execution:aborted":
       return {
         reason: payload.reason,
-        // OBS-3: the per-root autonomy.budget limb + numbers (content-free: closed-enum
+        // The per-root autonomy.budget limb + numbers (content-free: closed-enum
         // limb/unit strings + 2 numbers) so `explain` names the exact tripped knob.
         ...(payload.perRootBudget !== undefined ? { perRootBudget: payload.perRootBudget } : {}),
       };
@@ -465,9 +462,9 @@ export function translatePayload(
       };
 
     case "execution:prompt_timeout":
-      // LAT-04 (177): stall/makespan attribution fields forward verbatim — content-free
+      // Stall/makespan attribution fields forward verbatim — content-free
       // (numbers + closed enums + the config-KEY bindingKnob string, never delta text or env
-      // values; I7). The signals reader safeParses the row wholesale so the explain verdict
+      // values). The signals reader safeParses the row wholesale so the explain verdict
       // names the binding knob with actual numbers. agentId/sessionKey/timestamp stripped.
       return {
         timeoutMs: payload.timeoutMs,
@@ -494,8 +491,8 @@ export function translatePayload(
       };
 
     case "execution:tool_schema_unsupported":
-      // GBNF-02 strip-retry self-heal. Content-free (tool + keyword NAMES only, never schema
-      // bodies — I7), so all five diagnostic fields forward verbatim — `reason` (WR-05) is the
+      // GBNF strip-retry self-heal. Content-free (tool + keyword NAMES only, never schema
+      // bodies), so all five diagnostic fields forward verbatim — `reason` is the
       // closed branch discriminator (stripped | nothing_to_strip | gate_closed).
       // agentId/sessionKey/timestamp are envelope-only and stripped.
       return {
@@ -732,7 +729,7 @@ export function translatePayload(
         overflowStripped: payload.overflowStripped,
       };
 
-    // OBS-01 (Phase 180): the multilingual signals. Closed ScriptClass/lane
+    // The multilingual signals. Closed ScriptClass/lane
     // enums + identifiers ONLY — never query text or summary bodies. agentId +
     // sessionKey are envelope-only and stripped (the budget_computed precedent);
     // conversationId is the DAG conversation identifier (an id, not content) and
@@ -797,30 +794,30 @@ export function translatePayload(
         windowMs: payload.windowMs,
       };
 
-    // ---- Spend kill-switch (WR-4, 177-obs-loop) ---- delegated to
+    // ---- Spend kill-switch ---- delegated to
     // translate-spend-payload.ts (file-size split; content-free + envelope-stripped:
     // the closed SpendScopeKind enum + dollar amounts as NUMBERS + provider/model
-    // CONFIG ids ONLY, never a message/prompt/query body — §2.7 / H1, the milestone
+    // CONFIG ids ONLY, never a message/prompt/query body — the load-bearing
     // invariant). agentId/sessionKey/timestamp are envelope-only and stripped.
     case "observability:spend_warning":
     case "observability:spend_exceeded":
     case "observability:spend_unpriceable":
       return translateSpendPayload(eventName, payload);
 
-    // ---- Image generation (OBS-04, Phase 186) ---- delegated to translate-image-payload.ts (file-size split; content-free + envelope-stripped, the precedent the vision/video/voice arms below mirror — image was the last media lifecycle still inline).
+    // ---- Image generation ---- delegated to translate-image-payload.ts (file-size split; content-free + envelope-stripped, the precedent the vision/video/voice arms below mirror — image was the last media lifecycle still inline).
     case "image:requested":
     case "image:generated":
     case "image:delivered":
     case "image:failed":
       return translateImagePayload(eventName, payload);
 
-    // ---- Vision analysis (VIS-04, Phase 187) ---- delegated to translate-vision-payload.ts (file-size split, Phase 196; content-free + envelope-stripped, mirroring the image:* arms above + the video:* delegation below). The `path` label is VIS-03's "which path" signal; `costUsd` rides media.vision:completed (VIS-04 Route a).
+    // ---- Vision analysis ---- delegated to translate-vision-payload.ts (file-size split; content-free + envelope-stripped, mirroring the image:* arms above + the video:* delegation below). The `path` label is the "which path" signal; `costUsd` rides media.vision:completed.
     case "media.vision:requested":
     case "media.vision:completed":
     case "media.vision:failed":
       return translateVisionPayload(eventName, payload);
 
-    // ---- Video generation (OBS-04, Phase 192) ---- delegated to translate-video-payload.ts (file-size split; content-free + envelope-stripped, mirroring the image:*/media.vision:* arms above).
+    // ---- Video generation ---- delegated to translate-video-payload.ts (file-size split; content-free + envelope-stripped, mirroring the image:*/media.vision:* arms above).
     case "video:requested":
     case "video:submitted":
     case "video:generated":
@@ -828,7 +825,7 @@ export function translatePayload(
     case "video:failed":
       return translateVideoPayload(eventName, payload);
 
-    // ---- Voice STT/TTS (OBS-02/03, Phase 196) ---- delegated to translate-voice-payload.ts (file-size split; content-free + envelope-stripped, mirroring the image:*/media.vision:*/video:* arms above). media.*:completed carries costUsd (keyless = 0 explicit — OBS-05 Route a); media.*:requested carries the onSkip reasons (OBS-03).
+    // ---- Voice STT/TTS ---- delegated to translate-voice-payload.ts (file-size split; content-free + envelope-stripped, mirroring the image:*/media.vision:*/video:* arms above). media.*:completed carries costUsd (keyless = 0 explicit); media.*:requested carries the onSkip reasons.
     case "media.stt:requested":
     case "media.stt:completed":
     case "media.stt:failed":

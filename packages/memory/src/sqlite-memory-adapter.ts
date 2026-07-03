@@ -31,7 +31,7 @@ import { openSqliteDatabase } from "./sqlite-adapter-base.js";
 import { systemNowMs, normalizeForSearch, validateMemoryWrite } from "@comis/core";
 
 /**
- * The decided branch of a {@link SqliteMemoryAdapter.supersede} call (FORGET-04),
+ * The decided branch of a {@link SqliteMemoryAdapter.supersede} call,
  * returned to the caller and logged as metadata (never the content body). A closed
  * string-literal union (no `kind: string`): `"superseded"` = the incumbent's content
  * was updated to the new value and its prior state appended to `memories.history`;
@@ -55,11 +55,11 @@ export interface MemorySupersedeScope {
 
 // Row mappers
 const memoryRowMapper = createRowMapper(MemoryRowSchema);
-// DIST-05 (WR-02) id-projection mapper — the sanctioned typed-read path for the
+// Id-projection mapper — the sanctioned typed-read path for the
 // session-scoped id capture (no `as Foo[]` cast — untyped-sqlite gate).
 const idProjectionRowMapper = createRowMapper(IdProjectionRowSchema);
 
-// FORGET-04: the canonical `memories.history` JSON shape — an ordered array of
+// The canonical `memories.history` JSON shape — an ordered array of
 // prior contents (MemoryEntrySchema.history + the growObservation precedent). Built
 // once at module scope; parses the nullable TEXT column on read-back inside
 // supersede(). A strictObject mirrors the row-mapper's HistorySchema (the read path),
@@ -114,7 +114,7 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
       dbPath: config.dbPath,
       walMode: config.walMode,
       initSchema: (db) => {
-        // Initialize schema and capture per-instance vec state (Phase 226: recall keys nest under .recall)
+        // Initialize schema and capture per-instance vec state (recall keys nest under .recall)
         const schemaResult = initSchema(db, config.recall.embeddingDimensions);
         vecAvailable = schemaResult.vecAvailable;
       },
@@ -183,7 +183,7 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
         const now = systemNowMs();
         const results: MemorySearchResult[] = [];
         for (const vr of vecResults) {
-          // FORGET-01 (CR-01): the ALWAYS-ON `evicted_at IS NULL` recall exclusion —
+          // The ALWAYS-ON `evicted_at IS NULL` recall exclusion —
           // a soft-evicted row (evicted_at set by the lifecycle sweep) is omitted from
           // THIS live vector-only recall path too, not only hybridSearch. The
           // inspect/asOf raw reads stay UNFILTERED (eviction is soft + asOf-resolvable).
@@ -264,7 +264,7 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
       const now = systemNowMs();
       const results: MemorySearchResult[] = [];
       for (const hr of hybridResults) {
-        // FORGET-01 (CR-01): hybridSearch already applies `evicted_at IS NULL` in its
+        // hybridSearch already applies `evicted_at IS NULL` in its
         // post-fusion WHERE, so an evicted id never reaches here — but the per-id hydrate
         // is itself a recall read, so it carries the same always-on exclusion explicitly
         // (defense in depth; the two halves of the soft-eviction guarantee stay coupled).
@@ -376,7 +376,7 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
     const out: MemorySearchResult[] = [];
     let rank = 0;
     for (const id of ids) {
-      // FORGET-01 (CR-01): the ALWAYS-ON `evicted_at IS NULL` recall exclusion —
+      // The ALWAYS-ON `evicted_at IS NULL` recall exclusion —
       // hydrateLane backs searchLanes, the PRIMARY live recall path (createMemoryRecall
       // prefers searchLanes, memory-recall.ts:183), so a soft-evicted row MUST be omitted
       // here exactly as hybridSearch's post-fusion WHERE does it (hybrid-search.ts:440).
@@ -503,14 +503,14 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
     }
   }
 
-  // ── supersede (FORGET-04 — non-destructive contradiction → revise) ─
+  // ── supersede (non-destructive contradiction → revise) ─
 
   /**
-   * Phase 224 (FORGET-04): resolve a user CORRECTION of an existing fact by
+   * Resolve a user CORRECTION of an existing fact by
    * SUPERSESSION, NOT deletion. UPDATEs the scoped incumbent's `content` to
    * `newContent` and APPENDs the prior state (`{ previousContent, changedAt }`) to
    * the `memories.history` JSON array. The row is UPDATEd, never DELETEd — deletion
-   * stays reserved for the FORGET-02 corroborated-poison security path. The existing
+   * stays reserved for the corroborated-poison security path. The existing
    * row IS the latest, so recall (search/searchLanes) naturally returns the new
    * content; there is NO `mentioned_at` column and NO recall-side asOf filter (the
    * superseded content simply stops being the row's `content`, preserved in history).
@@ -523,7 +523,7 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
    * `WHERE id = ? AND tenant_id = ? AND agent_id = ?` (+ `user_id` when supplied),
    * bound params only (V4 isolation). The incumbent is parsed via the row mapper (no
    * `as Row`). The NEW content passes the same `validateMemoryWrite` redaction
-   * firewall a write goes through (INV-5) BEFORE the txn — a CRITICAL correction is
+   * firewall a write goes through BEFORE the txn — a CRITICAL correction is
    * rejected, never persisted. The `memories_au AFTER UPDATE OF content` trigger
    * re-syncs `memory_fts`; the normalized `memory_fts_tri` trigram twin is
    * re-inserted on the content change (the `growObservation` precedent), and the
@@ -548,7 +548,7 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
     const startMs = systemNowMs();
     const { tenantId, agentId, userId } = scope;
 
-    // INV-5 redaction firewall on the untrusted correction, BEFORE the txn — a
+    // The redaction firewall on the untrusted correction, BEFORE the txn — a
     // CRITICAL classification (dangerous command / secret egress) is REJECTED and
     // never persisted (mirrors revise()'s rejectUnwritableEntry → err). A `warn`
     // is permitted (the existing trust_level on the row is unchanged — a correction
@@ -698,16 +698,16 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
     }
   }
 
-  // ── listMemoryIdsBySessionKey (DIST-05, WR-02) ─────────────────────
+  // ── listMemoryIdsBySessionKey ─────────────────────
 
   /**
-   * Phase 172 (DIST-05, WR-02): Read the memory ids for a (sessionKey, tenant,
+   * Read the memory ids for a (sessionKey, tenant,
    * agent) scope WITHOUT deleting. Used by the session-reset handler to capture
    * THIS session's ids BEFORE `deleteBySessionKey`, so `--purge-derived` can be
    * session-scoped (source_ids ∩ thisSessionIds) instead of the coarse
    * "any dangling source id" sweep.
    *
-   * R4 isolation: filters on `source_session_key` AND `tenant_id` AND `agent_id`
+   * Tenant/agent isolation: filters on `source_session_key` AND `tenant_id` AND `agent_id`
    * — the SAME scope as `deleteBySessionKey`. Typed read via the row mapper (no
    * `as Foo[]` cast — untyped-sqlite gate). Returns the ids (possibly empty).
    */
@@ -730,14 +730,14 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
     }
   }
 
-  // ── deleteBySessionKey (DIST-05) ───────────────────────────────────
+  // ── deleteBySessionKey ───────────────────────────────────
 
   /**
-   * Phase 172 (DIST-05): Delete ALL memory rows for a (sessionKey, tenant, agent)
+   * Delete ALL memory rows for a (sessionKey, tenant, agent)
    * scope. ONE query covers BOTH paired-conversation memories AND lcd-distilled
    * episodic memories — both store `source_session_key` on the `memories` row.
    *
-   * R4 isolation: the WHERE filters on `source_session_key` AND `tenant_id` AND
+   * Tenant/agent isolation: the WHERE filters on `source_session_key` AND `tenant_id` AND
    * `agent_id`, so a cross-tenant or cross-agent row is never deleted (the same
    * fail-closed scoping the consolidation paths use). The `ON DELETE CASCADE` on
    * `lcd_memory_provenance.memory_id` drops the provenance rows automatically;
@@ -755,7 +755,7 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
     try {
       const tx = this.db.transaction(() => {
         // vec_memories has no cascade — delete the matching vec rows by id first.
-        // Subquery is fully tenant+agent+session scoped (R4) so it can only ever
+        // Subquery is fully tenant+agent+session scoped so it can only ever
         // reference this scope's memory ids.
         if (this.vecAvailable) {
           this.db
@@ -851,9 +851,9 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
     limit: number,
   ): Promise<Result<MemorySearchResult[], Error>> {
     return fromPromise((async () => {
-      // CR-02 fix: exclude expired entries (mirrors the other read paths in
+      // Exclude expired entries (mirrors the other read paths in
       // hydrateLane and search — `expires_at IS NULL OR expires_at > nowMs`).
-      // FORGET-01 (CR-01): the `AND evicted_at IS NULL` is defensive coupling — a
+      // The `AND evicted_at IS NULL` is defensive coupling — a
       // pinned row is store-side eviction-EXEMPT (the lifecycle sweep never evicts
       // pinned/system/high-proof rows), so a `pinned = 1` row can never carry
       // evicted_at; the guard makes the always-on-exclusion invariant explicit on this

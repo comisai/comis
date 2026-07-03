@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Unit tests for runner.ts — parseArgs helper + sweep dispatch contract.
- * Stage-A TDD: all tests fail until runner.ts is created (RED phase).
+ * Stage-A structural tests — deterministic, keyless.
  * No real provider calls — zero cost tier.
  *
  * @module
@@ -61,8 +61,8 @@ describe("parseArgs", () => {
     expect(result).toEqual({ dry: true, mode: "journeys", profile: undefined });
   });
 
-  // Phase 148: the prove mode (PROVE-01..05). parseArgs's {dry,mode,profile} shape
-  // is unchanged — --readiness is parsed separately inside runMain, so it never
+  // The prove mode (PROVE-01..05). parseArgs's {dry,mode,profile} shape is
+  // unchanged — --readiness is parsed separately inside runMain, so it never
   // appears in this return.
   it("parseArgs(['prove']) → { dry: false, mode: 'prove', profile: undefined }", () => {
     const result = parseArgs(["prove"]);
@@ -81,7 +81,7 @@ describe("parseArgs", () => {
     expect(result).toEqual({ dry: false, mode: "all", profile: undefined });
   });
 
-  // WR-02: --profile flag parsing
+  // --profile flag parsing
   it("returns profile:'lean-cloud' and mode:'all' when given ['--profile','lean-cloud']", () => {
     const result = parseArgs(["--profile", "lean-cloud"]);
     expect(result).toEqual({ dry: false, mode: "all", profile: "lean-cloud" });
@@ -106,18 +106,13 @@ describe("parseArgs", () => {
 });
 
 // ---------------------------------------------------------------------------
-// runner sweep dispatch contract — Task 1-RED (Phase 135-04)
+// runner sweep dispatch contract
 //
 // These tests confirm the structural contract for the sweep mode:
-// 1. parseArgs recognises "sweep" as a valid mode (already works)
-// 2. The sweep-branch symbols (runSweep, writeGapReport) are importable
-//    from the paths that runner.ts will use after Task 1-GREEN
-// 3. parseArgs(['sweep', '--dry']) yields dry:true + mode:'sweep'
-//
-// RED state: runner.ts has no `mode === "sweep"` branch yet.
-// The dynamic-import tests pass because Plans 02+03 already created the
-// modules. The key RED confirmation is grep returning 0 for "mode === \"sweep\""
-// in runner.ts (verified by the plan before this describe block is committed).
+// 1. parseArgs recognises "sweep" as a valid mode.
+// 2. The sweep-branch symbols (runSweep, parseProbeFilter, writeGapReport) are
+//    importable from the module paths runner.ts dispatches to.
+// 3. parseArgs(['sweep', '--dry']) yields dry:true + mode:'sweep'.
 // ---------------------------------------------------------------------------
 
 describe("runner sweep dispatch contract", () => {

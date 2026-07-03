@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * REACT-03 (Plan 206-03, Task 1) — the rig CONFIG bed: buildConfigYaml must
+ * REACT-03 — the rig CONFIG bed: buildConfigYaml must
  * ENABLE the Verified-Learning loop so a 👍 on an agent reply can persist an
  * `outcome_events` row and drive synthesis. Stage-A, no daemon required.
  *
@@ -11,7 +11,7 @@
  *   GOTCHA C — `someLearningOn` requires `memory.enabled` AND each
  *     agent's `learningOutcome.enabled` (else `recordOutboundMessage` is
  *     undefined → no ReactionTrajectoryMap binding at all) + `learning.enabled`
- *     (Phase 226 collapses learningSkills + learningTuning into this one gate).
+ *     (the single gate covering learning skills and tuning).
  *   GOTCHA D — the DM reactor defaults to `external` trust
  *     (`elevatedReply.defaultTrustLevel ?? "external"`):
  *     `REACTION_BASE_CONFIDENCE 0.6 × trustWeight("external") 0.05 = 0.03 <
@@ -106,8 +106,7 @@ describe("REACT-03 rig config — the produced YAML stays schema-VALID", () => {
 describe("REACT-03 rig config — GOTCHA C: learning is ENABLED (else the loop is byte-identical-OFF)", () => {
   it("memory.enabled is EXPLICITLY true (someLearningOn requires it; else recordOutboundMessage is undefined)", () => {
     // RAW-doc presence: the key must be WRITTEN, not just schema-defaulted —
-    // this is the assertion that fails RED on the pre-edit builder. (Phase 226
-    // renamed the master gate from memory.costFeatures.enabled to memory.enabled.)
+    // this is the assertion that fails RED on the pre-edit builder.
     const memory = rawDoc()["memory"] as Record<string, unknown> | undefined;
     expect(memory, "memory block present").toBeDefined();
     expect(memory!["enabled"], "memory.enabled EXPLICITLY present in the rig config").toBe(true);
@@ -122,7 +121,7 @@ describe("REACT-03 rig config — GOTCHA C: learning is ENABLED (else the loop i
     expect(validConfig().agents["default"]!.learningOutcome.enabled).toBe(true);
   });
 
-  it("agents.default.learning.enabled is EXPLICITLY true (Phase 226 collapses learningSkills + learningTuning into one gate; else the reflection cron never runs)", () => {
+  it("agents.default.learning.enabled is EXPLICITLY true (else the reflection cron never runs)", () => {
     const learning = rawAgentDefault()["learning"] as Record<string, unknown> | undefined;
     expect(learning, "agents.default.learning EXPLICITLY present").toBeDefined();
     expect(learning!["enabled"]).toBe(true);
@@ -141,10 +140,10 @@ describe("REACT-03 rig config — GOTCHA D: the reactor trust floor (the #1 REAC
 });
 
 // ---------------------------------------------------------------------------
-// MEDIA-02 / SEC-01 (Plan 207-05, Task 1) — the test-scoped SSRF-loopback
+// MEDIA-02 / SEC-01 — the test-scoped SSRF-loopback
 // allowance: a THIN `DaemonOverrides.setupMedia` wrapper that swaps ONLY
-// `result.ssrfFetcher` for a loopback fetcher addressing BOTH SSRF blocks
-// (Pitfall 1): (1) the resolver's HARDCODED `api.telegram.org` download URL
+// `result.ssrfFetcher` for a loopback fetcher addressing BOTH SSRF blocks:
+// (1) the resolver's HARDCODED `api.telegram.org` download URL
 // (telegram-resolver.ts:95) is host-rewritten to the emulator host; (2)
 // production `validateUrl` BLOCKS loopback — the override uses the inverse
 // primitive `validateLocalServerUrl([host])` (ALLOWS loopback, KEEPS the
@@ -214,7 +213,7 @@ describe("MEDIA-02 loopback override — the loopback fetcher addresses BOTH SSR
     }
   });
 
-  it("STILL BLOCKS a non-loopback / non-emulator host (the override is loopback-ONLY, not an arbitrary-URL hole — T-207-12)", async () => {
+  it("STILL BLOCKS a non-loopback / non-emulator host (the override is loopback-ONLY, not an arbitrary-URL hole)", async () => {
     // A download URL whose host is NOT api.telegram.org (so no rewrite fires) and
     // resolves to a non-loopback range → the override's validateLocalServerUrl DENIES.
     const fetcher = buildLoopbackSsrfFetcher({ emulatorHost: "127.0.0.1:54321", maxBytes: 1_000_000 });
@@ -224,8 +223,8 @@ describe("MEDIA-02 loopback override — the loopback fetcher addresses BOTH SSR
 });
 
 // ---------------------------------------------------------------------------
-// MEDIA-02 byte-proof (Plan 207-05, Task 2) — DETERMINISTIC, OFFLINE, no real
-// model. Strategy A3 (option b — the RESEARCH-blessed resolver-level proof): the
+// MEDIA-02 byte-proof — DETERMINISTIC, OFFLINE, no real
+// model. The resolver-level proof: the
 // daemon's keyless capability short-circuit (`media-handler-audio.ts:44 if
 // (!deps.transcriber)`) means a plain keyless run NEVER downloads bytes — so the
 // SSRF-guarded download is unreachable end-to-end without a model. We force it by
@@ -270,7 +269,7 @@ describe("MEDIA-02 byte-proof — a loopback SSRF-guarded download SUCCEEDS thro
         logger: NOOP_RESOLVER_LOGGER,
       });
 
-      // The stub-forced resolve+download leg (A3): resolve a tg-file://{file_id}.
+      // The stub-forced resolve+download leg: resolve a tg-file://{file_id}.
       const resolved = await resolver.resolve({ type: "audio", url: `tg-file://${handle.fileId}` });
 
       expect(
@@ -320,7 +319,7 @@ describe("MEDIA-02 / SEC-01 no-widening — production SSRF posture is provably 
 });
 
 // ---------------------------------------------------------------------------
-// CHAN2-02 (Plan 209-05, Task 1) — the `@comis/*`-FREE Signal config writer (the
+// CHAN2-02 — the `@comis/*`-FREE Signal config writer (the
 // `channels.signal.baseUrl` REDIRECT SEAM). `buildSignalConfigYaml` mirrors the
 // telegram `buildConfigYaml` but writes `channels.signal = { enabled:true,
 // baseUrl:<baseUrl> }` (the verified seam — setup-channels-adapters.ts:216-227
@@ -331,10 +330,9 @@ describe("MEDIA-02 / SEC-01 no-widening — production SSRF posture is provably 
 // provider + the ≥32-char LITERAL gateway token block as the telegram writer.
 //
 // The telegram writer stays BYTE-IDENTICAL (the Signal writer is ADDITIVE) — the
-// foundation-fix regression guard (T-209-14). And `rig-config.ts` stays
+// foundation-fix regression guard. And `rig-config.ts` stays
 // `@comis/*`-import-free (the detached `rig-daemon.ts` imports it under bare
-// `tsx` — a `@comis/*` edge would break that AND is a published-graph concern,
-// T-209-13).
+// `tsx` — a `@comis/*` edge would break that AND is a published-graph concern).
 //
 // Run (Stage-A, offline, deterministic):
 //   pnpm vitest run -c test/live/vitest.config.ts test/live/harness/rig.test.ts -t "Signal config"
@@ -416,7 +414,7 @@ describe("CHAN2-02 Signal config writer — channels.signal.baseUrl is the redir
 
 describe("CHAN2-02 Signal config writer — rig-config.ts stays @comis/*-free (the detached-tsx + published-graph constraint)", () => {
   it("rig-config.ts has NO `from \"@comis/...\"` import (the detached rig-daemon imports it under bare tsx)", () => {
-    // T-209-13: a `@comis/*` edge would break the detached rig (bare tsx cannot
+    // A `@comis/*` edge would break the detached rig (bare tsx cannot
     // resolve the alias) AND is a published-graph concern. Assert the SOURCE has
     // no such import (the Signal writer is plain-string only).
     const rigConfigPath = fileURLToPath(new URL("./rig-config.ts", import.meta.url));
@@ -425,9 +423,9 @@ describe("CHAN2-02 Signal config writer — rig-config.ts stays @comis/*-free (t
   });
 });
 
-describe("CHAN2-02 Signal config writer — the telegram writer is BYTE-IDENTICAL (the regression guard, T-209-14)", () => {
+describe("CHAN2-02 Signal config writer — the telegram writer is BYTE-IDENTICAL (the regression guard)", () => {
   it("buildConfigYaml still writes channels.telegram with the apiRoot seam (the Signal writer is additive)", () => {
-    // The telegram path is INVIOLATE (205-04). The existing telegram config-shape
+    // The telegram path is INVIOLATE. The existing telegram config-shape
     // assertions above already pin its content; this re-asserts the seam survives
     // alongside the new Signal writer.
     const tgYaml = buildConfigYaml(APP_ROOT, GATEWAY_PORT, "keyless");
@@ -440,7 +438,7 @@ describe("CHAN2-02 Signal config writer — the telegram writer is BYTE-IDENTICA
 });
 
 // ---------------------------------------------------------------------------
-// CHAN2-01 + CHAN2-02 (Plan 209-05, Task 2) — the channel→{emulator-factory,
+// CHAN2-01 + CHAN2-02 — the channel→{emulator-factory,
 // config-writer} dispatch MAP + the ONE-LINE signal registration.
 //
 // The foundation-fix: `rig.ts` was telegram-hard-coded (a `channel:"telegram"`
@@ -454,8 +452,8 @@ describe("CHAN2-02 Signal config writer — the telegram writer is BYTE-IDENTICA
 // These tests drive the MAP directly (deterministic, NO daemon): the factory
 // produces the right emulator, the config-writer wires the right seam, and the
 // telegram entry is byte-identical (the regression guard). The real
-// `buildRig({channel:"signal"})` daemon boot is the COMIS_LIVE Stage-C leg of the
-// 209-06/07 scenario (skip≠fail offline) — this plan proves the DISPATCH.
+// `buildRig({channel:"signal"})` daemon boot is the COMIS_LIVE Stage-C leg
+// (skip≠fail offline) — these tests prove the DISPATCH.
 //
 // Run (Stage-A, offline, deterministic):
 //   pnpm vitest run -c test/live/vitest.config.ts test/live/harness/rig.test.ts -t "dispatch map"
@@ -525,7 +523,7 @@ describe("CHAN2-01/02 channel dispatch map — the factory + config-writer regis
 
   it("the telegram config-writer is byte-identical to buildConfigYaml (the regression guard)", () => {
     // The telegram entry MUST produce the SAME apiRoot YAML the public surface
-    // (205-04) depends on — the map dispatch is additive, telegram is one entry.
+    // depends on — the map dispatch is additive, telegram is one entry.
     const viaMap = RIG_CHANNELS.telegram.writeConfig(APP_ROOT, GATEWAY_PORT, "keyless");
     const direct = buildConfigYaml(APP_ROOT, GATEWAY_PORT, "keyless");
     expect(viaMap).toBe(direct);

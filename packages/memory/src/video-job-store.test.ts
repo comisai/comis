@@ -6,9 +6,9 @@ import { ensureVideoJobTable } from "./schema-video-jobs.js";
 import { createVideoJobStore } from "./video-job-store.js";
 import type { VideoJobStore } from "./video-job-store.js";
 
-// The Phase-189 durable async VideoJobStore — the SQLite-backed, state-machine
-// job store the background poller resumes against across a daemon restart
-// (JOB-01/JOB-03/JOB-04). Modeled on the production crash-safe delivery queue
+// The durable async VideoJobStore — the SQLite-backed, state-machine
+// job store the background poller resumes against across a daemon restart.
+// Modeled on the production crash-safe delivery queue
 // (delivery-queue-adapter.test.ts): an in-memory :memory: db, ensureVideoJobTable
 // to create the table, then the frozen factory. No real fs, deterministic.
 
@@ -20,7 +20,7 @@ describe("VideoJobStore", () => {
   // updated_at_ms via systemNowMs() — these are the SUBMIT-time inputs only).
   const submittedAt = 1_700_000_000_000;
 
-  /** Helper to build a minimal JOB-01 submit record. */
+  /** Helper to build a minimal submit record. */
   function makeRecord(overrides: Record<string, unknown> = {}) {
     return {
       jobId: "fal-req-abc123",
@@ -40,15 +40,15 @@ describe("VideoJobStore", () => {
 
   beforeEach(() => {
     db = new Database(":memory:");
-    // initSchema must create the video_jobs table (Task 2 integration check),
-    // but the store's own setup uses ensureVideoJobTable directly so Task 1's
-    // RED has its table dependency even before the initSchema wiring lands.
+    // initSchema creates the video_jobs table, but the store's own setup uses
+    // ensureVideoJobTable directly so the table exists independently of the
+    // initSchema wiring.
     ensureVideoJobTable(db);
     store = createVideoJobStore(db);
   });
 
   // -----------------------------------------------------------------------
-  // Round-trip + snake→camel fidelity (JOB-01)
+  // Round-trip + snake→camel fidelity
   // -----------------------------------------------------------------------
 
   describe("insert + get round-trip", () => {
@@ -79,7 +79,7 @@ describe("VideoJobStore", () => {
   });
 
   // -----------------------------------------------------------------------
-  // listPending — only state='pending' rows (JOB-01)
+  // listPending — only state='pending' rows
   // -----------------------------------------------------------------------
 
   describe("listPending", () => {
@@ -100,7 +100,7 @@ describe("VideoJobStore", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Agent-scoped get — no cross-agent leak (JOB-04 / TARGET-01 / Pitfall 6)
+  // Agent-scoped get — no cross-agent leak
   // -----------------------------------------------------------------------
 
   describe("agent scoping", () => {
@@ -123,10 +123,10 @@ describe("VideoJobStore", () => {
   });
 
   // -----------------------------------------------------------------------
-  // session_key column (OBS-04 / Phase 192) — the off-turn recorder fold key
+  // session_key column — the off-turn recorder fold key
   // -----------------------------------------------------------------------
 
-  describe("sessionKey column (OBS-04)", () => {
+  describe("sessionKey column", () => {
     it("round-trips a sessionKey through insert/get/listPending (the off-turn recorder key)", async () => {
       const ins = await store.insert(
         makeRecord({ jobId: "job-sk", agentId: "alpha", sessionKey: "default:u1:telegram:c1" }),
@@ -157,7 +157,7 @@ describe("VideoJobStore", () => {
   });
 
   // -----------------------------------------------------------------------
-  // markDone (JOB-02)
+  // markDone
   // -----------------------------------------------------------------------
 
   describe("markDone", () => {
@@ -179,7 +179,7 @@ describe("VideoJobStore", () => {
   });
 
   // -----------------------------------------------------------------------
-  // markFailed (JOB-02)
+  // markFailed
   // -----------------------------------------------------------------------
 
   describe("markFailed", () => {
@@ -196,11 +196,10 @@ describe("VideoJobStore", () => {
       expect(got.value.lastError).toBe("job_timeout");
     });
 
-    // WR-02 (Phase 190): when an actionable hint is supplied it is persisted to
-    // last_error INSTEAD of the bare enum token, so `video.status` returns an
-    // operator-facing string (not "empty_response"). RED on pre-fix code: the
-    // 3rd arg did not exist and last_error always held the kind.
-    it("WR-02: persists the supplied lastError hint (not the bare kind) when provided", async () => {
+    // When an actionable hint is supplied it is persisted to last_error INSTEAD of
+    // the bare enum token, so `video.status` returns an operator-facing string
+    // (not "empty_response").
+    it("persists the supplied lastError hint (not the bare kind) when provided", async () => {
       await store.insert(makeRecord({ jobId: "job-hint", agentId: "alpha" }));
 
       const hint = "Veo blocked the prompt by safety/responsible-AI policy. Revise the prompt and retry.";
@@ -218,7 +217,7 @@ describe("VideoJobStore", () => {
   });
 
   // -----------------------------------------------------------------------
-  // updateProgress (JOB-02)
+  // updateProgress
   // -----------------------------------------------------------------------
 
   describe("updateProgress", () => {
@@ -238,7 +237,7 @@ describe("VideoJobStore", () => {
   });
 
   // -----------------------------------------------------------------------
-  // incrementDeliveryAttempt (CR-01) — bounded redelivery counter
+  // incrementDeliveryAttempt — bounded redelivery counter
   // -----------------------------------------------------------------------
 
   describe("incrementDeliveryAttempt", () => {
@@ -261,7 +260,7 @@ describe("VideoJobStore", () => {
     });
 
     it("returns 0 when the jobId matches no row (un-inserted row → no infinite in-memory loop signal)", async () => {
-      // CR-01 / WR-02: the handler's insert-failure path tracks an un-persisted
+      // The handler's insert-failure path tracks an un-persisted
       // job in-memory. incrementing a non-existent row must NOT throw and must
       // signal "no row" via a 0 count so the poller can bound it.
       const res = await store.incrementDeliveryAttempt("never-inserted");
@@ -325,7 +324,7 @@ describe("VideoJobStore", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Threat T-189-02: the persisted row carries NO secret column.
+  // Security: the persisted row carries NO secret column.
   // -----------------------------------------------------------------------
 
   describe("no-secret schema invariant", () => {
@@ -343,8 +342,8 @@ describe("VideoJobStore", () => {
 });
 
 // ===========================================================================
-// Task 2: video_jobs table DDL (ensureVideoJobTable) + initSchema wiring.
-// Co-located here because Task 1's setup already imports ensureVideoJobTable.
+// video_jobs table DDL (ensureVideoJobTable) + initSchema wiring.
+// Co-located here because the store setup already imports ensureVideoJobTable.
 // ===========================================================================
 
 describe("ensureVideoJobTable (video_jobs DDL)", () => {
@@ -367,7 +366,7 @@ describe("ensureVideoJobTable (video_jobs DDL)", () => {
     expect(() => ensureVideoJobTable(db)).not.toThrow();
   });
 
-  it("includes a deliver_attempts column defaulting to 0 (CR-01 bounded redelivery)", () => {
+  it("includes a deliver_attempts column defaulting to 0 (bounded redelivery)", () => {
     ensureVideoJobTable(db);
     const cols = db.prepare("PRAGMA table_info(video_jobs)").all() as Array<{
       name: string;
@@ -390,18 +389,18 @@ describe("ensureVideoJobTable (video_jobs DDL)", () => {
     expect(names).toContain("idx_video_jobs_agent");
   });
 
-  // OBS-04 (Phase 192): the new session_key column. A fresh db gets it in the
-  // CREATE; a db that ran a PRIOR v2.24 build (table without session_key) gets it
-  // via the idempotent, PRAGMA-guarded ALTER. Both converge, re-run-safe.
-  it("includes a session_key column on a fresh db (OBS-04)", () => {
+  // The session_key column. A fresh db gets it in the CREATE; a db from an earlier
+  // build (table without session_key) gets it via the idempotent, PRAGMA-guarded
+  // ALTER. Both converge, re-run-safe.
+  it("includes a session_key column on a fresh db", () => {
     ensureVideoJobTable(db);
     const cols = db.prepare("PRAGMA table_info(video_jobs)").all() as Array<{ name: string }>;
     expect(cols.map((c) => c.name)).toContain("session_key");
   });
 
   it("ADDs session_key to a prior-build table that lacks it (the idempotent forward-only migration)", () => {
-    // Simulate a daemon that ran a prior v2.24 build: a video_jobs table WITHOUT
-    // the session_key column (the 189 shape).
+    // Simulate a daemon that ran an earlier build: a video_jobs table WITHOUT
+    // the session_key column.
     db.exec(`
       CREATE TABLE video_jobs (
         job_id TEXT PRIMARY KEY, provider TEXT NOT NULL, model TEXT, agent_id TEXT NOT NULL,
@@ -432,7 +431,7 @@ describe("ensureVideoJobTable (video_jobs DDL)", () => {
   it("initSchema wires the video_jobs table on the boot path", () => {
     // The anti-built-but-not-wired check at the schema layer: a fresh initSchema
     // (the single boot-time DDL call) MUST create video_jobs — not just the
-    // standalone helper (JOB-01/JOB-03 restart resume reads this table on boot).
+    // standalone helper (restart resume reads this table on boot).
     initSchema(db, 768);
     const row = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='video_jobs'")
@@ -442,7 +441,7 @@ describe("ensureVideoJobTable (video_jobs DDL)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// CR-01 store-error resilience: EVERY method returns err() (never throws) when
+// Store-error resilience: EVERY method returns err() (never throws) when
 // the underlying SQLite statement fails. The store wraps each operation in a
 // try/catch that maps a thrown driver error to err(Error) — the poller / handler
 // chain on err with an early-return and (markFailed/markDone) keep the at-least-

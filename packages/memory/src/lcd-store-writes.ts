@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: WR-02 condensed range/child tamper guard in appendCondensedSummaryTxn — a throw inside db.transaction is the rollback mechanism (atomic) and the afterTurn condense trigger's outer try/catch degrades it non-fatally (T-130-07).
+// @allow-throw: the condensed range/child tamper guard in appendCondensedSummaryTxn — a throw inside db.transaction is the rollback mechanism (atomic) and the afterTurn condense trigger's outer try/catch degrades it non-fatally.
 /**
  * LCD (Lossless Context DAG) summary write-transaction builders. Extracted from
  * `lcd-store.ts` so the adapter stays under the 800-line file-size cap (mirrors
- * the prior `lcd-fts.ts` extraction; Pitfall 6) — this frees the headroom the
- * R4 read-filter edits (per-(agent,tenant) WHERE clauses, Phase 132-03) need.
+ * the prior `lcd-fts.ts` extraction) — this frees the headroom the
+ * per-(agent,tenant) read-filter WHERE clauses need.
  *
  * Two responsibilities, BYTE-IDENTICAL relocations of the closures that used to
  * live inside `createLcdStore` (no SQL/column/ordering/error-handling change):
- *   1. `buildAppendLeafSummaryTxn(db, deps)` — the depth-0 leaf-compaction write
- *      (Phase 129, C3): ONE `db.transaction` that persists the `lcd_summaries`
+ *   1. `buildAppendLeafSummaryTxn(db, deps)` — the depth-0 leaf-compaction write:
+ *      ONE `db.transaction` that persists the `lcd_summaries`
  *      row, links every covered message via `lcd_summary_messages`, and
  *      range-replaces the covered `lcd_context_items` message-refs with one
  *      summary-ref (ordinals stay dense, gap-free, ordered). NEVER deletes
  *      `lcd_messages` (FK RESTRICT enforces losslessness).
  *   2. `buildAppendCondensedSummaryTxn(db, deps)` — the depth>0 condensed-tier
- *      write (Phase 130, C2): a sibling clone that persists a `condensed`-kind
+ *      write: a sibling clone that persists a `condensed`-kind
  *      summary, links its CHILD SUMMARIES via `lcd_summary_parents`, and
  *      range-replaces the covered run of SUMMARY-refs (recomputing
  *      descendantCount + time-range from the child rows). NEVER deletes the
@@ -30,7 +30,7 @@
  * store's `appendLeafSummary` / `appendCondensedSummary` methods call.
  *
  * `@comis/memory` is infra-free (AGENTS.md §2.4 — no logger): a degraded write
- * skips a bad row silently (WR-02) or rolls back via the tamper-guard throw,
+ * skips a bad row silently or rolls back via the tamper-guard throw,
  * exactly as the original did. This file reads ONLY the LCD base tables; it
  * never logs summary `content`.
  *
@@ -60,7 +60,7 @@ import type {
  * captured exactly these; passing them keeps the relocation byte-identical).
  */
 export interface LcdSummaryWriteDeps {
-  /** Lazy-seed context_items 1:1 from lcd_messages for a fresh (conversation, agent, tenant) — R4 agent-scoped (132-03). */
+  /** Lazy-seed context_items 1:1 from lcd_messages for a fresh (conversation, agent, tenant) — agent-scoped. */
   seedContextItems: (scope: ContextStoreScope) => void;
   /** Covered run [start,end] inclusive, ordinal-ascending. */
   selectCtxItemsInRange: Database.Statement;
@@ -84,18 +84,18 @@ export interface LcdSummaryWriteDeps {
   selectCtxOrdinalsAbove: Database.Statement;
   /** Shift one context_items row's ordinal. */
   updateCtxItemOrdinal: Database.Statement;
-  /** Per-row degrade mapper for a context_items row (WR-02). */
+  /** Per-row degrade mapper for a context_items row. */
   ctxItemRowMapper: RowMapper<z.infer<typeof LcdContextItemRowSchema>>;
-  /** Per-row degrade mapper for the (id, created_at) seed projection (WR-02). */
+  /** Per-row degrade mapper for the (id, created_at) seed projection. */
   messageSeedRowMapper: RowMapper<{ id: string; created_at: number }>;
-  /** Per-row degrade mapper for a summary row (WR-02). */
+  /** Per-row degrade mapper for a summary row. */
   summaryRowMapper: RowMapper<z.infer<typeof LcdSummaryRowSchema>>;
-  /** Per-row degrade mapper for a single-column ordinal projection (WR-02). */
+  /** Per-row degrade mapper for a single-column ordinal projection. */
   ctxOrdinalRowMapper: RowMapper<{ ordinal: number }>;
   /**
-   * FTS-01 (Phase 180): index the NORMALIZED summary twin (`lcd_summaries_fts_tri`)
+   * Index the NORMALIZED summary twin (`lcd_summaries_fts_tri`)
    * at the summary's base rowid. Called immediately after the summary base write
-   * (leaf + condensed). Applies the search fold to `rawContent` INTERNALLY (the I7
+   * (leaf + condensed). Applies the search fold to `rawContent` INTERNALLY (the
    * single call site lives in lcd-store-fts-populate.ts — the index side of the
    * symmetry), gated on twin availability, best-effort (a twin failure NEVER fails
    * the authoritative summary write — the throw inside this db.transaction would
@@ -109,11 +109,11 @@ export interface LcdSummaryWriteDeps {
 }
 
 /**
- * Build the leaf-summary write transaction (C3). One atomic write: persist the
+ * Build the leaf-summary write transaction. One atomic write: persist the
  * leaf summary, link every covered message, and range-replace the covered
  * context_items message-refs with one summary-ref — ordinals stay dense,
- * gap-free, ordered. NEVER deletes lcd_messages (Pitfall 5 — FK RESTRICT
- * enforces losslessness; expansion in Phase 131 recovers the underlying rows).
+ * gap-free, ordered. NEVER deletes lcd_messages (FK RESTRICT
+ * enforces losslessness; expansion recovers the underlying rows).
  */
 export function buildAppendLeafSummaryTxn(
   db: Database.Database,
@@ -137,9 +137,9 @@ export function buildAppendLeafSummaryTxn(
 
   return db.transaction((input: AppendSummaryInput): string => {
     const conversationId = input.scope.conversationId;
-    // R4 (132-03): the model-facing view + the seed source are per (conversation,
+    // The model-facing view + the seed source are per (conversation,
     // agent, tenant), so every range op below binds the agentId+tenantId from the
-    // input scope — a leaf pass touches ONLY the acting agent's view (WR-02).
+    // input scope — a leaf pass touches ONLY the acting agent's view.
     const agentId = input.scope.agentId;
     const tenantId = input.scope.tenantId;
     // Ensure the model-facing view exists before range-replacing it (auto-seed
@@ -148,11 +148,11 @@ export function buildAppendLeafSummaryTxn(
 
     // The covered run [start,end]: gather the message refIds it covers (only
     // `message`-refs link to lcd_messages — a `summary`-ref over a prior leaf is
-    // possible in later phases but in 129 the eviction selects a message run).
+    // possible in other configurations, but the leaf eviction here selects a message run).
     const coveredItems: LcdContextItem[] = [];
     for (const raw of selectCtxItemsInRange.all(conversationId, agentId, tenantId, input.startOrdinal, input.endOrdinal)) {
       const parsed = ctxItemRowMapper.parseOptionalRow(raw);
-      if (!parsed.ok || !parsed.value) continue; // skip only the bad row (WR-02)
+      if (!parsed.ok || !parsed.value) continue; // skip only the bad row
       coveredItems.push({
         ordinal: parsed.value.ordinal,
         refKind: parsed.value.ref_kind as LcdRefKind,
@@ -201,10 +201,10 @@ export function buildAppendLeafSummaryTxn(
       input.createdAt,
     );
 
-    // 1b. FTS-01 (Phase 180): index the NORMALIZED summary twin at this summary's
+    // 1b. Index the NORMALIZED summary twin at this summary's
     // base rowid (resolved by summary_id inside the helper). The base row exists
     // now (just inserted). The search fold is applied inside insertSummaryTri (the
-    // I7 single call site); the FTS tables carry no tenant_id, so only the
+    // single call site); the FTS tables carry no tenant_id, so only the
     // (conversationId, agentId) scope is passed. Best-effort (de-indexed on
     // failure, never a rolled-back summary write).
     insertSummaryTri(summaryId, input.content, {
@@ -239,7 +239,7 @@ export function buildAppendLeafSummaryTxn(
     if (shift > 0) {
       for (const raw of selectCtxOrdinalsAbove.all(conversationId, agentId, tenantId, input.endOrdinal)) {
         const parsed = ctxOrdinalRowMapper.parseOptionalRow(raw);
-        if (!parsed.ok || !parsed.value) continue; // skip only the bad row (WR-02)
+        if (!parsed.ok || !parsed.value) continue; // skip only the bad row
         const ordinal = parsed.value.ordinal;
         updateCtxItemOrdinal.run(ordinal - shift, conversationId, agentId, tenantId, ordinal);
       }
@@ -250,7 +250,7 @@ export function buildAppendLeafSummaryTxn(
 }
 
 /**
- * Build the condensed-summary write transaction (Phase 130, C2). One atomic
+ * Build the condensed-summary write transaction. One atomic
  * write: persist ONE condensed (depth>0) summary, link it to its CHILD
  * SUMMARIES via lcd_summary_parents (NOT lcd_summary_messages), and
  * range-replace the covered contiguous run of SUMMARY-refs with one condensed
@@ -286,8 +286,8 @@ export function buildAppendCondensedSummaryTxn(
 
   return db.transaction((input: AppendCondensedSummaryInput): string => {
     const conversationId = input.scope.conversationId;
-    // R4 (132-03): agent-scoped range ops (per (conversation, agent, tenant)) —
-    // a condense pass touches ONLY the acting agent's view (WR-02).
+    // Agent-scoped range ops (per (conversation, agent, tenant)) —
+    // a condense pass touches ONLY the acting agent's view.
     const agentId = input.scope.agentId;
     const tenantId = input.scope.tenantId;
     // Ensure the model-facing view exists before range-replacing it (the same
@@ -295,7 +295,7 @@ export function buildAppendCondensedSummaryTxn(
     // getContextItems was never called first).
     seedContextItems(input.scope);
 
-    // T-130 tamper guard (WR-02) — mirror the leaf path's T-129-22 discipline:
+    // Tamper guard — mirror the leaf path's discipline:
     // DERIVE the child set FROM the summary-refs actually living in the replaced
     // [startOrdinal,endOrdinal] range, instead of trusting `input.childSummaryIds`
     // and the range to agree (two independent inputs). Read the range rows once
@@ -304,7 +304,7 @@ export function buildAppendCondensedSummaryTxn(
     //       condensed run is summary-refs ONLY; collapsing a raw message into a
     //       condensed ref whose `lcd_summary_parents` links no message would break
     //       losslessness for that message. The throw rolls back the whole txn
-    //       (non-fatal at the trigger, T-130-07).
+    //       (non-fatal at the trigger).
     //   (b) LINK the range-derived summary ids (not the caller input), so a
     //       mismatched `childSummaryIds` can never corrupt the DAG edges — exactly
     //       as the leaf path links the messages it READ from the range, never the
@@ -313,7 +313,7 @@ export function buildAppendCondensedSummaryTxn(
     const inRangeChildIds: string[] = [];
     for (const raw of selectCtxItemsInRange.all(conversationId, agentId, tenantId, input.startOrdinal, input.endOrdinal)) {
       const parsed = ctxItemRowMapper.parseOptionalRow(raw);
-      if (!parsed.ok || !parsed.value) continue; // skip only the bad row (WR-02)
+      if (!parsed.ok || !parsed.value) continue; // skip only the bad row
       if (parsed.value.ref_kind !== "summary") {
         throw new Error("condensed range/child mismatch: range contains a non-summary ref");
       }
@@ -323,7 +323,7 @@ export function buildAppendCondensedSummaryTxn(
 
     // Recompute descendantCount + time-range from the RANGE-DERIVED CHILD SUMMARY
     // rows (store is authority — the input's advisory fields are ignored). Read
-    // the whole conversation's summaries once, index by id (WR-02 per-row
+    // the whole conversation's summaries once, index by id (per-row
     // degrade), filter to the derived children.
     const childSet = inRangeSet;
     let descendantCount = 0;
@@ -331,7 +331,7 @@ export function buildAppendCondensedSummaryTxn(
     let latestAt = Number.NEGATIVE_INFINITY;
     for (const raw of selectSummaries.all(conversationId, agentId, tenantId)) {
       const parsed = summaryRowMapper.parseOptionalRow(raw);
-      if (!parsed.ok || !parsed.value) continue; // skip only the bad row (WR-02)
+      if (!parsed.ok || !parsed.value) continue; // skip only the bad row
       if (!childSet.has(parsed.value.summary_id)) continue;
       descendantCount += parsed.value.descendant_count;
       if (parsed.value.earliest_at < earliestAt) earliestAt = parsed.value.earliest_at;
@@ -364,8 +364,8 @@ export function buildAppendCondensedSummaryTxn(
       input.createdAt,
     );
 
-    // 1b. FTS-01 (Phase 180): index the NORMALIZED summary twin at this condensed
-    // summary's base rowid (resolved by summary_id inside the helper). Same I7
+    // 1b. Index the NORMALIZED summary twin at this condensed
+    // summary's base rowid (resolved by summary_id inside the helper). Same
     // single-call-site fold + best-effort discipline as the leaf path; the FTS
     // tables carry no tenant_id (only conversationId + agentId scope passed).
     insertSummaryTri(summaryId, input.content, {
@@ -374,7 +374,7 @@ export function buildAppendCondensedSummaryTxn(
     });
 
     // 2. Link one row per RANGE-DERIVED child summary id (losslessness ledger —
-    //    children, not messages). Derived from the range (WR-02), so the links and
+    //    children, not messages). Derived from the range, so the links and
     //    the range-replaced window can never diverge.
     for (const childId of inRangeChildIds) {
       insertSummaryParent.run(summaryId, childId);
@@ -403,7 +403,7 @@ export function buildAppendCondensedSummaryTxn(
     if (shift > 0) {
       for (const raw of selectCtxOrdinalsAbove.all(conversationId, agentId, tenantId, input.endOrdinal)) {
         const parsed = ctxOrdinalRowMapper.parseOptionalRow(raw);
-        if (!parsed.ok || !parsed.value) continue; // skip only the bad row (WR-02)
+        if (!parsed.ok || !parsed.value) continue; // skip only the bad row
         const ordinal = parsed.value.ordinal;
         updateCtxItemOrdinal.run(ordinal - shift, conversationId, agentId, tenantId, ordinal);
       }

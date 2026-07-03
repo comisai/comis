@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Assembly-outcome asserter — deterministic typed helpers for Phase-171 CTX harness (HARN-01).
+ * Assembly-outcome asserter — deterministic typed helpers for the CTX harness (HARN-01).
  *
  * All functions are pure (no I/O). They throw descriptive errors on assertion failure —
  * same error-message style as cache-trace.ts and context-trace.ts.
@@ -8,7 +8,7 @@
  * assemblyOutcomeScore and assertAssemblyOutcome are INLINED here (not imported
  * from @comis/agent). Reason: packages/agent/src/context-engine/ is NOT re-exported
  * at the barrel level for test consumption.
- * The implementations match design/lcd-v3-unified-substrate.md §15 exactly.
+ * The implementations match the canonical context-engine scorer exactly.
  *
  * CONTENT-FREE: this module never logs or stores model answers, reference answers,
  * or key-fact strings — only numeric scores and scenario IDs.

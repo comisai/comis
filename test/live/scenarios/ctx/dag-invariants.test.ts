@@ -13,8 +13,8 @@
  *   drives 2 turns via ConversationDriver against a real LLM, then asserts:
  *     - CTX-01 A1/A2/A3 via readContextStreamShape on cache-trace.jsonl
  *     - CTX-03 P1/P2 via driver.capturedEvents() (context:dag_compacted)
- *     - FND-10 log-oracle (expectedErrors:[])
- *     - FND-11 persistence oracle (lcd_messages delta = 4 rows for 2-turn session)
+ *     - log oracle (expectedErrors:[])
+ *     - persistence oracle (lcd_messages delta = 4 rows for 2-turn session)
  *
  * costTier: "¢¢" — two turns per combo, Anthropic Haiku.
  *
@@ -69,7 +69,7 @@ const ENGINE_MATRIX = [
 describe("CTX-01 Stage-A — DAG/LCD structural invariants (no COMIS_LIVE)", () => {
   it("A1 — store.append NEVER deletes lcd_messages: losslessness invariant", () => {
     // Use an in-memory SQLite DB — destroyed when db.close() is called.
-    // T-138-02-02: in-memory :memory: has no persistence outside the test process.
+    // An in-memory :memory: DB has no persistence outside the test process.
     const db = new Database(":memory:");
     db.pragma("foreign_keys = ON");
     initSchema(db, 1536);
@@ -227,7 +227,7 @@ describe.skipIf(!isLive)("Live — CTX-01/CTX-03 DAG invariants + honest present
   it.skipIf(!canRun).each(ENGINE_MATRIX)(
     "version=$label",
     async ({ version, label, contextThreshold }) => {
-      // T-138-02-03: each driver has a 3-min timeout; finally block guarantees close().
+      // Each driver has a 3-min timeout; the finally block guarantees close().
       const configPath = buildCtxConfig({ version, label, contextThreshold, filePrefix: "ctx-inv" });
       const driver = new ConversationDriver({
         agentId: `ctx-inv-${label}`,
@@ -273,10 +273,10 @@ describe.skipIf(!isLive)("Live — CTX-01/CTX-03 DAG invariants + honest present
           assertP2UncertaintyClauses(events);
         }
 
-        // FND-10 log-oracle — no unexpected ERROR/FATAL lines in successful live turns.
+        // Log oracle — no unexpected ERROR/FATAL lines in successful live turns.
         await runLogOracle(driver.capturedLogLines(), { expectedErrors: [] });
 
-        // FND-11 persistence oracle — lcd_messages delta.
+        // Persistence oracle — lcd_messages delta.
         // 2 turns = 2 user messages + 2 assistant messages = 4 rows appended.
         // lcd_summaries delta is NOT asserted: a 2-turn session at any threshold
         // may not trigger compaction (2 turns may not fill the context window).
@@ -292,7 +292,7 @@ describe.skipIf(!isLive)("Live — CTX-01/CTX-03 DAG invariants + honest present
         await driver.close().catch(() => {
           // Swallow shutdown noise — the daemon may already have exited.
         });
-        // IN-01: clean up the per-combo temp config file to avoid tmpdir bloat.
+        // Clean up the per-combo temp config file to avoid tmpdir bloat.
         try { rmSync(configPath); } catch { /* ignore if already gone */ }
       }
     },

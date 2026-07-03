@@ -64,9 +64,9 @@ import {
   type WebSearchParamsType,
 } from "./web-search-formatting.js";
 
-// Activity label spec (see spec §6.1). The EMITTED name
-// uses an UNDERSCORE — `web-search-tool/index.ts:114 → name: "web_search"` —
-// while the file basename is hyphenated (RESEARCH Pitfall 2). The `{query}`
+// Activity label spec. The EMITTED name
+// uses an UNDERSCORE — `name: "web_search"` —
+// while the file basename is hyphenated. The `{query}`
 // placeholder is allowlisted via detailKeys; LLM-supplied search queries
 // pass through redactValue (a query containing a secret-shape token renders
 // as `<redacted>`).

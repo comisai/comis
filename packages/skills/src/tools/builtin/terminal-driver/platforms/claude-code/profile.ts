@@ -3,9 +3,9 @@
  * The `claude-code` platform profile (Layer 2) — paired with
  * `packages/daemon/bundled-skills/claude-code/SKILL.md` by the shared `id` + `platformVersion`.
  *
- * Phase 167: the render transform — the FINDING-3 dim-autocomplete ghost-strip, RELOCATED here out
- * of the agnostic `terminal-render.ts` (RENDER-01). Perception (Phase 168) and dialogs (Phase 169)
- * follow in later phases.
+ * This profile carries the render transform (the dim-autocomplete ghost-strip, which lives here
+ * rather than in the agnostic `terminal-render.ts`), the perception signatures, and the
+ * interactive dialogs.
  *
  * @module
  */
@@ -14,8 +14,8 @@ import type { EmulatorSnapshot, RenderCell } from "../../terminal-render.js";
 import type { TerminalPlatformProfile } from "../terminal-platform-profile.js";
 
 /**
- * Render one terminal row to text while STRIPPING the dim autocomplete ghost-text (FINDING-3,
- * live VPS 2026-06-17). Claude Code shows a DIM suggestion in its composer (e.g. `commit this`);
+ * Render one terminal row to text while STRIPPING the dim autocomplete ghost-text.
+ * Claude Code shows a DIM suggestion in its composer (e.g. `commit this`);
  * the plain-text `read()` capture can't convey the dim styling, so the driving model can't tell
  * the suggestion from real queued input — it halts to ask about it and drops later steps. On the
  * cursor's row, a cell at column `>= cursorX` that is DIM is autocomplete (real input is NON-dim
@@ -25,7 +25,8 @@ import type { TerminalPlatformProfile } from "../terminal-platform-profile.js";
  * flag (the tmux backend's `tmux attach` renders in the alt screen, so the flag can't gate it);
  * the (also-dim) status bar on other rows is never touched.
  *
- * Relocated VERBATIM from `terminal-render.ts` (v2.26 RENDER-01) — the engine no longer carries it.
+ * This lives here, not in the agnostic `terminal-render.ts` engine — the ghost-strip is
+ * platform-specific and the engine no longer carries it.
  */
 export function stripGhostFromRow(cells: readonly RenderCell[], cursorX: number): string {
   let out = "";
@@ -42,7 +43,7 @@ export function stripGhostFromRow(cells: readonly RenderCell[], cursorX: number)
  * The `claude-code` `transformSnapshot`: re-render the cursor row of the plain-text snapshot with
  * the ghost-strip applied, using the viewport cell grid (`snap.grid`) for the dim attributes the
  * flattened `screen` string has lost. A no-op when `snap.grid` is absent (the engine populates it
- * only for text-format snapshots) — so ansi/html reads and the agnostic path are untouched (INV-1).
+ * only for text-format snapshots) — so ansi/html reads and the agnostic path are untouched.
  *
  * The cursor row's index WITHIN `screen` accounts for any scrollback rows the engine prepended:
  * `screen` carries `(lines.length - rows)` scrollback rows before the viewport, so the cursor's
@@ -71,26 +72,26 @@ export const claudeCodeProfile: TerminalPlatformProfile = {
   allowIds: ["claude", "claude-code"],
   platformVersion: "1.1.5",
   transformSnapshot,
-  // CLASSIFY-01 (Phase 168): Claude Code perception signatures the classifier consumes (layered on
-  // the generic structural detection). All anchored + ReDoS-safe (the registry guard enforces at load).
+  // Claude Code perception signatures the classifier consumes (layered on the generic structural
+  // detection). All anchored + ReDoS-safe (the registry guard enforces at load).
   perception: {
-    // The composer input caret — Claude's `❯ ` prompt box (the LIVE-02 idle-`❯` awaiting-input cue).
+    // The composer input caret — Claude's `❯ ` prompt box (the idle-`❯` awaiting-input cue).
     promptAffordance: [/(?:^|\s)❯\s/u],
-    // The working spinner: a SPINNER GLYPH (not the generic `·` middot — review WR-02, it over-matches
+    // The working spinner: a SPINNER GLYPH (not the generic `·` middot — it over-matches
     // prose `· Building`) + a gerund (e.g. `✻ Crunching`), or the `(esc to interrupt)` hint Claude
     // renders while busy — a settled-but-RECENT frame showing this is mid-work, not a prompt.
     workingLine: [/[✢✳✶✻✽]\s+\w+ing\b/u, /\(esc to interrupt\)/iu],
     // Pickers/menus: the `/model` picker, a dismiss affordance, or a `❯`/`›` selector on an
-    // enumerated option — the D5 fix for the v2.11 full-screen menu → awaiting-input misread.
+    // enumerated option — so a full-screen menu classifies as awaiting-input rather than being misread.
     menuOrPicker: [/Select\s+(?:a\s+)?Model/iu, /\bEsc to (?:cancel|exit|go back)\b/iu, /(?:^|\s)[›❯]\s+\d+[.)]/u],
-    // A completed-action bullet. POPULATED (the §6-v2 structured-perception field) but NOT routed into
+    // A completed-action bullet. POPULATED (the structured-perception field) but NOT routed into
     // the classifier's awaiting-input branch: `⏺` is Claude's per-tool-action bullet (`⏺ Read(…)`), so
-    // feeding it would over-fire awaiting-input on a mid-turn tool-use pause (review WR-01). The idle
+    // feeding it would over-fire awaiting-input on a mid-turn tool-use pause. The idle
     // `❯` composer (promptAffordance) is the real awaiting-input cue.
     turnEnd: [/⏺\s+\S/u],
   },
-  // DIALOG-01 (Phase 169): Claude's interactive dialogs + their SAFE answer. The operator safe-only
-  // policy + the escalate-always veto STILL gate these (a profile proposes; the policy disposes) — a
+  // Claude's interactive dialogs + their SAFE answer. The operator safe-only policy + the
+  // escalate-always veto STILL gate these (a profile proposes; the policy disposes) — a
   // screen carrying an auth/destructive/approval cue escalates regardless. safeAnswer is RAW text
   // (Enter), sent via send_text exactly like the canned hintPattern answer.
   dialogs: [
@@ -101,8 +102,8 @@ export const claudeCodeProfile: TerminalPlatformProfile = {
       //   pre-2.1:  "Do you trust the files in this folder?"
       //   >= 2.1.x: "Quick safety check: Is this a project you created or one you trust?"
       //             with option "1. Yes, I trust this folder"
-      // (webhook-claude-cli-tdd-20260630: a stale regex matching only the pre-2.1 wording stalled a
-      // driven claude 2.1.196 session at the gate — auto-answer never fired.)
+      // (A regex matching only the pre-2.1 wording once stalled a driven claude session at the gate —
+      // auto-answer never fired — so all known forms must be matched here.)
       name: "trust-gate",
       detect: /trust the files in this folder|is this a project you[^\n]{0,80}trust|yes, i trust this folder/iu,
       safeAnswer: ["\r"],

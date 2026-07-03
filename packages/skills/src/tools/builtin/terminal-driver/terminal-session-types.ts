@@ -3,7 +3,7 @@
  * terminal-session-types -- the neutral LEAF type-module for the daemon-side
  * registry's shared structural contracts.
  *
- * Extracted from `terminal-session-registry.ts` (124-01) to break the source-level
+ * Extracted from `terminal-session-registry.ts` to break the source-level
  * import cycle the worker-supervisor extraction introduced: the registry value-imports
  * `wireWorkerSupervision` FROM `terminal-worker-supervisor.ts`, while the supervisor
  * needed `FakeWorkerChild`/`RegistryLogger`/`SessionHandle` back FROM the registry —
@@ -54,9 +54,9 @@ export interface FakeWorkerChild {
   stdout: { on(event: "data", cb: (chunk: Buffer) => void): void } | null;
   /**
    * The 4-fd stdio array (`["pipe","pipe","pipe","pipe"]`, terminal-worker-launch.ts):
-   * fd0=stdin, fd1=stdout, fd2=stderr, fd3=the events PUSH channel (124-05). The
-   * supervisor reads `stdio[3]` for `TerminalEventFrame`s (the no-poll attention seam,
-   * TR-11). Optional + per-slot-nullable so a fake worker without fd3 (or stderr) is valid
+   * fd0=stdin, fd1=stdout, fd2=stderr, fd3=the events PUSH channel. The
+   * supervisor reads `stdio[3]` for `TerminalEventFrame`s (the no-poll attention seam).
+   * Optional + per-slot-nullable so a fake worker without fd3 (or stderr) is valid
    * — the reader is optional-chained.
    */
   stdio?: ReadonlyArray<WorkerStdioStream | null | undefined>;
@@ -77,39 +77,39 @@ export interface SessionHandle {
   cols: number;
   rows: number;
   lastActivity: number;
-  /** Session start epoch ms (stamped at `create`) — the reaper's wall-clock-age signal (OPS-06). */
+  /** Session start epoch ms (stamped at `create`) — the reaper's wall-clock-age signal. */
   startedAt: number;
   exitCode?: number;
-  /** The registry-allocated per-session jail workspace dir (gap 2), removed best-effort on kill so the throwaway dir does not leak. Set ONLY when the registry allocated it (a caller-supplied workspace is the caller's to clean). */
+  /** The registry-allocated per-session jail workspace dir, removed best-effort on kill so the throwaway dir does not leak. Set ONLY when the registry allocated it (a caller-supplied workspace is the caller's to clean). */
   workspace?: string;
-  /** The origin that owns this session — `(agentId, sessionKey)` (TR-13/TR-09). Stamped at `create`; `list`/`read`/`get`/`kill`/`send*` filter on it (two subagents are mutually invisible). */
+  /** The origin that owns this session — `(agentId, sessionKey)`. Stamped at `create`; `list`/`read`/`get`/`kill`/`send*` filter on it (two subagents are mutually invisible). */
   owner: SessionOwner;
   /**
-   * DUR-01 (165-06): `true` iff this is a `drive.durable:true` session backed by a
+   * `true` iff this is a `drive.durable:true` session backed by a
    * detached tmux server that outlives a worker/daemon close. The durable-aware
    * `markRunningSessionsLost` does NOT flip such a session `lost` while its tmux is
-   * alive (Q4); recover-on-boot rehydrates it `running`. ABSENT/false ⇒ today's
-   * non-durable spawn session (the documented lost floor on a worker close, I1).
+   * alive; recover-on-boot rehydrates it `running`. ABSENT/false ⇒ today's
+   * non-durable spawn session (the documented lost floor on a worker close).
    */
   durable?: boolean;
   /**
-   * DUR-01 (165-06): the deterministic `comis-<sessionId>` tmux session name — the
+   * The deterministic `comis-<sessionId>` tmux session name — the
    * re-attach key the durable-aware `markRunningSessionsLost` probes via the injected
    * `isTmuxAlive` (a durable handle with a live tmux name stays recoverable, not
    * `lost`). Present only for a durable session (set at create-time + on rehydrate).
    */
   tmuxName?: string;
   /**
-   * RECUR-03 (option A): the explicit `-S` socket path this durable session's tmux server is bound
+   * The explicit `-S` socket path this durable session's tmux server is bound
    * to — the PER-BOOT socket of the daemon generation that created it. The daemon's per-session
    * `isTmuxAlive` probe + the worker's re-attach target THIS socket, so a restart re-attaches the
    * surviving session from its OWN (prior-boot) server while new sessions get a fresh per-boot
-   * server in the live mount namespace (RECUR-02). Set at create-time + rehydrated on recover;
+   * server in the live mount namespace. Set at create-time + rehydrated on recover;
    * absent ⇒ the boot socket fallback. Present only for a durable tmux session.
    */
   tmuxSocket?: string;
   /**
-   * LOOP-CLOSURE (webhook-claude-cli-tdd, 2026-06-30): `true` once the agent has DELIVERED a task
+   * `true` once the agent has DELIVERED a task
    * to this drive — set on the first delivered `send_text` (NOT `send_key`, which is gate/menu
    * navigation, not a task). The wait tool feeds it to `shouldPromoteDrive` as `everTasked`: a
    * never-tasked `detached` durable drive must NOT background at its first (gate/idle) wait, which
@@ -120,7 +120,7 @@ export interface SessionHandle {
 }
 
 // The registry's create/read/send/list shape DTOs. Moved here from
-// terminal-session-registry.ts (PROJECTS-MOVE follow-up) — same neutral-leaf rationale as
+// terminal-session-registry.ts — same neutral-leaf rationale as
 // the handle/logger types above (keeps the registry under the 800-line cap; type-only, the
 // registry re-exports them so every existing importer is unchanged).
 
@@ -152,17 +152,17 @@ export interface TerminalView {
   diff?: SnapshotDiff;
 }
 
-/** The post-action snapshot subset returned by `sendText`/`sendKey` (spec §5) — `{screen,cursor}`, a strict subset of {@link TerminalView}. */
+/** The post-action snapshot subset returned by `sendText`/`sendKey` — `{screen,cursor}`, a strict subset of {@link TerminalView}. */
 export interface SendResult {
   screen: string;
   cursor: { x: number; y: number };
   /**
-   * Whether the send was actually FORWARDED to a live worker (WR-05). `true` only
+   * Whether the send was actually FORWARDED to a live worker. `true` only
    * when the owned, running session round-tripped an `ok` reply; absent/falsy on the
    * degraded path (absent/cross-owner/not-running session OR a wedged worker — the
    * `{screen:"",cursor:{0,0}}` not-delivered shape). The woken-turn audit reads this
    * so a keystroke that reached nothing is recorded `outcome:"rejected"`, never
-   * `attempted` — keeping the §2.7 audit trail honest about delivery.
+   * `attempted` — keeping the audit trail honest about delivery.
    */
   delivered?: boolean;
 }

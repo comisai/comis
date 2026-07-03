@@ -45,8 +45,8 @@ import { readFileSync, statSync, existsSync } from "node:fs";
 function parseArgs(argv) {
   const pos = [];
   const opt = { headers: {} };
-  // Normalize `--flag=value` → `--flag` `value` so both forms work (the
-  // `--ts-offset=-350`-silently-dropped trap, webhook-claude-cli-tdd-20260630).
+  // Normalize `--flag=value` → `--flag` `value` so both forms work (avoids the
+  // `--ts-offset=-350`-silently-dropped trap).
   argv = argv.flatMap((a) => {
     if (a.startsWith("--") && a.includes("=")) {
       const i = a.indexOf("=");
@@ -82,7 +82,7 @@ function readBody(spec, opt) {
   if (typeof spec === "string" && spec.startsWith("@")) {
     const path = spec.slice(1);
     // A MISSING @file is a rig error, not an honest HTTP negative — exit 2 with a clean
-    // message instead of a raw ENOENT stack. The footgun (webhook-claude-gsd-snake-20260702):
+    // message instead of a raw ENOENT stack. The footgun this guards against:
     // a `node -e` used process.env.ID BEFORE `export ID`, wrote `wh-undefined.json`, and the
     // POST referenced a DIFFERENT path → an ENOENT crash mid-drive that read as a daemon fault.
     if (!existsSync(path)) {
@@ -91,7 +91,7 @@ function readBody(spec, opt) {
       process.exit(2);
     }
     // Surface the file's size + mtime so a STALE body is obvious, and HARD-FAIL on a stale
-    // reuse. The prior footgun (webhook-claude-cli-tdd-20260701): a botched `writeFileSync`
+    // reuse. The prior footgun: a botched `writeFileSync`
     // EACCES-failed to refresh a reused `/tmp/<name>.json` (a prior run left it comis-owned),
     // but the POST still sent the STALE body — a phantom turn (id from the OLD run) that
     // looked like a durable-drive resurrection. Rules: (1) UNIQUE, self-owned path per run;

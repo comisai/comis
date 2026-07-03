@@ -85,7 +85,7 @@ const ObsQueryToolParams = Type.Object({
   since_hours: Type.Optional(
     Type.Integer({ description: "Window in hours for fleet_health (default 24)" }),
   ),
-  // AUDIT-05 (the 9th action): the audit-log filter surface. All optional; an
+  // The audit-log filter surface (the 9th action). All optional; an
   // absent filter widens the scan. since_ms/agent_id/limit are shared above.
   kind: Type.Optional(
     Type.String({ description: "Audit event family filter (e.g. secret_access, injection_detected) — for audit" }),
@@ -285,7 +285,7 @@ export function createObsQueryTool(rpcCall: RpcCall): AgentTool<typeof ObsQueryT
         }
 
         if (action === "audit") {
-          // AUDIT-05 (the 9th action): the durable security-decision audit log.
+          // The durable security-decision audit log (the 9th action).
           // Reuses the existing admin trustGuard — NO new auth surface. Delegates
           // to the admin-gated obs.audit.query RPC; the rows are content-free.
           const kind = readStringParam(p, "kind", false);

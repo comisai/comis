@@ -1,32 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * grammy-typed Telegram `Update` / `Message` builders (TEST-01 / invariant I4,
- * Phase 204).
+ * grammy-typed Telegram `Update` / `Message` builders.
  *
- * The emulator's `getUpdates` (Plan 03) serves these builder-produced `Update`
- * values, and the scenario contract test (Plan 05) round-trips them through the
+ * The emulator's `getUpdates` serves these builder-produced `Update`
+ * values, and the scenario contract test round-trips them through the
  * REAL production Telegram adapter (`mapGrammyToNormalized`). Because the
  * builders import grammy 1.43's OWN exported `Update` / `Message` / `User`
  * types and return-annotate against them, every emitted payload is *guaranteed*
  * to be exactly the shape the adapter parses — a grammy shape drift becomes a
  * COMPILE error here, not a silent runtime mismatch. That is the whole point:
- * it forecloses the hand-rolled Go-emulator drift problem this milestone exists
- * to avoid (design §1.3, threat T-204-04).
+ * it forecloses the hand-rolled-emulator drift problem this typed harness exists
+ * to avoid.
  *
  * Analog (the untyped literal this replaces): `injectInboundMessage` in
  * `test/e2e/mocks/telegram/mock-telegram-server.ts:227-245`. Same runtime
  * shape — now grammy-typed.
  *
- * Scope (Phase 207): the `message` Update (the DM text round-trip, Phase 204),
- * the `message_reaction` ADD Update (REACT-01, Phase 206), the inbound MEDIA
- * `message` (MEDIA-03 — `makeMediaUpdate`/`makeLocationUpdate`, mirroring
- * `buildAttachments`/`message-mapper`), the `callback_query` Update (INTERACT-01
- * — `makeCallbackUpdate`, the `telegram-inbound.ts:165` handler) AND the
- * `edited_message` Update (INTERACT-02 — `makeEditUpdate`, the
- * `telegram-inbound.ts:117` handler). The §4.2 scope guard now PERMITS those
+ * Scope: the `message` Update (the DM text round-trip),
+ * the `message_reaction` ADD Update, the inbound MEDIA
+ * `message` (`makeMediaUpdate`/`makeLocationUpdate`, mirroring
+ * `buildAttachments`/`message-mapper`), the `callback_query` Update
+ * (`makeCallbackUpdate`, the `telegram-inbound.ts:165` handler) AND the
+ * `edited_message` Update (`makeEditUpdate`, the
+ * `telegram-inbound.ts:117` handler). The scope guard PERMITS those
  * kinds and still forbids the Out-of-Scope kinds (channel-post / inline-query /
  * poll-answer / chat-member updates) — the harness must not mint an update kind
- * the adapter does not handle (T-207-03).
+ * the adapter does not handle.
  *
  * TEST-HARNESS — lives under `test/`, never `packages`; ZERO production code
  * change. `test/` is outside every `packages` source-tree ESLint/architecture rule.
@@ -72,8 +71,8 @@ export interface MakeUserOptions {
 /**
  * Build a grammy `User` for a HUMAN sender (`is_bot: false`).
  *
- * The return type is grammy's own `User` — a shape drift is a compile error
- * (I4). `username` is included only when supplied (exact-optional-safe).
+ * The return type is grammy's own `User` — a shape drift is a compile error.
+ * `username` is included only when supplied (exact-optional-safe).
  */
 export function makeUser(opts: MakeUserOptions): User {
   const user: User = {
@@ -86,7 +85,7 @@ export function makeUser(opts: MakeUserOptions): User {
 
 /**
  * Build a grammy `User` for the BOT (`is_bot: true`) — used where a bot-sender
- * is needed (e.g. echoing an outbound author). Same I4 typing guarantee.
+ * is needed (e.g. echoing an outbound author). Same compile-time typing guarantee.
  */
 export function makeBotUser(opts: MakeUserOptions): User {
   const user: User = {
@@ -98,7 +97,7 @@ export function makeBotUser(opts: MakeUserOptions): User {
 }
 
 /**
- * Options for {@link makeGroupChat} (GROUP-01, Phase 208).
+ * Options for {@link makeGroupChat}.
  */
 export interface MakeGroupChatOptions {
   /** The Telegram chat id — a NEGATIVE id for groups (the `-100…` supergroup form). */
@@ -110,11 +109,11 @@ export interface MakeGroupChatOptions {
 }
 
 /**
- * Build a grammy group/supergroup/forum `Chat` (GROUP-01). Every prior builder
+ * Build a grammy group/supergroup/forum `Chat`. Every prior builder
  * hardcoded `type: "private"`; this is the group/forum seed the addressing +
  * thread surface needs.
  *
- * The return is the grammy `Chat.GroupChat | Chat.SupergroupChat` union (the I4
+ * The return is the grammy `Chat.GroupChat | Chat.SupergroupChat` union (the
  * drift tripwire AND the exact type `Message.chat` accepts — never the wider
  * `Chat` that also admits a `ChannelChat`). A forum is a `supergroup` carrying
  * `is_forum: true` (what `message-mapper.ts:147` reads to derive
@@ -139,8 +138,8 @@ export function makeGroupChat(opts: MakeGroupChatOptions): Chat.GroupChat | Chat
 /**
  * Options for {@link makeMessageUpdate}.
  *
- * Phase 208 (GROUP-01/02) adds four OPTIONAL addressing fields — each defaults
- * to the pre-208 behaviour so the DM round-trip is byte-identical:
+ * Four OPTIONAL addressing fields — each defaults
+ * to the DM behaviour so the DM round-trip is byte-identical:
  *  - `chat` overrides the default `private` literal with a group/forum `Chat`.
  *  - `entities` carries `mention`/`text_mention`/`bot_command` entities
  *    (`detectBotAddressing` reads them → `isBotMentioned`/`isBotCommand`).
@@ -158,43 +157,43 @@ export interface MakeMessageUpdateOptions {
   readonly chatId: number;
   /** The message text. */
   readonly text: string;
-  /** Override the default `private` chat literal with a group/forum chat (GROUP-01; default = DM private). The non-channel chat union grammy's `Update.message.chat` accepts (no `ChannelChat`). */
+  /** Override the default `private` chat literal with a group/forum chat (default = DM private). The non-channel chat union grammy's `Update.message.chat` accepts (no `ChannelChat`). */
   readonly chat?: Chat.PrivateChat | Chat.GroupChat | Chat.SupergroupChat;
-  /** Message entities (mention/text_mention/bot_command) the addressing detector reads (GROUP-02). Omitted when absent. */
+  /** Message entities (mention/text_mention/bot_command) the addressing detector reads. Omitted when absent. */
   readonly entities?: MessageEntity[];
-  /** A `reply_to_message` (→ `replyToBot` when its author is the bot, GROUP-02). Omitted when absent. */
+  /** A `reply_to_message` (→ `replyToBot` when its author is the bot). Omitted when absent. */
   readonly replyToMessage?: Message;
-  /** A `message_thread_id` (the forum topic id the thread resolver reads, GROUP-01). Omitted when absent. */
+  /** A `message_thread_id` (the forum topic id the thread resolver reads). Omitted when absent. */
   readonly messageThreadId?: number;
 }
 
 /**
- * Build a well-formed grammy `message` `Update` for the 204 DM round-trip.
+ * Build a well-formed grammy `message` `Update` for the DM round-trip.
  *
- * The return annotation IS grammy's `Update` (I4 tripwire). The literal
+ * The return annotation IS grammy's `Update` (a drift tripwire). The literal
  * satisfies `Update.message: Message & Update.NonChannel` — a `private` chat
  * (`Chat.PrivateChat`) and a mandatory `from` `User`, which is exactly what the
  * adapter's `mapGrammyToNormalized` reads.
  *
  * `date` is `Math.floor(Date.now() / 1000)` — Telegram unix SECONDS, not
  * milliseconds; the adapter's message-mapper multiplies ×1000 to recover the
- * timestamp (message-mapper.ts:207, design §4.2). Emitting ms here would make
+ * timestamp (message-mapper.ts:207). Emitting ms here would make
  * the mapped timestamp ~1000× too large.
  *
  * Only the `message` kind is populated by THIS builder — the other in-scope
  * kinds (reaction / media / callback / edit) each have their own builder; the
- * §4.2-Out-of-Scope kinds (channel-post / inline-query / poll-answer) are minted
- * by NO builder. The source-grep AC strips comment lines, so a doc-comment
+ * Out-of-Scope kinds (channel-post / inline-query / poll-answer) are minted
+ * by NO builder. The source-grep check strips comment lines, so a doc-comment
  * naming a kind is not a false hit.
  */
 export function makeMessageUpdate(opts: MakeMessageUpdateOptions): Update {
-  // GROUP-01: when `chat` is supplied it overrides the DM literal (a group/forum
-  // chat); otherwise the pre-208 `private` literal is preserved verbatim
+  // When `chat` is supplied it overrides the DM literal (a group/forum
+  // chat); otherwise the `private` literal is preserved verbatim
   // (grammy's `Chat.PrivateChat` REQUIRES `first_name` — in a DM the chat IS the
-  // sender, so it mirrors `from`; the `: Update` annotation surfaces any drift, I4).
+  // sender, so it mirrors `from`; the `: Update` annotation surfaces any drift).
   const chat: Chat.PrivateChat | Chat.GroupChat | Chat.SupergroupChat =
     opts.chat ?? { id: opts.chatId, type: "private", first_name: opts.from.first_name };
-  // GROUP-02: the addressing fields, each present ONLY when supplied. grammy
+  // The addressing fields, each present ONLY when supplied. grammy
   // types `Message.reply_to_message` as `ReplyMessage` (a `Message` with the
   // nested reply forced absent — a reply cannot itself nest a reply); the
   // builder-supplied non-reply `Message` is exactly that shape, so it is widened
@@ -213,7 +212,7 @@ export function makeMessageUpdate(opts: MakeMessageUpdateOptions): Update {
       message_id: opts.messageId,
       from: opts.from,
       chat,
-      // Telegram unix SECONDS (NOT ms) — the mapper multiplies ×1000 (§4.2).
+      // Telegram unix SECONDS (NOT ms) — the mapper multiplies ×1000.
       date: Math.floor(Date.now() / 1000),
       text: opts.text,
       ...addressing,
@@ -222,13 +221,13 @@ export function makeMessageUpdate(opts: MakeMessageUpdateOptions): Update {
 }
 
 /**
- * The closed set of forum-service message kinds the harness mints (COVER-02,
- * Phase 208) — EXACTLY the six the adapter FILTERS at `telegram-inbound.ts:50-58`
+ * The closed set of forum-service message kinds the harness mints — EXACTLY the
+ * six the adapter FILTERS at `telegram-inbound.ts:50-58`
  * (`forum_topic_created` / `forum_topic_edited` / `forum_topic_closed` /
  * `forum_topic_reopened` / `general_forum_topic_hidden` /
  * `general_forum_topic_unhidden`). A `kind` outside this union is a COMPILE
  * error, so the harness can never mint a service kind the adapter does not
- * recognize — the §4.2 scope guard applied to service messages: these ARE
+ * recognize — the scope guard applied to service messages: these ARE
  * handled (filtered), so minting them is permitted; the negative test proves
  * the adapter does NOT dispatch them to the agent.
  */
@@ -241,7 +240,7 @@ export type ForumServiceKind =
   | "general_forum_topic_unhidden";
 
 /**
- * Options for {@link makeServiceMessageUpdate} (COVER-02). A forum-service
+ * Options for {@link makeServiceMessageUpdate}. A forum-service
  * message rides a SUPERGROUP chat (forum topics live in supergroups) and carries
  * NO `text` — it is a non-message lifecycle event, not agent input.
  */
@@ -260,7 +259,7 @@ export interface MakeServiceMessageUpdateOptions {
  * Build the grammy-typed forum-service field for a single {@link ForumServiceKind}.
  *
  * Each branch return-annotates the grammy field type (`ForumTopicCreated`/… —
- * the I4 drift tripwire: a grammy shape change fails to compile here). The
+ * the drift tripwire: a grammy shape change fails to compile here). The
  * `created` kind requires `name` + `icon_color`; `edited` is all-optional; the
  * other four are empty objects (the closed switch — an off-union kind is a
  * compile error).
@@ -308,15 +307,15 @@ function buildForumServiceField(
 
 /**
  * Build a well-formed grammy `message` `Update` carrying ONE forum-service field
- * (COVER-02 — the negative test). The adapter's message handler receives a
+ * (the negative test). The adapter's message handler receives a
  * `message` update and FILTERS it at `telegram-inbound.ts:50-58` (a DEBUG
  * "Skipped forum topic service message", then `return`) — so the scenario proves
  * it is NEVER dispatched to the agent.
  *
- * The return annotation IS grammy's `Update` (I4 tripwire). The inner `message`
+ * The return annotation IS grammy's `Update` (a drift tripwire). The inner `message`
  * rides a SUPERGROUP chat (forum service messages occur in supergroups) and
  * carries NO `text` — a service message is a lifecycle event, not a prompt. Only
- * the single named forum-service field is set (the §4.2 scope guard: these kinds
+ * the single named forum-service field is set (the scope guard: these kinds
  * ARE handled — by filtering — so minting them is permitted; channel-post /
  * inline-query / poll-answer stay forbidden). `date` is unix SECONDS.
  */
@@ -334,7 +333,7 @@ export function makeServiceMessageUpdate(
       message_id: opts.messageId,
       from,
       // A supergroup chat (forums are supergroups). grammy's SupergroupChat
-      // requires `title`; the `: Update` annotation surfaces any drift (I4).
+      // requires `title`; the `: Update` annotation surfaces any drift.
       chat: { id: opts.chatId, type: "supergroup", title: `supergroup ${opts.chatId}`, is_forum: true },
       // Telegram unix SECONDS (NOT ms) — the mapper multiplies ×1000.
       date: Math.floor(Date.now() / 1000),
@@ -400,7 +399,7 @@ export interface MakeMediaUpdateOptions {
  * exactly the fields `buildAttachments`'s per-kind `extract*` helper reads.
  *
  * Each branch return-annotates the grammy type (`PhotoSize[]`/`Voice`/…), so a
- * grammy field drift is a COMPILE error here (I4). Optional fields are spread
+ * grammy field drift is a COMPILE error here. Optional fields are spread
  * only when defined (`exactOptionalPropertyTypes` — an absent optional is NOT
  * `: undefined`).
  */
@@ -471,16 +470,16 @@ function buildMediaFields(
 /**
  * Build a well-formed grammy `message` `Update` carrying ONE inbound media kind.
  *
- * The return annotation IS grammy's `Update` (I4 tripwire). The inner `message`
+ * The return annotation IS grammy's `Update` (a drift tripwire). The inner `message`
  * mirrors {@link makeMessageUpdate}'s literal (a `private` chat + a mandatory
  * `from`) plus exactly the per-`kind` media field `buildAttachments` extracts —
- * NOTHING the extractor does not read (MEDIA-03 / zero product change: the
+ * NOTHING the extractor does not read (zero product change: the
  * builder emits only what production consumes). `has_media_spoiler` is set only
  * when `spoiler` is true (message-mapper.ts:142 → `metadata.hasSpoiler`); it is
  * OMITTED otherwise (exactOptionalPropertyTypes).
  *
  * `date` is `Math.floor(Date.now() / 1000)` — Telegram unix SECONDS (the mapper
- * ×1000 → ms; the 204/206 discipline).
+ * ×1000 → ms; the same timestamp discipline as every other builder).
  */
 export function makeMediaUpdate(opts: MakeMediaUpdateOptions): Update {
   return {
@@ -542,7 +541,7 @@ export type MakeLocationUpdateOptions = {
  * Build a grammy `message` `Update` carrying a `location` OR a `venue`.
  *
  * No file store (a `message` update). The return annotation IS grammy's `Update`
- * (I4). For `venue`, the builder sets `message.venue` (and NOT `message.location`)
+ * (a drift tripwire). For `venue`, the builder sets `message.venue` (and NOT `message.location`)
  * — matching the mapper's `else if` precedence (venue wins, message-mapper.ts:175);
  * for a plain point it sets `message.location`. `horizontal_accuracy` is omitted
  * when absent (exactOptionalPropertyTypes).
@@ -583,7 +582,7 @@ export function makeLocationUpdate(opts: MakeLocationUpdateOptions): Update {
 export interface MakeReactionUpdateOptions {
   /** The Update's unique, monotonically-increasing id (the caller owns the counter; see {@link nextUpdateId}). */
   readonly updateId: number;
-  /** The EXISTING bot reply's `message_id` — what `recordOutboundMessage` keyed the trajectory on (NOT a freshly-minted id; REACT-01 reacts to an already-sent message). */
+  /** The EXISTING bot reply's `message_id` — what `recordOutboundMessage` keyed the trajectory on (NOT a freshly-minted id; a reaction targets an already-sent message). */
   readonly messageId: number;
   /** The private-chat id this reaction belongs to. */
   readonly chatId: number;
@@ -593,15 +592,15 @@ export interface MakeReactionUpdateOptions {
    * The reaction emoji, typed as grammy's CLOSED `ReactionTypeEmoji["emoji"]`
    * union (message.d.ts:1446). The union contains `👍`/`👎`/`❌`/… but NOT `✅`
    * — even though the PRODUCT `DEFAULT_REACTION_MAP.success` lists `✅`, passing
-   * it here is a COMPILE error (GOTCHA A). Use `👍` for the success path.
+   * it here is a COMPILE error. Use `👍` for the success path.
    */
   readonly emoji: ReactionTypeEmoji["emoji"];
 }
 
 /**
- * Build a well-formed grammy `message_reaction` ADD `Update` for REACT-01.
+ * Build a well-formed grammy `message_reaction` ADD `Update`.
  *
- * The return annotation IS grammy's `Update` (I4 tripwire) and the inner literal
+ * The return annotation IS grammy's `Update` (a drift tripwire) and the inner literal
  * satisfies `MessageReactionUpdated` (message.d.ts:1468). It models a FRESH ADD:
  * `old_reaction: []` → `new_reaction: [{ type: "emoji", emoji }]`, which is
  * exactly the diff the already-wired adapter handler detects
@@ -614,7 +613,7 @@ export interface MakeReactionUpdateOptions {
  * ~1000× too large.
  *
  * Only the `message_reaction` kind is populated by THIS builder (the callback /
- * edited-message kinds have their own Phase-207 builders; §4.2 scope guard).
+ * edited-message kinds have their own builders; the scope guard).
  */
 export function makeReactionUpdate(opts: MakeReactionUpdateOptions): Update {
   return {
@@ -654,7 +653,7 @@ export interface MakeBotMessageOptions {
  * `callback_query` taps (it carries the `chat.id` + `message_id` the adapter
  * reads at `telegram-inbound.ts:173,181`). `from` is the bot (`is_bot: true`),
  * distinguishing it from an inbound human message. Return-annotated `: Message`
- * so a grammy drift is a compile error (I4).
+ * so a grammy drift is a compile error.
  */
 export function makeBotMessage(opts: MakeBotMessageOptions): Message {
   return {
@@ -681,7 +680,7 @@ export interface MakeCallbackUpdateOptions {
   readonly botMessage: Message;
   /** grammy's `CallbackQuery` REQUIRES `chat_instance` — a stable per-chat string. */
   readonly chatInstance: string;
-  /** The button payload (`ctx.callbackQuery.data`) — a SCALAR string (IN-04 safe). */
+  /** The button payload (`ctx.callbackQuery.data`) — a SCALAR string (kept scalar so it cannot smuggle structured input). */
   readonly data: string;
 }
 
@@ -691,11 +690,10 @@ export interface MakeCallbackUpdateOptions {
  * then it reads `ctx.callbackQuery.message?.chat.id`, `ctx.from.id`,
  * `ctx.callbackQuery.data`, `ctx.callbackQuery.message.message_id`).
  *
- * The return annotation IS grammy's `Update` (I4). `message` is the EXISTING bot
- * `Message` (a regular accessible message — assignable to grammy's
+ * The return annotation IS grammy's `Update` (a drift tripwire). `message` is the
+ * EXISTING bot `Message` (a regular accessible message — assignable to grammy's
  * `MaybeInaccessibleMessage`), `data` is a scalar string, `from` is the tapper.
- * Only the `callback_query` kind is populated (the §4.2 guard now PERMITS it —
- * lifted by INTERACT-01, Phase 207).
+ * Only the `callback_query` kind is populated (the scope guard PERMITS it).
  */
 export function makeCallbackUpdate(opts: MakeCallbackUpdateOptions): Update {
   const callbackQuery: CallbackQuery = {
@@ -735,9 +733,8 @@ export interface MakeEditUpdateOptions {
  * The inner shape is exactly {@link makeMessageUpdate}'s `message` (a `private`
  * chat + a mandatory `from`), under the `edited_message` key, PLUS `edit_date`
  * (what distinguishes an edit from a fresh message). The return annotation IS
- * grammy's `Update` (I4); `date`/`edit_date` are unix SECONDS. Only the
- * `edited_message` kind is populated (the §4.2 guard now PERMITS it — lifted by
- * INTERACT-02, Phase 207).
+ * grammy's `Update` (a drift tripwire); `date`/`edit_date` are unix SECONDS. Only the
+ * `edited_message` kind is populated (the scope guard PERMITS it).
  */
 export function makeEditUpdate(opts: MakeEditUpdateOptions): Update {
   const nowSeconds = Math.floor(Date.now() / 1000);
@@ -758,7 +755,7 @@ export function makeEditUpdate(opts: MakeEditUpdateOptions): Update {
 /**
  * Module-level strictly-monotonic update-id source.
  *
- * The emulator (Plan 03) relies on strictly-increasing `update_id`s for its
+ * The emulator relies on strictly-increasing `update_id`s for its
  * long-poll offset/ack (drop pending `update_id < offset`). Starting at 1
  * mirrors the proven mock (`mock-telegram-server.ts:231,250`). Callers pass the
  * value into {@link makeMessageUpdate} (the builder echoes it verbatim) so the

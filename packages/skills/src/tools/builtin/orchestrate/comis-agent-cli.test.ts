@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for `runComisAgent` (CLI-04 / CLI-06 — the in-jail `comis-agent`
+ * Unit tests for `runComisAgent` (the in-jail `comis-agent`
  * argv→one-cap-socket-call parser + dispatch).
  *
  * Drives the parser over a FAKE `callCapSocket` (no real socket): asserts each
@@ -9,8 +9,8 @@
  * `status list` aliases to `session.list`, that an unknown/admin/`skill` verb
  * exits non-zero WITHOUT touching the socket, and that a missing-lease reject
  * (the real primitive's loud-fail) surfaces as a non-zero exit + loud stderr
- * (CLI-06). A final source-grep test pins the dependency-free / no-WebSocket
- * containment (CLI-04 + §2.3).
+ * A final source-grep test pins the dependency-free / no-WebSocket
+ * containment (AGENTS.md §2.3).
  *
  * @module
  */
@@ -145,7 +145,7 @@ describe("runComisAgent", () => {
     expect(h.callCapSocket).not.toHaveBeenCalled();
   });
 
-  it("loud-fails (non-zero + stderr naming the env + jail) when callCapSocket rejects with the missing-lease error (CLI-06)", async () => {
+  it("loud-fails (non-zero + stderr naming the env + jail) when callCapSocket rejects with the missing-lease error", async () => {
     const h = harness({
       reject: new Error(
         "comis-agent / orchestrate runtime requires COMIS_ORCH_SOCKET/COMIS_CAP_LEASE — only valid inside an orchestrate jail",
@@ -174,7 +174,7 @@ describe("runComisAgent", () => {
   });
 });
 
-describe("comis-agent-cli containment (CLI-04 + §2.3 dependency-free)", () => {
+describe("comis-agent-cli containment (dependency-free, no forbidden WebSocket wire)", () => {
   const cliSrc = readFileSync(resolve(here, "comis-agent-cli.ts"), "utf8");
   const entrySrc = readFileSync(resolve(here, "comis-agent-entry.ts"), "utf8");
 

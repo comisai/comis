@@ -17,7 +17,7 @@ import { jsonResult, readStringParam, readNumberParam } from "../tool-helpers.js
 
 import type { RpcCall } from "./memory-search-tool.js";
 
-// Activity label spec (§17.6). Descriptor name == emitted name.
+// Activity label spec. Descriptor name == emitted name.
 registerActivityLabelSpec("memory_get", {
   semanticPhase: "memory",
   label: "reading memory",

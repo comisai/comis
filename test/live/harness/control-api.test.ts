@@ -1,27 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Stage-A unit tests for the generic `/control/*` surface + the in-process
- * typed control client + the reply-wait primitive (`control-api.ts`, RIG-03 +
- * SEC-01, Phase 204).
+ * typed control client + the reply-wait primitive (`control-api.ts`).
  *
  * Pure in-process HTTP/typed-verb tests — no daemon, no key, no real network
  * (the only "network" is loopback `fetch` against the emulator's own
  * `127.0.0.1:<port>`). The control API is the canonical driver surface; the rig
- * (Plan 05) and the round-trip scenario inject a message + await the reply
- * through this ONE mechanism, and Phase 205's `chan`/`tg` CLI is a thin HTTP
+ * and the round-trip scenario inject a message + await the reply
+ * through this ONE mechanism, and the `chan`/`tg` CLI is a thin HTTP
  * client over the same handlers.
  *
- * These tests assert the MINIMAL 204 route set on the SHARED http-backend base
+ * These tests assert the core route set on the SHARED http-backend base
  * (one loopback port shared with the Bot API):
  *   - POST /control/chats/:id/messages → { messageId } + queues an inbound the
  *     emulator's getUpdates serves (the inject route).
  *   - GET  /control/chats/:id/outbound?afterMessageId&waitMs → the reply-wait:
  *     immediate when an outbound already exists; block-then-resolve when one is
- *     recorded mid-wait; and — the PRIME DIRECTIVE (I5) — `[]` on timeout (an
+ *     recorded mid-wait; and — the PRIME DIRECTIVE — `[]` on timeout (an
  *     honest "no reply within Nms", NEVER a fabricated success).
  *   - in-process == HTTP parity: the typed `ControlClient` calls the SAME
  *     handlers without a socket and returns the SAME results.
- *   - SEC-01: `/control/*` is namespaced (never confused with `/bot<token>/*`)
+ *   - `/control/*` is namespaced (never confused with `/bot<token>/*`)
  *     and binds loopback only (no wildcard host in the source).
  *
  * Run under the LIVE vitest config (the bare root config excludes `test/live`,
@@ -90,7 +89,7 @@ async function getControl(apiRoot: string, path: string): Promise<{ status: numb
   return { status: res.status, json: await res.json() };
 }
 
-describe("control-api — generic /control/* surface + in-proc client + reply-wait (RIG-03)", () => {
+describe("control-api — generic /control/* surface + in-proc client + reply-wait", () => {
   let emu: TgEmulator;
   let client: ControlClient;
   let apiRoot: string;
@@ -270,7 +269,7 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
   });
 
   // -------------------------------------------------------------------------
-  // POST /control/chats/:id/reactions — the inject-reaction route (REACT-02)
+  // POST /control/chats/:id/reactions — the inject-reaction route
   //
   // The load-bearing structural assertion: ONE handler (handleInjectReaction)
   // serves BOTH the HTTP dispatch arm AND the in-proc ControlClient, so an
@@ -279,7 +278,7 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
   // SPY ControlEmulator records the forwarded `injectReaction(chat, from,
   // botMessageId, emoji)` call so both paths can be asserted byte-identical.
   // -------------------------------------------------------------------------
-  describe("POST /control/chats/:id/reactions (inject reaction — REACT-02)", () => {
+  describe("POST /control/chats/:id/reactions (inject reaction)", () => {
     /** A recorded injectReaction call (the args forwarded to the emulator). */
     interface ReactionCall {
       readonly chat: { readonly chatId: number };
@@ -386,7 +385,7 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
       }
     });
 
-    it("returns 400 (honest no-crash) on a non-numeric botMessageId — never crashes (T-204-12)", async () => {
+    it("returns 400 (honest no-crash) on a non-numeric botMessageId — never crashes", async () => {
       const spy = makeSpyControl();
       await spy.start();
       try {
@@ -456,11 +455,11 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
   });
 
   // -------------------------------------------------------------------------
-  // The reaction route regex (REACT-02) — a pure source-shape assertion.
+  // The reaction route regex — a pure source-shape assertion.
   // -------------------------------------------------------------------------
-  describe("the /control/chats/:id/reactions path constant (REACT-02)", () => {
+  describe("the /control/chats/:id/reactions path constant", () => {
     it("matches /reactions (incl. negative chat ids + trailing slash) and NOT /messages", () => {
-      // Re-derive the design path regex; assert the source declares the same.
+      // Re-derive the path regex; assert the source declares the same.
       const re = /^\/control\/chats\/(-?\d+)\/reactions\/?$/;
       expect(re.test("/control/chats/123/reactions")).toBe(true);
       expect(re.test("/control/chats/-100/reactions")).toBe(true); // supergroup
@@ -475,8 +474,8 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
   });
 
   // -------------------------------------------------------------------------
-  // POST /control/chats/:id/{media,location,callbacks,edits} — the four §4.6
-  // routes (Phase 207). Each mirrors the 206 reactions trio: ONE shared handler
+  // POST /control/chats/:id/{media,location,callbacks,edits} — the four
+  // media/interaction routes. Each mirrors the reactions trio: ONE shared handler
   // both the HTTP dispatch arm AND the in-proc ControlClient invoke, so an
   // in-proc inject and an HTTP inject drive the matching emulator verb
   // IDENTICALLY (in-proc == HTTP parity). The media byte payload travels as
@@ -486,7 +485,7 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
   // forwarded args so both paths can be asserted byte-identical and bad input
   // can be confirmed to never reach the emulator.
   // -------------------------------------------------------------------------
-  describe("POST /control/chats/:id/{media,location,callbacks,edits} (the four §4.6 routes — Phase 207)", () => {
+  describe("POST /control/chats/:id/{media,location,callbacks,edits} (the four media/interaction routes)", () => {
     /** A recorded injectMedia call (the args forwarded to the emulator). */
     interface MediaCall {
       readonly chat: { readonly chatId: number };
@@ -600,7 +599,7 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
     }
 
     // ---- media -------------------------------------------------------------
-    describe("POST /control/chats/:id/media (inject media — MEDIA-01/03)", () => {
+    describe("POST /control/chats/:id/media (inject media)", () => {
       it("drives emulator.injectMedia IDENTICALLY whether reached in-proc or over HTTP (parity), base64→Buffer", async () => {
         const spy = makeSpyControl();
         await spy.start();
@@ -720,7 +719,7 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
     });
 
     // ---- location ----------------------------------------------------------
-    describe("POST /control/chats/:id/location (inject location/venue — MEDIA-01)", () => {
+    describe("POST /control/chats/:id/location (inject location/venue)", () => {
       it("drives emulator.injectLocation IDENTICALLY in-proc and over HTTP (parity), plain point", async () => {
         const spy = makeSpyControl();
         await spy.start();
@@ -791,7 +790,7 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
     });
 
     // ---- callbacks ---------------------------------------------------------
-    describe("POST /control/chats/:id/callbacks (inject callback — INTERACT-01)", () => {
+    describe("POST /control/chats/:id/callbacks (inject callback)", () => {
       it("drives emulator.injectCallback IDENTICALLY in-proc and over HTTP (parity)", async () => {
         const spy = makeSpyControl();
         await spy.start();
@@ -808,7 +807,7 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
             data: "vote:yes",
           });
           expect(status).toBe(200);
-          // A callback mints no id — the §4.6 shape is `{ ok: true }`.
+          // A callback mints no id — the response shape is `{ ok: true }`.
           expect(json).toEqual({ ok: true });
 
           expect(spy.callbackCalls).toHaveLength(2);
@@ -844,11 +843,11 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
         }
       });
 
-      it("the JSON parseBody branch handles the callback body (IN-04: scalar data, NO form-parser change)", async () => {
+      it("the JSON parseBody branch handles the callback body (scalar data, NO form-parser change)", async () => {
         // grammy sends inline-keyboard/callback bodies as JSON; the control route
         // uses a JSON body with a scalar `data` string, which parseControlBody's
         // JSON branch handles. The `&`-split form parser is never relied on for
-        // callbacks. (CF-1 — confirm the JSON path, do NOT array-decode the form.)
+        // callbacks — confirm the JSON path, do NOT array-decode the form.
         const spy = makeSpyControl();
         await spy.start();
         try {
@@ -868,7 +867,7 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
     });
 
     // ---- edits -------------------------------------------------------------
-    describe("POST /control/chats/:id/edits (inject edit — INTERACT-02)", () => {
+    describe("POST /control/chats/:id/edits (inject edit)", () => {
       it("drives emulator.injectEdit IDENTICALLY in-proc and over HTTP (parity)", async () => {
         const spy = makeSpyControl();
         await spy.start();
@@ -996,7 +995,7 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
     });
 
     // ---- the four route regexes (pure source-shape assertions) -------------
-    describe("the four §4.6 path constants are declared (Phase 207)", () => {
+    describe("the four media/interaction path constants are declared", () => {
       it("declares CHAT_MEDIA/LOCATION/CALLBACKS/EDITS path constants targeting the right segments", () => {
         const src = readFileSync(CONTROL_API_SOURCE, "utf8");
         expect(src).toMatch(/CHAT_MEDIA_PATH/);
@@ -1029,9 +1028,9 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
   });
 
   // -------------------------------------------------------------------------
-  // SEC-01 — namespace + loopback bind
+  // Namespace + loopback bind
   // -------------------------------------------------------------------------
-  describe("SEC-01 — /control/* namespaced + loopback only", () => {
+  describe("/control/* namespaced + loopback only", () => {
     it("dispatches /control/* AND /bot<token>/* on the SAME port without confusion", async () => {
       // The Bot API works on this port.
       const me = await callBotMethod(apiRoot, "getMe", {});
@@ -1063,7 +1062,7 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
 
   // -------------------------------------------------------------------------
   // POST /control/faults + DELETE /control/faults — the out-of-process fault
-  // path (Plan 02). The in-process scenario calls emu.fail() directly; the
+  // path. The in-process scenario calls emu.fail() directly; the
   // HTTP routes (+ the in-proc client.setFault/clearFaults for symmetry) drive
   // the SAME emulator fail()/clearFaults() the scenario uses.
   // -------------------------------------------------------------------------
@@ -1134,7 +1133,7 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
 });
 
 // ---------------------------------------------------------------------------
-// FOUNDATION-FIX (type-lift, CHAN2-02) — the generic control-api imports its
+// Type-lift — the generic control-api imports its
 // shared outbound-oracle types from harness/, NOT from emulators/telegram/.
 //
 // The telegram-first build anchored the channel-agnostic `RecordedOutbound`
@@ -1142,9 +1141,9 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
 // Telegram emulator, and pulled `MediaKind` from `tg-payloads.ts` even though
 // a shared `MediaKind` already lives in `channel-emulator.ts`. So the "generic"
 // /control/* surface had a type edge on ONE specific channel — a second channel
-// (Phase 209 Signal) could not feed it without depending on the Telegram
+// (Signal) could not feed it without depending on the Telegram
 // emulator. This contract test pins that the lifted oracle type comes from the
-// harness layer, so channel #2 has no telegram dependency for the shared types.
+// harness layer, so a second channel has no telegram dependency for the shared types.
 // ---------------------------------------------------------------------------
 describe("control-api imports shared oracle types from harness/, not the telegram emulator", () => {
   it("does NOT import the lifted RecordedOutbound from the telegram emulator", () => {

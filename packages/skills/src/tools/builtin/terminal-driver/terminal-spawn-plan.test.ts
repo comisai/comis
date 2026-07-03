@@ -152,7 +152,7 @@ describe("buildSpawnPlan — daemon secrets MUST NOT enter the jailed CLI env (T
   // HIGH (security): the bwrap jail masks secrets.db (--tmpfs ~/.comis), but the daemon's admin
   // gateway token leaked through the env-scrub on the `inherited` source — with network:full a
   // prompt-injected driven CLI could `curl` the loopback gateway (scope `*`) and seize the control
-  // plane. Live-confirmed (webhook-claude-cli-tdd-20260630): a jailed claude 2.1.196's
+  // plane. Live-confirmed: a jailed claude 2.1.196's
   // /proc/<pid>/environ carried COMIS_GATEWAY_TOKEN + GWTOKEN. This proves the PRODUCTION composition
   // (buildSpawnPlan, not just scrubChildEnv) strips them on BOTH backends.
   const LEAKY_ENV: NodeJS.ProcessEnv = {
@@ -186,7 +186,7 @@ describe("buildSpawnPlan — daemon secrets MUST NOT enter the jailed CLI env (T
   });
 });
 
-describe("buildSpawnPlan — claude session-env carve-out (the actual EROFS fix, EROFS-03)", () => {
+describe("buildSpawnPlan — claude session-env carve-out (the actual EROFS fix)", () => {
   // Real-VPS 2026-06-17: claude's Bash tool / SessionStart hook EROFSes on `mkdir ~/.claude/
   // session-env/<id>` because claude's OWN bash sandbox remounts $HOME read-only IN-PLACE. The
   // CLAUDE_CODE_BUBBLEWRAP var does NOT suppress that remount in the prod seccomp'd daemon (it only

@@ -13,8 +13,8 @@
  *       fires via driver.capturedEvents() — observation-masking hysteresis active
  *     - dag mode: assertO1MetricsNonZero (context:dag_compacted or context:evicted)
  *       via driver.capturedEvents()
- *     - FND-11 persistence oracle: lcd_summaries delta = 0 for pipeline (no DAG store)
- *     - FND-10 log-oracle (expectedErrors: ["JSON-RPC method error"]) on each combo
+ *     - persistence oracle: lcd_summaries delta = 0 for pipeline (no DAG store)
+ *     - log oracle (expectedErrors: ["JSON-RPC method error"]) on each combo
  *     - COMIS_LIVE unset → Stage-C skips cleanly (0 failures)
  *
  * costTier: "¢¢" — Anthropic Haiku, 10–15 turns per combo.
@@ -138,7 +138,7 @@ describe.skipIf(!isLive)("Live — CTX-05 both modes × threshold profiles (Stag
 
           // Only assert for low threshold — high threshold + short session may not fire compaction.
           // Rely solely on the event-bus check (capturedEvents) — raw log-line substring search
-          // on JSON-serialised Pino entries produces false positives (WR-03).
+          // on JSON-serialised Pino entries produces false positives.
           if (contextThreshold <= 0.5) {
             expect(
               pipelineCompactionFired,
@@ -147,7 +147,7 @@ describe.skipIf(!isLive)("Live — CTX-05 both modes × threshold profiles (Stag
           }
 
           // Pipeline mode does NOT use the DAG lcd_* store.
-          // FND-11: lcd_summaries delta = 0 for pipeline mode.
+          // Persistence oracle: lcd_summaries delta = 0 for pipeline mode.
           if (existsSync(dbPath)) {
             await runDbOracle(dbPath, {
               expectedDeltas: [{ table: "lcd_summaries", expectedRowDelta: 0 }],
@@ -157,7 +157,7 @@ describe.skipIf(!isLive)("Live — CTX-05 both modes × threshold profiles (Stag
         } else {
           // DAG mode: assertO1MetricsNonZero must pass for low-threshold profiles
           // where compaction is expected. For high threshold, only run integrity checks.
-          // Guard by threshold — NOT by events.length (empty events must FAIL, not skip — WR-02).
+          // Guard by threshold — NOT by events.length (empty events must FAIL, not skip).
           if (contextThreshold <= 0.5) {
             assertO1MetricsNonZero(events); // throws with diagnostic if events empty
           }
@@ -167,13 +167,13 @@ describe.skipIf(!isLive)("Live — CTX-05 both modes × threshold profiles (Stag
           }
         }
 
-        // FND-10 log-oracle — no unexpected ERROR/FATAL lines in successful live turns.
+        // Log oracle — no unexpected ERROR/FATAL lines in successful live turns.
         await runLogOracle(driver.capturedLogLines(), { expectedErrors: [] });
       } finally {
         await driver.close().catch(() => {
           // Swallow shutdown noise — the daemon may already have exited.
         });
-        // IN-01: clean up the per-combo temp config file to avoid tmpdir bloat.
+        // Clean up the per-combo temp config file to avoid tmpdir bloat.
         try { rmSync(configPath); } catch { /* ignore if already gone */ }
       }
     },

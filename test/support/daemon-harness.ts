@@ -92,7 +92,7 @@ export interface TestDaemonHandle {
    */
   getTimerRecord(): ReadonlyArray<FakeTimerEntry> | undefined;
   /**
-   * Phase 216 chaos-test probe: read a `durable_runs` row straight from the
+   * Chaos-test probe: read a `durable_runs` row straight from the
    * daemon's `memory.db` (resolved from `config.dataDir` + `memory.dbPath`). The
    * durable-resume engine is not exposed on `DaemonInstance`, so the chaos test
    * inspects the persisted state directly to assert a run resumed / was orphaned /
@@ -100,7 +100,7 @@ export interface TestDaemonHandle {
    */
   getDurableRun(rootRunId: string): DurableRunProbeRow | undefined;
   /**
-   * Phase 216 chaos-test probe: read an `outward_send_ledger` row by its
+   * Chaos-test probe: read an `outward_send_ledger` row by its
    * `(root_run_id, step_index)` idempotency key from the daemon's `memory.db`.
    * Lets the chaos test assert the row transitioned unknown_after_send → committed
    * (ack-once) / unresolved (parked) after a crash-mid-send + restart. Returns
@@ -159,7 +159,7 @@ const DUMMY_API_KEY_VALUE = "test-fixture-not-a-real-key";
  * Real provider API keys captured ONCE at module load — before any daemon boot
  * scrubs them from process.env.
  *
- * 260611 live-fire fix: the daemon's bootstrap snapshots ANTHROPIC_* into its
+ * Live-fire fix: the daemon's bootstrap snapshots ANTHROPIC_* into its
  * SecretManager and then SCRUBS them from process.env (scrubProcessEnv). With
  * multiple daemons booting sequentially in one vitest file, the FIRST boot
  * removes the real key, so the 2nd+ daemon snapshots nothing and the post-boot
@@ -401,7 +401,7 @@ export async function startTestDaemon(options?: TestDaemonOptions): Promise<Test
 
   // Restore real provider keys (captured at module load) before boot so this
   // daemon's SecretManager snapshot sees them even if a sibling daemon already
-  // scrubbed process.env (260611 — fixes 401s on the 2nd+ daemon in a file).
+  // scrubbed process.env (fixes 401s on the 2nd+ daemon in a file).
   reinjectRealProviderKeys();
 
   // Start the daemon
@@ -476,7 +476,7 @@ export async function startTestDaemon(options?: TestDaemonOptions): Promise<Test
   };
 
   // Resolve the daemon's memory.db path ONCE (same resolution the WAL-cleanup
-  // branch uses): config.dataDir + config.memory.dbPath. The Phase 216 probes
+  // branch uses): config.dataDir + config.memory.dbPath. The chaos-test probes
   // open it read-only per call so the chaos test can inspect the durable_runs /
   // outward_send_ledger rows the daemon persisted (those tables are not exposed
   // on DaemonInstance). Captured here because `daemon` is in scope.
@@ -523,11 +523,11 @@ export function makeAuthHeaders(token: string): Record<string, string> {
 /**
  * Send a JSON-RPC 2.0 request to the gateway over WEBSOCKET (`/ws?token=`).
  *
- * AUTO-01 transport (205-07): the gateway serves the generic `handlers[method]`
+ * AUTO-01 transport: the gateway serves the generic `handlers[method]`
  * dispatch ONLY over WebSocket — `POST /rpc` returns a plain HTTP 404 at HEAD
  * (the gateway mounts the dispatch via `createWsHandler` on `/ws`; its only HTTP
- * routes are `/health`, the static SPA, and a curated `/api/*` REST set). The
- * 205-06 keystone discovered the prior `POST /rpc` form was latent-broken live —
+ * routes are `/health`, the static SPA, and a curated `/api/*` REST set). A live
+ * drive discovered the prior `POST /rpc` form was latent-broken live —
  * it hit the 404, NOT the dispatch — and no prior test caught it (the live
  * callers are `COMIS_LIVE`-gated; `eventbus-daemon-e2e` asserts only an inline
  * `status < 500`; `chan.test.ts` injects a fake `rpc`). This helper now mirrors
@@ -718,12 +718,12 @@ function seedDummyProviderApiKeys(): () => void {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 216 Echo delivery-count probe
+// Echo delivery-count probe
 // ---------------------------------------------------------------------------
 
 /**
  * Count + list the messages an EchoChannelAdapter recorded — the deterministic
- * delivery-count probe the Phase 216 chaos test asserts on (exactly-one delivery
+ * delivery-count probe the chaos test asserts on (exactly-one delivery
  * after a crash-mid-send + restart; exactly-two for the two-distinct-sends case).
  *
  * Echo's in-memory `sentMessages` store IS the platform truth in the test: the
@@ -742,7 +742,7 @@ export function getEchoDeliveries(
 }
 
 // ---------------------------------------------------------------------------
-// Phase 216 durable-state probes (read memory.db directly)
+// Durable-state probes (read memory.db directly)
 // ---------------------------------------------------------------------------
 
 /**

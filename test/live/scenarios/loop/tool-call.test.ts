@@ -21,7 +21,7 @@
  *   Tool errors do not crash the loop — resilience assertion included.
  *
  * Security notes:
- *   T-136-02-02: tool:executed listener is unregistered in a finally block
+ *   tool:executed listener is unregistered in a finally block
  *   — no handler persists after the test.
  *
  * costTier: "¢" — cheapest model per provider (Haiku / gpt-4o-mini).
@@ -76,14 +76,14 @@ describe("LOOP-02 Stage-A — tool event-bus wiring (no COMIS_LIVE)", () => {
   });
 
   afterEach(async () => {
-    // Flush daemon log buffer before snapshotting (T-134-flush).
+    // Flush daemon log buffer before snapshotting.
     await flushDaemonLogs(driver);
 
     // No sendTurn is called in Stage-A — no provider failure ERROR is emitted.
     // Keep expectedErrors: [] (no "JSON-RPC method error" will appear here).
     await runLogOracle(driver.capturedLogLines(), { expectedErrors: [] });
 
-    // FND-11 persistence oracle — only run if memory.db was created
+    // Persistence oracle — only run if memory.db was created
     const dbPath = join(driver.getDataDir(), "memory.db");
     if (existsSync(dbPath)) {
       await runDbOracle(dbPath, {});
@@ -157,7 +157,7 @@ describe.skipIf(!isLive)("Live — LOOP-02 tool-call (Stage-C, real LLM)", () =>
   });
 
   afterEach(async () => {
-    // Flush daemon log buffer before snapshotting (T-134-flush).
+    // Flush daemon log buffer before snapshotting.
     await flushDaemonLogs(driver);
 
     // Real successful turns emit no ERROR/FATAL lines
@@ -181,7 +181,7 @@ describe.skipIf(!isLive)("Live — LOOP-02 tool-call (Stage-C, real LLM)", () =>
       };
 
       // Collect tool:executed events during the turn (rung 4 — tool-call trace).
-      // T-136-02-02: listener MUST be unregistered in a finally block.
+      // Listener MUST be unregistered in a finally block.
       const toolEvents: { toolName: string; success: boolean; timestamp: number }[] = [];
       const toolListener = (e: { toolName: string; success: boolean; timestamp: number }): void => {
         toolEvents.push({ toolName: e.toolName, success: e.success, timestamp: e.timestamp });
@@ -214,13 +214,13 @@ describe.skipIf(!isLive)("Live — LOOP-02 tool-call (Stage-C, real LLM)", () =>
         const sentMessages = driver.getEcho().getSentMessages();
         expect(sentMessages.length).toBeGreaterThan(0);
 
-        // T-136-02-04 Resilience: if any tool failed, the loop must not have thrown.
+        // Resilience: if any tool failed, the loop must not have thrown.
         // (The try/catch below sendTurn catches a crash — reaching here means the
         // agent loop continued even in the presence of tool errors.)
         // We verify this implicitly: if we reach this assertion, the turn completed.
         expect(typeof reply).toBe("string");
       } finally {
-        // T-136-02-02: always unregister to prevent listener leak across tests
+        // Always unregister to prevent listener leak across tests
         container.eventBus.off("tool:executed", toolListener);
       }
     },

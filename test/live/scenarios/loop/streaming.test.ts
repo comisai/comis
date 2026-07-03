@@ -77,7 +77,7 @@ describe("LOOP-04 Stage-A — streaming structural assertions (no COMIS_LIVE)", 
   });
 
   afterEach(async () => {
-    // Flush daemon log buffer before snapshotting (T-134-flush).
+    // Flush daemon log buffer before snapshotting.
     await flushDaemonLogs(driver);
 
     // "JSON-RPC method error" is expected in Stage-A: sendTurn is called in
@@ -87,7 +87,7 @@ describe("LOOP-04 Stage-A — streaming structural assertions (no COMIS_LIVE)", 
       expectedErrors: ["JSON-RPC method error"],
     });
 
-    // FND-11 persistence oracle — only run if memory.db was created
+    // Persistence oracle — only run if memory.db was created
     const dbPath = join(driver.getDataDir(), "memory.db");
     if (existsSync(dbPath)) {
       await runDbOracle(dbPath, {});
@@ -197,7 +197,7 @@ describe.skipIf(!isLive)("Live — LOOP-04 streaming + billing (Stage-C, real LL
   });
 
   afterEach(async () => {
-    // Flush daemon log buffer before snapshotting (T-134-flush).
+    // Flush daemon log buffer before snapshotting.
     await flushDaemonLogs(driver);
 
     // Real successful LLM turns emit no ERROR/FATAL lines

@@ -11,8 +11,8 @@
  * `compareServedWindowForProvider` / `collectAgentBootWindowInfo` /
  * `resetServedWindowWarnForTest` are the REAL implementations — the wiring proof
  * must exercise the real once-per-boot-per-provider WARN latch and the real
- * executor-mirrored window resolution, not a stub (the milestone's recurring
- * failure class is "built-but-not-wired"; a stubbed comparator could pass while
+ * executor-mirrored window resolution, not a stub (a recurring failure class
+ * is "built-but-not-wired"; a stubbed comparator could pass while
  * the daemon never feeds it real registry data).
  *
  * Guards against the built-but-not-wired regression: without this wiring

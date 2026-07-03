@@ -46,9 +46,9 @@ import {
   resolveTimeoutSeconds,
 } from "./web-shared.js";
 
-// Activity label spec (see spec §6.1). The EMITTED name
-// uses an UNDERSCORE — `web-fetch-tool.ts:614 → name: "web_fetch"` — while
-// the file basename is hyphenated (RESEARCH Pitfall 2). The `{url}`
+// Activity label spec. The EMITTED name
+// uses an UNDERSCORE — `name: "web_fetch"` — while
+// the file basename is hyphenated. The `{url}`
 // placeholder is allowlisted via detailKeys; the LLM-supplied URL passes
 // through redactValue before substitution (an absolute path in the URL is
 // compacted to `~`).

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Stage-A contract test for the Signal capability descriptor + the §3A.4
- * caps↔adapter reconciliation (the FOUND-03 drift tripwire applied to channel
- * #2), Phase 209 / CHAN2-01.
+ * Stage-A contract test for the Signal capability descriptor + the
+ * caps↔adapter reconciliation (the drift tripwire applied to the Signal
+ * channel).
  *
- * `signal-caps.ts` carries the FLAT emulator `ChannelCaps` (design §3A.4); the
+ * `signal-caps.ts` carries the FLAT emulator `ChannelCaps`; the
  * real production adapter declares a NESTED `ChannelCapability`
  * (channel-capability.ts: `features{}`/`limits{}`/`replyToMetaKey`). This test
  * is the DRIFT TRIPWIRE: it imports the adapter's OWN declared capabilities from
@@ -12,10 +12,10 @@
  * surface that returns the module-local `CAPABILITIES`) and asserts the
  * overlapping fields reconcile field-by-field. If the adapter ever flips a
  * feature flag (esp. `buttons`) or changes `maxMessageChars`, this test fails
- * LOUDLY — the emulator's caps can never silently drift from the real adapter
- * (threat T-209-07). The KEY Signal difference vs Telegram: the adapter declares
+ * LOUDLY — the emulator's caps can never silently drift from the real adapter.
+ * The KEY Signal difference vs Telegram: the adapter declares
  * `buttons: "none"`, so `signalCaps.outbound.buttons` is `false` (the
- * honest-degrade trigger 209-06 wires into `chan tap`).
+ * honest-degrade trigger wired into `chan tap`).
  *
  * `@comis/channels` resolves from `dist/` via the live vitest alias, so this
  * reads the REAL built adapter declaration (run `pnpm build` first if stale).
@@ -53,7 +53,7 @@ function adapterCapabilities(): ChannelCapability {
   return plugin.capabilities;
 }
 
-describe("signal-caps — Signal ChannelCaps descriptor (CHAN2-01 / §3A.4)", () => {
+describe("signal-caps — Signal ChannelCaps descriptor", () => {
   it("is a flat ChannelCaps for signal over http with the reconciled message limit", () => {
     expect(signalCaps.channel).toBe("signal");
     expect(signalCaps.protocol).toBe("http");
@@ -65,9 +65,9 @@ describe("signal-caps — Signal ChannelCaps descriptor (CHAN2-01 / §3A.4)", ()
 
   it("declares the Signal-specific surface: buttons:false (no inline buttons), reactions:true", () => {
     // buttons:false is THE honest-degrade trigger — Signal has no inline
-    // buttons, so 209-06 caps-gates `chan tap` to an unsupported_on_channel exit.
+    // buttons, so caps-gating routes `chan tap` to an unsupported_on_channel exit.
     expect(signalCaps.outbound.buttons).toBe(false);
-    // reactions:true is the WS1-relevant verb Signal DOES support (chan react works).
+    // reactions:true is the verb Signal DOES support (chan react works).
     expect(signalCaps.outbound.reactions).toBe(true);
     // Honest degradation: unsupported verbs are represented as false, not omitted.
     expect(signalCaps.outbound.edits).toBe(false);
@@ -75,7 +75,7 @@ describe("signal-caps — Signal ChannelCaps descriptor (CHAN2-01 / §3A.4)", ()
   });
 });
 
-describe("signal-caps — §3A.4 caps↔adapter reconciliation (the drift tripwire)", () => {
+describe("signal-caps — caps↔adapter reconciliation (the drift tripwire)", () => {
   it("reconciles the emulator's flat outbound flags against the adapter's nested features field-by-field", () => {
     const caps = adapterCapabilities();
     const f = caps.features;

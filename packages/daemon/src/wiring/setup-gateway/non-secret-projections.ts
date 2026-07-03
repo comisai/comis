@@ -2,7 +2,7 @@
 /**
  * Non-secret config projections for the web dashboard's REST listings.
  *
- * The §17.8 security sign-off removed `agents` and `channels` from the getConfig
+ * A security sign-off removed `agents` and `channels` from the getConfig
  * RPC's non-secret allowlist, so the dashboard can no longer source its agent and
  * channel listings from getConfig. These pure projections return ONLY the
  * non-secret identity fields the dashboard needs — never auth profiles, API

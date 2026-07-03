@@ -36,13 +36,13 @@ export default defineConfig({
       { find: /^@comis\/skills$/, replacement: resolve(packagesRoot, "skills/dist/skills/index.js") },
       { find: /^@comis\/core$/, replacement: resolve(packagesRoot, "core/dist/index.js") },
       { find: /^@comis\/observability$/, replacement: resolve(packagesRoot, "observability/dist/index.js") },
-      // AUDIT-04 (176-03): audit-metadata-content-free.test.ts drives the REAL
+      // audit-metadata-content-free.test.ts drives the REAL
       // obs_audit_events store + the security-audit.jsonl writer (the compiled
       // runtime values createObservabilityStore/initSchema/appendAuditJsonl), not
       // their AST — the planted-value invariant must hold against actual
       // persistence. Same rationale as @comis/core/@comis/observability above.
       { find: /^@comis\/memory$/, replacement: resolve(packagesRoot, "memory/dist/index.js") },
-      // CLI-02/03 (219-05): comis-agent-same-gate / comis-agent-no-admin DERIVE
+      // comis-agent-same-gate / comis-agent-no-admin DERIVE
       // the denylisted-method set from the COMPILED `DENYLISTED_RPC_METHODS`
       // re-exported by the @comis/daemon top-level barrel (the cap socket's own
       // closed-door source), so the proof can never drift from a hand-copied

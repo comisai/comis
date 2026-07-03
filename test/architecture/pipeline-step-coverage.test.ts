@@ -7,7 +7,7 @@
  *
  *   jq 'select(.step=="queue-enqueue")' ~/.comis/daemon.log
  *
- * The 2026-05-24 duplicate-adapter bug would have been trivially findable with this filter.
+ * A duplicate-adapter bug would have been trivially findable with this filter.
  *
  * Shrink-only: NO allowlist. Every canonical emit site must carry a `step:` field.
  * Sites that cannot be tagged must be migrated — no exceptions.
@@ -399,7 +399,7 @@ function scanPackagesForStepToken(
 
 const PACKAGES_ROOT = resolve(REPO_ROOT, "packages");
 const DESIGN_REF =
-  "OBSERVABILITY_DESIGN.md §3 G4 + §M3.3";
+  "the pipeline step:-tag coverage rule (every pipeline stage emits at least one step:-tagged log line)";
 
 // ===========================================================================
 // Test suite 1: Each known pipeline stage has at least one step:-tagged emit

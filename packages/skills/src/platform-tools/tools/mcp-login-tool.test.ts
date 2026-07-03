@@ -2,8 +2,8 @@
 /**
  * Tests for the mcp_login agent tool.
  *
- * RED phase: assert the tool file does not yet exist (import fails).
- * GREEN phase: assert correct behavior after implementation.
+ * Assert the tool surfaces the OAuth device-authorization URL so the user
+ * can complete login, and enforces the required trust level.
  */
 
 import { describe, it, expect, vi } from "vitest";

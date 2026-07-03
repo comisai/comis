@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the FAL video error classifier (FAL-02).
+ * Tests for the FAL video error classifier.
  *
  * The FAL queue status union has NO "FAILED" member (only IN_QUEUE / IN_PROGRESS
  * / COMPLETED) — failures surface as THROWN errors from queue.status()/result(),

@@ -7,8 +7,8 @@ source reads). That scripted loop is the **canonical** automatable baseline — 
 runs under `COMIS_LIVE=1 pnpm test:live prove` with a model/judge key and writes
 the gating table + ledger to the git-ignored `benchmarks/live/<date>-<sha>/`.
 
-This runbook documents the **manual real-Claude-Code variant** (RESEARCH.md Open
-Question 1) — the **one-week production canary** path (design §10.5). It measures
+This runbook documents the **manual real-Claude-Code variant** — the
+**one-week production canary** path. It measures
 the SAME four dimensions, but using a real coding-agent session (e.g. Claude
 Code) instead of the scripted loop, so the numbers reflect a real agent's
 behavior on today's surface, not just a fixed harness.
@@ -41,14 +41,14 @@ one-week canary against live degraded sessions.
 | Fixture | Failure class | Gold mechanism (answer-key) |
 |---|---|---|
 | `session-678314278` | historical-c53ab0f | a status-200 body misclassified by a **substring** `403` scan flipped successes to failures, tripping the retry **breaker** |
-| `live-503-breaker` | 503-breaker | repeated **503** → overloaded tripped the per-tool retry **breaker** for **web_fetch** (the dark breaker, GA3) |
+| `live-503-breaker` | 503-breaker | repeated **503** → overloaded tripped the per-tool retry **breaker** for **web_fetch** (the dark breaker) |
 | `live-exec-modulenotfound` | exec-modulenotfound | an **exec** **dependency** failure (**ModuleNotFoundError**) |
 | `live-budget-exhaustion` | budget-exhaustion | rising **costUsd** crossed the **budget** ceiling → **exhausted** |
 | `live-provider-timeout` | provider-timeout | a 30000ms **timeout** classified as **prompt_timeout** |
 
 The answer-keys are written at **causal-mechanism** granularity, so a symptom-only
 answer ("web_fetch failed many times") does **not** count as "reached" — the
-measure-first lever (RESEARCH.md Pitfall 4). The substrate test
+measure-first lever. The substrate test
 (`diagnosis-baseline.test.ts`, Stage-A/B) proves this over the whole corpus,
 keyless.
 
@@ -70,7 +70,7 @@ keyless.
 
 2. **Let the agent work.** It will read source files (`pi-event-bridge.ts`,
    `tool-retry-breaker.ts`, `tool-metadata-registry.ts`, …) to recover the
-   mechanism the logs never record (the GA1/GA2 gap).
+   mechanism the logs never record.
 
 3. **Count the four dimensions from the session transcript:**
    - **rootCauseReached?** — does the final answer name the gold mechanism (the
@@ -81,7 +81,7 @@ keyless.
      report).
    - **distinctToolCalls** — count distinct tool/RPC names the agent invoked.
    - **distinctSourceReads** — count **distinct** source files the agent `Read`
-     (the cost Phase 156/G1 must drive to **zero**).
+     (the cost the obs.explain RE-PROVE must drive to **zero**).
 
 4. **Record the row by hand** into the ledger, alongside the scripted run:
    `benchmarks/live/<date>-<sha>/manual-baseline.md` (git-ignored). Keep the
@@ -106,12 +106,11 @@ Fill one row per fixture per run. `Reached` = yes / no / `SKIPPED(no-live)`.
 ## After the run — the GATE
 
 The expectation today is **FAIL the goal**: source reads > 0, multi-call, high
-tokens. That failure is the baseline Phase 156/G1 must beat (1 call, ≤ target
+tokens. That failure is the baseline the obs.explain RE-PROVE must beat (1 call, ≤ target
 tokens, 0 source reads).
 
 Transcribe the per-failure-class **gating table** (which classes are already
 root-caused from the obs surface alone — the TRIM-CANDIDATEs — vs which need new
-surface) into a `.planning/` phase doc so it gates/reorders phases **150-155**
-(`.planning/` stays out of git per project convention; the machine table lives in
-the git-ignored ledger). The scripted Stage-C run produces this table
+surface) into a planning note so it prioritizes the follow-up work (the machine
+table lives in the git-ignored ledger). The scripted Stage-C run produces this table
 automatically via `renderGatingMarkdown`; the manual variant confirms it.

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * PROM-01 — the Prometheus pull-surface guards: the `comis_prometheus_series`
+ * The Prometheus pull-surface guards: the `comis_prometheus_series`
  * self-cardinality gauge + the `cardinalityCap` ENFORCEMENT (the label-explosion
- * DoS guard, T-178-07).
+ * DoS guard).
  *
  * The OTel `PrometheusExporter` itself (the loopback `/metrics` listener) is
  * constructed in `otel-exporter.ts` as one of the `MeterProvider` readers. This
@@ -12,7 +12,7 @@
  * `comis_prometheus_series` on every scrape, and a breach of `cardinalityCap`
  * emits a single WARN with a `hint` (re-armed when the count drops back below).
  *
- * The cap ACTUALLY BOUNDS the estimate (MD-02): once the distinct-key set
+ * The cap ACTUALLY BOUNDS the estimate: once the distinct-key set
  * reaches `cardinalityCap`, NEW distinct keys are no longer admitted — the excess
  * collapses into a single `"_overflow"` bucket — so the tracker's own memory and
  * the reported series count stay bounded at `cardinalityCap + 1` regardless of
@@ -53,7 +53,7 @@ export function wireSeriesCardinality(deps: WireSeriesCardinalityDeps): void {
   // Bounded by the label cardinality, NEVER by ids — this is the guard, not a leak.
   const seriesKeys = new Set<string>();
   let breachWarned = false;
-  // The sentinel bucket every key past the cap collapses into (MD-02). Counts as
+  // The sentinel bucket every key past the cap collapses into. Counts as
   // ONE series, so the set size is hard-bounded at cardinalityCap + 1.
   const OVERFLOW_KEY = "_overflow";
 
@@ -61,7 +61,7 @@ export function wireSeriesCardinality(deps: WireSeriesCardinalityDeps): void {
     const key = `${instrument}{${labels.join("|")}}`;
     // Already tracked (a re-seen series) — a no-op add either way.
     if (seriesKeys.has(key)) return;
-    // MD-02: ENFORCE the cap. Once the distinct-key set is full, do NOT admit a
+    // ENFORCE the cap. Once the distinct-key set is full, do NOT admit a
     // new key — route it to the single "_overflow" bucket so the set (and thus
     // the tracker's memory + the reported count) cannot grow without bound. A
     // WARN alone would leave the Set growing, which is the DoS the cap prevents.

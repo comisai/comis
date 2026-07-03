@@ -155,7 +155,7 @@ export function createSessionDescriptorStore(deps: SessionDescriptorPersistenceD
     persist(descriptor: SessionDescriptor): void {
       // Best-effort: a failure (a PathTraversalError from a degenerate dataDir/agentId,
       // an unwritable target, a write fault) is SWALLOWED — it must not propagate off the
-      // registry's create path (the in-memory handle already exists). NEVER deletes (I10).
+      // registry's create path (the in-memory handle already exists). NEVER deletes.
       try {
         const dir = descriptorDir(deps.dataDir, deps.agentId);
         ensure({ dir, mode: 0o700, confinedBaseDir: deps.dataDir });
@@ -221,7 +221,7 @@ export function createSessionDescriptorStore(deps: SessionDescriptorPersistenceD
     },
 
     remove(sessionId: string): void {
-      // The DISTINCT explicit delete (I10: persist/recover NEVER delete; only this does).
+      // The DISTINCT explicit delete (persist/recover NEVER delete; only this does).
       // ENOENT-tolerant; per the module's all-best-effort contract a genuine fault is
       // swallowed too (the lingering file is overwritten/skipped on the next boot).
       let filePath: string;

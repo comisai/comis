@@ -76,102 +76,94 @@ export const TRAJECTORY_EVENT_TYPES = [
 
   // Memory injection observability.
   "memory.injected",
-  // RECALL-01: per-recall lane/candidate/final counts + rerank outcome (content-free).
+  // Per-recall lane/candidate/final counts + rerank outcome (content-free).
   "memory.recalled",
   "memory.reranked",
-  // GENQ-01: a memory-generation pass's output diverged from its source (content-free).
+  // A memory-generation pass's output diverged from its source (content-free).
   "memory.generation_quality",
-  // PERSIST-01 (Phase 176 Plan 04): a detected prompt-cache break on the per-session
+  // A detected prompt-cache break on the per-session
   // timeline — the closed reason + tokenDrop counts + a changed-dims DIGEST ONLY,
-  // NEVER the tool-name arrays or system text (content-free, H1/I3).
+  // NEVER the tool-name arrays or system text (content-free).
   "cache.break",
-  // OUTCOME-08 (v2.26 Verified Learning WS1): a finished trajectory's resolved net
+  // A finished trajectory's resolved net
   // task-outcome (daemon-side emit, learningOutcome.enabled-gated). Counts/ids/closed-enums
-  // ONLY — no bodies/alpha (SEC-01). Bridged so `comis explain` can reconstruct it (OBS-02).
+  // ONLY — no bodies/alpha (content-free). Bridged so `comis explain` can reconstruct it.
   "learning.outcome_observed",
-  // FORGET-06 (v2.26 WS4): the lifecycle sweep demoted / soft-evicted N memories — counts
-  // ONLY (daemon-side emit). Bridged for `comis explain` (OBS-02). (The RANK-06
-  // memory.online_tuning_applied bandit type was removed in Phase 224 — the UCB
-  // online-tuning bandit was deleted; recall is fixed-RRF.)
+  // The lifecycle sweep demoted / soft-evicted N memories — counts
+  // ONLY (daemon-side emit). Bridged for `comis explain`.
   "learning.memory_demoted",
   "learning.memory_evicted",
-  "learning.memory_failure_attributed", // OBS-4b: corroborated-failure accrual (the eviction-causation precursor)
-  // REFLECT (v2.31, Phase 226 SIMPLIFY-04): the reflection-run funnel telemetry, RENAMED
-  // from the old synthesis-funnel types. reflect.admitted = admitted-doc count; reflect.funnel
+  "learning.memory_failure_attributed", // Corroborated-failure accrual (the eviction-causation precursor)
+  // The reflection-run funnel telemetry.
+  // reflect.admitted = admitted-doc count; reflect.funnel
   // = synthesized/validated/admitted + maxClusterCardinality + the admissionOutcome closed-enum
   // (counts only). Answers "why was 0 admitted" from the trajectory (maxClusterCardinality:1 =
-  // uncorroborated → not admissible). Daemon-side emit; bridged for `comis explain` (OBS-02).
-  // The vestigial sandbox-validation type was REMOVED in the same lockstep.
+  // uncorroborated → not admissible). Daemon-side emit; bridged for `comis explain`.
   "reflect.admitted",
   "reflect.funnel",
-  // SURFACE-06 (v2.26 WS2, Phase 202): the promote/demote telemetry — the COUNT ONLY,
-  // NEVER an id-list / procedure body / script (SEC-01). Daemon-side emit (Plan 05);
-  // bridged for `comis explain` (OBS-02).
+  // The skill promote/demote telemetry — the COUNT ONLY,
+  // NEVER an id-list / procedure body / script (content-free). Daemon-side emit;
+  // bridged for `comis explain`.
   "learning.skill_promoted",
   "learning.skill_demoted",
-  // Phase 226 SIMPLIFY-04: the user-rep-revision + generalization types were DELETED with
-  // their 0-emit events (those paths folded into the reflection engine in Phase 225).
 
-  // TELEM-01 (v2.27 P1, Phase 173): a `pipeline` tool invocation was authored —
+  // A `pipeline` tool invocation was authored —
   // the reserved trajectory type for the counts-only pipeline:authored event
   // (action / capabilityClass tier / schemaValid / repaired). Mirrors the
   // memory.generation_quality triple. Content-free: closed enums + booleans ONLY,
-  // never a pipeline body / type_config value / node task (§2.7 / H1). The bridge
+  // never a pipeline body / type_config value / node task. The bridge
   // mapping reserves this type for arch closure (every EventMap member is
   // mapped-or-allowlisted); the live per-session recordEvent emit is a documented
-  // deferred follow-up (getRecorder is not reachable on the graph-handler deps at
-  // P1 — the FLEET aggregate, Plan 03/04, is the P1 deliverable).
+  // deferred follow-up (getRecorder is not reachable on the graph-handler deps).
   "pipeline.authored",
 
-  // AUTHOR-01/02 (v2.27 P2, Phase 174): the reserved trajectory types for the two
-  // counts-only authoring-AUDIT events Plans 03/04 emit on a conservative repair /
+  // The reserved trajectory types for the two
+  // counts-only authoring-AUDIT events emitted on a conservative repair /
   // intent-synthesis. APPEND-ONLY beside pipeline.authored. Content-free: closed
   // canonical-template pattern enum + numeric nodeCount (+ tier on repaired) ONLY,
-  // never a graph body / type_config value / node task / intent text (§2.7 / H1).
+  // never a graph body / type_config value / node task / intent text.
   // Daemon-side emit (graph-helpers.ts); bridged for arch closure + `comis explain`.
   "graph.repaired",
   "graph.synthesized_from_intent",
 
-  // STEER-01 (v2.27 P3, Phase 175): the reserved trajectory type for the
-  // counts-only subagent:steered event Plan 02 emits when a running child is
+  // The reserved trajectory type for the
+  // counts-only subagent:steered event emitted when a running child is
   // steered in-flight (transcript preserved) instead of kill+respawn. APPEND-ONLY
-  // beside the AUTHOR-01/02 types. Content-free: runId + the closed-union mode
-  // (steer|followup) ONLY, never the steer message body (§2.7 / H1). Daemon-side
+  // beside the graph authoring types. Content-free: runId + the closed-union mode
+  // (steer|followup) ONLY, never the steer message body. Daemon-side
   // emit (subagent-handlers.ts); bridged for OPERATOR TRAJECTORY VISIBILITY
   // (`comis explain`).
   "subagent.steered",
 
-  // ORCH-OBS (orchestration-observability): the reserved trajectory types for three
-  // previously-dark sub-agent-lifecycle events — a fail-closed sandbox-downgrade spawn
-  // refusal (SANDBOX-02), a dead-lettered sub-agent delivery (DELIVERY-02), and a
-  // per-node token-budget breach (BUDGET-03). APPEND-ONLY beside subagent.steered.
+  // The reserved trajectory types for three
+  // sub-agent-lifecycle events — a fail-closed sandbox-downgrade spawn
+  // refusal, a dead-lettered sub-agent delivery, and a
+  // per-node token-budget breach. APPEND-ONLY beside subagent.steered.
   // Bridged for per-session `comis explain` visibility (the subagent.steered
   // daemon-side precedent); content-free: closed dimension/channel/capSource labels +
-  // ids/numbers ONLY, NEVER a path/host/uid value, an announcement body, or a task
-  // (§2.7 / H1). sandbox_downgrade_refused fires WITHIN the spawning session (clean
+  // ids/numbers ONLY, NEVER a path/host/uid value, an announcement body, or a task.
+  // sandbox_downgrade_refused fires WITHIN the spawning session (clean
   // landing); the other two ride whichever session bridge is active when they fire.
   "security.sandbox_downgrade_refused",
   "subagent.delivery_deadlettered",
-  // OE-6b (orchestration-excellence-20260701-fullregression): the self-healing transient
-  // RETRY — the sibling of subagent.delivery_deadlettered. Emitted by the announcement-batcher
-  // via `?.emit` (which the trajectory-event-types-known arch regex missed pre-fix), so it was
-  // bridged to NOTHING while its terminal sibling was fully wired — P0-B's self-heal was invisible
-  // to `comis explain` (spec §7/§10 + the "all 7 bridged" claim). Content-free: runId + closed
+  // The self-healing transient RETRY — the sibling of subagent.delivery_deadlettered.
+  // Emitted by the announcement-batcher via `?.emit`; the self-heal must stay visible
+  // to `comis explain`. Content-free: runId + closed
   // channelType + attempt count + the transient tag ONLY — never an announcement body / error string.
   "subagent.delivery_retried",
   "subagent.budget_exceeded",
 
-  // AUDIT-01 / TREE (v2.29 Phase 215 Plan 01): the per-capability authorization
-  // decision for a gated call — the spawn-tree's per-node producer (Plan 03's
-  // TREE fold groups these by leaseId). DAEMON-emitted (rpc-dispatch.ts /
+  // The per-capability authorization
+  // decision for a gated call — the spawn-tree's per-node producer (the tree fold
+  // groups these by leaseId). DAEMON-emitted (rpc-dispatch.ts /
   // setup-capability-endpoint.ts), bridged for operator trajectory visibility +
   // arch closure (the subagent.budget_exceeded precedent). Content-free: caps +
   // tool NAME + method + decision + lease/root ids ONLY, NEVER the tool.invoke
-  // args, a message body, or a secret name (§2.7 / H1 / T-215-01). In-process
-  // records honestly omit leaseId/parentLeaseId/tool (no lease, G1).
+  // args, a message body, or a secret name. In-process
+  // records honestly omit leaseId/parentLeaseId/tool (no lease).
   "capability.audited",
 
-  // TREE-01 (finding D, 30uc-20260624): a graph DAG node spawn — the per-graph-node
+  // A graph DAG node spawn — the per-graph-node
   // spawn-tree producer. A graph node spawns in-process (gatedSpawn) and never crosses
   // the socket chokepoint that emits capability.audited, so without this the spawn-tree
   // omitted the graph children. DAEMON-emitted (graph-node-lifecycle.ts); the
@@ -179,21 +171,21 @@ export const TRAJECTORY_EVENT_TYPES = [
   // agentId + rootRunId + the per-node token cap ONLY — NEVER the node task or output.
   "graph.node_spawned",
 
-  // Background task lifecycle (T2.2 / F9): promote/complete/fail of a long-running tool
+  // Background task lifecycle: promote/complete/fail of a long-running tool
   // detached past the execute() boundary (content-free — ids + durationMs only).
   "background_task.promoted",
   "background_task.completed",
   "background_task.failed",
 
-  // Terminal-driver drive lifecycle (DRIVE-02): a long coding-CLI drive crossed the
+  // Terminal-driver drive lifecycle: a long coding-CLI drive crossed the
   // inline→detached boundary and was backgrounded (reason: mode_detached | producing).
   // Content-free — the reason enum only.
   "terminal.drive_promoted",
 
-  // Terminal-driver reaper eviction (EVICT-01): a durable drive was evicted by a cap
+  // Terminal-driver reaper eviction: a durable drive was evicted by a cap
   // (idle-TTL | max_sessions | wall_clock | max_interactions). Content-free — the reason
-  // enum + durationMs (total lifetime at eviction). Was a daemon WARN only; bridged so
-  // `explain` can name a reaper-killed autonomous drive (the PRODUCING-01 obs completion).
+  // enum + durationMs (total lifetime at eviction). Bridged so
+  // `explain` can name a reaper-killed autonomous drive.
   "terminal.session_evicted",
 
   // Delivery queue lifecycle.
@@ -224,7 +216,7 @@ export const TRAJECTORY_EVENT_TYPES = [
   "execution.prompt_timeout",
   "execution.output_escalated",
   "execution.replay_recovered",
-  // GBNF-02 strip-retry self-heal (Phase 175): content-free counts/names only.
+  // GBNF strip-retry self-heal: content-free counts/names only.
   "execution.tool_schema_unsupported",
 
   // Security + sender (scanned subset)
@@ -266,7 +258,7 @@ export const TRAJECTORY_EVENT_TYPES = [
   "context.overflow",
   "context.integrity",
   "context.rehydrated",
-  // OBS-01 (Phase 180): the two multilingual signals on the explain timeline.
+  // The two multilingual signals on the explain timeline.
   "context.script_zero_hit",
   "context.summary_language_mismatch",
 
@@ -288,43 +280,43 @@ export const TRAJECTORY_EVENT_TYPES = [
   // One literal covers all SDK entry types.
   "session.transcript.entry",
 
-  // OBS-04 (Phase 186): image-generation lifecycle on the explain timeline.
+  // Image-generation lifecycle on the explain timeline.
   // Direct-emitted by the daemon image RPC handler via the per-session recorder
   // (the daemon RPC context has NO EventBus bridge — direct-emit is the
   // sanctioned path, the comis-session-manager.ts:298 precedent). Content-free:
   // ids/labels/counts/costUsd/booleans ONLY — never the prompt, image bytes, a
-  // key, or a raw provider message (T-186-08). `image.generated` carries
-  // `costUsd` so `comis explain` reconstructs the image turn's cost (OBS-03).
+  // key, or a raw provider message. `image.generated` carries
+  // `costUsd` so `comis explain` reconstructs the image turn's cost.
   "image.requested",
   "image.generated",
   "image.delivered",
   "image.failed",
 
-  // VIS-04 (Phase 187): vision-analysis lifecycle on the explain timeline.
+  // Vision-analysis lifecycle on the explain timeline.
   // Direct-emitted by the daemon vision RPC handler (image.analyze /
   // media.describe_video) via the per-session recorder (the daemon RPC context
   // has NO EventBus bridge — direct-emit is the sanctioned path, the
   // image-handlers.ts:210 precedent). APPEND-ONLY alongside the SemVer-frozen
-  // image.* tuple above — never a rename (Pitfall 5). Content-free:
+  // image.* tuple above — never a rename. Content-free:
   // ids/labels/path/costUsd/outcome/errorKind ONLY — never the image bytes, the
-  // analysis prompt, the model answer, or a key (T-187-12). The `path` label is
-  // VIS-03's "which path" signal; `media.vision.completed` carries `costUsd`
+  // analysis prompt, the model answer, or a key. The `path` label is
+  // the "which path" signal; `media.vision.completed` carries `costUsd`
   // (optional — absent on the registry/gemini-video tiers) so `comis explain`
-  // reconstructs the vision turn's cost (Route a).
+  // reconstructs the vision turn's cost.
   "media.vision.requested",
   "media.vision.completed",
   "media.vision.failed",
 
-  // OBS-04 (Phase 192): video-generation lifecycle on the explain timeline.
+  // Video-generation lifecycle on the explain timeline.
   // Direct-emitted by the daemon video RPC handler (in-turn) AND the off-turn
   // background poller (setup-video-poller.ts) via the per-session recorder (the
   // daemon RPC/poller context has NO EventBus bridge — direct-emit is the
   // sanctioned path, the image-handlers.ts:210 precedent). APPEND-ONLY alongside
-  // the SemVer-frozen image.*/media.vision.* tuples above — never a rename
-  // (Pitfall 8). Content-free: ids/labels/counts/costUsd/outcome/errorKind/
+  // the SemVer-frozen image.*/media.vision.* tuples above — never a rename.
+  // Content-free: ids/labels/counts/costUsd/outcome/errorKind/
   // booleans ONLY — never the prompt, video bytes, a key, the Veo keyed-URL, or a
-  // raw provider message (T-192-01). `video.generated` carries `costUsd` so
-  // `comis explain` reconstructs the video turn's cost (OBS-03 Route a),
+  // raw provider message. `video.generated` carries `costUsd` so
+  // `comis explain` reconstructs the video turn's cost,
   // INCLUDING a job that completed in the background after the turn ended.
   "video.requested",
   "video.submitted",
@@ -332,17 +324,17 @@ export const TRAJECTORY_EVENT_TYPES = [
   "video.delivered",
   "video.failed",
 
-  // OBS-02/03 (Phase 196): voice (STT/TTS) lifecycle on the explain timeline.
+  // Voice (STT/TTS) lifecycle on the explain timeline.
   // Direct-emitted by the daemon voice RPC handler (media.transcribe /
   // tts.synthesize) via the per-session recorder (the daemon RPC context has NO
   // EventBus bridge — direct-emit is the sanctioned path, the
   // image-handlers.ts:210 precedent). APPEND-ONLY alongside the SemVer-frozen
-  // image.*/media.vision.*/video.* tuples above — never a rename (Pitfall 8).
+  // image.*/media.vision.*/video.* tuples above — never a rename.
   // Content-free: provider/keyless/model/durationMs/audioBytes/costUsd/source/
   // onSkip/outcome/errorKind ONLY — never the audio bytes, the transcript, the
-  // synthesized audio, or a key (T-196-04). `media.*.completed` carries `costUsd`
-  // (keyless = 0 explicit; keyed omitted — OBS-05 Route a) and `media.*.requested`
-  // carries the `onSkip` reasons (OBS-03 — WHY auto picked the rung) so `comis
+  // synthesized audio, or a key. `media.*.completed` carries `costUsd`
+  // (keyless = 0 explicit; keyed omitted) and `media.*.requested`
+  // carries the `onSkip` reasons (WHY auto picked the rung) so `comis
   // explain` reconstructs the voice turn including the selection provenance.
   "media.stt.requested",
   "media.stt.completed",
@@ -351,13 +343,12 @@ export const TRAJECTORY_EVENT_TYPES = [
   "media.tts.completed",
   "media.tts.failed",
 
-  // WR-4 (177-obs-loop): the spend kill-switch lifecycle on the explain timeline.
-  // Previously the 3 observability:spend_* events were allowlisted as fleet-only
-  // rollups (NOT on the trajectory) — so a spend-killed session's WARNING / ABORT /
-  // UNPRICEABLE signals never reached `comis explain` or the deterministic verdict,
-  // the security-review WR-4 blind spot. Now bridged. Content-free: the closed
+  // The spend kill-switch lifecycle on the explain timeline.
+  // The 3 spend.* events are bridged (not fleet-only rollups) so a spend-killed
+  // session's WARNING / ABORT / UNPRICEABLE signals reach `comis explain` and the
+  // deterministic verdict. Content-free: the closed
   // SpendScopeKind enum + dollar amounts as NUMBERS + provider/model config ids
-  // ONLY — never a message/prompt/query body (§2.7 / H1; the milestone invariant).
+  // ONLY — never a message/prompt/query body.
   "spend.warning",
   "spend.exceeded",
   "spend.unpriceable",

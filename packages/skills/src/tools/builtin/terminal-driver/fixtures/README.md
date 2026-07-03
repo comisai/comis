@@ -2,18 +2,18 @@
 
 This directory holds two fixture families:
 
-1. **Golden-frame fixtures** (Plan 121-05, TR-02 / §11) — `spinner.*`,
+1. **Golden-frame fixtures** — `spinner.*`,
    `altscreen.*`, `vim.*` — pin the `@xterm/addon-serialize` serialization.
-2. **Classifier-corpus fixtures** (Plan 124-03 + Plan 163-02 / CLASS-02) — the
+2. **Classifier-corpus fixtures** — the
    per-CLI `<scenario>.stream.txt` streams that pin `terminal-classifier.ts` across
    `claude`/`codex`/`aider` × each state. See
-   [The classifier corpus](#the-classifier-corpus-plan-124-03-spec-104) below.
+   [The classifier corpus](#the-classifier-corpus) below.
 
 ---
 
-# Golden-frame fixtures (Plan 121-05, TR-02 / §11)
+# Golden-frame fixtures
 
-These fixtures back `terminal-golden-frame.test.ts` — the **§11 addon-serialize
+These fixtures back `terminal-golden-frame.test.ts` — the **addon-serialize
 churn guard**. `@xterm/addon-serialize` is pinned (`0.14.0`) but flagged
 experimental, so a future bump could silently change the serialization. The
 golden-frame test replays each committed `*.stream.txt` byte stream through a
@@ -91,28 +91,26 @@ changed (that would mask exactly the churn this guard catches).
 
 ---
 
-# The classifier corpus (Plan 124-03, spec §10.4)
+# The classifier corpus
 
 These `<scenario>.stream.txt` streams back the corpus block in
-`terminal-classifier.test.ts` — the **#1-milestone-de-risk guard**. Each stream is
+`terminal-classifier.test.ts` — the **primary classifier guard**. Each stream is
 replayed through a fresh `createSessionEmulator` (the same host-independent pure-JS
 replay as the golden frames); the test models the worker's settle/diff frame for
-that scenario and asserts `classifyFrame(...)` returns the expected §4.3 state **and
+that scenario and asserts `classifyFrame(...)` returns the expected state **and
 its `confidence`**. The **load-bearing** assertion is that the **thinking/tool-use
 pause** is classified `working`, NEVER `awaiting-input` (a false `awaiting-input` would
-wake a turn that fires a spurious keystroke into a still-generating CLI — spec §4.3
-risk table, HIGH).
+wake a turn that fires a spurious keystroke into a still-generating CLI — a HIGH-severity
+risk).
 
-**Plan 163-02 (CLASS-02)** extends the original eight `claude` scenarios to
-`claude` + `codex` + `aider` × {idle-working, awaiting-text-input, full-screen menu,
-permission dialog, completed, hung}, and asserts the `confidence` on every case. The
-two `claude-*` dialog fixtures are the **regression lock** for the documented
-claude-2.1.x misread (`project_v211_classifier_claude_menus_stuck`): a full-screen
-permission/menu dialog whose cursor sits on a blank input line **below** the prompt
-block — pre-fix it classified `stuck`, now it classifies
-`awaiting-input`/`medium`/`dialog_detected` via the structural dialog detector. A
-render shift that moves the cursor or drops the dialog chrome fails **here**, not in a
-production drive.
+The corpus covers `claude` + `codex` + `aider` × {idle-working, awaiting-text-input,
+full-screen menu, permission dialog, completed, hung}, and asserts the `confidence` on
+every case. The two `claude-*` dialog fixtures are the **regression lock** for the
+claude-2.1.x misread: a full-screen permission/menu dialog whose cursor sits on a blank
+input line **below** the prompt block must classify
+`awaiting-input`/`medium`/`dialog_detected` via the structural dialog detector, not
+`stuck`. A render shift that moves the cursor or drops the dialog chrome fails **here**,
+not in a production drive.
 
 ## Pinned CLI versions
 
@@ -122,8 +120,8 @@ production drive.
 | `codex` (codex-cli) | **0.138** | TUI **shape reference** — boxed prompt / enumerated menu / `(y/n)` gate / parked input prompt. |
 | `aider` | **0.81** | TUI **shape reference** — enumerated menu / `(y/n)` gate / parked `>` chat prompt. |
 
-> **REFRESH this corpus on each `claude` / `codex` / `aider` version bump (spec §10.4
-> + CLASS-02).** A new release can shift where the CLI parks (or does not park) its
+> **REFRESH this corpus on each `claude` / `codex` / `aider` version bump.** A new release
+> can shift where the CLI parks (or does not park) its
 > cursor, or reshape its dialog chrome; a drift surfaces here as a failing corpus case.
 > Re-author the affected streams via `record-fixture.mjs --synthetic` (never hand-edit
 > the `.txt` bytes), re-verify the asserted state **and confidence**, and bump the
@@ -132,7 +130,7 @@ production drive.
 
 ## The scenarios
 
-### `claude` (the original 124-03 corpus + the 163-02 RED dialog shapes)
+### `claude` (the base corpus + the RED dialog shapes)
 
 | Stream | Expected | What it is | Authored |
 |--------|----------|------------|----------|
@@ -143,8 +141,8 @@ production drive.
 | `long-working.stream.txt` | `working`/`high` | A long working stream (spinner + streaming output); UNSETTLED. | **hand-authored** |
 | `thinking-pause.stream.txt` | **`working`**/`medium` | **The load-bearing negative.** A thinking/tool-use pause: settled + diff∅ but the cursor sits MID-SCREEN in the generation region (output rendered BELOW it), so it is NOT parked ⇒ `working`, never `awaiting-input`. | **hand-authored** |
 | `completion.stream.txt` | `awaiting-input`/`high` | The turn finished and returned to the `❯` input prompt; cursor PARKED at the bottom. | **hand-authored** |
-| `auth-expired.stream.txt` | `awaiting-input`/`high` | An expired-Max OAuth/login prompt; cursor PARKED. (Plan 124-04's auto-answer asserts an auth/login prompt ESCALATES — never auto-answered.) | **hand-authored** |
-| `claude-permission-dialog.stream.txt` | **`awaiting-input`**/`medium` | **The RED regression lock.** An ASCII-bordered permission prompt ABOVE; cursor on a blank input line BELOW (NOT parked) ⇒ `dialog_detected`. Was `stuck` pre-Plan-01. | **synthetic** |
+| `auth-expired.stream.txt` | `awaiting-input`/`high` | An expired-Max OAuth/login prompt; cursor PARKED. (The auto-answer policy asserts an auth/login prompt ESCALATES — never auto-answered.) | **hand-authored** |
+| `claude-permission-dialog.stream.txt` | **`awaiting-input`**/`medium` | **The RED regression lock.** An ASCII-bordered permission prompt ABOVE; cursor on a blank input line BELOW (NOT parked) ⇒ `dialog_detected` (a naive cursor-park check would misread it as `stuck`). | **synthetic** |
 | `claude-menu.stream.txt` | **`awaiting-input`**/`medium` | The RED misread family: a full-screen enumerated menu ABOVE; cursor on a blank line BELOW ⇒ `dialog_detected`. | **synthetic** |
 
 ### `codex` (shape reference) and `aider` (shape reference) — the six states each
@@ -160,12 +158,12 @@ production drive.
 
 ## Why hand-authored (not live-recorded)
 
-The plan permits either a live recording or a faithful hand-authored stream. All
+Either a live recording or a faithful hand-authored stream satisfies the corpus. All
 corpus streams are **synthetic / hand-authored** because a live `claude`/`codex`/`aider`
 capture is (a) **non-deterministic** (model output varies run-to-run, so it cannot
 deterministically pin a pure classifier), (b) **auth-gated** (it needs an authenticated
 session + a real TTY), and (c) not in-harness reproducible on the macOS author box (its
-node-pty cannot `posix_spawnp` in-harness — the 119/120 precedent). Synthetic streams
+node-pty cannot `posix_spawnp` in-harness). Synthetic streams
 matching the documented byte patterns are deterministic, host-independent, and
 reviewable in the commit diff — exactly like the `spinner`/`altscreen` golden frames.
 
@@ -176,17 +174,17 @@ mid-screen with output below; the misread dialog shape leaves it on a blank line
 `scripts/record-fixture.mjs` (the `SYNTHETIC` map) — edit them THERE (never hand-type
 raw escapes into the `.txt`), then regenerate.
 
-> **Encoding constraint for the 163-02 fixtures (latin1):** the corpus replay reads each
+> **Encoding constraint (latin1):** the corpus replay reads each
 > stream `latin1` (the golden-frame round-trip contract), so a multi-byte UTF-8 glyph
 > (`╭`, `❯`) decodes as **3 separate latin1 cells** — a wide Unicode box row would overflow
 > the 80-col grid and wrap, and a `❯`-prefixed enumerator would no longer match the
-> line-start regex. The 163-02 `claude-*`/`codex-*`/`aider-*` dialog fixtures therefore use
+> line-start regex. The `claude-*`/`codex-*`/`aider-*` dialog fixtures therefore use
 > **pure-ASCII** structural cues that survive the latin1 decode 1:1 — an ASCII border
 > (`+----+` / `| … |`), a `(y/n)` token, or ≥2 line-start `1.`/`2.` option rows. (The
-> original 124-03 `claude` fixtures keep their `╭`/`❯` chrome because they assert via a
+> original `claude` fixtures keep their `╭`/`❯` chrome because they assert via a
 > *parked cursor*, never via the structural dialog predicate, so glyph width is moot there.)
 
-Regenerate the original 124-03 `claude` corpus:
+Regenerate the original `claude` corpus:
 
 ```bash
 cd packages/skills/src/tools/builtin/terminal-driver/scripts
@@ -196,7 +194,7 @@ for s in startup trust-dialog ask-user-question permission-gate \
 done
 ```
 
-Regenerate the 163-02 per-CLI corpus (claude RED dialogs + codex/aider × six states):
+Regenerate the per-CLI corpus (claude RED dialogs + codex/aider × six states):
 
 ```bash
 cd packages/skills/src/tools/builtin/terminal-driver/scripts

@@ -11,8 +11,8 @@
  * A second-holder regression (one published-into, a different one read-from)
  * means the plan bridge silently reads an empty port forever.
  *
- * RED on pre-patch code: `./setup-acp-wiring.js` does not exist, so the import
- * below fails on a missing module — making the RED unambiguous.
+ * Regression guard for the shared-holder invariant: threading a second holder
+ * into either consumer makes the plan bridge read an empty port forever.
  */
 import { describe, it, expect, vi } from "vitest";
 import { createAcpWiring } from "./setup-acp-wiring.js";

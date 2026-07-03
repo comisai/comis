@@ -10,7 +10,7 @@
  * story module so each self-registers at load. Importing `registry.ts` therefore
  * yields a fully-populated library.
  *
- * THE OPEN/CLOSED CONTRACT (§7.7): adding a journey = drop one ./stories/*.ts
+ * THE OPEN/CLOSED CONTRACT: adding a journey = drop one ./stories/*.ts
  * spec file that calls `registerStory(...)` (imported from ./registry-core.js) +
  * add ONE import line below — ZERO change to registry-core, the journey-runner,
  * the step interpreter, or the schema. The new story automatically joins the next

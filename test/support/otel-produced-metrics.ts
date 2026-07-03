@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The PRODUCED-metric truth set for the OTel/Prometheus arch guards (CR-01 / HG-01).
+ * The PRODUCED-metric truth set for the OTel/Prometheus arch guards.
  *
  * The single source of "is this metric actually emitted?" — shared by the
  * wiring-completeness guard (`otel-metric-catalog-wired.test.ts`) and the
@@ -12,11 +12,10 @@
  *       `createGauge("<otelName>", …)` in metric-mapping.ts / prometheus-surface.ts /
  *       otel-exporter.ts.
  *
- * HG-01 is the bug this closes: the drift guard used to check expr metrics
- * against the ENTIRE catalog (`EMITTED_METRIC_NAMES`), so a panel/rule on a
- * CATALOGUED-BUT-UNPRODUCED metric passed CI while rendering "No data" in
- * production. Checking against the PRODUCED set (catalog ∩ producers, histograms
- * expanded) makes that panel/rule FAIL — the property the docstring promises.
+ * The drift guard checks expr metrics against the PRODUCED set (catalog ∩
+ * producers, histograms expanded), NOT the ENTIRE catalog
+ * (`EMITTED_METRIC_NAMES`): a panel/rule on a CATALOGUED-BUT-UNPRODUCED metric
+ * must FAIL rather than pass CI while rendering "No data" in production.
  *
  * Source-grep with NO allowlist (the audio-wiring-guard / cache-trace-stages
  * mold). A refactor that drops a producer reshapes this set, turning the
@@ -88,7 +87,7 @@ export interface CatalogDefLike {
  * producer, rendered to their `promName`, with each histogram stem expanded to
  * its `_bucket`/`_sum`/`_count` children (the queryable series the panels use).
  *
- * This is the HG-01 truth set: the drift guard checks expr metrics against THIS
+ * This is the PRODUCED truth set: the drift guard checks expr metrics against THIS
  * (not the full `EMITTED_METRIC_NAMES`), so a panel/rule on a catalogued-but-
  * unproduced metric fails.
  */

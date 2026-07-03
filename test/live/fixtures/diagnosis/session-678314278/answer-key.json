@@ -8,7 +8,7 @@
     "endReason completed_with_tool_errors",
     "sessionCostUsd ~1.32"
   ],
-  "hiddenMechanism": "No log/event/trajectory/RPC field records WHY a status-200 response was classified as failed — transportOk / httpStatus / matchedRule / classifiedFailureBy do not exist anywhere in the surface (the GA1/GA2 gap). The raw log shows finishReason:\"stop\" and errorKind:\"dependency\", never the substring-match that caused the flip.",
+  "hiddenMechanism": "No log/event/trajectory/RPC field records WHY a status-200 response was classified as failed — transportOk / httpStatus / matchedRule / classifiedFailureBy do not exist anywhere in the surface. The raw log shows finishReason:\"stop\" and errorKind:\"dependency\", never the substring-match that caused the flip.",
   "surfaceCeiling": [
     "trajectory JSONL (read file)",
     "obs_query tool (diagnostics/billing/delivery/channels only)",

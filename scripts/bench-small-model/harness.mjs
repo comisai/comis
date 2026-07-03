@@ -9,9 +9,8 @@
  * through the scorers and asserts expected verdicts (RED→GREEN), so the metrics
  * are trustworthy before a single GPU token is spent.
  *
- * Design source: .planning/SMALL_MODEL_EXCELLENCE_DESIGN.md (Phase 1 PROVE / M1).
  * Wire-level facts verified 2026-06-07: qwen3.6:35b + gemma4:31b both tool-call
- * via Ollama's OpenAI-compatible /v1/chat/completions (requirement L4).
+ * via Ollama's OpenAI-compatible /v1/chat/completions.
  *
  * @module
  */
@@ -238,7 +237,7 @@ export function renderReport({ summaries, scored, meta }) {
   lines.push(`- **Endpoint:** ${meta.baseUrl}`);
   lines.push(`- **Models:** ${meta.models.join(", ")}`);
   lines.push(`- **Scenarios:** ${meta.scenarioIds.join(", ")}`);
-  lines.push(`- **Harness:** \`scripts/bench-small-model/\` (Phase 1 PROVE / M1–M2). Higher pass/adherence/success = better; lower derail/false-success/poison = better.`);
+  lines.push(`- **Harness:** \`scripts/bench-small-model/\`. Higher pass/adherence/success = better; lower derail/false-success/poison = better.`);
   lines.push("");
   lines.push(`## Per-model summary`);
   lines.push("");

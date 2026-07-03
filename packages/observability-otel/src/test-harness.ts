@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * In-memory OTel exporter fixtures (test-only) — the deterministic, collector-free
- * assertion path for the exporter tests (OTEL-01/02/03 / PROM-01).
+ * assertion path for the exporter tests.
  *
  * Every test asserts against an `InMemorySpanExporter` / `InMemoryMetricExporter`
  * / `InMemoryLogRecordExporter` rather than a live OTLP collector, so the suite

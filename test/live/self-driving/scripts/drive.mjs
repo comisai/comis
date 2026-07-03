@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Emulator driver v2 — inject a DM and wait for the agent's TURN TO END, capturing the last
-// SUBSTANTIVE wire reply. v2 fixes the v1 friction (codex-30uc run 2026-06-25): v1 quiesced on the
+// SUBSTANTIVE wire reply. v2 fixes the v1 friction: v1 quiesced on the
 // first non-🔧 message, but on a reasoning model that is almost always the agent's PLANNING CHECKLIST
 // (`[ ] do X`) or a "running it now / GraphId Z" announcement — while the real work (research, build,
 // DAG, sub-agents) finishes ASYNC past the drive's exit. v2:
@@ -18,7 +18,7 @@ const [, , chatIdArg, text, quiesceMsArg, maxMsArg, dataArg] = process.argv;
 const chatId = chatIdArg || '678314278';
 const quiesceMs = Number(quiesceMsArg || 8000);
 const maxMs = Number(maxMsArg || 240000);
-// Guard the #1 mis-invocation (hindsight-reflection-20260626): passing DATA in the maxMs slot
+// Guard the #1 mis-invocation: passing DATA in the maxMs slot
 // (arg order is chatId,text,quiesceMs,maxMs,DATA) makes maxMs=NaN → `while (… < NaN)` is false →
 // the loop NEVER runs → an instant, SILENT false "0s [TIMEOUT] — NO SUBSTANTIVE ANSWER" on a reply
 // that actually landed. Fail LOUD instead of fabricating a no-reply.
@@ -32,14 +32,14 @@ const DATA = dataArg || process.env.DATA || '/home/comis/.comis';
 // keyed by chatId, but the inbound message author is FROMUSER. Lets one trusted sender drive N distinct
 // chat-SESSIONS (reflection anti-domination cardinality is distinct (sessionId, sender) — so two chats
 // from the SAME trusted sender = card 2, with SHARED memory + trusted origin + no cross-sender recall
-// pollution / no per-sender priming). Default: fromUserId == chatId (v2 behavior). (dispatch-learning-20260627)
+// pollution / no per-sender priming). Default: fromUserId == chatId.
 const fromUser = process.env.FROMUSER ? Number(process.env.FROMUSER) : Number(chatId);
 const emu = JSON.parse(readFileSync('/tmp/comis-emu.json', 'utf8'));
 const base = emu.apiRoot;
 
 // Resilient long-poll: a loaded machine or a long slow-model turn (a cold local 35b can run >200s)
-// can transiently ETIMEDOUT a fetch — a crash here aborts the WHOLE drive mid-turn
-// (package-delivery-20260628). Retry a few times, then return [] so the poll loop keeps going (the
+// can transiently ETIMEDOUT a fetch — a crash here aborts the WHOLE drive mid-turn.
+// Retry a few times, then return [] so the poll loop keeps going (the
 // trajectory turn-end / answer-quiesce is the real stop signal, not any single poll).
 const getOutbound = async (after, waitMs) => {
   for (let attempt = 0; ; attempt++) {
@@ -96,8 +96,8 @@ const turnEndedSince = (p, baseLines) => {
 // the drive would stay in wire-only mode for the WHOLE first turn, silently abandoning the
 // AUTHORITATIVE turn-end signal in favour of wire-quiescence (premature-quiesce risk on a slow
 // model that pauses > quiesceMs between tool calls with no wire output). The loop re-resolves
-// lazily once the file appears. (package-delivery-20260628 IMP-3 live-verify: first delivery on
-// a clean slate logged `trajectory=NONE (wire-only)`.)
+// lazily once the file appears. (On a clean slate the first delivery logs
+// `trajectory=NONE (wire-only)`.)
 let trajPath = resolveTraj();
 let trajBase = trajPath ? trajLineCount(trajPath) : 0;
 

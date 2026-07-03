@@ -177,7 +177,7 @@ function resolveOutcomeJudge(
   const apiKey =
     container.secretManager.get(apiKeyName) ??
     // Keyless by TYPE, not config NAME — a user-named ollama entry must resolve keyless, else the
-    // outcome judge is a silent no-op on a local keyless daemon (package-delivery-20260628). Mirrors
+    // outcome judge is a silent no-op on a local keyless daemon. Mirrors
     // setup-dialectic + the completion path. Guarded by test/architecture/keyless-provider-by-type.
     (KEYLESS_PROVIDER_TYPES.has(providerEntry?.type ?? resolved.provider) ? KEYLESS_API_KEY_SENTINEL : "");
   if (!apiKey) return undefined; // no key → no-op judge (Defer != Retry)

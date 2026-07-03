@@ -76,7 +76,7 @@ describe("PLAT-01 Stage-B — decideAutoAnswer safe-answer / escalate-always", (
     expect(d).toEqual({ action: "escalate", reason: "no_safe_match" });
   });
 
-  it("narration carrying a destructive WORD but matching NO safe pattern ⇒ no_safe_match, NOT destructive (v2.26, real-VPS 2026-06-16)", () => {
+  it("narration carrying a destructive WORD but matching NO safe pattern ⇒ no_safe_match, NOT destructive", () => {
     // The escalate-always gate is a VETO scoped to an about-to-auto-answer safe match. A driven CLI
     // that merely NARRATES "delete a todo" with no operator safe pattern is never auto-answered
     // anyway, so the broad markers must NOT fire on it (they used to false-positive and wedge the
@@ -179,7 +179,7 @@ describe("PLAT-01 Stage-B — TerminalDriverConfig shape (via SkillsConfigSchema
 
 describe.skipIf(!isLive || !hasBwrap())("PLAT-01 Stage-C — drive a real CLI under bwrap (COMIS_LIVE + Linux+bwrap)", () => {
   it.skip("SKIPPED(no-bwrap/linux-only) — drive a real interactive CLI: safe prompt auto-answered (\\r), unsafe prompt escalates (terminal:escalated Notify), loop-guard fires on a re-render loop, caps evict at maxInteractions; bwrap is ABSENT on macOS", () => {
-    // Deferred to a Linux+bwrap operator run + PROVE-148. The OS-agnostic governance core
+    // Deferred to a Linux+bwrap operator run. The OS-agnostic governance core
     // (decideAutoAnswer / createLoopGuard / createSessionCaps + the config-shape) is covered in Stage-B above.
   });
 });

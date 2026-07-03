@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the decay-aware learned-skill TREND (SURFACE-05, anti-induced-demotion).
+ * Tests for the decay-aware learned-skill TREND (anti-induced-demotion).
  *
  * The trend is the in-process, daemon-lifetime decision of WHEN a corroborated
  * failure should drive a `demote()` — modeled as a recency-weighted
  * success/failure standing ("strengthening" | "stable" | "weakening"), NOT a raw
- * failure counter (design §WS4 / §17 hindsight Trend). The load-bearing invariant
- * (Pitfall 4 / the §12 first-RED): a SINGLE corroborated failure against many
+ * failure counter (the hindsight Trend). The load-bearing invariant
+ * (anti-induced-demotion): a SINGLE corroborated failure against many
  * recent successes keeps the trend STABLE/STRENGTHENING — only SUSTAINED
  * corroborated failure reaches WEAKENING — so a well-reused procedure is not
  * archived by one (possibly induced) failure.
  *
- * Reuses the FORGET-02 saturating-penalty SHAPE (`f = fc/(fc+K)`, K=3) adapted to
+ * Reuses the saturating-penalty SHAPE (`f = fc/(fc+K)`, K=3) adapted to
  * a recency-decayed score (sqlite-memory-lifecycle-store.ts:354-359, READ-ONLY).
  *
  * @module
@@ -25,7 +25,7 @@ const DAY = 24 * HOUR;
 const T0 = 1_700_000_000_000;
 
 describe("createSkillTrendTracker — decay-aware learned-skill standing", () => {
-  it("the §12 first-RED: ONE failure after a strong recent success history stays STABLE/STRENGTHENING (never weakening)", () => {
+  it("ONE failure after a strong recent success history stays STABLE/STRENGTHENING (never weakening)", () => {
     const trend = createSkillTrendTracker();
     let now = T0;
     // A strong recent success history (the well-reused procedure).
@@ -101,7 +101,7 @@ describe("createSkillTrendTracker — decay-aware learned-skill standing", () =>
     expect(last).toBe("strengthening");
   });
 
-  it("is in-process / daemon-lifetime: a FRESH tracker resets the standing (A3 — like the corroboration tally)", () => {
+  it("is in-process / daemon-lifetime: a FRESH tracker resets the standing (like the corroboration tally)", () => {
     const trend1 = createSkillTrendTracker();
     let now = T0;
     // Drive s4 to weakening in tracker 1.
@@ -149,7 +149,7 @@ describe("createSkillTrendTracker — decay-aware learned-skill standing", () =>
   });
 });
 
-describe("peekSkillTrend (REFLECT-03 — non-mutating standing read for the value-gated promote)", () => {
+describe("peekSkillTrend (non-mutating standing read for the value-gated promote)", () => {
   it("returns 'stable' for a never-seen skill (neutral) — the gate never blocks an un-failed skill", () => {
     const trend = createSkillTrendTracker();
     expect(trend.peekSkillTrend("unseen", 1000)).toBe("stable");

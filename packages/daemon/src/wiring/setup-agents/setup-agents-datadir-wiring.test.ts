@@ -3,12 +3,12 @@
  * Wiring guard — setupSingleAgent must thread the resolved data dir into BOTH
  * `createComisSessionManager(...)` and the `createPiExecutor(...)` deps.
  *
- * 260611 live-fire finding: neither call received `dataDir`, so the agent-side
+ * Without the forward, neither call receives `dataDir`, so the agent-side
  * session-index writers (comis-session-manager.ts + pi-event-bridge.ts, both
- * `deps.dataDir ?? ~/.comis`) fell back to the REAL ~/.comis — 166 blocked
- * "must not write under the real ~/.comis" guard errors per live MEM suite
- * run, and on a production install with COMIS_DATA_DIR=/custom the session
- * index would silently land in ~/.comis instead of /custom. Mirrors the
+ * `deps.dataDir ?? ~/.comis`) fall back to the REAL ~/.comis — tripping the
+ * "must not write under the real ~/.comis" guard, and on a production install
+ * with COMIS_DATA_DIR=/custom the session index would silently land in ~/.comis
+ * instead of /custom. Mirrors the
  * setup-agents-lcd-wiring.test.ts composition-root guard pattern: types stay
  * structurally compatible when the field is omitted (it is optional), so only
  * a literal-forward assertion catches the omission.

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Track-K per-model CAPABILITY battery (run AFTER cfg-patch model + clean-restart, per model).
 // Track K's catalog probe is PONG-only (liveness + modelId==config); for a "test every model one by
-// one" target that's too thin (codex-30uc run 2026-06-25 — added this). This drives 4 LIGHT turns so
+// one" target that is too thin. This drives 4 LIGHT turns so
 // the session never accumulates into a per-root budget abort: tool-call(grounded) · memory(teach+recall)
 // · injection-resist(HARD: no token leak) · reasoning. Pairs with models-sweep.sh (which does the
 // liveness+modelId sweep); run this per model for the capability dimension.

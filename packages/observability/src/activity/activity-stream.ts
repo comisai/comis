@@ -167,8 +167,8 @@ const SUBSCRIBED_EVENTS = [
 /**
  * The status markers used when no theme is supplied (or a markerless theme is
  * passed). These mirror the `default` theme bundle byte-for-byte so the
- * no-theme / default-theme output is identical to the historical hardcoded
- * glyphs — existing channel golden fixtures do not regress.
+ * no-theme / default-theme output matches the exact glyphs the
+ * channel golden fixtures assert.
  * Only `subagent` is read today (the event-produced marker baked
  * into `defaultLabel`); the closing-line `success`/`failure` markers are
  * RENDERER-derived from the `TurnOutcome` and are themed separately (a

@@ -106,7 +106,6 @@ function makeEventBus() {
 // ExecutionPipelineDeps requires a DeliveryService. The fake delegates to
 // adapter.sendMessage so the existing assertions (which observe adapter call
 // shape — replyTo, threadId, extra, per-block chunking) remain valid.
-// Mirrors the previously-vi.mock'd `deliverToChannel` pattern.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only fake
 function makeFakeDeliveryService(): DeliveryService {
   return {
@@ -439,14 +438,14 @@ describe("executeAndDeliver", () => {
       expect(callArgs[1]).toBe("Agent response text"); // text
     });
 
-    it("REACT-04 (206-04): the delivery stage runs under a request context carrying the resolved agentId (so deliverToChannel can bind the reply → trajectory)", async () => {
+    it("the delivery stage runs under a request context carrying the resolved agentId (so deliverToChannel can bind the reply → trajectory)", async () => {
       // The delivery happens AFTER executeLlm returns (outside the executor's
       // runWithContext) and would otherwise inherit the channel-ingress ALS,
       // which has NO agentId (context.ts:38). deliverToChannel reads ctx.agentId
       // to persist the REAL agent into the queue optionsJson AND bind the minted
       // reply id → trajectory (the reaction-attribution keystone). This test
-      // captures the ctx.agentId visible INSIDE deliverToChannel — RED on
-      // pre-patch (undefined, because the delivery ran in the ingress context).
+      // captures the ctx.agentId visible INSIDE deliverToChannel; it must be the
+      // resolved agent, not undefined (which is what the ingress context carries).
       let agentIdInDelivery: string | undefined = "SENTINEL_NOT_SET";
       const capturingDelivery: DeliveryService = {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only fake

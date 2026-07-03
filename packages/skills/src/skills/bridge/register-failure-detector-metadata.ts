@@ -3,7 +3,7 @@
  * Failure-detector tool metadata (§16.10/§16.11).
  *
  * Extracted from `tool-metadata-registry.ts` to keep that file under the
- * 800-line cap (the v2.22/v2.23 closures-extraction protocol — never an
+ * 800-line cap (the closures-extraction protocol — never an
  * allowlist entry). Behavior-neutral: `registerFailureDetectorMetadata()` is
  * called once from `registerAllToolMetadata()` and registers the identical
  * web_search / web_fetch `failureDetector` metadata via spread-merge onto the

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `chanlive-handle.ts` — the CLI-01 lifecycle primitives the `chan`/`tg` CLI
- * (Phase 205, Plan 05) and the standalone-rig launcher (Plan 04) both use:
+ * `chanlive-handle.ts` — the lifecycle primitives the `chan`/`tg` CLI
+ * and the standalone-rig launcher both use:
  *
  *   1. the per-channel HANDLE FILE at `~/.comis-chanlive/<channel>.json`,
  *      written `0600`, recording the three endpoints (emulator control,
@@ -14,9 +14,9 @@
  *      and `tg status` / `tg up` consume (reuse a healthy rig; report a dead
  *      handle honestly otherwise).
  *
- * The handle records the THREE endpoints (design §10A.3 "three endpoints, one
- * handle"). It carries the gateway token, so `writeHandle` chmods it `0600`
- * (T-205-07 / §13-Q7 / V12 — the token must not leak off-box). `readHandle`
+ * The handle records the THREE endpoints in one file (emulator control,
+ * rig-control, gateway). It carries the gateway token, so `writeHandle` chmods it `0600`
+ * (the token must not leak off-box). `readHandle`
  * returns `undefined` on absence (honest, never a throw).
  *
  * TEST-HARNESS — lives under the test tree, never the packages source tree;
@@ -45,7 +45,7 @@ import { join } from "node:path";
 /**
  * The per-channel handle — the THREE endpoints + the SECRET gateway token + the
  * fixed test chat id + the rig's throwaway data dir / memory.db path. This is
- * the contract the launcher (Plan 04) WRITES and the CLI (Plan 05) READS.
+ * the contract the launcher WRITES and the CLI READS.
  */
 export interface ChanliveHandle {
   /** The channel key, e.g. "telegram". */
@@ -55,10 +55,10 @@ export interface ChanliveHandle {
   /**
    * `http://127.0.0.1:<R>` — the rig-control base.
    *
-   * For the IN-PROCESS rig (Plan 205-04) this is the gateway URL — the
+   * For the IN-PROCESS rig this is the gateway URL — the
    * discover-or-spawn HEALTH ANCHOR a later `tg up` probes, NOT a cross-process
    * control surface (the in-proc controller dies with its launcher). For the
-   * DETACHED rig (Plan 208-08, Option A) this is a REAL dedicated rig-control
+   * DETACHED rig this is a REAL dedicated rig-control
    * HTTP surface (≠ the gateway URL) the cold-shell `tg restart`/`reset`/
    * `reconfigure` POST to drive a SEPARATE-process rig.
    */
@@ -74,7 +74,7 @@ export interface ChanliveHandle {
   /** `<dataDir>/<memory.dbPath>` — the isolated `memory.db` the oracles read. */
   readonly memoryDbPath: string;
   /**
-   * The OS process id of the DETACHED-subprocess rig (Plan 208-08, Option A) —
+   * The OS process id of the DETACHED-subprocess rig —
    * `undefined` for the in-process rig (which has no separate process to signal).
    * `tg down`/`restart`/`reset` SIGTERM / probe this pid to drive (or reap) the
    * cold-shell rig; the cross-process acceptance test asserts the pid is gone
@@ -84,11 +84,11 @@ export interface ChanliveHandle {
 }
 
 /**
- * The default handle directory — `~/.comis-chanlive` (a NEW operator-visible
- * artifact, first written by Phase 205), OR the `COMIS_CHANLIVE_DIR` env override
+ * The default handle directory — `~/.comis-chanlive` (an operator-visible
+ * artifact), OR the `COMIS_CHANLIVE_DIR` env override
  * when set.
  *
- * The env override is the CROSS-PROCESS isolation seam (Plan 208-08, Option A):
+ * The env override is the CROSS-PROCESS isolation seam:
  * the cold-shell acceptance test points every separate-process `tg` (and the
  * detached `rig-daemon`) at ONE throwaway dir via `COMIS_CHANLIVE_DIR`, so the
  * processes share the same handle WITHOUT a `--baseDir` flag on each invocation
@@ -113,8 +113,7 @@ export function handlePath(channel: string, baseDir: string = defaultBaseDir()):
 /**
  * Write the handle to `<baseDir>/<channel>.json`: create the dir if missing,
  * serialize the JSON, then chmod the file `0600`. The gateway token in the
- * handle is admin-scoped — `0600` keeps it owner-only so it cannot leak off-box
- * (T-205-07 / §13-Q7 / V12).
+ * handle is admin-scoped — `0600` keeps it owner-only so it cannot leak off-box.
  */
 export function writeHandle(handle: ChanliveHandle, baseDir: string = defaultBaseDir()): void {
   mkdirSync(baseDir, { recursive: true });
@@ -138,14 +137,13 @@ export function readHandle(
 }
 
 /**
- * Resolve the rig-control endpoint for a channel by the EXACT precedence
- * (design §5.1):
+ * Resolve the rig-control endpoint for a channel by the EXACT precedence:
  *   1. `--endpoint <url>` flag (passed in by the CLI);
  *   2. `COMIS_CHANLIVE_ENDPOINT` env (read-only, no secret);
  *   3. the handle file's `rigControlEndpoint`.
  *
  * Returns `undefined` when none resolves — the honest dead-handle the CLI turns
- * into an error suggesting `tg up`, NEVER a silent spawn (T-205-08). `--endpoint`
+ * into an error suggesting `tg up`, NEVER a silent spawn. `--endpoint`
  * / env beat the recorded handle, the only way to target a second / operator rig.
  */
 export function resolveEndpoint(
@@ -165,8 +163,8 @@ const DEFAULT_PROBE_TIMEOUT_MS = 2000;
  * Probe rig health: a bounded GET `<gatewayUrl>/health` (the daemon's existing
  * health route). Resolves `true` on a 200-range response, `false` on any throw /
  * non-200 / timeout (honest — a dead endpoint returns `false`, never a crash).
- * This is the discover-or-spawn signal the launcher (Plan 04) and `tg status` /
- * `tg up` (Plan 05) consume to reuse a healthy rig instead of spawning a second.
+ * This is the discover-or-spawn signal the launcher and `tg status` /
+ * `tg up` consume to reuse a healthy rig instead of spawning a second.
  */
 export async function probeHealth(
   gatewayUrl: string,

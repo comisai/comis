@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * `constructCapabilityLayer` — the daemon-wide capability-layer boot wiring +
- * ACTIVATION (Phase 211 ENDPOINT-01/03 + JAIL-03 → Phase 212 Plan 05 Gap 3).
- * Asserts: the autonomy gate (construct ONLY when an agent is autonomy-bearing,
- * mirroring the broker gate); the JAIL-03 namespace preflight runs unconditionally;
- * and the Phase-212 dormancy ACTIVATION — when autonomy is on, the cap socket is
- * STARTED (`active:true` logged, the 0600 socket file exists); when autonomy is
- * off, NO socket is bound (`active:false` residue gone).
+ * ACTIVATION. Asserts: the autonomy gate (construct ONLY when an agent is
+ * autonomy-bearing, mirroring the broker gate); the namespace preflight runs
+ * unconditionally; and the dormancy ACTIVATION — when autonomy is on, the cap
+ * socket is STARTED (`active:true` logged, the 0600 socket file exists); when
+ * autonomy is off, NO socket is bound (`active:false` residue gone).
  * @module
  */
 
@@ -37,7 +36,7 @@ function createDeps(
 ) {
   const clock: ClockPort = { now: () => 1_700_000_000_000 };
   // The boot helper threads daemonLogger into createCapabilityEndpoint (a
-  // `submodule` child for the socket boundary, WR-02) AND into createBoundedAutonomy,
+  // `submodule` child for the socket boundary) AND into createBoundedAutonomy,
   // whose sub-modules bind a SECOND-level `submodule` child — so the child logger
   // must itself carry `child` (returns itself). A self-referential child handles
   // arbitrary nesting depth.
@@ -108,10 +107,10 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
     expect(deps.daemonLogger.info).toHaveBeenCalledTimes(1);
   });
 
-  // PHASE 213 (CEIL/BUDGET/RATE/QUOTA): the daemon-wide BoundedAutonomy service
+  // The daemon-wide BoundedAutonomy service
   // is constructed alongside the LeaseManager and held on the handle — the single
   // chokepoint the spawn ceiling / rate limit / outward quota / budget meter all
-  // consult. Without it, none of the 213 bounds are live.
+  // consult. Without it, none of those bounds are live.
   it("constructs the BoundedAutonomy service and holds it on the handle", async () => {
     const dataDir = tempDataDir();
     const deps = createDeps(
@@ -129,7 +128,7 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
     expect(outcome.kind).toBeDefined();
   });
 
-  // RATE-02 count source: the cronJobCount provider threaded into
+  // The count source: the cronJobCount provider threaded into
   // constructCapabilityLayer is bound INTO the service — boundedAutonomy.cronCount
   // delegates to it (so the cap endpoint's cronSelfMax cap reads a REAL count, not
   // an undefined/0 stub). daemon.ts binds the provider to the per-agent
@@ -148,7 +147,7 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
     expect(result.capEndpointHandle!.boundedAutonomy.cronCount("other")).toBe(0);
   });
 
-  // PHASE 213-08 (BUDGET-01/02): the late-bound budget holder is POPULATED by the
+  // The late-bound budget holder is POPULATED by the
   // cap layer after construction (the seam the bridge reads — schedulers/agents are
   // built BEFORE the cap layer, so they hold the holder and read `current` at fire
   // time). After construction, holder.current is defined and its reserveBudget
@@ -166,7 +165,7 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
     expect(holder.current).toBeDefined();
     const outcome = holder.current!.reserveBudget("root-x", "_web", "_web", 0, 0);
     expect(outcome.kind).toBeDefined();
-    // KEYING-01 (built-but-not-wired guard): the holder.current literal MUST also
+    // Built-but-not-wired guard: the holder.current literal MUST also
     // expose evictRootIfIdle — the bridge calls it once per turn to re-anchor a
     // session root's wall-clock. Omitting it (the literal only bound reserve +
     // register) silently no-ops the per-turn re-anchor LIVE while the bridge unit
@@ -177,7 +176,7 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
 
   // The resolver returns a STABLE rootRunId per session: an unregistered (top-level,
   // non-spawned) session gets a SYNTHETIC `root-session-<key>` id, registered on
-  // first use so a self-spawning loop on ANY run is bounded (criterion #2 — not only
+  // first use so a self-spawning loop on ANY run is bounded (not only
   // orchestrate children). The same session resolves to the SAME id on a second call.
   it("resolveRootRunId returns a stable synthetic root for an unregistered session and registers it on first use", async () => {
     const dataDir = tempDataDir();
@@ -209,7 +208,7 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
     expect(result.capEndpointHandle!.capSocketPath).toBe(join(dataDir, "cap.sock"));
   });
 
-  // PHASE 212 ACTIVATION (Gap 3): the daemon-wide socket is STARTED (the file
+  // ACTIVATION: the daemon-wide socket is STARTED (the file
   // exists on disk) and the boot log reports active:true — no active:false residue.
   it("ACTIVATES the cap socket (the 0600 socket file is bound) and logs active:true", async () => {
     const dataDir = tempDataDir();
@@ -268,15 +267,14 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
 });
 
 // ---------------------------------------------------------------------------
-// PHASE 217-05 Task 1 (UNATT/BREAK/EVICT composition-root wiring): the
-// denial breaker (BREAK-01/02), the evict registry (EVICT-01/03), and the
-// content-free escalate NotifyFn (UNATT-03) are constructed at this
-// composition root alongside BoundedAutonomy and held on the cap handle —
-// so the daemon threads them onto the dispatch deps (the chokepoint reads
-// them; the evict handler activates via the `...deps` spread). Each is
-// gated on an autonomy-bearing profile (the same gate as the lease layer).
+// Composition-root wiring: the denial breaker, the evict registry, and the
+// content-free escalate NotifyFn are constructed at this composition root
+// alongside BoundedAutonomy and held on the cap handle — so the daemon threads
+// them onto the dispatch deps (the chokepoint reads them; the evict handler
+// activates via the `...deps` spread). Each is gated on an autonomy-bearing
+// profile (the same gate as the lease layer).
 // ---------------------------------------------------------------------------
-describe("constructCapabilityLayer — denial breaker + evict registry + escalate (217-05 Task 1)", () => {
+describe("constructCapabilityLayer — denial breaker + evict registry + escalate", () => {
   it("constructs a denialBreaker + evictRegistry + escalate and holds all three on the handle", async () => {
     const dataDir = tempDataDir();
     const deps = createDeps(
@@ -287,21 +285,21 @@ describe("constructCapabilityLayer — denial breaker + evict registry + escalat
     cleanups.push(() => result.capEndpointHandle?.boundedAutonomy?.destroy());
     cleanups.push(() => result.capEndpointStop?.());
     const handle = result.capEndpointHandle!;
-    // The breaker exposes its record/evict surface (BREAK-01/02).
+    // The breaker exposes its record/evict surface.
     expect(handle.denialBreaker).toBeDefined();
     expect(typeof handle.denialBreaker.recordDenial).toBe("function");
     expect(typeof handle.denialBreaker.recordAllow).toBe("function");
     expect(typeof handle.denialBreaker.evict).toBe("function");
-    // The evict registry exposes its mark/isEvicted/clear surface (EVICT-01/03).
+    // The evict registry exposes its mark/isEvicted/clear surface.
     expect(handle.evictRegistry).toBeDefined();
     expect(typeof handle.evictRegistry.mark).toBe("function");
     expect(typeof handle.evictRegistry.isEvicted).toBe("function");
     expect(typeof handle.evictRegistry.clear).toBe("function");
-    // escalate is a content-free NotifyFn (UNATT-03) — a callable.
+    // escalate is a content-free NotifyFn — a callable.
     expect(typeof handle.escalate).toBe("function");
   });
 
-  it("sources denialBreakerN from autonomyBearingConfig (LOW-1, not a hardcoded 5): an explicit N=3 trips the breaker on the 3rd consecutive denial", async () => {
+  it("sources denialBreakerN from autonomyBearingConfig (not a hardcoded 5): an explicit N=3 trips the breaker on the 3rd consecutive denial", async () => {
     const dataDir = tempDataDir();
     // An autonomy-bearing agent with an EXPLICIT denialBreakerN override. If the
     // boot wired a hardcoded 5 (or a defaultAgentId lookup that does not exist in

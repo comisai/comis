@@ -11,14 +11,12 @@
  * tuple so consumers can enumerate it at test time and the Zod schema's
  * `stage` field rejects unknown stages at parse time.
  *
- * Comis improvements over the legacy 16-char-digest cache-trace-writer
- * (which lived in `packages/agent/src/executor/stream-wrappers`):
+ * Design properties of this schema:
  *   - `traceSchema: "comis-cache-trace"` + `schemaVersion: 1` — explicit
  *     parser fence; downstream replay/diff tooling can reject foreign
  *     artifacts.
  *   - Full 64-char `messagesDigest` + `systemDigest` via
- *     `stableStringify` (`shared/stable-stringify.ts`) instead of the
- *     legacy 16-char truncated SHA-256.
+ *     `stableStringify` (`shared/stable-stringify.ts`).
  *   - Per-stage events emitted at lifecycle boundaries — not a single
  *     point at the LLM call.
  *   - `cacheReadInputTokens` + `cacheCreationInputTokens` attached to
@@ -36,7 +34,7 @@ import { z } from "zod";
  *
  * Order: lifecycle-relevant (session.* → prompt → model → context → tool
  * → session.after → control-plane sentinel).
- * v1 shape established 2026-05-19; rewritten 2026-05-21 to match shipped code; append-only rule applies from 2026-05-21 forward.
+ * The stage tuple is append-only: new stages are added at the end; existing entries and their order never change.
  *
  * The trailing `cache_trace.write_failures` is a control-plane sentinel
  * (not an application stage) emitted by the runtime on first queued
@@ -104,11 +102,11 @@ export const CacheTraceEventSchema = z.object({
   seq: z.number().int().nonnegative(),
   agentId: z.string(),
   sessionId: z.string(),
-  // §7.2 canonical correlation key — required. Auto-derived from the
+  // The canonical correlation key — required. Auto-derived from the
   // AsyncLocalStorage RequestContext when present, falling back to
   // sessionId.
   traceId: z.string(),
-  // §7.2 envelope fields — optional; the executor wires what's reachable.
+  // Envelope fields — optional; the executor wires what's reachable.
   runId: z.string().optional(),
   sessionKey: z.string().optional(),
   tenantId: z.string().optional(),
@@ -120,7 +118,7 @@ export const CacheTraceEventSchema = z.object({
   messages: z.array(z.unknown()).optional(),
   messageCount: z.number().int().nonnegative().optional(),
   messageRoles: z.array(z.string()).optional(),
-  // O2 (Phase 126): a SMALL assembled-array shape descriptor — per-message
+  // A SMALL assembled-array shape descriptor — per-message
   // block-kind counts + a `hasToolResult` flag + tool_use/tool_result
   // id-pairing summary. It lets a test assert tool_use<->tool_result pairing
   // + array growth WITHOUT shipping the full `messages` array, so it is
@@ -130,7 +128,7 @@ export const CacheTraceEventSchema = z.object({
   // to the exempt set). The permanent provider-boundary regression gate
   // asserts against this (see provider-boundary-harness.test.ts).
   //
-  // WR-01 (Phase 126): the `toolUseIds` / `toolResultIds` arrays are a SAMPLE
+  // The `toolUseIds` / `toolResultIds` arrays are a SAMPLE
   // (capped at MAX_SAMPLED_IDS, below the 64-item array bound) so the limiter
   // never replaces them with an opaque sentinel on large tool fan-outs. The
   // authoritative pairing/growth signal lives in the integer count fields

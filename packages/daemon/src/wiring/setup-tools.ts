@@ -425,7 +425,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     // <location> even when a custom discoveryPaths omits the default ./skills. Without this the
     // registry surfaces the skill (skill-discovery-paths.ts, same force-include) but the agent's
     // read of its body is a `[path_traversal] outside workspace bounds` refusal — the skill is
-    // visible yet its how-to is unreadable (webhook-claude-cli-tdd-20260630-rerun).
+    // visible yet its how-to is unreadable.
     const readOnlyPaths = resolveSkillDiscoveryPaths(
       skillsConfig.discoveryPaths,
       dataDir,

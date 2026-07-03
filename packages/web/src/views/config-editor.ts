@@ -22,7 +22,7 @@ import "../components/domain/ic-diff-viewer.js";
 // Sub-component imports
 import "./config-editor/schema-form.js";
 
-// Re-export YAML utilities from extracted module for backward compatibility
+// Re-export the YAML utilities from ./config-editor/yaml-serializer so they stay importable from this module.
 import { serializeYaml, parseYaml } from "./config-editor/yaml-serializer.js";
 export { serializeYaml as serializeToYaml, parseYaml };
 

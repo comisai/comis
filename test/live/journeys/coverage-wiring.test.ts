@@ -3,7 +3,7 @@
  * E2E-03 — coverage auto-wiring + requires→skip gating.
  *
  * (a) Every seed story's tags (Cat A–V) auto-contribute to the story-coverage
- *     view (the "tags + dimensions contribute to the §7.2 matrix" claim, via a
+ *     view (tags + dimensions contribute to the coverage matrix via a
  *     VIEW — NOT new COVERAGE_DIMENSIONS rows).
  * (b) requires→skip-with-reason, never fail — the universal skip ≠ fail invariant,
  *     with a positive control over EVERY seed.

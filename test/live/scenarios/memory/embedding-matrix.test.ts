@@ -120,7 +120,7 @@ describe.skipIf(!isLive)(
           });
 
           expect(existsSync(dbPath), "memory DB missing after run - store never opened (dbPath: " + dbPath + ")").toBe(true);
-          // Content-anchored (260611 re-pin): the fact is stored for this dims
+          // Content-anchored: the fact is stored for this dims
           // config. The original exact `expectedRowDelta: 1` assumed the two
           // identical user turns dedup to one memory row — wrong once the agent
           // actually replies (real key): each turn also stores the agent reply +
@@ -182,7 +182,7 @@ describe.skipIf(!isLive || !hasOpenAiKey)(
           });
 
           expect(existsSync(dbPath), "memory DB missing after run - store never opened (dbPath: " + dbPath + ")").toBe(true);
-          // Content-anchored (260611): the fact is stored; counts are
+          // Content-anchored: the fact is stored; counts are
           // nondeterministic (user+agent+extracted rows). Embedding integrity is
           // enforced by runDbOracle check 3d.
           expect(

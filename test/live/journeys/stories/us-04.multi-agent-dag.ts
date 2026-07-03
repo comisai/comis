@@ -2,11 +2,11 @@
 /**
  * US-04 / J4 — Multi-agent / DAG pipeline.
  *
- * §7.7 flow: Slack request → route → subagent DAG (fetch→analyze→report) →
+ * Flow: Slack request → route → subagent DAG (fetch→analyze→report) →
  * aggregate → reply. Subsystems composed: A core-loop, B LLM, H subagents/DAG,
  * I multi-agent/routing, F tools, S delivery.
  *
- * Gated behind ORCH Stage-C cert (141). The `graph:completed` expect_event IS in
+ * Gated behind ORCH Stage-C cert. The `graph:completed` expect_event IS in
  * the conversation-harness subscribed set (so a Stage-D run can assert it). In
  * sandbox: shape validated + requires-skip; the real DAG runs at Stage-D.
  *

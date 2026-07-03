@@ -59,7 +59,7 @@ const SESSION_KEY_RT = "test:roundtrip-user:chan-RT";
 const EXPECTED_SAFE_TOOLS = ["browser", "web_fetch", "web_search"] as const;
 
 // Never-export canaries -- a handful of high-value names that MUST NOT appear
-// in tools/list regardless of allowlist (Plan 02 annotated them never-export).
+// in tools/list regardless of allowlist -- they are annotated never-export.
 const NEVER_EXPORT_CANARIES = [
   "tokens_manage",
   "exec",
@@ -195,7 +195,7 @@ describe("SDK Client end-to-end roundtrip against /mcp/v1", () => {
 
         const caps = client.getServerCapabilities();
         expect(caps).toBeDefined();
-        // Plan 03 advertises tools + resources capabilities; subscribe=false
+        // The server advertises tools + resources capabilities; subscribe=false
         // on resources is implementation-internal -- the SDK exposes the
         // capability presence boolean.
         expect(caps?.tools).toBeDefined();

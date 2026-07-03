@@ -41,7 +41,7 @@ export interface StartupInvariants {
   pluginRegistryCount:   number;
   channelRegistryCount:  number;
   depSlotConsistency: {
-    adaptersList:     boolean;   // expected false (removed in 2026-05-24 fix)
+    adaptersList:     boolean;   // expected false (the legacy adaptersList dep slot is no longer wired)
     channelRegistry:  boolean;   // expected true
   };
   agentCount:           number;

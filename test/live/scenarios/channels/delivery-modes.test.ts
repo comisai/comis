@@ -5,7 +5,7 @@
  * Stage-B (always runs, file-backed SQLite, keyless, deterministic — no daemon, no
  * network, no LLM):
  *   - Crash-mid-delivery resume on the REAL crash-safe SQLite delivery queue (the
- *     §5.2 persistence-oracle case): enqueue + enqueueInFlight rows persist
+ *     persistence-oracle case): enqueue + enqueueInFlight rows persist
  *     (`delivery:enqueued` fires per row); close the DB (simulated crash); reopen the
  *     SAME file → recoverInFlight() resets in_flight→pending → pendingEntries()
  *     resumes the persisted rows → statusCounts() reflects them; then runDbOracle()

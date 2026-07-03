@@ -1,24 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure M1 fleet-triage corpus loader + contract types (Phase 158 — PROVE & gate:
- * fleet-triage baseline, requirement M1).
+ * Pure fleet-triage corpus loader + contract types.
  *
- * The deterministic M1 half of the measure-first PROVE phase. Everything here is
+ * The deterministic by-hand-corpus half of the measure-first baseline. Everything here is
  * PURE except `readFileSync` (the loader): no daemon, no network, no env reads, no
  * key — so it runs keyless and never imports a product (`@comis/*`) package. The
- * loader is RED→GREEN unit-tested in fleet-triage-corpus.test.ts BEFORE the Plan-03
- * gate script consumes it (the `--selftest` discipline), mirroring the Phase-149
+ * loader is RED→GREEN unit-tested in fleet-triage-corpus.test.ts BEFORE the
+ * gate script consumes it (the `--selftest` discipline), mirroring the
  * diagnosis-harness.ts loader half (the EXACT analog — the recordMetrics /
- * makeReadSourceTool / judge bits are 149-only and NOT mirrored here).
+ * makeReadSourceTool / judge bits belong to that harness and are NOT mirrored here).
  *
- * CRITICAL DIVERGENCE from 149 (RESEARCH Pitfall 1): M1 is an ENCODING of
- * already-written prose (`.planning/FLEET_HEALTH_LENS_PHASE.md` §2 — this session's
- * v2.14 review), NOT a reconstruction from a rotating `daemon.1.log`. `loadCorpus`
- * reads a STATIC frozen `triage-corpus.json` the fixture plan (02) writes; there is
- * no `trajectory.jsonl` to parse and no daemon to re-run. M1 is a transcription into
+ * CRITICAL DIVERGENCE: the corpus is an ENCODING of the already-written by-hand
+ * fleet-health review, NOT a reconstruction from a rotating `daemon.1.log`. `loadCorpus`
+ * reads a STATIC frozen `triage-corpus.json` the fixture layer writes; there is
+ * no `trajectory.jsonl` to parse and no daemon to re-run. It is a transcription into
  * structured JSON, not a measurement.
  *
- * SECURITY (T-158-01-02): `parseJsonFile` rethrows with the PATH ONLY (the filename,
+ * SECURITY: `parseJsonFile` rethrows with the PATH ONLY (the filename,
  * never the offending content) on a malformed fixture — the residency rule; a
  * committed fixture body could carry captured content, so it is never echoed. The
  * shape-guards reject a mis-shaped corpus at load time (with the file path) so it
@@ -31,15 +29,15 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 // ---------------------------------------------------------------------------
-// Contract types — Plan 02 (fixtures) + Plan 03 (gate script) import these.
+// Contract types — the fixtures and gate-script layers import these.
 // Closed string unions (never a bare `string` discriminator) — the as-const-union
-// style of diagnosis-harness.ts:79-84.
+// style of diagnosis-harness.ts.
 // ---------------------------------------------------------------------------
 
 /**
- * One fleet-triage signal from the §2 by-hand review — the M1 reference the
+ * One fleet-triage signal from the by-hand review — the reference the
  * `obs.fleet.health` lens must reproduce. Carries counts + typed enums only, NEVER
- * raw log bodies (the §2 table is already PII-free).
+ * raw log bodies (the review table is already PII-free).
  */
 export interface FleetSignal {
   /** The signal class — a closed union, never a bare string. */
@@ -50,9 +48,9 @@ export interface FleetSignal {
     | "config-posture"
     | "session-degradation"
     | "model-health-deferred";
-  /** What THIS session's v2.14 review found (the M1 reference count). */
+  /** What the by-hand review found (the reference count). */
   byHandCount: number;
-  /** Where the signal lands TODAY — the gap the M2 gate measures. */
+  /** Where the signal lands TODAY — the gap the recurrence gate measures. */
   location: "daemon.log" | "trajectory.jsonl" | "obs_diagnostics" | "native-stdout";
   /** Queryable cross-session today? (true = an ALREADY-STRUCTURED contrast item). */
   alreadyStructured: boolean;
@@ -61,8 +59,8 @@ export interface FleetSignal {
 }
 
 /**
- * The §2 "cost/effort to beat" — the manual triage this session ran by hand, encoded
- * as the RE-PROVE bar (Phase 162 P1). The `obs.fleet.health` lens is proven when it
+ * The "cost/effort to beat" — the manual triage run by hand, encoded
+ * as the RE-PROVE bar. The `obs.fleet.health` lens is proven when it
  * reproduces this consolidated list in ONE call.
  */
 export interface ManualCostToBeat {
@@ -74,14 +72,14 @@ export interface ManualCostToBeat {
   pm2ModelScrape: string;
 }
 
-/** A frozen M1 corpus parsed into its signals + the manual cost-to-beat. */
+/** A frozen corpus parsed into its signals + the manual cost-to-beat. */
 export interface FleetCorpus {
   signals: FleetSignal[];
   manualCost: ManualCostToBeat;
 }
 
 // ---------------------------------------------------------------------------
-// loadCorpus — read the frozen M1 fixture directory into a typed bundle.
+// loadCorpus — read the frozen fixture directory into a typed bundle.
 // ---------------------------------------------------------------------------
 
 /**
@@ -110,8 +108,8 @@ const LOCATION_VALUES = new Set<FleetSignal["location"]>([
 
 /**
  * Parse a `{file}` under `dir` as JSON, rethrowing with the PATH ONLY (never the
- * offending content) on failure — the residency rule (T-158-01-02), mirroring
- * diagnosis-harness.ts:133-142.
+ * offending content) on failure — the residency rule, mirroring
+ * diagnosis-harness.ts.
  */
 function parseJsonFile(dir: string, file: string): unknown {
   const raw = readFileSync(resolve(dir, file), "utf-8");
@@ -125,11 +123,11 @@ function parseJsonFile(dir: string, file: string): unknown {
 
 /**
  * Validate that a parsed `triage-corpus.json` has the load-bearing FleetSignal[]
- * shape, throwing PATH ONLY on violation (the assertAnswerKey analog,
- * diagnosis-harness.ts:184-196).
+ * shape, throwing PATH ONLY on violation (the assertAnswerKey analog in
+ * diagnosis-harness.ts).
  *
  * Rejects: a `null`/non-object root, a non-`{signals:[]}` shape, an EMPTY signals array
- * (an empty corpus is a corrupt artifact — there are §2 findings to encode), a `null`/
+ * (an empty corpus is a corrupt artifact — there are review findings to encode), a `null`/
  * non-object entry, any entry lacking a string `signal` / number `byHandCount` / string
  * `location` / boolean `alreadyStructured`, or any entry whose `signal`/`location` is a
  * string OUTSIDE the closed union. A JSON-valid-but-mis-shaped corpus would otherwise
@@ -138,7 +136,7 @@ function parseJsonFile(dir: string, file: string): unknown {
  *
  * Each branch null/object-guards BEFORE dereferencing, so a bare `null` JSON literal or a
  * `[null]` entry hits this controlled PATH-NAMED throw, never the raw engine
- * `TypeError: Cannot read properties of null` the guard exists to replace (WR-01).
+ * `TypeError: Cannot read properties of null` the guard exists to replace.
  */
 function assertSignals(parsed: unknown): FleetSignal[] {
   if (parsed === null || typeof parsed !== "object") {
@@ -173,7 +171,7 @@ function assertSignals(parsed: unknown): FleetSignal[] {
       !LOCATION_VALUES.has(s.location as FleetSignal["location"])
     ) {
       // The closed-union contract (README + FleetSignal JSDoc): a typo'd / stale signal
-      // or location name is a corrupt artifact, not a new gate row (WR-02).
+      // or location name is a corrupt artifact, not a new gate row.
       throw new Error(
         "fleet-triage-corpus: malformed triage-corpus.json — signal/location out of the closed enum",
       );
@@ -188,8 +186,7 @@ function assertSignals(parsed: unknown): FleetSignal[] {
  * `groupByMessage` / `pm2ModelScrape` are missing or wrong-typed.
  *
  * Null/object-guards the root before dereferencing, so a bare `null` JSON literal hits
- * this controlled PATH-NAMED throw, never a raw `TypeError` on `c.severityHistogram`
- * (WR-01).
+ * this controlled PATH-NAMED throw, never a raw `TypeError` on `c.severityHistogram`.
  */
 function assertManualCost(parsed: unknown): ManualCostToBeat {
   if (parsed === null || typeof parsed !== "object") {
@@ -214,11 +211,11 @@ function assertManualCost(parsed: unknown): ManualCostToBeat {
 }
 
 /**
- * Read a frozen M1 corpus directory (`triage-corpus.json` +
+ * Read a frozen corpus directory (`triage-corpus.json` +
  * `manual-cost-to-beat.json`) into a {@link FleetCorpus}.
  *
  * Both files MUST be well-formed — a committed fixture is an artifact (the deliberate
- * early-throw philosophy from diagnosis-harness.ts:148-150). A malformed or
+ * early-throw philosophy from diagnosis-harness.ts). A malformed or
  * mis-shaped file throws PATH ONLY (the filename, never the body).
  */
 export function loadCorpus(dir: string): FleetCorpus {

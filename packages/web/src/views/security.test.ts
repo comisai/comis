@@ -250,8 +250,8 @@ describe("IcSecurityView", () => {
     expect(retryBtn).toBeTruthy();
   });
 
-  // --- Audit tab tests (durable obs.audit.query view; the live SSE feed was
-  //     REPLACED in this tab by ic-durable-audit-log — Plan 179-06 / Pitfall 2) ---
+  // --- Audit tab tests: the audit tab renders the durable obs.audit.query view
+  //     (ic-durable-audit-log), not the live SSE feed used by the events tab. ---
 
   it("audit tab renders the durable ic-durable-audit-log (NOT the live SSE feed)", async () => {
     const rpc = createSecurityMockRpcClient();
@@ -260,10 +260,10 @@ describe("IcSecurityView", () => {
 
     await switchTab(el, "audit");
 
-    // The durable, queryable obs.audit.query view replaces the SSE feed here.
+    // The audit tab renders the durable, queryable obs.audit.query view.
     const durable = el.shadowRoot?.querySelector("ic-durable-audit-log");
     expect(durable).toBeTruthy();
-    // The audit tab must NO LONGER render the live SSE feed.
+    // The audit tab must not render the live SSE feed.
     const feed = el.shadowRoot?.querySelector("ic-security-event-feed");
     expect(feed).toBeFalsy();
   });
@@ -279,7 +279,7 @@ describe("IcSecurityView", () => {
     expect(durable?.rpcClient).toBe(rpc);
   });
 
-  it("events tab still renders the live SSE feed (UNCHANGED by the audit-tab swap)", async () => {
+  it("events tab renders the live SSE feed and not the durable audit view", async () => {
     const rpc = createSecurityMockRpcClient();
     const el = await createElement({ rpcClient: rpc });
     await flush(el);
@@ -302,10 +302,10 @@ describe("IcSecurityView", () => {
     expect(empty).toBeTruthy();
   });
 
-  it("the audit:event SSE still feeds the event-feed instance (the live-feed wiring is intact)", async () => {
-    // The audit:event SSE wiring forwards to the event-feed sub-component; the
-    // event-feed renders on the EVENTS tab. The durable audit tab no longer
-    // consumes the SSE feed, but the wiring (onAuditEvent) is preserved.
+  it("the audit:event SSE forwards events to the event-feed instance", async () => {
+    // The audit:event SSE wiring (onAuditEvent) forwards to the event-feed
+    // sub-component, which renders on the events tab. The durable audit tab
+    // does not consume the SSE feed.
     const rpc = createSecurityMockRpcClient();
     const mockDispatcher = createMockEventDispatcher();
     const el = await createElement({ rpcClient: rpc, eventDispatcher: mockDispatcher });
@@ -405,13 +405,13 @@ describe("IcSecurityView", () => {
 
   // --- Secrets tab tests ---
 
-  it("secrets tab renders read-only storage mode and db path (no toggle — D17 runtime-immutable)", async () => {
+  it("secrets tab renders read-only storage mode and db path with no toggle since storage is runtime-immutable", async () => {
     const rpc = createSecurityMockRpcClient();
     const el = await createElement({ rpcClient: rpc });
     await flush(el);
     await switchTab(el, "secrets");
 
-    // security.storage is runtime-immutable (D17) — no write control offered.
+    // security.storage is runtime-immutable — no write control offered.
     const toggle = el.shadowRoot?.querySelector("ic-toggle");
     expect(toggle).toBeNull();
 
@@ -463,7 +463,7 @@ describe("IcSecurityView", () => {
     }
   });
 
-  // --- Rules tab tests (formerly Policies) ---
+  // --- Rules tab tests ---
 
   it("rules tab renders 4 section headers", async () => {
     const rpc = createSecurityMockRpcClient();

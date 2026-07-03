@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * `result-ref-store` — the workspace-confined disk I/O + GC behind the minimal
- * `ResultRef` (REF-01/02/03). It materializes a high-volume tool return to
+ * `ResultRef`. It materializes a high-volume tool return to
  * `<workspace>/results/<id>.<kind>` and hands back a structured `ResultRef`; the
  * big payload stays on disk as DATA and is sliced in-jail (`jq`/`grep`/`read`)
- * the same turn, so only the tiny handle re-enters context (v8 §23.9
- * "materialize-then-extract", CaMeL §12.2 — an untrusted web/MCP payload never
+ * the same turn, so only the tiny handle re-enters context (the
+ * "materialize-then-extract" pattern — an untrusted web/MCP payload never
  * re-enters as control).
  *
- * This is the DISK half on top of Plan 01's PURE math (`@comis/core`
+ * This is the DISK half on top of the PURE math (`@comis/core`
  * `result-ref.ts`: `checkPerFileCap`/`selectEvictions`/`isExpired`/
  * `computeExpiresAt`) — the store does the fs, the core owns the GC arithmetic.
  *
- * It is NET-NEW and DISTINCT from `microcompaction-guard.ts` (the Gap-2 split —
- * do NOT conflate):
+ * It is NET-NEW and DISTINCT from `microcompaction-guard.ts` (do NOT
+ * conflate):
  *   - dir: `<workspace>/results/` (the jail's writable root), NOT
  *     `<sessionDir>/tool-results/`.
  *   - return: the structured `ResultRef` (`{ref,kind,bytes,...}`), NOT a string.
- *   - lifecycle: per-run, GC'd on orchestrate-run end (the Plan 04 runner calls
+ *   - lifecycle: per-run, GC'd on orchestrate-run end (the runner calls
  *     `gcRun`/`cleanupRun`), NOT session-lifetime.
  * It REUSES only the contained-write helpers (`ensureContainedDir`/
  * `writeRegularFile`, `@comis/observability` fs-safe.ts:408/582) — the same
@@ -262,7 +262,7 @@ export function createResultRefStore(deps: ResultRefStoreDeps): ResultRefStore {
       ? payload.byteLength
       : Buffer.byteLength(payload, "utf8");
 
-    // 1. Per-file cap (REF-03) — refuse (content-free) BEFORE any write.
+    // 1. Per-file cap — refuse (content-free) BEFORE any write.
     const capCheck = checkPerFileCap(bytes, PER_FILE_CAP_BYTES);
     if (!capCheck.ok) {
       log.warn(

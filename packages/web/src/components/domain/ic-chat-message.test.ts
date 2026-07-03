@@ -156,12 +156,12 @@ describe("IcChatMessage", () => {
     expect(bubble?.innerHTML).not.toContain("<strong>");
   });
 
-  // XSS regression for the v2.20 review finding. renderMarkdown output is fed
+  // XSS regression guard. renderMarkdown output is fed
   // straight into Lit's unsafeHTML sink (ic-chat-message.ts _renderContent +
-  // pipeline-history-detail.ts) from UNTRUSTED agent/pipeline output. The old
-  // single-pass denylist (sanitizeHtml) could be defeated by nesting tags
+  // pipeline-history-detail.ts) from UNTRUSTED agent/pipeline output. A
+  // single-pass denylist (sanitizeHtml) can be defeated by nesting tags
   // (`<ifr<iframe>ame …>` -> a live `<iframe>` after one replace pass). The
-  // renderer now HTML-escapes all raw markup, so no live tag survives — only
+  // renderer HTML-escapes all raw markup, so no live tag survives — only
   // the fixed safe tag set it generates from markdown is emitted.
   it("XSS: a plain script tag never reaches the output as a live tag", () => {
     const result = renderMarkdown('<script>alert("xss")</script>');
@@ -170,7 +170,7 @@ describe("IcChatMessage", () => {
   });
 
   it("XSS: a nested-tag iframe srcdoc payload cannot reconstruct a live <iframe>", () => {
-    // The exact bypass class from the review: a single-pass tag-strip leaves a
+    // The bypass class this defends against: a single-pass tag-strip leaves a
     // working <iframe srcdoc="…"> behind; srcdoc auto-executes with no click.
     const payload = '<ifr<iframe>ame srcdoc="&lt;script&gt;alert(document.domain)&lt;/script&gt;">';
     const result = renderMarkdown(payload);

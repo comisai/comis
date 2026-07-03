@@ -3,15 +3,15 @@
  * BROWSER: Browser Automation Integration Tests
  *
  * Validates all 13 browser.* RPC methods through the running daemon's internal rpcCall:
- *   BROWSER-01: browser.start / browser.status
- *   BROWSER-02: browser.navigate
- *   BROWSER-03: browser.snapshot
- *   BROWSER-04: browser.screenshot
- *   BROWSER-05: browser.tabs / browser.open / browser.focus / browser.close
- *   BROWSER-06: browser.act
- *   BROWSER-07: browser.console
- *   BROWSER-08: browser.pdf
- *   BROWSER-09: browser.stop
+ *   browser.start / browser.status
+ *   browser.navigate
+ *   browser.snapshot
+ *   browser.screenshot
+ *   browser.tabs / browser.open / browser.focus / browser.close
+ *   browser.act
+ *   browser.console
+ *   browser.pdf
+ *   browser.stop
  *
  * Tests run sequentially -- order matters (start -> use -> stop).
  * Chrome must be installed; suite is skipped if not found.
@@ -168,7 +168,7 @@ describe.skipIf(!HAS_CHROME)(
     }, 60_000);
 
     // -----------------------------------------------------------------------
-    // BROWSER-01: browser.start + browser.status
+    // browser.start + browser.status
     // -----------------------------------------------------------------------
 
     it(
@@ -198,7 +198,7 @@ describe.skipIf(!HAS_CHROME)(
     );
 
     // -----------------------------------------------------------------------
-    // BROWSER-02: browser.navigate
+    // browser.navigate
     // -----------------------------------------------------------------------
 
     it(
@@ -219,7 +219,7 @@ describe.skipIf(!HAS_CHROME)(
     );
 
     // -----------------------------------------------------------------------
-    // BROWSER-03: browser.snapshot
+    // browser.snapshot
     // -----------------------------------------------------------------------
 
     it(
@@ -240,7 +240,7 @@ describe.skipIf(!HAS_CHROME)(
     );
 
     // -----------------------------------------------------------------------
-    // BROWSER-04: browser.screenshot
+    // browser.screenshot
     // -----------------------------------------------------------------------
 
     it(
@@ -264,7 +264,7 @@ describe.skipIf(!HAS_CHROME)(
     );
 
     // -----------------------------------------------------------------------
-    // BROWSER-05: browser.tabs / browser.open / browser.focus / browser.close
+    // browser.tabs / browser.open / browser.focus / browser.close
     // -----------------------------------------------------------------------
 
     it(
@@ -349,7 +349,7 @@ describe.skipIf(!HAS_CHROME)(
     );
 
     // -----------------------------------------------------------------------
-    // BROWSER-06: browser.act (press action - no ref needed)
+    // browser.act (press action - no ref needed)
     // -----------------------------------------------------------------------
 
     it(
@@ -375,7 +375,7 @@ describe.skipIf(!HAS_CHROME)(
     );
 
     // -----------------------------------------------------------------------
-    // BROWSER-07: browser.console
+    // browser.console
     // -----------------------------------------------------------------------
 
     // KNOWN-FAILURE: when this test runs inside the daemon-harness
@@ -424,7 +424,7 @@ describe.skipIf(!HAS_CHROME)(
     );
 
     // -----------------------------------------------------------------------
-    // BROWSER-08: browser.pdf
+    // browser.pdf
     // -----------------------------------------------------------------------
 
     it(
@@ -456,7 +456,7 @@ describe.skipIf(!HAS_CHROME)(
     );
 
     // -----------------------------------------------------------------------
-    // BROWSER-09: browser.stop
+    // browser.stop
     // -----------------------------------------------------------------------
 
     it(

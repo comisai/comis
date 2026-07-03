@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Spend kill-switch trajectory payload translators (WR-4, 177-obs-loop).
+ * Spend kill-switch trajectory payload translators.
  *
  * The three `observability:spend_*` events → `spend.warning` / `spend.exceeded` /
  * `spend.unpriceable` trajectory records. Extracted from `translate-payload.ts` to
@@ -8,7 +8,7 @@
  * same per-event delegation pattern as `translate-cache-break-payload.ts` /
  * `translate-orchestration-payload.ts` etc.
  *
- * CONTENT-FREE (the milestone's load-bearing invariant, §2.7 / H1): the closed
+ * CONTENT-FREE (the load-bearing invariant): the closed
  * {@link SpendScopeKind} enum + dollar amounts as NUMBERS + provider/model CONFIG
  * ids ONLY. A message/prompt/query body never crosses the bus on these payloads,
  * so the translator omission is the PRIMARY control (sanitizeForPersistence is a
@@ -52,7 +52,7 @@ export function translateSpendPayload(
     case "observability:spend_unpriceable":
       // provider/model are config ids (a model id is a config value, NOT user
       // content — the events-agent.ts spend_unpriceable doc), forwarded so the
-      // explain timeline can name the ffe11736-class unpriceable model.
+      // explain timeline can name an unpriceable model (one with no known pricing).
       return {
         provider: payload.provider,
         model: payload.model,

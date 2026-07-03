@@ -2,7 +2,7 @@
 /**
  * Unit tests for the `result-ref-store` — the workspace-confined disk I/O + GC
  * that materializes a high-volume tool return to `<workspace>/results/<id>.<kind>`
- * and returns a structured `ResultRef` (REF-01/02/03).
+ * and returns a structured `ResultRef`.
  *
  * RED-first (TDD): these fail at suite-load on pre-patch code (the module does
  * not exist) and go green once `result-ref-store.ts` ships.
@@ -201,7 +201,7 @@ describe("result-ref-store", () => {
     expect(readFileSync(onDisk).equals(buf)).toBe(true);
   });
 
-  it("refuses a payload exceeding the per-file cap and writes nothing (REF-03)", async () => {
+  it("refuses a payload exceeding the per-file cap and writes nothing", async () => {
     const store = makeStore();
     // One byte over the per-file cap (use a Buffer so we don't allocate a giant
     // UTF-8 string char-by-char; the byte count is what the cap checks).
@@ -223,7 +223,7 @@ describe("result-ref-store", () => {
     expect(entries.length).toBe(0);
   });
 
-  it("gcRun evicts the oldest results past the per-run aggregate cap, keeps the newest (REF-03)", async () => {
+  it("gcRun evicts the oldest results past the per-run aggregate cap, keeps the newest", async () => {
     const store = makeStore();
 
     // Write three results at increasing timestamps. Each is ~4 bytes; we set a
@@ -259,7 +259,7 @@ describe("result-ref-store", () => {
     expect(existsSync(join(workspacePath, refs[1]!.ref))).toBe(false);
   });
 
-  it("gcRun also evicts expired results past their TTL (REF-03)", async () => {
+  it("gcRun also evicts expired results past their TTL", async () => {
     const store = makeStore();
 
     // A short TTL → the file expires well before the gc nowMs.
@@ -283,7 +283,7 @@ describe("result-ref-store", () => {
     expect(existsSync(join(workspacePath, ref.ref))).toBe(false);
   });
 
-  it("cleanupRun removes the run's results entries on run end (REF-03)", async () => {
+  it("cleanupRun removes the run's results entries on run end", async () => {
     const store = makeStore();
 
     await store.materialize("a".repeat(100), "read", { workspacePath, runId, nowMs });
@@ -464,10 +464,10 @@ describe("result-ref-store pure helpers", () => {
 });
 
 // ---------------------------------------------------------------------------
-// QRY-03 / T-221-QRY-07: the slice-only guarantee.
+// The slice-only guarantee.
 //
 // The store materializes a high-volume tabular result to results/<id>; the `sql`
-// core (daemon-side DuckDB, Plan 02) runs a SELECT over it and returns ONLY the
+// core (daemon-side DuckDB) runs a SELECT over it and returns ONLY the
 // row slice. This test PINS that the payload NEVER re-enters context: it
 // materializes a multi-MB JSONL ResultRef, runs a `sql` query that selects 2
 // columns of 3 rows, and asserts the returned slice byte-length is « the
@@ -479,7 +479,7 @@ describe("result-ref-store pure helpers", () => {
 // round-trip is the VPS orchestrate-jail.linux.test.ts.
 // ---------------------------------------------------------------------------
 
-describe("QRY-03 slice-only: a large tabular ResultRef SQL'd returns ONLY the slice, never the payload", () => {
+describe("slice-only: a large tabular ResultRef SQL'd returns ONLY the slice, never the payload", () => {
   function makeCoresLogger(): import("@comis/core").ComisLogger {
     const child = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
     return { child: vi.fn(() => child), ...child } as unknown as import("@comis/core").ComisLogger;

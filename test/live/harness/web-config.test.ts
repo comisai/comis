@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Stage-A unit tests for the Phase 143 (WEB) config builders.
+ * Stage-A unit tests for the WEB config builders.
  *
  * These are pure object builders — no daemon, no key, no network — so the whole
  * file runs unconditionally (no COMIS_LIVE gate). They assert that:

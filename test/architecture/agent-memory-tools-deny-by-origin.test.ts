@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * MD-02 — the basic agent memory tools must have AGENT-REACHABLE backing RPC
+ * The basic agent memory tools must have AGENT-REACHABLE backing RPC
  * methods (`scopes:["rpc"]`, i.e. NOT in the deny-by-origin admin set), or the
  * agent's `memory_*` tool call is denied at the `assertNotAgentOrigin`
  * chokepoint before the tool ever runs.
  *
- * Live regression this guards (2026-06-24, verified-learning VPS run): the
+ * Regression this guards: the
  * `memory_store` agent tool failed with
  *   "Control-plane method memory.store is not reachable from an agent origin"
  * — the agent could not store a memory at all — because `MemoryStoreContract`
@@ -14,13 +14,12 @@
  * `ADMIN_METHODS` (`rpc-dispatch.ts`, derived via `scopes.includes("admin")`),
  * and the deny-by-origin chokepoint throws for any `_agentId`-bearing call — yet
  * `memory.store`'s own handler has a first-class agent path (defaults to
- * `learned` trust). Same CR-01/MD-01 regression class as the earlier
+ * `learned` trust). Same regression class as the earlier
  * `message.send` / `skills.*` / `session.list` admin→rpc fixes.
  *
  * Why a NEW test (the blind spot): `admin-handlers-deny-by-origin.test.ts`
- * (210-GAP) keys off `HANDLER_CAPABILITY_MAP`, but the memory surface is
- * deliberately NOT enumerated there ("deferred to Phase 212"), so `memory.store`
- * was invisible to it (that test's own residual note, lines 27-29). This test
+ * keys off `HANDLER_CAPABILITY_MAP`, but the memory surface is deliberately NOT
+ * enumerated there, so `memory.store` was invisible to it. This test
  * derives the agent-tool → backing-RPC mapping straight from the tool source,
  * closing the blind spot for the agent memory primitives.
  * @module
@@ -53,7 +52,7 @@ const ADMIN_METHODS: ReadonlySet<string> = new Set(
   API_CONTRACTS_ORDERED.filter((c) => c.scopes.includes("admin")).map((c) => c.method),
 );
 
-describe("MD-02 — agent memory tools have agent-reachable backing RPCs (not deny-by-origin)", () => {
+describe("agent memory tools have agent-reachable backing RPCs (not deny-by-origin)", () => {
   it("every basic agent memory tool's rpcCall() backing method is NOT in the admin deny set", () => {
     const violations: string[] = [];
     for (const file of AGENT_MEMORY_TOOL_FILES) {

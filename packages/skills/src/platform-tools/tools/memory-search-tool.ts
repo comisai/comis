@@ -13,7 +13,7 @@ import { Type } from "typebox";
 import { registerActivityLabelSpec } from "@comis/core";
 import { jsonResult, readStringParam, readNumberParam } from "../tool-helpers.js";
 
-// Activity label spec (§17.6). Descriptor name == emitted name.
+// Activity label spec. Descriptor name == emitted name.
 registerActivityLabelSpec("memory_search", {
   semanticPhase: "memory",
   label: "searching memory",

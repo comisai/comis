@@ -17,7 +17,7 @@ import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
 import type { ApprovalGate } from "@comis/core";
 import { tryGetContext } from "@comis/core";
-// AUTHOR-02 (Phase 174-04): the deterministic intent → ExecutionGraph
+// The deterministic intent → ExecutionGraph
 // synthesizer. It RETURNS a validated graph; the from_intent action below
 // dispatches it through the EXISTING graph.execute path (so governance applies
 // automatically — the synthesizer never executes). skills→agent is a clean
@@ -85,8 +85,8 @@ const PipelineNode = Type.Object({
   // typeless open record whose value schema the missing-type injection
   // stamps `type:"string"` — the wire schema then contradicts the daemon
   // drivers (debate wants `agents: array`, `rounds: number`) and the model
-  // oscillates between the two validators' errors (small-model e2e
-  // 2026-06-12, UC-1/UC-6). Field VALUE validation (required-ness, ranges,
+  // oscillates between the two validators' errors on small models. Field VALUE
+  // validation (required-ness, ranges,
   // strictness per type_id) stays with the daemon driver Zod schemas — the
   // single source of truth; this schema only declares accurate wire types.
   type_config: Type.Optional(Type.Object({
@@ -216,7 +216,7 @@ const PipelineParams = Type.Object({
       description: "Key-value map of ${VAR} substitutions to apply before execution",
     }),
   ),
-  // AUTHOR-02 (Phase 174-04): from_intent params. These are TOP-LEVEL tool
+  // from_intent params. These are TOP-LEVEL tool
   // params, distinct from the NESTED type_config.agents / type_config.rounds on
   // a PipelineNode (different scope — no field collision). Consumed ONLY by the
   // from_intent action; ignored by every other action.
@@ -237,10 +237,10 @@ const PipelineParams = Type.Object({
   agents: Type.Optional(
     Type.Array(Type.String(), { description: "from_intent: agent names for the pattern's roles — debate: [PRO, CON] (e.g. [\"bull\", \"bear\"]); vote: the voter pool; map-reduce: the mapper pool." }),
   ),
-  // WR-02: from_intent produces TEMPLATE-shaped graphs (plain agent nodes), NOT
-  // the typed orchestration drivers — so a top-level `rounds` param had no
-  // effect (the synthesizer never expanded it). It is intentionally NOT exposed
-  // here (no no-op param, §2.3). To run a multi-round debate DRIVER, use
+  // from_intent produces TEMPLATE-shaped graphs (plain agent nodes), NOT
+  // the typed orchestration drivers — so a top-level `rounds` param would have no
+  // effect (the synthesizer never expands it). It is intentionally NOT exposed
+  // here (no no-op param). To run a multi-round debate DRIVER, use
   // action: define/execute with a node `type_id: "debate"` + `type_config.rounds`.
 });
 
@@ -452,20 +452,20 @@ export function createPipelineTool(rpcCall: RpcCall, logger?: ToolLogger, approv
         }
 
         if (action === "from_intent") {
-          // AUTHOR-02 (Phase 174-04): synthesize a graph from a one-line intent
+          // Synthesize a graph from a one-line intent
           // (a canonical pattern + a few names) via the deterministic
           // @comis/agent synthesizer, then dispatch it through the EXISTING
           // graph.execute path. The synthesizer RETURNS a validated graph; it
           // NEVER executes one — flowing through graph.execute means the
           // synthesized graph hits the SAME define-time governance
           // (parse/sort/validateTypeConfigs) AND spawn-time governance
-          // (denylist + child⊆parent) a hand-authored graph hits (§9). The gate
+          // (denylist + child⊆parent) a hand-authored graph hits. The gate
           // (orchestration.authoring.intentAction) + the audit emit are
           // DAEMON-SIDE, keyed off the _synthesizedFromIntent marker — so the
           // daemon refuses an un-flagged from_intent at the chokepoint and the
           // tool surface stays uniform (no flag read here).
           //
-          // WR-02: from_intent expands the canonical TEMPLATE — plain agent
+          // from_intent expands the canonical TEMPLATE — plain agent
           // nodes ({nodeId, task, dependsOn}), NOT the typed orchestration
           // drivers (a synthesized "debate" is a one-shot pro/con fan-in, not
           // the multi-round `type_id: debate` driver). For the typed driver,

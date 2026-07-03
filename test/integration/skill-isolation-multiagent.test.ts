@@ -2,15 +2,15 @@
 /**
  * Skill Isolation Multi-Agent E2E Integration Tests
  *
- * Validates that per-agent skill isolation (Phases 439-441) works correctly
+ * Validates that per-agent skill isolation works correctly
  * across the full daemon stack: config -> daemon -> gateway -> WebSocket RPC ->
  * skill registry -> filesystem.
  *
- *   TEST-ISO-01: Alpha's local skill is visible only to alpha
- *   TEST-ISO-02: Beta's local skill is visible only to beta
- *   TEST-ISO-03: Non-default agent cannot upload with shared scope
- *   TEST-ISO-04: Default agent's shared skill is visible to all agents
- *   TEST-ISO-05: Deleting shared skill removes it from all agents
+ *   - Alpha's local skill is visible only to alpha
+ *   - Beta's local skill is visible only to beta
+ *   - Non-default agent cannot upload with shared scope
+ *   - Default agent's shared skill is visible to all agents
+ *   - Deleting shared skill removes it from all agents
  *
  * Uses a dedicated config (port 8730, alpha + beta agents, separate memory DB)
  * to avoid conflicts with other test suites.
@@ -162,11 +162,11 @@ describe("Skill Isolation Multi-Agent E2E", () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // TEST-ISO-01: alpha's local skill is visible only to alpha
+  // alpha's local skill is visible only to alpha
   // -------------------------------------------------------------------------
 
   it(
-    "TEST-ISO-01: alpha's local skill is visible only to alpha",
+    "alpha's local skill is visible only to alpha",
     async () => {
       // Upload a local skill for alpha
       const uploadResult = await rpc(ws, "skills.upload", {
@@ -196,11 +196,11 @@ describe("Skill Isolation Multi-Agent E2E", () => {
   );
 
   // -------------------------------------------------------------------------
-  // TEST-ISO-02: beta's local skill is visible only to beta
+  // beta's local skill is visible only to beta
   // -------------------------------------------------------------------------
 
   it(
-    "TEST-ISO-02: beta's local skill is visible only to beta",
+    "beta's local skill is visible only to beta",
     async () => {
       // Upload a local skill for beta
       const uploadResult = await rpc(ws, "skills.upload", {
@@ -230,11 +230,11 @@ describe("Skill Isolation Multi-Agent E2E", () => {
   );
 
   // -------------------------------------------------------------------------
-  // TEST-ISO-03: non-default agent cannot upload with shared scope
+  // non-default agent cannot upload with shared scope
   // -------------------------------------------------------------------------
 
   it(
-    "TEST-ISO-03: non-default agent cannot upload with shared scope",
+    "non-default agent cannot upload with shared scope",
     async () => {
       try {
         await rpc(ws, "skills.upload", {
@@ -253,11 +253,11 @@ describe("Skill Isolation Multi-Agent E2E", () => {
   );
 
   // -------------------------------------------------------------------------
-  // TEST-ISO-04: default agent's shared skill is visible to all agents
+  // default agent's shared skill is visible to all agents
   // -------------------------------------------------------------------------
 
   it(
-    "TEST-ISO-04: default agent's shared skill is visible to all agents",
+    "default agent's shared skill is visible to all agents",
     async () => {
       // Upload shared skill as alpha (the default agent)
       const uploadResult = await rpc(ws, "skills.upload", {
@@ -292,11 +292,11 @@ describe("Skill Isolation Multi-Agent E2E", () => {
   );
 
   // -------------------------------------------------------------------------
-  // TEST-ISO-05: deleting shared skill removes it from all agents
+  // deleting shared skill removes it from all agents
   // -------------------------------------------------------------------------
 
   it(
-    "TEST-ISO-05: deleting shared skill removes it from all agents",
+    "deleting shared skill removes it from all agents",
     async () => {
       // Confirm shared skill is still visible to both agents
       const alphaBefore = await rpc(ws, "skills.list", {

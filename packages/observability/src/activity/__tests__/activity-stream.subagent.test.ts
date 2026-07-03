@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED test for the subagent event → ActivityEvent mapping (spec §17.3).
+ * Tests for the subagent event → ActivityEvent mapping.
  *
- * Fails on pre-patch code: `activity-stream.ts` does NOT map
- * `session:sub_agent_spawned`/`session:sub_agent_completed` (the source comment
- * at :145 says "subagent events are deliberately absent" and the sibling test
- * `activity-stream.test.ts` asserts they are IGNORED). These cases pin the new
- * mapping → RED.
+ * `activity-stream.ts` maps `session:sub_agent_spawned` /
+ * `session:sub_agent_completed` to `kind:"subagent"` ActivityEvents.
  *
  * Linkage seam:
  * The spawn event payload is `{ runId, parentSessionKey, agentId, task,
@@ -19,7 +16,7 @@
  * event's `{agentId, parentSessionKey}`, STAMPING that subscriber's `traceId`
  * onto the delivered copy. The stream sets `kind:"subagent"` + the `🤖`+agentId
  * label but DOES NOT set `parentActivityId` — the per-turn coordinator (the
- * §4.5 single owner) maintains the `runId → parentActivityId` stack and
+ * single owner) maintains the `runId → parentActivityId` stack and
  * annotates the parent link in `onEvent`. This keeps `activity-stream.ts` free
  * of turn-lifecycle state and respects the hexagonal boundary. The coordinator
  * side of this seam is pinned in
@@ -62,7 +59,7 @@ function makeLogger(): ComisLogger {
   return logger;
 }
 
-describe("createActivityStream — subagent mapping (spec §17.3)", () => {
+describe("createActivityStream — subagent mapping", () => {
   it("maps session:sub_agent_spawned to a kind:'subagent' start event scoped to the turn", () => {
     const bus = new TypedEventBus();
     const stream = createActivityStream({ eventBus: bus, logger: makeLogger() });

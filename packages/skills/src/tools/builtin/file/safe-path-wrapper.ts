@@ -2,9 +2,6 @@
 /**
  * Shared types and constants for Comis file tools.
  *
- * Previously contained SafePath/PathSuggestion/FileStateGuards wrappers;
- * those were deleted when all file tools became Comis-native.
- *
  * @module
  */
 

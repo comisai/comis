@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * SqliteMentalModelStore: the SOLE adapter for the segregated
- * `MentalModelStorePort` (@comis/core, the v2.31 Mental Model doc store
- * generalized from the v2.26 Verified Learning WS2 / SKILL-01 procedural store).
+ * `MentalModelStorePort` (@comis/core) — the Mental Model doc store that holds
+ * learned skill/profile/topic docs.
  * It owns ALL the `mental_models` SQL — the idempotent `admit()` upsert (one row
  * per admitted doc), the scoped `get`/`list(scope, kind?)` reads, and the
  * `promote`/`demote`/`evict` lifecycle transitions.
  *
- * ## Idempotency (SKILL-01 / T-201-09)
+ * ## Idempotency
  *
  * `admit()` derives the row `id` as a deterministic sha256 hash of the UNIQUE
  * tuple `(tenant_id, agent_id, kind, topic_key, name)` in CODE before insert, AND
@@ -17,23 +17,23 @@
  * `UNIQUE (tenant_id, agent_id, kind, topic_key, name)` backstop catches it
  * regardless.
  *
- * ## Trust ceiling (SEC-01 / T-201-05) — the keystone
+ * ## Trust ceiling — the keystone
  *
  * A learned doc can NEVER be `system`. The store writes the LITERAL `'learned'`
  * for `trust_level` on EVERY admit (it never reads a caller-supplied trust), and
  * the DB `CHECK (trust_level IN ('learned'))` rejects any other value at insert
  * time — belt (code coercion) AND suspenders (DB constraint).
  *
- * ## Isolation is the load-bearing security boundary (SEC-01 / T-201-06)
+ * ## Isolation is the load-bearing security boundary
  *
  * Comis runs many agents in one DB. EVERY statement filters on
  * `(tenant_id, agent_id)` — parameterized — and the table keys/indexes lead on
  * those columns, so a doc under one (tenant, agent) is NEVER visible to a read
  * under another even when `name` is byte-identical. An UNRESOLVED
  * `(tenant, agent)` scope (empty id) fails-closed with `err(...)` — it NEVER
- * widens to a shared/global pool (the `get_current_schema()` leak vector,
- * T-201-07). The optional `kind` filter on `list()` is an ADDITIONAL `AND`, never
- * a replacement for the scope filter.
+ * widens to a shared/global pool (the `get_current_schema()` leak vector). The
+ * optional `kind` filter on `list()` is an ADDITIONAL `AND`, never a replacement
+ * for the scope filter.
  *
  * ## Soft lifecycle (never hard-delete)
  *
@@ -47,7 +47,7 @@
  * The persisted JSON columns (`source_traj_ids` etc.) are parsed with a
  * graceful-degrade `safeParse` (corrupt JSON → empty list, never a throw). Logs
  * carry counts/ids + metadata only — never doc bodies/descriptions
- * (§2.7 / T-201-10).
+ * (AGENTS.md §2.7).
  *
  * @module
  */
@@ -100,10 +100,10 @@ function parseIdList(raw: string | null): string[] {
   }
 }
 
-// Lenient parser for the structured_body AST column (the v2.31 Reflection
+// Lenient parser for the structured_body AST column (the Reflection
 // section-list). The shape mirrors @comis/core's StructuredBody — a NULL column,
 // non-JSON text, or a payload that does not match the shape degrades to
-// `undefined` (NOT a throw — T-223-09: a corrupt AST row must not crash recall;
+// `undefined` (NOT a throw: a corrupt AST row must not crash recall;
 // the doc is treated as "no AST" and re-synthesized).
 const StructuredBodySchema = z.object({
   sections: z.array(
@@ -126,11 +126,11 @@ function parseStructuredBody(raw: string | null): StructuredBody | undefined {
   }
 }
 
-/** One prior-body history entry (the FOLD-01 supersede trail). */
+/** One prior-body history entry (the supersede trail). */
 type HistoryEntry = { previousContent: string; changedAt: number };
 
-// FOLD-01 (Phase 225): the canonical `mental_models.history` JSON shape — an
-// ordered (oldest-first) array of prior bodies, mirroring the 224
+// The canonical `mental_models.history` JSON shape — an
+// ordered (oldest-first) array of prior bodies, mirroring the
 // `SqliteMemoryAdapter` `SupersedeHistorySchema` byte-for-byte
 // ({ previousContent, changedAt }). A strictObject so a malformed/legacy column
 // degrades to "absent" (→ a fresh array in supersede / undefined in get) instead
@@ -142,7 +142,7 @@ const HistorySchema = z.array(
 /**
  * Parse a nullable JSON-encoded `history` column into the typed prior-body array,
  * or `undefined` when the column is NULL / corrupt (degrade-to-absent, mirrors
- * `parseStructuredBody` / the 224 `parseHistoryColumn`). supersede() then starts a
+ * `parseStructuredBody` / the adapter's `parseHistoryColumn`). supersede() then starts a
  * fresh array, so a damaged column self-heals on the next correction.
  */
 function parseHistoryColumn(raw: string | null): HistoryEntry[] | undefined {
@@ -193,12 +193,12 @@ function rowToMentalModel(row: z.infer<typeof MentalModelRowSchema>): MentalMode
     confidence: row.confidence,
     mutating: row.mutating === 1,
     sourceTrajIds: parseIdList(row.source_traj_ids),
-    // The Reflection section-AST (REFLECT-04) — lenient parse so delta-ops read
+    // The Reflection section-AST — lenient parse so delta-ops read
     // the prior doc; undefined when the column is NULL or holds garbage (the
-    // doc is then treated as new — synthesize fresh, A6).
+    // doc is then treated as new — synthesize fresh).
     structuredBody: parseStructuredBody(row.structured_body),
-    // The FOLD-01 supersede trail (Phase 225) — lenient parse; undefined when the
-    // column is NULL (never superseded) or corrupt (degrade-to-absent, T-223-09).
+    // The supersede trail — lenient parse; undefined when the
+    // column is NULL (never superseded) or corrupt (degrade-to-absent).
     history: parseHistoryColumn(row.history),
     createdAt: row.created_at,
   };
@@ -209,7 +209,7 @@ function rowToMentalModel(row: z.infer<typeof MentalModelRowSchema>): MentalMode
  * handle. The handle's lifecycle (open/close, pragmas) is owned by the caller
  * (the memory adapter) — this factory neither opens nor closes it. Built
  * UNCONDITIONALLY (no model/IO cost, like every dormant store); the per-agent
- * enable flag gates the daemon-side `admit`/`get`/`list` call (Plan 07), not
+ * enable flag gates the daemon-side `admit`/`get`/`list` call, not
  * construction.
  */
 export function createSqliteMentalModelStore(
@@ -220,12 +220,12 @@ export function createSqliteMentalModelStore(
   // --- Prepared statements (parameterized; reused across calls) ---
   // Idempotent admit keyed on the deterministic id (= hash of the
   // (tenant_id, agent_id, kind, topic_key, name) UNIQUE tuple). A re-admit upserts
-  // the SAME row. trust_level is the LITERAL 'learned' (the SEC-01 keystone —
+  // the SAME row. trust_level is the LITERAL 'learned' (the trust-ceiling keystone —
   // never a bound caller value); all other columns are bound `?` params (never
   // string-built). kind/topic_key are bound (default 'skill'/'' at the call site).
-  // structured_body (the v2.31 Reflection section-AST, REFLECT-04) is bound as a
+  // structured_body (the Reflection section-AST) is bound as a
   // JSON `?` (NULL when the caller omits it) and updated in lockstep with body on
-  // conflict. `history` stays the DB default NULL (Phase 224 owns supersession).
+  // conflict. `history` stays the DB default NULL on admit (supersede() owns the trail).
   // The dropped `scripts` column was the literal NULL — its removal is a no-op.
   const insertStmt = db.prepare(
     "INSERT INTO mental_models " +
@@ -244,7 +244,7 @@ export function createSqliteMentalModelStore(
   );
 
   // Scoped reads — the `tenant_id = ? AND agent_id = ?` filter is the
-  // load-bearing isolation boundary (SEC-01); every value is a bound `?` param.
+  // load-bearing isolation boundary; every value is a bound `?` param.
   // SELECT_COLS drops `scripts` and adds kind/topic_key/structured_body/history —
   // kept in lockstep with the MentalModelRowSchema strictObject (a drift throws).
   const SELECT_COLS =
@@ -271,7 +271,7 @@ export function createSqliteMentalModelStore(
   // Lifecycle transitions — all scoped to (tenant, agent) AND id (bound params).
   // promote: proof_count bumps on EVERY call, but the candidate→active flip is
   // GATED on the caller's proof bar — `proof_count + 1 >= promoteAtProofCount`
-  // (D2 / T-202-04: a single attributed success must NOT mint an active
+  // (a single attributed success must NOT mint an active
   // doc). The threshold is the FIRST bound `?` (promote runs its own bind
   // path, not the shared runTransition); an already-active doc keeps bumping
   // proof_count but the `state = 'candidate'` guard means its state never moves.
@@ -280,10 +280,10 @@ export function createSqliteMentalModelStore(
       "state = CASE WHEN state = 'candidate' AND proof_count + 1 >= ? THEN 'active' ELSE state END, " +
       "updated_at = ? WHERE tenant_id = ? AND agent_id = ? AND id = ?",
   );
-  // promoteByName keys on the NAME (not the re-derived id) — SKILL-04: a reflected
+  // promoteByName keys on the NAME (not the re-derived id) — a reflected
   // doc is admitted WITH a non-empty topicKey, so re-deriving the id with an assumed
   // `topicKey:''` MISSES it. The reflection job names a doc `skill-<full-topicKey>`
-  // (WR-01 — the FULL topicKey, not a 16-char truncation), so the name EMBEDS the
+  // (the FULL topicKey, not a 16-char truncation), so the name EMBEDS the
   // unique topic_key and is therefore unique per (tenant, agent, kind) — a name-keyed
   // UPDATE resolves the SAME single row get() does, with no truncation-collision risk.
   // Identical proof-bar CASE to promoteStmt; only the WHERE key differs (name vs id).
@@ -293,7 +293,7 @@ export function createSqliteMentalModelStore(
       "updated_at = ? WHERE tenant_id = ? AND agent_id = ? AND name = ?",
   );
   // demote: step state back toward stale on a verified failure (soft, monotone).
-  // WR-06: the WHERE pins `state IN ('active','candidate')` — the ONLY states a demote
+  // The WHERE pins `state IN ('active','candidate')` — the ONLY states a demote
   // moves. A terminal-state row (stale/archived) therefore matches 0 rows, so the
   // `updated_at` rewrite never inflates `info.changes` into a phantom transition and
   // demoteByName's `changed` reflects a REAL state delta (not a no-op write). The CASE
@@ -304,8 +304,8 @@ export function createSqliteMentalModelStore(
       "strength = CASE WHEN strength > 0 THEN strength - 1 ELSE strength END, " +
       "updated_at = ? WHERE tenant_id = ? AND agent_id = ? AND id = ? AND state IN ('active', 'candidate')",
   );
-  // demoteByName keys on the NAME (not the re-derived id) — SKILL-04, the mirror of
-  // promoteByNameStmt. Same monotone state step + the WR-06 `state IN
+  // demoteByName keys on the NAME (not the re-derived id) — the mirror of
+  // promoteByNameStmt. Same monotone state step + the `state IN
   // ('active','candidate')` terminal-state guard; only the WHERE key differs.
   const demoteByNameStmt = db.prepare(
     "UPDATE mental_models SET " +
@@ -366,7 +366,7 @@ export function createSqliteMentalModelStore(
           input.description,
           input.body,
           // structured_body: JSON-stringify the AST, or NULL when omitted. Updated
-          // in lockstep with body on the idempotent ON CONFLICT upsert (REFLECT-04).
+          // in lockstep with body on the idempotent ON CONFLICT upsert.
           input.structuredBody !== undefined ? JSON.stringify(input.structuredBody) : null,
           input.proofCount,
           input.confidence,
@@ -491,12 +491,10 @@ export function createSqliteMentalModelStore(
       promoteAtProofCount: number,
     ): Promise<Result<{ changed: boolean }, Error>> {
       // Resolve the row by `(tenant, agent, name)` — the SAME key get() resolves by.
-      // SKILL-04 fix: the reuse loop holds only the skill NAME (ATTR-01), and a
-      // reflected doc is admitted WITH a non-empty topicKey, so re-deriving the id
-      // with a hardcoded `topicKey:''` (the prior behavior) MISSED any reflected doc
-      // and `changed` was always false — the entire reflect→reuse→promote loop was
-      // silently dead on its real input. The reflection name embeds the FULL topicKey
-      // (`skill-<full-topicKey>`, WR-01), so the name is unique per (tenant, agent,
+      // The reuse loop holds only the skill NAME, and a reflected doc is admitted WITH a
+      // non-empty topicKey, so re-deriving the id with a hardcoded `topicKey:''` would MISS
+      // any reflected doc (and `changed` would always be false). The reflection name embeds
+      // the FULL topicKey (`skill-<full-topicKey>`), so the name is unique per (tenant, agent,
       // kind) — a name-keyed UPDATE finds the SINGLE row get() resolves by (no 16-char
       // truncation collision). Reports rows-changed so a 0-row write (an unknown/
       // evicted name) stays detectable.
@@ -523,11 +521,11 @@ export function createSqliteMentalModelStore(
     },
 
     async demoteByName(name: string, scope: LearningScope): Promise<Result<{ changed: boolean }, Error>> {
-      // Resolve the row by `(tenant, agent, name)` — the mirror of promoteByName's
-      // SKILL-04 fix. Re-deriving the id with `topicKey:''` missed any reflected doc
+      // Resolve the row by `(tenant, agent, name)` — the mirror of promoteByName.
+      // Re-deriving the id with `topicKey:''` would miss any reflected doc
       // (non-empty topicKey); the reflection name embeds the FULL topicKey
-      // (`skill-<full-topicKey>`, WR-01), so it is unique per (tenant, agent, kind).
-      // The WR-06 terminal-state guard lives in the statement, so an unknown/evicted/
+      // (`skill-<full-topicKey>`), so it is unique per (tenant, agent, kind).
+      // The terminal-state guard lives in the statement, so an unknown/evicted/
       // stale name yields 0 rows → changed:false (never a phantom transition).
       const rejected = rejectUnresolvedScope(scope);
       if (rejected) return rejected;
@@ -556,19 +554,19 @@ export function createSqliteMentalModelStore(
       scope: LearningScope,
       now: number,
     ): Promise<Result<"superseded" | "not-found", Error>> {
-      // FOLD-01 (Phase 225): a profile/topic CORRECTION → UPDATE body (+ structured_body
-      // when supplied) and APPEND the prior body to `history` ({previousContent,
-      // changedAt}); the row is UPDATEd, never DELETEd (deletion stays reserved for the
-      // evict() security path). Mirrors SqliteMemoryAdapter.supersede (224 FORGET-04).
+      // A profile/topic CORRECTION → UPDATE body (+ structured_body when supplied) and
+      // APPEND the prior body to `history` ({previousContent, changedAt}); the row is
+      // UPDATEd, never DELETEd (deletion stays reserved for the evict() security path).
+      // Mirrors SqliteMemoryAdapter.supersede.
       const rejected = rejectUnresolvedScope(scope);
       if (rejected) return rejected;
       const startMs = systemNowMs();
 
-      // INV-5 redaction firewall on the untrusted correction, BEFORE the txn — a
+      // Redaction firewall on the untrusted correction, BEFORE the txn — a
       // CRITICAL classification (dangerous command / secret egress) is REJECTED and
       // never persisted. A `warn` is permitted: a learned doc's trust is the fixed
       // 'learned' (the supersede never touches trust_level), so only `critical` blocks
-      // (mirror 224 sqlite-memory-adapter.ts:556 — a learned body already passed
+      // (mirror sqlite-memory-adapter.ts:556 — a learned body already passed
       // validateLearnedDocBody in the engine; this is the store-side belt).
       const verdict = validateMemoryWrite(input.body);
       if (verdict.severity === "critical") {
@@ -587,7 +585,7 @@ export function createSqliteMentalModelStore(
       }
 
       try {
-        // Scoped statements — the (tenant, agent, name) filter is the SEC-01 isolation
+        // Scoped statements — the (tenant, agent, name) filter is the isolation
         // boundary; every value a bound `?` (NEVER concatenated). The doc is keyed by
         // name within scope (the same key get() resolves by), `evicted_at IS NULL` so a
         // correction never silently revives a soft-evicted doc.
@@ -600,7 +598,7 @@ export function createSqliteMentalModelStore(
             "WHERE tenant_id = ? AND agent_id = ? AND name = ? AND evicted_at IS NULL",
         );
 
-        // The revise unit — ONE synchronous transaction (mirror the 224 supersede).
+        // The revise unit — ONE synchronous transaction (mirror the adapter's supersede).
         // better-sqlite3 auto-ROLLBACKs on ANY throw, so SELECT-incumbent →
         // history-append → UPDATE is atomic; a parse fault THROWS → ROLLBACK (caught
         // below → err). The decided branch is returned for the metadata log.
@@ -613,7 +611,7 @@ export function createSqliteMentalModelStore(
           if (row === undefined) return "not-found";
           // Append the prior body (oldest-first), then update. History is appended
           // REGARDLESS of whether body changed — a correction is the durable signal
-          // (mirror 224). The mental_models_au/_tri_au WHEN-guarded triggers re-sync the
+          // (mirror the adapter's supersede). The mental_models_au/_tri_au WHEN-guarded triggers re-sync the
           // FTS/trigram twins on the body UPDATE (schema-mental-models.ts:226,252) — no
           // NEW trigger work.
           const prior: HistoryEntry[] = [

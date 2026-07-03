@@ -30,7 +30,7 @@
  *     bare-token site, since the regex catches the method-declaration
  *     syntax) and the `makeDeliveryService` test factory in
  *     `test/support/factories.ts` (defensive — the file no longer matches
- *     the regex, but is retained per the design contract).
+ *     the regex, but the allowlist entry is retained deliberately).
  *
  * @module
  */
@@ -91,7 +91,7 @@ const SAFE_PATH_ALLOWLIST: readonly string[] = [
   // (verified by the "symlink deduplication" tests in discovery.test.ts and
   // skill-registry.test.ts). All other call sites in this file use safePath.
   "skills/src/skills/registry/discovery.ts",
-  // JAIL-03 bind-mount validator (Phase 211): a path-VALIDATOR (the inverse of
+  // The bind-mount validator: a path-VALIDATOR (the inverse of
   // safePath) that intentionally reasons over NON-base-confined absolute system
   // and credential paths (/etc, /proc, ~/.ssh, ...). safePath(base, ...) would
   // throw on any path outside `base`, which is exactly the set this validator
@@ -454,10 +454,3 @@ describe("source-rules -- [REDACTED] literal forbidden in production source", ()
     });
   }
 });
-
-// NOTE (v2.12, Phase 126): the "ContextStorePort row-DTO residency" describe
-// block (a TS-compiler-API walker over context-engine-store.ts +
-// context-admin-store.ts + context-store-types.ts) was removed — those DAG
-// store port files were deleted with the DAG context engine. Its support helper
-// `test/support/ports-dto-residency-checker.ts` was deleted in the same change
-// (it had no other consumer). The LCD store port is reintroduced fresh later.

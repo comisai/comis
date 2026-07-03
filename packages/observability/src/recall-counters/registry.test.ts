@@ -2,7 +2,7 @@
 /**
  * createRecallCounters tests — in-process counter registry.
  *
- * A process-lifetime gauge (Assumption A2 — resets on restart, NOT a durable
+ * A process-lifetime gauge (resets on restart, NOT a durable
  * table). Each createRecallCounters() owns its own closed-over numeric
  * accumulators; two registries must be independent (no module-global leak).
  * Pure — no clock, no I/O, no globals.

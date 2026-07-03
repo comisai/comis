@@ -2,7 +2,7 @@
 /**
  * Statistical gating — pass-rate, binomial CI, baseline comparison, scenario×model grid.
  *
- * Design defaults (FND-08 — §18.7 resolved):
+ * Default gating parameters:
  *   N = 3 runs per stochastic scenario (overridable per scenario)
  *   Frontier models: pass-rate >= 0.90
  *   Mid models:      pass-rate >= 0.80
@@ -23,7 +23,6 @@ export type PassRateTier = "frontier" | "mid" | "small";
 
 /**
  * Default pass-rate thresholds per capability tier (env-overridable per scenario).
- * Source: RESEARCH.md §18.7 / design §7.5.
  */
 export const PASS_RATE_THRESHOLDS: Record<PassRateTier, number> = {
   frontier: 0.90,
@@ -265,7 +264,7 @@ export interface Grid2D {
  * Build a scenario × model pass/fail grid from an array of run-rows.
  *
  * Used to render the per-model reliability table in READINESS.md and stored
- * as a 2-D JSON object in the ledger row (§7.5).
+ * as a 2-D JSON object in the ledger row.
  */
 export function buildScenarioModelGrid(rows: RunRow[]): Grid2D {
   const grid: Grid2D = {};

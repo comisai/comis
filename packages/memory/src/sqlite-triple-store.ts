@@ -15,7 +15,7 @@
  *   current REGARDLESS of recency; equal trust tiebreaks by recency (newer
  *   `t_occurred`|`t_ingested` wins); the LOSER is SOFT-CLOSED (`t_valid_end` +
  *   `expired_at` set), NEVER deleted. Same object is idempotent corroboration (no
- *   new history row). Non-overlapping occurred intervals coexist (Graphiti's
+ *   new history row). Non-overlapping occurred intervals coexist (the
  *   interval-overlap guard).
  * - `asOf(t, scope, mode)` is the bi-temporal as-of read:
  *   `"valid"` (default) queries the VALID-time window (`t_valid_start <= t AND
@@ -26,7 +26,7 @@
  *   appears in one but not the other at a chosen `t`. Both scoped.
  * - `currentTruth(scope, cap)` is the DEFAULT-RECALL read:
  *   only `t_valid_end IS NULL` rows — superseded losers and recorded-but-not-
- *   believed rows are DEFAULT-FILTERED out (the Graphiti opt-in-leak fix). As-of
+ *   believed rows are DEFAULT-FILTERED out (the stale-fact leak fix). As-of
  *   history is reachable only via an explicit `asOf(t)`. Scoped, capped.
  * - `spreadLane(seedSubjects, scope, maxDepth, fanOut, cap)` is the read-side
  *   graph-spread lane: a bounded `WITH RECURSIVE walk`
@@ -45,7 +45,7 @@
  * memories(id)` `ON DELETE CASCADE` fire (deleting a source memory drops its
  * derived triples; no orphan-sweep job).
  *
- * ## Isolation is the load-bearing security boundary (the §5.2 pattern)
+ * ## Isolation is the load-bearing security boundary
  *
  * Comis runs many agents in one DB. BOTH the write (the INSERT) and the read
  * (`asOf`, and the `spreadLane` CTE) filter on `(tenant_id, agent_id)` —
@@ -142,7 +142,7 @@ const DEFAULT_CURRENT_TRUTH_CAP = 256;
 /**
  * Two occurred windows OVERLAP iff each starts on/before the other ends
  * (half-open-friendly inclusive test). Only meaningful when BOTH rows carry a
- * full `[t_occurred .. t_occurred_end]` range — Graphiti's interval-overlap
+ * full `[t_occurred .. t_occurred_end]` range — the interval-overlap
  * guard: a contradiction is only real when the windows overlap; disjoint windows
  * are two facts true at DIFFERENT times (both stay current, neither closes).
  */
@@ -252,7 +252,7 @@ export function createSqliteTripleStore(deps: MemoryTripleStoreDeps): TripleStor
       "WHERE tenant_id = ? AND agent_id = ? " +
       "AND t_ingested <= ? AND (expired_at IS NULL OR expired_at > ?)",
   );
-  // Default-recall current-truth read (the Graphiti opt-in-leak fix).
+  // Default-recall current-truth read (the stale-fact leak fix).
   // ONLY `t_valid_end IS NULL` rows are believed NOW: superseded losers (soft-
   // closed) and recorded-but-not-believed rows (inserted already-closed by the
   // invalidation write path) are DEFAULT-FILTERED out. Newest-valid first, capped.
@@ -267,7 +267,7 @@ export function createSqliteTripleStore(deps: MemoryTripleStoreDeps): TripleStor
   // triple whose `object` is the node AND that carries a source_memory_id, then
   // join `memories` re-asserting the FULL (tenant, agent) scope (self-sufficient
   // hydrate — no fail-open if the CTE is ever refactored). Bound params only.
-  // FORGET-01 (CR-01): the ALWAYS-ON `evicted_at IS NULL` recall exclusion (`m.` alias —
+  // The ALWAYS-ON `evicted_at IS NULL` recall exclusion (`m.` alias —
   // `memories` is joined as `m`). This is the RECALL-side hydration (graph-spread →
   // MemorySearchResult[] → createMemoryRecall → the prompt), so a soft-evicted reached-node
   // source memory MUST be omitted here. The bi-temporal asOf reads (asOfSelect /
@@ -363,7 +363,7 @@ export function createSqliteTripleStore(deps: MemoryTripleStoreDeps): TripleStor
           }
 
           // 2c. Different object = a candidate contradiction.
-          // Interval-overlap guard (Graphiti): when BOTH rows carry a FULL
+          // Interval-overlap guard: when BOTH rows carry a FULL
           // occurred range, it is a contradiction ONLY if the windows overlap.
           // Disjoint windows = two facts true at different times → the new row
           // ALSO becomes current-truth (neither closes).
@@ -499,7 +499,7 @@ export function createSqliteTripleStore(deps: MemoryTripleStoreDeps): TripleStor
       try {
         // The DEFAULT-RECALL read: only `t_valid_end IS NULL` rows (believed
         // NOW) — superseded losers + recorded-but-not-believed rows are
-        // default-filtered out (the Graphiti opt-in-leak fix). Scoped + capped;
+        // default-filtered out (the stale-fact leak fix). Scoped + capped;
         // both the (tenant, agent) filter and the cap are bound `?` params.
         const rows = currentTruthSelect.all(tenantId, agentId, cap);
         const parsed = tripleRowMapper.parseRows(rows);

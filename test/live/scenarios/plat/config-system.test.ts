@@ -261,7 +261,7 @@ describe("PLAT-02 Stage-B — config-audit record + config:patched event", () =>
 
 describe.skipIf(!isLive)("PLAT-02 Stage-C — live config.patch RPC + restart + rollback (COMIS_LIVE)", () => {
   it.skip("SKIPPED(no-daemon/no-network) — live config.patch over the gateway → atomic YAML write → SIGUSR2 restart → last-known-good rollback on a bad config; needs a booted daemon container + the gateway HTTP server", () => {
-    // Deferred to a COMIS_LIVE operator run + PROVE-148. The pure guard (isImmutableConfigPath), the
+    // Deferred to a COMIS_LIVE operator run. The pure guard (isImmutableConfigPath), the
     // config-audit record, and the config:patched event shape are covered in Stage-B above.
   });
 });

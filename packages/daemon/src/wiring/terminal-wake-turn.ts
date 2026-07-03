@@ -317,7 +317,7 @@ export function buildWokenTurnDriver(
       try {
         const current = deps.journal.get(sessionId) ?? emptyJournal(sessionId);
         // The digest line is content-free by construction (counts/coords + a SHORT excerpt);
-        // run the excerpt through the canonical redactor before it lands on the journal (I3).
+        // run the excerpt through the canonical redactor before it lands on the journal.
         const { text: redactedDigest } = scrubSecretsFromText(
           screenDigestLine({ screen, cols: view.cols, rows: view.rows, cursor: view.cursor, diff: view.diff }),
         );

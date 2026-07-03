@@ -1,33 +1,33 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * The `outward_send_ledger` table DDL — the three-state exactly-once outward-send
- * ledger the Phase-216 resume engine reconciles on boot (ONCE-01/ONCE-02/ONCE-03).
+ * ledger the resume engine reconciles on boot.
  * A send-intent is persisted HERE, on disk in the shared `memory.db`, BEFORE the
  * irreversible chat-platform call, so a daemon CRASH mid-send leaves a durable,
  * reconcilable trace rather than a lost message OR a blind replay (a second
  * 10,000-user DM blast on restart).
  *
  * Forward-only, re-run-safe: create-if-not-exists only, no destructive or reverse
- * DDL (design §9). Extracted from `schema.ts` (which is at the 800-line cap) —
- * `initSchema` CALLS this so the table exists on every boot (Pitfall 5: a table
+ * DDL. Extracted from `schema.ts` (which is at the 800-line cap) —
+ * `initSchema` CALLS this so the table exists on every boot (a table
  * defined here but not wired into initSchema is MISSING at runtime).
  *
- * THE IDEMPOTENCY KEY (ONCE-02, T-216-10): the UNIQUE index
+ * THE IDEMPOTENCY KEY: the UNIQUE index
  * `idx_osl_idempotency` on `(root_run_id, step_index)` is what makes the send
  * exactly-once. The `step_index` half is allocated by the durable_runs
- * `allocateOutwardStep` monotonic counter (HIGH-1), so a REPLAYED step collides
- * on this index — a second `begin` is an err the wrap site (Plan 05) treats as
+ * `allocateOutwardStep` monotonic counter, so a REPLAYED step collides
+ * on this index — a second `begin` is an err the wrap site treats as
  * "already in flight, do NOT double-send". This store has NO blind
  * `in_flight → pending` bulk reset (the `delivery-queue-adapter.ts:141-145`
- * anti-pattern §9 forbids, T-216-09): recovery is PER-ROW via the
- * `listUnreconciled` scan → the engine asks the platform `reconcileSend?`
- * (Plan 04), never a blanket UPDATE.
+ * bulk-reset anti-pattern): recovery is PER-ROW via the
+ * `listUnreconciled` scan → the engine asks the platform `reconcileSend?`,
+ * never a blanket UPDATE.
  *
- * SECURITY — CONTENT-FREE (T-216-11, mirrors video_jobs T-189-02 / durable_runs
- * T-216-05): `content_digest` is a sha256 set by the caller and is the ONLY
+ * SECURITY — CONTENT-FREE (mirrors video_jobs / durable_runs):
+ * `content_digest` is a sha256 set by the caller and is the ONLY
  * content trace. There is deliberately NO `body` / `text` / `message` column and
  * NO secret / token / bearer / api_key column — the reconcile matches on the
- * digest + a time window, NEVER the message text (§2.7 / §15). A recipient list
+ * digest + a time window, NEVER the message text. A recipient list
  * is routing only (`channel_id`), never a stored secret.
  *
  * `better-sqlite3` durability is WAL + path-based chmod (never fd-based file
@@ -67,13 +67,13 @@ export function ensureOutwardLedgerTable(db: Database.Database): void {
       updated_at_ms       INTEGER NOT NULL
     )
   `);
-  // ONCE-02 (T-216-10): the idempotency key. A replayed (root_run_id, step_index)
+  // The idempotency key. A replayed (root_run_id, step_index)
   // collides here, so a second begin() is the "already in flight" err — there is
   // NO second outward send.
   db.exec(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_osl_idempotency ON outward_send_ledger(root_run_id, step_index)`,
   );
-  // ONCE-03: the partial recovery-scan index — serves listUnreconciled(), which
+  // The partial recovery-scan index — serves listUnreconciled(), which
   // returns ONLY the still-in-flight rows the boot reconcile loop must resolve.
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_osl_unknown ON outward_send_ledger(state) WHERE state IN ('unknown_after_send','send_attempt_started')`,

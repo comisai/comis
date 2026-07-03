@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Decay-aware learned-skill TREND (Verified Learning WS4 / §17 hindsight Trend) —
+ * Decay-aware learned-skill TREND (Verified Learning — the hindsight trend) —
  * the in-process decision of WHEN a corroborated failure should drive a `demote()`.
  *
  * The promote/demote loop (setup-learning.ts) calls {@link createSkillTrendTracker}
@@ -11,12 +11,12 @@
  * `active → stale` move (the store's `demote()`) fires on a SUSTAINED corroborated
  * failure, not a raw counter.
  *
- * The load-bearing invariant (Pitfall 4 / the §12 first-RED, anti-induced-demotion):
+ * The load-bearing invariant (anti-induced-demotion):
  * a SINGLE corroborated failure against many recent successes keeps the standing
  * STABLE/STRENGTHENING — only SUSTAINED corroborated failure reaches WEAKENING. A
  * well-reused procedure is NOT archived by one (possibly induced) failure.
  *
- * Math — reuses the FORGET-02 saturating-penalty SHAPE (`f = fc/(fc+K)`, K=3, the
+ * Math — reuses the saturating-penalty SHAPE (`f = fc/(fc+K)`, K=3, the
  * READ-ONLY pattern at sqlite-memory-lifecycle-store.ts:354-359) adapted to a
  * recency-decayed score:
  *  - keep a per-skill `{ score, failureCount, lastUpdateMs }`;
@@ -31,7 +31,7 @@
  *  - classify against two bands: ≥ {@link STRENGTHENING_BAND} → "strengthening",
  *    ≤ {@link WEAKENING_BAND} → "weakening", else "stable".
  *
- * In-process / daemon-lifetime (A3 — resets on restart, exactly like the FORGET-03
+ * In-process / daemon-lifetime (resets on restart, exactly like the
  * corroboration tally). BOUNDED: the per-skill map caps at `maxTracked` and evicts the
  * OLDEST-touched skill (Map insertion order = recency, refreshed via delete-before-set)
  * so a busy/adversarial fleet never grows it without bound. Counts/ids only — never a
@@ -41,7 +41,7 @@
  * @module
  */
 
-/** The §17 hindsight trend standing — a closed union (AGENTS.md §2.8: exhaustive). */
+/** The hindsight trend standing — a closed union (AGENTS.md §2.8: exhaustive). */
 export type SkillTrend = "strengthening" | "stable" | "weakening";
 
 /** Neutral midpoint a fresh skill starts at and a decayed score relaxes toward. */
@@ -55,7 +55,7 @@ const SUCCESS_STEP = 0.18;
 /** The MAX failure penalty (the `failurePenalty` of the saturating shape `p * fc/(fc+K)`). */
 const FAILURE_PENALTY = 0.55;
 /**
- * The FORGET-02 saturation constant — ~K failures reach half the penalty, so the
+ * The saturation constant — ~K failures reach half the penalty, so the
  * penalty saturates (a single failure barely moves a strong score; sustained failure
  * compounds). Mirrors `FAILURE_SATURATION_K` in sqlite-memory-lifecycle-store.ts.
  */
@@ -63,7 +63,7 @@ const FAILURE_SATURATION_K = 3;
 /**
  * Half-life of the recency decay: a success/failure's contribution to the standing
  * halves every ~3 days of idle time, so an OLD success protects LESS than a fresh one
- * (the recency-decayed §17 Trend). The score relaxes toward {@link NEUTRAL_SCORE}.
+ * (the recency-decayed Trend). The score relaxes toward {@link NEUTRAL_SCORE}.
  */
 const SCORE_HALF_LIFE_MS = 3 * 24 * 60 * 60 * 1000;
 /**
@@ -73,8 +73,8 @@ const SCORE_HALF_LIFE_MS = 3 * 24 * 60 * 60 * 1000;
  */
 const FAILURE_COUNT_HALF_LIFE_MS = 3 * 24 * 60 * 60 * 1000;
 /**
- * WR-01 bound on the number of tracked skills (daemon-lifetime, resets on restart).
- * Past this the oldest-touched skill id is evicted. Mirrors the FORGET-03 tally cap
+ * Bound on the number of tracked skills (daemon-lifetime, resets on restart).
+ * Past this the oldest-touched skill id is evicted. Mirrors the corroboration tally cap
  * (`MAX_TRACKED_FAILURE_MEMORIES`) — a soft forget of the stalest standing, never a
  * correctness loss (the store's durable proof_count/state is the source of truth).
  */
@@ -100,7 +100,7 @@ export interface SkillTrendTracker {
    */
   updateSkillTrend(skillId: string, outcome: "success" | "failure", nowMs: number): SkillTrend;
   /**
-   * READ-ONLY (REFLECT-03): the skill's CURRENT standing decayed to `nowMs`, WITHOUT
+   * READ-ONLY: the skill's CURRENT standing decayed to `nowMs`, WITHOUT
    * folding a new outcome — does NOT mutate the score, failureCount, recency, or the
    * Map. A never-seen skill returns `"stable"` (the neutral starting standing). The
    * promote path peeks this BEFORE applying a success so a skill in a SUSTAINED-failure

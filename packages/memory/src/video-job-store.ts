@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * VideoJobStore — SQLite persistence for the Phase-189 durable async video-job
- * lifecycle (JOB-01/JOB-03/JOB-04).
+ * VideoJobStore — SQLite persistence for the durable async video-job lifecycle.
  *
  * Factory-function pattern (modeled on `createSqliteDeliveryQueue`): prepares
  * fixed SQL statements once in the closure, returns a frozen `VideoJobStore`.
@@ -11,18 +10,18 @@
  *
  * The job row is the durable spine the background poller resumes against across
  * a daemon restart: a row survives the agent turn AND a restart because it lives
- * on disk in the shared `memory.db` (Q1/O3 LOCKED: shared db, not an own .db).
+ * on disk in the shared `memory.db` (shared db, not an own .db).
  *
  * WHERE IT DIFFERS FROM THE DELIVERY QUEUE:
- *  1. `get(jobId, agentId)` is agent-scoped (filters BOTH columns — JOB-04 /
- *     Pitfall 6). A bare `get(jobId)` is FORBIDDEN: it would leak another
- *     agent's job. A cross-agent jobId returns not-found (`ok(undefined)`).
+ *  1. `get(jobId, agentId)` is agent-scoped (filters BOTH columns). A bare
+ *     `get(jobId)` is FORBIDDEN: it would leak another agent's job. A cross-agent
+ *     jobId returns not-found (`ok(undefined)`).
  *  2. Carries a video path + cost + progress columns (the queue carries text).
  *  3. State domain is `pending | done | failed` (the queue's is broader).
  *  4. ZERO fd-based fs (no explicit file-sync/chmod-by-fd) — better-sqlite3 +
- *     the shared `db` are permission-model-safe by construction (Pitfall 2 / A4).
+ *     the shared `db` are permission-model-safe by construction.
  *
- * SECURITY (T-189-02): the persisted columns carry NO secret — the `jobId` is
+ * SECURITY: the persisted columns carry NO secret — the `jobId` is
  * the opaque provider request id; the credential is held by the boot-bound
  * adapter and is never written here.
  *
@@ -44,12 +43,12 @@ import {
 // Domain types
 // ---------------------------------------------------------------------------
 
-/** The state machine for a video job (JOB-01). */
+/** The state machine for a video job. */
 export type VideoJobState = "pending" | "done" | "failed";
 
 /** A persisted video-generation job (camelCase domain view of a `video_jobs` row). */
 export interface VideoJobRecord {
-  /** Opaque, durable provider request id (secret-free — T-189-02). */
+  /** Opaque, durable provider request id (secret-free). */
   readonly jobId: string;
   readonly provider: string;
   readonly model?: string;
@@ -57,7 +56,7 @@ export interface VideoJobRecord {
   readonly channelType?: string;
   readonly channelId?: string;
   readonly traceId?: string;
-  /** OBS-04 (Phase 192): the formatted session key — the off-turn poller resolves
+  /** The formatted session key — the off-turn poller resolves
    *  the per-session trajectory recorder by this to stitch a background-completed
    *  render to its originating turn. Nullable in the row (old rows are NULL). */
   readonly sessionKey?: string;
@@ -67,14 +66,14 @@ export interface VideoJobRecord {
   readonly mediaPath?: string;
   readonly progress?: number;
   readonly lastError?: string;
-  /** CR-01: count of delivery/completion attempts; bounds the poller's
+  /** Count of delivery/completion attempts; bounds the poller's
    *  redelivery loop (dead-letter once it exceeds maxDeliveryAttempts). */
   readonly deliverAttempts: number;
   readonly submittedAtMs: number;
   readonly updatedAtMs: number;
 }
 
-/** Insert payload — the JOB-01 fields recorded at submit. */
+/** Insert payload — the fields recorded at submit. */
 export interface VideoJobInsert {
   readonly jobId: string;
   readonly provider: string;
@@ -83,7 +82,7 @@ export interface VideoJobInsert {
   readonly channelType?: string;
   readonly channelId?: string;
   readonly traceId?: string;
-  /** OBS-04 (Phase 192): the formatted session key persisted at submit (the
+  /** The formatted session key persisted at submit (the
    *  off-turn recorder fold key). Optional — `undefined` outside a request scope. */
   readonly sessionKey?: string;
   readonly state: VideoJobState;
@@ -92,7 +91,7 @@ export interface VideoJobInsert {
   readonly updatedAtMs: number;
 }
 
-/** The completion payload for `markDone` (the poller's `done` tail — JOB-02). */
+/** The completion payload for `markDone` (the poller's `done` tail). */
 export interface VideoJobDoneInput {
   readonly mediaPath: string;
   readonly actualCostUsd?: number;
@@ -108,26 +107,26 @@ export interface VideoJobStore {
   /** All rows in state 'pending', oldest first (the poller's boot-resume scan). */
   listPending(): Promise<Result<VideoJobRecord[], Error>>;
   /**
-   * Read a job scoped to BOTH jobId AND agentId (JOB-04 / Pitfall 6).
+   * Read a job scoped to BOTH jobId AND agentId.
    * Not-found (no such job for this agent) is `ok(undefined)` — distinct from a
    * real error, so the status handler can answer "no such job" vs "lookup failed".
    */
   get(jobId: string, agentId: string): Promise<Result<VideoJobRecord | undefined, Error>>;
-  /** Transition to 'done' + record the delivered path + actual cost (JOB-02). */
+  /** Transition to 'done' + record the delivered path + actual cost. */
   markDone(jobId: string, input: VideoJobDoneInput): Promise<Result<void, Error>>;
   /**
-   * Transition to 'failed' + record `last_error` (JOB-02).
+   * Transition to 'failed' + record `last_error`.
    *
-   * WR-02 (Phase 190): pass the optional `lastError` to persist an ACTIONABLE
-   * operator hint (what `video.status` returns as `error`) instead of the bare
-   * `errorKind` enum token. When omitted, `errorKind` is written verbatim (the
-   * pre-190 behavior — preserved for callers/tests that pass only the kind).
+   * Pass the optional `lastError` to persist an ACTIONABLE operator hint (what
+   * `video.status` returns as `error`) instead of the bare `errorKind` enum token.
+   * When omitted, `errorKind` is written verbatim (preserved for callers/tests
+   * that pass only the kind).
    */
   markFailed(jobId: string, errorKind: string, lastError?: string): Promise<Result<void, Error>>;
-  /** Update the optional progress fraction (JOB-02). */
+  /** Update the optional progress fraction. */
   updateProgress(jobId: string, progress: number): Promise<Result<void, Error>>;
   /**
-   * CR-01: atomically `deliver_attempts = deliver_attempts + 1` and return the
+   * Atomically `deliver_attempts = deliver_attempts + 1` and return the
    * NEW count. The poller calls this on each delivery/completion attempt and
    * dead-letters the row to `failed` once the count exceeds maxDeliveryAttempts,
    * so a persistent delivery failure converges instead of re-polling +
@@ -192,8 +191,8 @@ export function createVideoJobStore(db: Database.Database): VideoJobStore {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?)
   `);
 
-  // Agent-scoped read — filters by BOTH columns (the must-differ point 1;
-  // JOB-04 / Pitfall 6). A cross-agent jobId matches no row → not-found.
+  // Agent-scoped read — filters by BOTH columns (the must-differ point 1).
+  // A cross-agent jobId matches no row → not-found.
   const getStmt = db.prepare(`
     SELECT * FROM video_jobs WHERE job_id = ? AND agent_id = ?
   `);
@@ -218,7 +217,7 @@ export function createVideoJobStore(db: Database.Database): VideoJobStore {
     UPDATE video_jobs SET progress = ?, updated_at_ms = ? WHERE job_id = ?
   `);
 
-  // CR-01: atomic redelivery-counter bump. better-sqlite3 is synchronous +
+  // Atomic redelivery-counter bump. better-sqlite3 is synchronous +
   // single-connection, so the UPDATE and the paired read below run in the SAME
   // event-loop turn — no interleaving, so the read sees this UPDATE's value.
   const incrementAttemptStmt = db.prepare(`
@@ -297,7 +296,7 @@ export function createVideoJobStore(db: Database.Database): VideoJobStore {
 
     markFailed(jobId: string, errorKind: string, lastError?: string): Promise<Result<void, Error>> {
       try {
-        // WR-02: persist the actionable hint when supplied; else the bare kind.
+        // Persist the actionable hint when supplied; else the bare kind.
         markFailedStmt.run(lastError ?? errorKind, systemNowMs(), jobId);
         return Promise.resolve(ok(undefined));
       } catch (e) {

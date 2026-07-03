@@ -1,20 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Plan 180-08, Task 1 — `ctx_search` OBS-01 wiring tests.
+ * `ctx_search` script-health signal wiring tests.
  *
- * The tool now consumes the 180-05-widened `LcdSearchResult`
+ * The tool consumes the widened `LcdSearchResult`
  * (`scriptZeroHit`/`lane`/`matchErrored`/`scanCapped`) and:
  *   - emits `context:script_zero_hit { conversationId, agentId, sessionKey,
- *     scriptClass, lane, timestamp }` on a CLEAN non-Latin zero-hit, REPLACING
- *     the DEBUG-only `cjkZeroHit` line;
+ *     scriptClass, lane, timestamp }` on a CLEAN non-Latin zero-hit, instead of
+ *     a `cjkZeroHit` DEBUG line;
  *   - NEVER emits when `matchErrored` is true (a `safeAll`-swallowed FTS5 error
  *     stays a content-free WARN with `hint` + `errorKind`, §2.7 — signal purity);
  *   - surfaces the scan cap to the model when `lane === "scan" && scanCapped`;
  *   - surfaces `lane` in the result JSON;
  *   - swallows a throwing emit subscriber (guarded-emit — never fails the tool).
- *
- * RED-first: these behaviors fail on the pre-patch tool (which only reads the
- * derived `cjkZeroHit` boolean at DEBUG and never emits `context:script_zero_hit`).
  *
  * Pure-JS / macOS-green: a hand-built `ContextToolDeps` with a stub
  * `ContextStorePort.searchLcd` returning a widened `LcdSearchResult`, a recording
@@ -146,7 +143,7 @@ const HIT: LcdSearchHit = { kind: "message", refId: "m1", snippet: "a hit", rank
 // context:script_zero_hit emit (purity-gated)
 // ---------------------------------------------------------------------------
 
-describe("ctx_search — context:script_zero_hit emit (OBS-01)", () => {
+describe("ctx_search — context:script_zero_hit emit", () => {
   it("emits exactly one content-free context:script_zero_hit on a clean non-Latin zero-hit", async () => {
     const bus = makeCapturingBus();
     const result: LcdSearchResult = {
@@ -275,10 +272,10 @@ describe("ctx_search — context:script_zero_hit emit (OBS-01)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// matchErrored — signal purity (Pitfall 9): WARN, never an emit
+// matchErrored — signal purity: WARN, never an emit
 // ---------------------------------------------------------------------------
 
-describe("ctx_search — matchErrored signal purity (OBS-01)", () => {
+describe("ctx_search — matchErrored signal purity", () => {
   it("does NOT emit context:script_zero_hit when matchErrored is true; WARNs with hint + errorKind", async () => {
     const bus = makeCapturingBus();
     // A swallowed FTS5 syntax error: matchErrored true, no scriptZeroHit.
@@ -327,7 +324,7 @@ describe("ctx_search — matchErrored signal purity (OBS-01)", () => {
 // scan-cap surfacing + lane in the result JSON
 // ---------------------------------------------------------------------------
 
-describe("ctx_search — scan-cap surfacing + lane in the result (OBS-01)", () => {
+describe("ctx_search — scan-cap surfacing + lane in the result", () => {
   it("appends the cap note to the result when lane === scan && scanCapped", async () => {
     const result: LcdSearchResult = {
       hits: [HIT],
@@ -403,11 +400,11 @@ describe("ctx_search — scan-cap surfacing + lane in the result (OBS-01)", () =
 });
 
 // ---------------------------------------------------------------------------
-// The old DEBUG-only cjkZeroHit line is gone
+// No DEBUG-only cjkZeroHit line is emitted
 // ---------------------------------------------------------------------------
 
-describe("ctx_search — cjkZeroHit DEBUG line removed (OBS-01 migration)", () => {
-  it("does not emit the old DEBUG 'lcd FTS returned zero hits for CJK query' line", async () => {
+describe("ctx_search — emits no cjkZeroHit DEBUG line for a CJK zero-hit", () => {
+  it("does not emit a DEBUG 'lcd FTS returned zero hits for CJK query' line", async () => {
     const result: LcdSearchResult = {
       hits: [],
       cjkZeroHit: true, // the derived boolean is no longer consumed by the tool

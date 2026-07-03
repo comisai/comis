@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * PROVE-03 — the soak HARNESS.
+ * The soak harness.
  *
- * Endurance/volume validation: drive the §7.7 user-story library (`STORY_LIBRARY`)
+ * Endurance/volume validation: drive the user-story library (`STORY_LIBRARY`)
  * as realistic traffic and WATCH the daemon health line for stability. Where the
- * §7.7 journeys are about CORRECTNESS of real workflows, the soak is about
- * endurance under sustained traffic — and it REUSES the journeys as its generator
- * (the design's "the soak reuses them as its traffic generator", §7.7 / §13 Phase 148).
+ * journeys are about CORRECTNESS of real workflows, the soak is about
+ * endurance under sustained traffic — and it REUSES the journeys as its traffic
+ * generator.
  *
  * The health-line fields watched are the EXACT canonical "Daemon health" DEBUG
  * fields the daemon emits (packages/daemon/src/daemon.ts:1226-1240) — no invented
@@ -16,7 +16,7 @@
  * Sandbox vs operator split: `runSoak` + `parseHealthLine` + `assessHealthTrend`
  * are the harness; a SHORT deterministic smoke (scenarios/prove/soak-smoke.test.ts)
  * proves the mechanism on the echo Stage-B daemon. The REAL multi-hour soak is the
- * operator step on a Linux VPS (§18.5) — `runSoak` is what they invoke with
+ * operator step on a Linux VPS — `runSoak` is what they invoke with
  * COMIS_LIVE + provider keys + many iterations over a long window.
  *
  * NO product change — additive test/live tooling.
@@ -140,7 +140,7 @@ export function parseHealthLine(logLines: string): HealthSample | undefined {
  *   - zero `stuckSubAgentRuns` / `deadLetterQueueSize` / `promptTimeoutsLast5m` in every sample;
  *   - empty `degradedProviders` in every sample.
  *
- * These are the §5 / §13 Phase 148 soak criteria over the VERIFIED health-line fields.
+ * These are the soak stability criteria over the VERIFIED health-line fields.
  */
 export function assessHealthTrend(
   samples: HealthSample[],

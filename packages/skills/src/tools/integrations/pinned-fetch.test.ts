@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the DNS-pinned fetch primitive (CR-01, Phase 197).
+ * Unit tests for the DNS-pinned fetch primitive.
  *
  * `createPinnedAgent` must build an undici Agent whose `connect.lookup` ALWAYS
  * returns the pre-validated IP (both the legacy 3-arg callback form and the

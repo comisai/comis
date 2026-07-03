@@ -1,28 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `rig-control.ts` — the AUTO-02 isolated-daemon LIFECYCLE OWNER (Phase 205,
- * Plan 04). `createRigController(state, bootFn?)` returns a controller over the
+ * `rig-control.ts` — the AUTO-02 isolated-daemon LIFECYCLE OWNER.
+ * `createRigController(state, bootFn?)` returns a controller over the
  * rig's isolated daemon + its throwaway `COMIS_DATA_DIR`, exposing:
  *
  *   • `restart()` — re-boot the isolated daemon PRESERVING the emulator + handle.
- *     The EXACT cleanup-before-reboot ordering (Pitfall 1, the deadlock trap):
+ *     The EXACT cleanup-before-reboot ordering (the deadlock trap):
  *     `startTestDaemon` THROWS "Test daemon already running" if a second boot
  *     starts before the first `cleanup()` resets the `activeHandle` double-start
  *     guard to `null`. So `restart()` MUST: `await daemonHandle.cleanup()` (which
  *     clears the guard) → re-pin `COMIS_DATA_DIR` to the SAME isolated dir
- *     (Pitfall 2) → re-`startTestDaemon({ configPath, gatewayPort })` → restore
+ *     → re-`startTestDaemon({ configPath, gatewayPort })` → restore
  *     `COMIS_DATA_DIR`. The injected `bootFn` (default `startTestDaemon`) makes
  *     the ordering deterministically unit-testable.
  *
  *   • `resetDeep()` — a one-call deterministic CLEAN SLATE, isolated-dir-only
- *     (added in this plan's Task 2; guarded against the operator's real
- *     `~/.comis`).
+ *     (guarded against the operator's real `~/.comis`).
  *
  * SECURITY POSTURE — this is the most powerful test-only surface (stop / reset /
  * restart the daemon + mutate its data dir). It is in-process here; when fronted
- * by an HTTP endpoint (Plan 05) it binds 127.0.0.1 ONLY and is owner-checked, and
+ * by an HTTP endpoint it binds 127.0.0.1 ONLY and is owner-checked, and
  * every destructive op is scoped UNDER the recorded throwaway `dataDir` — never a
- * real `~/.comis` (the `resetDeep()` home-dir guard, T-205-10).
+ * real `~/.comis` (the `resetDeep()` home-dir guard).
  *
  * TEST-HARNESS — lives under the test tree, never the packages source-tree; ZERO
  * production code change. `test/` is outside every packages source-tree ESLint /
@@ -72,7 +71,7 @@ export interface RigControlState {
   readonly onDaemonHandle?: (next: TestDaemonHandle) => void;
   /**
    * AUTO-04 — the override→YAML mapping `reconfigure(overrides)` writes to
-   * `configPath` before re-booting (the Track-K model sweep). The standalone
+   * `configPath` before re-booting (the model sweep). The standalone
    * launcher (`rig.ts`) supplies one closing over `buildConfigYaml` + the rig's
    * `apiRoot` + `gatewayPort` + the literal gateway token, so it can rewrite a new
    * `agents.default.model` while keeping the exact telegram schema keys + the
@@ -87,7 +86,7 @@ export interface RigControlState {
 
 /**
  * The isolated-daemon lifecycle controller (AUTO-02). `restart()` re-boots
- * preserving the emulator + handle; `resetDeep()` (Task 2) is a one-call clean
+ * preserving the emulator + handle; `resetDeep()` is a one-call clean
  * slate scoped to the isolated dir.
  */
 export interface RigController {
@@ -98,7 +97,7 @@ export interface RigController {
   /** The gateway base URL (stable across `restart()` — same port). */
   readonly gatewayUrl: string;
   /**
-   * Re-boot the isolated daemon WITHOUT the double-start deadlock (Pitfall 1):
+   * Re-boot the isolated daemon WITHOUT the double-start deadlock:
    * `await cleanup()` → re-pin `COMIS_DATA_DIR` → re-`startTestDaemon` → restore
    * env. The emulator + handle are preserved.
    */
@@ -109,17 +108,17 @@ export interface RigController {
    * `workspace/sessions/` UNDER `dataDir` → `emulator.resetChat(chat)` → `restart()`.
    *
    * SECURITY: REFUSES (throws) when `dataDir` is empty or equals the operator's
-   * real `~/.comis` — a misconfigured controller must never wipe real state
-   * (T-205-10). Every `rmSync` path is composed under the recorded `dataDir`.
+   * real `~/.comis` — a misconfigured controller must never wipe real state.
+   * Every `rmSync` path is composed under the recorded `dataDir`.
    */
   resetDeep(): Promise<void>;
   /**
-   * AUTO-04 — the Track-K model sweep. Rewrite the throwaway YAML at `configPath`
+   * AUTO-04 — the model sweep. Rewrite the throwaway YAML at `configPath`
    * with the `--set` `overrides` (e.g. a new `agents.default.model`) via the
    * injected {@link RigControlState.configYamlFor} writer, THEN {@link restart}
-   * (the cleanup-before-reboot ordering, Pitfall 1). Mutates ONLY the isolated
-   * `configPath` and re-pins the SAME `dataDir` — never a real `~/.comis`
-   * (T-208-18). REFUSES (throws) when no `configYamlFor` writer is wired (it
+   * (the cleanup-before-reboot ordering). Mutates ONLY the isolated
+   * `configPath` and re-pins the SAME `dataDir` — never a real `~/.comis`.
+   * REFUSES (throws) when no `configYamlFor` writer is wired (it
    * cannot rewrite the config — an honest refusal, never a silent re-boot on the
    * OLD model).
    */
@@ -148,18 +147,18 @@ export function createRigController(state: RigControlState, bootFn: BootFn = sta
     },
 
     async restart(): Promise<void> {
-      // Pitfall 1 — the EXACT cleanup-before-reboot ordering. cleanup() runs the
+      // The EXACT cleanup-before-reboot ordering. cleanup() runs the
       // shutdown + settle delay + WAL cleanup and, in its finally, deletes
       // COMIS_CONFIG_PATHS and sets activeHandle = null. ONLY after that can a
       // second startTestDaemon boot without throwing "Test daemon already running".
       await state.daemonHandle.cleanup();
-      // Re-boot into the same isolated dir (re-pin COMIS_DATA_DIR — Pitfall 2 —
+      // Re-boot into the same isolated dir (re-pin COMIS_DATA_DIR,
       // boot, restore env, rebind). The daemon is already down from cleanup().
       await rebootCleanIsolatedDir();
     },
 
     async resetDeep(): Promise<void> {
-      // SECURITY (T-205-10) — refuse a non-isolated dataDir BEFORE touching the
+      // SECURITY — refuse a non-isolated dataDir BEFORE touching the
       // filesystem or the daemon. An empty dir or the operator's real ~/.comis
       // would have its memory.db / logs / sessions wiped — never allowed.
       if (state.dataDir === "" || state.dataDir === join(homedir(), ".comis")) {
@@ -183,13 +182,13 @@ export function createRigController(state: RigControlState, bootFn: BootFn = sta
       // 3. Reset the channel-side oracle (the emulator's recorded chat state).
       state.emulator.resetChat(state.chat);
 
-      // 4. Re-boot into the now-clean isolated dir (the Pitfall-1 ordering — but
-      //    cleanup() already ran above, so restart() must NOT cleanup() twice).
+      // 4. Re-boot into the now-clean isolated dir (the cleanup-before-reboot
+      //    ordering — but cleanup() already ran above, so restart() must NOT cleanup() twice).
       await rebootCleanIsolatedDir();
     },
 
     async reconfigure(overrides: Record<string, string>): Promise<void> {
-      // AUTO-04 (the Track-K model sweep) — rewrite the throwaway YAML at the
+      // AUTO-04 (the model sweep) — rewrite the throwaway YAML at the
       // isolated configPath with the --set overrides, THEN restart. REFUSE
       // (throw) when no writer is wired: reconfigure CANNOT rewrite the config
       // without the override→YAML mapping, and silently re-booting the OLD config
@@ -204,13 +203,13 @@ export function createRigController(state: RigControlState, bootFn: BootFn = sta
             "+ gatewayPort); none was provided — cannot rewrite the config.",
         );
       }
-      // Mutate ONLY the isolated configPath (T-208-18) — the SAME dataDir is
+      // Mutate ONLY the isolated configPath — the SAME dataDir is
       // re-pinned by restart() below. The writer keeps the exact telegram schema
       // keys + the ≥32-char literal gateway token; the overrides carry the sweep
       // (e.g. a new agents.default.model).
       writeFileSync(state.configPath, state.configYamlFor(overrides), "utf-8");
-      // Re-boot on the rewritten config (cleanup-before-reboot, the Pitfall-1
-      // ordering, same gateway port → a stable handle URL across the sweep).
+      // Re-boot on the rewritten config (cleanup-before-reboot ordering,
+      // same gateway port → a stable handle URL across the sweep).
       await controller.restart();
     },
   };
@@ -218,7 +217,7 @@ export function createRigController(state: RigControlState, bootFn: BootFn = sta
   /**
    * Re-boot the daemon into the (already-cleaned) isolated dir — the second half
    * of `restart()` WITHOUT a fresh `cleanup()` (resetDeep already stopped the
-   * daemon). Re-pins `COMIS_DATA_DIR` (Pitfall 2), boots, restores env, rebinds.
+   * daemon). Re-pins `COMIS_DATA_DIR`, boots, restores env, rebinds.
    */
   async function rebootCleanIsolatedDir(): Promise<void> {
     const hadDataDirEnv = process.env["COMIS_DATA_DIR"] !== undefined;

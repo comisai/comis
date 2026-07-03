@@ -18,15 +18,15 @@
    - **reliability**: re-run N≥3× → pass@k if content-sensitive.
 3. Add the **config postures** that change this capability's behavior (the toggle both-polarities — `05-CATALOG.md §Track-M`).
 
-### A2. Target = a MILESTONE ("v2.29 M1", "v2.28 channel-emulation")
-1. Locate its source: `grep -rn "<version>\|<milestone-name>" .planning/design .planning/phases .planning/ROADMAP.md MILESTONES.md`. The roadmap/plan lists **phases → requirements (CAP-01.., ORCH-01..) → success-criteria**.
+### A2. Target = a MILESTONE (a named release / feature set)
+1. Locate its source: grep the roadmap/plan for the milestone name. The roadmap/plan lists **phases → requirements → success-criteria**.
 2. Each **requirement + success-criterion** is a test row. Each **security invariant** is a HARD oracle. Each **config knob** the milestone adds is a Track-M pair.
-3. Cross-check `.planning/live-tests/milestone-coverage/` — if a prior audit flagged a GAP for this milestone's capabilities, cover it.
-4. Add the **regression slice**: the surfaces this milestone touches still work for the *previous* milestone's behavior (MIG-style "no silent break").
+3. Cross-check any prior milestone-coverage audit — if it flagged a GAP for this milestone's capabilities, cover it.
+4. Add the **regression slice**: the surfaces this milestone touches still work for the *previous* behavior (a "no silent break" check).
 
 ### A3. Target = a DESIGN DOCUMENT (a path)
 1. Read it **fully**. Extract every: **implementation** ("X does Y"), **success-criterion** (the doc's own acceptance list — these are gold; they're pre-written predicates), **security invariant** (the threat/floor table), **config key / default**, and **out-of-scope** statement (don't test what's deferred).
-2. **Verify each claim against HEAD before trusting it — the doc lies in BOTH directions.** A draft/spec drifts: (a) a claim marked "existing" the code removed/moved (the doc's anchors are evidence, not contracts — `grep -rn`, read the seam); AND (b) — the one that bites hardest — a feature the spec calls **"NEW / dormant / absent / not wired"** that has since **SHIPPED and is DEFAULT-ON**. *Verified-learning's spec (rev.2) marked WS1–WS7 as proposals; at HEAD they were all implemented, wired, and the per-agent flags defaulted `enabled:true`.* So before deriving tests, **establish the real implementation state** (a focused codebase scan: does the table/job/event/port exist, is it scheduled/dispatched/called, what are the config defaults) and test what's LIVE — testing the doc's stale prose wastes the run. A claim either way the code contradicts is itself a finding.
+2. **Verify each claim against HEAD before trusting it — the doc lies in BOTH directions.** A draft/spec drifts: (a) a claim marked "existing" the code removed/moved (the doc's anchors are evidence, not contracts — `grep -rn`, read the seam); AND (b) — the one that bites hardest — a feature the spec calls **"NEW / dormant / absent / not wired"** that has since **SHIPPED and is DEFAULT-ON**. *For example, a learning subsystem's spec marked its proposed workstreams as future proposals; at HEAD they were all implemented, wired, and the per-agent flags defaulted `enabled:true`.* So before deriving tests, **establish the real implementation state** (a focused codebase scan: does the table/job/event/port exist, is it scheduled/dispatched/called, what are the config defaults) and test what's LIVE — testing the doc's stale prose wastes the run. A claim either way the code contradicts is itself a finding.
 3. Map each **live** implementation → a test that drives it (channel turn, RPC, or the offline trigger per §B) and reads ground truth. Map each invariant → a HARD oracle driven adversarially (or benignly-but-deterministically per `03 §benign probes`). Out-of-scope/deferred items: don't test; absent-but-claimed-shipped: a finding.
 
 ### A4. Target = a USER STORY
@@ -88,8 +88,8 @@ A few rows:
 | BUDGET-1 | lower budget, run the DAG | over-budget sub-agents `spend_exceeded`, fan-out bounded | daemon log + `explain` | ✅ | B/C |
 | REVOKE-1 | launch DAG, `run.kill {rootRunId}` mid-flight | `{killed:N>0}`, sub-agents abort | revoke.mjs + daemon log | ✅ | B/C |
 
-### Example 2 — MILESTONE: "v2.29 M1 Secure Agent Autonomy"
-STEP 1 finds `.planning/design/SECURE-AGENT-AUTONOMY-M1-platform-foundation.md` (56 reqs across phases 210–215: CAP/ORIGIN/PROFILE/MIG · LEASE/ENDPOINT/JAIL · ORCH/DISPATCH/READ/WEB/REF · BUDGET/CEIL/RATE/QUOTA/REVOKE · SKILL · AUDIT/TREE/INTRO). Each req → a row; each "Security invariants M1 must hold" → a HARD oracle; the profile resolver → a Track-M sweep (assistant/standard/unattended/max). (`.planning/live-tests/SECURE-AGENT-AUTONOMY-M1-test-plan.md` is the worked output of exactly this.)
+### Example 2 — MILESTONE: "Secure Agent Autonomy"
+STEP 1 finds the milestone's design doc — a platform-foundation doc with ~56 reqs across its phases: CAP/ORIGIN/PROFILE/MIG · LEASE/ENDPOINT/JAIL · ORCH/DISPATCH/READ/WEB/REF · BUDGET/CEIL/RATE/QUOTA/REVOKE · SKILL · AUDIT/TREE/INTRO. Each req → a row; each "Security invariants must hold" → a HARD oracle; the profile resolver → a Track-M sweep (assistant/standard/unattended/max). The worked test plan for that milestone is the output of exactly this method.
 
-### Example 3 — DESIGN DOC: a fresh `.planning/design/<feature>.md`
+### Example 3 — DESIGN DOC: a fresh design/spec document
 Read it → its "Success criteria" list becomes predicates verbatim; its "Threat model" / "invariants" become HARD oracles; its config table becomes Track-M pairs; its "Out of scope" tells you what NOT to test. Verify each cited `file:line` at HEAD; test the actual behavior; write the plan; drive per `00-MISSION.md`.

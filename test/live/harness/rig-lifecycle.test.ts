@@ -1,23 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * `rig-lifecycle.test.ts` — the DETERMINISTIC unit proof of the detached-rig respawn +
- * teardown DECISION logic (Phase 208 review WR-01/WR-02/INFO-3 fixes).
+ * teardown DECISION logic (the orphan-reap leak race, the EADDRINUSE respawn flake, and
+ * the bounded port-free settle).
  *
  * These cover the race/flake-sensitive transitions of `rig-daemon.ts` WITHOUT booting a
  * real daemon: the logic was extracted to `rig-lifecycle.ts` precisely so the
- * interleavings that leak a zombie (WR-01) or flake on EADDRINUSE (WR-02) are provable
+ * interleavings that leak a zombie or flake on EADDRINUSE are provable
  * with injected, side-effect-free seams.
  *
  * RED-first evidence (the pre-patch behavior these would catch):
- *   - WR-01: pre-patch `restartDaemon`/`/reset` spawned a fresh daemon WITHOUT checking
+ *   - Orphan-reap leak race: pre-patch `restartDaemon`/`/reset` spawned a fresh daemon WITHOUT checking
  *     `tearingDown` → a respawn during teardown's awaits leaked on the orphan-reap path.
  *     `respawnDaemon` now REFUSES under the latch, and `reapForTeardown` re-reaps a
  *     daemon that raced in — the two tests below FAIL against a no-latch respawn.
- *   - WR-02: pre-patch respawn IGNORED the reap return value + rebound the port blindly
+ *   - EADDRINUSE respawn flake: pre-patch respawn IGNORED the reap return value + rebound the port blindly
  *     → an EADDRINUSE flake when the SIGKILL grace overran. `respawnDaemon` now refuses
  *     when reap returned false / the port is held — the test FAILS if the respawn fires
  *     regardless.
- *   - INFO-3: a fixed 1500ms settle is replaced by `pollPortFree`; the test asserts it
+ *   - Bounded port-free settle: a fixed 1500ms settle is replaced by `pollPortFree`; the test asserts it
  *     returns the instant the port frees (deterministic, not a real-clock guess).
  *
  * A final WIRING guard greps `rig-daemon.ts` to prove it actually CONSUMES these helpers
@@ -57,11 +58,11 @@ function makeState(daemon: ChildProcess | undefined): LifecycleState {
 }
 
 // ---------------------------------------------------------------------------
-// WR-01 — teardown is AUTHORITATIVE: a respawn refuses under the latch, and
+// Teardown is AUTHORITATIVE: a respawn refuses under the latch, and
 //         teardown re-reaps a daemon that raced in before the latch took effect.
 // ---------------------------------------------------------------------------
 
-describe("respawnDaemon — WR-01 teardown-authoritative respawn refusal", () => {
+describe("respawnDaemon — teardown-authoritative respawn refusal", () => {
   it("REFUSES to respawn once tearingDown is set, never creating a daemon teardown cannot see", async () => {
     const state = makeState(fakeChild(100));
     state.tearingDown = true; // teardown has begun.
@@ -107,7 +108,7 @@ describe("respawnDaemon — WR-01 teardown-authoritative respawn refusal", () =>
   });
 
   it("re-reaps a daemon a racing /reset swapped in before the latch — NO daemon survives teardown (orphan-reap path)", async () => {
-    // The WR-01 interleaving: a /reset reassigned state.daemon to D2 in the window
+    // The orphan-reap interleaving: a /reset reassigned state.daemon to D2 in the window
     // between the latch being set and teardown's first reap reading it. teardown must
     // re-read state.daemon and reap the LATEST one too.
     const d1 = fakeChild(101);
@@ -160,11 +161,11 @@ describe("respawnDaemon — WR-01 teardown-authoritative respawn refusal", () =>
 });
 
 // ---------------------------------------------------------------------------
-// WR-02 — the in-proc respawn HONORS the reap result + polls isPortFree before
+// The in-proc respawn HONORS the reap result + polls isPortFree before
 //         rebinding: no EADDRINUSE race onto an occupied gateway port.
 // ---------------------------------------------------------------------------
 
-describe("respawnDaemon — WR-02 reap-aware, port-free-gated rebind", () => {
+describe("respawnDaemon — reap-aware, port-free-gated rebind", () => {
   it("REFUSES to rebind when reap returned false (the SIGKILL grace overran) — no EADDRINUSE race", async () => {
     const state = makeState(fakeChild(100));
     const spawn = vi.fn(() => fakeChild(200));
@@ -239,10 +240,10 @@ describe("respawnDaemon — WR-02 reap-aware, port-free-gated rebind", () => {
 });
 
 // ---------------------------------------------------------------------------
-// INFO-3 — the no-leak settle is a BOUNDED POLL, not a fixed real-clock sleep.
+// The no-leak settle is a BOUNDED POLL, not a fixed real-clock sleep.
 // ---------------------------------------------------------------------------
 
-describe("pollPortFree — INFO-3 bounded port-free settle (no fixed sleep)", () => {
+describe("pollPortFree — bounded port-free settle (no fixed sleep)", () => {
   it("returns true the instant the port frees, without exhausting the attempt budget", async () => {
     let calls = 0;
     const isPortFree = vi.fn(async () => {
@@ -282,13 +283,13 @@ describe("rig-daemon.ts wiring — the lifecycle helpers are the LIVE respawn/te
     expect(rigDaemonSrc).toMatch(/\breapForTeardown\b/);
   });
 
-  it("routes teardown through reapForTeardown so the authoritative re-reap is live (WR-01)", () => {
+  it("routes teardown through reapForTeardown so the authoritative re-reap is live", () => {
     // teardown must drive the authoritative latch+re-reap helper, not a bare
     // single reapDaemon(state.daemon, ...) that a racing /reset can outrun.
     expect(rigDaemonSrc).toMatch(/reapForTeardown\s*\(/);
   });
 
-  it("routes /restart and /reset respawn through respawnDaemon so the latch + port gate are live (WR-01/WR-02)", () => {
+  it("routes /restart and /reset respawn through respawnDaemon so the latch + port gate are live", () => {
     expect(rigDaemonSrc).toMatch(/respawnDaemon\s*\(/);
   });
 });

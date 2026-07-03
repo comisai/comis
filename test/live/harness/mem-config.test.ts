@@ -2,12 +2,11 @@
 /**
  * Unit tests for buildMemConfig — Stage-A, no daemon required.
  *
- * 260611 live-fire fix: the original buildMemConfig regex-patched keys at
- * schema-INVALID paths (embedding/memory under agents.default; boolean
- * includeTrustLevels) — every Stage-B daemon boot failed with
- * "Config validation failed: agents.default: Unrecognized key: 'embedding'".
- * The substring assertions here (e.g. /provider:\s*local/) passed for both the
- * wrong and the right placement, which is how the bug survived keyless CI.
+ * Regex-patching keys at schema-INVALID paths (embedding/memory under
+ * agents.default; boolean includeTrustLevels) makes every Stage-B daemon boot
+ * fail with "Config validation failed: agents.default: Unrecognized key:
+ * 'embedding'". Substring assertions (e.g. /provider:\s*local/) pass for both
+ * the wrong and the right placement, so they cannot catch that misplacement.
  *
  * These tests now assert the produced YAML:
  *   1. parses through the REAL AppConfigSchema (any misplaced key → loud fail),
@@ -106,7 +105,7 @@ describe("buildMemConfig — Behavior A: embedding patched at TOP level", () => 
 });
 
 describe("buildMemConfig — Behavior B/C: memory.* patched at TOP level", () => {
-  it("writes memory.recall.embeddingDimensions (Phase 226 nested it under memory.recall)", () => {
+  it("writes memory.recall.embeddingDimensions nested under memory.recall", () => {
     const p = build({ label: "dims", embeddingDimensions: 768 });
     const cfg = loadValid(p);
     expect(cfg.memory.recall.embeddingDimensions).toBe(768);
@@ -114,7 +113,7 @@ describe("buildMemConfig — Behavior B/C: memory.* patched at TOP level", () =>
     expect(cfg.memory.dbPath).toBe("test-memory-default.db");
   });
 
-  it("writes memory.enabled (Phase 226 renamed it from memory.costFeatures.enabled)", () => {
+  it("writes memory.enabled as the master cost gate", () => {
     const p = build({ label: "cost-off", costFeaturesEnabled: false });
     const cfg = loadValid(p);
     expect(cfg.memory.enabled).toBe(false);

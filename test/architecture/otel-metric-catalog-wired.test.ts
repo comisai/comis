@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Built-but-not-wired SOURCE GUARD for the OTel/Prometheus metric catalog
- * (CR-01 — the v2.28 "Observability Excellence" code-review finding).
+ * Built-but-not-wired SOURCE GUARD for the OTel/Prometheus metric catalog.
  *
- * "Built but not wired" is THIS program's #1 recurring blocker (caught by code
- * review every prior phase v2.14/v2.18/v2.22/v2.23/v2.24): a surface can exist,
+ * "Built but not wired" is a recurring blocker: a surface can exist,
  * compile, and pass its own unit tests while NOTHING produces it at runtime.
- * Phase 178 shipped a 30-entry {@link METRIC_CATALOG} but `wireMetricMapping`
+ * A 30-entry {@link METRIC_CATALOG} once shipped while `wireMetricMapping`
  * only incremented 11 of them + the spend gauges — so a `severity: critical`
  * alert (`ComisAuditSinkFailure`, keyed on `comis_audit_events_total`) could
  * NEVER fire, several other alerts were dead, and most Grafana panels rendered
@@ -14,7 +12,7 @@
  * panels GREEN because it checked catalog MEMBERSHIP, not whether a metric is
  * actually emitted — the exact gap this guard closes.
  *
- * This is the test that would have caught CR-01: EVERY {@link METRIC_CATALOG}
+ * This test enforces that EVERY {@link METRIC_CATALOG}
  * entry must have a PRODUCER — either
  *   (a) incremented via `addCounter(instruments, "<otelName>", …)` /
  *       `recordHistogram(instruments, "<otelName>", …)` in metric-mapping.ts, OR
@@ -63,7 +61,7 @@ beforeAll(async () => {
   METRIC_CATALOG = mod.METRIC_CATALOG;
 });
 
-describe("otel-metric-catalog-wired — every METRIC_CATALOG entry has a producer (CR-01)", () => {
+describe("otel-metric-catalog-wired — every METRIC_CATALOG entry has a producer", () => {
   it("sanity: the catalog loaded and the producer grep found a substantial set", () => {
     expect(METRIC_CATALOG.length, "METRIC_CATALOG not loaded from the extension").toBeGreaterThanOrEqual(29);
     const produced = collectProducedOtelNames();
@@ -80,7 +78,7 @@ describe("otel-metric-catalog-wired — every METRIC_CATALOG entry has a produce
       `These METRIC_CATALOG entries have NO producer (neither an addCounter/recordHistogram ` +
         `increment in metric-mapping.ts nor a createObservableGauge/createGauge registration in ` +
         `metric-mapping.ts / prometheus-surface.ts / otel-exporter.ts): ${unwired.join(", ")}. ` +
-        `This is the built-but-not-wired blocker (CR-01) — a catalogued metric with no producer ` +
+        `This is the built-but-not-wired blocker — a catalogued metric with no producer ` +
         `means a dead alert/panel ("No data"). Either WIRE a producer (subscribe the carrying bus ` +
         `event in wireMetricMapping and increment the metric with content-free MetricLabel labels, ` +
         `or register a gauge callback), OR REMOVE the entry from METRIC_CATALOG and every Grafana ` +

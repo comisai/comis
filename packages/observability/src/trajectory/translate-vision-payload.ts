@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Trajectory bridge payload translators for the vision-analysis
- * (`media.vision:*`) lifecycle (VIS-04, Phase 187).
+ * (`media.vision:*`) lifecycle.
  *
  * Extracted from `translate-payload.ts` (which is at the file-size cap) — the
  * main `translatePayload` switch delegates its three `media.vision:*` cases here.
- * BEHAVIOR-NEUTRAL move (Phase 196 file-size split): the returned shapes are
+ * BEHAVIOR-NEUTRAL move (file-size split): the returned shapes are
  * byte-identical to the previously-inline arms, pinned by the existing
  * `media.vision:*` arm tests in `translate-payload.test.ts` + the `never`
  * exhaustiveness check below. This is the EXACT precedent that produced
  * `translate-video-payload.ts`.
  *
- * CONTENT-FREE (T-187-12): each arm forwards ONLY content-free ids / labels /
+ * CONTENT-FREE: each arm forwards ONLY content-free ids / labels /
  * the `path` / numbers / `outcome` / `errorKind` and STRIPS the envelope
  * (`agentId` / `sessionKey` / `timestamp`) — NEVER the image bytes, the analysis
  * prompt, the model's answer, or a credential. `costUsd` rides
- * `media.vision:completed` (VIS-04 Route a — the image:generated cost-carry
+ * `media.vision:completed` (the image:generated cost-carry
  * precedent); it + `model` spread presence-conditionally (the registry/
- * gemini-video tiers return no cost — Pitfall 4 — so an absent value never
+ * gemini-video tiers return no cost, so an absent value never
  * appears as an `undefined` key).
  *
  * @module

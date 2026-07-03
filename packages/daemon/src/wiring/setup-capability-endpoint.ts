@@ -610,7 +610,7 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
     // this boundary does NOT share that property, so it must strip here.
     //
     // Inject _agentId + _capabilities and dispatch through the shipped sink.
-    // _agentId (Pitfall 2): makes assertNotAgentOrigin fire for admin methods.
+    // _agentId: makes assertNotAgentOrigin fire for admin methods.
     // _capabilities: makes each handler's requireCapability fire (no second gate
     // here — the endpoint passes the lease caps through verbatim and lets the
     // shipped per-handler gate decide). Via dispatchAudited so a

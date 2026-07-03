@@ -20,14 +20,14 @@
  *   using TRUST_STRIP_TEST_BEARER, calls tools/call memory_search, and asserts:
  *   - wrapExternalContent taint markers present (expectMcpTaintMarkers)
  *   - _trustLevel:admin injection is stripped (expectTrustLevelStripped)
- *   FND-10/FND-11 afterEach oracle runs after each test.
+ *   The log and persistence oracles run in afterEach after each test.
  *
  * Stage-C (it.skip):
  *   cwd/rlimits sandbox per-server workspace isolation — requires a configured
  *   MCP server with cwd set. Deferred to operator run.
  *
  * Security:
- *   T-140-04-01 (Elevation of Privilege): expectTrustLevelStripped verifies that
+ *   Elevation of Privilege: expectTrustLevelStripped verifies that
  *   the product's delete args["_trustLevel"] guard is enforced.
  *
  * costTier: "¢" (memory_search is a local tool, no LLM cost in Stage-B).
@@ -171,13 +171,13 @@ describe.skipIf(!isLive)(
     });
 
     afterEach(async () => {
-      // Flush daemon log buffer before snapshotting (T-134-flush).
+      // Flush daemon log buffer before snapshotting.
       await flushDaemonLogs(driver);
 
-      // FND-10: No unexpected errors in the daemon log.
+      // Log oracle: no unexpected errors in the daemon log.
       await runLogOracle(driver.capturedLogLines(), { expectedErrors: [] });
 
-      // FND-11: persistence oracle — only run if memory.db was created.
+      // Persistence oracle — only run if memory.db was created.
       const dbPath = join(driver.getDataDir(), "memory.db");
       if (existsSync(dbPath)) {
         await runDbOracle(dbPath, {});
@@ -243,7 +243,7 @@ describe.skipIf(!isLive)(
           };
 
           // Verifies the product's delete args["_trustLevel"] guard is enforced.
-          // A regression would fail this assertion (T-140-04-01).
+          // A regression would fail this assertion.
           await expectTrustLevelStripped(result);
         } finally {
           await close();

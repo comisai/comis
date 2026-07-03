@@ -238,11 +238,11 @@ function likeDbReturning(rowsByScope: {
 describe("lcd-fts — LIKE fallback degrades a corrupt hit PER ROW, not all-or-nothing", () => {
   it("searchLcdImpl LIKE summaries fallback keeps the valid hit and skips only the corrupt row (no undefined snippet leaks)", () => {
     // One valid summary hit + one schema-violating row (snippet NULL — a drifted/
-    // corrupt column the typed write path cannot produce). The pre-patch LIKE
-    // fallback cast `raw as { ref_id, snippet }` with NO validation, so the bad
-    // row's `undefined` snippet flowed straight into the LcdSearchHit (and onward
-    // into wrapExternalContent at the tool boundary). The fix routes the LIKE rows
-    // through the same per-row `parseOptionalRow`+skip the MATCH path uses.
+    // corrupt column the typed write path cannot produce). Without validation, an
+    // unchecked `raw as { ref_id, snippet }` cast would let the bad row's
+    // `undefined` snippet flow straight into the LcdSearchHit (and onward into
+    // wrapExternalContent at the tool boundary). The LIKE rows go through the
+    // same per-row `parseOptionalRow`+skip the MATCH path uses.
     const db = likeDbReturning({
       summary: [
         { ref_id: "s-good", snippet: "the quarterly revenue report" },
@@ -261,7 +261,7 @@ describe("lcd-fts — LIKE fallback degrades a corrupt hit PER ROW, not all-or-n
   });
 
   it("searchLcdImpl LIKE messages fallback skips a corrupt row (undefined ref_id) instead of emitting it", () => {
-    // A corrupt message row whose projected ref_id is missing — the pre-patch
+    // A corrupt message row whose projected ref_id is missing — an unchecked
     // cast would `seen.add(undefined)` and push a hit with `refId: undefined`.
     const db = likeDbReturning({
       message: [

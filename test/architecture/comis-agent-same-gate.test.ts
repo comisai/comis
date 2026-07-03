@@ -2,7 +2,7 @@
 /**
  * Architecture gate: the `comis-agent` CLI surface reaches the SAME capability
  * gate the typed tools and the `orchestrate(script)` surface reach — no weaker
- * path, no advertised-but-denied verb (CLI-02, v8 §7 / RESEARCH Pitfall 3).
+ * path, no advertised-but-denied verb.
  *
  * Surface 3 (the in-jail `comis-agent` CLI) is shell fluency over the SAME
  * handlers + the SAME `requireCapability` gate as Surface 1 (typed tools) and
@@ -10,8 +10,8 @@
  * the cap is DERIVED from the existing cap-maps. The success criterion "same
  * gate, no weaker path" is true BY CONSTRUCTION (the module-load assertion in
  * `cli-subcommand-map.ts` already aborts import on a non-cap / non-orch /
- * deny-by-origin target), but a regression-proof TEST is demanded — and the
- * plan-check found a real hole the module-load assertion deliberately leaves to
+ * deny-by-origin target), but a regression-proof TEST is demanded — and there is
+ * a real hole the module-load assertion deliberately leaves to
  * THIS test: a denylisted `orch:skill` target like `skills.create` is `orch:*`
  * (so it passes the orch check) yet the cap socket's denylist pre-check throws
  * BEFORE `validate()` — i.e. it is a CLOSED DOOR, not a same gate. The
@@ -37,7 +37,7 @@
  * The denylist is DERIVED from the daemon export (not a hand-copied literal), so
  * a new denylisted method is covered automatically. A future subcommand that
  * reaches a weaker / denylisted / deny-by-origin path becomes a
- * `pnpm test:architecture` BUILD failure (T-219-19 / T-219-20).
+ * `pnpm test:architecture` BUILD failure.
  *
  * @module
  */
@@ -52,7 +52,7 @@ import {
   type CliCallTarget,
 } from "@comis/core";
 // DERIVED denylist source — the SAME closed-door set the cap socket's pre-check
-// uses (re-exported from the @comis/daemon top-level barrel by 219-05). Importing
+// uses (re-exported from the @comis/daemon top-level barrel). Importing
 // it here keeps the denylist check from drifting into a hand-maintained literal.
 import { DENYLISTED_RPC_METHODS } from "@comis/daemon";
 
@@ -70,7 +70,7 @@ interface GateVerdict {
 /**
  * The HARDENED same-gate predicate, factored as a PURE function over the entry +
  * the cap-maps + the denylist so it runs identically against the real
- * `CLI_SUBCOMMAND_MAP` AND the poisoned negative fixtures (Pitfall 3 — the
+ * `CLI_SUBCOMMAND_MAP` AND the poisoned negative fixtures (the
  * discriminating power is proven, not asserted).
  *
  * A target "resolves to the same gate" iff:
@@ -149,7 +149,7 @@ const CLI_ENTRIES: ReadonlyArray<readonly [string, CliCallTarget]> = Object.entr
   CLI_SUBCOMMAND_MAP,
 ) as ReadonlyArray<readonly [string, CliCallTarget]>;
 
-describe("comis-agent CLI surface reaches the same capability gate (no weaker path, CLI-02)", () => {
+describe("comis-agent CLI surface reaches the same capability gate (no weaker path)", () => {
   it("derives the denylisted-method set from the @comis/daemon export (not a drifting literal)", () => {
     // Soundness anchor: the import resolved to the REAL daemon denylist (so the
     // proof can never silently empty). skills.create (the keystone closed door)
@@ -230,7 +230,7 @@ describe("comis-agent CLI surface reaches the same capability gate (no weaker pa
   it("rejects a weaker-path, unmapped, deny-by-origin, OR denylisted target (the predicate discriminates)", () => {
     // NEGATIVE FIXTURES — the SAME predicate MUST return ok:false on each.
     // These are the exact cases a non-discriminating "green-anyway" test would
-    // miss; skills.create is the keystone the plan-check identified.
+    // miss; skills.create is the keystone closed-door case.
     const poisoned: ReadonlyArray<readonly [string, CliCallTarget]> = [
       // unmapped admin/persistence method (not even a HANDLER_CAPABILITY_MAP key)
       ["config.apply", { kind: "method", method: "config.apply" as never }],
@@ -259,7 +259,7 @@ describe("comis-agent CLI surface reaches the same capability gate (no weaker pa
   });
 
   it("would PASS a denylisted target if the denylist check were removed (proves the hardening is load-bearing)", () => {
-    // Counter-proof of Pitfall 3: run the predicate with an EMPTY denylist and
+    // Counter-proof: run the predicate with an EMPTY denylist and
     // confirm skills.create then PASSES — i.e. the ONLY thing failing it in the
     // real run is the derived denylist (the keystone hardening), not luck.
     const skillsCreate: CliCallTarget = { kind: "method", method: "skills.create" as never };

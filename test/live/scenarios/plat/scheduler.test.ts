@@ -234,7 +234,7 @@ describe("PLAT-04 Stage-B — heartbeat ok / alert classification", () => {
 
 describe.skipIf(!isLive)("PLAT-04 Stage-C — real-LLM-turn-from-cron (COMIS_LIVE)", () => {
   it.skip("SKIPPED(no-live/no-creds) — a cron job whose executeJob runs a real agent turn through a real provider + a real-agent heartbeat source; needs COMIS_LIVE + a real provider key + a daemon container", () => {
-    // Deferred to a COMIS_LIVE operator run + PROVE-148. The firing/recording/alerting mechanics (with a stub
+    // Deferred to a COMIS_LIVE operator run. The firing/recording/alerting mechanics (with a stub
     // executeJob/source) are covered in Stage-B above.
   });
 });

@@ -1,24 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * (Linux/VPS) — the real-bwrap CONTAINMENT proof for the `orchestrate` runner
- * (ORCH-01/02, READ-02). It drives the GENUINE {@link createOrchestrateTool}
+ * (Linux/VPS) — the real-bwrap CONTAINMENT proof for the `orchestrate` runner.
+ * It drives the GENUINE {@link createOrchestrateTool}
  * end-to-end against a real `BwrapProvider` jail and a real cap-socket server
- * (mirroring the Phase-211 endpoint's newline-JSON wire), proving on the
+ * (mirroring the capability endpoint's newline-JSON wire), proving on the
  * production Linux host class that:
  *   - the jailed child runs `--unshare-net`: a direct TCP egress FAILS; only the
- *     bound cap socket is reachable (ORCH-01 / T-212-19).
+ *     bound cap socket is reachable.
  *   - `~/.comis` is masked: the jail binds only the workspace + the curated
- *     SYSTEM_RO_PATHS, so a data-dir read returns ENOENT/empty (T-212-20).
+ *     SYSTEM_RO_PATHS, so a data-dir read returns ENOENT/empty.
  *   - stdout-only: a script that writes to stderr + computes a result + console
- *     .logs it → only the console.log slice re-enters; stderr never does
- *     (T-212-21).
- *   - ORCH-02 env-scrub (real spawn): a `process.env` dump shows NO
+ *     .logs it → only the console.log slice re-enters; stderr never does.
+ *   - env-scrub (real spawn): a `process.env` dump shows NO
  *     `*KEY* / *TOKEN* / *SECRET*` but DOES show COMIS_CAP_LEASE/COMIS_ORCH_SOCKET
- *     (the lease vars survive via placeholders-merged-last — Pitfall 4).
- *   - READ-02 in-jail jq: a ResultRef materialized in `results/` is queryable via
+ *     (the lease vars survive via placeholders-merged-last).
+ *   - in-jail jq: a ResultRef materialized in `results/` is queryable via
  *     the cap socket's `jq` route; the slice returns, the full payload never
  *     enters stdout unless explicitly logged.
- *   - QRY-01 in-jail sql: a tabular ResultRef in `results/` is queried via the
+ *   - in-jail sql: a tabular ResultRef in `results/` is queried via the
  *     cap socket's `sql` route (the same daemon-side DuckDB round-trip); only the
  *     queried row slice returns, the big payload never leaks.
  *
@@ -27,7 +26,7 @@
  * `bwrap-cap-socket.linux.test.ts`) — so the macOS `pnpm validate` floor reports
  * it skipped, never failed. On `comisvps` (`pnpm validate:full`) it runs as the
  * VPS-tier gate for the orchestrate containment claim (deferred to the operator,
- * exactly like the Phase-211 `.linux` suites).
+ * exactly like the other `.linux` suites).
  *
  * @module
  */
@@ -246,13 +245,13 @@ describe.skipIf(!jailAvailable)("orchestrate jail containment (real bwrap, Linux
   );
 
   it(
-    "ORCH-02 env-scrub holds in a real spawn: secrets stripped, lease vars survive",
+    "env-scrub holds in a real spawn: secrets stripped, lease vars survive",
     { timeout: 20_000 },
     async () => {
       server = await startCapServer(() => null);
       const tool = makeTool();
       // Dump the in-jail env; assert the scrub stripped the decoys but the lease
-      // placeholders survived (merged AFTER the scrub — Pitfall 4).
+      // placeholders survived (merged AFTER the scrub).
       const script = [
         'const keys = Object.keys(process.env);',
         'const leaked = keys.filter((k) => /KEY|TOKEN|SECRET/i.test(k));',
@@ -271,7 +270,7 @@ describe.skipIf(!jailAvailable)("orchestrate jail containment (real bwrap, Linux
   );
 
   it(
-    "READ-02 in-jail jq: a ResultRef in results/ is queryable via the cap socket; the slice returns",
+    "in-jail jq: a ResultRef in results/ is queryable via the cap socket; the slice returns",
     { timeout: 20_000 },
     async () => {
       // The cap server answers the `jq` route by returning only the requested
@@ -328,7 +327,7 @@ describe.skipIf(!jailAvailable)("orchestrate jail containment (real bwrap, Linux
   );
 
   it(
-    "QRY-01 in-jail sql: a tabular ResultRef in results/ is queried via the cap socket; only the row slice returns",
+    "in-jail sql: a tabular ResultRef in results/ is queried via the cap socket; only the row slice returns",
     { timeout: 20_000 },
     async () => {
       // The cap server answers the `sql` route by returning ONLY the queried row
@@ -388,7 +387,7 @@ describe.skipIf(!jailAvailable)("orchestrate jail containment (real bwrap, Linux
   );
 
   it(
-    "CR-01: the daemon-side duckdb cannot read a host file OUTSIDE the run workspace (allowed_directories + external-access-off)",
+    "the daemon-side duckdb cannot read a host file OUTSIDE the run workspace (allowed_directories + external-access-off)",
     { timeout: 20_000 },
     async () => {
       // The real exploit class: the model writes a `sql` query that names an
@@ -396,7 +395,7 @@ describe.skipIf(!jailAvailable)("orchestrate jail containment (real bwrap, Linux
       // The cap server routes `sql` to the GENUINE daemon-side core (the same
       // createOrchestrateExecutorCores duckdb round-trip), so this proves the
       // running duckdb is confined to the workspace and refuses the host read —
-      // the secret canary never re-enters stdout. (T-221-QRY-01 / CR-01.)
+      // the secret canary never re-enters stdout.
       const { createOrchestrateExecutorCores } = await import("./orchestrate-executor-cores.js");
       const cores = createOrchestrateExecutorCores({ logger: makeLogger() });
       // A secret file OUTSIDE the jailed workspace (the daemon CAN read it on
@@ -418,7 +417,7 @@ describe.skipIf(!jailAvailable)("orchestrate jail containment (real bwrap, Linux
           }
           return null;
         });
-        // Resolve the real core directly (the deterministic CR-01 assertion):
+        // Resolve the real core directly (the deterministic assertion):
         // a read_text over the out-of-workspace secret must NOT return the canary.
         const result = await cores.fileExecutors.sql(
           { path: "results/rows.jsonl", query: `SELECT content FROM read_text('${outOfWsPath}')` },

@@ -2,12 +2,12 @@
 /**
  * US-01 / J1 — Research assistant (cross-session research + recall).
  *
- * §7.7 flow: channel text → web search (Brave/Tavily) → read links → synthesize →
+ * Flow: channel text → web search (Brave/Tavily) → read links → synthesize →
  * STORE memory → reply; *later session*: "what did you find about X?" → recall.
  * Subsystems composed: A core-loop, B LLM, N search/web, E memory(store+recall),
  * J session/cross-session, S delivery.
  *
- * Gated behind WEB + MEM Stage-C certs (143/139). In sandbox: shape validated +
+ * Gated behind WEB + MEM Stage-C certs. In sandbox: shape validated +
  * requires-skip; the real-model cross-session recall runs at Stage-D.
  *
  * @module

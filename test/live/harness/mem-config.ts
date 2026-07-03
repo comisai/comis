@@ -3,14 +3,13 @@
  * buildMemConfig — shared helper for MEM scenario tests.
  *
  * Builds a temp YAML config file patching memory-specific keys at their REAL
- * schema paths (260611 live-fire fix — the original regex patcher wrote
- * embedding/memory under agents.default, which AppConfigSchema rejects with
- * "Unrecognized key", so every Stage-B daemon boot failed; keyless CI never
- * caught it because Stage-B is COMIS_LIVE-gated):
+ * schema paths. Patching embedding/memory under agents.default instead makes
+ * AppConfigSchema reject them with "Unrecognized key", failing every Stage-B
+ * daemon boot; keyless CI cannot catch that because Stage-B is COMIS_LIVE-gated:
  *
  *   - embedding.provider / embedding.local.gpu   → TOP-LEVEL embedding (schema.ts)
  *   - memory.recall.embeddingDimensions          → memory.recall (schema-memory.ts)
- *   - memory.enabled (was costFeatures.enabled)  → TOP-LEVEL memory
+ *   - memory.enabled                             → TOP-LEVEL memory
  *   - rag.*                                      → agents.default.rag (schema-agent-runtime.ts),
  *     using the REAL RagConfigSchema shapes (schema-agent-prompt.ts):
  *       fts/vector     → rag.lanes.<lane>.weight (these lanes have NO enabled knob;
@@ -125,15 +124,15 @@ export function buildMemConfig(opts: MemConfigOpts): string {
   // Applied UNCONDITIONALLY (unless the test explicitly targets openai):
   // embedding.enabled defaults true with provider "auto" → local, so even
   // configs that never set embeddingProvider (e.g. MEM-03's ragConfig-only
-  // lane combos) boot the local embedder — observed re-downloading mid-run
-  // when this knob was nested inside the embeddingProvider branch (260611).
+  // lane combos) boot the local embedder — which re-downloads mid-run
+  // when this knob is nested inside the embeddingProvider branch instead.
   const embedModelPath = process.env["COMIS_LIVE_EMBED_MODEL_PATH"];
   if (embedModelPath && opts.embeddingProvider !== "openai") {
     ensureObj(ensureObj(doc, "embedding"), "local")["modelUri"] = embedModelPath;
   }
 
-  // ── memory.* — TOP-LEVEL (recall knobs nested under memory.recall since
-  //    Phase 226; the master cost gate is memory.enabled, was costFeatures.enabled) ──
+  // ── memory.* — TOP-LEVEL (recall knobs nested under memory.recall;
+  //    the master cost gate is memory.enabled) ──
   if (opts.embeddingDimensions !== undefined) {
     ensureObj(ensureObj(doc, "memory"), "recall")["embeddingDimensions"] = opts.embeddingDimensions;
   }

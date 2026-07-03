@@ -74,7 +74,7 @@ function makeFakeEngine(opts: {
   pipelineRejects?: boolean;
   /** Throw at call time (AFTER a successful load) to exercise the transcribe seam. */
   transcribeThrows?: boolean;
-  /** Return this shape from the transcriber instead of `{ text }` (WR-03). */
+  /** Return this shape from the transcriber instead of `{ text }`. */
   transcribeResult?: unknown;
 }): {
   mod: TransformersModule;
@@ -221,7 +221,7 @@ describe("createLocalWhisperAdapter", () => {
     expect(fake.pipelineSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("does NOT evict the loaded singleton on a transcribe-time throw, and labels it 'dependency' not a load failure (WR-01)", async () => {
+  it("does NOT evict the loaded singleton on a transcribe-time throw, and labels it 'dependency' not a load failure", async () => {
     // The model LOADS fine (pipeline resolves), but the transcriber THROWS at
     // call time — a per-call inference failure, not a load failure.
     const fake = makeFakeEngine({ transcribeThrows: true });
@@ -249,7 +249,7 @@ describe("createLocalWhisperAdapter", () => {
     }
   });
 
-  it("attaches the SttErrorKind to every surfaced failure branch (WR-02)", async () => {
+  it("attaches the SttErrorKind to every surfaced failure branch", async () => {
     // Empty-buffer branch → 'dependency'.
     const emptyAdapter = createLocalWhisperAdapter({
       dataDir: DATA_DIR,
@@ -292,7 +292,7 @@ describe("createLocalWhisperAdapter", () => {
     }
   });
 
-  it("returns err (not a phantom ok with undefined text) when the engine yields an unexpected output shape (WR-03)", async () => {
+  it("returns err (not a phantom ok with undefined text) when the engine yields an unexpected output shape", async () => {
     const fake = makeFakeEngine({ transcribeResult: { notText: 123 } });
     const adapter = createLocalWhisperAdapter({
       dataDir: DATA_DIR,
@@ -349,7 +349,7 @@ describe("createLocalWhisperAdapter", () => {
     }
   });
 
-  it("treats a zero-byte decoded PCM as a decode failure, not an empty Float32Array (WR-04)", () => {
+  it("treats a zero-byte decoded PCM as a decode failure, not an empty Float32Array", () => {
     // ffmpeg "succeeded" (exit 0) but wrote no PCM — a valid container with no
     // decodable audio stream, or a 0-duration clip. The old code produced an
     // empty Float32Array fed into the engine; now it must be a decode error.
@@ -361,7 +361,7 @@ describe("createLocalWhisperAdapter", () => {
     }
   });
 
-  it("treats a non-multiple-of-4 decoded PCM length as a decode failure (WR-04)", () => {
+  it("treats a non-multiple-of-4 decoded PCM length as a decode failure", () => {
     // f32le PCM must be a whole number of 4-byte float samples; 1-3 stray bytes
     // are a decode anomaly, not a sample to silently truncate.
     const result = __pcmBufferToSamplesForTests(Buffer.alloc(6)); // 6 % 4 !== 0
@@ -371,7 +371,7 @@ describe("createLocalWhisperAdapter", () => {
     }
   });
 
-  it("decodes a valid 4-byte-multiple PCM buffer into the right number of samples (WR-04)", () => {
+  it("decodes a valid 4-byte-multiple PCM buffer into the right number of samples", () => {
     const buf = Buffer.alloc(12); // 3 float32 samples
     buf.writeFloatLE(0.5, 0);
     buf.writeFloatLE(-0.25, 4);
@@ -405,13 +405,13 @@ describe("createLocalWhisperAdapter", () => {
   });
 
   // ===========================================================================
-  // SEC-03: model-download integrity hardening (pinned id + size-floor +
-  // confirm fail-closed). HONEST scope: pinned id + TLS + the existing
-  // fail-closed model_load_failed seam + an OPTIONAL size-floor. There is NO
-  // caller-visible content-hash (transformers.js exposes none) — so NO test
-  // mocks a "hash mismatch" the production code never computes (Pitfall 4).
+  // Model-download integrity hardening (pinned id + size-floor + confirm
+  // fail-closed). HONEST scope: pinned id + TLS + the existing fail-closed
+  // model_load_failed seam + an OPTIONAL size-floor. There is NO caller-visible
+  // content-hash (transformers.js exposes none) — so NO test mocks a "hash
+  // mismatch" the production code never computes.
   // ===========================================================================
-  describe("SEC-03 model-download integrity", () => {
+  describe("model-download integrity", () => {
     it("loads the model id from the pinned MODEL_IDS map (onnx-community/whisper-*) for a known key", async () => {
       const fake = makeFakeEngine({});
       const adapter = createLocalWhisperAdapter({
@@ -446,7 +446,7 @@ describe("createLocalWhisperAdapter", () => {
       expect(modelId).toBe("onnx-community/whisper-base");
     });
 
-    it("fails closed with model_load_failed and resets the singleton when the post-load size-floor reports a near-zero cached model (SEC-03)", async () => {
+    it("fails closed with model_load_failed and resets the singleton when the post-load size-floor reports a near-zero cached model", async () => {
       const fake = makeFakeEngine({ transcribeText: "should-never-be-reached" });
       // The injected size seam reports an implausibly small on-disk model — a
       // truncated/partial download masquerading as a loaded pipeline.
@@ -532,12 +532,12 @@ describe("createLocalWhisperAdapter — default seams (real lazy-import + ffmpeg
     }
   });
 
-  it("the DEFAULT statModelCache seam enforces NO size-floor in production (WR-02 honest contract) — a normal load proceeds with no statModelCache injected", async () => {
-    // WR-02: the SEC-03 size-floor is a TEST-ONLY seam. The production default
+  it("the DEFAULT statModelCache seam enforces NO size-floor in production (honest contract) — a normal load proceeds with no statModelCache injected", async () => {
+    // The size-floor is a TEST-ONLY seam. The production default
     // (defaultStatModelCache) returns undefined because the transformers.js etag
-    // cache layout is not a documented contract (guessing a path is the §2.10 bug
-    // class). So with NO statModelCache injected, the size-floor is INERT — the
-    // load proceeds on the live SEC-03 triad (pinned id + TLS + fail-closed load),
+    // cache layout is not a documented contract (a guessed path may not exist).
+    // So with NO statModelCache injected, the size-floor is INERT — the
+    // load proceeds on the live triad (pinned id + TLS + fail-closed load),
     // NOT on a content/size integrity check. This locks the documented behavior so
     // a reader does not believe corrupt-download size protection runs in prod.
     const fake = makeFakeEngine({ transcribeText: "ok-no-size-floor" });

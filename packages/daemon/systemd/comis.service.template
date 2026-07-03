@@ -61,7 +61,7 @@ WatchdogSec=30s
 TimeoutStopSec=45
 
 # KillMode=process: on stop, signal ONLY the main daemon process — NOT the whole
-# cgroup (the default `control-group`). REQUIRED for durable terminal drives (DUR-01):
+# cgroup (the default `control-group`). REQUIRED for durable terminal drives:
 # a durable session runs its child inside a detached `tmux new-session -d` server that
 # daemonizes (reparented to init) but REMAINS a member of this unit's cgroup — the daemon
 # can't move it out (ProtectControlGroups=yes + non-root @USER@ + no user bus). With the
@@ -102,7 +102,7 @@ EnvironmentFile=-@ENV_FILE@
 ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=yes
-# TERMRW-01: grant the WHOLE service home read-write. The terminal driver's `filesystem: home`
+# Grant the WHOLE service home read-write. The terminal driver's `filesystem: home`
 # scope runs driven CLIs (claude, codex, …) that persist state in their own home dirs
 # (~/.claude, ~/.codex, ~/.local); the bwrap jail binds the DAEMON's view of ~/, so a read-only
 # home read-onlys those dirs and the CLI exits at launch. The bwrap jail (uid/network scope +

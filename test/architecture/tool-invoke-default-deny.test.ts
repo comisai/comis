@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Architecture gate: the `tool.invoke` default-deny-by-absence invariant
- * (Phase 212, DISPATCH-02).
+ * Architecture gate: the `tool.invoke` default-deny-by-absence invariant.
  *
  * Default-deny is the ABSENCE of a `TOOL_CAPABILITY_MAP` entry: an arbitrary
- * unmapped tool name resolves to `undefined`, which the Plan 02 dispatch turns
+ * unmapped tool name resolves to `undefined`, which the dispatch turns
  * into a `CapabilityDeniedError` (undispatchable). This pins that an unknown /
  * not-yet-defined / admin tool can never be dispatched as if allowed.
  *
@@ -32,7 +31,7 @@ describe("tool.invoke default-deny by absence", () => {
   it("the curated surface holds only known read/web tool names", () => {
     // Defense-in-depth: enumerate the allowed names so an accidental future
     // addition of an admin tool is caught here too (not just by the denylist
-    // arch-test). This is the closed surface DISPATCH-02 protects.
+    // arch-test). This is the closed surface the default-deny gate protects.
     const allowed = new Set(Object.keys(TOOL_CAPABILITY_MAP));
     const expected = new Set([
       "memory_search",

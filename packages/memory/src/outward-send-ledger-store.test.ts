@@ -177,7 +177,7 @@ describe("createSqliteOutwardSendLedger — failure + reconcile", () => {
     expect(found.value?.state).toBe("committed");
   });
 
-  it("resolveReconcile 'not_sent' records the verdict but KEEPS the prior state for replay (Pitfall 2)", async () => {
+  it("resolveReconcile 'not_sent' records the verdict but KEEPS the prior state for replay", async () => {
     const ledger = createSqliteOutwardSendLedger(db, nowMs);
     await ledger.begin(makeBegin());
     await ledger.markUnknown("run-A", 0);
@@ -285,7 +285,7 @@ describe("createSqliteOutwardSendLedger — content-free + corrupt-row resilienc
   });
 });
 
-describe("ensureOutwardLedgerTable wiring — real initSchema layout (Pitfall 5)", () => {
+describe("ensureOutwardLedgerTable wiring — real initSchema layout", () => {
   it("the REAL initSchema creates outward_send_ledger + the UNIQUE idx_osl_idempotency index", () => {
     // A table defined in schema-outward-ledger.ts but not wired into initSchema
     // is MISSING at runtime — assert against the REAL initSchema, not the local

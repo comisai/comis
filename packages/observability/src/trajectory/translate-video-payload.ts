@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Trajectory bridge payload translators for the `video:*` lifecycle (OBS-04,
- * Phase 192).
+ * Trajectory bridge payload translators for the `video:*` lifecycle.
  *
  * Extracted from `translate-payload.ts` (which is at the file-size cap) — the
  * main `translatePayload` switch delegates its five `video:*` cases here. No
@@ -9,13 +8,13 @@
  * translate-payload.ts header documents the same split rationale for the bridge
  * table itself).
  *
- * CONTENT-FREE (T-192-01): each arm forwards ONLY content-free ids / labels /
+ * CONTENT-FREE: each arm forwards ONLY content-free ids / labels /
  * numbers / `outcome` / `errorKind` / booleans and STRIPS the envelope
  * (agentId / sessionKey / timestamp) — NEVER the prompt, the video bytes, a
  * credential, or the Veo keyed-download-URL. `costUsd` rides `video:generated`
- * (OBS-03 Route a — the image:generated cost-carry precedent); it + model +
+ * (the image:generated cost-carry precedent); it + model +
  * sizeBytes + durationSecs spread presence-conditionally (FAL reports no actual
- * cost — Pitfall 4 — so an absent value never appears as an `undefined` key).
+ * cost, so an absent value never appears as an `undefined` key).
  *
  * @module
  */

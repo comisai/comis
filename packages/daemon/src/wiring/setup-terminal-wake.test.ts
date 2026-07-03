@@ -784,14 +784,14 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
     expect(js.store.remove, "a lost/crash must NOT remove the durable journal (preserve-on-failure)").not.toHaveBeenCalled();
   });
 
-  it("BL-02 (the boot-race gap): a wake LAZY-SEEDS a recovered durable journal even when terminal:drive_reattached was DROPPED at boot — the resumed drive does NOT re-answer an already-answered prompt", async () => {
+  it("the boot-race gap: a wake LAZY-SEEDS a recovered durable journal even when terminal:drive_reattached was DROPPED at boot — the resumed drive does NOT re-answer an already-answered prompt", async () => {
     // The boot race: the registry's recover-on-boot emits terminal:drive_reattached during the
-    // FLOOR-01 sweep BEFORE setupTerminalWake subscribes, so the event is lost. The robust fix
+    // boot sweep BEFORE setupTerminalWake subscribes, so the event is lost. The robust fix
     // is order-independent: the holder lazy-seeds the journal from store.load on the FIRST
     // woken turn of a recovered session (when its in-memory journal is empty). Here we seed the
     // on-disk journal as already-answered "pattern:0" and fire a wake WITHOUT ever firing
     // drive_reattached/drive_promoted (simulating the dropped boot event) — the woken turn must
-    // resume from disk + SKIP re-answering pattern:0 (resume, don't re-answer — I10/DUR-02).
+    // resume from disk + SKIP re-answering pattern:0 (resume, don't re-answer).
     const seeded = new Map<string, DriveJournalShape>([
       ["a/s-boot", { objective: "build the app", lastClassification: "awaiting-input", lastScreenDigest: "", answeredPrompts: ["pattern:0"], stepsTried: ["ran:build"], elapsedMs: 5_000, interactions: 4, costUsd: 0, truncations: 0 }],
     ]);
@@ -802,16 +802,16 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
     await flush();
 
     // The holder lazy-loaded the persisted journal (the resume read happened on the first wake).
-    expect(js.store.load, "the first wake must lazy-load the recovered journal (BL-02)").toHaveBeenCalledWith("a", "s-boot");
+    expect(js.store.load, "the first wake must lazy-load the recovered journal").toHaveBeenCalledWith("a", "s-boot");
     // RESUME-no-re-answer (I10): pattern:0 was already answered before the crash, so the woken
     // turn must NOT re-send the canned keystroke for it (the loop-guard ring is cold post-restart,
     // so without the lazy-seed the resume guard has nothing to consult and re-answers).
-    expect(built.registry.sendText, "a resumed drive must NOT re-answer an already-answered prompt (BL-02/I10)").not.toHaveBeenCalled();
+    expect(built.registry.sendText, "a resumed drive must NOT re-answer an already-answered prompt").not.toHaveBeenCalled();
     const reAnswered = built.bus.emitted.find((e) => e.event === "terminal:auto_answered");
     expect(reAnswered, "no auto_answered for an already-answered prompt on resume").toBeUndefined();
   });
 
-  it("BL-02: a wake for a recovered durable session with NO persisted journal is a no-op load (no throw; a plain session is unaffected)", async () => {
+  it("a wake for a recovered durable session with NO persisted journal is a no-op load (no throw; a plain session is unaffected)", async () => {
     built = buildDur(dataDir, { screen: "Press enter to continue" }); // empty store
     const { js } = built as Built & { js: ReturnType<typeof makeJournalStore> };
     built.bus.fireInputNeeded("s-none", "a");
@@ -825,9 +825,9 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
     expect(js.store.load, "the lazy-seed load is attempted at most once per session per life").not.toHaveBeenCalled();
   });
 
-  it("DUR-02 wiring (source guard): the journal.set wrapper persists + the holder seeds on a re-attach", () => {
+  it("the journal.set wrapper persists + the holder seeds on a re-attach (source guard)", () => {
     const src = readFileSync(fileURLToPath(new URL("./setup-terminal-wake.ts", import.meta.url)), "utf8");
-    // The single DUR-02 persistence point: the journal.set wrapper calls the store's persist.
+    // The single durable persistence point: the journal.set wrapper calls the store's persist.
     expect(src, "the journal.set wrapper must persist via driveJournalStore").toMatch(/driveJournalStore\??\.persist\(/);
     // The holder seeds the resumed journal from the store on the re-attach signal.
     expect(src, "the holder must seed from driveJournalStore.load on a re-attach").toMatch(/driveJournalStore\??\.load\(/);
@@ -836,16 +836,13 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
   });
 
   // -------------------------------------------------------------------------
-  // LIVE-01 (165-07 Task 2): the coarse liveness BACKSTOP timer. It rides UNDER the
+  // The coarse liveness BACKSTOP timer. It rides UNDER the
   // event-driven wake purely as a safety net: a deps.timers.setInterval(...).unref()
   // that, per tick, for each PROMOTED session, fires ONE liveness check ONLY in the
-  // ABSENCE of a wake within the heartbeat window (I2 — no per-tick screen read), then
-  //   - busyOrHung → "busy"  ⇒ NOT stuck (the ENDURE-01 unify is the check's status stamp, LO-03)
+  // ABSENCE of a wake within the heartbeat window (no per-tick screen read), then
+  //   - busyOrHung → "busy"  ⇒ NOT stuck (the check's status round-trip is the lastActivity stamp)
   //   - busyOrHung → "hung"  ⇒ synth state:"stuck" via the EXISTING terminal:input_needed seam
   // A normally-progressing drive (a transition inside heartbeatMs every tick) NEVER triggers it.
-  // RED on pre-patch: no backstop exists — deps.timers is never armed, so a silent+hung
-  // drive synthesizes NO stuck (the silent-worker hole stays open) and a silent+busy drive
-  // never refreshes lastActivity.
   // -------------------------------------------------------------------------
 
   /** A fake TimerPort that CAPTURES the interval callback so a test can tick it manually. */
@@ -881,9 +878,9 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
   }
 
   /**
-   * Build with the LIVE-01 backstop wired: a fake TimerPort, a controllable clock, an
-   * injected checkLiveness probe (has-session + noProgressMs + stuckMs — NO screen), and a
-   * injected checkLiveness probe. `liveness` maps a sessionId → its BusySignal-shaped probe.
+   * Build with the backstop wired: a fake TimerPort, a controllable clock, and an
+   * injected checkLiveness probe (has-session + noProgressMs + stuckMs — NO screen).
+   * `liveness` maps a sessionId → its BusySignal-shaped probe.
    */
   function buildBackstop(
     dataDir: string,
@@ -891,7 +888,7 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
       screen: string;
       heartbeatMs?: number;
       liveness: Record<string, { alive: boolean; noProgressMs: number; stuckMs: number; awaitingInput?: boolean } | undefined>;
-      /** ME-02 (165-REVIEW): an optional seeded journal store so a recovered drive can be lazy-seeded/promoted. */
+      /** An optional seeded journal store so a recovered drive can be lazy-seeded/promoted. */
       seed?: Map<string, DriveJournalShape>;
     },
   ): Built & {
@@ -919,8 +916,8 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
       logger: logger as unknown as SetupTerminalWakeDeps["logger"],
       timers: fake.timers,
       heartbeatMs: opts.heartbeatMs ?? 90_000,
-      // LO-03 (165-REVIEW): NO refreshLastActivity dep — checkLiveness's status round-trip stamps
-      // lastActivity (the I9 unify); the backstop's busy verdict relies on that, not a separate hook.
+      // NO refreshLastActivity dep — checkLiveness's status round-trip stamps
+      // lastActivity; the backstop's busy verdict relies on that, not a separate hook.
       checkLiveness,
       driveJournalStore: js.store,
     } as unknown as SetupTerminalWakeDeps;
@@ -933,18 +930,18 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
     return b.bus.emitted.filter((e) => e.event === "terminal:input_needed" && e.payload.state === "stuck").map((e) => e.payload);
   }
 
-  it("LIVE-01: the backstop arms a deps.timers.setInterval at heartbeatMs and .unref()'s the handle (mirrors the reaper)", () => {
+  it("the backstop arms a deps.timers.setInterval at heartbeatMs and .unref()'s the handle (mirrors the reaper)", () => {
     built = buildBackstop(dataDir, { screen: "Building…", heartbeatMs: 45_000, liveness: {} });
     const { fake } = built as ReturnType<typeof buildBackstop>;
     // The backstop interval is the one armed at heartbeatMs (the buildBackstop harness also
-    // arms the 166-03 user-facing heartbeat interval at the default cadence — assert the
+    // arms the user-facing heartbeat interval at the default cadence — assert the
     // backstop one specifically, distinct from that).
     const backstop = fake.intervals.find((i) => i.intervalMs === 45_000);
     expect(backstop, "the backstop must arm an interval at heartbeatMs").toBeDefined();
     expect(backstop!.handle.unrefCalls, "the backstop handle must be .unref()'d (never holds the loop open on SIGTERM)").toBeGreaterThanOrEqual(1);
   });
 
-  it("LIVE-01 / I2: a normally-progressing drive (a transition INSIDE heartbeatMs) triggers 0 synth-stuck + reads NO screen (Pitfall 7)", async () => {
+  it("a normally-progressing drive (a transition INSIDE heartbeatMs) triggers 0 synth-stuck + reads NO screen", async () => {
     const b = buildBackstop(dataDir, { screen: "Building…", heartbeatMs: 90_000, liveness: { "s-live": { alive: true, noProgressMs: 999_999, stuckMs: 600_000 } } });
     built = b;
     // Promote, then a wake lands (the transition stamps lastTransitionMs = now).
@@ -957,17 +954,17 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
     b.fake.tick();
     await flush();
 
-    // I2: a wake intervened → no liveness check, no synth-stuck, NO screen read this tick.
+    // A wake intervened → no liveness check, no synth-stuck, NO screen read this tick.
     expect(synthStuckEmits(b), "a normally-progressing drive must NOT be declared stuck").toHaveLength(0);
     expect(b.checkLiveness, "a wake intervened → the backstop must skip the liveness check").not.toHaveBeenCalled();
-    expect(b.registry.read, "the backstop must NEVER read the screen per tick (I2)").not.toHaveBeenCalled();
+    expect(b.registry.read, "the backstop must NEVER read the screen per tick").not.toHaveBeenCalled();
   });
 
-  it("DELIVER-01 (#2): a promoted drive that reaches awaiting-input (finished + idle) notifies the user EXACTLY ONCE — not per tick, and never a stuck", async () => {
-    // Real-VPS 2026-06-16: a backgrounded 'build a snake game' drive finished (claude idle at
-    // its ❯ box) but NOTHING was delivered — the conversation dead-ended at 'Kicked off'. A
-    // backgrounded drive emits no fd3 attention once promoted, and the backstop acted only on
-    // 'hung'. The backstop now also delivers a ONE-TIME completion notification on awaiting-input.
+  it("a promoted drive that reaches awaiting-input (finished + idle) notifies the user EXACTLY ONCE — not per tick, and never a stuck", async () => {
+    // A backgrounded drive that finishes (the CLI goes idle at its prompt box) emits no fd3
+    // attention once promoted, and the backstop otherwise acts only on 'hung' — so a finished
+    // drive would dead-end with nothing delivered. The backstop therefore also delivers a
+    // ONE-TIME completion notification on awaiting-input.
     const b = buildBackstop(dataDir, { screen: "❯ ", heartbeatMs: 90_000, liveness: { "s-done": { alive: true, noProgressMs: 0, stuckMs: 600_000, awaitingInput: true } } });
     built = b;
     b.bus.fireDrivePromoted("s-done", "a", "producing");
@@ -987,7 +984,7 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
     expect(b.notify, "completion is delivered once per idle period, not every backstop tick").not.toHaveBeenCalled();
   });
 
-  it("LIVE-01: a SILENT + HUNG drive (no transition past heartbeatMs, busyOrHung→hung) synthesizes EXACTLY ONE stuck through the existing terminal:input_needed seam (no 600s wait)", async () => {
+  it("a SILENT + HUNG drive (no transition past heartbeatMs, busyOrHung→hung) synthesizes EXACTLY ONE stuck through the existing terminal:input_needed seam (no 600s wait)", async () => {
     const b = buildBackstop(dataDir, { screen: "$ ", heartbeatMs: 90_000, liveness: { "s-hung": { alive: true, noProgressMs: 999_999, stuckMs: 600_000 } } });
     built = b;
     b.bus.fireDrivePromoted("s-hung", "a", "producing");
@@ -1002,19 +999,19 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
     expect(stuck, "a silent+hung drive must synthesize exactly ONE stuck").toHaveLength(1);
     expect(stuck[0]).toMatchObject({ sessionId: "s-hung", agentId: "a", state: "stuck" });
     // The synth went through the EXISTING terminal:input_needed/stuck seam (NOT a new event):
-    // the backstop's OWN liveness check is the injected has-session + noProgressMs probe (I2 —
-    // it reads NO screen). The downstream woken turn the synthesized stuck triggers DOES read
+    // the backstop's OWN liveness check is the injected has-session + noProgressMs probe and
+    // reads NO screen. The downstream woken turn the synthesized stuck triggers DOES read
     // the screen — that is the whole point of escalating a stuck — but that is the FSM's read,
-    // not the backstop tick's; the I2 "no per-tick screen read" invariant is about the BACKSTOP.
+    // not the backstop tick's; the "no per-tick screen read" invariant is about the BACKSTOP.
     expect(b.checkLiveness, "the backstop performed the injected liveness check (has-session + noProgressMs)").toHaveBeenCalledWith("s-hung", "a");
-    // A WARN with the §2.7 hint+errorKind+step surfaces the synthesized stuck.
+    // A WARN with the hint+errorKind+step surfaces the synthesized stuck.
     const warn = b.logger.warn.mock.calls.find((c) => (c[0] as { step?: string })?.step === "liveness_backstop");
     expect(warn, "a synthesized stuck must WARN with step:liveness_backstop").toBeDefined();
     expect((warn![0] as { errorKind?: string }).errorKind).toBe("timeout");
     expect(typeof (warn![0] as { hint?: string }).hint).toBe("string");
   });
 
-  it("LIVE-01 / ENDURE-01 unify (I9): a SILENT + BUSY drive (a quiet compile) runs the liveness check + synthesizes 0 stuck (lastActivity is refreshed by the check's status round-trip — LO-03)", async () => {
+  it("a SILENT + BUSY drive (a quiet compile) runs the liveness check + synthesizes 0 stuck (lastActivity is refreshed by the check's status round-trip)", async () => {
     const b = buildBackstop(dataDir, { screen: "Compiling…", heartbeatMs: 90_000, liveness: { "s-busy": { alive: true, noProgressMs: 1_000, stuckMs: 600_000 } } });
     built = b;
     b.bus.fireDrivePromoted("s-busy", "a", "producing");
@@ -1024,14 +1021,14 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
     b.fake.tick();
     await flush();
 
-    // busyOrHung → "busy": NOT stuck. The ENDURE-01 idle-reaper unify is the checkLiveness
-    // round-trip's `registry.status` lastActivity stamp (LO-03 — no separate refresh hook); here
-    // we pin that the busy verdict ran the liveness check + declared no stuck (the unify behavior).
-    expect(b.checkLiveness, "a busy verdict must run the liveness check (whose status stamp is the I9 unify)").toHaveBeenCalledWith("s-busy", "a");
+    // busyOrHung → "busy": NOT stuck. The idle-reaper liveness stamp is the checkLiveness
+    // round-trip's `registry.status` lastActivity stamp (no separate refresh hook); here
+    // we pin that the busy verdict ran the liveness check + declared no stuck.
+    expect(b.checkLiveness, "a busy verdict must run the liveness check (whose status round-trip stamps lastActivity)").toHaveBeenCalledWith("s-busy", "a");
     expect(synthStuckEmits(b), "a busy compile must NOT be declared stuck").toHaveLength(0);
   });
 
-  it("LIVE-01: a DEAD backend (alive:false) is hung → synth stuck (busyOrHung biases dead→hung regardless of timing)", async () => {
+  it("a DEAD backend (alive:false) is hung → synth stuck (busyOrHung biases dead→hung regardless of timing)", async () => {
     const b = buildBackstop(dataDir, { screen: "$ ", heartbeatMs: 90_000, liveness: { "s-dead": { alive: false, noProgressMs: 0, stuckMs: 600_000 } } });
     built = b;
     b.bus.fireDrivePromoted("s-dead", "a", "producing");
@@ -1042,18 +1039,18 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
     expect(synthStuckEmits(b), "a dead backend is hung → synth stuck").toHaveLength(1);
   });
 
-  it("LIVE-01 / I1: an UNPROMOTED session is NOT checked by the backstop (the backstop only guards promoted drives)", async () => {
+  it("an UNPROMOTED session is NOT checked by the backstop (the backstop only guards promoted drives)", async () => {
     const b = buildBackstop(dataDir, { screen: "$ ", heartbeatMs: 90_000, liveness: { "s-plain": { alive: false, noProgressMs: 999_999, stuckMs: 600_000 } } });
     built = b;
     // No promotion — a plain terminal_session. The backstop must not check or synth-stuck it.
     b.clock.now += 120_000;
     b.fake.tick();
     await flush();
-    expect(b.checkLiveness, "an unpromoted session must NOT be liveness-checked (I1)").not.toHaveBeenCalled();
-    expect(synthStuckEmits(b), "an unpromoted session must NOT be synth-stuck (I1)").toHaveLength(0);
+    expect(b.checkLiveness, "an unpromoted session must NOT be liveness-checked").not.toHaveBeenCalled();
+    expect(synthStuckEmits(b), "an unpromoted session must NOT be synth-stuck").toHaveLength(0);
   });
 
-  it("LIVE-01: the synth-stuck fires AT MOST ONCE per silent stretch — a second tick still inside the same no-wake stretch does NOT re-synth", async () => {
+  it("the synth-stuck fires AT MOST ONCE per silent stretch — a second tick still inside the same no-wake stretch does NOT re-synth", async () => {
     const b = buildBackstop(dataDir, { screen: "$ ", heartbeatMs: 90_000, liveness: { "s-hung": { alive: true, noProgressMs: 999_999, stuckMs: 600_000 } } });
     built = b;
     b.bus.fireDrivePromoted("s-hung", "a", "producing");
@@ -1069,7 +1066,7 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
     expect(synthStuckEmits(b), "the backstop synthesizes stuck at most once per silent stretch").toHaveLength(1);
   });
 
-  it("LIVE-01: the backstop interval handle is cancelled on shutdown (no leaked timer)", async () => {
+  it("the backstop interval handle is cancelled on shutdown (no leaked timer)", async () => {
     const b = buildBackstop(dataDir, { screen: "$ ", liveness: {} });
     built = b;
     await b.handle.shutdown();
@@ -1077,32 +1074,30 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
     expect(b.fake.intervals[0]!.handle.cancelCalls, "shutdown must cancel the backstop interval").toBeGreaterThanOrEqual(1);
   });
 
-  it("LIVE-01 wiring (source guard): the backstop arms timers.setInterval(...).unref() + consumes busyOrHung + never reads the screen per tick", () => {
+  it("the backstop arms timers.setInterval(...).unref() + consumes busyOrHung + never reads the screen per tick (source guard)", () => {
     const src = readFileSync(fileURLToPath(new URL("./setup-terminal-wake.ts", import.meta.url)), "utf8");
     expect(src, "the backstop must arm an interval off the injected TimerPort").toMatch(/timers\??\.setInterval\(/);
     expect(src, "the backstop handle must be .unref()'d").toMatch(/\.unref\(\)/);
     expect(src, "the backstop must consume the busy-vs-hung predicate").toMatch(/busyOrHung/);
-    expect(src, "the backstop must gate on the per-session last-transition (I2)").toMatch(/lastTransition/);
+    expect(src, "the backstop must gate on the per-session last-transition").toMatch(/lastTransition/);
     expect(src, "the backstop must read heartbeatMs").toMatch(/heartbeatMs/);
   });
 
   // -------------------------------------------------------------------------
-  // ME-02 (165-REVIEW): the LIVE-01 backstop + spend ceiling only guard
-  // promotedSessions, which is EMPTY for a boot-recovered durable drive. A
-  // re-attached drive that later hangs was invisible to the backstop. The fix:
-  // the recover/resume path (onDriveReattached AND the BL-02 lazy-seed) PROMOTES
-  // the recovered session so the backstop + spend ceiling cover its remaining life.
-  // RED on pre-patch: a recovered drive (never live-promoted) is not in
-  // promotedSessions, so the backstop skips it and synthesizes NO stuck on a hang.
+  // The backstop + spend ceiling only guard promotedSessions, which is EMPTY for a
+  // boot-recovered durable drive — so a re-attached drive that later hangs would be
+  // invisible to the backstop. The recover/resume path (onDriveReattached AND the
+  // lazy-seed) therefore PROMOTES the recovered session so the backstop + spend
+  // ceiling cover its remaining life.
   // -------------------------------------------------------------------------
-  it("ME-02: a drive recovered via terminal:drive_reattached IS promoted → a later hang is backstopped (synth stuck)", async () => {
+  it("a drive recovered via terminal:drive_reattached IS promoted → a later hang is backstopped (synth stuck)", async () => {
     const seeded = new Map<string, DriveJournalShape>([
       ["a/s-recov", { objective: "build", lastClassification: "working", lastScreenDigest: "", answeredPrompts: [], stepsTried: [], elapsedMs: 10_000, interactions: 1, costUsd: 0, truncations: 0 }],
     ]);
     const b = buildBackstop(dataDir, { screen: "$ ", heartbeatMs: 90_000, seed: seeded, liveness: { "s-recov": { alive: true, noProgressMs: 999_999, stuckMs: 600_000 } } });
     built = b;
     // The registry re-attached the surviving session on boot → the resume event (delivered
-    // here AFTER subscription) promotes it (ME-02) — no live drive_promoted ever fired.
+    // here AFTER subscription) promotes it — no live drive_promoted ever fired.
     b.bus.emit("terminal:drive_reattached", { sessionId: "s-recov", agentId: "a", reason: "tmux_alive", timestamp: 1 });
     await flush();
     // The drive then hangs (no wake past the heartbeat window) → the backstop must guard it.
@@ -1110,52 +1105,49 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
     b.fake.tick();
     await flush();
 
-    expect(b.checkLiveness, "a recovered drive must be liveness-checked by the backstop (ME-02)").toHaveBeenCalledWith("s-recov", "a");
-    expect(synthStuckEmits(b), "a recovered drive that hangs must synthesize a stuck (ME-02)").toHaveLength(1);
+    expect(b.checkLiveness, "a recovered drive must be liveness-checked by the backstop").toHaveBeenCalledWith("s-recov", "a");
+    expect(synthStuckEmits(b), "a recovered drive that hangs must synthesize a stuck").toHaveLength(1);
     expect(synthStuckEmits(b)[0]).toMatchObject({ sessionId: "s-recov", agentId: "a", state: "stuck" });
   });
 
-  it("ME-02: a drive recovered via the BL-02 lazy-seed (first wake; the boot event was dropped) IS promoted → a later hang is backstopped", async () => {
+  it("a drive recovered via the lazy-seed (first wake; the boot event was dropped) IS promoted → a later hang is backstopped", async () => {
     const seeded = new Map<string, DriveJournalShape>([
       ["a/s-lazy", { objective: "build", lastClassification: "working", lastScreenDigest: "", answeredPrompts: [], stepsTried: [], elapsedMs: 10_000, interactions: 1, costUsd: 0, truncations: 0 }],
     ]);
     const b = buildBackstop(dataDir, { screen: "$ ", heartbeatMs: 90_000, seed: seeded, liveness: { "s-lazy": { alive: true, noProgressMs: 999_999, stuckMs: 600_000 } } });
     built = b;
     // NO drive_reattached (dropped at boot). The first wake lazy-seeds + promotes the recovered
-    // drive (BL-02) — which ALSO makes it backstop-guarded (ME-02 via the lazy-seed path).
+    // drive — which ALSO makes it backstop-guarded via the lazy-seed path.
     b.bus.fireInputNeeded("s-lazy", "a");
     await flush();
     b.clock.now += 120_000;
     b.fake.tick();
     await flush();
 
-    expect(synthStuckEmits(b), "a lazily-recovered drive that hangs must synthesize a stuck (ME-02)").toHaveLength(1);
+    expect(synthStuckEmits(b), "a lazily-recovered drive that hangs must synthesize a stuck").toHaveLength(1);
   });
 
   // -------------------------------------------------------------------------
-  // NOTIFY-01/02 outcome + heartbeat wiring (166-03). The keystone holder now
+  // The outcome + heartbeat wiring. The keystone holder
   // DERIVES the user-facing done/failed outcomes at onStateChange/onEvicted (gated
   // by drive.notify, capturing wasPromoted+journal BEFORE onSessionGone clears them,
-  // naming the cap on onEvicted), keeps the escalation notify UNCONDITIONAL (I4),
-  // and arms a SECOND coarse user-facing heartbeat timer (NOTIFY-02), distinct from
-  // the LIVE-01 internal backstop. The pure decision/digest fns are 166-01's siblings;
+  // naming the cap on onEvicted), keeps the escalation notify UNCONDITIONAL,
+  // and arms a SECOND coarse user-facing heartbeat timer, distinct from
+  // the internal backstop. The pure decision/digest fns are siblings;
   // these tests pin the WIRING (the outcome fires deps.notify; the heartbeat ticks;
   // the gate suppresses; the ordering captures-before-clear).
-  // RED on pre-patch: the holder has no done/failed/heartbeat notify + no notifyPolicy
-  // / heartbeatNotifyMs deps — a promoted exit/lost/evict fires only the drive-started
-  // notify (never an outcome), and no second timer is armed.
   // -------------------------------------------------------------------------
-  describe("NOTIFY-01/02 outcome + heartbeat wiring (166-03)", () => {
+  describe("outcome + heartbeat wiring", () => {
     /** The heartbeat cadence used in these tests — DISTINCT from heartbeatMs so the timer is isolable. */
     const HEARTBEAT_NOTIFY_MS = 3_600_000;
 
     /**
-     * Build with the NOTIFY-01/02 wiring exercised: a fake TimerPort + a controllable clock
+     * Build with the outcome + heartbeat wiring exercised: a fake TimerPort + a controllable clock
      * (for the heartbeat tick), an optional seeded journal store (so a promoted drive carries a
-     * heartbeat-able journal), and the two new operator deps `notifyPolicy` + `heartbeatNotifyMs`.
+     * heartbeat-able journal), and the operator deps `notifyPolicy` + `heartbeatNotifyMs`.
      * Mirrors `buildBackstop` (the fake-timer harness) — but for the user-facing outcome+heartbeat
-     * path, NOT the LIVE-01 backstop (no `checkLiveness`, so the backstop never arms; only the
-     * heartbeat timer is under test). The screen drives whether a wake escalates (I4 tests).
+     * path, NOT the liveness backstop (no `checkLiveness`, so the backstop never arms; only the
+     * heartbeat timer is under test). The screen drives whether a wake escalates.
      */
     function buildNotify(
       dataDir: string,
@@ -1185,7 +1177,7 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
         logger: logger as unknown as SetupTerminalWakeDeps["logger"],
         timers: fake.timers,
         driveJournalStore: js.store,
-        // The 166-03 operator deps under test.
+        // The operator deps under test.
         notifyPolicy: opts.notifyPolicy ?? "terminal",
         heartbeatNotifyMs: opts.heartbeatNotifyMs ?? HEARTBEAT_NOTIFY_MS,
       } as unknown as SetupTerminalWakeDeps;
@@ -1200,7 +1192,7 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
         .map((c) => ({ agentId: c.agentId, message: c.message }));
     }
 
-    /** The heartbeat notifies — the NOTIFY-02 "still working" digest line. */
+    /** The heartbeat notifies — the "still working" digest line. */
     function heartbeatNotifies(b: Built): Array<{ agentId: string; message: string }> {
       return notifyCalls(b)
         .filter((c) => /still working/i.test(c.message))
@@ -1212,7 +1204,7 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
       for (const i of b.fake.intervals) if (i.intervalMs === cadenceMs) i.cb();
     }
 
-    // --- DONE (NOTIFY-01) -------------------------------------------------
+    // --- DONE -------------------------------------------------
 
     it("notifies exactly ONE content-free done when a PROMOTED session's PTY exits (high-confidence exited → done)", async () => {
       const b = buildNotify(dataDir, { screen: "Building…" });
@@ -1226,20 +1218,20 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
       expect(done, "a promoted clean exit notifies exactly one done").toHaveLength(1);
       expect(done[0]).toMatchObject({ agentId: "a" });
       expect(done[0]!.message).toContain("s-done");
-      // Content-free (I3): the done message carries the sessionId + the outcome enum, never screen text.
-      expect(done[0]!.message, "the done message must NOT leak screen text (I3)").not.toMatch(/Building/);
+      // Content-free: the done message carries the sessionId + the outcome enum, never screen text.
+      expect(done[0]!.message, "the done message must NOT leak screen text").not.toMatch(/Building/);
     });
 
-    it("does NOT notify an outcome when an UNPROMOTED (inline short) session exits (I1 — byte-identical)", async () => {
+    it("does NOT notify an outcome when an UNPROMOTED (inline short) session exits (byte-identical)", async () => {
       const b = buildNotify(dataDir, { screen: "$ " });
       built = b;
-      // No promotion — an inline drive. Its exit must stay byte-identical (no outcome notify, I1).
+      // No promotion — an inline drive. Its exit must stay byte-identical (no outcome notify).
       b.bus.emit("terminal:session_state", { sessionId: "s-inline", agentId: "a", state: "exited", durationMs: 0, timestamp: 3 });
       await flush();
-      expect(outcomeNotifies(b), "an unpromoted exit must emit NO outcome notify (I1)").toHaveLength(0);
+      expect(outcomeNotifies(b), "an unpromoted exit must emit NO outcome notify").toHaveLength(0);
     });
 
-    // --- FAILED (NOTIFY-01; lands the 165 deferral) -----------------------
+    // --- FAILED -----------------------
 
     it("notifies exactly ONE failed with an errorKind when a PROMOTED durable session goes lost (GENUINE unrecoverable death)", async () => {
       const seeded = new Map<string, DriveJournalShape>([
@@ -1248,8 +1240,8 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
       const b = buildNotify(dataDir, { screen: "Building…", seed: seeded });
       built = b;
       // Re-attach (which promotes + seeds the journal) → then the durable session goes GENUINELY
-      // lost. CR-01: ONLY a lost marked `unrecoverable:true` (the durable-wiring onUnrecoverable
-      // emit) is a genuine death → failed. It threads the real content-free reason (WR-03).
+      // lost. ONLY a lost marked `unrecoverable:true` (the durable-wiring onUnrecoverable
+      // emit) is a genuine death → failed. It threads the real content-free reason.
       b.bus.emit("terminal:drive_reattached", { sessionId: "s-lost", agentId: "a", reason: "tmux_alive", timestamp: 1 });
       await flush();
       b.bus.emit("terminal:session_state", { sessionId: "s-lost", agentId: "a", state: "lost", unrecoverable: true, reason: "tmux_session_gone", durationMs: 0, timestamp: 9 });
@@ -1258,14 +1250,14 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
       const failed = outcomeNotifies(b);
       expect(failed, "a promoted GENUINE lost notifies exactly one failed").toHaveLength(1);
       expect(failed[0]!.message.toLowerCase(), "the failed message names the failed outcome").toContain("failed");
-      // The §2.7 record carries errorKind + hint (a failure branch, not just an INFO).
+      // The structured record carries errorKind + hint (a failure branch, not just an INFO).
       const warn = b.logger.warn.mock.calls.find((c) => (c[0] as { step?: string })?.step === "drive_outcome");
       expect(warn, "a failed outcome must WARN with step:drive_outcome").toBeDefined();
       expect((warn![0] as { errorKind?: string }).errorKind, "a lost failure is errorKind:dependency").toBe("dependency");
-      expect(typeof (warn![0] as { hint?: string }).hint, "a failed WARN carries a §2.7 hint").toBe("string");
-      // WR-03: the REAL unrecoverable reason rides the §2.7 record + the hint (not a generic "session_lost").
-      expect((warn![0] as { reason?: string }).reason, "the genuine-death reason rides the failed record (WR-03)").toBe("tmux_session_gone");
-      expect((warn![0] as { hint: string }).hint, "the §2.7 hint names the actual cause (WR-03)").toContain("tmux_session_gone");
+      expect(typeof (warn![0] as { hint?: string }).hint, "a failed WARN carries a hint").toBe("string");
+      // The REAL unrecoverable reason rides the structured record + the hint (not a generic "session_lost").
+      expect((warn![0] as { reason?: string }).reason, "the genuine-death reason rides the failed record").toBe("tmux_session_gone");
+      expect((warn![0] as { hint: string }).hint, "the hint names the actual cause").toContain("tmux_session_gone");
       // The captured interactions (from the journal, BEFORE onSessionGone cleared it) ride the record.
       expect((warn![0] as { interactions?: number }).interactions, "the captured journal interactions ride the failed record (capture-before-clear)").toBe(12);
     });
@@ -1280,25 +1272,24 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
 
       const failed = outcomeNotifies(b);
       expect(failed, "a named cap-eviction notifies exactly one failed").toHaveLength(1);
-      // The cap name rides the message AND the §2.7 record (a deliberate bound, not a mystery — I9).
+      // The cap name rides the message AND the structured record (a deliberate bound, not a mystery).
       expect(failed[0]!.message, "the failed message NAMES the cap (wall_clock)").toContain("wall_clock");
       const warn = b.logger.warn.mock.calls.find((c) => (c[0] as { step?: string })?.step === "drive_outcome");
       expect(warn, "a cap failure WARNs with step:drive_outcome").toBeDefined();
       expect((warn![0] as { errorKind?: string }).errorKind, "a cap failure is errorKind:resource").toBe("resource");
-      expect((warn![0] as { capName?: string }).capName, "the §2.7 record names the cap").toBe("wall_clock");
+      expect((warn![0] as { capName?: string }).capName, "the structured record names the cap").toBe("wall_clock");
     });
 
-    it("WR-01: the reaper's DUAL emit (session_evicted + the companion plain lost, production order) yields EXACTLY ONE failed naming the cap — no double-notify, no dependency-kind (CR-01 resolves the ordering fragility)", async () => {
+    it("the reaper's DUAL emit (session_evicted + the companion plain lost, production order) yields EXACTLY ONE failed naming the cap — no double-notify, no dependency-kind", async () => {
       const b = buildNotify(dataDir, { screen: "Building…" });
       built = b;
       b.bus.fireDrivePromoted("s-dual", "a", "producing");
       await flush();
       // The PRODUCTION reaper emits BOTH events on every eviction (setup-terminal-tools.ts onEvict,
       // in this fixed order): the audited session_evicted (the cap) THEN the companion plain
-      // session_state{lost} (the lifecycle transition, NOT marked unrecoverable). Pre-CR-01 the
-      // correctness rested on that emit ORDER (the lost branch suppressed only because onSessionGone
-      // had cleared the promoted flag — fragile). Post-CR-01 the plain lost is not a genuine death,
-      // so it never maps to failed → the eviction path is the unambiguous SOLE outcome owner.
+      // session_state{lost} (the lifecycle transition, NOT marked unrecoverable). The plain lost is
+      // not a genuine death, so it never maps to failed → the eviction path is the unambiguous SOLE
+      // outcome owner, independent of emit order.
       b.bus.emit("terminal:session_evicted", { sessionId: "s-dual", agentId: "a", reason: "max_interactions", durationMs: 0, timestamp: 5 });
       b.bus.emit("terminal:session_state", { sessionId: "s-dual", agentId: "a", state: "lost", durationMs: 0, timestamp: 5 });
       await flush();
@@ -1306,9 +1297,9 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
       const failed = outcomeNotifies(b).filter((o) => /failed/i.test(o.message));
       expect(failed, "the dual reaper emit must yield exactly ONE failed (no double-notify)").toHaveLength(1);
       expect(failed[0]!.message, "the single failed NAMES the cap (not a dependency-kind lost)").toContain("max_interactions");
-      // Exactly ONE failed §2.7 WARN — and it is the cap (resource) kind, never the lost (dependency) kind.
+      // Exactly ONE failed WARN — and it is the cap (resource) kind, never the lost (dependency) kind.
       const warns = b.logger.warn.mock.calls.filter((c) => (c[0] as { step?: string })?.step === "drive_outcome");
-      expect(warns, "exactly one failed §2.7 record (no double)").toHaveLength(1);
+      expect(warns, "exactly one failed record (no double)").toHaveLength(1);
       expect((warns[0]![0] as { errorKind?: string }).errorKind, "the cap-eviction owns the outcome (resource, not dependency)").toBe("resource");
     });
 
@@ -1326,9 +1317,9 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
       expect(outcomeNotifies(b), "the outcome derivation captured wasPromoted BEFORE onSessionGone cleared it").toHaveLength(1);
     });
 
-    // --- I9 (never fail a healthy long/quiet drive) -----------------------
+    // --- never fail a healthy long/quiet drive -----------------------
 
-    it("emits NO failed for a healthy long/quiet promoted drive that never goes lost or evicted (I9)", async () => {
+    it("emits NO failed for a healthy long/quiet promoted drive that never goes lost or evicted", async () => {
       const b = buildNotify(dataDir, { screen: "Compiling…" });
       built = b;
       b.bus.fireDrivePromoted("s-long", "a", "producing");
@@ -1338,30 +1329,28 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
         b.bus.fireInputNeeded("s-long", "a", `working_frame_${i}`);
         await flush();
       }
-      // No lost, no evict → no genuine death → NO failed (the I9 invariant is structural upstream).
-      expect(outcomeNotifies(b).filter((o) => /failed/i.test(o.message)), "a healthy long/quiet drive must never be reported failed (I9)").toHaveLength(0);
+      // No lost, no evict → no genuine death → NO failed (the invariant is structural upstream).
+      expect(outcomeNotifies(b).filter((o) => /failed/i.test(o.message)), "a healthy long/quiet drive must never be reported failed").toHaveLength(0);
     });
 
     it("does NOT report failed for a transient lost on an UNPROMOTED session (only a promoted durable lost is a failure)", async () => {
       const b = buildNotify(dataDir, { screen: "$ " });
       built = b;
-      // An unpromoted session going lost is today's behavior — no user-facing failed (I1/I9).
+      // An unpromoted session going lost is expected — no user-facing failed.
       b.bus.emit("terminal:session_state", { sessionId: "s-transient", agentId: "a", state: "lost", durationMs: 0, timestamp: 9 });
       await flush();
-      expect(outcomeNotifies(b), "an unpromoted lost emits no failed (I1)").toHaveLength(0);
+      expect(outcomeNotifies(b), "an unpromoted lost emits no failed").toHaveLength(0);
     });
 
-    // --- CR-01 (the I9/I10 BLOCKER gap): a PROMOTED drive's TRANSIENT/recoverable lost is NOT a
-    //     genuine death → ZERO failed. `terminal:session_state{lost}` is emitted on the transient
-    //     worker-crash respawn path (terminal-worker-supervisor.ts → the fd3 re-publish) AND for a
-    //     durable session that re-attaches (I10) — neither carries `unrecoverable:true`. Only the
-    //     durable-wiring onUnrecoverable genuine death sets it. Pre-fix, onStateChange mapped EVERY
-    //     promoted lost → failed, falsely reporting a healthy/recoverable drive dead (the exact
-    //     false-fire the phase exists to prevent). RED on pre-fix: a promoted transient lost fires
-    //     ONE false failed (the assertion expects ZERO).
+    // --- A PROMOTED drive's TRANSIENT/recoverable lost is NOT a genuine death → ZERO failed.
+    //     `terminal:session_state{lost}` is emitted on the transient worker-crash respawn path
+    //     (terminal-worker-supervisor.ts → the fd3 re-publish) AND for a durable session that
+    //     re-attaches — neither carries `unrecoverable:true`. Only the durable-wiring
+    //     onUnrecoverable genuine death sets it, so only that maps to failed; a healthy/recoverable
+    //     drive is never falsely reported dead.
     // ---------------------------------------------------------------------------
 
-    it("CR-01: a PROMOTED (non-durable) drive that goes lost via a TRANSIENT worker crash emits ZERO failed (I9/I10 — the worker re-spawns)", async () => {
+    it("a PROMOTED (non-durable) drive that goes lost via a TRANSIENT worker crash emits ZERO failed (the worker re-spawns)", async () => {
       const b = buildNotify(dataDir, { screen: "Compiling…" });
       built = b;
       // A promoted, NON-durable long drive (promotion does not require durability).
@@ -1372,13 +1361,13 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
       b.bus.emit("terminal:session_state", { sessionId: "s-crash", agentId: "a", state: "lost", durationMs: 0, timestamp: 9 });
       await flush();
 
-      expect(outcomeNotifies(b).filter((o) => /failed/i.test(o.message)), "a promoted transient worker-crash lost must NOT be reported failed (I9/I10)").toHaveLength(0);
-      // And no §2.7 failed WARN was emitted either (the drive is alive/recoverable).
+      expect(outcomeNotifies(b).filter((o) => /failed/i.test(o.message)), "a promoted transient worker-crash lost must NOT be reported failed").toHaveLength(0);
+      // And no failed WARN was emitted either (the drive is alive/recoverable).
       const warn = b.logger.warn.mock.calls.find((c) => (c[0] as { step?: string })?.step === "drive_outcome");
-      expect(warn, "a transient lost must NOT emit a failed §2.7 record").toBeUndefined();
+      expect(warn, "a transient lost must NOT emit a failed record").toBeUndefined();
     });
 
-    it("CR-01/I10: a PROMOTED DURABLE drive that emits lost while its tmux is alive (a re-attach) emits ZERO failed", async () => {
+    it("a PROMOTED DURABLE drive that emits lost while its tmux is alive (a re-attach) emits ZERO failed", async () => {
       const seeded = new Map<string, DriveJournalShape>([
         ["a/s-reattach", { objective: "build", lastClassification: "working", lastScreenDigest: "", answeredPrompts: [], stepsTried: [], elapsedMs: 5_000, interactions: 3, costUsd: 0, truncations: 0 }],
       ]);
@@ -1388,47 +1377,47 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
       b.bus.emit("terminal:drive_reattached", { sessionId: "s-reattach", agentId: "a", reason: "tmux_alive", timestamp: 1 });
       await flush();
       // A transient lost arrives (e.g. the over-broad crash snapshot) but the durable session is
-      // alive and re-attaching (I10) — the emit is NOT marked unrecoverable. ZERO failed.
+      // alive and re-attaching — the emit is NOT marked unrecoverable. ZERO failed.
       b.bus.emit("terminal:session_state", { sessionId: "s-reattach", agentId: "a", state: "lost", durationMs: 0, timestamp: 9 });
       await flush();
 
-      expect(outcomeNotifies(b).filter((o) => /failed/i.test(o.message)), "a re-attaching durable drive must NEVER be reported failed (I10)").toHaveLength(0);
+      expect(outcomeNotifies(b).filter((o) => /failed/i.test(o.message)), "a re-attaching durable drive must NEVER be reported failed").toHaveLength(0);
     });
 
-    it("CR-01: a GENUINE unrecoverable lost (unrecoverable:true) on a PROMOTED drive emits EXACTLY ONE failed naming the real reason (WR-03)", async () => {
+    it("a GENUINE unrecoverable lost (unrecoverable:true) on a PROMOTED drive emits EXACTLY ONE failed naming the real reason", async () => {
       const b = buildNotify(dataDir, { screen: "Building…" });
       built = b;
       b.bus.fireDrivePromoted("s-dead", "a", "producing");
       await flush();
       // The genuine death: the durable-wiring onUnrecoverable emit marks the lost unrecoverable +
-      // carries the real content-free reason. This is the ONE I9-legitimate failed source.
+      // carries the real content-free reason. This is the ONE legitimate failed source.
       b.bus.emit("terminal:session_state", { sessionId: "s-dead", agentId: "a", state: "lost", unrecoverable: true, reason: "tmux_reattach_failed", durationMs: 0, timestamp: 9 });
       await flush();
 
       const failed = outcomeNotifies(b).filter((o) => /failed/i.test(o.message));
       expect(failed, "a genuine unrecoverable death notifies exactly one failed").toHaveLength(1);
-      // The §2.7 record names the actual cause (WR-03), not a generic "session_lost".
+      // The structured record names the actual cause, not a generic "session_lost".
       const warn = b.logger.warn.mock.calls.find((c) => (c[0] as { step?: string })?.step === "drive_outcome");
-      expect(warn, "a genuine death emits a failed §2.7 record").toBeDefined();
+      expect(warn, "a genuine death emits a failed record").toBeDefined();
       expect((warn![0] as { errorKind?: string }).errorKind, "a lost failure is errorKind:dependency").toBe("dependency");
-      expect((warn![0] as { reason?: string }).reason, "the §2.7 record names the real unrecoverable reason (WR-03)").toBe("tmux_reattach_failed");
-      expect((warn![0] as { hint: string }).hint, "the §2.7 hint names the actual cause (WR-03)").toContain("tmux_reattach_failed");
+      expect((warn![0] as { reason?: string }).reason, "the record names the real unrecoverable reason").toBe("tmux_reattach_failed");
+      expect((warn![0] as { hint: string }).hint, "the hint names the actual cause").toContain("tmux_reattach_failed");
     });
 
-    // --- I4 (escalation always fires; done/failed suppressed under none) ---
+    // --- escalation always fires; done/failed suppressed under none ---
 
-    it("STILL fires the escalation notify under notifyPolicy:none (I4 — an escalation is never gated)", async () => {
+    it("STILL fires the escalation notify under notifyPolicy:none (an escalation is never gated)", async () => {
       const b = buildNotify(dataDir, { screen: "Permanently delete all files? (y/n)", notifyPolicy: "none", hintPatterns: ["(y/n)"] });
       built = b;
-      // A destructive prompt → escalate-always WINS, even under notify:"none" (the I4 canary).
+      // A destructive prompt → escalate-always WINS, even under notify:"none".
       b.bus.fireInputNeeded("s-esc", "a");
       await flush();
 
       const escalated = b.bus.emitted.find((e) => e.event === "terminal:escalated");
       expect(escalated, "a destructive screen must still escalate under notify:none").toBeDefined();
-      // The escalation reaches the user via deps.notify even under "none" (I4 — never suppressed).
+      // The escalation reaches the user via deps.notify even under "none" (never suppressed).
       const notifs = notifyCalls(b);
-      expect(notifs.some((c) => /needs a human|delete|escalat/i.test(c.message) || c.origin === "background_task"), "the escalation notify must fire under notify:none (I4)").toBe(true);
+      expect(notifs.some((c) => /needs a human|delete|escalat/i.test(c.message) || c.origin === "background_task"), "the escalation notify must fire under notify:none").toBe(true);
       expect(notifs.length, "the escalation under none produced at least one notify").toBeGreaterThanOrEqual(1);
     });
 
@@ -1455,9 +1444,9 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
       expect(outcomeNotifies(b), "failed is suppressed under notify:none").toHaveLength(0);
     });
 
-    // --- HEARTBEAT (NOTIFY-02) -------------------------------------------
+    // --- HEARTBEAT -------------------------------------------
 
-    it("arms a SECOND user-facing heartbeat interval at heartbeatNotifyMs and .unref()'s the handle (distinct from the LIVE-01 backstop)", () => {
+    it("arms a SECOND user-facing heartbeat interval at heartbeatNotifyMs and .unref()'s the handle (distinct from the liveness backstop)", () => {
       const b = buildNotify(dataDir, { screen: "Building…", heartbeatNotifyMs: HEARTBEAT_NOTIFY_MS });
       built = b;
       const hb = b.fake.intervals.find((i) => i.intervalMs === HEARTBEAT_NOTIFY_MS);
@@ -1482,20 +1471,20 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
       const beats = heartbeatNotifies(b);
       expect(beats, "a promoted drive emits a heartbeat at the cadence").toHaveLength(1);
       expect(beats[0]).toMatchObject({ agentId: "a" });
-      // The line is the content-free digest: the already-redacted lastScreenDigest, never raw bytes (I3).
+      // The line is the content-free digest: the already-redacted lastScreenDigest, never raw bytes.
       expect(beats[0]!.message, "the heartbeat carries the journal digest").toContain("12r 80c, 3 changed");
       expect(beats[0]!.message.toLowerCase(), "the heartbeat is the 'still working' progress line").toContain("still working");
-      // A §2.7 INFO heartbeat record (content-free, not DEBUG-only).
+      // An INFO heartbeat record (content-free, not DEBUG-only).
       const info = b.logger.info.mock.calls.find((c) => (c[0] as { step?: string })?.step === "drive_heartbeat");
       expect(info, "a heartbeat must emit an INFO step:drive_heartbeat record").toBeDefined();
     });
 
-    it("IN-01: a freshly-promoted drive emits NO heartbeat on the first tick WITHIN one cadence of promotion (the stamp is seeded at promotion)", async () => {
+    it("a freshly-promoted drive emits NO heartbeat on the first tick WITHIN one cadence of promotion (the stamp is seeded at promotion)", async () => {
       const b = buildNotify(dataDir, { screen: "Compiling…" });
       built = b;
       // Advance the wall clock so it is already well past one cadence (the realistic case: a daemon
-      // up for hours promotes a new drive). Pre-IN-01 the unstamped session reads `last:0` ⇒
-      // `now-0 >= cadence` ⇒ it would fire a bogus "elapsed 0.0h" heartbeat on the very first tick.
+      // up for hours promotes a new drive). Without the promotion-time stamp an unstamped session
+      // reads `last:0` ⇒ `now-0 >= cadence` ⇒ it would fire a bogus "elapsed 0.0h" heartbeat on the very first tick.
       b.clock.now += HEARTBEAT_NOTIFY_MS * 5;
       b.bus.fireDrivePromoted("s-fresh", "a", "producing");
       await flush();
@@ -1503,9 +1492,9 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
       b.clock.now += Math.floor(HEARTBEAT_NOTIFY_MS / 10);
       tickHeartbeat(b);
       await flush();
-      // IN-01: the promotion seeded lastHeartbeatSentMs = promotion-instant, so it is NOT yet due —
+      // The promotion seeded lastHeartbeatSentMs = promotion-instant, so it is NOT yet due —
       // the first user heartbeat lands one FULL cadence after promotion, not seconds after.
-      expect(heartbeatNotifies(b), "a freshly-promoted drive must NOT heartbeat within the first cadence (IN-01)").toHaveLength(0);
+      expect(heartbeatNotifies(b), "a freshly-promoted drive must NOT heartbeat within the first cadence").toHaveLength(0);
       // And after a full cadence past promotion, it DOES fire (the seed only delays, never silences).
       b.clock.now += HEARTBEAT_NOTIFY_MS;
       tickHeartbeat(b);
@@ -1513,7 +1502,7 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
       expect(heartbeatNotifies(b), "after one full cadence the heartbeat fires (the seed delays, not silences)").toHaveLength(1);
     });
 
-    it("emits NO heartbeat for a SHORT (unpromoted) drive — only promoted drives are heartbeated (I1)", async () => {
+    it("emits NO heartbeat for a SHORT (unpromoted) drive — only promoted drives are heartbeated", async () => {
       const b = buildNotify(dataDir, { screen: "$ " });
       built = b;
       // A plain unpromoted session present, but never promoted → not in promotedSessions.
@@ -1522,13 +1511,13 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
       b.clock.now += HEARTBEAT_NOTIFY_MS + 1;
       tickHeartbeat(b);
       await flush();
-      expect(heartbeatNotifies(b), "an unpromoted short drive emits no heartbeat (I1)").toHaveLength(0);
+      expect(heartbeatNotifies(b), "an unpromoted short drive emits no heartbeat").toHaveLength(0);
     });
 
     it("arms NO heartbeat timer when heartbeatNotifyMs is 0 — but a terminal outcome (exited → done) STILL fires", async () => {
       const b = buildNotify(dataDir, { screen: "Building…", heartbeatNotifyMs: 0 });
       built = b;
-      // 0 ⇒ terminal-only: the heartbeat cadence interval must NEVER be armed (Pitfall 5).
+      // 0 ⇒ terminal-only: the heartbeat cadence interval must NEVER be armed.
       const armedAtZero = b.fake.intervals.find((i) => i.intervalMs === 0);
       expect(armedAtZero, "heartbeatNotifyMs:0 must arm NO heartbeat interval").toBeUndefined();
       // But terminal outcomes are independent of the heartbeat — a promoted exit still notifies done.
@@ -1556,13 +1545,13 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
 
     // --- wiring source guards (the extraction + the cap-name fix + the deps) ---
 
-    it("routes the outcome derivation through the 166-01 siblings + the extracted terminal-wake-notify helper (source guard)", () => {
+    it("routes the outcome derivation through the sibling modules + the extracted terminal-wake-notify helper (source guard)", () => {
       const src = readFileSync(fileURLToPath(new URL("./setup-terminal-wake.ts", import.meta.url)), "utf8");
       const sibling = readFileSync(fileURLToPath(new URL("./terminal-wake-notify.ts", import.meta.url)), "utf8");
       // The holder calls the extracted emit helper; the helper consumes the pure outcome map.
       expect(src, "the holder must call the extracted emitTerminalOutcome helper").toMatch(/emitTerminalOutcome/);
       expect(sibling, "the extracted helper must derive the outcome via mapTerminalOutcome").toMatch(/mapTerminalOutcome/);
-      // The onEvicted cap-name fix: the reason (currently dropped at :572) is read.
+      // onEvicted reads e.reason to name the cap.
       expect(src, "onEvicted must read e.reason to name the cap (the dropped-reason fix)").toMatch(/e\.reason/);
       // The new operator dep is threaded.
       expect(src, "the holder must accept a notifyPolicy dep").toMatch(/notifyPolicy/);
@@ -1577,7 +1566,7 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
   });
 
   // -------------------------------------------------------------------------
-  // ENDURE-01 (165-07): the operator per-drive spend ceiling (`drive.maxCostUsd`)
+  // The operator per-drive spend ceiling (`drive.maxCostUsd`)
   // must reach its sole consumer THROUGH setupTerminalWake. The durability bundle
   // resolves it (terminal-durable-wiring.ts → maxCostUsd: config.drive?.maxCostUsd ??
   // null) and the daemon SPREADS it into setupTerminalWake — but if the holder's deps
@@ -1585,21 +1574,17 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
   // through a spread) and buildWokenTurnDriver never receives it, so the consumer
   // checkSpendCeiling(costUsd, deps.maxCostUsd ?? null) always sees `null` (uncapped)
   // regardless of operator config — the configured ceiling is INERT. This is the
-  // cross-phase integration seam the per-module unit suites missed (the driver's own
+  // integration seam a per-module unit suite misses (the driver's own
   // spend tests inject maxCostUsd DIRECTLY into buildWokenTurnDriver, never through the
   // setupTerminalWake hop the daemon actually uses).
   //
-  // I6 (no fabricated cost producer): costUsd stays honestly 0 at the canned-keystroke
+  // No fabricated cost producer: costUsd stays honestly 0 at the canned-keystroke
   // seam — so this test seeds the run-total cost into the DURABLE journal store (the
   // honest persistence path), then recovers/promotes the drive so its FIRST woken turn
   // reads the seeded costUsd at the spend-ceiling check (terminal-wake-turn.ts) — never
   // fabricating a cost at the keystroke seam.
-  //
-  // RED on pre-patch: SetupTerminalWakeDeps does not declare `maxCostUsd` and the
-  // buildWokenTurnDriver({...}) call does not forward it, so a threaded maxCostUsd is
-  // dropped at the setupTerminalWake hop → no breach even when configured.
   // -------------------------------------------------------------------------
-  describe("ENDURE-01 spend ceiling — the configured ceiling reaches the consumer THROUGH setupTerminalWake (cross-phase forwarding)", () => {
+  describe("spend ceiling — the configured ceiling reaches the consumer THROUGH setupTerminalWake", () => {
     /**
      * A registry whose session is always resolvable AND carries the `evict` spy the
      * spend-ceiling breach path calls (terminal-wake-turn.ts — a breach evicts + escalates
@@ -1613,8 +1598,8 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
     }
 
     /**
-     * Build the keystone holder with a DUR-02 journal store seeded with a run-total
-     * costUsd AND the ENDURE-01 `maxCostUsd` THREADED THROUGH setupTerminalWake (not into
+     * Build the keystone holder with a durable journal store seeded with a run-total
+     * costUsd AND the `maxCostUsd` THREADED THROUGH setupTerminalWake (not into
      * buildWokenTurnDriver directly). `maxCostUsd: undefined` omits it entirely (the
      * uncapped default). Returns the evictable registry so a test can assert the breach
      * STOP fired.
@@ -1638,7 +1623,7 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
         nowMs: () => 1_000,
         logger: logger as unknown as SetupTerminalWakeDeps["logger"],
         driveJournalStore: js.store,
-        // The ENDURE-01 dep under test — threaded THROUGH setupTerminalWake (the daemon
+        // The dep under test — threaded THROUGH setupTerminalWake (the daemon
         // spreads ...terminalDurability, which carries maxCostUsd; this exercises that hop).
         ...(opts.maxCostUsd !== undefined ? { maxCostUsd: opts.maxCostUsd } : {}),
       } as unknown as SetupTerminalWakeDeps;
@@ -1653,13 +1638,13 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
       ]);
     }
 
-    /** The spend-ceiling §2.7 WARN the breach path emits (step:spend_ceiling). */
+    /** The spend-ceiling WARN the breach path emits (step:spend_ceiling). */
     function spendBreachWarn(b: Built) {
       return b.logger.warn.mock.calls.find((c) => (c[0] as { step?: string })?.step === "spend_ceiling");
     }
 
     it("a threaded maxCostUsd reaches the consumer: a recovered/promoted drive whose journal costUsd is OVER the configured ceiling has its FIRST woken turn breach the spend check (escalate + evict + STOP), never a silent overspend", async () => {
-      // The drive's honest run-total cost (seeded into the durable store, I6) exceeds the
+      // The drive's honest run-total cost (seeded into the durable store) exceeds the
       // operator ceiling threaded through setupTerminalWake.
       const seed = seedWithCost("a", "s-over", 10);
       const b = buildSpend(dataDir, { screen: "Press enter to continue", seed, maxCostUsd: 5 });
@@ -1672,13 +1657,13 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
       b.bus.fireInputNeeded("s-over", "a");
       await flush();
 
-      // ENDURE-01: the breach fired BECAUSE the configured ceiling reached the consumer
-      // (pre-fix, maxCostUsd is dropped at the setupTerminalWake hop → uncapped → no breach).
+      // The breach fired BECAUSE the configured ceiling reached the consumer (if maxCostUsd is
+      // dropped at the setupTerminalWake hop it is uncapped → no breach).
       const warn = spendBreachWarn(b);
       expect(warn, "the configured maxCostUsd must reach the spend check (a breach WARNs step:spend_ceiling)").toBeDefined();
       expect((warn![0] as { errorKind?: string }).errorKind, "a spend breach is errorKind:resource").toBe("resource");
-      expect((warn![0] as { maxCostUsd?: number }).maxCostUsd, "the §2.7 breach record names the configured ceiling (not null)").toBe(5);
-      expect((warn![0] as { costUsd?: number }).costUsd, "the §2.7 breach record names the over-cap run-total").toBe(10);
+      expect((warn![0] as { maxCostUsd?: number }).maxCostUsd, "the breach record names the configured ceiling (not null)").toBe(5);
+      expect((warn![0] as { costUsd?: number }).costUsd, "the breach record names the over-cap run-total").toBe(10);
       // On breach the drive is STOPPED (evicted) — never a silent overspend.
       expect(b.registry.evict, "a breach must STOP the drive (evict), never let it run on uncapped").toHaveBeenCalledWith("s-over", expect.anything(), "max_interactions");
       // And escalated to a human (the breach rides the existing escalate() path).
@@ -1688,8 +1673,8 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
       expect(b.registry.sendText, "a breached turn sends NO keystroke (it STOPS)").not.toHaveBeenCalled();
     });
 
-    it("I1/I9: the SAME over-cost drive with maxCostUsd OMITTED (uncapped default) does NOT breach — a healthy drive under no ceiling is never stopped", async () => {
-      // Identical seeded over-cost journal, but NO maxCostUsd threaded → uncapped (I1).
+    it("the SAME over-cost drive with maxCostUsd OMITTED (uncapped default) does NOT breach — a healthy drive under no ceiling is never stopped", async () => {
+      // Identical seeded over-cost journal, but NO maxCostUsd threaded → uncapped.
       const seed = seedWithCost("a", "s-uncapped", 10);
       const b = buildSpend(dataDir, { screen: "Press enter to continue", seed }); // maxCostUsd omitted
       built = b;
@@ -1698,14 +1683,14 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
       b.bus.fireInputNeeded("s-uncapped", "a");
       await flush();
 
-      // Uncapped → checkSpendCeiling returns undefined → NO breach (I1 byte-identical to today).
-      expect(spendBreachWarn(b), "an uncapped drive must NOT breach (I1)").toBeUndefined();
-      expect(b.registry.evict, "an uncapped drive must NOT be stopped (I9)").not.toHaveBeenCalled();
+      // Uncapped → checkSpendCeiling returns undefined → NO breach (byte-identical to the no-ceiling path).
+      expect(spendBreachWarn(b), "an uncapped drive must NOT breach").toBeUndefined();
+      expect(b.registry.evict, "an uncapped drive must NOT be stopped").not.toHaveBeenCalled();
       // The turn proceeded normally: the safe-pattern screen was answered (not pre-empted).
       expect(b.registry.sendText, "an uncapped turn proceeds to answer the safe prompt (not stopped)").toHaveBeenCalled();
     });
 
-    it("I9 boundary: a drive UNDER the configured ceiling is never stopped (the ceiling reaches the consumer but does not spuriously fire)", async () => {
+    it("a drive UNDER the configured ceiling is never stopped (the ceiling reaches the consumer but does not spuriously fire)", async () => {
       // costUsd (3) < maxCostUsd (5) → the threaded ceiling reaches the consumer but the
       // strict `>` boundary means the budget is not yet over → no breach (proves the
       // forwarding does not over-fire, distinct from the omitted-cap path above).
@@ -1717,8 +1702,8 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
       b.bus.fireInputNeeded("s-under", "a");
       await flush();
 
-      expect(spendBreachWarn(b), "a drive under the ceiling must NOT breach (I9)").toBeUndefined();
-      expect(b.registry.evict, "a drive under the ceiling must NOT be stopped (I9)").not.toHaveBeenCalled();
+      expect(spendBreachWarn(b), "a drive under the ceiling must NOT breach").toBeUndefined();
+      expect(b.registry.evict, "a drive under the ceiling must NOT be stopped").not.toHaveBeenCalled();
       expect(b.registry.sendText, "a healthy under-cap turn proceeds normally").toHaveBeenCalled();
     });
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Unit tests for the `wait` reply mapping (terminal-wait-reply). RED-first: the module
- * does not exist when first committed. Covers the T1.1 producing/hint passthrough and the
+ * does not exist when first committed. Covers the producing/hint passthrough and the
  * load-bearing "never coerce isComplete to true" defense.
  *
  * @module
@@ -12,7 +12,7 @@ import { describe, it, expect } from "vitest";
 import { mapWaitReply, degradedWaitResult, withCompleteNote, type WaitResult } from "./terminal-wait-reply.js";
 
 describe("mapWaitReply", () => {
-  it("passes the T1.1 producing + hint through verbatim", () => {
+  it("passes the producing + hint through verbatim", () => {
     const r = mapWaitReply({
       matched: false,
       isComplete: false,
@@ -58,8 +58,8 @@ describe("mapWaitReply", () => {
   });
 });
 
-describe("withCompleteNote — FINDING-3 scope guard on a settle-complete wait", () => {
-  // Live VPS 2026-06-17: the driving model over-reads `isComplete:true` (a SETTLE-scoped signal)
+describe("withCompleteNote — the settle-scope guard on a settle-complete wait", () => {
+  // The driving model over-reads `isComplete:true` (a SETTLE-scoped signal)
   // as "my whole task is done" and ends the turn, dropping later requested steps after a build.
   // The complete path must carry a model-facing note scoping `isComplete` to the settle.
   it("attaches the scope note when isComplete (so the driver does not over-read it as task-done)", () => {
@@ -83,12 +83,12 @@ describe("withCompleteNote — FINDING-3 scope guard on a settle-complete wait",
   });
 });
 
-describe("withCompleteNote — never-tasked live-drive directive (loop-closure recovery, webhook-claude-cli-tdd-20260701)", () => {
+describe("withCompleteNote — never-tasked live-drive directive (never-tasked-drive recovery)", () => {
   // The dominant flub: the agent creates a drive, clears the trust gate with send_key, then WAITS
   // before ever delivering the task (send_text). The wait resolves idle and the agent reads "nothing
   // to do" → ends the turn / hallucinates "I have no task". When the wait tool detects a LIVE
   // never-tasked drive it flips `neverTaskedLiveDrive`, and this helper returns a JIT directive
-  // (superseding the FINDING-3 complete-note) steering the agent to deliver the task or fail honestly.
+  // (superseding the settle-complete note) steering the agent to deliver the task or fail honestly.
   it("attaches the task-not-delivered directive when the drive was never tasked (supersedes the complete-note)", () => {
     const out: WaitResult = { matched: true, isComplete: true, reason: "idle", screen: "idle-composer", cursor: { x: 0, y: 0 } };
     const r = withCompleteNote(out, true) as WaitResult & { note?: string };
@@ -96,7 +96,7 @@ describe("withCompleteNote — never-tasked live-drive directive (loop-closure r
     expect(r.note).toMatch(/have NOT delivered a task/i);
     expect(r.note).toMatch(/send_text/i);
     expect(r.note).toMatch(/honestly/i); // the honest-fail half
-    expect(r.note).not.toMatch(/overall task is done/i); // it's the directive, NOT the FINDING-3 complete-note
+    expect(r.note).not.toMatch(/overall task is done/i); // it's the directive, NOT the settle-complete note
     expect(r.isComplete).toBe(true); // the rest of the result is preserved verbatim
     expect(r.screen).toBe("idle-composer");
   });
@@ -108,7 +108,7 @@ describe("withCompleteNote — never-tasked live-drive directive (loop-closure r
     expect(r.isComplete).toBe(false); // never coerced
   });
 
-  it("a TASKED complete wait keeps the FINDING-3 scope note, NOT the directive (neverTaskedLiveDrive=false)", () => {
+  it("a TASKED complete wait keeps the settle-scope note, NOT the directive (neverTaskedLiveDrive=false)", () => {
     const out: WaitResult = { matched: true, isComplete: true, reason: "idle", screen: "x", cursor: { x: 0, y: 0 } };
     const r = withCompleteNote(out, false) as WaitResult & { note?: string };
     expect(r.note).toMatch(/SETTLED/);

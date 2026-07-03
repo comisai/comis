@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Unit tests for `createSqliteOutcomeStore` — the @comis/memory SQLite adapter
- * for the segregated `OutcomeSignalPort` (@comis/core, v2.26 Verified Learning
- * WS1). The store owns ALL `outcome_events` SQL: the idempotent `observe()`
+ * for the segregated `OutcomeSignalPort` (@comis/core). The store owns ALL
+ * `outcome_events` SQL: the idempotent `observe()`
  * upsert (deterministic-hash id + `ON CONFLICT … DO NOTHING` on the UNIQUE
  * `(tenant_id, agent_id, trajectory_id, source, observed_at)` tuple), the scoped
  * precedence-first-then-confidence `resolve()` fusion (fail-closed `unknown`),
@@ -97,7 +97,7 @@ describe("createSqliteOutcomeStore", () => {
     db.close();
   });
 
-  describe("listTrajectoryIds() — per-turn enumeration (live-2026-06-18 synthesis-source fix)", () => {
+  describe("listTrajectoryIds() — per-turn enumeration", () => {
     it("returns the DISTINCT (trajectoryId, sessionId) pairs for the scope, deduped across sources", async () => {
       // Two per-turn traceIds in one session; turn-a has two source rows.
       await store.observe(makeObs({ trajectoryId: "turn-a", sessionId: "sess-1", source: "tool", observedAt: 1_000 }));
@@ -110,7 +110,7 @@ describe("createSqliteOutcomeStore", () => {
       expect(pairs).toEqual(["turn-a|sess-1", "turn-b|sess-1"]);
     });
 
-    it("is scoped — never returns another (tenant, agent)'s trajectories (SEC-01)", async () => {
+    it("is scoped — never returns another (tenant, agent)'s trajectories", async () => {
       await store.observe(makeObs({ trajectoryId: "mine", sessionId: "s" }));
       await store.observe(makeObs({ tenantId: "other", agentId: "other", trajectoryId: "theirs", sessionId: "s" }));
       const r = await store.listTrajectoryIds!(SCOPE_A);
@@ -125,7 +125,7 @@ describe("createSqliteOutcomeStore", () => {
     });
   });
 
-  describe("observe() — idempotent write (WS1 first-RED)", () => {
+  describe("observe() — idempotent write", () => {
     it("treats a replayed observation on the same tuple as a no-op (exactly one row)", async () => {
       const obs = makeObs();
       const first = await store.observe(obs);
@@ -218,7 +218,7 @@ describe("createSqliteOutcomeStore", () => {
       if (res.ok) expect(res.value.outcome).toBe("success");
     });
 
-    it("a high-confidence reaction never overrides a deterministic tool result (OUTCOME-05 keystone)", async () => {
+    it("a high-confidence reaction never overrides a deterministic tool result (the precedence keystone)", async () => {
       // Same trajectory: a deterministic tool FAILURE at modest confidence, plus a
       // reaction SUCCESS and a judge SUCCESS at much higher confidence. The
       // deterministic tool tier must win despite the lower confidence.
@@ -232,18 +232,17 @@ describe("createSqliteOutcomeStore", () => {
       expect(res.value.confidence).toBe(0.6); // the winning tier's contributing observation
     });
 
-    // --- REACT-04: spoof-weight + corroboration + cross-tenant (Phase 199) ---
-    // The fusion production code is UNCHANGED (198 ranks tool/pipeline=0 > judge=1
-    // > reaction/correction=2). These cases assert the SPOOF + corroboration
-    // properties on top of the precedence keystone: a maxed external reaction is
-    // corroboration ONLY, never an override; a reaction-only trajectory resolves
-    // weakly; reaction rows are (tenant, agent)-isolated; a correction never
-    // outranks a deterministic success.
+    // --- spoof-weight + corroboration + cross-tenant ---
+    // The fusion ranks tool/pipeline=0 > judge=1 > reaction/correction=2. These
+    // cases assert the SPOOF + corroboration properties on top of the precedence
+    // keystone: a maxed external reaction is corroboration ONLY, never an override;
+    // a reaction-only trajectory resolves weakly; reaction rows are (tenant,
+    // agent)-isolated; a correction never outranks a deterministic success.
 
     it("a 0.99 external-trust reaction never overrides a 0.6 tool failure (spoof corroboration, not override)", async () => {
       // A spoofed external 👍 (max self-report) plus a deterministic tool failure
       // at a LOWER confidence. The tool tier still wins; the reaction is in the
-      // sources[] as CORROBORATION only — it cannot flip the verdict (T-199-16).
+      // sources[] as CORROBORATION only — it cannot flip the verdict.
       await store.observe(makeObs({ source: "tool", outcome: "failure", confidence: 0.6, observedAt: 1_000 }));
       await store.observe(
         makeObs({ source: "reaction", outcome: "success", confidence: 0.99, senderTrust: "external", observedAt: 1_100 }),
@@ -272,7 +271,7 @@ describe("createSqliteOutcomeStore", () => {
       expect(res.value.sources).toEqual(["reaction"]);
     });
 
-    it("a reaction row under (tenantA, agentA) is invisible to a resolve under (tenantB, agentB) (SEC-01 cross-tenant)", async () => {
+    it("a reaction row under (tenantA, agentA) is invisible to a resolve under (tenantB, agentB) (cross-tenant)", async () => {
       await store.observe(
         makeObs({ tenantId: "tenant_a", agentId: "agent_a", source: "reaction", outcome: "success", confidence: 0.9, senderTrust: "admin" }),
       );
@@ -286,7 +285,7 @@ describe("createSqliteOutcomeStore", () => {
 
     it("a corrected (correction-source) row never overrides a deterministic tool success (deterministic outranks correction)", async () => {
       // A follow-up "correction" soft-failure at a capped confidence, plus a
-      // deterministic tool SUCCESS. The tool tier outranks correction (T-199-18) —
+      // deterministic tool SUCCESS. The tool tier outranks correction —
       // the verdict stays success; the correction is corroboration only.
       await store.observe(makeObs({ source: "tool", outcome: "success", confidence: 0.9, observedAt: 1_000 }));
       await store.observe(makeObs({ source: "correction", outcome: "corrected", confidence: 0.6, observedAt: 1_100 }));
@@ -309,7 +308,7 @@ describe("createSqliteOutcomeStore", () => {
       expect(res.value.confidence).toBe(0.8);
     });
 
-    it("a turn that ENDS in failure resolves to 'failure' (latest observation wins — recency tie-break, WR-01)", async () => {
+    it("a turn that ENDS in failure resolves to 'failure' (latest observation wins — recency tie-break)", async () => {
       // Same-tier (tool) equal-confidence (0.9) signals; the FAILURE is the LATEST
       // (terminal) observation → the turn ended failed → resolves `failure`.
       await store.observe(makeObs({ source: "tool", outcome: "success", confidence: 0.9, observedAt: 1_000 }));
@@ -321,12 +320,11 @@ describe("createSqliteOutcomeStore", () => {
       expect(res.value.confidence).toBe(0.9);
     });
 
-    it("a RECOVERED turn (transient failure → later success) resolves to 'success' (live-2026-06-18 §4 fix)", async () => {
+    it("a RECOVERED turn (transient failure → later success) resolves to 'success'", async () => {
       // The dominant single-agent case: a tool call fails, the agent retries and
       // succeeds. Same `tool` tier, equal 0.9 confidence; the SUCCESS is the LATEST
       // (terminal) observation → the turn recovered → resolves `success`, so it is
       // ELIGIBLE for skill synthesis and does NOT penalize the memories it used.
-      // (Pre-fix severity-wins resolved this to `failure` — the §4 defect.)
       await store.observe(makeObs({ source: "tool", outcome: "failure", confidence: 0.9, observedAt: 1_000 }));
       await store.observe(makeObs({ source: "tool", outcome: "success", confidence: 0.9, observedAt: 2_000 }));
       const res = await store.resolve(TRAJ, SCOPE_A);
@@ -335,7 +333,7 @@ describe("createSqliteOutcomeStore", () => {
       expect(res.value.outcome).toBe("success");
     });
 
-    it("on an EXACT-timestamp tie, severity still wins — a concurrent failure is never masked (WR-01 safety)", async () => {
+    it("on an EXACT-timestamp tie, severity still wins — a concurrent failure is never masked", async () => {
       // Genuinely simultaneous same-tier (tool+pipeline are both tier 0) same-confidence
       // signals at the SAME observed_at (e.g. concurrent DAG-node siblings): recency
       // cannot decide, so the more-severe `failure` wins — preserving the original
@@ -371,11 +369,9 @@ describe("createSqliteOutcomeStore", () => {
       });
     });
 
-    it("surfaces recalledIds (attribution) AND usedSkillIds — the loop is no longer write-only (ATTR-02, Plan 07)", async () => {
-      // The P0 hardcoded `usedSkillIds: []` sink is REPLACED with a union-dedup of the
-      // used_skill_ids column (mirroring recalled_ids). A row written WITH usedSkillIds
-      // resolves to those ids — on pre-patch HEAD this returned [] regardless (the :299
-      // hardcode), so this is the genuine first-RED for the BLOCKER fix.
+    it("surfaces recalledIds (attribution) AND usedSkillIds — the loop is no longer write-only", async () => {
+      // usedSkillIds is a union-dedup of the used_skill_ids column (mirroring
+      // recalled_ids). A row written WITH usedSkillIds resolves to those ids.
       await store.observe(
         makeObs({ source: "tool", outcome: "success", confidence: 0.9, recalledIds: ["m1", "m2"], usedSkillIds: ["s1", "s2"] }),
       );
@@ -420,7 +416,7 @@ describe("createSqliteOutcomeStore", () => {
     });
   });
 
-  describe("prune() — age-based housekeeping (OUTCOME-07 / anti-DoS)", () => {
+  describe("prune() — age-based housekeeping (anti-DoS)", () => {
     const DAY_MS = 86_400_000;
 
     it("removes rows older than the cutoff and keeps fresh rows", async () => {
@@ -460,7 +456,7 @@ describe("createSqliteOutcomeStore", () => {
     });
   });
 
-  describe("error handling — catch branches (OBS-01 fail paths)", () => {
+  describe("error handling — catch branches (fail paths)", () => {
     // observe()/resolve() must NEVER throw — a DB failure mid-operation is
     // caught and surfaced as err() with a WARN carrying errorKind + hint (the
     // §2.7 logging bar). We force the failure by dropping the table out from

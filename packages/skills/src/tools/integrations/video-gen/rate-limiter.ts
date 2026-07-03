@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Rate limiter for video generation -- per-agent hourly budget (SEC-02 count cap).
+ * Rate limiter for video generation -- per-agent hourly count cap.
  *
  * Mirrors the image-gen rate limiter verbatim: a simple fixed 1h window with an
  * injectable clock. The count cap (checked first by the handler) bounds the
- * blast radius of the dollars-per-clip cost ceiling (Plan 04's VideoCostLimiter).
+ * blast radius of the dollars-per-clip cost ceiling (the VideoCostLimiter).
  *
  * @module
  */

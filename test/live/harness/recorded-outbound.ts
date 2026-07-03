@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * `RecordedOutbound` — the LIFTED channel-agnostic outbound-oracle subset
- * (FOUNDATION-FIX / CHAN2-02, Phase 209).
+ * (CHAN2-02).
  *
  * The foundation-design bug this fixes: the channel-agnostic subset of an
  * outbound record (`{ method, messageId, text? }` — the EXACT bit the dual
  * oracle `assert/channel-trace.ts` and the generic `harness/control-api.ts`
  * actually consume) lived INSIDE the Telegram emulator
  * (`emulators/telegram/tg-emulator.ts:116-143`). So the "generic" `/control/*`
- * surface had a type edge on ONE specific channel — a second channel (Phase 209
- * Signal) could not feed `assertChannelTrace` / `control-api` without depending
+ * surface had a type edge on ONE specific channel — a second channel (Signal)
+ * could not feed `assertChannelTrace` / `control-api` without depending
  * on the Telegram emulator. The telegram-first build anchored the shared type
  * under `emulators/telegram/`; this module lifts the agnostic subset UP to the
  * `harness/` layer so BOTH channels share a channel-neutral type.
@@ -43,7 +43,7 @@
 
 /**
  * The channel-agnostic outbound-oracle subset every emulated channel's outbound
- * record satisfies (the lifted shared type — design §3A.4 / RESEARCH Open-Q3).
+ * record satisfies (the lifted shared type).
  *
  * A per-channel emulator's full record (e.g. Telegram's, with `raw` + the
  * telegram-specific extras) is a SUPERSET of this interface and assignable to

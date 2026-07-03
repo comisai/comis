@@ -1,17 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Unit tests for `statusReplyFromState` (terminal-worker-classify.ts) — the worker's
- * point-in-time `status`-frame reply (124-06), widened in 163-03 (CLASS-02) to emit
- * the classifier's `confidence` + `reason` so `terminal_session_status` can surface
- * WHY + HOW SURE a verdict is (the documented field-plumbing chain — the worker
- * source of the two fields composeStatusView folds onto the view).
+ * point-in-time `status`-frame reply, which emits the classifier's `confidence` +
+ * `reason` so `terminal_session_status` can surface WHY + HOW SURE a verdict is (the
+ * worker is the source of the two fields composeStatusView folds onto the view).
  *
- * `classifyFrame` already computes `{state, confidence, reason}`; pre-163-03
+ * `classifyFrame` already computes `{state, confidence, reason}`; an earlier
  * `statusReplyFromState` returned only `{state, cursorParked, screenDiffEmpty,
  * interactions, exitCode?}` — dropping confidence/reason on the floor. RED: the two
- * `confidence`/`reason` assertions read `undefined` (and the `WorkerStatusPerception`
- * return type does not yet carry them — but the type widen landed in 163-03 Task 1,
- * so the runtime drop is the RED here).
+ * `confidence`/`reason` assertions read `undefined` before the passthrough is wired.
  *
  * Pure-ish: `statusReplyFromState` takes an injected `state` + `nowMs` (no real clock),
  * and a fake `emu.snapshot()` feeds the grid — no PTY, macOS-green. The no-emulator
@@ -67,10 +64,10 @@ function dialogSnapshot(cursor: { x: number; y: number } = { x: 0, y: 12 }): Emu
   return { screen: lines.join("\n"), cursor, cols: COLS, rows: ROWS, alt: false };
 }
 
-describe("statusReplyFromState — emits the classification's confidence + reason (163-03 / CLASS-02)", () => {
+describe("statusReplyFromState — emits the classification's confidence + reason", () => {
   it("classified branch: a dialog frame surfaces confidence 'medium' + reason 'dialog_detected' (the classification's own fields)", async () => {
     // A settled diff-empty dialog whose cursor sits below the menu → classifyFrame's
-    // dialog_detected branch (163-01) → {awaiting-input, medium, dialog_detected}.
+    // dialog_detected branch → {awaiting-input, medium, dialog_detected}.
     const state = makeState({ lastProgressMs: 1000 }, dialogSnapshot());
     const reply = await statusReplyFromState({
       state,
@@ -122,7 +119,7 @@ describe("statusReplyFromState — emits the classification's confidence + reaso
   });
 });
 
-describe("statusReplyFromState — resolves profile.perception by the session allowId (CLASSIFY-01)", () => {
+describe("statusReplyFromState — resolves profile.perception by the session allowId", () => {
   // A RECENT `Working (Ns)` frame, cursor mid-screen above content (unparked).
   function workingSnapshot(): EmulatorSnapshot {
     const lines = ["Working (12s)", "reading the project files", "more output", "and more"];
@@ -152,14 +149,14 @@ describe("statusReplyFromState — resolves profile.perception by the session al
     expect(reply.reason).toBe("dialog_detected");
   });
 
-  it("the SAME menu frame under an unknown allowId takes the generic path → stuck (INV-1, no profile)", async () => {
+  it("the SAME menu frame under an unknown allowId takes the generic path → stuck (no profile)", async () => {
     const state = makeState({ allowId: "vim", lastProgressMs: 0 }, menuSnapshot());
     const reply = await statusReplyFromState({ state, settled: true, nowMs: () => 10_000, stuckMs: 5_000 });
     expect(reply.state).toBe("stuck");
   });
 });
 
-describe("composeStatusView — carries the session allowId for the DIALOG-01 profile resolution", () => {
+describe("composeStatusView — carries the session allowId for the profile resolution", () => {
   const perception: WorkerStatusPerception = {
     state: "awaiting-input",
     cursorParked: true,
@@ -174,7 +171,7 @@ describe("composeStatusView — carries the session allowId for the DIALOG-01 pr
     expect(view.allowId).toBe("claude");
   });
 
-  it("omits allowId when the handle has none (a not-found / pre-v2.26 session) — no profile, the safe default", () => {
+  it("omits allowId when the handle has none (a not-found session) — no profile, the safe default", () => {
     const view = composeStatusView(perception, { lastActivity: 5 });
     expect(view.allowId).toBeUndefined();
   });

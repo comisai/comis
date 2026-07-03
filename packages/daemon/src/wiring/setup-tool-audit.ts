@@ -2,7 +2,7 @@
 /**
  * The `tool:executed` audit-log subscription (a skills concern) — extracted from
  * `setup-tools.ts` to keep that composition-root file under the 800-line architecture cap
- * (the established house extraction discipline, e.g. 124-06's `terminal-status-view.ts`).
+ * (the established house extraction discipline, e.g. `terminal-status-view.ts`).
  *
  * Subscribes the daemon event bus and emits a DEBUG audit line per tool execution: the
  * tool name + `durationMs` + success + the origin (userId/agentId/sessionKey) + a truncated,

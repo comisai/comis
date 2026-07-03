@@ -104,9 +104,10 @@ describe("ConversationDriver — unit (Stage-A, no daemon required)", () => {
   });
 
   it("getMemoryDbPath() resolves a RELATIVE memory.dbPath against the daemon's dataDir", () => {
-    // 260611 live-fire fix: scenario files hand-built join(dataDir,"memory.db"),
-    // which never matched config.test.yaml's dbPath "test-memory-default.db" —
-    // every existsSync-guarded db-oracle silently skipped (§2.10 bug class).
+    // Scenario files that hand-built join(dataDir,"memory.db") never matched
+    // config.test.yaml's dbPath "test-memory-default.db", so every
+    // existsSync-guarded db-oracle silently skipped. Resolve the configured
+    // dbPath against the dataDir rather than guessing the filename.
     const driver = new StubDriver();
     (driver as unknown as { _handle: unknown })._handle = {
       daemon: { container: { config: { dataDir: "/data/root", memory: { dbPath: "test-memory-default.db" } } } },
@@ -245,7 +246,7 @@ describe("ConversationDriver — unit (Stage-A, no daemon required)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// parseAgentExecuteResult — 260611 live-fire fix. The gateway returns
+// parseAgentExecuteResult — the gateway returns
 // { response, tokensUsed, finishReason } (rpc-adapters.ts handleAgentRequest);
 // the driver previously read `result.reply` (never existed) so every live turn
 // threw even when the model answered. Handler failures arrive as result.error

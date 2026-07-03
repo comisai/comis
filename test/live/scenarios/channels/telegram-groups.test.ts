@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * GROUP-01/02/03 — group/supergroup/forum + multi-user addressing + the TWO
- * group-only HARD assertions (Phase 208, Plan 01 — the surfaces the chat API
- * structurally cannot reach: there are no groups, no forum topics, no
- * cross-member reactions, and no allowFrom gate in /v1/chat/completions).
+ * group-only HARD assertions (the surfaces the chat API structurally cannot
+ * reach: there are no groups, no forum topics, no cross-member reactions, and
+ * no allowFrom gate in /v1/chat/completions).
  *
  * The mapper (chatType + addressing), the General-Topic id=1 thread asymmetry,
  * the allowFrom engage-gate, and the reaction trust-floor spoof guard are ALL
  * already wired in packages/*\/src; this scenario DRIVES + ASSERTS them against
  * emulator-built wire shapes — it never re-implements them.
  *
- * ── THE CI vs COMIS_LIVE SPLIT (the 204/205/206 pattern — copied VERBATIM) ──
+ * ── THE CI vs COMIS_LIVE SPLIT ──
  *
  *   • Stage-B (ALWAYS runs, in-process, NO COMIS_LIVE, NO model): the WIRING
  *     proofs, deterministic.
@@ -34,7 +34,7 @@
  *     createGroupChat({members:[auth,attacker],admins:[auth]}) -> a group reply
  *     -> inject BOTH a known-member 👍 and an attacker 👍 on the same bot reply
  *     -> bounded poll -> assert "select count(*) from outcome_events where
- *     source='reaction'" == 1 (ONLY the authorized 👍). NO-FALSE-SUCCESS (I5): a
+ *     source='reaction'" == 1 (ONLY the authorized 👍). NO-FALSE-SUCCESS: a
  *     non-closing loop emits a reason-coded finding, NEVER a faked "spoof
  *     blocked". SKIPPED (skip != fail) without COMIS_LIVE + a reachable model.
  *
@@ -50,7 +50,7 @@
  *
  * TEST-HARNESS — lives under `test/`, never the packages source-tree; ZERO
  * production code change (the thread-context builders were widened onto the
- * @comis/channels barrel test-first — a Defect-Watch surface-gap closure with
+ * @comis/channels barrel test-first — a surface-gap closure with
  * full gates — but no behavior changed).
  *
  * @module
@@ -565,7 +565,7 @@ describe("SEC-02 Stage-B — the never-published guard re-verifies + the phase d
     // GROUP-01/02/03 drive the already-wired group/forum/addressing/thread/spoof
     // chain with NO product behavior change. The ONE product touch this plan made
     // (widening the thread-context builders onto the @comis/channels barrel) was
-    // a Defect-Watch surface-gap closure landed test-first + COMMITTED (it has no
+    // a surface-gap closure landed test-first + COMMITTED (it has no
     // pending diff). So `git status --porcelain` must show NO outstanding
     // packages/*/src change. If this fails, an UNCOMMITTED product file is dirty —
     // STOP and reconcile.
@@ -612,7 +612,7 @@ describe.skipIf(!isLive)("GROUP-03 Stage-C — the group reaction-spoof leg: onl
   }
 
   it(
-    "a group reply, then BOTH an authorized 👍 and an attacker 👍 on it -> exactly ONE reaction row (the authorized), OR an honest reason-coded finding (no-false-success I5)",
+    "a group reply, then BOTH an authorized 👍 and an attacker 👍 on it -> exactly ONE reaction row (the authorized), OR an honest reason-coded finding (no-false-success)",
     async () => {
       const r = built;
       const dbPath = memoryDbPath;
@@ -620,7 +620,7 @@ describe.skipIf(!isLive)("GROUP-03 Stage-C — the group reaction-spoof leg: onl
       expect(dbPath, "memoryDbPath resolved").toBeDefined();
       if (r === undefined || dbPath === undefined) return;
 
-      // FLAG-2 (participant-aware trust): the AUTHORIZED reactor must BE the conversation
+      // Participant-aware trust: the AUTHORIZED reactor must BE the conversation
       // participant — the user whose inbound message triggered the bot's reply. So inject the
       // triggering message AS AUTH_REACTOR_ID (NOT the rig's r.send() default sender 100),
       // binding AUTH as the participant on the outbound trajectory. AUTH's 👍 then inherits the
@@ -664,7 +664,7 @@ describe.skipIf(!isLive)("GROUP-03 Stage-C — the group reaction-spoof leg: onl
       }
       expect(
         rows,
-        "FINDING: no outcome_events source='reaction' row after the authorized 👍 — check the rig learning gotchas (costFeatures/learningOutcome) + the trust floor (defaultTrustLevel: known) + the botReplyId attribution. NOT a faked green (I5).",
+        "FINDING: no outcome_events source='reaction' row after the authorized 👍 — check the rig learning gotchas (costFeatures/learningOutcome) + the trust floor (defaultTrustLevel: known) + the botReplyId attribution. NOT a faked green.",
       ).toBeGreaterThanOrEqual(1);
       if (rows === 0) return;
 
@@ -673,7 +673,7 @@ describe.skipIf(!isLive)("GROUP-03 Stage-C — the group reaction-spoof leg: onl
       await new Promise((res) => setTimeout(res, 3000));
       expect(
         countRigReactionRows(dbPath),
-        "the attacker 👍 (external trust, the inert 0.03 < 0.05 floor) must NOT add a reaction row — exactly the authorized one persists (the spoof guard holds). A 2nd row is a real spoof-guard defect (Defect-Watch: close it test-first in packages/*/src).",
+        "the attacker 👍 (external trust, the inert 0.03 < 0.05 floor) must NOT add a reaction row — exactly the authorized one persists (the spoof guard holds). A 2nd row is a real spoof-guard defect (close it test-first in packages/*/src).",
       ).toBe(1);
     },
     1_800_000,

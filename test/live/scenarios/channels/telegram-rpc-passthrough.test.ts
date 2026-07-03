@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * AUTO-01 — the `tg rpc` auth'd passthrough to a known gateway JSON-RPC method
- * + the honest-error exits (Phase 205, Plan 06).
+ * + the honest-error exits.
  *
  * The gateway exposes a SINGLE generic JSON-RPC dispatch (`handlers[method]`,
  * 120+ methods). This scenario proves a known no-LLM method round-trips auth'd
- * by the handle token, plus the two honest-error contracts (CLI-04 / V5).
+ * by the handle token, plus the two honest-error contracts.
  *
  * ── TRANSPORT (this scenario was the FIRST live /rpc round-trip) ──
  *
@@ -23,12 +23,12 @@
  * (`packages/cli/src/client/rpc-client.ts` is a WS JSON-RPC client; the
  * `cli-uses-typed-rpc` architecture invariant).
  *
- * RESOLVED (205-07 — the AUTO-01 transport fix): `rpcRequest`
+ * RESOLVED (the AUTO-01 transport fix): `rpcRequest`
  * (test/support/daemon-harness.ts) NOW routes over WS via `ws-helpers.ts`
  * (`openAuthenticatedWebSocket` + `sendJsonRpc`), and the CLI's `tg rpc`
  * (test/live/bin/chan.ts) wraps it — so `tg rpc <method>` reaches ANY gateway
  * dispatch method over the transport the gateway actually serves, mirroring
- * `rpc-client.ts`. The 205-06 keystone discovered the defect (no prior test
+ * `rpc-client.ts`. The keystone discovered the defect (no prior test
  * caught it: the one integration caller, eventbus-daemon-e2e, asserts only an
  * inline `status < 500` — a 404 passes; chan.test.ts injects a fake `rpc`; the
  * three live `rpcRequest` callers are COMIS_LIVE-gated, so the broken `/rpc` leg
@@ -89,7 +89,7 @@ describe("AUTO-01 — the honest-error exits (bad_json + rpc_error), no daemon",
     memoryDbPath: "/tmp/none/memory.db",
   };
 
-  it("a malformed json arg yields bad_json BEFORE any passthrough (V5 — the rpc fn is never called)", async () => {
+  it("a malformed json arg yields bad_json BEFORE any passthrough (the rpc fn is never called)", async () => {
     let rpcCalled = false;
     const ctx: VerbContext = {
       handle: fakeHandle,
@@ -221,13 +221,13 @@ describe("AUTO-01 Stage-B — `tg rpc <known method>` round-trips auth'd by the 
     }
   });
 
-  it("the shared `rpcRequest` helper now ROUND-TRIPS over WS (the 205-07 AUTO-01 transport fix — no longer the /rpc 404)", async () => {
+  it("the shared `rpcRequest` helper ROUND-TRIPS over WS (the AUTO-01 transport, not a /rpc 404)", async () => {
     const r = rig;
     expect(r, "rig booted").toBeDefined();
     if (r === undefined) return;
 
     // The shared helper is the seam BOTH the CLI (`tg rpc`) and the COMIS_LIVE
-    // billing/health callers use. Post-205-07 it connects to `/ws?token=` and
+    // billing/health callers use. It connects to `/ws?token=` and
     // dispatches the SAME way the production `comis` CLI does — so a known no-LLM
     // method returns its UNWRAPPED result (the `json.result`, not the envelope),
     // never the old `RPC error undefined: undefined` thrown off the 404 body.
@@ -320,10 +320,10 @@ describe("AUTO-01 Stage-B — `tg rpc <known method>` round-trips auth'd by the 
 });
 
 // ---------------------------------------------------------------------------
-// A dead handle is an honest non-zero exit (CLI-04) — no daemon, no network.
+// A dead handle is an honest non-zero exit — no daemon, no network.
 // ---------------------------------------------------------------------------
 
-describe("AUTO-01 — `tg rpc` with NO resolved handle is an honest dead_handle (CLI-04), never a silent spawn", () => {
+describe("AUTO-01 — `tg rpc` with NO resolved handle is an honest dead_handle, never a silent spawn", () => {
   it("rpc with no resolved handle throws VerbFailure(dead_handle) BEFORE any transport (it needs the gateway token)", async () => {
     // An empty ctx (handle omitted) is the unresolved-handle case under
     // exactOptionalPropertyTypes — runVerb's `ctx.handle === undefined` guard fires.

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * DNS-pinned fetch primitive for SSRF-validated hosts (CR-01, Phase 197).
+ * DNS-pinned fetch primitive for SSRF-validated hosts.
  *
  * `validateUrl` / `validateLocalServerUrl` resolve a hostname's IP and classify
  * it, but a subsequent BARE `fetch()` re-resolves DNS independently at connect
@@ -12,7 +12,7 @@
  *
  * It is the shared extraction of the pattern that already lived inline in
  * `media/ssrf-fetcher.ts` (`createSsrfGuardedFetcher`) — that fetcher now imports
- * `createPinnedAgent` from here, and the two SEC-02 local-server surfaces
+ * `createPinnedAgent` from here, and the two local-server surfaces
  * (`local-stt-probe.ts`, `openai-stt-adapter.ts`) use `fetchPinned` so all three
  * paths share ONE pinned implementation instead of each hand-rolling a bare
  * `fetch`.
@@ -80,7 +80,7 @@ export function createPinnedAgent(ip: string): Agent {
  * @param init     - Standard fetch init (method, headers, body, signal, …). The
  *                   `dispatcher` is set by this helper and must NOT be supplied.
  * @returns The undici `Response`. Network/connect errors propagate to the caller
- *   (each SEC-02 surface already wraps its fetch in a try → honest-degrade).
+ *   (each surface already wraps its fetch in a try → honest-degrade).
  */
 export async function fetchPinned(
   url: string,

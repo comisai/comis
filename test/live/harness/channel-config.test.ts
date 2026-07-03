@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Stage-A unit tests for the Phase 144 (CHANNELS) config harness.
+ * Stage-A unit tests for the CHANNELS config harness.
  *
  * Pure object builders + channel enumeration tables — no daemon, no key, no
  * network. Mirrors test/live/harness/web-config.test.ts.

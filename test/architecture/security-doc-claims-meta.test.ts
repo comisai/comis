@@ -6,7 +6,7 @@
  * known-bad fixture strings (the pre-fix claims) and assert that the functions
  * correctly detect the violation. This is a permanent machine-proof that the
  * main guard would go RED if those claims were reverted — satisfying the TDD
- * RED-state obligation from STATE.md and AGENTS.md §2.10.
+ * RED-state obligation.
  *
  * @module
  */
@@ -121,7 +121,7 @@ describe("security-doc-claims guard detects reverted claims", () => {
     ).toBe(false);
   });
 
-  // AUDIT-06 (Phase 176): RED-state proof for the audit.mdx durability↔sink checker.
+  // RED-state proof for the audit.mdx durability↔sink checker.
   it("auditDocClaimsDurabilityWithoutSink FLAGS a daemon.log-only persistence over-claim", () => {
     // The pre-correction claim: durable persistence asserted, NO real sink named.
     expect(

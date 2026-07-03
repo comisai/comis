@@ -9,7 +9,7 @@
  *   Drives 20 short turns at low contextThreshold → asserts:
  *     - context:dag_compacted fires with leafSummariesCreated > 0
  *       (assertO1MetricsNonZero against driver.capturedEvents())
- *     - lcd_summaries delta >= 1 (FND-11 persistence oracle — manual >= check)
+ *     - lcd_summaries delta >= 1 (persistence oracle — manual >= check)
  *   lcd_messages exact delta is NOT asserted — runDbOracle enforces exact equality
  *   and a hardcoded count false-fails on tool-use/retry turns.
  *
@@ -106,10 +106,10 @@ describe.skipIf(!isLive)("Live — CTX-02 summarization (Stage-C)", () => {
         const events = driver.capturedEvents();
         assertO1MetricsNonZero(events);
 
-        // FND-10 log-oracle — no unexpected ERROR/FATAL in a successful live run.
+        // Log oracle — no unexpected ERROR/FATAL in a successful live run.
         await runLogOracle(driver.capturedLogLines(), { expectedErrors: [] });
 
-        // FND-11: persistence oracle — structural integrity checks only
+        // Persistence oracle — structural integrity checks only
         // (integrity_check, foreign_key_check, Zod row validation).
         // lcd_messages exact delta is NOT asserted — the oracle enforces exact
         // equality and tool-use/retry turns make the count non-deterministic.
@@ -117,7 +117,7 @@ describe.skipIf(!isLive)("Live — CTX-02 summarization (Stage-C)", () => {
           await runDbOracle(dbPath, {});
         }
 
-        // FND-11: lcd_summaries >= 1 — manual delta check (>= semantics).
+        // lcd_summaries >= 1 — manual delta check (>= semantics).
         // We need at least one leaf summary row to have been written.
         if (existsSync(dbPath) && beforeCounts["lcd_summaries"] !== undefined) {
           const afterCounts = snapshotRowCounts(dbPath, ["lcd_summaries"]);
@@ -140,7 +140,7 @@ describe.skipIf(!isLive)("Live — CTX-02 summarization (Stage-C)", () => {
         await driver.close().catch(() => {
           // Swallow shutdown noise — the daemon may already have exited.
         });
-        // IN-01: clean up per-combo temp config to avoid tmpdir bloat.
+        // Clean up per-combo temp config to avoid tmpdir bloat.
         try { rmSync(configPath); } catch { /* ignore if already gone */ }
       }
     },

@@ -305,7 +305,7 @@ describe("expectDigestChange", () => {
   });
 
   it("throws when 'after' has traceCount=0 — turn failed before emitting cache-trace", () => {
-    // WR-03: before has a real digest; after has traceCount=0 (undefined digest).
+    // before has a real digest; after has traceCount=0 (undefined digest).
     // Without the guard, before.lastMessagesDigest !== undefined evaluates to
     // 'changed' and the function would NOT throw — masking a broken turn.
     const before: CacheTraceSummary = {

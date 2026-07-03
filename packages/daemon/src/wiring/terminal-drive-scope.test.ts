@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the pure drive-scope helpers (`terminal-drive-scope.ts`, DRIVE-01 /
- * 164-06 Task 1) — the two-owner split that lets a PROMOTED drive's woken turns run
+ * Unit tests for the pure drive-scope helpers (`terminal-drive-scope.ts`) — the two-owner
+ * split that lets a PROMOTED drive's woken turns run
  * under a dedicated `drive:<sessionId>` attribution key while every REGISTRY call still
  * resolves the session's STAMPED owner (`sessionKey:""`).
  *
@@ -10,13 +10,11 @@
  *     (the FSM/journal/conversation attribution key; NOT the registry-authorization owner).
  *   - `registryOwnerFor(owner)` → strips a `drive:`-scoped `sessionKey` back to the stamped
  *     registry owner (`sessionKey:""`), passing a NON-drive (real subagent) key through
- *     unchanged — the I5 read-parity anchor (a promoted turn resolves the live session, not
+ *     unchanged — the read-parity anchor (a promoted turn resolves the live session, not
  *     the not-found view).
  *   - `DRIVE_SCOPE_PREFIX` — the reserved `"drive:"` prefix `formatSessionKey` NEVER produces
- *     (A4: a subagent key derives from `sub-agent:<uuid>`), so the drive-scope key cannot
+ *     (a subagent key derives from `sub-agent:<uuid>`), so the drive-scope key cannot
  *     collide with a real owner.
- *
- * RED on pre-patch: `terminal-drive-scope.ts` does not exist (the import fails).
  *
  * @module
  */
@@ -29,7 +27,7 @@ import { formatSessionKey } from "@comis/core";
 import { DRIVE_SCOPE_PREFIX, driveScopeKeyFor, registryOwnerFor, isDriveScoped } from "./terminal-drive-scope.js";
 import type { PersistedWakeOwner } from "./terminal-wake-persistence.js";
 
-describe("terminal-drive-scope — the pure two-owner split (DRIVE-01 / I5 / A4)", () => {
+describe("terminal-drive-scope — the pure two-owner split", () => {
   it("driveScopeKeyFor returns drive:<id> when promoted, '' when not", () => {
     expect(driveScopeKeyFor("sess-42", true)).toBe(`${DRIVE_SCOPE_PREFIX}sess-42`);
     expect(driveScopeKeyFor("sess-42", false)).toBe("");
@@ -41,7 +39,7 @@ describe("terminal-drive-scope — the pure two-owner split (DRIVE-01 / I5 / A4)
     const wakeOwner: PersistedWakeOwner = { agentId: "agent-1", sessionKey: `${DRIVE_SCOPE_PREFIX}sess-7` };
     const stamped = registryOwnerFor(wakeOwner);
     // The registry owner is the STAMPED owner — the drive scope is stripped, so a
-    // promoted turn's registry call resolves the live session (I5), not the not-found view.
+    // promoted turn's registry call resolves the live session, not the not-found view.
     expect(stamped).toEqual({ agentId: "agent-1", sessionKey: "" });
   });
 
@@ -65,14 +63,14 @@ describe("terminal-drive-scope — the pure two-owner split (DRIVE-01 / I5 / A4)
     expect(() => registryOwnerFor(undefined as unknown as PersistedWakeOwner)).not.toThrow();
   });
 
-  it("IN-03: isDriveScoped is the SAME total accessor registryOwnerFor uses (a drive: owner is scoped; '' and a real subagent key are not)", () => {
+  it("isDriveScoped is the SAME total accessor registryOwnerFor uses (a drive: owner is scoped; '' and a real subagent key are not)", () => {
     expect(isDriveScoped({ agentId: "a", sessionKey: `${DRIVE_SCOPE_PREFIX}sess-1` })).toBe(true);
     expect(isDriveScoped({ agentId: "a", sessionKey: "" })).toBe(false);
     const subagentKey = formatSessionKey({ tenantId: "default", userId: "u", channelId: `sub-agent:${randomUUID()}` });
     expect(isDriveScoped({ agentId: "a", sessionKey: subagentKey })).toBe(false);
   });
 
-  it("IN-03: isDriveScoped never throws on a degenerate owner (total — the same defensive narrow as registryOwnerFor)", () => {
+  it("isDriveScoped never throws on a degenerate owner (total — the same defensive narrow as registryOwnerFor)", () => {
     // The woken-turn driver's `promoted` gate calls this on every wake; a raw
     // `owner.sessionKey.startsWith(...)` throws on a missing/non-string key — isDriveScoped
     // narrows defensively (false) just like registryOwnerFor.
@@ -83,7 +81,7 @@ describe("terminal-drive-scope — the pure two-owner split (DRIVE-01 / I5 / A4)
     expect(isDriveScoped({ agentId: "a", sessionKey: 5 as unknown as string })).toBe(false);
   });
 
-  it("A4: DRIVE_SCOPE_PREFIX is a value formatSessionKey never produces (no collision with a real subagent key)", () => {
+  it("DRIVE_SCOPE_PREFIX is a value formatSessionKey never produces (no collision with a real subagent key)", () => {
     // A subagent's channelId is "sub-agent:<uuid>"; formatSessionKey derives the per-run key
     // as `{tenantId}:{userId}:{channelId}…`. Over many runs, NONE start with the reserved
     // drive: prefix — so the drive-scope attribution key can never equal a real owner (the

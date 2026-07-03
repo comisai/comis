@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Stage-A TDD unit tests for the CostGovernor, scanForSecrets, and assertNoSecrets.
+ * Stage-A unit tests for the CostGovernor, scanForSecrets, and assertNoSecrets.
  *
- * These tests import from ./cost.ts which does not yet exist — they MUST FAIL
- * on the pre-patch codebase (RED phase). No real API calls; no real budget consumed.
+ * No real API calls; no real budget consumed.
  *
  * @module
  */
@@ -76,7 +75,7 @@ describe("scanForSecrets", () => {
     expect(matches).toEqual([]);
   });
 
-  // CR-01: apiKey field-name false-positive regression tests
+  // apiKey field-name false-positive regression tests
   it("does NOT match a JSON field name 'apiKey' with null value", () => {
     const matches = scanForSecrets(JSON.stringify({ apiKey: null }));
     expect(matches).toEqual([]);

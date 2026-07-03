@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Memory-recall asserter — deterministic typed helpers for Phase-139 MEM test suite.
+ * Memory-recall asserter — deterministic typed helpers for the MEM test suite.
  *
  * All functions are pure (no I/O). They throw descriptive errors on assertion
  * failure — same error-message style as cache-trace.ts and context-trace.ts.
@@ -218,10 +218,10 @@ export function assertNoSecretLeak(
  * Daemon-generated honest-non-answer markers. These strings are emitted by the
  * EXECUTOR's silent-failure recovery (handleSilentRetryDefault), NOT by the
  * model — so an agent cannot fabricate them to dodge a quality judge. When a
- * reply matches, the turn DEGRADED HONESTLY (the v2.19 honesty fix: report the
+ * reply matches, the turn DEGRADED HONESTLY (report the
  * empty/thinking-only stall truthfully instead of fabricating a "done").
  *
- * Observed live (260611): claude-sonnet-4-6 intermittently emits a thinking-only
+ * Observed live: claude-sonnet-4-6 intermittently emits a thinking-only
  * onboarding turn (all reasoning, no visible text) that poisons the session; the
  * recovery surfaces this fallback rather than inventing an answer.
  */
@@ -232,9 +232,9 @@ const HONEST_NON_ANSWER_MARKERS = [
   "context exhausted",
   "I couldn't produce",
   "I could not produce",
-  // v2.18 honest-auth-error: the executor truthfully reports an auth failure
+  // honest-auth-error: the executor truthfully reports an auth failure
   // (e.g. the test harness's post-boot dummy-key re-seed winning over the real
-  // key) instead of fabricating an answer — an honest degradation (260611).
+  // key) instead of fabricating an answer — an honest degradation.
   "could not authenticate",
   "check the API key",
 ] as const;

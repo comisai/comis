@@ -53,7 +53,7 @@ function labels(tools: ReturnType<typeof mcpToolsToAgentTools>): string[] {
 // ---------------------------------------------------------------------------
 
 describe("mcpToolsToAgentTools — per-server tool filtering", () => {
-  it("Test 1 (allowlist): surfaces ONLY the allowlisted tool", () => {
+  it("allowlist: surfaces ONLY the allowlisted tool", () => {
     const tools = mcpToolsToAgentTools(
       threeTools(),
       makeCallTool(),
@@ -66,7 +66,7 @@ describe("mcpToolsToAgentTools — per-server tool filtering", () => {
     expect(labels(tools)).toEqual(["get_price"]);
   });
 
-  it("Test 2 (blocklist): removes the blocklisted tool; others pass", () => {
+  it("blocklist: removes the blocklisted tool; others pass", () => {
     const tools = mcpToolsToAgentTools(
       threeTools(),
       makeCallTool(),
@@ -79,7 +79,7 @@ describe("mcpToolsToAgentTools — per-server tool filtering", () => {
     expect(labels(tools)).toEqual(["get_price", "sell"]);
   });
 
-  it("Test 3 (both, overlap): a name on both lists is filtered out (blocklist wins)", () => {
+  it("both lists overlap: a name on both lists is filtered out (blocklist wins)", () => {
     const tools = mcpToolsToAgentTools(
       threeTools(),
       makeCallTool(),
@@ -92,7 +92,7 @@ describe("mcpToolsToAgentTools — per-server tool filtering", () => {
     expect(labels(tools)).toEqual(["get_price"]);
   });
 
-  it("Test 4 (undefined serverFiltersFn): all tools pass", () => {
+  it("undefined serverFiltersFn: all tools pass", () => {
     const tools = mcpToolsToAgentTools(
       threeTools(),
       makeCallTool(),
@@ -104,7 +104,7 @@ describe("mcpToolsToAgentTools — per-server tool filtering", () => {
     expect(tools).toHaveLength(3);
   });
 
-  it("Test 5 (empty allowlist): no-op, not deny-all", () => {
+  it("empty allowlist: no-op, not deny-all", () => {
     const tools = mcpToolsToAgentTools(
       threeTools(),
       makeCallTool(),
@@ -116,7 +116,7 @@ describe("mcpToolsToAgentTools — per-server tool filtering", () => {
     expect(tools).toHaveLength(3);
   });
 
-  it("Test 6 (5-arg call, no serverFiltersFn at all): back-compat, all tools pass", () => {
+  it("5-arg call with no serverFiltersFn: back-compat, all tools pass", () => {
     const tools = mcpToolsToAgentTools(
       threeTools(),
       makeCallTool(),

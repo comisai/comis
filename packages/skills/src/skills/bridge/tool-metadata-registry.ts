@@ -78,7 +78,7 @@ export function registerAllToolMetadata(): void {
 
   registerToolMetadata("discover_tools", { isReadOnly: true });
 
-  // Context expansion (3) — in-session lossless-store recovery (E1/E2). They
+  // Context expansion (3) — in-session lossless-store recovery. They
   // only READ the LCD store, so they are read-only (parallel-execution safe).
   registerToolMetadata("ctx_search",  { isReadOnly: true });
   registerToolMetadata("ctx_inspect", { isReadOnly: true });
@@ -120,7 +120,7 @@ export function registerAllToolMetadata(): void {
   // --- Concurrency-safe mutating tool ---
   registerToolMetadata("message", { isReadOnly: false, isConcurrencySafe: true });
 
-  // --- Read-only concurrency-safe pacing primitive (STREAM-03) ---
+  // --- Read-only concurrency-safe pacing primitive ---
   // sleep mutates NO state: read-only + concurrency-safe so the parallel-execution
   // serializer lets it overlap concurrency-safe reads (it must not serialize them
   // behind a pure timer) and the input-strip / read-only detection see it correctly.
@@ -151,9 +151,9 @@ export function registerAllToolMetadata(): void {
   const VALID_CRON_ACTIONS = ["add", "list", "update", "remove", "status", "runs", "run", "wake"];
   // "in" = deterministic relative one-shot (now + schedule_in_seconds), the
   // reliable path for "remind me in N minutes" — keep in lockstep with
-  // CronScheduleSchema (CRON-IN-01). Omitting it here silently rejected the
-  // model's correct `schedule_kind:"in"` with "Valid: cron, every, at", forcing
-  // it back onto the timezone-error-prone `at` path (live 2026-06-20).
+  // CronScheduleSchema. Omitting it here silently rejected the model's correct
+  // `schedule_kind:"in"` with "Valid: cron, every, at", forcing it back onto the
+  // timezone-error-prone `at` path.
   const VALID_SCHEDULE_KINDS = ["cron", "every", "at", "in"];
 
   registerToolMetadata("cron", {
@@ -642,7 +642,7 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("session_status",   { mcpExportPolicy: "permission-gated" });
   registerToolMetadata("sessions_list",    { mcpExportPolicy: "permission-gated" });
   registerToolMetadata("sessions_history", { mcpExportPolicy: "permission-gated" });
-  // Observability (3) — all permission-gated; operator allowlists by query scope. obs_explain (154-03) + obs_fleet_health (161-02) are READ-ONLY digests that run their assembler directly under daemon authority (NOT the admin RPC); the allowlist is the grant (merged comments to stay under the 800-line cap).
+  // Observability (3) — all permission-gated; operator allowlists by query scope. obs_explain + obs_fleet_health are READ-ONLY digests that run their assembler directly under daemon authority (NOT the admin RPC); the allowlist is the grant.
   registerToolMetadata("obs_query", { mcpExportPolicy: "permission-gated" });
   registerToolMetadata("obs_explain", { mcpExportPolicy: "permission-gated", isReadOnly: true, maxResultSizeChars: 100_000, searchHint: "explain incident root-cause post-mortem session report" });
   registerToolMetadata("obs_fleet_health", { mcpExportPolicy: "permission-gated", isReadOnly: true, maxResultSizeChars: 100_000, searchHint: "fleet health cross-session degradation rate errorKinds breaker trips config posture model health" });
@@ -695,8 +695,8 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("slack_action",    { mcpExportPolicy: "never-export" });
   // Cost-bearing synthesis (3).
   registerToolMetadata("tts_synthesize", { mcpExportPolicy: "never-export" });
-  // Video generation (188-02 SEC-01) — cost-bearing + outbound delivery; never
-  // MCP-exported. video_status is reserved (its tool lands Phase 189).
+  // Video generation — cost-bearing + outbound delivery; never MCP-exported.
+  // video_status is reserved so its policy is pinned before the tool exists.
   registerToolMetadata("video_generate", { mcpExportPolicy: "never-export" });
   registerToolMetadata("video_status",   { mcpExportPolicy: "never-export" });
   // Terminal driver (9) — never-export; inside Comis's trust boundary, NOT an MCP-exported surface.
@@ -711,18 +711,17 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("terminal_session_status",    { mcpExportPolicy: "never-export", exitCodeIsDrivenSession: true });
   registerToolMetadata("terminal_session_resize",    { mcpExportPolicy: "never-export" });
   registerToolMetadata("terminal_session_kill",      { mcpExportPolicy: "never-export" });
-  // Context expansion (3) — never-export; in-session lossless-store recovery (E1/E2),
+  // Context expansion (3) — never-export; in-session lossless-store recovery,
   // NOT an MCP-exported surface and DISTINCT from cross-session recall.
   registerToolMetadata("ctx_search",  { mcpExportPolicy: "never-export" });
   registerToolMetadata("ctx_inspect", { mcpExportPolicy: "never-export" });
   registerToolMetadata("ctx_expand",  { mcpExportPolicy: "never-export" });
-  // Sleep (STREAM-03) — never-export; an internal between-turns pacing primitive
+  // Sleep — never-export; an internal between-turns pacing primitive
   // inside Comis's trust boundary, not a capability an external MCP client needs.
   registerToolMetadata("sleep", { mcpExportPolicy: "never-export" });
 
-  // Failure Detectors (§16.10/§16.11) — web_search / web_fetch structured-field
-  // failure classification. Extracted to keep this file ≤800 lines (the
-  // closures-extraction protocol; behavior-neutral spread-merge onto the
-  // existing entries — the unique-tool count is unchanged).
+  // Failure Detectors — web_search / web_fetch structured-field failure
+  // classification. Extracted to keep this file ≤800 lines; a behavior-neutral
+  // spread-merge onto the existing entries — the unique-tool count is unchanged.
   registerFailureDetectorMetadata();
 }

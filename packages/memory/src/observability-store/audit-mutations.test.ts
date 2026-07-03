@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * audit-mutations.ts tests (AUDIT-01).
+ * audit-mutations.ts tests.
  *
  * Two composed analogs under test:
  *   1. The SQLite half — `insertAuditEvent` / `queryAuditEvents` round-trip
@@ -8,7 +8,7 @@
  *   2. The JSONL half — `appendAuditJsonl` writes a 0600 rotated
  *      `security-audit.jsonl` via the reused config-audit helpers (a tmp dir).
  *
- * The `secret:accessed` invariant (AUDIT-01) is structural: a secret-access row
+ * The `secret:accessed` invariant is structural: a secret-access row
  * carries `secretName` (in `refs`/`action`) + `outcome` and NO value field
  * anywhere — there is no value to drop because the source payload is value-free.
  */
@@ -193,6 +193,6 @@ describe("audit-mutations — security-audit.jsonl writer (JSONL half)", () => {
   });
 });
 
-// Type-level: AuditQueryParams exposes the obs_query filter surface (decision #4).
+// Type-level: AuditQueryParams exposes the obs_query filter surface.
 const _q: AuditQueryParams = { kind: "secret_access", agentId: "a", tenant: "t", outcome: "denied", since: 1, until: 2, limit: 3, classification: "read" };
 void _q;

@@ -115,7 +115,7 @@ describe("attachTrajectoryToEventBus -- tool events", () => {
     expect(data.errorKind).toBe("internal");
   });
 
-  it("F-OBS-2: forwards the content-free web_search grounding summary (resultCount + domains) onto tool.result", () => {
+  it("forwards the content-free web_search grounding summary (resultCount + domains) onto tool.result", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
     attachTrajectoryToEventBus({ eventBus: bus, recorder });
@@ -138,9 +138,9 @@ describe("attachTrajectoryToEventBus -- tool events", () => {
     expect(data.domains).toEqual(["example.com", "news.example.org"]);
   });
 
-  // B1 (D3): the two breaker transitions must land in the trajectory as
+  // The two breaker transitions must land in the trajectory as
   // tool.breaker_opened / tool.breaker_reset with ids/counts/typed-reason only
-  // (no raw error body, §2.7). Phase 153's obs.explain reads these.
+  // (no raw error body). obs.explain reads these.
   it("tool_breaker_opened_maps_to_tool.breaker_opened with toolName/consecutiveFailures/errorTag/reason/seq", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
@@ -185,9 +185,9 @@ describe("attachTrajectoryToEventBus -- tool events", () => {
     expect(data.seq).toBe(7);
   });
 
-  // F2 (D5): the per-session health rollup must land in the trajectory as
-  // session.summary carrying counts/flags only — the §6.2 replay shape
-  // (degraded run, 8/10 web_fetch failures). Phase 153's obs.explain reads it.
+  // The per-session health rollup must land in the trajectory as
+  // session.summary carrying counts/flags only — the replay shape
+  // (degraded run, 8/10 web_fetch failures). obs.explain reads it.
   it("session_summary_maps_to_session.summary with degraded/turnCount/costUsd/toolStats/breakerTripCount", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
@@ -215,7 +215,7 @@ describe("attachTrajectoryToEventBus -- tool events", () => {
     expect(data.breakerTripCount).toBe(1);
   });
 
-  // §2.7: the trajectory record carries counts/flags ONLY — the envelope
+  // The trajectory record carries counts/flags ONLY — the envelope
   // correlation ids (agentId/sessionKey/traceId) are handled separately and
   // must NOT appear in the translated data.
   it("session_summary_strips_envelope_ids_from_data", () => {
@@ -279,7 +279,7 @@ describe("attachTrajectoryToEventBus -- tool events", () => {
       timestamp: Date.now(),
       agentId: "agent-1",
       sessionKey: "t1:u1:c1",
-      // D1 provenance fields (Plan 03 payload — Phase 153 obs.explain reads these).
+      // Provenance fields (obs.explain reads these).
       classifiedFailureBy: "failure_detector",
       transportOk: true,
       httpStatus: 200,
@@ -293,7 +293,7 @@ describe("attachTrajectoryToEventBus -- tool events", () => {
     expect(recorder.calls[0].type).toBe("tool.result");
     const data = recorder.calls[0].data as Record<string, unknown>;
     // All 7 provenance fields must reach the trajectory `data` — without
-    // this forwarding, Phase 153's obs.explain is blind (RESEARCH Pitfall 2).
+    // this forwarding, obs.explain is blind.
     expect(data.classifiedFailureBy).toBe("failure_detector");
     expect(data.transportOk).toBe(true);
     expect(data.httpStatus).toBe(200);
@@ -431,9 +431,9 @@ describe("attachTrajectoryToEventBus -- model events", () => {
     expect(data.durationMs).toBe(2500);
   });
 
-  // B3 (D8): when the per-turn token_usage event carries stopReason/finishReason,
+  // When the per-turn token_usage event carries stopReason/finishReason,
   // the existing token_usage->model.completed translator forwards them
-  // presence-conditionally (same pattern Phase 150 used for provenance). No new
+  // presence-conditionally (the same pattern used for provenance). No new
   // mapping key / case is added — the event is already mapped to model.completed.
   it("model_completed_forwards_stopReason_and_finishReason when the token_usage event carries them", () => {
     const bus = makeBus();
@@ -570,17 +570,17 @@ describe("attachTrajectoryToEventBus -- delivery events", () => {
 });
 
 // ---------------------------------------------------------------------------
-// OBS-04 (Phase 186): image-generation lifecycle bridge tests.
+// Image-generation lifecycle bridge tests.
 //
 // The 4 image:* events are DIRECT-emitted by the daemon image RPC handler
 // (the daemon context has no bus bridge), but they MUST be declared in
 // EventMap + TRAJECTORY_BRIDGE_MAPPING + TRAJECTORY_EVENT_TYPES + a translator
-// for arch-closure (Pitfall 4). The translator forwards ONLY content-free
+// for arch-closure. The translator forwards ONLY content-free
 // ids/labels/numbers/booleans (provider/model/costUsd/sizeBytes/outcome/
 // channelType/errorKind/delivered/mainProvider) — never the prompt, image
-// bytes, a key, or a raw provider message (T-186-08).
+// bytes, a key, or a raw provider message.
 // ---------------------------------------------------------------------------
-describe("attachTrajectoryToEventBus -- image generation (OBS-04)", () => {
+describe("attachTrajectoryToEventBus -- image generation", () => {
   it("image_requested_maps_to_image.requested with provider/mainProvider; correlation keys stripped", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
@@ -606,7 +606,7 @@ describe("attachTrajectoryToEventBus -- image generation (OBS-04)", () => {
     expect(data.traceId).toBeUndefined();
   });
 
-  it("image_generated_maps_to_image.generated carrying costUsd/model/provider/sizeBytes/outcome (OBS-03 cost-carry)", () => {
+  it("image_generated_maps_to_image.generated carrying costUsd/model/provider/sizeBytes/outcome (cost-carry)", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
     attachTrajectoryToEventBus({ eventBus: bus, recorder });
@@ -627,8 +627,8 @@ describe("attachTrajectoryToEventBus -- image generation (OBS-04)", () => {
     const data = recorder.calls[0].data as Record<string, unknown>;
     expect(data.provider).toBe("openai");
     expect(data.model).toBe("gpt-image-1");
-    // The OBS-03 binding field — the cost rides the trajectory record so
-    // `comis explain` reconstructs it (Route a).
+    // The cost-carry field — the cost rides the trajectory record so
+    // `comis explain` reconstructs it.
     expect(data.costUsd).toBe(0.04);
     expect(data.sizeBytes).toBe(4242);
     expect(data.outcome).toBe("ok");
@@ -683,7 +683,7 @@ describe("attachTrajectoryToEventBus -- image generation (OBS-04)", () => {
   });
 });
 
-describe("attachTrajectoryToEventBus -- vision analysis (VIS-04, append-only)", () => {
+describe("attachTrajectoryToEventBus -- vision analysis (append-only)", () => {
   it("vision_requested_maps_to_media.vision.requested with provider/mainProvider; correlation keys stripped", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
@@ -709,7 +709,7 @@ describe("attachTrajectoryToEventBus -- vision analysis (VIS-04, append-only)", 
     expect(data.traceId).toBeUndefined();
   });
 
-  it("vision_completed_maps_to_media.vision.completed carrying path/costUsd/model/provider/outcome (VIS-04 cost-carry + path label)", () => {
+  it("vision_completed_maps_to_media.vision.completed carrying path/costUsd/model/provider/outcome (cost-carry + path label)", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
     attachTrajectoryToEventBus({ eventBus: bus, recorder });
@@ -732,15 +732,15 @@ describe("attachTrajectoryToEventBus -- vision analysis (VIS-04, append-only)", 
     expect(data.provider).toBe("anthropic");
     expect(data.mainProvider).toBe("anthropic");
     expect(data.model).toBe("claude-sonnet-4-5");
-    // The VIS-04 cost-carry field — cost rides the trajectory record (Route a).
+    // The cost-carry field — cost rides the trajectory record.
     expect(data.costUsd).toBe(0.002);
-    // VIS-03's "which path" signal.
+    // The "which path" signal.
     expect(data.path).toBe("main-vision");
     expect(data.outcome).toBe("ok");
     expect(data.agentId).toBeUndefined();
   });
 
-  it("vision_completed on the registry tier carries NO costUsd (those adapters return no cost — Pitfall 4)", () => {
+  it("vision_completed on the registry tier carries NO costUsd (those adapters return no cost)", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
     attachTrajectoryToEventBus({ eventBus: bus, recorder });
@@ -793,13 +793,13 @@ describe("attachTrajectoryToEventBus -- vision analysis (VIS-04, append-only)", 
     expect(TRAJECTORY_BRIDGE_MAPPING["image:generated"]).toBe("image.generated");
   });
 
-  // OBS-04 (Phase 192): video-generation lifecycle bridge mapping. The daemon
+  // Video-generation lifecycle bridge mapping. The daemon
   // video RPC handler + the off-turn background poller DIRECT-emit these via the
   // per-session recorder (no bus bridge in the daemon RPC/poller context — the
   // image.*/media.vision.* precedent); the mapping is declared for arch-closure +
-  // a future bus emitter. APPEND-ONLY beside image.*/media.vision.* (Pitfall 8 —
-  // never a rename, which would trip the bridge-entry-count guard + web codegen).
-  it("OBS-04: all five video:* events are trajectory-mapped (arch closure); the +5 rows are exactly these", () => {
+  // a future bus emitter. APPEND-ONLY beside image.*/media.vision.* —
+  // never a rename, which would trip the bridge-entry-count guard + web codegen.
+  it("all five video:* events are trajectory-mapped (arch closure); the +5 rows are exactly these", () => {
     expect(TRAJECTORY_BRIDGE_MAPPING["video:requested"]).toBe("video.requested");
     expect(TRAJECTORY_BRIDGE_MAPPING["video:submitted"]).toBe("video.submitted");
     expect(TRAJECTORY_BRIDGE_MAPPING["video:generated"]).toBe("video.generated");
@@ -816,7 +816,7 @@ describe("attachTrajectoryToEventBus -- vision analysis (VIS-04, append-only)", 
       expect((TRAJECTORY_EVENT_TYPES as readonly string[]).includes(t)).toBe(true);
     }
     // The SemVer-frozen image.*/media.vision.* mappings are STILL present (the
-    // video append renamed nothing — Pitfall 8).
+    // video append renamed nothing).
     expect(TRAJECTORY_BRIDGE_MAPPING["image:generated"]).toBe("image.generated");
     expect(TRAJECTORY_BRIDGE_MAPPING["media.vision:completed"]).toBe("media.vision.completed");
   });
@@ -1044,7 +1044,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       confidence: 0.9,
       timestamp: 1000,
     },
-    // FORGET-06: the soft-eviction transition counts (daemon-side emit).
+    // The soft-eviction transition counts (daemon-side emit).
     "learning:memory_demoted": {
       agentId: "default",
       count: 3,
@@ -1060,7 +1060,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       count: 2,
       timestamp: 1000,
     },
-    // REFLECT (Phase 226, renamed from the synthesis funnel): the reflection-run telemetry
+    // The reflection-run telemetry
     // (daemon-side emit) — count / funnel-counts / admissionOutcome closed-enum ONLY.
     "reflect:admitted": {
       agentId: "default",
@@ -1076,7 +1076,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       admissionOutcome: "uncorroborated",
       timestamp: 1000,
     },
-    // SURFACE-06: the promote/demote telemetry (daemon-side emit) — count ONLY.
+    // The promote/demote telemetry (daemon-side emit) — count ONLY.
     "learning:skill_promoted": {
       agentId: "default",
       count: 2,
@@ -1429,7 +1429,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       overflowStripped: false,
       timestamp: 0,
     },
-    // OBS-01 (Phase 180): the two multilingual signals — the envelope-only
+    // The two multilingual signals — the envelope-only
     // correlation invariant must hold for them too (no agentId/sessionKey leak).
     "context:script_zero_hit": {
       conversationId: "t1:u1:c1",
@@ -1484,7 +1484,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       windowMs: 60000,
       timestamp: 0,
     },
-    // OBS-04 (Phase 186): image-generation lifecycle — the envelope-only
+    // Image-generation lifecycle — the envelope-only
     // correlation invariant must hold for them too (no agentId/sessionKey leak).
     "image:requested": {
       provider: "openai",
@@ -1509,7 +1509,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       provider: "openai",
       timestamp: 0,
     },
-    // VIS-04 (Phase 187): vision-analysis lifecycle — the envelope-only
+    // Vision-analysis lifecycle — the envelope-only
     // correlation invariant must hold for them too (no agentId/sessionKey leak).
     "media.vision:requested": {
       provider: "anthropic",
@@ -1532,7 +1532,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       mainProvider: "anthropic",
       timestamp: 0,
     },
-    // OBS-04 (Phase 192): video-generation lifecycle — the envelope-only
+    // Video-generation lifecycle — the envelope-only
     // correlation invariant must hold for them too (no agentId/sessionKey leak).
     "video:requested": {
       provider: "veo",
@@ -1563,7 +1563,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       provider: "veo",
       timestamp: 0,
     },
-    // OBS-02/03 (Phase 196): voice STT/TTS lifecycle — the envelope-only
+    // Voice STT/TTS lifecycle — the envelope-only
     // correlation invariant must hold for them too (no agentId/sessionKey/traceId
     // leak; onSkip is a closed rung-list, NOT an envelope key — it stays).
     "media.stt:requested": {
@@ -1610,7 +1610,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       source: "explicit",
       timestamp: 0,
     },
-    // TELEM-01: counts/enums/booleans only — the correlation invariant must hold
+    // Counts/enums/booleans only — the correlation invariant must hold
     // (no agentId/sessionKey leak into the trajectory record data).
     "pipeline:authored": {
       action: "execute",
@@ -1630,7 +1630,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       nodeCount: 4,
       timestamp: 0,
     },
-    // STEER-01: counts/ids + the closed-union mode only — the correlation
+    // Counts/ids + the closed-union mode only — the correlation
     // invariant must hold (no sessionKey/traceId leak into the record data).
     "subagent:steered": {
       runId: "run-1",
@@ -1638,7 +1638,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       mode: "steer",
       timestamp: 0,
     },
-    // ORCH-OBS: the three sub-agent-lifecycle events — the correlation invariant
+    // The three sub-agent-lifecycle events — the correlation invariant
     // must hold (agent ids / timestamp never leak into data).
     "security:sandbox_downgrade_refused": {
       parentAgentId: "researcher",
@@ -1671,7 +1671,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       capSource: "node",
       timestamp: 0,
     },
-    // AUDIT-01 / TREE (215): the per-cap audit — the correlation invariant must
+    // The per-cap audit — the correlation invariant must
     // hold (agentId/traceId/sessionKey/sessionId never leak into data).
     "capability:audited": {
       capability: "orch:read",
@@ -1684,7 +1684,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       agentId: "agent-1",
       timestamp: 0,
     },
-    // TREE-01 (finding D): the per-graph-node spawn-tree leaf. The child agentId
+    // The per-graph-node spawn-tree leaf. The child agentId
     // rides `nodeAgentId` (data), NOT the correlation key `agentId` (envelope-only) —
     // the strip invariant still holds (data.agentId never set by the translator).
     "graph:node_spawned": {
@@ -1695,7 +1695,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       tokenBudget: 5000,
       timestamp: 0,
     },
-    // WR-4 (177-obs-loop): spend kill-switch — content-free (scope enum + $ numbers
+    // Spend kill-switch — content-free (scope enum + $ numbers
     // + provider/model config ids); the envelope correlation keys are stripped.
     "observability:spend_warning": {
       scope: "tenant",
@@ -1778,7 +1778,7 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- architecture-test surface", () => {
   });
 });
 
-describe("TRAJECTORY_BRIDGE_MAPPING -- pipeline:authored (TELEM-01, arch-closure)", () => {
+describe("TRAJECTORY_BRIDGE_MAPPING -- pipeline:authored (arch-closure)", () => {
   it("maps pipeline:authored -> pipeline.authored (mirrors the memory:generation_quality entry)", () => {
     expect(TRAJECTORY_BRIDGE_MAPPING["pipeline:authored"]).toBe("pipeline.authored");
   });
@@ -1793,7 +1793,7 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- pipeline:authored (TELEM-01, arch-closure
     expect(allTypes.has("pipeline.authored")).toBe(true);
   });
 
-  it("bridge translates pipeline:authored to a content-free record (counts/enums/booleans only — H1 / §2.7)", () => {
+  it("bridge translates pipeline:authored to a content-free record (counts/enums/booleans only)", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
     attachTrajectoryToEventBus({ eventBus: bus, recorder });
@@ -1825,12 +1825,12 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- pipeline:authored (TELEM-01, arch-closure
   });
 });
 
-describe("TRAJECTORY_BRIDGE_MAPPING -- graph:repaired + graph:synthesized_from_intent (AUTHOR-01/02, arch-closure)", () => {
-  it("maps graph:repaired -> graph.repaired (AUTHOR-01; mirrors the pipeline:authored entry)", () => {
+describe("TRAJECTORY_BRIDGE_MAPPING -- graph:repaired + graph:synthesized_from_intent (arch-closure)", () => {
+  it("maps graph:repaired -> graph.repaired (mirrors the pipeline:authored entry)", () => {
     expect(TRAJECTORY_BRIDGE_MAPPING["graph:repaired"]).toBe("graph.repaired");
   });
 
-  it("maps graph:synthesized_from_intent -> graph.synthesized_from_intent (AUTHOR-02)", () => {
+  it("maps graph:synthesized_from_intent -> graph.synthesized_from_intent", () => {
     expect(TRAJECTORY_BRIDGE_MAPPING["graph:synthesized_from_intent"]).toBe(
       "graph.synthesized_from_intent",
     );
@@ -1846,7 +1846,7 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- graph:repaired + graph:synthesized_from_i
     expect(allTypes.has("graph.synthesized_from_intent")).toBe(true);
   });
 
-  it("bridge translates graph:repaired to a content-free record (pattern enum + nodeCount + tier only — §2.7 / H1)", () => {
+  it("bridge translates graph:repaired to a content-free record (pattern enum + nodeCount + tier only)", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
     attachTrajectoryToEventBus({ eventBus: bus, recorder });
@@ -1875,7 +1875,7 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- graph:repaired + graph:synthesized_from_i
     }
   });
 
-  it("bridge translates graph:synthesized_from_intent to a content-free record (NO intent text crosses — §2.7 / H1)", () => {
+  it("bridge translates graph:synthesized_from_intent to a content-free record (NO intent text crosses)", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
     attachTrajectoryToEventBus({ eventBus: bus, recorder });
@@ -1903,17 +1903,17 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- graph:repaired + graph:synthesized_from_i
 });
 
 // ---------------------------------------------------------------------------
-// STEER-01 (v2.27 P3, Phase 175): the subagent:steered event — bridge-mapped
+// The subagent:steered event — bridge-mapped
 // for OPERATOR TRAJECTORY VISIBILITY (a steer is a meaningful per-session event
-// an operator wants in `comis explain`), mirroring the 173/174 entries
+// an operator wants in `comis explain`), mirroring the authoring entries
 // (pipeline:authored / graph:repaired / graph:synthesized_from_intent). This is
 // a recording choice, NOT a closure-gate requirement: the closure gate scans
 // agent/orchestrator emit sites only and subagent:steered is daemon-emitted
-// (Plan 02, subagent-handlers.ts) — so it does not trip the gate (the unmapped
+// (subagent-handlers.ts) — so it does not trip the gate (the unmapped
 // subagent:budget_exceeded precedent). The translator is content-free: runId/
-// agentId/mode counts/ids ONLY — NEVER the steer message body (§2.7 / H1).
+// agentId/mode counts/ids ONLY — NEVER the steer message body.
 // ---------------------------------------------------------------------------
-describe("TRAJECTORY_BRIDGE_MAPPING -- subagent:steered (STEER-01, operator visibility)", () => {
+describe("TRAJECTORY_BRIDGE_MAPPING -- subagent:steered (operator visibility)", () => {
   it("maps subagent:steered -> subagent.steered (mirrors the graph:repaired entry)", () => {
     expect(TRAJECTORY_BRIDGE_MAPPING["subagent:steered"]).toBe("subagent.steered");
   });
@@ -1925,7 +1925,7 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- subagent:steered (STEER-01, operator visi
     expect(allTypes.has("subagent.steered")).toBe(true);
   });
 
-  it("bridge translates subagent:steered to a content-free record (runId/agentId/mode only — NO message body crosses, §2.7 / H1)", () => {
+  it("bridge translates subagent:steered to a content-free record (runId/agentId/mode only — NO message body crosses)", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
     attachTrajectoryToEventBus({ eventBus: bus, recorder });
@@ -1976,21 +1976,20 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- subagent:steered (STEER-01, operator visi
 });
 
 // ---------------------------------------------------------------------------
-// ORCH-OBS (orchestration-observability): three previously-dark sub-agent-lifecycle
+// Three sub-agent-lifecycle
 // events bridged for per-session `comis explain` visibility (the subagent:steered
 // daemon-side precedent). Content-free: closed labels/ids/numbers ONLY — never a
 // path/host/uid value (sandbox), an announcement/error body (delivery), or a task
-// (budget). RED: the three mapping keys + trajectory types + translator arms are absent.
+// (budget).
 // ---------------------------------------------------------------------------
 
-describe("TRAJECTORY_BRIDGE_MAPPING -- ORCH-OBS sub-agent lifecycle (operator visibility)", () => {
+describe("TRAJECTORY_BRIDGE_MAPPING -- sub-agent lifecycle (operator visibility)", () => {
   it("maps the four events to their reserved trajectory types (arch closure)", () => {
     expect(TRAJECTORY_BRIDGE_MAPPING["security:sandbox_downgrade_refused"]).toBe("security.sandbox_downgrade_refused");
     expect(TRAJECTORY_BRIDGE_MAPPING["subagent:delivery_deadlettered"]).toBe("subagent.delivery_deadlettered");
-    // OE-6b (orchestration-excellence-20260701-fullregression): delivery_retried was
-    // emitted (announcement-batcher) but bridged to NOTHING — the arch ?.emit blind spot
-    // let it slip past trajectory-event-types-known. It is the sibling of delivery_deadlettered
-    // and must be reconstructable in `comis explain` (spec §7/§10 + P0-B self-healing visibility).
+    // delivery_retried is emitted (announcement-batcher) via `?.emit`. It is the
+    // sibling of delivery_deadlettered and must be reconstructable in `comis explain`
+    // (the self-healing retry visibility).
     expect(TRAJECTORY_BRIDGE_MAPPING["subagent:delivery_retried"]).toBe("subagent.delivery_retried");
     expect(TRAJECTORY_BRIDGE_MAPPING["subagent:budget_exceeded"]).toBe("subagent.budget_exceeded");
     const allTypes = new Set<string>(TRAJECTORY_EVENT_TYPES as readonly string[]);
@@ -2018,7 +2017,7 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- ORCH-OBS sub-agent lifecycle (operator vi
     expect(recorder.calls[0]!.type).toBe("security.sandbox_downgrade_refused");
     const data = recorder.calls[0]!.data as Record<string, unknown>;
     expect(data.dimensions).toEqual(["exec", "network"]);
-    // The fail-closed posture VALUES + the agent ids never cross (topology + §2.7).
+    // The fail-closed posture VALUES + the agent ids never cross (topology leak guard).
     const serialized = JSON.stringify(data);
     expect(serialized).not.toMatch(/workspace|"full"|"none"|researcher|unconfined-child/);
     expect(data.parentPosture).toBeUndefined();
@@ -2048,7 +2047,7 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- ORCH-OBS sub-agent lifecycle (operator vi
     }
   });
 
-  it("translates subagent:delivery_retried to runId/channelType/attempt/transient ONLY (no announcement/error body) — OE-6b", () => {
+  it("translates subagent:delivery_retried to runId/channelType/attempt/transient ONLY (no announcement/error body)", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
     attachTrajectoryToEventBus({ eventBus: bus, recorder });
@@ -2384,12 +2383,11 @@ describe("queue + execution + sender bridge", () => {
     expect(data.timestamp).toBeUndefined();
   });
 
-  // LAT-04 (Phase 177): the enriched execution:prompt_timeout payload (177-03)
-  // must forward ALL attribution fields through the translator — the 4-sync-point
-  // chain's known silent-failure mode is extending the event but missing the
-  // translator, which silently drops the evidence from `comis explain`
-  // (research Pitfall 5; the Phase-176 safeParse-drop lesson).
-  it("LAT-04-O-1: enriched execution_prompt_timeout forwards durationMs/limit/source/bindingKnob/stallBudgetMs/makespanMs verbatim; envelope keys stripped", () => {
+  // The enriched execution:prompt_timeout payload
+  // must forward ALL attribution fields through the translator — the known
+  // silent-failure mode is extending the event but missing the
+  // translator, which silently drops the evidence from `comis explain`.
+  it("enriched execution_prompt_timeout forwards durationMs/limit/source/bindingKnob/stallBudgetMs/makespanMs verbatim; envelope keys stripped", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
     attachTrajectoryToEventBus({ eventBus: bus, recorder });
@@ -2420,16 +2418,16 @@ describe("queue + execution + sender bridge", () => {
     expect(data.makespanMs).toBe(1_800_000);
     // operationType was undefined at the emit — must not materialize as a key.
     expect("operationType" in data).toBe(false);
-    // Envelope-only correlation keys are stripped from data (the 175 house style).
+    // Envelope-only correlation keys are stripped from data (the house style).
     expect(data.agentId).toBeUndefined();
     expect(data.sessionKey).toBeUndefined();
     expect(data.timestamp).toBeUndefined();
   });
 
-  it("LAT-04-O-2: a LEGACY prompt_timeout payload (no extended fields) still translates to exactly {timeoutMs} — no undefined-keyed fields", () => {
-    // Back-compat guard pin (green pre-patch by design): old emitters/rows carry
-    // only the original four fields; the conditional spreads must not materialize
-    // undefined-keyed entries on the persisted trajectory row.
+  it("a LEGACY prompt_timeout payload (no extended fields) still translates to exactly {timeoutMs} — no undefined-keyed fields", () => {
+    // Back-compat guard: an emitter/row carrying only the original four fields
+    // (no extended attribution) must still translate cleanly — the conditional
+    // spreads must not materialize undefined-keyed entries on the persisted row.
     const bus = makeBus();
     const recorder = createCaptureRecorder();
     attachTrajectoryToEventBus({ eventBus: bus, recorder });
@@ -2495,10 +2493,10 @@ describe("queue + execution + sender bridge", () => {
     expect(data.timestamp).toBeUndefined();
   });
 
-  // GBNF-02 (Phase 175 Plan 05): the strip-retry self-heal event must be
+  // The GBNF strip-retry self-heal event must be
   // registered + bridged BEFORE the executor emit lands so the architecture
   // test (trajectory-event-types-known) can never catch an unmapped emit.
-  // Payload is content-free per I7: tool + keyword NAMES only — never schema
+  // Payload is content-free: tool + keyword NAMES only — never schema
   // bodies and never the raw provider error body.
   it("execution_tool_schema_unsupported_maps_to_execution.tool_schema_unsupported with toolNames/strippedKeywords/retried/succeeded; agentId/sessionKey stripped", () => {
     const bus = makeBus();
@@ -2528,12 +2526,12 @@ describe("queue + execution + sender bridge", () => {
     expect(recorder.calls).toHaveLength(1);
     expect(recorder.calls[0].type).toBe("execution.tool_schema_unsupported");
     const data = recorder.calls[0].data as Record<string, unknown>;
-    // All 5 payload fields survive translation (Plan 06's explain heuristic input).
+    // All 5 payload fields survive translation (the explain heuristic input).
     expect(data.toolNames).toEqual(["schedule_task"]);
     expect(data.strippedKeywords).toEqual(["pattern", "format"]);
     expect(data.retried).toBe(true);
     expect(data.succeeded).toBe(false);
-    // WR-05 (175-REVIEW): the branch discriminator must reach the trajectory
+    // The branch discriminator must reach the trajectory
     // so gate-closed and nothing-to-strip terminals stay distinguishable.
     expect(data.reason).toBe("stripped");
     // Envelope-only correlation keys are stripped from data.
@@ -3229,10 +3227,8 @@ describe("security + compaction + context + approval bridge", () => {
     expect(data.sessionKey).toBeUndefined();
   });
 
-  // OBS-01 / Phase 180 — the two new multilingual signals on the explain path.
-  // RED: nothing is declared/mapped yet, so the bridge drops these events
-  // (recorder.calls is empty) → both cases FAIL until Task 2 wires the EventMap
-  // declaration + mapping entry + translator + trajectory type.
+  // The two multilingual signals on the explain path — the bridge forwards
+  // scriptClass/lane/conversationId (envelope correlation keys stripped).
   it("context_script_zero_hit_maps_to_context.script_zero_hit forwarding scriptClass/lane/conversationId; envelope stripped", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
@@ -3647,81 +3643,11 @@ describe("attachTrajectoryToEventBus -- dedup events", () => {
 // ---------------------------------------------------------------------------
 
 describe("health:budget_exceeded entry (bridge entry count guard)", () => {
-  it("bridge entry count is exactly 100 (+3 T2.2 background_task promoted/completed/failed; +2 D3 breaker + 1 D7 offload Phase 151; +1 session:summary Phase 152; +1 context:budget_computed W2; +1 execution:tool_schema_unsupported Phase 175; +2 OBS-01 script signals Phase 180; +2 RECALL-01 memory:recalled/reranked; +1 GENQ-01 memory:generation_quality; +4 OBS-04 image:* Phase 186; +3 media.vision:* VIS-04 Phase 187; +5 video:* OBS-04 Phase 192; +6 voice media.stt/tts:* OBS-02/03 Phase 196; +1 OUTCOME-08 learning:outcome_observed v2.26 Phase 198; +2 FORGET-06 learning:memory_demoted/evicted v2.26 Phase 200 (the RANK-06 memory:online_tuning_applied bandit event was REMOVED in Phase 224); +2 SKILL-09 learning:skill_synthesized/skill_validated v2.26 Phase 201; +2 SURFACE-06 learning:skill_promoted/demoted v2.26 Phase 202; +2 REVISE-/GENERAL- learning:user_model_revised/memory_generalized v2.26 Phase 203; +1 TELEM-01 pipeline:authored v2.27 Phase 173; +2 AUTHOR-01/02 graph:repaired + graph:synthesized_from_intent v2.27 Phase 174)", () => {
-    // 55 + tool:breaker_opened + tool:breaker_reset (D3) + tool:result_offloaded (D7)
-    // + session:summary (F2/D5, Phase 152)
-    // + execution:tool_schema_unsupported (GBNF-02, Phase 175 Plan 05)
-    // + context:script_zero_hit + context:summary_language_mismatch (OBS-01, Phase 180 Plan 03)
-    // + memory:recalled + memory:reranked (RECALL-01, observability-excellence)
-    // + memory:generation_quality (GENQ-01, observability-excellence)
-    // + background_task:promoted/completed/failed (T2.2, background-task bridge)
-    // + image:requested/generated/delivered/failed (OBS-04, Phase 186 Plan 03)
-    // + media.vision:requested/completed/failed (VIS-04, Phase 187 Plan 03 —
-    //   APPEND-ONLY, the image.* tuple is untouched; Pitfall 5).
-    // + video:requested/submitted/generated/delivered/failed (OBS-04, Phase 192
-    //   Plan 01 — APPEND-ONLY beside image.*/media.vision.*; Pitfall 8).
-    // + media.stt:requested/completed/failed + media.tts:requested/completed/failed
-    //   (OBS-02/03, Phase 196 Plan 02 — APPEND-ONLY beside the media.*/video.* tuples).
-    // + learning:outcome_observed (OUTCOME-08, v2.26 Verified Learning WS1, Phase 198
-    //   Plan 04 — APPEND-ONLY; the daemon-side emit, bridged for comis explain / OBS-02).
-    // + learning:memory_demoted/evicted (FORGET-06, the soft-eviction counts —
-    //   daemon-side emit) (v2.26 Verified Learning WS4, Phase 200 Plan 06 — APPEND-ONLY;
-    //   both counts/ids/closed-enums ONLY, NEVER a memory body — SEC-01). The RANK-06
-    //   memory:online_tuning_applied bandit event was REMOVED in Phase 224 (the UCB
-    //   online-tuning bandit was deleted; recall is fixed-RRF).
-    // + learning:skill_synthesized + learning:skill_validated (SKILL-09, v2.26 Verified Learning
-    //   WS2, Phase 201 Plan 07 — APPEND-ONLY; the daemon-side procedural-synthesis telemetry,
-    //   counts/coverage-enum ONLY, NEVER a procedure body / script / finding — SEC-01).
-    // + learning:skill_promoted + learning:skill_demoted (SURFACE-06, v2.26 Verified Learning
-    //   WS2, Phase 202 Plan 03 — APPEND-ONLY; the daemon-side promote/demote telemetry, count
-    //   ONLY, NEVER an id-list / procedure body / script — SEC-01).
-    // + learning:user_model_revised + learning:memory_generalized (REVISE-/GENERAL-, v2.26
-    //   Verified Learning WS6/WS7, Phase 203 Plan 05 — APPEND-ONLY; the daemon-side user-model-
-    //   revision + generalization telemetry, COUNTS ONLY (superseded/corroborated/inserted +
-    //   generalized/clustersConsidered), NEVER a profile / memory body / entry id — SEC-01).
-    // + pipeline:authored (TELEM-01, v2.27 P1, Phase 173 Plan 01 — APPEND-ONLY; the
-    //   authoring-telemetry signal, counts/enums/booleans ONLY (action/capabilityClass/
-    //   schemaValid/repaired), NEVER a pipeline body / type_config value / node task — §2.7.
-    //   Mapping reserves the type for arch closure; the live per-session recordEvent emit is
-    //   a deferred follow-up — getRecorder is not reachable on the graph-handler deps at P1).
-    // + graph:repaired + graph:synthesized_from_intent (AUTHOR-01/02, v2.27 P2, Phase 174
-    //   Plan 02 — APPEND-ONLY beside pipeline:authored; the two daemon-side authoring-AUDIT
-    //   events Plans 03/04 emit on conservative repair / intent-synthesis, counts/ids/enums
-    //   ONLY (pattern closed-enum + nodeCount + capabilityClass tier), NEVER a graph body /
-    //   type_config value / node task / intent text — §2.7. Mapping reserves the types for
-    //   arch closure of the keyof TrajectoryBridgedEventName).
-    // + subagent:steered (STEER-01, v2.27 P3, Phase 175 Plan 01 — APPEND-ONLY beside the
-    //   AUTHOR-01/02 entries; the daemon-side in-flight-steer event Plan 02 emits at the
-    //   inject site, bridged for OPERATOR TRAJECTORY VISIBILITY (`comis explain`). Counts/
-    //   ids/closed-enum-mode ONLY (runId + mode), NEVER the steer message body — §2.7.
-    //   Daemon-emitted → outside the agent/orchestrator closure-gate scan, so no
-    //   EVENTS_NOT_TRAJECTORY_MAPPED entry is needed; the unmapped subagent:budget_exceeded
-    //   is the precedent. The mapping is purely for trajectory recording).
-    // + security:sandbox_downgrade_refused + subagent:delivery_deadlettered +
-    //   subagent:budget_exceeded (ORCH-OBS orchestration-observability — APPEND-ONLY beside
-    //   subagent:steered; three previously-dark sub-agent-lifecycle events bridged for
-    //   per-session `comis explain` visibility. Content-free: closed dimension/channel/
-    //   capSource labels + ids/numbers ONLY, NEVER a path/host/uid value, an announcement
-    //   body, or a task — §2.7. The budget_exceeded entry retires the "unmapped precedent"
-    //   note above. These ALSO feed the fleet lens via obs-persistence-wiring).
-    // + observability:cache_break (PERSIST-01, Phase 176 Plan 04 — APPEND-ONLY beside the
-    //   memory.recalled/generation_quality block; a detected prompt-cache break bridged to
-    //   the per-session timeline. Content-free: the closed reason + tokenDrop counts + a
-    //   changed-dims DIGEST ONLY, NEVER the tool-name arrays or system text — §2.7 / I3.
-    //   MOVED OUT of EVENTS_NOT_TRAJECTORY_MAPPED, so the disjoint invariant holds).
-    // + observability:spend_warning/exceeded/unpriceable (WR-4, 177-obs-loop —
-    //   APPEND-ONLY; the spend kill-switch signals MOVED OUT of
-    //   EVENTS_NOT_TRAJECTORY_MAPPED and bridged so a spend-killed session is
-    //   diagnosable via `comis explain` (the security-review WR-4 blind spot).
-    //   Content-free: the closed SpendScopeKind enum + dollar amounts as NUMBERS +
-    //   provider/model config ids ONLY, NEVER a message/prompt/query body — §2.7 / H1).
-    // + capability:audited (AUDIT-01/TREE, v2.29 Phase 215 Plan 01 — APPEND-ONLY;
-    //   the per-cap audit's spawn-tree producer, DAEMON-emitted (rpc-dispatch.ts /
-    //   setup-capability-endpoint.ts) → outside the agent/orchestrator emit-scanner
-    //   scope (the subagent:budget_exceeded precedent), so no allowlist entry is
-    //   needed; the mapping is for operator trajectory visibility + arch closure.
-    //   Content-free: caps/tool-NAME/decision/ids ONLY, NEVER args/body/secret — §2.7 / H1).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(113); // +1 EVICT-01 terminal:session_evicted (webhook-claude-gsd-snake-20260702 — the idle-reap that stranded an autonomous drive; was daemon-WARN-only, now bridged so `explain` can name a reaper eviction — the observability completion of the PRODUCING-01 keep-alive fix); +1 OE-6b subagent:delivery_retried (orchestration-excellence-20260701-fullregression — the self-healing retry sibling of delivery_deadlettered, bridged to nothing pre-fix via the ?.emit arch blind spot); +1 DRIVE-02 terminal:drive_promoted (webhook-claude-cli #2, 2026-06-30 — was daemon-log-only); +1 TREE-01 graph:node_spawned (finding D, 30uc-20260624); reflect:admitted + reflect:funnel RENAMED from learning:skill_synthesized/skill_synthesis_funnel (count-neutral); -3 Phase 226 SIMPLIFY-04 vestigial 0-emit DELETED (learning:skill_validated + user_model_revised + memory_generalized); -1 RANK-06 memory:online_tuning_applied REMOVED (Phase 224 — bandit deleted); +1 OBS-4b learning:memory_failure_attributed (reflect-obs-20260627 — the eviction-causation precursor, count-only); +1 IMP-3/PD-OBS-1 memory:skill_used bridged (package-delivery-20260628 — inline-surfaced reuse credit, ids+count only); +1 finding A memory:skill_surfaced bridged (package-delivery-20260628 — topic-match reuse census, names+numbers only)
+  it("bridge entry count matches the exact mapping size (guards a silent add/remove)", () => {
+    // This count guards TRAJECTORY_BRIDGE_MAPPING against a silent add or
+    // removal: any change to the mapping must update this number in lockstep,
+    // forcing a deliberate review of every newly-bridged or dropped event.
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(113);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {
@@ -3758,14 +3684,13 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// FORGET-06 (v2.26 Verified Learning WS4, Phase 200 Plan 06): the lifecycle-sweep
+// The lifecycle-sweep
 // soft-eviction telemetry events. The two learning:memory_* keys are daemon-side
-// emit. Counts/ids/closed-enums ONLY — NEVER a memory body (the binding SEC-01
-// constraint). (The RANK-06 memory:online_tuning_applied bandit event was REMOVED in
-// Phase 224 — the UCB online-tuning bandit was deleted; recall is fixed-RRF.)
+// emit. Counts/ids/closed-enums ONLY — NEVER a memory body (the binding content-free
+// constraint).
 // ---------------------------------------------------------------------------
 
-describe("FORGET-06 learning soft-eviction events (counts-only, bridged)", () => {
+describe("learning soft-eviction events (counts-only, bridged)", () => {
   it("the two soft-eviction keys are in TRAJECTORY_BRIDGE_MAPPING with the canonical dotted names", () => {
     const mapping = TRAJECTORY_BRIDGE_MAPPING as Record<string, string>;
     expect(mapping["learning:memory_demoted"]).toBe("learning.memory_demoted");
@@ -3810,18 +3735,18 @@ describe("FORGET-06 learning soft-eviction events (counts-only, bridged)", () =>
 });
 
 // ---------------------------------------------------------------------------
-// SKILL-09 (Plan 07): the two procedural-synthesis telemetry events. Emitted
+// The two procedural-synthesis telemetry events. Emitted
 // DAEMON-SIDE (the __SKILL_SYNTHESIS__ cron handler) after runSkillSynthesis.
 // Counts / ids / closed-enums (coverage) ONLY — NEVER a procedure body, a script,
-// or a finding (the SEC-01 firewall; the translator forwards counts/coverage only).
+// or a finding (the content-free firewall; the translator forwards counts/coverage only).
 // ---------------------------------------------------------------------------
 
-describe("REFLECT reflect:admitted / reflect:funnel (counts-only, bridged, renamed Phase 226)", () => {
+describe("reflect:admitted / reflect:funnel (counts-only, bridged)", () => {
   it("both renamed keys are in TRAJECTORY_BRIDGE_MAPPING with the canonical dotted names", () => {
     const mapping = TRAJECTORY_BRIDGE_MAPPING as Record<string, string>;
     expect(mapping["reflect:admitted"]).toBe("reflect.admitted");
     expect(mapping["reflect:funnel"]).toBe("reflect.funnel");
-    // No compat alias — the old synthesis-funnel keys + the deleted vestigial are GONE (I1).
+    // No compat alias — the old synthesis-funnel keys + the deleted vestigial are GONE.
     expect(mapping["learning:skill_synthesized"]).toBeUndefined();
     expect(mapping["learning:skill_synthesis_funnel"]).toBeUndefined();
     expect(mapping["learning:skill_validated"]).toBeUndefined();
@@ -3872,7 +3797,7 @@ describe("REFLECT reflect:admitted / reflect:funnel (counts-only, bridged, renam
     expect(data).toEqual({ synthesized: 2, validated: 1, admitted: 1, maxClusterCardinality: 2, admissionOutcome: "admitted" });
     expect(data.agentId).toBeUndefined();
     expect(data.timestamp).toBeUndefined();
-    // SEC-01 firewall: NO body / scripts / findings / field-name leak crosses.
+    // Content-free firewall: NO body / scripts / findings / field-name leak crosses.
     for (const k of Object.keys(data)) {
       expect(k, `payload key ${k} must not name a body/script/finding`).not.toMatch(/body|script|finding|content/i);
     }
@@ -3902,15 +3827,15 @@ describe("REFLECT reflect:admitted / reflect:funnel (counts-only, bridged, renam
 });
 
 // ---------------------------------------------------------------------------
-// SURFACE-06 (Phase 202 Plan 03): the two promote/demote telemetry events.
-// Emitted DAEMON-SIDE (the promote/demote loop, Plan 05) — NOT agent/orchestrator,
-// so the arch emit-scanner does not require them; bridged so OBS-02 `comis explain`
+// The two skill promote/demote telemetry events.
+// Emitted DAEMON-SIDE (the promote/demote loop) — NOT agent/orchestrator,
+// so the arch emit-scanner does not require them; bridged so `comis explain`
 // reconstructs a promotion/demotion. Counts ONLY — the count crosses, never an
-// id-list / procedure body / script (the SEC-01 firewall; they fold into the
-// shared { count } translator case). APPEND-ONLY beside the 201-07 skill rows.
+// id-list / procedure body / script (the content-free firewall; they fold into the
+// shared { count } translator case). APPEND-ONLY beside the skill rows.
 // ---------------------------------------------------------------------------
 
-describe("SURFACE-06 learning:skill_promoted / skill_demoted (counts-only, bridged)", () => {
+describe("learning:skill_promoted / skill_demoted (counts-only, bridged)", () => {
   it("both keys are in TRAJECTORY_BRIDGE_MAPPING with the canonical dotted names", () => {
     const mapping = TRAJECTORY_BRIDGE_MAPPING as Record<string, string>;
     expect(mapping["learning:skill_promoted"]).toBe("learning.skill_promoted");
@@ -3955,7 +3880,7 @@ describe("SURFACE-06 learning:skill_promoted / skill_demoted (counts-only, bridg
     expect(data.timestamp).toBeUndefined();
   });
 
-  it("finding C: learning:skill_demoted carries demotedSkillNames + triggerTrajectoryId (ids), still strips a smuggled body", () => {
+  it("learning:skill_demoted carries demotedSkillNames + triggerTrajectoryId (ids), still strips a smuggled body", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
     attachTrajectoryToEventBus({ eventBus: bus, recorder });
@@ -3974,11 +3899,11 @@ describe("SURFACE-06 learning:skill_promoted / skill_demoted (counts-only, bridg
     expect(data.count).toBe(2);
     expect(data.demotedSkillNames).toEqual(["skill-a", "skill-b"]);
     expect(data.triggerTrajectoryId).toBe("traj-9");
-    expect(data.body).toBeUndefined(); // SEC-01: only the declared fields cross
+    expect(data.body).toBeUndefined(); // Only the declared fields cross
     expect(Object.keys(data).sort()).toEqual(["count", "demotedSkillNames", "triggerTrajectoryId"]);
   });
 
-  it("never forwards a body/script/id-list even if present on the payload (SEC-01 firewall)", () => {
+  it("never forwards a body/script/id-list even if present on the payload (content-free firewall)", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
     attachTrajectoryToEventBus({ eventBus: bus, recorder });
@@ -4003,11 +3928,10 @@ describe("SURFACE-06 learning:skill_promoted / skill_demoted (counts-only, bridg
   });
 });
 
-// Phase 226 SIMPLIFY-04: the REVISE-/GENERAL- bridge tests were DELETED with the
-// learning:user_model_revised / learning:memory_generalized events (both grep-confirmed
-// 0-emit at HEAD; the user-rep revision + generalization paths folded into the reflection
-// engine in Phase 225). A guard below asserts those keys are absent from the mapping.
-describe("Phase 226 SIMPLIFY-04 — the 3 vestigial 0-emit events are unmapped", () => {
+// Guard tests: three learning events (learning:skill_validated /
+// learning:user_model_revised / learning:memory_generalized) are not part of the
+// bridge — these assertions keep them absent from the mapping and the type union.
+describe("removed learning events stay absent from the bridge mapping", () => {
   it("learning:skill_validated / user_model_revised / memory_generalized are GONE from the bridge mapping", () => {
     const mapping = TRAJECTORY_BRIDGE_MAPPING as Record<string, string>;
     expect(mapping["learning:skill_validated"]).toBeUndefined();
@@ -4024,11 +3948,11 @@ describe("Phase 226 SIMPLIFY-04 — the 3 vestigial 0-emit events are unmapped",
 });
 
 // ---------------------------------------------------------------------------
-// PERSIST-01 (Phase 176 Plan 04): observability:cache_break → cache.break
+// observability:cache_break → cache.break
 // (content-free — counts/digest ONLY, never the tool-name arrays or system text)
 // ---------------------------------------------------------------------------
 
-describe("attachTrajectoryToEventBus -- cache break (PERSIST-01, content-free)", () => {
+describe("attachTrajectoryToEventBus -- cache break (content-free)", () => {
   it("TRAJECTORY_BRIDGE_MAPPING maps observability:cache_break to cache.break", () => {
     expect(
       (TRAJECTORY_BRIDGE_MAPPING as Record<string, string>)["observability:cache_break"],
@@ -4085,7 +4009,7 @@ describe("attachTrajectoryToEventBus -- cache break (PERSIST-01, content-free)",
     expect(data.tokenDropRelative).toBe(0.5);
     expect(data).toHaveProperty("changedDimsDigest");
 
-    // I3 / H1: NO tool-name arrays, NO system text crosses into the trajectory.
+    // NO tool-name arrays, NO system text crosses into the trajectory.
     const serialized = JSON.stringify(data);
     expect(serialized).not.toContain("secret-tool-name");
     expect(serialized).not.toContain("internal_admin_api");
@@ -4099,7 +4023,7 @@ describe("attachTrajectoryToEventBus -- cache break (PERSIST-01, content-free)",
 });
 
 // ---------------------------------------------------------------------------
-// AUDIT-01 / TREE (Phase 215 Plan 01): the per-cap audit's `capability:audited`
+// The per-cap audit's `capability:audited`
 // spawn-tree producer event. DAEMON-emitted (rpc-dispatch.ts / setup-capability-
 // endpoint.ts) → outside the agent/orchestrator emit-scanner scope (the
 // subagent:budget_exceeded precedent), so no EVENTS_NOT_TRAJECTORY_MAPPED entry
@@ -4108,7 +4032,7 @@ describe("attachTrajectoryToEventBus -- cache break (PERSIST-01, content-free)",
 // decision/ids ONLY — NEVER the tool.invoke args, a message body, or a secret.
 // ---------------------------------------------------------------------------
 
-describe("capability:audited entry (AUDIT-01/TREE spawn-tree producer)", () => {
+describe("capability:audited entry (spawn-tree producer)", () => {
   it("TRAJECTORY_BRIDGE_MAPPING maps capability:audited to capability.audited", () => {
     expect(
       (TRAJECTORY_BRIDGE_MAPPING as Record<string, string>)["capability:audited"],

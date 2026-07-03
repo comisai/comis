@@ -1,6 +1,6 @@
 // Autonomous research-lab simulator — the autonomous-yield-optimization scenario.
 //
-// THE NO-EXECUTION KEYSTONE (INV-3): `queue_run` runs ONLY a protocol referenced by id
+// THE NO-EXECUTION KEYSTONE: `queue_run` runs ONLY a protocol referenced by id
 // whose `validated` flag is true. It REFUSES — never executes — any unvalidated design,
 // any advisory/free-text body (e.g. text stored via `update_protocol`), and any inline
 // protocol text. `update_protocol` stores ADVISORY notes only and never flips `validated`.
@@ -292,7 +292,7 @@ export const handlers = {
 };
 
 // Golden path → success; naive path → failure AND demonstrates queue_run REFUSING an
-// unvalidated/advisory protocol (the INV-3 NO-EXEC proof). One process, deterministic.
+// unvalidated/advisory protocol (the NO-EXEC proof). One process, deterministic.
 export function selftest({ call, ctx }) {
   const T = ctx.world.truth;
 

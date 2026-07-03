@@ -22,7 +22,7 @@
 Classify the target and extract a flat list of **testable requirements** (each becomes ≥1 test). Method + worked examples in **`04-DERIVE-TESTS.md`**; in short:
 
 - **Use case** ("test the DAG pipeline") → enumerate the capabilities it exercises + the happy path + edge + abuse variants. Cross-reference `05-CATALOG.md` to find the matching domain UCs.
-- **Milestone** ("test v2.29 M1") → find its roadmap/plan under `.planning/design/` or `.planning/phases/` (grep the version); extract every **requirement + success-criterion**; map to phases.
+- **Milestone** ("test milestone X") → find its roadmap/plan (grep the milestone name); extract every **requirement + success-criterion**; map to phases.
 - **Design document / spec** (a path) → read it fully; extract every **implementation, success-criterion, security invariant, and config knob**; each is a requirement.
 - **User story** ("As a trader, I want four analysts to debate NVDA so I get a grounded call") → treat each acceptance criterion as a requirement; enumerate the acceptance path **plus** the alternate/error paths and the edge cases the story implies (an unstated "so that …" is a requirement too).
 - **A bare prompt with test instructions** (the user hands you the scenario + what to check) → the prompt is the **seed, not the whole plan**: expand it into the full real-world + edge + deep + broad matrix for the scenario it implies. Test what the prompt *means* end-to-end, not just its literal words.
@@ -66,7 +66,7 @@ Run the plan in order. Per test:
 The target is the vehicle; while the rig is hot, **actively hunt system-wide issues** (non-negotiable #6), not just the target's. This is where you catch the bugs the target's tests never would. Method + the precise filters in `03-OBSERVABILITY.md §system-health-sweep`:
 - **`fleet --since N`** → degraded rate, top errorKinds, breaker trips, the `config_posture`/`model_health`/`health_signal` findings. Triage each: real bug vs. expected-for-the-rig (TLS-off on loopback, no canary) vs. advisory.
 - **Daemon-log scan with PRECISE filters** (read structured fields, not raw word-grep — `grep "degraded"` matches the `"Daemon health"` report lines, a false positive). Look for `"level":50/60` (ERROR/FATAL), unexplained `errorKind`, tool-failure records (`"success":false` / `failedTools`), `not reachable` / `Capability denied` / `EACCES`/`EPERM`.
-- **Drive a basic agent tool turn** (memory_store, web_search, a file write) even if the target doesn't use it — a broken core tool (like the MD-02 `memory_store` deny-by-origin) only shows under a real agent turn, never in a handler unit test.
+- **Drive a basic agent tool turn** (memory_store, web_search, a file write) even if the target doesn't use it — a broken core tool (like a `memory_store` deny-by-origin regression) only shows under a real agent turn, never in a handler unit test.
 - Each real issue → the same fix-verify loop (STEP 4.3). Each one that's nuanced/security-sensitive/out-of-budget → a **documented finding** with the verdict + evidence + fix direction (never silently dropped) + a recommended focused follow-up.
 
 ## STEP 5 — Sweep broad (after the deep UCs)

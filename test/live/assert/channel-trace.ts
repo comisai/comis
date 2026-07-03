@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Channel-trace oracle — the shared, channel-agnostic DUAL-ORACLE cross-check
- * (Phase 205, ORACLE-01 + ORACLE-02).
+ * (ORACLE-01 + ORACLE-02).
  *
- * It composes the two oracles Phase 204 already shipped:
+ * It composes the two existing oracles:
  *   - the CHANNEL oracle — `TgEmulator.lastBotReply(chat).text` (the exact bytes
  *     the bot put on the wire; ORACLE-01); accepted here as a minimal STRUCTURAL
  *     subset so the check stays channel-agnostic (not bound to `TgEmulator`).
@@ -39,7 +39,7 @@ import * as sqliteVec from "sqlite-vec";
  * Open a READONLY connection with the sqlite-vec extension loaded — copied
  * verbatim from `assert/db-oracle.ts` (where `openReadonlyWithVec` is PRIVATE,
  * not exported). Loading an extension is a connection-level operation, NOT a DB
- * write, so the readonly guarantee (T-134-12) is unchanged. A missing native
+ * write, so the readonly guarantee is unchanged. A missing native
  * extension is tolerated (the isolated daemon may create `vec0` vtables; a plain
  * readonly connection that has not loaded sqlite-vec throws "no such module:
  * vec0" — loading it keeps those reads first-class, and a host that lacks the
@@ -87,9 +87,8 @@ export function readMirrorText(dbPath: string, sessionKey: string): string | und
  * The `emulator` is the CHANNEL oracle accepted as a minimal STRUCTURAL subset
  * (`{ lastBotReply(chat): { text?: string } | undefined }`) so the cross-check
  * stays channel-agnostic — any emulator that records outbound text satisfies
- * it, not just `TgEmulator` (which is the concrete 204 implementor and a
- * superset of this shape). Ready for reuse by the DELIV-01 scenario (205-06)
- * and Phases 206-208.
+ * it, not just `TgEmulator` (which is the concrete implementor and a
+ * superset of this shape). Ready for reuse by the DELIV-01 delivery scenario.
  */
 export interface ChannelTraceOptions {
   /** The channel oracle (structural subset): the recorded wire bytes for a chat. */

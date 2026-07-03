@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * DIAG-reprove (Phase 156 — GA CLOSE: RE-PROVE with obs.explain).
+ * DIAG-reprove — RE-PROVE with obs.explain.
  *
- * The G1 proof. Mirrors diagnosis-baseline.test.ts EXACTLY (the Phase-149
+ * The obs.explain proof. Mirrors diagnosis-baseline.test.ts EXACTLY (the
  * Stage-A/B-vs-Stage-C discipline) and differs in only four documented ways:
  *   (1) the inline agent manifest gains a 3rd tool `obs.explain`;
  *   (2) that tool's dispatch calls the barrel-exported
  *       `assembleIncidentReportFromSources` over a FIXTURE reader (NOT a daemon
  *       RPC, NOT ~/.comis) — the in-process 1-call root cause;
  *   (3) the always-on Stage-A/B substrate asserts the obs.explain tool reaches
- *       the X3 IncidentReport in 1 call / 0 reads — FIELD-LEVEL for the 678
- *       fixture (via the 156-01 `assert678Report`, NOT `compareToAnswerKey`,
+ *       the IncidentReport in 1 call / 0 reads — FIELD-LEVEL for the 678
+ *       fixture (via `assert678Report`, NOT `compareToAnswerKey`,
  *       which returns false for 678 — it never resolves the literal "403");
  *   (4) the Stage-C gated RUN records `obsExplainCalls === 1` AND
- *       `distinctSourceReads === 0` on the verdict row (Task 2).
+ *       `distinctSourceReads === 0` on the verdict row.
  *
- * This is the heart of v2.14's proof: the §1.1 degraded session, which Phase
- * 149's baseline FAILED (it needed source reads + multi-call), is now
+ * This is the heart of the proof: the degraded session, which the
+ * baseline FAILED (it needed source reads + multi-call), is now
  * root-caused in ONE obs.explain call with ZERO source reads.
  *
  *   Stage-A/B (ALWAYS-ON, KEYLESS — runs in `pnpm validate`): the deterministic
@@ -25,15 +25,15 @@
  *     (field-level); over the 503 fixture reaches breaker_opened_repeated_failure
  *     + web_fetch (field-level + the compareToAnswerKey bonus). A synthetic
  *     1-call transcript proves countObsExplainCalls === 1 + distinctSourceReads
- *     === 0 — the G1 metric, keyless. NO COMIS_LIVE, NO daemon, NO token.
+ *     === 0 — the 1-call metric, keyless. NO COMIS_LIVE, NO daemon, NO token.
  *
  *   Stage-C (COMIS_LIVE-gated, `it.skip`, NEVER in `pnpm validate`): the actual
  *     RE-PROVE RUN — a fresh SCRIPTED ReAct agent WITH obs.explain root-causes
  *     each fixture, recording per fixture (rootCauseReached via judge, totalTokens,
  *     obsExplainCalls === 1, distinctSourceReads === 0). Writes the reprove ledger
  *     to the git-ignored benchmarks/ dir. SKIPS cleanly with no key (skip != fail).
- *     The numeric "≤ the 149 token target" comparison is the operator's RUN — NO
- *     literal token target is asserted here (see the RUNBOOK). Added in Task 2.
+ *     The numeric "≤ the baseline token target" comparison is the operator's RUN — NO
+ *     literal token target is asserted here (see the RUNBOOK).
  *
  * NO new env var: reuses COMIS_LIVE / COMIS_LIVE_BUDGET_USD / COMIS_LIVE_JUDGE_*
  * (all already in docs/reference/environment-variables.mdx). costTier: "dollar".
@@ -67,12 +67,12 @@ import {
   BUDGET_SKIPPED_MARKER,
 } from "../../support/diagnosis-gating-report.js";
 import { createObsQueryTool, type RpcCall } from "@comis/skills/platform-tools";
-// NEW in reprove (not in baseline): the FROZEN Phase-153 assembler + its reader
-// type, re-exported by 156-01's @comis/daemon barrel. The bare-package import
+// NEW in reprove (not in baseline): the FROZEN assembler + its reader
+// type, re-exported by the @comis/daemon barrel. The bare-package import
 // resolves via the test/live/vitest.config.ts:36 alias to daemon/dist/index.js.
 import { assembleIncidentReportFromSources, type IncidentSourceReader } from "@comis/daemon";
 import type { IncidentReport } from "@comis/core";
-// NEW in reprove: the 156-01 pure assert module — the 1-call gate + the
+// NEW in reprove: the pure assert module — the 1-call gate + the
 // field-level 678/503 IncidentReport asserts (NOT compareToAnswerKey for 678).
 import {
   countObsExplainCalls,
@@ -88,7 +88,7 @@ const isLive = !!process.env["COMIS_LIVE"];
 const __dirnameLocal = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = join(__dirnameLocal, "../../fixtures/diagnosis");
 
-/** The 5 frozen diagnosis fixtures (Plan 149-02). */
+/** The 5 frozen diagnosis fixtures. */
 const FIXTURE_IDS = [
   "session-678314278",
   "live-503-breaker",
@@ -98,7 +98,7 @@ const FIXTURE_IDS = [
 ] as const;
 type FixtureId = (typeof FIXTURE_IDS)[number];
 
-/** Map each fixture id to its closed failure class (Plan 149-02 corpus table). */
+/** Map each fixture id to its closed failure class. */
 const FAILURE_CLASS: Record<FixtureId, DiagnosisFailureClass> = {
   "session-678314278": "historical-c53ab0f",
   "live-503-breaker": "503-breaker",
@@ -109,7 +109,7 @@ const FAILURE_CLASS: Record<FixtureId, DiagnosisFailureClass> = {
 
 /**
  * Build the explicit NEVER-MEASURED verdict row for a fixture the cost budget cut
- * off (WR-04) — reused verbatim from diagnosis-baseline.test.ts:92-103. Emitting
+ * off — reused verbatim from diagnosis-baseline.test.ts:92-103. Emitting
  * one of these per budget-skipped fixture (instead of a silent `break`) is what
  * keeps every FIXTURE_IDS class present in the gating table — the gating report
  * renders these distinctly (never a TRIM-CANDIDATE) and flags the partial gate.
@@ -153,28 +153,28 @@ function makeFixtureReader(fixtureDir: string): IncidentSourceReader {
  * calls with NO `_trustLevel`) over the fixture's reader. NOT a daemon RPC, NOT
  * `bindObsExplainHandlers` (which keeps its admin gate) — the gate-free assembler
  * is reachable under daemon authority directly, and here at operator trust as a
- * test (T-156-02-01: the admin gate is untouched; this is the assembler's
- * own boundary by design, 154-03). `summary` keeps the report ≤6 KB bounded (X2).
+ * test (the admin gate is untouched; this is the assembler's
+ * own boundary by design). `summary` keeps the report ≤6 KB bounded.
  */
 async function obsExplainTool(fixtureDir: string): Promise<IncidentReport> {
   return assembleIncidentReportFromSources(makeFixtureReader(fixtureDir), ".", {
     sessionKey: "default:x:x:peer:x", // the fixture reader ignores the key
-    depth: "summary", // ≤6 KB bounded (X2)
+    depth: "summary", // ≤6 KB bounded
   });
 }
 
 // ===========================================================================
 // Stage-A/B — the always-on, keyless substrate (runs in pnpm validate).
-//   Proves the obs.explain tool reaches the X3 root cause in 1 call / 0 reads
+//   Proves the obs.explain tool reaches the root cause in 1 call / 0 reads
 //   over the REAL frozen fixtures. No COMIS_LIVE, no daemon, no live token.
 // ===========================================================================
 
-describe("DIAG-reprove substrate — obs.explain tool reaches X3 root cause in 1 call / 0 reads", () => {
+describe("DIAG-reprove substrate — obs.explain tool reaches root cause in 1 call / 0 reads", () => {
   it("678 fixture (field-level): content_heuristic_misclassification + degraded + breakerTimeline + costUsd in 1 obs.explain call", async () => {
     // FIELD-LEVEL via the 156-01 helper — NOT compareToAnswerKey. compareToAnswerKey
     // returns reached=false for 678 (the report resolves token=status, never the
     // literal "403" the answer-key requires), so a compareToAnswerKey-reached
-    // assertion here would be a permanent RED. assert678Report pins the X3 fields:
+    // assertion here would be a permanent RED. assert678Report pins the report fields:
     // likelyRootCause.code/detail~web_fetch/outcome.degraded/breakerTimeline>0/
     // cost.costUsd≈1.320669. Reaching the report at all proves the 1-call path.
     const report = await obsExplainTool(join(FIXTURES_DIR, "session-678314278"));
@@ -193,14 +193,14 @@ describe("DIAG-reprove substrate — obs.explain tool reaches X3 root cause in 1
     expect(compareToAnswerKey(JSON.stringify(report), fx503.answerKey).reached).toBe(true);
   });
 
-  it("a 1-obs_explain-call transcript yields countObsExplainCalls === 1 and distinctSourceReads === 0 (the G1 metric, keyless)", () => {
-    // The G1 proof shape, proven without a token: a single assistant turn that
+  it("a 1-obs_explain-call transcript yields countObsExplainCalls === 1 and distinctSourceReads === 0 (the 1-call metric, keyless)", () => {
+    // The 1-call proof shape, proven without a token: a single assistant turn that
     // calls obs_explain ONCE and reads NO source files. recordMetrics is reused
     // VERBATIM (it counts the 3rd tool automatically); distinctSourceReads is the
     // zero-reads half. countObsExplainCalls is the 1-call half. BOTH matter
-    // (Pitfall 4) — reaching the root cause is not the proof unless it was reached
+    // — reaching the root cause is not the proof unless it was reached
     // in 1 call with 0 reads. The synthetic transcript uses the wire-safe
-    // OBS_EXPLAIN_TOOL_NAME — the SAME string the live manifest ships (CR-01).
+    // OBS_EXPLAIN_TOOL_NAME — the SAME string the live manifest ships.
     const transcript: AgentTurn[] = [
       {
         role: "assistant",
@@ -219,12 +219,12 @@ describe("DIAG-reprove substrate — obs.explain tool reaches X3 root cause in 1
     expect(recordMetrics(transcript).distinctSourceReads).toBe(0);
   });
 
-  it("every live tool-manifest function name is wire-valid for the OpenAI Chat Completions schema (CR-01)", () => {
-    // CR-01 GUARD, keyless: the Stage-C costed RUN sends this manifest to
+  it("every live tool-manifest function name is wire-valid for the OpenAI Chat Completions schema", () => {
+    // Keyless guard: the Stage-C costed RUN sends this manifest to
     // `/v1/chat/completions`. OpenAI constrains tools[].function.name to
-    // `^[A-Za-z0-9_-]{1,64}$` (NO dot) — a dotted name (the pre-fix
+    // `^[A-Za-z0-9_-]{1,64}$` (NO dot) — a dotted name (a bare
     // `obs.explain`) HTTP-400s the real endpoint, the ReAct loop breaks with an
-    // empty transcript, countObsExplainCalls returns 0, and the G1 gate
+    // empty transcript, countObsExplainCalls returns 0, and the 1-call gate
     // `expect(obsExplainCalls).toBe(1)` fails. Nothing else checked the manifest's
     // wire-validity, so this defect slipped the green substrate (Stage-A/B never
     // hits a provider). This asserts over the SAME builder the live loop uses, so
@@ -244,7 +244,7 @@ describe("DIAG-reprove substrate — obs.explain tool reaches X3 root cause in 1
 // Stage-C — the actual RE-PROVE RUN. Gated behind COMIS_LIVE, NEVER in
 //   `pnpm validate`, NEVER needs a CI key. A fresh SCRIPTED ReAct agent WITH the
 //   obs.explain tool root-causes each fixture and records obsExplainCalls === 1
-//   + 0 source reads (the G1 GATE) + the judge verdict + tokens.
+//   + 0 source reads (the GATE) + the judge verdict + tokens.
 // =========================================================================
 
 // ---------------------------------------------------------------------------
@@ -290,7 +290,7 @@ function makeFixtureBackedRpc(fixtureEvents: Array<Record<string, unknown>>): Rp
 }
 
 /**
- * Character budget for the fixture transcript handed to the model (WR-03) —
+ * Character budget for the fixture transcript handed to the model —
  * cloned from diagnosis-baseline.test.ts. 100 KB comfortably retains the SALIENT
  * window (failure/status/breaker/error events) for the historical 678 fixture
  * (~86 KB / 98 events) plus headroom; the four synthetic fixtures pass through
@@ -299,7 +299,7 @@ function makeFixtureBackedRpc(fixtureEvents: Array<Record<string, unknown>>): Rp
 const TRANSCRIPT_BUDGET_CHARS = 100_000;
 
 /**
- * Event-salience pattern (WR-03) — cloned from diagnosis-baseline.test.ts. A
+ * Event-salience pattern — cloned from diagnosis-baseline.test.ts. A
  * serialized event carrying any of these signals is part of the failure
  * NARRATIVE, so it is kept preferentially when the full transcript exceeds the
  * budget. Pure structural match over the serialized line — never echoes a body.
@@ -308,7 +308,7 @@ const SALIENT_EVENT_PATTERN =
   /tool execution failed|failuredetector|breaker|do not retry|403|forbidden|blocked|status|errorkind|completed_with_tool_errors|finishreason|success/i;
 
 /**
- * Window a fixture's events into the model's transcript budget (WR-03) — cloned
+ * Window a fixture's events into the model's transcript budget — cloned
  * from diagnosis-baseline.test.ts. Returns the serialized transcript plus a
  * `truncated` flag so the RUN can RECORD on the verdict row when truncation
  * occurred. Selects salient events first (chronological), then backfills context
@@ -351,7 +351,7 @@ export const OPENAI_FUNCTION_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;
  * object the live RUN ships — not a drifting copy. The only runtime input is the
  * obs_query tool description (from `createObsQueryTool`, itself keyless).
  *
- * CR-01: the 3rd tool is named `obs_explain` (the product's MCP tool name, see
+ * The 3rd tool is named `obs_explain` (the product's MCP tool name, see
  * glass-box-ga-readiness.test.ts:78), NOT a dotted `obs.explain` — a dot is
  * forbidden in an OpenAI function name and HTTP-400s a real endpoint, breaking
  * the Stage-C costed RUN before the agent can call the tool.
@@ -380,8 +380,8 @@ export function buildReproveToolManifest(
         parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
       },
     },
-    // NEW — the RE-PROVE's added tool (PATTERNS:243-256). Wire-safe `obs_explain`
-    // (CR-01): the product MCP tool name; a dotted name fails the OpenAI schema.
+    // NEW — the RE-PROVE's added tool. Wire-safe `obs_explain`:
+    // the product MCP tool name; a dotted name fails the OpenAI schema.
     {
       type: "function",
       function: {
@@ -408,11 +408,10 @@ export function buildReproveToolManifest(
  * baseline:
  *   1. MANIFEST: a 3rd `obs_explain` tool (root cause + breaker timeline + cost in
  *      ONE call). Named `obs_explain` (the wire-safe MCP tool name), NOT a dotted
- *      `obs.explain` the OpenAI function-name schema rejects (CR-01).
+ *      `obs.explain` the OpenAI function-name schema rejects.
  *   2. SYSTEM PROMPT: positions obs_explain as the PRIMARY tool while KEEPING
  *      read_source available — so "0 source reads" is EARNED by the agent
- *      choosing obs_explain, not by removing the fallback (RESEARCH anti-pattern
- *      + Pitfall 4).
+ *      choosing obs_explain, not by removing the fallback.
  *   3. DISPATCH: the obs_explain branch calls the in-process assembler over the
  *      CURRENT fixture's reader (`fixtureId` threaded in as an opt, mirroring how
  *      `readSourceImpl` is threaded). read_source + obs_query branches kept.
@@ -435,8 +434,8 @@ async function runDiagnosisLoop(opts: {
   const obsTool = createObsQueryTool(obsRpc);
 
   // SYSTEM PROMPT: obs_explain PRIMARY, read_source kept available so 0 reads is
-  // earned (not removed). PATTERNS:262-268. The tool name MUST match the manifest's
-  // wire-safe `obs_explain` (CR-01) — instructing the model to call a dotted
+  // earned (not removed). The tool name MUST match the manifest's
+  // wire-safe `obs_explain` — instructing the model to call a dotted
   // `obs.explain` would name a tool the manifest does not expose.
   const systemPrompt =
     "You are diagnosing a degraded Comis session. The session transcript is provided " +
@@ -449,10 +448,10 @@ async function runDiagnosisLoop(opts: {
 
   // OpenAI-compatible tool manifest — the RE-PROVE has 3 tools (baseline had 2).
   // Built via the module-level builder so the keyless Stage-A/B substrate asserts
-  // the SAME manifest's wire-validity that the live RUN ships (CR-01).
+  // the SAME manifest's wire-validity that the live RUN ships.
   const tools = buildReproveToolManifest(obsTool.description);
 
-  // WR-03: window the transcript RETAINING the mechanism evidence (salient
+  // Window the transcript RETAINING the mechanism evidence (salient
   // failure/status/breaker events). `truncated` is bubbled up so the caller can
   // record it on the verdict row.
   const { text: transcriptText, truncated } = windowTranscript(fixtureEvents);
@@ -481,7 +480,7 @@ async function runDiagnosisLoop(opts: {
     const msg = json.choices?.[0]?.message ?? {};
     const usage = json.usage ?? {};
 
-    // WR-02: drop nameless tool calls at the producer so a model emitting a tool
+    // Drop nameless tool calls at the producer so a model emitting a tool
     // call without function.name does not enter the transcript as name:"" and
     // inflate distinctToolCalls. recordMetrics + countObsExplainCalls also skip
     // empty names defensively; this keeps the captured transcript clean.
@@ -550,7 +549,7 @@ describe.skipIf(!isLive)("DIAG-reprove RUN — fresh agent WITH obs.explain (gat
       // for the judge).
       const agentApiKey = process.env["COMIS_LIVE_JUDGE_API_KEY"] ?? "";
       const agentModel = process.env["COMIS_LIVE_JUDGE_MODEL"] ?? "gpt-4o-mini";
-      // IN-02: the prior ternary returned "https://api.openai.com" from BOTH arms,
+      // The prior ternary returned "https://api.openai.com" from BOTH arms,
       // so the runbook's "point COMIS_LIVE_JUDGE_PROVIDER at any OpenAI-compatible
       // endpoint" was a dead claim — every provider value was pinned to OpenAI and a
       // non-OpenAI endpoint was unreachable. Honor the configured provider WITHOUT a
@@ -568,7 +567,7 @@ describe.skipIf(!isLive)("DIAG-reprove RUN — fresh agent WITH obs.explain (gat
         const id = FIXTURE_IDS[i]!;
         gov.declare("dollar", `reprove-${id}`);
         if (gov.check()) {
-          // WR-04: the budget cut us off. Emit an explicit budget-skipped row for
+          // The budget cut us off. Emit an explicit budget-skipped row for
           // THIS fixture and every remaining one, so all FIXTURE_IDS classes always
           // appear in the gating table with a clear "not measured" reason — never
           // present a partial corpus as the full gate.
@@ -603,13 +602,13 @@ describe.skipIf(!isLive)("DIAG-reprove RUN — fresh agent WITH obs.explain (gat
             "misclassified and the cascade), not just the symptom.",
         });
 
-        // The G1 GATE: the obs_explain run must reach root cause in EXACTLY 1
-        // obs_explain call with ZERO source reads. BOTH halves matter (Pitfall 4)
+        // The GATE: the obs_explain run must reach root cause in EXACTLY 1
+        // obs_explain call with ZERO source reads. BOTH halves matter
         // — a correct verdict reached via source reads or multi-call is NOT the
         // RE-PROVE.
         const obsExplainCalls = countObsExplainCalls(transcript);
         expect(obsExplainCalls).toBe(1);
-        // WR-01: the GATE and the ledger ROW must be the SAME source of truth. The
+        // The GATE and the ledger ROW must be the SAME source of truth. The
         // row records readSource.readPaths.size (the paths the dispatch ACTUALLY
         // executed); assert the gate on that SAME executed set so the gate can never
         // pass while the ledger reports non-zero reads (or vice versa) after a future
@@ -627,14 +626,14 @@ describe.skipIf(!isLive)("DIAG-reprove RUN — fresh agent WITH obs.explain (gat
           failureClass: FAILURE_CLASS[id],
           totalTokens: metrics.totalTokens,
           distinctToolCalls: metrics.distinctToolCalls,
-          // distinctSourceReads from the COUNTED read_source tool (metric M2c).
+          // distinctSourceReads from the COUNTED read_source tool.
           distinctSourceReads: readSource.readPaths.size,
           judgeVerdict: v.verdict,
           // skip != fail: an absent judge key → "skip" (excluded from the denominator).
           rootCauseReached: v.verdict === "skip" ? "skip" : v.verdict === "pass",
           // The RE-PROVE surfaces: obs_explain (the 1-call root cause) FIRST, then
           // the truncation marker (if any) + any read_source paths (should be none).
-          // Labels the surface with the wire-safe tool name (CR-01).
+          // Labels the surface with the wire-safe tool name.
           surfacesUsed: [
             OBS_EXPLAIN_TOOL_NAME,
             ...(truncated ? ["input-truncated:salient-window"] : []),
@@ -668,9 +667,9 @@ describe.skipIf(!isLive)("DIAG-reprove RUN — fresh agent WITH obs.explain (gat
       };
       const ledgerDir = writeLedger(report, resolve(repoRoot, "benchmarks")); // assertNoSecrets inside
       writeFileSync(join(ledgerDir, "reprove-table.md"), md, "utf-8");
-      // belt-and-suspenders sweep over rows + the rendered table (T-156-02-03).
+      // belt-and-suspenders sweep over rows + the rendered table.
       assertNoSecrets(JSON.stringify(rows) + md, "diagnosis reprove run");
-      // WR-04: EVERY class must appear in the gate — measured or budget-skipped.
+      // EVERY class must appear in the gate — measured or budget-skipped.
       expect(rows.length).toBe(FIXTURE_IDS.length);
     },
   );

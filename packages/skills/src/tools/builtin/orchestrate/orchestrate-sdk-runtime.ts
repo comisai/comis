@@ -8,9 +8,9 @@
  * — the stable `./orchestrate-sdk-runtime.js` contract the generated
  * `comis_tools.js` imports (`invoke` + `wrapResultRef`), where each typed SDK
  * method delegates to {@link invoke}. `comis-agent`'s direct-method subcommands
- * (CLI-04) ride {@link callCapSocket} directly so they can dispatch a non-tool
+ * ride {@link callCapSocket} directly so they can dispatch a non-tool
  * method (`session.spawn`, `graph.execute`, …) without the `tool.invoke`
- * envelope. Both speak the exact wire the Phase-211 capability endpoint serves
+ * envelope. Both speak the exact wire the capability endpoint serves
  * (`setup-capability-endpoint.ts` — one `{ bearer, method, params }` line per
  * connection → one `{ result }` / `{ error }` line back).
  *
@@ -20,14 +20,14 @@
  * (`COMIS_CAP_LEASE`) authenticates every call, audience-bound at the endpoint.
  * So the runtime needs nothing but `node:net` + JSON — there is deliberately NO
  * WebSocket / gateway client: that loopback gateway transport is unreachable
- * from the `--unshare-net` jail and is the very wire CLI-04 forbids.
+ * from the `--unshare-net` jail and is the wire this containment design forbids.
  *
  * Globals rule (AGENTS.md §2.2): this runtime executes INSIDE the jail, which has
  * NO `node_modules` — so it MUST be self-contained (node built-ins only). It
  * therefore reads the two lease env vars via a local `process.env` accessor rather
  * than importing `@comis/core`'s `systemGetEnv` seam: that import is unreachable
  * from the jail and would make EVERY `comis_tools` import fail `ERR_MODULE_NOT_FOUND`
- * (live VPS finding 2026-06-23 — guarded by `orchestrate-sdk-self-contained.test.ts`).
+ * (guarded by `orchestrate-sdk-self-contained.test.ts`).
  *
  * @module
  */
@@ -45,7 +45,7 @@ import type { ResultRef } from "@comis/core";
 // eslint-disable-next-line no-restricted-syntax -- jailed runtime: process.env is the sole env source (no @comis/core seam reachable in the jail)
 const systemGetEnv = (name: string): string | undefined => process.env[name];
 
-/** The method the runtime always sends — the one-route dispatch (v8 §6.2). */
+/** The method the runtime always sends — the one-route dispatch. */
 const TOOL_INVOKE_METHOD = "tool.invoke" as const;
 
 /** The lease env var the cap socket authenticates each call with. */
@@ -63,7 +63,7 @@ interface CapReply {
 }
 
 /**
- * A ResultRef decorated with the §23.9 in-jail extraction helpers (REF-02). The
+ * A ResultRef decorated with the in-jail extraction helpers. The
  * big (untrusted) payload stays materialized on the jailed workspace as DATA;
  * these helpers slice it IN-JAIL via the `orch:read`-gated read/grep/jq/sql/
  * jsonpath tools so only the relevant rows/lines re-enter context — the full
@@ -89,9 +89,9 @@ export interface WrappedResultRef extends ResultRef {
  * framing exactly. The `method` and `params` are passed THROUGH verbatim — the
  * caller decides whether it is a `tool.invoke` (see {@link invoke}) or a direct
  * orchestration method (`session.spawn`, `graph.execute`, `cron.add`, …, the
- * `comis-agent` CLI-04 subcommands). The lease (`COMIS_CAP_LEASE`) authenticates
+ * `comis-agent` subcommands). The lease (`COMIS_CAP_LEASE`) authenticates
  * every call; the unix cap socket (`COMIS_ORCH_SOCKET`) is the only egress — this
- * is deliberately NOT the loopback gateway WebSocket (the wire CLI-04 forbids).
+ * is deliberately NOT the loopback gateway WebSocket (the wire this design forbids).
  *
  * @param method - The wire method (e.g. `"tool.invoke"`, `"session.spawn"`).
  * @param params - The method params, forwarded verbatim (no envelope wrapping).
@@ -182,7 +182,7 @@ export function invoke(tool: string, args?: Record<string, unknown>): Promise<un
 }
 
 /**
- * Decorate a {@link ResultRef} with the in-jail extraction helpers (REF-02). The
+ * Decorate a {@link ResultRef} with the in-jail extraction helpers. The
  * generated SDK calls this for the high-volume tool returns; the helpers route
  * through {@link invoke} to the `orch:read`-gated read/grep/jq tools over the
  * materialized `results/` file, so only the requested slice re-enters context.

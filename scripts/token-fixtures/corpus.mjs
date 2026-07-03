@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Token-fixture corpus (TOK-02 — design/multilingual-excellence.md §4).
+ * Token-fixture corpus.
  *
  * ~180 neutral, non-personal strings across the 9 factor-shipping scripts
  * (he/ar/ru/zh/ja/el/th/hi/en), >=20 per script. These strings are committed
@@ -16,9 +16,9 @@
  *     acronym >=3 (gershayim forms, incl. one ASCII double-quote stand-in)
  *   - ar additionally: marks >=3 (harakat-bearing)
  *   - ja mixes kana+kanji; zh is han-dominant; en is NORMAL CHAT PROSE
- *     (not code-dense — en is the I1-locked 1.0 control)
+ *     (not code-dense — en is the 1.0 control)
  *   - pinned entry `he_mixed_docker` (>=40 chars, names docker) — the
- *     harmonic-combination discriminator (179-RESEARCH Pattern 3)
+ *     harmonic-combination discriminator
  *
  * Ids follow `{script}_{category}_{nn}` (the pin is `he_mixed_docker`).
  * @module

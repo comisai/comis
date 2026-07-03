@@ -3,7 +3,7 @@
  * Video Generate tool: text-to-video generation via provider abstraction.
  *
  * Allows agents to generate videos from text prompts. Delegates to the
- * daemon-side video.generate RPC handler (lands Phase 188 Plan 04) which
+ * daemon-side video.generate RPC handler, which
  * resolves the agent's main provider's video backend (or explicit FAL),
  * applies a per-agent rate limit + a pre-submit worst-case cost ceiling, runs
  * the inline submit→poll→download loop through one VideoGenerationPort, and
@@ -77,7 +77,7 @@ const VideoGenerateToolParams = Type.Object({
  * The shipped static description, used when no backend is resolved at build
  * (the defensive path — e.g. the parity STUB_CTX with no videoGenProvider). It
  * carries NO config value, key, or env — only the generic capability prose
- * (T-191-08: the description must not leak config/secrets).
+ * (the description must not leak config/secrets).
  */
 const STATIC_FALLBACK =
   "Generate a video from a text prompt, optionally from a source image (image-to-video) and with an explicit model. The generated video is automatically delivered to the current channel.";
@@ -88,15 +88,15 @@ function formatDurations(d: VideoDurations): string {
 }
 
 /**
- * IN-03: build the `video_generate` description at registration time from the
+ * Build the `video_generate` description at registration time from the
  * ACTIVE backend's VIDEO_MODELS capability matrix, so the agent sees the active
  * provider's REAL options (durations/resolutions/aspect/i2v) — not a static
- * superset (Hermes `_build_dynamic_video_schema`, hardened with structured
- * enums). Built ONLY from the matrix's capability data + the backend id
- * (fal/veo/grok — not a secret): NO config value, key, or env is interpolated
- * (T-191-08). An unknown/blocked backend (the SEC-04 `isBlockedObjectKey` guard
- * in `listVideoModelCaps` returns `undefined`, T-191-09) or a backend with no
- * t2v entry falls back to STATIC_FALLBACK — never throws.
+ * superset, using structured enums. Built ONLY from the matrix's capability data
+ * + the backend id (fal/veo/grok — not a secret): NO config value, key, or env
+ * is interpolated (the description must not leak config/secrets). An
+ * unknown/blocked backend (the `isBlockedObjectKey` guard in `listVideoModelCaps`
+ * returns `undefined`) or a backend with no t2v entry falls back to
+ * STATIC_FALLBACK — never throws.
  *
  * Registration-time / default-agent-scoped: `AgentTool.description` is a static
  * string fixed at `build`, so changing the active `provider` needs a daemon
@@ -105,7 +105,7 @@ function formatDurations(d: VideoDurations): string {
  */
 function buildVideoDescription(backend: string | undefined): string {
   if (!backend) return STATIC_FALLBACK;
-  const t2v = listVideoModelCaps(backend, "t2v"); // SEC-04 guarded; undefined if blocked/unknown
+  const t2v = listVideoModelCaps(backend, "t2v"); // blocked-object-key guarded; undefined if blocked/unknown
   if (!t2v) return STATIC_FALLBACK;
   const i2v = listVideoModelCaps(backend, "i2v");
   return (
@@ -127,10 +127,10 @@ function buildVideoDescription(backend: string | undefined): string {
  * Uses the createRpcDispatchTool factory to dispatch to the daemon-side
  * video.generate RPC handler. The RPC handler resolves the provider, applies
  * rate limiting + the pre-submit cost ceiling, validates the params against the
- * active backend's capability matrix (IN-02), and executes the submit→poll→
+ * active backend's capability matrix, and executes the submit→poll→
  * download loop before delivering the generated video to the current channel.
  *
- * IN-03: when `provider` is supplied (the registry threads the boot-selected
+ * When `provider` is supplied (the registry threads the boot-selected
  * `ctx.videoGenProvider`), the tool description is built at registration from
  * that backend's real capability matrix. With no provider it keeps the shipped
  * STATIC_FALLBACK string (defensive — the parity STUB_CTX path).

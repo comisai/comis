@@ -1,37 +1,36 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `signal-caps` — the Signal capability descriptor + the §3A.4 caps↔adapter
- * reconciliation seam (the channel-#2 mirror of the 204 Telegram `tg-caps.ts`),
- * Phase 209 / CHAN2-01.
+ * `signal-caps` — the Signal capability descriptor + the caps↔adapter
+ * reconciliation seam (the Signal mirror of the Telegram `tg-caps.ts`).
  *
  * Two capability shapes exist in this codebase and they DIFFER:
  *
- *   - The emulator side (this file, design §3A.4) is a FLAT `ChannelCaps`:
+ *   - The emulator side (this file) is a FLAT `ChannelCaps`:
  *     `{ channel, inbound{}, outbound{}, protocol }`.
  *   - The production adapter (signal-plugin.ts `CAPABILITIES`,
  *     core/channel-capability.ts) is NESTED `ChannelCapability`:
  *     `{ features{}, limits{}, replyToMetaKey }`.
  *
- * The §3A.4 decision (mirrored from the 204 A5 decision): `signal-caps.ts`
- * carries the flat descriptor AND the reconciliation map; the contract test
- * (`signal-caps.test.ts`) reads the adapter's REAL declared capabilities from
- * `@comis/channels` (via `createSignalPlugin(...).capabilities`) and asserts the
- * overlapping fields match — a drift tripwire so the emulator's caps can never
- * silently diverge from the adapter's self-declaration (threat T-209-07).
+ * By design, `signal-caps.ts` carries the flat descriptor AND the reconciliation
+ * map; the contract test (`signal-caps.test.ts`) reads the adapter's REAL
+ * declared capabilities from `@comis/channels` (via
+ * `createSignalPlugin(...).capabilities`) and asserts the overlapping fields
+ * match — a drift tripwire so the emulator's caps can never silently diverge
+ * from the adapter's self-declaration.
  *
  * THE KEY SIGNAL DIFFERENCE vs Telegram: the adapter declares
  * `features.buttons: "none"` (signal-plugin.ts:26), so `outbound.buttons` is
  * `false` — Signal has NO inline buttons. That is the honest-degrade trigger
- * 209-06 wires into `chan tap` (an unsupported-verb exit, never a silent no-op).
+ * wired into `chan tap` (an unsupported-verb exit, never a silent no-op).
  * Signal DOES support reactions (`features.reactions: true`), so `chan react`
- * works unchanged — the WS1-relevant verb.
+ * works unchanged.
  *
  * The flat `ChannelCaps` shape has no slot for a message-length limit, so the
  * reconciled `maxMessageChars` is carried as the sibling const
- * {@link SIGNAL_MAX_MESSAGE_CHARS} (the FOUND-03-style reconciliation seam) and
+ * {@link SIGNAL_MAX_MESSAGE_CHARS} (the reconciliation seam) and
  * the contract test asserts it against the adapter's `limits.maxMessageChars`.
  *
- * --- §3A.4 FIELD-BY-FIELD MAP (emulator FLAT ⇄ adapter NESTED) ---
+ * --- FIELD-BY-FIELD MAP (emulator FLAT ⇄ adapter NESTED) ---
  *   outbound.reactions     == features.reactions      (true)
  *   outbound.edits         == features.editMessages   (false — Signal can't edit)
  *   outbound.deletes       == features.deleteMessages (true)
@@ -59,7 +58,7 @@
 import type { ChannelCaps } from "../../harness/channel-emulator.js";
 
 /**
- * The reconciled Signal message-length limit (the §3A.4 seam).
+ * The reconciled Signal message-length limit (the reconciliation seam).
  *
  * The flat `ChannelCaps` shape carries no `maxMessageChars` field, so the
  * reconciled value lives here as a sibling const. The contract test asserts it
@@ -76,7 +75,7 @@ export const SIGNAL_MAX_MESSAGE_CHARS = 65536;
  * which is not-reconciled-yet (the adapter declares no inbound caps). `buttons`
  * is `false` because the adapter declares the `"none"` flavour — Signal has no
  * inline buttons, the honest-degrade trigger for `chan tap`. `reactions` is
- * `true` (the WS1-relevant verb Signal supports).
+ * `true` (Signal supports reactions).
  */
 export const signalCaps: ChannelCaps = {
   channel: "signal",

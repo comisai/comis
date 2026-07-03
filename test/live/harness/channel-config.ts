@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * channel-config.ts — shared harness for the Phase 144 (CHANNELS) scenario tests.
+ * channel-config.ts — shared harness for the CHANNELS scenario tests.
  *
  * Provides:
  *   1. The channel enumeration tables (ALL_CHANNELS = the 10 registered adapters;
  *      REAL_CHANNELS = the 9 non-echo channels) — the single source of truth for
- *      the CHAN-01 credential-validation loop.
+ *      the credential-validation loop.
  *   2. Streaming / queue / dmScope / delivery-timing config-OBJECT builders that
  *      round-trip every mode-value through the REAL @comis/core Zod schemas
  *      (StreamingConfigSchema / QueueConfigSchema / DmScopeConfigSchema /
@@ -58,8 +58,8 @@ export type ChannelType =
   | "echo";
 
 /**
- * All 10 registered channel adapters, in a stable order. The design enumerates
- * "10 channels" = the 9 real + echo. Single source of truth for the CHAN-01 loop.
+ * All 10 registered channel adapters, in a stable order. The 10 channels are
+ * the 9 real + echo. Single source of truth for the credential-validation loop.
  */
 export const ALL_CHANNELS = [
   "discord",

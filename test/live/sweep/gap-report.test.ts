@@ -26,7 +26,7 @@ function makeSweepResult(verdicts: Partial<ProbeVerdict>[]): SweepResult {
 // ---------------------------------------------------------------------------
 
 describe("buildGapReport", () => {
-  it("Test 1: returns GapReport with required shape from a SweepResult", () => {
+  it("returns GapReport with required shape from a SweepResult", () => {
     const result = makeSweepResult([
       { category: "search(brave)", status: "green" },
       { category: "search(tavily)", status: "red" },
@@ -43,7 +43,7 @@ describe("buildGapReport", () => {
     expect(typeof report.summary.skip).toBe("number");
   });
 
-  it("Test 2: phaseOrder puts most-red phases first; all 137–144 present", () => {
+  it("phaseOrder puts most-red phases first; all 137–144 present", () => {
     // 2 reds mapped to phase 142 (via "STT(openai)" + "TTS(openai)") and 1 red to 143 (via "search(brave)")
     const result = makeSweepResult([
       { category: "STT(openai)", status: "red" },
@@ -61,7 +61,7 @@ describe("buildGapReport", () => {
     expect(report.phaseOrder.sort((a, b) => a - b)).toEqual(expected);
   });
 
-  it("Test 3: phaseOrder is [137..144] natural order when zero red verdicts", () => {
+  it("phaseOrder is [137..144] natural order when zero red verdicts", () => {
     const result = makeSweepResult([
       { category: "search(brave)", status: "green" },
       { category: "search(tavily)", status: "skip" },
@@ -70,7 +70,7 @@ describe("buildGapReport", () => {
     expect(report.phaseOrder).toEqual([137, 138, 139, 140, 141, 142, 143, 144]);
   });
 
-  it("Test 4: summary green/red/skip counts match input verdicts", () => {
+  it("summary green/red/skip counts match input verdicts", () => {
     const result = makeSweepResult([
       { status: "green" },
       { status: "green" },
@@ -84,7 +84,7 @@ describe("buildGapReport", () => {
     expect(report.summary.skip).toBe(2);
   });
 
-  it("Test 8: summary.skip includes budget-exceeded verdicts (status=skip)", () => {
+  it("summary.skip includes budget-exceeded verdicts (status=skip)", () => {
     // budget-exceeded verdicts come in as status:"skip" from sweep.ts
     const result = makeSweepResult([
       { status: "skip", reason: "SKIPPED(budget-exceeded)" },
@@ -108,7 +108,7 @@ describe("writeGapReport", () => {
     }
   });
 
-  it("Test 5: writes gap-report.json to benchmarks/live/<date>-<sha>/ and is parseable", () => {
+  it("writes gap-report.json to benchmarks/live/<date>-<sha>/ and is parseable", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "gap-report-test-"));
     const result = makeSweepResult([{ status: "green" }, { status: "skip" }]);
     const ledgerDir = writeGapReport(result, tmpDir, "abc1234");
@@ -121,12 +121,12 @@ describe("writeGapReport", () => {
     expect(Array.isArray(parsed.probeVerdicts)).toBe(true);
     expect(Array.isArray(parsed.phaseOrder)).toBe(true);
     expect(typeof parsed.summary).toBe("object");
-    // WR-04: Ledger dir path now includes a timestamp suffix for collision safety
+    // Ledger dir path includes a timestamp suffix for collision safety
     // Pattern: benchmarks/live/<date>-<sha>-<ISO-timestamp-safe>
     expect(ledgerDir).toMatch(/live\/\d{4}-\d{2}-\d{2}-abc1234-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}/);
   });
 
-  it("Test 6: writeGapReport throws SECRET LEAK when verdict reason contains a secret-shaped string", () => {
+  it("writeGapReport throws SECRET LEAK when verdict reason contains a secret-shaped string", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "gap-report-test-"));
     // Inject a fake sk-ant style key into a verdict reason
     const result = makeSweepResult([
@@ -139,7 +139,7 @@ describe("writeGapReport", () => {
     expect(() => writeGapReport(result, tmpDir, "abc1234")).toThrow("SECRET LEAK");
   });
 
-  it("Test WR-04: two runs with the same SHA produce two distinct ledger directories", () => {
+  it("two runs with the same SHA produce two distinct ledger directories", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "gap-report-test-"));
     // Create two SweepResults with different ranAt times to ensure distinct timestamps
     const result1 = makeSweepResult([{ status: "green" }]);
@@ -168,7 +168,7 @@ describe("writeGapReadiness", () => {
     }
   });
 
-  it("Test 7: writes markdown file containing # Gap Report and phase reorder table", () => {
+  it("writes markdown file containing # Gap Report and phase reorder table", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "gap-report-test-"));
     const result = makeSweepResult([
       { id: "search-brave", category: "search(brave)", status: "green" },
@@ -189,7 +189,7 @@ describe("writeGapReadiness", () => {
     expect(content).toContain("stt-openai");
   });
 
-  it("Test WR-03: pipe characters in reason are escaped to avoid breaking Markdown table", () => {
+  it("pipe characters in reason are escaped to avoid breaking Markdown table", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "gap-report-test-"));
     const result = makeSweepResult([
       {

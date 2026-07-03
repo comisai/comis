@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `rig-daemon.ts` — the DETACHED-subprocess rig entrypoint (Phase 208, Plan 08 —
- * the cold-shell Option-A stretch, the milestone HEADLINE "shell-only,
- * unattended").
+ * `rig-daemon.ts` — the DETACHED-subprocess rig entrypoint (the cold-shell
+ * variant: shell-only, unattended).
  *
  * The in-process rig (`startStandaloneRig` @ rig.ts) boots the daemon IN THE
  * `tg up` PROCESS, so it dies the instant `tg up` exits — a SECOND-shell
@@ -38,7 +37,7 @@
  *   handle file → rm the throwaway config + data dirs → exit 0. Idempotent (a
  *   second trigger is a no-op).
  *
- * SECURITY (T-208-30/31/32): the rig-control surface binds 127.0.0.1 ONLY and is
+ * SECURITY: the rig-control surface binds 127.0.0.1 ONLY and is
  * owner-checked against the `0600` handle's gateway token (a loopback caller
  * still must present the token). The handle file stays `0600`. This is the most
  * powerful test-only surface (stop/reset/restart a daemon) — it is FULLY isolated
@@ -73,7 +72,7 @@ import {
   type RespawnOutcome,
 } from "./rig-lifecycle.js";
 
-/** The fixed test chat id the rig drives (a fabricated id, never a real operator chat — T-204-15). */
+/** The fixed test chat id the rig drives (a fabricated id, never a real operator chat). */
 const DEFAULT_CHAT_ID = 424242;
 
 /**
@@ -267,7 +266,7 @@ function spawnDaemonGrandchild(state: RigState): ChildProcess {
  * exit. Every path (SIGTERM, `/shutdown`, orphan-reap) calls this.
  */
 async function teardown(state: RigState, code: number): Promise<never> {
-  // AUTHORITATIVE teardown (WR-01): reapForTeardown sets the `tearingDown` latch (so a
+  // AUTHORITATIVE teardown: reapForTeardown sets the `tearingDown` latch (so a
   // racing /reset|/restart refuses to respawn) and reaps the CURRENT daemon, then
   // re-reads state.daemon and reaps AGAIN — catching a daemon a /reset swapped in just
   // before the latch took effect. This guarantees NO daemon survives teardown even on
@@ -374,7 +373,7 @@ async function handleRigControl(
     res.end(JSON.stringify({ ok: healthy, pid: process.pid }));
     return;
   }
-  // Every MUTATING verb is owner-checked against the gateway token (T-208-30).
+  // Every MUTATING verb is owner-checked against the gateway token.
   const auth = req.headers["authorization"];
   const presented = typeof auth === "string" && auth.startsWith("Bearer ") ? auth.slice("Bearer ".length) : "";
   if (presented !== token) {
@@ -406,7 +405,7 @@ async function handleRigControl(
       return;
     }
     const overrides = parsed.overrides;
-    // Rewrite the throwaway config with the new model, then restart (the Track-K sweep).
+    // Rewrite the throwaway config with the new model, then restart (the model sweep).
     const newModel = overrides["agents.default.model"] ?? state.env.model;
     writeFileSync(
       state.configPath,
@@ -423,8 +422,8 @@ async function handleRigControl(
     // oracle, then restart. Scoped UNDER the throwaway dataDir — never ~/.comis.
     //
     // Delegated to respawnDaemon so /reset shares the SAME guards as /restart:
-    //   - WR-01: refuses to respawn (and skips the wipe) once teardown's latch is set;
-    //   - WR-02: only wipes + rebinds once the prior daemon is CONFIRMED reaped AND the
+    //   - refuses to respawn (and skips the wipe) once teardown's latch is set;
+    //   - only wipes + rebinds once the prior daemon is CONFIRMED reaped AND the
     //     gateway port is free — so the wipe never runs against a live daemon's db and
     //     the fresh daemon never races an EADDRINUSE.
     // The wipe is the beforeSpawn seam (after the confirmed reap, before the new spawn).
@@ -457,9 +456,9 @@ async function handleRigControl(
 
 /**
  * Reap the current daemon grandchild + re-spawn it on the (current) config; wait on
- * health. Delegates the DECISION to {@link respawnDaemon}, which (WR-01) REFUSES to
+ * health. Delegates the DECISION to {@link respawnDaemon}, which REFUSES to
  * respawn once teardown's `tearingDown` latch is set — so no daemon is created that a
- * teardown-via-`process.exit` could not reap on the orphan-reap path — and (WR-02)
+ * teardown-via-`process.exit` could not reap on the orphan-reap path — and
  * HONORS the reap result + confirms {@link isPortFree} before rebinding, so a fresh
  * daemon never races an EADDRINUSE onto a gateway port the prior (slow-to-die) daemon
  * still holds. Returns the boolean the `/restart`/`/reconfigure` verbs branch on (a
@@ -555,7 +554,7 @@ async function main(): Promise<void> {
   //    rig is BUILT to OUTLIVE its launcher (the cold-shell premise: `tg up` exits,
   //    the rig keeps running so a SEPARATE-shell `tg send` reaches it). Treating the
   //    expected parent exit as an orphan signal would tear the rig down the instant
-  //    `tg up` returns — the exact opposite of Option A. The handle-gone signal is
+  //    `tg up` returns — the exact opposite of the detached premise. The handle-gone signal is
   //    the correct, sufficient orphan oracle. `env.parentPid` is retained only for
   //    diagnostics (it identifies which launcher spawned this rig).
   void env.parentPid;

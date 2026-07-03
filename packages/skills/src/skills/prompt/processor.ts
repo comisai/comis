@@ -98,8 +98,8 @@ export function formatAvailableSkillsXml(
       `    <name>${escapeXml(s.name)}</name>\n` +
       `    <description>${escapeXml(s.description)}</description>\n` +
       `    <location>${escapeXml(s.location)}</location>\n` +
-      // SURFACE-02: the learned-trust distinction the model SEES. Defaults to
-      // "bundled" for platform skills that never set source (byte-stable).
+      // The learned-trust distinction the model SEES. Defaults to "bundled"
+      // for platform skills that never set source (byte-stable).
       `    <source>${escapeXml(s.source ?? "bundled")}</source>\n` +
       `  </skill>`,
   );

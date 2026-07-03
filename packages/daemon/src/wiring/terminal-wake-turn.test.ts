@@ -763,11 +763,11 @@ describe("terminal-wake-turn — a channel/API-stamped session drives via the re
   });
 });
 
-describe("buildEscalationMessage — actionable, redaction-safe escalation text (real-VPS 2026-06-16)", () => {
-  // Live Telegram drive: the escalation delivered the BARE "Terminal session X needs a human:
-  // <reason>." — the user could not tell what was wanted or how to unblock the drive. The message
-  // must be reason-aware + tell the user HOW to respond (reply to drive it, or stop), while
-  // staying redaction-safe (the structural reason ONLY, never the attacker-influenceable screen).
+describe("buildEscalationMessage — actionable, redaction-safe escalation text", () => {
+  // A bare "Terminal session X needs a human: <reason>." leaves the user unable to tell what was
+  // wanted or how to unblock the drive. The message must be reason-aware + tell the user HOW to
+  // respond (reply to drive it, or stop), while staying redaction-safe (the structural reason
+  // ONLY, never the attacker-influenceable screen).
   it("is reason-aware + tells the user how to respond (not the bare 'needs a human: <reason>')", () => {
     const m = buildEscalationMessage("sess-1", "no_safe_match");
     expect(m).toContain("sess-1");
@@ -789,7 +789,7 @@ describe("buildEscalationMessage — actionable, redaction-safe escalation text 
   });
 });
 
-describe("terminal-wake-turn — profile dialogs feed the safe-only policy (v2.26 DIALOG-01)", () => {
+describe("terminal-wake-turn — profile dialogs feed the safe-only policy", () => {
   it("ESCALATES a codex approval-overlay (a destructive profile dialog) instead of auto-answering", async () => {
     // The session's allowId resolves the codex profile; its approval-overlay dialog is destructive,
     // so decideAutoAnswer escalates (command execution is never auto-approved) — proves the wake-turn
@@ -806,7 +806,7 @@ describe("terminal-wake-turn — profile dialogs feed the safe-only policy (v2.2
     expect(esc?.payload.reason).toBe("destructive");
   });
 
-  it("answers a claude trust-gate (a non-destructive profile dialog) and records the audit source as 'dialog' (L1 provenance)", async () => {
+  it("answers a claude trust-gate (a non-destructive profile dialog) and records the audit source as 'dialog'", async () => {
     const { wakeOneTurn, registry, emitted } = build({
       screen: "Do you trust the files in this folder?",
       allowId: "claude",
@@ -820,7 +820,7 @@ describe("terminal-wake-turn — profile dialogs feed the safe-only policy (v2.2
     expect(aa?.payload.source).toBe("dialog"); // provenance: a profile dialog, not an operator hintPattern
   });
 
-  it("no allowId ⇒ no profile ⇒ today's hintPattern-only behavior (INV-1)", async () => {
+  it("no allowId ⇒ no profile ⇒ plain hintPattern-only behavior", async () => {
     // Without an allowId the wake-turn passes no dialogs; the same screen falls through to the
     // operator hintPattern path. With no hint match it escalates `no_safe_match` (the escalate-always
     // veto is gated on an actual safe match — the narration-false-positive fix — so it does NOT fire

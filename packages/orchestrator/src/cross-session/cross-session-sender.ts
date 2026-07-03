@@ -44,25 +44,25 @@ export interface CrossSessionSenderDeps {
   eventBus: TypedEventBus;
   config: AgentToAgentConfig;
   /**
-   * HIGH-2 (ONCE-01/02) — the three-state outward-send ledger. When present
+   * The three-state outward-send ledger. When present
    * (alongside {@link CrossSessionSenderDeps.durableRuns} + a resolvable
    * rootRunId), the completion-announcement send is routed through the SAME
    * exactly-once ledger as `message.send`, so a restart-driven re-announce of an
    * already-committed announcement is a no-op (no double-notify). `undefined` on
-   * a non-autonomy daemon ⇒ the announce is a pass-through (unchanged behavior).
-   * Wired by Plan 12 (the sole daemon.ts editor for this injection).
+   * a non-autonomy daemon ⇒ the announce is a pass-through.
+   * Wired from the daemon.
    */
   outwardLedger?: OutwardSendLedgerPort;
   /**
-   * HIGH-2 — allocates the stable per-announce `stepIndex` (the other half of the
+   * Allocates the stable per-announce `stepIndex` (the other half of the
    * `(rootRunId, stepIndex)` idempotency key) ONCE via `allocateOutwardStep`.
-   * `undefined` ⇒ pass-through. Wired by Plan 12.
+   * `undefined` ⇒ pass-through. Wired from the daemon.
    */
   durableRuns?: DurableRunPort;
   /**
-   * HIGH-2 — resolves the announce origin's `rootRunId` from the (parsed) caller
+   * Resolves the announce origin's `rootRunId` from the (parsed) caller
    * session key, the SAME resolver the message handlers use. `undefined` (or an
-   * unresolvable key) ⇒ pass-through. Wired by Plan 12.
+   * unresolvable key) ⇒ pass-through. Wired from the daemon.
    */
   resolveRootRunId?: (sessionKey: SessionKey) => string;
 }
@@ -111,15 +111,15 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
 
   /**
    * Send the completion announcement through the SAME three-state ONCE ledger as
-   * `message.send` (HIGH-2). The lifecycle written around the single
-   * `deps.sendToChannel` call mirrors `wrapOutwardSend` (Plan 05) exactly:
+   * `message.send`. The lifecycle written around the single
+   * `deps.sendToChannel` call mirrors `wrapOutwardSend` exactly:
    *   lookup (committed → no-op) → begin (send_attempt_started, the SOLE INSERT)
    *   → markUnknown (unknown_after_send) → sendToChannel → commit.
    * A committed `(rootRunId, stepIndex)` short-circuits to a no-op (the announce
    * already landed across a restart — no double-notify). A begin UNIQUE-collision
    * is "already in flight" (NO second send). A permanent failure → markFailed
-   * (no retry, ONCE-04); a transient failure leaves the row `unknown_after_send`
-   * for the Plan-04 recovery scan. Content-free (T-216-03): only a sha256 digest
+   * (no retry); a transient failure leaves the row `unknown_after_send`
+   * for the recovery scan. Content-free: only a sha256 digest
    * reaches the ledger, never the announcement body. The agentId for the row is
    * the caller's resolved agent (the announce origin).
    */
@@ -132,17 +132,17 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
     channelId: string,
     text: string,
   ): Promise<boolean> {
-    // ONCE-02 dedup read: a committed row short-circuits a replay to a no-op —
+    // Dedup read: a committed row short-circuits a replay to a no-op —
     // deps.sendToChannel is never reached (no restart double-notify).
     const existing = await ledger.lookup(rootRunId, stepIndex);
     if (existing.ok && existing.value?.state === "committed") {
       return true; // the announcement already landed
     }
 
-    // Content-free key (T-216-03): only the sha256 slice — never the body.
+    // Content-free key: only the sha256 slice — never the body.
     const contentDigest = createHash("sha256").update(text).digest("hex").slice(0, 16);
 
-    // ONCE-01: send_attempt_started BEFORE the platform call. A UNIQUE
+    // send_attempt_started BEFORE the platform call. A UNIQUE
     // (rootRunId, stepIndex) collision means another attempt owns this send →
     // do NOT issue a second platform call (no double-notify).
     const begun = await ledger.begin({ rootRunId, stepIndex, agentId, channelType, channelId, contentDigest });
@@ -169,9 +169,9 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
       return true;
     }
 
-    // A permanent failure is terminal (ONCE-04): markFailed, skip retry. A
+    // A permanent failure is terminal: markFailed, skip retry. A
     // transient failure (or a false return) leaves the row unknown_after_send for
-    // the Plan-04 recovery scan — never a blind replay.
+    // the recovery scan — never a blind replay.
     if (sendErr && isPermanentError(sendErr.message)) {
       await ledger.markFailed(rootRunId, stepIndex, "permanent");
     }
@@ -186,7 +186,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
   ): Promise<boolean> {
     if (!channelType || !channelId) return false;
 
-    // HIGH-2: route the announce through the ONCE ledger when the ledger +
+    // Route the announce through the ONCE ledger when the ledger +
     // durableRuns deps are wired AND the caller resolves to a rootRunId. Allocate
     // the stepIndex ONCE for this announce (the stable key across a restart).
     const rootRunId = resolveAnnounceRootRunId(callerSessionKey);

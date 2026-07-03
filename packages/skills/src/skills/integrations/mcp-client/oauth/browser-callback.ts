@@ -10,9 +10,9 @@
  * rejection — so no port or file descriptor lingers.
  *
  * ── ZERO module-scope mutables ──────────────────────────────────────────────
- * Hermes kept the callback port in a MODULE-GLOBAL (`_oauth_port`); two
- * concurrent logins then clobbered each other's port (a TOCTOU that could
- * mis-route an authorization code). THIS file therefore has NO module-scope
+ * A module-global callback port (e.g. `_oauth_port`) would let two concurrent
+ * logins clobber each other's port — a TOCTOU that could mis-route an
+ * authorization code. THIS file therefore has NO module-scope
  * `let`/`var`. Every piece of mutable state — the server handle, the port, the
  * `state`, the `code_verifier`, the resolve/reject, the timeout timer, the
  * "already settled" guard — lives inside the closure of a single

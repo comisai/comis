@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Sweep probes — one minimal LLM-free probe per configured integration.
- * SWP-01: each probe records green|red|skip without any LLM in the loop.
+ * Each probe records green|red|skip without any LLM in the loop.
  *
  * All probes are side-effect-free except for the real network call inside run().
  * run() MUST NOT throw — it wraps errors and returns { status:"red", reason }.
  * run() checks registry.getSkipVerdict() FIRST and returns skip on non-null verdict.
  *
- * Security notes (T-135-01, T-135-02):
+ * Security notes:
  *   - API key values are read only inside the fetch call, never stored in the Probe descriptor.
  *   - ProbeResult carries only status/reason/durationMs — never the raw response body.
  *   - Error reason is HTTP status code or err.message only (no response body echo).
@@ -96,7 +96,7 @@ async function runProbe(
   } catch (err: unknown) {
     return {
       status: "red",
-      // T-135-02: only err.message — never raw response body
+      // Only err.message — never raw response body
       reason: err instanceof Error ? err.message : String(err),
       durationMs: Date.now() - t0,
     };
@@ -530,7 +530,7 @@ registerProbe({
         body: JSON.stringify({ model: "dall-e-2", prompt: "a red dot", n: 1, size: "256x256" }),
         signal: AbortSignal.timeout(15_000),
       });
-      if (res.status === 429) return; // quota exceeded → reachable (T-135-05 accept)
+      if (res.status === 429) return; // quota exceeded → still proves reachability (accept)
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
     }),
 });
@@ -545,7 +545,7 @@ registerProbe({
   costTier: "cent",
   run: (registry, _governor) =>
     runProbe("search(brave)", registry, async () => {
-      // WR-02: canonical env var is SEARCH_API_KEY (matches wizard types.ts + docs)
+      // Canonical env var is SEARCH_API_KEY (matches wizard types.ts + docs)
       const key = process.env["SEARCH_API_KEY"];
       const res = await fetch("https://api.search.brave.com/res/v1/web/search?q=test&count=1", {
         headers: { "X-Subscription-Token": key ?? "", Accept: "application/json" },
@@ -629,7 +629,7 @@ registerProbe({
     }),
 });
 
-// search-grok: reads XAI_API_KEY (NOT GROK_API_KEY) — T-135-01 + canonical env key
+// search-grok: reads XAI_API_KEY (NOT GROK_API_KEY) — the canonical env key
 registerProbe({
   id: "search-grok",
   category: "search(grok)",
@@ -694,7 +694,7 @@ registerProbe({
 
 // ---------------------------------------------------------------------------
 // MCP stdio probe — spawn npx @modelcontextprotocol/server-echo, verify it starts
-// T-135-03: spawns only the public echo server, 10s hard timeout, SIGTERM on done
+// Spawns only the public echo server, 10s hard timeout, SIGTERM on done
 // ---------------------------------------------------------------------------
 
 registerProbe({
@@ -709,7 +709,7 @@ registerProbe({
           reject(new Error("mcp-stdio probe timeout (10s)"));
         }, 10_000);
 
-        // T-135-03: never pass API key env vars to the spawned process
+        // Never pass API key env vars to the spawned process
         const child = spawn("npx", ["--yes", "@modelcontextprotocol/server-echo"], {
           stdio: ["pipe", "pipe", "pipe"],
           env: { PATH: process.env["PATH"] ?? "" }, // minimal env — no secrets

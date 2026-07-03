@@ -2,9 +2,8 @@
 /**
  * Branch coverage for setup-and-route.ts.
  *
- * Covers the typing-mode matrix and the routing matrix. The call signatures
- * invoke the merged setupAndRoute() (formerly setupInboundExecution() /
- * routeInboundMessage()).
+ * Covers the typing-mode matrix and the routing matrix through the
+ * setupAndRoute() call signature.
  *
  * @module
  */
@@ -141,7 +140,7 @@ function makeMinimalDeps(overrides?: Partial<SetupAndRouteDeps>): SetupAndRouteD
 // in inbound-setup.ts is gone; lifecycle reactor handles ack reactions when
 // enabled (production absent-mode).
 
-describe("setupAndRoute typing controller (formerly setupInboundExecution)", () => {
+describe("setupAndRoute typing controller behavior", () => {
   it("forces typingMode 'never' on IRC channel even when streamingConfig default is thinking", async () => {
     // Pass no streamingConfig — resolveStreamingConfig falls back to typingMode: "thinking" default
     const eventBus = {
@@ -394,7 +393,7 @@ describe("setupAndRoute typing controller (formerly setupInboundExecution)", () 
 // sessionLabelStore deps slots removed. Production absent-mode is direct
 // routing through CommandQueue without coalescing or history injection.
 
-describe("setupAndRoute steer+followup routing (formerly routeInboundMessage)", () => {
+describe("setupAndRoute steer+followup routing", () => {
   function makeRunHandle(
     overrides?: Partial<{
       isStreaming: boolean;
@@ -691,7 +690,7 @@ describe("setupAndRoute steer+followup routing (formerly routeInboundMessage)", 
 // ROUTE-SIDE: Command queue routing
 // ===========================================================================
 
-describe("setupAndRoute command-queue routing (formerly routeInboundMessage)", () => {
+describe("setupAndRoute command-queue routing", () => {
   it("logs warning when command queue rejects enqueue with overflow policy", async () => {
     const enqueue = vi.fn(async () => ({
       ok: false as const,

@@ -5,7 +5,7 @@
  * child summaryIds and covered-message count, via the injected
  * `ContextStorePort`.
  *
- * Composition (RESEARCH Q2 — no dedicated single-summary getter): filters
+ * Composition (no dedicated single-summary getter): filters
  * `getSummaries(conversationId)` by `summaryId`, then composes
  * `getSummaryChildren` + `getSummaryMessages`. Returns METADATA ONLY — the
  * summary `content` is NOT surfaced and NOT logged, so the output is not
@@ -14,7 +14,7 @@
  *
  * Owner-scoped: the conversation is derived per-call from
  * `tryGetContext().sessionKey` (fail-closed `permission_denied` with no live
- * session), never a caller-supplied id (E2 isolation).
+ * session), never a caller-supplied id (conversation isolation).
  *
  * @module
  */
@@ -46,13 +46,13 @@ export function createCtxInspectTool(deps: ContextToolDeps): AgentTool<typeof Ct
 
     async execute(_toolCallId: string, params: Record<string, unknown>): Promise<AgentToolResult<unknown>> {
       // SCOPE — build the (conversation, agent, tenant) read scope from the LIVE
-      // context per-call (R4 / WR-02); fail closed without a fully-scoped session.
+      // context per-call; fail closed without a fully-scoped session.
       const ctxScope = requireCtxScope();
       const conversationId = ctxScope.conversationId;
       const summaryId = readStringParam(params, "summaryId", true)!;
       const t0 = deps.nowMs();
 
-      // Filter this agent's summaries (R4 agent-scoped) — no single-summary getter (YAGNI, Q2).
+      // Filter this agent's summaries (agent-scoped) — there is no single-summary getter.
       const summary: LcdSummary | undefined = deps.store
         .getSummaries(ctxScope)
         .find((s) => s.summaryId === summaryId);
@@ -80,12 +80,12 @@ export function createCtxInspectTool(deps: ContextToolDeps): AgentTool<typeof Ct
         },
         "ctx_inspect complete",
       );
-      // O1: content-free expansion-hit metric (ids/counts/durationMs only —
+      // Content-free expansion-hit metric (ids/counts/durationMs only —
       // NEVER the summary content; the lossless store, AGENTS.md §2.2/§2.7).
       // recoveredCount = the covered-message count the inspection surfaced.
-      // WR-02: GUARDED — a throwing subscriber must never fail this completed
+      // GUARDED — a throwing subscriber must never fail this completed
       // metadata read (see emitExpansionMetric).
-      // WR-03: read the end-instant ONCE so durationMs and timestamp are a single
+      // Read the end-instant ONCE so durationMs and timestamp are a single
       // consistent snapshot (the afterTurn triggers' one-read pattern).
       const endMs = deps.nowMs();
       emitExpansionMetric(deps, "ctx_inspect", {

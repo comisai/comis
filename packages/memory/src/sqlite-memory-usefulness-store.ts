@@ -100,7 +100,7 @@ export function createSqliteMemoryUsefulnessStore(
       "VALUES (?, ?, ?, ?, 0, 1, NULL) " +
       "ON CONFLICT(tenant_id, agent_id, memory_id, intent) DO UPDATE SET ignored_count = ignored_count + 1",
   );
-  // Failure per-intent upsert (FORGET-02): first touch INSERTs failure_count=1
+  // Failure per-intent upsert: first touch INSERTs failure_count=1
   // (used/ignored=0, last_useful_at NULL — a failure is NEITHER a use NOR an
   // ignore), later touches bump failure_count within the SAME (…, intent) bucket.
   // failure_count is a DISTINCT signal from ignored_count (outcome-attributed task
@@ -237,7 +237,7 @@ export function createSqliteMemoryUsefulnessStore(
         // (?, '')` fetches BOTH the requested per-intent bucket AND the global
         // fallback row per id; the per-id preference is resolved below.
         const ph = memoryIds.map(() => "?").join(", ");
-        // WR-03: `failure_count` is now PROJECTED (the bandit feed's negative-reward
+        // `failure_count` is PROJECTED (the bandit feed's negative-reward
         // signal). It is surfaced onto the signal ONLY when > 0 below, so a clean
         // memory's signal shape is byte-identical and the recall hot-path usefulnessNorm
         // (used/ignored only) is unaffected.
@@ -269,7 +269,7 @@ export function createSqliteMemoryUsefulnessStore(
             usedCount: row.used_count,
             ignoredCount: row.ignored_count,
             ...(row.last_useful_at !== null ? { lastUsefulAt: row.last_useful_at } : {}),
-            // WR-03: surface failure_count ONLY when > 0 (spread-conditional, like
+            // Surface failure_count ONLY when > 0 (spread-conditional, like
             // lastUsefulAt) so a clean memory's signal is byte-identical — the recall
             // hot path ignores it; the bandit feed reads it as the negative-reward term.
             ...(row.failure_count !== undefined && row.failure_count > 0

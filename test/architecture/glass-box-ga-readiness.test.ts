@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * v2.14 GLASS-BOX GA-READINESS — the milestone's terminal shrink-only checklist.
+ * OBSERVABILITY-EXPLAIN GA-READINESS — the milestone's terminal shrink-only checklist.
  *
- * This is the Phase-156 G2 durable marker. It does NOT re-run the architecture
+ * This is the durable observability-explain GA marker. It does NOT re-run the architecture
  * suite — that is `pnpm test:architecture`'s job (the auto-discovery enforcers:
  * api-contracts-bidirectional, mcp-export-policy, cli-uses-typed-rpc,
  * log-payload-checker, trajectory-event-types-known, contract-codegen-drift).
- * Instead it asserts the v2.14 "Glass Box" SURFACE ANCHORS are still in place,
+ * Instead it asserts the observability-explain SURFACE ANCHORS are still in place,
  * so a future PR that silently drops the `obs.explain` contract, downgrades the
  * `obs_explain` MCP export policy, removes the `comis explain` CLI, un-maps the
- * tool-lifecycle / session-summary trajectory events, drops the 156-01 daemon
+ * tool-lifecycle / session-summary trajectory events, drops the daemon
  * barrel re-export, or deletes the RE-PROVE scenario fails THIS test loudly
  * (deterministic, cheap — fs/string reads only, NO runtime path).
  *
@@ -43,9 +43,9 @@ function readSource(relPath: string): string {
   return readFileSync(abs, "utf8");
 }
 
-describe("v2.14 Glass-Box GA-readiness — the milestone surfaces are present + gated", () => {
+describe("Observability-explain GA-readiness — the milestone surfaces are present + gated", () => {
   it("registers the obs.explain RPC contract (the api-contracts-bidirectional discovery surface)", () => {
-    // The Phase-153 centerpiece contract lives in incident-report.ts and is
+    // The centerpiece contract lives in incident-report.ts and is
     // re-exported through the observability api-contracts barrel; the
     // bidirectional gate keys off the `method: "obs.explain"` literal.
     const incidentReport = readSource(
@@ -110,7 +110,7 @@ describe("v2.14 Glass-Box GA-readiness — the milestone surfaces are present + 
   });
 
   it("maps the tool-lifecycle events + session:summary into the trajectory bridge (trajectory-event-types-known)", () => {
-    // The Glass-Box activity layer rides the event-bus → trajectory bridge.
+    // The activity layer rides the event-bus → trajectory bridge.
     // The three tool-lifecycle events (started / executed / timeout) and the
     // session-summary event must be mapped in EVENT_BUS_TO_TRAJECTORY so the
     // trajectory-event-types-known gate (which fails on any unmapped event)
@@ -133,9 +133,9 @@ describe("v2.14 Glass-Box GA-readiness — the milestone surfaces are present + 
     ).toEqual([]);
   });
 
-  it("re-exports the obs.explain assembler from the @comis/daemon barrel (the 156-01 RE-PROVE seam)", () => {
-    // The 156-01 barrel add lets the live-tier RE-PROVE scenario call the
-    // FROZEN Phase-153 assembler over a fixture reader without a deep
+  it("re-exports the obs.explain assembler from the @comis/daemon barrel (the RE-PROVE seam)", () => {
+    // The barrel add lets the live-tier RE-PROVE scenario call the
+    // frozen assembler over a fixture reader without a deep
     // daemon-internal dist path. A refactor that drops it would silently break
     // the milestone's proof harness.
     const daemonIndex = readSource("packages/daemon/src/index.ts");
@@ -149,7 +149,7 @@ describe("v2.14 Glass-Box GA-readiness — the milestone surfaces are present + 
     ).toContain("IncidentSourceReader");
   });
 
-  it("keeps the RE-PROVE scenario + operator RUNBOOK on disk (the G1 proof artifacts)", () => {
+  it("keeps the RE-PROVE scenario + operator RUNBOOK on disk (the proof artifacts)", () => {
     expect(
       existsSync(
         resolve(

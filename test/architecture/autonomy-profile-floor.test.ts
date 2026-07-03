@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Architecture test: PROFILE-02 — the §3.8 named profiles never over-grant.
+ * Architecture test: the named profiles never over-grant.
  *
- * Asserts the four invariants the v8 design doc lists under §3.8 ("Arch-tests
- * (net-new)") + the §22.3 structural floor:
+ * Asserts the four invariants that keep the named profiles within the
+ * structural floor:
  *   (1) every profile's resolved cap set ⊆ {floor-contained caps} — no profile
  *       grants a cap outside the floor in M1;
- *   (2) no `autoApprovable:false` cap (the §22.3 always-escalate floor —
+ *   (2) no `autoApprovable:false` cap (the always-escalate floor —
  *       `orch:browse`, `orch:message`-to-non-origin, `report:issue`) is marked
  *       auto-allowable in ANY profile;
  *   (3) `standard`/`unattended`/`max` resolve with the budget/rate/spawn
@@ -14,7 +14,7 @@
  *   (4) `assistant` resolves with ZERO orchestration surfaces, and
  *       `unattended`/`max` keep a subset of `standard`'s caps (no silent
  *       over-grant). `max` carries an M3-deferral notice; `unattended`'s notice
- *       (Phase 217) states its never-hang MODE behaviors are now ACTIVE.
+ *       states its never-hang MODE behaviors are now ACTIVE.
  *
  * It imports the COMPILED `resolveAutonomy` from `@comis/core` (dist) — the
  * runtime resolver, not its AST — so a future change that over-grants in the
@@ -27,16 +27,15 @@ import { describe, it, expect } from "vitest";
 import { resolveAutonomy, type AgentCapability } from "@comis/core";
 import { formatViolations } from "../support/architecture-helpers.js";
 
-const DESIGN_REF = "v8 §3.8 (named profiles) / §22.3 (structural floor)";
+const DESIGN_REF = "named autonomy profiles never over-grant (resolveAutonomy in @comis/core)";
 
-// The nine FLOOR-CONTAINED orchestration caps `standard` turns on (v8 §3.8 /
-// §22.3). Hardcoded here as the independent source of truth: the resolver must
-// stay a subset of these in M1. `orch:message` IS a member (210-GAP MIG-01 / v8
-// §3.8 line 253 profile table): the standard profile turns ON origin-channel
-// messaging. The ORIGIN-vs-new-channel scoping rides `message.channels`
-// (`["origin"]` default) — origin sends are auto-allowable under quota; a NEW
-// channel is an `autoApprovable:false` floor item (§3.5/§22.3) enforced by the
-// message config + the §8.4 per-target grant, NOT by removing the cap. So the
+// The nine FLOOR-CONTAINED orchestration caps `standard` turns on. Hardcoded
+// here as the independent source of truth: the resolver must stay a subset of
+// these in M1. `orch:message` IS a member: the standard profile turns ON
+// origin-channel messaging. The ORIGIN-vs-new-channel scoping rides
+// `message.channels` (`["origin"]` default) — origin sends are auto-allowable
+// under quota; a NEW channel is an `autoApprovable:false` floor item enforced by
+// the message config + the per-target grant, NOT by removing the cap. So the
 // cap-literal is floor-contained + `autoApprovable:true`; only the non-origin
 // target escalates (asserted via ALWAYS_ESCALATE below, which `orch:message` is
 // NOT a member of).
@@ -52,15 +51,15 @@ const FLOOR_CONTAINED: ReadonlySet<AgentCapability> = new Set<AgentCapability>([
   "orch:message",
 ]);
 
-// The §22.3 caps that are `autoApprovable:false` in EVERY profile forever
+// The caps that are `autoApprovable:false` in EVERY profile forever
 // (outward + irreversible). Modeled in the orch:* vocabulary as `orch:browse`;
 // `orch:message`-to-non-origin and `report:issue` are enforced via the message
-// config / are outside this milestone's vocabulary (§3.5/Phase 215).
+// config / are outside this milestone's vocabulary.
 const ALWAYS_ESCALATE: ReadonlySet<AgentCapability> = new Set<AgentCapability>(["orch:browse"]);
 
 const PROFILES = ["assistant", "standard", "unattended", "max"] as const;
 
-describe("PROFILE-02 — named profiles never over-grant (v8 §3.8 / §22.3)", () => {
+describe("named profiles never over-grant", () => {
   it("(1) every profile's resolved caps ⊆ the floor-contained set", () => {
     const violations = PROFILES.flatMap((profile) => {
       const resolved = resolveAutonomy({ profile });
@@ -75,7 +74,7 @@ describe("PROFILE-02 — named profiles never over-grant (v8 §3.8 / §22.3)", (
     expect(
       violations,
       formatViolations({
-        description: "A profile resolved a capability outside the §22.3 floor-contained set (over-grant).",
+        description: "A profile resolved a capability outside the floor-contained set (over-grant).",
         violations,
         suggestedFix:
           "Clamp the profile's resolved caps to the eight floor-contained caps in M1. Caps whose enforcement floor (lease/durability) is not built yet must not be granted.",
@@ -99,10 +98,10 @@ describe("PROFILE-02 — named profiles never over-grant (v8 §3.8 / §22.3)", (
       violations,
       formatViolations({
         description:
-          "A profile marked an always-escalate floor cap (orch:browse / outward-irreversible) as auto-allowable — Elevation of Privilege (T-210-05).",
+          "A profile marked an always-escalate floor cap (orch:browse / outward-irreversible) as auto-allowable — Elevation of Privilege.",
         violations,
         suggestedFix:
-          "The §22.3 floor caps (orch:browse, orch:message-to-non-origin, report:issue) are autoApprovable:false in EVERY profile forever. Never set their autoApprovable bit true.",
+          "The floor caps (orch:browse, orch:message-to-non-origin, report:issue) are autoApprovable:false in EVERY profile forever. Never set their autoApprovable bit true.",
         designRef: DESIGN_REF,
       }),
     ).toEqual([]);
@@ -123,10 +122,10 @@ describe("PROFILE-02 — named profiles never over-grant (v8 §3.8 / §22.3)", (
       violations,
       formatViolations({
         description:
-          "A profile shipped the always-on budget/rate/spawn ceiling OFF, defeating the floor that earns the capable default (Tampering, T-210-07).",
+          "A profile shipped the always-on budget/rate/spawn ceiling OFF, defeating the floor that earns the capable default (Tampering).",
         violations,
         suggestedFix:
-          "standard/unattended/max must resolve with aggregateBudgetUsd > 0 and the spawn/rate ceilings > 0. A profile cannot ship the §8.7 guards off.",
+          "standard/unattended/max must resolve with aggregateBudgetUsd > 0 and the spawn/rate ceilings > 0. A profile cannot ship the always-on guards off.",
         designRef: DESIGN_REF,
       }),
     ).toEqual([]);
@@ -157,9 +156,9 @@ describe("PROFILE-02 — named profiles never over-grant (v8 §3.8 / §22.3)", (
 
   it("(4) unattended/max keep ⊆ standard's caps (no over-grant) + carry the correct per-profile notice", () => {
     // The CAP-CLAMP half is the load-bearing Elevation-of-Privilege invariant
-    // (T-210-06) and holds for BOTH profiles forever: neither may resolve a cap
-    // outside standard's set in M1. The NOTICE half differs by profile as of
-    // Phase 217: `max` still defers its sandbox-auto-allow surface (an M3 notice),
+    // and holds for BOTH profiles forever: neither may resolve a cap
+    // outside standard's set in M1. The NOTICE half differs by profile:
+    // `max` still defers its sandbox-auto-allow surface (an M3 notice),
     // while `unattended`'s never-hang MODE behaviors are now ACTIVE — its notice
     // must NOT claim deferral. (Caps are unchanged; only the mode is activated.)
     const standardCaps = new Set(resolveAutonomy({ profile: "standard" }).capabilities);
@@ -181,10 +180,10 @@ describe("PROFILE-02 — named profiles never over-grant (v8 §3.8 / §22.3)", (
           out.push({ file: where, line: 0, snippet: `max m1Notice must mention its still-deferred (M3) surface (got: ${r.m1Notice})` });
         }
       } else {
-        // unattended (Phase 217): the never-hang behaviors are ACTIVE — the notice
+        // unattended: the never-hang behaviors are ACTIVE — the notice
         // must NOT claim deferral, and must say the behaviors are active.
         if (/M2|M3/.test(r.m1Notice)) {
-          out.push({ file: where, line: 0, snippet: `unattended m1Notice must NOT claim a deferred M2/M3 surface (Phase 217 activates it) (got: ${r.m1Notice})` });
+          out.push({ file: where, line: 0, snippet: `unattended m1Notice must NOT claim a deferred M2/M3 surface (got: ${r.m1Notice})` });
         }
         if (!/active/i.test(r.m1Notice)) {
           out.push({ file: where, line: 0, snippet: `unattended m1Notice must state its never-hang behaviors are active (got: ${r.m1Notice})` });
@@ -196,10 +195,10 @@ describe("PROFILE-02 — named profiles never over-grant (v8 §3.8 / §22.3)", (
       violations,
       formatViolations({
         description:
-          "unattended/max over-granted past standard's cap set in M1, or carried the wrong per-profile notice (Elevation of Privilege, T-210-06).",
+          "unattended/max over-granted past standard's cap set in M1, or carried the wrong per-profile notice (Elevation of Privilege).",
         violations,
         suggestedFix:
-          "In M1, unattended/max clamp to standard's cap set. `max` keeps an M3-deferral notice; `unattended`'s notice (Phase 217) states its never-hang behaviors are ACTIVE — caps whose floor is not built yet must not be granted.",
+          "In M1, unattended/max clamp to standard's cap set. `max` keeps an M3-deferral notice; `unattended`'s notice states its never-hang behaviors are ACTIVE — caps whose floor is not built yet must not be granted.",
         designRef: DESIGN_REF,
       }),
     ).toEqual([]);
