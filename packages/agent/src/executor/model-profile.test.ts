@@ -20,6 +20,7 @@ import { describe, it, expect } from "vitest";
 import {
   resolveModelProfile,
   capabilityClassFromProvider,
+  autoRepairForClass,
 } from "./model-profile.js";
 import type { ModelProfile, CapabilityClass } from "./model-profile.js";
 
@@ -619,5 +620,44 @@ describe("resolveModelProfile — capability/capacity boundary invariants", () =
       expect(capabilityClassFromProvider(undefined)).toBeUndefined();
       expect(capabilityClassFromProvider("")).toBeUndefined();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AUTOREPAIR_FOR per-class policy — the pure class-gate the orchestrate runner
+// consults before firing the one-shot repair seam. Auto-repair is ON for the
+// weaker models (small/nano) that benefit from a corrective re-prompt and OFF
+// for the stronger ones (frontier/mid), which get their scripts right the first
+// time and would only burn tokens. Mirrors the SCAFFOLD_FOR/SECURITY_FOR
+// sibling tables: the Record<CapabilityClass, boolean> typing is exhaustive by
+// construction, so a new class member fails the build until it is classified.
+// ---------------------------------------------------------------------------
+describe("autoRepairForClass — per-class auto-repair policy", () => {
+  it("enables auto-repair for the small class (weak model → corrective re-prompt helps)", () => {
+    expect(autoRepairForClass("small")).toBe(true);
+  });
+
+  it("enables auto-repair for the nano class (weakest model → corrective re-prompt helps)", () => {
+    expect(autoRepairForClass("nano")).toBe(true);
+  });
+
+  it("disables auto-repair for the frontier class (strong model → no wasteful re-prompt)", () => {
+    expect(autoRepairForClass("frontier")).toBe(false);
+  });
+
+  it("disables auto-repair for the mid class (strong model → no wasteful re-prompt)", () => {
+    expect(autoRepairForClass("mid")).toBe(false);
+  });
+
+  it("covers the full four-class table exactly (small/nano on, frontier/mid off)", () => {
+    const table = (["frontier", "mid", "small", "nano"] as CapabilityClass[]).map(
+      (cls) => [cls, autoRepairForClass(cls)] as const,
+    );
+    expect(table).toEqual([
+      ["frontier", false],
+      ["mid", false],
+      ["small", true],
+      ["nano", true],
+    ]);
   });
 });
