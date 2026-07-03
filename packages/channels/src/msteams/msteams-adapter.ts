@@ -426,8 +426,53 @@ export function createMsTeamsAdapter(
    * callback is not a fresh inbound to reply to.
    */
   function processCardAction(activity: TeamsActivity): void {
-    const normalized = normalizeCardAction(activity);
-    if (!normalized) return;
+    const result = normalizeCardAction(activity);
+    if (result.message === null) {
+      // Distinguish the benign "not our activity" drop (silent by design — a ping
+      // or a non-card invoke) from the security-relevant rejects, each of which
+      // gets a §2.7 WARN carrying hint + a distinct errorKind so a T-6
+      // arbitrary-verb probe against the approval gate, or a legitimate approver
+      // whose click vanished, is diagnosable via comis explain / fleet. The log
+      // names the reject class and carries NO secret/token/raw-signature — it
+      // mirrors the allowlist-drop WARN shape below.
+      switch (result.reason) {
+        case "ignored":
+          break;
+        case "unrendered-verb":
+          deps.logger.warn(
+            {
+              channelType: "msteams" as const,
+              hint: "Card-action verb is not in the rendered set; a click cannot invoke a method the bot never rendered",
+              errorKind: "validation" as const,
+            },
+            "Inbound card action dropped: unrendered verb",
+          );
+          break;
+        case "missing-callback":
+          deps.logger.warn(
+            {
+              channelType: "msteams" as const,
+              hint: "Card-action invoke carried no signed callback; the action is malformed",
+              errorKind: "validation" as const,
+            },
+            "Inbound card action dropped: missing signed callback",
+          );
+          break;
+        case "missing-clicker":
+          deps.logger.warn(
+            {
+              channelType: "msteams" as const,
+              hint: "Card-action activity carried no verified aadObjectId; the clicker cannot be authorized",
+              errorKind: "precondition" as const,
+            },
+            "Inbound card action dropped: no verified clicker id",
+          );
+          break;
+      }
+      return;
+    }
+
+    const normalized = result.message;
 
     if (!isAllowedSender(normalized.senderId, normalized.channelId)) {
       deps.logger.warn(

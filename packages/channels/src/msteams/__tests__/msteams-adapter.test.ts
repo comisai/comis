@@ -506,6 +506,92 @@ describe("createMsTeamsAdapter — card-action invoke routing + default-deny", (
   });
 });
 
+/**
+ * The security-relevant card-action rejects must be observable: a T-6
+ * arbitrary-verb probe against the approval gate and a legitimately dropped
+ * clicker are each logged with a distinct errorKind, mirroring the allowlist-drop
+ * WARN, so they are diagnosable via comis explain / fleet rather than vanishing
+ * silently. The benign "not our activity" drop stays silent (no WARN noise).
+ */
+describe("createMsTeamsAdapter — card-action reject-class observability", () => {
+  /** Find the first logged fields object at any level carrying the given errorKind. */
+  function warnWithKind(
+    loggerSpy: ReturnType<typeof makeLoggerSpy>,
+    kind: string,
+  ): Record<string, unknown> | undefined {
+    return loggerSpy.warn.mock.calls
+      .map((c) => c[0])
+      .find(
+        (p) =>
+          p !== null &&
+          typeof p === "object" &&
+          (p as { errorKind?: string }).errorKind === kind,
+      ) as Record<string, unknown> | undefined;
+  }
+
+  it("emits a validation WARN when a card-action invoke carries an unrendered verb (T-6 probe)", () => {
+    const { deps, loggerSpy } = makeAdapterDeps();
+    const adapter = createMsTeamsAdapter(deps);
+    const handler = vi.fn<MessageHandler>();
+    adapter.onMessage(handler);
+
+    adapter.handleWebhookEvents([
+      invokeActivity({
+        value: { action: { verb: "attacker.arbitrary.method", data: { cb: CB } } },
+      }),
+    ]);
+
+    expect(handler).not.toHaveBeenCalled();
+    const dropWarn = warnWithKind(loggerSpy, "validation");
+    expect(dropWarn).toBeDefined();
+    expect(typeof dropWarn!.hint).toBe("string");
+    // The signed callback must never ride the drop log.
+    expect(loggerSpy.serialized()).not.toContain(CB);
+  });
+
+  it("emits a validation WARN when a card-action invoke carries no signed callback", () => {
+    const { deps, loggerSpy } = makeAdapterDeps();
+    const adapter = createMsTeamsAdapter(deps);
+    const handler = vi.fn<MessageHandler>();
+    adapter.onMessage(handler);
+
+    adapter.handleWebhookEvents([
+      invokeActivity({ value: { action: { verb: MSTEAMS_APPROVAL_VERB, data: {} } } }),
+    ]);
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(warnWithKind(loggerSpy, "validation")).toBeDefined();
+  });
+
+  it("emits a precondition WARN when a card-action invoke has no verified aadObjectId (guest/federated clicker)", () => {
+    const { deps, loggerSpy } = makeAdapterDeps();
+    const adapter = createMsTeamsAdapter(deps);
+    const handler = vi.fn<MessageHandler>();
+    adapter.onMessage(handler);
+
+    // A guest/federated context may not populate from.aadObjectId; the clicker
+    // cannot be authorized, and the deliberate refusal must be diagnosable.
+    adapter.handleWebhookEvents([invokeActivity({ from: { id: "29:guest-no-aad" } })]);
+
+    expect(handler).not.toHaveBeenCalled();
+    const dropWarn = warnWithKind(loggerSpy, "precondition");
+    expect(dropWarn).toBeDefined();
+    expect(typeof dropWarn!.hint).toBe("string");
+  });
+
+  it("stays silent (no WARN) for a benign non-card invoke that is not an approval action", () => {
+    const { deps, loggerSpy } = makeAdapterDeps();
+    const adapter = createMsTeamsAdapter(deps);
+    adapter.onMessage(vi.fn());
+
+    adapter.handleWebhookEvents([invokeActivity({ name: "task/fetch" })]);
+
+    // A non-card invoke is not an approval action; dropping it must not add WARN
+    // noise that would drown out a real T-6 probe in the logs.
+    expect(loggerSpy.warn).not.toHaveBeenCalled();
+  });
+});
+
 describe("createMsTeamsAdapter — outbound sendMessage via the Connector REST", () => {
   it("posts a DM top-level activity with a Bearer token and no replyToId", async () => {
     const { fetchImpl, spy, token } = makeConnectorFetch();
