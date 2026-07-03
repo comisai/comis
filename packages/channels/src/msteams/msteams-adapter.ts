@@ -265,14 +265,17 @@ export function createMsTeamsAdapter(
 
   /**
    * Fire-and-forget upsert of the conversation routing tuple on every inbound so a
-   * later proactive send can recover it. Reads the RAW activity fields (the mapper
-   * strips them into metadata / a stripped channelId) — the raw `conversation.id`
-   * is the key, `channelData.tenant.id` the tenant (fallback `conversation.tenantId`).
-   * Skips when there is no store or no serviceUrl to route with; a capture failure
-   * is logged at DEBUG and never breaks inbound delivery.
+   * later proactive send can recover it. The key is `conversationId` — the mapper's
+   * stripped `normalized.channelId` (the ;messageid= thread suffix is carried
+   * separately as `threadId`), NOT the raw `conversation.id`: a proactive send
+   * targets that same stripped channelId, so keying by the raw id would miss on a
+   * threaded reference. Tenant is `channelData.tenant.id` (fallback
+   * `conversation.tenantId`). Skips when there is no store or no serviceUrl to route
+   * with; a capture failure is logged at DEBUG and never breaks inbound delivery.
    */
   function captureReference(
     activity: TeamsActivity,
+    conversationId: string,
     threadId: string | undefined,
   ): void {
     const store = deps.conversationStore;
@@ -285,7 +288,7 @@ export function createMsTeamsAdapter(
 
     Promise.resolve(
       store.capture({
-        conversationId: activity.conversation.id,
+        conversationId,
         serviceUrl,
         tenantId,
         threadId,
@@ -382,9 +385,12 @@ export function createMsTeamsAdapter(
 
     _lastMessageAt = now();
 
-    // Capture the routing tuple so a later proactive send can recover it.
+    // Capture the routing tuple so a later proactive send can recover it. Key by
+    // the stripped normalized.channelId — the SAME id a proactive send targets —
+    // not the raw conversation.id (which keeps the ;messageid= thread suffix).
     captureReference(
       activity,
+      normalized.channelId,
       normalized.metadata.msteamsThreadId as string | undefined,
     );
 
