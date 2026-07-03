@@ -135,10 +135,14 @@ function resolveServiceUrl(options?: SendMessageOptions): string {
 }
 
 /**
- * Resolve the reply target for a threaded channel/group reply. A direct message
- * carries none, so its activity is sent top-level.
+ * Resolve the reply target. A Teams direct message is always sent top-level, so
+ * a `dm` chatType forces no replyToId even when the caller supplies one (the
+ * delivery layer stamps a reply target on every inbound). Channel and group
+ * replies thread under the parent via replyToId.
  */
 function resolveReplyToId(options?: SendMessageOptions): string | undefined {
+  // Honor "DM → top-level": never thread a direct message, whatever was passed.
+  if (options?.extra?.chatType === "dm") return undefined;
   if (typeof options?.replyTo === "string" && options.replyTo.length > 0) {
     return options.replyTo;
   }

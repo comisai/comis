@@ -407,6 +407,46 @@ describe("createMsTeamsAdapter — outbound sendMessage via the Connector REST",
     expect(body.replyToId).toBe("parent-activity-id");
   });
 
+  it("keeps a DM reply top-level even when a replyTo is supplied (chatType dm)", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+
+    // The delivery layer stamps a replyToId on every inbound; a DM must still be
+    // sent top-level (Teams 1:1 chats have no thread), so the dm signal wins.
+    const result = await adapter.sendMessage("19:dm-convo", "hi", {
+      replyTo: "parent-activity-id",
+      extra: { serviceUrl: SERVICE_URL, chatType: "dm" },
+    });
+
+    expect(result.ok).toBe(true);
+    const body = JSON.parse(String(findSendCall(spy)![1].body)) as {
+      replyToId?: string;
+    };
+    expect(body.replyToId).toBeUndefined();
+  });
+
+  it("threads a channel reply under the parent when chatType is channel", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.sendMessage(
+      "19:channel-convo@thread.tacv2",
+      "hi",
+      {
+        replyTo: "parent-activity-id",
+        extra: { serviceUrl: SERVICE_URL, chatType: "channel" },
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    const body = JSON.parse(String(findSendCall(spy)![1].body)) as {
+      replyToId?: string;
+    };
+    expect(body.replyToId).toBe("parent-activity-id");
+  });
+
   it("logs an outbound INFO completion carrying durationMs on success", async () => {
     const { fetchImpl } = makeConnectorFetch();
     const { deps, loggerSpy } = makeAdapterDeps({ fetchImpl });
