@@ -76,14 +76,22 @@ export function extractCapabilityFootprint(script: string): CapabilityFootprint 
  * Classify a bounded stderr tail into a known-recoverable failure class, or
  * `undefined` for anything else. Ordered first-match: `bad_import` (a missing
  * module/package/import), then `comis_tools_misuse` (a `comis_tools` reference
- * paired with a Type/Attribute error shape), then the generic `type_error`.
- * The misuse class is tested BEFORE `type_error` so a `comis_tools` TypeError
- * classifies as misuse. Case-sensitive: the token names are engine-emitted.
- * Pure: a bounded regex projection — it never executes or reflects the tail.
+ * paired with a Type/Attribute error shape), then `syntax_error` (a malformed
+ * script body — the most frequent weak-model authoring failure; Node and Python
+ * both emit the exact token `SyntaxError`), then the generic `type_error`. The
+ * misuse class is tested BEFORE `syntax_error`/`type_error` so a `comis_tools`
+ * TypeError classifies as misuse; `syntax_error` is kept a DISTINCT class (not
+ * folded into a generic bucket) so its one-shot-repair success rate stays
+ * separately observable. The classes are disjoint in practice (a SyntaxError tail
+ * carries no Import/Type/Attribute token), so a `comis_tools` SyntaxError still
+ * classifies as `syntax_error`, not misuse. Case-sensitive: the token names are
+ * engine-emitted. Pure: a bounded regex projection — it never executes or reflects
+ * the tail. A repaired script re-runs in the SAME jail, so a bad regeneration
+ * still fails closed at the cap-socket endpoint.
  */
 export function classifyRecoverableStderr(
   tail: string,
-): "bad_import" | "comis_tools_misuse" | "type_error" | undefined {
+): "bad_import" | "comis_tools_misuse" | "syntax_error" | "type_error" | undefined {
   if (/ImportError|ModuleNotFoundError|ERR_MODULE_NOT_FOUND|Cannot find (?:module|package)/.test(tail)) {
     return "bad_import";
   }
@@ -92,6 +100,9 @@ export function classifyRecoverableStderr(
     /TypeError|AttributeError|is not a function|has no attribute/.test(tail)
   ) {
     return "comis_tools_misuse";
+  }
+  if (/SyntaxError/.test(tail)) {
+    return "syntax_error";
   }
   if (/TypeError|AttributeError/.test(tail)) {
     return "type_error";
