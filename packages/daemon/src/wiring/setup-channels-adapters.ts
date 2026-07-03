@@ -8,7 +8,7 @@
  * @module
  */
 
-import type { AppContainer, ChannelPort, ChannelPluginPort } from "@comis/core";
+import type { AppContainer, ChannelPort, ChannelPluginPort, MsTeamsConversationStorePort, TimerPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import {
   createTelegramPlugin,
@@ -79,8 +79,16 @@ export interface AdapterBootstrapResult {
 export async function bootstrapAdapters(deps: {
   container: AppContainer;
   channelsLogger: ComisLogger;
+  /** Persisted conversation-reference store (built once on the shared memory.db),
+   *  injected into the Teams plugin so every inbound captures the routing tuple
+   *  and a proactive send recovers it. Optional: absent → the adapter skips
+   *  capture and a proactive send errs (never a wrong-host default). */
+  msTeamsConversationStore?: MsTeamsConversationStorePort;
+  /** Daemon TimerPort, injected into the Teams plugin for its typing keepalive.
+   *  Optional: absent → the keepalive degrades to a no-op (never a raw setTimeout). */
+  timer?: TimerPort;
 }): Promise<AdapterBootstrapResult> {
-  const { container, channelsLogger } = deps;
+  const { container, channelsLogger, msTeamsConversationStore, timer } = deps;
   const channelConfig = container.config.channels;
 
   const adaptersByType = new Map<string, ChannelPort>();
@@ -398,6 +406,11 @@ export async function bootstrapAdapters(deps: {
         allowFrom: channelConfig.msteams.allowFrom,
         allowMode: channelConfig.msteams.allowMode,
         logger: channelsLogger,
+        // Inject the shared conversation-reference store + the daemon TimerPort
+        // as the @comis/core port types (never a raw db into @comis/channels):
+        // capture on every inbound + proactive-send recovery + the typing keepalive.
+        ...(msTeamsConversationStore ? { conversationStore: msTeamsConversationStore } : {}),
+        ...(timer ? { timer } : {}),
       });
       adaptersByType.set("msteams", plugin.adapter);
       channelPlugins.set("msteams", plugin);

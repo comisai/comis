@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, MsTeamsConversationStorePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
@@ -233,6 +233,12 @@ export interface ChannelsDeps {
   /** Mental-model store (skills) — forwarded to the __REFLECT__ cron path (runReflection get/admit).
    *  Built in setup-memory on the shared db; port TYPE only (the agent↛memory closed-graph cut). */
   learnedSkillStore?: MentalModelStorePort;
+  /** Microsoft Teams conversation-reference store — constructed once on the shared
+   *  memory.db and forwarded through bootstrapAdapters into createMsTeamsPlugin so
+   *  every inbound captures its routing tuple and a proactive send (cron/heartbeat)
+   *  recovers it. Injected as the @comis/core port TYPE (no SQLite dep in channels).
+   *  Absent → capture is skipped and a proactive Teams send errs. */
+  msTeamsConversationStore?: MsTeamsConversationStorePort;
   /** Default tenant ID for memory storage. */
   tenantId?: string;
   /** Embedding queue for new memory entries (optional). */
@@ -357,8 +363,16 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     recordOutboundMessage: deps.recordOutboundMessage,
   });
 
-  // Bootstrap enabled channel adapters from config
-  const { adaptersByType, tgPlugin, linePlugin, channelPlugins, msTeamsIngress } = await bootstrapAdapters({ container, channelsLogger });
+  // Bootstrap enabled channel adapters from config. The Teams conversation store
+  // + the daemon TimerPort are injected into createMsTeamsPlugin here (both are
+  // optional @comis/core-port seams on the adapter): capture + proactive recovery
+  // + the typing keepalive.
+  const { adaptersByType, tgPlugin, linePlugin, channelPlugins, msTeamsIngress } = await bootstrapAdapters({
+    container,
+    channelsLogger,
+    msTeamsConversationStore: deps.msTeamsConversationStore,
+    timer: deps.timers,
+  });
 
   // Assemble media pipeline (resolvers, preprocessor, preflight)
   const {

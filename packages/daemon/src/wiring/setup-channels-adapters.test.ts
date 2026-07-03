@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { AppContainer, ChannelPort } from "@comis/core";
+import type { AppContainer, ChannelPort, MsTeamsConversationStorePort, TimerPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 
 // ---------------------------------------------------------------------------
@@ -580,6 +580,37 @@ describe("bootstrapAdapters", () => {
     );
     expect(result.adaptersByType.get("msteams")).toBe(mockMsTeamsAdapter);
     expect(result.msTeamsIngress).toBe(mockMsTeamsIngress);
+  });
+
+  it("injects the conversation store + TimerPort into createMsTeamsPlugin when provided", async () => {
+    // The composition root builds the conversation-reference store on the shared
+    // memory.db and passes it (+ the daemon TimerPort) through bootstrapAdapters.
+    // Both must reach createMsTeamsPlugin as the injected port types so capture /
+    // proactive recovery / the typing keepalive are live — never a raw db thread.
+    const conversationStore = { capture: vi.fn(), get: vi.fn() } as unknown as MsTeamsConversationStorePort;
+    const timer = { schedule: vi.fn(), cancel: vi.fn() } as unknown as TimerPort;
+    const container = makeContainer({
+      msteams: { enabled: true, appId: "app-123", appPassword: "secret-pw", tenantId: "tenant-abc" },
+    });
+    await bootstrapAdapters({ container, channelsLogger, msTeamsConversationStore: conversationStore, timer });
+
+    expect(createMsTeamsPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationStore, timer }),
+    );
+  });
+
+  it("omits conversationStore/timer from createMsTeamsPlugin when the composition root injects neither", async () => {
+    // The seams are optional: with neither injected the plugin is built without the
+    // fields (the adapter then skips capture and errs a proactive send — never a
+    // wrong-host default), not with `undefined` values.
+    const container = makeContainer({
+      msteams: { enabled: true, appId: "app-123", appPassword: "secret-pw", tenantId: "tenant-abc" },
+    });
+    await bootstrapAdapters({ container, channelsLogger });
+
+    const call = vi.mocked(createMsTeamsPlugin).mock.calls[0]![0] as Record<string, unknown>;
+    expect(call).not.toHaveProperty("conversationStore");
+    expect(call).not.toHaveProperty("timer");
   });
 
   it("warns with errorKind auth and does not register when enabled but a credential is missing", async () => {

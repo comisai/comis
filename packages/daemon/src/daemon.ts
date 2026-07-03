@@ -55,6 +55,7 @@ import {
   setupSecrets as _setupSecretsImpl,
   createNamedGraphStore,
   createObservabilityStore,
+  createSqliteMsTeamsConversationStore,
   selectSecretStore,
 } from "@comis/memory";
 import { createGatewayServer } from "@comis/gateway";
@@ -421,8 +422,11 @@ function buildChannelManagerDeps(deps: {
   assembleToolsForAgent: (agentId: string, options?: import("./wiring/setup-tools.js").AssembleToolsOptions) => Promise<any[]>;
   getInboundMessageIdResolver: () => InboundMessageIdResolver | undefined;
   getSessionTracker: () => import("./notification/session-tracker.js").SessionTracker | undefined;
+  /** Teams conversation-reference store (built on the shared memory.db) forwarded
+   *  into bootstrapAdapters → createMsTeamsPlugin as the @comis/core port type. */
+  msTeamsConversationStore?: import("@comis/core").MsTeamsConversationStorePort;
 }): Parameters<typeof setupChannels>[0] {
-  const { agents, assembleToolsForAgent, getInboundMessageIdResolver, getSessionTracker } = deps;
+  const { agents, assembleToolsForAgent, getInboundMessageIdResolver, getSessionTracker, msTeamsConversationStore } = deps;
   const {
     container, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger, linkRunner, ssrfFetcher, transcriber,
@@ -524,6 +528,9 @@ function buildChannelManagerDeps(deps: {
     // setup-learning.ts.
     // outcomeStore + learnedSkillStore ride the SAME chain → the __REFLECT__ sentinel: the daemon assembles the closed-graph reflection bundle from them + the trusted-origin LCD source inside registerCronEventListeners. (The embedder is NOT threaded here — the reflection job groups by topicKey, no clustering embeddings.)
     memoryLifecycleStore, outcomeStore, learnedSkillStore, memoryApi,
+    // Teams conversation-reference store → bootstrapAdapters → createMsTeamsPlugin
+    // (capture on every inbound + proactive-send recovery). Port type only.
+    msTeamsConversationStore,
     tenantId: container.config.tenantId,
     embeddingQueue, queueConfig: container.config.queue,
     onSuspiciousContent,
@@ -2112,6 +2119,13 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // 7.8.9. Durable stores built EARLY (before the cap layer — the jail-leg chokepoint shares the SAME store for the _outwardStepIndex allocation). See buildDurableStores.
   const { durabilityCfg, durableRunStore: durableRunStoreEarly, outwardLedger: outwardLedgerEarly } = buildDurableStores({ agents, db });
 
+  // 7.8.9b. Teams conversation-reference store on the SAME shared memory.db handle
+  // (its table is chained into initSchema via ensureMsTeamsConversationTable). Built
+  // here where `db` is in scope, injected as the @comis/core port TYPE through
+  // buildChannelManagerDeps → ChannelsDeps → bootstrapAdapters → createMsTeamsPlugin
+  // so every inbound captures its routing tuple and a proactive Teams send recovers it.
+  const msTeamsConversationStore = createSqliteMsTeamsConversationStore(db);
+
   // 7.9. Capability-lease layer + ACTIVATION — constructed BEFORE setupTools so the KEPT handle threads capMint + the orchestrate capSocketPath into tool assembly; on `boot` for bootShutdown. cronJobCount binds the bounded-autonomy rate count to the per-agent CronScheduler. durableRuns threads into the jail-leg chokepoint for the _outwardStepIndex allocation.
   const { capEndpointHandle, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, timers: handle.timers, cronJobCount: (agentId) => { try { return handle.getAgentCronScheduler(agentId).getJobs().length; } catch { return 0; } }, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager, boundedAutonomyHolder: handle.boundedAutonomyBudgetHolder, leaseManager: handle.sharedLeaseManager, container, ...(durableRunStoreEarly ? { durableRuns: durableRunStoreEarly } : {}) }); // POPULATES the late-bound budget holder (read by the bridge at turn time) + shares the SAME LeaseManager as the cron-fire mint; the container is passed so the SOCKET chokepoint emits the per-cap audit (audit:event + capability:audited) for jailed tool.invoke calls
   Object.assign(boot, { capEndpointHandle, namespacePreflightOk });
@@ -2195,6 +2209,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
       assembleToolsForAgent,
       getInboundMessageIdResolver: () => inboundMessageIdResolverSlot.current,
       getSessionTracker: () => sessionTrackerSlot.current,
+      msTeamsConversationStore,
     }),
   );
   channelPluginsRef.ref = channelPlugins;
