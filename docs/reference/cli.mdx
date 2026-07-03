@@ -1587,7 +1587,7 @@ The bundle is content-free by construction: it excludes secrets, message bodies,
 | `--since <hours>` | `number` | `24` | Diagnostic window in hours (same unit as `comis fleet`) |
 | `--format <format>` | `table` \| `json` | `table` | Output format |
 | `-c, --config <paths...>` | `string[]` | auto | Config file paths; defaults to `COMIS_CONFIG_PATHS` or the standard `~/.comis` / `/etc/comis` locations |
-| `--session <sessionKeyOrTraceId>` | `string` | — | Focus the bundle on a single session (requires `--deep`) |
+| `--session <sessionKeyOrTraceId>` | `string` | — | Focus the bundle on one session — embeds its `explain.json` digest (valid on its own; add `--deep` for the full trace bundle) |
 | `--deep` | `boolean` | `false` | Include deep per-session evidence (requires `--session`) |
 
 **Output files** — written under `comis-support-<ts>/`:
@@ -1623,6 +1623,8 @@ In table format the command also prints the copy-paste commands to compress the 
 tar czf comis-support-<ts>.tar.gz -C <parent> comis-support-<ts>
 gh issue create --body-file <bundleDir>/issue-summary.md
 ```
+
+When you did not pass `--session` and a best-effort local scan finds a recently-degraded session, the table view also prints a tip naming that session, so you can re-run with `--session <key> --deep` for a focused per-session bundle.
 
 **Exit codes:**
 

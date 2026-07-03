@@ -65,8 +65,9 @@ interface SupportBundleOptions {
  *
  * Flags: `--since <hours>` (window, default 24), `--format table|json`
  * (default table), `-c/--config <paths...>`, `--session <ref>`, and `--deep`
- * (requires `--session`). The `--session`/`--deep` pair is declared for the
- * usage contract; deep per-session evidence is not embedded yet.
+ * (requires `--session`). `--session` focuses the bundle on one session and
+ * embeds its `explain.json` digest; `--deep` additionally embeds that session's
+ * redacted per-session trace bundle.
  *
  * @param program - The root Commander program
  */
@@ -81,7 +82,7 @@ export function registerSupportBundleCommand(program: Command): void {
     .option("-c, --config <paths...>", "Config file paths")
     .option(
       "--session <sessionKeyOrTraceId>",
-      "Focus the bundle on a single session (requires --deep)",
+      "Focus the bundle on one session — embeds its explain.json digest (add --deep for the full trace bundle)",
     )
     .option("--deep", "Include deep per-session evidence (requires --session)")
     .action(async (options: SupportBundleOptions) => {
@@ -111,6 +112,8 @@ export function registerSupportBundleCommand(program: Command): void {
         configPaths,
         sinceHours,
         nowMs: startedAtMs,
+        ...(options.session !== undefined ? { session: options.session } : {}),
+        ...(options.deep === true ? { deep: true } : {}),
       });
 
       // The one hard failure: the bundle directory could not be produced.
@@ -122,7 +125,7 @@ export function registerSupportBundleCommand(program: Command): void {
         process.exit(ExitCode.GeneralFailure);
       }
 
-      const { bundleDir, status, activeSignals, warnings } = result.value;
+      const { bundleDir, status, activeSignals, warnings, worstSessionKey } = result.value;
 
       // Machine-readable surface: exactly the triage digest, nothing else.
       if (options.format === "json") {
@@ -153,6 +156,18 @@ export function registerSupportBundleCommand(program: Command): void {
       info(`       tar czf ${bundleName}.tar.gz -C ${parentDir} ${bundleName}`);
       info("  3. Or open an issue directly from the summary:");
       info(`       gh issue create --body-file ${bundleDir}/issue-summary.md`);
+
+      // Worst-session tip (CLI-side stopgap): when the operator did not focus a
+      // session, a best-effort local scan of the rollups may surface the most
+      // degraded recent session. Name it and the focused re-run so the operator
+      // can drill in — content-free (a sessionKey only), and omitted cleanly when
+      // nothing ranked.
+      if (worstSessionKey !== undefined) {
+        info(
+          `Tip: the most-degraded session in a local scan is ${worstSessionKey}. ` +
+            `Re-run with --session ${worstSessionKey} --deep for a focused per-session bundle.`,
+        );
+      }
 
       // Privacy notice: the bundle is content-free by construction, but treat
       // it as sensitive all the same.
