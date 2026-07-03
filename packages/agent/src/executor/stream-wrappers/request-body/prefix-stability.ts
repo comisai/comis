@@ -231,7 +231,7 @@ function emitUnstableWarn(
       // operator sees exactly what changed at the divergent message without ad-hoc logging.
       prevSig,
       currSig,
-      hint: `Cached-prefix content mutated at message #${firstDivergentIndex} [${mutationClass}] (${mutationCount} cached-region mutations in the last ${window} calls): ${prevSig ?? "?"} → ${currSig ?? "?"}. Already-sent content inside the cache fence must be byte-stable — re-sending it changed wastes the cache write (see C-FIX-3 / stripReplayThinking). A once-per-turn mutation at a DIFFERENT message each turn still accumulates here.`,
+      hint: `Cached-prefix content mutated at message #${firstDivergentIndex} [${mutationClass}] (${mutationCount} cached-region mutations in the last ${window} calls): ${prevSig ?? "?"} → ${currSig ?? "?"}. Already-sent content inside the cache fence must be byte-stable — re-sending it changed wastes the cache write (see stripReplayThinking). A once-per-turn mutation at a DIFFERENT message each turn still accumulates here.`,
       errorKind: "internal" as const,
     },
     "Unstable prefix detected",

@@ -231,7 +231,7 @@ export function buildFindings(
       code: "pipeline_authoring",
       detail: `${smallInvalid}/${smallTotal} small-tier pipeline authorings invalid (rate ${pct}%)`,
       count: smallInvalid,
-      hint: "small/local models are failing to author valid pipeline DAGs; this is the Phase-174 (small-model-authorable DAGs) gate metric — review before enabling orchestration.authoring.*",
+      hint: "small/local models are failing to author valid pipeline DAGs; this is the small-model-authorable-DAGs gate metric — review before enabling orchestration.authoring.*",
     });
   }
 
@@ -512,7 +512,7 @@ export function buildFindings(
       code: "memory_lifecycle",
       detail: `${memoryLifecycle.length} forget sweep(s) in the window; evicted=${evictedSum}, demoted=${demotedSum}`,
       count: memoryLifecycle.length,
-      hint: 'run `cron.runs jobName "Memory lifecycle"` for the per-sweep counts; evicted=0 is usually healthy (no corroborated-wrong / dormant candidates) — NOT a fault. Eviction is gated by learning.forget + the INV-4 exemptions (pinned/high-proof/system survive).',
+      hint: 'run `cron.runs jobName "Memory lifecycle"` for the per-sweep counts; evicted=0 is usually healthy (no corroborated-wrong / dormant candidates) — NOT a fault. Eviction is gated by learning.forget + the anti-induced-eviction exemptions (pinned/high-proof/system survive).',
     });
   }
 

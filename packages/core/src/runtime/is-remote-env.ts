@@ -11,6 +11,8 @@
  * so operators can override the heuristic when it guesses wrong (e.g. tmux
  * over SSH where DISPLAY is set by tunneling but they still want manual paste).
  *
+ * Derived from third-party code; see NOTICE.
+ *
  * @module
  */
 

@@ -307,8 +307,8 @@ export function pruneToolSchemas(
     return { ...tool, parameters: cloned } as ToolDefinition;
   });
 
-  // flat-by-design: an aggregate stat over chars REMOVED across many schemas —
-  // no single source string exists to script-factor.
+  // An aggregate stat over chars REMOVED across many schemas — no single
+  // source string exists to script-factor (flat-by-design).
   const estimatedTokensSaved = Math.ceil(
     totalCharsRemoved / CHARS_PER_TOKEN_RATIO,
   );

@@ -423,7 +423,7 @@ describe("createBlockRetryGuard", () => {
     expect(guard.shouldAbort).toBe(true);
   });
 
-  it("resets on success", () => {
+  it("resets the failure counter on success", () => {
     const guard = createBlockRetryGuard();
     guard.recordFailure();
     guard.recordSuccess();

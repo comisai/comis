@@ -260,7 +260,7 @@ export function shouldRunCritic(params: {
         provider,
         errorKind: "config" as const,
         step: "verification" as const,
-        hint: "Verification critic skipped: cloud API-key threading is deferred to Phase 155. " +
+        hint: "Verification critic skipped: cloud API-key threading is not yet wired. " +
           "Use a keyless provider (ollama/lm-studio) to exercise the critic.",
       },
       "Verification critic skipped (cloud key threading not yet wired)",

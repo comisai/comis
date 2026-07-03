@@ -361,7 +361,7 @@ describe("buildGraphInput — capabilityClass routing", () => {
     } catch (e) {
       msg = (e as Error).message;
     }
-    expect(msg).toMatch(/157/);
+    expect(msg).toMatch(/repair not yet wired/);
   });
 });
 
@@ -395,7 +395,7 @@ describe("buildGraphInput — weak-model repair branch", () => {
         repairMatch: matchToDebate, // present, but gate is OFF → never consulted
         eventBus: { emit, on: vi.fn() } as never,
       }),
-    ).rejects.toThrow(/157/);
+    ).rejects.toThrow(/repair not yet wired/);
     // The matcher and emit were never reached (the gate short-circuits).
     expect(emit).not.toHaveBeenCalled();
   });
@@ -442,7 +442,7 @@ describe("buildGraphInput — weak-model repair branch", () => {
         authoringConfig: FLAGS_ON_AUTHORING,
         repairMatch: noMatch,
       }),
-    ).rejects.toThrow(/157/);
+    ).rejects.toThrow(/repair not yet wired/);
   });
 
   it("governance preserved: a repaired graph that would itself fail validation is NOT returned — falls through to the fail-closed throw", async () => {
@@ -463,7 +463,7 @@ describe("buildGraphInput — weak-model repair branch", () => {
         authoringConfig: FLAGS_ON_AUTHORING,
         repairMatch: matchCyclic,
       }),
-    ).rejects.toThrow(/157/);
+    ).rejects.toThrow(/repair not yet wired/);
   });
 
   it("emit best-effort: a throwing graph:repaired emit does NOT break the valid repaired graph", async () => {

@@ -24,7 +24,7 @@
  *
  * Also guards modelProfile threading:
  *   - pi-executor.ts passes modelProfile into setupContextEngine
- *   - executor-context-engine-setup.ts forwards it into createLcdContextEngine deps (C1)
+ *   - executor-context-engine-setup.ts forwards it into createLcdContextEngine deps
  * If either wiring leg is accidentally dropped the fail-closed WARN fires at runtime
  * but no build gate catches it — these source-grep assertions are the gate.
  *
@@ -176,14 +176,15 @@ describe("SystemPromptReport — daemon-level E2E wiring", () => {
     expect(piExecutorSrc).toMatch(/modelProfile,\s*\/\/.*resolveModelProfile/);
 
     // (b) executor-context-engine-setup.ts: modelProfile is forwarded into the
-    // createLcdContextEngine deps object (the C1 annotation marks the intent).
-    // Anchored to the deps-object C1 comment rather than the closing `})` so the
+    // createLcdContextEngine deps object (the "resolved ModelProfile for
+    // budget-aware eviction cap" comment marks the intent).
+    // Anchored to that deps-object comment rather than the closing `})` so the
     // guard survives sibling fields being added after `modelProfile,` (e.g. the
     // securityPinMarkers/onAssembledInputTokens forwards) while still
-    // going RED if the `modelProfile` forwarding leg under C1 is dropped.
-    expect(ceSetupSrc).toMatch(/\/\/ C1 \(Phase 165\)/);
+    // going RED if the `modelProfile` forwarding leg is dropped.
+    expect(ceSetupSrc).toMatch(/\/\/ The resolved ModelProfile for budget-aware eviction cap/);
     expect(ceSetupSrc).toMatch(
-      /C1 \(Phase 165\): the resolved ModelProfile for budget-aware eviction cap[\s\S]*?\n\s*modelProfile,/,
+      /The resolved ModelProfile for budget-aware eviction cap[\s\S]*?\n\s*modelProfile,/,
     );
   });
 });

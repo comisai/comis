@@ -148,7 +148,7 @@ function doLifecycle() {
 function doProgress() {
   if (!project) { console.log("=== progress: pass a projectName to read git + ROADMAP ==="); return; }
   const P = `${DATA}/workspace/projects/${project}`;
-  console.log(`=== coding progress: ${project} ===`);
+  console.log(`=== GSD/coding progress: ${project} ===`);
   if (!asComis(`test -d ${P} && echo yes`).trim()) { console.log("  (no such project)"); return; }
   const commits = asComis(`cd ${P} && git rev-list --count HEAD 2>/dev/null`).trim();
   const log = asComis(`cd ${P} && git log --oneline -6 2>/dev/null`).trim();

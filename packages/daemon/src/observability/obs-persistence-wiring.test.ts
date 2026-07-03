@@ -1929,7 +1929,7 @@ describe("setupObsPersistence — audit sink (real store + tmp JSONL)", () => {
     expect(all.length).toBeGreaterThanOrEqual(6);
   });
 
-  it("a planted metadata value lands in NEITHER the row NOR the JSONL", () => {
+  it("keeps a planted metadata value out of BOTH the row AND the JSONL", () => {
     const { deps, eventBus } = realDeps();
     const result = setupObsPersistence(deps as never);
     eventBus.emit("audit:event", {

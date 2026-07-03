@@ -529,7 +529,7 @@ async function runOneLeafPass(
     logger.debug({ conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", reason: "over-cap-chunk", chunkTokens: chunk.tokens, clampedLeafChunkTokens: leafChunkCap }, "lcd leaf chunk exceeds the resolved summarizer cap; deterministic floor (no LLM)");
     return persistDeterministicLeafFloor(
       store, scope, chunkItems, chunk.tokens, window, now, nowFn, passStart, logger, eventBus,
-      "LCD leaf summary persisted (SUMW-01: over-cap chunk — deterministic floor)",
+      "LCD leaf summary persisted (over-cap chunk — deterministic floor)",
     );
   }
 

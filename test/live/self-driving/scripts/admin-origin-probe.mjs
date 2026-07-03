@@ -147,7 +147,7 @@ async function probeAdminset() {
   const wronglyAdmin = mustBeRpc.filter((m) => ADMIN.has(m));
   const ok = missing.length === 0 && wronglyAdmin.length === 0;
   record("adminset", ok,
-    ok ? `all ${Object.values(MANAGE_METHODS).flat().length} manage admin-methods ∈ ADMIN_METHODS; memory.store + rpc-surface EXCLUDED; |ADMIN_METHODS|=${ADMIN.size}`
+    ok ? `all ${Object.values(MANAGE_METHODS).flat().length} manage admin-methods ∈ ADMIN_METHODS; memory.store + rpc-surface EXCLUDED (MD-02 intact); |ADMIN_METHODS|=${ADMIN.size}`
        : `missing-from-admin=[${missing}] wrongly-admin=[${wronglyAdmin}]`);
 }
 

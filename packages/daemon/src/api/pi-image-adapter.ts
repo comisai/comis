@@ -237,7 +237,7 @@ export function createPiImageAdapter(opts: {
               hint:
                 `The ${opts.model.provider} image path does not honor an explicit size; the ` +
                 `requested "${input.size}" is ignored. Use provider:"openai" for pixel-size ` +
-                `control, or omit size. (Per-provider size mapping is Phase 186.)`,
+                `control, or omit size. (Per-provider size mapping varies.)`,
             },
             "Requested image size is not supported by the executing provider (ignored)",
           );

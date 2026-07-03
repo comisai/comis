@@ -265,7 +265,7 @@ export async function buildGraphInput(
   // is the only consumer of an invalid weak-tier graph; this throw remains the
   // recourse when the gate is off or no conservative match exists.
   throw new Error(
-    `Graph validation failed (weak model, Phase 157 repair deferred): ${validateResult.error.message}`,
+    `Graph validation failed (weak model, automatic repair not yet wired): ${validateResult.error.message}`,
   );
 }
 

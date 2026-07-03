@@ -43,7 +43,7 @@ export const learnedSkillFailingVerdict: VerdictPredicate = (s) => {
       `a learned procedure was used in failed/corrected trajectories ` +
       `(${s.learning.skillFailures.length} skill(s): ${s.learning.skillFailures.join(", ")})`,
     suggestedNextSteps: [
-      "inspect via comis memory skills; the procedure will demote on continued failure (Phase 202)",
+      "inspect via comis memory skills; the procedure will demote on continued failure",
       "obs.explain depth=full",
     ],
   };

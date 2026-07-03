@@ -2137,7 +2137,7 @@ describe("frontier/mid budget characterization — byte-identity (no-regression)
     store = createLcdStore(db);
   });
 
-  it("frontier profile → budgetTokens byte-identical (no-regression)", async () => {
+  it("keeps budgetTokens byte-identical for the frontier profile (no regression)", async () => {
     const { deps, logger } = makeDeps(store);
     const frontierProfile: ModelProfile = {
       ...FAIL_CLOSED_PROFILE,

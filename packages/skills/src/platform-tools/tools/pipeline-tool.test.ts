@@ -45,8 +45,8 @@ describe("createPipelineTool", () => {
 
   // The description must be INTENT-led so a weak model maps a natural
   // orchestration request ("four analysts in parallel, then a debate…") to this
-  // tool instead of researching everything itself in one context. A
-  // mechanics-led description ("DAG pipelines") fails to steer small models.
+  // tool instead of researching everything itself in one context. In a live
+  // run, the mechanics-led description ("DAG pipelines") failed to steer qwen3.6.
   it("description: steers multi-agent / parallel / debate intent and delegation", () => {
     const tool = createPipelineTool(rpcCall);
     const d = tool.description.toLowerCase();

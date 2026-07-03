@@ -86,7 +86,7 @@ export function runBootWindowHonestyChecks(params: {
         err,
         agentId,
         errorKind: "internal" as const,
-        hint: "served-window comparison / boot-window collection failed — boot continues (fail-open); turn-time guards still apply (dag: CWF-02 preflight; pipeline: 85% compaction trigger + reactive classification)",
+        hint: "served-window comparison / boot-window collection failed — boot continues (fail-open); turn-time guards still apply (dag: budget preflight; pipeline: 85% compaction trigger + reactive classification)",
       },
       "Boot window honesty checks skipped for agent",
     );

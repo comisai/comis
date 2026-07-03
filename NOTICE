@@ -22,9 +22,11 @@ OpenClaw - Open-source personal AI agent
   OpenClaw source code: the TLS preflight classifier in
   packages/core/src/oauth/oauth-tls-preflight.ts, the OAuth error
   classifier and identity resolution in
-  packages/core/src/security/oauth-helpers.ts, and the login flow's
+  packages/core/src/security/oauth-helpers.ts, the login flow's
   VPS-aware handlers and manual-paste fallback in
-  packages/core/src/oauth/oauth-login-runner.ts.
+  packages/core/src/oauth/oauth-login-runner.ts, and the remote/headless
+  environment detection heuristic in
+  packages/core/src/runtime/is-remote-env.ts.
 
 Hono - Ultrafast web framework
   Copyright Yusuke Wada and Hono contributors

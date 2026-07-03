@@ -151,7 +151,7 @@ export function createLcdContextEngine(
             conversationId,
             agentId: deps.agentId,
             tenantId: deps.tenantId,
-            hint: "LCD dag assembly could not build a full (conversation, agent, tenant) read scope; reading no history this turn to avoid a cross-agent leak (R4/WR-02) — ensure setupContextEngine threads agentId + tenantId",
+            hint: "LCD dag assembly could not build a full (conversation, agent, tenant) read scope; reading no history this turn to avoid a cross-agent leak — ensure setupContextEngine threads agentId + tenantId",
             // `as const` so the log-payload-checker TypeChecker resolves this to
             // the closed `ErrorKind` literal (a bare object-literal string widens
             // to `string` and trips the closed-union gate). AGENTS.md §2.1.

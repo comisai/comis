@@ -237,7 +237,7 @@ export function renderReport({ summaries, scored, meta }) {
   lines.push(`- **Endpoint:** ${meta.baseUrl}`);
   lines.push(`- **Models:** ${meta.models.join(", ")}`);
   lines.push(`- **Scenarios:** ${meta.scenarioIds.join(", ")}`);
-  lines.push(`- **Harness:** \`scripts/bench-small-model/\`. Higher pass/adherence/success = better; lower derail/false-success/poison = better.`);
+  lines.push(`- **Harness:** \`scripts/bench-small-model/\` (Phase 1 PROVE / M1–M2). Higher pass/adherence/success = better; lower derail/false-success/poison = better.`);
   lines.push("");
   lines.push(`## Per-model summary`);
   lines.push("");

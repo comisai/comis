@@ -64,7 +64,7 @@ export const spendExceededVerdict = (s: IncidentSignals): SpendVerdict | null =>
         `per-ROOT autonomy.budget meter, NOT the observability.spend $-ceiling.`,
       suggestedNextSteps: [
         `raise this agent's autonomy.budget.${prb.limb} (currently ${prb.cap} ${prb.unit}) for heavier/longer turns — NOT observability.spend.*`,
-        "note the token limb counts cache-read tokens, so a cache-heavy multi-tool turn hits it fast at trivial actual $ (BUDGET-02); the wall-clock limb is the stuck-tree backstop",
+        "note the token limb counts cache-read tokens, so a cache-heavy multi-tool turn hits it fast at trivial actual $; the wall-clock limb is the stuck-tree backstop",
       ],
     };
   }

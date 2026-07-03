@@ -425,7 +425,7 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
           step: "select" as const,
           trajectoryId: t.trajectoryId,
           errorKind: "precondition" as const,
-          hint: "untrusted-origin success — never seeds a doc (INV-5/D-04 axis 1), skipped",
+          hint: "untrusted-origin success — never seeds a doc (trust-origin admission belt), skipped",
         },
         "reflection: untrusted-origin trajectory skipped",
       );
@@ -446,7 +446,7 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
           step: "select" as const,
           trajectoryId: t.trajectoryId,
           errorKind: "precondition" as const,
-          hint: "external-trust source — excluded from doc seeding (FOLD-04 axis 2 / INV-5), skipped",
+          hint: "external-trust source — excluded from doc seeding (trust-origin admission belt), skipped",
         },
         "reflection: external-trust source skipped",
       );
@@ -643,7 +643,7 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
     // skipped and the prior doc survives (the adapter already WARNed with the
     // network/dependency errorKind). Treated as empty-content: NO admit.
     logger.debug(
-      { agentId, step: "reflect" as const, topicKey, hint: "reflect call faulted — topic skipped, prior doc survives (REFLECT-05)" },
+      { agentId, step: "reflect" as const, topicKey, hint: "reflect call faulted — topic skipped, prior doc survives" },
       "reflection call faulted for topic, skipping",
     );
     return "empty";
@@ -660,7 +660,7 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
   //     an existing-doc refresh that produced no change) is skipped, reason-coded.
   if (nextBody === undefined || nextBody.sections.length === 0) {
     logger.debug(
-      { agentId, step: "admit" as const, topicKey, hint: "empty/no-change reflection — admit skipped, prior doc survives (REFLECT-05)" },
+      { agentId, step: "admit" as const, topicKey, hint: "empty/no-change reflection — admit skipped, prior doc survives" },
       "reflection produced no content, skipping admit",
     );
     return "empty";

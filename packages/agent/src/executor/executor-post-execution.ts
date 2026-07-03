@@ -1352,7 +1352,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     result.response = (result.response ?? "") + buildOutputStarvedAnnotation(replyLanguage);
     deps.logger.warn(
       { step: "degraded-reply", errorKind: "resource" as const, hint: "output_starved annotation appended" },
-      "CWF-05: output_starved — annotated truncated reply",
+      "output_starved — annotated truncated reply",
     );
   }
   if (effectiveFinishReason === "context_exhausted") {
@@ -1376,7 +1376,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     });
     deps.logger.warn(
       { step: "degraded-reply", errorKind: "resource" as const, hint: "context_exhausted synthesized reply" },
-      "CWF-05: context_exhausted — synthesized honest reply delivered",
+      "context_exhausted — synthesized honest reply delivered",
     );
   }
   if (effectiveFinishReason === "loop_detected") {
@@ -1392,7 +1392,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     result.response = existing.length > 0 ? `${existing}\n\n${loopReply}` : loopReply;
     deps.logger.warn(
       { step: "degraded-reply", errorKind: "resource" as const, hint: "loop_detected synthesized reply" },
-      "CWF-05: loop_detected — synthesized honest reply delivered",
+      "loop_detected — synthesized honest reply delivered",
     );
   }
 
