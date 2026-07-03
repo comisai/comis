@@ -134,6 +134,15 @@ const TOOL_SUMMARIES: Record<string, string> = {
 // ResultRef sliced in-jail), not just each method's signature. A capability
 // absent here falls back to a generic line, so adding a cap never breaks the
 // build. String-only values keep the emitted JSON a valid Python literal too.
+//
+// The example is emitted PER LANGUAGE: the `.d.ts`/`.js` SDK is the async,
+// named-export TS surface (`const x = await comis_tools.foo({...})`), while the
+// `.py` SDK is the SYNCHRONOUS, module-level binding (`x = comis_tools.foo({...})`
+// — dict literals with quoted keys, no `const`/`await`). Emitting the TS form
+// into the `.py` describe() would hand a py author invalid Python (an instant
+// SyntaxError), so each artifact renders its own language's example. The drift
+// gate still byte-locks each artifact to its own generated form; example-parity
+// is semantic-per-language, which is what the discovery surface needs.
 // ---------------------------------------------------------------------------
 
 const CAPABILITY_GROUP_EXAMPLES: Record<string, string> = {
@@ -141,6 +150,20 @@ const CAPABILITY_GROUP_EXAMPLES: Record<string, string> = {
     "const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40);",
   "orch:web":
     "const hits = await comis_tools.web_search({ query: 'site reliability' }); const top3 = await hits.jq('.[0:3]'); const page = await comis_tools.web_fetch({ url: top3[0].url }); const text = await page.read(0, 200);",
+};
+
+/**
+ * The Python analogue of {@link CAPABILITY_GROUP_EXAMPLES}: the SAME tool chain,
+ * expressed for the synchronous, module-level `comis_tools.py` SDK — module form
+ * (`comis_tools.grep(...)`), dict literals with quoted keys, ResultRef methods,
+ * no `const`/`await`. Mirrors the documented `language: "py"` idiom
+ * (docs/agent-tools/orchestrate.mdx) so a py author copying it gets valid syntax.
+ */
+const CAPABILITY_GROUP_EXAMPLES_PY: Record<string, string> = {
+  "orch:read":
+    'ref = comis_tools.grep({"path": "logs/app.jsonl", "pattern": "ERROR"}); rows = ref.jq(".[0:20]"); head = ref.read(0, 40)',
+  "orch:web":
+    'hits = comis_tools.web_search({"query": "site reliability"}); top3 = hits.jq(".[0:3]"); page = comis_tools.web_fetch({"url": top3[0]["url"]}); text = page.read(0, 200)',
 };
 
 // ---------------------------------------------------------------------------
@@ -157,8 +180,17 @@ function summaryFor(tool: string, capability: string): string {
   return TOOL_SUMMARIES[tool] ?? `A ${capability} tool.`;
 }
 
-/** The worked calling-pattern example for the discovery surface, keyed by capability group. */
-function exampleFor(capability: string): string {
+/**
+ * The worked calling-pattern example for the discovery surface, keyed by
+ * capability group AND rendered for the target SDK language: `"ts"` for the
+ * async `.d.ts`/`.js` surface, `"py"` for the synchronous `comis_tools.py` binding
+ * (so a py author never sees TypeScript). An unmapped capability falls back to a
+ * language-valid pointer line (a `.py` fallback is a `#` comment — valid Python).
+ */
+function exampleFor(capability: string, lang: "ts" | "py"): string {
+  if (lang === "py") {
+    return CAPABILITY_GROUP_EXAMPLES_PY[capability] ?? `# see comis_tools.describe() for a ${capability} tool`;
+  }
   return CAPABILITY_GROUP_EXAMPLES[capability] ?? `See describe() for a ${capability} tool.`;
 }
 
@@ -232,7 +264,7 @@ export interface ToolDescriptor {
     const capability = TOOL_CAPABILITY_MAP[tool as keyof typeof TOOL_CAPABILITY_MAP];
     const ret = returnsResultRef(tool) ? "Promise<ResultRef>" : "Promise<unknown>";
     const summary = summaryFor(tool, capability);
-    methodLines.push(`  /** ${summary} (capability: ${capability}) Example: ${exampleFor(capability)} */`);
+    methodLines.push(`  /** ${summary} (capability: ${capability}) Example: ${exampleFor(capability, "ts")} */`);
     methodLines.push(`  ${tool}(args?: Record<string, unknown>): ${ret};`);
   }
 
@@ -273,7 +305,7 @@ function emitSdkJs(sortedTools: readonly string[]): string {
   // The static discovery list (cap + summary per tool) — 2-space indented JSON.
   const descriptors = sortedTools.map((tool) => {
     const capability = TOOL_CAPABILITY_MAP[tool as keyof typeof TOOL_CAPABILITY_MAP];
-    return { name: tool, capability, summary: summaryFor(tool, capability), example: exampleFor(capability) };
+    return { name: tool, capability, summary: summaryFor(tool, capability), example: exampleFor(capability, "ts") };
   });
   const descriptorsJson = JSON.stringify(descriptors, null, 2);
 
@@ -445,15 +477,20 @@ def _wrap_result_ref(ref):
  * Emit the single self-contained `.py` binding. Reuses the SAME sorted tool
  * list, `returnsResultRef`, `summaryFor`, and `TOOL_SUMMARIES` as the JS/dts
  * emitters (parity by construction). `describe()` renders the SAME
- * `{name,capability,summary}` list via the SAME `JSON.stringify(..., 2)` — all
- * values are strings, so the emitted JSON is also a valid Python literal.
+ * `{name,capability,summary}` fields via the SAME `JSON.stringify(..., 2)`; the
+ * `example` field alone is language-specific — the PY idiom here (sync,
+ * module-level, quoted dict keys) rather than the TS form the `.js`/`.d.ts` carry,
+ * so a py author never copies TypeScript. All values are strings, so the emitted
+ * JSON is still a valid Python literal.
  */
 function emitSdkPy(sortedTools: readonly string[]): string {
   // The static discovery list (cap + summary per tool) — the identical shape +
   // 2-space JSON the JS SDK emits; string-only values make it a Python literal.
+  // The `example` renders in the PY idiom here (sync, module-level, quoted dict
+  // keys) so a py author never copies TypeScript out of describe().
   const descriptors = sortedTools.map((tool) => {
     const capability = TOOL_CAPABILITY_MAP[tool as keyof typeof TOOL_CAPABILITY_MAP];
-    return { name: tool, capability, summary: summaryFor(tool, capability), example: exampleFor(capability) };
+    return { name: tool, capability, summary: summaryFor(tool, capability), example: exampleFor(capability, "py") };
   });
   const descriptorsJson = JSON.stringify(descriptors, null, 2);
 
