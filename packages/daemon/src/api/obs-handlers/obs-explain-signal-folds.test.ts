@@ -24,6 +24,7 @@ import {
   accumulateSkillTransitionRecord,
   accumulateMemoryFailureRecord,
   buildLearningSignal,
+  parseWakeGateRecord,
 } from "./obs-explain-signal-folds.js";
 
 describe("obs-explain-signal-folds — EXTENDED learning fold", () => {
@@ -257,5 +258,46 @@ describe("obs-explain-signal-folds — EXTENDED learning fold", () => {
     const state = emptyLearningFold();
     accumulateReflectFunnelRecord(state, { admitted: 1, admissionOutcome: "admitted" });
     expect(buildLearningSignal(state)).toBeDefined();
+  });
+});
+
+describe("obs-explain-signal-folds — parseWakeGateRecord (the woke-fire fact fold)", () => {
+  it("parses a well-formed scheduler.wake_gate record into the content-free fact", () => {
+    const fact = parseWakeGateRecord({
+      jobId: "j1",
+      agentId: "default",
+      wake: true,
+      durationMs: 20,
+      toolCalls: 2,
+      estTurnsSaved: 0,
+    });
+    // The extra agentId (the real record carries it) is stripped — the fact is the
+    // bounded schema shape only.
+    expect(fact).toEqual({ jobId: "j1", wake: true, durationMs: 20, toolCalls: 2, estTurnsSaved: 0 });
+  });
+
+  it("returns undefined for a malformed/partial record (forward-compatible — the caller ignores it)", () => {
+    expect(parseWakeGateRecord({ jobId: "j1", wake: true })).toBeUndefined();
+    expect(parseWakeGateRecord({})).toBeUndefined();
+  });
+
+  it("strips a smuggled finding/script off the parsed fact (content-free by construction)", () => {
+    const fact = parseWakeGateRecord({
+      jobId: "j1",
+      wake: true,
+      durationMs: 20,
+      toolCalls: 2,
+      estTurnsSaved: 0,
+      finding: "the sensitive content the gate gathered",
+      script: "curl https://internal | jq",
+    }) as Record<string, unknown> | undefined;
+    expect(fact).toBeDefined();
+    expect(Object.keys(fact ?? {}).sort()).toEqual([
+      "durationMs",
+      "estTurnsSaved",
+      "jobId",
+      "toolCalls",
+      "wake",
+    ]);
   });
 });
