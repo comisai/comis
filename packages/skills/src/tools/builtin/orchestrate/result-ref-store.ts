@@ -109,6 +109,12 @@ export interface CleanupRunContext {
   readonly runId: string;
 }
 
+/** Context for the per-run materialized-aggregate read (read-only enumeration). */
+export interface RunAggregateContext {
+  /** The jailed workspace path whose `results/` the aggregate enumerates. */
+  readonly workspacePath: string;
+}
+
 /** The content-free error a refuse/failed-write returns (never the payload). */
 export interface MaterializeError {
   /** A short, content-free reason (safe to surface to the agent/logs). */
@@ -132,6 +138,15 @@ export interface ResultRefStore {
   gcRun(ctx: GcRunContext): Promise<void>;
   /** Remove the run's `results/` entries on run end. */
   cleanupRun(ctx: CleanupRunContext): Promise<void>;
+  /**
+   * Read the run's materialized-result aggregate — the file count and total
+   * bytes currently under `<workspace>/results/`. READ-ONLY (it enumerates,
+   * never evicts), so the runner can capture it BEFORE {@link cleanupRun} wipes
+   * the dir. Content-free: counts + bytes only, never a path or content.
+   * Optional so a minimal stub store need not implement it; the concrete
+   * {@link createResultRefStore} always provides it.
+   */
+  runAggregate?(ctx: RunAggregateContext): { count: number; bytes: number };
 }
 
 // ---------------------------------------------------------------------------
@@ -478,7 +493,23 @@ export function createResultRefStore(deps: ResultRefStoreDeps): ResultRefStore {
     }
   }
 
-  return { materialize, gcRun, cleanupRun };
+  /**
+   * Fold the run's materialized results into a content-free `{count, bytes}`
+   * aggregate by re-using {@link listRunResults}. READ-ONLY — it enumerates and
+   * sums, never unlinks — so the runner may call it BEFORE gcRun/cleanupRun to
+   * learn what the run materialized. An absent/empty `results/` folds to
+   * `{count:0, bytes:0}` (listRunResults returns [] defensively — no error).
+   */
+  function runAggregate(ctx: RunAggregateContext): { count: number; bytes: number } {
+    const entries = listRunResults(ctx.workspacePath);
+    let bytes = 0;
+    for (const entry of entries) {
+      bytes += entry.bytes;
+    }
+    return { count: entries.length, bytes };
+  }
+
+  return { materialize, gcRun, cleanupRun, runAggregate };
 }
 
 /** An on-disk results entry (path + size + lifecycle stamps) for the GC sweep. */
