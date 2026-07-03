@@ -41,6 +41,7 @@ import type {
   OrchestrateSpawnFn,
   OrchestrateSpawnedChild,
 } from "./orchestrate-tool.js";
+import { estimateSavings } from "./savings-estimate.js";
 import { BwrapProvider } from "../sandbox/bwrap-provider.js";
 
 function makeLogger(): ComisLogger {
@@ -111,6 +112,13 @@ describe("orchestrate-tool", () => {
     baseEnv?: Record<string, string | undefined>;
     loadSeccompFdFn?: () => number | null;
     mintRunLease?: (runId: string, timeoutMs: number) => { leaseId: string; bearer: string };
+    eventBus?: { emit: (event: string, payload: Record<string, unknown>) => unknown };
+    runAggregate?: (ctx: { workspacePath: string }) => { count: number; bytes: number };
+    rootRunId?: string;
+    sessionKey?: string;
+    // Drop the broker lease env so the child gets NO COMIS_CAP_LEASE (the
+    // lease_absent run_summary case).
+    dropBrokerSpawnEnv?: boolean;
   }) {
     const cleanupRun = over?.cleanupRun ?? vi.fn(async () => {});
     return {
@@ -120,16 +128,21 @@ describe("orchestrate-tool", () => {
         capSocketPath,
         sandbox: new BwrapProvider(),
         sdkAssetsDir,
-        brokerSpawnEnv: {
-          placeholders: {
-            COMIS_CAP_LEASE: "lease-xyz",
-            COMIS_ORCH_SOCKET: capSocketPath,
-          },
-        },
+        ...(over?.dropBrokerSpawnEnv
+          ? {}
+          : {
+              brokerSpawnEnv: {
+                placeholders: {
+                  COMIS_CAP_LEASE: "lease-xyz",
+                  COMIS_ORCH_SOCKET: capSocketPath,
+                },
+              },
+            }),
         store: {
           materialize: vi.fn(),
           gcRun: vi.fn(async () => {}),
           cleanupRun,
+          ...(over?.runAggregate ? { runAggregate: over.runAggregate } : {}),
         },
         spawnFn: over?.spawnFn ?? ((): OrchestrateSpawnedChild => makeFakeChild("ok-output\n")),
         resolveJailNodeFn: over?.resolveJailNodeFn ?? (() => ({ mode: "path" as const })),
@@ -142,9 +155,39 @@ describe("orchestrate-tool", () => {
         now: () => 1_700_000_000_000,
         baseEnv: over?.baseEnv ?? { PATH: "/usr/bin", HOME: "/home/x" },
         ...(over?.mintRunLease ? { mintRunLease: over.mintRunLease } : {}),
+        ...(over?.eventBus ? { eventBus: over.eventBus } : {}),
+        ...(over?.rootRunId !== undefined ? { rootRunId: over.rootRunId } : {}),
+        ...(over?.sessionKey !== undefined ? { sessionKey: over.sessionKey } : {}),
       },
       cleanupRun,
     };
+  }
+
+  /** A recording eventBus stub — captures every emit for run_summary assertions. */
+  function makeEventBusSpy(): {
+    eventBus: { emit: (event: string, payload: Record<string, unknown>) => unknown };
+    emitted: Array<{ event: string; payload: Record<string, unknown> }>;
+  } {
+    const emitted: Array<{ event: string; payload: Record<string, unknown> }> = [];
+    return {
+      emitted,
+      eventBus: {
+        emit(event: string, payload: Record<string, unknown>) {
+          emitted.push({ event, payload });
+          return undefined;
+        },
+      },
+    };
+  }
+
+  /** A fake child that spawns then hangs forever (never closes) — the timeout trip. */
+  function makeHangingChild(): OrchestrateSpawnedChild {
+    const child = new EventEmitter() as unknown as OrchestrateSpawnedChild & EventEmitter;
+    (child as { stdout: EventEmitter }).stdout = new EventEmitter();
+    (child as { stderr: EventEmitter }).stderr = new EventEmitter();
+    (child as { kill: () => void }).kill = () => {};
+    // Never emits "close"/"error" — the run can only settle via the timeout timer.
+    return child;
   }
 
   it("registers as an AgentTool named 'orchestrate' with the script/language schema", () => {
@@ -875,6 +918,179 @@ describe("orchestrate-tool", () => {
 
       // Fail-closed: the runaway child is SIGKILLed.
       expect(killSpy).toHaveBeenCalled();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // orchestrate:run_summary emit — the content-free per-run observability signal
+  // (EXPLAIN-02) carrying the SAVE-01 savings numbers + the per-run child leaseId.
+  // ---------------------------------------------------------------------------
+
+  describe("orchestrate:run_summary emit (EXPLAIN-02 + SAVE-01)", () => {
+    // The EXACT content-free key set on a SUCCESS emit (leaseId + sessionKey
+    // present; failureClass ABSENT). NEVER a stderr tail / script / params (INV-5).
+    const SUCCESS_KEYS = [
+      "durationMs",
+      "estSavedTokens",
+      "exitCode",
+      "language",
+      "leaseId",
+      "resultRefBytes",
+      "resultRefCount",
+      "rootRunId",
+      "runId",
+      "savedRatio",
+      "sessionKey",
+      "stdoutBytesRaw",
+      "stdoutCharsReentered",
+      "timestamp",
+    ];
+
+    it("a SUCCESSFUL run emits exactly one content-free run_summary with the child leaseId + SAVE-01 numbers, BEFORE cleanupRun", async () => {
+      const { eventBus, emitted } = makeEventBusSpy();
+      const runAggregate = vi.fn(() => ({ count: 3, bytes: 122_880 }));
+      // cleanupRun asserts the emit ALREADY fired (Pitfall 3 — before results/ is wiped).
+      const cleanupRun = vi.fn(async () => {
+        expect(emitted).toHaveLength(1);
+      });
+      const mintRunLease = vi.fn(() => ({ leaseId: "child-lease-1", bearer: "bearer-1" }));
+      const { deps } = makeDeps({
+        eventBus,
+        runAggregate,
+        cleanupRun,
+        mintRunLease,
+        rootRunId: "root-agent-1",
+        sessionKey: "tenant:user:channel",
+        spawnFn: () => makeFakeChild("ok-output\n"),
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "1", language: "ts" });
+
+      expect(emitted).toHaveLength(1);
+      const { event, payload } = emitted[0]!;
+      expect(event).toBe("orchestrate:run_summary");
+      expect(payload.exitCode).toBe(0);
+      expect(payload.failureClass).toBeUndefined();
+      expect(payload.leaseId).toBe("child-lease-1");
+      expect(payload.rootRunId).toBe("root-agent-1");
+      expect(payload.sessionKey).toBe("tenant:user:channel");
+      expect(payload.language).toBe("ts");
+      expect(payload.resultRefCount).toBe(3);
+      expect(payload.resultRefBytes).toBe(122_880);
+      // stdoutCharsReentered = the POST-bounce char count of "ok-output\n" (10).
+      expect(payload.stdoutCharsReentered).toBe(10);
+      expect(payload.stdoutBytesRaw).toBe("ok-output\n".length);
+      // SAVE-01: the estimate is EXACTLY estimateSavings(materializedBytes, reentered).
+      const expected = estimateSavings(122_880, 10);
+      expect(payload.estSavedTokens).toBe(expected.estSavedTokens);
+      expect(payload.savedRatio).toBe(expected.savedRatio);
+      // runAggregate was consulted (real counts, not 0) — proves capture-before-cleanup.
+      expect(runAggregate).toHaveBeenCalledWith({ workspacePath });
+      // INV-5: the payload key set is EXACTLY the content-free declared fields.
+      expect(Object.keys(payload).sort()).toEqual(SUCCESS_KEYS);
+    });
+
+    it("a NON-ZERO exit emits failureClass nonzero_exit + the real exit code (no stderr tail on the bus)", async () => {
+      const { eventBus, emitted } = makeEventBusSpy();
+      const { deps } = makeDeps({
+        eventBus,
+        rootRunId: "root-2",
+        spawnFn: () => makeFakeChild("", 3, "TypeError: boom on stderr"),
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(tool.execute("c", { script: "1", language: "ts" })).rejects.toThrow(/code 3/);
+
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0]!.payload.failureClass).toBe("nonzero_exit");
+      expect(emitted[0]!.payload.exitCode).toBe(3);
+      // INV-5: the stderr tail rides the tool-error surface ONLY, never the bus.
+      const json = JSON.stringify(emitted[0]!.payload);
+      expect(json).not.toContain("boom on stderr");
+      expect("stderrTail" in emitted[0]!.payload).toBe(false);
+    });
+
+    it("a TIMEOUT emits failureClass timeout", async () => {
+      const { eventBus, emitted } = makeEventBusSpy();
+      const { deps } = makeDeps({
+        eventBus,
+        rootRunId: "root-3",
+        spawnFn: () => makeHangingChild(),
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(
+        tool.execute("c", { script: "1", language: "ts", timeoutMs: 1 }),
+      ).rejects.toThrow(/timeout/i);
+
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0]!.payload.failureClass).toBe("timeout");
+    });
+
+    it("a SPAWN failure emits failureClass spawn_fail", async () => {
+      const { eventBus, emitted } = makeEventBusSpy();
+      const spawnFn: OrchestrateSpawnFn = () => {
+        throw new Error("spawn boom");
+      };
+      const { deps } = makeDeps({ eventBus, rootRunId: "root-4", spawnFn });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(tool.execute("c", { script: "1", language: "ts" })).rejects.toThrow(/spawn boom/);
+
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0]!.payload.failureClass).toBe("spawn_fail");
+    });
+
+    it("a STDOUT hard-cap trip emits failureClass stdout_cap", async () => {
+      const { eventBus, emitted } = makeEventBusSpy();
+      const spawnFn: OrchestrateSpawnFn = () => {
+        const child = new EventEmitter() as unknown as OrchestrateSpawnedChild & EventEmitter;
+        const out = new EventEmitter();
+        (child as { stdout: EventEmitter }).stdout = out;
+        (child as { stderr: EventEmitter }).stderr = new EventEmitter();
+        (child as { kill: () => void }).kill = () => {};
+        setImmediate(() => {
+          out.emit("data", Buffer.alloc(STDOUT_HARD_CAP_BYTES + 1, 0x41));
+          child.emit("close", 0);
+        });
+        return child;
+      };
+      const { deps } = makeDeps({ eventBus, rootRunId: "root-5", spawnFn });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(
+        tool.execute("c", { script: "1", language: "ts" }),
+      ).rejects.toThrow(/hard cap|exceeded/i);
+
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0]!.payload.failureClass).toBe("stdout_cap");
+    });
+
+    it("a run with NO lease emits failureClass lease_absent", async () => {
+      const { eventBus, emitted } = makeEventBusSpy();
+      // No brokerSpawnEnv AND no mintRunLease → childEnv has no COMIS_CAP_LEASE.
+      const { deps } = makeDeps({
+        eventBus,
+        rootRunId: "root-6",
+        dropBrokerSpawnEnv: true,
+        spawnFn: () => makeFakeChild("ok\n"),
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "1", language: "ts" });
+
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0]!.payload.failureClass).toBe("lease_absent");
+      expect(emitted[0]!.payload.exitCode).toBe(0);
+    });
+
+    it("does NOT emit (and does not throw) when no eventBus is wired — the emit is opt-in", async () => {
+      // The default makeDeps injects NO eventBus; a run must not throw for the
+      // absent emit channel (the ?. guard on deps.eventBus).
+      const { deps } = makeDeps({ spawnFn: () => makeFakeChild("ok\n") });
+      const tool = createOrchestrateTool(deps);
+      await expect(tool.execute("c", { script: "1", language: "ts" })).resolves.toBeDefined();
     });
   });
 });
