@@ -40,12 +40,24 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readdirSync, readFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
+import * as path from "node:path";
 import { parse as parseYaml } from "yaml";
 
 import { safePath } from "@comis/core";
 import type { FleetHealthReport } from "@comis/core";
+import { writeTrajectoryPointerFileBestEffort } from "@comis/observability";
+// Test-only @comis/memory imports (the cli→memory production rule excludes
+// `.test.ts`): seed a REAL memory.db so the offline audit read exercises the
+// same store the bundle opens, and prove its scrubbed-blob refs never reach a
+// written file.
+import {
+  openSqliteDatabase,
+  initSchema as initMemorySchema,
+  createObservabilityStore,
+} from "@comis/memory";
+import type { AuditEventRow } from "@comis/memory";
 
 import { generateSupportBundle } from "./generate.js";
 
@@ -271,4 +283,188 @@ describe("no seeded secret survives any support-bundle output file", () => {
       expect(configPostureJson, `${seed} survived in config-posture.json`).not.toContain(seed);
     }
   });
+});
+
+// ---------------------------------------------------------------------------
+// Depth-surface sweep: --session --deep against a REAL nested layout whose
+// trajectory free-text + audit store carry every secret shape. explain.json
+// rides the untrusted value-shape leaf, audit-summary.json is content-free
+// (counts only), and the trace-export bundle carries the exporter's OWN
+// redaction — so the RECURSIVE sweep (walking the nested trace-export dir, not a
+// flat readdir) is the binding end-to-end proof that the whole depth surface is
+// clean. This is where a credential shape a real tool error would carry
+// (sk-/Bearer/AWS/JWT/url-userinfo/registered) must not survive into the most
+// sensitive artifact the bundle can emit.
+// ---------------------------------------------------------------------------
+
+// A production-shaped session key → tenant "default", channel "678314278".
+const SESSION_KEY = "default:678314278:678314278:peer:678314278";
+// The UUID correlation id — the one identity anchor that must round-trip VERBATIM
+// through the untrusted leaf (masking secrets must not also destroy ids).
+const SESSION_TRACE_ID = "ea72ef66-9497-46c2-a7bb-46f5ba92732e";
+
+/** Recursively enumerate every file under `dir`, returned relative to it. */
+function walkFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = safePath(dir, entry.name);
+    if (entry.isDirectory()) out.push(...walkFiles(full).map((f) => path.join(entry.name, f)));
+    else out.push(entry.name);
+  }
+  return out;
+}
+
+/** A comis-trajectory record envelope for the seeded runtime file. */
+function trajectoryRecord(type: string, seq: number, data: Record<string, unknown>): string {
+  return JSON.stringify({
+    traceSchema: "comis-trajectory",
+    schemaVersion: 1,
+    type,
+    seq,
+    agentId: "default",
+    sessionId: SESSION_KEY,
+    data,
+  });
+}
+
+/** Seed a REAL memory.db with audit rows whose scrubbed-blob `refs` carry secrets. */
+function seedAuditDb(dataDir: string, rows: AuditEventRow[]): void {
+  const db = openSqliteDatabase({
+    dbPath: safePath(dataDir, "memory.db"),
+    initSchema: (d) => {
+      initMemorySchema(d, 1536);
+    },
+  });
+  const store = createObservabilityStore(db);
+  for (const row of rows) store.insertAuditEvent(row);
+  db.close();
+}
+
+/**
+ * Build the production nested session layout whose trajectory free-text (a failed
+ * tool's error body) carries every secret shape, plus a memory.db whose audit
+ * refs carry secrets. The exporter reads the trajectory via the pointer and
+ * applies its own redaction; the assembler surfaces the error into explain.json;
+ * the audit read counts kinds only.
+ */
+function writeSeededSession(dataDir: string, nowMs: number): void {
+  const sessionDir = safePath(dataDir, "workspace", "sessions", "default", "678314278");
+  mkdirSync(sessionDir, { recursive: true });
+  const sessionFile = safePath(sessionDir, "678314278~peer~678314278.jsonl");
+  writeFileSync(sessionFile, "", "utf8");
+
+  const runtimeFile = `${sessionFile}.trajectory.jsonl`;
+  // A realistic failed-tool error body echoing request credentials — the exact
+  // free-text a real tool failure would carry a secret in.
+  const errorMessage =
+    `connect failed to https://${URL_USERINFO}/v1: ` +
+    `apiKey=${OPENAI_KEY} aws=${AWS_KEY} jwt=${JWT} authorization=${BEARER} canary=${REGISTERED}`;
+  const records = [
+    trajectoryRecord("session.started", 1, { channelType: "telegram", channelId: "678314278" }),
+    trajectoryRecord("tool.result", 2, {
+      toolName: "web_fetch",
+      toolCallId: "call_seed",
+      success: false,
+      errorKind: "network",
+      errorMessage,
+    }),
+  ];
+  writeFileSync(runtimeFile, records.join("\n") + "\n", "utf8");
+  writeTrajectoryPointerFileBestEffort({ sessionFile, sessionId: SESSION_KEY, runtimeFile });
+  writeFileSync(
+    sessionFile.replace(/\.jsonl$/, "_session-metadata.json"),
+    JSON.stringify({
+      traceId: SESSION_TRACE_ID,
+      sessionEnd: {
+        type: "session_end",
+        endReason: "tool_failed",
+        degraded: true,
+        costUsd: 0,
+        totalTokens: 100,
+        toolStats: { web_fetch: { ok: 0, failed: 1 } },
+      },
+    }),
+    "utf8",
+  );
+
+  // Two in-window audit rows whose scrubbed-blob refs carry secrets. The window
+  // read counts kinds only, so no ref value can reach audit-summary.json.
+  const refsBlob = JSON.stringify({
+    leaked: AWS_KEY,
+    endpoint: `https://${URL_USERINFO}/x`,
+    token: BEARER,
+    key: OPENAI_KEY,
+  });
+  const baseRow: AuditEventRow = {
+    id: "seed-a",
+    tenantId: "default",
+    agentId: "default",
+    ts: nowMs - 1_000,
+    kind: "secret_access",
+    classification: null,
+    action: null,
+    actor: null,
+    outcome: "success",
+    severity: "info",
+    traceId: SESSION_TRACE_ID,
+    refs: refsBlob,
+  };
+  seedAuditDb(dataDir, [
+    baseRow,
+    { ...baseRow, id: "seed-b", kind: "injection_detected", ts: nowMs - 2_000 },
+  ]);
+}
+
+describe("no seeded secret survives the --session --deep depth surface", () => {
+  // Generous timeout: the first offline call lazy-loads the whole daemon graph
+  // (~10s cold under vitest's transform); the session/deep path pays it once.
+  it(
+    "recursively sweeps explain.json + audit-summary.json + every trace-export file for surviving seeds",
+    { timeout: 30_000 },
+    async () => {
+      const dataDir = makeDataDir();
+      writeSeededSession(dataDir, NOW_MS);
+
+      const result = await generateSupportBundle({
+        dataDir,
+        configPaths: [],
+        sinceHours: 24,
+        nowMs: NOW_MS,
+        session: SESSION_KEY,
+        deep: true,
+        isDaemonRunning: daemonDown.isDaemonRunning,
+        assembleFleet: async () => emptyFleet(),
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      // Enumerate EVERY written file recursively — the nested trace-export dir
+      // included — so a non-recursive readdir cannot silently under-cover it.
+      const files = walkFiles(result.value.bundleDir);
+      expect(files.length).toBeGreaterThan(0);
+
+      // The two content-bearing depth artifacts are explicitly in the swept set.
+      expect(files).toContain("explain.json");
+      expect(files).toContain("audit-summary.json");
+
+      // Descent guard: the walk actually entered trace-exports/ — a flat readdir
+      // would list none of these, silently passing while the bundle leaks.
+      const traceFiles = files.filter((f) => f.startsWith(`trace-exports${path.sep}`));
+      expect(traceFiles.length).toBeGreaterThan(0);
+      expect(traceFiles.some((f) => f.endsWith("events.jsonl"))).toBe(true);
+
+      // Zero survivors across the entire depth surface — every seed, every file.
+      for (const rel of files) {
+        const content = readFileSync(safePath(result.value.bundleDir, rel), "utf8");
+        for (const seed of ALL_SEEDS) {
+          expect(content, `${seed} survived in ${rel}`).not.toContain(seed);
+        }
+      }
+
+      // Id integrity: the UUID traceId — the primary correlation id — round-trips
+      // VERBATIM into explain.json. The untrusted leaf masks secrets, not ids.
+      const explain = readFileSync(safePath(result.value.bundleDir, "explain.json"), "utf8");
+      expect(explain).toContain(SESSION_TRACE_ID);
+    },
+  );
 });
