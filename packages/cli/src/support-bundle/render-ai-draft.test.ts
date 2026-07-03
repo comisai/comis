@@ -61,7 +61,46 @@ function makeTriage(overrides: Partial<SupportTriage> = {}): SupportTriage {
 
 describe("renderAiIssueDraft", () => {
   it("renders a deterministic markdown draft from a fixed triage", () => {
-    expect(renderAiIssueDraft(makeTriage())).toMatchInlineSnapshot();
+    expect(renderAiIssueDraft(makeTriage())).toMatchInlineSnapshot(`
+      "# Comis issue draft
+
+      Fill the REQUIRED sections below, then file this as a GitHub issue. The environment, triage status, active signals, and doctor summary are pre-filled from the local triage.
+
+      ## Steps to reproduce
+
+      <REQUIRED: paste repro steps — do not invent>
+
+      ## Expected vs. actual
+
+      <REQUIRED: expected behavior vs. actual behavior — do not invent>
+
+      ## Environment
+
+      - CLI: \`1.0.45\`
+      - Daemon: \`1.0.45\`
+      - Node: \`v22.21.1\`
+      - Platform: \`linux\` (\`x64\`)
+
+      ## Triage status
+
+      **Status:** \`degraded\`
+
+      ## Active signals
+
+      - \`daemon_down\`
+      - \`config_posture:chimeric_model\`
+
+      ## Doctor summary
+
+      - Checks run: 9
+      - Pass: 7
+      - Warn: 1
+      - Fail: 1
+      - Skip: 0
+      - Repairable: 1
+      - Failing checks: \`config\`, \`gateway\`
+      "
+    `);
   });
 
   it("emits both REQUIRED placeholders, each carrying the do-not-invent instruction", () => {
