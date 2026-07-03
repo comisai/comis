@@ -509,6 +509,15 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "PostureDimension",
       "PostureComparison",
       "SkillsPostureSlice",
+      // One-shot orchestrate auto-repair building blocks (the pure class-gate +
+      // the daemon-mintable repair closure). autoRepairForClass is the pure
+      // per-class policy and createOrchestrateRepairSeam builds the bounded
+      // utility-model re-prompt closure; both land AHEAD of their consumer (the
+      // orchestrate tool + the buildAutonomyToolWiring daemon thread wire them
+      // in a later wave). Surfaced here per the ahead-of-consumer precedent
+      // (mirror runMemoryTripleExtraction). Shrink each entry as the daemon
+      // wiring / orchestrate tool name-imports it cross-package.
+      "autoRepairForClass",
     ])],
     // @comis/channels: baseline orphans tracked here. The 5 delivery
     // helpers + the Markdown IR pipeline (incl. telegram-file-ref-guard)
