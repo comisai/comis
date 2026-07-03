@@ -37,15 +37,41 @@ function makeLoggerSpy() {
   return { logger, serialized, info, warn, debug, error };
 }
 
-/** A fetch stub returning a 2xx Connector send response; captures its calls. */
-function makeSendFetch(sentId = "sent-1", status = 200) {
-  const spy = vi.fn(async () => ({
-    ok: status >= 200 && status < 300,
-    status,
-    json: async () => ({ id: sentId }),
-  }));
-  return { fetchImpl: spy as unknown as typeof fetch, spy };
+/**
+ * A fetch stub covering BOTH boundary calls the outbound path makes: the token
+ * mint (login endpoint) and the Connector send. Branches on the request URL.
+ */
+function makeConnectorFetch(
+  opts: { sendStatus?: number; sentId?: string; token?: string } = {},
+) {
+  const sendStatus = opts.sendStatus ?? 200;
+  const sentId = opts.sentId ?? "sent-1";
+  const token = opts.token ?? "connector-access-token";
+  const spy = vi.fn(async (url: string) => {
+    if (String(url).includes("/oauth2/v2.0/token")) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ access_token: token, expires_in: 3600 }),
+      };
+    }
+    return {
+      ok: sendStatus >= 200 && sendStatus < 300,
+      status: sendStatus,
+      json: async () => ({ id: sentId }),
+    };
+  });
+  return { fetchImpl: spy as unknown as typeof fetch, spy, token };
 }
+
+/** Find the Connector send call (the POST to the v3 conversations REST path). */
+function findSendCall(spy: ReturnType<typeof vi.fn>): [string, RequestInit] | undefined {
+  return spy.mock.calls.find(([u]) => String(u).includes("/v3/conversations/")) as
+    | [string, RequestInit]
+    | undefined;
+}
+
+const SERVICE_URL = "https://smba.example.com/teams/";
 
 function makeAdapterDeps(overrides: Partial<MsTeamsAdapterDeps> = {}) {
   const loggerSpy = makeLoggerSpy();
@@ -266,5 +292,203 @@ describe("createMsTeamsAdapter — inbound handleWebhookEvents → processEvent 
     adapter.handleWebhookEvents([messageActivity()]);
     expect(first).toHaveBeenCalledOnce();
     expect(second).toHaveBeenCalledOnce();
+  });
+});
+
+describe("createMsTeamsAdapter — outbound sendMessage via the Connector REST", () => {
+  it("posts a DM top-level activity with a Bearer token and no replyToId", async () => {
+    const { fetchImpl, spy, token } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.sendMessage("19:dm-convo", "hi there", {
+      extra: { serviceUrl: SERVICE_URL },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toBe("sent-1");
+
+    const sendCall = findSendCall(spy);
+    expect(sendCall).toBeDefined();
+    const [url, init] = sendCall!;
+    expect(url).toBe(`${SERVICE_URL}v3/conversations/19:dm-convo/activities`);
+    expect(init.method).toBe("POST");
+    const headers = init.headers as Record<string, string>;
+    expect(headers.authorization).toBe(`Bearer ${token}`);
+    expect(headers["content-type"]).toBe("application/json");
+    const body = JSON.parse(String(init.body)) as {
+      type: string;
+      text: string;
+      replyToId?: string;
+    };
+    expect(body.type).toBe("message");
+    expect(body.text).toBe("hi there");
+    expect(body.replyToId).toBeUndefined();
+  });
+
+  it("threads a channel/group reply by including replyToId in the activity body", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.sendMessage(
+      "19:channel-convo@thread.tacv2",
+      "reply text",
+      { replyTo: "parent-activity-id", extra: { serviceUrl: SERVICE_URL } },
+    );
+
+    expect(result.ok).toBe(true);
+    const sendCall = findSendCall(spy);
+    expect(sendCall).toBeDefined();
+    const body = JSON.parse(String(sendCall![1].body)) as { replyToId?: string };
+    expect(body.replyToId).toBe("parent-activity-id");
+  });
+
+  it("logs an outbound INFO completion carrying durationMs on success", async () => {
+    const { fetchImpl } = makeConnectorFetch();
+    const { deps, loggerSpy } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+    await adapter.sendMessage("19:dm-convo", "hi", { extra: { serviceUrl: SERVICE_URL } });
+    const outboundInfo = loggerSpy.info.mock.calls
+      .map((c) => c[0])
+      .find(
+        (p) =>
+          p !== null &&
+          typeof p === "object" &&
+          (p as { step?: string }).step === "channels-outbound",
+      );
+    expect(outboundInfo).toBeDefined();
+    expect(typeof (outboundInfo as { durationMs?: unknown }).durationMs).toBe("number");
+  });
+
+  it("resolves the default Connector service URL when none is supplied", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+    const result = await adapter.sendMessage("19:dm-convo", "hi");
+    expect(result.ok).toBe(true);
+    const sendCall = findSendCall(spy);
+    expect(sendCall).toBeDefined();
+    const [url] = sendCall!;
+    expect(url.startsWith("https://")).toBe(true);
+    expect(url).toContain("/v3/conversations/19:dm-convo/activities");
+  });
+
+  it("returns a classified err and warns when the Connector responds non-2xx", async () => {
+    const { fetchImpl } = makeConnectorFetch({ sendStatus: 500 });
+    const { deps, loggerSpy } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.sendMessage("19:dm-convo", "hi", {
+      extra: { serviceUrl: SERVICE_URL },
+    });
+
+    expect(result.ok).toBe(false);
+    const platformWarn = loggerSpy.warn.mock.calls
+      .map((c) => c[0])
+      .find(
+        (p) =>
+          p !== null &&
+          typeof p === "object" &&
+          (p as { errorKind?: string }).errorKind === "platform",
+      );
+    expect(platformWarn).toBeDefined();
+    expect(typeof (platformWarn as { hint?: unknown }).hint).toBe("string");
+  });
+
+  it("returns err and warns as network when the Connector send rejects at the transport level", async () => {
+    const spy = vi.fn(async (url: string) => {
+      if (String(url).includes("/oauth2/v2.0/token")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ access_token: "tok", expires_in: 3600 }),
+        };
+      }
+      throw new Error("connect ECONNREFUSED");
+    });
+    const { deps, loggerSpy } = makeAdapterDeps({
+      fetchImpl: spy as unknown as typeof fetch,
+    });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.sendMessage("19:dm-convo", "hi", {
+      extra: { serviceUrl: SERVICE_URL },
+    });
+
+    expect(result.ok).toBe(false);
+    const networkWarn = loggerSpy.warn.mock.calls
+      .map((c) => c[0])
+      .find(
+        (p) =>
+          p !== null &&
+          typeof p === "object" &&
+          (p as { errorKind?: string }).errorKind === "network",
+      );
+    expect(networkWarn).toBeDefined();
+  });
+
+  it("returns err when the Connector token cannot be minted", async () => {
+    const spy = vi.fn(async (url: string) => {
+      if (String(url).includes("/oauth2/v2.0/token")) {
+        return { ok: false, status: 401, json: async () => ({}) };
+      }
+      return { ok: true, status: 200, json: async () => ({ id: "unexpected" }) };
+    });
+    const { deps } = makeAdapterDeps({ fetchImpl: spy as unknown as typeof fetch });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.sendMessage("19:dm-convo", "hi", {
+      extra: { serviceUrl: SERVICE_URL },
+    });
+
+    expect(result.ok).toBe(false);
+    // The send REST call must never fire once the token mint fails.
+    expect(findSendCall(spy)).toBeUndefined();
+  });
+
+  it("rejects a path-traversal conversation id with a precondition err before any fetch", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps, loggerSpy } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.sendMessage("../evil", "hi", {
+      extra: { serviceUrl: SERVICE_URL },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(spy).not.toHaveBeenCalled();
+    const preconditionWarn = loggerSpy.warn.mock.calls
+      .map((c) => c[0])
+      .find(
+        (p) =>
+          p !== null &&
+          typeof p === "object" &&
+          (p as { errorKind?: string }).errorKind === "precondition",
+      );
+    expect(preconditionWarn).toBeDefined();
+  });
+
+  it("rejects a non-https service URL with a precondition err before any fetch", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.sendMessage("19:dm-convo", "hi", {
+      extra: { serviceUrl: "http://insecure.example.com/teams/" },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("never logs the Connector bearer token on the outbound path", async () => {
+    const { fetchImpl, token } = makeConnectorFetch();
+    const { deps, loggerSpy } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+    await adapter.sendMessage("19:dm-convo", "hi", {
+      extra: { serviceUrl: SERVICE_URL },
+    });
+    expect(loggerSpy.serialized()).not.toContain(token);
   });
 });
