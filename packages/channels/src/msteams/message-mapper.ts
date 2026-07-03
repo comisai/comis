@@ -47,6 +47,14 @@ export interface TeamsActivity {
   replyToId?: string;
   channelData?: { tenant?: { id?: string } };
   entities?: Array<{ type: string; mentioned?: { id: string }; text?: string }>;
+  /** Invoke sub-kind, e.g. "adaptiveCard/action" for a card-action click. */
+  name?: string;
+  /**
+   * Card-action invoke payload. Client-controllable — read only on an invoke,
+   * and only for the rendered `verb` and the signed callback `data.cb`; no
+   * identity is ever sourced from here.
+   */
+  value?: { action?: { verb?: string; data?: { cb?: string } } };
 }
 
 /**
@@ -56,7 +64,7 @@ export interface TeamsActivity {
  * id (e.g. "19:abc@thread.tacv2;messageid=1700000000000"); the routing key is
  * the bare conversation id, so the suffix is removed.
  */
-function stripMessageIdSuffix(conversationId: string): string {
+export function stripMessageIdSuffix(conversationId: string): string {
   const idx = conversationId.indexOf(MESSAGE_ID_MARKER);
   return idx >= 0 ? conversationId.slice(0, idx) : conversationId;
 }
