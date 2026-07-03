@@ -85,4 +85,77 @@ describe("orchestrate comis_tools SDK drift gate", () => {
     expect(jsMatch).toBe(true);
     expect(pyMatch).toBe(true);
   });
+
+  it("describe() carries a worked example per capability group in all three SDKs", () => {
+    // Read the committed artifacts (the exact bytes the drift gate above locks).
+    const committedDts = readFileSync(OUT_DTS, "utf8");
+    const committedJs = readFileSync(OUT_JS, "utf8");
+    const committedPy = readFileSync(OUT_PY, "utf8");
+
+    // (1) The `.d.ts` typed surface: the ToolDescriptor interface must declare the
+    // `example` field, so the typed SDK carries the worked example too.
+    expect(
+      committedDts,
+      "comis_tools.d.ts: ToolDescriptor must declare `readonly example` — run `pnpm sdk:generate`",
+    ).toContain("readonly example");
+
+    // (2)+(3) The `.js` and `.py` runtime surfaces: parse the emitted DESCRIPTORS
+    // array. Its values are string-only, so the pretty-printed JSON block is the
+    // IDENTICAL text in both artifacts (parity by construction) and JSON-parses in
+    // each. The array closes on a line-start `]` (`\n]`); example strings live on
+    // indented lines, so an inner `]` (e.g. a `.[0:3]` slice) never matches the
+    // terminator.
+    const parseDescriptors = (
+      src: string,
+      label: string,
+    ): Array<{ name: string; capability: string; summary: string; example?: unknown }> => {
+      const match = src.match(/DESCRIPTORS = (\[[\s\S]*?\n\])/);
+      expect(match, `${label}: could not locate the DESCRIPTORS array literal`).not.toBeNull();
+      return JSON.parse(match![1]!);
+    };
+
+    for (const [label, src] of [
+      ["comis_tools.js", committedJs],
+      ["comis_tools.py", committedPy],
+    ] as const) {
+      const entries = parseDescriptors(src, label);
+      expect(entries.length, `${label}: DESCRIPTORS is empty`).toBeGreaterThan(0);
+
+      // Every descriptor carries a non-empty string worked example.
+      for (const entry of entries) {
+        expect(
+          typeof entry.example,
+          `${label}: descriptor "${entry.name}" is missing a string example`,
+        ).toBe("string");
+        expect(
+          (entry.example as string).length,
+          `${label}: descriptor "${entry.name}" has an empty example`,
+        ).toBeGreaterThan(0);
+      }
+
+      // The example is keyed by capability GROUP: both groups (orch:read, orch:web)
+      // are covered, and every descriptor sharing a capability shares the SAME
+      // worked example (the single `exampleFor(capability)` source).
+      const examplesByCap = new Map<string, Set<string>>();
+      for (const entry of entries) {
+        const set = examplesByCap.get(entry.capability) ?? new Set<string>();
+        set.add(entry.example as string);
+        examplesByCap.set(entry.capability, set);
+      }
+      expect(
+        new Set(entries.map((entry) => entry.capability)).size,
+        `${label}: expected exactly two capability groups (orch:read, orch:web)`,
+      ).toBe(2);
+      for (const [capability, examples] of examplesByCap) {
+        expect(
+          examples.size,
+          `${label}: capability "${capability}" must map to exactly one worked example`,
+        ).toBe(1);
+        expect(
+          [...examples][0]!.length,
+          `${label}: capability "${capability}" has an empty example`,
+        ).toBeGreaterThan(0);
+      }
+    }
+  });
 });
