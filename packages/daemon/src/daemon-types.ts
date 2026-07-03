@@ -580,6 +580,10 @@ export interface BootContext {
   resolveAttachment?: Awaited<ReturnType<typeof setupChannels>>["resolveAttachment"];
   lifecycleReactors?: Awaited<ReturnType<typeof setupChannels>>["lifecycleReactors"];
   channelPlugins?: Awaited<ReturnType<typeof setupChannels>>["channelPlugins"];
+  /** Microsoft Teams inbound ingress sub-app — threaded to bootGateway so the
+   *  `/channels/msteams` route mounts when the channel is enabled. Optional:
+   *  undefined when the channel is disabled (no route). */
+  msTeamsIngress?: Awaited<ReturnType<typeof setupChannels>>["msTeamsIngress"];
   commandQueue?: Awaited<ReturnType<typeof setupChannels>>["commandQueue"];
   deliveryService?: Awaited<ReturnType<typeof setupChannels>>["deliveryService"];
   inboundMessageIdResolver?: InboundMessageIdResolver;

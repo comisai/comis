@@ -20,6 +20,7 @@ import {
   createIMessagePlugin,
   createIrcPlugin,
   createEmailPlugin,
+  createMsTeamsPlugin,
   validateBotToken,
   validateDiscordToken,
   validateSlackCredentials,
@@ -29,10 +30,15 @@ import {
   validateIMessageConnection,
   validateIrcConnection,
   validateEmailCredentials,
+  validateMsTeamsCredentials,
+  validateActivityJwt,
   type TelegramPluginHandle,
   type LinePluginHandle,
   type EmailAdapterDeps,
+  type MsTeamsAdapterHandle,
+  type TeamsActivity,
 } from "@comis/channels";
+import { createMsTeamsIngress } from "@comis/gateway";
 import os from "node:os";
 import { safePath } from "@comis/core";
 
@@ -81,6 +87,7 @@ export async function bootstrapAdapters(deps: {
   const channelPlugins = new Map<string, ChannelPluginPort>();
   let tgPlugin: TelegramPluginHandle | undefined;
   let linePlugin: LinePluginHandle | undefined;
+  let msTeamsIngress: import("hono").Hono | undefined;
 
   // Helper: attempt to get a secret, return undefined if not found
   const getSecret = (name: string): string | undefined => {
@@ -371,6 +378,41 @@ export async function bootstrapAdapters(deps: {
     }
   }
 
+  // Microsoft Teams — a route-driven channel whose inbound arrives over the
+  // net-new gateway ingress. This block is the production CALLER that builds
+  // that ingress: on valid credentials it registers the adapter/plugin, then
+  // wires the REAL adapter's handleWebhookEvents + the bound activity-token
+  // validator into createMsTeamsIngress and exposes the sub-app for the gateway
+  // phase to mount at /channels/msteams. A mounted route MUST reach the real
+  // adapter — there is no factory without a caller.
+  if (channelConfig.msteams.enabled) {
+    const appPassword = (channelConfig.msteams.appPassword as string | undefined) || getSecret("MSTEAMS_APP_PASSWORD");
+    const appId = channelConfig.msteams.appId;
+    const tenantId = channelConfig.msteams.tenantId;
+    const validation = validateMsTeamsCredentials({ appId, appPassword, tenantId });
+    if (validation.ok && appId && appPassword && tenantId) {
+      const plugin = createMsTeamsPlugin({
+        appId,
+        appPassword,
+        tenantId,
+        allowFrom: channelConfig.msteams.allowFrom,
+        allowMode: channelConfig.msteams.allowMode,
+        logger: channelsLogger,
+      });
+      adaptersByType.set("msteams", plugin.adapter);
+      channelPlugins.set("msteams", plugin);
+      const teamsAdapter = plugin.adapter as MsTeamsAdapterHandle;
+      msTeamsIngress = createMsTeamsIngress({
+        validateActivityJwt: (authHeader) => validateActivityJwt(authHeader, appId),
+        handleWebhookEvents: (activities) => teamsAdapter.handleWebhookEvents(activities as TeamsActivity[]),
+        logger: channelsLogger,
+      });
+      channelsLogger.info({ channelType: "msteams", tenantId }, "Channel adapter initialized");
+    } else {
+      channelsLogger.warn({ hint: "Verify msteams.appId/tenantId and MSTEAMS_APP_PASSWORD", errorKind: "auth" as const }, "Teams credential validation failed");
+    }
+  }
+
   if (adaptersByType.size > 0) {
     channelsLogger.info({ channels: Array.from(adaptersByType.keys()), count: adaptersByType.size }, "Channel adapters initialized");
   } else {
@@ -378,5 +420,5 @@ export async function bootstrapAdapters(deps: {
   }
   } // end if (channelConfig)
 
-  return { adaptersByType, tgPlugin, linePlugin, channelPlugins };
+  return { adaptersByType, tgPlugin, linePlugin, channelPlugins, msTeamsIngress };
 }
