@@ -35,6 +35,11 @@ export interface CronJobInput {
     tenantId: string;
     channelType?: string;
   };
+  /** Optional pre-run wake-gate: a jailed script that decides whether to invoke the model. */
+  wakeGate?: {
+    script: string;
+    language?: "js" | "ts";
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -487,6 +492,8 @@ export class IcCronEditor extends LitElement {
   @state() private _deliveryMode: "none" | "origin" | "custom" = "none";
   @state() private _deliveryChannelType = "";
   @state() private _deliveryChannelId = "";
+  @state() private _wakeGateScript = "";
+  @state() private _wakeGateLanguage: "js" | "ts" = "js";
   @state() private _nextRuns: string[] = [];
 
   /** Controller owns preview-debounce orchestration + next-runs dispatch. */
@@ -562,6 +569,8 @@ export class IcCronEditor extends LitElement {
       this._deliveryChannelType = "";
       this._deliveryChannelId = "";
     }
+    this._wakeGateScript = job.wakeGate?.script ?? "";
+    this._wakeGateLanguage = job.wakeGate?.language ?? "js";
   }
 
   /* ---- Preview ---- */
@@ -624,6 +633,11 @@ export class IcCronEditor extends LitElement {
       maxConcurrent: this._maxConcurrent,
       sessionTarget: this._sessionTarget,
       deliveryTarget,
+      // Optional: omit entirely when no script is entered so an un-gated
+      // job's assembled output is byte-identical to a form without this field.
+      ...(this._wakeGateScript.trim()
+        ? { wakeGate: { script: this._wakeGateScript, language: this._wakeGateLanguage } }
+        : {}),
     };
   }
 
@@ -875,6 +889,31 @@ export class IcCronEditor extends LitElement {
               }}
             />
           </div>
+
+          <!-- Wake-gate (optional) -->
+          <div class="field">
+            <label for="cron-wake-gate">Wake-gate script (optional)</label>
+            <textarea
+              id="cron-wake-gate"
+              rows="4"
+              .value=${this._wakeGateScript}
+              placeholder=${'Runs before the model; print {"wake":false} to skip the turn, or {"wake":true,"context":"…"} with what it found.'}
+              @input=${(e: InputEvent) => { this._wakeGateScript = (e.target as HTMLTextAreaElement).value; }}
+            ></textarea>
+          </div>
+          ${this._wakeGateScript.trim() ? html`
+            <div class="field">
+              <label for="cron-wake-gate-lang">Wake-gate language</label>
+              <select
+                id="cron-wake-gate-lang"
+                .value=${this._wakeGateLanguage}
+                @change=${(e: Event) => { this._wakeGateLanguage = (e.target as HTMLSelectElement).value as "js" | "ts"; }}
+              >
+                <option value="js" ?selected=${this._wakeGateLanguage === "js"}>JavaScript</option>
+                <option value="ts" ?selected=${this._wakeGateLanguage === "ts"}>TypeScript</option>
+              </select>
+            </div>
+          ` : nothing}
 
           <!-- Next 5 runs preview -->
           <div class="next-runs">
