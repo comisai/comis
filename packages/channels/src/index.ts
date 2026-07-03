@@ -370,6 +370,7 @@ export type { EditPlaceDeps } from "./shared/strategies/edit-place.js";
 export { createTelegramActivityRenderer, classifyTelegramError } from "./telegram/telegram-activity.js";
 export { createDiscordActivityRenderer } from "./discord/discord-activity.js";
 export { createSlackActivityRenderer } from "./slack/slack-activity.js";
+export { createMSTeamsActivityRenderer } from "./msteams/msteams-activity.js";
 export { createWhatsAppActivityRenderer } from "./whatsapp/whatsapp-activity.js";
 export { createEchoActivityRenderer } from "./echo/echo-activity.js";
 // Non-EditPlace strategy factories — wired by
