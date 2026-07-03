@@ -169,13 +169,26 @@ export function registerSupportBundleCommand(program: Command): void {
         );
       }
 
-      // Privacy notice: the bundle is content-free by construction, but treat
-      // it as sensitive all the same.
-      warn(
-        "Privacy: this bundle excludes secrets, message bodies, and raw config " +
-          "values by construction, but treat it as sensitive — share it only " +
-          "with authorized engineers over a secure channel and delete it after triage.",
-      );
+      // Privacy notice: the default bundle is content-free by construction, but
+      // treat it as sensitive all the same. With --deep the bundle additionally
+      // embeds the redacted RAW session trajectory (session content, PII-adjacent),
+      // so the notice ESCALATES to the trace-bundle discipline — strictly more
+      // sensitive than the digest, and never safe to post publicly.
+      if (options.deep === true) {
+        warn(
+          "Privacy (--deep): this bundle embeds the per-session trace export — redacted " +
+            "RAW session trajectory (session content, PII-adjacent) that is strictly more " +
+            "sensitive than the default digest bundle. Redaction is heuristic, not a " +
+            "guarantee — share it ONLY with authorized engineers over a secure channel and " +
+            "DELETE it after triage.",
+        );
+      } else {
+        warn(
+          "Privacy: this bundle excludes secrets, message bodies, and raw config " +
+            "values by construction, but treat it as sensitive — share it only " +
+            "with authorized engineers over a secure channel and delete it after triage.",
+        );
+      }
 
       info(`Support bundle ready in ${durationMs}ms.`);
       process.exit(ExitCode.Success);

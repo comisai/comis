@@ -1638,6 +1638,8 @@ When you did not pass `--session` and a best-effort local scan finds a recently-
 **Privacy notice**
 
 The bundle excludes secrets, message bodies, and raw config values by construction, and a redaction backstop masks value-shaped strings and substitutes absolute paths before anything reaches disk. Redaction is heuristic, though — always treat the bundle as sensitive: share it only with authorized engineers over a secure channel, and delete it after triage.
+
+With `--deep`, the bundle additionally embeds the redacted **raw session trajectory** (session content, PII-adjacent) under `trace-export/` — strictly more sensitive than the default digest, and the command's printed notice escalates to match. Handle a `--deep` bundle with the same care as a [`comis trace export`](/operations/incident-bundle).
 </Warning>
 
 **No daemon required.** The bundle is assembled entirely from the local `~/.comis` files and the offline health checks, so it works when the daemon is stopped or crash-looping — exactly when you most need it. When the daemon happens to be running, the bundle also records its build version; otherwise that field is simply absent.
