@@ -130,3 +130,43 @@ export function parseSupportTriage(raw: unknown): Result<SupportTriage, z.ZodErr
   }
   return err(result.error);
 }
+
+/**
+ * The bundle manifest — the top-level index written as `manifest.json`.
+ *
+ * `redaction.policy` is the platform-aware fingerprint recorded so a reader
+ * can confirm which redaction pass produced the bundle; `privacy` enumerates
+ * the machine-readable exclusion set every writer honors. `warnings` is
+ * optional and holds recoverable, section-level failures so a partial bundle
+ * still carries an honest record of what could not be produced. `generatedAt`
+ * is caller-stamped (ISO 8601), keeping the reducer that builds the triage
+ * pure and timestamp-free.
+ */
+export const SupportBundleManifestSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  bundle: z.string(),
+  generatedAt: z.string(),
+  redaction: z.strictObject({ policy: z.literal("platform-aware-v1") }),
+  privacy: z.strictObject({
+    redaction: z.literal("platform-aware-v1"),
+    excludes: z.array(z.string()),
+  }),
+  warnings: z.array(SupportBundleWarningSchema).optional(),
+});
+
+export type SupportBundleManifest = z.infer<typeof SupportBundleManifestSchema>;
+
+/**
+ * Parse unknown input into a SupportBundleManifest, returning
+ * `Result<T, z.ZodError>`. A drifted redaction policy, an unknown key, or a
+ * version other than 1 returns `err`.
+ */
+export function parseSupportBundleManifest(
+  raw: unknown,
+): Result<SupportBundleManifest, z.ZodError> {
+  const result = SupportBundleManifestSchema.safeParse(raw);
+  if (result.success) {
+    return ok(result.data);
+  }
+  return err(result.error);
+}
