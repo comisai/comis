@@ -167,7 +167,8 @@ describe("renderMSTeamsCardAttachment PascalCase enum enforcement", () => {
       [{ text: "X", callback_data: SIGNED_CB, style: rogueStyle }],
     ];
     const body = bodyOf(renderMSTeamsCardAttachment([], buttons));
-    const emphasis = body.find((b) => b.text === "X");
+    // The companion emphasis marker is the TextBlock spaced Small — never the label.
+    const emphasis = body.find((b) => b.type === "TextBlock" && b.spacing === "Small");
 
     expect(emphasis?.color).toBe("Default");
   });
@@ -190,6 +191,42 @@ describe("renderMSTeamsCardAttachment PascalCase enum enforcement", () => {
     const serialized = JSON.stringify(contentOf(renderMSTeamsCardAttachment(cards, buttons)));
 
     expect(serialized).not.toMatch(/"(weight|size|color|spacing)":"[a-z]/);
+  });
+});
+
+describe("renderMSTeamsCardAttachment styled-button emphasis", () => {
+  it("renders a styled button's label once — on the action title, not echoed in the body", () => {
+    const buttons: RichButton[][] = [
+      [{ text: "Approve", callback_data: SIGNED_CB, style: "primary" }],
+    ];
+    const attachment = renderMSTeamsCardAttachment([], buttons);
+    const actions = actionsOf(attachment);
+    const body = bodyOf(attachment);
+
+    // The label lives on the action title …
+    expect(actions[0]!.title).toBe("Approve");
+    // … and is NOT echoed by a companion TextBlock (the pre-fix double-render).
+    const labelEchoes = body.filter((b) => b.type === "TextBlock" && b.text === "Approve");
+    expect(labelEchoes).toHaveLength(0);
+    // Emphasis is still conveyed: a colored companion marker rides alongside.
+    const emphasis = body.find((b) => b.type === "TextBlock" && b.spacing === "Small");
+    expect(emphasis).toBeDefined();
+    expect(emphasis!.color).toBe("Good");
+  });
+
+  it("gives each styled button exactly one companion emphasis marker (labels not duplicated)", () => {
+    const buttons: RichButton[][] = [
+      [
+        { text: "Approve", callback_data: SIGNED_CB, style: "primary" },
+        { text: "Deny", callback_data: "v1.deny.Abc123Def456.ZXCVbnmasdfghjkl0", style: "danger" },
+      ],
+    ];
+    const body = bodyOf(renderMSTeamsCardAttachment([], buttons));
+    const emphasis = body.filter((b) => b.type === "TextBlock" && b.spacing === "Small");
+    // Two styled buttons → two emphasis markers, and neither repeats a label.
+    expect(emphasis).toHaveLength(2);
+    expect(emphasis.some((b) => b.text === "Approve" || b.text === "Deny")).toBe(false);
+    expect(emphasis.map((b) => b.color)).toEqual(["Good", "Attention"]);
   });
 });
 

@@ -47,6 +47,15 @@ function styleToColor(style: RichButton["style"]): AdaptiveTextColor {
 }
 
 /**
+ * The glyph a styled button's companion TextBlock carries. `Action.Execute` has
+ * no color in the AC 1.4 core schema, so a styled button's emphasis rides on a
+ * companion colored TextBlock — but that companion carries only this marker, not
+ * the button's label, so the label is never rendered twice (once in the body and
+ * again as the action title).
+ */
+const EMPHASIS_MARKER = "●"; // ● BLACK CIRCLE
+
+/**
  * Map one domain button to its Adaptive Card action by discriminant:
  *   - `callback_data` present → `Action.Execute` (interactive; stamps the shared
  *     verb the inbound normalizer validates, so the rendered and validated verb
@@ -107,8 +116,8 @@ function cardToBody(card: RichCard): Record<string, unknown>[] {
  * Render `RichCard[]` + `RichButton[][]` into one Adaptive Card v1.4 attachment.
  *
  * The button rows are flattened into `content.actions`. A styled button also
- * contributes a companion colored TextBlock to `content.body`, since
- * `Action.Execute` has no color in the 1.4 core schema.
+ * contributes a companion colored marker TextBlock (a glyph, not its label) to
+ * `content.body`, since `Action.Execute` has no color in the 1.4 core schema.
  *
  * @param cards - Card bodies (title/description/image/fields)
  * @param buttons - Button rows; flattened into the card actions
@@ -126,13 +135,15 @@ export function renderMSTeamsCardAttachment(
   const flat = buttons.flat();
 
   // A styled button's emphasis is carried by a companion colored TextBlock
-  // because Action.Execute has no color in the 1.4 core schema. The spacing
-  // enum here is a PascalCase literal for the same case-sensitivity reason.
+  // because Action.Execute has no color in the 1.4 core schema. The companion
+  // carries a colored marker glyph, NOT the button's label — echoing the label
+  // would render it twice (here and again as the action title). The spacing enum
+  // here is a PascalCase literal for the same case-sensitivity reason.
   for (const btn of flat) {
     if (btn.style !== undefined) {
       body.push({
         type: "TextBlock",
-        text: btn.text,
+        text: EMPHASIS_MARKER,
         color: styleToColor(btn.style),
         spacing: "Small",
         wrap: true,
