@@ -9,12 +9,14 @@
  * parser.
  *
  * Two invariants are load-bearing:
- *   - FAIL-OPEN. A gate that errors, times out, over-caps, or emits no verdict
- *     WAKES the model. The shared jailed runner REJECTS on a SIGKILL-timeout /
- *     4 MiB stdout-overflow / non-zero exit / spawn error / unavailable jail;
- *     every one of those is caught here and mapped to `{ wake: true }`. This
- *     runner NEVER throws to the scheduler — a broken gate can never silently
- *     drop a monitored job.
+ *   - FAIL-OPEN. A gate that errors, times out, over-caps, emits no verdict, or
+ *     whose per-fire lease mint faults WAKES the model. The shared jailed runner
+ *     REJECTS on a SIGKILL-timeout / 4 MiB stdout-overflow / non-zero exit /
+ *     spawn error / unavailable jail, and the mint can throw on a LeaseManager /
+ *     OutputGuard invariant; the WHOLE body runs inside one try and every one of
+ *     those is caught and mapped to `{ wake: true }`. This runner NEVER throws to
+ *     the scheduler — a broken gate can never silently drop a monitored job
+ *     (which would fail CLOSED: status:error → backoff → auto-suspend).
  *   - LEAST-PRIVILEGE, per fire. Each fire mints a FRESH attenuated lease under a
  *     distinct `root-wakegate-<jobId>-<ts>` root, registers the bearer with the
  *     OutputGuard so it is never logged, and threads it into the jail env as
@@ -115,57 +117,65 @@ export function createWakeGateRunner(deps: WakeGateRunnerDeps): WakeGateRunner {
 
   return {
     async runWakeGate(gate, ctx) {
-      // 1. Honest degrade. Resolve the agent's autonomy through the SAME
-      //    preflight-driven downshift the tool wiring uses; a disabled posture
-      //    (assistant, or a host that cannot build the jail) runs the job as
-      //    today — no lease, no jailed run, never a silent unjailed run.
-      const resolved = degradeAutonomy(resolveAutonomy(deps.agents[ctx.agentId]?.autonomy), {
-        namespacePreflightOk: deps.namespacePreflightOk,
-      }).resolved;
-      if (!resolved.enabled) {
-        log.debug(
-          { agentId: ctx.agentId, jobId: ctx.jobId, step: "degrade" },
-          "wake-gate skipped (autonomy disabled or sandbox unavailable) — running the job as today",
-        );
-        return { runAsToday: true };
-      }
-
-      // 2. Mint the per-fire lease WITH the bearer threaded. Reuse the shipped
-      //    mint (mintLease → registerSecret(bearer) → registerRoot →
-      //    COMIS_CAP_LEASE/COMIS_ORCH_SOCKET). Caps are the agent's RESOLVED
-      //    autonomy caps enforced at the cap socket — never a job tool policy.
-      const ts = (deps.now ?? systemNowMs)().toString(36);
-      const rootRunId = `root-wakegate-${ctx.jobId}-${ts}`;
-      const capMint: CapabilityMintDeps = {
-        leaseManager: deps.leaseManager,
-        outputGuard: deps.outputGuard,
-        capSocketPath: deps.capSocketPath,
-        resolvedCaps: resolved.capabilities,
-        budgetRef: `run-wakegate-${ctx.jobId}-${ts}`,
-        sessionKey: ctx.sessionKey,
-        rootRunId,
-        registerRoot: deps.registerRoot,
-      };
-      const spawnEnv = buildBrokerSpawnEnv(undefined, ctx.agentId, capMint);
-
-      // 3. Assemble the per-fire jailed-run deps (the SAME shared jail the
-      //    orchestrate tool drives). The lease env rides brokerSpawnEnv.
-      const runnerDeps: JailedScriptRunnerDeps = {
-        logger: deps.logger,
-        workspaceResolver: () => deps.resolveWorkspace(ctx.agentId),
-        capSocketPath: deps.capSocketPath,
-        sandbox: deps.sandbox,
-        brokerSpawnEnv: spawnEnv,
-        store: deps.store ?? createResultRefStore({ logger: deps.logger }),
-        baseEnv: deps.baseEnv,
-        ...(deps.now ? { now: deps.now } : {}),
-      };
-      const runFn = deps.runJailedScriptFn ?? runJailedScript;
-
-      // 4. Run the gate; fail open on EVERY rejection. The runner rejects on a
-      //    SIGKILL-timeout / 4 MiB overflow / non-zero exit / spawn error / an
-      //    unavailable jail — each maps to a wake. Never rethrow to the scheduler.
+      // The WHOLE body is fail-open: the degrade, the per-fire lease mint, the
+      // deps assembly, and the jailed run all sit inside ONE try. Any throw —
+      // including a mintLease / registerSecret / registerRoot fault — maps to a
+      // wake, never a rethrow, so a broken gate can never fail CLOSED (a
+      // status:error would trigger scheduler backoff → auto-suspend). The
+      // `runAsToday` degrade is a normal return from inside the try (not a throw),
+      // so the catch is skipped for it.
       try {
+        // 1. Honest degrade. Resolve the agent's autonomy through the SAME
+        //    preflight-driven downshift the tool wiring uses; a disabled posture
+        //    (assistant, or a host that cannot build the jail) runs the job as
+        //    today — no lease, no jailed run, never a silent unjailed run.
+        const resolved = degradeAutonomy(resolveAutonomy(deps.agents[ctx.agentId]?.autonomy), {
+          namespacePreflightOk: deps.namespacePreflightOk,
+        }).resolved;
+        if (!resolved.enabled) {
+          log.debug(
+            { agentId: ctx.agentId, jobId: ctx.jobId, step: "degrade" },
+            "wake-gate skipped (autonomy disabled or sandbox unavailable) — running the job as today",
+          );
+          return { runAsToday: true };
+        }
+
+        // 2. Mint the per-fire lease WITH the bearer threaded. Reuse the shipped
+        //    mint (mintLease → registerSecret(bearer) → registerRoot →
+        //    COMIS_CAP_LEASE/COMIS_ORCH_SOCKET). Caps are the agent's RESOLVED
+        //    autonomy caps enforced at the cap socket — never a job tool policy.
+        //    A fault here is caught below and fails OPEN (waking), never closed.
+        const ts = (deps.now ?? systemNowMs)().toString(36);
+        const rootRunId = `root-wakegate-${ctx.jobId}-${ts}`;
+        const capMint: CapabilityMintDeps = {
+          leaseManager: deps.leaseManager,
+          outputGuard: deps.outputGuard,
+          capSocketPath: deps.capSocketPath,
+          resolvedCaps: resolved.capabilities,
+          budgetRef: `run-wakegate-${ctx.jobId}-${ts}`,
+          sessionKey: ctx.sessionKey,
+          rootRunId,
+          registerRoot: deps.registerRoot,
+        };
+        const spawnEnv = buildBrokerSpawnEnv(undefined, ctx.agentId, capMint);
+
+        // 3. Assemble the per-fire jailed-run deps (the SAME shared jail the
+        //    orchestrate tool drives). The lease env rides brokerSpawnEnv.
+        const runnerDeps: JailedScriptRunnerDeps = {
+          logger: deps.logger,
+          workspaceResolver: () => deps.resolveWorkspace(ctx.agentId),
+          capSocketPath: deps.capSocketPath,
+          sandbox: deps.sandbox,
+          brokerSpawnEnv: spawnEnv,
+          store: deps.store ?? createResultRefStore({ logger: deps.logger }),
+          baseEnv: deps.baseEnv,
+          ...(deps.now ? { now: deps.now } : {}),
+        };
+        const runFn = deps.runJailedScriptFn ?? runJailedScript;
+
+        // 4. Run the gate; fail open on EVERY rejection. The runner rejects on a
+        //    SIGKILL-timeout / 4 MiB overflow / non-zero exit / spawn error / an
+        //    unavailable jail — each maps to a wake. Never rethrow to the scheduler.
         const stdout = await runFn(runnerDeps, {
           script: gate.script,
           language: gate.language,
