@@ -143,6 +143,11 @@ function normalizeCronAddParams(params: Record<string, unknown>): Record<string,
     schedule_every_ms: schedule?.everyMs,
     schedule_at: schedule?.at,
     schedule_in_seconds: schedule?.seconds,
+    // Fold the web nested wake-gate into the flat authoring fields the cron.add
+    // body reads. The script is code for the jail and is carried through
+    // untouched -- it is never scrubbed as payload text.
+    wake_gate_script: (params.wakeGate as { script?: string } | undefined)?.script,
+    wake_gate_language: (params.wakeGate as { language?: string } | undefined)?.language,
   };
 }
 
@@ -202,6 +207,11 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
       const forwardToMain = (normalized.forward_to_main as boolean) ?? false;
       const sessionStrategy = (normalized.session_strategy as string) ?? "fresh";
       const maxHistoryTurns = (normalized.max_history_turns as number) ?? undefined;
+      // Pre-run wake-gate authoring. The script is CODE for the jail, so it is
+      // read raw and NEVER passed through sanitizeToolOutput (that helper scrubs
+      // payload TEXT). Language falls back to the store schema value.
+      const wakeGateScript = normalized.wake_gate_script as string | undefined;
+      const wakeGateLanguage = normalized.wake_gate_language as "js" | "ts" | undefined;
       const job = {
         id: randomUUID(),
         name,
@@ -213,6 +223,13 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
         forwardToMain,
         sessionStrategy: sessionStrategy as "fresh" | "rolling" | "accumulate",
         ...(maxHistoryTurns !== undefined ? { maxHistoryTurns } : {}),
+        // A wake-gate is added only when a script was authored -- an un-gated job
+        // is byte-identical to one built without these params. The script is
+        // stored verbatim (never sanitized); language falls back to the store
+        // schema value.
+        ...(wakeGateScript
+          ? { wakeGate: { script: wakeGateScript, language: wakeGateLanguage ?? "js", timeoutSeconds: 30 } }
+          : {}),
         enabled: true,
         consecutiveErrors: 0,
         createdAtMs: systemNowMs(),
