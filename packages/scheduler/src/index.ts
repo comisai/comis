@@ -15,6 +15,10 @@ export type { CronStore } from "./cron/index.js";
 export { createCronScheduler } from "./cron/index.js";
 export type { CronScheduler } from "./cron/index.js";
 
+// Pre-run wake-gate: pure, fail-open verdict parser
+export { parseWakeGateVerdict } from "./cron/index.js";
+export type { WakeGateVerdict, WakeGateRunOutcome } from "./cron/index.js";
+
 // Execution safety
 export { createExecutionTracker } from "./execution/index.js";
 export type { ExecutionTracker, ExecutionLogEntry } from "./execution/index.js";

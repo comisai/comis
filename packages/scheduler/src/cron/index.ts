@@ -13,3 +13,7 @@ export type { CronStore } from "./cron-store.js";
 // Cron scheduler (timer loop, job lifecycle, error backoff)
 export { createCronScheduler } from "./cron-scheduler.js";
 export type { CronScheduler } from "./cron-scheduler.js";
+
+// Pre-run wake-gate: pure, fail-open verdict parser
+export { parseWakeGateVerdict } from "./wake-gate-verdict.js";
+export type { WakeGateVerdict, WakeGateRunOutcome } from "./wake-gate-verdict.js";
