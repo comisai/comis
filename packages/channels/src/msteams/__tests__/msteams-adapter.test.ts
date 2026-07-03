@@ -4,6 +4,7 @@ import type { ComisLogger, MessageHandler, NormalizedMessage } from "@comis/core
 import { createMsTeamsAdapter, type MsTeamsAdapterDeps } from "../msteams-adapter.js";
 import { createMsTeamsPlugin } from "../msteams-plugin.js";
 import type { TeamsActivity } from "../message-mapper.js";
+import { classifyMSTeamsError } from "../msteams-activity.js";
 
 // A fixed clock so lastMessageAt / uptime / durationMs are deterministic.
 const FIXED_NOW = 1_700_000_000_000;
@@ -43,7 +44,12 @@ function makeLoggerSpy() {
  * mint (login endpoint) and the Connector send. Branches on the request URL.
  */
 function makeConnectorFetch(
-  opts: { sendStatus?: number; sentId?: string; token?: string } = {},
+  opts: {
+    sendStatus?: number;
+    sentId?: string;
+    token?: string;
+    retryAfter?: string;
+  } = {},
 ) {
   const sendStatus = opts.sendStatus ?? 200;
   const sentId = opts.sentId ?? "sent-1";
@@ -53,12 +59,17 @@ function makeConnectorFetch(
       return {
         ok: true,
         status: 200,
+        headers: { get: () => null },
         json: async () => ({ access_token: token, expires_in: 3600 }),
       };
     }
     return {
       ok: sendStatus >= 200 && sendStatus < 300,
       status: sendStatus,
+      headers: {
+        get: (name: string) =>
+          name.toLowerCase() === "retry-after" ? (opts.retryAfter ?? null) : null,
+      },
       json: async () => ({ id: sentId }),
     };
   });
@@ -68,6 +79,13 @@ function makeConnectorFetch(
 /** Find the Connector send call (the POST to the v3 conversations REST path). */
 function findSendCall(spy: ReturnType<typeof vi.fn>): [string, RequestInit] | undefined {
   return spy.mock.calls.find(([u]) => String(u).includes("/v3/conversations/")) as
+    | [string, RequestInit]
+    | undefined;
+}
+
+/** Find the edit/delete call — the PUT/DELETE to a specific activity under the path. */
+function findActivityCall(spy: ReturnType<typeof vi.fn>): [string, RequestInit] | undefined {
+  return spy.mock.calls.find(([u]) => String(u).includes("/activities/")) as
     | [string, RequestInit]
     | undefined;
 }
@@ -664,6 +682,193 @@ describe("createMsTeamsAdapter — outbound sendMessage via the Connector REST",
       extra: { serviceUrl: SERVICE_URL },
     });
     expect(loggerSpy.serialized()).not.toContain(token);
+  });
+});
+
+/** A shape-valid Bot Framework bot id (`28:<guid>`) — mentionable. */
+const MENTIONABLE_BOT_ID = "28:6f2c8e1a-1b2c-3d4e-5f6a-7b8c9d0e1f2a";
+
+describe("createMsTeamsAdapter — editMessage / deleteMessage via the Connector REST", () => {
+  it("PUTs an updated activity to the conversation activity path with a Bearer token", async () => {
+    const { fetchImpl, spy, token } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+    expect(adapter.editMessage).toBeInstanceOf(Function);
+
+    const result = await adapter.editMessage!("19:convo", "activity-9", "updated text", {
+      extra: { serviceUrl: SERVICE_URL },
+    });
+
+    expect(result.ok).toBe(true);
+    const call = findActivityCall(spy);
+    expect(call).toBeDefined();
+    const [url, init] = call!;
+    expect(url).toBe(
+      `${SERVICE_URL}v3/conversations/${encodeURIComponent("19:convo")}/activities/${encodeURIComponent("activity-9")}`,
+    );
+    expect(init.method).toBe("PUT");
+    const headers = init.headers as Record<string, string>;
+    expect(headers.authorization).toBe(`Bearer ${token}`);
+    const body = JSON.parse(String(init.body)) as { type: string; text: string };
+    expect(body.type).toBe("message");
+    expect(body.text).toBe("updated text");
+  });
+
+  it("DELETEs an activity at the same activity path and returns ok", async () => {
+    const { fetchImpl, spy, token } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+    expect(adapter.deleteMessage).toBeInstanceOf(Function);
+
+    const result = await adapter.deleteMessage!("19:convo", "activity-9");
+    // No serviceUrl in options → the default host-safe Connector URL is used.
+    expect(result.ok).toBe(true);
+    const call = findActivityCall(spy);
+    expect(call).toBeDefined();
+    const [url, init] = call!;
+    expect(url).toContain(
+      `/v3/conversations/${encodeURIComponent("19:convo")}/activities/${encodeURIComponent("activity-9")}`,
+    );
+    expect(init.method).toBe("DELETE");
+    expect((init.headers as Record<string, string>).authorization).toBe(`Bearer ${token}`);
+  });
+
+  it("rejects an unsafe messageId on edit with an err before any fetch (T-8)", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.editMessage!("19:convo", "../../evil", "x", {
+      extra: { serviceUrl: SERVICE_URL },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unsafe messageId on delete with an err before any fetch (T-8)", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.deleteMessage!("19:convo", "bad id");
+
+    expect(result.ok).toBe(false);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("attaches the structural HTTP status + retryAfter to an edit failure so the renderer classifies it", async () => {
+    const { fetchImpl } = makeConnectorFetch({ sendStatus: 429, retryAfter: "30" });
+    const { deps } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.editMessage!("19:convo", "activity-9", "x", {
+      extra: { serviceUrl: SERVICE_URL },
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      // A bare Error(message) would classify as `internal` and the renderer's
+      // 429 retry would silently no-op; the structural status is the contract.
+      expect((result.error as { status?: number }).status).toBe(429);
+      expect(classifyMSTeamsError(result.error)).toEqual({
+        kind: "rate_limited",
+        retryAfterMs: 30_000,
+      });
+    }
+  });
+
+  it("classifies a 404 edit failure as an activity-gone drop via the structural status", async () => {
+    const { fetchImpl } = makeConnectorFetch({ sendStatus: 404 });
+    const { deps } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.editMessage!("19:convo", "activity-9", "x", {
+      extra: { serviceUrl: SERVICE_URL },
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(classifyMSTeamsError(result.error)).toEqual({
+        kind: "not_supported",
+        capability: "edit",
+      });
+    }
+  });
+
+  it("never logs the Connector bearer token on the edit path", async () => {
+    const { fetchImpl, token } = makeConnectorFetch({ sendStatus: 403 });
+    const { deps, loggerSpy } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+    await adapter.editMessage!("19:convo", "activity-9", "x", {
+      extra: { serviceUrl: SERVICE_URL },
+    });
+    expect(loggerSpy.serialized()).not.toContain(token);
+  });
+});
+
+describe("createMsTeamsAdapter — outbound mention wiring (id-shape gated)", () => {
+  it("builds an <at> tag + mention entity for an id-shape-valid mention", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+
+    await adapter.sendMessage(
+      "19:convo",
+      `hey @[Ada](${MENTIONABLE_BOT_ID}) look`,
+      { extra: { serviceUrl: SERVICE_URL } },
+    );
+
+    const body = JSON.parse(String(findSendCall(spy)![1].body)) as {
+      text: string;
+      entities?: Array<{ type: string; text: string; mentioned: { id: string; name: string } }>;
+    };
+    expect(body.text).toContain("<at>Ada</at>");
+    expect(body.text).not.toContain("@[Ada]");
+    expect(body.entities).toBeDefined();
+    expect(body.entities![0]).toEqual({
+      type: "mention",
+      text: "<at>Ada</at>",
+      mentioned: { id: MENTIONABLE_BOT_ID, name: "Ada" },
+    });
+  });
+
+  it("leaves a non-GUID mention markup literal with NO entity (false-mention control)", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+
+    await adapter.sendMessage("19:convo", "see @[x](not-a-guid) here", {
+      extra: { serviceUrl: SERVICE_URL },
+    });
+
+    const body = JSON.parse(String(findSendCall(spy)![1].body)) as {
+      text: string;
+      entities?: unknown;
+    };
+    expect(body.text).toContain("@[x](not-a-guid)");
+    expect(body.entities).toBeUndefined();
+  });
+
+  it("wires the mention builder into editMessage too", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+
+    await adapter.editMessage!(
+      "19:convo",
+      "activity-9",
+      `ping @[Ada](${MENTIONABLE_BOT_ID})`,
+      { extra: { serviceUrl: SERVICE_URL } },
+    );
+
+    const body = JSON.parse(String(findActivityCall(spy)![1].body)) as {
+      text: string;
+      entities?: unknown[];
+    };
+    expect(body.text).toContain("<at>Ada</at>");
+    expect(body.entities).toBeDefined();
+    expect(body.entities!.length).toBe(1);
   });
 });
 
