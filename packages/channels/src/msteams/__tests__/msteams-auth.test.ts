@@ -329,6 +329,61 @@ describe("createConnectorTokenProvider — client-credentials mint", () => {
     expect(preconditionWarn).toBeDefined();
   });
 
+  it("treats a non-finite expires_in as an incomplete response and never caches it", async () => {
+    // typeof NaN === "number", so a NaN/0 expiry would pass a bare typeof guard
+    // and poison the cache (expiresAtMs = NaN), forcing a re-mint on every call.
+    const loggerSpy = makeLoggerSpy();
+    let call = 0;
+    const spy = vi.fn(async () => {
+      call += 1;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          access_token: "tok",
+          expires_in: call === 1 ? Number.NaN : 3600,
+        }),
+      };
+    });
+    const provider = createConnectorTokenProvider({
+      appId: "app-client-id",
+      appPassword: APP_PASSWORD,
+      tenantId: TENANT,
+      logger: loggerSpy.logger,
+      fetchImpl: spy as unknown as typeof fetch,
+      now: () => 1_000_000,
+    });
+    // NaN expiry → incomplete token response (error); nothing is cached.
+    const first = await provider.getToken();
+    expect(first.ok).toBe(false);
+    // The next mint returns a valid expiry and succeeds, then caches.
+    const second = await provider.getToken();
+    expect(second.ok).toBe(true);
+    const third = await provider.getToken();
+    expect(third.ok).toBe(true);
+    // Two network mints (failed NaN + valid); the third is served from cache.
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it("treats a zero/negative expires_in as an incomplete token response", async () => {
+    const loggerSpy = makeLoggerSpy();
+    const spy = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ access_token: "tok", expires_in: 0 }),
+    }));
+    const provider = createConnectorTokenProvider({
+      appId: "app-client-id",
+      appPassword: APP_PASSWORD,
+      tenantId: TENANT,
+      logger: loggerSpy.logger,
+      fetchImpl: spy as unknown as typeof fetch,
+      now: () => 1_000_000,
+    });
+    const result = await provider.getToken();
+    expect(result.ok).toBe(false);
+  });
+
   it("returns an error and warns as network when the token fetch rejects at the transport level", async () => {
     const loggerSpy = makeLoggerSpy();
     const spy = vi.fn(async () => {

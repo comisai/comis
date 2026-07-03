@@ -259,7 +259,15 @@ export function createConnectorTokenProvider(
 
       const accessToken = parsed.value.access_token;
       const expiresInSec = parsed.value.expires_in;
-      if (!accessToken || typeof expiresInSec !== "number") {
+      // typeof NaN === "number", so a bare typeof guard would let a NaN/0/negative
+      // expiry through and poison the cache (expiresAtMs = NaN → re-mint every call).
+      // The typeof arm also narrows expiresInSec to a number for the range checks.
+      if (
+        !accessToken ||
+        typeof expiresInSec !== "number" ||
+        !Number.isFinite(expiresInSec) ||
+        expiresInSec <= 0
+      ) {
         deps.logger.warn(
           {
             channelType: "msteams" as const,
