@@ -23,12 +23,14 @@ import {
   IncidentContextBudgetHistoryEntrySchema,
   IncidentPromptTimeoutSchema,
   SpawnTreeNodeSchema,
+  OrchestrateRunSchema,
 } from "./incident-report-sections.js";
 import type {
   IncidentContextBudget,
   IncidentContextBudgetHistoryEntry,
   IncidentPromptTimeout,
   SpawnTreeNode,
+  OrchestrateRun,
 } from "./incident-report-sections.js";
 
 /**
@@ -54,8 +56,9 @@ export {
   IncidentContextBudgetSchema,
   IncidentPromptTimeoutSchema,
   SpawnTreeNodeSchema,
+  OrchestrateRunSchema,
 };
-export type { IncidentContextBudget, IncidentContextBudgetHistoryEntry, IncidentPromptTimeout, SpawnTreeNode };
+export type { IncidentContextBudget, IncidentContextBudgetHistoryEntry, IncidentPromptTimeout, SpawnTreeNode, OrchestrateRun };
 
 export const IncidentReportSchema = z.object({
   schemaVersion: z.literal(1),
@@ -148,6 +151,14 @@ export const IncidentReportSchema = z.object({
    *  when the trajectory carried `capability.audited` records; schemaVersion stays
    *  1 — the `nodeBudgetBreaches` presence-conditional precedent). */
   spawnTree: SpawnTreeNodeSchema.array().optional(),
+  /** The per-run `orchestrate` PTC section reconstructed from the
+   *  session's `orchestrate.run_summary` records — one entry per run (a session may
+   *  hold several). Each carries its `failureClass`, the per-run `toolCalls`/denials
+   *  attributed by the child leaseId (a `decision:"deny"` groups under THAT run), and
+   *  the labeled `savings` estimate. Run shape + rationale: {@link OrchestrateRunSchema}.
+   *  Optional + additive (present only when the trajectory carried run_summary records;
+   *  schemaVersion stays 1 — the `spawnTree` presence-conditional precedent). */
+  orchestrate: OrchestrateRunSchema.array().optional(),
   /** The terminal per-call budget equation (optional — present only when the
    *  session's trajectory carries `context.budget` records; additive, schemaVersion
    *  stays 1). */
@@ -549,12 +560,12 @@ export interface IncidentFailure {
  * tool, "DO NOT retry" signal, most-failed tool, the content-heuristic
  * misclassification signal + offending tool/token).
  */
-// @optional-field-count: 18 — this is the obs.explain signal accumulator, the
+// @optional-field-count: 19 — this is the obs.explain signal accumulator, the
 // single shared contract every root-cause heuristic
 // reads. Each optional field is a presence-conditional signal aggregated from a
 // distinct trajectory record class (contextBudget / promptTimeout /
 // toolSchemaUnsupported / recall / cacheBreaks / spend / image / vision /
-// videoGenerated / voice / learning / channel / agentId / spawnTree / …) — absent
+// videoGenerated / voice / learning / channel / agentId / spawnTree / orchestrate / …) — absent
 // when that record class did not occur. Clustering them would couple unrelated
 // heuristics; the read sites already key on each independently. Grows by one per
 // observability signal class.
@@ -615,6 +626,13 @@ export interface IncidentSignals {
    *  mold): absent when the trajectory carried no `capability.audited` records, so
    *  the assembler omits the report section. Node shape: {@link SpawnTreeNode}. */
   spawnTree?: SpawnTreeNode[];
+  /** The per-run orchestrate PTC runs folded from
+   *  `orchestrate.run_summary` records (one entry per runId, first-seen kept), each
+   *  with its `toolCalls` joined from the per-run child-leaseId `capability.audited`
+   *  tally (EXPLAIN-04). Optional (the `spawnTree` presence-conditional mold): absent
+   *  when the trajectory carried no run_summary records, so the assembler omits the
+   *  report section. Run shape: {@link OrchestrateRun}. */
+  orchestrate?: OrchestrateRun[];
   // derived booleans/strings for the heuristic registry:
   breakerOpenedTool?: string; // from a tool.breaker_opened event OR a "DO NOT retry" log line's toolName
   hasDoNotRetrySignal: boolean; // any errorText contains "DO NOT retry"
