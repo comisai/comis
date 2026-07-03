@@ -259,7 +259,7 @@ Per-session JSONL execution traces, rotated at 5 MB per file (3 files kept by de
 
 ### `support-bundles/`
 
-Output of [`comis support-bundle`](/reference/cli#comis-support-bundle). Each run writes one timestamped `comis-support-<ts>/` directory containing `issue-summary.md`, `triage.json`, `doctor.json`, and `manifest.json` — a content-free, paste-ready diagnostic bundle assembled offline. The directory is created with mode `0o700` and every file with `0o600`; the name carries a timestamp only (no hostname). The bundle excludes secrets, message bodies, and raw config values by construction.
+Output of [`comis support-bundle`](/reference/cli#comis-support-bundle). Each run writes one timestamped `comis-support-<ts>/` directory containing `issue-summary.md`, `ai-issue-draft.md`, `triage.json`, `doctor.json`, and `manifest.json` — a content-free, paste-ready diagnostic bundle assembled offline. The directory is created with mode `0o700` and every file with `0o600`; the name carries a timestamp only (no hostname). The bundle excludes secrets, message bodies, and raw config values by construction.
 
 **Written by:** `comis support-bundle`, on each run.
 **Safe to delete?** Yes. Bundles are point-in-time diagnostic artifacts — delete them once you have shared or triaged them (the privacy guidance is to delete after triage anyway).

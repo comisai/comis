@@ -1576,7 +1576,7 @@ Requires an admin-scoped gateway token (same as `comis explain` / `comis trace`)
 
 ### `comis support-bundle`
 
-Assemble a **paste-ready support bundle** — a single directory to hand to a maintainer or attach to a bug report. Each run writes four content-free files under `<dataDir>/support-bundles/comis-support-<ts>/`: a machine-readable triage verdict, the full health-check findings, a human-readable issue summary, and a manifest carrying the redaction fingerprint. The verdict is derived from the local health checks only — no LLM is invoked, so the same install state always yields the same verdict.
+Assemble a **paste-ready support bundle** — a single directory to hand to a maintainer or attach to a bug report. Each run writes five content-free files under `<dataDir>/support-bundles/comis-support-<ts>/`: a machine-readable triage verdict, the full health-check findings, a human-readable issue summary, an AI-fillable issue draft, and a manifest carrying the redaction fingerprint. The verdict is derived from the local health checks only — no LLM is invoked, so the same install state always yields the same verdict.
 
 The command runs **fully offline**: it composes the same checks as `comis doctor` against a stopped daemon, folds them into the triage verdict, and writes the bundle without contacting the gateway. A **degraded or partial** triage is still a written bundle — the degraded verdict is the content, not a failure — so the command exits `0` on any bundle it manages to write. It is safe to run the moment something looks wrong.
 
@@ -1595,6 +1595,7 @@ The bundle is content-free by construction: it excludes secrets, message bodies,
 | File | Contents |
 |------|----------|
 | `issue-summary.md` | Human-readable triage summary, ready to paste into a bug report |
+| `ai-issue-draft.md` | A GitHub issue draft with the auto-known facts (versions, triage status, active signals, doctor summary) pre-filled and `<REQUIRED: … — do not invent>` placeholders for repro steps and expected-vs-actual, so an AI assistant can file a faithful issue without inventing missing facts |
 | `triage.json` | Machine-readable triage verdict (status, active signals, doctor summary) |
 | `doctor.json` | Full diagnostic findings from the health checks |
 | `manifest.json` | Bundle index with the redaction fingerprint and any partial-section warnings |
