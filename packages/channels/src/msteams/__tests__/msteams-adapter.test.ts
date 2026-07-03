@@ -72,7 +72,7 @@ function findSendCall(spy: ReturnType<typeof vi.fn>): [string, RequestInit] | un
     | undefined;
 }
 
-const SERVICE_URL = "https://smba.example.com/teams/";
+const SERVICE_URL = "https://smba.trafficmanager.net/teams/";
 
 function makeAdapterDeps(overrides: Partial<MsTeamsAdapterDeps> = {}) {
   const loggerSpy = makeLoggerSpy();
@@ -541,6 +541,38 @@ describe("createMsTeamsAdapter — outbound sendMessage via the Connector REST",
 
     expect(result.ok).toBe(false);
     expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a serviceUrl outside the Bot Framework host allowlist, never sending the token", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+
+    // A validly-signed inbound could carry a hostile serviceUrl; the freshly
+    // minted Connector bearer token must never be transmitted to it.
+    const result = await adapter.sendMessage("19:dm-convo", "hi", {
+      extra: { serviceUrl: "https://attacker.example/" },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("accepts a legitimate Bot Framework service host", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.sendMessage("19:dm-convo", "hi", {
+      extra: { serviceUrl: "https://smba.trafficmanager.net/amer/" },
+    });
+
+    expect(result.ok).toBe(true);
+    const sendCall = findSendCall(spy);
+    expect(sendCall).toBeDefined();
+    expect(sendCall![0].startsWith("https://smba.trafficmanager.net/amer/")).toBe(
+      true,
+    );
   });
 
   it("never logs the Connector bearer token on the outbound path", async () => {

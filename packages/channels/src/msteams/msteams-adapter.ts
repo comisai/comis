@@ -94,11 +94,27 @@ function isSafeConversationId(id: string): boolean {
   return id.length > 0 && !id.includes("..") && CONVERSATION_ID_PATTERN.test(id);
 }
 
-/** A send target is safe only over https and free of a `..` traversal segment. */
+/**
+ * Bot Framework Connector service-host suffixes. A minted Connector bearer token
+ * is only ever transmitted to a host under one of these, so an inbound activity
+ * bearing a hostile serviceUrl cannot exfiltrate the token to an arbitrary
+ * origin. A static defense-in-depth allowlist.
+ */
+const BF_SERVICE_HOST_SUFFIXES = [".botframework.com", ".trafficmanager.net"];
+
+/**
+ * A send target is safe only over https, free of a `..` traversal segment, and
+ * hosted under a Bot Framework Connector service host — so the bearer token is
+ * never sent to an arbitrary origin.
+ */
 function isSafeServiceUrl(serviceUrl: string): boolean {
   if (serviceUrl.includes("..")) return false;
   const parsed = tryCatch(() => new URL(serviceUrl));
-  return parsed.ok && parsed.value.protocol === "https:";
+  if (!parsed.ok || parsed.value.protocol !== "https:") return false;
+  const host = parsed.value.hostname.toLowerCase();
+  return BF_SERVICE_HOST_SUFFIXES.some(
+    (suffix) => host === suffix.slice(1) || host.endsWith(suffix),
+  );
 }
 
 /** Resolve the send target, preferring an explicit serviceUrl; ensures a trailing slash. */
@@ -315,7 +331,7 @@ export function createMsTeamsAdapter(
         deps.logger.warn(
           {
             channelType: "msteams" as const,
-            hint: "Reject the serviceUrl: it must be an https URL free of '..'",
+            hint: "Reject the serviceUrl: it must be an https Bot Framework Connector host (e.g. *.botframework.com / *.trafficmanager.net) free of '..'",
             errorKind: "precondition" as const,
           },
           "Connector send blocked: unsafe service url",
