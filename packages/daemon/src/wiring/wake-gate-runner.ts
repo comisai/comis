@@ -36,6 +36,7 @@ import {
   systemNowMs,
   type ComisLogger,
   type ErrorKind,
+  type EventMap,
   type OutputGuardPort,
   type PerAgentConfig,
   type TypedEventBus,
@@ -171,7 +172,7 @@ export function createWakeGateRunner(deps: WakeGateRunnerDeps): WakeGateRunner {
       // count survives into the fail-open return.
       const now = deps.now ?? systemNowMs;
       const startedAt = now();
-      const toolCalls = 0;
+      let toolCalls = 0;
       try {
         // 1. Honest degrade. Resolve the agent's autonomy through the SAME
         //    preflight-driven downshift the tool wiring uses; a disabled posture
@@ -221,54 +222,73 @@ export function createWakeGateRunner(deps: WakeGateRunnerDeps): WakeGateRunner {
         };
         const runFn = deps.runJailedScriptFn ?? runJailedScript;
 
-        // 4. Run the gate; fail open on EVERY rejection. The runner rejects on a
-        //    SIGKILL-timeout / 4 MiB overflow / non-zero exit / spawn error / an
-        //    unavailable jail — each maps to a wake. Never rethrow to the scheduler.
-        const stdout = await runFn(runnerDeps, {
-          script: gate.script,
-          language: gate.language,
-          timeoutMs: gate.timeoutSeconds * 1000,
-        });
-        // A clean resolve means the child exited 0 without timing out/overflowing
-        // (those paths REJECT). The parser fails open on empty/unparseable stdout.
-        const verdict = parseWakeGateVerdict({ stdout, exitCode: 0, timedOut: false, overflowed: false });
+        // 3b. Scope a tool-call counter to THIS fire's rootRunId. Each cap-call
+        //     the gate makes emits one `capability:audited` on the same bus, tagged
+        //     with the fire's root; count only ALLOW decisions (a deny is a blocked
+        //     call — no cost incurred) under our OWN root (a foreign root is another
+        //     fire, never counted). Content-free: the handler reads ONLY `rootRunId`
+        //     + `decision`, never the tool name / args / any payload body. The
+        //     listener is removed in the `finally` below — even on the fail-open
+        //     reject — so no listener leaks across fires. Absent bus ⇒ toolCalls
+        //     stays 0 (honest degrade, never a fabricated count).
+        const onAudited = (p: EventMap["capability:audited"]): void => {
+          if (p.rootRunId === rootRunId && p.decision === "allow") toolCalls += 1;
+        };
+        deps.eventBus?.on("capability:audited", onAudited);
+        try {
+          // 4. Run the gate; fail open on EVERY rejection. The runner rejects on a
+          //    SIGKILL-timeout / 4 MiB overflow / non-zero exit / spawn error / an
+          //    unavailable jail — each maps to a wake. Never rethrow to the scheduler.
+          const stdout = await runFn(runnerDeps, {
+            script: gate.script,
+            language: gate.language,
+            timeoutMs: gate.timeoutSeconds * 1000,
+          });
+          // A clean resolve means the child exited 0 without timing out/overflowing
+          // (those paths REJECT). The parser fails open on empty/unparseable stdout.
+          const verdict = parseWakeGateVerdict({ stdout, exitCode: 0, timedOut: false, overflowed: false });
 
-        // 5. Egress-scrub the delivered status HERE, in the gate, before the
-        //    verdict leaves. The cron-delivery listener ships `result` VERBATIM on
-        //    its raw/system_event branch (no filterResponse, OutputGuard not
-        //    applied there), so an untrusted, model-authored `deliver` string is
-        //    scrubbed at the gate or a registered secret/canary could reach the
-        //    channel. `context` is model-only (wrapped elsewhere) and `wake` is a
-        //    boolean — only `deliver` egresses verbatim, so only `deliver` is scanned.
-        if (verdict.deliver !== undefined) {
-          const scanned = deps.outputGuard.scan(verdict.deliver);
-          if (scanned.ok) {
+          // 5. Egress-scrub the delivered status HERE, in the gate, before the
+          //    verdict leaves. The cron-delivery listener ships `result` VERBATIM on
+          //    its raw/system_event branch (no filterResponse, OutputGuard not
+          //    applied there), so an untrusted, model-authored `deliver` string is
+          //    scrubbed at the gate or a registered secret/canary could reach the
+          //    channel. `context` is model-only (wrapped elsewhere) and `wake` is a
+          //    boolean — only `deliver` egresses verbatim, so only `deliver` is scanned.
+          if (verdict.deliver !== undefined) {
+            const scanned = deps.outputGuard.scan(verdict.deliver);
+            if (scanned.ok) {
+              return {
+                verdict: { ...verdict, deliver: scanned.value.sanitized },
+                durationMs: now() - startedAt,
+                toolCalls,
+              };
+            }
+            // A scrub fault must never egress unscrubbed untrusted text: DROP the
+            // deliver, degrading to a plain skip (no delivery). The pure-skip path
+            // is always safe. `wake`/`context` are preserved as parsed.
+            log.warn(
+              {
+                err: scanned.error,
+                agentId: ctx.agentId,
+                jobId: ctx.jobId,
+                errorKind: "internal" as const,
+                hint: "output-guard scan failed on the gate deliver text — dropping the deliver (skip, no delivery) to avoid unscrubbed egress",
+              },
+              "Wake-gate deliver scrub failed — dropping deliver",
+            );
             return {
-              verdict: { ...verdict, deliver: scanned.value.sanitized },
+              verdict: { wake: verdict.wake, ...(verdict.context !== undefined ? { context: verdict.context } : {}) },
               durationMs: now() - startedAt,
               toolCalls,
             };
           }
-          // A scrub fault must never egress unscrubbed untrusted text: DROP the
-          // deliver, degrading to a plain skip (no delivery). The pure-skip path
-          // is always safe. `wake`/`context` are preserved as parsed.
-          log.warn(
-            {
-              err: scanned.error,
-              agentId: ctx.agentId,
-              jobId: ctx.jobId,
-              errorKind: "internal" as const,
-              hint: "output-guard scan failed on the gate deliver text — dropping the deliver (skip, no delivery) to avoid unscrubbed egress",
-            },
-            "Wake-gate deliver scrub failed — dropping deliver",
-          );
-          return {
-            verdict: { wake: verdict.wake, ...(verdict.context !== undefined ? { context: verdict.context } : {}) },
-            durationMs: now() - startedAt,
-            toolCalls,
-          };
+          return { verdict, durationMs: now() - startedAt, toolCalls };
+        } finally {
+          // Unsubscribe on EVERY exit of the run region — clean return, deliver-scrub
+          // return, or a runFn reject that propagates to the outer fail-open catch.
+          deps.eventBus?.off("capability:audited", onAudited);
         }
-        return { verdict, durationMs: now() - startedAt, toolCalls };
       } catch (err) {
         log.warn(
           {

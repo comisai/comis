@@ -12,7 +12,7 @@
  * `capEndpointHandle` the cron-fire mint uses.
  * @module
  */
-import type { ComisLogger, PerAgentConfig } from "@comis/core";
+import type { ComisLogger, PerAgentConfig, TypedEventBus } from "@comis/core";
 import type { SandboxProvider } from "@comis/skills/tools";
 
 import type { WakeGateRunnerDeps } from "./wake-gate-runner.js";
@@ -30,6 +30,12 @@ export interface WakeGateRunnerBootInputs {
   readonly defaultWorkspaceDir: string;
   readonly agentsConfig: Record<string, PerAgentConfig>;
   readonly execToolEnv: Record<string, string | undefined>;
+  /**
+   * The daemon container — its `eventBus` is the SAME bus the socket cap
+   * chokepoint emits `capability:audited` on, so the runner scope-counts a fire's
+   * allow-decision cap-calls (`toolCalls`) off it.
+   */
+  readonly container: { readonly eventBus: TypedEventBus };
 }
 
 /** Build the {@link WakeGateRunnerDeps} from the boot context + the built cap layer. */
@@ -51,5 +57,8 @@ export function buildWakeGateRunnerDeps(
     agents: boot.agentsConfig,
     baseEnv: boot.execToolEnv,
     namespacePreflightOk,
+    // The bus the socket cap chokepoint emits `capability:audited` on — the runner
+    // scope-counts a fire's own allow-decisions off it (toolCalls).
+    eventBus: boot.container.eventBus,
   };
 }
