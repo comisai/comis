@@ -2096,7 +2096,7 @@ describe("setupSchedulers", () => {
       }
     });
 
-    it("records NO trajectory event on a SKIP — the skip opens no session (the OBS-05 producer negative)", async () => {
+    it("records NO trajectory event on a SKIP — the skip opens no session (the producer negative)", async () => {
       const runWakeGate = vi.fn(async () => wgOutcome({ wake: false }, { durationMs: 42, toolCalls: 3 }));
       const reg = captureRegistry();
       const setupSchedulers = await getSetupSchedulers();
