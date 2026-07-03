@@ -151,6 +151,7 @@ import { setupChannelHealthLogging } from "./observability/channel-health-logger
 import { createProcessMonitor } from "./process/process-monitor.js";
 import { ok, err, suppressError } from "@comis/shared";
 import { exportTrajectoryBundle } from "@comis/observability";
+import { exportSessionBundleFromKey } from "./export-session-bundle.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { writeFile as fsWriteFile, rm } from "node:fs/promises";
@@ -452,22 +453,16 @@ function buildChannelManagerDeps(deps: {
   // Complete three-layer forget for channel /new + /reset.
   const channelConversationReset = createConversationReset({ lcdStore: agents.lcdStore, piSessionAdapters, tenantId: container.config.tenantId, logger });
   // Build exportSessionBundle DI closure for the /export-trajectory slash
-  // command. Uses exportTrajectoryBundle from @comis/observability (same
-  // pipeline as `comis trace export`).
+  // command. Delegates to exportSessionBundleFromKey, which pointer-resolves the
+  // real session `.jsonl` before calling exportTrajectoryBundle — the session
+  // lives under <dataDir>/workspace/sessions/<tenant>/<channel>/, never a flat
+  // <dataDir>/sessions/<id>.jsonl path.
   const exportSessionBundle = async (sessionId: string): Promise<{ bundlePath: string }> => {
-    const sessionsDir = safePath(container.config.dataDir ?? dataDir, "sessions");
-    const sessionFile = safePath(sessionsDir, `${sessionId}.jsonl`);
-    const workspaceDir = defaultWorkspaceDir ?? safePath(container.config.dataDir ?? dataDir, "workspace");
-    const result = await exportTrajectoryBundle({
-      sessionId,
-      sessionKey: sessionId,
-      sessionFile,
-      workspaceDir,
-      traceId: sessionId,  // best-effort; bundle exporter uses for naming only
-      agentId: "unknown",  // best-effort; available in session file header
-    });
+    const activeDataDir = container.config.dataDir ?? dataDir;
+    const workspaceDir = defaultWorkspaceDir ?? safePath(activeDataDir, "workspace");
+    const result = await exportSessionBundleFromKey({ dataDir: activeDataDir, workspaceDir, sessionId });
     if (!result.ok) throw new Error(`Bundle export failed: ${result.error.kind}`);
-    return { bundlePath: result.value.bundleDir };
+    return { bundlePath: result.value.bundlePath };
   };
   return {
     container, executors, defaultAgentId, sessionManager, sessionStore,
