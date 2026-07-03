@@ -66,6 +66,36 @@ function agentsWithWeb(web: boolean): WakeGateRunnerDeps["agents"] {
   } as unknown as Record<string, PerAgentConfig>;
 }
 
+/** The resolved lease caps for a web-toggled agent: base `orch:read` + optional
+ *  `orch:web`. Mirrors {@link agentsWithWeb} → resolveAutonomy, so the fake cap
+ *  gate enforces the SAME caps the runner mints the per-fire lease with. */
+function capsForWeb(web: boolean): readonly string[] {
+  return web ? ["orch:read", "orch:web"] : ["orch:read"];
+}
+
+/** The cap a jailed gate tool requires at the endpoint (the enforced binding). */
+function requiredCapFor(tool: string): string {
+  return tool === "web_fetch" ? "orch:web" : "orch:read";
+}
+
+/**
+ * Wrap a tool responder in the cap binding the real endpoint enforces: a call
+ * whose required cap is in `leaseCaps` is served; one whose cap the lease lacks
+ * is DENIED. This makes the deny CAP-DRIVEN (denied BECAUSE the web-off lease
+ * lacks `orch:web`) — distinguishable from an unconditional error — so the same
+ * handler + same tool yields opposite outcomes purely from the lease's caps.
+ */
+function capBoundHandler(
+  leaseCaps: readonly string[],
+  serve: (tool: string, args: Record<string, unknown>) => unknown,
+): (tool: string, args: Record<string, unknown>) => unknown {
+  return (tool, args) => {
+    const cap = requiredCapFor(tool);
+    if (!leaseCaps.includes(cap)) return { error: `capability denied: ${cap}` };
+    return serve(tool, args);
+  };
+}
+
 describe.skipIf(!jailAvailable)("wake-gate runner real-jail acceptance (bwrap, Linux only)", () => {
   let workspacePath: string;
   let socketPath: string;
@@ -142,9 +172,13 @@ describe.skipIf(!jailAvailable)("wake-gate runner real-jail acceptance (bwrap, L
     "a jailed gate that web_fetches and prints {\"wake\":false} resolves to wake:false",
     { timeout: 20_000 },
     async () => {
-      // orch:web is present → the cap gate answers web_fetch; the gate decides skip.
-      server = await startCapServer((tool) =>
-        tool === "web_fetch" ? { status: 200, body: "all green" } : null,
+      // orch:web IS in this lease → the cap gate SERVES web_fetch (the same
+      // cap-bound handler DENIES it when orch:web is absent, below); the gate
+      // reads the body and decides skip.
+      server = await startCapServer(
+        capBoundHandler(capsForWeb(true), (tool) =>
+          tool === "web_fetch" ? { status: 200, body: "all green" } : null,
+        ),
       );
       const gate = {
         script: [
@@ -167,11 +201,16 @@ describe.skipIf(!jailAvailable)("wake-gate runner real-jail acceptance (bwrap, L
     "a gate needing orch:web on a web-OFF agent is denied at the cap gate (bound = the lease caps)",
     { timeout: 20_000 },
     async () => {
-      // The web-off agent's minted lease lacks orch:web, so the cap gate DENIES
-      // web_fetch — the bound is the lease caps, NOT the job's tool policy. A gate
-      // that cannot complete its check fails OPEN to wake (never a silent skip).
-      server = await startCapServer((tool) =>
-        tool === "web_fetch" ? { error: "capability denied: orch:web" } : null,
+      // The web-off agent's minted lease carries ["orch:read"] — NOT orch:web.
+      // The SAME cap-bound handler that SERVES web_fetch when orch:web is present
+      // (the acceptance test above) DENIES it here because this lease lacks it —
+      // so the deny is CAP-DRIVEN (the bound is the lease caps, not the job's tool
+      // policy), not an unconditional error. A gate that cannot complete its check
+      // fails OPEN to wake (never a silent skip).
+      server = await startCapServer(
+        capBoundHandler(capsForWeb(false), (tool) =>
+          tool === "web_fetch" ? { status: 200, body: "all green" } : null,
+        ),
       );
       const gate = {
         script: [
