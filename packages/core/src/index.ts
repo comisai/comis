@@ -28,4 +28,5 @@ export * from "./api-contracts/index.js";
 export * from "./ports/durable-run.js";
 export * from "./ports/outward-send-ledger.js";
 export * from "./ports/msteams-conversation-store.js";
+export * from "./domain/msteams-conversation-reference.js";
 export * from "./domain/durable-run.js";

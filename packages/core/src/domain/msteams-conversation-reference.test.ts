@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { parseConversationReference } from "./msteams-conversation-store.js";
+import { parseConversationReference } from "./msteams-conversation-reference.js";
 
 const validReference = {
   conversationId: "19:meeting_abc@thread.v2",
