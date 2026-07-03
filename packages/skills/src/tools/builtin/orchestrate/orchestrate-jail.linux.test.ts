@@ -44,9 +44,30 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { systemNowMs, type ComisLogger, type ResultRef } from "@comis/core";
+import {
+  systemNowMs,
+  TOOL_CAPABILITY_MAP,
+  type AgentCapability,
+  type ComisLogger,
+  type EventMap,
+  type ResultRef,
+} from "@comis/core";
+// The REAL LeaseManager (@comis/infra) backs the per-run child-lease mint seam,
+// so the leaseId attribution + the RFC-8707 audience deny + revoke-reaches-child
+// run against the genuine audience-bound, revocable lease authority — never a
+// hand-rolled stand-in (design §4.5: never a green mock). Test-only import: the
+// `.linux` suite is excluded from the skills tsc build AND the dist `.d.ts` graph
+// (architecture-graph), so the production `skills ↛ infra` boundary is untouched
+// (it resolves via the pnpm workspace symlink at test time).
+import {
+  createLeaseManager,
+  createSystemClock,
+  type IssuedLease,
+  type LeaseManager,
+} from "@comis/infra";
 import { BwrapProvider } from "../sandbox/bwrap-provider.js";
 import { createOrchestrateTool, type OrchestrateResultStore } from "./orchestrate-tool.js";
+import { createResultRefStore } from "./result-ref-store.js";
 
 /** Linux + real bwrap gate (mirrors bwrap-cap-socket.linux.test.ts). */
 function canJailRun(): boolean {
@@ -80,6 +101,44 @@ const noopStore: OrchestrateResultStore = {
   gcRun: async () => {},
   cleanupRun: async () => {},
 };
+
+// ---------------------------------------------------------------------------
+// Per-run child-lease attribution fixtures (EXPLAIN-01 / EXPLAIN-04 / INV-7).
+//
+// The cases at the bottom of the suite mint per-run CHILD leases against a REAL
+// LeaseManager via the SAME mintRunLease seam buildAutonomyToolWiring wires (a
+// child off the assembly lease, SAME rootRunId, parentLeaseId=assembly, TTL
+// clamped to the run timeout — registerRoot skipped), then exercise the leaseId
+// attribution + the RFC-8707 audience deny + revokeByRootRun end-to-end THROUGH
+// the real bwrap jail + the real cap-socket wire. Content-free throughout: the
+// assertions are on ids / enums / counts only (INV-5) — never a bearer / body /
+// stderr / tool arg.
+// ---------------------------------------------------------------------------
+
+const LEASE_AGENT_ID = "agent-vps";
+const LEASE_BUDGET_REF = "run-vps";
+const LEASE_SESSION_KEY = "sess-vps";
+/** The assembly lease outlives the run; each child clamps to the run timeout. */
+const ASSEMBLY_TTL_MS = 5 * 60_000;
+/** The child caps under test: orch:read HELD, orch:web NOT (the deny audience). */
+const READ_CAPS: readonly AgentCapability[] = ["orch:read"];
+
+/** A content-free per-cap attribution row — the `capability:audited` tuple the
+ *  endpoint emits + Plan 05 folds (ids/enums only; NEVER a bearer/body/arg). */
+interface AuditRow {
+  readonly leaseId?: string;
+  readonly tool: string;
+  readonly capability: string;
+  readonly decision: "allow" | "deny";
+}
+
+/** A child-lease record captured from the mint seam. The bearer feeds a DIRECT
+ *  LeaseManager.validate ground-truth check only — never asserted or logged. */
+interface MintedLease {
+  readonly runId: string;
+  readonly leaseId: string;
+  readonly bearer: string;
+}
 
 describe.skipIf(!jailAvailable)("orchestrate jail containment (real bwrap, Linux only)", () => {
   let workspacePath: string;
@@ -170,6 +229,147 @@ describe.skipIf(!jailAvailable)("orchestrate jail containment (real bwrap, Linux
         DB_SECRET: "sec-leak",
       },
     });
+  }
+
+  /**
+   * A cap server that authenticates each `{ bearer, method, params }` line against
+   * the REAL LeaseManager and records the content-free attribution, mirroring the
+   * capability endpoint: authenticate the bearer via a self-scoped read (any valid
+   * lease is in-audience there, so the leaseId is recovered EVEN when the tool's
+   * audience denies — the endpoint likewise holds the LeaseInfo), then take the
+   * RFC-8707 audience decision for the requested inner tool. Records
+   * `{ leaseId, tool, capability, decision }` — never the bearer/args.
+   */
+  function startLeaseCapServer(
+    leaseManager: LeaseManager,
+    audits: AuditRow[],
+  ): Promise<net.Server> {
+    return new Promise((resolve, reject) => {
+      const srv = net.createServer((conn) => {
+        let buf = "";
+        conn.setEncoding("utf8");
+        conn.on("data", (chunk: string) => {
+          buf += chunk;
+          const nl = buf.indexOf("\n");
+          if (nl === -1) return;
+          const line = buf.slice(0, nl);
+          let reply: { result: unknown } | { error: string };
+          try {
+            const req = JSON.parse(line) as {
+              bearer?: string;
+              method?: string;
+              params?: { tool?: string };
+            };
+            const bearer = req.bearer ?? "";
+            const tool = typeof req.params?.tool === "string" ? req.params.tool : "";
+            const capability =
+              TOOL_CAPABILITY_MAP[tool as keyof typeof TOOL_CAPABILITY_MAP] ?? "";
+            // Authenticate (recover the leaseId) independent of the tool audience.
+            const auth = leaseManager.validate(bearer, "capabilities.introspect");
+            // The genuine RFC-8707 audience decision for the requested inner tool.
+            const toolLease =
+              req.method === "tool.invoke"
+                ? leaseManager.validate(bearer, "tool.invoke", tool)
+                : null;
+            const decision: "allow" | "deny" = toolLease ? "allow" : "deny";
+            audits.push({
+              ...(auth ? { leaseId: auth.leaseId } : {}),
+              tool,
+              capability,
+              decision,
+            });
+            reply = toolLease ? { result: { ok: true } } : { error: "audience mismatch" };
+          } catch (err) {
+            reply = { error: String(err) };
+          }
+          conn.end(JSON.stringify(reply) + "\n");
+        });
+      });
+      srv.once("error", reject);
+      srv.listen(socketPath, () => resolve(srv));
+    });
+  }
+
+  /** Copy the REAL compiled cap-socket runtime into the fixture SDK dir so a
+   *  jailed script's `import "./orchestrate-sdk-runtime.js"` resolves the genuine
+   *  `invoke` (validate:full builds dist/ first, so the module is present). */
+  function copyRealSdkRuntime(): void {
+    const distRuntime = new URL(
+      "../../../../dist/tools/builtin/orchestrate/orchestrate-sdk-runtime.js",
+      import.meta.url,
+    ).pathname;
+    expect(existsSync(distRuntime), "dist runtime must exist (run pnpm build)").toBe(true);
+    copyFileSync(distRuntime, join(sdkAssetsDir, "orchestrate-sdk-runtime.js"));
+  }
+
+  /**
+   * Wire a lease-backed orchestrate tool over a REAL LeaseManager: mint the
+   * assembly lease, thread the per-run child mint seam (parentLeaseId=assembly,
+   * SAME rootRunId, TTL=run timeout — the buildAutonomyToolWiring shape), and
+   * capture the emitted `orchestrate:run_summary`. Returns the handles the cases
+   * assert on.
+   */
+  function setupLeaseRun(
+    caps: readonly AgentCapability[],
+    store: OrchestrateResultStore = noopStore,
+  ): {
+    leaseManager: LeaseManager;
+    rootRunId: string;
+    assembly: IssuedLease;
+    minted: MintedLease[];
+    runSummaries: EventMap["orchestrate:run_summary"][];
+    tool: ReturnType<typeof createOrchestrateTool>;
+  } {
+    const leaseManager = createLeaseManager({ clock: createSystemClock() });
+    const rootRunId = `root-vps-${systemNowMs().toString(36)}`;
+    const assembly = leaseManager.mintLease({
+      agentId: LEASE_AGENT_ID,
+      caps,
+      budgetRef: LEASE_BUDGET_REF,
+      sessionKey: LEASE_SESSION_KEY,
+      rootRunId,
+      ttlMs: ASSEMBLY_TTL_MS,
+      maxTtlMs: ASSEMBLY_TTL_MS,
+    });
+    const minted: MintedLease[] = [];
+    const runSummaries: EventMap["orchestrate:run_summary"][] = [];
+    const tool = createOrchestrateTool({
+      logger: makeLogger(),
+      workspaceResolver: () => workspacePath,
+      capSocketPath: socketPath,
+      sandbox: new BwrapProvider(),
+      sdkAssetsDir,
+      brokerSpawnEnv: {
+        placeholders: { COMIS_CAP_LEASE: assembly.bearer, COMIS_ORCH_SOCKET: socketPath },
+      },
+      store,
+      baseEnv: { PATH: "/usr/bin:/bin", HOME: workspacePath },
+      // The per-run child mint (D5): a DISJOINT child bearer per run, injected as
+      // COMIS_CAP_LEASE (overriding the assembly bearer), SAME rootRunId, TTL
+      // clamped to the run timeout — registerRoot intentionally NOT called (INV-7).
+      mintRunLease: (runId, timeoutMs) => {
+        const child = leaseManager.mintLease({
+          agentId: LEASE_AGENT_ID,
+          caps,
+          budgetRef: LEASE_BUDGET_REF,
+          sessionKey: LEASE_SESSION_KEY,
+          rootRunId,
+          parentLeaseId: assembly.leaseId,
+          ttlMs: timeoutMs,
+          maxTtlMs: timeoutMs,
+        });
+        minted.push({ runId, leaseId: child.leaseId, bearer: child.bearer });
+        return { leaseId: child.leaseId, bearer: child.bearer };
+      },
+      eventBus: {
+        emit: (_event, payload) => {
+          runSummaries.push(payload);
+        },
+      },
+      rootRunId,
+      sessionKey: LEASE_SESSION_KEY,
+    });
+    return { leaseManager, rootRunId, assembly, minted, runSummaries, tool };
   }
 
   it(
@@ -440,6 +640,152 @@ describe.skipIf(!jailAvailable)("orchestrate jail containment (real bwrap, Linux
       } finally {
         rmSync(secretDir, { recursive: true, force: true });
       }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // Per-run child-lease attribution (EXPLAIN-01 / EXPLAIN-04 / INV-7) — real
+  // bwrap jail + real cap-socket wire + the REAL LeaseManager mint seam.
+  // -------------------------------------------------------------------------
+
+  it(
+    "two sequential jailed runs mint DISJOINT per-run child leaseIds sharing the assembly rootRunId (EXPLAIN-01)",
+    { timeout: 30_000 },
+    async () => {
+      server = await startCapServer(() => null);
+      const { leaseManager, rootRunId, minted, runSummaries, tool } = setupLeaseRun(READ_CAPS);
+
+      await tool.execute("c", { script: 'console.log("R1")', language: "js" });
+      await tool.execute("c", { script: 'console.log("R2")', language: "js" });
+
+      // Two runs → two children, DISJOINT leaseIds.
+      expect(minted).toHaveLength(2);
+      expect(minted[0]!.leaseId).not.toBe(minted[1]!.leaseId);
+      // Both children share the assembly rootRunId (ground truth off the REAL lease).
+      const l0 = leaseManager.validate(minted[0]!.bearer, "capabilities.introspect");
+      const l1 = leaseManager.validate(minted[1]!.bearer, "capabilities.introspect");
+      expect(l0?.rootRunId).toBe(rootRunId);
+      expect(l1?.rootRunId).toBe(rootRunId);
+      // The emitted run_summaries carry the same disjoint leaseIds + shared root.
+      expect(runSummaries).toHaveLength(2);
+      expect(runSummaries[0]!.leaseId).toBe(minted[0]!.leaseId);
+      expect(runSummaries[1]!.leaseId).toBe(minted[1]!.leaseId);
+      expect(runSummaries[0]!.leaseId).not.toBe(runSummaries[1]!.leaseId);
+      expect(runSummaries[0]!.rootRunId).toBe(rootRunId);
+      expect(runSummaries[1]!.rootRunId).toBe(rootRunId);
+    },
+  );
+
+  it(
+    "revokeByRootRun on a real jailed run revokes the per-run child lease (INV-7 kill still reaches it)",
+    { timeout: 30_000 },
+    async () => {
+      server = await startCapServer(() => null);
+      const { leaseManager, rootRunId, minted, tool } = setupLeaseRun(READ_CAPS);
+
+      await tool.execute("c", { script: 'console.log("RUN")', language: "js" });
+      expect(minted).toHaveLength(1);
+      const child = minted[0]!;
+
+      // Pre-revoke: the child bearer validates at the cap socket (self-scoped read).
+      expect(leaseManager.validate(child.bearer, "capabilities.introspect")).not.toBeNull();
+
+      // INV-7: revoke by the tree-stable root reaches the child AND the assembly.
+      const revoked = leaseManager.revokeByRootRun(rootRunId);
+      expect(revoked.revoked).toBe(2);
+
+      // Post-revoke: the child bearer no longer validates — kill reached the child.
+      expect(leaseManager.validate(child.bearer, "capabilities.introspect")).toBeNull();
+      expect(leaseManager.validate(child.bearer, "tool.invoke", "memory_search")).toBeNull();
+    },
+  );
+
+  it(
+    "a denied in-jail orch:web call is attributed to THAT run's child leaseId (allow + deny under the run — EXPLAIN-04)",
+    { timeout: 30_000 },
+    async () => {
+      const { leaseManager, minted, runSummaries, tool } = setupLeaseRun(READ_CAPS);
+      const audits: AuditRow[] = [];
+      server = await startLeaseCapServer(leaseManager, audits);
+
+      // The jailed script needs the REAL runtime to speak the cap-socket wire.
+      copyRealSdkRuntime();
+
+      // orch:read is HELD (memory_search → allow); orch:web is NOT (web_fetch → deny).
+      const script = [
+        'import { invoke } from "./orchestrate-sdk-runtime.js";',
+        "const seen = [];",
+        'try { await invoke("memory_search", { query: "x" }); seen.push("read:ok"); } catch { seen.push("read:err"); }',
+        'try { await invoke("web_fetch", { url: "http://denied.invalid/" }); seen.push("web:ALLOWED"); } catch { seen.push("web:denied"); }',
+        'console.log("SEEN=" + JSON.stringify(seen));',
+      ].join("\n");
+
+      const result = await tool.execute("c", { script, language: "js" });
+      const text = result.content.map((b) => b.text ?? "").join("");
+
+      // The jailed run really hit the socket: the read was allowed, the web denied.
+      expect(text).toContain("read:ok");
+      expect(text).toContain("web:denied");
+      expect(text).not.toContain("web:ALLOWED");
+
+      expect(minted).toHaveLength(1);
+      const childLeaseId = minted[0]!.leaseId;
+
+      // EXPLAIN-04: BOTH the allow and the deny attribute to THAT run's child leaseId.
+      expect(audits).toContainEqual({
+        leaseId: childLeaseId,
+        tool: "memory_search",
+        capability: "orch:read",
+        decision: "allow",
+      });
+      expect(audits).toContainEqual({
+        leaseId: childLeaseId,
+        tool: "web_fetch",
+        capability: "orch:web",
+        decision: "deny",
+      });
+
+      // Ground truth on the REAL lease: the SAME child bearer is in-audience for
+      // orch:read but genuinely OUT of audience for orch:web (a real audience deny,
+      // not a dead lease); the run_summary carries the same child leaseId.
+      const childBearer = minted[0]!.bearer;
+      expect(
+        leaseManager.validate(childBearer, "tool.invoke", "memory_search")?.leaseId,
+      ).toBe(childLeaseId);
+      expect(leaseManager.validate(childBearer, "tool.invoke", "web_fetch")).toBeNull();
+      expect(runSummaries).toHaveLength(1);
+      expect(runSummaries[0]!.leaseId).toBe(childLeaseId);
+      expect(runSummaries[0]!.exitCode).toBe(0);
+    },
+  );
+
+  it(
+    "a savings-positive jailed run emits a run_summary carrying a positive labeled estSavedTokens (SAVE-03 producer)",
+    { timeout: 30_000 },
+    async () => {
+      server = await startCapServer(() => null);
+      // Three ~40 KB materialized ResultRefs the run produced (the counterfactual
+      // input); the REAL store enumerates results/ for the run aggregate.
+      for (let i = 0; i < 3; i++) {
+        writeFileSync(join(workspacePath, "results", `big-${i}.jsonl`), "x".repeat(40 * 1024));
+      }
+      const store = createResultRefStore({ logger: makeLogger() });
+      const { runSummaries, tool } = setupLeaseRun(READ_CAPS, store);
+
+      // A ~2 KB summary re-enters context; the 120 KB stays materialized on disk.
+      await tool.execute("c", {
+        script: 'console.log("SUMMARY".padEnd(2000, "."));',
+        language: "js",
+      });
+
+      expect(runSummaries).toHaveLength(1);
+      const rs = runSummaries[0]!;
+      expect(rs.resultRefCount).toBe(3);
+      // A LABELED estimate ≈ (120 KB − 2 KB) / 4 — strictly positive, ratio in (0,1].
+      expect(rs.estSavedTokens ?? 0).toBeGreaterThan(0);
+      expect(rs.savedRatio ?? 0).toBeGreaterThan(0);
+      expect(rs.savedRatio ?? 0).toBeLessThanOrEqual(1);
+      expect(rs.exitCode).toBe(0);
     },
   );
 });
