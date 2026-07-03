@@ -59,10 +59,16 @@ import {
 } from "@comis/core";
 import { createToolResultSizeGuard } from "@comis/agent";
 
-import { resolveJailAgentCli, resolveJailNode, SYSTEM_RO_PATHS } from "../sandbox/bwrap-provider.js";
+import {
+  resolveJailAgentCli,
+  resolveJailNode,
+  resolveJailPython,
+  SYSTEM_RO_PATHS,
+} from "../sandbox/bwrap-provider.js";
 import type {
   JailAgentCliResolution,
   JailNodeResolution,
+  JailPythonResolution,
   SandboxProvider,
 } from "../sandbox/types.js";
 import { loadSeccompProfileFd, closeSeccompProfileFd } from "../sandbox/seccomp-profile.js";
@@ -93,8 +99,8 @@ const OrchestrateParams = Type.Object({
     description:
       "The script body to run in the jailed child. It may `import { comis_tools } from \"./comis_tools.js\"` and chain the capability-scoped tools; only what it console.logs (stdout) re-enters context.",
   }),
-  language: Type.Union([Type.Literal("ts"), Type.Literal("js")], {
-    description: 'The script language: "ts" or "js".',
+  language: Type.Union([Type.Literal("ts"), Type.Literal("js"), Type.Literal("py")], {
+    description: 'The script language: "ts", "js", or "py".',
   }),
   timeoutMs: Type.Optional(
     Type.Integer({ description: "Hard wall-clock timeout for the jailed run (ms). Default 60000." }),
@@ -106,7 +112,7 @@ const OrchestrateParams = Type.Object({
 
 type OrchestrateParamsType = {
   script: string;
-  language: "ts" | "js";
+  language: "ts" | "js" | "py";
   timeoutMs?: number;
   captureStdout?: boolean;
 };
@@ -181,6 +187,13 @@ export interface OrchestrateToolDeps {
   /** The jail-node resolver (default the real `resolveJailNode`). */
   readonly resolveJailNodeFn?: () => JailNodeResolution;
   /**
+   * The jail-python resolver (default `defaultResolveJailPython`, which probes
+   * the ABSOLUTE host interpreter bin paths). Consumed ONLY on a `language:"py"`
+   * run: an `unavailable` verdict REFUSES the run (fail-closed, never a silent
+   * unjailed run); a `path` verdict supplies the absolute `pythonBin` to invoke.
+   */
+  readonly resolveJailPythonFn?: () => JailPythonResolution;
+  /**
    * The comis-agent CLI-binary resolver (default `defaultResolveJailAgentCli`,
    * which resolves the dist entry + reads the committed manifest sha via
    * `import.meta.url` and calls `resolveJailAgentCli`). A missing or
@@ -245,7 +258,12 @@ export interface OrchestrateToolDeps {
 // ---------------------------------------------------------------------------
 
 /** The SDK asset filenames copied into the jail workspace. */
-const SDK_ASSETS = ["comis_tools.d.ts", "comis_tools.js", "orchestrate-sdk-runtime.js"] as const;
+const SDK_ASSETS = [
+  "comis_tools.d.ts",
+  "comis_tools.js",
+  "comis_tools.py",
+  "orchestrate-sdk-runtime.js",
+] as const;
 
 /** The comis-built comis-agent entry that is sha256-pinned + RO-bound. */
 const COMIS_AGENT_ENTRY_FILENAME = "comis-agent-entry.js";
@@ -408,6 +426,7 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
   const log = deps.logger.child({ submodule: "orchestrate-tool" });
   const spawnFn = deps.spawnFn ?? defaultSpawn;
   const resolveNode = deps.resolveJailNodeFn ?? defaultResolveJailNode;
+  const resolvePython = deps.resolveJailPythonFn ?? defaultResolveJailPython;
   const loadSeccompFd = deps.loadSeccompFdFn ?? loadSeccompProfileFd;
   const now = deps.now ?? systemNowMs;
   const sdkAssetsDir = deps.sdkAssetsDir ?? dirname(fileURLToPath(import.meta.url));
@@ -532,6 +551,35 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
           );
         }
 
+        // 3a. Select the SCRIPT interpreter, honest-degrading the "py" surface.
+        //     ts/js run under the daemon node; "py" runs under the RO-bound host
+        //     python3 resolved by `resolvePython`. Resolve + refuse-on-unavailable
+        //     HERE — before buildArgs and the per-run lease mint — mirroring the
+        //     node refuse above: an absent interpreter NEVER falls through to a
+        //     silent unjailed run (INV-1 fail-closed). The interpreter is invoked
+        //     by its ABSOLUTE path (bind-mode node's execPath, or the resolved
+        //     pythonBin): a bare `node`/`python3` is not on the jail's scrubbed
+        //     PATH and would exit 127 (the #236 lesson). Python has no BIND net, so
+        //     `resolveJailPython` returns the absolute pythonBin directly.
+        let interp: string;
+        if (params.language === "py") {
+          const jailPython = resolvePython();
+          if (jailPython.mode === "unavailable") {
+            log.warn(
+              { runId, errorKind: "precondition" as const, hint: jailPython.hint },
+              "orchestrate 'py' surface unavailable — refusing to run",
+            );
+            throwToolError(
+              "not_implemented",
+              "The orchestrate 'py' surface is unavailable on this host (no python3 inside the jail).",
+              { hint: jailPython.hint },
+            );
+          }
+          interp = jailPython.pythonBin;
+        } else {
+          interp = jailNode.mode === "bind" ? jailNode.execPath : "node";
+        }
+
         // 3b. Honest-degrade for the CLI surface: resolve the sha256-pinned
         //     comis-agent binary. UNLIKE the node resolve, an unavailable
         //     (missing/tampered) binary does NOT refuse the whole jail — it
@@ -575,15 +623,10 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
           jailNode,
           jailAgentCli,
         });
-        // The jailed command runs the script with node, from the workspace cwd.
-        // In BIND mode the daemon's node is --ro-bind'd at its absolute execPath
-        // but is NOT on the jail's scrubbed PATH (e.g. /usr/bin:/bin), so a bare
-        // `node` exits 127 (command not found). Invoke it by the resolved absolute
-        // path; in PATH mode the bare name resolves off a bound PATH dir. Latent
-        // since #236 — surfaced by the CI runner's hostedtoolcache node, which sits
-        // outside SYSTEM_RO_PATHS → BIND. Guarded by orchestrate-tool.test.ts.
-        const nodeBin = jailNode.mode === "bind" ? jailNode.execPath : "node";
-        const command = `${nodeBin} ${scriptName}`;
+        // Run the script with the interpreter resolved at step 3a (node for ts/js,
+        // python3 for py), invoked by its ABSOLUTE path from the workspace cwd — a
+        // bare `node`/`python3` is not on the jail's scrubbed PATH and exits 127.
+        const command = `${interp} ${scriptName}`;
         const bin = args[0]!;
         const spawnArgs = [...args.slice(1), "/bin/bash", "-c", command];
 
@@ -841,6 +884,20 @@ const defaultSpawn: OrchestrateSpawnFn = (bin, args, opts) =>
 /** The default jail-node resolver — probe the jail PATH / bind the daemon node. */
 function defaultResolveJailNode(): JailNodeResolution {
   return resolveJailNode({ pathDirs: SYSTEM_RO_PATHS, execPath: readExecPath() });
+}
+
+/**
+ * The default jail-python resolver — probe the ABSOLUTE host interpreter bin
+ * paths (NOT the SYSTEM_RO_PATHS directory roots `defaultResolveJailNode` uses).
+ * Python has no BIND fallback the way node does (there is no daemon-python to
+ * ro-bind), so probing roots (`/usr`,`/bin`) would falsely report `unavailable`
+ * on a host that has `/usr/bin/python3`. All three candidates live under the
+ * RO-bound `/usr`/`/bin`, so a hit is reachable in-jail at the same absolute path.
+ */
+function defaultResolveJailPython(): JailPythonResolution {
+  return resolveJailPython({
+    interpreterPaths: ["/usr/bin/python3", "/bin/python3", "/usr/local/bin/python3"],
+  });
 }
 
 /** Read `process.execPath` through a narrow boundary (the daemon's own node). */

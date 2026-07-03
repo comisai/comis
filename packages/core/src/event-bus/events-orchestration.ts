@@ -382,7 +382,7 @@ export interface OrchestrationEvents {
     /** The owning session — an attribution key. Absent for a heartbeat/cron run with no session. */
     sessionKey?: string;
     /** The script language (mirrors the orchestrate `language` param). */
-    language: "ts" | "js";
+    language: "ts" | "js" | "py";
     /** Wall-clock duration of the run (ms). */
     durationMs: number;
     /** The jailed child's process exit code (0 on success; the real code on a non-zero exit; a sentinel on kill/spawn-fail). */
