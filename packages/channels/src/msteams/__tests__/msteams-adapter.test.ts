@@ -13,6 +13,7 @@ import { ok } from "@comis/shared";
 import { createMsTeamsAdapter, type MsTeamsAdapterDeps } from "../msteams-adapter.js";
 import { createMsTeamsPlugin } from "../msteams-plugin.js";
 import type { TeamsActivity } from "../message-mapper.js";
+import { MSTEAMS_APPROVAL_VERB } from "../msteams-actions.js";
 import type { TeamsReactionActivity } from "../msteams-reaction-binder.js";
 import { classifyMSTeamsError } from "../msteams-activity.js";
 import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
@@ -152,6 +153,26 @@ function messageActivity(overrides: Partial<TeamsActivity> = {}): TeamsActivity 
     },
     from: { id: "29:user", aadObjectId: "allowed-aad", name: "User" },
     serviceUrl: "https://smba.example.com/teams/",
+    ...overrides,
+  };
+}
+
+/** The opaque signed callback string a rendered approval button carries. */
+const CB = "v1.approve.Abc123Def456.QWERTYuiop123456";
+
+/** A well-formed inbound card-action invoke (allowlisted clicker, rendered verb). */
+function invokeActivity(overrides: Partial<TeamsActivity> = {}): TeamsActivity {
+  return {
+    type: "invoke",
+    id: "invoke-activity-1",
+    name: "adaptiveCard/action",
+    conversation: {
+      id: "19:channel-convo@thread.tacv2",
+      conversationType: "channel",
+      tenantId: TENANT,
+    },
+    from: { id: "29:user", aadObjectId: "allowed-aad", name: "User" },
+    value: { action: { verb: MSTEAMS_APPROVAL_VERB, data: { cb: CB } } },
     ...overrides,
   };
 }
@@ -404,6 +425,84 @@ describe("createMsTeamsAdapter — inbound handleWebhookEvents → processEvent 
           (p as { errorKind?: string }).errorKind === "internal",
       );
     expect(internalError).toBeDefined();
+  });
+});
+
+describe("createMsTeamsAdapter — card-action invoke routing + default-deny", () => {
+  it("routes an allowlisted clicker's card-action invoke into onMessage as a button callback", () => {
+    const { deps } = makeAdapterDeps();
+    const adapter = createMsTeamsAdapter(deps);
+    const handler = vi.fn<MessageHandler>();
+    adapter.onMessage(handler);
+
+    adapter.handleWebhookEvents([invokeActivity()]);
+
+    // The invoke traverses processCardAction → the shared allowFrom gate → onMessage.
+    expect(handler).toHaveBeenCalledOnce();
+    const delivered = handler.mock.calls[0]![0] as NormalizedMessage;
+    expect(delivered.channelType).toBe("msteams");
+    // The clicker id is the VERIFIED directory id off the activity.
+    expect(delivered.senderId).toBe("allowed-aad");
+    // The inbound-gate button-intercept contract: isButtonCallback + callbackData.
+    expect(delivered.metadata.isButtonCallback).toBe(true);
+    expect(delivered.metadata.callbackData).toBe(CB);
+    expect(typeof delivered.metadata.traceId).toBe("string");
+  });
+
+  it("drops a card-action invoke from a non-allowlisted clicker at the same allowFrom gate, never reaching onMessage (default-deny)", () => {
+    const { deps, loggerSpy } = makeAdapterDeps();
+    const adapter = createMsTeamsAdapter(deps);
+    const handler = vi.fn<MessageHandler>();
+    adapter.onMessage(handler);
+
+    adapter.handleWebhookEvents([
+      invokeActivity({ from: { id: "29:stranger", aadObjectId: "stranger-aad" } }),
+    ]);
+
+    expect(handler).not.toHaveBeenCalled();
+    const dropWarn = loggerSpy.warn.mock.calls
+      .map((c) => c[0])
+      .find(
+        (p) =>
+          p !== null &&
+          typeof p === "object" &&
+          (p as { errorKind?: string }).errorKind === "precondition",
+      );
+    expect(dropWarn).toBeDefined();
+    expect((dropWarn as { hint?: string }).hint).toContain("allowFrom");
+  });
+
+  it("still drops the unlisted clicker when the payload forges data.userId as the allowlisted id (gate keys on from.aadObjectId, not the payload)", () => {
+    const { deps } = makeAdapterDeps();
+    const adapter = createMsTeamsAdapter(deps);
+    const handler = vi.fn<MessageHandler>();
+    adapter.onMessage(handler);
+
+    // A hostile clicker cannot self-authorize by claiming the allowlisted id in the
+    // client-controllable card data — the gate reads the verified from.aadObjectId.
+    const forged = invokeActivity({
+      from: { id: "29:stranger", aadObjectId: "stranger-aad" },
+    });
+    const forgedData = forged.value!.action!.data! as Record<string, unknown>;
+    forgedData.userId = "allowed-aad";
+    adapter.handleWebhookEvents([forged]);
+
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("drops a card-action invoke carrying a verb this bot never rendered (normalizeCardAction returns null)", () => {
+    const { deps } = makeAdapterDeps();
+    const adapter = createMsTeamsAdapter(deps);
+    const handler = vi.fn<MessageHandler>();
+    adapter.onMessage(handler);
+
+    adapter.handleWebhookEvents([
+      invokeActivity({
+        value: { action: { verb: "comis.card.unknown", data: { cb: CB } } },
+      }),
+    ]);
+
+    expect(handler).not.toHaveBeenCalled();
   });
 });
 
