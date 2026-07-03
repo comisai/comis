@@ -12,7 +12,7 @@
  */
 
 import type { AppContainer, SkillsConfig, ClockPort, TimerPort } from "@comis/core";
-import { safePath, SkillsConfigSchema, formatSessionKey, systemNowMs, systemSetTimeout, resolveAutonomy } from "@comis/core";
+import { safePath, SkillsConfigSchema, formatSessionKey, systemNowMs, systemSetTimeout, resolveAutonomy, wrapExternalContent } from "@comis/core";
 import type { BoundedAutonomyBudgetHolder } from "@comis/agent";
 import type { ComisLogger, LeaseManager } from "@comis/infra";
 import type { createSessionStore } from "@comis/memory";
@@ -26,10 +26,12 @@ import {
   resolveEffectiveHeartbeatConfig,
   resolveHeartbeatSessionKey,
   type CronScheduler,
+  type CronJob,
   type SystemEventQueue,
   type ExecutionTracker,
 } from "@comis/scheduler";
 import type { ComputeDailyResetNextRun } from "@comis/core";
+import type { WakeGateRunner } from "./wake-gate-runner.js";
 
 /**
  * Record a completed `__REFLECT__` run to the firing
@@ -113,6 +115,23 @@ export interface SchedulersResult {
 }
 
 // ---------------------------------------------------------------------------
+// Wake-gate context injection
+// ---------------------------------------------------------------------------
+
+/**
+ * Return a copy of `job` with `wrapped` (an already-`wrapExternalContent`-wrapped
+ * gate finding) prepended to the text the model reads: the `agent_turn` message or
+ * the `system_event` text. A job whose gate does not inject is never passed here,
+ * so a no-gate / no-context fire stays byte-identical.
+ */
+function withInjectedContext(job: CronJob, wrapped: string): CronJob {
+  if (job.payload.kind === "agent_turn") {
+    return { ...job, payload: { ...job.payload, message: `${wrapped}\n\n${job.payload.message}` } };
+  }
+  return { ...job, payload: { ...job.payload, text: `${wrapped}\n\n${job.payload.text}` } };
+}
+
+// ---------------------------------------------------------------------------
 // Setup function
 // ---------------------------------------------------------------------------
 
@@ -155,8 +174,13 @@ export async function setupSchedulers(deps: {
    *  reads `holder.current` at FIRE time; registerRoot anchors the cron run. Optional
    *  — absent / `current` undefined ⇒ no mint. */
   boundedAutonomyHolder?: BoundedAutonomyBudgetHolder;
+  /** The daemon-wide LATE-BOUND pre-payload wake-gate runner. The schedulers are
+   *  built in bootAgents BEFORE the cap layer that constructs the runner (bootChannels),
+   *  so executeJob reads `ref` at FIRE time. Absent / `ref` undefined ⇒ no gate (a job
+   *  runs exactly as today). A job WITHOUT `wakeGate` never consults it. */
+  wakeGateRunnerRef?: { ref?: WakeGateRunner };
 }): Promise<SchedulersResult> {
-  const { container, workspaceDirs, sessionStore, sessionManager, schedulerLogger, agentLogger, skillsLogger, subprocessEnv, systemEventQueue, onCronWake, clock, timers, leaseManager, boundedAutonomyHolder } = deps;
+  const { container, workspaceDirs, sessionStore, sessionManager, schedulerLogger, agentLogger, skillsLogger, subprocessEnv, systemEventQueue, onCronWake, clock, timers, leaseManager, boundedAutonomyHolder, wakeGateRunnerRef } = deps;
   const agents = container.config.agents; // Always populated after schema transform
   const schedulerConfig = container.config.scheduler;
 
@@ -201,10 +225,53 @@ export async function setupSchedulers(deps: {
 
     const scheduler = createCronScheduler({
       store: agentCronStore,
-      executeJob: async (job) => {
+      executeJob: async (jobInput) => {
+        // `let job` is the seam: the wake-gate may reassign it with injected
+        // context, and every downstream `job.` read then resolves against the
+        // (possibly enriched) local. No gate ⇒ job === jobInput ⇒ byte-identical.
+        let job: CronJob = jobInput;
         const startTs = systemNowMs();
         const jobLogger = schedulerLogger.child({ agentId, jobId: job.id, jobName: job.name });
         try {
+          // Pre-payload wake-gate. When the job carries a `wakeGate` AND a runner
+          // ref is populated (read at FIRE time — the runner is built after this
+          // scheduler, in the cap layer), run the gate BEFORE the payload branch:
+          //   - runAsToday (host cannot jail / autonomy off) → fall through unchanged.
+          //   - wake:false → skip the payload entirely (the model never runs), record
+          //     a visible skipped row, and return status:ok so the job re-arms cleanly
+          //     (a status:error would wrongly trigger backoff).
+          //   - wake:true + context → prepend the wrapExternalContent-wrapped finding
+          //     so the model starts informed, then fall through to the normal dispatch.
+          // runWakeGate never throws (it fails open to wake), so a broken gate can
+          // never silently drop a monitored job. A job without `wakeGate` (or with no
+          // runner ref) is byte-identical to today.
+          const gateRunner = wakeGateRunnerRef?.ref;
+          if (job.wakeGate && gateRunner) {
+            const verdict = await gateRunner.runWakeGate(job.wakeGate, {
+              agentId: job.agentId,
+              jobId: job.id,
+              sessionKey: resolveMainSessionKey(job.agentId),
+            });
+            if (!("runAsToday" in verdict)) {
+              if (!verdict.wake) {
+                // wake:false → skip. Deliver-on-skip is a later slice; this phase
+                // skips regardless of verdict.deliver — the model does not run.
+                jobLogger.info(
+                  { step: "wake-gate", wake: false },
+                  "Wake-gate skipped the job (no model turn)",
+                );
+                await agentExecTracker.record({
+                  ts: systemNowMs(), jobId: job.id, status: "skipped",
+                  durationMs: systemNowMs() - startTs, summary: "wake-gate: skipped",
+                });
+                return { status: "ok" as const, summary: "wake-gate: skipped" };
+              }
+              if (verdict.context) {
+                job = withInjectedContext(job, wrapExternalContent(verdict.context, { source: "unknown" }));
+              }
+            }
+          }
+
           // Route main-session systemEvent jobs through heartbeat pipeline
           if (job.sessionTarget === "main" && job.payload.kind === "system_event" && systemEventQueue) {
             const mainSessionKey = resolveMainSessionKey(agentId);
