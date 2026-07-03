@@ -199,13 +199,13 @@ describe("createMsTeamsAdapter — inbound handleWebhookEvents → processEvent 
     expect(delivered.text).toBe("hello teams");
     expect(typeof delivered.metadata.traceId).toBe("string");
 
-    // LIVE-01: lastMessageAt advances from undefined to the injected clock.
+    // lastMessageAt advances from undefined to the injected clock.
     expect(before).toBeUndefined();
     const after = adapter.getStatus?.().lastMessageAt;
     expect(typeof after).toBe("number");
     expect(after).toBe(FIXED_NOW);
 
-    // OBS-01: an INFO inbound line carries the pipeline step, messageId and traceId.
+    // An INFO inbound line carries the pipeline step, messageId and traceId.
     const inboundInfo = loggerSpy.info.mock.calls
       .map((c) => c[0])
       .find(
@@ -574,7 +574,7 @@ describe("createMsTeamsPlugin — honest text-only capabilities", () => {
     });
   });
 
-  it("keeps 228 out of the EditPlace union and the adaptivecard button variant", () => {
+  it("keeps msteams out of the EditPlace union and the adaptivecard button variant", () => {
     const { deps } = makeAdapterDeps();
     const plugin = createMsTeamsPlugin(deps);
     // editMessages:false keeps msteams out of the closed EditPlaceChannel union.
