@@ -25,8 +25,11 @@ import { classifyMsTeamsError } from "./errors.js";
 const BF_ISSUER = "https://api.botframework.com";
 
 /**
- * Bot Framework JWKS — a remote key set with jose's built-in caching, key-id
- * rotation, and algorithm pinning. Constructed once at module scope.
+ * Bot Framework JWKS — a remote key set with jose's built-in caching and key-id
+ * rotation. `createRemoteJWKSet` performs key selection (by `kid`), not
+ * verification-algorithm pinning; the accepted signature algorithm is pinned
+ * separately as an explicit `algorithms` allowlist on the verify call below.
+ * Constructed once at module scope.
  */
 const BF_JWKS = createRemoteJWKSet(
   new URL("https://login.botframework.com/v1/.well-known/keys"),
@@ -74,7 +77,7 @@ export function createActivityJwtValidator(
     }
     const token = authHeader.slice("Bearer ".length);
     const verified = await fromPromise(
-      jwtVerify(token, keySet, { issuer, audience: appId }),
+      jwtVerify(token, keySet, { issuer, audience: appId, algorithms: ["RS256"] }),
     );
     if (!verified.ok) {
       logger?.debug(

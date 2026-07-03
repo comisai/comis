@@ -118,6 +118,26 @@ describe("createActivityJwtValidator — jose signature + claim verification", (
     const result = await validate(`Bearer ${token}`, APP_ID);
     expect(result.ok).toBe(false);
   });
+
+  it("rejects a non-RS256 token (RS384) even when signed by a trusted key", async () => {
+    // A trusted RS384 keypair whose public key is in the key set. Without an
+    // explicit RS256 allowlist on the verify call, jose accepts this RS384
+    // signature; pinning algorithms: ["RS256"] must reject any other algorithm.
+    const { publicKey, privateKey } = await generateKeyPair("RS384", {
+      extractable: true,
+    });
+    const jwk = await exportJWK(publicKey);
+    const jwks = createLocalJWKSet({ keys: [jwk] });
+    const token = await new SignJWT({})
+      .setProtectedHeader({ alg: "RS384" })
+      .setIssuer(BF_ISSUER)
+      .setAudience(APP_ID)
+      .setExpirationTime("5m")
+      .sign(privateKey);
+    const validate = createActivityJwtValidator({ jwks, issuer: BF_ISSUER });
+    const result = await validate(`Bearer ${token}`, APP_ID);
+    expect(result.ok).toBe(false);
+  });
 });
 
 // --- Outbound Connector token mint (client-credentials, cached) ---
