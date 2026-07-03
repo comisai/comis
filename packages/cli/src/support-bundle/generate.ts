@@ -10,9 +10,12 @@
  *  2. build a local doctor context and run the nine health checks daemon-down,
  *  3. read the cross-session fleet digest over the --since window through the
  *     sanctioned offline seam, and build the config-posture membership digest,
- *  4. fold the doctor aggregate + fleet into the deterministic triage verdict,
- *  5. shape `doctor.json`, render the issue summary and the AI issue draft,
- *  6. write the up-to-seven-file bundle through the symlink-safe writer.
+ *  4. on --session, embed the offline IncidentReport (and, on --deep, resolve the
+ *     real session file) and read the window-scoped audit {total,byKind} digest,
+ *  5. fold the doctor aggregate + fleet + embedded explain into the triage verdict,
+ *  6. shape `doctor.json`, render the issue summary and the AI issue draft,
+ *  7. create the bundle dir, export the deep trace bundle into it (--deep), then
+ *     write the up-to-nine-file bundle through the symlink-safe writer.
  *
  * Everything is `Result`-chained: the orchestrator throws nothing (the command
  * that invokes it owns the throw boundary and surfaces the completion/failure
@@ -34,6 +37,7 @@
 import { safePath } from "@comis/core";
 import type { FleetHealthReport } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
+import { exportTrajectoryBundle } from "@comis/observability";
 
 import { runDoctorChecks } from "../doctor/check-runner.js";
 import { configHealthCheck } from "../doctor/checks/config-health.js";
@@ -48,16 +52,21 @@ import { lcdHealthCheck } from "../doctor/checks/lcd-health.js";
 import { resolveDoctorConfig } from "../doctor/config-resolve.js";
 import { buildDoctorJson } from "../doctor/output.js";
 import { readCliVersion } from "../util/cli-version.js";
-import { assembleFleetHealthReportOffline } from "../util/offline-obs.js";
+import {
+  assembleFleetHealthReportOffline,
+  readAuditSummaryOffline,
+  suggestWorstSessionOffline,
+} from "../util/offline-obs.js";
 import type { DoctorCheck, DoctorContext, DoctorResult } from "../doctor/types.js";
 
 import { buildSupportTriage } from "./triage.js";
 import { buildConfigPosture } from "./config-posture.js";
 import { collectHostSnapshot, type CollectHostSnapshotDeps } from "./host-snapshot.js";
+import { embedSession, type EmbedSessionResult } from "./session-embed.js";
 import { renderIssueSummary } from "./render-issue.js";
 import { renderAiIssueDraft } from "./render-ai-draft.js";
-import { writeSupportBundle } from "./writer.js";
-import type { SupportBundleWarning, ConfigPostureDigest } from "./types.js";
+import { writeSupportBundle, ensureSupportBundleDir } from "./writer.js";
+import type { SupportBundleWarning, ConfigPostureDigest, AuditSummary } from "./types.js";
 
 /**
  * The nine health checks, composed in the same execution order the doctor
@@ -111,6 +120,34 @@ export interface GenerateSupportBundleDeps {
    * `isDaemonRunning`, and `withClient`.
    */
   readonly assembleFleet?: (dataDir: string, sinceHours: number) => Promise<FleetHealthReport>;
+  /** The `--session <ref>` argument (sessionKey | traceId | rootRunId) when focusing on one session. */
+  readonly session?: string;
+  /** Whether `--deep` was requested — embeds the per-session trace bundle (requires `--session`). */
+  readonly deep?: boolean;
+  /**
+   * The `--session`/`--deep` embed engine, defaulting to the real `embedSession`
+   * (which assembles the offline IncidentReport and resolves the deep session
+   * file through the pointer seam). Injected in tests so a unit run never loads
+   * the @comis/daemon runtime graph the offline assembler dynamic-imports.
+   */
+  readonly embedSessionFn?: typeof embedSession;
+  /**
+   * The offline audit `{ total, byKind }` window read, defaulting to
+   * `readAuditSummaryOffline`. Reads the local observability store directly (no
+   * daemon); a missing/unreadable store returns `undefined` → a manifest warning.
+   */
+  readonly readAudit?: typeof readAuditSummaryOffline;
+  /**
+   * The trajectory-bundle exporter, defaulting to the real `exportTrajectoryBundle`.
+   * Injected in tests so `--deep` unit runs stay hermetic (the real exporter opens
+   * the session DAG through the pi SDK SessionManager).
+   */
+  readonly exportTrace?: typeof exportTrajectoryBundle;
+  /**
+   * The CLI-side worst-session ranking, defaulting to `suggestWorstSessionOffline`.
+   * Best-effort, offline, soft-failing; surfaces a hint when no `--session` is given.
+   */
+  readonly suggestWorst?: typeof suggestWorstSessionOffline;
 }
 
 /** Success payload consumed by the command wiring. */
@@ -119,6 +156,11 @@ export interface GenerateSupportBundleResult {
   readonly status: string;
   readonly activeSignals: string[];
   readonly warnings: SupportBundleWarning[];
+  /**
+   * The worst-session hint surfaced when no `--session` was given (the CLI-side
+   * stopgap ranking). Omitted when a session was focused or none could be ranked.
+   */
+  readonly worstSessionKey?: string;
 }
 
 /**
@@ -288,32 +330,123 @@ export async function generateSupportBundle(
     configPosture = buildConfigPosture(resolution.rawTopLevelKeys, fleet?.findings ?? []);
   }
 
-  // Pure assembly: the fleet-enriched reducer verdict, the doctor.json shape, and
-  // the render. Fleet is passed only when present so its summary is omitted on a
-  // thrown read.
+  // Session embed: on --session, assemble the offline IncidentReport and — on
+  // --deep — resolve the real session file through the pointer seam. The engine
+  // never throws: a bad ref folds into an "explain"/"trace-export" warning and the
+  // core bundle still generates.
+  let embed: EmbedSessionResult | undefined;
+  if (deps.session !== undefined) {
+    embed = await (deps.embedSessionFn ?? embedSession)({
+      ref: deps.session,
+      deep: deps.deep ?? false,
+      dataDir: deps.dataDir,
+    });
+    sectionWarnings.push(...embed.warnings);
+  }
+
+  // Audit compose: always attempt the window-scoped {total,byKind} read from the
+  // offline store. A missing/unreadable store returns undefined — omit
+  // audit-summary.json and record an honest warning (never a crash).
+  const auditSummary: AuditSummary | undefined = (deps.readAudit ?? readAuditSummaryOffline)(
+    deps.dataDir,
+    deps.sinceHours,
+    deps.nowMs,
+  );
+  if (auditSummary === undefined) {
+    sectionWarnings.push({
+      source: "audit",
+      code: "audit_store_unreadable",
+      count: 1,
+      message:
+        "Audit-summary omitted: the observability store was absent or unreadable, so the " +
+        "window audit counts could not be read.",
+    });
+  }
+
+  // Worst-session hint (the CLI-side stopgap): only when NOT focusing a session,
+  // rank the local rollups so the command can tip the operator at a session to
+  // drill into. Best-effort — an empty or unreadable tree yields no hint.
+  let worstSessionKey: string | undefined;
+  if (deps.session === undefined) {
+    worstSessionKey = (deps.suggestWorst ?? suggestWorstSessionOffline)(deps.dataDir);
+  }
+
+  // Pure assembly: the fleet- and explain-enriched reducer verdict, the doctor.json
+  // shape, and the render. Fleet/explain are passed only when present so their
+  // summaries are omitted when the section could not be produced (status rule 2
+  // honors an embedded explain.outcome.degraded).
   const triage = buildSupportTriage({
     host,
     doctor,
     ...(fleet !== undefined ? { fleet } : {}),
+    ...(embed?.explain !== undefined ? { explain: embed.explain } : {}),
   });
   const doctorJson = buildDoctorJson(doctor);
   const issueSummaryMd = renderIssueSummary(triage);
   const aiIssueDraftMd = renderAiIssueDraft(triage);
 
-  // Safe write: the up-to-seven allowlisted files through the symlink-safe
-  // primitives with the redaction backstop. fleet.json + config-posture.json ride
-  // the writer's trusted-leaf path and are each written only when defined.
-  // Section-level write failures fold into warnings; only an unproducible bundle
-  // dir is a hard error.
+  // Create the bundle dir FIRST (ordering is load-bearing): the trace export
+  // writes INTO it and its warning must reach the manifest, so the dir must exist
+  // before both the exporter and the writer's manifest write. An unproducible dir
+  // is the one hard error (a symlinked slot, an ENOTDIR collision, an escape).
+  const dir = ensureSupportBundleDir(deps.dataDir, deps.nowMs);
+  if (!dir.ok) {
+    return err({
+      kind: "bundle-unproducible",
+      errorKind: "resource",
+      hint:
+        "Ensure the data dir is writable and the support-bundles slot is a real " +
+        "directory (not a symlink); check its ownership and permissions.",
+      reason: dir.error.reason,
+    });
+  }
+  const bundleDir = dir.value;
+
+  // Trace export: with --deep and a resolved deep session file, embed the 8-file
+  // per-session bundle by pointing the exporter's workspaceDir at the bundle dir
+  // (no copy — it derives its own trace-exports/ output dir from there and applies
+  // its OWN platform-aware redaction, which the support-bundle does not re-process).
+  // This runs BEFORE the writer's manifest write so a failure lands in the manifest;
+  // the clock is stamped from deps.nowMs for determinism.
+  if (deps.deep === true && embed?.explain !== undefined && embed.deepSessionFile !== undefined) {
+    const explain = embed.explain;
+    const exportTrace = deps.exportTrace ?? exportTrajectoryBundle;
+    const traceResult = await exportTrace({
+      sessionId: explain.sessionKey,
+      sessionKey: explain.sessionKey,
+      sessionFile: embed.deepSessionFile,
+      workspaceDir: bundleDir,
+      traceId: explain.traceId,
+      agentId: explain.agentId,
+      clock: () => deps.nowMs,
+    });
+    if (!traceResult.ok) {
+      sectionWarnings.push({
+        source: "trace-export",
+        code: "trace_export_failed",
+        count: 1,
+        message: `The deep trace export could not be produced: ${traceResult.error.kind}.`,
+      });
+    }
+  }
+
+  // Safe write: the up-to-nine allowlisted files through the symlink-safe
+  // primitives with the redaction backstop, into the pre-created bundle dir.
+  // fleet.json/config-posture.json/audit-summary.json ride the trusted leaf and
+  // explain.json rides the untrusted value-shape leaf; each is written only when
+  // defined. Section-level write failures fold into warnings.
   const writeResult = writeSupportBundle({
     dataDir: deps.dataDir,
     generatedAtMs: deps.nowMs,
+    bundleDir,
     triage,
     issueSummaryMd,
     aiIssueDraftMd,
     doctorJson,
     fleetJson: fleet,
     configPostureJson: configPosture,
+    explainJson: embed?.explain,
+    auditSummaryJson: auditSummary,
     warnings: sectionWarnings,
   });
   if (!writeResult.ok) {
@@ -332,5 +465,6 @@ export async function generateSupportBundle(
     status: triage.status,
     activeSignals: triage.activeSignals,
     warnings: writeResult.value.warnings,
+    ...(worstSessionKey !== undefined ? { worstSessionKey } : {}),
   });
 }
