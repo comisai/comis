@@ -312,9 +312,9 @@ describe("orchestrate-tool", () => {
   // The "py" language path: a language:"py" run writes <runId>.py, resolves the
   // RO-bound host python3 via resolveJailPython (2-mode: {path,pythonBin} |
   // {unavailable,hint}), and invokes it by its ABSOLUTE path. An unavailable
-  // interpreter REFUSES the run with NO spawn (PY-03: never a silent unjailed
-  // run — the INV-1 fail-closed gate). The jail envelope is identical to js/ts
-  // (NG4 — no new sandbox primitive).
+  // interpreter REFUSES the run with NO spawn — a missing interpreter must never
+  // fall through to a silent unjailed run (fail-closed). The jail envelope is
+  // identical to js/ts — no new sandbox primitive.
   // -------------------------------------------------------------------------
   describe("language: 'py' runner path (interpreter selection + fail-closed refuse)", () => {
     it("invokes the resolved absolute pythonBin for a language:'py' run (not a bare python3, not node)", async () => {
@@ -358,8 +358,8 @@ describe("orchestrate-tool", () => {
       await expect(tool.execute("c", { script: "print(1)", language: "py" })).rejects.toThrow(
         /not_implemented|unavailable|python|no python3 inside the jail/i,
       );
-      // The PY-03 safety net: an absent interpreter must NEVER fall through to a
-      // silent unjailed run — the spawn seam is never called.
+      // The fail-closed safety net: an absent interpreter must NEVER fall through
+      // to a silent unjailed run — the spawn seam is never called.
       expect(spawnFn).not.toHaveBeenCalled();
     });
 
