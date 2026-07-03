@@ -32,9 +32,10 @@ import { tmpdir } from "node:os";
 
 import { safePath } from "@comis/core";
 
-import { writeSupportBundle } from "./writer.js";
+import { writeSupportBundle, ensureSupportBundleDir } from "./writer.js";
 import {
   parseSupportBundleManifest,
+  parseAuditSummary,
   type SupportTriage,
   type SupportBundleWarning,
 } from "./types.js";
@@ -372,5 +373,154 @@ describe("writeSupportBundle routes fleet.json and config-posture.json through t
     const files = readdirSync(result.value.bundleDir).sort();
     expect(files).toContain("fleet.json");
     expect(files).not.toContain("config-posture.json");
+  });
+});
+
+describe("writeSupportBundle routes explain.json through the UNTRUSTED value-shape leaf", () => {
+  // An AWS-access-key-id planted in a free-text incident field — a value-shape
+  // the backstop redacts. (An `sk-…`-style key is deliberately NOT used: it is
+  // outside the value-shape pattern set, so it would prove nothing about the
+  // leaf; the AWS shape is the same one the doctor.json case pins.)
+  const FREE_TEXT_SECRET = "AKIAIOSFODNN7EXAMPLE";
+
+  /**
+   * A minimal IncidentReport-shaped object carrying the content-free ids that
+   * MUST round-trip un-mangled (a UUID traceId, a non-numeric colon-form
+   * sessionKey, a tool name, and a clean root-cause code) plus a free-text
+   * `errorPreview` seeded with a value-shape secret that MUST be masked.
+   */
+  function explainReport(): unknown {
+    return {
+      schemaVersion: 1,
+      sessionKey: "acme:alice:general",
+      traceId: "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+      agentId: "default",
+      channel: { type: "discord", id: "general" },
+      outcome: { endReason: "completed", degraded: true, severity: "degraded" },
+      toolStats: { read_file: { ok: 3, failed: 1 } },
+      failures: [
+        {
+          seq: 1,
+          toolName: "read_file",
+          errorKind: "io",
+          errorPreview: `tool failed: credential ${FREE_TEXT_SECRET} leaked`,
+          resultDigest: "3 rows",
+        },
+      ],
+      likelyRootCause: { code: "spend_exceeded", detail: "cap hit" },
+    };
+  }
+
+  it("value-shape masks a secret in an explain.json free-text field", () => {
+    const result = writeSupportBundle({ ...makeInput(), explainJson: explainReport() });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const explain = readFileSync(safePath(result.value.bundleDir, "explain.json"), "utf8");
+    // The seeded secret is masked, and the sentinel proves the value-shape pass ran.
+    expect(explain).not.toContain(FREE_TEXT_SECRET);
+    expect(explain).toContain("<REDACTED:aws-access-key-id>");
+  });
+
+  it("id round-trip golden: content-free ids survive VERBATIM through the untrusted leaf", () => {
+    // The HR-01 risk: the value-shape pass masks secrets but must NOT mangle the
+    // report's content-free correlation ids. A UUID traceId, a non-numeric
+    // colon-form sessionKey, a tool name, and a clean root-cause code all
+    // round-trip byte-for-byte — proven against the real redactor.
+    const result = writeSupportBundle({ ...makeInput(), explainJson: explainReport() });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const explain = readFileSync(safePath(result.value.bundleDir, "explain.json"), "utf8");
+    expect(explain).toContain("3f2504e0-4f89-41d3-9a0c-0305e82c3301"); // UUID traceId
+    expect(explain).toContain("acme:alice:general"); // colon-form sessionKey
+    expect(explain).toContain("read_file"); // tool name
+    expect(explain).toContain("spend_exceeded"); // root-cause code
+  });
+
+  it("redacts PII-shaped ids (numeric channel ids, keyword-bearing codes) — the accepted A1 tradeoff", () => {
+    // Ground truth pinned so the tradeoff is not a hidden surprise: the untrusted
+    // leaf INTENTIONALLY redacts a 9+ digit numeric channel/user id in a
+    // sessionKey (a PII shape via long-decimal-id) and masks a root-cause code
+    // that embeds a payload keyword (`context_exhausted` contains "text"). The
+    // UUID traceId remains the stable, un-mangled correlation id. This is the
+    // security-first cost of masking a secret-shaped substring in free text.
+    const report = {
+      schemaVersion: 1,
+      sessionKey: "default:678314278:678314278:peer:678314278",
+      traceId: "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+      agentId: "default",
+      likelyRootCause: { code: "context_exhausted", detail: "" },
+    };
+    const result = writeSupportBundle({ ...makeInput(), explainJson: report });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const explain = readFileSync(safePath(result.value.bundleDir, "explain.json"), "utf8");
+    expect(explain).not.toContain("678314278"); // numeric id redacted (PII shape)
+    expect(explain).toContain("<REDACTED:long-decimal-id>");
+    expect(explain).toContain("<REDACTED:payload-field>"); // context_exhausted's "text"
+    expect(explain).toContain("3f2504e0-4f89-41d3-9a0c-0305e82c3301"); // traceId still intact
+  });
+});
+
+describe("writeSupportBundle routes audit-summary.json through the TRUSTED leaf", () => {
+  it("writes counts and closed kind labels that round-trip un-mangled", () => {
+    // `secret_access` is the discriminator: it carries the "secret" field-name
+    // token, so the value-shape pass WOULD mask it — its verbatim survival proves
+    // audit-summary.json rides the trusted (path-substitution-only) leaf.
+    const auditSummaryJson = {
+      schemaVersion: 1,
+      total: 7,
+      byKind: { secret_access: 3, command_blocked: 4 },
+    };
+    const result = writeSupportBundle({ ...makeInput(), auditSummaryJson });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const raw = readFileSync(safePath(result.value.bundleDir, "audit-summary.json"), "utf8");
+    expect(raw).not.toContain("<REDACTED:");
+    expect(raw).toContain("secret_access");
+
+    const parsed = parseAuditSummary(JSON.parse(raw) as unknown);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.total).toBe(7);
+    expect(parsed.value.byKind["secret_access"]).toBe(3);
+    expect(parsed.value.byKind["command_blocked"]).toBe(4);
+  });
+});
+
+describe("writeSupportBundle omits the new files when their inputs are absent", () => {
+  it("writes neither explain.json nor audit-summary.json when both are undefined", () => {
+    const result = writeSupportBundle(makeInput());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const files = readdirSync(result.value.bundleDir);
+    expect(files).not.toContain("explain.json");
+    expect(files).not.toContain("audit-summary.json");
+  });
+});
+
+describe("ensureSupportBundleDir exposes the writer's dir derivation", () => {
+  it("returns the same bundle dir the writer uses and is idempotent", () => {
+    const dataDir = makeDataDir();
+    const first = ensureSupportBundleDir(dataDir, GENERATED_AT_MS);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    expect(first.value).toBe(expectedBundleDir(dataDir));
+
+    // A second call is a no-op create (ensureContainedDir) — same dir, no throw.
+    const second = ensureSupportBundleDir(dataDir, GENERATED_AT_MS);
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    expect(second.value).toBe(first.value);
+
+    // writeSupportBundle reuses a pre-created dir when one is passed in.
+    const result = writeSupportBundle({ ...makeInput({ dataDir }), bundleDir: first.value });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.bundleDir).toBe(first.value);
+    expect(existsSync(safePath(first.value, "manifest.json"))).toBe(true);
   });
 });
