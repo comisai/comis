@@ -108,6 +108,13 @@ describe("classifyRecoverableStderr", () => {
     ["AttributeError: module 'comis_tools' has no attribute 'web_fetch'", "comis_tools_misuse"],
     ["TypeError: Cannot read properties of undefined (reading 'jq')", "type_error"],
     ["AttributeError: 'NoneType' object has no attribute 'read'", "type_error"],
+    // A malformed body — the single most frequent small/nano-model authoring
+    // failure — is recoverable: the one-shot repair re-runs the fixed script in
+    // the same jail. Node and Python both surface the exact token `SyntaxError`.
+    ["SyntaxError: Unexpected token ')'", "syntax_error"],
+    ["SyntaxError: Unexpected identifier 'foo'", "syntax_error"],
+    ["SyntaxError: invalid syntax", "syntax_error"],
+    ["  File \"s.py\", line 2\n    x = (\nSyntaxError: '(' was never closed", "syntax_error"],
   ] as const)("classifies %j as %s", (tail, expected) => {
     expect(classifyRecoverableStderr(tail)).toBe(expected);
   });
@@ -118,6 +125,15 @@ describe("classifyRecoverableStderr", () => {
     expect(classifyRecoverableStderr("TypeError: comis_tools.read is not a function")).toBe(
       "comis_tools_misuse",
     );
+  });
+
+  it("classifies a SyntaxError that mentions comis_tools as syntax_error, not misuse", () => {
+    // A malformed body whose traceback happens to show a comis_tools call is still
+    // syntax_error — the misuse branch requires a Type/Attribute-error SHAPE, which
+    // a SyntaxError tail lacks, so the comis_tools token alone must not divert it.
+    const tail =
+      '  File "script.py", line 3\n    head = comis_tools.grep({"path": "x"\nSyntaxError: \'{\' was never closed';
+    expect(classifyRecoverableStderr(tail)).toBe("syntax_error");
   });
 
   it.each([
