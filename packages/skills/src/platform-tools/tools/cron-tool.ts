@@ -87,6 +87,18 @@ const CronToolParams = Type.Object({
   model: Type.Optional(Type.String({
     description: "Model to use when this cron job fires (e.g. gemini-2.5-flash). Only applies to agent_turn payload kind.",
   })),
+  // wake-gate (monitoring) params — see the tool description for the verdict protocol
+  wake_gate_script: Type.Optional(
+    Type.String({
+      description:
+        "Optional pre-run gate script for a monitoring job (add/update). When set, the scheduler runs it before each fire and wakes the model ONLY if the script signals a change; otherwise the fire is skipped cheaply. The script prints its verdict on stdout — see this tool's description for the protocol and a worked example.",
+    }),
+  ),
+  wake_gate_language: Type.Optional(
+    Type.Union([Type.Literal("js"), Type.Literal("ts")], {
+      description: "Language of wake_gate_script. Valid values: js, ts. Default: js.",
+    }),
+  ),
   // update/remove/runs/run params
   job_name: Type.Optional(
     Type.String({ description: "Job name (required for update, remove, runs, run)" }),
@@ -179,6 +191,8 @@ export function createCronTool(rpcCall: RpcCall): AgentTool<typeof CronToolParam
               session_strategy: readStringParam(p, "session_strategy", false),
               max_history_turns: readNumberParam(p, "max_history_turns", false),
               model: readStringParam(p, "model", false),
+              wake_gate_script: readStringParam(p, "wake_gate_script", false),
+              wake_gate_language: readStringParam(p, "wake_gate_language", false),
             });
             return jsonResult(result);
           }
@@ -192,7 +206,13 @@ export function createCronTool(rpcCall: RpcCall): AgentTool<typeof CronToolParam
             const jobName = readStringParam(p, "job_name");
             const enabled = readBooleanParam(p, "enabled", false);
             const name = readStringParam(p, "name", false);
-            const result = await rpcCall("cron.update", { jobName, enabled, name });
+            const result = await rpcCall("cron.update", {
+              jobName,
+              enabled,
+              name,
+              wake_gate_script: readStringParam(p, "wake_gate_script", false),
+              wake_gate_language: readStringParam(p, "wake_gate_language", false),
+            });
             return jsonResult(result);
           }
 
