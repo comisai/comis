@@ -136,6 +136,88 @@ describe("IncidentReportSchema spend? section", () => {
   });
 });
 
+describe("IncidentReportSchema orchestrate? section", () => {
+  /** A valid non-zero-exit run with a denied in-jail call + savings. */
+  const validRun = {
+    runId: "orch-abc",
+    leaseId: "lease-child-1",
+    outcome: "failure",
+    durationMs: 4200,
+    exitCode: 1,
+    failureClass: "nonzero_exit",
+    toolCalls: [
+      { tool: "web_fetch", capability: "orch:read", decision: "allow", count: 2 },
+      { tool: "web_browse", capability: "orch:web", decision: "deny", count: 1 },
+    ],
+    resultRefs: { count: 3, bytes: 120_000 },
+    savings: { estSavedTokens: 29_500, savedRatio: 0.98 },
+  };
+
+  it("parses a report WITHOUT orchestrate (additive — pre-existing constructors); schemaVersion stays 1", () => {
+    const parsed = IncidentReportSchema.parse(baseReport());
+    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed.orchestrate).toBeUndefined();
+  });
+
+  it("accepts an orchestrate array of valid runs (per-run deny + savings); schemaVersion stays 1", () => {
+    const parsed = IncidentReportSchema.parse({ ...baseReport(), orchestrate: [validRun] });
+    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed.orchestrate).toHaveLength(1);
+    expect(parsed.orchestrate?.[0]).toMatchObject({
+      runId: "orch-abc",
+      outcome: "failure",
+      exitCode: 1,
+      failureClass: "nonzero_exit",
+    });
+    // EXPLAIN-04: the deny rides the run's toolCalls.
+    expect(parsed.orchestrate?.[0]?.toolCalls).toContainEqual({
+      tool: "web_browse",
+      capability: "orch:web",
+      decision: "deny",
+      count: 1,
+    });
+    // SAVE-02: savings rides the section.
+    expect(parsed.orchestrate?.[0]?.savings).toEqual({ estSavedTokens: 29_500, savedRatio: 0.98 });
+  });
+
+  it("accepts a clean-success run WITHOUT the optional failureClass/leaseId/savings", () => {
+    const cleanRun = {
+      runId: "orch-ok",
+      outcome: "success",
+      durationMs: 12,
+      exitCode: 0,
+      toolCalls: [],
+      resultRefs: { count: 0, bytes: 0 },
+    };
+    const parsed = IncidentReportSchema.parse({ ...baseReport(), orchestrate: [cleanRun] });
+    expect(parsed.orchestrate?.[0]?.failureClass).toBeUndefined();
+    expect(parsed.orchestrate?.[0]?.leaseId).toBeUndefined();
+    expect(parsed.orchestrate?.[0]?.savings).toBeUndefined();
+  });
+
+  it("REJECTS an out-of-enum failureClass (the closed run-failure union is enforced)", () => {
+    const badRun = { ...validRun, failureClass: "kaboom" };
+    expect(() => IncidentReportSchema.parse({ ...baseReport(), orchestrate: [badRun] })).toThrow();
+  });
+
+  it("REJECTS an out-of-enum toolCalls decision (only allow|deny)", () => {
+    const badRun = {
+      ...validRun,
+      toolCalls: [{ tool: "x", capability: "orch:web", decision: "maybe", count: 1 }],
+    };
+    expect(() => IncidentReportSchema.parse({ ...baseReport(), orchestrate: [badRun] })).toThrow();
+  });
+
+  it("strips a planted body-shaped field from a run (content-free — z.object strips unknown keys)", () => {
+    const run = { ...validRun, stderrTail: "secret-tail", script: "rm -rf /" };
+    const parsed = IncidentReportSchema.parse({ ...baseReport(), orchestrate: [run] });
+    const first = (parsed.orchestrate?.[0] ?? {}) as Record<string, unknown>;
+    expect("stderrTail" in first).toBe(false);
+    expect("script" in first).toBe(false);
+    expect(JSON.stringify(parsed.orchestrate)).not.toContain("rm -rf");
+  });
+});
+
 describe("ObsExplainContract.request rootRunId arm", () => {
   // The rootRunId arm widens obs.explain from a TWO-ref (sessionKey | traceId) request to a
   // THREE-ref one (+ rootRunId), so the fleet→explain drill-down can paste an
