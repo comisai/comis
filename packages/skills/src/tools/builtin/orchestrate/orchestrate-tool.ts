@@ -53,11 +53,14 @@ import {
   systemClearTimeout,
   systemNowMs,
   systemSetTimeout,
+  tryGetContext,
+  type AgentCapability,
   type ComisLogger,
   type EventMap,
   type SystemTimeoutHandle,
 } from "@comis/core";
 import { createToolResultSizeGuard } from "@comis/agent";
+import type { CapabilityClass } from "@comis/agent";
 
 import {
   resolveJailAgentCli,
@@ -80,6 +83,7 @@ import type {
   RunAggregateContext,
 } from "./result-ref-store.js";
 import { estimateSavings } from "./savings-estimate.js";
+import { extractCapabilityFootprint } from "./orchestrate-preflight.js";
 import type { ResultRef } from "@comis/core";
 
 // Activity label (channel render): the descriptor name equals the emitted tool
@@ -251,6 +255,56 @@ export interface OrchestrateToolDeps {
   readonly rootRunId?: string;
   /** The owning session — the other run_summary attribution key. Threaded from the wiring; absent for a heartbeat/cron run. */
   readonly sessionKey?: string;
+  /**
+   * The agent's HELD capability set (fed from the resolved autonomy profile's
+   * `resolved.capabilities` daemon-side). When present, the pre-flight statically
+   * scans the model's script for its capability footprint and FAILS FAST pre-spawn
+   * with a cap-named error if the footprint needs a cap the agent lacks.
+   * This is ADVISORY UX only — it grants nothing; the bwrap cap-socket endpoint's
+   * default-deny-by-absence stays the sole authoritative boundary. Absent
+   * (older wiring) ⇒ the cap fail-fast is skipped (the endpoint still gates).
+   */
+  readonly allowedCaps?: readonly AgentCapability[];
+  /**
+   * The approval gate, structurally typed to the ONE method used (the eventBus-dep
+   * precedent). When present, the pre-flight fires ONE approval on the script's whole
+   * capability footprint (the exact sorted cap set) BEFORE spawn; a `!approved`
+   * resolution refuses the run. The daemon threads this seam ONLY when
+   * `config.approvals.enabled`, so seam-presence IS "approvals configured" — there is
+   * no rule engine (the reused gate is the whole mechanism). Absent ⇒ no approval fire.
+   */
+  readonly approvalGate?: {
+    requestApproval(req: {
+      toolName: string;
+      action: string;
+      params: Record<string, unknown>;
+      agentId: string;
+      sessionKey: string;
+      trustLevel: "admin" | "user" | "guest";
+      channelType?: string;
+    }): Promise<{ approved: boolean; reason?: string }>;
+  };
+  /**
+   * The resolved capability class (operator override ?? provider-family), threaded
+   * daemon-side. The one-shot auto-repair is class-gated (ON for weaker models, OFF
+   * for stronger). Declared here as the contract the one-shot repair path consumes;
+   * UNUSED by the pre-flight gate. Absent ⇒ treat as the fail-safe class
+   * (repair-eligible) where consumed.
+   */
+  readonly capabilityClass?: CapabilityClass;
+  /**
+   * The daemon-minted one-shot repair completion closure (like {@link mintRunLease}):
+   * given the failed script + its bounded stderr tail + a describe digest, it does ONE
+   * utility-model re-prompt and returns the regenerated script (or `undefined` on
+   * give-up). Declared here as the contract the one-shot repair path consumes; UNUSED
+   * by the pre-flight gate. Absent ⇒ no repair.
+   */
+  readonly repairSeam?: (input: {
+    script: string;
+    language: "ts" | "js" | "py";
+    stderrTail: string;
+    describeDigest: string;
+  }) => Promise<string | undefined>;
 }
 
 // ---------------------------------------------------------------------------
@@ -450,6 +504,59 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
       // Bound the model-supplied timeout (fallback default, clamp ceiling)
       // so a jailed script cannot pin a child for an arbitrarily long window.
       const timeoutMs = clampTimeoutMs(params.timeoutMs);
+
+      // Static pre-flight, run BEFORE any resource is acquired — no seccomp fd
+      // opened, no run_summary emitted, no child spawned on a rejection (it precedes
+      // the try/finally and the loadSeccompFd below). Scan the model's script for its
+      // capability footprint (pure text analysis — no eval/fs/net) and:
+      //   (a) FAIL FAST with a cap-named error if the footprint needs a cap the agent
+      //       lacks, so a small model gets a precise pre-spawn error instead of a
+      //       mid-run failure after a jail is burned; and
+      //   (b) fire ONE approval on the whole footprint (the exact sorted cap set) when
+      //       an approval gate is wired — a `!approved` resolution refuses the run.
+      //       Seam-presence IS "approvals configured" (the daemon threads the gate only
+      //       when config.approvals.enabled); there is no rule engine — the reused gate
+      //       is the whole mechanism.
+      // ADVISORY ONLY: the footprint grants nothing. A script that dodges the static
+      // scan (a dynamic/computed call → empty footprint) proceeds past here and is
+      // still denied at the cap-socket endpoint by default-deny-by-absence, the sole
+      // authoritative boundary.
+      const footprint = extractCapabilityFootprint(params.script);
+      if (deps.allowedCaps) {
+        const held = new Set(deps.allowedCaps);
+        const missing = [...footprint.caps].filter((cap) => !held.has(cap)).sort();
+        if (missing.length > 0) {
+          throwToolError(
+            "permission_denied",
+            `This script calls tools requiring capabilities the agent lacks: ${missing.join(", ")}.`,
+            {
+              hint: `Remove those calls or grant ${missing.join("/")} in the agent's autonomy profile. The jail endpoint denies them regardless — this is a pre-spawn fail-fast.`,
+            },
+          );
+        }
+      }
+      if (deps.approvalGate && footprint.caps.size > 0) {
+        const sortedCaps = [...footprint.caps].sort();
+        // The trust level / agent id / session come from the framework-injected
+        // request context (tryGetContext), never from the model's params — the tool
+        // cannot self-supply them. Undefined outside a request scope (heartbeat/cron).
+        const ctx = tryGetContext();
+        const resolution = await deps.approvalGate.requestApproval({
+          toolName: "orchestrate",
+          action: `orchestrate:${sortedCaps.join("+")}`,
+          params: { caps: sortedCaps },
+          agentId: ctx?.userId ?? "unknown",
+          sessionKey: ctx?.sessionKey ?? "",
+          trustLevel: (ctx?.trustLevel ?? "admin") as "admin" | "user" | "guest",
+          ...(ctx?.channelType ? { channelType: ctx.channelType } : {}),
+        });
+        if (!resolution.approved) {
+          throwToolError("permission_denied", "Orchestrate run denied by the approval workflow.", {
+            hint: resolution.reason ?? "no reason given",
+          });
+        }
+      }
+
       // The per-run child leaseId (D5) — the per-run correlator carried on the
       // run_summary emit. Undefined when no mintRunLease seam is wired (the
       // assembly bearer authenticates instead).
