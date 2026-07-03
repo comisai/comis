@@ -21,6 +21,10 @@ vi.mock("@comis/skills/tools", () => ({
 }));
 
 import { buildAutonomyToolWiring, type AutonomyToolInputs } from "./setup-tools-autonomy.js";
+// A REAL LeaseManager (ground truth) for the revoke-reaches-child proof — the
+// child-lease attribution is the security keystone, never a green mock.
+import { createLeaseManager, type LeaseManager } from "@comis/infra";
+import { createFakeClock } from "../../../../test/support/fake-clock.js";
 
 function makeLogger() {
   const child = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
@@ -162,5 +166,95 @@ describe("buildAutonomyToolWiring", () => {
     expect((handle.leaseManager as never as { mintLease: ReturnType<typeof vi.fn> }).mintLease).not.toHaveBeenCalled();
     expect(brokerSpawnEnv).toBeUndefined();
     expect(orchestrateTool).toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // Per-run child lease seam (D5, EXPLAIN-01) — the correlation keystone.
+  // buildAutonomyToolWiring threads a mintRunLease(runId, timeoutMs) closure into
+  // createOrchestrateTool. The closure mints a short-TTL CHILD lease per run:
+  // same caps, SAME rootRunId (tree accounting untouched — registerRoot is NOT
+  // called for the child), parentLeaseId = the assembly leaseId, TTL clamped to
+  // the run timeout; it registers the child bearer in OutputGuard at mint.
+  // revokeByRootRun still reaches the child (it scans by the inherited rootRunId),
+  // so kill is preserved (INV-7).
+  // -------------------------------------------------------------------------
+  describe("per-run child lease seam (mintRunLease, D5)", () => {
+    it("threads a mintRunLease closure into createOrchestrateTool", () => {
+      buildAutonomyToolWiring(baseInput());
+      const args = mockCreateOrchestrateTool.mock.calls[0]![0] as { mintRunLease?: unknown };
+      expect(typeof args.mintRunLease).toBe("function");
+    });
+
+    it("mints the child with parentLeaseId=assembly + SAME rootRunId + TTL clamped to timeoutMs, registers the bearer, and does NOT registerRoot the child (INV-7)", () => {
+      const input = baseInput({ callerRootRunId: "root-stable-1" });
+      buildAutonomyToolWiring(input);
+      const handle = input.capEndpointHandle!;
+      const mint = (handle.leaseManager as never as { mintLease: ReturnType<typeof vi.fn> }).mintLease;
+      const reg = (handle.boundedAutonomy as never as { registerRoot: ReturnType<typeof vi.fn> }).registerRoot;
+      const registerSecret = (handle.outputGuard as never as { registerSecret: ReturnType<typeof vi.fn> }).registerSecret;
+
+      // The assembly lease was minted ONCE (buildBrokerSpawnEnv) and its root
+      // anchored ONCE — the seam is a closure, not invoked at wiring time.
+      expect(mint).toHaveBeenCalledTimes(1);
+      expect(reg).toHaveBeenCalledTimes(1);
+
+      const args = mockCreateOrchestrateTool.mock.calls[0]![0] as {
+        mintRunLease?: (runId: string, timeoutMs: number) => { leaseId: string; bearer: string };
+      };
+      expect(typeof args.mintRunLease).toBe("function");
+      const child = args.mintRunLease!("orch-abc", 42_000);
+
+      // A SECOND mintLease — the per-run child — with the D5 shape.
+      expect(mint).toHaveBeenCalledTimes(2);
+      const assemblyInput = mint.mock.calls[0]![0] as { caps: unknown };
+      const childInput = mint.mock.calls[1]![0] as {
+        parentLeaseId?: string;
+        rootRunId?: string;
+        ttlMs?: number;
+        maxTtlMs?: number;
+        caps: unknown;
+      };
+      expect(childInput.parentLeaseId).toBe("leaseid-1"); // = the assembly leaseId (BrokerSpawnEnv.leaseId)
+      expect(childInput.rootRunId).toBe("root-stable-1"); // SAME as the assembly (INV-7)
+      expect(childInput.ttlMs).toBe(42_000); // TTL clamped to the run timeout...
+      expect(childInput.maxTtlMs).toBe(42_000); // ...hard ceiling === soft TTL === timeoutMs
+      expect(childInput.caps).toEqual(assemblyInput.caps); // resolved.capabilities (never broadened)
+
+      // The child bearer is registered in OutputGuard at mint (Pitfall 1) —
+      // assembly (1) + child (1) = 2 registrations. The seam returns {leaseId,bearer}.
+      expect(registerSecret).toHaveBeenCalledTimes(2);
+      expect(registerSecret).toHaveBeenCalledWith(child.bearer);
+
+      // D5: registerRoot is NOT called for the child — the per-root
+      // budget/semaphore/kill accounting stays keyed on the single registered
+      // assembly lease (INV-7); the child rides the same rootRunId.
+      expect(reg).toHaveBeenCalledTimes(1);
+    });
+
+    it("revokeByRootRun reaches EVERY per-run child lease minted via the seam (INV-7 kill; registerRoot skipped is safe)", () => {
+      // A REAL LeaseManager (ground truth — not the fixed mock): the assembly
+      // lease + each per-run child share the rootRunId, so revokeByRootRun (which
+      // scans by rootRunId) reaches the children even though registerRoot was
+      // skipped for them. This is the INV-7 kill guarantee end-to-end.
+      const realLease = createLeaseManager({ clock: createFakeClock(1_700_000_000_000) });
+      const handle = makeHandle();
+      (handle as unknown as { leaseManager: LeaseManager }).leaseManager = realLease;
+      const input = baseInput({ capEndpointHandle: handle, callerRootRunId: "root-kill-1" });
+      buildAutonomyToolWiring(input);
+
+      const args = mockCreateOrchestrateTool.mock.calls[0]![0] as {
+        mintRunLease?: (runId: string, timeoutMs: number) => { leaseId: string; bearer: string };
+      };
+      expect(typeof args.mintRunLease).toBe("function");
+      // Two per-run child leases off the SAME assembly (same rootRunId).
+      const c1 = args.mintRunLease!("orch-1", 60_000);
+      const c2 = args.mintRunLease!("orch-2", 60_000);
+      // Two sequential runs → DISJOINT child leaseIds (a fresh id per run).
+      expect(c1.leaseId).not.toBe(c2.leaseId);
+
+      // revokeByRootRun scans by the inherited rootRunId → assembly + BOTH children.
+      const { revoked } = realLease.revokeByRootRun("root-kill-1");
+      expect(revoked).toBe(3);
+    });
   });
 });
