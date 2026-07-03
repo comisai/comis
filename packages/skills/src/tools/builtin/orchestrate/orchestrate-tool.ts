@@ -449,31 +449,46 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         readonly stdoutCharsReentered: number;
       }): void => {
         if (deps.eventBus === undefined) return;
-        const agg = deps.store.runAggregate?.({ workspacePath }) ?? { count: 0, bytes: 0 };
-        const savings = estimateSavings(agg.bytes, outcome.stdoutCharsReentered);
-        deps.eventBus.emit("orchestrate:run_summary", {
-          runId,
-          ...(childLeaseId !== undefined ? { leaseId: childLeaseId } : {}),
-          rootRunId: deps.rootRunId ?? runId,
-          ...(deps.sessionKey !== undefined ? { sessionKey: deps.sessionKey } : {}),
-          language: params.language,
-          durationMs: now() - startedMs,
-          exitCode: outcome.exitCode,
-          ...(outcome.failureClass !== undefined ? { failureClass: outcome.failureClass } : {}),
-          stdoutBytesRaw: outcome.stdoutBytesRaw,
-          stdoutCharsReentered: outcome.stdoutCharsReentered,
-          resultRefCount: agg.count,
-          resultRefBytes: agg.bytes,
-          // Savings is carried ONLY when the run materialized ResultRefs — the
-          // documented contract (orchestrate.mdx / json-rpc.mdx), the fold's
-          // omit-branch, and the schema test. A run that materialized nothing
-          // OMITS both keys rather than carrying a phantom 0, mirroring the sibling
-          // optional leaseId / sessionKey / failureClass conditional spreads.
-          ...(agg.count > 0
-            ? { estSavedTokens: savings.estSavedTokens, savedRatio: savings.savedRatio }
-            : {}),
-          timestamp: now(),
-        });
+        // The emit MUST NEVER throw into the run flow. TypedEventBus.emit delegates
+        // to EventEmitter.emit, which invokes subscribers synchronously and
+        // PROPAGATES a throwing one — so a throwing subscriber (a future plugin hook
+        // or a new bridge branch) would otherwise be caught by the run's catch,
+        // re-classified as spawn_fail, re-emitted (double record), and flip a
+        // SUCCESSFUL run into a failed tool call. Swallow + log so a bad subscriber
+        // can never perturb the run outcome (the run already rode its own
+        // return/throw); the store aggregate read is inside the guard too.
+        try {
+          const agg = deps.store.runAggregate?.({ workspacePath }) ?? { count: 0, bytes: 0 };
+          const savings = estimateSavings(agg.bytes, outcome.stdoutCharsReentered);
+          deps.eventBus.emit("orchestrate:run_summary", {
+            runId,
+            ...(childLeaseId !== undefined ? { leaseId: childLeaseId } : {}),
+            rootRunId: deps.rootRunId ?? runId,
+            ...(deps.sessionKey !== undefined ? { sessionKey: deps.sessionKey } : {}),
+            language: params.language,
+            durationMs: now() - startedMs,
+            exitCode: outcome.exitCode,
+            ...(outcome.failureClass !== undefined ? { failureClass: outcome.failureClass } : {}),
+            stdoutBytesRaw: outcome.stdoutBytesRaw,
+            stdoutCharsReentered: outcome.stdoutCharsReentered,
+            resultRefCount: agg.count,
+            resultRefBytes: agg.bytes,
+            // Savings is carried ONLY when the run materialized ResultRefs — the
+            // documented contract (orchestrate.mdx / json-rpc.mdx), the fold's
+            // omit-branch, and the schema test. A run that materialized nothing
+            // OMITS both keys rather than carrying a phantom 0, mirroring the sibling
+            // optional leaseId / sessionKey / failureClass conditional spreads.
+            ...(agg.count > 0
+              ? { estSavedTokens: savings.estSavedTokens, savedRatio: savings.savedRatio }
+              : {}),
+            timestamp: now(),
+          });
+        } catch (emitErr) {
+          log.debug(
+            { runId, err: emitErr instanceof Error ? emitErr : undefined },
+            "orchestrate run_summary emit failed (non-fatal)",
+          );
+        }
       };
 
       log.debug({ runId, step: "start", language: params.language }, "orchestrate run starting");

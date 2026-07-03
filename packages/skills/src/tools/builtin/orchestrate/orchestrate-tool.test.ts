@@ -1132,5 +1132,39 @@ describe("orchestrate-tool", () => {
       const tool = createOrchestrateTool(deps);
       await expect(tool.execute("c", { script: "1", language: "ts" })).resolves.toBeDefined();
     });
+
+    it("a THROWING run_summary subscriber does NOT flip a successful run to a failed tool call (emit never throws into the run)", async () => {
+      // EventEmitter.emit invokes subscribers synchronously and PROPAGATES a
+      // throwing one. If the success emit threw into the run's try, the catch would
+      // fire, re-classify the emit error as spawn_fail, re-emit a FAILURE summary
+      // (double record), and surface a SUCCESSFUL run as a failed tool call. The
+      // emit must swallow+log a throwing subscriber so it can never perturb the run.
+      const emitted: Array<{ event: string; payload: Record<string, unknown> }> = [];
+      const eventBus = {
+        emit(event: string, payload: Record<string, unknown>) {
+          emitted.push({ event, payload });
+          throw new Error("subscriber boom");
+        },
+      };
+      const { deps } = makeDeps({
+        eventBus,
+        rootRunId: "root-throw",
+        spawnFn: () => makeFakeChild("THE-ANSWER\n"),
+      });
+      const tool = createOrchestrateTool(deps);
+
+      // The run RESOLVES (success) despite the throwing subscriber — NOT flipped to
+      // a failed tool call, and the thrown subscriber error does not escape.
+      const result = await tool.execute("c", { script: "1", language: "ts" });
+      const text = result.content.map((b) => (b.type === "text" ? (b.text ?? "") : "")).join("");
+      expect(text).toContain("THE-ANSWER");
+
+      // Exactly ONE emit attempt (the success emit) — swallowing prevents the catch
+      // from re-emitting a second (failure) summary (no double-record).
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0]!.event).toBe("orchestrate:run_summary");
+      expect(emitted[0]!.payload.exitCode).toBe(0);
+      expect(emitted[0]!.payload.failureClass).toBeUndefined();
+    });
   });
 });
