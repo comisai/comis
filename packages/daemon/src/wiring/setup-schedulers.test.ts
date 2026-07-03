@@ -1801,6 +1801,42 @@ describe("setupSchedulers", () => {
       expect(clearEmit, "a clear-quiet-hours deliver DOES emit").toBeDefined();
       expect((clearEmit![1] as { result: string }).result).toBe("✓ backup OK");
     });
+
+    // -------------------------------------------------------------------------
+    // A malformed quietHours.start/end (no HH:MM schema validation) makes
+    // isInQuietHours throw. That throw must NOT reach executeJob's catch, where a
+    // DECIDED skip would degrade to status:"error" → consecutiveErrors → auto-suspend
+    // (silently killing a wake:false monitor). A failed check is treated as "in quiet
+    // hours": suppress the routine ping and STILL record the skip.
+    // -------------------------------------------------------------------------
+
+    it("suppresses the deliver + records the skip + returns ok + WARNs errorKind:config when the quiet-hours check throws (never degrades to a job error)", async () => {
+      mockIsInQuietHours.mockImplementation(() => {
+        throw new Error('Invalid time format: "25:99" (expected HH:MM)');
+      });
+      const gate = vi.fn(async () => ({ wake: false, deliver: "✓ backup OK" }));
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(gate) });
+      await setupSchedulers(deps);
+      const tracker = mockCreateExecutionTracker.mock.results[0].value as { record: ReturnType<typeof vi.fn> };
+
+      const result = await extractExecuteJob()(gatedAgentTurnJob());
+
+      // No deliver emit — a routine ping must not fire when the window can't be evaluated.
+      expect(deps.container.eventBus.emit).not.toHaveBeenCalledWith("scheduler:job_result", expect.anything());
+      // The decided skip is STILL recorded (never lost to an error record).
+      expect(tracker.record).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "skipped", summary: "wake-gate: skipped" }),
+      );
+      // The job re-arms with status:ok — NOT the pre-fix error → suspend path.
+      expect(result).toEqual(expect.objectContaining({ status: "ok" }));
+      // A config-classified WARN names the misconfigured knob.
+      const warn = (deps.schedulerLogger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c) => (c[1] as string)?.includes("quiet-hours check failed"),
+      );
+      expect(warn, "a config-kind WARN fired for the malformed quiet-hours window").toBeDefined();
+      expect((warn![0] as { errorKind?: string }).errorKind).toBe("config");
+    });
   });
 });
 
