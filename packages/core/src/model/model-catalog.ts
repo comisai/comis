@@ -12,7 +12,7 @@
  * @module
  */
 
-import { getProviders, getModels } from "@earendil-works/pi-ai";
+import { getProviders, getModels } from "@earendil-works/pi-ai/compat";
 import type { ModelCompatConfig } from "../domain/model-compat.js";
 import { isNativeProvider } from "./model-family.js";
 

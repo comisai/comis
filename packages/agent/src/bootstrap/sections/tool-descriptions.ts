@@ -20,7 +20,7 @@
  */
 
 import { getToolMetadata } from "@comis/core";
-import { getProviders } from "@earendil-works/pi-ai";
+import { getProviders } from "@earendil-works/pi-ai/compat";
 
 // ---------------------------------------------------------------------------
 // Live native-catalog provider list

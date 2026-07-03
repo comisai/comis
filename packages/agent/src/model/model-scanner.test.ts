@@ -7,7 +7,7 @@ import {
   type ModelScanner,
   type ScanResult,
 } from "./model-scanner.js";
-import { getModels } from "@earendil-works/pi-ai";
+import { getModels } from "@earendil-works/pi-ai/compat";
 
 // ---------------------------------------------------------------------------
 // Helpers

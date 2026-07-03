@@ -24,15 +24,8 @@
  *
  * @module
  */
-import {
-  generateImages,
-  getImagesApiProvider,
-  registerImagesApiProvider,
-  type AssistantImages,
-  type ImageContent,
-  type ImagesModel,
-  type ProviderImagesOptions,
-} from "@earendil-works/pi-ai";
+import { type AssistantImages, type ImageContent, type ImagesModel, type ProviderImagesOptions } from "@earendil-works/pi-ai";
+import { generateImages, getImagesApiProvider, registerImagesApiProvider } from "@earendil-works/pi-ai/compat";
 import {
   IMAGE_ERR_TO_LOG,
   type ImageErrorKind,

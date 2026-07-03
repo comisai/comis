@@ -32,7 +32,7 @@ import {
   type SsrfGuardedFetcher,
 } from "@comis/skills";
 import type { LinkRunner, MediaPersistenceService, PersistedFile } from "@comis/skills";
-import { getModel } from "@earendil-works/pi-ai";
+import { getModel } from "@earendil-works/pi-ai/compat";
 import { safePath, systemNowMs } from "@comis/core";
 import os from "node:os";
 

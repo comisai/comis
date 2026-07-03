@@ -14,7 +14,7 @@ import { ok, err, type Result } from "@comis/shared";
 import { snapshotToSpawnTree, incompleteNodes } from "./graph-durable-checkpoint.js";
 import { computeGraphToolSuperset } from "./graph-tool-superset.js";
 import { preWarmGraphCache, type PreWarmSdk } from "./graph-prewarm.js";
-import { getModel, completeSimple } from "@earendil-works/pi-ai";
+import { getModel, completeSimple } from "@earendil-works/pi-ai/compat";
 
 // Module imports
 import { globalCompletionHandler, releaseAndDrainQueue } from "./graph-concurrency.js";

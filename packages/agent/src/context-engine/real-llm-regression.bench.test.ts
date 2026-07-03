@@ -74,7 +74,7 @@ import type { AgentMessage, AgentTool, StreamFn } from "@earendil-works/pi-agent
 // The REAL agentic loop driver (fine in a .test.ts) — the faithful <=2-reads probe.
 import { Agent } from "@earendil-works/pi-agent-core";
 // VALUE completion + stream entry points (fine in a .test.ts) — the real answer LLM call.
-import { completeSimple, getModel, streamSimple } from "@earendil-works/pi-ai";
+import { completeSimple, getModel, streamSimple } from "@earendil-works/pi-ai/compat";
 import type { ContextEngineConfig } from "@comis/core";
 import {
   buildCacheTraceWrapper,

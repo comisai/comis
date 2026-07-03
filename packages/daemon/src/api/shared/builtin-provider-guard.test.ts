@@ -6,7 +6,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { getProviders, getModels, type KnownProvider } from "@earendil-works/pi-ai";
+import { type KnownProvider } from "@earendil-works/pi-ai";
+import { getProviders, getModels } from "@earendil-works/pi-ai/compat";
 import { checkBuiltInProviderRedundancy } from "./builtin-provider-guard.js";
 
 // ---------------------------------------------------------------------------

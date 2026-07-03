@@ -21,7 +21,8 @@
  * @module
  */
 
-import { getModels, type KnownProvider } from "@earendil-works/pi-ai";
+import { type KnownProvider } from "@earendil-works/pi-ai";
+import { getModels } from "@earendil-works/pi-ai/compat";
 import { resolveOperationDefaults } from "./operation-model-defaults.js";
 
 /**

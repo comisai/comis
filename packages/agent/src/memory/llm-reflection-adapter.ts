@@ -30,7 +30,7 @@
 import { ok, err, fromPromise, type Result } from "@comis/shared";
 import { systemSetTimeout, systemClearTimeout, wrapExternalContent } from "@comis/core";
 import type { DocSection, ExternalContentSource } from "@comis/core";
-import { completeSimple } from "@earendil-works/pi-ai";
+import { completeSimple } from "@earendil-works/pi-ai/compat";
 import { resolveJudgeModel, temperatureOption, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
 import { REFLECT_PROMPT, parseReflectionResult, type ReflectionResult } from "./reflection-prompt.js";
 

@@ -21,7 +21,8 @@
  * @module
  */
 
-import { getModels, getProviders, type KnownProvider } from "@earendil-works/pi-ai";
+import { type KnownProvider } from "@earendil-works/pi-ai";
+import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import type { ModelOperationType } from "@comis/core";
 
 // ---------------------------------------------------------------------------

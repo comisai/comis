@@ -13,7 +13,7 @@ import { systemDateFrom, type MemoryReviewConfig } from "@comis/core";
 import type { MemoryReviewDeps } from "./memory-review-job.js";
 
 // Mock pi-ai
-vi.mock("@earendil-works/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai/compat", () => ({
   getModel: vi.fn(() => ({ id: "mock-model" })),
   completeSimple: vi.fn(),
 }));
@@ -26,7 +26,7 @@ vi.mock("node:fs/promises", () => ({
 }));
 
 import { runMemoryReview } from "./memory-review-job.js";
-import { completeSimple, getModel } from "@earendil-works/pi-ai";
+import { completeSimple, getModel } from "@earendil-works/pi-ai/compat";
 import { readFile, writeFile, rename } from "node:fs/promises";
 
 /** Fixed reference clock — every time read in the job resolves to this. */

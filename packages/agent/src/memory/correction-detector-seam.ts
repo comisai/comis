@@ -65,7 +65,7 @@
 
 import { systemSetTimeout, systemClearTimeout, wrapExternalContent } from "@comis/core";
 import type { ClockPort, ComisLogger } from "@comis/core";
-import { completeSimple } from "@earendil-works/pi-ai";
+import { completeSimple } from "@earendil-works/pi-ai/compat";
 import { resolveJudgeModel, temperatureOption, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
 import { z } from "zod";
 import { parseLenientJson } from "./llm-json.js";

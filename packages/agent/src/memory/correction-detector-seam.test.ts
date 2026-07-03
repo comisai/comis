@@ -33,13 +33,13 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("@earendil-works/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai/compat", () => ({
   getModel: vi.fn(() => ({ id: "mock-model" })),
   completeSimple: vi.fn(),
 }));
 
 import { createCorrectionDetectorSeam, CORRECTION_REWARD_CAP, CORRECTION_DETECTOR_PROMPT } from "./correction-detector-seam.js";
-import { completeSimple, getModel } from "@earendil-works/pi-ai";
+import { completeSimple, getModel } from "@earendil-works/pi-ai/compat";
 import { runWithContext } from "@comis/core";
 
 /** A ≥16-char delimiter (the RequestContext schema requires `min(16)`). */

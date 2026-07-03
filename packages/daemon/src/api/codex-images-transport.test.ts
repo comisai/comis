@@ -2,7 +2,7 @@
 /**
  * Tests for the custom Codex Responses image transport (codex-images-transport.ts).
  *
- * The transport is a pi-ai `ImagesApiFunction` that POSTs the hosted
+ * The transport is a pi-ai `ImagesFunction` that POSTs the hosted
  * `image_generation` tool to the ChatGPT-backend Codex Responses endpoint and
  * parses the image SSE to base64. Every test mocks at the `fetch` /
  * `Response.body` boundary (a `ReadableStream` of SSE bytes) — NEVER the

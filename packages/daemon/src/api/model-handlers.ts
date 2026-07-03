@@ -11,7 +11,7 @@
  */
 
 import { AuthorizationError } from "./errors.js";
-import { getProviders } from "@earendil-works/pi-ai";
+import { getProviders } from "@earendil-works/pi-ai/compat";
 import {
   ModelsListContract,
   ModelsListProvidersContract,

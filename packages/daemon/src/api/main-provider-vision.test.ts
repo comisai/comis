@@ -14,7 +14,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("@earendil-works/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai/compat", () => ({
   getModel: vi.fn(() => ({ id: "mock-model" })),
   completeSimple: vi.fn(),
 }));
@@ -34,7 +34,7 @@ vi.mock("@comis/core", async (importOriginal) => {
 });
 
 import { createMainProviderVision, VisionUnavailable } from "./main-provider-vision.js";
-import { completeSimple, getModel } from "@earendil-works/pi-ai";
+import { completeSimple, getModel } from "@earendil-works/pi-ai/compat";
 import { systemSetTimeout, systemClearTimeout } from "@comis/core";
 
 type StopReason = "stop" | "length" | "toolUse" | "error" | "aborted";

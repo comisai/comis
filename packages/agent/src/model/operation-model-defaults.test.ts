@@ -9,7 +9,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { getModels, getProviders, type KnownProvider } from "@earendil-works/pi-ai";
+import { type KnownProvider } from "@earendil-works/pi-ai";
+import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import {
   resolveOperationDefaults,
   OPERATION_TIER_MAP,

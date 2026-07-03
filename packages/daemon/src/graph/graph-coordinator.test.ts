@@ -23,7 +23,7 @@ import type { CoordinatorSharedState, GraphRunState } from "./graph-coordinator-
 // Module mock for @earendil-works/pi-ai (prevents real SDK import in unit tests)
 // ---------------------------------------------------------------------------
 
-vi.mock("@earendil-works/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai/compat", () => ({
   getModel: vi.fn().mockReturnValue({ id: "mock-model" }),
   getModels: vi.fn().mockReturnValue([]),
   getProviders: vi.fn().mockReturnValue([]),

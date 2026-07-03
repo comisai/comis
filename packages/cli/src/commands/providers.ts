@@ -15,7 +15,7 @@
  */
 
 import type { Command } from "commander";
-import { getEnvApiKey } from "@earendil-works/pi-ai";
+import { getEnvApiKey } from "@earendil-works/pi-ai/compat";
 import { withClient, callTyped } from "../client/rpc-client.js";
 import { loadProvidersWithFallback } from "../client/provider-list.js";
 import { createModelCatalog, ModelsListContract } from "@comis/core";

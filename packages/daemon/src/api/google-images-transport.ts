@@ -2,7 +2,7 @@
 /**
  * Google (Gemini) Images transport.
  *
- * A pi-ai `ImagesApiFunction` over the `@google/genai` SDK. It is registered
+ * A pi-ai `ImagesFunction` over the `@google/genai` SDK. It is registered
  * into pi-ai's module-level IMAGES registry under the `google-images` api
  * (via `registerComisImageProviders()`) and dispatched through the ONE
  * `generateImages()` call site.
@@ -32,7 +32,7 @@
  * @module
  */
 import { GoogleGenAI, Modality } from "@google/genai";
-import { type AssistantImages, type ImagesApiFunction, type ImagesModel } from "@earendil-works/pi-ai";
+import { type AssistantImages, type ImagesFunction, type ImagesModel } from "@earendil-works/pi-ai";
 // systemNowMs is the globals-gate-sanctioned wall-clock read — NOT Date.now().
 import { systemNowMs } from "@comis/core";
 
@@ -67,7 +67,7 @@ type GeminiPart = { text: string } | { inlineData: { data: string; mimeType: str
  * NEVER throws out — every failure -> an `AssistantImages{ stopReason:"error" }`
  * the shipped classifier maps.
  */
-export const generateImagesGoogle: ImagesApiFunction = async (model, context, options) => {
+export const generateImagesGoogle: ImagesFunction = async (model, context, options) => {
   const out: AssistantImages = {
     api: model.api,
     provider: model.provider,

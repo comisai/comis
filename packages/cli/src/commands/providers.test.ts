@@ -49,7 +49,7 @@ vi.mock("../output/format.js", () => ({
   json: vi.fn(),
 }));
 
-vi.mock("@earendil-works/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai/compat", () => ({
   getEnvApiKey: vi.fn(),
 }));
 
@@ -76,7 +76,7 @@ const { withClient } = await import("../client/rpc-client.js");
 const { loadProvidersWithFallback } = await import("../client/provider-list.js");
 const { renderTable } = await import("../output/table.js");
 const { info, json, error } = await import("../output/format.js");
-const { getEnvApiKey } = await import("@earendil-works/pi-ai");
+const { getEnvApiKey } = await import("@earendil-works/pi-ai/compat");
 
 // ---------- Helpers ----------
 

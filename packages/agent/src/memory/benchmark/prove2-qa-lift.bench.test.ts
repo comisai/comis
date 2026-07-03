@@ -60,7 +60,7 @@ import {
   createLocalRerankerProvider,
 } from "@comis/memory";
 import { createMemoryRecall, type MemoryRecallDeps, type MemoryRecallConfig } from "@comis/agent";
-import { completeSimple, getModel } from "@earendil-works/pi-ai";
+import { completeSimple, getModel } from "@earendil-works/pi-ai/compat";
 import { writeRegularFile } from "@comis/observability";
 import { loadLongMemEvalDataset } from "./longmemeval-loader.js";
 import { loadLocomoDataset } from "./locomo-loader.js";

@@ -32,7 +32,8 @@
  *
  * @module
  */
-import { getEnvApiKey, getProviders, getModels, type KnownProvider } from "@earendil-works/pi-ai";
+import { type KnownProvider } from "@earendil-works/pi-ai";
+import { getEnvApiKey, getProviders, getModels } from "@earendil-works/pi-ai/compat";
 import { KEYLESS_PROVIDER_TYPES, type ProviderEntry } from "@comis/core";
 import { DEFAULT_PROVIDER_KEYS } from "@comis/agent";
 

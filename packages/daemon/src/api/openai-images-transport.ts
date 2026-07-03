@@ -2,7 +2,7 @@
 /**
  * OpenAI Images transport.
  *
- * A pi-ai `ImagesApiFunction` over the `openai` SDK. It is registered into
+ * A pi-ai `ImagesFunction` over the `openai` SDK. It is registered into
  * pi-ai's module-level IMAGES registry under the `openai-images` api
  * (`registerComisImageProviders()`) and dispatched through the ONE
  * `generateImages()` call site.
@@ -35,7 +35,7 @@
  * @module
  */
 import OpenAI, { toFile } from "openai";
-import { type AssistantImages, type ImagesApiFunction, type ImagesModel } from "@earendil-works/pi-ai";
+import { type AssistantImages, type ImagesFunction, type ImagesModel } from "@earendil-works/pi-ai";
 // systemNowMs is the globals-gate-sanctioned wall-clock read — NOT Date.now(),
 // which the production globals gate forbids (mirror codex-images-transport.ts).
 import { systemNowMs } from "@comis/core";
@@ -69,7 +69,7 @@ export const OPENAI_IMAGE_MODEL: ImagesModel<"openai-images"> = {
  * `ImageContent` reference is present). NEVER throws out — every failure -> an
  * `AssistantImages{ stopReason:"error" }` the shipped classifier maps.
  */
-export const generateImagesOpenAI: ImagesApiFunction = async (model, context, options) => {
+export const generateImagesOpenAI: ImagesFunction = async (model, context, options) => {
   const out: AssistantImages = {
     api: model.api,
     provider: model.provider,

@@ -36,7 +36,7 @@ vi.mock("@comis/agent", () => ({
   isVisionCapable: vi.fn(() => false),
 }));
 
-vi.mock("@earendil-works/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai/compat", () => ({
   getModel: vi.fn(() => null),
   getModels: vi.fn(() => []),
   getProviders: vi.fn(() => []),

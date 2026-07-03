@@ -29,12 +29,12 @@ import { isCompletionClaim, detectImpliedToolCall } from "./critic-isolation.js"
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
-vi.mock("@earendil-works/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai/compat", () => ({
   getModel: vi.fn(() => ({ id: "mock-model" })),
   completeSimple: vi.fn(),
 }));
 
-import { getModel, completeSimple } from "@earendil-works/pi-ai";
+import { getModel, completeSimple } from "@earendil-works/pi-ai/compat";
 
 function llmText(text: string) {
   return { content: [{ type: "text", text }] };

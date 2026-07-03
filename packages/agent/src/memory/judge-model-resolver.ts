@@ -23,7 +23,8 @@
  * @module
  */
 
-import { getModel, type Api, type Model } from "@earendil-works/pi-ai";
+import { type Api, type Model } from "@earendil-works/pi-ai";
+import { getModel } from "@earendil-works/pi-ai/compat";
 
 /**
  * Minimal spec to construct a Model for a custom OpenAI-compatible provider the

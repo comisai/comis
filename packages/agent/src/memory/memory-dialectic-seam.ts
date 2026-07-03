@@ -35,7 +35,7 @@
 
 import { systemSetTimeout, systemClearTimeout } from "@comis/core";
 import type { ClockPort, ComisLogger } from "@comis/core";
-import { completeSimple } from "@earendil-works/pi-ai";
+import { completeSimple } from "@earendil-works/pi-ai/compat";
 import { resolveJudgeModel, temperatureOption, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
 import { buildDialecticPrompt, parseDialecticOutput, type DialecticParsed } from "./memory-dialectic-prompt.js";
 import { resolveMemoryOpsStrategy } from "./memory-capability-router.js";
