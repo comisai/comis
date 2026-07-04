@@ -182,18 +182,23 @@ describe.skipIf(!jailAvailable)("wake-gate runner real-jail acceptance (bwrap, L
       );
       const gate = {
         script: [
+          // The jailed SDK is an ESM export copied beside the script — it must be
+          // imported (it is NOT a global), the same pattern an orchestrate script uses.
+          "import { comis_tools } from \"./comis_tools.js\";",
           "const res = await comis_tools.web_fetch({ url: \"https://example.com/status\" });",
           "console.log(JSON.stringify({ wake: /green/.test(res.body ?? \"\") ? false : true }));",
         ].join("\n"),
         language: "js" as const,
         timeoutSeconds: 20,
       };
-      const verdict = await makeRunner({ web: true }).runWakeGate(gate, {
+      const outcome = await makeRunner({ web: true }).runWakeGate(gate, {
         agentId: "agent-1",
         jobId: "job-web-fetch",
         sessionKey: "main:agent-1",
       });
-      expect(verdict).toEqual({ wake: false });
+      // runWakeGate returns the richer WakeGateOutcome — the wake decision is
+      // nested under `.verdict`, beside the durationMs + toolCalls counts.
+      expect(outcome).toMatchObject({ verdict: { wake: false } });
     },
   );
 
@@ -214,6 +219,9 @@ describe.skipIf(!jailAvailable)("wake-gate runner real-jail acceptance (bwrap, L
       );
       const gate = {
         script: [
+          // Import the jailed SDK (ESM export, not a global) so the DENY is the
+          // cap gate rejecting web_fetch — not a ReferenceError masquerading as one.
+          "import { comis_tools } from \"./comis_tools.js\";",
           "try {",
           "  const res = await comis_tools.web_fetch({ url: \"https://example.com/status\" });",
           "  if (res.error) throw new Error(res.error);",
@@ -225,13 +233,14 @@ describe.skipIf(!jailAvailable)("wake-gate runner real-jail acceptance (bwrap, L
         language: "js" as const,
         timeoutSeconds: 20,
       };
-      const verdict = await makeRunner({ web: false }).runWakeGate(gate, {
+      const outcome = await makeRunner({ web: false }).runWakeGate(gate, {
         agentId: "agent-1",
         jobId: "job-web-denied",
         sessionKey: "main:agent-1",
       });
-      // The denied fetch cannot resolve a skip — the model wakes (fail-open).
-      expect(verdict).toMatchObject({ wake: true });
+      // The denied fetch cannot resolve a skip — the model wakes (fail-open),
+      // the verdict nested under the richer WakeGateOutcome.
+      expect(outcome).toMatchObject({ verdict: { wake: true } });
     },
   );
 
