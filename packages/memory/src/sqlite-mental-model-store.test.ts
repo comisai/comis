@@ -60,6 +60,14 @@ function makeInput(overrides: Partial<AdmitMentalModelInput> = {}): AdmitMentalM
     // structuredBody is OPTIONAL — forwarded only when a test supplies it, so an
     // admit without an AST omits the field entirely.
     ...(overrides.structuredBody !== undefined ? { structuredBody: overrides.structuredBody } : {}),
+    // requiredTools/paramsSchema are OPTIONAL advisory metadata the procedure run binds
+    // deterministically; omitted ⇒ the store binds NULL (the user-intent skill path).
+    ...((overrides as { requiredTools?: ReadonlyArray<string> }).requiredTools !== undefined
+      ? { requiredTools: (overrides as { requiredTools?: ReadonlyArray<string> }).requiredTools }
+      : {}),
+    ...((overrides as { paramsSchema?: string }).paramsSchema !== undefined
+      ? { paramsSchema: (overrides as { paramsSchema?: string }).paramsSchema }
+      : {}),
     proofCount: overrides.proofCount ?? 1,
     confidence: overrides.confidence ?? 0.8,
     sourceTrajIds: overrides.sourceTrajIds ?? ["traj_1"],
@@ -345,6 +353,67 @@ describe("createSqliteMentalModelStore", () => {
       .prepare("SELECT trust_level FROM mental_models WHERE tenant_id = ? AND agent_id = ? AND name = ?")
       .get(TENANT_A, AGENT_A, "deploy-the-thing") as { trust_level: string };
     expect(row.trust_level).toBe("learned");
+  });
+
+  // -------------------------------------------------------------------------
+  // Deterministic advisory metadata: the procedure run binds required_tools /
+  // params_schema at admit (derived from the audited descriptor, NEVER
+  // LLM-authored); the user-intent skill path leaves both NULL. The columns
+  // already exist in the DDL — this plan binds them instead of the hardcoded
+  // NULL,NULL. INV-4: no executable `scripts` column (advisory doc, no learned code).
+  // -------------------------------------------------------------------------
+
+  it("admit WITH requiredTools + paramsSchema binds them (JSON-encoded names / raw schema); trust_level stays the 'learned' literal", async () => {
+    await store.admit(
+      makeInput({ name: "proc-doc", requiredTools: ["jq", "web_fetch"], paramsSchema: "{}" }),
+      SCOPE_A,
+    );
+    const row = db
+      .prepare("SELECT required_tools, params_schema, trust_level FROM mental_models WHERE tenant_id = ? AND agent_id = ? AND name = ?")
+      .get(TENANT_A, AGENT_A, "proc-doc") as { required_tools: string | null; params_schema: string | null; trust_level: string };
+    // required_tools is the JSON-encoded content-free tool-NAME set; params_schema the fixed value.
+    expect(row.required_tools).toBe('["jq","web_fetch"]');
+    expect(row.params_schema).toBe("{}");
+    // The trust keystone is NEVER a bound value — always the 'learned' literal.
+    expect(row.trust_level).toBe("learned");
+  });
+
+  it("admit WITHOUT requiredTools/paramsSchema binds both NULL (the user-intent skill path); trust_level stays 'learned'", async () => {
+    await store.admit(makeInput({ name: "plain-doc" }), SCOPE_A);
+    const row = db
+      .prepare("SELECT required_tools, params_schema, trust_level FROM mental_models WHERE tenant_id = ? AND agent_id = ? AND name = ?")
+      .get(TENANT_A, AGENT_A, "plain-doc") as { required_tools: string | null; params_schema: string | null; trust_level: string };
+    expect(row.required_tools).toBeNull();
+    expect(row.params_schema).toBeNull();
+    expect(row.trust_level).toBe("learned");
+  });
+
+  it("a re-admit UPDATEs required_tools in lockstep (the ON CONFLICT DO UPDATE arm binds it, mirroring structured_body)", async () => {
+    await store.admit(makeInput({ name: "proc-doc", requiredTools: ["jq"], paramsSchema: "{}" }), SCOPE_A);
+    // Re-admit the SAME (tenant, agent, kind, topicKey, name) with a widened footprint.
+    await store.admit(makeInput({ name: "proc-doc", requiredTools: ["jq", "web_fetch"], paramsSchema: "{}" }), SCOPE_A);
+    const row = db
+      .prepare("SELECT required_tools FROM mental_models WHERE tenant_id = ? AND agent_id = ? AND name = ?")
+      .get(TENANT_A, AGENT_A, "proc-doc") as { required_tools: string | null };
+    expect(row.required_tools).toBe('["jq","web_fetch"]'); // the upsert refreshed it in lockstep
+  });
+
+  it("INV-4: PRAGMA table_info(mental_models) has required_tools/params_schema but NO scripts column (no learned-code path)", () => {
+    // Ground truth against a real ensureMentalModelsTable table — immune to the schema file's
+    // explanatory `scripts` COMMENTS. The advisory-metadata columns (the bind targets) exist;
+    // the executable `scripts` column does not — a mental-model doc is readable guidance.
+    const fresh = new Database(":memory:");
+    try {
+      ensureMentalModelsTable(fresh, 384, false);
+      const cols = new Set(
+        (fresh.prepare("PRAGMA table_info(mental_models)").all() as { name: string }[]).map((c) => c.name),
+      );
+      expect(cols.has("required_tools")).toBe(true);
+      expect(cols.has("params_schema")).toBe(true);
+      expect(cols.has("scripts")).toBe(false);
+    } finally {
+      fresh.close();
+    }
   });
 
   // -------------------------------------------------------------------------

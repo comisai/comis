@@ -23,10 +23,11 @@ import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { ok } from "@comis/shared";
 import { applyDeltaOps, renderStructuredBody, MAX_DOC_NAME_LENGTH } from "@comis/core";
 import type { ResolvedOutcome, StructuredBody } from "@comis/core";
-import type { ReflectionResult } from "./reflection-prompt.js";
+import { PROCEDURE_REFLECT_PROMPT, type ReflectionResult } from "./reflection-prompt.js";
 import {
   runReflection,
   classifyReflectOutcome,
+  deriveRequiredTools,
   type RunReflectionDeps,
   type RunReflectionConfig,
   type ReflectionSourceTrajectory,
@@ -126,6 +127,12 @@ function makeDeps(
     // run (the common case) stays at the engine's skill defaults.
     ...(over.kind !== undefined ? { kind: over.kind } : {}),
     ...(over.groupKey !== undefined ? { groupKey: over.groupKey } : {}),
+    // The procedure-run flag — forwarded only when a test supplies it (gates the
+    // deterministic required_tools bind AND the descriptor-into-input thread; Pitfall 5:
+    // the user-intent skill run leaves it absent so its admit binds NULL required_tools).
+    ...((over as { populateProcedureMetadata?: boolean }).populateProcedureMetadata !== undefined
+      ? { populateProcedureMetadata: (over as { populateProcedureMetadata?: boolean }).populateProcedureMetadata }
+      : {}),
     config,
     sourceTrajectories: trajectories,
     reflectionAdapter: { reflect },
@@ -1477,5 +1484,141 @@ describe("runReflection — procedure descriptor key (order/count-sensitive; byp
     if (!res.ok) throw new Error("expected ok");
     expect(res.value.distinctTopicKeys).toBe(2); // counts are load-bearing
     expect(res.value.admitted).toBe(0);
+  });
+});
+
+// ===========================================================================
+// PROCEDURE reflection metadata: the 4th reflectKinds entry threads the descriptor's
+// ORDERED sequence INTO the reflect input (Pitfall 2 — the tool-stripped transcript is
+// augmented with a bounded content-free tool-sequence section) and the admitted advisory
+// doc's required_tools is bound DETERMINISTICALLY from the audited descriptor — NEVER
+// LLM-authored. Pitfall 5: BOTH are gated on the `populateProcedureMetadata` flag, NOT on
+// "descriptor present" — the user-intent skill run (which also reads descriptor-carrying
+// sources) leaves required_tools NULL. INV-4: the prompt authors readable guidance only,
+// emitting no machine-readable requiredTools/paramsSchema JSON envelope.
+// ===========================================================================
+describe("runReflection — procedure metadata: deterministic required_tools + reflect-input thread (Pitfalls 2 & 5)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const procGroupKey = (t: ReflectionSourceTrajectory): string => t.procedureDescriptor?.key ?? "";
+
+  /** A source carrying a content-free procedure descriptor (key = the ordered sequence joined). */
+  function procTraj(over: Partial<ReflectionSourceTrajectory>, sequence: readonly string[]): ReflectionSourceTrajectory {
+    return { ...traj(over), procedureDescriptor: { key: sequence.join(">"), sequence } };
+  }
+
+  // web_search → jq → jq → web_fetch : ordered, with a repeated jq (order + counts matter for the
+  // groupKey + the reflect input; required_tools collapses it to the dedupe+sorted SET).
+  const SEQ = ["web_search", "jq", "jq", "web_fetch"] as const;
+
+  it("the PROCEDURE run (populateProcedureMetadata:true) admits with DETERMINISTIC required_tools (dedupe+sorted footprint SET) + kind:'skill' + paramsSchema '{}'", async () => {
+    const mocks: Partial<Mocks> = {};
+    const deps = makeDeps(
+      [
+        procTraj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "fetch and filter the data" }, SEQ),
+        procTraj({ trajectoryId: "b", sessionId: "s2", sender: "u2", signature: "fetch and filter the data" }, SEQ),
+      ],
+      { kind: "skill", groupKey: procGroupKey, populateProcedureMetadata: true } as Partial<RunReflectionDeps>,
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.admitted).toBe(1);
+    expect(mocks.admit).toHaveBeenCalledTimes(1);
+    const admitArg = (mocks.admit as Mock).mock.calls[0][0];
+    // required_tools = the dedupe+SORTED footprint SET of the audited tool NAMES (the ORDER +
+    // counts live on the groupKey + the reflect input, NOT on required_tools). Deterministic,
+    // content-free, NEVER LLM-authored.
+    expect(admitArg.requiredTools).toEqual(["jq", "web_fetch", "web_search"]);
+    // params_schema is a fixed content-free value — an advisory doc has no replay parameters.
+    expect(admitArg.paramsSchema).toBe("{}");
+    expect(admitArg.kind).toBe("skill");
+  });
+
+  it("the USER-INTENT skill run (no populateProcedureMetadata) admits WITHOUT required_tools/paramsSchema (Pitfall 5 — NULL bind)", async () => {
+    const mocks: Partial<Mocks> = {};
+    // The SAME descriptor-carrying sources, but the DEFAULT skill grouping (signature) and NO
+    // procedure flag → the two corroborate on the signature and admit, yet required_tools is
+    // NOT populated (a user-intent skill must never be mis-tagged as a learnable procedure).
+    const deps = makeDeps(
+      [
+        procTraj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "fetch and filter the data" }, SEQ),
+        procTraj({ trajectoryId: "b", sessionId: "s2", sender: "u2", signature: "fetch and filter the data" }, SEQ),
+      ],
+      {},
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.admitted).toBe(1);
+    const admitArg = (mocks.admit as Mock).mock.calls[0][0];
+    expect(admitArg.requiredTools).toBeUndefined();
+    expect(admitArg.paramsSchema).toBeUndefined();
+  });
+
+  it("the PROCEDURE reflect INPUT carries the ordered tool sequence (Pitfall 2 — augments the tool-stripped transcript; order/counts preserved)", async () => {
+    const mocks: Partial<Mocks> = {};
+    const deps = makeDeps(
+      [
+        procTraj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "fetch and filter the data" }, SEQ),
+        procTraj({ trajectoryId: "b", sessionId: "s2", sender: "u2", signature: "fetch and filter the data" }, SEQ),
+      ],
+      { kind: "skill", groupKey: procGroupKey, populateProcedureMetadata: true } as Partial<RunReflectionDeps>,
+      mocks,
+    );
+
+    await runReflection(deps);
+
+    const reflectArg = (mocks.reflect as Mock).mock.calls[0][0];
+    // The bounded content-free tool-sequence section is appended to the reflect input.
+    expect(reflectArg.trajectoryText).toContain("Tool sequence for this procedure:");
+    expect(reflectArg.trajectoryText).toContain("web_fetch");
+    // Order + counts preserved (web_search → jq → jq → web_fetch), NOT deduped/sorted.
+    expect(reflectArg.trajectoryText).toMatch(/web_search[\s\S]*jq[\s\S]*jq[\s\S]*web_fetch/);
+  });
+
+  it("the NON-procedure run does NOT thread the tool sequence into the reflect input", async () => {
+    const mocks: Partial<Mocks> = {};
+    const deps = makeDeps(
+      [
+        procTraj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "fetch and filter the data" }, SEQ),
+        procTraj({ trajectoryId: "b", sessionId: "s2", sender: "u2", signature: "fetch and filter the data" }, SEQ),
+      ],
+      {},
+      mocks,
+    );
+
+    await runReflection(deps);
+
+    const reflectArg = (mocks.reflect as Mock).mock.calls[0][0];
+    expect(reflectArg.trajectoryText).not.toContain("Tool sequence for this procedure:");
+  });
+
+  it("deriveRequiredTools is DETERMINISTIC — the dedupe+sorted union of the members' sequences, byte-equal across calls", () => {
+    const members = [
+      procTraj({ trajectoryId: "a" }, ["web_search", "jq", "jq"]),
+      procTraj({ trajectoryId: "b" }, ["web_fetch", "jq"]),
+    ];
+    const first = deriveRequiredTools(members);
+    const second = deriveRequiredTools(members);
+    // dedupe + sorted footprint SET (no clock/order dependence).
+    expect(first).toEqual(["jq", "web_fetch", "web_search"]);
+    // byte-equal across calls.
+    expect(JSON.stringify(first)).toBe(JSON.stringify(second));
+  });
+
+  it("PROCEDURE_REFLECT_PROMPT is defined and emits NO machine-readable requiredTools/paramsSchema JSON envelope key (INV-4 scoped no-envelope)", () => {
+    // The prompt must EXIST (RED until the const is added) and author only readable guidance —
+    // it carries NO JSON envelope key `"requiredTools":` / `"paramsSchema":` (a SCOPED guard on
+    // THIS const; the sibling prompts legitimately mention those tokens in backticked prose).
+    expect(PROCEDURE_REFLECT_PROMPT).toBeDefined();
+    expect(typeof PROCEDURE_REFLECT_PROMPT).toBe("string");
+    expect(PROCEDURE_REFLECT_PROMPT).not.toMatch(/"(requiredTools|paramsSchema)"\s*:/);
   });
 });
