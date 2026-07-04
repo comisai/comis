@@ -32,6 +32,7 @@ import {
   durableOrphanedEventToRow,
   durableResumedEventToRow,
   autonomyRevokedEventToRow,
+  autonomyBudgetWarningEventToRow,
   autonomyKilledEventToRow,
   autonomyDenialBreakerEventToRow,
 } from "./obs-autonomy-rows.js";
@@ -558,6 +559,7 @@ export {
   durableOrphanedEventToRow,
   durableResumedEventToRow,
   autonomyRevokedEventToRow,
+  autonomyBudgetWarningEventToRow,
   autonomyKilledEventToRow,
   autonomyDenialBreakerEventToRow,
 };
@@ -793,6 +795,9 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   });
   eventBus.on("durable:resumed", (payload) => {
     diagnosticBuffer.push(durableResumedEventToRow(payload));
+  });
+  eventBus.on("autonomy:budget_warning", (payload) => {
+    diagnosticBuffer.push(autonomyBudgetWarningEventToRow(payload));
   });
   eventBus.on("autonomy:revoked", (payload) => {
     diagnosticBuffer.push(autonomyRevokedEventToRow(payload));

@@ -76,6 +76,38 @@ export function durableResumedEventToRow(payload: EventMap["durable:resumed"]): 
 }
 
 /**
+ * Map an `autonomy:budget_warning` event to a `health_signal` diagnostic row —
+ * the PRE-TRIP budget signal (a per-root limb crossed 80% of its cap). Fired
+ * once per (root, limb); severity:"warning" so the fleet lens surfaces a
+ * session approaching its autonomy budget BEFORE the abort wedges it (the trip
+ * itself arrived with zero warning, observed live). `details` carries the
+ * closed limb/unit labels + the numeric spent/cap/fraction + the rootRunId
+ * ONLY — never a body.
+ */
+export function autonomyBudgetWarningEventToRow(
+  payload: EventMap["autonomy:budget_warning"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "warning",
+    agentId: "",
+    sessionKey: "",
+    message: "autonomy:budget_warning",
+    details: JSON.stringify({
+      signal: "autonomy_budget_warning",
+      limb: payload.limb,
+      spent: payload.spent,
+      cap: payload.cap,
+      unit: payload.unit,
+      fraction: payload.fraction,
+      rootRunId: payload.rootRunId,
+    }),
+    traceId: undefined,
+  };
+}
+
+/**
  * Map an `autonomy:revoked` event to a `health_signal` diagnostic row. A
  * cooperative lease/tree revoke had no fleet surface (it was INFO-log-only).
  * `details` carries the revoked COUNT + the rootRunId ONLY — NEVER the lease

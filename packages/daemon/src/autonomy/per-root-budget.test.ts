@@ -170,7 +170,7 @@ describe("per-root-budget — $/token/wall-clock limbs reusing the 3-state gate"
     expect(warnings).toHaveLength(1);
   });
 
-  it("fires onLimbWarning for the $ limb at 80% of aggregateUsd and re-arms after evictRoot", () => {
+  it("fires onLimbWarning for the $ limb at 80% of aggregateUsd (via the gate's granted-reserve warn)", () => {
     const clock = createFakeClock(1_000_000);
     const warnings: Array<{ limb: string; unit: string }> = [];
     const budget = createPerRootBudget({
@@ -184,12 +184,30 @@ describe("per-root-budget — $/token/wall-clock limbs reusing the 3-state gate"
     budget.reserveBudget("root-D80", PRICED_PROVIDER, PRICED_MODEL, 0.85, 10);
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatchObject({ limb: "aggregateUsd", unit: "usd" });
+  });
 
-    // Eviction clears the once-guard so a fresh root warns again.
-    budget.evictRoot("root-D80");
-    budget.registerRoot("root-D80");
-    budget.reserveBudget("root-D80", PRICED_PROVIDER, PRICED_MODEL, 0.85, 10);
+  it("evictRoot re-arms the once-per-limb warning guard (token limb — the $-accumulator is deliberately not per-root-evictable)", () => {
+    const clock = createFakeClock(1_000_000);
+    const warnings: Array<{ limb: string }> = [];
+    const budget = createPerRootBudget({
+      clock,
+      config: { aggregateUsd: 100, tokens: 1_000, wallClockMs: 3_600_000 },
+      logger: createMockLogger(),
+      onLimbWarning: (w) => { warnings.push(w); },
+    });
+    budget.registerRoot("root-R80");
+
+    budget.reserveBudget("root-R80", FREE_PROVIDER, FREE_MODEL, 0, 850);
+    expect(warnings).toHaveLength(1);
+
+    // Eviction clears the once-guard AND the token total, so a re-used root
+    // (the interactive-session per-turn re-anchor) warns afresh next time it
+    // approaches the cap.
+    budget.evictRoot("root-R80");
+    budget.registerRoot("root-R80");
+    budget.reserveBudget("root-R80", FREE_PROVIDER, FREE_MODEL, 0, 850);
     expect(warnings).toHaveLength(2);
+    expect(warnings.every((w) => w.limb === "tokens")).toBe(true);
   });
 
   it("never trips the dollar limb for a free model yet still enforces the token limb", () => {

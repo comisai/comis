@@ -43,6 +43,7 @@ import {
   type ComisLogger,
   type SessionKey,
   type DurableRunPort,
+  type TypedEventBus,
 } from "@comis/core";
 import type { BoundedAutonomyBudgetHolder } from "@comis/agent";
 import { createLeaseManager, type LeaseManager, type LeaseManagerDeps } from "@comis/infra";
@@ -401,6 +402,27 @@ export async function constructCapabilityLayer(
     config: autonomyBearingConfig,
     ...(deps.cronJobCount ? { cronJobCount: deps.cronJobCount } : {}),
     logger: daemonLogger,
+    // The pre-trip budget signal: 80% of any per-root limb → the fleet lens
+    // (health_signal row via the persistence wiring) BEFORE the abort wedges
+    // the session. Counts + closed labels only. Absent container (boot-gate
+    // unit tests) ⇒ no emit — the meter still enforces.
+    ...(deps.container !== undefined
+      ? {
+          onLimbWarning: (w: { rootRunId: string; limb: string; spent: number; cap: number; unit: string }) =>
+            // The container's structural type narrows emit to the audit
+            // events; the budget warning rides the SAME full TypedEventBus the
+            // daemon passes (AppContainer.eventBus) — widen at this one seam.
+            (deps.container!.eventBus.emit as TypedEventBus["emit"])("autonomy:budget_warning", {
+              rootRunId: w.rootRunId,
+              limb: w.limb,
+              spent: w.spent,
+              cap: w.cap,
+              unit: w.unit,
+              fraction: w.cap > 0 ? Math.min(1, w.spent / w.cap) : 1,
+              timestamp: clock.now(),
+            }),
+        }
+      : {}),
   });
   // The daemon-wide denial breaker, keyed per
   // rootRunId. denialBreakerN is sourced from the resolved autonomy-bearing config
