@@ -1152,6 +1152,13 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       origin: "agent",
       timestamp: 0,
     },
+    "execution:recovery_attempted": {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      reason: "silent_retry",
+      succeeded: true,
+      timestamp: 0,
+    },
     "activity:turn_finalized": {
       sessionKey: "t1:u1:c1",
       agentId: "agent-1",
@@ -2411,6 +2418,29 @@ describe("queue + execution + sender bridge", () => {
     expect(data.errorKind).toBe("resource");
     expect(data.reason).toBe("stopped — spend limit reached");
     expect(data.reclassified).toBe(false);
+  });
+
+  it("execution_recovery_attempted maps to execution.recovery_attempted carrying the closed reason + succeeded", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("execution:recovery_attempted", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      reason: "silent_retry",
+      succeeded: true,
+      timestamp: Date.now(),
+    } as any);
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("execution.recovery_attempted");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.reason).toBe("silent_retry");
+    expect(data.succeeded).toBe(true);
+    // Correlation keys stripped (envelope-only invariant).
+    expect(data.sessionKey).toBeUndefined();
+    expect(data.agentId).toBeUndefined();
   });
 
   it("delivery_aborted maps to delivery.aborted carrying chunk counts + the abort reason", () => {
@@ -3747,7 +3777,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // This count guards TRAJECTORY_BRIDGE_MAPPING against a silent add or
     // removal: any change to the mapping must update this number in lockstep,
     // forcing a deliberate review of every newly-bridged or dropped event.
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(115);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(116);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

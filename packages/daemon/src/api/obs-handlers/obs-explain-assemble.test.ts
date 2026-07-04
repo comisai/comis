@@ -963,6 +963,31 @@ function cacheBreakRecord(
   };
 }
 
+describe("assembleIncidentReport — recovery attempts", () => {
+  // The strip-and-re-enter / LKW-fallback / continuation-nudge recovery paths
+  // mutate a run (re-prompt, model swap) and were log-only — explain couldn't
+  // say a session re-entered the model. Fold the execution.recovery_attempted
+  // records into a recoveries section (counts by reason + succeeded tally).
+  it("folds recovery attempts by reason with a succeeded count", () => {
+    const signals = toIncidentSignals([
+      { traceSchema: "comis-trajectory", type: "execution.recovery_attempted", seq: 1, sessionKey: SESSION_KEY, data: { reason: "silent_retry", succeeded: false } },
+      { traceSchema: "comis-trajectory", type: "execution.recovery_attempted", seq: 2, sessionKey: SESSION_KEY, data: { reason: "silent_retry", succeeded: true } },
+      { traceSchema: "comis-trajectory", type: "execution.recovery_attempted", seq: 3, sessionKey: SESSION_KEY, data: { reason: "lkw_fallback", succeeded: true } },
+    ]);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 3);
+    expect(report.recoveries).toEqual({
+      total: 3,
+      succeeded: 2,
+      byReason: { silent_retry: 2, lkw_fallback: 1 },
+    });
+  });
+
+  it("omits recoveries when the trajectory carries none", () => {
+    const report = assembleIncidentReport(toIncidentSignals([]), makeMetadata(), null, SESSION_KEY, 0);
+    expect(report.recoveries).toBeUndefined();
+  });
+});
+
 describe("assembleIncidentReport — user surface (activity finalize + skipped delivery)", () => {
   // "What did the user actually see this turn?" — the terminal pill state and
   // any never-sent blocks. Observed live: explain claimed 2 dispatched

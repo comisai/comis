@@ -351,6 +351,50 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
     expect(outcome.promptSucceeded).toBe(false);
     expect(emit.mock.calls.filter((c) => c[0] === "execution:tool_schema_unsupported")).toHaveLength(0);
   });
+
+  it("the default silent-retry path emits execution:recovery_attempted{reason:silent_retry} (the incident's re-drive path, previously log-only)", async () => {
+    // The strip-and-re-enter path was the smoking gun in the budget incident,
+    // findable only by a debug-log grep. Emit an event so `explain` shows the
+    // session re-entered the model on a silent failure.
+    // Initial call succeeds-but-empty (drives detectSilentFailure); the retry
+    // recovers with visible text.
+    vi.mocked(runWithModelRetry).mockResolvedValue({ succeeded: true });
+    const { params, emit } = makeDispatchParams([], "network blip, empty response", "c-silent-retry");
+    // finishReason "error" (not "stop") → skip the continuation nudge → the
+    // default classification → handleSilentRetryDefault.
+    (params.bridge.getResult as ReturnType<typeof vi.fn>).mockReturnValue({
+      llmCalls: 1, stepsExecuted: 1, textEmitted: false, finishReason: "error", lastLlmErrorMessage: "network blip",
+    });
+    (params.session.getLastAssistantText as ReturnType<typeof vi.fn>).mockReturnValue("recovered text");
+
+    await runRetryLoop(params, "hello", undefined, false);
+
+    const calls = emit.mock.calls.filter((c) => c[0] === "execution:recovery_attempted");
+    expect(calls.length).toBeGreaterThanOrEqual(1);
+    expect(calls[0]![1]).toMatchObject({ reason: "silent_retry", agentId: "agent-1" });
+    expect(typeof calls[0]![1].succeeded).toBe("boolean");
+  });
+
+  it("the continuation nudge (thinking-only final turn) emits execution:recovery_attempted{reason:continuation_nudge}", async () => {
+    vi.mocked(runWithModelRetry).mockResolvedValue({ succeeded: true });
+    const { params, emit } = makeDispatchParams([], "", "c-continuation");
+    // finishReason "stop" + empty visible text → the continuation nudge fires.
+    (params.bridge.getResult as ReturnType<typeof vi.fn>).mockReturnValue({
+      llmCalls: 1, stepsExecuted: 1, textEmitted: false, finishReason: "stop", lastLlmErrorMessage: undefined,
+    });
+    // First getVisibleAssistantText → "" (triggers detect); after followUp → recovered.
+    let visibleCalls = 0;
+    (params.session.getLastAssistantText as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      visibleCalls += 1;
+      return visibleCalls <= 1 ? "" : "continued text";
+    });
+    (params.session as unknown as { followUp: ReturnType<typeof vi.fn> }).followUp = vi.fn(async () => undefined);
+
+    await runRetryLoop(params, "hello", undefined, false);
+
+    const calls = emit.mock.calls.filter((c) => c[0] === "execution:recovery_attempted");
+    expect(calls.some((c) => c[1].reason === "continuation_nudge")).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
