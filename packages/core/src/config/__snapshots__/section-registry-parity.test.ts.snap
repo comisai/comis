@@ -86,6 +86,10 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
         "staleHeartbeatMs": 120000
       },
       "evictOnPolicyUnreachable": true,
+      "mcp": {
+        "allow": {},
+        "enabled": false
+      },
       "message": {
         "channels": [
           "origin"
@@ -243,6 +247,27 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.autonomy.maxSelfSpawnRatePerMin",
     "type": "integer"
+  },
+  {
+    "default": {
+      "allow": {},
+      "enabled": false
+    },
+    "immutable": true,
+    "path": "agents.autonomy.mcp",
+    "type": "object"
+  },
+  {
+    "default": {},
+    "immutable": true,
+    "path": "agents.autonomy.mcp.allow",
+    "type": "object"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "agents.autonomy.mcp.enabled",
+    "type": "boolean"
   },
   {
     "default": {
@@ -8257,6 +8282,10 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
             "staleHeartbeatMs": 120000
           },
           "evictOnPolicyUnreachable": true,
+          "mcp": {
+            "allow": {},
+            "enabled": false
+          },
           "message": {
             "channels": [
               "origin"
@@ -15765,6 +15794,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "staleHeartbeatMs": 120000
         },
         "evictOnPolicyUnreachable": true,
+        "mcp": {
+          "allow": {},
+          "enabled": false
+        },
         "message": {
           "channels": [
             "origin"
@@ -15845,7 +15878,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
               "orch:web",
               "orch:analyze",
               "orch:write",
-              "orch:browse"
+              "orch:browse",
+              "orch:mcp"
             ],
             "type": "string"
           },
@@ -15932,6 +15966,54 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991,
           "type": "integer"
+        },
+        "mcp": {
+          "additionalProperties": false,
+          "default": {
+            "allow": {},
+            "enabled": false
+          },
+          "properties": {
+            "allow": {
+              "additionalProperties": {
+                "additionalProperties": false,
+                "properties": {
+                  "classification": {
+                    "enum": [
+                      "safe",
+                      "permission-gated"
+                    ],
+                    "type": "string"
+                  },
+                  "tools": {
+                    "default": [],
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "tools"
+                ],
+                "type": "object"
+              },
+              "default": {},
+              "propertyNames": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "enabled": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "enabled",
+            "allow"
+          ],
+          "type": "object"
         },
         "message": {
           "additionalProperties": false,
@@ -16112,7 +16194,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "rate",
         "spawn",
         "outward",
-        "durability"
+        "durability",
+        "mcp"
       ],
       "type": "object"
     },
@@ -26695,6 +26778,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "staleHeartbeatMs": 120000
               },
               "evictOnPolicyUnreachable": true,
+              "mcp": {
+                "allow": {},
+                "enabled": false
+              },
               "message": {
                 "channels": [
                   "origin"
@@ -26775,7 +26862,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                     "orch:web",
                     "orch:analyze",
                     "orch:write",
-                    "orch:browse"
+                    "orch:browse",
+                    "orch:mcp"
                   ],
                   "type": "string"
                 },
@@ -26862,6 +26950,54 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "exclusiveMinimum": 0,
                 "maximum": 9007199254740991,
                 "type": "integer"
+              },
+              "mcp": {
+                "additionalProperties": false,
+                "default": {
+                  "allow": {},
+                  "enabled": false
+                },
+                "properties": {
+                  "allow": {
+                    "additionalProperties": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "classification": {
+                          "enum": [
+                            "safe",
+                            "permission-gated"
+                          ],
+                          "type": "string"
+                        },
+                        "tools": {
+                          "default": [],
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "tools"
+                      ],
+                      "type": "object"
+                    },
+                    "default": {},
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "enabled": {
+                    "default": false,
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "enabled",
+                  "allow"
+                ],
+                "type": "object"
               },
               "message": {
                 "additionalProperties": false,
@@ -27042,7 +27178,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "rate",
               "spawn",
               "outward",
-              "durability"
+              "durability",
+              "mcp"
             ],
             "type": "object"
           },
@@ -31013,6 +31150,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "staleHeartbeatMs": 120000
             },
             "evictOnPolicyUnreachable": true,
+            "mcp": {
+              "allow": {},
+              "enabled": false
+            },
             "message": {
               "channels": [
                 "origin"
