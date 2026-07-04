@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, MsTeamsConversationStorePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, MsTeamsConversationStorePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, EnvPort, TimerPort, ActivityStreamPort } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
@@ -101,6 +101,12 @@ export interface ChannelsDeps {
   /** System timers (composition root). Threaded to buildActivityRenderers so the
    *  EditPlace renderer debounces edits via TimerPort (no raw setTimeout). */
   timers: TimerPort;
+  /** Live composition-root EnvPort. Threaded through bootstrapAdapters into
+   *  createMsTeamsPlugin so the managed-identity token path reads the App-Service
+   *  IDENTITY_ENDPOINT/IDENTITY_HEADER live per mint (they rotate). Absent → the
+   *  managed-identity header path falls back to no env (secret/certificate modes
+   *  are unaffected). */
+  env?: EnvPort;
   /** The orchestrator-facing redacted activity stream port (the
    *  setupObservability ActivityStream). Threaded into the inbound
    *  coordinatorFactory built in buildAndStartChannelManager as its
@@ -372,6 +378,9 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     channelsLogger,
     msTeamsConversationStore: deps.msTeamsConversationStore,
     timer: deps.timers,
+    // Live EnvPort → the managed-identity App-Service header path reads
+    // IDENTITY_ENDPOINT/IDENTITY_HEADER per mint (they rotate).
+    env: deps.env,
   });
 
   // Assemble media pipeline (resolvers, preprocessor, preflight)

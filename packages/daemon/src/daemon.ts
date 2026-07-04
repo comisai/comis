@@ -354,7 +354,7 @@ function buildChannelManagerDeps(deps: {
     activeRunRegistry, sessionResolver, rpcCall,
     continuationTracker, approvalGate, interactiveCallbackWiring,
     piSessionAdapters, costTrackers, deliveryQueue, recordOutboundMessage, executionTrackers,
-    onSuspiciousContent, dataDir, clock, timers, activityBreaker, activityStream, activityRendererFactoryOverride,
+    onSuspiciousContent, dataDir, clock, timers, env, activityBreaker, activityStream, activityRendererFactoryOverride,
     executionPlanPorts, oauthManagers,
   } = agents;
   // Per-agent OAuth access-token resolver (auto-refreshing) so the
@@ -395,6 +395,9 @@ function buildChannelManagerDeps(deps: {
   return {
     container, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger, clock, timers,
+    // Live EnvPort → bootstrapAdapters → createMsTeamsPlugin (managed-identity
+    // App-Service IDENTITY_ENDPOINT/IDENTITY_HEADER read live per mint).
+    env,
     resolveAccessToken: resolveCronAccessToken, // OAuth-provider background jobs
 
     // the orchestrator-facing redacted ActivityStream (setupObservability)
