@@ -168,6 +168,34 @@ describe("deliverExecutionResponse — aborted-signal skip honesty", () => {
     expect(warn?.[0]).toMatchObject({ errorKind: "precondition" });
     expect(String(warn?.[0]?.hint ?? "")).toMatch(/not.*sent|never sent|did not receive/i);
   });
+
+  it("emits delivery:aborted for the skip so the trajectory records what the user never received", async () => {
+    // The pacer's hard stop bypasses deliverToChannel entirely, so none of the
+    // delivery events fire — the trajectory showed NOTHING for a turn whose
+    // blocks were all skipped (observed live: explain claimed 2 dispatched
+    // deliveries while the user's chat showed a third, undelivered turn).
+    const send = vi.fn(async () => ok("msg-x"));
+    const adapter = makeAdapter(send as unknown as ChannelPort["sendMessage"]);
+    const deps = makeDeps();
+    const abortedController = new AbortController();
+    abortedController.abort("spend_exceeded");
+
+    await deliverExecutionResponse(
+      deps, adapter, makeMessage(), "hello world", makeBlockStreamCfg(),
+      new Set<BlockPacer>(), undefined, abortedController.signal, NO_TYPING,
+    );
+
+    const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+    const aborted = emit.mock.calls.filter((c) => c[0] === "delivery:aborted");
+    expect(aborted).toHaveLength(1);
+    expect(aborted[0]![1]).toMatchObject({
+      channelType: "telegram",
+      reason: "spend_exceeded",
+      chunksDelivered: 0,
+      totalChunks: 2,
+      origin: "agent",
+    });
+  });
 });
 
 describe("deliverExecutionResponse — delivery receipt", () => {

@@ -963,6 +963,47 @@ function cacheBreakRecord(
   };
 }
 
+describe("assembleIncidentReport — user surface (activity finalize + skipped delivery)", () => {
+  // "What did the user actually see this turn?" — the terminal pill state and
+  // any never-sent blocks. Observed live: explain claimed 2 dispatched
+  // deliveries while the user's chat showed a stale ❌ pill and two turns of
+  // silence; only a screenshot could establish the surface.
+  it("surfaces the finalize outcome and skipped-delivery counts from the trajectory records", () => {
+    const signals = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "delivery.aborted",
+        seq: 1,
+        sessionKey: SESSION_KEY,
+        data: { reason: "spend_exceeded", chunksDelivered: 0, totalChunks: 2, channelType: "telegram" },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "activity.turn_finalized",
+        seq: 2,
+        sessionKey: SESSION_KEY,
+        data: { strategy: "EditPlace", outcome: "failure", errorKind: "resource", reason: "stopped — spend limit reached", reclassified: false, failedEventCount: 1 },
+      },
+    ]);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 2);
+    expect(report.activityFinalize).toEqual({
+      strategy: "EditPlace",
+      outcome: "failure",
+      errorKind: "resource",
+      reason: "stopped — spend limit reached",
+      reclassified: false,
+    });
+    expect(report.deliverySkipped).toEqual({ events: 1, chunksNotSent: 2 });
+  });
+
+  it("omits both sections when the trajectory carries no such records (undefined, never empty objects)", () => {
+    const signals = toIncidentSignals([]);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 0);
+    expect(report.activityFinalize).toBeUndefined();
+    expect(report.deliverySkipped).toBeUndefined();
+  });
+});
+
 describe("assembleIncidentReport — trajectory-derived cost/cache ledger", () => {
   // A session's sessionEnd rollup is overwritten by EVERY execution, so its
   // costUsd is the LAST execution's cost only — observed live as a ~$0.50

@@ -2360,6 +2360,61 @@ describe("queue + execution + sender bridge", () => {
     expect(data.perRootBudget).toEqual({ limb: "aggregateUsd", spent: 2.04, cap: 2, unit: "usd" });
   });
 
+  it("activity_turn_finalized maps to activity.turn_finalized carrying the terminal user-surface state", () => {
+    // The pill's terminal state (kept ❌ label vs deleted scaffold) is derived
+    // from this outcome + strategy — without the record, explaining what the
+    // user's chat showed requires the platform screenshot (observed live).
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("activity:turn_finalized", {
+      sessionKey: "t1:u1:c1",
+      agentId: "agent-1",
+      channelType: "telegram",
+      strategy: "EditPlace",
+      outcome: "failure",
+      errorKind: "resource",
+      reason: "stopped — spend limit reached",
+      reclassified: false,
+      failedEventCount: 1,
+      timestamp: Date.now(),
+    } as any);
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("activity.turn_finalized");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.strategy).toBe("EditPlace");
+    expect(data.outcome).toBe("failure");
+    expect(data.errorKind).toBe("resource");
+    expect(data.reason).toBe("stopped — spend limit reached");
+    expect(data.reclassified).toBe(false);
+  });
+
+  it("delivery_aborted maps to delivery.aborted carrying chunk counts + the abort reason", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("delivery:aborted", {
+      channelId: "chat-1",
+      channelType: "telegram",
+      reason: "spend_exceeded",
+      chunksDelivered: 0,
+      totalChunks: 2,
+      durationMs: 5,
+      origin: "agent",
+      timestamp: Date.now(),
+    } as any);
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("delivery.aborted");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.reason).toBe("spend_exceeded");
+    expect(data.chunksDelivered).toBe(0);
+    expect(data.totalChunks).toBe(2);
+  });
+
   it("execution_budget_warning_maps_to_execution.budget_warning with totalTokens/llmCallCount/projectedCallsLeft; sessionKey/agentId stripped", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
