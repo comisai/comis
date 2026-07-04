@@ -2457,6 +2457,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // Consumer: test/architecture/comis-agent-same-gate.test.ts +
       //           test/architecture/comis-agent-no-admin.test.ts
       "DENYLISTED_RPC_METHODS",
+      // CAPABILITY_ACTION_CLASS — the closed capability→action-class map
+      // (read|mutate) the durable audit trail's `classification` reads. Re-exported
+      // from the TOP-LEVEL daemon barrel so the tool-invoke-cap-map arch-test PINS a
+      // cap's audit classification against the SAME runtime map the emitter uses
+      // (not a hand-copied literal that drifts). Same test-only-consumer shape as
+      // DENYLISTED_RPC_METHODS above: the sole consumer imports it statically from
+      // @comis/daemon under test/architecture/**, which the public-export-consumers
+      // AST walker (it scans packages/ only, excluding *.test.ts) does not see.
+      // SECURITY: read-only widening — an inert classification map; exporting it
+      // grants no new authority (the emitter behavior + the gate are untouched).
+      // Consumer: test/architecture/tool-invoke-cap-map.test.ts
+      "CAPABILITY_ACTION_CLASS",
     ])],
     // @comis/gateway: baseline orphans tracked here.
     // mTLS auth surface (validateCertificates, extractClientCN, CertPaths) is

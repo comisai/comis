@@ -143,11 +143,10 @@ describe("orch:mcp joins the closed capability union (default-off, disjoint from
 
   it("orch:mcp is disjoint from the gateway Scope set (orch:mcp ≠ mcp-client)", () => {
     // The one collision worth naming: orch:mcp is NOT the mcp-client Scope. A cap
-    // named like a scope would let a scope grant masquerade as a capability.
+    // named like a scope would let a scope grant masquerade as a capability. (The
+    // "no member implies admin/rpc/*" test above now iterates orch:mcp too, so the
+    // elevated-scope rule is already re-proven for the new member.)
     const scopeSet = new Set<string>(SCOPE_VALUES);
     expect(scopeSet.has("orch:mcp")).toBe(false);
-    // And it does not imply an elevated scope / wildcard (re-proving the axis rule
-    // for the new member specifically).
-    expect(/(^|:)(admin|rpc)$|\*/.test("orch:mcp")).toBe(false);
   });
 });

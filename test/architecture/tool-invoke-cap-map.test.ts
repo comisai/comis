@@ -39,16 +39,10 @@ import {
 // The daemon-side tables the INV-3 keystone + the orch:mcp audit class read (the
 // COMPILED @comis/daemon barrel — the cap socket's own closed-door source, so the
 // proof can never drift from a hand-copied literal; same rationale as the
-// @comis/core runtime-value imports above). A NAMESPACE import so a not-yet-added
-// export reads as `undefined` (a clean per-assertion RED) rather than a load crash.
-import * as comisDaemon from "@comis/daemon";
-
-/** The method-precise RPC pre-check denylist (already on the @comis/daemon barrel). */
-const DENYLISTED_RPC_METHODS = comisDaemon.DENYLISTED_RPC_METHODS as Record<string, string>;
-/** The per-cap audit action class (joins the barrel beside DENYLISTED_RPC_METHODS). */
-const CAPABILITY_ACTION_CLASS = (
-  comisDaemon as { CAPABILITY_ACTION_CLASS?: Record<string, "read" | "mutate"> }
-).CAPABILITY_ACTION_CLASS;
+// @comis/core runtime-value imports above, and as comis-agent-same-gate's
+// DENYLISTED_RPC_METHODS import). Named imports so the public-export-consumers gate
+// sees these barrel exports have an in-repo consumer.
+import { DENYLISTED_RPC_METHODS, CAPABILITY_ACTION_CLASS } from "@comis/daemon";
 
 describe("tool.invoke capability-map ↔ denylist ↔ contract registry", () => {
   it("no capability-mapped tool appears in the sub-agent denylist", () => {
@@ -108,7 +102,7 @@ describe("orch:mcp cap birth: ResultRef offload threshold + audit action class",
   it("classifies orch:mcp as a 'read' action in CAPABILITY_ACTION_CLASS", () => {
     // The Record<AgentCapability,…> is exhaustive, so a new union member is a
     // COMPILE-visible gap here; this pins the resolved class (MCP calls observe).
-    expect(CAPABILITY_ACTION_CLASS?.["orch:mcp"]).toBe("read");
+    expect(CAPABILITY_ACTION_CLASS["orch:mcp"]).toBe("read");
   });
 });
 
