@@ -120,6 +120,30 @@ describe("per-root-budget — $/token/wall-clock limbs reusing the 3-state gate"
     expect(overWall.kind).toBe("exceeded");
   });
 
+  it("brands a per-root $-limb trip with limb aggregateUsd + unit usd so the abort event names the exact knob", () => {
+    const { budget } = makeBudget({ aggregateUsd: 1.0 });
+    budget.registerRoot("root-D");
+
+    // Two priced reserves: the first fits, the second crosses the $1 cap.
+    const first = budget.reserveBudget("root-D", PRICED_PROVIDER, PRICED_MODEL, 0.6, 100);
+    expect(first.kind).toBe("ok");
+    const second = budget.reserveBudget("root-D", PRICED_PROVIDER, PRICED_MODEL, 0.6, 100);
+    expect(second.kind).toBe("exceeded");
+    if (second.kind === "exceeded") {
+      // checkSpendCeiling's SpendError is shared with the daemon-wide
+      // observability.spend ceiling and carries no limb. Without the per-root
+      // $-branch branding its own trip, the execution.aborted record has no
+      // perRootBudget payload and the explain spend verdict points the operator
+      // at observability.spend.* — the wrong knob tree for a per-root trip
+      // (observed live). The $-limb must self-identify like the token and
+      // wall-clock limbs do.
+      expect(second.error.limb).toBe("aggregateUsd");
+      expect(second.error.unit).toBe("usd");
+      expect(second.error.currentUsd).toBeCloseTo(0.6);
+      expect(second.error.capUsd).toBe(1.0);
+    }
+  });
+
   it("never trips the dollar limb for a free model yet still enforces the token limb", () => {
     const { budget } = makeBudget({ aggregateUsd: 0.0001, tokens: 1000 });
     budget.registerRoot("root-F");
