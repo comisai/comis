@@ -127,6 +127,54 @@ export function orphanReasonToEnum(
   return "resume_failed";
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Orphan-reclaim hook (RESUME-04)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The injected seams the orphan-reclaim hook composes. Both are best-effort /
+ * result-degrading in production (a missing file is a no-op), so reclaim is
+ * IDEMPOTENT. Injected so the hook is macOS-unit-testable against a real temp
+ * workspace with no daemon boot / no concrete store import.
+ */
+export interface OrchestrateReclaimSeams {
+  /** Resolve the dead run's workspace ROOT (undefined ⇒ nothing to reclaim). */
+  readonly workspaceFor: (record: DurableRunRecord) => string | undefined;
+  /** Delete the run's `results/` dir — reuses result-ref-store.cleanupRun (rmSync recursive). */
+  readonly cleanupResults: (workspacePath: string, runId: string) => Promise<void>;
+  /** Delete the pinned `<scriptRef>` at the workspace root (guarded rmSync — a missing file is a no-op). */
+  readonly removePinnedScript: (workspacePath: string, scriptRef: string) => void;
+}
+
+/**
+ * Reclaim a dead resumable orchestrate run's artifacts: its surviving `results/`
+ * (the checkpoint blob + any materialized results) + the pinned `<scriptRef>`.
+ *
+ * The RESUME-04 orphan sweep. A run orphaned on boot (its checkpoint gone) or on a
+ * lapsed-heartbeat watchdog tick has NO surviving runner to GC its workspace (the
+ * runner's own run-end cleanup never fired — the process crashed mid-pipeline), so
+ * the orphan path is the OWNER of the reclaim. SCOPED to orchestrate-kind rows
+ * (`scriptRef != null` — a re-runnable orchestrate row); a DAG/flat legacy orphan
+ * carries no `scriptRef` and is a no-op. IDEMPOTENT — a second reclaim finds the
+ * files already gone (the seams degrade, never throw). Composes the EXISTING
+ * `cleanupRun` + a guarded `rmSync` — no new GC primitive (NG4).
+ */
+export async function reclaimOrphanedOrchestrateRun(
+  record: DurableRunRecord,
+  seams: OrchestrateReclaimSeams,
+): Promise<void> {
+  const scriptRef = record.scriptRef;
+  // Scoped: only a re-runnable orchestrate row (a pinned scriptRef) has artifacts
+  // this hook owns; a DAG/flat legacy orphan is unaffected.
+  if (scriptRef == null) return;
+  const workspacePath = seams.workspaceFor(record);
+  if (workspacePath === undefined) return; // unresolvable workspace ⇒ nothing to reclaim
+  // 1. results/ — the checkpoint blob (+ any surviving materialized results) live here.
+  await seams.cleanupResults(workspacePath, record.rootRunId);
+  // 2. the pinned script at the workspace ROOT (cleanupRun is results/-only).
+  seams.removePinnedScript(workspacePath, scriptRef);
+}
+
 /** Dependencies for {@link reconcileLedgerRow}. */
 export interface ReconcileLedgerDeps {
   readonly ledger: OutwardSendLedgerPort;
@@ -312,6 +360,14 @@ export interface DurableResumeEngineDeps {
   readonly recoveryBudgetMs: number;
   readonly logger: ComisLogger;
   readonly eventBus: DurableEventEmitter;
+  /**
+   * Reclaim a dead resumable orchestrate run's artifacts on the orphan path
+   * (RESUME-04). Called for a run whose resume FAILED (e.g. the boot-sweep arm
+   * found a missing checkpoint); scoped + idempotent by the bound
+   * {@link reclaimOrphanedOrchestrateRun} (a non-orchestrate row is a no-op).
+   * Absent ⇒ no reclaim (a flat/legacy-only wiring).
+   */
+  readonly reclaimOrchestrateRun?: (record: DurableRunRecord) => Promise<void>;
 }
 
 /** The result of one boot/watchdog recovery pass. */
@@ -345,6 +401,7 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
     recoveryBudgetMs,
     logger,
     eventBus,
+    reclaimOrchestrateRun,
   } = deps;
 
   /** Orphan a run: markOrphaned + NotifyFn + eventBus + INFO (never silent). */
@@ -491,12 +548,22 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
             "Durable resume: run resumed",
           );
         } else {
+          // Propagate the resume failure's specific reason (e.g. the orchestrate
+          // arm's "not resumable: the checkpoint blob is gone") so the WARN log /
+          // notify name WHY AND `orphanReasonToEnum` maps it to the fitting closed
+          // member (a missing checkpoint → not_resumable) — the free text NEVER
+          // crosses onto the event (content-free — INV-5).
           await orphan(
             rootRunId,
-            "resume failed",
+            resumeResult.error.message,
             "the run could not be resumed from its checkpoint; inspect the cause and re-launch if needed",
           );
           orphaned++;
+          // RESUME-04 orphan-reclaim: a dead resumable orchestrate run has no
+          // surviving runner to GC its workspace — reclaim its results/ + pinned
+          // script now. Scoped + idempotent by the bound seam (a non-orchestrate
+          // row is a no-op); absent ⇒ no reclaim.
+          if (reclaimOrchestrateRun) await reclaimOrchestrateRun(record);
           logger.warn(
             { rootRunId, stepIndex: record.stepIndex, errorKind: "internal" as const, err: resumeResult.error, hint: "resumeRun returned err — orphaned + operator notified" },
             "Durable resume: resumeRun failed → orphaned",
