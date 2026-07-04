@@ -33,7 +33,7 @@ import { join } from "node:path";
 
 import type { ClockPort, TimerPort, TimerHandle, DurableRunPort } from "@comis/core";
 import type { ComisLogger, LeaseManager } from "@comis/infra";
-import { createSqliteDurableRunStore, ensureDurableRunTable } from "@comis/memory";
+import { createSqliteDurableRunStore, ensureDurableRunTable, ensureOutwardLedgerTable } from "@comis/memory";
 
 import { buildDurableResume, buildOrchestrateResumeWiring } from "../wiring/setup-durable-resume.js";
 
@@ -80,6 +80,7 @@ describe.skipIf(!RUN_LINUX)("orchestrate durable-resume boot-sweep recovery (res
     const Database = (await import("better-sqlite3")).default;
     db = new Database(":memory:");
     ensureDurableRunTable(db);
+    ensureOutwardLedgerTable(db);
   });
   afterEach(() => {
     rmSync(ws, { recursive: true, force: true });
