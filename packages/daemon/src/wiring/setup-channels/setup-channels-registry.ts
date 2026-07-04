@@ -367,7 +367,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
   // + the daemon TimerPort are injected into createMsTeamsPlugin here (both are
   // optional @comis/core-port seams on the adapter): capture + proactive recovery
   // + the typing keepalive.
-  const { adaptersByType, tgPlugin, linePlugin, channelPlugins, msTeamsIngress } = await bootstrapAdapters({
+  const { adaptersByType, tgPlugin, linePlugin, channelPlugins, msTeamsIngress, msTeamsPlugin } = await bootstrapAdapters({
     container,
     channelsLogger,
     msTeamsConversationStore: deps.msTeamsConversationStore,
@@ -386,6 +386,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     adaptersByType,
     tgPlugin,
     linePlugin,
+    msTeamsPlugin,
     ssrfFetcher,
     linkRunner,
     transcriber,

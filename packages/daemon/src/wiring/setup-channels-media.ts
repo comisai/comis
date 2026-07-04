@@ -21,6 +21,7 @@ import {
   type WhatsAppAdapterHandle,
   type TelegramPluginHandle,
   type LinePluginHandle,
+  type MsTeamsPluginHandle,
 } from "@comis/channels";
 import {
   createCompositeResolver,
@@ -64,6 +65,7 @@ export interface MediaPipelineDeps {
   adaptersByType: Map<string, ChannelPort>;
   tgPlugin?: TelegramPluginHandle;
   linePlugin?: LinePluginHandle;
+  msTeamsPlugin?: MsTeamsPluginHandle;
   ssrfFetcher: SsrfGuardedFetcher;
   linkRunner: LinkRunner;
   transcriber?: TranscriptionPort;
@@ -99,6 +101,7 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
     adaptersByType,
     tgPlugin,
     linePlugin,
+    msTeamsPlugin,
     ssrfFetcher,
     linkRunner,
     transcriber,
@@ -226,6 +229,21 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
   if (linePlugin) {
     platformResolvers.push(
       linePlugin.createResolver({ maxBytes: maxMediaBytes, logger: channelsLogger }),
+    );
+  }
+
+  // Microsoft Teams: resolver created from plugin handle (closes over the
+  // Connector-token getter). The SAME injected auth-capable ssrfFetcher + the
+  // config allowlist (the resolver applies its built-in default when empty) —
+  // never a bare fetch or an over-broad list.
+  if (msTeamsPlugin) {
+    platformResolvers.push(
+      msTeamsPlugin.createResolver({
+        ssrfFetcher,
+        maxBytes: maxMediaBytes,
+        logger: channelsLogger,
+        mediaAuthAllowHosts: channelConfig?.msteams?.mediaAuthAllowHosts ?? [],
+      }),
     );
   }
 

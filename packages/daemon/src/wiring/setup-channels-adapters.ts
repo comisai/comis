@@ -36,6 +36,7 @@ import {
   type LinePluginHandle,
   type EmailAdapterDeps,
   type MsTeamsAdapterHandle,
+  type MsTeamsPluginHandle,
   type TeamsActivity,
 } from "@comis/channels";
 import { createMsTeamsIngress } from "@comis/gateway";
@@ -63,6 +64,10 @@ export interface AdapterBootstrapResult {
    *  gateway so the `/channels/msteams` route mounts only when a caller-backed
    *  ingress exists. Undefined when the channel is disabled. */
   msTeamsIngress?: import("hono").Hono;
+  /** Microsoft Teams plugin handle (needed by the media pipeline for resolver
+   *  creation — mirrors tgPlugin/linePlugin). Undefined when the channel is
+   *  disabled or its credentials are invalid. */
+  msTeamsPlugin?: MsTeamsPluginHandle;
 }
 
 // ---------------------------------------------------------------------------
@@ -96,6 +101,7 @@ export async function bootstrapAdapters(deps: {
   let tgPlugin: TelegramPluginHandle | undefined;
   let linePlugin: LinePluginHandle | undefined;
   let msTeamsIngress: import("hono").Hono | undefined;
+  let msTeamsPlugin: MsTeamsPluginHandle | undefined;
 
   // Helper: attempt to get a secret, return undefined if not found
   const getSecret = (name: string): string | undefined => {
@@ -414,6 +420,9 @@ export async function bootstrapAdapters(deps: {
       });
       adaptersByType.set("msteams", plugin.adapter);
       channelPlugins.set("msteams", plugin);
+      // Capture the handle so the media pipeline can build the msteams-file
+      // resolver over its Connector-token getter (mirrors tgPlugin/linePlugin).
+      msTeamsPlugin = plugin as MsTeamsPluginHandle;
       const teamsAdapter = plugin.adapter as MsTeamsAdapterHandle;
       msTeamsIngress = createMsTeamsIngress({
         validateActivityJwt: (authHeader) => validateActivityJwt(authHeader, appId),
@@ -433,5 +442,5 @@ export async function bootstrapAdapters(deps: {
   }
   } // end if (channelConfig)
 
-  return { adaptersByType, tgPlugin, linePlugin, channelPlugins, msTeamsIngress };
+  return { adaptersByType, tgPlugin, linePlugin, channelPlugins, msTeamsIngress, msTeamsPlugin };
 }
