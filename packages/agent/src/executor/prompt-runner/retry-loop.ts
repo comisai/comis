@@ -148,7 +148,20 @@ export async function runRetryLoop(
       // produce visible text in an intermediate turn (stopReason: "toolUse")
       // then return an empty final turn after a bookkeeping tool call.
       // The textEmitted flag from the bridge tracks all text_delta events.
-      if ((earlyBridgeResult.llmCalls ?? 0) > 0 && !earlyBridgeResult.textEmitted) {
+      // A run the bridge itself ABORTED is excluded: a safety-control abort
+      // (spend/budget/step/loop/context) cuts the stream mid-loop, so the
+      // empty tail is the abort, not a silent provider failure. abortResponse
+      // is set exactly at those abort sites and already carries the
+      // user-facing outcome (executor-post-execution substitutes it as the
+      // response). Re-entering the model here would re-drive a
+      // deliberately-stopped run with the bridge's aborted latch disarming
+      // every safety gate, and re-appending the prompt duplicates the user
+      // message in the session and the conversation store.
+      if (
+        (earlyBridgeResult.llmCalls ?? 0) > 0 &&
+        !earlyBridgeResult.textEmitted &&
+        earlyBridgeResult.abortResponse === undefined
+      ) {
         // Single-entry by construction: detectSilentFailure is called at most
         // once per runPrompt invocation (the surrounding `if (promptSucceeded
         // && !skipPrompt)` cannot re-enter this branch). The
