@@ -142,6 +142,58 @@ describe("validateChannelCredential", () => {
     });
   });
 
+  describe("msteams", () => {
+    // Azure app-registration app IDs and directory (tenant) IDs are GUIDs
+    // (8-4-4-4-12 hex). Neutral placeholder GUID (not a real registration).
+    const validGuid = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+
+    it("accepts a valid appId (GUID shape)", () => {
+      const result = validateChannelCredential("msteams", "appId", validGuid);
+      expect(result).toBeUndefined();
+    });
+
+    it("rejects a malformed appId that is not a GUID", () => {
+      const result = validateChannelCredential("msteams", "appId", "not-a-guid");
+      expect(result).toBeDefined();
+      expect(result!.message).toContain("Invalid Microsoft Teams app ID");
+    });
+
+    it("rejects an empty appId", () => {
+      const result = validateChannelCredential("msteams", "appId", "");
+      expect(result).toBeDefined();
+      expect(result!.message).toContain("required");
+    });
+
+    it("accepts a valid tenantId (GUID shape)", () => {
+      const result = validateChannelCredential("msteams", "tenantId", validGuid);
+      expect(result).toBeUndefined();
+    });
+
+    it("rejects a malformed tenantId that is not a GUID", () => {
+      const result = validateChannelCredential("msteams", "tenantId", "tenant");
+      expect(result).toBeDefined();
+      expect(result!.message).toContain("Invalid Microsoft Teams tenant ID");
+    });
+
+    it("accepts a valid appPassword (sufficient length)", () => {
+      const secret = "a".repeat(40);
+      const result = validateChannelCredential("msteams", "appPassword", secret);
+      expect(result).toBeUndefined();
+    });
+
+    it("rejects a too-short appPassword", () => {
+      const result = validateChannelCredential("msteams", "appPassword", "abc");
+      expect(result).toBeDefined();
+      expect(result!.message).toContain("Invalid Microsoft Teams app password");
+    });
+
+    it("rejects an empty appPassword", () => {
+      const result = validateChannelCredential("msteams", "appPassword", "");
+      expect(result).toBeDefined();
+      expect(result!.message).toContain("required");
+    });
+  });
+
   describe("channels with no credentials", () => {
     it("returns undefined for whatsapp", () => {
       expect(
@@ -192,6 +244,14 @@ describe("getChannelCredentialTypes", () => {
     expect(getChannelCredentialTypes("line")).toEqual([
       "channelToken",
       "channelSecret",
+    ]);
+  });
+
+  it("returns ['appId', 'appPassword', 'tenantId'] for msteams", () => {
+    expect(getChannelCredentialTypes("msteams")).toEqual([
+      "appId",
+      "appPassword",
+      "tenantId",
     ]);
   });
 
