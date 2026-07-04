@@ -1300,6 +1300,17 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             sessionKey: formatSessionKey(deps.sessionKey),
             traceId: tryGetContext()?.traceId ?? deps.executionId,
             ...(executedRedactedParams !== undefined && { params: executedRedactedParams }),
+            // On FAILURE, carry the bounded+redacted argument shape so the
+            // trajectory tool.result record — and `comis explain`'s failures[] —
+            // can answer "what did the failed call attempt?" without a raw
+            // conversation-store dive. redactValue (executedRedactedParams)
+            // masks secrets/PII/paths; sanitizeToolArgs then caps each value
+            // (large values → "[N chars]"). Success omits it — the input is
+            // only diagnostically load-bearing on a failure, and gating keeps
+            // the trajectory lean.
+            ...(!toolSuccess && executedRedactedParams !== undefined && {
+              argsPreview: sanitizeToolArgs(executedRedactedParams),
+            }),
             ...(toolErrorKind !== undefined && { errorKind: toolErrorKind }),
             ...(errorText && { errorMessage: sanitizeLogString(errorText).slice(0, 1500) }),
             ...(!toolSuccess && mcpServer !== undefined && { mcpServer, mcpErrorType: classifyMcpErrorType(errorText) }),

@@ -211,6 +211,11 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
         resultDigest: asString(data.resultDigest) ?? fingerprint(errorText ?? ""),
         resultBytes,
         errorPreview,
+        // The bounded+redacted arguments the failed call was invoked with
+        // (already sanitized at the emit) — "what did the failed call attempt?"
+        ...(data.argsPreview !== null && typeof data.argsPreview === "object" && !Array.isArray(data.argsPreview)
+          ? { argsPreview: data.argsPreview as Record<string, unknown> }
+          : {}),
       });
       return;
     }

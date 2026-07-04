@@ -59,6 +59,9 @@ export function translatePayload(
         success: payload.success,
         ...(payload.errorKind !== undefined ? { errorKind: payload.errorKind } : {}),
         ...(payload.errorMessage !== undefined ? { errorMessage: payload.errorMessage } : {}),
+        // The bounded+redacted failed-call arguments (emit-site gated to
+        // failures only; obs.explain surfaces it on failures[]).
+        ...(payload.argsPreview !== undefined ? { argsPreview: payload.argsPreview } : {}),
         ...(payload.truncated !== undefined ? { truncated: payload.truncated } : {}),
         // Provenance forwarding (obs.explain reads it).
         // matchedToken is already sanitized+bounded at the emit (pi-event-bridge),

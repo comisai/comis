@@ -581,6 +581,12 @@ export interface IncidentFailure {
   resultDigest: string;
   resultBytes: number;
   errorPreview: string;
+  /** The bounded+redacted argument shape the FAILED call was invoked with
+   *  (from the tool.result record's `argsPreview`): secrets/PII/paths masked,
+   *  each value capped (large values → "[N chars]"). Answers "what did the
+   *  failed call attempt?" without a raw conversation-store dive. Absent for a
+   *  failure record that carried no argsPreview (older trajectories). */
+  argsPreview?: Record<string, unknown>;
 }
 
 /**
