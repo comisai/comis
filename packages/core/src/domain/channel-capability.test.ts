@@ -8,7 +8,7 @@ import { ChannelCapabilitySchema } from "./channel-capability.js";
 // ChannelFeaturesSchema declares `typing` (default false), `threads`
 // (default false), and `buttons` (closed enum, default "none") so
 // selectStrategy() and renderers don't have to guess what a plugin supports.
-// Defaults exist only as a safety net for *new* plugins — the 10
+// Defaults exist only as a safety net for *new* plugins — the 11
 // in-tree plugins declare the values explicitly.
 // ---------------------------------------------------------------------------
 
