@@ -1,6 +1,6 @@
 {
-  "totalMinified": 133282,
-  "totalGzipped": 13512,
+  "totalMinified": 133677,
+  "totalGzipped": 13547,
   "budget": {
     "minified": 134000,
     "gzipped": 38912
@@ -166,6 +166,7 @@
     "obs.trace.export": 362,
     "obs.trace.search": 604,
     "obs.trace.tail": 569,
+    "orchestrate.replay": 376,
     "providers.create": 585,
     "providers.delete": 402,
     "providers.disable": 431,

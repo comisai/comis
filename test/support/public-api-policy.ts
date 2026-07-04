@@ -1694,6 +1694,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "LeaseRevokeContract",
       "RunKillContract",
       "AUTONOMY_HANDLERS_CONTRACTS",
+      // Replay-domain aggregator array. Same pattern as AUTONOMY_HANDLERS_CONTRACTS:
+      // composed into ORCHESTRATOR_CONTRACTS → API_CONTRACTS_ORDERED intra-package
+      // (the walker skips self-imports), and no external consumer imports the
+      // per-domain array directly. The per-method `OrchestrateReplayContract` is
+      // NOT policy-listed — it HAS in-repo consumers (its
+      // `[OrchestrateReplayContract.method]` handler in orchestrate-replay-handlers.ts
+      // + the `comis orchestrate replay` CLI in commands/orchestrate.ts).
+      "REPLAY_HANDLERS_CONTRACTS",
       // Capabilities-domain aggregator. Same pattern as
       // DAEMON_CONTRACTS / AUTH_CONTRACTS: the per-method
       // `CapabilitiesIntrospectContract` HAS in-repo consumers (its

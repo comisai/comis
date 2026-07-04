@@ -9656,6 +9656,41 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "admin"
     ]
   },
+  "orchestrate.replay": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "runId"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "stdout": {
+          "type": "string"
+        },
+        "diverged": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "stdout"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
   "providers.create": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
