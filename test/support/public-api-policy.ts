@@ -584,12 +584,19 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // wraps the adapter; the adapter drives the mapper, Connector-token
       // provider and error classifier) with no cross-package importer; the
       // daemon consumes the plugin factory, validators and handle/activity
-      // types instead.
+      // types instead. The 3-mode token factory (secret/certificate/managed-
+      // identity) + its deps/mode/provider types are the same class: the adapter
+      // constructs the provider from them internally, and MsTeamsAdapterDeps
+      // (above) surfaces the auth mode — no cross-package importer names them.
       "createMsTeamsAdapter",
       "MsTeamsAdapterDeps",
       "mapMsTeamsActivityToNormalized",
       "createActivityJwtValidator",
       "createConnectorTokenProvider",
+      "createConnectorTokenProviderFor",
+      "ConnectorAuthMode",
+      "ConnectorTokenDeps",
+      "ConnectorTokenProvider",
       "classifyMsTeamsError",
       "createIMessageAdapter",
       "IMessageAdapterDeps",
