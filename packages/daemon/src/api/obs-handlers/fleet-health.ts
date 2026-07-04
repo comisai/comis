@@ -63,6 +63,7 @@ import { IS_DEV, type ObsHandlerDeps } from "./obs-helpers.js";
 import { readSessionIndexWindow } from "./fleet-session-index.js";
 import { buildFindings, pipelineAuthoringAggregateFromRows, type Finding } from "./fleet-findings.js";
 import { computeAutonomySlice } from "./fleet-autonomy.js";
+import { computeCronWakeGateSlice } from "./fleet-cron-wake-gate.js";
 
 /** Default data directory (lazy). Mirrors obs-explain.ts / fleet-session-index.ts. */
 function defaultDataDir(): string {
@@ -334,6 +335,8 @@ export async function assembleFleetHealthReport(
   const learningHealth = deps.obsStore?.queryDiagnostics({ category: "learning_health", sinceMs }) ?? [];
   // The forget-sweep rows → the memory_lifecycle finding.
   const memoryLifecycle = deps.obsStore?.queryDiagnostics({ category: "memory_lifecycle", sinceMs }) ?? [];
+  // The gated cron-fire rows → the cronWakeGate slice + rollup finding.
+  const cronWakeGate = deps.obsStore?.queryDiagnostics({ category: "cron_wake_gate", sinceMs }) ?? [];
 
   // The pre-committed pipeline-authoring decision verdict (the gate metric for
   // enabling small-model DAG authoring). PURE + deterministic: the windowed
@@ -345,7 +348,7 @@ export async function assembleFleetHealthReport(
   );
 
   // findings[] — counts + codes + hints ONLY (no raw bodies).
-  const allFindings = buildFindings(healthSignals, modelHealth, configPosture, learningHealth, memoryLifecycle);
+  const allFindings = buildFindings(healthSignals, modelHealth, configPosture, learningHealth, memoryLifecycle, cronWakeGate);
   const truncations: TruncationEntry[] = [];
   const findings = boundFindings(allFindings, truncations);
 
@@ -384,6 +387,12 @@ export async function assembleFleetHealthReport(
     // read-back — documented in the schema; a stricter autonomy-only cost is a follow-up).
     costUsd: fleet.costUsd,
   });
+
+  // The cross-session wake-gate efficiency slice (per-agent skip-rate /
+  // turns-saved / net cost). PURE over the already-read `cron_wake_gate` rows;
+  // `undefined` (block omitted) when no gated fire is in the window — honest
+  // degradation, mirroring the autonomy slice's honest-omit.
+  const cronWakeGateSlice = computeCronWakeGateSlice(cronWakeGate);
 
   // The deterministic verdict (PURE, ordered first-match-wins).
   // Dominant named degradation cause (highest count; lexicographic tiebreak).
@@ -456,6 +465,11 @@ export async function assembleFleetHealthReport(
     // signals OMITS the field entirely (honest degradation; the schema field is
     // optional, so an absent block round-trips). Present otherwise.
     ...(autonomy !== undefined ? { autonomy } : {}),
+    // The wake-gate efficiency block (per-agent skip-rate + net cost).
+    // Conditionally spread so a window with no gated fire OMITS the field entirely
+    // (honest degradation; the schema field is optional, so an absent block
+    // round-trips). Present otherwise.
+    ...(cronWakeGateSlice !== undefined ? { cronWakeGate: cronWakeGateSlice } : {}),
     suggestedNextSteps,
     truncations,
     coverage: {

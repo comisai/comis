@@ -240,6 +240,35 @@ describe("CronStore", () => {
     );
   });
 
+  it("keeps valid jobs when ONE job is invalid — a single bad job does not empty the store (poison-pill regression)", async () => {
+    // load() parsed the whole array atomically (z.array(CronJobSchema)), so ONE
+    // malformed job threw and dropped EVERY job — silently disabling all
+    // scheduling (incl. the system lifecycle crons) on the next daemon reload.
+    // The load must quarantine only the invalid job and keep the valid ones. The
+    // poison shape here (a partial deliveryTarget) is exactly what a bare-cast
+    // cron.update persisted; live-reproduced 2026-07-04.
+    const logger = createMockLogger();
+    const store = createCronStore(filePath, logger);
+    const valid = makeJob({ id: "good-1", name: "keeper" });
+    const dir = path.dirname(filePath);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify([
+        valid,
+        { ...valid, id: "bad-1", name: "poison", deliveryTarget: { channelType: "telegram", channelId: "c1" } },
+      ]),
+      "utf-8",
+    );
+    const jobs = await store.load();
+    // The valid job survives; only the poison is dropped (not the whole store).
+    expect(jobs.map((j) => j.id)).toEqual(["good-1"]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "validation", kept: 1, dropped: 1 }),
+      "Cron store schema validation failed",
+    );
+  });
+
   it("load on missing file returns empty array without warning", async () => {
     const logger = createMockLogger();
     const store = createCronStore(filePath, logger);

@@ -10,7 +10,7 @@
  * @module
  */
 import { describe, it, expect } from "vitest";
-import { IncidentReportSchema, ObsExplainContract } from "./observability.js";
+import { IncidentReportSchema, IncidentCronWakeGateSchema, ObsExplainContract } from "./observability.js";
 
 /** A minimal-but-valid IncidentReport (no optional sections) — the base fixture. */
 function baseReport(): Record<string, unknown> {
@@ -133,6 +133,81 @@ describe("IncidentReportSchema spend? section", () => {
   it("rejects a spend section missing capUsd (the shape is enforced)", () => {
     const report = { ...baseReport(), spend: { scope: "global", totalUsd: 5 } };
     expect(() => IncidentReportSchema.parse(report)).toThrow();
+  });
+});
+
+describe("IncidentReportSchema cronWakeGate? section (the woke-fire fact)", () => {
+  // Only a fire the gate WOKE runs the model, so only a woke fire has a
+  // session/trajectory to post-mortem. The fact is bounded + content-free
+  // (counts/ids/enum) — the gate's gathered finding never rides it.
+  const wokeFact = { jobId: "j1", wake: true, durationMs: 20, toolCalls: 2, estTurnsSaved: 0 };
+
+  it("parses the wake-gate fact — counts/ids/boolean ONLY (no free-text field)", () => {
+    const fact = IncidentCronWakeGateSchema.parse(wokeFact);
+    expect(fact).toEqual(wokeFact);
+  });
+
+  it("strips a planted finding/script field from the wake-gate fact (content-free)", () => {
+    // z.object strips unknown keys on parse — the gate's gathered content or its
+    // script source can never ride the fact even if a caller tries to smuggle one.
+    const parsed = IncidentCronWakeGateSchema.parse({
+      ...wokeFact,
+      finding: "the sensitive content the gate gathered",
+      script: "curl https://internal/secrets | jq",
+    }) as Record<string, unknown>;
+    expect("finding" in parsed).toBe(false);
+    expect("script" in parsed).toBe(false);
+    expect(Object.keys(parsed).sort()).toEqual([
+      "durationMs",
+      "estTurnsSaved",
+      "jobId",
+      "toolCalls",
+      "wake",
+    ]);
+  });
+
+  it("rejects a wake-gate fact missing a required count (the shape is enforced)", () => {
+    expect(() =>
+      IncidentCronWakeGateSchema.parse({ jobId: "j1", wake: true, durationMs: 20, toolCalls: 2 }),
+    ).toThrow();
+  });
+
+  it("parses a report WITHOUT cronWakeGate (additive — a non-gate session omits it)", () => {
+    const parsed = IncidentReportSchema.parse(baseReport());
+    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed.cronWakeGate).toBeUndefined();
+  });
+
+  it("round-trips a report WITH cronWakeGate — the block is DECLARED, not stripped by the non-strict .parse()", () => {
+    // A non-strict z.object silently STRIPS an undeclared key — a cronWakeGate that
+    // is folded but not declared on IncidentReportSchema would vanish at the wire.
+    // Proving it survives .parse() proves the field is actually declared.
+    const report = { ...baseReport(), cronWakeGate: wokeFact };
+    const parsed = IncidentReportSchema.parse(report);
+    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed.cronWakeGate).toEqual(wokeFact);
+  });
+});
+
+describe("ObsExplainContract.request skip-negative (a skipped fire is NOT resolvable via comis explain)", () => {
+  // A SKIPPED wake-gate fire opens NO session/trajectory — its only handle is the
+  // jobId, and the cron.runs lens owns that. comis explain resolves a SESSION, so its
+  // request accepts sessionKey/traceId/rootRunId ONLY. A jobId-only request must be
+  // refine-rejected so a skip is never falsely promised a post-mortem.
+  it("rejects a jobId-only request via the refine (a jobId is none of sessionKey/traceId/rootRunId)", () => {
+    const result = ObsExplainContract.request.safeParse({ jobId: "j1" });
+    expect(result.success).toBe(false);
+  });
+
+  it("strips jobId even beside a valid ref — jobId is not a declared post-mortem handle", () => {
+    // Paired with a valid sessionKey a jobId is still stripped (undeclared), so no
+    // code path can resolve a session FROM a jobId.
+    const parsed = ObsExplainContract.request.parse({
+      sessionKey: "default:u:c:1",
+      jobId: "j1",
+    }) as Record<string, unknown>;
+    expect("jobId" in parsed).toBe(false);
+    expect(parsed.sessionKey).toBe("default:u:c:1");
   });
 });
 

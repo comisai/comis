@@ -186,6 +186,59 @@ export const FleetHealthReportSchema = z.object({
       worstRootRunId: z.string().optional(),
     })
     .optional(),
+  /**
+   * The cross-session wake-gate EFFICIENCY slice — per-agent
+   * skip-rate + turns-saved + tool-call cost, rolled up from the content-free
+   * `cron_wake_gate` diagnostic rows. Counts + agent ids ONLY (never the gate's
+   * gathered payload / script source / a secret — the smuggled-key test proves
+   * the non-strict z.object strips any extra field). Optional (schemaVersion
+   * stays 1) — additive; the block is ABSENT when no gated fire happened in the
+   * window (honest omit).
+   *
+   * The two legibility properties this block carries:
+   *   - SUPPRESSION: `perAgent[].skipRate == 1.0` is a gate that NEVER wakes the
+   *     model — either working hard (savings) OR silently poisoned to suppress a
+   *     monitor. Either way it is visible, never silent.
+   *   - NET COST: `toolCalls` (the gate's cap-call cost) beside `turnsSaved`
+   *     (the avoided model turns) makes a gate that costs more than it saves
+   *     legible — the operator compares the two numbers directly.
+   */
+  cronWakeGate: z
+    .object({
+      /** Window totals: `total` gated fires, `skipped` (wake===false) fires,
+       *  `skipRate = skipped/total`, `failedOpen` (fail-open wakes: crash/timeout/
+       *  over-cap/no-verdict) and `failOpenRate = failedOpen/total` (0 when total
+       *  is 0). `failOpenRate` is the signal symmetric to a 100% `skipRate`: a
+       *  broken gate that fails open every fire saves nothing and costs its own
+       *  cap-calls, yet otherwise looks like a healthy always-waking monitor. */
+      fires: z.object({
+        total: z.number(),
+        skipped: z.number(),
+        skipRate: z.number(),
+        failedOpen: z.number(),
+        failOpenRate: z.number(),
+      }),
+      /** Sum of the derived per-fire `estTurnsSaved` (the avoided model turns). */
+      turnsSaved: z.number(),
+      /** Sum of the gate's cap-call cost across the window (the net-cost numerator). */
+      toolCalls: z.number(),
+      /** Per-agent breakdown — the suppression (skipRate), the broken-gate signal
+       *  (failOpenRate), and net-cost (toolCalls vs turnsSaved) legibility keyed
+       *  by agent id. */
+      perAgent: z.array(
+        z.object({
+          agentId: z.string(),
+          fires: z.number(),
+          skipped: z.number(),
+          skipRate: z.number(),
+          failedOpen: z.number(),
+          failOpenRate: z.number(),
+          turnsSaved: z.number(),
+          toolCalls: z.number(),
+        }),
+      ),
+    })
+    .optional(),
 });
 
 /** The `obs.fleet.health` response (the cross-session fleet digest). Inferred from the Zod schema. */

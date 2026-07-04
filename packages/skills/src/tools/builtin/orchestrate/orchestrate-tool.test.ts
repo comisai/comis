@@ -29,18 +29,21 @@ import { EventEmitter } from "node:events";
 
 import type { ComisLogger } from "@comis/core";
 
+import { createOrchestrateTool } from "./orchestrate-tool.js";
+// The env-scrub + the clamp + the caps now live in the shared jailed-run core;
+// import them (and the spawn seam types) from there. Aliased to their prior
+// names so the assertions below stay byte-identical (import-only diff).
 import {
-  createOrchestrateTool,
   scrubSecretEnv,
   clampTimeoutMs,
   MAX_TIMEOUT_MS,
   DEFAULT_TIMEOUT_MS,
   STDOUT_HARD_CAP_BYTES,
-} from "./orchestrate-tool.js";
+} from "./jailed-script-runner.js";
 import type {
-  OrchestrateSpawnFn,
-  OrchestrateSpawnedChild,
-} from "./orchestrate-tool.js";
+  JailedScriptSpawnFn as OrchestrateSpawnFn,
+  JailedScriptSpawnedChild as OrchestrateSpawnedChild,
+} from "./jailed-script-runner.js";
 import { BwrapProvider } from "../sandbox/bwrap-provider.js";
 
 function makeLogger(): ComisLogger {
@@ -560,6 +563,45 @@ describe("orchestrate-tool", () => {
     expect(arg.workspacePath).toBe(workspacePath);
     expect(typeof arg.runId).toBe("string");
     expect(arg.runId.length).toBeGreaterThan(0);
+  });
+
+  it("emits the operator-facing completion INFO carrying the runId and durationMs", async () => {
+    // Guards that the extraction did not drop the completion INFO (runId +
+    // durationMs) — the run stays observable, and the SAME runId that rides the
+    // INFO also rides the tool's `details` (correlatable end to end).
+    const infoCalls: Array<{ fields: Record<string, unknown>; msg: string }> = [];
+    const logger: ComisLogger = (() => {
+      const noop = (): void => {};
+      const base: ComisLogger = {
+        level: "silent",
+        trace: noop,
+        debug: noop,
+        info: (a?: unknown, b?: unknown) => {
+          infoCalls.push({
+            fields: (a ?? {}) as Record<string, unknown>,
+            msg: typeof b === "string" ? b : "",
+          });
+        },
+        warn: noop,
+        error: noop,
+        fatal: noop,
+        audit: noop,
+        child: () => base,
+      };
+      return base;
+    })();
+    const { deps } = makeDeps({ logger });
+    const tool = createOrchestrateTool(deps);
+
+    const result = await tool.execute("c", { script: "1", language: "ts" });
+
+    const completeInfo = infoCalls.find((i) => /orchestrate run complete/i.test(i.msg));
+    expect(completeInfo, "expected a completion INFO line").toBeDefined();
+    expect(typeof completeInfo!.fields.runId).toBe("string");
+    expect(String(completeInfo!.fields.runId).length).toBeGreaterThan(0);
+    expect(typeof completeInfo!.fields.durationMs).toBe("number");
+    const details = (result as { details?: { runId?: unknown } }).details;
+    expect(details?.runId).toBe(completeInfo!.fields.runId);
   });
 
   it("calls cleanupRun even when the jailed child fails (runs in the finally)", async () => {

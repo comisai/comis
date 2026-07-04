@@ -304,6 +304,62 @@ describe("setup-channels-credentials", () => {
   });
 
   // -------------------------------------------------------------------------
+  // Control-token safety. An untrusted, model-authored deliver string equal to a
+  // memory-cron sentinel must NOT be interpreted as a control token. Sentinel
+  // interpretation is scoped to INTERNAL, deliveryTarget-less emits; a user-facing
+  // delivery (a normal cron result OR a wake-gate deliver-on-skip) ALWAYS carries a
+  // deliveryTarget, so a deliver of "__MEMORY_REVIEW__" is shipped VERBATIM and the
+  // review LLM turn never fires.
+  // -------------------------------------------------------------------------
+
+  it("delivers a deliver equal to __MEMORY_REVIEW__ VERBATIM when it carries a deliveryTarget (never runs review)", async () => {
+    const deliverToChannel = vi.fn(async () => ({
+      ok: true as const,
+      value: { ok: true, totalChunks: 1, deliveredChunks: 1, failedChunks: 0, chunks: [], totalChars: 16 },
+    }));
+    const deps = makeDeps({
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryReview: { enabled: true } } },
+      apiKey: "test-key",
+    });
+    (deps as any).adaptersByType = new Map([["telegram", { channelType: "telegram" }]]);
+    (deps as any).deliveryService = { deliverToChannel };
+    registerCronEventListeners(deps);
+
+    await deps.__eventBus.fire("scheduler:job_result", {
+      result: "__MEMORY_REVIEW__",
+      agentId: "agent-1",
+      jobName: "backup-monitor",
+      payloadKind: "system_event",
+      deliveryTarget: { channelType: "telegram", channelId: "chat-1" },
+    });
+
+    // The control token is shipped verbatim — the review LLM turn never fires.
+    expect(mockRunMemoryReview).not.toHaveBeenCalled();
+    expect(deliverToChannel).toHaveBeenCalledWith(
+      { channelType: "telegram" },
+      "chat-1",
+      "__MEMORY_REVIEW__",
+      undefined,
+    );
+  });
+
+  it("still runs memory review for a target-LESS __MEMORY_REVIEW__ sentinel (internal cron path unchanged)", async () => {
+    const deps = makeDeps({
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryReview: { enabled: true } } },
+      apiKey: "test-key",
+    });
+    registerCronEventListeners(deps);
+
+    await deps.__eventBus.fire("scheduler:job_result", {
+      result: "__MEMORY_REVIEW__",
+      agentId: "agent-1",
+      // no deliveryTarget — the internal, target-less memory-review cron shape
+    });
+
+    expect(mockRunMemoryReview).toHaveBeenCalledOnce();
+  });
+
+  // -------------------------------------------------------------------------
   // The cron agent_turn producer THREADS the resolver's
   // timeoutSource into cronOverrides.promptTimeout.source. A producer that
   // passed `promptTimeout: { promptTimeoutMs }` UNCONDITIONALLY would
