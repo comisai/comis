@@ -73,7 +73,11 @@ export interface PerRootBudget {
    * @param rootRunId the tree root the spend accrues to (scope `agentId`).
    * @param provider the LLM/web provider id (consumed by the 3-state pricing gate).
    * @param model the model id at the provider (consumed by the 3-state pricing gate).
-   * @param estUsd the conservative estimated dollars for this call (the $-limb).
+   * @param estUsd the dollars this call accrues into the $-limb. The accumulator
+   *   has NO separate actual-adder and nothing reconciles a reserve after the
+   *   fact — whatever is passed here IS the root's recorded spend, so callers
+   *   pass the actual billed cost when known (the bridge reserves post-record).
+   *   A worst-case estimate here permanently consumes the ceiling.
    * @param estTokens the estimated tokens for this call (the token limb + the
    *   `burnedTokens` discriminator the 3-state gate reads).
    */

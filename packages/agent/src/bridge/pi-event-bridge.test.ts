@@ -6498,7 +6498,7 @@ describe("createPiEventBridge — per-root budget sibling", () => {
     expect(evictRootIfIdle).toHaveBeenCalledWith("root-session-conv");
   });
 
-  it("calls the per-root reserve with the REAL per-call provider/model/tokens (the same locals checkSpendCeiling consumes)", () => {
+  it("calls the per-root reserve with the REAL per-call provider/model/tokens and the ACTUAL corrected call cost (never the perTurnMax estimate)", () => {
     const clock = createFakeClock(1_000_000);
     const spy = vi.fn().mockReturnValue({ kind: "ok" as const, reservation: { scopeKey: "_root root-args", tenantKey: "_root", reservedUsd: 0, warn: false }, warn: null });
     deps = createMockDeps({
@@ -6513,10 +6513,15 @@ describe("createPiEventBridge — per-root budget sibling", () => {
     } as Partial<PiEventBridgeDeps>);
     const { listener } = createPiEventBridge(deps);
 
-    listener(makeTurnEndEvent({ totalTokens: 222 }) as any);
+    listener(makeTurnEndEvent({
+      totalTokens: 222,
+      cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
+    }) as any);
 
-    // rootRunId, the LIVE provider, the LIVE getCurrentModel(), the perTurnMax est $, the real totalTokens.
-    expect(spy).toHaveBeenCalledWith("root-args", "anthropic", "claude-opus-4-1", 0.5, 222);
+    // rootRunId, the LIVE provider, the LIVE getCurrentModel(), the ACTUAL
+    // corrected $ of this call (the per-root accumulator's sole accrual source —
+    // NOT the perTurnMax admission estimate), the real totalTokens.
+    expect(spy).toHaveBeenCalledWith("root-args", "anthropic", "claude-opus-4-1", 0.03, 222);
   });
 
   it("accrues the ACTUAL corrected per-call cost into the per-root $-limb — five cheap calls under the cap do NOT abort (the perTurnMax admission estimate must not permanently consume the aggregate ceiling)", () => {

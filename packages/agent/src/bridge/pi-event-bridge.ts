@@ -268,7 +268,11 @@ export interface TtlSplitEstimate {
 export interface BoundedAutonomyBudgetPort {
   /** Reserve one LLM call's spend against the tree root: wall-clock + token limbs
    *  enforce REGARDLESS of pricing (they bite a zero-price loop), then the 3-state
-   *  $-limb. An `exceeded` outcome means a limb breached → the bridge aborts. */
+   *  $-limb. An `exceeded` outcome means a limb breached → the bridge aborts.
+   *  `estUsd` is whatever the meter should ACCRUE for this call — the bridge
+   *  passes the actual corrected per-call cost (this reserve runs post-record,
+   *  where the billed amount is known, and the per-root accumulator has no
+   *  separate actual-adder to settle an estimate against). */
   reserveBudget(
     rootRunId: string,
     provider: string,
@@ -2175,10 +2179,17 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               }
               // The SAME real per-call locals the sibling ceiling consumes: the live
               // model (a manual /model switch updates getCurrentModel), the provider,
-              // the conservative perTurnMax est $ (0 when spend is unconfigured — the
-              // token/wall-clock limbs still gate), and the turn's true totalTokens.
+              // and the turn's true totalTokens. The $ figure is the ACTUAL corrected
+              // cost of THIS call (`cost.total`), NOT the perTurnMax admission
+              // estimate: the sibling ceiling releases its estimate at the billing
+              // point (`reconcile` to $0, actuals recorded by the daemon-wide
+              // token_usage subscriber), but the per-root accumulator has NO separate
+              // actual-adder — whatever is reserved here IS its accrual. Reserving
+              // the estimate made the $-limb a calls-counter (perTurnMax × N), which
+              // consumed a $2 cap in 4 calls and wedged live sessions at pennies of
+              // real spend. This reserve runs post-record, so the actual is known.
               const perRootModel = deps.getCurrentModel?.() ?? deps.model;
-              const perRootEstUsd = deps.spendConfig?.perTurnMax ?? 0;
+              const perRootEstUsd = cost.total;
               const rootGate = perRoot.reserveBudget(
                 rootRunId,
                 deps.provider,
