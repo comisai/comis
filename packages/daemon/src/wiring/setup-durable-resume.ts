@@ -166,6 +166,7 @@ export function buildOrchestrateResumeWiring(deps: {
   const resultStore = createResultRefStore({ logger: deps.logger });
   return {
     workspaceFor: () => deps.defaultWorkspaceDir,
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- absPath is safePath-confined by the caller (the boot-sweep arm resolves scriptRef/checkpointRef via safePath before probing).
     fileExists: (absPath) => existsSync(absPath),
     cleanupResults: (workspacePath, runId) => resultStore.cleanupRun({ workspacePath, runId }),
     removePinnedScript: (workspacePath, scriptRef) => {
@@ -174,7 +175,6 @@ export function buildOrchestrateResumeWiring(deps: {
       // no-op — the reclaim must never throw and abort the boot/watchdog sweep.
       try {
         const abs = safePath(workspacePath, scriptRef);
-        // eslint-disable-next-line security/detect-non-literal-fs-filename -- safePath-confined to the run workspace root (mirrors result-ref-store.ts).
         rmSync(abs, { force: true });
       } catch {
         /* traversal-escape scriptRef (safePath threw) or an unlink failure — no-op. */

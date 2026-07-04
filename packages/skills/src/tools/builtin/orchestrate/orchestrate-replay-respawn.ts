@@ -136,9 +136,8 @@ export function createOrchestrateReplayRespawn(
     const { scriptRef, scriptBytes, language } = loaded.value;
 
     // 2. Copy the committed SDK + runtime shim so the pinned script's imports resolve
-    //    (the IDENTICAL asset set a live run gets).
+    //    (the IDENTICAL asset set a live run gets; both paths safePath-confined).
     for (const asset of SDK_ASSETS) {
-      // eslint-disable-next-line security/detect-non-literal-fs-filename -- safePath-confined src (asset dir) + dest (workspace), mirroring orchestrate-tool.ts.
       copyFileSync(safePath(sdkAssetsDir, asset), safePath(workspacePath, asset));
     }
 
