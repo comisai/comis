@@ -37,6 +37,7 @@ import {
   REFLECT_PROMPT,
   PROFILE_REFLECT_PROMPT,
   TOPIC_REFLECT_PROMPT,
+  PROCEDURE_REFLECT_PROMPT,
   type ReflectionSourceTrajectory,
 } from "@comis/agent";
 import type { MemoryCronContext, MemoryCronPayload } from "./setup-channels-memory-crons-types.js";
@@ -204,22 +205,42 @@ export async function handleWireMemoryCronSentinel(
     const reflectLogger = logger.child({ agentId, submodule: "reflection" });
     const reflectStartMs = clock.now();
 
-    // ONE __REFLECT__ cron reflects ALL THREE kinds in one pass
-    // (ONE engine, LOOPED, not three engines). The model/cred resolution
-    // above runs ONCE (the same MID-tier reflect model for all kinds); per kind we vary
+    // ONE __REFLECT__ cron runs ALL FOUR reflect passes in one loop
+    // (ONE engine, LOOPED, not four engines). The model/cred resolution
+    // above runs ONCE (the same MID-tier reflect model for all passes); per pass we vary
     // only the adapter `systemPrompt` + `source` label and the per-kind source build +
     // `groupKey`. SKILL keys on the normalized opening-request signature (the default,
     // groupKey undefined); PROFILE groups by user (groupKey `t.sender` ⇒ topicKey ===
-    // userId, which the <user_profile> read selects on); TOPIC keys like skill.
+    // userId, which the <user_profile> read selects on); TOPIC keys like skill. The 4th
+    // PROCEDURE pass is a kind:"skill" entry that groups by the audited descriptor KEY
+    // instead of the user intent (two kind:"skill" passes → DIFFERENT topicKeys → different
+    // doc names → no collision) and sets `populateProcedureMetadata` so its admit binds the
+    // DETERMINISTIC required_tools (and its reflect input carries the ordered tool sequence).
     const reflectKinds: ReadonlyArray<{
       kind: "skill" | "profile" | "topic";
       systemPrompt: string;
-      source: "learned_skill_reflection" | "learned_profile_reflection" | "learned_topic_reflection";
+      source:
+        | "learned_skill_reflection"
+        | "learned_profile_reflection"
+        | "learned_topic_reflection"
+        | "learned_procedure_reflection";
       groupKey?: (t: ReflectionSourceTrajectory) => string;
+      populateProcedureMetadata?: boolean;
     }> = [
       { kind: "skill", systemPrompt: REFLECT_PROMPT, source: "learned_skill_reflection" },
       { kind: "profile", systemPrompt: PROFILE_REFLECT_PROMPT, source: "learned_profile_reflection", groupKey: (t) => t.sender },
       { kind: "topic", systemPrompt: TOPIC_REFLECT_PROMPT, source: "learned_topic_reflection" },
+      // The PROCEDURE pass: kind:"skill" (surfaces through the shipped skill path) but grouped
+      // by the content-free descriptor key (a defined groupKey ⇒ the Jaccard signature-merge is
+      // bypassed; "" ⇒ ungroupable singleton, skipped). populateProcedureMetadata gates the
+      // deterministic required_tools bind + the ordered-sequence thread into the reflect input.
+      {
+        kind: "skill",
+        systemPrompt: PROCEDURE_REFLECT_PROMPT,
+        source: "learned_procedure_reflection",
+        groupKey: (t) => t.procedureDescriptor?.key ?? "",
+        populateProcedureMetadata: true,
+      },
     ];
 
     // SUMMED counts across the 3 kinds for ONE daemon-side reflect:* emit (counts
@@ -251,7 +272,7 @@ export async function handleWireMemoryCronSentinel(
     // discriminator (selected>1 + distinctTopicKeys>1 + maxCardinality<2 = successes that didn't merge).
     let sumDistinctTopicKeys = 0;
 
-    for (const { kind, systemPrompt, source, groupKey } of reflectKinds) {
+    for (const { kind, systemPrompt, source, groupKey, populateProcedureMetadata } of reflectKinds) {
       // CLOSED-GRAPH CUT: the per-kind @comis/agent reflect adapter (wraps the UNTRUSTED
       // transcript via the per-kind `source` label) is built HERE on the resolved
       // model; the @comis/memory store + the per-kind source come in via the daemon-assembled
@@ -275,6 +296,9 @@ export async function handleWireMemoryCronSentinel(
         scope,
         kind, // the threaded doc family (skill default if omitted)
         ...(groupKey ? { groupKey } : {}),
+        // Procedure pass ONLY — gates the deterministic required_tools bind + the
+        // ordered-descriptor thread into the reflect input (absent on the other passes).
+        ...(populateProcedureMetadata ? { populateProcedureMetadata } : {}),
         config: {
           enabled: cfg.enabled,
           minConfidence: cfg.reflect.minConfidence,

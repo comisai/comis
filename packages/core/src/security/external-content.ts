@@ -151,6 +151,7 @@ export type ExternalContentSource =
   | "learned_skill_reflection"
   | "learned_profile_reflection"
   | "learned_topic_reflection"
+  | "learned_procedure_reflection"
   | "memory_generalization"
   | "unknown";
 
@@ -172,6 +173,7 @@ const EXTERNAL_SOURCE_LABELS: Record<ExternalContentSource, string> = {
   learned_skill_reflection: "Learned-skill reflection input",
   learned_profile_reflection: "Learned-profile reflection input",
   learned_topic_reflection: "Learned-topic reflection input",
+  learned_procedure_reflection: "Learned-procedure reflection input",
   memory_generalization: "Memory generalization cluster input",
   unknown: "External",
 };
