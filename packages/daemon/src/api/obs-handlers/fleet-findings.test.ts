@@ -898,6 +898,51 @@ describe("buildFindings — node_budget_exceeded finding", () => {
 // degradation; the multilingual advisory (read from the latest row) is
 // severity-independent and must keep firing.
 // ---------------------------------------------------------------------------
+describe("buildFindings — health_signal rollup counts only degraded (warning) rows", () => {
+  it("does NOT surface a severity-info session_rebase row as an lcd_divergence finding (benign continuation, not degradation)", () => {
+    // The ingest layer deliberately stamps benign context:dag_degraded reasons
+    // (session_rebase / serialized_wait) severity "info" so they do not inflate
+    // the fleet lens — but the findings rollup ignored severity and folded
+    // them anyway. Observed live: a fresh session's once-per-start rebase
+    // (reason session_rebase, 5ms) surfaced as an actionable-looking
+    // "health_signal:lcd_divergence" finding whose hint ("inspect the
+    // recurring health WARNs") dead-ended — no such WARNs exist.
+    const findings = buildFindings(
+      [
+        {
+          timestamp: 1_000,
+          category: "health_signal",
+          severity: "info",
+          message: "context:dag_degraded",
+          details: JSON.stringify({ signal: "lcd_divergence", reason: "session_rebase", durationMs: 5 }),
+        },
+      ],
+      [],
+      [],
+    );
+    expect(findings.some((f) => f.code === "health_signal:lcd_divergence")).toBe(false);
+  });
+
+  it("still surfaces a severity-warning lcd_divergence row (a genuine live/store shrink)", () => {
+    const findings = buildFindings(
+      [
+        {
+          timestamp: 1_000,
+          category: "health_signal",
+          severity: "warning",
+          message: "context:dag_degraded",
+          details: JSON.stringify({ signal: "lcd_divergence", reason: "live_store_divergence", durationMs: 5 }),
+        },
+      ],
+      [],
+      [],
+    );
+    const f = findings.filter((x) => x.code === "health_signal:lcd_divergence");
+    expect(f).toHaveLength(1);
+    expect(f[0]!.count).toBe(1);
+  });
+});
+
 describe("buildFindings — model_health 'provider degradation' counts only degraded (warning) rows", () => {
   const MH_CODE = "model_health";
 
