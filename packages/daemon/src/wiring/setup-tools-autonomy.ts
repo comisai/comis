@@ -122,10 +122,14 @@ export interface AutonomyToolInputs {
    */
   readonly repairSeam?: OrchestrateRepairSeam;
   /**
-   * The durable-run store port, threaded into the orchestrate runner ONLY when the
-   * resume surface is on (the caller resolves the surface gate). Present ⇒ the
-   * runner registers a resumable row + honors `resumeRunId` + skips cleanupRun on a
-   * timeout. Absent (default-off / older wiring) ⇒ no durable row, normal cleanup.
+   * The durable-run store port. The composition root threads it whenever the
+   * durable-resume subsystem is constructed (i.e. durability is enabled for some
+   * agent); this wiring forwards it into the orchestrate runner ONLY when THIS
+   * agent's `autonomy.durability.orchestrateResume` is on (the surface gate,
+   * resolved below off the same config path as the capability-endpoint's
+   * `orchestrateResumeEnabled` predicate). Forwarded ⇒ the runner registers a
+   * resumable row + honors `resumeRunId` + skips cleanupRun on a timeout. Off /
+   * absent ⇒ no durable row, normal cleanup (byte-identical to a non-resumable run).
    */
   readonly durableRuns?: OrchestrateDurableRuns;
 }
@@ -164,6 +168,14 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
   const resolved = degradeAutonomy(resolveAutonomy(input.agentConfig?.autonomy), {
     namespacePreflightOk: input.namespacePreflightOk ?? true,
   }).resolved;
+  // The resume surface gate (default-OFF, deny-by-absence): the durable-run store
+  // is forwarded into the runner ONLY when THIS agent has opted into resumable
+  // orchestrate runs. Reads the SAME config path as the capability endpoint's
+  // orchestrateResumeEnabled predicate (`=== true` so an absent/typo'd durability
+  // block resolves OFF) — so a store the composition root always threads under a
+  // durability-enabled boot goes live in the runner only for an opted-in agent.
+  const orchestrateResumeOn =
+    input.agentConfig?.autonomy?.durability?.orchestrateResume === true;
   const handle = input.capEndpointHandle;
   // Tree-stable rootRunId: INHERIT the caller's
   // id when this assembly is a sub-agent (so the whole tree shares one id the
@@ -273,9 +285,13 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
           // not repair (no regression to older wiring).
           ...(input.capabilityClass !== undefined ? { capabilityClass: input.capabilityClass } : {}),
           ...(input.repairSeam !== undefined ? { repairSeam: input.repairSeam } : {}),
-          // The durable-run store — threaded ONLY when the resume surface is on
-          // (the caller sets input.durableRuns), making the runner resumable.
-          ...(input.durableRuns !== undefined ? { durableRuns: input.durableRuns } : {}),
+          // The durable-run store — forwarded ONLY when the resume surface is on
+          // for this agent (orchestrateResumeOn gates the store the composition
+          // root always threads), making the runner resumable. Off ⇒ omitted → the
+          // runner writes no durable row + cleans normally (default-off byte-identity).
+          ...(input.durableRuns !== undefined && orchestrateResumeOn
+            ? { durableRuns: input.durableRuns }
+            : {}),
           rootRunId,
           sessionKey,
         }) as unknown as AgentTool)

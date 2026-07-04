@@ -232,6 +232,58 @@ describe("buildAutonomyToolWiring", () => {
     });
   });
 
+  // -------------------------------------------------------------------------
+  // Resumable-durable seam: the durable-run store is threaded into the
+  // orchestrate runner ONLY when the agent's autonomy.durability.orchestrateResume
+  // is ON — so a timed-out run records a resumable row + honors resumeRunId + skips
+  // cleanupRun. Default-OFF: an agent without the toggle gets NO durable row (the
+  // runner stays byte-identical to a non-resumable run). The gate lives HERE
+  // (co-located with the tool assembly), reading the same config path as the
+  // capability-endpoint's orchestrateResumeEnabled surface predicate — so the
+  // store the composition root always threads is forwarded to the runner only
+  // under the resume surface.
+  // -------------------------------------------------------------------------
+  describe("resumable-durable seam (durableRuns under orchestrateResume)", () => {
+    const fakeDurableRuns = {
+      upsertCheckpoint: vi.fn(),
+      getByRootRun: vi.fn(),
+    } as never as NonNullable<AutonomyToolInputs["durableRuns"]>;
+
+    it("threads durableRuns into createOrchestrateTool when autonomy.durability.orchestrateResume is ON", () => {
+      const input = baseInput({
+        agentConfig: {
+          autonomy: { profile: "standard", durability: { orchestrateResume: true } },
+        } as never,
+        durableRuns: fakeDurableRuns,
+      });
+      buildAutonomyToolWiring(input);
+      const args = mockCreateOrchestrateTool.mock.calls[0]![0] as { durableRuns?: unknown };
+      expect(args.durableRuns).toBe(fakeDurableRuns);
+    });
+
+    it("OMITS durableRuns when orchestrateResume is OFF, even when the store is supplied (default-off byte-identity)", () => {
+      const input = baseInput({
+        agentConfig: { autonomy: { profile: "standard" } } as never, // no durability block
+        durableRuns: fakeDurableRuns,
+      });
+      buildAutonomyToolWiring(input);
+      const args = mockCreateOrchestrateTool.mock.calls[0]![0] as Record<string, unknown>;
+      expect("durableRuns" in args).toBe(false);
+    });
+
+    it("OMITS durableRuns when orchestrateResume is explicitly false", () => {
+      const input = baseInput({
+        agentConfig: {
+          autonomy: { profile: "standard", durability: { orchestrateResume: false } },
+        } as never,
+        durableRuns: fakeDurableRuns,
+      });
+      buildAutonomyToolWiring(input);
+      const args = mockCreateOrchestrateTool.mock.calls[0]![0] as Record<string, unknown>;
+      expect("durableRuns" in args).toBe(false);
+    });
+  });
+
   it("does NOT mint a lease for a non-autonomy (assistant) agent", () => {
     const input = baseInput({ agentConfig: { autonomy: { profile: "assistant" } } as never });
     const { brokerSpawnEnv, orchestrateTool } = buildAutonomyToolWiring(input);

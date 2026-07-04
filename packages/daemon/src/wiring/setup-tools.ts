@@ -606,6 +606,10 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         approvalGate, // the orchestrate pre-flight approval seam — undefined unless config.approvals.enabled
         capabilityClass, // the one-shot auto-repair class-gate (pure class-gate off the model profile; no toggle)
         ...(repairSeam !== undefined ? { repairSeam } : {}), // the daemon-minted repair closure (absent ⇒ repair off)
+        // The durable-run store — passed whenever the durable-resume subsystem is
+        // wired; buildAutonomyToolWiring forwards it into the runner only when THIS
+        // agent's autonomy.durability.orchestrateResume is on (the surface gate).
+        ...(deps.durableRuns !== undefined ? { durableRuns: deps.durableRuns } : {}),
       });
       // Exec tool -- always instantiated; builtinTools ceiling applied after profile filtering.
       // (agentWorkspaceDir + getToolResultsDir are HOISTED above — shared with the ctx_* wiring.)
