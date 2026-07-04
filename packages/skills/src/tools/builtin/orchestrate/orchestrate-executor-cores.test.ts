@@ -232,6 +232,30 @@ describe("createOrchestrateExecutorCores", () => {
     }
   });
 
+  it("write PRESERVES the distinct failure kind instead of collapsing to 'not writable' (LO-03)", async () => {
+    const ws = makeWorkspace();
+    try {
+      const cores = createOrchestrateExecutorCores({ logger: makeLogger() });
+      // AGENTS.md is a PROTECTED_WORKSPACE_FILES basename → the shipped write tool
+      // throws a prefixed `[protected_file]` error. The core must surface that
+      // DISTINCT failure CLASS (so a jailed script trying to recover knows WHY),
+      // NOT collapse every write failure to the misleading "not writable" message
+      // — while still leaking no host path.
+      const result = (await cores.fileExecutors.write(
+        { path: "AGENTS.md", content: "x" },
+        { workspaceDir: ws },
+      )) as { error?: string };
+      expect(result.error).toBeDefined();
+      expect(result.error).toContain("protected_file"); // the distinct kind is preserved
+      expect(result.error).not.toMatch(/not writable/); // NOT collapsed to the generic message
+      // Content-free: the interpolated message tail (which can echo a host path for
+      // other kinds) is dropped — only the bracketed enum kind is surfaced.
+      expect(result.error).not.toContain(ws);
+    } finally {
+      rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
   it("write refuses a `..` traversal ({ error }, nothing written outside the workspace, never throws)", async () => {
     const ws = makeWorkspace();
     // The escape target is one level ABOVE the workspace (a writable temp parent):

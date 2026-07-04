@@ -677,11 +677,26 @@ export function createOrchestrateExecutorCores(
       );
       return result;
     } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      // The shipped write tool throws PREFIXED errors ([stale_file],
+      // [write_secret_blocked], [file_too_large], [invalid_config], [protected_file],
+      // [dir_create_failed], [write_error], [device_file], [jupyter_rejected],
+      // [missing_path]). Preserve the DISTINCT failure CLASS (the bracketed kind) so
+      // a jailed script can tell a secret-blocked / stale-file / protected-file
+      // refusal apart and recover — collapsing them all to "not writable" was
+      // misleading. We surface ONLY the [kind] token (a fixed lower_snake enum),
+      // never the interpolated tail, which can echo an absolute host path
+      // (device_file / dir_create_failed name a path) — the jail must not see it.
+      const kind = /^\[([a-z_]+)\]/.exec(message)?.[1];
       log.warn(
-        { err, errorKind: "validation" as const, hint: "write refused by a workspace write guard", toolName: "write" },
+        { err, errorKind: "validation" as const, hint: "write refused by a workspace write guard", toolName: "write", writeErrorKind: kind ?? "unknown" },
         "orchestrate write failed",
       );
-      return errorResult("write refused: the path is not writable in the run workspace");
+      return errorResult(
+        kind !== undefined
+          ? `write refused (${kind})`
+          : "write refused: the path is not writable in the run workspace",
+      );
     }
   };
 
