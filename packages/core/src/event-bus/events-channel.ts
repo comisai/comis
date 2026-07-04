@@ -453,6 +453,20 @@ export interface ChannelEvents {
     timestamp: number;
   };
 
+  /**
+   * A webhook channel has received no inbound activity for longer than its
+   * configured missed-inbound threshold. Raised by the daemon liveness timer
+   * (independent of the stale-reap-exempt health monitor). Content-free —
+   * labels, counts, and timestamps only, never message bodies.
+   */
+  "channel:inbound_silent": {
+    channelType: string;
+    lastInboundAt: number | null;
+    silentForMs: number;
+    thresholdMs: number;
+    timestamp: number;
+  };
+
   // -------------------------------------------------------------------------
   // Delivery hook events
   // -------------------------------------------------------------------------

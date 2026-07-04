@@ -204,6 +204,15 @@ export const MsTeamsChannelEntrySchema = z.strictObject({
   mediaAuthAllowHosts: z.array(z.string()).optional(),
   /** Target cloud environment */
   cloud: z.enum(["public"]).default("public"),
+  /**
+   * Silence window (ms) after which the daemon raises a missed-inbound alert
+   * for this webhook channel. Webhook adapters are exempt from the health
+   * monitor's stale-reap, so a dead ingress reports healthy indefinitely; a
+   * dedicated liveness timer compares the inbound-only last-received timestamp
+   * to this threshold and, on breach, emits a `channel:inbound_silent` event +
+   * a WARN that surface as a `comis fleet` health signal. Default: 6 hours.
+   */
+  missedInboundThresholdMs: z.number().int().positive().default(21_600_000),
   /** Per-channel media processing overrides (defaults: all enabled) */
   mediaProcessing: MediaProcessingSchema.optional(),
   /** Ack reaction sent when the agent starts processing a message */
