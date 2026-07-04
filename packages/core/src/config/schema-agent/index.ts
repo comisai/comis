@@ -50,4 +50,8 @@ export * from "./schema-agent-autonomy-degrade.js";
 // AutonomyConfigSchema). Exported so the daemon reads DurabilityConfigSchema
 // for the boot-time durability resolution.
 export * from "./schema-agent-autonomy-durability.js";
+// The autonomy.mcp inbound-allowlist sub-block schema + the pure
+// `permitsMcpTool` layer-2 resolver (nested into AutonomyConfigSchema). Exported
+// so the daemon-side `case "mcp"` executor resolves the per-agent allowlist.
+export * from "./schema-agent-autonomy-mcp.js";
 export * from "./schema-agent-runtime.js";

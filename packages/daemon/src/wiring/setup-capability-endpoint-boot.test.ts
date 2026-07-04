@@ -14,6 +14,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PerAgentConfig, ClockPort, TimerPort, TimerHandle } from "@comis/core";
+import type { McpClientManager } from "@comis/skills";
 import { constructCapabilityLayer } from "./setup-capability-endpoint-boot.js";
 
 /** Track temp data dirs + stop thunks so each socket-binding test tears down. */
@@ -54,6 +55,10 @@ function createDeps(
     timers: createNoopTimers(),
     dataDir: opts.dataDir ?? "/test/data",
     daemonLogger,
+    // A fake MCP manager satisfies the non-optional boot dep; the boot-gate tests
+    // never construct the executor (no skillsLogger/workspaceDirs), so callTool is
+    // never invoked here — the `case "mcp"` dispatch is proven in the executor unit.
+    mcpClientManager: { getTools: () => [], callTool: vi.fn() } as unknown as McpClientManager,
     ...(opts.cronJobCount ? { cronJobCount: opts.cronJobCount } : {}),
   };
 }

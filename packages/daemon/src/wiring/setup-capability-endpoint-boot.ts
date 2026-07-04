@@ -32,6 +32,7 @@
 
 import {
   resolveAutonomy,
+  permitsMcpTool,
   safePath,
   createOutputGuard,
   formatSessionKey,
@@ -54,7 +55,7 @@ import { createBoundedAutonomy, type BoundedAutonomy } from "../autonomy/bounded
 import { createDenialBreaker, type DenialBreaker } from "../autonomy/denial-breaker.js";
 import { createEvictRegistry, type EvictRegistry } from "../autonomy/evict-registry.js";
 import type { NotifyFn } from "../autonomy/durable-resume-engine.js";
-import { namespacePreflight, type NamespacePreflightResult } from "@comis/skills";
+import { namespacePreflight, type NamespacePreflightResult, type McpClientManager } from "@comis/skills";
 import {
   createOrchestrateExecutorCores,
   createResultRefStore,
@@ -188,6 +189,16 @@ export interface CapabilityLayerDeps {
    * chokepoint shares the SAME store the resume engine + message handlers use.
    */
   durableRuns?: DurableRunPort;
+  /**
+   * The daemon-wide MCP client manager (constructed unconditionally by `setupMcp`,
+   * in daemon.ts scope). Threaded into the tool-invoke executor's `case "mcp"` so a
+   * jailed `mcp.<server>.<tool>()` call dispatches through `callTool` on the DAEMON's
+   * network (the jail stays `--unshare-net`). NON-optional on purpose: it compile-forces
+   * the single daemon.ts caller to thread the shipped manager — an un-threaded manager
+   * ⇒ `executeMcp` honest-degrades to "MCP not available" ⇒ MCP-01 silently dead on a
+   * green macOS build. (The executor-leg dep stays OPTIONAL for defense-in-depth.)
+   */
+  mcpClientManager: McpClientManager;
 }
 
 /** The constructed capability layer handle (undefined when no autonomy agent). */
@@ -341,6 +352,22 @@ function buildToolInvokeExecutor(
       // over-cap refuse, or undefined on a failed write — the executor inlines on
       // anything that is not a ResultRef.
       return result !== undefined && "ref" in result ? result : undefined;
+    },
+    // The daemon-wide MCP manager (threaded from CapabilityLayerDeps via the
+    // daemon.ts caller) — the executor's `case "mcp"` dispatches through its
+    // `callTool` on the daemon's network (the jail stays `--unshare-net`).
+    mcpClientManager: deps.mcpClientManager,
+    // The layer-2 inbound MCP allowlist (232-02 `permitsMcpTool`), resolved PER
+    // agentId from THAT agent's `autonomy.mcp` block (not a global — D3 per-agent).
+    // Prototype-safe lookup: `agentId` crosses from the lease, so iterate own
+    // entries rather than indexing the Record with it. Absent autonomy/mcp ⇒
+    // `permitsMcpTool` never runs ⇒ deny by absence (the surface stays dark).
+    mcpAllowlist: {
+      permits: (agentId, server, tool): boolean => {
+        const agentCfg = Object.entries(deps.agents).find(([id]) => id === agentId)?.[1];
+        const mcpCfg = agentCfg?.autonomy?.mcp;
+        return mcpCfg !== undefined && permitsMcpTool(mcpCfg, server, tool);
+      },
     },
     logger: daemonLogger,
   });
