@@ -111,6 +111,14 @@ function buildNonInteractiveOptionsFromCommander(
     slackAppToken: options.slackAppToken as string | undefined,
     lineToken: options.lineToken as string | undefined,
     lineSecret: options.lineSecret as string | undefined,
+    msteamsAppId: options.msteamsAppId as string | undefined,
+    msteamsAppPassword: options.msteamsAppPassword as string | undefined,
+    msteamsTenantId: options.msteamsTenantId as string | undefined,
+    msteamsAuthMode: options.msteamsAuthMode as
+      | "secret"
+      | "certificate"
+      | "managedIdentity"
+      | undefined,
     imageProvider: options.imageProvider as string | undefined,
     imageApiKey: options.imageApiKey as string | undefined,
     videoProvider: options.videoProvider as string | undefined,
@@ -185,6 +193,10 @@ export function registerInitCommand(program: Command): void {
     .option("--slack-app-token <tok>", "Slack app token")
     .option("--line-token <tok>", "LINE channel token")
     .option("--line-secret <sec>", "LINE channel secret")
+    .option("--msteams-app-id <id>", "Microsoft Teams bot app (client) ID")
+    .option("--msteams-app-password <pw>", "Microsoft Teams app password (client secret)")
+    .option("--msteams-tenant-id <id>", "Microsoft Teams directory (tenant) ID")
+    .option("--msteams-auth-mode <mode>", "Microsoft Teams auth mode: secret|certificate|managedIdentity")
     // Media generation
     .option("--image-provider <id>", "Image generation provider: auto|fal|openai|openai-codex|google|openrouter")
     .option("--image-api-key <key>", "Image provider API key (e.g. FAL_KEY; reuses --api-key for a matching main provider)")

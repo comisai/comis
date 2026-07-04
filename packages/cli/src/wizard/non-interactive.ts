@@ -82,6 +82,10 @@ export type NonInteractiveOptions = {
   slackAppToken?: string;
   lineToken?: string;
   lineSecret?: string;
+  msteamsAppId?: string;
+  msteamsAppPassword?: string;
+  msteamsTenantId?: string;
+  msteamsAuthMode?: "secret" | "certificate" | "managedIdentity";
   // Media generation
   imageProvider?: string;
   imageApiKey?: string;
@@ -321,6 +325,26 @@ export function validateNonInteractiveOptions(
             );
           }
           break;
+        case "msteams":
+          if (!opts.msteamsAppId) {
+            throw new NonInteractiveError(
+              "--msteams-app-id is required when msteams channel is enabled",
+              "msteamsAppId",
+            );
+          }
+          if (!opts.msteamsAppPassword) {
+            throw new NonInteractiveError(
+              "--msteams-app-password is required when msteams channel is enabled",
+              "msteamsAppPassword",
+            );
+          }
+          if (!opts.msteamsTenantId) {
+            throw new NonInteractiveError(
+              "--msteams-tenant-id is required when msteams channel is enabled",
+              "msteamsTenantId",
+            );
+          }
+          break;
         // whatsapp, signal, irc do not require tokens at init time
         default:
           // Unknown channel -- allow for forward compatibility
@@ -391,6 +415,16 @@ export function buildNonInteractiveState(
             type: "line",
             botToken: opts.lineToken,
             channelSecret: opts.lineSecret,
+            validated: false,
+          });
+          break;
+        case "msteams":
+          channels.push({
+            type: "msteams",
+            appId: opts.msteamsAppId,
+            appPassword: opts.msteamsAppPassword,
+            tenantId: opts.msteamsTenantId,
+            authMode: opts.msteamsAuthMode,
             validated: false,
           });
           break;
