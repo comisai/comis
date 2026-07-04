@@ -157,8 +157,15 @@ export interface OutcomeSignalPort {
    * (treat absent / `err` as "no source trajectories") rather than fall back to a
    * non-resolvable identity. Scoped + fail-closed on an unresolved scope, exactly
    * like {@link resolve}.
+   *
+   * Each entry also carries the turn's content-free `procedureDescriptor` when one was
+   * recorded — the ordered tool-NAME sequence + counts read back from the ledger (NAMES
+   * only, never args/bodies). Absent when the turn ran no cap-mapped tool call sites (or
+   * the stored value was corrupt — it degrades to absent, never throws). The reflection
+   * source attaches it onto each `ReflectionSourceTrajectory` so procedure information
+   * reaches the reflection engine (whose string transcript drops tool_use/tool_result blocks).
    */
   listTrajectoryIds?(
     scope: LearningScope,
-  ): Promise<Result<Array<{ trajectoryId: string; sessionId: string }>, Error>>;
+  ): Promise<Result<Array<{ trajectoryId: string; sessionId: string; procedureDescriptor?: ReadonlyArray<string> }>, Error>>;
 }

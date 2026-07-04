@@ -69,9 +69,11 @@ export interface OutcomeStoreDeps {
 // Row mapper — the sanctioned read path (no `as Foo[]`).
 const outcomeRowMapper = createRowMapper(OutcomeEventRowSchema);
 
-// Row mapper for listTrajectoryIds — the two projected columns only (sanctioned
-// typed read; no `as Foo[]` cast, per untyped-sqlite.test.ts).
-const trajectoryIdRowMapper = createRowMapper(z.object({ t: z.string(), s: z.string() }));
+// Row mapper for listTrajectoryIds — the projected columns (sanctioned typed read;
+// no `as Foo[]` cast, per untyped-sqlite.test.ts). `d` is the per-turn
+// procedure_descriptor read back (the content-free JSON tool-NAME array; NULL when no
+// procedure ran — SQLite NULL ≠ undefined → `.nullable()`).
+const trajectoryIdRowMapper = createRowMapper(z.object({ t: z.string(), s: z.string(), d: z.string().nullable() }));
 
 // Lenient JSON-string[] parser for the recalled_ids/used_skill_ids columns:
 // corrupt/non-array JSON degrades to [] (never a throw that breaks resolve()).
@@ -212,8 +214,12 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
   // collapses one turn's multiple source rows to a single pair; MAX(observed_at)
   // is the recency key. These are the SAME per-turn `traceId`s `resolve()` keys on
   // — the synthesis source emits THESE so resolve() actually finds rows.
+  // MAX(procedure_descriptor) surfaces the turn's content-free descriptor carrier
+  // across its multiple source rows (the carrier is one `source:"explicit"` row; the
+  // tool/pipeline siblings are NULL, which MAX ignores) — the read-back the reflection
+  // source attaches onto its per-turn ReflectionSourceTrajectory. NULL when no procedure ran.
   const listStmt = db.prepare(
-    "SELECT trajectory_id AS t, session_id AS s, MAX(observed_at) AS ts FROM outcome_events " +
+    "SELECT trajectory_id AS t, session_id AS s, MAX(observed_at) AS ts, MAX(procedure_descriptor) AS d FROM outcome_events " +
       "WHERE tenant_id = ? AND agent_id = ? GROUP BY trajectory_id, session_id ORDER BY ts DESC LIMIT ?",
   );
 
@@ -389,7 +395,7 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
     // (never a shared/global pool).
     async listTrajectoryIds(
       scope: LearningScope,
-    ): Promise<Result<Array<{ trajectoryId: string; sessionId: string }>, Error>> {
+    ): Promise<Result<Array<{ trajectoryId: string; sessionId: string; procedureDescriptor?: ReadonlyArray<string> }>, Error>> {
       const { tenantId, agentId } = scope;
       if (tenantId === "" || agentId === "") {
         return err(new Error("outcome listTrajectoryIds requires a resolved (tenant, agent) scope"));
@@ -397,7 +403,19 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
       try {
         const parsed = trajectoryIdRowMapper.parseRows(listStmt.all(tenantId, agentId, MAX_LISTED_TRAJECTORIES));
         if (!parsed.ok) return err(new Error(parsed.error.message));
-        return ok(parsed.value.map((r) => ({ trajectoryId: r.t, sessionId: r.s })));
+        return ok(
+          parsed.value.map((r) => {
+            // Read the content-free procedure descriptor back per turn. `parseIdList` reuses the
+            // recalled/used-skill graceful-degrade posture ([] on NULL or corrupt JSON, never a
+            // throw); an empty list maps to ABSENT so the field is OMITTED when no procedure ran.
+            const descriptor = parseIdList(r.d);
+            return {
+              trajectoryId: r.t,
+              sessionId: r.s,
+              ...(descriptor.length > 0 ? { procedureDescriptor: descriptor } : {}),
+            };
+          }),
+        );
       } catch (e: unknown) {
         const error = e instanceof Error ? e : new Error(String(e));
         logger?.warn(
