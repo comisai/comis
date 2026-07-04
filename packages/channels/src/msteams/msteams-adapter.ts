@@ -748,6 +748,49 @@ export function createMsTeamsAdapter(
       if (!ctx.ok) return sendContextError(ctx.error);
       const replyToId = resolveReplyToId(options, ctx.value.threadId);
 
+      // Teams inline attachment support is IMAGES ONLY. Bot Framework reliably
+      // renders an inline `data:` URI only for images; a file/video/audio inline
+      // data: URI does not render, and for a multi-MB video base64-inlining reads
+      // the whole file into memory and inflates it +33% past BF's inline limit (a
+      // memory spike + a guaranteed rejection). A non-image attachment is therefore
+      // delivered BY REFERENCE as a plain text message — the bytes are NOT read —
+      // preserving the graceful text delivery the daemon callers had before Teams
+      // implemented sendAttachment (proper file/video delivery is the deferred
+      // FileConsent/SharePoint flow).
+      if (attachment.type !== "image") {
+        const label =
+          attachment.fileName !== undefined && attachment.fileName.length > 0
+            ? attachment.fileName
+            : "a file";
+        const referenceText =
+          (attachment.caption !== undefined && attachment.caption.length > 0
+            ? `${attachment.caption}\n`
+            : "") +
+          `[${label}] — Teams inline delivery currently supports images only; this attachment is available on the server.`;
+        const referenceBody: Record<string, unknown> = { type: "message", text: referenceText };
+        // DM → top-level; channel/group → threaded reply under the parent.
+        if (replyToId !== undefined) referenceBody.replyToId = replyToId;
+        deps.logger.debug(
+          {
+            channelType: "msteams" as const,
+            attachmentType: attachment.type,
+            hint: "Non-image attachment delivered by reference; Bot Framework renders inline data: URIs for images only",
+          },
+          "Connector attachment delivered by reference (non-image)",
+        );
+        return recordActivity(
+          await postConnectorActivity({
+            serviceUrl: ctx.value.serviceUrl,
+            conversationId,
+            activityBody: referenceBody,
+            tokens,
+            fetchImpl: deps.fetchImpl,
+            logger: deps.logger,
+            now,
+          }),
+        );
+      }
+
       // Read the bytes the shared outbound handler already wrote to a safePath temp
       // file; Teams has no separate upload step, so the image inlines as a data: URI
       // on the activity. Neither the token nor the data URI is ever logged (T-5).
