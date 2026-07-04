@@ -2007,3 +2007,64 @@ describe("createMsTeamsAdapter — reconcileSend exactly-once oracle (RECON-01)"
     expect(findSendCall(spy)).toBeUndefined();
   });
 });
+
+describe("createMsTeamsAdapter — inbound-only lastInboundAt liveness signal (T-10)", () => {
+  it("advances lastInboundAt on an inbound message activity", () => {
+    const { deps } = makeAdapterDeps();
+    const adapter = createMsTeamsAdapter(deps);
+    adapter.onMessage(vi.fn<MessageHandler>());
+
+    expect(adapter.getStatus?.().lastInboundAt).toBeUndefined();
+    adapter.handleWebhookEvents([messageActivity()]);
+    expect(adapter.getStatus?.().lastInboundAt).toBe(FIXED_NOW);
+  });
+
+  it("advances lastInboundAt on an inbound reaction activity", () => {
+    const { deps } = makeAdapterDeps();
+    const adapter = createMsTeamsAdapter(deps);
+    adapter.onReaction!(vi.fn<ReactionHandler>());
+
+    adapter.handleWebhookEvents([reactionActivity()]);
+    expect(adapter.getStatus?.().lastInboundAt).toBe(FIXED_NOW);
+  });
+
+  it("advances lastInboundAt on an inbound card-action invoke", () => {
+    const { deps } = makeAdapterDeps();
+    const adapter = createMsTeamsAdapter(deps);
+    adapter.onMessage(vi.fn<MessageHandler>());
+
+    adapter.handleWebhookEvents([invokeActivity()]);
+    expect(adapter.getStatus?.().lastInboundAt).toBe(FIXED_NOW);
+  });
+
+  it("does NOT advance lastInboundAt on an outbound send — it diverges from the outbound-polluted lastMessageAt", async () => {
+    const { fetchImpl } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+
+    // A send-only (cron/proactive) bot: an outbound send advances lastMessageAt
+    // but must leave the inbound-only lastInboundAt untouched, so a dead ingress
+    // cannot hide behind a fresh outbound timestamp (the T-10 guarantee).
+    const result = await adapter.sendMessage("19:dm-convo", "hi", {
+      extra: { serviceUrl: SERVICE_URL },
+    });
+    expect(result.ok).toBe(true);
+
+    const status = adapter.getStatus?.();
+    expect(status?.lastMessageAt).toBe(FIXED_NOW); // outbound bumped this…
+    expect(status?.lastInboundAt).toBeUndefined(); // …but NOT the inbound signal
+  });
+
+  it("does NOT advance lastInboundAt when a non-allowlisted inbound is dropped at the gate", () => {
+    // A dropped (unauthorized) inbound is not a real ingress signal — the bump
+    // sits after the allowlist gate, so a rejected sender never advances it.
+    const { deps } = makeAdapterDeps();
+    const adapter = createMsTeamsAdapter(deps);
+    adapter.onMessage(vi.fn<MessageHandler>());
+
+    adapter.handleWebhookEvents([
+      messageActivity({ from: { id: "29:stranger", aadObjectId: "stranger-aad" } }),
+    ]);
+    expect(adapter.getStatus?.().lastInboundAt).toBeUndefined();
+  });
+});
