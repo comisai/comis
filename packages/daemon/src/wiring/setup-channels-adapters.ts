@@ -98,7 +98,7 @@ export async function bootstrapAdapters(deps: {
    *  no env. */
   env?: EnvPort;
 }): Promise<AdapterBootstrapResult> {
-  const { container, channelsLogger, msTeamsConversationStore, timer } = deps;
+  const { container, channelsLogger, msTeamsConversationStore, timer, env } = deps;
   const channelConfig = container.config.channels;
 
   const adaptersByType = new Map<string, ChannelPort>();
@@ -405,23 +405,44 @@ export async function bootstrapAdapters(deps: {
   // phase to mount at /channels/msteams. A mounted route MUST reach the real
   // adapter — there is no factory without a caller.
   if (channelConfig.msteams.enabled) {
+    const authMode = channelConfig.msteams.authMode ?? "secret";
     const appPassword = (channelConfig.msteams.appPassword as string | undefined) || getSecret("MSTEAMS_APP_PASSWORD");
     const appId = channelConfig.msteams.appId;
     const tenantId = channelConfig.msteams.tenantId;
-    const validation = validateMsTeamsCredentials({ appId, appPassword, tenantId });
-    if (validation.ok && appId && appPassword && tenantId) {
+    const certPath = channelConfig.msteams.certPath;
+    const managedIdentityClientId = channelConfig.msteams.managedIdentityClientId;
+    const validation = validateMsTeamsCredentials({ authMode, appId, appPassword, tenantId, certPath, managedIdentityClientId });
+    // Per-mode credential precondition: secret needs the resolved appPassword,
+    // certificate needs certPath, managed-identity needs managedIdentityClientId
+    // (all still need appId + tenantId + a passing validation). A cert/MI config
+    // carries no appPassword, so the old appPassword-only gate silently dropped it.
+    const perModeCredentialPresent =
+      authMode === "certificate"
+        ? Boolean(certPath)
+        : authMode === "managedIdentity"
+          ? Boolean(managedIdentityClientId)
+          : Boolean(appPassword);
+    if (validation.ok && appId && tenantId && perModeCredentialPresent) {
       const plugin = createMsTeamsPlugin({
+        authMode,
         appId,
-        appPassword,
+        // Secret mode sends the resolved password; cert/MI carry none (empty placeholder).
+        appPassword: appPassword ?? "",
         tenantId,
+        ...(certPath ? { certPath } : {}),
+        ...(managedIdentityClientId ? { managedIdentityClientId } : {}),
+        cloud: channelConfig.msteams.cloud,
         allowFrom: channelConfig.msteams.allowFrom,
         allowMode: channelConfig.msteams.allowMode,
         logger: channelsLogger,
         // Inject the shared conversation-reference store + the daemon TimerPort
         // as the @comis/core port types (never a raw db into @comis/channels):
         // capture on every inbound + proactive-send recovery + the typing keepalive.
+        // The live EnvPort feeds the managed-identity App-Service endpoint/header
+        // (read live per mint); absent → managed-identity falls to IMDS.
         ...(msTeamsConversationStore ? { conversationStore: msTeamsConversationStore } : {}),
         ...(timer ? { timer } : {}),
+        ...(env ? { env } : {}),
       });
       adaptersByType.set("msteams", plugin.adapter);
       channelPlugins.set("msteams", plugin);
@@ -434,9 +455,16 @@ export async function bootstrapAdapters(deps: {
         handleWebhookEvents: (activities) => teamsAdapter.handleWebhookEvents(activities as TeamsActivity[]),
         logger: channelsLogger,
       });
-      channelsLogger.info({ channelType: "msteams", tenantId }, "Channel adapter initialized");
+      channelsLogger.info({ channelType: "msteams", authMode, tenantId }, "Channel adapter initialized");
     } else {
-      channelsLogger.warn({ hint: "Verify msteams.appId/tenantId and MSTEAMS_APP_PASSWORD", errorKind: "auth" as const }, "Teams credential validation failed");
+      // Mode-specific hint: name the exact credential the configured authMode needs.
+      const credHint =
+        authMode === "certificate"
+          ? "Set msteams.certPath (certificate mode) and msteams.appId/tenantId"
+          : authMode === "managedIdentity"
+            ? "Set msteams.managedIdentityClientId (managed-identity mode) and msteams.appId/tenantId"
+            : "Verify msteams.appId/tenantId and MSTEAMS_APP_PASSWORD";
+      channelsLogger.warn({ hint: credHint, errorKind: "auth" as const }, "Teams credential validation failed");
     }
   }
 
