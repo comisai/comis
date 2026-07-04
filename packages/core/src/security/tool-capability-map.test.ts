@@ -80,12 +80,15 @@ describe("TOOL_CAPABILITY_MAP", () => {
     }
   });
 
-  it("uses only orch:read, orch:web, or orch:mcp on the curated surface", () => {
-    // The curated surface carries only the read/web/mcp data-plane caps — never a
-    // write/admin cap. orch:mcp gates the fixed literal `mcp` data-plane tool (the
-    // dynamic {server,tool} ride inside args).
+  it("uses only the read/web/mcp/write floor caps on the curated surface (never an admin cap)", () => {
+    // The curated surface carries the read/web/mcp DATA-plane caps plus orch:write:
+    // the workspace-confined `write` core and the durable `checkpoint`/`resume` pair
+    // REUSE the orch:write/orch:read FLOOR caps (no bespoke orch:checkpoint cap). It
+    // NEVER carries an admin/management cap. Holding a floor cap here is not enough
+    // to reach the write/resume SURFACES — those are default-off per-agent toggles
+    // (autonomy.write / autonomy.durability.orchestrateResume), gated daemon-side.
     for (const cap of Object.values(TOOL_CAPABILITY_MAP)) {
-      expect(["orch:read", "orch:web", "orch:mcp"]).toContain(cap);
+      expect(["orch:read", "orch:web", "orch:mcp", "orch:write"]).toContain(cap);
     }
   });
 
