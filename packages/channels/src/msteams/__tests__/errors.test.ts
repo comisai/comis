@@ -24,6 +24,23 @@ describe("classifyMsTeamsError", () => {
     expect(classified.retryable).toBe(true);
   });
 
+  it("exposes the numeric 429 status the bounded send retry keys its Retry-After branch on", () => {
+    // The send retry executor delays on Retry-After only when status === 429, so
+    // the classification must surface the status alongside the retry disposition.
+    const classified = classifyMsTeamsError(429);
+    expect(classified.status).toBe(429);
+    expect(classified.retryable).toBe(true);
+  });
+
+  it("marks a status-less transport fault retryable on the transience axis (send retry gates separately on status presence)", () => {
+    // The classifier's `retryable` is a TRANSIENCE verdict; the send executor
+    // gates on `status !== undefined` for SEND SAFETY — a fault with no status may
+    // already have landed, so it is never resent despite being transient.
+    const classified = classifyMsTeamsError(undefined, new Error("ECONNRESET"));
+    expect(classified.retryable).toBe(true);
+    expect(classified.status).toBeUndefined();
+  });
+
   it("classifies 500, 502 and 503 responses as retryable platform failures", () => {
     for (const status of [500, 502, 503]) {
       const classified = classifyMsTeamsError(status);
