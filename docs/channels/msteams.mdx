@@ -326,6 +326,52 @@ so run this operator checklist once against a live account:
       `comis doctor` shows the Teams probes green; the missed-inbound alert fires
       after the configured silence window
 
+## Local emulator (self-drive testing)
+
+The live-smoke checklist above needs a real Azure Bot registration. For an
+offline, no-Azure round trip -- and for the self-driving live-test rig -- an
+in-tree emulator plays the Bot Framework side (a fake Connector + AAD token
+endpoint + a JWKS signer). It lives at `test/live/emulators/msteams/` and is
+driven from `test/live/self-driving/`.
+
+Teams is the inverse of the poll-based channels (Telegram/Signal): inbound is a
+signed webhook the daemon *exposes*, and outbound goes to the Connector. So two
+loopback bridges are needed, and both are **off-by-default environment variables
+set only on the test daemon** -- never in production:
+
+| Env var | Bridges |
+|---------|---------|
+| [`COMIS_MSTEAMS_TEST_JWKS`](/reference/environment-variables#comis_msteams_test_jwks) | The ingress verifies inbound tokens against the emulator's local JWKS (a full signature/issuer/audience verify -- not a bypass) instead of the remote Bot Framework keys. |
+| [`COMIS_MSTEAMS_TEST_CONNECTOR`](/reference/environment-variables#comis_msteams_test_connector) | The adapter's outbound Connector + token calls are redirected to the loopback emulator. `isSafeServiceUrl` is unchanged -- it still allowlists the real `smba.trafficmanager.net` host first; only the transport is redirected. |
+
+<Warning>
+With both variables unset, the daemon behaves identically to a normal Teams
+deployment. Setting them on a production daemon would point inbound trust and
+outbound delivery at a local process -- they are strictly for the live-test rig.
+</Warning>
+
+Wiring (as the operator, on the test box):
+
+```bash
+# 1. Start the emulator (prints /tmp/comis-msteams-emu.json with the exact daemonEnv to set).
+tsx test/live/bin/vps-emu-msteams.ts
+
+# 2. Enable channels.msteams in config.yaml (appId/tenantId matching the emulator; allowMode: open),
+#    then boot the daemon with the two seams from the emulator's printed `daemonEnv`:
+COMIS_MSTEAMS_TEST_JWKS=/tmp/comis-msteams-jwks.json \
+COMIS_MSTEAMS_TEST_CONNECTOR=http://127.0.0.1:<emuPort> \
+  node packages/daemon/dist/daemon.js
+
+# 3. Drive an inbound turn (signs a Bearer via the emulator, POSTs to the ingress,
+#    polls the Connector oracle for the agent reply):
+node test/live/self-driving/scripts/msteams-drive.mjs "a:dm-1" "hello teams"
+```
+
+The whole wire stack is also proven offline (no daemon) by the round-trip
+scenario at `test/live/scenarios/channels/msteams-emulator.test.ts`, which pushes
+a signed activity through the real ingress + adapter + connector into the
+emulator's oracle.
+
 ## What your agent can do
 
 Once connected to Teams, your agent can:
