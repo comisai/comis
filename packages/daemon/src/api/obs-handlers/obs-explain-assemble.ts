@@ -250,7 +250,7 @@ export function assembleIncidentReport(
   // --- outcome -------------------------------------------------------------
   // The FROZEN 678 fixture's session-metadata.json carries the rollup fields at
   // the metadata TOP LEVEL with no nested `sessionEnd` (endReason / durationMs /
-  // totalTokens / sessionCostUsd / degraded). Live sessions nest them under
+  // totalTokens / executionCostUsd / degraded). Live sessions nest them under
   // `sessionEnd`. Read `sessionEnd.<field>` first, then the metadata top-level
   // field of the same name — so BOTH on-disk shapes resolve.
   const endReason =
@@ -286,7 +286,7 @@ export function assembleIncidentReport(
   // stays the fallback for log-only sessions with no trajectory records.
   const costUsd =
     signals.summaryCostUsd ??
-    readRollupNumber(sessionEnd, metadata, rollupPayload, "costUsd", "sessionCostUsd", 0);
+    readRollupNumber(sessionEnd, metadata, rollupPayload, "costUsd", "executionCostUsd", 0);
   const mt = signals.modelTokens;
   const totalTokens =
     mt !== undefined
@@ -304,15 +304,22 @@ export function assembleIncidentReport(
   // --- timing --------------------------------------------------------------
   // durationMs also lives at the metadata top level in the frozen-678 shape.
   const durationMs = readRollupNumber(sessionEnd, metadata, rollupPayload, "durationMs", "durationMs", 0);
-  // turnCount: prefer an explicit rollup turn count; else derive from the
-  // per-tool invocation totals (a deterministic lower bound, never 0 when any
-  // tool ran), else 0.
+  // turnCount: prefer the SUMMED per-execution ledger (Σ session.summary
+  // turnCount — the rollup's turnCount is last-write-wins, so a multi-execution
+  // session under-reported it: the incident's 11-turn session showed 1). Then
+  // the explicit rollup turn count (log-only sessions), then the per-tool
+  // invocation total (a deterministic lower bound, never 0 when any tool ran).
   const explicitTurns = readRollupNumber(sessionEnd, metadata, rollupPayload, "turnCount", "turnCount", 0);
   let toolInvocations = 0;
   for (const stat of Object.values(signals.toolStats)) {
     toolInvocations += stat.ok + stat.failed;
   }
-  const turnCount = explicitTurns > 0 ? explicitTurns : toolInvocations;
+  const turnCount =
+    signals.summaryTurnCount !== undefined && signals.summaryTurnCount > 0
+      ? signals.summaryTurnCount
+      : explicitTurns > 0
+        ? explicitTurns
+        : toolInvocations;
 
   // --- toolStats merge (signal counts win on overlap; rollup-only surfaced) -
   const toolStats: IncidentReport["toolStats"] = {};

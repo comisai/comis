@@ -37,7 +37,7 @@ export interface SessionHealthRollup {
  * `errorKind`, and `breakerTripCount` is accumulated on the bridge.
  */
 interface RollupInput {
-  sessionCostUsd?: number;
+  executionCostUsd?: number;
   breakerTripCount?: number;
   toolExecResults?: ReadonlyArray<{
     toolName: string;
@@ -119,7 +119,7 @@ export function buildSessionHealthRollup(
 
   return {
     degraded,
-    costUsd: bridgeResult.sessionCostUsd ?? 0,
+    costUsd: bridgeResult.executionCostUsd ?? 0,
     toolStats: Object.fromEntries(toolStatsMap),
     breakerTripCount: bridgeResult.breakerTripCount ?? 0,
     topErrorKinds,

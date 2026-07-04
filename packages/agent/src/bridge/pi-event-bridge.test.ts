@@ -3129,7 +3129,7 @@ describe("createPiEventBridge", () => {
       expect(recordedCost.total).toBeCloseTo(event.message.usage.cost.total + expectedDelta, 8);
     });
 
-    it("m.sessionCumulativeCostUsd uses corrected cost when ttlSplit present", () => {
+    it("m.executionCostUsd uses corrected cost when ttlSplit present", () => {
       const ttlSplit = { cacheWrite5mTokens: 858, cacheWrite1hTokens: 23400 };
       deps = createMockDeps({
         provider: "anthropic",
@@ -3965,13 +3965,13 @@ describe("createPiEventBridge", () => {
   // ---------------------------------------------------------------------------
 
   describe("session-cumulative cost accumulators", () => {
-    it("createBridgeMetrics initializes sessionCumulativeCostUsd=0 and sessionCumulativeCacheSavedUsd=0", () => {
+    it("createBridgeMetrics initializes executionCostUsd=0 and executionCacheSavedUsd=0", () => {
       const m = createBridgeMetrics();
-      expect(m.sessionCumulativeCostUsd).toBe(0);
-      expect(m.sessionCumulativeCacheSavedUsd).toBe(0);
+      expect(m.executionCostUsd).toBe(0);
+      expect(m.executionCacheSavedUsd).toBe(0);
     });
 
-    it("after 3 turn_end events with costs [0.15, 0.05, 0.10], sessionCumulativeCostUsd = 0.30", () => {
+    it("after 3 turn_end events with costs [0.15, 0.05, 0.10], executionCostUsd = 0.30", () => {
       deps = createMockDeps({ provider: "anthropic", model: "claude-sonnet-4-5-20250929" });
       const { listener, getResult } = createPiEventBridge(deps);
 
@@ -3986,10 +3986,10 @@ describe("createPiEventBridge", () => {
       }
 
       const result = getResult();
-      expect(result.sessionCostUsd).toBeCloseTo(0.30);
+      expect(result.executionCostUsd).toBeCloseTo(0.30);
     });
 
-    it("after 3 turn_end events with savings, sessionCacheSavedUsd accumulates correctly", () => {
+    it("after 3 turn_end events with savings, executionCacheSavedUsd accumulates correctly", () => {
       deps = createMockDeps({
         provider: "anthropic",
         model: "claude-sonnet-4-5-20250929",
@@ -4009,18 +4009,18 @@ describe("createPiEventBridge", () => {
 
       const result = getResult();
       // Session cache saved should be > 0 when cache reads happened
-      expect(result.sessionCacheSavedUsd).toBeDefined();
-      expect(typeof result.sessionCacheSavedUsd).toBe("number");
+      expect(result.executionCacheSavedUsd).toBeDefined();
+      expect(typeof result.executionCacheSavedUsd).toBe("number");
     });
 
-    it("buildBridgeResult includes sessionCostUsd and sessionCacheSavedUsd", () => {
+    it("buildBridgeResult includes executionCostUsd and executionCacheSavedUsd", () => {
       const m = createBridgeMetrics();
-      m.sessionCumulativeCostUsd = 0.42;
-      m.sessionCumulativeCacheSavedUsd = 0.15;
+      m.executionCostUsd = 0.42;
+      m.executionCacheSavedUsd = 0.15;
 
       const result = buildBridgeResult(m, 3);
-      expect(result.sessionCostUsd).toBeCloseTo(0.42);
-      expect(result.sessionCacheSavedUsd).toBeCloseTo(0.15);
+      expect(result.executionCostUsd).toBeCloseTo(0.42);
+      expect(result.executionCacheSavedUsd).toBeCloseTo(0.15);
     });
   });
 
@@ -4280,16 +4280,16 @@ describe("createPiEventBridge", () => {
   });
 
   describe("ExecutionResult.cost session fields", () => {
-    it("sessionCostUsd and sessionCacheSavedUsd present on ExecutionResult.cost type", () => {
+    it("executionCostUsd and executionCacheSavedUsd present on ExecutionResult.cost type", () => {
       // Type-level test: ensure the fields exist in the type
       const cost: ExecutionResult["cost"] = {
         total: 0.50,
         cacheSaved: 0.10,
-        sessionCostUsd: 1.20,
-        sessionCacheSavedUsd: 0.35,
+        executionCostUsd: 1.20,
+        executionCacheSavedUsd: 0.35,
       };
-      expect(cost.sessionCostUsd).toBe(1.20);
-      expect(cost.sessionCacheSavedUsd).toBe(0.35);
+      expect(cost.executionCostUsd).toBe(1.20);
+      expect(cost.executionCacheSavedUsd).toBe(0.35);
     });
   });
 

@@ -379,6 +379,11 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       // FINAL execution's cost; the assembler prefers this ledger sum.
       const c = asNumber(data.costUsd);
       if (c !== undefined) acc.summaryCostUsd = (acc.summaryCostUsd ?? 0) + c;
+      // Σ the per-execution turn counts — the sessionEnd rollup's turnCount is
+      // last-write-wins (the final execution's only), so a multi-execution
+      // session under-reported (the incident's 11-turn session showed 1).
+      const t = asNumber(data.turnCount);
+      if (t !== undefined) acc.summaryTurnCount = (acc.summaryTurnCount ?? 0) + t;
       return;
     }
     case "model.completed": {
@@ -644,6 +649,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     // with its numbers in their unit — lets the spend verdict name the exact knob.
     ...(acc.perRootBudget !== undefined ? { perRootBudget: acc.perRootBudget } : {}),
     ...(acc.summaryCostUsd !== undefined ? { summaryCostUsd: acc.summaryCostUsd } : {}),
+    ...(acc.summaryTurnCount !== undefined ? { summaryTurnCount: acc.summaryTurnCount } : {}),
     ...(acc.modelTokens !== undefined ? { modelTokens: acc.modelTokens } : {}),
     ...(acc.turnFinalized !== undefined ? { turnFinalized: acc.turnFinalized } : {}),
     ...(acc.deliveryAborts !== undefined ? { deliveryAborts: acc.deliveryAborts } : {}),

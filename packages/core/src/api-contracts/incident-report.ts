@@ -774,6 +774,12 @@ export interface IncidentSignals {
    */
   deliveryAborts?: { events: number; chunksNotSent: number };
   /**
+   * Σ of the session's `session.summary` records' `turnCount` — the
+   * trajectory-derived turn total, preferred for `timing.turnCount` over the
+   * last-write-wins rollup turnCount. Absent ⇒ no summary records.
+   */
+  summaryTurnCount?: number;
+  /**
    * Σ of the session's `session.summary` records' `costUsd` — the
    * trajectory-derived session cost. Each summary record carries ONE
    * execution's cost, while the sessionEnd rollup is overwritten per execution

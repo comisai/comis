@@ -95,6 +95,10 @@ export interface Acc {
    *  execution) — the trajectory-derived session cost the assembler prefers
    *  over the last-write-wins sessionEnd rollup. Absent ⇒ no summary records. */
   summaryCostUsd?: number;
+  /** Σ of the session's `session.summary` records' turnCount — the
+   *  trajectory-derived turn total the assembler prefers over the
+   *  last-write-wins rollup turnCount. Absent ⇒ no summary records. */
+  summaryTurnCount?: number;
   /** Σ of the session's `model.completed` token fields — the trajectory-derived
    *  token ledger (source of cost.totalTokens + cacheReadRatio). Absent ⇒ no
    *  model.completed records. */

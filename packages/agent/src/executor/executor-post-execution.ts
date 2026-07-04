@@ -151,7 +151,7 @@ export interface PostExecutionBridgeResult {
   /** Estimated 1h TTL cache write tokens from TTL split data. */
   cacheWrite1hTokens?: number;
   /** Session-cumulative total cost across all turns (USD). */
-  sessionCostUsd?: number;
+  executionCostUsd?: number;
   /** Per-tool execution results carrying the classified errorKind —
    *  the rollup's failure source for toolStats + topErrorKinds. */
   toolExecResults?: Array<{ toolName: string; success: boolean; durationMs: number; errorText?: string; errorKind?: ErrorKind }>;
@@ -171,7 +171,7 @@ export interface PostExecutionBridgeResult {
    */
   lastStopReason?: string;
   /** Session-cumulative cache savings across all turns (USD). */
-  sessionCacheSavedUsd?: number;
+  executionCacheSavedUsd?: number;
   /** Thinking tokens from SDK reasoningTokens field. */
   thinkingTokens?: number;
   // Per-execute diagnostic counters surfaced into the bookend log.
@@ -1229,11 +1229,11 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         costCorrectionDeltaUsd: bridgeResult.totalCostCorrectionDeltaUsd,
       }),
       // Session-cumulative cost fields (alongside per-turn costUsd/cacheSavedUsd)
-      sessionCostUsd: bridgeResult.sessionCostUsd ?? 0,
-      sessionCacheSavedUsd: bridgeResult.sessionCacheSavedUsd ?? 0,
+      executionCostUsd: bridgeResult.executionCostUsd ?? 0,
+      executionCacheSavedUsd: bridgeResult.executionCacheSavedUsd ?? 0,
       // Session cache savings rate
-      sessionCacheSavingsRate: (bridgeResult.sessionCacheSavedUsd ?? 0) > 0 || (bridgeResult.sessionCostUsd ?? 0) > 0
-        ? Math.round(((bridgeResult.sessionCacheSavedUsd ?? 0) / ((bridgeResult.sessionCostUsd ?? 0) + (bridgeResult.sessionCacheSavedUsd ?? 0))) * 100)
+      executionCacheSavingsRate: (bridgeResult.executionCacheSavedUsd ?? 0) > 0 || (bridgeResult.executionCostUsd ?? 0) > 0
+        ? Math.round(((bridgeResult.executionCacheSavedUsd ?? 0) / ((bridgeResult.executionCostUsd ?? 0) + (bridgeResult.executionCacheSavedUsd ?? 0))) * 100)
         : 0,
       // Ghost cost from timed-out requests
       ghostCostUsd: result.cost.ghostCostUsd ?? 0,

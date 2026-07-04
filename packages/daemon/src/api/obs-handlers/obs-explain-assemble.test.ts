@@ -11,7 +11,7 @@
  *
  * These tests pin the contract per field group:
  *   - **cost** comes from the F1 metadata rollup (`sessionEnd.costUsd`) with a
- *     fallback chain: `sessionEnd.costUsd` → top-level `sessionCostUsd` →
+ *     fallback chain: `sessionEnd.costUsd` → top-level `executionCostUsd` →
  *     F2 `rollup.costUsd` → `0`. For the 678 fixture this is `1.320669`.
  *   - **outcome.degraded** is `rollup.degraded ?? (endReason ∈ DEGRADED_SET)`;
  *     **severity** is `"failed"` for a hard-failure endReason, else `"degraded"`
@@ -87,7 +87,7 @@ function makeSignals(overrides: Partial<IncidentSignals> = {}): IncidentSignals 
 
 /**
  * Build an F1 metadata object. `sessionEnd` is the nested end-of-session rollup;
- * top-level fields (traceId, agentId, channel, sessionCostUsd) sit beside it.
+ * top-level fields (traceId, agentId, channel, executionCostUsd) sit beside it.
  */
 function makeMetadata(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -212,11 +212,11 @@ describe("assembleIncidentReport — cost", () => {
     expect(report.cost.totalTokens).toBe(735_800);
   });
 
-  it("falls back to top-level sessionCostUsd when sessionEnd.costUsd is absent", () => {
+  it("falls back to top-level executionCostUsd when sessionEnd.costUsd is absent", () => {
     const report = assembleIncidentReport(
       makeSignals(),
       makeMetadata({
-        sessionCostUsd: 1.320669,
+        executionCostUsd: 1.320669,
         sessionEnd: { endReason: "completed_with_tool_errors", totalTokens: 735_800 },
       }),
       null,
@@ -229,7 +229,7 @@ describe("assembleIncidentReport — cost", () => {
   it("falls back to the F2 diagnostics rollup costUsd when both metadata sources are absent", () => {
     const report = assembleIncidentReport(
       makeSignals(),
-      makeMetadata({ sessionCostUsd: undefined, sessionEnd: { endReason: "completed_with_tool_errors" } }),
+      makeMetadata({ executionCostUsd: undefined, sessionEnd: { endReason: "completed_with_tool_errors" } }),
       { costUsd: 0.5 },
       SESSION_KEY,
       READ_COUNT,
@@ -240,7 +240,7 @@ describe("assembleIncidentReport — cost", () => {
   it("falls back to 0 when every cost source is absent", () => {
     const report = assembleIncidentReport(
       makeSignals(),
-      makeMetadata({ sessionCostUsd: undefined, sessionEnd: { endReason: "success" } }),
+      makeMetadata({ executionCostUsd: undefined, sessionEnd: { endReason: "success" } }),
       null,
       SESSION_KEY,
       READ_COUNT,
@@ -274,7 +274,7 @@ describe("assembleIncidentReport — cost", () => {
         sessionKey: SESSION_KEY,
         endReason: "completed_with_tool_errors",
         totalTokens: 735_800,
-        sessionCostUsd: 1.320669,
+        executionCostUsd: 1.320669,
       },
       null,
       SESSION_KEY,
@@ -364,7 +364,7 @@ describe("assembleIncidentReport — outcome", () => {
 
   it("reads the endReason from the metadata top level when the fixture has no sessionEnd (real 678 shape)", () => {
     // The FROZEN 678 fixture's session-metadata.json carries the rollup fields
-    // at the TOP LEVEL (endReason / durationMs / totalTokens / sessionCostUsd)
+    // at the TOP LEVEL (endReason / durationMs / totalTokens / executionCostUsd)
     // with NO nested sessionEnd — the assembler must read top-level too.
     const report = assembleIncidentReport(
       makeSignals(),
@@ -375,7 +375,7 @@ describe("assembleIncidentReport — outcome", () => {
         traceId: "f942d38c-e372-43cc-99f1-ead4f0b8582f",
         durationMs: 9_000,
         totalTokens: 735_800,
-        sessionCostUsd: 1.320669,
+        executionCostUsd: 1.320669,
         toolFailureCount: 8,
       },
       null,
