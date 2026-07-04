@@ -128,13 +128,20 @@ const fired = await call("cron.run", { jobName: name, agentId });
 const deadline = Date.now() + ((spec.timeoutSeconds || 30) * 1000 + 12_000);
 let runs = { runs: [] };
 let diag = before;
+const isNewer = (d) => d && d.ts && (!before || !before.ts || d.ts > before.ts);
 while (Date.now() < deadline) {
   await sleep(1500);
   runs = await call("cron.runs", { jobName: name, agentId, limit: 1 });
   diag = latestDiag();
-  const diagIsNew = diag && diag.ts && (!before || !before.ts || diag.ts > before.ts);
-  if (runs.runs.length > 0 || diagIsNew) break;
+  if (runs.runs.length > 0 || isNewer(diag)) break;
 }
+
+// Only surface a diag that belongs to THIS fire. When the gate was NOT consulted
+// (toggle OFF, autonomy disabled, no-bwrap degrade) NO new cron_wake_gate row is
+// written, so latestDiag() returns a STALE prior-fire row — reporting it as this
+// fire's verdict is a false read (e.g. a gate-OFF fire looking like wake=true).
+// Emit diag:null in that case, matching the honest no-gate/degrade signal.
+const diagThisFire = isNewer(diag) ? diag : null;
 
 console.log(
   JSON.stringify(
@@ -145,7 +152,7 @@ console.log(
       resolvedAgentId: fired.resolvedAgentId,
       stored: storedWakeGate(agentId, name),
       run: runs.runs[0] || null,
-      diag,
+      diag: diagThisFire,
     },
     null,
     1,
