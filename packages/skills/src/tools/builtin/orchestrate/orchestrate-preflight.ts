@@ -51,6 +51,17 @@ export interface CapabilityFootprint {
 const CALL_SITE_RE = /\bcomis_tools\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
 
 /**
+ * Match an MCP proxy call site `comis_tools.mcp.<server>.<tool>(` — the SDK's sole
+ * path to a connected MCP tool. The flat {@link CALL_SITE_RE} misses it: the ident
+ * after `comis_tools` is "mcp", followed by "." (the server), not "(". This site
+ * maps to the fixed method name "mcp" (→ `orch:mcp`), identical to a direct
+ * `comis_tools.mcp(` call. The bracket form (`comis_tools.mcp["s"]["t"]()`) is a
+ * dynamic call the static scan intentionally leaves to the endpoint gate (fail-safe).
+ */
+const MCP_PROXY_RE =
+  /\bcomis_tools\s*\.\s*mcp\s*\.\s*[A-Za-z_][A-Za-z0-9_]*\s*\.\s*[A-Za-z_][A-Za-z0-9_]*\s*\(/g;
+
+/**
  * Upper bound on {@link CapabilityFootprint.sequence} — it keeps the first N
  * cap-mapped call sites in source order. Bounds the content-free descriptor so a
  * pathological script cannot bloat it (a security bound, not a correctness one).
@@ -71,8 +82,17 @@ export function extractCapabilityFootprint(script: string): CapabilityFootprint 
   const methods = new Set<string>();
   const sequence: string[] = [];
   const unknownMethods = new Set<string>();
-  for (const match of script.matchAll(CALL_SITE_RE)) {
-    const method = match[1];
+  // Collect both call-site shapes — the flat `comis_tools.<method>(` floor and the
+  // MCP proxy `comis_tools.mcp.<server>.<tool>(` — in a SINGLE source-ordered pass,
+  // so the descriptor `sequence` stays faithful when a script interleaves them. The
+  // proxy site records the fixed method name "mcp" (→ orch:mcp). A proxy site never
+  // also matches CALL_SITE_RE (the "mcp" ident is followed by ".", not "("), so no
+  // site is double-counted.
+  const hits: Array<{ index: number; method: string }> = [];
+  for (const m of script.matchAll(CALL_SITE_RE)) hits.push({ index: m.index ?? 0, method: m[1] });
+  for (const m of script.matchAll(MCP_PROXY_RE)) hits.push({ index: m.index ?? 0, method: "mcp" });
+  hits.sort((a, b) => a.index - b.index);
+  for (const { method } of hits) {
     const cap = TOOL_CAPABILITY_MAP[method as keyof typeof TOOL_CAPABILITY_MAP];
     if (cap) {
       caps.add(cap);
