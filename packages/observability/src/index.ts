@@ -55,6 +55,12 @@ export {
 
 export { safeJsonStringify } from "./shared/safe-json-stringify.js";
 
+// Canonical (digest-stable) JSON serializer — sorts object keys at every depth so
+// two semantically-equal inputs hash identically. Consumers that key a digest on a
+// structured value (e.g. the content-free orchestrate replay params-digest) use it
+// so both the recording and the matching side compute the same bytes.
+export { stableStringify } from "./shared/stable-stringify.js";
+
 // File-snapshot helper — sha256 + POSIX stat in one pass. Used by the
 // daemon's read-side audit producer (`readConfigFileObservation`) and
 // any other consumer that needs the file-state block.
