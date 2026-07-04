@@ -248,6 +248,37 @@ describe("createOrchestrateReplaySocket — serves recorded results (REPLAY-02)"
     rmSync(ws, { recursive: true, force: true });
   });
 
+  it("tracks a sticky diverged() flag — false after only matched calls, true after any divergence", async () => {
+    const ws = freshWorkspace();
+    writeReplayFixture(ws, [
+      { method: "tool.invoke", params: { tool: "web_fetch", args: { url: "https://x" } }, result: { ok: true } },
+    ]);
+    const socket = createOrchestrateReplaySocket({ workspacePath: ws });
+    const socketPath = join(ws, "replay.sock");
+    await socket.start(socketPath);
+
+    // A matched, served call does NOT set the flag.
+    await callSocket(socketPath, {
+      bearer: "b",
+      method: "tool.invoke",
+      params: { tool: "web_fetch", args: { url: "https://x" } },
+    });
+    expect(socket.diverged()).toBe(false);
+
+    // A second call has no further recorded entry → divergence → sticky flag set
+    // (the flag is set BEFORE the {error} reply, so it is settled once callSocket resolves).
+    const second = await callSocket(socketPath, {
+      bearer: "b",
+      method: "tool.invoke",
+      params: { tool: "web_fetch", args: { url: "https://x" } },
+    });
+    expect(typeof second.error).toBe("string");
+    expect(socket.diverged()).toBe(true);
+
+    await socket.close();
+    rmSync(ws, { recursive: true, force: true });
+  });
+
   it("returns {error} for every request once the recorded results are exhausted", async () => {
     const ws = freshWorkspace();
     writeReplayFixture(ws, [

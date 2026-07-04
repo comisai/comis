@@ -87,6 +87,15 @@ export interface OrchestrateReplaySocket {
   start(socketPath: string): Promise<void>;
   /** Stop the socket server + unlink the socket file. Idempotent. */
   close(): Promise<void>;
+  /**
+   * Whether ANY served request diverged (an exhausted log, a method/params-digest
+   * mismatch, or a gone/escaped recorded pointer) — a sticky flag set the first time
+   * `handleReplayCall` throws. Divergence is signalled to the jailed child over the
+   * socket as `{error}`, which the parent respawn cannot observe; the session reads
+   * this AFTER the re-spawn so a diverged replay is reported honestly (not a clean
+   * success). Read once the re-spawn has settled (every cap call has been served).
+   */
+  diverged(): boolean;
 }
 
 /**
@@ -107,6 +116,9 @@ export function createOrchestrateReplaySocket(
   // lockstep with a faithful replay; a diverging call leaves it put and gets {error}.
   let entries: RecordedEntry[] = [];
   let cursor = 0;
+  // Sticky divergence flag — set the first time handleReplayCall throws (any
+  // divergence). The session reads it via `diverged()` after the re-spawn settles.
+  let divergedFlag = false;
 
   /** Load + parse `results/replay.jsonl` (best-effort; a missing/garbled line is skipped). */
   function loadEntries(): void {
@@ -220,7 +232,12 @@ export function createOrchestrateReplaySocket(
               socket.end(JSON.stringify({ result }) + "\n");
             })
             .catch((err: unknown) => {
-              // Content-free divergence signal — a fixed reason, never params/bytes.
+              // Any handleReplayCall throw is a divergence (exhausted log,
+              // method/params-digest mismatch, gone/escaped pointer). Record the
+              // sticky flag BEFORE replying so the session reads a settled value
+              // after the re-spawn, then emit the content-free divergence signal
+              // to the (re-spawned) client — a fixed reason, never params/bytes.
+              divergedFlag = true;
               const message = err instanceof Error ? err.message : "replay call failed";
               socket.end(JSON.stringify({ error: message }) + "\n");
             });
@@ -305,5 +322,9 @@ export function createOrchestrateReplaySocket(
     });
   }
 
-  return { start, close };
+  function diverged(): boolean {
+    return divergedFlag;
+  }
+
+  return { start, close, diverged };
 }

@@ -227,24 +227,32 @@ export async function runOrchestrateReplaySession(
     // 4. Re-spawn the PINNED bytes with COMIS_ORCH_SOCKET pointed at the replay
     //    socket (INV-1). The operator supplies NO script (T-WS4-03).
     const childEnv = buildReplayChildEnv(socketPath, bearer);
-    const { stdout, diverged } = await deps.respawn({
+    const respawnResult = await deps.respawn({
       rootRunId: runId,
       workspacePath,
       socketPath,
       bearer,
       childEnv,
     });
+    const stdout = respawnResult.stdout;
+    // The production respawn only captures stdout — a child-side cap-call
+    // divergence is signalled over the socket as {error}, which the respawn cannot
+    // observe. Read the separate replay socket's sticky flag AFTER the re-spawn has
+    // settled (every cap call has been served) and OR it with any flag the respawn
+    // itself set (an alt/test seam), so a diverged replay is reported honestly
+    // instead of as a clean success.
+    const diverged = (respawnResult.diverged ?? false) || socket.diverged();
     // §2.7: content-free completion line — a stdout BYTE COUNT + the divergence
     // flag + method only, never the stdout body or the bearer.
     log.info(
       {
         method: "orchestrate.replay",
         stdoutBytes: Buffer.byteLength(stdout, "utf8"),
-        diverged: diverged ?? false,
+        diverged,
       },
       "Orchestrate replay complete",
     );
-    return diverged === undefined ? { stdout } : { stdout, diverged };
+    return diverged ? { stdout, diverged: true } : { stdout };
   } finally {
     // 5. Tear the ephemeral socket down regardless of the re-spawn outcome
     //    (T-233-13) — the bearer + socket live only for this single replay.

@@ -77,6 +77,9 @@ function makeHarness(
     row?: DurableRunRecord | undefined;
     getByRootRunResult?: { ok: true; value: DurableRunRecord | undefined } | { ok: false; error: Error };
     respawnImpl?: (input: OrchestrateReplayRespawnInput) => Promise<{ stdout: string; diverged?: boolean }>;
+    // The sticky divergence the replay SOCKET reports (the production respawn cannot
+    // observe a child-side socket divergence, so the session reads it off the socket).
+    socketDiverged?: boolean;
   } = {},
 ): Harness {
   const callOrder: string[] = [];
@@ -102,7 +105,11 @@ function makeHarness(
   const deps: OrchestrateReplaySessionDeps = {
     durableRuns: { getByRootRun },
     resolveWorkspace: () => WORKSPACE,
-    createReplaySocket: () => ({ start: socketStart, close: socketClose }),
+    createReplaySocket: () => ({
+      start: socketStart,
+      close: socketClose,
+      diverged: () => over.socketDiverged ?? false,
+    }),
     respawn: respawn as unknown as OrchestrateReplaySessionDeps["respawn"],
     outputGuard: { registerSecret },
     mintBearer: () => BEARER,
@@ -178,6 +185,16 @@ describe("runOrchestrateReplaySession — happy path", () => {
     const result = await runOrchestrateReplaySession(h.deps, RUN_ID);
     expect(result.diverged).toBe(true);
     expect(result.stdout).toBe("PARTIAL");
+  });
+
+  it("surfaces divergence reported by the replay SOCKET even when the respawn returns clean stdout", async () => {
+    // The production respawn only captures stdout — it cannot see that a child-side
+    // cap call got {error} from the replay socket. The session must read the socket's
+    // sticky diverged() after the re-spawn so a diverged replay is not a silent success.
+    const h = makeHarness({ socketDiverged: true });
+    const result = await runOrchestrateReplaySession(h.deps, RUN_ID);
+    expect(result.diverged).toBe(true);
+    expect(result.stdout).toBe("RECORDED-STDOUT");
   });
 });
 
@@ -290,7 +307,7 @@ describe("orchestrate.replay — deny-by-origin on the dispatch path (INV-3)", (
     orchestrateReplay: {
       outputGuard: { registerSecret: vi.fn() },
       respawn: vi.fn(async () => ({ stdout: "RECORDED-STDOUT" })),
-      createReplaySocket: () => ({ start: socketStart, close: socketClose }),
+      createReplaySocket: () => ({ start: socketStart, close: socketClose, diverged: () => false }),
     },
   } as never;
 
