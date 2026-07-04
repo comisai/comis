@@ -249,22 +249,43 @@ export async function refreshLearnedSkillSurface(args: {
   const visible = result.value.filter((d) => d.kind === "skill" || d.kind === "topic");
 
   // Per-agent PROCEDURE-doc budget (the scaling guard — there is NO ranked top-K
-  // surfacing today). Partition `visible`: a PROCEDURE doc is the
-  // `required_tools`-populated subset (an orchestrate-derived doc); a user-intent
-  // skill (required_tools NULL ⇒ requiredTools undefined) + a topic doc are NOT.
-  // Cap the procedure subset to `maxProcedureDocsSurfaced` in created_at-ASC order
-  // (already the list() order — the OLDEST, most-corroborated procedures win a slot,
-  // deterministically + stably across refreshes) BEFORE materialize. The
-  // non-procedure docs pass through UNCAPPED (a separate path). NO new execution
-  // path — the docs are still advisory markdown materialized via the existing
-  // enumeration; the model re-authors the run under the unchanged jail/cap gate.
+  // surfacing today). A PROCEDURE doc is the `required_tools`-populated subset (an
+  // orchestrate-derived doc); a user-intent skill (required_tools NULL ⇒ requiredTools
+  // undefined) + a topic doc are NOT, and pass through UNCAPPED (a separate path).
+  //
+  // SELECTION and PRESENTATION are DECOUPLED so the budget can prefer corroboration
+  // WITHOUT churning the prompt cache:
+  //  - SELECTION (which procedure docs keep a slot when over budget): the MOST-
+  //    CORROBORATED win — order the procedure subset by proof_count DESC, then created_at
+  //    ASC, then id ASC (a fully deterministic, stable tiebreak) and keep the top
+  //    `maxProcedureDocsSurfaced`. This is the DoS-guard's intent: a burst of weakly-
+  //    corroborated procedures can NEVER crowd out a heavily-corroborated one, and lowering
+  //    the cap sheds the LEAST-corroborated docs, not the newest.
+  //  - PRESENTATION (the order they appear in <available_skills>): the survivors are
+  //    emitted in the original created_at-ASC list() order by FILTERING `visible` (never a
+  //    repartition), so the listing stays APPEND-ONLY — admitting an unrelated new user-
+  //    intent skill (newest created_at ⇒ lands LAST) never shifts a surviving procedure
+  //    doc's position, keeping the <available_skills> prompt-cache suffix stable cross-session.
+  // NO new execution path — the docs are still advisory markdown materialized via the
+  // existing enumeration; the model re-authors the run under the unchanged jail/cap gate.
   const procedureCap = maxProcedureDocsSurfaced ?? Number.POSITIVE_INFINITY;
   const isProcedureDoc = (d: MentalModel): boolean =>
     d.requiredTools != null && d.requiredTools.length > 0;
   const procedureDocs = visible.filter(isProcedureDoc);
-  const nonProcedureDocs = visible.filter((d) => !isProcedureDoc(d));
-  const cappedProcedureDocs = procedureDocs.slice(0, procedureCap);
-  const budgeted = [...nonProcedureDocs, ...cappedProcedureDocs];
+  // Select the kept procedure docs BY CORROBORATION (proof_count DESC, created_at ASC, id ASC).
+  const keptProcedureIds = new Set(
+    [...procedureDocs]
+      .sort(
+        (a, b) =>
+          b.proofCount - a.proofCount ||
+          a.createdAt - b.createdAt ||
+          (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+      )
+      .slice(0, procedureCap)
+      .map((d) => d.id),
+  );
+  // Present APPEND-ONLY: drop only the over-budget procedure docs, keep `visible`'s created_at order.
+  const budgeted = visible.filter((d) => !isProcedureDoc(d) || keptProcedureIds.has(d.id));
 
   materializeLearnedSkills(workspaceDir, budgeted, logger);
   const surfaced = budgeted.filter(isSurfaceable);
@@ -284,8 +305,8 @@ export async function refreshLearnedSkillSurface(args: {
       // The per-agent procedure-doc budget: how many procedure docs the agent has, how
       // many surfaced this refresh, and how many the cap omitted (the DoS-guard signal).
       procedureDocCount: procedureDocs.length,
-      procedureDocsSurfaced: cappedProcedureDocs.length,
-      procedureDocsOmitted: procedureDocs.length - cappedProcedureDocs.length,
+      procedureDocsSurfaced: keptProcedureIds.size,
+      procedureDocsOmitted: procedureDocs.length - keptProcedureIds.size,
     },
     "Learned-skill surface refreshed",
   );

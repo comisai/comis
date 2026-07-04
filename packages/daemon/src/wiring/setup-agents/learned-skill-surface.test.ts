@@ -399,15 +399,18 @@ describe("refreshLearnedSkillSurface — async list + materialize + cache", () =
 // (the `requiredTools`-populated subset) get their OWN per-agent cap
 // (`maxProcedureDocsSurfaced`) so a burst can't bloat every prompt's
 // <available_skills>; user-intent skills (requiredTools undefined) + topic docs
-// keep a SEPARATE, uncapped path. The cap keeps the OLDEST M in created_at-ASC
-// order (already the list() order) — deterministic + stable across refreshes.
+// keep a SEPARATE, uncapped path. SELECTION keeps the MOST-CORROBORATED M
+// (proof_count DESC, created_at ASC tiebreak); PRESENTATION stays append-only
+// (created_at-ASC list() order) so an unrelated new skill never reshuffles the
+// surfaced procedure docs — deterministic + cache-stable across refreshes.
 // Asserted against the REAL materialized `.learned-skills/` set (ground truth).
 // ---------------------------------------------------------------------------
 
 describe("refreshLearnedSkillSurface — per-agent procedure-doc budget", () => {
-  it("caps the requiredTools-populated subset to maxProcedureDocsSurfaced (oldest-first); user-intent skills + topics UNAFFECTED", async () => {
+  it("caps the requiredTools-populated subset to maxProcedureDocsSurfaced (equal proof_count ⇒ created_at-ASC tiebreak keeps the oldest); user-intent skills + topics UNAFFECTED", async () => {
     // N=3 procedure docs (requiredTools set) + K=2 user-intent skills + 1 topic (no requiredTools),
-    // all active + read-only, with distinct createdAt so "oldest M" is unambiguous.
+    // all active + read-only with EQUAL proof_count (default 3), so the created_at-ASC tiebreak
+    // governs and the "kept 2" is unambiguously the oldest two.
     const docs = [
       learned({ name: "proc-old", requiredTools: ["jq"], createdAt: 1_000 }),
       learned({ name: "intent-a", createdAt: 1_500 }),
@@ -428,7 +431,8 @@ describe("refreshLearnedSkillSurface — per-agent procedure-doc budget", () => 
     });
 
     const dir = safePath(workDir, ".learned-skills");
-    // Exactly the OLDEST 2 procedure docs materialize; the 3rd (newest) is over budget.
+    // Equal proof_count ⇒ created_at-ASC tiebreak: exactly the oldest 2 procedure docs
+    // materialize; the 3rd (newest) is over budget.
     expect(existsSync(safePath(dir, "proc-old", "SKILL.md"))).toBe(true);
     expect(existsSync(safePath(dir, "proc-mid", "SKILL.md"))).toBe(true);
     expect(existsSync(safePath(dir, "proc-new", "SKILL.md"))).toBe(false); // dropped by the budget
@@ -485,9 +489,66 @@ describe("refreshLearnedSkillSurface — per-agent procedure-doc budget", () => 
       logger: noopLogger,
       maxProcedureDocsSurfaced: 1,
     });
-    // 1 procedure (the oldest) + both non-procedure docs = 3; proc-2 dropped.
+    // 1 procedure (equal proof ⇒ oldest via the created_at tiebreak) + both non-procedure
+    // docs = 3; proc-2 dropped.
     expect(surfaced.map((s) => s.name).sort()).toEqual(["intent-1", "proc-1", "topic-1"]);
     expect(surfaced.some((s) => s.name === "proc-2")).toBe(false);
+  });
+
+  it("SELECTS by corroboration: keeps the highest proof_count procedure docs — a low-proof OLD doc is shed before a high-proof NEW one", async () => {
+    // The oldest procedure doc is the LEAST corroborated, so age-first (the old policy) and
+    // corroboration-first DISAGREE about which to drop. proof_count must win.
+    const docs = [
+      learned({ name: "proc-weak-old", requiredTools: ["jq"], createdAt: 1_000, proofCount: 1 }),
+      learned({ name: "proc-mid", requiredTools: ["web_fetch"], createdAt: 2_000, proofCount: 5 }),
+      learned({ name: "proc-strong-new", requiredTools: ["grep"], createdAt: 3_000, proofCount: 10 }),
+    ];
+    const store = makeStore(ok(docs));
+    const surfaced = await refreshLearnedSkillSurface({
+      learnedSkillStore: store,
+      scope,
+      workspaceDir: workDir,
+      logger: noopLogger,
+      maxProcedureDocsSurfaced: 2, // keep the 2 MOST-corroborated, drop the least
+    });
+    const dir = safePath(workDir, ".learned-skills");
+    // The most-corroborated 2 survive; the least-corroborated (proof=1) is shed EVEN THOUGH it is
+    // the oldest — age is no longer the selection key.
+    expect(existsSync(safePath(dir, "proc-strong-new", "SKILL.md"))).toBe(true); // proof 10
+    expect(existsSync(safePath(dir, "proc-mid", "SKILL.md"))).toBe(true); // proof 5
+    expect(existsSync(safePath(dir, "proc-weak-old", "SKILL.md"))).toBe(false); // proof 1 — dropped
+    expect(surfaced.map((s) => s.name).sort()).toEqual(["proc-mid", "proc-strong-new"]);
+  });
+
+  it("PRESENTS append-only: admitting a new user-intent skill does NOT reorder the surfaced procedure docs (prompt-cache suffix stability)", async () => {
+    // Before: one user-intent skill (oldest) then two procedure docs, in created_at-ASC list() order.
+    const before = [
+      learned({ name: "intent-1", createdAt: 1_000 }),
+      learned({ name: "proc-1", requiredTools: ["jq"], createdAt: 2_000 }),
+      learned({ name: "proc-2", requiredTools: ["web_fetch"], createdAt: 3_000 }),
+    ];
+    const surfacedBefore = await refreshLearnedSkillSurface({
+      learnedSkillStore: makeStore(ok(before)),
+      scope,
+      workspaceDir: workDir,
+      logger: noopLogger,
+      maxProcedureDocsSurfaced: 10, // all within budget — nothing dropped
+    });
+    // After: a NEW user-intent skill is admitted (newest created_at ⇒ lands LAST in the list).
+    const after = [...before, learned({ name: "intent-2", createdAt: 4_000 })];
+    const surfacedAfter = await refreshLearnedSkillSurface({
+      learnedSkillStore: makeStore(ok(after)),
+      scope,
+      workspaceDir: workDir,
+      logger: noopLogger,
+      maxProcedureDocsSurfaced: 10,
+    });
+    // Append-only: the new skill appends at the END; every prior doc — INCLUDING the procedure
+    // docs — keeps its exact position, so the <available_skills> prompt-cache suffix is stable.
+    // (The pre-fix `[...nonProcedure, ...procedure]` partition shifted every procedure doc down
+    // when a user-intent skill was added, invalidating the suffix.)
+    expect(surfacedBefore.map((s) => s.name)).toEqual(["intent-1", "proc-1", "proc-2"]);
+    expect(surfacedAfter.map((s) => s.name)).toEqual([...surfacedBefore.map((s) => s.name), "intent-2"]);
   });
 });
 
