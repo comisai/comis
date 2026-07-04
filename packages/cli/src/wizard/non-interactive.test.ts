@@ -377,6 +377,33 @@ describe("validateNonInteractiveOptions", () => {
     }
   });
 
+  it("rejects an unknown --msteams-auth-mode (closed config vocabulary)", () => {
+    // Commander hands this flag through as an arbitrary string; simulate a
+    // typo the type system cannot catch at the boundary. Without wizard-time
+    // validation it would be written to config.yaml and only rejected by the
+    // daemon's Zod schema at boot (a FATAL, or a crash loop with --start-daemon).
+    const opts = validOpts({
+      msteamsAuthMode: "managed" as NonInteractiveOptions["msteamsAuthMode"],
+    });
+    expect(() => validateNonInteractiveOptions(opts)).toThrow(NonInteractiveError);
+    try {
+      validateNonInteractiveOptions(opts);
+    } catch (e) {
+      expect((e as NonInteractiveError).field).toBe("msteamsAuthMode");
+      expect((e as NonInteractiveError).message).toContain("secret");
+      expect((e as NonInteractiveError).message).toContain("certificate");
+      expect((e as NonInteractiveError).message).toContain("managedIdentity");
+    }
+  });
+
+  it("accepts each valid --msteams-auth-mode value", () => {
+    for (const mode of ["secret", "certificate", "managedIdentity"] as const) {
+      expect(() =>
+        validateNonInteractiveOptions(validOpts({ msteamsAuthMode: mode })),
+      ).not.toThrow();
+    }
+  });
+
   it("rejects an unknown --stt-provider / --tts-provider", () => {
     expect(() =>
       validateNonInteractiveOptions(validOpts({ sttProvider: "assemblyai" })),
