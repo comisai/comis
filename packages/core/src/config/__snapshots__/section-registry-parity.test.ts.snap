@@ -5546,7 +5546,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("diagn
       "enabled": true,
       "includeMessages": false,
       "includePrompt": true,
-      "includeSystem": true,
+      "includeSystem": false,
       "maxFileBytes": 52428800
     },
     "immutable": false,
@@ -5577,7 +5577,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("diagn
     "type": "boolean"
   },
   {
-    "default": true,
+    "default": false,
     "immutable": false,
     "path": "diagnostics.cacheTrace.includeSystem",
     "type": "boolean"
@@ -11138,7 +11138,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "enabled": true,
         "includeMessages": false,
         "includePrompt": true,
-        "includeSystem": true,
+        "includeSystem": false,
         "maxFileBytes": 52428800
       },
       "configAudit": {
@@ -11164,7 +11164,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       "enabled": true,
       "includeMessages": false,
       "includePrompt": true,
-      "includeSystem": true,
+      "includeSystem": false,
       "maxFileBytes": 52428800
     },
     "immutable": false,
@@ -11195,7 +11195,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "boolean"
   },
   {
-    "default": true,
+    "default": false,
     "immutable": false,
     "path": "diagnostics.cacheTrace.includeSystem",
     "type": "boolean"
@@ -22947,7 +22947,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dia
       "enabled": true,
       "includeMessages": false,
       "includePrompt": true,
-      "includeSystem": true,
+      "includeSystem": false,
       "maxFileBytes": 52428800
     },
     "configAudit": {
@@ -22971,7 +22971,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dia
         "enabled": true,
         "includeMessages": false,
         "includePrompt": true,
-        "includeSystem": true,
+        "includeSystem": false,
         "maxFileBytes": 52428800
       },
       "properties": {
@@ -22991,7 +22991,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dia
           "type": "boolean"
         },
         "includeSystem": {
-          "default": true,
+          "default": false,
           "type": "boolean"
         },
         "maxFileBytes": {
@@ -34593,7 +34593,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "enabled": true,
           "includeMessages": false,
           "includePrompt": true,
-          "includeSystem": true,
+          "includeSystem": false,
           "maxFileBytes": 52428800
         },
         "configAudit": {
@@ -34617,7 +34617,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "enabled": true,
             "includeMessages": false,
             "includePrompt": true,
-            "includeSystem": true,
+            "includeSystem": false,
             "maxFileBytes": 52428800
           },
           "properties": {
@@ -34637,7 +34637,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "type": "boolean"
             },
             "includeSystem": {
-              "default": true,
+              "default": false,
               "type": "boolean"
             },
             "maxFileBytes": {
