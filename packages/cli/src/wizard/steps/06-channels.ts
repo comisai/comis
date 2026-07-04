@@ -2,7 +2,7 @@
 /**
  * Channel setup step -- step 06 of the init wizard.
  *
- * Presents a multiselect of all 7 supported channels with credential hints,
+ * Presents a multiselect of all 8 supported channels with credential hints,
  * collects per-channel credentials inline with format pre-checks and live
  * API validation, shows deferred guidance for WhatsApp/Signal, silently
  * adds IRC, and stores ChannelConfig[] on wizard state.
