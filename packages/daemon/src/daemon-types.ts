@@ -590,6 +590,8 @@ export interface BootContext {
   // Channel health monitor
   channelHealthMonitor?: ChannelHealthMonitor;
   stopChannelHealthMonitor?: () => void;
+  // Missed-inbound liveness monitor (proactive dead-ingress alert for webhook channels)
+  stopChannelLivenessMonitor?: () => void;
   // Notifications + background completion
   notificationContext?: ReturnType<typeof setupNotifications>;
   bgCompletionRunnerContext?: ReturnType<typeof setupBackgroundCompletionRunner>;

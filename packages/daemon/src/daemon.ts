@@ -169,6 +169,7 @@ import { buildDialecticWiring, dialecticWiringDepsFromBoot } from "./wiring/setu
 import { createConversationReset } from "./wiring/conversation-reset.js";
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
 import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, createBoundedAutonomyWiring } from "./wiring/main-helpers.js";
+import { setupChannelLivenessMonitor } from "./wiring/setup-channel-liveness-monitor.js";
 import { hardenDataDirPermissions } from "./wiring/harden-data-dir.js";
 import { buildAudioResolverDeps } from "./wiring/setup-audio-provider.js";
 import { runPreflightDoctor } from "./wiring/preflight-doctor.js";
@@ -2203,6 +2204,10 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // eventBus.on("system:shutdown", () => stopChannelHealthMonitor?.())
   // deleted — stopChannelHealthMonitor is threaded directly into setupShutdown
   // via ShutdownDeps.stopChannelHealthMonitor.
+  // Missed-inbound liveness monitor (proactive dead-ingress alert for webhook
+  // channels, which the health monitor exempts from stale-reap). stop is threaded
+  // into setupShutdown via ShutdownDeps.stopChannelLivenessMonitor (no leaked timer).
+  const { stop: stopChannelLivenessMonitor } = setupChannelLivenessMonitor({ adaptersByType, daemonLogger, container, timer: handle.timers });
   setupChannelHealthLogging({ eventBus: container.eventBus, logger: daemonLogger });
 
   // 6.6.9. Cross-session sender + sub-agent runner
@@ -2324,7 +2329,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     adaptersByType, channelManager, resolveAttachment, lifecycleReactors, channelPlugins,
     msTeamsIngress,
     commandQueue, deliveryService,
-    inboundMessageIdResolver, channelHealthMonitor, stopChannelHealthMonitor,
+    inboundMessageIdResolver, channelHealthMonitor, stopChannelHealthMonitor, stopChannelLivenessMonitor,
     notificationContext, bgCompletionRunnerContext, terminalWakeContext,
     crossSessionSender, subAgentRunner, sendToChannel, announceToParent,
     deadLetterQueue, announcementBatcher, gatewaySendRef,
@@ -2595,7 +2600,7 @@ async function bootShutdown(
     | "sessionStoreBridge" | "shutdownRef" | "hotAdd" | "hotRemove" | "rpcDispatchDeps"
     | "activeExecutions" | "getActiveConnectionCount" | "wsConnections"
     | "heartbeatRunner" | "duplicateDetector" | "perAgentRunner"
-    | "stopChannelHealthMonitor" | "shutdownBackgroundProcesses" | "proxyTypingCleanup"
+    | "stopChannelHealthMonitor" | "stopChannelLivenessMonitor" | "shutdownBackgroundProcesses" | "proxyTypingCleanup"
     | "outputRetentionHandle"
     | "bgCompletionRunnerContext" | "trajectoryRegistry"
     | "auditAggregator" | "onSuspiciousContent"
@@ -2633,7 +2638,7 @@ async function bootShutdown(
     // 9 new teardown handles surfaced through BootContext.
     shutdownBackgroundProcesses, proxyTypingCleanup,
     outputRetentionHandle, shutdownDeliveryQueue, shutdownMirror,
-    bgCompletionRunnerContext, terminalWakeContext, stopChannelHealthMonitor, mcpClientManager,
+    bgCompletionRunnerContext, terminalWakeContext, stopChannelHealthMonitor, stopChannelLivenessMonitor, mcpClientManager,
     // The background video poller (undefined when video disabled) —
     // its shutdown is threaded into setupShutdown below.
     videoPoller,
@@ -2690,6 +2695,7 @@ async function bootShutdown(
     shutdownDeliveryMirror: shutdownMirror,
     outputRetentionShutdown: outputRetentionHandle ? () => outputRetentionHandle.shutdown() : undefined,
     stopChannelHealthMonitor: stopChannelHealthMonitor ?? undefined,
+    stopChannelLivenessMonitor: stopChannelLivenessMonitor ?? undefined,
     // Thunk reads _healthAggRef.fn at teardown time — populated by emitStartupInvariants.
     unsubscribeHealthAggregator: () => _healthAggRef.fn?.(),
     // Credential broker teardown (no-op when executor.broker is absent)

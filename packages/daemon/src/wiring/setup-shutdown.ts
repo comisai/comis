@@ -167,6 +167,8 @@ export interface ShutdownDeps {
   /** Stop the output retention housekeeper (from setupOutputRetention). */ outputRetentionShutdown?: () => void;
   /** Stop the channel health monitor (from setupChannelHealthMonitor). */
   stopChannelHealthMonitor?: () => void;
+  /** Stop the missed-inbound liveness monitor (from setupChannelLivenessMonitor). */
+  stopChannelLivenessMonitor?: () => void;
   /** Unsubscribe health budget aggregator. */ unsubscribeHealthAggregator?: () => void;
   /** Stop the credential broker (TCP + unix socket teardown). Only present when executor.broker is configured. */
   brokerStop?: () => Promise<void>;
@@ -242,6 +244,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     shutdownDeliveryMirror,
     outputRetentionShutdown,
     stopChannelHealthMonitor,
+    stopChannelLivenessMonitor,
     unsubscribeHealthAggregator,
     brokerStop,
     capEndpointStop,
@@ -524,6 +527,14 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           stopChannelHealthMonitor();
           daemonLogger.info({ component: "channel-health-monitor", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "channel-health-monitor", daemonLogger);
+      }
+      // Cancel the missed-inbound liveness timer (no leaked interval on shutdown).
+      if (stopChannelLivenessMonitor) {
+        const stopMs = systemNowMs();
+        await withStepTimeout(() => {
+          stopChannelLivenessMonitor();
+          daemonLogger.info({ component: "channel-liveness-monitor", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+        }, "channel-liveness-monitor", daemonLogger);
       }
       if (unsubscribeHealthAggregator) unsubscribeHealthAggregator(); // health budget aggregator
       if (heartbeatRunner) {
