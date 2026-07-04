@@ -70,6 +70,7 @@
     "globals": "17.6.0",
     "grammy": "1.43.0",
     "hono": "4.12.27",
+    "jose": "6.2.3",
     "madge": "8.0.0",
     "node-llama-cpp": "3.18.1",
     "nodemailer": "9.0.2",
