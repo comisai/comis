@@ -149,8 +149,9 @@ console.log(JSON.stringify(result));
 Because a server's tool set is discovered per connection, `comis_tools.mcp` is a **runtime
 namespace**, not a fixed list — `comis_tools.mcp.<server>.<tool>(args)` resolves each `<server>`
 and `<tool>` on the fly to a single cap-socket call. It runs under the `orch:mcp` capability, which
-is **off in every default profile** — the one genuinely new default-off capability of this surface
-(contrast the write/message surfaces below, whose capabilities are already on in `standard`).
+is **off in every default profile** — the one genuinely new default-off *capability* of this surface
+(the write/message *capabilities* are already on in `standard`, though the `write` surface itself is
+a separate opt-in — see below).
 
 The call runs exactly like `web_fetch`: **daemon-side**, on the daemon's network, so the jail
 stays `--unshare-net`. The jailed script's call crosses the `0600` capability socket to the
@@ -195,23 +196,28 @@ The outward triplet is `message_send`, `message_reply`, and `message_react` — 
 genuinely-outward send subset (dispatching [`message.send`/`reply`/`react`](/reference/json-rpc#message-send)).
 
 <Warning>
-**What is new here is the typed surface, not the capabilities.** `orch:write` and `orch:message`
-are **floor capabilities** — on by default in `standard` and up (only the `assistant` profile
-withholds them). What ships new is the **typed `comis_tools` methods** (`write`,
-`message_send`/`reply`/`react`) that let a script reach those already-held capabilities directly
-in one turn. The methods are inert for an agent that does not hold the underlying capability: an
-`assistant`-profile agent, or one you gate with `write: false`, cannot call them. Only `orch:mcp`
-above is a genuinely new default-off capability — do not read "typed surface is new" as "the
-write/message capabilities are off by default".
+**The capabilities are floor capabilities — but the `write` surface is opt-in.** `orch:write` and
+`orch:message` are **floor capabilities**: held by default in `standard` and up (only the
+`assistant` profile withholds them). What ships new is the **typed `comis_tools` methods** (`write`,
+`message_send`/`reply`/`react`) that reach those capabilities directly in one turn. The `message_*`
+methods are reachable by default; the **`write` method is gated by a separate, default-OFF surface
+toggle** — even though a `standard` agent *holds* `orch:write`, the typed write surface stays dark
+until you set `write: true` under the agent's `autonomy` block, so the orchestrate surface is
+**read-only by default**. The methods are inert for an agent that does not hold the underlying
+capability (an `assistant`-profile agent, or one you set `write: false`, cannot call `write`). Only
+`orch:mcp` above is a genuinely new default-off *capability*.
 </Warning>
 
-`write` is **path-confined to the run's workspace** and **run-ephemeral**: every path resolves
-under the agent's jailed workspace root (a `../` or absolute path is refused), and the workspace is
-cleaned when the run ends, exactly like the files the read tools see. It is not a persistent store.
-`message_send`/`reply`/`react` target the agent's **own origin channel** by default — a send to a
-new channel escalates for approval (see [Autonomy](/agents/autonomy#what-standard-turns-on)) — and
-the [`message.*`](/reference/json-rpc#message-send) edit/delete/fetch subset stays admin-only, not
-part of `orch:message`.
+`write` is **run-scoped, run-ephemeral, and isolated from the discovery/config subtrees**: every
+path resolves under a per-run `results/writes` area inside the agent's jailed workspace (a `../`,
+absolute, or `../…/skills/…` path is refused), and that area is **reaped when the run ends** — a
+file written this run is gone the next run. It is **not** a persistent store, and it **cannot** reach
+the workspace-root skill-discovery or config subtrees (`skills/`, `.learned-skills/`, memory,
+config), so a jailed turn can never plant a cross-run skill. Enable the surface per agent with
+`autonomy.write: true`. `message_send`/`reply`/`react` target the agent's **own origin channel** by
+default — a send to a new channel escalates for approval (see [Autonomy](/agents/autonomy#what-standard-turns-on))
+— and the [`message.*`](/reference/json-rpc#message-send) edit/delete/fetch subset stays admin-only,
+not part of `orch:message`.
 
 ### Worked example — fetch, transform, send in one turn
 

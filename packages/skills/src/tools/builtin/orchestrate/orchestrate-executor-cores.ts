@@ -18,16 +18,21 @@
  *     `createComis{Read,Grep,Find,Ls,Write}Tool` AgentTools — constructed per call
  *     under the lease's resolved `workspaceDir` (the executor passes it in `ctx`),
  *     then `.execute()`d. `read`/`grep`/`find`/`ls` are read-only; `write` is the
- *     FIRST general writing core on this surface — workspace-CONFINED (every path
- *     resolves under `workspaceDir` via `safePath`, so a `..`/absolute escape is
- *     refused BEFORE any write) and run-EPHEMERAL (it lands in the run's workspace
- *     root, cleaned at run end — NOT a persistent store, NOT an arbitrary/absolute
- *     path; the durable, `results/`-confined specialized writing core is a
- *     separate, later concern). A path escape / write guard that would throw
- *     honest-degrades to an `{ error }` (never a throw), like the jq/sql/jsonpath
- *     slicers below. The `AgentToolResult` it returns is the value the jailed SDK
- *     receives over the cap socket; high-volume returns are offloaded to a
- *     `ResultRef` by the executor's `materialize` seam, not here.
+ *     FIRST general writing core on this surface — confined to a RUN-SCOPED,
+ *     EPHEMERAL root (`<workspace>/results/writes`, NOT the persistent workspace
+ *     root): every path resolves under that root via `safePath` (a `..`/absolute/
+ *     `../…/skills/…` escape is refused BEFORE any write), and it is genuinely
+ *     run-EPHEMERAL because `results/` is reaped wholesale by
+ *     `ResultRefStore.cleanupRun` on run end — so a written file is GONE after the
+ *     run, and the write can never reach the workspace-root discovery/config
+ *     subtrees (`skills/`, `.learned-skills/`, memory, config). The TYPED write
+ *     SURFACE is default-OFF (opt-in via `autonomy.write`; the executor gates the
+ *     dispatch on `writeSurfaceEnabled` even though `orch:write` is a floor cap) —
+ *     see `setup-tool-invoke-executor.ts`. A path escape / write guard that would
+ *     throw honest-degrades to an `{ error }` (never a throw), like the
+ *     jq/sql/jsonpath slicers below. The `AgentToolResult` it returns is the value
+ *     the jailed SDK receives over the cap socket; high-volume returns are
+ *     offloaded to a `ResultRef` by the executor's `materialize` seam, not here.
  *   - `jq`/`sql`/`jsonpath`: the in-jail ResultRef
  *     query engine. The jailed script's `wrapResultRef(...).jq(expr)` /
  *     `.sql(query)` / `.jsonpath(expr)` sends `tool.invoke("jq"|"sql"|"jsonpath",
@@ -104,7 +109,7 @@ export interface OrchestrateFileCores {
   sql: OrchestrateFileCore;
   /** Precise JSON extraction via DuckDB `json_extract` (NO eval lib). */
   jsonpath: OrchestrateFileCore;
-  /** Workspace-confined, run-ephemeral write (safePath; the first mutating core). */
+  /** Run-scoped, run-ephemeral write confined to results/writes (safePath; the first mutating core). */
   write: OrchestrateFileCore;
 }
 
@@ -165,6 +170,19 @@ const JQ_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
 const DEFAULT_SQL_TIMEOUT_MS = 10_000;
 /** Bound the captured duckdb stdout so a huge slice cannot blow the daemon's heap. */
 const SQL_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
+
+/**
+ * The RUN-SCOPED, EPHEMERAL write root (relative to the lease workspace) the
+ * `write` core confines to — a subdir UNDER `results/`, which
+ * `ResultRefStore.cleanupRun` reaps WHOLESALE on run end. Confining here (NOT the
+ * persistent per-agent workspace root) makes the write genuinely run-ephemeral
+ * (a file written this run is gone after the run's cleanupRun) AND isolates it
+ * from the workspace-root discovery/config subtrees (`skills/`,
+ * `.learned-skills/`, memory, config): a `../`/absolute/`../../skills/…` path that
+ * escapes this root is refused by `safePath` BEFORE any write, so a run can never
+ * persist a cross-run skill into the top-priority skill-discovery path.
+ */
+const WRITE_SUBDIR = "results/writes";
 
 /**
  * Build the DuckDB hardening prelude prepended before the (untrusted) model
@@ -619,23 +637,39 @@ export function createOrchestrateExecutorCores(
       );
       return errorResult("write requires a string `path`");
     }
-    // Confine the target under the run workspace BEFORE any write (the same
-    // safePath confinement the jq/sql/jsonpath cores use). A `..`/absolute escape
-    // is refused here; the write lands in the run's workspace root only.
+    // Resolve the RUN-SCOPED, EPHEMERAL write root (<workspace>/results/writes) —
+    // NOT the persistent workspace root. results/ is reaped wholesale by
+    // ResultRefStore.cleanupRun on run end, so a write here is genuinely
+    // run-ephemeral (OQ-Q1) and isolated from the workspace-root discovery/config
+    // subtrees (skills/, .learned-skills/, memory, config).
+    let writeRoot: string;
     try {
-      safePath(ctx.workspaceDir, rawPath);
+      writeRoot = safePath(ctx.workspaceDir, WRITE_SUBDIR);
     } catch (err: unknown) {
       log.warn(
-        { err, errorKind: "validation" as const, hint: "write path escaped the workspace — refusing", toolName: "write" },
+        { err, errorKind: "validation" as const, hint: "the run-scoped write root escaped the workspace — refusing", toolName: "write" },
+        "orchestrate write root unresolvable",
+      );
+      return errorResult("write refused: the run workspace is unavailable");
+    }
+    // Confine the target under the run-scoped write root BEFORE any write (the same
+    // safePath confinement the jq/sql/jsonpath cores use). A `..`/absolute escape —
+    // or a `../…/skills/…` traversal back into the workspace-root discovery path —
+    // is refused here; the write lands under results/writes only.
+    try {
+      safePath(writeRoot, rawPath);
+    } catch (err: unknown) {
+      log.warn(
+        { err, errorKind: "validation" as const, hint: "write path escaped the run workspace — refusing", toolName: "write" },
         "orchestrate write path traversal blocked",
       );
-      return errorResult("write path escapes the workspace");
+      return errorResult("write path escapes the run workspace");
     }
-    // Run the shipped write tool under the confined workspace root — it re-confines
+    // Run the shipped write tool under the confined run-scoped root — it re-confines
     // via its own safePath. Any remaining write guard that throws honest-degrades
     // to a content-free { error } (the daemon-side host path never crosses the jail).
     try {
-      const tool = createComisWriteTool(ctx.workspaceDir);
+      const tool = createComisWriteTool(writeRoot);
       const result: AgentToolResult<unknown> = await tool.execute("tool.invoke", args as never);
       log.debug(
         { step: "write-core", toolName: "write", durationMs: systemNowMs() - started },

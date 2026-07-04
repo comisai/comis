@@ -34,6 +34,7 @@ import {
   rejectDangerousSql,
   isSafeJsonPath,
 } from "./orchestrate-executor-cores.js";
+import { createResultRefStore } from "./result-ref-store.js";
 
 function makeLogger(): ComisLogger {
   const child = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
@@ -152,15 +153,18 @@ describe("createOrchestrateExecutorCores", () => {
   // -------------------------------------------------------------------------
   // The `write` core — the FIRST general writing core on this surface (the
   // module was read-only by construction). It adapts the shipped
-  // createComisWriteTool under ctx.workspaceDir; every path is safePath-confined
-  // to the run workspace (a `..`/absolute escape is refused, nothing is written
-  // outside), the write is run-EPHEMERAL (the workspace root only, NOT a
-  // persistent/arbitrary path), and a guard that would throw honest-degrades to
-  // an { error } (never a throw), like the jq/sql/jsonpath slicers. Ground
-  // truth: a real file under a real temp workspace; a real absence outside it.
+  // createComisWriteTool under the RUN-SCOPED, EPHEMERAL write root
+  // `<workspace>/results/writes` — every path is safePath-confined to THAT root
+  // (a `..`/absolute/into-`skills/` escape is refused, nothing is written
+  // outside), the write is run-EPHEMERAL (results/ is reaped wholesale by
+  // ResultRefStore.cleanupRun on run end), and a guard that would throw
+  // honest-degrades to an { error } (never a throw), like the jq/sql/jsonpath
+  // slicers. Ground truth: a real file under a real temp workspace's
+  // results/writes; a real absence after a REAL cleanupRun; a real absence of
+  // the workspace-root discovery subtree (skills/).
   // -------------------------------------------------------------------------
 
-  it("runs the write core under the lease's workspaceDir and writes a real file (a small success ack)", async () => {
+  it("runs the write core under the RUN-SCOPED results/writes root (never the persistent workspace root)", async () => {
     const ws = makeWorkspace();
     try {
       const cores = createOrchestrateExecutorCores({ logger: makeLogger() });
@@ -168,12 +172,61 @@ describe("createOrchestrateExecutorCores", () => {
         { path: "note.txt", content: "hello orchestrate write" },
         { workspaceDir: ws },
       )) as { error?: string };
-      // Ground truth: the file exists UNDER the workspace with the exact content.
-      const written = join(ws, "note.txt");
+      // Ground truth: the file lands under the run-scoped results/writes root with
+      // the exact content — NOT at the persistent workspace root (the read cores'
+      // dir + the top-priority skill-discovery path).
+      const written = join(ws, "results", "writes", "note.txt");
       expect(existsSync(written)).toBe(true);
       expect(readFileSync(written, "utf8")).toBe("hello orchestrate write");
+      // The persistent workspace root is UNTOUCHED — no cross-run persisted file.
+      expect(existsSync(join(ws, "note.txt"))).toBe(false);
       // The core returns the write tool's AgentToolResult (a small ack), never an error.
       expect(result.error).toBeUndefined();
+    } finally {
+      rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
+  it("write is RUN-EPHEMERAL: a written file is GONE after the run's cleanupRun (OQ-Q1)", async () => {
+    const ws = makeWorkspace();
+    try {
+      const cores = createOrchestrateExecutorCores({ logger: makeLogger() });
+      await cores.fileExecutors.write(
+        { path: "summary.md", content: "# Findings" },
+        { workspaceDir: ws },
+      );
+      const written = join(ws, "results", "writes", "summary.md");
+      expect(existsSync(written)).toBe(true); // present DURING the run
+
+      // Reap the run with the REAL store teardown (the same cleanupRun the
+      // orchestrate runner calls on run end) — NOT a test-local rmSync. This is
+      // the ground-truth ephemerality proof: the write lives under results/,
+      // which cleanupRun wipes wholesale.
+      const store = createResultRefStore({ logger: makeLogger() });
+      await store.cleanupRun({ workspacePath: ws, runId: "run-1" });
+
+      expect(existsSync(written)).toBe(false); // GONE after the run ends
+    } finally {
+      rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
+  it("write CANNOT reach the workspace-root skills/ discovery subtree (a ../ escape into skills/ is denied)", async () => {
+    const ws = makeWorkspace();
+    // The cross-run prompt-injection persistence vector: a write that escapes the
+    // run-scoped root back up into the workspace-root skills/ (the top-priority,
+    // live-watched skill-discovery path). safePath must refuse it BEFORE any write.
+    const plantedSkill = join(ws, "skills", "x", "SKILL.md");
+    try {
+      const cores = createOrchestrateExecutorCores({ logger: makeLogger() });
+      const result = (await cores.fileExecutors.write(
+        { path: "../../skills/x/SKILL.md", content: "<attacker skill body>" },
+        { workspaceDir: ws },
+      )) as { error?: string };
+      expect(result.error).toEqual(expect.stringContaining("escape"));
+      // Ground truth: the discovery path is UNTOUCHED — nothing planted.
+      expect(existsSync(plantedSkill)).toBe(false);
+      expect(existsSync(join(ws, "skills"))).toBe(false);
     } finally {
       rmSync(ws, { recursive: true, force: true });
     }

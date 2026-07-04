@@ -369,6 +369,16 @@ function buildToolInvokeExecutor(
         return mcpCfg !== undefined && permitsMcpTool(mcpCfg, server, tool);
       },
     },
+    // The default-OFF write SURFACE gate (NG2): `orch:write` is a FLOOR cap (held
+    // by every standard/unattended/max agent), but the typed write surface must be
+    // an explicit opt-in. Resolved PER agentId from THAT agent's
+    // `autonomy.write === true` (prototype-safe own-entry lookup, mirroring
+    // mcpAllowlist). Absent/false ⇒ the executor denies the write dispatch even
+    // though the lease holds orch:write — restoring the read-only-by-default surface.
+    writeSurfaceEnabled: (agentId): boolean => {
+      const agentCfg = Object.entries(deps.agents).find(([id]) => id === agentId)?.[1];
+      return agentCfg?.autonomy?.write === true;
+    },
     logger: daemonLogger,
   });
 }

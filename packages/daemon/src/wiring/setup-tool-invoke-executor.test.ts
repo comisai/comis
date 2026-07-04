@@ -296,7 +296,9 @@ describe("createToolInvokeExecutor — file builtins run workspace-scoped", () =
     // the lease-resolved workspace ctx — the confinement root. The core itself
     // (safePath confinement + escape-denied) is proven against a real temp
     // workspace in orchestrate-executor-cores.test.ts; here we pin the ROUTING.
-    const deps = makeDeps();
+    // The write SURFACE must be opted-in (writeSurfaceEnabled) — see the
+    // default-off pair below; here it is enabled so the routing is exercised.
+    const deps = makeDeps({ writeSurfaceEnabled: () => true });
     const exec = createToolInvokeExecutor(deps);
 
     await exec("write", { path: "note.txt", content: "hi" }, LEASE);
@@ -306,6 +308,50 @@ describe("createToolInvokeExecutor — file builtins run workspace-scoped", () =
     const [writeArgs, writeCtx] = deps.fileExecutors.write.mock.calls[0];
     expect(writeArgs).toMatchObject({ path: "note.txt", content: "hi" });
     expect((writeCtx as { workspaceDir: string }).workspaceDir).toBe("/ws/agent-7");
+  });
+
+  // -------------------------------------------------------------------------
+  // MUT-02 / NG2 — the write SURFACE is default-OFF. orch:write is a FLOOR cap
+  // (held by every standard/unattended/max agent), but the TYPED write surface
+  // requires an explicit per-agent opt-in (autonomy.write:true), resolved at boot
+  // into the executor's `writeSurfaceEnabled(agentId)` predicate. So a default
+  // standard agent — which HOLDS orch:write — still cannot reach the write tool
+  // without the surface toggle: a content-free deny that NEVER reaches the core.
+  // This restores the read-only-by-default posture the persistent-write footgun
+  // had eroded (a floor-cap-default-on persistent write into skills/).
+  // -------------------------------------------------------------------------
+
+  it("DENIES write when the write surface is not enabled — even though orch:write is held (default-off, fail-closed)", async () => {
+    // No writeSurfaceEnabled dep ⇒ fail-closed (absent ⇒ deny), mirroring the MCP
+    // allowlist's deny-by-absence. The lease HOLDS orch:write (the floor cap).
+    const deps = makeDeps();
+    const exec = createToolInvokeExecutor(deps);
+
+    const result = (await exec(
+      "write",
+      { path: "note.txt", content: "hi" },
+      { agentId: "agent-7", caps: ["orch:read", "orch:web", "orch:write"] as const },
+    )) as { error?: string };
+
+    // A content-free, error-SHAPED deny (never a throw) — and the core is NEVER reached.
+    expect(result.error).toMatch(/write surface/i);
+    expect(deps.fileExecutors.write).not.toHaveBeenCalled();
+  });
+
+  it("REACHES the write core once the write surface IS enabled for the agent (opt-in)", async () => {
+    const writeSurfaceEnabled = vi.fn(() => true);
+    const deps = makeDeps({ writeSurfaceEnabled });
+    const exec = createToolInvokeExecutor(deps);
+
+    await exec(
+      "write",
+      { path: "note.txt", content: "hi" },
+      { agentId: "agent-7", caps: ["orch:read", "orch:write"] as const },
+    );
+
+    // The surface predicate was consulted for THIS lease's agentId, then the core ran.
+    expect(writeSurfaceEnabled).toHaveBeenCalledWith("agent-7");
+    expect(deps.fileExecutors.write).toHaveBeenCalledTimes(1);
   });
 
   it("routes web_search to the injected daemon-side search core", async () => {

@@ -125,7 +125,7 @@ export interface ToolInvokeExecutorDeps {
     sql: FileExecutor;
     /** JSONPath via DuckDB json_extract over a ResultRef (no eval lib). */
     jsonpath: FileExecutor;
-    /** Workspace-confined, run-ephemeral write (safePath; the first mutating builtin). */
+    /** Run-scoped, run-ephemeral write confined to results/writes (safePath; surface-gated, the first mutating builtin). */
     write: FileExecutor;
   };
   /** The injected daemon-side web-search core. */
@@ -152,6 +152,17 @@ export interface ToolInvokeExecutorDeps {
    * (deny-by-absence). A deny is an audited error-result — `callTool` is never reached.
    */
   mcpAllowlist?: { permits(agentId: string, server: string, tool: string): boolean };
+  /**
+   * The per-agent WRITE-SURFACE gate — the default-OFF surface toggle consulted
+   * BEFORE the `write` dispatch. `orch:write` is a FLOOR cap (held by every
+   * standard/unattended/max agent), but the TYPED write surface must be an
+   * explicit opt-in (`autonomy.write`), so a default agent that HOLDS orch:write
+   * still cannot reach the write tool. Resolved per-agent at boot from that
+   * agent's `autonomy.write === true`. OPTIONAL: absent ⇒ the write surface is
+   * OFF (deny-by-absence, fail-closed — mirrors {@link mcpAllowlist}). A deny is a
+   * content-free error-result; `executeFileBuiltin("write", …)` is never reached.
+   */
+  writeSurfaceEnabled?: (agentId: string) => boolean;
   /** Daemon logger for boundary observability (AGENTS.md §2.7). */
   logger?: ComisLogger;
 }
@@ -459,12 +470,28 @@ export function createToolInvokeExecutor(
       case "jq":
       case "sql":
       case "jsonpath":
-      case "write":
-        // `write` is the first MUTATING builtin — it rides the SAME workspace-scoped
-        // file-builtin path (the injected core is safePath-confined to the run's
-        // workspace root; the endpoint already required orch:write before dispatch).
-        // No ResultRef threshold: a write returns a small ack.
         return executeFileBuiltin(tool, args, lease);
+      case "write": {
+        // `write` is the first MUTATING builtin. The TYPED write surface is
+        // default-OFF (NG2): orch:write is a FLOOR cap (the endpoint already
+        // required it before dispatch), but the surface itself requires an explicit
+        // per-agent opt-in (autonomy.write → writeSurfaceEnabled). So a default
+        // standard agent HOLDS orch:write yet cannot reach the write tool without
+        // the surface toggle. Deny-by-absence (fail-closed): an absent predicate
+        // denies, exactly like the MCP allowlist. The deny is a content-free
+        // error-result (never a throw) and the core is NEVER reached — a run cannot
+        // mutate even the ephemeral workspace unless the surface is opted in.
+        if (!deps.writeSurfaceEnabled?.(lease.agentId)) {
+          log?.warn(
+            { errorKind: "auth" as const, toolName: "write", decision: "deny", hint: "the write surface is not enabled for this agent (set autonomy.write:true to opt in)" },
+            "tool.invoke write denied (surface off)",
+          );
+          return errorResult("write surface not enabled for this agent");
+        }
+        // The injected core is safePath-confined to the run-scoped results/writes
+        // root (run-ephemeral). No ResultRef threshold: a write returns a small ack.
+        return executeFileBuiltin(tool, args, lease);
+      }
       default:
         // Defensive default-deny: the dispatch allow-list (cap-map) already
         // rejects any tool absent from TOOL_CAPABILITY_MAP, and only the 7

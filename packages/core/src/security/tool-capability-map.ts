@@ -49,7 +49,8 @@ import { SUB_AGENT_TOOL_DENYLIST } from "../domain/sub-agent-tool-denylist.js";
  * SCOPE: the read/web + inbound-MCP + workspace-write surface — `orch:read`
  * (RPC-backed reads + in-process workspace builtins), `orch:web` (daemon-side,
  * DNS-pinned), `orch:mcp` (the fixed-literal connected-MCP-server call), and
- * `orch:write` (the workspace-confined, run-ephemeral write core). Admin/
+ * `orch:write` (the run-scoped, run-ephemeral `results/writes` write core, whose
+ * typed SURFACE is default-off behind the `autonomy.write` opt-in). Admin/
  * management tools (`mcp_manage`, `gateway`, `agents_create`, …) are NEVER
  * mapped: they stay unreachable via this curated surface, and the deny-by-origin
  * chokepoint covers the control plane.
@@ -91,12 +92,16 @@ export const TOOL_CAPABILITY_MAP = {
   // runtime-dynamic namespace — MCP tools are never enumerated into this map.
   mcp: "orch:mcp",
   // orch:write — daemon-side workspace mutation, the FIRST mutating builtin. A
-  // MINIMAL, run-EPHEMERAL write confined to the run's workspace root via safePath
-  // (the same root the read cores read) — NOT a persistent store, NOT an
-  // arbitrary/absolute path (the durable, results/-confined checkpoint is a
-  // separate, later concern). Gated by requireCapability(orch:write) at the
-  // endpoint; the typed SDK SURFACE is default-off behind the write toggle
-  // (orch:write itself is a floor cap in standard+ — only the surface is new).
+  // MINIMAL, run-EPHEMERAL write confined to a RUN-SCOPED subdir
+  // (<workspace>/results/writes) via safePath: results/ is reaped wholesale by
+  // ResultRefStore.cleanupRun on run end, so the write is genuinely ephemeral AND
+  // isolated from the workspace-root discovery/config subtrees (skills/,
+  // .learned-skills/, memory, config) — NOT the persistent workspace root, NOT an
+  // arbitrary/absolute path. Gated by requireCapability(orch:write) at the
+  // endpoint AND — because orch:write is a FLOOR cap in standard+ — the typed
+  // write SURFACE is default-OFF behind an explicit per-agent opt-in
+  // (autonomy.write), enforced in the executor's writeSurfaceEnabled gate. So a
+  // default standard agent HOLDS orch:write yet cannot reach the write tool.
   write: "orch:write",
 } as const satisfies Record<string, AgentCapability>;
 
