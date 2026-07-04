@@ -213,10 +213,12 @@ describe("orchestrate-tool", () => {
    */
   function makeFakeDurableRuns(over?: {
     getRow?: DurableRunRecord;
-  }): OrchestrateDurableRuns & { upserts: DurableRunRecord[] } {
+  }): OrchestrateDurableRuns & { upserts: DurableRunRecord[]; completed: string[] } {
     const upserts: DurableRunRecord[] = [];
+    const completed: string[] = [];
     return {
       upserts,
+      completed,
       upsertCheckpoint: vi.fn(async (record: DurableRunRecord): Promise<Result<void, Error>> => {
         upserts.push(record);
         return ok(undefined);
@@ -224,6 +226,10 @@ describe("orchestrate-tool", () => {
       getByRootRun: vi.fn(
         async (): Promise<Result<DurableRunRecord | undefined, Error>> => ok(over?.getRow),
       ),
+      markCompleted: vi.fn(async (rootRunId: string): Promise<Result<void, Error>> => {
+        completed.push(rootRunId);
+        return ok(undefined);
+      }),
     };
   }
 
@@ -1355,6 +1361,61 @@ describe("orchestrate-tool", () => {
       await tool.execute("c", { script: "1", language: "ts" });
 
       expect(cleanupRun).toHaveBeenCalledTimes(1);
+    });
+
+    it("a SUCCESSFUL resumable-enabled run marks the durable row COMPLETED and cleans the pinned script", async () => {
+      // Without a terminal write the row stays status='running' forever + the
+      // pinned <runId>.<language> script (at the workspace ROOT, which cleanupRun
+      // does NOT touch) leaks, so listResumable re-surfaces the completed run and
+      // the orphan sweep false-orphans it on every boot.
+      const durableRuns = makeFakeDurableRuns();
+      const { deps } = makeDeps({ durableRuns, rootRunId: "root-done" });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "console.log(1)", language: "ts" });
+
+      // The row is marked terminal (no leaked 'running' row).
+      expect(durableRuns.completed).toContain("root-done");
+      // The pinned script at the workspace ROOT is cleaned on a non-resumable
+      // completion (only a resumable timeout keeps it — see below).
+      const pinnedScriptRef = durableRuns.upserts[0]!.scriptRef!;
+      expect(existsSync(join(workspacePath, pinnedScriptRef))).toBe(false);
+    });
+
+    it("a NON-timeout failure marks the durable row COMPLETED too (a dead run is not resumable)", async () => {
+      // A non-timeout failure is terminal-and-dead (only a timeout is resumable),
+      // so its row must not linger 'running' either.
+      const durableRuns = makeFakeDurableRuns();
+      const { deps } = makeDeps({
+        spawnFn: () => makeFakeChild("", 1, "boom"),
+        durableRuns,
+        rootRunId: "root-fail-term",
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(tool.execute("c", { script: "1", language: "ts" })).rejects.toThrow();
+
+      expect(durableRuns.completed).toContain("root-fail-term");
+    });
+
+    it("a TIMED-OUT resumable run is NOT marked completed and KEEPS its pinned script (only a genuine timeout stays resumable)", async () => {
+      const durableRuns = makeFakeDurableRuns();
+      const { deps } = makeDeps({
+        spawnFn: () => makeHangingChild(),
+        durableRuns,
+        rootRunId: "root-to",
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(
+        tool.execute("c", { script: "1", language: "ts", timeoutMs: 1 }),
+      ).rejects.toThrow(/timeout/i);
+
+      // A resumable timeout must leave the row resumable (never completed) and keep
+      // the pinned script for a later resume.
+      expect(durableRuns.completed).not.toContain("root-to");
+      const pinnedScriptRef = durableRuns.upserts[0]!.scriptRef!;
+      expect(existsSync(join(workspacePath, pinnedScriptRef))).toBe(true);
     });
 
     it("a durable-registered run that fails NON-timeout still calls cleanupRun", async () => {

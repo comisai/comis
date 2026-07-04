@@ -53,6 +53,15 @@ export interface OrchestrateDurableRuns {
   upsertCheckpoint(record: DurableRunRecord): Promise<Result<void, Error>>;
   /** Read the durable row for a root run id (the resume lookup). */
   getByRootRun(rootRunId: string): Promise<Result<DurableRunRecord | undefined, Error>>;
+  /**
+   * Mark the row terminal on a NON-resumable completion (success or a non-timeout
+   * failure) so `listResumable` stops re-surfacing a finished run on every boot and
+   * the orphan sweep never false-orphans it — mirroring the graph coordinator /
+   * sub-agent runner terminal write. A structural subset of the daemon's
+   * `DurableRunPort.markCompleted`; optional so a minimal store stub compiles (the
+   * concrete store always provides it, and the runner skips it on a resumable timeout).
+   */
+  markCompleted?(rootRunId: string): Promise<Result<void, Error>>;
 }
 
 /**

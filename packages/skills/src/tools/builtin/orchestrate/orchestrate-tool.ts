@@ -43,7 +43,7 @@
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 
@@ -888,6 +888,40 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         // the checkpoint lives). gcRun stays — the checkpoint's longer TTL spares it.
         if (!skipCleanup) {
           await deps.store.cleanupRun({ workspacePath, runId });
+          // A NON-resumable terminal run (success OR a non-timeout failure — a
+          // timeout set skipCleanup above) must not leak its durable row or pinned
+          // script. Mark the row terminal so listResumable stops re-surfacing a
+          // finished run on every boot and the orphan sweep never false-orphans it
+          // (mirrors the graph coordinator / sub-agent runner terminal write), then
+          // unlink the pinned <runId>.<language> script at the workspace ROOT
+          // (cleanupRun wipes only results/). Both are kept ONLY for a resumable timeout.
+          if (deps.durableRuns !== undefined) {
+            const done = await deps.durableRuns.markCompleted?.(durableKey);
+            if (done !== undefined && !done.ok) {
+              log.warn(
+                {
+                  runId,
+                  rootRunId: durableKey,
+                  err: done.error,
+                  errorKind: "internal" as const,
+                  hint: "the durable row could not be marked completed — the watchdog orphan-sweep eventually reclaims the stale 'running' row (no live impact)",
+                },
+                "orchestrate durable markCompleted failed (non-fatal)",
+              );
+            }
+            try {
+              unlinkSync(safePath(workspacePath, scriptName));
+            } catch (unlinkErr) {
+              log.debug(
+                {
+                  runId,
+                  err: unlinkErr instanceof Error ? unlinkErr : undefined,
+                  hint: "best-effort unlink of the pinned script failed; a later workspace teardown reclaims it",
+                },
+                "orchestrate pinned-script cleanup failed (non-fatal)",
+              );
+            }
+          }
         }
       }
     },
