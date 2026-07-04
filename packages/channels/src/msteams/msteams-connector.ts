@@ -46,27 +46,36 @@ export function isSafeConversationId(id: string): boolean {
   return id.length > 0 && !id.includes("..") && !hasControlChar(id);
 }
 
+/** The deployment cloud selecting the Bot Framework Connector host set. */
+export type MsTeamsCloud = "public" | "china";
+
 /**
- * Bot Framework Connector service-host suffixes. A minted Connector bearer token
- * is only ever transmitted to a host under one of these, so an inbound activity
- * (or a stored reference) bearing a hostile serviceUrl cannot exfiltrate the
- * token to an arbitrary origin. A static defense-in-depth allowlist.
+ * Bot Framework Connector service hosts, keyed by deployment cloud. A minted
+ * Connector bearer token is only ever transmitted to the EXACT host for the
+ * configured cloud, so an inbound activity (or a stored reference) bearing a
+ * hostile or cross-cloud serviceUrl cannot exfiltrate the token to an arbitrary
+ * origin. Exact hosts, never suffixes: a `*.trafficmanager.net` match would admit
+ * any Traffic Manager profile an attacker can register.
  */
-const BF_SERVICE_HOST_SUFFIXES = [".botframework.com", ".trafficmanager.net"];
+const CLOUD_CONNECTOR_HOSTS: Record<MsTeamsCloud, readonly string[]> = {
+  public: ["smba.trafficmanager.net"],
+  china: ["botframework.azure.cn"],
+};
 
 /**
  * A send target is safe only over https, free of a `..` traversal segment, and
- * hosted under a Bot Framework Connector service host — so the bearer token is
- * never sent to an arbitrary origin.
+ * hosted on the EXACT Bot Framework Connector service host for the configured
+ * cloud — so the bearer token is never sent to an arbitrary or cross-cloud origin.
  */
-export function isSafeServiceUrl(serviceUrl: string): boolean {
+export function isSafeServiceUrl(
+  serviceUrl: string,
+  cloud: MsTeamsCloud = "public",
+): boolean {
   if (serviceUrl.includes("..")) return false;
   const parsed = tryCatch(() => new URL(serviceUrl));
   if (!parsed.ok || parsed.value.protocol !== "https:") return false;
   const host = parsed.value.hostname.toLowerCase();
-  return BF_SERVICE_HOST_SUFFIXES.some(
-    (suffix) => host === suffix.slice(1) || host.endsWith(suffix),
-  );
+  return CLOUD_CONNECTOR_HOSTS[cloud].includes(host);
 }
 
 // ---------------------------------------------------------------------------
@@ -89,6 +98,8 @@ export interface PostConnectorActivityParams {
   logger: ComisLogger;
   /** Injected clock in ms; makes durationMs deterministic. */
   now: () => number;
+  /** Deployment cloud selecting the exact Connector host set; defaults to public. */
+  cloud?: MsTeamsCloud;
 }
 
 /**
@@ -121,11 +132,11 @@ export async function postConnectorActivity(
     return err(new Error("unsafe conversation id"));
   }
 
-  if (!isSafeServiceUrl(serviceUrl)) {
+  if (!isSafeServiceUrl(serviceUrl, params.cloud ?? "public")) {
     logger.warn(
       {
         channelType: "msteams" as const,
-        hint: "Reject the serviceUrl: it must be an https Bot Framework Connector host (e.g. *.botframework.com / *.trafficmanager.net) free of '..'",
+        hint: "Reject the serviceUrl: it must be the https Bot Framework Connector host for the configured cloud, free of '..'",
         errorKind: "precondition" as const,
       },
       "Connector send blocked: unsafe service url",
@@ -259,6 +270,8 @@ export interface MsTeamsConnectorDeps {
   now: () => number;
   /** Injected timer for the typing keepalive; absent → keepalive is a no-op. */
   timer?: TimerPort;
+  /** Deployment cloud selecting the exact Connector host set; defaults to public. */
+  cloud?: MsTeamsCloud;
 }
 
 /** The Connector transport surface the adapter drives. */
@@ -316,12 +329,12 @@ export function createMsTeamsConnector(deps: MsTeamsConnectorDeps): MsTeamsConne
       );
       return err(new Error("unsafe activity id"));
     }
-    if (!isSafeServiceUrl(serviceUrl)) {
+    if (!isSafeServiceUrl(serviceUrl, deps.cloud ?? "public")) {
       deps.logger.warn(
         {
           channelType: "msteams" as const,
           op,
-          hint: "Reject the serviceUrl: it must be an https Bot Framework Connector host free of '..'",
+          hint: "Reject the serviceUrl: it must be the https Bot Framework Connector host for the configured cloud, free of '..'",
           errorKind: "precondition" as const,
         },
         "Connector activity mutation blocked: unsafe service url",
