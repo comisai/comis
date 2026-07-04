@@ -45,4 +45,54 @@ describe("validateMsTeamsCredentials", () => {
     const result = validateMsTeamsCredentials({});
     expect(result.ok).toBe(false);
   });
+
+  it("secret mode still requires appPassword when authMode is set explicitly", () => {
+    const result = validateMsTeamsCredentials({
+      authMode: "secret",
+      appId: "app-id",
+      tenantId: "tenant-id",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain("appPassword");
+  });
+
+  it("certificate mode validates ok with appId + certPath + tenantId and no appPassword", () => {
+    const result = validateMsTeamsCredentials({
+      authMode: "certificate",
+      appId: "app-id",
+      tenantId: "tenant-id",
+      certPath: "/etc/comis/teams-cert.pem",
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("certificate mode errs naming certPath when the certificate path is missing", () => {
+    const result = validateMsTeamsCredentials({
+      authMode: "certificate",
+      appId: "app-id",
+      tenantId: "tenant-id",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain("certPath");
+  });
+
+  it("managed-identity mode validates ok with appId + managedIdentityClientId + tenantId", () => {
+    const result = validateMsTeamsCredentials({
+      authMode: "managedIdentity",
+      appId: "app-id",
+      tenantId: "tenant-id",
+      managedIdentityClientId: "mi-client-id",
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("managed-identity mode errs naming managedIdentityClientId when it is missing", () => {
+    const result = validateMsTeamsCredentials({
+      authMode: "managedIdentity",
+      appId: "app-id",
+      tenantId: "tenant-id",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain("managedIdentityClientId");
+  });
 });

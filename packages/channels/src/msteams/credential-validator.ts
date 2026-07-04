@@ -16,12 +16,23 @@ import { ok, err } from "@comis/shared";
 
 /** Credentials required to authenticate the Microsoft Teams adapter. */
 export interface MsTeamsValidateOpts {
+  /**
+   * Credential mode. Selects which per-mode credential is required alongside the
+   * always-required appId + tenantId: `secret` → appPassword, `certificate` →
+   * certPath, `managedIdentity` → managedIdentityClientId. Absent defaults to
+   * `secret`.
+   */
+  authMode?: "secret" | "certificate" | "managedIdentity";
   /** Bot application (client) id. */
   appId?: string;
-  /** Bot application secret — never echoed into errors or logs. */
+  /** Bot application secret — never echoed into errors or logs. Required in secret mode. */
   appPassword?: string;
   /** Single-tenant directory id. */
   tenantId?: string;
+  /** Client certificate path — required in certificate mode. */
+  certPath?: string;
+  /** Managed-identity client id — required in managed-identity mode. */
+  managedIdentityClientId?: string;
 }
 
 /** A credential is missing when it is absent or all-whitespace. */

@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   ComisLogger,
   ConversationReference,
@@ -17,6 +21,7 @@ import { MSTEAMS_APPROVAL_VERB } from "../msteams-actions.js";
 import type { TeamsReactionActivity } from "../msteams-reaction-binder.js";
 import { classifyMSTeamsError } from "../msteams-activity.js";
 import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
+import { createFakeEnv } from "../../../../../test/support/fake-env.js";
 
 /** Resolve after the current microtask queue drains (lets fire-and-forget POSTs land). */
 const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
@@ -2066,5 +2071,203 @@ describe("createMsTeamsAdapter — inbound-only lastInboundAt liveness signal (T
       messageActivity({ from: { id: "29:stranger", aadObjectId: "stranger-aad" } }),
     ]);
     expect(adapter.getStatus?.().lastInboundAt).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Enterprise auth modes (AUTH-02 certificate / AUTH-03 managed-identity)
+// ---------------------------------------------------------------------------
+
+/**
+ * Mint a throwaway self-signed RSA cert + PKCS#8 key at runtime and bundle them
+ * into one PEM, the way an operator's certificate file bundles key + cert. The
+ * subject is a neutral placeholder and the material lives only for the test's
+ * lifetime; openssl mirrors the existing cert-gen, pulling in no new dependency.
+ */
+function generateSelfSignedPemBundle(): {
+  combinedPem: string;
+  bundlePath: string;
+  cleanup: () => void;
+} {
+  const dir = mkdtempSync(join(tmpdir(), "comis-msteams-adapter-cert-"));
+  const keyPath = join(dir, "key.pem");
+  const certPath = join(dir, "cert.pem");
+  const bundlePath = join(dir, "bundle.pem");
+  execFileSync(
+    "openssl",
+    [
+      "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+      "-keyout", keyPath, "-out", certPath, "-days", "1",
+      "-subj", "/CN=comis-msteams-adapter-test",
+    ],
+    { stdio: "pipe" },
+  );
+  const combinedPem = `${readFileSync(keyPath, "utf8")}\n${readFileSync(certPath, "utf8")}`;
+  writeFileSync(bundlePath, combinedPem);
+  return { combinedPem, bundlePath, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+/** A fetch stub for certificate mode: the token POST returns a bearer + records the mint body. */
+function makeCertConnectorFetch(token = "cert-connector-token") {
+  const spy = vi.fn(async (url: string) => {
+    if (String(url).includes("/oauth2/v2.0/token")) {
+      return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ access_token: token, expires_in: 3600 }) };
+    }
+    return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ id: "sent-cert" }) };
+  });
+  return { fetchImpl: spy as unknown as typeof fetch, spy, token };
+}
+
+/** A fetch stub for managed-identity mode: the IMDS/identity GET returns a bearer. */
+function makeManagedIdentityFetch(token = "mi-connector-token") {
+  const spy = vi.fn(async (url: string) => {
+    if (String(url).includes("169.254.169.254") || String(url).includes("/metadata/identity/")) {
+      return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ access_token: token, expires_in: 3600 }) };
+    }
+    return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ id: "sent-mi" }) };
+  });
+  return { fetchImpl: spy as unknown as typeof fetch, spy, token };
+}
+
+describe("createMsTeamsAdapter — enterprise auth modes (cert / managed-identity)", () => {
+  let pem: ReturnType<typeof generateSelfSignedPemBundle>;
+  beforeAll(() => {
+    pem = generateSelfSignedPemBundle();
+  });
+  afterAll(() => {
+    pem.cleanup();
+  });
+
+  it("mints via the certificate branch (client_assertion body) when authMode is certificate with a certPath and no appPassword", async () => {
+    const { fetchImpl, spy, token } = makeCertConnectorFetch();
+    const { deps } = makeAdapterDeps({
+      authMode: "certificate",
+      appPassword: "", // certificate mode carries no client secret
+      certPath: pem.bundlePath,
+      certReadFileImpl: async () => pem.combinedPem, // hermetic — no real fs read
+      fetchImpl,
+    });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.getConnectorToken();
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toBe(token);
+
+    // The token mint POST carries a signed client-assertion — the cert branch ran.
+    const mint = spy.mock.calls.find(([u]) => String(u).includes("/oauth2/v2.0/token"));
+    expect(mint).toBeDefined();
+    const body = new URLSearchParams(String((mint![1] as RequestInit).body));
+    expect(body.get("client_assertion_type")).toBe(
+      "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+    );
+    expect((body.get("client_assertion") ?? "").split(".")).toHaveLength(3); // compact JWS
+    expect(body.get("client_secret")).toBeNull();
+  });
+
+  it("returns ok from start() in certificate mode with no appPassword (the empty-cred gate is authMode-branched)", async () => {
+    const { fetchImpl } = makeCertConnectorFetch();
+    const { deps } = makeAdapterDeps({
+      authMode: "certificate",
+      appPassword: "",
+      certPath: pem.bundlePath,
+      certReadFileImpl: async () => pem.combinedPem,
+      fetchImpl,
+    });
+    const adapter = createMsTeamsAdapter(deps);
+    const started = await adapter.start();
+    expect(started.ok).toBe(true);
+    expect(adapter.getStatus?.().connected).toBe(true);
+  });
+
+  it("errs from start() in certificate mode when certPath is empty", async () => {
+    const { deps } = makeAdapterDeps({ authMode: "certificate", appPassword: "", certPath: "" });
+    const adapter = createMsTeamsAdapter(deps);
+    expect((await adapter.start()).ok).toBe(false);
+  });
+
+  it("mints via the managed-identity branch (IMDS GET) when authMode is managedIdentity with no appPassword", async () => {
+    const { fetchImpl, spy, token } = makeManagedIdentityFetch();
+    const { deps } = makeAdapterDeps({
+      authMode: "managedIdentity",
+      appPassword: "",
+      managedIdentityClientId: "mi-user-assigned-client-id",
+      env: createFakeEnv({}), // no IDENTITY_ENDPOINT → IMDS path
+      fetchImpl,
+    });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.getConnectorToken();
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toBe(token);
+    const [url, init] = spy.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toContain("169.254.169.254/metadata/identity/oauth2/token");
+    expect((init.headers as Record<string, string>).Metadata).toBe("true");
+  });
+
+  it("mints via the App-Service identity endpoint reading the live X-IDENTITY-HEADER when IDENTITY_ENDPOINT is set", async () => {
+    const spy = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => ({ access_token: "mi-appsvc-token", expires_in: 3600 }),
+    }));
+    const { deps } = makeAdapterDeps({
+      authMode: "managedIdentity",
+      appPassword: "",
+      managedIdentityClientId: "mi-user-assigned-client-id",
+      env: createFakeEnv({
+        IDENTITY_ENDPOINT: "https://appservice.local/msi/token",
+        IDENTITY_HEADER: "header-live-1",
+      }),
+      fetchImpl: spy as unknown as typeof fetch,
+    });
+    const adapter = createMsTeamsAdapter(deps);
+    const result = await adapter.getConnectorToken();
+    expect(result.ok).toBe(true);
+    const [url, init] = spy.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toContain("https://appservice.local/msi/token?");
+    expect((init.headers as Record<string, string>)["X-IDENTITY-HEADER"]).toBe("header-live-1");
+  });
+
+  it("returns ok from start() in managed-identity mode with no appPassword", async () => {
+    const { fetchImpl } = makeManagedIdentityFetch();
+    const { deps } = makeAdapterDeps({
+      authMode: "managedIdentity",
+      appPassword: "",
+      managedIdentityClientId: "mi-user-assigned-client-id",
+      env: createFakeEnv({}),
+      fetchImpl,
+    });
+    const adapter = createMsTeamsAdapter(deps);
+    expect((await adapter.start()).ok).toBe(true);
+  });
+
+  it("errs from start() in managed-identity mode when managedIdentityClientId is empty", async () => {
+    const { deps } = makeAdapterDeps({ authMode: "managedIdentity", appPassword: "", managedIdentityClientId: "" });
+    const adapter = createMsTeamsAdapter(deps);
+    expect((await adapter.start()).ok).toBe(false);
+  });
+
+  it("secret mode is unchanged: an empty appPassword still errs from start()", async () => {
+    const { deps } = makeAdapterDeps({ authMode: "secret", appPassword: "   " });
+    const adapter = createMsTeamsAdapter(deps);
+    expect((await adapter.start()).ok).toBe(false);
+  });
+
+  it("never records the PEM private key or the minted token in any log field (T-5)", async () => {
+    const { fetchImpl, token } = makeCertConnectorFetch();
+    const { deps, loggerSpy } = makeAdapterDeps({
+      authMode: "certificate",
+      appPassword: "",
+      certPath: pem.bundlePath,
+      certReadFileImpl: async () => pem.combinedPem,
+      fetchImpl,
+    });
+    const adapter = createMsTeamsAdapter(deps);
+    await adapter.getConnectorToken();
+    const keyNeedle =
+      pem.combinedPem.split("\n").find((l) => l.length > 40 && !l.includes("-----")) ?? "PRIVATE";
+    expect(loggerSpy.serialized()).not.toContain(token);
+    expect(loggerSpy.serialized()).not.toContain(keyNeedle);
   });
 });

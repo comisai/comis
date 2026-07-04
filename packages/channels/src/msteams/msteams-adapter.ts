@@ -25,6 +25,7 @@ import type {
   ChannelPort,
   ChannelStatus,
   ComisLogger,
+  EnvPort,
   MessageHandler,
   MsTeamsConversationStorePort,
   NormalizedMessage,
@@ -56,7 +57,10 @@ import {
   isSafeServiceUrl,
   postConnectorActivity,
 } from "./msteams-connector.js";
-import { createConnectorTokenProvider } from "./msteams-auth.js";
+import {
+  createConnectorTokenProvider,
+  type ConnectorAuthMode,
+} from "./msteams-auth.js";
 import { normalizeCardAction } from "./msteams-actions.js";
 import { renderMSTeamsCardAttachment } from "./msteams-rich-renderer.js";
 import {
@@ -71,12 +75,40 @@ import {
 
 /** Dependencies for the Microsoft Teams adapter. */
 export interface MsTeamsAdapterDeps {
+  /**
+   * Which credential the outbound Connector token is minted from. Selects the
+   * token-provider branch: `secret` (appPassword), `certificate` (a signed
+   * client-assertion from certPath), or `managedIdentity` (the local identity
+   * endpoint). Optional — absent defaults to `secret` so a secret-mode config is
+   * unchanged.
+   */
+  authMode?: ConnectorAuthMode;
   /** Bot application (client) id. */
   appId: string;
-  /** Bot application secret — sent only on the token request, never logged. */
+  /** Bot application secret — sent only on the token request, never logged. Empty in cert/managed-identity mode. */
   appPassword: string;
   /** Single-tenant directory id — required for the client-credentials grant. */
   tenantId: string;
+  /**
+   * Certificate mode: an absolute path to a PEM bundling the private key and the
+   * certificate. The key signs the client assertion; the path is never logged.
+   */
+  certPath?: string;
+  /** Managed-identity mode: the user-assigned identity's client id. */
+  managedIdentityClientId?: string;
+  /**
+   * Live environment accessor for the managed-identity App-Service identity
+   * endpoint + rotating header (read per mint, never snapshotted). Absent → the
+   * managed-identity mint falls to the IMDS (VM/AKS) endpoint, which needs no env.
+   */
+  env?: EnvPort;
+  /**
+   * Injected PEM reader for certificate mode (default: node:fs/promises readFile,
+   * utf8). Distinct from `readFileImpl` (which reads attachment BYTES as a Buffer);
+   * this reads the certificate bundle as a string. Lets a unit test supply the PEM
+   * without touching the filesystem.
+   */
+  certReadFileImpl?: (path: string) => Promise<string>;
   /** Sender ids (aadObjectId) and/or conversation ids allowed to reach handlers. */
   allowFrom: string[];
   /** "allowlist" (default) drops unknown senders; "open" processes any sender. */
