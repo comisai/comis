@@ -194,6 +194,7 @@ function observeNonFatal(
   confidence: number,
   usedSkillIds?: ReadonlyArray<string>,
   recalledIds?: ReadonlyArray<string>,
+  procedureDescriptor?: ReadonlyArray<string>,
 ): Promise<void> {
   return deps.outcomeStore
     .observe({
@@ -215,6 +216,12 @@ function observeNonFatal(
       // (tool/pipeline/skill paths) ⇒ NULL. Without this carrier the outcome-gated
       // recall reward would be dormant (recalledIds always empty).
       ...(recalledIds !== undefined && recalledIds.length > 0 ? { recalledIds: [...recalledIds] } : {}),
+      // Thread the per-turn content-free tool-NAME descriptor onto observe() so the
+      // procedure_descriptor COLUMN is written (the orchestrate:run_summary carrier). Omitted
+      // (tool/pipeline/skill/recall paths) ⇒ the column stays NULL — no behavior change there.
+      ...(procedureDescriptor !== undefined && procedureDescriptor.length > 0
+        ? { procedureDescriptor: [...procedureDescriptor] }
+        : {}),
       observedAt: deps.clock.now(),
     })
     .then((r) => {
@@ -303,6 +310,7 @@ function recordNonFatal(
  * Wiring:
  *  - `tool:executed`               → observe a `tool` outcome (`success===false`→failure).
  *  - `memory:skill_used`           → observe the per-turn used-skill ids (attribution row).
+ *  - `orchestrate:run_summary`     → observe the run's content-free tool-NAME descriptor (attribution row).
  *  - `graph:completed` (DAG)       → observe a `pipeline` outcome, then the shared
  *                                    resolve→consume chain. (`graph:driver_lifecycle`
  *                                    is NOT observed — per-node, floods the ledger.)
@@ -554,6 +562,28 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     const scope = resolveScope({ agentId: p.agentId, traceId: p.traceId, sessionKey: p.sessionKey });
     if (scope === undefined) return;
     void observeNonFatal(deps, scope, "unknown", "explicit", ATTRIBUTION_CONFIDENCE, undefined, p.usedIds);
+  });
+
+  // ---- Procedure-descriptor attribution write-back ----
+  // The orchestrate tool emits `orchestrate:run_summary` at run completion, SYNCHRONOUSLY
+  // within the turn's ALS scope. It has NO other daemon-side ledger consumer (it is otherwise
+  // only bridged to the trajectory), so this is a NEW carrier: a neutral `explicit`/`unknown`
+  // row that threads the content-free `toolSequence` (the pre-flight tool-NAME footprint) onto
+  // the `procedure_descriptor` COLUMN, keyed on the turn traceId. The `unknown` outcome + low
+  // confidence means it NEVER wins resolve() fusion (the deterministic tool/pipeline rows
+  // outrank it) — a pure attribution carrier; the descriptor rides the column for the reflection
+  // input to read back. The payload carries NO agentId, so it resolves from the live ALS
+  // (`tryGetContext()`) — valid because the emit is synchronous within the turn's async context.
+  // Default-OFF via `learningOutcomeEnabled` (byte-identical when off); an empty toolSequence
+  // writes no row (mirrors the skill_used length===0 guard). Content-free (§2.7): only the
+  // tool-NAME set + correlators cross the bus — no body/args.
+  deps.eventBus.on("orchestrate:run_summary", (p) => {
+    const agentId = tryGetContext()?.agentId;
+    if (agentId === undefined || !deps.learningOutcomeEnabled(agentId)) return;
+    if (!p.toolSequence || p.toolSequence.length === 0) return; // no descriptor → no carrier row
+    const scope = resolveScope({ agentId, traceId: p.traceId, sessionKey: p.sessionKey });
+    if (scope === undefined) return;
+    void observeNonFatal(deps, scope, "unknown", "explicit", ATTRIBUTION_CONFIDENCE, undefined, undefined, p.toolSequence);
   });
 
   // NB: `graph:driver_lifecycle` is intentionally NOT subscribed — it is
