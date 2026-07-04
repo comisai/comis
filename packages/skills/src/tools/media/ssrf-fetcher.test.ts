@@ -405,4 +405,231 @@ describe("createSsrfGuardedFetcher", () => {
     // Agent.close() should have been called via suppressError
     expect(mockAgentClose).toHaveBeenCalled();
   });
+
+  // -------------------------------------------------------------------------
+  // Opt-in auth header + redirect-hop revalidation (a backward-compatible
+  // superset). Passing the second `opts` arg turns on an authenticated,
+  // redirect-following path: the auth header rides ONLY a hop whose validated
+  // host is on `authAllowHosts`, is DROPPED on a cross-host redirect, and
+  // validateUrl re-runs on EVERY hop (per-hop DNS-pin). The no-opts path is
+  // unchanged (redirect blocked, no auth) — pinned by the last case below.
+  // -------------------------------------------------------------------------
+
+  it("attaches the auth header only when the current-hop host is on the allowlist", async () => {
+    const logger = createMockLogger();
+    const fetcher = createSsrfGuardedFetcher({ maxBytes: 1024 * 1024 }, logger);
+
+    mockValidateUrl.mockResolvedValue(
+      ok(
+        makeValidatedUrl({
+          hostname: "smba.gbl.botframework.com",
+          ip: "13.107.9.1",
+          url: new URL("https://smba.gbl.botframework.com/v3/attachments/x"),
+        }),
+      ),
+    );
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      createMockResponse({ headers: { "content-type": "image/png" }, body: new Uint8Array([1, 2, 3]) }),
+    );
+
+    const result = await fetcher.fetch("https://smba.gbl.botframework.com/v3/attachments/x", {
+      authHeader: "Bearer T",
+      authAllowHosts: [".botframework.com"],
+    });
+
+    expect(result.ok).toBe(true);
+    const init = vi.mocked(globalThis.fetch).mock.calls[0]![1] as { headers?: Record<string, string> };
+    expect(init.headers).toMatchObject({ authorization: "Bearer T" });
+  });
+
+  it("withholds the auth header from a host that is NOT on the allowlist", async () => {
+    const logger = createMockLogger();
+    const fetcher = createSsrfGuardedFetcher({ maxBytes: 1024 * 1024 }, logger);
+
+    mockValidateUrl.mockResolvedValue(
+      ok(
+        makeValidatedUrl({
+          hostname: "attacker.example.com",
+          ip: "203.0.113.5",
+          url: new URL("https://attacker.example.com/x"),
+        }),
+      ),
+    );
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      createMockResponse({ headers: { "content-type": "image/png" }, body: new Uint8Array([1]) }),
+    );
+
+    const result = await fetcher.fetch("https://attacker.example.com/x", {
+      authHeader: "Bearer T",
+      authAllowHosts: [".botframework.com"],
+    });
+
+    expect(result.ok).toBe(true);
+    const init = vi.mocked(globalThis.fetch).mock.calls[0]![1] as { headers?: Record<string, string> };
+    expect((init.headers ?? {}).authorization).toBeUndefined();
+  });
+
+  it("DROPS the auth header on a cross-host redirect and re-validates every hop", async () => {
+    const logger = createMockLogger();
+    const fetcher = createSsrfGuardedFetcher({ maxBytes: 1024 * 1024 }, logger);
+
+    mockValidateUrl
+      .mockResolvedValueOnce(
+        ok(
+          makeValidatedUrl({
+            hostname: "smba.gbl.botframework.com",
+            ip: "13.107.9.1",
+            url: new URL("https://smba.gbl.botframework.com/v3/attachments/x"),
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        ok(
+          makeValidatedUrl({
+            hostname: "storage.example.net",
+            ip: "203.0.113.9",
+            url: new URL("https://storage.example.net/blob"),
+          }),
+        ),
+      );
+    vi.mocked(globalThis.fetch)
+      .mockResolvedValueOnce(
+        createMockResponse({ ok: false, status: 302, headers: { location: "https://storage.example.net/blob" } }),
+      )
+      .mockResolvedValueOnce(
+        createMockResponse({ headers: { "content-type": "image/png" }, body: new Uint8Array([9, 9, 9]) }),
+      );
+
+    const result = await fetcher.fetch("https://smba.gbl.botframework.com/v3/attachments/x", {
+      authHeader: "Bearer T",
+      authAllowHosts: [".botframework.com"],
+    });
+
+    expect(result.ok).toBe(true);
+    // per-hop SSRF revalidation: validateUrl ran for the initial URL AND the redirect target
+    expect(mockValidateUrl).toHaveBeenCalledTimes(2);
+    expect(mockValidateUrl).toHaveBeenNthCalledWith(1, "https://smba.gbl.botframework.com/v3/attachments/x");
+    expect(mockValidateUrl).toHaveBeenNthCalledWith(2, "https://storage.example.net/blob");
+    // hop 0 (allowlisted) carried the bearer; hop 1 (cross-host) did NOT
+    const calls = vi.mocked(globalThis.fetch).mock.calls;
+    expect((calls[0]![1] as { headers?: Record<string, string> }).headers).toMatchObject({
+      authorization: "Bearer T",
+    });
+    expect(((calls[1]![1] as { headers?: Record<string, string> }).headers ?? {}).authorization).toBeUndefined();
+  });
+
+  it("rejects a redirect whose target fails SSRF validation (per-hop firewall, never followed)", async () => {
+    const logger = createMockLogger();
+    const fetcher = createSsrfGuardedFetcher({ maxBytes: 1024 * 1024 }, logger);
+
+    mockValidateUrl
+      .mockResolvedValueOnce(
+        ok(
+          makeValidatedUrl({
+            hostname: "smba.gbl.botframework.com",
+            ip: "13.107.9.1",
+            url: new URL("https://smba.gbl.botframework.com/x"),
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(err(new Error("169.254.169.254 is in blocked range (cloud_metadata)")));
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      createMockResponse({ ok: false, status: 302, headers: { location: "http://169.254.169.254/latest/meta-data/" } }),
+    );
+
+    const result = await fetcher.fetch("https://smba.gbl.botframework.com/x", {
+      authHeader: "Bearer T",
+      authAllowHosts: [".botframework.com"],
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain("blocked range");
+    }
+    // the malicious redirect target was validated but NEVER fetched (only the first hop hit the wire)
+    expect(vi.mocked(globalThis.fetch).mock.calls.length).toBe(1);
+  });
+
+  it("does not treat a look-alike host as an allowlist suffix match (no partial-suffix bypass)", async () => {
+    const logger = createMockLogger();
+    const fetcher = createSsrfGuardedFetcher({ maxBytes: 1024 * 1024 }, logger);
+
+    mockValidateUrl.mockResolvedValue(
+      ok(
+        makeValidatedUrl({
+          hostname: "evilbotframework.com",
+          ip: "203.0.113.7",
+          url: new URL("https://evilbotframework.com/x"),
+        }),
+      ),
+    );
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      createMockResponse({ headers: { "content-type": "image/png" }, body: new Uint8Array([1]) }),
+    );
+
+    const result = await fetcher.fetch("https://evilbotframework.com/x", {
+      authHeader: "Bearer T",
+      authAllowHosts: [".botframework.com"],
+    });
+
+    expect(result.ok).toBe(true);
+    const init = vi.mocked(globalThis.fetch).mock.calls[0]![1] as { headers?: Record<string, string> };
+    expect((init.headers ?? {}).authorization).toBeUndefined();
+  });
+
+  it("never writes the auth header or the raw URL into a log field (T-5)", async () => {
+    const logger = createMockLogger();
+    const fetcher = createSsrfGuardedFetcher({ maxBytes: 1024 * 1024 }, logger);
+    const secret = "Bearer super-secret-token";
+    const url = "https://smba.gbl.botframework.com/v3/attachments/private?sig=SECRETSIG";
+
+    mockValidateUrl.mockResolvedValue(
+      ok(makeValidatedUrl({ hostname: "smba.gbl.botframework.com", ip: "13.107.9.1", url: new URL(url) })),
+    );
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      createMockResponse({ headers: { "content-type": "image/png" }, body: new Uint8Array([1]) }),
+    );
+
+    await fetcher.fetch(url, { authHeader: secret, authAllowHosts: [".botframework.com"] });
+
+    const everyLogArg = [logger.debug, logger.warn, logger.error]
+      .flatMap((fn) => vi.mocked(fn).mock.calls)
+      .map((call) => JSON.stringify(call));
+    for (const serialized of everyLogArg) {
+      expect(serialized).not.toContain("super-secret-token");
+      expect(serialized).not.toContain("SECRETSIG");
+    }
+  });
+
+  it("caps a redirect chain at maxHops so a redirect loop cannot spin forever", async () => {
+    const logger = createMockLogger();
+    const fetcher = createSsrfGuardedFetcher({ maxBytes: 1024 * 1024 }, logger);
+
+    // Every hop validates and returns another same-host redirect.
+    mockValidateUrl.mockResolvedValue(
+      ok(
+        makeValidatedUrl({
+          hostname: "smba.gbl.botframework.com",
+          ip: "13.107.9.1",
+          url: new URL("https://smba.gbl.botframework.com/loop"),
+        }),
+      ),
+    );
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      createMockResponse({ ok: false, status: 302, headers: { location: "https://smba.gbl.botframework.com/loop" } }),
+    );
+
+    const result = await fetcher.fetch("https://smba.gbl.botframework.com/loop", {
+      authHeader: "Bearer T",
+      authAllowHosts: [".botframework.com"],
+      maxHops: 2,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/hop limit/i);
+    }
+    // maxHops=2 → hops 0,1,2 attempted (3 requests), then the cap trips
+    expect(vi.mocked(globalThis.fetch).mock.calls.length).toBe(3);
+  });
 });
