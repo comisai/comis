@@ -197,6 +197,55 @@ function countOccurrences(content: string, oldText: string): number {
   return fuzzyContent.split(fuzzyOldText).length - 1;
 }
 
+/** Bounds for the not-found "closest actual text" hint (content-hygiene: a
+ *  few lines, each truncated — never a whole-file dump). */
+const NEAREST_HINT_MAX_LINES = 8;
+const NEAREST_HINT_MAX_LINE_CHARS = 200;
+
+/**
+ * Best-effort "closest actual text" hint for a not-found edit.
+ *
+ * When an `oldText` misses (exact + desanitized + fuzzy all fail), the raw
+ * "must match exactly" error tells the model WHAT rule it broke but not WHICH
+ * bytes differ — so it blindly re-reads and re-guesses (a live onboarding
+ * burned 8 edit calls on a single dropped "?"). This anchors on the FIRST
+ * `oldText` line whose trimmed form matches a file line and returns the REAL
+ * file block at that anchor, spanning `oldText`'s line count — surfacing the
+ * exact drift (e.g. a trailing "?") so the model fixes it in one retry.
+ *
+ * Returns `""` when no `oldText` line anchors (no misleading guess). Pure;
+ * bounded to {@link NEAREST_HINT_MAX_LINES} lines each truncated to
+ * {@link NEAREST_HINT_MAX_LINE_CHARS} chars.
+ */
+function describeNearestText(content: string, oldText: string): string {
+  const oldLines = oldText.split("\n");
+  const contentLines = content.split("\n");
+  // Anchor: the first non-trivial oldText line whose TRIMMED form matches a
+  // file line (indentation drift tolerated). The label line usually matches;
+  // it is the placeholder VALUE below it that drifted.
+  let anchorFileIdx = -1;
+  let anchorOldIdx = -1;
+  for (let oi = 0; oi < oldLines.length; oi++) {
+    const needle = oldLines[oi]!.trim();
+    if (needle.length < 3) continue; // skip blank / trivial lines
+    const found = contentLines.findIndex((l) => l.trim() === needle);
+    if (found !== -1) {
+      anchorFileIdx = found;
+      anchorOldIdx = oi;
+      break;
+    }
+  }
+  if (anchorFileIdx === -1) return "";
+  // Place the block where oldText's first line would sit relative to the anchor.
+  const blockStart = Math.max(0, anchorFileIdx - anchorOldIdx);
+  const blockLen = Math.min(oldLines.length, NEAREST_HINT_MAX_LINES);
+  const block = contentLines
+    .slice(blockStart, blockStart + blockLen)
+    .map((l) => (l.length > NEAREST_HINT_MAX_LINE_CHARS ? l.slice(0, NEAREST_HINT_MAX_LINE_CHARS) + "…" : l))
+    .join("\n");
+  return ` Closest actual text at line ${blockStart + 1}:\n${block}`;
+}
+
 /**
  * Apply one or more exact-text replacements to LF-normalized content.
  *
@@ -270,7 +319,8 @@ export function applyEdits(
         if (!fuzzyResult) {
           throw new Error(
             `[text_not_found] The old_text in edits[${i}] was not found in ${filePath}. ` +
-            `Make sure it matches exactly (including whitespace and indentation).`,
+            `Make sure it matches exactly (including whitespace and indentation).` +
+            describeNearestText(baseContent, edit.oldText),
           );
         }
         // Fuzzy found a single match -- use it, but note encoding diff
@@ -303,13 +353,14 @@ export function applyEdits(
       const matchResult = findMatch(baseContent, edit.oldText);
 
       if (!matchResult) {
+        const hint = describeNearestText(baseContent, edit.oldText);
         if (normalizedEdits.length === 1) {
           throw new Error(
-            `Could not find the exact text in ${filePath}. The old text must match exactly including all whitespace and newlines.`,
+            `Could not find the exact text in ${filePath}. The old text must match exactly including all whitespace and newlines.${hint}`,
           );
         }
         throw new Error(
-          `Could not find edits[${i}] in ${filePath}. The oldText must match exactly including all whitespace and newlines.`,
+          `Could not find edits[${i}] in ${filePath}. The oldText must match exactly including all whitespace and newlines.${hint}`,
         );
       }
 
