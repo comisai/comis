@@ -33,7 +33,22 @@ import {
   TOOL_ROUTE_MAP,
   SUB_AGENT_TOOL_DENYLIST,
   API_CONTRACTS_ORDERED,
+  RESULT_REF_THRESHOLDS,
+  shouldMaterialize,
 } from "@comis/core";
+// The daemon-side tables the INV-3 keystone + the orch:mcp audit class read (the
+// COMPILED @comis/daemon barrel — the cap socket's own closed-door source, so the
+// proof can never drift from a hand-copied literal; same rationale as the
+// @comis/core runtime-value imports above). A NAMESPACE import so a not-yet-added
+// export reads as `undefined` (a clean per-assertion RED) rather than a load crash.
+import * as comisDaemon from "@comis/daemon";
+
+/** The method-precise RPC pre-check denylist (already on the @comis/daemon barrel). */
+const DENYLISTED_RPC_METHODS = comisDaemon.DENYLISTED_RPC_METHODS as Record<string, string>;
+/** The per-cap audit action class (joins the barrel beside DENYLISTED_RPC_METHODS). */
+const CAPABILITY_ACTION_CLASS = (
+  comisDaemon as { CAPABILITY_ACTION_CLASS?: Record<string, "read" | "mutate"> }
+).CAPABILITY_ACTION_CLASS;
 
 describe("tool.invoke capability-map ↔ denylist ↔ contract registry", () => {
   it("no capability-mapped tool appears in the sub-agent denylist", () => {
@@ -76,5 +91,66 @@ describe("tool.invoke capability-map ↔ denylist ↔ contract registry", () => 
       missing,
       `rpc routes point at unregistered methods (the session.get 404 class): ${JSON.stringify(missing)}`,
     ).toEqual([]);
+  });
+});
+
+describe("orch:mcp cap birth: ResultRef offload threshold + audit action class", () => {
+  it("registers an mcp ResultRef threshold at 15_000 bytes", () => {
+    // A large/hostile MCP return must offload to a handle rather than blow context.
+    expect(RESULT_REF_THRESHOLDS.mcp).toBe(15_000);
+  });
+
+  it("offloads an over-threshold MCP return but keeps an at-threshold one inline (strict >)", () => {
+    expect(shouldMaterialize("mcp", 15_001)).toBe(true);
+    expect(shouldMaterialize("mcp", 15_000)).toBe(false);
+  });
+
+  it("classifies orch:mcp as a 'read' action in CAPABILITY_ACTION_CLASS", () => {
+    // The Record<AgentCapability,…> is exhaustive, so a new union member is a
+    // COMPILE-visible gap here; this pins the resolved class (MCP calls observe).
+    expect(CAPABILITY_ACTION_CLASS?.["orch:mcp"]).toBe("read");
+  });
+});
+
+describe("INV-3: the MCP control plane stays unreachable through the cap surface", () => {
+  it("mcp_manage, mcp_login, and the bare 'mcp' control name are absent from TOOL_CAPABILITY_MAP", () => {
+    // AUTHORITATIVE gate: default-deny by absence. A tool absent from the curated
+    // allow-list has no cap to resolve and cannot be rendered by the SDK — so the
+    // control plane is undispatchable through the endpoint regardless of any lease.
+    // NB: the fixed literal "mcp" tool (the dynamic MCP surface) is NOT born in
+    // this plan — its cap-map entry + executor route arrive with the dispatch shape
+    // later; until then it too must stay unreachable by absence.
+    const map = TOOL_CAPABILITY_MAP as Record<string, unknown>;
+    for (const name of ["mcp_manage", "mcp_login", "mcp"]) {
+      expect(
+        map[name],
+        `${name} must NOT be a TOOL_CAPABILITY_MAP key (default-deny by absence)`,
+      ).toBeUndefined();
+    }
+  });
+
+  it("mcp_manage AND mcp_login are both in SUB_AGENT_TOOL_DENYLIST (defense-in-depth)", () => {
+    expect(SUB_AGENT_TOOL_DENYLIST.has("mcp_manage")).toBe(true);
+    expect(SUB_AGENT_TOOL_DENYLIST.has("mcp_login")).toBe(true);
+  });
+
+  it("the mcp.* control-plane methods are denylisted and each maps to a denylisted tool", () => {
+    // DEFENSE-IN-DEPTH: the RPC pre-check denies these methods BEFORE lease validate.
+    // The module-load soundness loop already guarantees every VALUE is a denylist
+    // member; this re-proves the mcp.* rows exist and point at the owning tool.
+    const expected: Readonly<Record<string, string>> = {
+      "mcp.connect": "mcp_manage",
+      "mcp.disconnect": "mcp_manage",
+      "mcp.reconnect": "mcp_manage",
+      "mcp.oauth_login": "mcp_login",
+    };
+    for (const [method, owningTool] of Object.entries(expected)) {
+      const mapped = DENYLISTED_RPC_METHODS[method];
+      expect(mapped, `${method} must be a DENYLISTED_RPC_METHODS key`).toBe(owningTool);
+      expect(
+        SUB_AGENT_TOOL_DENYLIST.has(mapped ?? ""),
+        `${method} → ${mapped} must be a SUB_AGENT_TOOL_DENYLIST member (soundness)`,
+      ).toBe(true);
+    }
   });
 });
