@@ -40,7 +40,6 @@ import { runWithContext, systemNowMs } from "@comis/core";
 import { err, fromPromise, ok, type Result } from "@comis/shared";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { buildMentionEntities } from "./mentions.js";
 import {
   mapMsTeamsActivityToNormalized,
   resolveCaptureThreadId,
@@ -50,12 +49,15 @@ import {
   mapMsTeamsReaction,
   type TeamsReactionActivity,
 } from "./msteams-reaction-binder.js";
-import { rebuildConversationReference } from "./msteams-proactive.js";
+import {
+  isRevokedProxyError,
+  rebuildConversationReference,
+} from "./msteams-proactive.js";
 import {
   createMsTeamsConnector,
   isSafeConversationId,
   isSafeServiceUrl,
-  postConnectorActivity,
+  postConnectorActivityWithRetry,
   type MsTeamsCloud,
 } from "./msteams-connector.js";
 import {
@@ -63,8 +65,10 @@ import {
   type ConnectorAuthMode,
 } from "./msteams-auth.js";
 import { normalizeCardAction } from "./msteams-actions.js";
-import { renderMSTeamsCardAttachment } from "./msteams-rich-renderer.js";
 import {
+  buildAttachmentReferenceBody,
+  buildImageActivityBody,
+  buildTextActivityBody,
   resolveReplyToId,
   resolveTypingServiceUrl,
   withTrailingSlash,
@@ -76,13 +80,7 @@ import {
 
 /** Dependencies for the Microsoft Teams adapter. */
 export interface MsTeamsAdapterDeps {
-  /**
-   * Which credential the outbound Connector token is minted from. Selects the
-   * token-provider branch: `secret` (appPassword), `certificate` (a signed
-   * client-assertion from certPath), or `managedIdentity` (the local identity
-   * endpoint). Optional — absent defaults to `secret` so a secret-mode config is
-   * unchanged.
-   */
+  /** Credential mode for the outbound token: secret (appPassword) / certificate (certPath) / managedIdentity. Absent → secret. */
   authMode?: ConnectorAuthMode;
   /** Bot application (client) id. */
   appId: string;
@@ -90,32 +88,15 @@ export interface MsTeamsAdapterDeps {
   appPassword: string;
   /** Single-tenant directory id — required for the client-credentials grant. */
   tenantId: string;
-  /**
-   * Certificate mode: an absolute path to a PEM bundling the private key and the
-   * certificate. The key signs the client assertion; the path is never logged.
-   */
+  /** Certificate mode: absolute path to a PEM bundling the private key + certificate (never logged). */
   certPath?: string;
   /** Managed-identity mode: the user-assigned identity's client id. */
   managedIdentityClientId?: string;
-  /**
-   * Live environment accessor for the managed-identity App-Service identity
-   * endpoint + rotating header (read per mint, never snapshotted). Absent → the
-   * managed-identity mint falls to the IMDS (VM/AKS) endpoint, which needs no env.
-   */
+  /** Managed-identity App-Service identity endpoint + rotating header accessor (read live per mint). Absent → IMDS, no env. */
   env?: EnvPort;
-  /**
-   * Injected PEM reader for certificate mode (default: node:fs/promises readFile,
-   * utf8). Distinct from `readFileImpl` (which reads attachment BYTES as a Buffer);
-   * this reads the certificate bundle as a string. Lets a unit test supply the PEM
-   * without touching the filesystem.
-   */
+  /** PEM reader for certificate mode (default fs readFile utf8); distinct from readFileImpl (attachment Buffer). Test seam. */
   certReadFileImpl?: (path: string) => Promise<string>;
-  /**
-   * Deployment cloud selecting the exact Bot Framework Connector host set the
-   * bearer token may be sent to. Threaded into the connector and every adapter-side
-   * serviceUrl callsite (send/edit/typing/proactive). Optional — absent defaults to
-   * "public", so a public deployment is unchanged.
-   */
+  /** Deployment cloud selecting the exact Connector host set the token may reach; threaded to every serviceUrl callsite. Absent → "public". */
   cloud?: MsTeamsCloud;
   /** Sender ids (aadObjectId) and/or conversation ids allowed to reach handlers. */
   allowFrom: string[];
@@ -199,6 +180,11 @@ export function createMsTeamsAdapter(
     now: deps.now,
   });
 
+  // The configured deployment cloud, threaded into the connector and every
+  // adapter-side serviceUrl callsite so the bearer token is only ever sent to the
+  // exact Connector host for that cloud. Defaults to "public" so nothing regresses.
+  const cloud: MsTeamsCloud = deps.cloud ?? "public";
+
   // Connector transport: the edit/delete REST mutations + the typing keepalive.
   // Shares the cached token; the adapter resolves the routing context and drives it.
   const connector = createMsTeamsConnector({
@@ -207,6 +193,7 @@ export function createMsTeamsAdapter(
     logger: deps.logger,
     now,
     timer: deps.timer,
+    cloud,
   });
 
   const handlers: MessageHandler[] = [];
@@ -450,7 +437,9 @@ export function createMsTeamsAdapter(
     if (got === undefined || !got.ok || got.value === undefined) {
       return err(new Error("no stored conversation reference for a proactive send"));
     }
-    const rebuilt = rebuildConversationReference(got.value, isSafeServiceUrl);
+    const rebuilt = rebuildConversationReference(got.value, (url) =>
+      isSafeServiceUrl(url, cloud),
+    );
     if (!rebuilt.ok) return err(rebuilt.error);
     return ok({
       serviceUrl: withTrailingSlash(rebuilt.value.serviceUrl),
@@ -735,40 +724,39 @@ export function createMsTeamsAdapter(
     ): Promise<Result<string, Error>> {
       // Reply → the caller's serviceUrl; proactive (none) → the stored reference.
       // The id/serviceUrl safety gates + token mint + POST + classification live in
-      // the shared postConnectorActivity helper; this method only builds the body.
+      // the shared connector helper; this method only builds the body + routes it.
       const ctx = await resolveConnectorServiceContext(conversationId, options);
       if (!ctx.ok) return sendContextError(ctx.error);
       const replyToId = resolveReplyToId(options, ctx.value.threadId);
+      const activityBody = buildTextActivityBody(text, replyToId, options);
 
-      // Rewrite id-shape-valid @[Name](id) markup into <at>…</at> tags + paired
-      // mention entities; text with no valid mention markup is left byte-identical.
-      const built = buildMentionEntities(text);
-      const activityBody: Record<string, unknown> = { type: "message", text: built.text };
-      if (built.entities.length > 0) activityBody.entities = built.entities;
-      // DM → top-level; channel/group → threaded reply under the parent.
-      if (replyToId !== undefined) activityBody.replyToId = replyToId;
-      // Render options.buttons/cards into ONE Adaptive Card attachment, attached
-      // only when present so a plain text send stays byte-identical to the bare
-      // { type, text } body — a non-approval send carries no attachments key.
-      const hasButtons = (options?.buttons?.length ?? 0) > 0;
-      const hasCards = (options?.cards?.length ?? 0) > 0;
-      if (hasButtons || hasCards) {
-        activityBody.attachments = [
-          renderMSTeamsCardAttachment(options?.cards ?? [], options?.buttons ?? []),
-        ];
+      // Send via the bounded retry executor (429 Retry-After / 5xx backoff; a
+      // status-less transport fault is never retried). Defense-in-depth: if the
+      // reply relay was revoked after the turn, drop the explicit serviceUrl,
+      // re-resolve it from the store (the proactive path, re-validated) and resend
+      // exactly once. The lean fetch path rarely raises this, so it is a tested
+      // seam, not a hot path.
+      const sendVia = (serviceUrl: string) =>
+        postConnectorActivityWithRetry(
+          {
+            serviceUrl,
+            conversationId,
+            activityBody,
+            tokens,
+            fetchImpl: deps.fetchImpl,
+            logger: deps.logger,
+            now,
+            cloud,
+          },
+          { timer: deps.timer },
+        );
+
+      const sent = await sendVia(ctx.value.serviceUrl);
+      if (!sent.ok && isRevokedProxyError(sent.error)) {
+        const proactive = await resolveConnectorServiceContext(conversationId, undefined);
+        if (proactive.ok) return recordActivity(await sendVia(proactive.value.serviceUrl));
       }
-
-      return recordActivity(
-        await postConnectorActivity({
-          serviceUrl: ctx.value.serviceUrl,
-          conversationId,
-          activityBody,
-          tokens,
-          fetchImpl: deps.fetchImpl,
-          logger: deps.logger,
-          now,
-        }),
-      );
+      return recordActivity(sent);
     },
 
     async sendAttachment(
@@ -793,18 +781,7 @@ export function createMsTeamsAdapter(
       // implemented sendAttachment (proper file/video delivery is the deferred
       // FileConsent/SharePoint flow).
       if (attachment.type !== "image") {
-        const label =
-          attachment.fileName !== undefined && attachment.fileName.length > 0
-            ? attachment.fileName
-            : "a file";
-        const referenceText =
-          (attachment.caption !== undefined && attachment.caption.length > 0
-            ? `${attachment.caption}\n`
-            : "") +
-          `[${label}] — Teams inline delivery currently supports images only; this attachment is available on the server.`;
-        const referenceBody: Record<string, unknown> = { type: "message", text: referenceText };
-        // DM → top-level; channel/group → threaded reply under the parent.
-        if (replyToId !== undefined) referenceBody.replyToId = replyToId;
+        const referenceBody = buildAttachmentReferenceBody(attachment, replyToId);
         deps.logger.debug(
           {
             channelType: "msteams" as const,
@@ -814,15 +791,19 @@ export function createMsTeamsAdapter(
           "Connector attachment delivered by reference (non-image)",
         );
         return recordActivity(
-          await postConnectorActivity({
-            serviceUrl: ctx.value.serviceUrl,
-            conversationId,
-            activityBody: referenceBody,
-            tokens,
-            fetchImpl: deps.fetchImpl,
-            logger: deps.logger,
-            now,
-          }),
+          await postConnectorActivityWithRetry(
+            {
+              serviceUrl: ctx.value.serviceUrl,
+              conversationId,
+              activityBody: referenceBody,
+              tokens,
+              fetchImpl: deps.fetchImpl,
+              logger: deps.logger,
+              now,
+              cloud,
+            },
+            { timer: deps.timer },
+          ),
         );
       }
 
@@ -845,31 +826,22 @@ export function createMsTeamsAdapter(
         return err(read.error);
       }
 
-      const mime = attachment.mimeType ?? "image/png";
-      const activityBody: Record<string, unknown> = {
-        type: "message",
-        ...(attachment.caption ? { text: attachment.caption } : {}),
-        attachments: [
-          {
-            contentType: mime,
-            contentUrl: `data:${mime};base64,${read.value.toString("base64")}`,
-            ...(attachment.fileName ? { name: attachment.fileName } : {}),
-          },
-        ],
-      };
-      // DM → top-level; channel/group → threaded reply under the parent.
-      if (replyToId !== undefined) activityBody.replyToId = replyToId;
+      const activityBody = buildImageActivityBody(read.value, attachment, replyToId);
 
       return recordActivity(
-        await postConnectorActivity({
-          serviceUrl: ctx.value.serviceUrl,
-          conversationId,
-          activityBody,
-          tokens,
-          fetchImpl: deps.fetchImpl,
-          logger: deps.logger,
-          now,
-        }),
+        await postConnectorActivityWithRetry(
+          {
+            serviceUrl: ctx.value.serviceUrl,
+            conversationId,
+            activityBody,
+            tokens,
+            fetchImpl: deps.fetchImpl,
+            logger: deps.logger,
+            now,
+            cloud,
+          },
+          { timer: deps.timer },
+        ),
       );
     },
 
@@ -935,7 +907,7 @@ export function createMsTeamsAdapter(
             ? { extra: { serviceUrl: explicitServiceUrl } }
             : undefined,
         );
-        if (!ctx.ok || !isSafeServiceUrl(ctx.value.serviceUrl)) {
+        if (!ctx.ok || !isSafeServiceUrl(ctx.value.serviceUrl, cloud)) {
           return ok({ typing: false });
         }
         connector.startTyping(conversationId, ctx.value.serviceUrl);

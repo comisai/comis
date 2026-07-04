@@ -9,11 +9,90 @@
  * @module
  */
 
-import type { SendMessageOptions } from "@comis/core";
+import type { AttachmentPayload, SendMessageOptions } from "@comis/core";
+import { buildMentionEntities } from "./mentions.js";
+import { renderMSTeamsCardAttachment } from "./msteams-rich-renderer.js";
 
 /** Ensure a service base URL ends in a single trailing slash for path composition. */
 export function withTrailingSlash(raw: string): string {
   return raw.endsWith("/") ? raw : `${raw}/`;
+}
+
+/**
+ * Build the outbound text-activity body: rewrite id-shape-valid `@[Name](id)`
+ * markup into `<at>…</at>` tags + paired mention entities (text with no valid
+ * mention markup is left byte-identical), thread under `replyToId` when present,
+ * and attach ONE Adaptive Card only when buttons/cards are present (so a plain
+ * text send stays the bare `{ type, text }` shape — no attachments key).
+ */
+export function buildTextActivityBody(
+  text: string,
+  replyToId: string | undefined,
+  options?: SendMessageOptions,
+): Record<string, unknown> {
+  const built = buildMentionEntities(text);
+  const body: Record<string, unknown> = { type: "message", text: built.text };
+  if (built.entities.length > 0) body.entities = built.entities;
+  if (replyToId !== undefined) body.replyToId = replyToId;
+  const hasButtons = (options?.buttons?.length ?? 0) > 0;
+  const hasCards = (options?.cards?.length ?? 0) > 0;
+  if (hasButtons || hasCards) {
+    body.attachments = [
+      renderMSTeamsCardAttachment(options?.cards ?? [], options?.buttons ?? []),
+    ];
+  }
+  return body;
+}
+
+/**
+ * Build the by-reference text body for a NON-image attachment. Bot Framework
+ * renders an inline `data:` URI only for images, so a file/video/audio is
+ * delivered as a plain text message naming the caption + filename — the bytes are
+ * never read (avoids the multi-MB inline blowup). Threads under `replyToId`.
+ */
+export function buildAttachmentReferenceBody(
+  attachment: AttachmentPayload,
+  replyToId: string | undefined,
+): Record<string, unknown> {
+  const label =
+    attachment.fileName !== undefined && attachment.fileName.length > 0
+      ? attachment.fileName
+      : "a file";
+  const referenceText =
+    (attachment.caption !== undefined && attachment.caption.length > 0
+      ? `${attachment.caption}\n`
+      : "") +
+    `[${label}] — Teams inline delivery currently supports images only; this attachment is available on the server.`;
+  const body: Record<string, unknown> = { type: "message", text: referenceText };
+  if (replyToId !== undefined) body.replyToId = replyToId;
+  return body;
+}
+
+/**
+ * Build the image-attachment body: inline the bytes as a `data:` URI (Teams has
+ * no separate upload step), carrying the caption as text and the filename as the
+ * attachment name when present. Threads under `replyToId`. Neither the bytes nor
+ * the data URI are ever logged (T-5) — they live only on the returned body.
+ */
+export function buildImageActivityBody(
+  bytes: Buffer,
+  attachment: AttachmentPayload,
+  replyToId: string | undefined,
+): Record<string, unknown> {
+  const mime = attachment.mimeType ?? "image/png";
+  const body: Record<string, unknown> = {
+    type: "message",
+    ...(attachment.caption ? { text: attachment.caption } : {}),
+    attachments: [
+      {
+        contentType: mime,
+        contentUrl: `data:${mime};base64,${bytes.toString("base64")}`,
+        ...(attachment.fileName ? { name: attachment.fileName } : {}),
+      },
+    ],
+  };
+  if (replyToId !== undefined) body.replyToId = replyToId;
+  return body;
 }
 
 /**
