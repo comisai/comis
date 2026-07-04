@@ -10,7 +10,10 @@
  * a fake clock) keep the engine exhaustively unit-testable with no real I/O — it
  * is bound to the real stores / LeaseManager / channel adapters by the wiring.
  */
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { ok, err, type Result } from "@comis/shared";
 import type {
   OutwardSendLedgerPort,
@@ -21,7 +24,12 @@ import type {
   ReconcileSendOutcome,
   DurableRunRecord,
   DurableRunPort,
+  ClockPort,
+  TimerPort,
+  TimerHandle,
+  TypedEventBus,
 } from "@comis/core";
+import type { ComisLogger, LeaseManager } from "@comis/infra";
 import {
   reconcileLedgerRow,
   createDurableResumeEngine,
@@ -29,6 +37,11 @@ import {
   type ReconcileLedgerDeps,
   type DurableResumeEngineDeps,
 } from "./durable-resume-engine.js";
+import {
+  verifyOrchestrateResumable,
+  buildDurableResume,
+  type OrchestrateResumeSeams,
+} from "../wiring/setup-durable-resume.js";
 
 // ─── test logger (records nothing; the engine never inspects it) ──────────────
 function makeLogger() {
@@ -710,5 +723,213 @@ describe("durable:orphaned / durable:resumed event payloads typed, content-free"
     expect(payload.rootRunId).toBe("root-resumed-ev");
     // Content-free: exactly {rootRunId, stepIndex, timestamp}.
     expect(Object.keys(payload).sort()).toEqual(["rootRunId", "stepIndex", "timestamp"]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Task 1 (233): the orchestrate-kind resume arm — surface vs orphan.
+//
+// A durable row with a FLAT spawnTree AND scriptRef != null is a RE-RUNNABLE
+// orchestrate row (the runner writes it). The boot sweep dispatches it to a NEW
+// arm (never resumeGraph) that VERIFIES the pinned script + checkpoint are on
+// disk: PRESENT → re-anchor + surface resumable (SURFACE-ONLY on boot — the byte
+// re-execution is the explicit orchestrate({resumeRunId}), A2); GONE → an honest
+// err the engine turns into a durable:orphaned with a CLOSED-ENUM reason (no
+// silent loss). Proven against a REAL temp workspace (real fs) + the engine harness.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const tempWorkspaces: string[] = [];
+function makeTempWorkspace(): string {
+  const ws = mkdtempSync(join(tmpdir(), "durable-orch-arm-"));
+  tempWorkspaces.push(ws);
+  return ws;
+}
+afterEach(() => {
+  for (const ws of tempWorkspaces.splice(0)) {
+    try {
+      rmSync(ws, { recursive: true, force: true });
+    } catch {
+      /* best-effort temp cleanup */
+    }
+  }
+});
+
+/** Write a pinned script (workspace ROOT) + optionally a checkpoint blob (results/). */
+function seedArtifacts(ws: string, opts: { script?: string; checkpoint?: string }): void {
+  if (opts.script !== undefined) writeFileSync(join(ws, opts.script), "print('pinned')");
+  if (opts.checkpoint !== undefined) {
+    mkdirSync(join(ws, "results"), { recursive: true });
+    writeFileSync(join(ws, opts.checkpoint), '{"step":1}');
+  }
+}
+
+/** The arm seams pointed at a real temp workspace (real existsSync). */
+function orchSeams(ws: string | undefined): OrchestrateResumeSeams {
+  return { workspaceFor: () => ws, fileExists: (p) => existsSync(p) };
+}
+
+describe("verifyOrchestrateResumable — the orchestrate-kind arm over injected seams (surface-only, A2)", () => {
+  it("present pinned script + checkpoint blob → ok (verified resumable — the engine re-anchors, never re-spawns on boot)", () => {
+    const ws = makeTempWorkspace();
+    seedArtifacts(ws, { script: "orch-a.py", checkpoint: "results/cp.json" });
+    const record = durableRecord({ scriptRef: "orch-a.py", checkpointRef: "results/cp.json" });
+    const r = verifyOrchestrateResumable(record, orchSeams(ws));
+    expect(r.ok).toBe(true);
+  });
+
+  it("checkpoint blob MISSING → err whose free text maps through orphanReasonToEnum to not_resumable (no silent loss)", () => {
+    const ws = makeTempWorkspace();
+    seedArtifacts(ws, { script: "orch-a.py" }); // the pinned script is present, the checkpoint is NOT
+    const record = durableRecord({ scriptRef: "orch-a.py", checkpointRef: "results/cp.json" });
+    const r = verifyOrchestrateResumable(record, orchSeams(ws));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(orphanReasonToEnum(r.error.message)).toBe("not_resumable");
+  });
+
+  it("pinned script MISSING → err (not_resumable)", () => {
+    const ws = makeTempWorkspace();
+    seedArtifacts(ws, { checkpoint: "results/cp.json" }); // checkpoint present, script gone
+    const record = durableRecord({ scriptRef: "orch-a.py", checkpointRef: "results/cp.json" });
+    const r = verifyOrchestrateResumable(record, orchSeams(ws));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(orphanReasonToEnum(r.error.message)).toBe("not_resumable");
+  });
+
+  it("a scriptRef that escapes the workspace (traversal) → err, never a real fs touch outside the workspace", () => {
+    const ws = makeTempWorkspace();
+    const record = durableRecord({ scriptRef: "../../etc/passwd" });
+    const r = verifyOrchestrateResumable(record, orchSeams(ws));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(orphanReasonToEnum(r.error.message)).toBe("not_resumable");
+  });
+
+  it("no checkpointRef (never checkpointed) + present pinned script → ok (resumable from the pinned bytes alone)", () => {
+    const ws = makeTempWorkspace();
+    seedArtifacts(ws, { script: "orch-a.py" });
+    const record = durableRecord({ scriptRef: "orch-a.py" }); // checkpointRef undefined
+    const r = verifyOrchestrateResumable(record, orchSeams(ws));
+    expect(r.ok).toBe(true);
+  });
+
+  it("workspace unavailable → err (not_resumable), never a bare-path fs read", () => {
+    const record = durableRecord({ scriptRef: "orch-a.py", checkpointRef: "results/cp.json" });
+    const r = verifyOrchestrateResumable(record, orchSeams(undefined));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(orphanReasonToEnum(r.error.message)).toBe("not_resumable");
+  });
+});
+
+// ── buildDurableResume dispatch: the closure routes flat + scriptRef != null to
+//    the new arm, DAG rows still to resumeGraph. Ground truth: a synthetic row
+//    against the real engine + a REAL temp workspace. ──────────────────────────
+
+const silentLog = {
+  info() {}, warn() {}, error() {}, debug() {}, trace() {}, fatal() {}, audit() {},
+  level: "info",
+  child() { return silentLog; },
+} as unknown as ComisLogger;
+
+function makeTimers(): TimerPort {
+  const mk = (t: NodeJS.Timeout): TimerHandle => {
+    let cancelled = false;
+    return {
+      get cancelled() { return cancelled; },
+      cancel() { cancelled = true; clearInterval(t as never); },
+      unref() { (t as unknown as { unref?: () => void }).unref?.(); },
+    };
+  };
+  return { setTimeout: (cb, ms) => mk(setTimeout(cb, ms)), setInterval: (cb, ms) => mk(setInterval(cb, ms)) };
+}
+const wallClock: ClockPort = { now: () => Date.now(), nowDate: () => new Date() };
+
+function makeLeaseMgr(): LeaseManager {
+  return { mintLease: vi.fn(() => ({ leaseId: "lease-x", bearer: "bearer-x" })) } as unknown as LeaseManager;
+}
+
+interface WiringOver {
+  store: DurableRunPort;
+  orchestrateResume?: OrchestrateResumeSeams;
+  resumeGraph?: (record: DurableRunRecord) => Promise<Result<void, Error>>;
+}
+function buildWiring(over: WiringOver): {
+  wiring: ReturnType<typeof buildDurableResume>;
+  events: { event: string; payload: Record<string, unknown> }[];
+  registerRoot: ReturnType<typeof vi.fn>;
+} {
+  const events: { event: string; payload: Record<string, unknown> }[] = [];
+  const registerRoot = vi.fn();
+  const wiring = buildDurableResume({
+    db: {},
+    durabilityCfg: { enabled: true, staleHeartbeatMs: 60_000, keepAliveMs: 30_000, recoveryBudgetMs: 5_000 },
+    durableRunStore: over.store,
+    outwardLedger: makeLedger(),
+    boundedAutonomy: { registerRoot, leaseIdsForRoot: () => new Set<string>() } as never,
+    sharedLeaseManager: makeLeaseMgr(),
+    channelAdaptersRef: new Map(),
+    eventBus: {
+      emit: (e: string, p: Record<string, unknown>) => { events.push({ event: e, payload: p }); },
+    } as unknown as TypedEventBus,
+    logger: silentLog,
+    clock: wallClock,
+    timers: makeTimers(),
+    resumeGraph: over.resumeGraph ?? (async () => ok(undefined)),
+    ...(over.orchestrateResume ? { orchestrateResume: over.orchestrateResume } : {}),
+  });
+  return { wiring, events, registerRoot };
+}
+
+describe("buildDurableResume — orchestrate-kind dispatch (flat + scriptRef != null, never resumeGraph)", () => {
+  it("routes a flat + scriptRef row with present artifacts to the arm → durable:resumed + registerRoot, NEVER resumeGraph (surface-only, no auto-re-spawn)", async () => {
+    const ws = makeTempWorkspace();
+    seedArtifacts(ws, { script: "orch-x.py", checkpoint: "results/cp.json" });
+    const record = durableRecord({ rootRunId: "root-orch", scriptRef: "orch-x.py", checkpointRef: "results/cp.json" });
+    const store = makeDurableRuns({ resumable: [record], byRootRun: new Map([["root-orch", record]]) });
+    const resumeGraph = vi.fn(async () => ok(undefined));
+    const { wiring, events, registerRoot } = buildWiring({ store, orchestrateResume: orchSeams(ws), resumeGraph });
+
+    await wiring.startAndResumeDurable();
+    wiring.durableResume.shutdown();
+
+    expect(events.some((e) => e.event === "durable:resumed" && e.payload.rootRunId === "root-orch")).toBe(true);
+    expect(registerRoot).toHaveBeenCalledWith("root-orch", expect.any(String));
+    // The orchestrate arm NEVER routes to the graph resume, and never orphaned it.
+    expect(resumeGraph).not.toHaveBeenCalled();
+    expect(events.some((e) => e.event === "durable:orphaned")).toBe(false);
+  });
+
+  it("a DAG row (spawn_tree objects with `status`) still routes to resumeGraph (regression — the arm is entered only for flat + scriptRef != null)", async () => {
+    const ws = makeTempWorkspace();
+    const dag = durableRecord({
+      rootRunId: "root-dag",
+      spawnTree: [{ nodeId: "A", status: "running", runId: "ra" }] as unknown as DurableRunRecord["spawnTree"],
+    });
+    const store = makeDurableRuns({ resumable: [dag], byRootRun: new Map([["root-dag", dag]]) });
+    const resumeGraph = vi.fn(async () => ok(undefined));
+    const { wiring, registerRoot } = buildWiring({ store, orchestrateResume: orchSeams(ws), resumeGraph });
+
+    await wiring.startAndResumeDurable();
+    wiring.durableResume.shutdown();
+
+    expect(resumeGraph).toHaveBeenCalledTimes(1);
+    expect(resumeGraph.mock.calls[0]![0].rootRunId).toBe("root-dag");
+    expect(registerRoot).not.toHaveBeenCalled();
+  });
+
+  it("a flat + scriptRef row whose checkpoint is GONE → durable:orphaned with a closed-enum reason (no silent loss, not re-anchored as resumed)", async () => {
+    const ws = makeTempWorkspace();
+    seedArtifacts(ws, { script: "orch-x.py" }); // the checkpoint blob was NOT written (reclaimed/expired)
+    const record = durableRecord({ rootRunId: "root-gone", scriptRef: "orch-x.py", checkpointRef: "results/cp.json" });
+    const store = makeDurableRuns({ resumable: [record], byRootRun: new Map([["root-gone", record]]) });
+    const { wiring, events, registerRoot } = buildWiring({ store, orchestrateResume: orchSeams(ws) });
+
+    await wiring.startAndResumeDurable();
+    wiring.durableResume.shutdown();
+
+    const orphan = events.find((e) => e.event === "durable:orphaned" && e.payload.rootRunId === "root-gone");
+    expect(orphan).toBeDefined();
+    expect(ORPHAN_ENUM).toContain(orphan!.payload.reason);
+    // Not surfaced as a resumed run — an honest orphan, never a silent re-anchor.
+    expect(events.some((e) => e.event === "durable:resumed" && e.payload.rootRunId === "root-gone")).toBe(false);
+    expect(registerRoot).not.toHaveBeenCalled();
   });
 });
