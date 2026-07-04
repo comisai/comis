@@ -186,6 +186,15 @@ export const comis_tools = {
   async web_search(args) {
     return wrapResultRef(await invoke("web_search", args));
   },
+  async message_send(args) {
+    return callCapSocket("message.send", args);
+  },
+  async message_reply(args) {
+    return callCapSocket("message.reply", args);
+  },
+  async message_react(args) {
+    return callCapSocket("message.react", args);
+  },
 };
 
 export default comis_tools;

@@ -272,3 +272,12 @@ def web_fetch(args=None):
 
 def web_search(args=None):
     return _wrap_result_ref(_invoke("web_search", args))
+
+def message_send(args=None):
+    return _call_cap_socket("message.send", args or {})
+
+def message_reply(args=None):
+    return _call_cap_socket("message.reply", args or {})
+
+def message_react(args=None):
+    return _call_cap_socket("message.react", args or {})

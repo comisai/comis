@@ -95,6 +95,12 @@ export interface ComisTools {
   web_fetch(args?: Record<string, unknown>): Promise<ResultRef>;
   /** Search the web (daemon-side, DNS-pinned). (capability: orch:web) Example: const hits = await comis_tools.web_search({ query: 'site reliability' }); const top3 = await hits.jq('.[0:3]'); const page = await comis_tools.web_fetch({ url: top3[0].url }); const text = await page.read(0, 200); */
   web_search(args?: Record<string, unknown>): Promise<ResultRef>;
+  /** Send a message to a channel (outward). (capability: orch:message) */
+  message_send(args?: Record<string, unknown>): Promise<unknown>;
+  /** Reply to a message in a channel (outward). (capability: orch:message) */
+  message_reply(args?: Record<string, unknown>): Promise<unknown>;
+  /** React to a message with an emoji (outward). (capability: orch:message) */
+  message_react(args?: Record<string, unknown>): Promise<unknown>;
 }
 
 /** The singleton typed SDK the jailed script imports. */

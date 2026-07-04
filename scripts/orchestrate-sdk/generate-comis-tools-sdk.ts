@@ -172,6 +172,37 @@ const CAPABILITY_GROUP_EXAMPLES_PY: Record<string, string> = {
 };
 
 // ---------------------------------------------------------------------------
+// The curated DIRECT-METHOD set — the outward `orch:message` triplet
+// (send/reply/react). These are NOT `tool.invoke` tools (they are absent from
+// TOOL_CAPABILITY_MAP); they are DIRECT RPC methods (HANDLER_CAPABILITY_MAP →
+// orch:message). So the SDK renders them via `callCapSocket(method, args)` (the
+// arbitrary-method wire), NEVER `invoke(...)` (the tool.invoke wire). This render
+// choice is load-bearing: the exactly-once outward-step ledger
+// (`allocateOutwardStepIfNeeded`) fires ONLY in the endpoint's direct-method
+// branch of `handleCapCall`, so a `tool.invoke` route would silently bypass it
+// (and — since `message.*` is absent from the cap-map — be default-denied anyway).
+// Emitted in a FIXED order (deterministic) ALONGSIDE the sorted tool loop, so a
+// fetch→transform→send chain runs in one typed turn.
+// ---------------------------------------------------------------------------
+
+interface DirectMethod {
+  /** The SDK method name (the property on `comis_tools`). */
+  readonly name: string;
+  /** The wire RPC method it dispatches via `callCapSocket`. */
+  readonly method: string;
+  /** The capability the method requires (the handler-cap-map classification). */
+  readonly capability: string;
+  /** A one-line summary for the typed-surface JSDoc. */
+  readonly summary: string;
+}
+
+const DIRECT_METHODS: readonly DirectMethod[] = [
+  { name: "message_send", method: "message.send", capability: "orch:message", summary: "Send a message to a channel (outward)." },
+  { name: "message_reply", method: "message.reply", capability: "orch:message", summary: "Reply to a message in a channel (outward)." },
+  { name: "message_react", method: "message.react", capability: "orch:message", summary: "React to a message with an emoji (outward)." },
+];
+
+// ---------------------------------------------------------------------------
 // Pure emitters.
 // ---------------------------------------------------------------------------
 
@@ -283,6 +314,15 @@ export interface ToolDescriptor {
     methodLines.push(`  ${tool}(args?: Record<string, unknown>): ${ret};`);
   }
 
+  // The curated DIRECT-METHOD triplet (orch:message outward send/reply/react):
+  // typed methods appended after the sorted tool methods, in the fixed
+  // DIRECT_METHODS order. They dispatch via callCapSocket (not tool.invoke), so a
+  // ResultRef is never returned — a plain Promise<unknown> ack.
+  for (const dm of DIRECT_METHODS) {
+    methodLines.push(`  /** ${dm.summary} (capability: ${dm.capability}) */`);
+    methodLines.push(`  ${dm.name}(args?: Record<string, unknown>): Promise<unknown>;`);
+  }
+
   const iface = `
 // ---------------------------------------------------------------------------
 // ComisTools — the typed SDK surface. One async method per capability-mapped
@@ -373,6 +413,17 @@ function emitSdkJs(sortedTools: readonly string[]): string {
           `  },`,
       );
     }
+  }
+
+  // The curated DIRECT-METHOD triplet — rendered via callCapSocket (the direct-
+  // method wire), NEVER invoke (the tool.invoke wire), so the endpoint's outward-
+  // step ledger (allocateOutwardStepIfNeeded) is preserved (see DIRECT_METHODS).
+  for (const dm of DIRECT_METHODS) {
+    methodLines.push(
+      `  async ${dm.name}(args) {\n` +
+        `    return callCapSocket(${JSON.stringify(dm.method)}, args);\n` +
+        `  },`,
+    );
   }
 
   const body = `
@@ -595,6 +646,13 @@ function emitSdkPy(sortedTools: readonly string[]): string {
       ? `_wrap_result_ref(_invoke(${JSON.stringify(tool)}, args))`
       : `_invoke(${JSON.stringify(tool)}, args)`;
     methods.push(`def ${tool}(args=None):\n    return ${call}`);
+  }
+
+  // The curated DIRECT-METHOD triplet — module-level functions dispatching via
+  // _call_cap_socket (the direct-method wire), NEVER _invoke (the tool.invoke wire),
+  // so the endpoint's outward-step ledger is preserved (see DIRECT_METHODS).
+  for (const dm of DIRECT_METHODS) {
+    methods.push(`def ${dm.name}(args=None):\n    return _call_cap_socket(${JSON.stringify(dm.method)}, args or {})`);
   }
 
   return (
