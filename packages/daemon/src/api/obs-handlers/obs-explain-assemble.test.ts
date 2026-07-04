@@ -963,6 +963,87 @@ function cacheBreakRecord(
   };
 }
 
+describe("assembleIncidentReport — trajectory-derived cost/cache ledger", () => {
+  // A session's sessionEnd rollup is overwritten by EVERY execution, so its
+  // costUsd is the LAST execution's cost only — observed live as a ~$0.50
+  // session explained at $0.03. The trajectory carries the honest ledger: one
+  // session.summary record per execution (costUsd each) and one
+  // model.completed record per LLM call (token + cache fields). The assembler
+  // must prefer those sums; the rollup stays the fallback for log-only sessions.
+
+  const modelCompletedRecord = (
+    data: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens?: number },
+    seq: number,
+  ): Record<string, unknown> => ({
+    traceSchema: "comis-trajectory",
+    type: "model.completed",
+    seq,
+    sessionKey: SESSION_KEY,
+    data: { cacheCreationTokens: 0, ...data },
+  });
+
+  const sessionSummaryRecord = (costUsd: number, seq: number): Record<string, unknown> => ({
+    traceSchema: "comis-trajectory",
+    type: "session.summary",
+    seq,
+    sessionKey: SESSION_KEY,
+    data: { degraded: false, turnCount: 1, costUsd, toolStats: {}, breakerTripCount: 0 },
+  });
+
+  it("sums the per-execution session.summary costs instead of trusting the last-write rollup costUsd", () => {
+    const signals = toIncidentSignals([
+      sessionSummaryRecord(0.13086, 1),
+      sessionSummaryRecord(0.071879, 2),
+      sessionSummaryRecord(0.265657, 3),
+      sessionSummaryRecord(0.02994, 4),
+    ]);
+    const report = assembleIncidentReport(
+      signals,
+      // The rollup carries only the FINAL execution's cost (the live shape).
+      makeMetadata({ sessionEnd: { endReason: "spend_exceeded", costUsd: 0.02994, totalTokens: 296_675 } }),
+      null,
+      SESSION_KEY,
+      4,
+    );
+    expect(report.cost.costUsd).toBeCloseTo(0.498336, 4);
+  });
+
+  it("derives cacheReadRatio and totalTokens from the model.completed token ledger (the rollup never carries cacheReadRatio)", () => {
+    const signals = toIncidentSignals([
+      modelCompletedRecord({ inputTokens: 25_926, outputTokens: 41, cacheReadTokens: 0 }, 1),
+      modelCompletedRecord({ inputTokens: 893, outputTokens: 120, cacheReadTokens: 25_600 }, 2),
+      modelCompletedRecord({ inputTokens: 1_344, outputTokens: 75, cacheReadTokens: 27_136 }, 3),
+    ]);
+    const report = assembleIncidentReport(
+      signals,
+      makeMetadata({ sessionEnd: { endReason: "success", costUsd: 0.1, totalTokens: 1 } }),
+      null,
+      SESSION_KEY,
+      3,
+    );
+    // cacheRead / (input + cacheRead) across the session's completions.
+    const input = 25_926 + 893 + 1_344;
+    const cacheRead = 25_600 + 27_136;
+    expect(report.cost.cacheReadRatio).toBeCloseTo(cacheRead / (input + cacheRead), 4);
+    // totalTokens = input + output + cacheRead + cacheCreation (the ledger sum),
+    // preferred over the rollup's stale value.
+    expect(report.cost.totalTokens).toBe(input + (41 + 120 + 75) + cacheRead);
+  });
+
+  it("keeps the rollup fallback for log-only sessions (no trajectory records)", () => {
+    const report = assembleIncidentReport(
+      makeSignals(),
+      makeMetadata({ sessionEnd: { endReason: "success", costUsd: 0.25, totalTokens: 42_000 } }),
+      null,
+      SESSION_KEY,
+      0,
+    );
+    expect(report.cost.costUsd).toBeCloseTo(0.25, 4);
+    expect(report.cost.totalTokens).toBe(42_000);
+    expect(report.cost.cacheReadRatio).toBe(0);
+  });
+});
+
 describe("assembleIncidentReport — cacheBreaks?", () => {
   it("surfaces cacheBreaks folded per-reason from cache.break trajectory records", () => {
     const signals = toIncidentSignals([
