@@ -442,6 +442,29 @@ describe("createToolInvokeExecutor — case \"mcp\" (daemon-side MCP dispatch)",
     expect(result.text).not.toBe("small mcp payload"); // NOT the raw payload
   });
 
+  it("falls back to a 'no text content' marker when the MCP result carries ONLY non-text content (LO-02)", async () => {
+    // An image/data/embedded-resource-only result: the text-only extraction yields
+    // "" — without a fallback the jailed script gets an opaque wrapper around empty
+    // with NO signal that content was present but dropped. Mirror the in-process
+    // bridge's fallback so an all-non-text result is legible (diagnosability).
+    const callTool = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        content: [{ type: "image", data: "base64-bytes", mimeType: "image/png" }],
+        isError: false,
+      } as unknown as McpToolCallResult,
+    }));
+    const exec = createToolInvokeExecutor(
+      makeDeps({ mcpClientManager: fakeMcpManager(callTool), mcpAllowlist: { permits: () => true } }),
+    );
+
+    const result = (await exec("mcp", { server: "ctx7", tool: "shot" }, MCP_LEASE)) as { text?: string };
+
+    // The honest marker rides INSIDE the untrusted-content wrap (still data-not-control).
+    expect(result.text).toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/);
+    expect(result.text).toContain("no text content");
+  });
+
   it("OFFLOADS an over-threshold (>15 KB) MCP return to a ResultRef handle (MCP-03)", async () => {
     const callTool = vi.fn(async () => okMcpResult("x".repeat(20_000)));
     const ref = {

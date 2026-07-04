@@ -371,6 +371,14 @@ export function createToolInvokeExecutor(
       .filter((c) => c.type === "text" && c.text)
       .map((c) => c.text ?? "")
       .join("\n");
+    // Fallback for an ALL-non-text result (image/data/embedded-resource only):
+    // this path is text-only (like the in-process bridge), so without a marker the
+    // jailed script would receive an opaque wrapper around empty — no signal that
+    // content was present but dropped. Mirror mcp-tool-bridge's fallback so the
+    // result stays legible (a diagnosability fix, not a content change).
+    if (text === "") {
+      text = "MCP tool returned no text content";
+    }
     text = sanitizeMcpToolResult(text);
     text = wrapExternalContent(text, { source: "mcp_tool" });
 
