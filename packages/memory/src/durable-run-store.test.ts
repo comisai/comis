@@ -321,6 +321,63 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
       expect(res.ok).toBe(true);
       if (res.ok) expect(res.value.map((r) => r.rootRunId)).not.toContain("r-revoke");
     });
+
+    it("a subsequent upsertCheckpoint(status:'running') does NOT resurrect a revoked row", async () => {
+      // A timeout markResumable or a raced jailed checkpoint() upserts status:'running'.
+      // Landing after a revoke it must NOT clobber the terminal 'revoked' back to
+      // 'running' — else the boot sweep re-surfaces + re-anchors a run the operator
+      // explicitly revoked, defeating invalidateForRevoke.
+      await store.upsertCheckpoint(makeRecord({ rootRunId: "r-race", status: "running" }));
+      await store.invalidateForRevoke("r-race");
+
+      // The clobber vector: a running upsert (markResumable / checkpoint) after revoke.
+      const up = await store.upsertCheckpoint(
+        makeRecord({ rootRunId: "r-race", status: "running", scriptRef: "orch-x.ts" }),
+      );
+      expect(up.ok).toBe(true);
+
+      const got = await store.getByRootRun("r-race");
+      expect(got.ok).toBe(true);
+      if (got.ok && got.value) expect(got.value.status).toBe("revoked");
+      // And it stays out of the resume set.
+      const res = await store.listResumable();
+      if (res.ok) expect(res.value.map((r) => r.rootRunId)).not.toContain("r-race");
+    });
+
+    it("a subsequent upsertCheckpoint(status:'running') does NOT resurrect a completed or orphaned row", async () => {
+      // The same terminal-preserve holds for completed/orphaned — a late checkpoint
+      // upsert must not flip a finished run back to a resumable 'running'.
+      await store.upsertCheckpoint(makeRecord({ rootRunId: "r-comp", status: "running" }));
+      await store.markCompleted("r-comp");
+      await store.upsertCheckpoint(makeRecord({ rootRunId: "r-comp", status: "running" }));
+      const comp = await store.getByRootRun("r-comp");
+      if (comp.ok && comp.value) expect(comp.value.status).toBe("completed");
+
+      await store.upsertCheckpoint(makeRecord({ rootRunId: "r-orph2", status: "running" }));
+      await store.markOrphaned("r-orph2", "no live lease on boot");
+      await store.upsertCheckpoint(makeRecord({ rootRunId: "r-orph2", status: "running" }));
+      const orph = await store.getByRootRun("r-orph2");
+      if (orph.ok && orph.value) expect(orph.value.status).toBe("orphaned");
+    });
+
+    it("still COALESCE-preserves the scriptRef/checkpointRef columns on a post-revoke upsert (terminal-preserve does not drop the pointers)", async () => {
+      // Preserving the terminal status must not regress the existing ref COALESCE:
+      // a post-revoke checkpoint upsert still merges its ref onto the row.
+      await store.upsertCheckpoint(
+        makeRecord({ rootRunId: "r-ref", status: "running", scriptRef: "orch-y.ts" }),
+      );
+      await store.invalidateForRevoke("r-ref");
+      await store.upsertCheckpoint(
+        makeRecord({ rootRunId: "r-ref", status: "running", checkpointRef: "cp-9" }),
+      );
+      const got = await store.getByRootRun("r-ref");
+      expect(got.ok).toBe(true);
+      if (got.ok && got.value) {
+        expect(got.value.status).toBe("revoked"); // terminal preserved
+        expect(got.value.scriptRef).toBe("orch-y.ts"); // COALESCE-preserved
+        expect(got.value.checkpointRef).toBe("cp-9"); // merged
+      }
+    });
   });
 
   // -----------------------------------------------------------------------

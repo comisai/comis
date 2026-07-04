@@ -141,6 +141,14 @@ export function createSqliteDurableRunStore(
   // checkpoint_ref and the resumable-timeout runner set only script_ref WITHOUT
   // clobbering each other (the outcome_events COALESCE precedent). On a fresh
   // INSERT the bound value (or NULL) is written directly.
+  //
+  // status uses a terminal-preserve CASE on CONFLICT: once a row is in a TERMINAL
+  // state ('revoked'/'completed'/'orphaned') a later upsert (every 233 caller binds
+  // status:'running' — the timeout markResumable + the jailed checkpoint()) MUST NOT
+  // resurrect it back to 'running'. Without this a timeout re-mark or a raced
+  // checkpoint landing after invalidateForRevoke would un-revoke the run and the
+  // boot sweep would re-surface/re-anchor a run the operator explicitly revoked. On
+  // a fresh INSERT the bound status is written directly (the CASE is DO-UPDATE-only).
   const upsertStmt = db.prepare(`
     INSERT INTO durable_runs (
       root_run_id, spawn_tree, caps, lease_ids, budget_consumed, cron_origin,
@@ -152,7 +160,10 @@ export function createSqliteDurableRunStore(
       lease_ids = excluded.lease_ids,
       budget_consumed = excluded.budget_consumed,
       cron_origin = excluded.cron_origin,
-      status = excluded.status,
+      status = CASE
+        WHEN durable_runs.status IN ('revoked', 'completed', 'orphaned') THEN durable_runs.status
+        ELSE excluded.status
+      END,
       last_heartbeat_at = excluded.last_heartbeat_at,
       updated_at_ms = excluded.updated_at_ms,
       script_ref = COALESCE(excluded.script_ref, script_ref),
