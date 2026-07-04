@@ -164,6 +164,7 @@ export type { TeamsActivity } from "./msteams/message-mapper.js";
 export {
   validateActivityJwt,
   createActivityJwtValidator,
+  createLocalActivityJwtValidator,
   createConnectorTokenProvider,
   createConnectorTokenProviderFor,
 } from "./msteams/msteams-auth.js";

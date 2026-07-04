@@ -20,7 +20,14 @@ import { readFile } from "node:fs/promises";
 import { systemNowMs } from "@comis/core";
 import type { ComisLogger, EnvPort } from "@comis/core";
 import { ok, err, fromPromise, tryCatch, type Result } from "@comis/shared";
-import { createRemoteJWKSet, jwtVerify, importPKCS8, SignJWT } from "jose";
+import {
+  createRemoteJWKSet,
+  createLocalJWKSet,
+  jwtVerify,
+  importPKCS8,
+  SignJWT,
+  type JSONWebKeySet,
+} from "jose";
 import { classifyMsTeamsError } from "./errors.js";
 
 /** Bot Framework activity issuer (verified against the live issuer metadata). */
@@ -112,6 +119,27 @@ export function createActivityJwtValidator(
  * id (the expected audience).
  */
 export const validateActivityJwt = createActivityJwtValidator();
+
+/**
+ * Build an inbound activity JWT validator over a LOCAL JWKS (a `{ keys: [...] }`
+ * set) instead of the default remote Bot Framework JWKS — verification runs with
+ * NO network, against a key set the caller supplies. The offline analog of
+ * {@link validateActivityJwt}, for a test rig / the live-test emulator that holds
+ * its own signing key. Production keeps the default remote-JWKS
+ * {@link validateActivityJwt} untouched: this is only reached when a caller opts
+ * in with a local key set (e.g. the daemon's off-by-default `COMIS_MSTEAMS_TEST_JWKS`
+ * seam). The issuer defaults to the Bot Framework issuer (so an emulator can mint
+ * maximally-real tokens) and can be overridden for a fully-synthetic issuer.
+ */
+export function createLocalActivityJwtValidator(
+  jwks: JSONWebKeySet,
+  opts?: { issuer?: string },
+): (authHeader: string | undefined, appId: string) => Promise<Result<void, Error>> {
+  return createActivityJwtValidator({
+    jwks: createLocalJWKSet(jwks),
+    ...(opts?.issuer !== undefined ? { issuer: opts.issuer } : {}),
+  });
+}
 
 // --- Outbound Connector token mint (client-credentials, cached) ---
 
