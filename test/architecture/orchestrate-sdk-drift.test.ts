@@ -102,6 +102,47 @@ describe("orchestrate comis_tools SDK drift gate", () => {
     expect(pyMatch).toBe(true);
   });
 
+  it("emits the mcp surface as a runtime proxy (JS Proxy / Python __getattr__), not a flat method", () => {
+    // The connected MCP server/tool set is dynamic per connection, so it CANNOT be a
+    // static per-tool method — the generator special-cases `mcp` as a runtime proxy
+    // resolving comis_tools.mcp.<server>.<tool>(args) to ONE tool.invoke over the cap
+    // socket (the fixed wire literal "mcp"; the {server,tool} ride inside args).
+    const tmp = mkdtempSync(join(tmpdir(), "comis-sdk-mcp-"));
+    let js: string;
+    let py: string;
+    try {
+      const result = runCodegen(tmp);
+      js = result.js;
+      py = result.py;
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+
+    // JS: the proxy composes callCapSocket (the arbitrary-method wire), so the import
+    // header pulls it in beside invoke/wrapResultRef.
+    expect(
+      js,
+      "the JS SDK import header must include callCapSocket for the mcp proxy",
+    ).toContain(
+      'import { invoke, wrapResultRef, callCapSocket } from "./orchestrate-sdk-runtime.js"',
+    );
+    // The `mcp` binding is a runtime Proxy, NOT a flat `async mcp(args)` invoke method.
+    expect(js, "mcp must be a runtime Proxy binding").toMatch(/mcp:\s*new Proxy/);
+    expect(js, "mcp must NOT be a flat invoke method").not.toMatch(/async mcp\s*\(/);
+    // It frames a single tool.invoke with the fixed literal wire tool "mcp".
+    expect(js).toContain('callCapSocket("tool.invoke"');
+    expect(js).toContain('tool: "mcp"');
+
+    // Python: an _McpNamespace __getattr__ proxy bound to the module-level `mcp`,
+    // resolving to _call_cap_socket("tool.invoke", …) with "tool": "mcp".
+    expect(py, "the .py must define the _McpNamespace proxy class").toContain("class _McpNamespace");
+    expect(py, "the proxy resolves attribute access via __getattr__").toContain("def __getattr__");
+    expect(py, "mcp is bound to the namespace at module level").toMatch(/^mcp = _McpNamespace\(\)$/m);
+    expect(py, "mcp must NOT be a flat def").not.toMatch(/^def mcp\(/m);
+    expect(py).toContain("_call_cap_socket(");
+    expect(py).toContain('"tool": "mcp"');
+  });
+
   it("describe() carries a worked example per capability group in all three SDKs", () => {
     // Read the committed artifacts (the exact bytes the drift gate above locks).
     const committedDts = readFileSync(OUT_DTS, "utf8");
@@ -160,8 +201,8 @@ describe("orchestrate comis_tools SDK drift gate", () => {
       }
       expect(
         new Set(entries.map((entry) => entry.capability)).size,
-        `${label}: expected exactly two capability groups (orch:read, orch:web)`,
-      ).toBe(2);
+        `${label}: expected exactly three capability groups (orch:read, orch:web, orch:mcp)`,
+      ).toBe(3);
       for (const [capability, examples] of examplesByCap) {
         expect(
           examples.size,

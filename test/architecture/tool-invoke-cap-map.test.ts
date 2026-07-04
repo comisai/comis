@@ -106,16 +106,41 @@ describe("orch:mcp cap birth: ResultRef offload threshold + audit action class",
   });
 });
 
+describe("MCP-01: the dynamic mcp tool is cap-mapped + executor-routed", () => {
+  it("maps the fixed literal `mcp` tool to orch:mcp (the {server,tool} ride inside args)", () => {
+    // The wire tool name is the fixed literal "mcp"; the dynamic {server,tool} pair
+    // is DATA inside args, never a new cap-map key — one entry governs the whole
+    // runtime-dynamic namespace.
+    expect((TOOL_CAPABILITY_MAP as Record<string, unknown>).mcp).toBe("orch:mcp");
+  });
+
+  it("routes `mcp` to the daemon-side executor (net-needing, mirrors web_fetch)", () => {
+    // The jail stays --unshare-net; the MCP call runs daemon-side like web_fetch.
+    expect((TOOL_ROUTE_MAP as Record<string, unknown>).mcp).toEqual({ kind: "executor" });
+  });
+
+  it("keeps cap-map ↔ route ↔ denylist soundness with mcp present (the import-time assertion held)", () => {
+    // assertToolMapSoundness runs at module import; a throw would have failed this
+    // whole file's import. Re-pin the invariant it guards for `mcp`: it is cap-mapped,
+    // has exactly one route, and is NOT on the admin/destructive denylist.
+    const cap = TOOL_CAPABILITY_MAP as Record<string, unknown>;
+    const route = TOOL_ROUTE_MAP as Record<string, unknown>;
+    expect("mcp" in cap && "mcp" in route).toBe(true);
+    expect(SUB_AGENT_TOOL_DENYLIST.has("mcp")).toBe(false);
+  });
+});
+
 describe("INV-3: the MCP control plane stays unreachable through the cap surface", () => {
-  it("mcp_manage, mcp_login, and the bare 'mcp' control name are absent from TOOL_CAPABILITY_MAP", () => {
-    // AUTHORITATIVE gate: default-deny by absence. A tool absent from the curated
-    // allow-list has no cap to resolve and cannot be rendered by the SDK — so the
-    // control plane is undispatchable through the endpoint regardless of any lease.
-    // NB: the fixed literal "mcp" tool (the dynamic MCP surface) is NOT born in
-    // this plan — its cap-map entry + executor route arrive with the dispatch shape
-    // later; until then it too must stay unreachable by absence.
+  it("mcp_manage and mcp_login (the control plane) stay absent from TOOL_CAPABILITY_MAP", () => {
+    // AUTHORITATIVE gate: default-deny by absence. The admin/destructive control-plane
+    // tools have no cap to resolve and cannot be rendered by the SDK — so the control
+    // plane is undispatchable through the endpoint regardless of any lease.
+    // NB: the fixed literal "mcp" tool (the dynamic DATA-plane surface) IS now born —
+    // cap-mapped to orch:mcp with an executor route (see the MCP-01 block above). Its
+    // {server,tool} ride inside args, so admitting it never makes the control plane
+    // (mcp.connect / mcp.oauth_login) reachable.
     const map = TOOL_CAPABILITY_MAP as Record<string, unknown>;
-    for (const name of ["mcp_manage", "mcp_login", "mcp"]) {
+    for (const name of ["mcp_manage", "mcp_login"]) {
       expect(
         map[name],
         `${name} must NOT be a TOOL_CAPABILITY_MAP key (default-deny by absence)`,
