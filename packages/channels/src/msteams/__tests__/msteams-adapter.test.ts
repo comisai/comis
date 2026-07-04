@@ -1195,6 +1195,96 @@ describe("createMsTeamsAdapter — outbound sendAttachment (base64-inline image)
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value).toBe(token);
   });
+
+  // Bot Framework renders an inline `data:` URI only for IMAGES. The daemon routes
+  // every attachment type to sendAttachment once it exists, so a type:"file" (a
+  // Graph markdown report) or a type:"video" must NOT be base64-inlined: that reads
+  // the whole (multi-MB) file into memory, inflates it +33% past BF's inline limit,
+  // and renders as a broken/failed attachment. A non-image degrades to a plain text
+  // "by reference" message (the graceful path the daemon callers relied on before
+  // Teams implemented sendAttachment), and the bytes are never read.
+
+  it("does NOT base64-inline a type:'file' attachment — degrades to a text reference without reading the bytes", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const readSpy = readingBytes(); // must NOT be called for a non-image
+    const { deps } = makeAdapterDeps({ fetchImpl, readFileImpl: readSpy });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.sendAttachment!(
+      "19:dm-convo",
+      {
+        type: "file",
+        url: "/tmp/report.md",
+        mimeType: "text/markdown",
+        fileName: "report.md",
+        caption: "Full report",
+      },
+      { extra: { serviceUrl: SERVICE_URL, chatType: "dm" } },
+    );
+
+    expect(result.ok).toBe(true);
+    // No whole-file-into-memory read for a non-image type.
+    expect(readSpy).not.toHaveBeenCalled();
+
+    const body = JSON.parse(String(findSendCall(spy)![1].body)) as Record<string, unknown>;
+    // Degrades to a plain text message — never a base64 data: inline attachment.
+    expect("attachments" in body).toBe(false);
+    expect(body.type).toBe("message");
+    expect(typeof body.text).toBe("string");
+    expect(String(body.text)).not.toContain("data:");
+    expect(String(body.text)).not.toContain("base64");
+    // The reference names the caption + filename so the delivery is not silent.
+    expect(String(body.text)).toContain("Full report");
+    expect(String(body.text)).toContain("report.md");
+  });
+
+  it("does NOT base64-inline a type:'video' attachment — avoids the multi-MB read and preserves threading", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const readSpy = readingBytes();
+    const { deps } = makeAdapterDeps({ fetchImpl, readFileImpl: readSpy });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.sendAttachment!(
+      "19:channel-convo@thread.tacv2",
+      {
+        type: "video",
+        url: "/tmp/generated-video.mp4",
+        mimeType: "video/mp4",
+        fileName: "generated-video.mp4",
+      },
+      { replyTo: "parent-activity-id", extra: { serviceUrl: SERVICE_URL, chatType: "channel" } },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(readSpy).not.toHaveBeenCalled();
+
+    const body = JSON.parse(String(findSendCall(spy)![1].body)) as Record<string, unknown>;
+    expect("attachments" in body).toBe(false);
+    // The by-reference text still threads under the parent (channel reply).
+    expect(body.replyToId).toBe("parent-activity-id");
+    expect(String(body.text)).toContain("generated-video.mp4");
+  });
+
+  it("still base64-inlines a type:'image' attachment (the supported inline path is unchanged)", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const readSpy = readingBytes();
+    const { deps } = makeAdapterDeps({ fetchImpl, readFileImpl: readSpy });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.sendAttachment!(
+      "19:dm-convo",
+      { type: "image", url: "/tmp/x.png", mimeType: "image/png" },
+      { extra: { serviceUrl: SERVICE_URL, chatType: "dm" } },
+    );
+
+    expect(result.ok).toBe(true);
+    // The image path DOES read the bytes and inline them as a data: URI.
+    expect(readSpy).toHaveBeenCalled();
+    const body = JSON.parse(String(findSendCall(spy)![1].body)) as {
+      attachments?: Array<{ contentUrl: string }>;
+    };
+    expect(body.attachments![0]!.contentUrl.startsWith("data:image/png;base64,")).toBe(true);
+  });
 });
 
 /** A shape-valid Bot Framework bot id (`28:<guid>`) — mentionable. */
