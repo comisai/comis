@@ -1071,6 +1071,27 @@ describe("assembleIncidentReport — trajectory-derived cost/cache ledger", () =
     expect(report.cost.totalTokens).toBe(input + (41 + 120 + 75) + cacheRead);
   });
 
+  it("sums timing.turnCount from the per-execution session.summary ledger (not the last-write rollup)", () => {
+    // The sessionEnd rollup's turnCount is overwritten per execution, so a
+    // multi-execution session reported the LAST execution's turn count — the
+    // incident's 11-turn session showed timing.turnCount:1. Sum the ledger.
+    const signals = toIncidentSignals([
+      { traceSchema: "comis-trajectory", type: "session.summary", seq: 1, sessionKey: SESSION_KEY, data: { degraded: false, turnCount: 1, costUsd: 0.1, toolStats: {}, breakerTripCount: 0 } },
+      { traceSchema: "comis-trajectory", type: "session.summary", seq: 2, sessionKey: SESSION_KEY, data: { degraded: false, turnCount: 3, costUsd: 0.1, toolStats: {}, breakerTripCount: 0 } },
+      { traceSchema: "comis-trajectory", type: "session.summary", seq: 3, sessionKey: SESSION_KEY, data: { degraded: true, turnCount: 6, costUsd: 0.1, toolStats: {}, breakerTripCount: 0 } },
+      { traceSchema: "comis-trajectory", type: "session.summary", seq: 4, sessionKey: SESSION_KEY, data: { degraded: true, turnCount: 1, costUsd: 0.1, toolStats: {}, breakerTripCount: 0 } },
+    ]);
+    const report = assembleIncidentReport(
+      signals,
+      // The rollup carries only the final execution's turnCount (last write).
+      makeMetadata({ sessionEnd: { endReason: "spend_exceeded", costUsd: 0.1, totalTokens: 1, turnCount: 1 } }),
+      null,
+      SESSION_KEY,
+      4,
+    );
+    expect(report.timing.turnCount).toBe(11);
+  });
+
   it("keeps the rollup fallback for log-only sessions (no trajectory records)", () => {
     const report = assembleIncidentReport(
       makeSignals(),
