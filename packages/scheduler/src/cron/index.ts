@@ -2,6 +2,10 @@
 // @comis/scheduler/cron — cron scheduling
 
 export type { CronJob, CronSchedule } from "./cron-types.js";
+// The delivery-target schema — exported so the RPC write path can validate a
+// caller-supplied deliveryTarget against the SAME shape the store enforces on
+// load (prevents a partial target poison-pilling the whole job array).
+export { CronDeliveryTargetSchema } from "./cron-types.js";
 
 // Cron expression evaluation
 export { computeNextRunAtMs } from "./cron-expression.js";

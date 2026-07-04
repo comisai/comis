@@ -7,6 +7,7 @@ export type { SchedulerLogger } from "./shared-types.js";
 
 // Cron types
 export type { CronJob, CronSchedule } from "./cron/index.js";
+export { CronDeliveryTargetSchema } from "./cron/index.js";
 
 // Cron engine
 export { computeNextRunAtMs } from "./cron/index.js";

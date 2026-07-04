@@ -38,6 +38,7 @@ import {
 } from "@comis/core";
 import { buildCronSchedule } from "../wiring/daemon-utils.js";
 import type { CronSchedule } from "@comis/scheduler";
+import { CronDeliveryTargetSchema } from "@comis/scheduler";
 import { randomUUID } from "node:crypto";
 
 import type { RpcHandler } from "./types.js";
@@ -365,16 +366,28 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
           timeoutSeconds: wakeGateNested?.timeoutSeconds ?? 30,
         };
       }
-      // Delivery target: set structured target or clear with null
+      // Delivery target: set structured target or clear with null. Validate a
+      // caller-supplied target against the SAME schema the cron store enforces on
+      // load (CronDeliveryTargetSchema, required channelId/userId/tenantId) — a
+      // bare cast let a partial target (e.g. {channelType,channelId}) persist, and
+      // because cron-store.load() parses the WHOLE job array atomically, that one
+      // invalid job made the store "return empty job list" on the next reload,
+      // silently dropping every cron on a restart. Reject at the API boundary
+      // instead (mirrors the wake-gate empty-clear guard above).
       if (rawParams.deliveryTarget !== undefined) {
-        job.deliveryTarget = rawParams.deliveryTarget === null
-          ? undefined
-          : (rawParams.deliveryTarget as {
-              channelId: string;
-              userId: string;
-              tenantId: string;
-              channelType?: string;
-            });
+        if (rawParams.deliveryTarget === null) {
+          job.deliveryTarget = undefined;
+        } else {
+          const parsed = CronDeliveryTargetSchema.safeParse(rawParams.deliveryTarget);
+          if (!parsed.success) {
+            throw new Error(
+              `Invalid deliveryTarget: ${parsed.error.issues
+                .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
+                .join("; ")}. Required: channelId, userId, tenantId (channelType optional).`,
+            );
+          }
+          job.deliveryTarget = parsed.data;
+        }
       }
       // Persist the in-place mutations NOW. The field-by-field updates above mutate
       // the live in-memory job (a getJobs() reference); without this flush the edit

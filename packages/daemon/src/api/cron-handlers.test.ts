@@ -5,6 +5,7 @@ import type { CronHandlerDeps } from "./cron-handlers.js";
 import type { RpcHandler } from "./types.js";
 import { withHeldCapabilities } from "../../../../test/support/held-capabilities.js";
 import { sanitizeToolOutput } from "@comis/agent";
+import { CronDeliveryTargetSchema } from "@comis/scheduler";
 
 // The gated cron.add/update/remove/run handlers require an injected
 // _capabilities (production supplies it via createAgentRpcCall). Wrap the bound
@@ -647,6 +648,55 @@ describe("createCronHandlers", () => {
       await handlers["cron.update"]!({ jobName: "test-job", enabled: false });
 
       expect(scheduler.persist).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects a deliveryTarget missing userId/tenantId instead of persisting a store-invalid job (regression: cron store poison-pill)", async () => {
+      // A partial deliveryTarget (only channelType+channelId) was cast-and-persisted
+      // verbatim, but the cron store's CronJobSchema requires userId+tenantId. Because
+      // cron-store.load() parses the WHOLE job array atomically (z.array(CronJobSchema)),
+      // ONE invalid job made the entire store "return empty job list" on the next
+      // reload — silently dropping every cron (incl. the system lifecycle crons) on a
+      // daemon restart. The write path must validate deliveryTarget against the SAME
+      // schema the store enforces on load, rejecting a partial target at the API
+      // boundary (mirrors the wake-gate empty-clear guard). Live-reproduced 2026-07-04.
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+
+      await expect(
+        handlers["cron.update"]!({
+          jobName: "test-job",
+          deliveryTarget: { channelType: "telegram", channelId: "678314278" },
+        }),
+      ).rejects.toThrow(/deliveryTarget/i);
+
+      // And the invalid target must NOT have been written to the live in-memory job.
+      const scheduler = deps.getAgentCronScheduler("default");
+      expect(scheduler.getJobs()[0]!.deliveryTarget).toBeUndefined();
+    });
+
+    it("accepts a complete deliveryTarget and stores a target that round-trips the store schema", async () => {
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+
+      const result = (await handlers["cron.update"]!({
+        jobName: "test-job",
+        deliveryTarget: { channelType: "telegram", channelId: "c1", userId: "u1", tenantId: "t1" },
+      })) as { updated: boolean };
+
+      expect(result.updated).toBe(true);
+      const job = deps.getAgentCronScheduler("default").getJobs()[0]!;
+      // The stored target must satisfy the SAME schema the store enforces on load,
+      // so the job can never poison-pill the store array on the next reload.
+      expect(CronDeliveryTargetSchema.safeParse(job.deliveryTarget).success).toBe(true);
+    });
+
+    it("clears the deliveryTarget when passed null", async () => {
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+
+      await handlers["cron.update"]!({ jobName: "test-job", deliveryTarget: null });
+
+      expect(deps.getAgentCronScheduler("default").getJobs()[0]!.deliveryTarget).toBeUndefined();
     });
 
     it("updates job name when provided", async () => {
