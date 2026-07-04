@@ -206,6 +206,51 @@ describe("buildMediaPipeline", () => {
     expect(compositeCall.resolvers).toContainEqual(mockTgResolver);
   });
 
+  it("creates the msteams resolver from the msTeamsPlugin handle", async () => {
+    const mockMsResolver = { resolve: vi.fn(), schemes: ["msteams-file"] };
+    const msTeamsPlugin = { createResolver: vi.fn(() => mockMsResolver) } as any;
+    const deps = makeDeps({ msTeamsPlugin });
+    await buildMediaPipeline(deps);
+
+    // The SAME injected auth-capable fetcher + the config allowlist (empty here →
+    // the resolver applies its built-in default) reach createResolver.
+    expect(msTeamsPlugin.createResolver).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ssrfFetcher: deps.ssrfFetcher,
+        maxBytes: 10_000_000,
+        mediaAuthAllowHosts: [],
+      }),
+    );
+    // The msteams-file resolver is registered in the composite.
+    const compositeCall = vi.mocked(createCompositeResolver).mock.calls[0][0];
+    expect(compositeCall.resolvers).toContainEqual(mockMsResolver);
+  });
+
+  it("passes configured msteams mediaAuthAllowHosts through to createResolver", async () => {
+    const mockMsResolver = { resolve: vi.fn(), schemes: ["msteams-file"] };
+    const msTeamsPlugin = { createResolver: vi.fn(() => mockMsResolver) } as any;
+    const container = makeContainer({
+      channels: { slack: { botToken: undefined }, msteams: { mediaAuthAllowHosts: ["hosted.example"] } },
+    });
+    const deps = makeDeps({ msTeamsPlugin, container });
+    await buildMediaPipeline(deps);
+
+    expect(msTeamsPlugin.createResolver).toHaveBeenCalledWith(
+      expect.objectContaining({ mediaAuthAllowHosts: ["hosted.example"] }),
+    );
+  });
+
+  it("omits the msteams resolver when msTeamsPlugin is absent", async () => {
+    const deps = makeDeps(); // no msTeamsPlugin
+    await buildMediaPipeline(deps);
+
+    const compositeCall = vi.mocked(createCompositeResolver).mock.calls[0][0];
+    const hasMsteams = (compositeCall.resolvers as Array<{ schemes?: string[] }>).some(
+      (r) => r.schemes?.includes("msteams-file"),
+    );
+    expect(hasMsteams).toBe(false);
+  });
+
   it("calls createCompositeResolver with empty resolvers when no adapters", async () => {
     const deps = makeDeps({ adaptersByType: new Map() });
     await buildMediaPipeline(deps);
