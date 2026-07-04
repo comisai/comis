@@ -197,6 +197,53 @@ describe("validateNonInteractiveOptions", () => {
     }
   });
 
+  it("throws NonInteractiveError for missing msteams app id", () => {
+    const opts = validOpts({ channels: ["msteams"] });
+    expect(() => validateNonInteractiveOptions(opts)).toThrow(NonInteractiveError);
+    try {
+      validateNonInteractiveOptions(opts);
+    } catch (e) {
+      expect((e as NonInteractiveError).field).toBe("msteamsAppId");
+    }
+  });
+
+  it("throws NonInteractiveError for missing msteams app password when app id present", () => {
+    const opts = validOpts({
+      channels: ["msteams"],
+      msteamsAppId: "11111111-1111-1111-1111-111111111111",
+    });
+    expect(() => validateNonInteractiveOptions(opts)).toThrow(NonInteractiveError);
+    try {
+      validateNonInteractiveOptions(opts);
+    } catch (e) {
+      expect((e as NonInteractiveError).field).toBe("msteamsAppPassword");
+    }
+  });
+
+  it("throws NonInteractiveError for missing msteams tenant id when app id + password present", () => {
+    const opts = validOpts({
+      channels: ["msteams"],
+      msteamsAppId: "11111111-1111-1111-1111-111111111111",
+      msteamsAppPassword: "teams-client-secret-value-xyz",
+    });
+    expect(() => validateNonInteractiveOptions(opts)).toThrow(NonInteractiveError);
+    try {
+      validateNonInteractiveOptions(opts);
+    } catch (e) {
+      expect((e as NonInteractiveError).field).toBe("msteamsTenantId");
+    }
+  });
+
+  it("does NOT throw when all required msteams flags are present", () => {
+    const opts = validOpts({
+      channels: ["msteams"],
+      msteamsAppId: "11111111-1111-1111-1111-111111111111",
+      msteamsAppPassword: "teams-client-secret-value-xyz",
+      msteamsTenantId: "22222222-2222-2222-2222-222222222222",
+    });
+    expect(() => validateNonInteractiveOptions(opts)).not.toThrow();
+  });
+
   it("does NOT throw for whatsapp, signal, or irc channels (no tokens needed)", () => {
     const opts = validOpts({ channels: ["whatsapp", "signal", "irc"] });
     expect(() => validateNonInteractiveOptions(opts)).not.toThrow();
@@ -492,6 +539,27 @@ describe("buildNonInteractiveState", () => {
       type: "line",
       botToken: "line-tok",
       channelSecret: "line-sec",
+      validated: false,
+    });
+  });
+
+  it("builds msteams channel from the --msteams-* opts", () => {
+    const state = buildNonInteractiveState(
+      validOpts({
+        channels: ["msteams"],
+        msteamsAppId: "11111111-1111-1111-1111-111111111111",
+        msteamsAppPassword: "teams-client-secret-value-xyz",
+        msteamsTenantId: "22222222-2222-2222-2222-222222222222",
+        msteamsAuthMode: "secret",
+      }),
+    );
+    expect(state.channels).toHaveLength(1);
+    expect(state.channels![0]).toEqual({
+      type: "msteams",
+      appId: "11111111-1111-1111-1111-111111111111",
+      appPassword: "teams-client-secret-value-xyz",
+      tenantId: "22222222-2222-2222-2222-222222222222",
+      authMode: "secret",
       validated: false,
     });
   });

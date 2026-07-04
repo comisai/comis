@@ -757,4 +757,76 @@ describe("writeConfigStep", () => {
       expect(result.unresolvedSecretRefs ?? []).toHaveLength(0);
     });
   });
+
+  // ---------- Microsoft Teams: ${VAR} reference + managed-secret join ----------
+
+  describe("microsoft teams channel write", () => {
+    // Teams' credentials do not fit the botToken shape: appId and tenantId are
+    // GUIDs written inline as non-secret config, authMode is inline, and
+    // appPassword (the client secret) is the ONLY value that must flow to a
+    // ${VAR} reference + the managed-secret store.
+    function msteamsState(): WizardState {
+      return {
+        ...populatedState(),
+        channels: [
+          {
+            type: "msteams",
+            appId: "11111111-1111-1111-1111-111111111111",
+            appPassword: "teams-client-secret-value-xyz",
+            tenantId: "22222222-2222-2222-2222-222222222222",
+            authMode: "secret",
+            validated: false,
+          },
+        ],
+      };
+    }
+
+    it("writes channels.msteams.appPassword as a ${MSTEAMS_APP_PASSWORD} reference (never plaintext) with appId/tenantId/authMode inline", async () => {
+      const prompter = createMockPrompter();
+
+      await writeConfigStep.execute(msteamsState(), prompter);
+
+      const writeCalls = vi.mocked(writeFileSync).mock.calls;
+      const configWriteCall = writeCalls.find(
+        ([path]) => typeof path === "string" && path.includes(".tmp"),
+      );
+      expect(configWriteCall).toBeDefined();
+
+      const rawConfig = configWriteCall![1] as string;
+      const configContent = JSON.parse(rawConfig);
+      // The secret is emitted ONLY as a ${VAR} reference — never plaintext.
+      expect(configContent.channels.msteams.appPassword).toBe(
+        "${MSTEAMS_APP_PASSWORD}",
+      );
+      // Non-secret credentials are written inline.
+      expect(configContent.channels.msteams.appId).toBe(
+        "11111111-1111-1111-1111-111111111111",
+      );
+      expect(configContent.channels.msteams.tenantId).toBe(
+        "22222222-2222-2222-2222-222222222222",
+      );
+      expect(configContent.channels.msteams.authMode).toBe("secret");
+      // The raw app password must never appear in config.yaml.
+      expect(rawConfig).not.toContain("teams-client-secret-value-xyz");
+    });
+
+    it("registers the raw MSTEAMS_APP_PASSWORD via collectManagedSecrets so the config reference is not dangling", async () => {
+      const prompter = createMockPrompter();
+
+      await writeConfigStep.execute(msteamsState(), prompter);
+
+      const writeCalls = vi.mocked(writeFileSync).mock.calls;
+      const envWriteCall = writeCalls.find(
+        ([path]) => typeof path === "string" && path.includes(".env"),
+      );
+      expect(envWriteCall).toBeDefined();
+
+      // The managed-secret branch persists the raw value, so the
+      // ${MSTEAMS_APP_PASSWORD} written into config.yaml always resolves at boot.
+      const envContent = envWriteCall![1] as string;
+      expect(envContent).toContain(
+        "MSTEAMS_APP_PASSWORD=teams-client-secret-value-xyz",
+      );
+    });
+  });
 });
