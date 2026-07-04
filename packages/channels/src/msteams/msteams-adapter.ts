@@ -57,6 +57,11 @@ import {
 import { createConnectorTokenProvider } from "./msteams-auth.js";
 import { normalizeCardAction } from "./msteams-actions.js";
 import { renderMSTeamsCardAttachment } from "./msteams-rich-renderer.js";
+import {
+  resolveReplyToId,
+  resolveTypingServiceUrl,
+  withTrailingSlash,
+} from "./msteams-adapter-outbound.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -110,40 +115,11 @@ export interface MsTeamsAdapterHandle extends ChannelPort {
 }
 
 // ---------------------------------------------------------------------------
-// Outbound send helpers (pure)
+// Outbound send helpers
 // ---------------------------------------------------------------------------
-
-/** Ensure a service base URL ends in a single trailing slash for path composition. */
-function withTrailingSlash(raw: string): string {
-  return raw.endsWith("/") ? raw : `${raw}/`;
-}
 
 /** Default attachment byte reader — the url is a safePath temp file the outbound handler wrote (no path build here). */
 const defaultReadFile: (path: string) => Promise<Buffer> = readFile;
-
-/**
- * Resolve the reply target. A Teams direct message is always sent top-level, so
- * a `dm` chatType forces no replyToId even when the caller supplies one (the
- * delivery layer stamps a reply target on every inbound). Channel and group
- * replies thread under the parent via replyToId; a proactive send with no
- * explicit reply target threads under the stored thread root (channel/group
- * references carry one, a 1:1 does not — so a DM stays top-level).
- */
-function resolveReplyToId(
-  options?: SendMessageOptions,
-  fallbackThreadId?: string,
-): string | undefined {
-  // Honor "DM → top-level": never thread a direct message, whatever was passed.
-  if (options?.extra?.chatType === "dm") return undefined;
-  if (typeof options?.replyTo === "string" && options.replyTo.length > 0) {
-    return options.replyTo;
-  }
-  const fromExtra = options?.extra?.replyToId;
-  if (typeof fromExtra === "string" && fromExtra.length > 0) return fromExtra;
-  return typeof fallbackThreadId === "string" && fallbackThreadId.length > 0
-    ? fallbackThreadId
-    : undefined;
-}
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -575,22 +551,6 @@ export function createMsTeamsAdapter(
     );
 
     fanOutMessage(traceId, normalized);
-  }
-
-  /** Extract an explicit typing serviceUrl from the action params (direct or under extra). */
-  function resolveTypingServiceUrl(
-    params: Record<string, unknown>,
-  ): string | undefined {
-    const direct =
-      typeof params.serviceUrl === "string" ? params.serviceUrl : undefined;
-    const extra = params.extra;
-    const fromExtra =
-      typeof extra === "object" &&
-      extra !== null &&
-      typeof (extra as { serviceUrl?: unknown }).serviceUrl === "string"
-        ? (extra as { serviceUrl: string }).serviceUrl
-        : undefined;
-    return direct ?? fromExtra;
   }
 
   /**
