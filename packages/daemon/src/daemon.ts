@@ -173,6 +173,7 @@ import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, 
 import { hardenDataDirPermissions } from "./wiring/harden-data-dir.js";
 import { buildAudioResolverDeps } from "./wiring/setup-audio-provider.js";
 import { runPreflightDoctor } from "./wiring/preflight-doctor.js";
+import { applyInspectDefaultsForLogging } from "./wiring/apply-inspect-defaults.js";
 import { createInboundMessageIdResolver, type InboundMessageIdResolver } from "./wiring/inbound-message-id-resolver.js";
 import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import { emitStartupBanner } from "./wiring/emit-startup-banner.js";
@@ -182,44 +183,18 @@ import { buildPlaceholdersFromBindings } from "./wiring/broker-placeholder-build
 import { warnOnProviderTimeoutRedirect } from "./wiring/provider-timeout-redirect.js";
 import os from "node:os";
 import { dirname as pathDirname } from "node:path";
-import { inspect } from "node:util";
 
 export const DEFAULT_CONFIG_PATHS = [
   safePath(safePath(os.homedir(), ".comis"), "config.yaml"),
   safePath(safePath(os.homedir(), ".comis"), "config.local.yaml"),
 ];
 
-/**
- * When ANTHROPIC_LOG=debug|info is set, the Anthropic SDK calls
- * `console.debug('[req] sending request', { ...payload })`, which Node
- * formats with util.inspect using the default `depth: 2`. That collapses
- * the request body to `messages: [Array]`, so we lose the actual body
- * we are trying to capture.
- *
- * This helper deepens util.inspect ONLY when the SDK debug logger is
- * actually enabled. When ANTHROPIC_LOG is unset, the SDK emits no debug
- * lines anyway, so we leave inspect defaults alone — keeping production
- * logs unchanged.
- *
- * `breakLength: Infinity` keeps each log line single-line so grep-based
- * inspection of the daemon log keeps working.
- *
- * Returns whether each default was changed (used by tests; ignored at
- * runtime).
- */
-export function applyInspectDefaultsForLogging(
-  env: Record<string, string | undefined>,
-): { depthChanged: boolean; breakLengthChanged: boolean } {
-  const lvl = env["ANTHROPIC_LOG"];
-  if (lvl !== "debug" && lvl !== "info") {
-    return { depthChanged: false, breakLengthChanged: false };
-  }
-  const depthChanged = inspect.defaultOptions.depth !== null;
-  const breakLengthChanged = inspect.defaultOptions.breakLength !== Infinity;
-  inspect.defaultOptions.depth = null;
-  inspect.defaultOptions.breakLength = Infinity;
-  return { depthChanged, breakLengthChanged };
-}
+// util.inspect depth/breakLength deepening for Anthropic SDK debug logs —
+// extracted to wiring/apply-inspect-defaults.ts to keep this composition root
+// ≤3000 lines. Imported for the boot call site in main() AND re-exported so
+// `applyInspectDefaultsForLogging` stays on daemon.ts's public surface
+// (daemon.test.ts imports it from "./daemon.js").
+export { applyInspectDefaultsForLogging };
 
 // Preflight native-dep doctor — extracted to wiring/preflight-doctor.ts to keep
 // this composition root ≤3000 lines. Imported
