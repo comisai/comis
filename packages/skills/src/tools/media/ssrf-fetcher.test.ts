@@ -632,4 +632,90 @@ describe("createSsrfGuardedFetcher", () => {
     // maxHops=2 → hops 0,1,2 attempted (3 requests), then the cap trips
     expect(vi.mocked(globalThis.fetch).mock.calls.length).toBe(3);
   });
+
+  it("classifies a malformed redirect Location with a validation hint instead of a bare throw", async () => {
+    const logger = createMockLogger();
+    const fetcher = createSsrfGuardedFetcher({ maxBytes: 1024 * 1024 }, logger);
+
+    mockValidateUrl.mockResolvedValue(
+      ok(
+        makeValidatedUrl({
+          hostname: "smba.gbl.botframework.com",
+          ip: "13.107.9.1",
+          url: new URL("https://smba.gbl.botframework.com/v3/attachments/x"),
+        }),
+      ),
+    );
+    // A 3xx whose Location cannot be parsed as a URL (unterminated IPv6 literal).
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      createMockResponse({ ok: false, status: 302, headers: { location: "http://[" } }),
+    );
+
+    const result = await fetcher.fetch("https://smba.gbl.botframework.com/v3/attachments/x", {
+      authHeader: "Bearer T",
+      authAllowHosts: [".botframework.com"],
+    });
+
+    expect(result.ok).toBe(false);
+    // The malformed-Location branch now carries the per-hop classified hint+errorKind
+    // (§2.7), not a bare TypeError stripped of which hop failed and why.
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hop: 0,
+        errorKind: "validation",
+        hint: expect.stringContaining("Location"),
+      }),
+      "SSRF-guarded auth fetch failed — malformed redirect target",
+    );
+  });
+
+  it("follows a SharePoint 302 to blob storage token-free (a pre-authed downloadUrl carries no bearer on either hop)", async () => {
+    const logger = createMockLogger();
+    const fetcher = createSsrfGuardedFetcher({ maxBytes: 1024 * 1024 }, logger);
+
+    mockValidateUrl
+      .mockResolvedValueOnce(
+        ok(
+          makeValidatedUrl({
+            hostname: "contoso.sharepoint.com",
+            ip: "13.107.136.9",
+            url: new URL("https://contoso.sharepoint.com/sites/s/download.aspx?x=1"),
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        ok(
+          makeValidatedUrl({
+            hostname: "abc.blob.core.windows.net",
+            ip: "20.150.34.4",
+            url: new URL("https://abc.blob.core.windows.net/c/blob"),
+          }),
+        ),
+      );
+    vi.mocked(globalThis.fetch)
+      .mockResolvedValueOnce(
+        createMockResponse({
+          ok: false,
+          status: 302,
+          headers: { location: "https://abc.blob.core.windows.net/c/blob" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        createMockResponse({ headers: { "content-type": "image/png" }, body: new Uint8Array([7, 7, 7]) }),
+      );
+
+    // The Teams default auth allowlist is Connector hosts only — SharePoint and blob
+    // are both OFF it, so the bearer is withheld on BOTH hops even though one is passed.
+    const result = await fetcher.fetch("https://contoso.sharepoint.com/sites/s/download.aspx?x=1", {
+      authHeader: "Bearer T",
+      authAllowHosts: ["smba.trafficmanager.net", ".botframework.com"],
+    });
+
+    expect(result.ok).toBe(true);
+    // Both hops were followed + SSRF-revalidated, and NEITHER carried the bearer.
+    expect(mockValidateUrl).toHaveBeenCalledTimes(2);
+    const calls = vi.mocked(globalThis.fetch).mock.calls;
+    expect(((calls[0]![1] as { headers?: Record<string, string> }).headers ?? {}).authorization).toBeUndefined();
+    expect(((calls[1]![1] as { headers?: Record<string, string> }).headers ?? {}).authorization).toBeUndefined();
+  });
 });
