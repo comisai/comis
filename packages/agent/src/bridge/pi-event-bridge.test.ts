@@ -6519,6 +6519,41 @@ describe("createPiEventBridge — per-root budget sibling", () => {
     expect(spy).toHaveBeenCalledWith("root-args", "anthropic", "claude-opus-4-1", 0.5, 222);
   });
 
+  it("accrues the ACTUAL corrected per-call cost into the per-root $-limb — five cheap calls under the cap do NOT abort (the perTurnMax admission estimate must not permanently consume the aggregate ceiling)", () => {
+    // A priced provider/model + a $2 per-root aggregate cap + perTurnMax $0.50.
+    // Five completions costing $0.06 each = $0.30 of REAL spend — far under the
+    // $2 cap. If the bridge reserves the $0.50 perTurnMax estimate per call and
+    // never settles it to the actual, the phantom holds cross $2 at the 5th
+    // call and the turn falsely aborts with spend_exceeded (observed live: an
+    // interactive session wedged after 5 LLM calls at ~$0.23 of real spend).
+    const clock = createFakeClock(1_000_000);
+    const meter = makePerRootMeter({ clock, tokens: 1_000_000, wallClockMs: 600_000, aggregateUsd: 2.0 });
+    deps = createMockDeps({
+      provider: "anthropic",
+      model: "claude-sonnet-4-5-20250929",
+      getCurrentModel: () => "claude-sonnet-4-5-20250929",
+      // spendConfig alone (no spendAccumulator/spendScope): the sibling
+      // per-(tenant,agent) ceiling block is skipped, isolating the per-root path;
+      // the per-root block still reads spendConfig.perTurnMax as its estimate.
+      spendConfig: { perAgentUsd: null, perTenantUsd: null, daemonGlobalUsd: null, perTurnMax: 0.5, action: "abort", warnAtFraction: 0.8, pricingFallback: "snapshot", onUnknownPricing: "warn" } as SpendConfig,
+      boundedAutonomyBudget: { current: meter },
+      resolveRootRunId: () => "root-session-cheap",
+    } as Partial<PiEventBridgeDeps>);
+    const { listener, getResult } = createPiEventBridge(deps);
+
+    for (let call = 0; call < 5; call += 1) {
+      listener(makeTurnEndEvent({
+        totalTokens: 1_000,
+        cost: { input: 0.02, output: 0.04, cacheRead: 0, cacheWrite: 0, total: 0.06 },
+      }) as any);
+    }
+
+    // $0.30 of real spend against a $2 cap: the run must NOT be aborted.
+    expect(getResult().finishReason).not.toBe("spend_exceeded");
+    const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+    expect(emit.mock.calls.filter((c) => c[0] === "execution:aborted")).toHaveLength(0);
+  });
+
   it("ADDITIVE: with boundedAutonomyBudget ABSENT the bridge path is byte-identical (no per-root reserve, no abort on a normal priced turn)", () => {
     deps = createMockDeps(); // no boundedAutonomyBudget / resolveRootRunId
     const { listener, getResult } = createPiEventBridge(deps);
