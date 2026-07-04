@@ -5,10 +5,10 @@
  * `isSafeServiceUrl` is the token-exfil gate: a freshly minted Connector bearer
  * must reach ONLY the exact per-cloud Connector host, so a tampered, look-alike,
  * or cross-cloud serviceUrl is rejected before any token mint or fetch. The send
- * retry executor is the send-safety gate: it re-sends only on an EXPLICIT
- * retryable non-2xx (429 → Retry-After, 5xx → capped backoff) and never on a
- * status-less transport fault, which may already have landed — a resend would
- * duplicate the activity.
+ * retry executor is the send-safety gate: it re-sends only on a 429 (rate
+ * limited, so definitively not processed) and never on a 5xx or a status-less
+ * transport fault, either of which may already have landed on the non-idempotent
+ * create — a resend would duplicate the activity.
  *
  * @module
  */
@@ -210,24 +210,24 @@ describe("postConnectorActivityWithRetry — bounded explicit-status retry (ERR-
     expect(spy).toHaveBeenCalledTimes(2);
   });
 
-  it("retries a transient 5xx with capped backoff, then succeeds with three POSTs", async () => {
+  it("does NOT resend a 5xx on the non-idempotent create send — the activity may already have landed", async () => {
     const timer = createFakeTimers();
-    const { fetchImpl, spy } = makeConnectorFetch([
-      { status: 503 },
-      { status: 500 },
-      { status: 200, id: "ok-after-5xx" },
-    ]);
+    const { fetchImpl, spy } = makeConnectorFetch([{ status: 502 }]);
     const pending = postConnectorActivityWithRetry(makeParams({ fetchImpl }), { timer });
-    // Advancing well past the backoff cap fires each scheduled retry.
-    for (let round = 0; round < 3; round++) {
+    // Advance well past any backoff window: a retrying executor WOULD fire resends
+    // in this span, so a POST count above one would prove a duplicate-risk resend.
+    for (let round = 0; round < 6; round++) {
       await flush();
       timer.advance(60_000);
     }
     await flush();
     const result = await pending;
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.value).toBe("ok-after-5xx");
-    expect(spy).toHaveBeenCalledTimes(3);
+    expect(result.ok).toBe(false);
+    // A 502/504 can arrive AFTER create-activity was created (non-idempotent POST,
+    // no client idempotency key; the outward-send ledger dedups per call, not per
+    // HTTP attempt), so a resend would duplicate the message — treat it like the
+    // status-less transport fault and surface it without a retry.
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 
   it("does not retry a 401 auth failure — exactly one POST", async () => {

@@ -243,7 +243,7 @@ function parseRetryAfterSeconds(res: {
 }
 
 // ---------------------------------------------------------------------------
-// Bounded send retry (explicit-status only)
+// Bounded send retry (429-only — a resend must never duplicate a create)
 // ---------------------------------------------------------------------------
 
 /** Retries the send makes on top of the first attempt before surfacing the failure. */
@@ -278,14 +278,19 @@ export interface PostConnectorActivityRetryDeps {
 }
 
 /**
- * Send an activity with a bounded retry that engages ONLY on an EXPLICIT
- * retryable non-2xx status (429 → Retry-After, 5xx → capped exponential backoff).
- * A status-less transport fault is never retried: the fetch may already have
- * landed, so a resend risks a duplicate activity — the send-safety axis is
- * distinct from the classifier's transience axis, which marks a network fault
- * retryable. The backoff always runs on the injected {@link TimerPort}, never a
- * raw timer, and total retries are capped at {@link MAX_RETRIES}. This is the
- * send entry point the adapter drives.
+ * Send an activity with a bounded retry that engages ONLY on a 429 (rate limited,
+ * so the activity was definitively NOT processed): it backs off the capped
+ * Retry-After, or capped exponential backoff when the header is absent. Every
+ * other failure surfaces on the FIRST attempt — a status-less transport fault OR
+ * a 5xx (a gateway-timeout class that can land AFTER the activity was created)
+ * may already have created the activity, and create-activity is non-idempotent
+ * (no client idempotency key; the outward-send ledger dedups per send call, not
+ * per HTTP attempt), so a resend would duplicate the message. The send-safety
+ * axis is deliberately narrower than the classifier's transience axis, which
+ * still marks 5xx/network retryable for a caller that CAN safely retry. The
+ * backoff always runs on the injected {@link TimerPort}, never a raw timer, and
+ * total retries are capped at {@link MAX_RETRIES}. This is the send entry point
+ * the adapter drives.
  */
 export async function postConnectorActivityWithRetry(
   params: PostConnectorActivityParams,
@@ -297,17 +302,19 @@ export async function postConnectorActivityWithRetry(
     if (result.ok) return result;
 
     const status = connectorErrorStatus(result.error);
-    // Send-safety gate: no explicit status ⇒ an ambiguous transport fault ⇒ never resend.
-    if (status === undefined) return result;
-
-    const classified = classifyMsTeamsError(status);
-    if (!classified.retryable || attempt >= MAX_RETRIES || timer === undefined) {
+    // Send-safety gate: create-activity is non-idempotent, so the ONLY status
+    // safe to resend is a 429 — rate limiting rejects it BEFORE the activity is
+    // processed, so it definitively did not land. A status-less transport fault
+    // OR a 5xx (which can arrive AFTER the activity was created) may already have
+    // landed; resending either would duplicate the message, so both surface here.
+    if (status !== 429 || attempt >= MAX_RETRIES || timer === undefined) {
       return result;
     }
 
+    const classified = classifyMsTeamsError(status);
     const retryAfter = connectorErrorRetryAfter(result.error);
     const delayMs =
-      status === 429 && retryAfter !== undefined
+      retryAfter !== undefined
         ? Math.min(retryAfter * 1000, RETRY_AFTER_CAP_MS)
         : Math.min(RETRY_BACKOFF_BASE_MS * 2 ** attempt, RETRY_BACKOFF_CAP_MS);
 
