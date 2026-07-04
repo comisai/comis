@@ -286,7 +286,8 @@ that helps the model reconstruct the approach; it never executes on its own.
 To keep a burst of procedure docs from bloating every prompt, the surfaced procedure-doc subset is
 capped per agent by
 [`learning.reflect.maxProcedureDocsSurfaced`](/agents/memory-config#the-one-learning-reflection-engine)
-(default `10`), oldest-first so the most-corroborated procedures keep their slot. User-intent
+(default `10`): when the cap is exceeded the **most-corroborated** procedure docs (ranked by
+proof count) keep their slot, surfaced in a stable listing order. User-intent
 skill docs and topic docs keep a separate, uncapped path. A procedure doc is outcome-gated and
 **demotes on sustained failing reuse** like every learned doc.
 

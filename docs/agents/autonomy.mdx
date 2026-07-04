@@ -150,7 +150,8 @@ approach proves out across verified successes, the learning layer distils it int
 procedure doc** -- a learned skill that records the run's tool footprint. It surfaces into the
 agent's `<available_skills>` listing like any other learned skill, bounded by a **per-agent
 budget** ([`learning.reflect.maxProcedureDocsSurfaced`](/agents/memory-config#the-one-learning-reflection-engine),
-default `10`) so a burst of procedures can never bloat every prompt. Crucially, surfacing a
+default `10`) that, when exceeded, keeps the **most-corroborated** procedure docs in a stable
+listing order, so a burst of procedures can never bloat every prompt. Crucially, surfacing a
 procedure doc grants **no new capability and no new execution path**: it is guidance the model
 **re-authors** into a fresh `orchestrate` script, run under the **same** capability gate and jail
 as any other run. A learned procedure can never widen the agent's autonomy posture -- the profile

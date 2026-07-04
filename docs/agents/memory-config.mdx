@@ -203,9 +203,9 @@ agents:
 - **Procedure-doc surface budget (`learning.reflect.maxProcedureDocsSurfaced`, default `10`)** —
   a per-agent cap on how many procedure docs surface into one prompt's `<available_skills>`. With
   no ranked top-K at surface time, a burst of procedure docs would otherwise bloat every prompt;
-  the budget caps that subset only (oldest-first, so the most-corroborated procedures keep their
-  slot). User-intent **skill** docs and **topic** docs are **unaffected** — they keep a separate,
-  uncapped path.
+  the budget caps that subset only — when it is exceeded the **most-corroborated** procedure docs
+  (highest proof count) keep their slot, surfaced in a stable listing order. User-intent **skill**
+  docs and **topic** docs are **unaffected** — they keep a separate, uncapped path.
 - **Forgetting (`learning.forget.*`)** — couples a memory's decay to its outcome-attributed
   `failure_count`, so **wrong fades faster than merely old**, and **soft-evicts** a sufficiently
   weak or stale memory: it is marked `evicted_at` (excluded from recall, still resolvable via
