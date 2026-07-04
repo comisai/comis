@@ -143,25 +143,35 @@ export const comis_tools = {
   async ls(args) {
     return invoke("ls", args);
   },
-  mcp: new Proxy(
-    {},
-    {
-      get(_serverTarget, server) {
-        return new Proxy(
-          {},
-          {
-            get(_toolTarget, tool) {
-              return (args) =>
-                callCapSocket("tool.invoke", {
-                  tool: "mcp",
-                  args: { server, tool, args },
-                });
+  mcp: (() => {
+    const isNonToolKey = (k) =>
+      typeof k === "symbol" ||
+      k === "then" ||
+      k === "catch" ||
+      k === "finally" ||
+      k === "toJSON";
+    return new Proxy(
+      {},
+      {
+        get(_serverTarget, server) {
+          if (isNonToolKey(server)) return undefined;
+          return new Proxy(
+            {},
+            {
+              get(_toolTarget, tool) {
+                if (isNonToolKey(tool)) return undefined;
+                return (args) =>
+                  callCapSocket("tool.invoke", {
+                    tool: "mcp",
+                    args: { server, tool, args },
+                  });
+              },
             },
-          },
-        );
+          );
+        },
       },
-    },
-  ),
+    );
+  })(),
   async memory_get(args) {
     return invoke("memory_get", args);
   },

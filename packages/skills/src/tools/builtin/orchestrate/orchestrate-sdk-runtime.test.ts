@@ -17,6 +17,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { callCapSocket, invoke, wrapResultRef } from "./orchestrate-sdk-runtime.js";
+// The GENERATED SDK — exercised here so the shipped proxy bytes (not just the
+// runtime shim) are proven: awaiting/inspecting a partial `mcp` namespace must
+// NOT fire a spurious cap call (LO-01).
+import { comis_tools } from "./comis_tools.js";
 
 /** One received request line, captured by the fake server for assertions. */
 interface CapturedRequest {
@@ -393,6 +397,58 @@ describe("orchestrate-sdk-runtime", () => {
       expect(captured[0].params).toEqual({
         tool: "read",
         args: { path: "results/big.text", offset: 5, limit: 2 },
+      });
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // LO-01 — the `mcp` runtime proxy must NOT be thenable. A common model mistake,
+  // `await comis_tools.mcp.server` (awaiting the namespace instead of calling a
+  // tool), would otherwise access `.then`, resolve it to a callable, and CALL it
+  // — firing a spurious (allowlist-denied) tool:"then" cap dispatch (and, since
+  // the returned thenable never resolves, hanging the await). The proxy drops the
+  // promise-protocol/inspection names + symbol keys on BOTH namespace levels so a
+  // partial-namespace await/inspect is a clean no-op.
+  // -------------------------------------------------------------------------
+  describe("mcp proxy — not thenable (LO-01)", () => {
+    it("returns undefined for then/catch/finally/toJSON + symbol keys on both namespace levels", () => {
+      // Cast to a PropertyKey-indexable view: the ComisTools type models mcp as a
+      // string-keyed record, but the footgun is precisely the special keys.
+      const mcpNs = comis_tools.mcp as unknown as Record<PropertyKey, unknown>;
+      const serverNs = comis_tools.mcp.myserver as unknown as Record<PropertyKey, unknown>;
+      for (const k of ["then", "catch", "finally", "toJSON"]) {
+        expect(mcpNs[k]).toBeUndefined(); // level 1 (server namespace)
+        expect(serverNs[k]).toBeUndefined(); // level 2 (tool namespace)
+      }
+      expect(serverNs[Symbol.iterator]).toBeUndefined();
+      expect(mcpNs[Symbol.iterator]).toBeUndefined();
+    });
+
+    it("awaiting a partial namespace resolves to the namespace and dispatches NO cap call", async () => {
+      const captured: CapturedRequest[] = [];
+      server = await startFakeCapServer(socketPath, () => ({ result: "unexpected" }), captured);
+
+      // `.then` is undefined ⇒ the value is non-thenable ⇒ `await` yields it
+      // unchanged and fires NO cap call (the footgun is gone). A short timeout so
+      // a regression (a thenable that never resolves) fails fast, never hangs.
+      const awaited = await comis_tools.mcp.myserver;
+
+      expect(awaited).toBeDefined();
+      expect(captured).toHaveLength(0);
+    }, 3000);
+
+    it("still dispatches a REAL mcp tool call as one composed tool.invoke {server,tool,args}", async () => {
+      const captured: CapturedRequest[] = [];
+      server = await startFakeCapServer(socketPath, () => ({ result: "hello from mcp" }), captured);
+
+      const out = await comis_tools.mcp.ctx7.search({ q: "comis" });
+
+      expect(out).toBe("hello from mcp");
+      expect(captured).toHaveLength(1);
+      expect(captured[0].method).toBe("tool.invoke");
+      expect(captured[0].params).toEqual({
+        tool: "mcp",
+        args: { server: "ctx7", tool: "search", args: { q: "comis" } },
       });
     });
   });

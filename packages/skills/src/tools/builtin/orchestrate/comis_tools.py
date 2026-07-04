@@ -103,6 +103,12 @@ class _McpNamespace:
         self._server = server
 
     def __getattr__(self, name):
+        # Dunder / special-attribute probes (introspection, copy, pickle, the
+        # format/await protocols) must NOT build a fresh namespace or a bound
+        # call -- raise the normal AttributeError so a partial-namespace probe is
+        # a clean miss (mirrors the JS proxy dropping then/catch/finally, LO-01).
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)
         server = self.__dict__.get("_server")
         if server is None:
             return _McpNamespace(name)

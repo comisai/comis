@@ -360,26 +360,44 @@ export default comis_tools;
  * `comis_tools.mcp.<server>.<tool>(args)` to ONE `callCapSocket("tool.invoke", …)`
  * with the fixed wire literal `"mcp"` — the `{server,tool}` ride inside `args`.
  * Composes only the shim's exported `callCapSocket` (no import beyond the header).
+ *
+ * NOT thenable (LO-01): the `get` trap on BOTH levels returns `undefined` for
+ * symbol keys and the promise-protocol / inspection names (`then`/`catch`/
+ * `finally`/`toJSON`), so a common model mistake — `await comis_tools.mcp.server`
+ * (awaiting a partial namespace instead of calling a tool) — is a clean no-op
+ * rather than a `.then` access that resolves to a callable and fires a spurious
+ * (allowlist-denied) `tool:"then"` cap dispatch. A shared `isNonToolKey`
+ * predicate (an IIFE-scoped local) keeps the guard DRY across the two levels.
  */
-const MCP_PROXY_JS = `  mcp: new Proxy(
-    {},
-    {
-      get(_serverTarget, server) {
-        return new Proxy(
-          {},
-          {
-            get(_toolTarget, tool) {
-              return (args) =>
-                callCapSocket("tool.invoke", {
-                  tool: "mcp",
-                  args: { server, tool, args },
-                });
+const MCP_PROXY_JS = `  mcp: (() => {
+    const isNonToolKey = (k) =>
+      typeof k === "symbol" ||
+      k === "then" ||
+      k === "catch" ||
+      k === "finally" ||
+      k === "toJSON";
+    return new Proxy(
+      {},
+      {
+        get(_serverTarget, server) {
+          if (isNonToolKey(server)) return undefined;
+          return new Proxy(
+            {},
+            {
+              get(_toolTarget, tool) {
+                if (isNonToolKey(tool)) return undefined;
+                return (args) =>
+                  callCapSocket("tool.invoke", {
+                    tool: "mcp",
+                    args: { server, tool, args },
+                  });
+              },
             },
-          },
-        );
+          );
+        },
       },
-    },
-  ),`;
+    );
+  })(),`;
 
 /**
  * Emit the thin `.js` runtime. Each method delegates to the stable
@@ -603,6 +621,12 @@ class _McpNamespace:
         self._server = server
 
     def __getattr__(self, name):
+        # Dunder / special-attribute probes (introspection, copy, pickle, the
+        # format/await protocols) must NOT build a fresh namespace or a bound
+        # call -- raise the normal AttributeError so a partial-namespace probe is
+        # a clean miss (mirrors the JS proxy dropping then/catch/finally, LO-01).
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)
         server = self.__dict__.get("_server")
         if server is None:
             return _McpNamespace(name)
