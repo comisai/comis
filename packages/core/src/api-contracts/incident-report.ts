@@ -463,6 +463,18 @@ export const IncidentReportSchema = z.object({
       reclassified: z.boolean(),
     })
     .optional(),
+  /** Silent-failure recovery attempts folded from the session's
+   *  `execution.recovery_attempted` records — the model re-entries
+   *  (silent_retry / lkw_fallback / continuation_nudge) that were previously
+   *  log-only. `total` attempts, `succeeded` count, and per-reason counts.
+   *  Absent ⇒ no recovery attempts this session. */
+  recoveries: z
+    .object({
+      total: z.number(),
+      succeeded: z.number(),
+      byReason: z.record(z.string(), z.number()),
+    })
+    .optional(),
   /** Reply blocks an aborted execution left UNSENT — the pacer's hard stop
    *  never reaches the delivery service, so no `delivery.dispatched` fires
    *  and the user silently receives nothing. Σ over the session's
@@ -773,6 +785,11 @@ export interface IncidentSignals {
    * chunksDelivered)). Absent ⇒ no aborted deliveries.
    */
   deliveryAborts?: { events: number; chunksNotSent: number };
+  /**
+   * Recovery-attempt fold from `execution.recovery_attempted` records: total +
+   * succeeded tally + per-reason counts. Absent ⇒ no recovery attempts.
+   */
+  recoveries?: { total: number; succeeded: number; byReason: Record<string, number> };
   /**
    * Σ of the session's `session.summary` records' `turnCount` — the
    * trajectory-derived turn total, preferred for `timing.turnCount` over the

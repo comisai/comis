@@ -291,6 +291,9 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // Maps to "execution.replay_recovered" (NOT "execution.signed_replay_recovered")
   // per canonical name.
   "execution:signed_replay_recovered": "execution.replay_recovered",
+  // The silent-failure recovery re-drives (silent_retry / lkw_fallback /
+  // continuation_nudge) — the model re-entry that used to be log-only.
+  "execution:recovery_attempted": "execution.recovery_attempted",
   // GBNF strip-retry self-heal. Payload is already content-free
   // (tool + keyword NAMES only) — translator forwards all 4 data fields.
   "execution:tool_schema_unsupported": "execution.tool_schema_unsupported",

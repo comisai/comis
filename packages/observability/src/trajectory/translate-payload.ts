@@ -510,6 +510,13 @@ export function translatePayload(
         escalatedMaxTokens: payload.escalatedMaxTokens,
       };
 
+        case "execution:recovery_attempted":
+      // Closed recovery reason + a boolean — content-free.
+      return {
+        reason: payload.reason,
+        succeeded: payload.succeeded,
+      };
+
     case "execution:signed_replay_recovered":
       return {
         blocksRemoved: payload.blocksRemoved,

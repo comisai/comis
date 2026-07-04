@@ -8583,6 +8583,32 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           ],
           "additionalProperties": false
         },
+        "recoveries": {
+          "type": "object",
+          "properties": {
+            "total": {
+              "type": "number"
+            },
+            "succeeded": {
+              "type": "number"
+            },
+            "byReason": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "number"
+              }
+            }
+          },
+          "required": [
+            "total",
+            "succeeded",
+            "byReason"
+          ],
+          "additionalProperties": false
+        },
         "deliverySkipped": {
           "type": "object",
           "properties": {

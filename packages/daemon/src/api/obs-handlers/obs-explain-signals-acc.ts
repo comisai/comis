@@ -91,6 +91,9 @@ export interface Acc {
   turnFinalized?: { strategy: string; outcome: string; errorKind?: string; reason?: string; reclassified: boolean };
   /** Σ over `delivery.aborted` records: events + blocks never sent. */
   deliveryAborts?: { events: number; chunksNotSent: number };
+  /** Recovery-attempt fold from `execution.recovery_attempted` records:
+   *  total + succeeded tally + per-reason counts. */
+  recoveries?: { total: number; succeeded: number; byReason: Record<string, number> };
   /** Σ of the session's `session.summary` records' costUsd (one record per
    *  execution) — the trajectory-derived session cost the assembler prefers
    *  over the last-write-wins sessionEnd rollup. Absent ⇒ no summary records. */

@@ -264,7 +264,7 @@ async function detectSilentFailure(
   invokeRetry: InvokeRetry,
   silentRetryAttempted: boolean,
 ): Promise<boolean> {
-  const { session, deps } = params;
+  const { session, agentId, sessionKey, deps } = params;
 
   // Before declaring failure, attempt a single continuation
   // when the model stopped normally but only produced thinking blocks
@@ -283,6 +283,17 @@ async function detectSilentFailure(
     const followUpResult = await fromPromise(
       session.followUp("(continued from previous message)"),
     );
+    const nudgeRecovered = followUpResult.ok && getVisibleAssistantText(session) !== "";
+    // Announce the continuation nudge (a followUp re-drive on a thinking-only
+    // "stop" turn) so `explain` shows the recovery attempt (previously
+    // log-only, and only on the recovered branch).
+    deps.eventBus.emit("execution:recovery_attempted", {
+      agentId: agentId ?? "default",
+      sessionKey: formatSessionKey(sessionKey),
+      reason: "continuation_nudge",
+      succeeded: nudgeRecovered,
+      timestamp: deps.clock.now(),
+    });
     if (followUpResult.ok) {
       const recoveredText = getVisibleAssistantText(session);
       if (recoveredText !== "") {

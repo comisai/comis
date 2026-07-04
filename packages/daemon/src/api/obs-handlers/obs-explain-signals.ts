@@ -372,6 +372,18 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       };
       return;
     }
+    case "execution.recovery_attempted": {
+      // Fold the model re-entry recoveries (silent_retry / lkw_fallback /
+      // continuation_nudge) → counts by reason + a succeeded tally.
+      const reason = asString(data.reason) ?? "unknown";
+      const prev = acc.recoveries ?? { total: 0, succeeded: 0, byReason: {} };
+      prev.total += 1;
+      if (data.succeeded === true) prev.succeeded += 1;
+      // eslint-disable-next-line security/detect-object-injection -- reason is a closed enum from the recovery emitter
+      prev.byReason[reason] = (prev.byReason[reason] ?? 0) + 1;
+      acc.recoveries = prev;
+      return;
+    }
     case "session.summary": {
       // One summary record per EXECUTION, each carrying that execution's own
       // costUsd — Σ them for the session cost. The sessionEnd rollup is
@@ -653,6 +665,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.modelTokens !== undefined ? { modelTokens: acc.modelTokens } : {}),
     ...(acc.turnFinalized !== undefined ? { turnFinalized: acc.turnFinalized } : {}),
     ...(acc.deliveryAborts !== undefined ? { deliveryAborts: acc.deliveryAborts } : {}),
+    ...(acc.recoveries !== undefined ? { recoveries: acc.recoveries } : {}),
     ...(acc.abortReason !== undefined ? { abortReason: acc.abortReason } : {}),
     // Surface the turn span ONLY when >1 — it flags the whole-session toolStats
     // as cumulative across N turns (the trajectory is append-only across severs), so a

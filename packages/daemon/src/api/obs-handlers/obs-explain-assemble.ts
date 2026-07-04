@@ -450,6 +450,9 @@ export function assembleIncidentReport(
     ...(signals.deliveryAborts !== undefined
       ? { deliverySkipped: { events: signals.deliveryAborts.events, chunksNotSent: signals.deliveryAborts.chunksNotSent } }
       : {}),
+    // The silent-failure recovery re-drives (model re-entry) — previously
+    // log-only, so explain could not show a session re-entered the model.
+    ...(signals.recoveries !== undefined ? { recoveries: signals.recoveries } : {}),
     // The turn span (>1 only) — flags the
     // whole-session toolStats as cumulative across N turns (append-only trajectory).
     ...(signals.turnCount !== undefined ? { turnCount: signals.turnCount } : {}),
