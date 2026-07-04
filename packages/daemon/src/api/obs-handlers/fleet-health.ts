@@ -395,7 +395,12 @@ export async function assembleFleetHealthReport(
     sessionCount: fleet.sessionCount,
     degradedCount: degraded,
     ...(topDegradedCause !== undefined ? { topDegradedCause } : {}),
-    healthSignalCount: healthSignals.length,
+    // Count only degraded (warning+) rows: the ingest layer stamps benign
+    // reasons (session_rebase / serialized_wait) severity "info", and counting
+    // them here made a healthy fleet root-cause to "recurring health WARN
+    // signal(s)" off once-per-session-start rebases — the same severity
+    // discipline the findings rollup applies.
+    healthSignalCount: healthSignals.filter((r) => r.severity !== "info").length,
     configPostureCount: configPosture.length,
     topErrorKind: topErrorKinds[0]?.kind,
     // The autonomy verdict keys on the DEGRADED autonomy run count +
