@@ -1951,3 +1951,59 @@ describe("createMsTeamsPlugin — capability parity metadata", () => {
     expect((await plugin.deactivate()).ok).toBe(true);
   });
 });
+
+describe("createMsTeamsAdapter — reconcileSend exactly-once oracle (RECON-01)", () => {
+  const reconcileQuery = (contentDigest: string) => ({
+    channelId: "19:channel-convo@thread.tacv2",
+    contentDigest,
+    sentAfterMs: FIXED_NOW - 60_000,
+    sentBeforeMs: FIXED_NOW,
+  });
+
+  it("exposes reconcileSend as a function on the adapter handle", () => {
+    const { deps } = makeAdapterDeps();
+    const adapter = createMsTeamsAdapter(deps);
+    expect(typeof adapter.reconcileSend).toBe("function");
+  });
+
+  it("resolves an honest unresolved verdict for any query — the Bot Connector has no history read", async () => {
+    const { deps } = makeAdapterDeps();
+    const adapter = createMsTeamsAdapter(deps);
+
+    // The Connector REST API cannot prove a send landed, so the only truthful
+    // verdict is unresolved — never a not_sent the platform can't substantiate.
+    const outcome = await adapter.reconcileSend!(reconcileQuery("digest-abc"));
+
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) expect(outcome.value).toEqual({ kind: "unresolved" });
+  });
+
+  it("never re-sends a committed or unknown_after_send ledger row on a simulated restart (ledger dedup + unresolved parks)", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+
+    // A tiny in-memory model of the outward-send ledger — digest → lifecycle
+    // state. The LEDGER (not reconcileSend) is the exactly-once authority.
+    type LedgerStatus = "committed" | "unknown_after_send";
+    const ledger = new Map<string, LedgerStatus>([
+      ["digest-committed", "committed"],
+      ["digest-unknown", "unknown_after_send"],
+    ]);
+
+    // The restart-recovery pass mirrors the durable-resume engine + ledger
+    // wrap: a committed row short-circuits (dedup — no re-POST); an
+    // unknown_after_send row consults reconcileSend → unresolved → parked,
+    // never replayed. Neither path fires a second Connector send.
+    for (const [digest, status] of ledger) {
+      if (status === "committed") continue; // ledger dedup: no re-send
+      const verdict = await adapter.reconcileSend!(reconcileQuery(digest));
+      expect(verdict.ok).toBe(true);
+      if (verdict.ok) expect(verdict.value.kind).toBe("unresolved");
+      // unresolved → park + escalate; NEVER a replay.
+    }
+
+    // No Connector send POST fired during the whole recovery pass.
+    expect(findSendCall(spy)).toBeUndefined();
+  });
+});
