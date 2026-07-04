@@ -34,9 +34,9 @@
  *
  * @module
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 
-import { safePath, type DurableRunRecord } from "@comis/core";
+import { safePath, type ComisLogger, type DurableRunRecord } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
@@ -160,9 +160,95 @@ export async function markResumable(
   return { skipCleanup: true };
 }
 
+/**
+ * Terminal cleanup for a NON-resumable orchestrate run (success OR a non-timeout
+ * failure): mark the durable row completed — so `listResumable` stops re-surfacing
+ * a finished run and the boot sweep never false-orphans it, mirroring the graph
+ * coordinator / sub-agent runner terminal write — and unlink the pinned
+ * `<runId>.<language>` script at the workspace ROOT (the run-end `cleanupRun` wipes
+ * only `results/`). Only a resumable TIMEOUT keeps the row + script, and it never
+ * calls this. Best-effort: a store/fs failure is logged (never thrown into the
+ * run's terminal path); `markCompleted` absent (a minimal stub) ⇒ that half no-ops.
+ */
+export async function finalizeCompletedRun(
+  runs: OrchestrateDurableRuns | undefined,
+  input: { rootRunId: string; scriptRef: string; workspacePath: string; runId: string },
+  logger?: ComisLogger,
+): Promise<void> {
+  if (runs === undefined) return; // resume surface off — nothing durable to finalize.
+  const done = await runs.markCompleted?.(input.rootRunId);
+  if (done !== undefined && !done.ok) {
+    logger?.warn(
+      { runId: input.runId, rootRunId: input.rootRunId, err: done.error, errorKind: "internal" as const, hint: "the durable row could not be marked completed — the watchdog orphan-sweep eventually reclaims the stale 'running' row (no live impact)" },
+      "orchestrate durable markCompleted failed (non-fatal)",
+    );
+  }
+  try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- safePath-confined to the run workspace; scriptRef is a store-minted <runId>.<language> path
+    unlinkSync(safePath(input.workspacePath, input.scriptRef));
+  } catch (e) {
+    logger?.debug(
+      { runId: input.runId, err: e instanceof Error ? e : undefined, hint: "best-effort unlink of the pinned script failed; a later workspace teardown reclaims it" },
+      "orchestrate pinned-script cleanup failed (non-fatal)",
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // The pinned-byte resume loader.
 // ---------------------------------------------------------------------------
+
+/** A refusal class resolveScriptSource surfaces to the runner (mapped to a tool error). */
+export interface ResumeInputRefusal {
+  /** The tool-error code the runner throws (a subset of the tool-error codes). */
+  readonly code: "not_implemented" | "not_found";
+  readonly message: string;
+  readonly hint: string;
+}
+
+/** The resolved script source the runner spawns (fresh params, or the pinned bytes). */
+export interface ResolvedScriptSource {
+  readonly script: string;
+  readonly language: "ts" | "js" | "py";
+  /** The workspace-relative script path (`<runId>.<language>`, or the pinned scriptRef). */
+  readonly scriptName: string;
+}
+
+/**
+ * Resolve what the runner spawns, applying the fail-CLOSED resume contract:
+ *   - no `resumeRunId` ⇒ the fresh `script`/`language` params;
+ *   - `resumeRunId` with the surface OFF (no store) ⇒ REFUSE `not_implemented`
+ *     (NEVER silently run the caller's `script` — a resume takes no fresh bytes);
+ *   - `resumeRunId` with the surface ON ⇒ load + return the PINNED bytes (the
+ *     `script` param is IGNORED), or REFUSE `not_found` when it can't be loaded.
+ */
+export async function resolveScriptSource(
+  params: { script: string; language: "ts" | "js" | "py"; resumeRunId?: string },
+  runs: OrchestrateDurableRuns | undefined,
+  fs: OrchestrateDurableFs,
+  ctx: { workspacePath: string; runId: string },
+): Promise<Result<ResolvedScriptSource, ResumeInputRefusal>> {
+  const scriptName = `${ctx.runId}.${params.language}`;
+  if (params.resumeRunId === undefined) {
+    return ok({ script: params.script, language: params.language, scriptName });
+  }
+  if (runs === undefined) {
+    return err({
+      code: "not_implemented",
+      message:
+        "Resume requires the durable-resume surface (autonomy.durability.orchestrateResume), which is not enabled for this agent.",
+      hint: "Enable orchestrateResume for this agent, or omit resumeRunId to run a fresh script.",
+    });
+  }
+  const loaded = await loadResumeSpec(runs, fs, {
+    resumeRunId: params.resumeRunId,
+    workspacePath: ctx.workspacePath,
+  });
+  if (!loaded.ok) {
+    return err({ code: "not_found", message: "The orchestrate run to resume could not be loaded.", hint: loaded.error });
+  }
+  return ok({ script: loaded.value.scriptBytes, language: loaded.value.language, scriptName: loaded.value.scriptRef });
+}
 
 /**
  * Load the pinned re-spawn spec for a resume: read the durable row, resolve the

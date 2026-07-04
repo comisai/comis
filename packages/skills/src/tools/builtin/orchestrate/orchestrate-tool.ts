@@ -43,7 +43,7 @@
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 
@@ -93,9 +93,10 @@ import type {
   OrchestrateSpawnedChild,
 } from "./orchestrate-repair.js";
 import {
-  loadResumeSpec,
+  finalizeCompletedRun,
   markResumable,
   registerDurableRun,
+  resolveScriptSource,
   defaultOrchestrateDurableFs,
 } from "./orchestrate-durable.js";
 import type { OrchestrateDurableRuns } from "./orchestrate-durable.js";
@@ -476,36 +477,16 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
       const durableKey = deps.rootRunId ?? runId;
       let skipCleanup = false;
 
-      // A resume request is fail-CLOSED: when the durable-resume surface is off for
-      // this agent (no durableRuns seam / older wiring) a resumeRunId must be
-      // REFUSED, never silently fall through to spawning the caller-supplied `script`
-      // bytes. A resume NEVER accepts fresh bytes (the pinned bytes are the sole
-      // source), so a resume request with no store to load them from is unsatisfiable
-      // — refusing is honest, running the param bytes is a surprising fail-open.
-      if (params.resumeRunId !== undefined && deps.durableRuns === undefined) {
-        throwToolError(
-          "not_implemented",
-          "Resume requires the durable-resume surface (autonomy.durability.orchestrateResume), which is not enabled for this agent.",
-          { hint: "Enable orchestrateResume for this agent, or omit resumeRunId to run a fresh script." },
-        );
+      // Resolve the script source (fresh params, or PINNED bytes on a resume).
+      // Fail-CLOSED: a resumeRunId with the surface off is REFUSED, not run as `script`.
+      const resolved = await resolveScriptSource(params, deps.durableRuns, defaultOrchestrateDurableFs, {
+        workspacePath,
+        runId,
+      });
+      if (!resolved.ok) {
+        throwToolError(resolved.error.code, resolved.error.message, { hint: resolved.error.hint });
       }
-
-      // A resume loads the PINNED bytes (the `script` param is IGNORED); else params.
-      let script = params.script;
-      let language = params.language;
-      let scriptName = `${runId}.${params.language}`;
-      if (params.resumeRunId !== undefined && deps.durableRuns !== undefined) {
-        const loaded = await loadResumeSpec(deps.durableRuns, defaultOrchestrateDurableFs, {
-          resumeRunId: params.resumeRunId,
-          workspacePath,
-        });
-        if (!loaded.ok) {
-          throwToolError("not_found", "The orchestrate run to resume could not be loaded.", { hint: loaded.error });
-        }
-        script = loaded.value.scriptBytes;
-        language = loaded.value.language;
-        scriptName = loaded.value.scriptRef;
-      }
+      const { script, language, scriptName } = resolved.value;
 
       // Static pre-flight, run BEFORE any resource is acquired — no seccomp fd
       // opened, no run_summary emitted, no child spawned on a rejection (it precedes
@@ -902,40 +883,13 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         // the checkpoint lives). gcRun stays — the checkpoint's longer TTL spares it.
         if (!skipCleanup) {
           await deps.store.cleanupRun({ workspacePath, runId });
-          // A NON-resumable terminal run (success OR a non-timeout failure — a
-          // timeout set skipCleanup above) must not leak its durable row or pinned
-          // script. Mark the row terminal so listResumable stops re-surfacing a
-          // finished run on every boot and the orphan sweep never false-orphans it
-          // (mirrors the graph coordinator / sub-agent runner terminal write), then
-          // unlink the pinned <runId>.<language> script at the workspace ROOT
-          // (cleanupRun wipes only results/). Both are kept ONLY for a resumable timeout.
-          if (deps.durableRuns !== undefined) {
-            const done = await deps.durableRuns.markCompleted?.(durableKey);
-            if (done !== undefined && !done.ok) {
-              log.warn(
-                {
-                  runId,
-                  rootRunId: durableKey,
-                  err: done.error,
-                  errorKind: "internal" as const,
-                  hint: "the durable row could not be marked completed — the watchdog orphan-sweep eventually reclaims the stale 'running' row (no live impact)",
-                },
-                "orchestrate durable markCompleted failed (non-fatal)",
-              );
-            }
-            try {
-              unlinkSync(safePath(workspacePath, scriptName));
-            } catch (unlinkErr) {
-              log.debug(
-                {
-                  runId,
-                  err: unlinkErr instanceof Error ? unlinkErr : undefined,
-                  hint: "best-effort unlink of the pinned script failed; a later workspace teardown reclaims it",
-                },
-                "orchestrate pinned-script cleanup failed (non-fatal)",
-              );
-            }
-          }
+          // A NON-resumable terminal run must not leak its durable row/pinned script
+          // (only a resumable timeout keeps them; a no-op when the surface is off).
+          await finalizeCompletedRun(
+            deps.durableRuns,
+            { rootRunId: durableKey, scriptRef: scriptName, workspacePath, runId },
+            log,
+          );
         }
       }
     },
