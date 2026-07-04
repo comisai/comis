@@ -189,3 +189,13 @@ export { assembleFleetHealthReport } from "./api/obs-handlers/fleet-health.js";
 // a package cycle), so the cross-check lives in the architecture-suite arch-test.
 // Consumer: test/architecture/comis-agent-same-gate.test.ts + comis-agent-no-admin.test.ts
 export { DENYLISTED_RPC_METHODS } from "./wiring/setup-capability-endpoint.js";
+
+// CAPABILITY_ACTION_CLASS (RE-PROVE seam) — the closed capability→action-class
+// map (`read`|`mutate`) the durable audit trail's `classification` reads. Typed
+// `Record<AgentCapability,…>`, so a new cap-union member is a compile-visible gap
+// at its definition. Re-exported from the top-level barrel so the
+// tool-invoke-cap-map arch-test PINS a cap's classification against the SAME
+// runtime map the emitter uses (no drifting hand-copied literal). Pure additive
+// `export` — the emitter behavior is unchanged. Consumer:
+// test/architecture/tool-invoke-cap-map.test.ts
+export { CAPABILITY_ACTION_CLASS } from "./api/shared/emit-capability-audit.js";

@@ -93,11 +93,14 @@ export interface CapabilityAuditRecord {
  * miss. There is no `"destructive"` entry: the allow path attributes read/mutate;
  * a DENY is the only `"destructive"` emitter (a denied call is the signal).
  */
-const CAPABILITY_ACTION_CLASS: Record<AgentCapability, "read" | "mutate"> = {
+export const CAPABILITY_ACTION_CLASS: Record<AgentCapability, "read" | "mutate"> = {
   "orch:read": "read",
   "orch:web": "read",
   "orch:analyze": "read",
   "orch:browse": "read",
+  // MCP calls observe the connected server — a read-class action. (A deny is
+  // always emitted as `destructive`, so this class is the ALLOW-path attribution.)
+  "orch:mcp": "read",
   "orch:write": "mutate",
   "orch:message": "mutate",
   "orch:spawn": "mutate",

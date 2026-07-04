@@ -57,6 +57,9 @@ export const AGENT_CAPABILITIES = [
   "orch:analyze",
   "orch:write",
   "orch:browse",
+  // MCP-in-jail inbound surface — a daemon-side executor route (the jail stays
+  // network-closed); default-off (granted only via the `mcp` toggle, no floor).
+  "orch:mcp",
 ] as const;
 
 /** The closed orchestration-capability union (inferred from {@link AGENT_CAPABILITIES}). */
