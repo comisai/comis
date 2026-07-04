@@ -476,6 +476,20 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
       const durableKey = deps.rootRunId ?? runId;
       let skipCleanup = false;
 
+      // A resume request is fail-CLOSED: when the durable-resume surface is off for
+      // this agent (no durableRuns seam / older wiring) a resumeRunId must be
+      // REFUSED, never silently fall through to spawning the caller-supplied `script`
+      // bytes. A resume NEVER accepts fresh bytes (the pinned bytes are the sole
+      // source), so a resume request with no store to load them from is unsatisfiable
+      // — refusing is honest, running the param bytes is a surprising fail-open.
+      if (params.resumeRunId !== undefined && deps.durableRuns === undefined) {
+        throwToolError(
+          "not_implemented",
+          "Resume requires the durable-resume surface (autonomy.durability.orchestrateResume), which is not enabled for this agent.",
+          { hint: "Enable orchestrateResume for this agent, or omit resumeRunId to run a fresh script." },
+        );
+      }
+
       // A resume loads the PINNED bytes (the `script` param is IGNORED); else params.
       let script = params.script;
       let language = params.language;

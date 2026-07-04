@@ -1475,6 +1475,29 @@ describe("orchestrate-tool", () => {
       expect(writtenScript).not.toContain("DIFFERENT-PARAM-BYTES");
       expect(durableRuns.getByRootRun).toHaveBeenCalledWith("root-resume");
     });
+
+    it("REFUSES a resumeRunId when the durable-resume surface is OFF (fail-closed, never the caller's script)", async () => {
+      // With no durableRuns seam (surface off / older wiring) a resumeRunId must be
+      // REFUSED, never silently fall through to spawning the caller-supplied `script`
+      // bytes — a resume never accepts fresh bytes, even when the surface is off.
+      let spawned = false;
+      const spawnFn: OrchestrateSpawnFn = () => {
+        spawned = true;
+        return makeFakeChild("SHOULD-NOT-RUN\n");
+      };
+      const { deps } = makeDeps({ spawnFn }); // NO durableRuns
+      const tool = createOrchestrateTool(deps);
+
+      await expect(
+        tool.execute("c", {
+          script: "console.log('caller-supplied bytes')",
+          language: "ts",
+          resumeRunId: "root-x",
+        }),
+      ).rejects.toThrow(/resume/i);
+      // Fail-closed: the caller's script was NEVER executed.
+      expect(spawned).toBe(false);
+    });
   });
 
   // Diagnosability: if a failing orchestrate script surfaced ONLY "jailed child
