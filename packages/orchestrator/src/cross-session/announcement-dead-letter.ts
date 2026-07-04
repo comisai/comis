@@ -34,7 +34,7 @@ export interface AnnouncementLogger {
 // ---------------------------------------------------------------------------
 
 /**
- * Canonical 9-channel set covering production platform adapters. Used as the
+ * Canonical 10-channel set covering production platform adapters. Used as the
  * closed-union discriminator for sendToChannel(type, ...) instead of an open
  * `string`. Local definition (no @comis/core export currently aggregates the
  * platform-adapter channel types — the rest of the codebase carries this
@@ -51,6 +51,7 @@ export type ChannelType =
   | "irc"
   | "line"
   | "email"
+  | "msteams"
   | "echo";
 
 /** A single dead-letter queue entry representing a failed announcement. */
