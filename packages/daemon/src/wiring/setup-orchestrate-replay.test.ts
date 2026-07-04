@@ -27,6 +27,7 @@ import { OrchestrateReplayContract } from "@comis/core";
 import {
   runOrchestrateReplaySession,
   buildReplayChildEnv,
+  resolveReplaySocketPathIn,
   type OrchestrateReplaySessionDeps,
   type OrchestrateReplayRespawnInput,
 } from "./setup-orchestrate-replay.js";
@@ -141,6 +142,27 @@ describe("buildReplayChildEnv — COMIS_ORCH_SOCKET points at the replay socket 
     expect(env.COMIS_ORCH_SOCKET).toBe(SOCKET_PATH);
     expect(env.COMIS_CAP_LEASE).toBe(BEARER);
     expect(env.COMIS_ORCH_SOCKET).not.toContain("PRODUCTION");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveReplaySocketPathIn — bound under the unix sun_path limit (LR-02)
+// ---------------------------------------------------------------------------
+
+describe("resolveReplaySocketPathIn — stays under the unix sun_path limit", () => {
+  it("keeps the socket path under ~104 bytes even under a long TMPDIR (a long macOS /var/folders/... base)", () => {
+    // On macOS tmpdir() is a long /var/folders/xx/…/T path that, combined with the
+    // basename, can exceed the ~104-byte sun_path limit → listen() fails ENAMETOOLONG.
+    const longTmp = "/var/folders/" + "a".repeat(140) + "/T";
+    const p = resolveReplaySocketPathIn(longTmp, "root-abc");
+    expect(Buffer.byteLength(p, "utf8")).toBeLessThanOrEqual(104);
+    expect(p.endsWith(".sock")).toBe(true);
+  });
+
+  it("uses the provided temp-dir base as-is when the full path is short enough", () => {
+    const p = resolveReplaySocketPathIn("/tmp", "root-abc");
+    expect(p.startsWith("/tmp/comis-rpl-")).toBe(true);
+    expect(p.endsWith(".sock")).toBe(true);
   });
 });
 

@@ -143,12 +143,41 @@ export function defaultMintReplayBearer(): string {
 }
 
 /**
- * A fresh per-replay socket path under the OS temp dir. The name is kept short
- * (a random hex, no runId embed) so the full path stays under the platform unix-
- * socket path limit (~104 bytes on macOS); the socket chmod-0600s on bind.
+ * A fresh per-replay socket path under the OS temp dir. Delegates to
+ * {@link resolveReplaySocketPathIn} with the process temp dir so the bound is
+ * deterministically unit-testable with an injected base.
  */
-export function defaultResolveReplaySocketPath(_rootRunId: string): string {
-  return join(tmpdir(), `comis-rpl-${randomBytes(8).toString("hex")}.sock`);
+export function defaultResolveReplaySocketPath(rootRunId: string): string {
+  return resolveReplaySocketPathIn(tmpdir(), rootRunId);
+}
+
+/**
+ * Conservative bound on the full unix socket path: the `sun_path` limit is ~104
+ * bytes on macOS (~108 on Linux); staying under 100 leaves headroom so `listen()`
+ * never fails ENAMETOOLONG.
+ */
+const UNIX_SOCKET_PATH_MAX_BYTES = 100;
+
+/**
+ * The short, always-present fallback base used when the OS temp dir would push the
+ * full socket path past the `sun_path` limit (a long macOS `/var/folders/...` TMPDIR).
+ */
+const SHORT_SOCKET_FALLBACK_DIR = "/tmp";
+
+/**
+ * Resolve a fresh 0600 replay socket path under `baseTmpDir`. The basename is a
+ * short random hex (no runId embed); the socket chmod-0600s on bind. Only the
+ * basename is bounded by construction — a long `baseTmpDir` (macOS `tmpdir()` is a
+ * long `/var/folders/xx/…/T` path) can still push the FULL path past the unix
+ * `sun_path` limit, so when the preferred path would overflow, fall back to the
+ * short, always-present `/tmp` base. Exported + base-injected so the length bound
+ * is deterministically testable without touching the process env.
+ */
+export function resolveReplaySocketPathIn(baseTmpDir: string, _rootRunId: string): string {
+  const name = `comis-rpl-${randomBytes(8).toString("hex")}.sock`;
+  const preferred = join(baseTmpDir, name);
+  if (Buffer.byteLength(preferred, "utf8") <= UNIX_SOCKET_PATH_MAX_BYTES) return preferred;
+  return join(SHORT_SOCKET_FALLBACK_DIR, name);
 }
 
 // ---------------------------------------------------------------------------
