@@ -3,10 +3,12 @@
  * Microsoft Teams Credential Validator: fail-fast guard that the bot
  * credentials required to authenticate the adapter are present.
  *
- * Synchronous, transport-free, and secret-safe — it verifies appId,
- * appPassword and tenantId are non-empty and names any missing field in the
- * error, never the secret value itself. Live token-mint reachability is a
- * separate operational probe and is intentionally out of scope here.
+ * Synchronous, transport-free, and secret-safe — it verifies appId and tenantId
+ * are non-empty plus the per-mode credential the configured authMode requires
+ * (secret → appPassword, certificate → certPath, managedIdentity →
+ * managedIdentityClientId), naming any missing field in the error, never the
+ * secret value itself. Live token-mint reachability is a separate operational
+ * probe and is intentionally out of scope here.
  *
  * @module
  */
@@ -41,12 +43,18 @@ function isBlank(value: string | undefined): boolean {
 }
 
 /**
- * Verify the Microsoft Teams bot credentials are all present.
+ * Verify the Microsoft Teams bot credentials required for the configured mode
+ * are present. appId + tenantId are always required; the third credential is
+ * authMode-branched (secret → appPassword, certificate → certPath,
+ * managedIdentity → managedIdentityClientId).
  *
+ * @param opts.authMode - Credential mode (default "secret")
  * @param opts.appId - Bot application (client) id
- * @param opts.appPassword - Bot application secret (never named by value)
+ * @param opts.appPassword - Bot application secret (never named by value; secret mode)
  * @param opts.tenantId - Single-tenant directory id
- * @returns ok when all three are non-empty; err naming the first missing field
+ * @param opts.certPath - Certificate path (certificate mode)
+ * @param opts.managedIdentityClientId - Managed-identity client id (managed-identity mode)
+ * @returns ok when all required fields are non-empty; err naming the first missing field
  */
 export function validateMsTeamsCredentials(
   opts: MsTeamsValidateOpts,
@@ -54,11 +62,26 @@ export function validateMsTeamsCredentials(
   if (isBlank(opts.appId)) {
     return err(new Error("Teams credentials invalid: appId must not be empty"));
   }
-  if (isBlank(opts.appPassword)) {
-    return err(new Error("Teams credentials invalid: appPassword must not be empty"));
-  }
   if (isBlank(opts.tenantId)) {
     return err(new Error("Teams credentials invalid: tenantId must not be empty"));
+  }
+  const authMode = opts.authMode ?? "secret";
+  if (authMode === "certificate") {
+    if (isBlank(opts.certPath)) {
+      return err(
+        new Error("Teams credentials invalid: certPath must not be empty in certificate mode"),
+      );
+    }
+  } else if (authMode === "managedIdentity") {
+    if (isBlank(opts.managedIdentityClientId)) {
+      return err(
+        new Error(
+          "Teams credentials invalid: managedIdentityClientId must not be empty in managed-identity mode",
+        ),
+      );
+    }
+  } else if (isBlank(opts.appPassword)) {
+    return err(new Error("Teams credentials invalid: appPassword must not be empty"));
   }
   return ok(undefined);
 }

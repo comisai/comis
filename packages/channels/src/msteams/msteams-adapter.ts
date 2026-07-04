@@ -58,7 +58,7 @@ import {
   postConnectorActivity,
 } from "./msteams-connector.js";
 import {
-  createConnectorTokenProvider,
+  createConnectorTokenProviderFor,
   type ConnectorAuthMode,
 } from "./msteams-auth.js";
 import { normalizeCardAction } from "./msteams-actions.js";
@@ -170,12 +170,22 @@ export function createMsTeamsAdapter(
   deps: MsTeamsAdapterDeps,
 ): MsTeamsAdapterHandle {
   const now = deps.now ?? systemNowMs;
+  // The configured credential mode; secret unless the composition root set it.
+  const authMode = deps.authMode ?? "secret";
 
-  // Cached client-credentials token provider for the outbound Connector send.
-  const tokens = createConnectorTokenProvider({
+  // Cached token provider for the outbound Connector send, minted from the
+  // configured credential — secret (appPassword), certificate (a signed
+  // client-assertion from certPath), or managed identity (the local identity
+  // endpoint). All three share one cache/skew/tenant-guard scaffold; the cert
+  // key, assertion, and every minted token stay out of every log field (T-5).
+  const tokens = createConnectorTokenProviderFor(authMode, {
     appId: deps.appId,
     appPassword: deps.appPassword,
     tenantId: deps.tenantId,
+    certPath: deps.certPath,
+    managedIdentityClientId: deps.managedIdentityClientId,
+    env: deps.env,
+    readFileImpl: deps.certReadFileImpl,
     logger: deps.logger,
     fetchImpl: deps.fetchImpl,
     now: deps.now,
@@ -656,20 +666,36 @@ export function createMsTeamsAdapter(
 
     async start(): Promise<Result<void, Error>> {
       // Route-driven: the gateway mounts the inbound route externally. The only
-      // start-time work is a credential pre-flight; no connection is opened.
+      // start-time work is a credential pre-flight; no connection is opened. The
+      // required per-mode credential is authMode-branched — appId + tenantId are
+      // always required, plus appPassword (secret) / certPath (certificate) /
+      // managedIdentityClientId (managedIdentity). A cert/MI config carries no
+      // appPassword, so gating on it would silently refuse to start.
+      const perModeCredential =
+        authMode === "certificate"
+          ? deps.certPath
+          : authMode === "managedIdentity"
+            ? deps.managedIdentityClientId
+            : deps.appPassword;
       if (
         !deps.appId.trim() ||
-        !deps.appPassword.trim() ||
-        !deps.tenantId.trim()
+        !deps.tenantId.trim() ||
+        !(perModeCredential ?? "").trim()
       ) {
         const credErr = new Error(
-          "Teams app credentials (appId, appPassword, tenantId) must not be empty",
+          "Teams app credentials (appId, tenantId, and the authMode credential) must not be empty",
         );
+        const credHint =
+          authMode === "certificate"
+            ? "Set msteams.certPath (certificate mode) and msteams.appId/tenantId"
+            : authMode === "managedIdentity"
+              ? "Set msteams.managedIdentityClientId (managed-identity mode) and msteams.appId/tenantId"
+              : "Set MSTEAMS_APP_PASSWORD (secret mode) and msteams.appId/tenantId";
         deps.logger.error(
           {
             channelType: "msteams" as const,
             err: credErr,
-            hint: "Set MSTEAMS_APP_PASSWORD and msteams.appId/tenantId",
+            hint: credHint,
             errorKind: "auth" as const,
           },
           "Adapter start failed",
