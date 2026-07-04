@@ -2337,6 +2337,29 @@ describe("queue + execution + sender bridge", () => {
     expect(data.timestamp).toBeUndefined();
   });
 
+  it("execution_aborted forwards the perRootBudget limb payload onto the record (the explain spend-verdict's input)", () => {
+    // The spend verdict names autonomy.budget.<limb> ONLY when the terminal
+    // execution.aborted record carries perRootBudget — a dropped payload here
+    // silently degrades the verdict to the observability.spend.* misdirection
+    // (the wired-but-untested emit class that has gone obs-dark before).
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("execution:aborted", {
+      sessionKey: "t1:u1:c1" as any,
+      reason: "spend_exceeded",
+      agentId: "agent-1",
+      timestamp: Date.now(),
+      perRootBudget: { limb: "aggregateUsd", spent: 2.04, cap: 2, unit: "usd" },
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.reason).toBe("spend_exceeded");
+    expect(data.perRootBudget).toEqual({ limb: "aggregateUsd", spent: 2.04, cap: 2, unit: "usd" });
+  });
+
   it("execution_budget_warning_maps_to_execution.budget_warning with totalTokens/llmCallCount/projectedCallsLeft; sessionKey/agentId stripped", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
