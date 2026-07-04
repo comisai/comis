@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { AppContainer, ChannelPort, MsTeamsConversationStorePort, TimerPort } from "@comis/core";
+import type { AppContainer, ChannelPort, EnvPort, MsTeamsConversationStorePort, TimerPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 
 // ---------------------------------------------------------------------------
@@ -113,7 +113,7 @@ function makeChannelConfig(overrides: Record<string, any> = {}) {
     imessage: { enabled: false, binaryPath: "/usr/local/bin/imsg", account: "", ...overrides.imessage },
     irc: { enabled: false, host: undefined, port: 6667, nick: undefined, tls: false, channels: [], nickservPassword: undefined, ...overrides.irc },
     email: { enabled: false, address: undefined, imapHost: undefined, imapPort: 993, smtpHost: undefined, smtpPort: 587, secure: true, authType: "password", allowFrom: [], allowMode: "allowlist", pollingIntervalMs: 60_000, ...overrides.email },
-    msteams: { enabled: false, appId: undefined, appPassword: undefined, tenantId: undefined, allowFrom: [], allowMode: "allowlist", ...overrides.msteams },
+    msteams: { enabled: false, authMode: "secret", appId: undefined, appPassword: undefined, tenantId: undefined, certPath: undefined, managedIdentityClientId: undefined, cloud: "public", allowFrom: [], allowMode: "allowlist", ...overrides.msteams },
   };
 }
 
@@ -637,5 +637,87 @@ describe("bootstrapAdapters", () => {
     expect(result.msTeamsIngress).toBeUndefined();
     expect(createMsTeamsPlugin).not.toHaveBeenCalled();
     expect(createMsTeamsIngress).not.toHaveBeenCalled();
+  });
+
+  // Enterprise auth: the appPassword-only gate is relaxed per authMode so a
+  // certificate / managed-identity config (which carries no appPassword) registers.
+  it("registers a certificate-mode Teams adapter with no appPassword (the appPassword gate is relaxed)", async () => {
+    const container = makeContainer({
+      msteams: {
+        enabled: true,
+        authMode: "certificate",
+        appId: "app-123",
+        tenantId: "tenant-abc",
+        certPath: "/etc/comis/teams.pem",
+      },
+    });
+    const result = await bootstrapAdapters({ container, channelsLogger });
+
+    expect(createMsTeamsPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authMode: "certificate",
+        certPath: "/etc/comis/teams.pem",
+        appId: "app-123",
+        tenantId: "tenant-abc",
+      }),
+    );
+    expect(result.adaptersByType.get("msteams")).toBe(mockMsTeamsAdapter);
+    expect(result.msTeamsIngress).toBe(mockMsTeamsIngress);
+  });
+
+  it("registers a managed-identity Teams adapter and threads the live env accessor into the plugin", async () => {
+    // The composition root's EnvPort must reach the plugin (for the MI App-Service
+    // endpoint + rotating header, read live per mint) — the SAME injected object,
+    // not a snapshot.
+    const env = { get: vi.fn(() => undefined) } as unknown as EnvPort;
+    const container = makeContainer({
+      msteams: {
+        enabled: true,
+        authMode: "managedIdentity",
+        appId: "app-123",
+        tenantId: "tenant-abc",
+        managedIdentityClientId: "mi-client-id",
+      },
+    });
+    const result = await bootstrapAdapters({ container, channelsLogger, env });
+
+    expect(createMsTeamsPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authMode: "managedIdentity",
+        managedIdentityClientId: "mi-client-id",
+        env,
+      }),
+    );
+    expect(result.adaptersByType.get("msteams")).toBe(mockMsTeamsAdapter);
+  });
+
+  it("warns with a certificate-mode hint and does not register when certPath is missing", async () => {
+    const container = makeContainer({
+      msteams: { enabled: true, authMode: "certificate", appId: "app-123", tenantId: "tenant-abc" },
+      // certPath missing → the per-mode credential precondition fails
+    });
+    const result = await bootstrapAdapters({ container, channelsLogger });
+
+    expect(result.adaptersByType.has("msteams")).toBe(false);
+    expect(createMsTeamsPlugin).not.toHaveBeenCalled();
+    expect(channelsLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "auth", hint: expect.stringContaining("certPath") }),
+      expect.stringContaining("Teams credential validation failed"),
+    );
+  });
+
+  it("secret mode with no appPassword still warns and does not register (unchanged)", async () => {
+    vi.mocked(validateMsTeamsCredentials).mockReturnValueOnce({ ok: false, error: new Error("appPassword must not be empty") } as any);
+    const container = makeContainer({
+      msteams: { enabled: true, authMode: "secret", appId: "app-123", tenantId: "tenant-abc" },
+    });
+    const result = await bootstrapAdapters({ container, channelsLogger });
+
+    expect(result.adaptersByType.has("msteams")).toBe(false);
+    expect(createMsTeamsPlugin).not.toHaveBeenCalled();
+    expect(channelsLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "auth" }),
+      expect.stringContaining("Teams credential validation failed"),
+    );
   });
 });

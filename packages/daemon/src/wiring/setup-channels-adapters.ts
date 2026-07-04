@@ -8,7 +8,7 @@
  * @module
  */
 
-import type { AppContainer, ChannelPort, ChannelPluginPort, MsTeamsConversationStorePort, TimerPort } from "@comis/core";
+import type { AppContainer, ChannelPort, ChannelPluginPort, EnvPort, MsTeamsConversationStorePort, TimerPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import {
   createTelegramPlugin,
@@ -92,6 +92,11 @@ export async function bootstrapAdapters(deps: {
   /** Daemon TimerPort, injected into the Teams plugin for its typing keepalive.
    *  Optional: absent → the keepalive degrades to a no-op (never a raw setTimeout). */
   timer?: TimerPort;
+  /** Live composition-root EnvPort, threaded into the Teams plugin for the
+   *  managed-identity App-Service endpoint + rotating header (read live per mint).
+   *  Optional: absent → managed-identity mint falls to IMDS (VM/AKS), which needs
+   *  no env. */
+  env?: EnvPort;
 }): Promise<AdapterBootstrapResult> {
   const { container, channelsLogger, msTeamsConversationStore, timer } = deps;
   const channelConfig = container.config.channels;
