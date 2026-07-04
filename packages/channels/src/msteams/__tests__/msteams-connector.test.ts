@@ -99,9 +99,9 @@ function makeParams(
  */
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
-// --- SEC-01: cloud-boundary serviceUrl validation --------------------------
+// --- Cloud-boundary serviceUrl validation ----------------------------------
 
-describe("isSafeServiceUrl — cloud-boundary host validation (SEC-01)", () => {
+describe("isSafeServiceUrl — cloud-boundary host validation", () => {
   it("accepts the exact Public Connector host over https", () => {
     expect(isSafeServiceUrl("https://smba.trafficmanager.net/amer/", "public")).toBe(
       true,
@@ -141,9 +141,9 @@ describe("isSafeServiceUrl — cloud-boundary host validation (SEC-01)", () => {
   });
 });
 
-// --- SEC-01/T-8: reject-before-mint on the send path -----------------------
+// --- T-8: reject-before-mint on the send path ------------------------------
 
-describe("postConnectorActivity — reject-before-mint gate (SEC-01/T-8)", () => {
+describe("postConnectorActivity — reject-before-mint gate (T-8)", () => {
   it("rejects a cross-origin serviceUrl before minting the token or fetching", async () => {
     const { fetchImpl, spy } = makeConnectorFetch([{ status: 200 }]);
     const tokens = makeTokens();
@@ -166,9 +166,9 @@ describe("postConnectorActivity — reject-before-mint gate (SEC-01/T-8)", () =>
   });
 });
 
-// --- ERR-01: bounded, explicit-status-only send retry ----------------------
+// --- Bounded 429-only send retry -------------------------------------------
 
-describe("postConnectorActivityWithRetry — bounded explicit-status retry (ERR-01)", () => {
+describe("postConnectorActivityWithRetry — bounded 429-only send retry", () => {
   it("retries a 429 once after exactly the Retry-After delay, then succeeds with two POSTs", async () => {
     const timer = createFakeTimers();
     const { fetchImpl, spy } = makeConnectorFetch([

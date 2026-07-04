@@ -1957,7 +1957,7 @@ describe("createMsTeamsPlugin — capability parity metadata", () => {
   });
 });
 
-describe("createMsTeamsAdapter — reconcileSend exactly-once oracle (RECON-01)", () => {
+describe("createMsTeamsAdapter — reconcileSend exactly-once oracle", () => {
   const reconcileQuery = (contentDigest: string) => ({
     channelId: "19:channel-convo@thread.tacv2",
     contentDigest,
@@ -2075,7 +2075,7 @@ describe("createMsTeamsAdapter — inbound-only lastInboundAt liveness signal (T
 });
 
 // ---------------------------------------------------------------------------
-// Enterprise auth modes (AUTH-02 certificate / AUTH-03 managed-identity)
+// Enterprise auth modes (certificate / managed-identity)
 // ---------------------------------------------------------------------------
 
 /**
@@ -2276,7 +2276,7 @@ describe("createMsTeamsAdapter — enterprise auth modes (cert / managed-identit
 // Adapter-side cloud threading to every serviceUrl callsite + bounded send retry
 // ---------------------------------------------------------------------------
 
-describe("createMsTeamsAdapter — configured cloud threaded to every serviceUrl callsite (SEC-01)", () => {
+describe("createMsTeamsAdapter — configured cloud threaded to every serviceUrl callsite", () => {
   const chinaRef: ConversationReference = {
     conversationId: "19:cn-convo",
     serviceUrl: "https://botframework.azure.cn/teams/",
@@ -2348,7 +2348,7 @@ describe("createMsTeamsAdapter — configured cloud threaded to every serviceUrl
   });
 });
 
-describe("createMsTeamsAdapter — bounded send retry via postConnectorActivityWithRetry (ERR-01)", () => {
+describe("createMsTeamsAdapter — bounded send retry via postConnectorActivityWithRetry", () => {
   /** Resolve after the current macrotask queue drains (lets the awaited backoff schedule). */
   const drain = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
