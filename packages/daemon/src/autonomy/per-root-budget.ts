@@ -229,7 +229,28 @@ export function createPerRootBudget(deps: {
       );
       // checkSpendCeiling returns ok(...) on every branch (the breach is an
       // `exceeded` outcome, not an err); the Result err arm is defensive.
-      return r.ok ? r.value : { kind: "exceeded", error: r.error };
+      const outcome: SpendGateOutcome = r.ok ? r.value : { kind: "exceeded", error: r.error };
+      // Brand a $-limb trip with its limb identity. The gate's SpendError is
+      // shared with the daemon-wide observability.spend ceiling and carries no
+      // limb; without it the execution.aborted event has no perRootBudget
+      // payload for exactly this limb, and the explain spend verdict points
+      // the operator at observability.spend.* — the wrong knob tree for a
+      // per-root trip (the knob is autonomy.budget.aggregateUsd). The token
+      // and wall-clock limbs above already self-identify.
+      if (outcome.kind === "exceeded" && outcome.error.limb === undefined) {
+        return {
+          kind: "exceeded",
+          error: new SpendError(
+            outcome.error.scope,
+            outcome.error.currentUsd,
+            outcome.error.capUsd,
+            outcome.error.estUsd,
+            "aggregateUsd",
+            "usd",
+          ),
+        };
+      }
+      return outcome;
     },
 
     remaining(rootRunId): {
