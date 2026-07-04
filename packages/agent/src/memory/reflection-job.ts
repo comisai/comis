@@ -137,6 +137,15 @@ export interface ReflectionSourceTrajectory {
    * (skill sources are outcome trajectories, not source memories).
    */
   sourceTrustExternal: boolean;
+  /**
+   * Content-free procedure descriptor for the turn — `key` groups (self-sufficient:
+   * a custom groupKey BYPASSES the Jaccard signature-merge, so only byte-identical keys
+   * collide), `sequence` is the ordered call-site sequence + counts (repeats preserved,
+   * NOT sorted/deduped) which feeds the reflect input. NAMES only — no args/bodies/secrets.
+   * Absent when the turn ran no cap-mapped tool call sites. Orthogonal to the two trust
+   * axes above — it never weakens them.
+   */
+  procedureDescriptor?: { key: string; sequence: readonly string[] };
 }
 
 /** The config slice the job reads (a structural subset of the learning reflect config). */
