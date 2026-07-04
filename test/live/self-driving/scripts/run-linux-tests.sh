@@ -33,6 +33,33 @@ rsync -az -e "ssh -o ConnectTimeout=20" \
 rsync -az -e "ssh -o ConnectTimeout=20" \
   "$REPO/vitest.config.ts" "$REPO/tsconfig.base.json" "$VPS:$SRC/" 2>/dev/null || true
 
+# Relink workspace @comis/* symlinks from each package.json's `workspace:*` deps.
+# deploy-dist ships dist only (no node_modules) and this script rsyncs src+package.json
+# but never `pnpm install`s — so a NEW workspace (dev)dep (e.g. skills → @comis/infra, added
+# in v2.32) is present in package.json but has no node_modules symlink on the box, and vitest
+# fails to LOAD the test with "Cannot find package '@comis/infra'" (a whole suite reads as 0
+# tests). This idempotent relink makes the box's workspace resolution match a fresh
+# `pnpm install`, so a milestone that adds a workspace dep never silently fails-to-load here.
+ssh -o ConnectTimeout=20 "$VPS" "cd '$SRC' && node -e '
+const fs=require(\"fs\"),path=require(\"path\");
+let n=0;
+for(const pkg of fs.readdirSync(\"packages\")){
+  const pj=path.join(\"packages\",pkg,\"package.json\"); if(!fs.existsSync(pj))continue;
+  let j; try{j=JSON.parse(fs.readFileSync(pj,\"utf8\"))}catch(e){continue}
+  const deps={...(j.dependencies||{}),...(j.devDependencies||{})};
+  for(const [name,spec] of Object.entries(deps)){
+    if(!name.startsWith(\"@comis/\")||!String(spec).startsWith(\"workspace:\"))continue;
+    const short=name.slice(\"@comis/\".length);
+    const nm=path.join(\"packages\",pkg,\"node_modules\",\"@comis\");
+    fs.mkdirSync(nm,{recursive:true});
+    const link=path.join(nm,short);
+    try{fs.rmSync(link,{force:true,recursive:false})}catch(e){}
+    try{fs.symlinkSync(path.join(\"..\",\"..\",\"..\",short),link);n++}catch(e){}
+  }
+}
+console.log(\"relinked \"+n+\" workspace @comis/* symlinks\");
+'" || true
+
 echo "Running .linux tests on the box (real bwrap): ${TESTS[*]}"
 # The box CLI is not on PATH concerns don't apply — pnpm runs from $SRC.
 ssh -o ConnectTimeout=200 -o ServerAliveInterval=10 "$VPS" \

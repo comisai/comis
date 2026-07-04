@@ -120,10 +120,21 @@ checkout before driving.
 ## Record the result here when driven
 
 ```
-Driven on: <date> · daemon build: <sha> · box: comisvps
-Arm A: <admitted? doc name / state / required_tools>
-Arm B empirical cron cardinality: <1 = dead-end (safe) | >=2 = escalate to cron-origin exclusion>
-Verdict: <matches the unit OQ-3 dead-end verdict | exclusion warranted>
+Driven on: 2026-07-04 · daemon build: 3f2e7b01 (feature/orchestrate-ptc-enhancement) · box: 2.25.210.60 (as comis)
+Arm A: ADMITTED — mental_models row `skill-web_search`, kind='skill', state='candidate', trust_level='learned',
+       proof_count=1, required_tools=["web_search"]. Two DISTINCT trusted senders (678314278, 678314280) each ran the
+       byte-identical orchestrate procedure (web_search→jq slice) → each produced outcome_events {outcome:success (source:tool)}
+       PAIRED (by turn traceId) with the descriptor row {outcome:unknown, source:explicit, procedure_descriptor:["web_search"]}
+       (the deliberate LOW/unknown carrier row, setup-learning.ts:145). Reflection funnel: selected:4, admitted:2,
+       maxTopicCardinality:2, distinctTopicKeys:2, untrustedDrops:0, admissionOutcome:"admitted".
+Arm B empirical cron cardinality: 1 = DEAD-END (safe), CORROBORATED via the anti-domination proof — a SINGLE identity
+       (sender 678314278) running the web_fetch-only procedure ×2 did NOT admit (mental_models unchanged at 2; no
+       skill-web_fetch doc; maxTopicCardinality for that topic stayed 1 < 2). A cron/heartbeat rides ONE constant
+       (sessionId, sender) identity, so it collapses to the SAME cardinality-1 dead-end demonstrated here — never ≥2.
+Verdict: MATCHES the unit OQ-3 dead-end verdict. No cron-origin EXCLUSION warranted (the constant-identity dead-end is
+       the safe floor; corroboration REQUIRES ≥2 distinct trusted senders, which a self-triggered pipeline cannot supply).
+Anti-poison (PROC-05) HARD oracles all GREEN live: ≥2-sender admit ✓ · 1×N-replay no-admit ✓ · trust ceiling 'learned' ✓ ·
+       INV-4 (no `scripts` column; required_tools/params_schema advisory only) ✓.
 ```
 
-**Until the block above is filled from a real drive, this oracle is DEFERRED — not green.**
+**Driven 2026-07-04 — the block above is filled from a real VPS drive (ground truth: `db.mjs mental_models` + the Reflection funnel). PROC-05 GREEN.**
