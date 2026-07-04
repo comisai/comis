@@ -29,7 +29,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { ComisLogger } from "@comis/core";
-import { createSqliteDurableRunStore } from "@comis/memory";
+import { createSqliteDurableRunStore, ensureDurableRunTable } from "@comis/memory";
 import { createOrchestrateReplayRespawn, detectSandboxProvider } from "@comis/skills/tools";
 
 import {
@@ -78,6 +78,7 @@ describe.skipIf(!jailAvailable)("orchestrate.replay real jailed byte-identical r
     // eslint-disable-next-line no-restricted-syntax -- Linux/VPS integration gate.
     const Database = (await import("better-sqlite3")).default;
     db = new Database(":memory:");
+    ensureDurableRunTable(db);
     // eslint-disable-next-line no-restricted-syntax -- Linux/VPS integration gate.
     const store = createSqliteDurableRunStore(db as never);
     await store.upsertCheckpoint({
