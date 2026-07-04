@@ -135,6 +135,35 @@ describe("createSqliteOutcomeStore", () => {
       const r = await store.listTrajectoryIds!({ tenantId: "", agentId: "" });
       expect(r.ok).toBe(false);
     });
+
+    it("projects the procedure_descriptor back per turn (the carrier's ordered array, verbatim — order + repeats preserved)", async () => {
+      // turn-a is the real shape: a deterministic tool row (no descriptor) PLUS the explicit
+      // descriptor carrier — MAX(procedure_descriptor) surfaces the carrier's descriptor across the
+      // turn's multiple source rows. turn-b ran no procedure carrier at all.
+      await store.observe(makeObs({ trajectoryId: "turn-a", sessionId: "sess-1", source: "tool", outcome: "success", observedAt: 1_000 }));
+      await store.observe(
+        makeObs({ trajectoryId: "turn-a", sessionId: "sess-1", source: "explicit", outcome: "unknown", confidence: 0, observedAt: 1_001, procedureDescriptor: ["web_search", "jq", "jq"] }),
+      );
+      await store.observe(makeObs({ trajectoryId: "turn-b", sessionId: "sess-1", source: "tool", outcome: "success", observedAt: 2_000 }));
+      const r = await store.listTrajectoryIds!(SCOPE_A);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      const byId = new Map(r.value.map((p) => [p.trajectoryId, p]));
+      // turn-a carries the ORDERED descriptor read back VERBATIM (order + the jq repeat preserved).
+      expect(byId.get("turn-a")?.procedureDescriptor).toEqual(["web_search", "jq", "jq"]);
+      // A turn with no procedure carrier → the field is ABSENT (undefined), never [].
+      expect(byId.get("turn-b")?.procedureDescriptor).toBeUndefined();
+    });
+
+    it("degrades a corrupt descriptor to absent (never throws) — mirrors the recalled/used-skill parse posture", async () => {
+      // A corrupt (non-JSON) descriptor on the ledger row must degrade to absent, never throw.
+      await store.observe(makeObs({ trajectoryId: "turn-c", sessionId: "sess-1", source: "explicit", outcome: "unknown", confidence: 0, observedAt: 3_000 }));
+      db.prepare("UPDATE outcome_events SET procedure_descriptor = ? WHERE trajectory_id = ?").run("{not-json", "turn-c");
+      const r = await store.listTrajectoryIds!(SCOPE_A);
+      expect(r.ok).toBe(true); // never throws on corrupt JSON
+      if (!r.ok) return;
+      expect(r.value.find((p) => p.trajectoryId === "turn-c")?.procedureDescriptor).toBeUndefined();
+    });
   });
 
   describe("observe() — idempotent write", () => {

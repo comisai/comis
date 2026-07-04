@@ -1402,3 +1402,80 @@ describe("runReflection — analogous-signature merge (under-merge fix)", () => 
     expect(res.value.admissionOutcome).toBe("uncorroborated");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Procedure descriptor key as the group key — order/count-sensitive + self-sufficient.
+// The procedure groupKey is `t.procedureDescriptor.key`, a DEFINED custom groupKey — so
+// `useSignatureMerge` is FALSE and the Jaccard signature-merge is BYPASSED. Only byte-identical
+// descriptor keys collide; a different ORDER or a different COUNT derives a different key and never
+// auto-merges — even when the source SIGNATURES are identical and WOULD have Jaccard-merged. This
+// pins the self-sufficiency the bypassed merge requires (the groupKey seed a later procedure
+// reflection builds on).
+// ---------------------------------------------------------------------------
+describe("runReflection — procedure descriptor key (order/count-sensitive; bypasses the Jaccard merge)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const procGroupKey = (t: ReflectionSourceTrajectory): string => t.procedureDescriptor?.key ?? "";
+
+  // The builder derives key = sequence.join(">"); mirror it so a source carries the same key shape.
+  function procTraj(over: Partial<ReflectionSourceTrajectory>, sequence: readonly string[]): ReflectionSourceTrajectory {
+    return { ...traj(over), procedureDescriptor: { key: sequence.join(">"), sequence } };
+  }
+
+  it("two sources with the SAME ordered sequence share the IDENTICAL key → ONE group → corroborated (admit)", async () => {
+    const mocks: Partial<Mocks> = {};
+    const deps = makeDeps(
+      [
+        procTraj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "fetch and filter the data" }, ["web_search", "jq", "jq"]),
+        procTraj({ trajectoryId: "b", sessionId: "s2", sender: "u2", signature: "fetch and filter the data" }, ["web_search", "jq", "jq"]),
+      ],
+      { kind: "skill", groupKey: procGroupKey } as Partial<RunReflectionDeps>,
+      mocks,
+    );
+    const res = await runReflection(deps);
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    // Identical descriptor keys collide into ONE corroboration group (card 2) → admit.
+    expect(res.value.distinctTopicKeys).toBe(1);
+    expect(res.value.maxTopicCardinality).toBe(2);
+    expect(res.value.admitted).toBe(1);
+  });
+
+  it("a DIFFERENT order derives a DIFFERENT key → SEPARATE groups even with identical signatures (Jaccard bypassed)", async () => {
+    const mocks: Partial<Mocks> = {};
+    // Identical SIGNATURES (which WOULD Jaccard-merge under the default skill grouping) but a
+    // different tool ORDER. The custom groupKey bypasses the signature-merge, so the two stay in
+    // SEPARATE groups → uncorroborated. Proves the key — not the signature — decides grouping.
+    const deps = makeDeps(
+      [
+        procTraj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "fetch and filter the data" }, ["web_search", "jq", "jq"]),
+        procTraj({ trajectoryId: "b", sessionId: "s2", sender: "u2", signature: "fetch and filter the data" }, ["jq", "web_search", "jq"]),
+      ],
+      { kind: "skill", groupKey: procGroupKey } as Partial<RunReflectionDeps>,
+      mocks,
+    );
+    const res = await runReflection(deps);
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.distinctTopicKeys).toBe(2); // no auto-merge — order is load-bearing
+    expect(res.value.maxTopicCardinality).toBe(1);
+    expect(res.value.admitted).toBe(0);
+  });
+
+  it("a DIFFERENT count (one fewer repeat) derives a DIFFERENT key → SEPARATE groups → uncorroborated", async () => {
+    const mocks: Partial<Mocks> = {};
+    const deps = makeDeps(
+      [
+        procTraj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "fetch and filter the data" }, ["web_search", "jq", "jq"]),
+        procTraj({ trajectoryId: "b", sessionId: "s2", sender: "u2", signature: "fetch and filter the data" }, ["web_search", "jq"]),
+      ],
+      { kind: "skill", groupKey: procGroupKey } as Partial<RunReflectionDeps>,
+      mocks,
+    );
+    const res = await runReflection(deps);
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.distinctTopicKeys).toBe(2); // counts are load-bearing
+    expect(res.value.admitted).toBe(0);
+  });
+});

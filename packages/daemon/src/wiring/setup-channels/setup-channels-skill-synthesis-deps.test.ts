@@ -149,6 +149,50 @@ describe("buildReflectionCronDeps", () => {
     expect(resolved.value.outcome).toBe("success");
   });
 
+  // ── PROCEDURE DESCRIPTOR ATTACH (read-back → ReflectionSourceTrajectory) ──
+  // The skill source builder reads the content-free procedure_descriptor back out of
+  // listTrajectoryIds and attaches a { key, sequence } to each source. The key is the ORDERED
+  // sequence joined (order + repeats preserved, NOT sorted/deduped) — self-sufficient because the
+  // procedure groupKey bypasses the Jaccard signature-merge. The anti-poison trust axes are unchanged.
+  describe("procedure descriptor attach", () => {
+    function oneTurnWith(descriptor: string[] | undefined) {
+      return {
+        sessionStore: {
+          listDetailed: vi.fn(() => [{ sessionKey: "s1", userId: "u1", tenantId: "t", channelId: "c", metadata: null, createdAt: 1, updatedAt: 2, messageCount: 2 }]),
+          loadByFormattedKey: vi.fn(() => ({ messages: [{ role: "user", content: "do X" }, { role: "assistant", content: "did X" }], metadata: {}, createdAt: 1, updatedAt: 2 })),
+        } as any,
+        outcomeStore: {
+          observe: vi.fn(), prune: vi.fn(), resolve: vi.fn(),
+          listTrajectoryIds: vi.fn(async () => ({
+            ok: true as const,
+            value: [{ trajectoryId: "turn-1", sessionId: "s1", ...(descriptor !== undefined ? { procedureDescriptor: descriptor } : {}) }],
+          })),
+        } as any,
+      };
+    }
+
+    it("attaches a content-free ordered procedureDescriptor { key, sequence } (key = sequence joined; order + repeats preserved)", async () => {
+      // u1 is a TRUSTED sender so the source is admissible and its axes are observable.
+      const container = { config: { tenantId: "t", agents: { "agent-1": { elevatedReply: { senderTrustMap: { u1: "verified" }, defaultTrustLevel: "external" } } } } };
+      const bundle = buildReflectionCronDeps(makeInput({ ...oneTurnWith(["web_search", "jq", "jq"]), container: container as any }))!;
+      const traj = await bundle.buildSourceTrajectories("skill", "agent-1", "t");
+      expect(traj).toHaveLength(1);
+      // The descriptor rides the source: key = the ordered sequence joined (NOT sorted/deduped — the
+      // jq repeat and the web_search→jq order are load-bearing), sequence = the array verbatim.
+      expect(traj[0].procedureDescriptor).toEqual({ key: "web_search>jq>jq", sequence: ["web_search", "jq", "jq"] });
+      // The two anti-poison trust axes are UNCHANGED by the descriptor attach (REUSE).
+      expect(traj[0].trustedOrigin).toBe(true);
+      expect(traj[0].sourceTrustExternal).toBe(false);
+    });
+
+    it("attaches NO procedureDescriptor when the turn ran no cap-mapped tools (absent ⇒ undefined, never an empty descriptor)", async () => {
+      const bundle = buildReflectionCronDeps(makeInput(oneTurnWith(undefined)))!;
+      const traj = await bundle.buildSourceTrajectories("skill", "agent-1", "t");
+      expect(traj).toHaveLength(1);
+      expect(traj[0].procedureDescriptor).toBeUndefined();
+    });
+  });
+
   // ── TRUSTED-ORIGIN DERIVATION — daemon-side, deny-on-unknown ──
   // `ResolvedOutcome` does NOT carry sender_trust, so the daemon derives
   // trust here from the per-agent elevatedReply.senderTrustMap + defaultTrustLevel.
