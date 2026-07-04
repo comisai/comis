@@ -18,6 +18,7 @@ import { ok, type Result } from "@comis/shared";
 import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
 import type { ConnectorTokenProvider } from "../msteams-auth.js";
 import {
+  createMsTeamsConnector,
   isSafeServiceUrl,
   postConnectorActivity,
   postConnectorActivityWithRetry,
@@ -265,5 +266,43 @@ describe("postConnectorActivityWithRetry — bounded explicit-status retry (ERR-
     expect(result.ok).toBe(false);
     // One initial attempt plus the bounded number of retries.
     expect(spy).toHaveBeenCalledTimes(5);
+  });
+});
+
+// --- The typing wire path self-validates the serviceUrl (T-3) --------------
+
+describe("createMsTeamsConnector — typing keepalive host validation (T-3)", () => {
+  function makeTypingConnector() {
+    const tokens = makeTokens();
+    const tokenSpy = vi.spyOn(tokens, "getToken");
+    const { fetchImpl, spy: fetchSpy } = makeConnectorFetch([{ status: 200 }]);
+    const connector = createMsTeamsConnector({
+      tokens,
+      fetchImpl,
+      logger: makeLogger(),
+      now: () => 1_000_000,
+    });
+    return { connector, tokenSpy, fetchSpy };
+  }
+
+  it("neither mints the bearer nor POSTs when startTyping gets an unsafe serviceUrl", async () => {
+    const { connector, tokenSpy, fetchSpy } = makeTypingConnector();
+    connector.startTyping("19:convo", "https://evil.trafficmanager.net/");
+    await flush();
+    // The host guard runs BEFORE the mint, so a cross-origin typing target can
+    // never leak the freshly minted Connector bearer — matching the send/edit path,
+    // which validate internally rather than trusting the caller.
+    expect(tokenSpy).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    connector.stopTyping();
+  });
+
+  it("mints and POSTs a typing activity for the exact Connector host", async () => {
+    const { connector, tokenSpy, fetchSpy } = makeTypingConnector();
+    connector.startTyping("19:convo", "https://smba.trafficmanager.net/amer/");
+    await flush();
+    expect(tokenSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    connector.stopTyping();
   });
 });

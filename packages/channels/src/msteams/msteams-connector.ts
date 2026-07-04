@@ -514,6 +514,21 @@ export function createMsTeamsConnector(deps: MsTeamsConnectorDeps): MsTeamsConne
 
   /** POST a single {type:"typing"} activity (best-effort; failures log at DEBUG). */
   async function postTyping(conversationId: string, serviceUrl: string): Promise<void> {
+    // Self-enforce the host allowlist on the wire path BEFORE the mint, exactly as
+    // postConnectorActivity/mutate do: the Connector bearer must never reach a
+    // non-Connector or cross-cloud host on ANY send path, so a future caller of
+    // startTyping cannot bypass the adapter-side check and leak the token.
+    if (!isSafeServiceUrl(serviceUrl, deps.cloud ?? "public")) {
+      deps.logger.warn(
+        {
+          channelType: "msteams" as const,
+          hint: "Reject the serviceUrl: it must be the https Bot Framework Connector host for the configured cloud, free of '..'",
+          errorKind: "precondition" as const,
+        },
+        "Typing keepalive blocked: unsafe service url",
+      );
+      return;
+    }
     const tok = await deps.tokens.getToken();
     if (!tok.ok) return; // the token provider already logged its failure branch
     const url = `${serviceUrl}v3/conversations/${encodeURIComponent(conversationId)}/activities`;
