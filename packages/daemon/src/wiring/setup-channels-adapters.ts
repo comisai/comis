@@ -41,7 +41,7 @@ import {
 } from "@comis/channels";
 import { createMsTeamsIngress } from "@comis/gateway";
 import os from "node:os";
-import { safePath } from "@comis/core";
+import { safePath, systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -453,6 +453,16 @@ export async function bootstrapAdapters(deps: {
       msTeamsIngress = createMsTeamsIngress({
         validateActivityJwt: (authHeader) => validateActivityJwt(authHeader, appId),
         handleWebhookEvents: (activities) => teamsAdapter.handleWebhookEvents(activities as TeamsActivity[]),
+        // Bridge the ingress auth-gate rejections onto the daemon eventBus as a
+        // content-free health_signal, so a forged/expired/wrong-audience/missing-
+        // token flood is COUNTED by `comis fleet` instead of raw-log-only. Carries
+        // the channel label + closed reason class only — never the token/header/body.
+        onAuthRejected: (reason) =>
+          container.eventBus.emit("channel:ingress_auth_rejected", {
+            channelType: "msteams",
+            reason,
+            timestamp: systemNowMs(),
+          }),
         logger: channelsLogger,
       });
       channelsLogger.info({ channelType: "msteams", authMode, tenantId }, "Channel adapter initialized");
