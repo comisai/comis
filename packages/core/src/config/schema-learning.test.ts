@@ -41,6 +41,8 @@ describe("LearningConfigSchema — the collapsed ~10-key learning layer", () => 
         minConfidence: 0.6,
         promoteAtProofCount: 3,
         maxDocsPerRun: 100,
+        // The per-agent procedure-doc surface budget (the scaling guard).
+        maxProcedureDocsSurfaced: 10,
       },
       forget: {
         maxDormantDays: 365, // best-out-of-box: remember ~a year (forget less aggressively)
@@ -59,8 +61,38 @@ describe("LearningConfigSchema — the collapsed ~10-key learning layer", () => 
       minConfidence: 0.6,
       promoteAtProofCount: 3,
       maxDocsPerRun: 100,
+      maxProcedureDocsSurfaced: 10,
     });
     expect(parsed.forget).toEqual({ maxDormantDays: 365, failureEvictionFloor: 3, highProofFloor: 5 });
+  });
+
+  it("reflect.maxProcedureDocsSurfaced fills from the PARENT-FACTORY default on an empty config (the Pitfall path)", () => {
+    // An EMPTY config leaves `reflect` undefined, so the parent `.default(() => ({...}))`
+    // factory supplies the whole block verbatim — NOT the per-field defaults. The new key
+    // MUST be on that factory too, else a partial-config parse silently drops it (a
+    // ZodDefault returns its default value as-is, without re-running per-field defaults).
+    expect(LearningConfigSchema.parse({}).reflect).toEqual({
+      schedule: "0 */3 * * *",
+      minConfidence: 0.6,
+      promoteAtProofCount: 3,
+      maxDocsPerRun: 100,
+      maxProcedureDocsSurfaced: 10,
+    });
+  });
+
+  it("a partial reflect config still fills maxProcedureDocsSurfaced from the per-FIELD default", () => {
+    // A PRESENT `reflect` object is parsed by the strictObject, so the absent fields take
+    // their per-field defaults — maxProcedureDocsSurfaced fills to 10 while maxDocsPerRun keeps 5.
+    const parsed = LearningConfigSchema.parse({ reflect: { maxDocsPerRun: 5 } });
+    expect(parsed.reflect.maxDocsPerRun).toBe(5);
+    expect(parsed.reflect.maxProcedureDocsSurfaced).toBe(10);
+  });
+
+  it("reflect.maxProcedureDocsSurfaced is a positive integer (rejects 0 / negative / float)", () => {
+    expect(() => LearningConfigSchema.parse({ reflect: { maxProcedureDocsSurfaced: 0 } })).toThrow();
+    expect(() => LearningConfigSchema.parse({ reflect: { maxProcedureDocsSurfaced: -1 } })).toThrow();
+    expect(() => LearningConfigSchema.parse({ reflect: { maxProcedureDocsSurfaced: 2.5 } })).toThrow();
+    expect(LearningConfigSchema.parse({ reflect: { maxProcedureDocsSurfaced: 3 } }).reflect.maxProcedureDocsSurfaced).toBe(3);
   });
 
   it("is strict — a smuggled/unknown knob throws at parse (z.strictObject)", () => {

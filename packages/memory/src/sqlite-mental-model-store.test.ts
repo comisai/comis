@@ -417,6 +417,54 @@ describe("createSqliteMentalModelStore", () => {
   });
 
   // -------------------------------------------------------------------------
+  // Read-side requiredTools plumbing. The admit INSERT already binds the
+  // `required_tools` column (bound `?`); the READ path (rowToMentalModel) must
+  // now surface it on the domain MentalModel so the learned-skill surface can
+  // DISCRIMINATE a procedure doc (required_tools populated) from a user-intent
+  // skill (NULL). This is the read-side mirror of the write-side bind: the
+  // columns exist in the DDL/SELECT, the read TYPE + mapper carry them through.
+  // Content-free: requiredTools is the tool-NAME set only.
+  // -------------------------------------------------------------------------
+
+  it("get() surfaces requiredTools on a procedure doc admitted with them (read-side mirror of the write bind)", async () => {
+    await store.admit(
+      makeInput({ name: "proc-read", requiredTools: ["jq", "web_fetch"], paramsSchema: "{}" }),
+      SCOPE_A,
+    );
+    const r = await store.get("proc-read", SCOPE_A);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value?.requiredTools).toEqual(["jq", "web_fetch"]);
+  });
+
+  it("list() surfaces requiredTools on the procedure doc (the surface reads via list)", async () => {
+    await store.admit(makeInput({ name: "proc-list", requiredTools: ["jq"], paramsSchema: "{}" }), SCOPE_A);
+    const r = await store.list(SCOPE_A);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      const doc = r.value.find((d) => d.name === "proc-list");
+      expect(doc?.requiredTools).toEqual(["jq"]);
+    }
+  });
+
+  it("a user-intent skill (no requiredTools) surfaces requiredTools UNDEFINED (the surface discriminator)", async () => {
+    await store.admit(makeInput({ name: "intent-read" }), SCOPE_A);
+    const r = await store.get("intent-read", SCOPE_A);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value?.requiredTools).toBeUndefined();
+  });
+
+  it("degrades requiredTools to ABSENT on corrupt JSON in the column (never throws — mirrors parseStructuredBody)", async () => {
+    await store.admit(makeInput({ name: "proc-corrupt", requiredTools: ["jq"], paramsSchema: "{}" }), SCOPE_A);
+    // Corrupt the persisted column out-of-band; the read must degrade to absent, not throw.
+    db.prepare(
+      "UPDATE mental_models SET required_tools = '{not json' WHERE tenant_id = ? AND agent_id = ? AND name = ?",
+    ).run(TENANT_A, AGENT_A, "proc-corrupt");
+    const r = await store.get("proc-corrupt", SCOPE_A);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value?.requiredTools).toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
   // Idempotency: deterministic id + ON CONFLICT — a replay is a no-op
   // -------------------------------------------------------------------------
 

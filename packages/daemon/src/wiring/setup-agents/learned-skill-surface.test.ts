@@ -42,8 +42,13 @@ function platform(name: string): PromptSkillDescription {
   };
 }
 
-/** A MentalModel (kind='skill') row mirror; defaults are an active, read-only procedure. */
-function learned(over: Partial<MentalModel> = {}): MentalModel {
+/**
+ * A MentalModel (kind='skill') row mirror; defaults are an active, read-only
+ * procedure. `requiredTools` (the read-side procedure discriminator) is spread in
+ * ONLY when a test supplies it, so a user-intent skill fixture omits the field
+ * entirely (undefined) — exactly the shape the store's mapper produces.
+ */
+function learned(over: Partial<MentalModel> & { requiredTools?: ReadonlyArray<string> } = {}): MentalModel {
   return {
     id: `id-${over.name ?? "alpha"}`,
     name: over.name ?? "alpha",
@@ -57,6 +62,7 @@ function learned(over: Partial<MentalModel> = {}): MentalModel {
     confidence: over.confidence ?? 0.9,
     mutating: over.mutating ?? false,
     sourceTrajIds: over.sourceTrajIds ?? [],
+    ...(over.requiredTools !== undefined ? { requiredTools: over.requiredTools } : {}),
     createdAt: over.createdAt ?? 1_700_000_000_000,
   };
 }
@@ -385,6 +391,103 @@ describe("refreshLearnedSkillSurface — async list + materialize + cache", () =
     const absent = makeStore(ok([]));
     await refreshLearnedSkillSurface({ learnedSkillStore: absent, scope, workspaceDir: workDir, logger: noopLogger });
     expect(existsSync(file)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The per-agent PROCEDURE-DOC surface budget. Orchestrate-derived procedure docs
+// (the `requiredTools`-populated subset) get their OWN per-agent cap
+// (`maxProcedureDocsSurfaced`) so a burst can't bloat every prompt's
+// <available_skills>; user-intent skills (requiredTools undefined) + topic docs
+// keep a SEPARATE, uncapped path. The cap keeps the OLDEST M in created_at-ASC
+// order (already the list() order) — deterministic + stable across refreshes.
+// Asserted against the REAL materialized `.learned-skills/` set (ground truth).
+// ---------------------------------------------------------------------------
+
+describe("refreshLearnedSkillSurface — per-agent procedure-doc budget", () => {
+  it("caps the requiredTools-populated subset to maxProcedureDocsSurfaced (oldest-first); user-intent skills + topics UNAFFECTED", async () => {
+    // N=3 procedure docs (requiredTools set) + K=2 user-intent skills + 1 topic (no requiredTools),
+    // all active + read-only, with distinct createdAt so "oldest M" is unambiguous.
+    const docs = [
+      learned({ name: "proc-old", requiredTools: ["jq"], createdAt: 1_000 }),
+      learned({ name: "intent-a", createdAt: 1_500 }),
+      learned({ name: "proc-mid", requiredTools: ["jq", "web_fetch"], createdAt: 2_000 }),
+      learned({ name: "topic-x", kind: "topic", createdAt: 2_100 }),
+      learned({ name: "intent-b", createdAt: 2_500 }),
+      learned({ name: "proc-new", requiredTools: ["web_fetch"], createdAt: 3_000 }),
+    ];
+    // list() returns created_at-ASC (mirror the store's ORDER BY); pass them in that order.
+    const store = makeStore(ok(docs));
+
+    const surfaced = await refreshLearnedSkillSurface({
+      learnedSkillStore: store,
+      scope,
+      workspaceDir: workDir,
+      logger: noopLogger,
+      maxProcedureDocsSurfaced: 2, // M=2 < N=3 → the newest procedure doc is dropped
+    });
+
+    const dir = safePath(workDir, ".learned-skills");
+    // Exactly the OLDEST 2 procedure docs materialize; the 3rd (newest) is over budget.
+    expect(existsSync(safePath(dir, "proc-old", "SKILL.md"))).toBe(true);
+    expect(existsSync(safePath(dir, "proc-mid", "SKILL.md"))).toBe(true);
+    expect(existsSync(safePath(dir, "proc-new", "SKILL.md"))).toBe(false); // dropped by the budget
+    // ALL user-intent skills + the topic doc materialize — the procedure budget does not touch them.
+    expect(existsSync(safePath(dir, "intent-a", "SKILL.md"))).toBe(true);
+    expect(existsSync(safePath(dir, "intent-b", "SKILL.md"))).toBe(true);
+    expect(existsSync(safePath(dir, "topic-x", "SKILL.md"))).toBe(true);
+    // The cached (surfaced) set matches the materialized set — the seam renders from it, so an
+    // over-budget doc must NOT appear there either (else its <location> points at a missing file).
+    expect(surfaced.map((s) => s.name).sort()).toEqual([
+      "intent-a",
+      "intent-b",
+      "proc-mid",
+      "proc-old",
+      "topic-x",
+    ]);
+    expect(surfaced.some((s) => s.name === "proc-new")).toBe(false);
+  });
+
+  it("surfaces ALL procedure docs when the count is within budget (no omission)", async () => {
+    const store = makeStore(
+      ok([
+        learned({ name: "p1", requiredTools: ["jq"], createdAt: 1_000 }),
+        learned({ name: "p2", requiredTools: ["web_fetch"], createdAt: 2_000 }),
+      ]),
+    );
+    const surfaced = await refreshLearnedSkillSurface({
+      learnedSkillStore: store,
+      scope,
+      workspaceDir: workDir,
+      logger: noopLogger,
+      maxProcedureDocsSurfaced: 10, // M=10 > N=2 → nothing dropped
+    });
+    expect(surfaced.map((s) => s.name).sort()).toEqual(["p1", "p2"]);
+    const dir = safePath(workDir, ".learned-skills");
+    expect(existsSync(safePath(dir, "p1", "SKILL.md"))).toBe(true);
+    expect(existsSync(safePath(dir, "p2", "SKILL.md"))).toBe(true);
+  });
+
+  it("a budget of 0-capacity edge: with M procedure docs and a tight cap, the non-procedure docs still all surface", async () => {
+    // Even a cap of 1 leaves every user-intent skill + topic untouched (separate path).
+    const store = makeStore(
+      ok([
+        learned({ name: "proc-1", requiredTools: ["jq"], createdAt: 1_000 }),
+        learned({ name: "proc-2", requiredTools: ["web_fetch"], createdAt: 2_000 }),
+        learned({ name: "intent-1", createdAt: 1_500 }),
+        learned({ name: "topic-1", kind: "topic", createdAt: 2_500 }),
+      ]),
+    );
+    const surfaced = await refreshLearnedSkillSurface({
+      learnedSkillStore: store,
+      scope,
+      workspaceDir: workDir,
+      logger: noopLogger,
+      maxProcedureDocsSurfaced: 1,
+    });
+    // 1 procedure (the oldest) + both non-procedure docs = 3; proc-2 dropped.
+    expect(surfaced.map((s) => s.name).sort()).toEqual(["intent-1", "proc-1", "topic-1"]);
+    expect(surfaced.some((s) => s.name === "proc-2")).toBe(false);
   });
 });
 
