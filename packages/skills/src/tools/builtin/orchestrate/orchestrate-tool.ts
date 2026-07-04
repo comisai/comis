@@ -342,8 +342,9 @@ export interface OrchestrateToolDeps {
 // Constants.
 // ---------------------------------------------------------------------------
 
-/** The SDK asset filenames copied into the jail workspace. */
-const SDK_ASSETS = [
+/** The SDK asset filenames copied into the jail workspace. Exported so the
+ *  deterministic-replay re-spawn reuses the IDENTICAL asset set as a live run. */
+export const SDK_ASSETS = [
   "comis_tools.d.ts",
   "comis_tools.js",
   "comis_tools.py",
@@ -916,16 +917,18 @@ function sizeBounceStdout(stdout: string): TextBlock[] {
   return result.content.map((b) => ({ type: "text" as const, text: b.text ?? "" }));
 }
 
-/** The default real spawn (the unit suite injects `spawnFn`; this is production). */
-const defaultSpawn: OrchestrateSpawnFn = (bin, args, opts) =>
+/** The default real spawn (the unit suite injects `spawnFn`; this is production).
+ *  Exported so the deterministic-replay re-spawn drives the SAME production spawn. */
+export const defaultSpawn: OrchestrateSpawnFn = (bin, args, opts) =>
   spawn(bin, args, {
     env: opts.env,
     cwd: opts.cwd,
     stdio: ["ignore", "pipe", "pipe"],
   }) as unknown as OrchestrateSpawnedChild;
 
-/** The default jail-node resolver — probe the jail PATH / bind the daemon node. */
-function defaultResolveJailNode(): JailNodeResolution {
+/** The default jail-node resolver — probe the jail PATH / bind the daemon node.
+ *  Exported so the deterministic-replay re-spawn resolves the jail identically. */
+export function defaultResolveJailNode(): JailNodeResolution {
   return resolveJailNode({ pathDirs: SYSTEM_RO_PATHS, execPath: readExecPath() });
 }
 
@@ -937,7 +940,7 @@ function defaultResolveJailNode(): JailNodeResolution {
  * on a host that has `/usr/bin/python3`. All three candidates live under the
  * RO-bound `/usr`/`/bin`, so a hit is reachable in-jail at the same absolute path.
  */
-function defaultResolveJailPython(): JailPythonResolution {
+export function defaultResolveJailPython(): JailPythonResolution {
   return resolveJailPython({
     interpreterPaths: ["/usr/bin/python3", "/bin/python3", "/usr/local/bin/python3"],
   });
@@ -957,7 +960,7 @@ function readExecPath(): string {
  * — the CLI surface is off, the orchestrate SCRIPT surface still runs, NEVER an
  * unverified bind.
  */
-function defaultResolveJailAgentCli(assetDir: string): JailAgentCliResolution {
+export function defaultResolveJailAgentCli(assetDir: string): JailAgentCliResolution {
   const manifestPath = safePath(assetDir, COMIS_AGENT_MANIFEST_FILENAME);
   if (!existsSync(manifestPath)) {
     return {

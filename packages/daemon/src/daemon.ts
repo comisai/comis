@@ -125,7 +125,7 @@ import { seedBundledSkills, defaultSeedBundledSkillsDeps } from "./wiring/seed-b
 // createModelCatalog + resolveWorkspaceDir live in @comis/core.
 import { createModelCatalog, resolveWorkspaceDir } from "@comis/core";
 import { createFileStateTracker, detectSandboxProvider } from "@comis/skills";
-import { reapNeverTaskedDrives as reapNeverTaskedDrivesInRegistry } from "@comis/skills/tools";
+import { reapNeverTaskedDrives as reapNeverTaskedDrivesInRegistry, createOrchestrateReplayRespawn } from "@comis/skills/tools";
 import { constructCapabilityLayer } from "./wiring/setup-capability-endpoint-boot.js"; // the sandbox/capability endpoint layer
 import { buildOrchestrateRepairResolver } from "./wiring/setup-tools-orchestrate-repair.js"; // the class-gated one-shot orchestrate repair-seam resolver (daemon-minted, injected into setupTools)
 // The single process-singleton activity circuit breaker is constructed
@@ -867,6 +867,20 @@ function buildRpcDispatchDeps(deps: {
     ...(c.outwardLedger ? { outwardLedger: c.outwardLedger } : {}),
     // The never-hang control plane the dispatch chokepoint reads — the denial breaker (recordDenial/recordAllow → trip→abort), the evicted-rootRunId set (isEvicted → demote mid-run), and the content-free escalate. Constructed at the cap layer; absent when no autonomy agent ⇒ deny-without-escalate. Threading evictRegistry here ALSO flows it into createAutonomyHandlers via the `...deps` spread, activating the autonomy.evict handler.
     ...(c.capEndpointHandle ? { denialBreaker: c.capEndpointHandle.denialBreaker, evictRegistry: c.capEndpointHandle.evictRegistry, escalate: c.capEndpointHandle.escalate } : {}),
+    // The operator deterministic-replay wiring (plan 06 → LIVE): the daemon-wide OutputGuard the ephemeral bearer registers in + the sandbox-backed pinned-byte re-spawn seam that points COMIS_ORCH_SOCKET at the SEPARATE replay socket (INV-1), reusing the runner's loadResumeSpec + jail envelope. Assembled ONLY when the jail (capEndpointHandle + sandboxProvider) AND the durable store (a replayable row source) all exist — durableRunStore is present exactly when durability is enabled; absent ⇒ orchestrate.replay is not registered (rpc-dispatch gates the handler on this cluster + durableRuns). The REAL bwrap byte-identical round-trip is the .linux/VPS tier; the wiring + INV-1 target are proven on macOS.
+    ...(c.capEndpointHandle && c.sandboxProvider && c.durableRunStore
+      ? {
+          orchestrateReplay: {
+            outputGuard: c.capEndpointHandle.outputGuard,
+            respawn: createOrchestrateReplayRespawn({
+              sandbox: c.sandboxProvider,
+              durableRuns: c.durableRunStore,
+              logger: c.logger,
+              ...(c.execToolEnv ? { baseEnv: c.execToolEnv } : {}),
+            }),
+          },
+        }
+      : {}),
     graphCoordinator: c.graphCoordinator, namedGraphStore: c.namedGraphStore, nodeTypeRegistry: c.nodeTypeRegistry,
     securityConfig: c.container.config.security, adaptersByType: c.adaptersByType,
     inboundMessageIdResolver: c.inboundMessageIdResolver, visionRegistry: c.visionRegistry, resolveAgentMainProvider: resolveAgentMainProviderFor, mainModelIdFor: c.mediaVisionBundle?.resolveMainModelId, mainProviderVision: c.mediaVisionBundle?.capability, trajectoryRegistry: c.trajectoryRegistry,

@@ -319,6 +319,9 @@ export {
   // The daemon-side executor cores (read/grep/find/ls/jq + web_search) the
   // tool.invoke executor routes to.
   createOrchestrateExecutorCores,
+  // The deterministic-replay pinned-byte re-spawn seam (INV-1 replay socket target);
+  // the daemon assembles it + threads it into the orchestrate.replay RPC wiring.
+  createOrchestrateReplayRespawn,
   // The git-worktree lifecycle for `spawn --worktree`, consumed by the daemon's
   // executeSubAgent + boot orphan-sweep (the daemon binds the real
   // execFile-backed GitExec at the composition root).
@@ -332,6 +335,10 @@ export type {
   OrchestrateResultStore,
   // The durable-run store port the daemon threads to make the runner resumable.
   OrchestrateDurableRuns,
+  // The deterministic-replay re-spawn seam types (the daemon assembles the closure).
+  OrchestrateReplayRespawnDeps,
+  OrchestrateReplayRespawnFn,
+  OrchestrateReplayRespawnInput,
   ResultRefStore,
   ResultRefStoreDeps,
   MaterializeContext,
