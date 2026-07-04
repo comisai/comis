@@ -82,6 +82,12 @@ export const TOOL_CAPABILITY_MAP = {
   // orch:web — daemon-side, DNS-pinned (the jail stays --unshare-net)
   web_search: "orch:web",
   web_fetch: "orch:web",
+  // orch:mcp — daemon-side connected-MCP-server call (the jail stays
+  // --unshare-net; the net call runs daemon-side like web_fetch). The wire tool
+  // name is the fixed literal "mcp"; the dynamic {server,tool} ride inside args
+  // (validated at the executor allowlist), so ONE entry governs the whole
+  // runtime-dynamic namespace — MCP tools are never enumerated into this map.
+  mcp: "orch:mcp",
 } as const satisfies Record<string, AgentCapability>;
 
 /** The tool-name keys of {@link TOOL_CAPABILITY_MAP} (mirrors `GatedMethodName`). */
@@ -118,6 +124,7 @@ export const TOOL_ROUTE_MAP = {
   jsonpath: { kind: "executor" },
   web_search: { kind: "executor" },
   web_fetch: { kind: "executor" },
+  mcp: { kind: "executor" },
 } as const satisfies Record<ToolName, ToolRoute>;
 
 // ---------------------------------------------------------------------------

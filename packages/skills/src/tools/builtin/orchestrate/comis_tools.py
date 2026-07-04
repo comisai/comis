@@ -89,6 +89,32 @@ class ResultRef:
 def _wrap_result_ref(ref):
     return ResultRef(ref)
 
+
+class _McpNamespace:
+    """Runtime proxy for the operator-configured connected-MCP-server tools.
+
+    comis_tools.mcp.<server>.<tool>(args) resolves to a single tool.invoke over the
+    cap socket -- the fixed wire tool is "mcp" and the {server, tool} ride inside
+    args. The server/tool set is dynamic per connection, so it cannot be a static
+    per-tool binding; attribute access builds the {server, tool} pair.
+    """
+
+    def __init__(self, server=None):
+        self._server = server
+
+    def __getattr__(self, name):
+        server = self.__dict__.get("_server")
+        if server is None:
+            return _McpNamespace(name)
+
+        def _call(args=None):
+            return _call_cap_socket(
+                "tool.invoke",
+                {"tool": "mcp", "args": {"server": server, "tool": name, "args": args or {}}},
+            )
+
+        return _call
+
 DESCRIPTORS = [
   {
     "name": "extract_document",
@@ -125,6 +151,12 @@ DESCRIPTORS = [
     "capability": "orch:read",
     "summary": "List a directory in the jailed workspace.",
     "example": "ref = comis_tools.grep({\"path\": \"logs/app.jsonl\", \"pattern\": \"ERROR\"}); rows = ref.jq(\".[0:20]\"); head = ref.read(0, 40)"
+  },
+  {
+    "name": "mcp",
+    "capability": "orch:mcp",
+    "summary": "Call an allowlisted connected MCP server's tool: comis_tools.mcp.<server>.<tool>(args). The server/tool set is operator-configured.",
+    "example": "result = comis_tools.mcp.myserver.mytool({\"query\": \"hello\"})"
   },
   {
     "name": "memory_get",
@@ -208,6 +240,8 @@ def jsonpath(args=None):
 
 def ls(args=None):
     return _invoke("ls", args)
+
+mcp = _McpNamespace()
 
 def memory_get(args=None):
     return _invoke("memory_get", args)

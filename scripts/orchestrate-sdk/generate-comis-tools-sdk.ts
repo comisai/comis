@@ -125,6 +125,7 @@ const TOOL_SUMMARIES: Record<string, string> = {
   jsonpath: "Extract a precise value from a JSON ResultRef via JSONPath (no eval).",
   web_search: "Search the web (daemon-side, DNS-pinned).",
   web_fetch: "Fetch a URL's readable content (daemon-side, DNS-pinned).",
+  mcp: "Call an allowlisted connected MCP server's tool: comis_tools.mcp.<server>.<tool>(args). The server/tool set is operator-configured.",
 };
 
 // ---------------------------------------------------------------------------
@@ -150,6 +151,8 @@ const CAPABILITY_GROUP_EXAMPLES: Record<string, string> = {
     "const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40);",
   "orch:web":
     "const hits = await comis_tools.web_search({ query: 'site reliability' }); const top3 = await hits.jq('.[0:3]'); const page = await comis_tools.web_fetch({ url: top3[0].url }); const text = await page.read(0, 200);",
+  "orch:mcp":
+    "const result = await comis_tools.mcp.myserver.mytool({ query: 'hello' });",
 };
 
 /**
@@ -164,6 +167,8 @@ const CAPABILITY_GROUP_EXAMPLES_PY: Record<string, string> = {
     'ref = comis_tools.grep({"path": "logs/app.jsonl", "pattern": "ERROR"}); rows = ref.jq(".[0:20]"); head = ref.read(0, 40)',
   "orch:web":
     'hits = comis_tools.web_search({"query": "site reliability"}); top3 = hits.jq(".[0:3]"); page = comis_tools.web_fetch({"url": top3[0]["url"]}); text = page.read(0, 200)',
+  "orch:mcp":
+    'result = comis_tools.mcp.myserver.mytool({"query": "hello"})',
 };
 
 // ---------------------------------------------------------------------------
@@ -262,8 +267,18 @@ export interface ToolDescriptor {
   const methodLines: string[] = [];
   for (const tool of sortedTools) {
     const capability = TOOL_CAPABILITY_MAP[tool as keyof typeof TOOL_CAPABILITY_MAP];
-    const ret = returnsResultRef(tool) ? "Promise<ResultRef>" : "Promise<unknown>";
     const summary = summaryFor(tool, capability);
+    if (tool === "mcp") {
+      // The connected MCP server/tool set is dynamic per connection, so `mcp` is a
+      // runtime proxy NAMESPACE, not a single method: the type is an index-signature
+      // shape so a model sees comis_tools.mcp.<server>.<tool>(args) (honest: dynamic).
+      methodLines.push(`  /** ${summary} (capability: ${capability}) Example: ${exampleFor(capability, "ts")} */`);
+      methodLines.push(
+        `  mcp: Record<string, Record<string, (args?: Record<string, unknown>) => Promise<unknown>>>;`,
+      );
+      continue;
+    }
+    const ret = returnsResultRef(tool) ? "Promise<ResultRef>" : "Promise<unknown>";
     methodLines.push(`  /** ${summary} (capability: ${capability}) Example: ${exampleFor(capability, "ts")} */`);
     methodLines.push(`  ${tool}(args?: Record<string, unknown>): ${ret};`);
   }
@@ -294,13 +309,43 @@ export default comis_tools;
 }
 
 /**
+ * The `mcp` runtime proxy block emitted into the `.js` SDK — a SPECIAL-CASE, not a
+ * per-tool render. The connected MCP server/tool set is dynamic per connection, so
+ * it cannot be a static method: a two-level `Proxy` resolves
+ * `comis_tools.mcp.<server>.<tool>(args)` to ONE `callCapSocket("tool.invoke", …)`
+ * with the fixed wire literal `"mcp"` — the `{server,tool}` ride inside `args`.
+ * Composes only the shim's exported `callCapSocket` (no import beyond the header).
+ */
+const MCP_PROXY_JS = `  mcp: new Proxy(
+    {},
+    {
+      get(_serverTarget, server) {
+        return new Proxy(
+          {},
+          {
+            get(_toolTarget, tool) {
+              return (args) =>
+                callCapSocket("tool.invoke", {
+                  tool: "mcp",
+                  args: { server, tool, args },
+                });
+            },
+          },
+        );
+      },
+    },
+  ),`;
+
+/**
  * Emit the thin `.js` runtime. Each method delegates to the stable
  * `./orchestrate-sdk-runtime.js` shim; high-volume returns are
  * wrapped so the ResultRef carries its `.grep/.jq/.read`. `describe()` returns
- * the static discovery list emitted from the cap-map.
+ * the static discovery list emitted from the cap-map. The `mcp` tool is the one
+ * special-case: a runtime proxy namespace (see {@link MCP_PROXY_JS}) instead of a
+ * flat method, because its server/tool set is dynamic per connection.
  */
 function emitSdkJs(sortedTools: readonly string[]): string {
-  const importLine = `import { invoke, wrapResultRef } from "./orchestrate-sdk-runtime.js";\n`;
+  const importLine = `import { invoke, wrapResultRef, callCapSocket } from "./orchestrate-sdk-runtime.js";\n`;
 
   // The static discovery list (cap + summary per tool) — 2-space indented JSON.
   const descriptors = sortedTools.map((tool) => {
@@ -311,6 +356,10 @@ function emitSdkJs(sortedTools: readonly string[]): string {
 
   const methodLines: string[] = [];
   for (const tool of sortedTools) {
+    if (tool === "mcp") {
+      methodLines.push(MCP_PROXY_JS);
+      continue;
+    }
     if (returnsResultRef(tool)) {
       methodLines.push(
         `  async ${tool}(args) {\n` +
@@ -474,6 +523,44 @@ def _wrap_result_ref(ref):
 `;
 
 /**
+ * The `_McpNamespace` runtime proxy — the Python analogue of the JS `mcp` `Proxy`.
+ * `comis_tools.mcp.<server>.<tool>(args)` resolves via a two-level `__getattr__`
+ * to ONE `_call_cap_socket("tool.invoke", …)` with the fixed wire literal `"mcp"`
+ * (the `{server,tool}` ride inside `args`). The server/tool set is dynamic per
+ * connection, so it cannot be a static per-tool binding; attribute access builds
+ * the `{server, tool}` pair. Stdlib-only — no import beyond the wire preamble's.
+ * `self.__dict__.get("_server")` reads the field directly so `__getattr__` never
+ * recurses on it.
+ */
+const PY_MCP_NAMESPACE_CLASS = `
+
+class _McpNamespace:
+    """Runtime proxy for the operator-configured connected-MCP-server tools.
+
+    comis_tools.mcp.<server>.<tool>(args) resolves to a single tool.invoke over the
+    cap socket -- the fixed wire tool is "mcp" and the {server, tool} ride inside
+    args. The server/tool set is dynamic per connection, so it cannot be a static
+    per-tool binding; attribute access builds the {server, tool} pair.
+    """
+
+    def __init__(self, server=None):
+        self._server = server
+
+    def __getattr__(self, name):
+        server = self.__dict__.get("_server")
+        if server is None:
+            return _McpNamespace(name)
+
+        def _call(args=None):
+            return _call_cap_socket(
+                "tool.invoke",
+                {"tool": "mcp", "args": {"server": server, "tool": name, "args": args or {}}},
+            )
+
+        return _call
+`;
+
+/**
  * Emit the single self-contained `.py` binding. Reuses the SAME sorted tool
  * list, `returnsResultRef`, `summaryFor`, and `TOOL_SUMMARIES` as the JS/dts
  * emitters (parity by construction). `describe()` renders the SAME
@@ -498,6 +585,12 @@ function emitSdkPy(sortedTools: readonly string[]): string {
   // a ResultRef exactly like the JS SDK's wrapResultRef branch.
   const methods: string[] = [];
   for (const tool of sortedTools) {
+    if (tool === "mcp") {
+      // The dynamic MCP surface is a runtime proxy namespace (see _McpNamespace),
+      // not a per-tool function — bind it once at module level.
+      methods.push("mcp = _McpNamespace()");
+      continue;
+    }
     const call = returnsResultRef(tool)
       ? `_wrap_result_ref(_invoke(${JSON.stringify(tool)}, args))`
       : `_invoke(${JSON.stringify(tool)}, args)`;
@@ -508,6 +601,7 @@ function emitSdkPy(sortedTools: readonly string[]): string {
     pyHeader() +
     PY_WIRE_PREAMBLE +
     PY_RESULTREF_CLASS +
+    PY_MCP_NAMESPACE_CLASS +
     "\nDESCRIPTORS = " +
     descriptorsJson +
     "\n\ndef describe():\n    return DESCRIPTORS\n\n" +

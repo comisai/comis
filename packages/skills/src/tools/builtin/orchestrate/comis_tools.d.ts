@@ -73,6 +73,8 @@ export interface ComisTools {
   jsonpath(args?: Record<string, unknown>): Promise<unknown>;
   /** List a directory in the jailed workspace. (capability: orch:read) Example: const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40); */
   ls(args?: Record<string, unknown>): Promise<unknown>;
+  /** Call an allowlisted connected MCP server's tool: comis_tools.mcp.<server>.<tool>(args). The server/tool set is operator-configured. (capability: orch:mcp) Example: const result = await comis_tools.mcp.myserver.mytool({ query: 'hello' }); */
+  mcp: Record<string, Record<string, (args?: Record<string, unknown>) => Promise<unknown>>>;
   /** Fetch a specific memory file by id (self-tenant). (capability: orch:read) Example: const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40); */
   memory_get(args?: Record<string, unknown>): Promise<unknown>;
   /** Search the agent's long-term memory (self-tenant). (capability: orch:read) Example: const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40); */
