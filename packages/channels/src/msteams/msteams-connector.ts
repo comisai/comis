@@ -251,6 +251,13 @@ const MAX_RETRIES = 4;
 /** Exponential-backoff base + ceiling for a retryable 5xx (a 429 uses its Retry-After). */
 const RETRY_BACKOFF_BASE_MS = 500;
 const RETRY_BACKOFF_CAP_MS = 8_000;
+/**
+ * Ceiling on a server-supplied `Retry-After`. The value is operator-untrusted, so
+ * a large or hostile `Retry-After` (e.g. 86400s) is clamped rather than awaited
+ * verbatim — otherwise the outbound send would park pending for hours, stalling
+ * that delivery-pipeline slot, and could repeat up to {@link MAX_RETRIES} times.
+ */
+const RETRY_AFTER_CAP_MS = 60_000;
 
 /** Read the structural HTTP status a Connector REST error carries (absent on a transport fault). */
 function connectorErrorStatus(error: Error): number | undefined {
@@ -301,7 +308,7 @@ export async function postConnectorActivityWithRetry(
     const retryAfter = connectorErrorRetryAfter(result.error);
     const delayMs =
       status === 429 && retryAfter !== undefined
-        ? retryAfter * 1000
+        ? Math.min(retryAfter * 1000, RETRY_AFTER_CAP_MS)
         : Math.min(RETRY_BACKOFF_BASE_MS * 2 ** attempt, RETRY_BACKOFF_CAP_MS);
 
     params.logger.debug(

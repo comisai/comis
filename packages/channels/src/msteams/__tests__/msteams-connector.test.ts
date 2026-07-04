@@ -188,6 +188,28 @@ describe("postConnectorActivityWithRetry — bounded explicit-status retry (ERR-
     expect(spy).toHaveBeenCalledTimes(2);
   });
 
+  it("clamps a large/hostile 429 Retry-After to the backoff cap so the send cannot stall", async () => {
+    const timer = createFakeTimers();
+    const { fetchImpl, spy } = makeConnectorFetch([
+      { status: 429, retryAfter: "86400" }, // 24h — must be clamped to the 60s cap
+      { status: 200, id: "ok-after-clamp" },
+    ]);
+    const pending = postConnectorActivityWithRetry(makeParams({ fetchImpl }), { timer });
+    await flush();
+    // One tick short of the cap must NOT fire the retry (the delay equals the cap)...
+    timer.advance(59_999);
+    await flush();
+    expect(spy).toHaveBeenCalledTimes(1);
+    // ...but reaching the cap does — the 24h Retry-After was clamped down to it,
+    // proving a hostile value can never park the outbound slot for hours.
+    timer.advance(1);
+    await flush();
+    const result = await pending;
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toBe("ok-after-clamp");
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
   it("retries a transient 5xx with capped backoff, then succeeds with three POSTs", async () => {
     const timer = createFakeTimers();
     const { fetchImpl, spy } = makeConnectorFetch([
