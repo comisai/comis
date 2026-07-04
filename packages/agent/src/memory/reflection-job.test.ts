@@ -1775,3 +1775,82 @@ describe("PROC-05 seam-integrity — the anti-poison tokens are byte-intact (sco
     expect(src).toContain("if (cardinality < 2) continue;");
   });
 });
+
+// ===========================================================================
+// PROC-05 / OQ-3 — the CRON self-corroboration cardinality unit oracle (macOS, no VPS).
+//
+// A self-triggered (cron/heartbeat) pipeline rides ONE constant (sessionId, sender) per
+// agent: agent-heartbeat-source.ts derives `userId:"heartbeat"` + `channelId:
+// "heartbeat-<agentId>"` (constant per agent) and `senderId:"system"` — proven in
+// agent-heartbeat-source.test.ts, and at the daemon READ path in
+// setup-channels-skill-synthesis-deps.test.ts. Fed to the SAME distinctSenderCardinality
+// + <2 gate, N such runs collapse to cardinality 1 → the pipeline can NEVER self-corroborate.
+// That is a DEAD-END (safe), NOT a poison hole — so NO cron-origin exclusion is needed
+// (the empirical OQ-3 verdict: constant sessionId ⇒ dead-end). This is proven against the
+// real gate even when the cron identity is (hypothetically) TRUSTED — the cardinality cap
+// alone stops self-corroboration, independent of the (also-holding) trust belt.
+// ===========================================================================
+describe("runReflection — cron self-corroboration is a cardinality-1 dead-end (OQ-3)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const procGroupKey = (t: ReflectionSourceTrajectory): string => t.procedureDescriptor?.key ?? "";
+
+  /**
+   * A cron-shaped source: the heartbeat identity — a CONSTANT sessionId
+   * (`heartbeat-<agentId>`) + sender `"system"`. `trustedOrigin:true` is the WORST case
+   * (even a trusted cron cannot self-corroborate); in production the unmapped
+   * `"heartbeat"`/`"system"` sender is ALSO deny-on-unknown untrusted (a second belt).
+   */
+  function cronTraj(trajectoryId: string, sequence: readonly string[]): ReflectionSourceTrajectory {
+    return {
+      ...traj({ trajectoryId, sessionId: "heartbeat-agent1", sender: "system", trustedOrigin: true }),
+      procedureDescriptor: { key: sequence.join(">"), sequence },
+    };
+  }
+
+  it("N cron-shaped runs of one procedure (constant (sessionId,sender)) never reach >=2 corroboration → NO admit (dead-end, safe)", async () => {
+    const mocks: Partial<Mocks> = {};
+    const SEQ = ["web_search", "jq"] as const;
+    // 6 trusted cron successes of the SAME procedure, all on the ONE heartbeat identity.
+    const trajectories = Array.from({ length: 6 }, (_, i) => cronTraj(`cron-${i}`, SEQ));
+    const deps = makeDeps(
+      trajectories,
+      { kind: "skill", groupKey: procGroupKey, populateProcedureMetadata: true } as Partial<RunReflectionDeps>,
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    // All 6 SELECT-survive (trusted), group into ONE descriptor topic, but the constant
+    // (sessionId,sender) caps distinctSenderCardinality at 1 → the <2 gate blocks → no admit.
+    expect(res.value.selected).toBe(6);
+    expect(res.value.distinctTopicKeys).toBe(1);
+    expect(res.value.maxTopicCardinality).toBe(1);
+    expect(res.value.admitted).toBe(0);
+    expect(res.value.admissionOutcome).toBe("uncorroborated");
+    expect(mocks.admit).not.toHaveBeenCalled();
+  });
+
+  it("distinctSenderCardinality of a cron-shaped member set is 1 regardless of N (the metric the gate reads)", async () => {
+    // A white-box corollary: the dead-end is a property of the SHARED cardinality metric —
+    // the same `${sessionId} ${sender}` set the <2 gate reads collapses N cron members to 1.
+    const mocks: Partial<Mocks> = {};
+    const SEQ = ["a_tool", "b_tool"] as const;
+    for (const n of [2, 5, 50]) {
+      (mocks.admit as ReturnType<typeof vi.fn> | undefined)?.mockClear?.();
+      const deps = makeDeps(
+        Array.from({ length: n }, (_, i) => cronTraj(`c-${n}-${i}`, SEQ)),
+        { kind: "skill", groupKey: procGroupKey, populateProcedureMetadata: true } as Partial<RunReflectionDeps>,
+        mocks,
+      );
+      const res = await runReflection(deps);
+      expect(res.ok).toBe(true);
+      if (!res.ok) throw new Error("expected ok");
+      expect(res.value.selected).toBe(n);
+      expect(res.value.maxTopicCardinality).toBe(1); // 1 for ANY N — never self-corroborates
+      expect(res.value.admitted).toBe(0);
+    }
+  });
+});

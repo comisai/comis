@@ -355,4 +355,50 @@ describe("buildReflectionCronDeps", () => {
       expect(await bundle.buildSourceTrajectories("topic", "agent-1", "t")).toHaveLength(0);
     });
   });
+
+  // ── OQ-3 (PROC-05): a cron/heartbeat-origin turn read by the SKILL source builder is a
+  // constant-identity, deny-on-unknown DEAD-END. A self-triggered heartbeat rides ONE
+  // session (`heartbeat-<agentId>`, userId "heartbeat" — agent-heartbeat-source.ts:191-195)
+  // and sender "system"/"heartbeat", so N cron turns read back by buildSkillSources carry
+  // the IDENTICAL (sessionId, sender) → distinctSenderCardinality would be 1 (never
+  // self-corroborates). AND the unmapped "heartbeat" sender is deny-on-unknown untrusted.
+  // This pins the empirical OQ-3 verdict at the daemon READ path: constant sessionId ⇒
+  // dead-end (safe) — NO cron-origin exclusion added.
+  describe("OQ-3 — a heartbeat/cron-origin turn is a constant-identity, untrusted dead-end", () => {
+    const HB_SESSION = "heartbeat-agent-1"; // the constant channelId per agent (heartbeat source)
+    function heartbeatTurns(traceIds: string[]) {
+      return {
+        // The heartbeat session: userId "heartbeat" is the constant sender half of the pair.
+        sessionStore: {
+          listDetailed: vi.fn(() => [{ sessionKey: HB_SESSION, userId: "heartbeat", tenantId: "t", channelId: HB_SESSION, metadata: null, createdAt: 1, updatedAt: 2, messageCount: 2 }]),
+          loadByFormattedKey: vi.fn(() => ({ messages: [{ role: "user", content: "heartbeat tick" }, { role: "assistant", content: "ok" }], metadata: {}, createdAt: 1, updatedAt: 2 })),
+        } as any,
+        outcomeStore: {
+          observe: vi.fn(), prune: vi.fn(), resolve: vi.fn(),
+          // N cron turns all on the ONE heartbeat session.
+          listTrajectoryIds: vi.fn(async () => ({ ok: true as const, value: traceIds.map((trajectoryId) => ({ trajectoryId, sessionId: HB_SESSION })) })),
+        } as any,
+      };
+    }
+
+    it("N heartbeat turns share ONE (sessionId, sender) — so distinctSenderCardinality would be 1 (never self-corroborates)", async () => {
+      // Default agent config ⇒ senderTrustMap {} + defaultTrustLevel "external".
+      const bundle = buildReflectionCronDeps(makeInput(heartbeatTurns(["hb-1", "hb-2", "hb-3"])))!;
+      const traj = await bundle.buildSourceTrajectories("skill", "agent-1", "t");
+      expect(traj).toHaveLength(3);
+      // All three cron turns carry the IDENTICAL (sessionId, sender) — the corroboration
+      // cardinality metric (`${sessionId} ${sender}`) collapses them to a single distinct pair.
+      const pairs = new Set(traj.map((s) => `${s.sessionId} ${s.sender}`));
+      expect(pairs.size).toBe(1);
+      expect(traj[0].sessionId).toBe(HB_SESSION);
+      expect(traj[0].sender).toBe("heartbeat");
+    });
+
+    it("the unmapped 'heartbeat' sender is deny-on-unknown untrusted (trustedOrigin:false) — a second belt on the cron path", async () => {
+      const bundle = buildReflectionCronDeps(makeInput(heartbeatTurns(["hb-1"])))!;
+      const traj = await bundle.buildSourceTrajectories("skill", "agent-1", "t");
+      // "heartbeat" is not in the senderTrustMap; the schema-default tier is "external" ⇒ deny.
+      expect(traj[0].trustedOrigin).toBe(false);
+    });
+  });
 });

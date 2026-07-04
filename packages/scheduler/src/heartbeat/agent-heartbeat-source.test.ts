@@ -660,3 +660,45 @@ describe("heartbeat source uses BackgroundSessionResolver.hasActiveSession", () 
     expect(stripped).not.toMatch(/activeRunRegistry\.has\(/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// OQ-3 (PROC-05) — a cron/heartbeat pipeline rides a CONSTANT (sessionId, sender)
+// per agent. This is the empirical input to the reflection corroboration cardinality:
+// a self-triggered heartbeat rides ONE (sessionId, sender) per agent, so N cron runs
+// collapse to distinctSenderCardinality 1 (never self-corroborates — proven against the
+// gate in packages/agent reflection-job.test.ts). Verdict: constant sessionId ⇒ dead-end
+// (safe) — NO cron-origin exclusion needed. These pin the SOURCE derivation the verdict
+// rests on (resolveHeartbeatSessionKey is constant per agent; the synthetic message rides
+// senderId:"system").
+// ---------------------------------------------------------------------------
+describe("OQ-3 — heartbeat rides a constant (sessionId, sender) per agent (cron self-corroboration dead-end)", () => {
+  it("resolveHeartbeatSessionKey is CONSTANT across repeated ticks for one agent (no target)", () => {
+    const config = mockConfig(); // no delivery target → the self-triggered fallback identity
+    const k1 = resolveHeartbeatSessionKey("agent1", config, "default");
+    const k2 = resolveHeartbeatSessionKey("agent1", config, "default");
+    // Byte-identical across ticks — ONE sessionId per agent (userId + channelId constant).
+    expect(k1).toEqual({ tenantId: "default", userId: "heartbeat", channelId: "heartbeat-agent1" });
+    expect(k2).toEqual(k1);
+    // A DIFFERENT agent gets a DIFFERENT constant key (agents never cross-corroborate).
+    expect(resolveHeartbeatSessionKey("agent2", config, "default").channelId).toBe("heartbeat-agent2");
+  });
+
+  it("two heartbeat ticks for one agent execute on the SAME (channelId, senderId) pair (constant across runs)", async () => {
+    const deps = createMockDeps(); // no target → no delivery side effects
+    const source = createAgentHeartbeatSource(deps);
+    await source.onTick("agent1");
+    await source.onTick("agent1");
+    const executor = (deps.getExecutor as ReturnType<typeof vi.fn>).mock.results[0]?.value;
+    expect(executor.execute).toHaveBeenCalledTimes(2);
+    const [msg1, key1] = executor.execute.mock.calls[0]!;
+    const [msg2, key2] = executor.execute.mock.calls[1]!;
+    // The (sessionId, sender) PAIR the reflection cardinality keys on is CONSTANT across ticks:
+    // the session channelId + userId are identical, and the sender is the constant "system".
+    expect(key1.channelId).toBe("heartbeat-agent1");
+    expect(key2.channelId).toBe(key1.channelId);
+    expect(key1.userId).toBe("heartbeat");
+    expect(key2.userId).toBe(key1.userId);
+    expect(msg1.senderId).toBe("system");
+    expect(msg2.senderId).toBe("system");
+  });
+});
