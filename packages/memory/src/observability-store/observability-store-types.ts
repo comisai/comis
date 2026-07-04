@@ -310,13 +310,10 @@ export interface CostBucketFilter {
 }
 
 /**
- * Per-session health rollup (A1 `aggregateSessionsInWindow`) over the latest
- * reduce over ALL in-window `session_summary` rows per `session_key` (one row
- * per execution): additive fields (`costUsd`/`turnCount`/`breakerTripCount`/
- * `toolStats`/`topErrorKinds`) are summed, `degraded` ORs, and `endReason`
- * keeps the latest degraded execution's named cause. Fields parsed from each
- * row's `details` JSON. `source` is the provenance enum the A2 reducer filters on.
- */
+ * Per-session health rollup (A1 `aggregateSessionsInWindow`): reduced over ALL
+ * in-window `session_summary` rows per key (one per execution) — additive fields
+ * sum, `degraded` ORs, `endReason` keeps the latest degraded execution's cause.
+ * `source` is the provenance enum the A2 reducer filters on. */
 export interface SessionSummaryRollup {
   sessionKey: string;
   lastTs: number;
