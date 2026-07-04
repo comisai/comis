@@ -127,6 +127,8 @@ const TOOL_SUMMARIES: Record<string, string> = {
   web_fetch: "Fetch a URL's readable content (daemon-side, DNS-pinned).",
   mcp: "Call an allowlisted connected MCP server's tool: comis_tools.mcp.<server>.<tool>(args). The server/tool set is operator-configured.",
   write: "Write a file into the jailed run workspace (path-confined, run-ephemeral).",
+  checkpoint: "Persist this run's state so it survives a restart: comis_tools.checkpoint(state). Durable (longer TTL), capped like any result; requires the resume surface.",
+  resume: "Return this run's last checkpoint state (wrapped as data, never executed) or null if none: comis_tools.resume(). Requires the resume surface.",
 };
 
 // ---------------------------------------------------------------------------

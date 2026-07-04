@@ -103,6 +103,19 @@ export const TOOL_CAPABILITY_MAP = {
   // (autonomy.write), enforced in the executor's writeSurfaceEnabled gate. So a
   // default standard agent HOLDS orch:write yet cannot reach the write tool.
   write: "orch:write",
+  // orch:write / orch:read — the durable specialized checkpoint/resume pair
+  // (RESUME-01). checkpoint persists a distinguished, longer-TTL kind:"json"
+  // ResultRef (the run's last state) and stamps its id onto the durable row;
+  // resume reads that state back WRAPPED (data-not-control). They REUSE the FLOOR
+  // caps (checkpoint→orch:write, resume→orch:read) rather than a new
+  // orch:checkpoint cap — the authoritative gate is NOT the cap (both are floor
+  // caps held in standard+) but the daemon-side `orchestrateResumeEnabled` surface
+  // predicate (default-off `autonomy.durability.orchestrateResume`), mirroring how
+  // `write` sits behind `autonomy.write`. Reusing floor caps avoids the 5-consumer
+  // AGENT_CAPABILITIES fan-out + capability-scope-disjoint churn a bespoke cap
+  // would force, and keeps the durability toggle the single authoritative gate.
+  checkpoint: "orch:write",
+  resume: "orch:read",
 } as const satisfies Record<string, AgentCapability>;
 
 /** The tool-name keys of {@link TOOL_CAPABILITY_MAP} (mirrors `GatedMethodName`). */
@@ -141,6 +154,11 @@ export const TOOL_ROUTE_MAP = {
   web_fetch: { kind: "executor" },
   mcp: { kind: "executor" },
   write: { kind: "executor" }, // workspace-confined write core (mirrors the file builtins)
+  // The durable checkpoint/resume pair runs DAEMON-side (longer-TTL materialize +
+  // durable-row checkpointRef read/write, wrap-on-read) — an in-process executor
+  // arm, NOT an RPC method. Same route kind as write / the file builtins.
+  checkpoint: { kind: "executor" },
+  resume: { kind: "executor" },
 } as const satisfies Record<ToolName, ToolRoute>;
 
 // ---------------------------------------------------------------------------

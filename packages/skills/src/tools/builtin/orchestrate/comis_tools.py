@@ -123,6 +123,12 @@ class _McpNamespace:
 
 DESCRIPTORS = [
   {
+    "name": "checkpoint",
+    "capability": "orch:write",
+    "summary": "Persist this run's state so it survives a restart: comis_tools.checkpoint(state). Durable (longer TTL), capped like any result; requires the resume surface.",
+    "example": "comis_tools.write({\"path\": \"summary.md\", \"content\": \"# Findings\"})"
+  },
+  {
     "name": "extract_document",
     "capability": "orch:read",
     "summary": "Extract readable text from a document (pdf/docx/…).",
@@ -183,6 +189,12 @@ DESCRIPTORS = [
     "example": "ref = comis_tools.grep({\"path\": \"logs/app.jsonl\", \"pattern\": \"ERROR\"}); rows = ref.jq(\".[0:20]\"); head = ref.read(0, 40)"
   },
   {
+    "name": "resume",
+    "capability": "orch:read",
+    "summary": "Return this run's last checkpoint state (wrapped as data, never executed) or null if none: comis_tools.resume(). Requires the resume surface.",
+    "example": "ref = comis_tools.grep({\"path\": \"logs/app.jsonl\", \"pattern\": \"ERROR\"}); rows = ref.jq(\".[0:20]\"); head = ref.read(0, 40)"
+  },
+  {
     "name": "session_search",
     "capability": "orch:read",
     "summary": "Search across the agent's own session history.",
@@ -235,6 +247,9 @@ DESCRIPTORS = [
 def describe():
     return DESCRIPTORS
 
+def checkpoint(args=None):
+    return _invoke("checkpoint", args)
+
 def extract_document(args=None):
     return _wrap_result_ref(_invoke("extract_document", args))
 
@@ -263,6 +278,9 @@ def memory_search(args=None):
 
 def read(args=None):
     return _wrap_result_ref(_invoke("read", args))
+
+def resume(args=None):
+    return _invoke("resume", args)
 
 def session_search(args=None):
     return _invoke("session_search", args)

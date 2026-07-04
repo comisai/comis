@@ -61,6 +61,8 @@ export interface ComisTools {
    * a specific tool's full types.
    */
   describe(): ToolDescriptor[];
+  /** Persist this run's state so it survives a restart: comis_tools.checkpoint(state). Durable (longer TTL), capped like any result; requires the resume surface. (capability: orch:write) Example: await comis_tools.write({ path: 'summary.md', content: '# Findings' }); */
+  checkpoint(args?: Record<string, unknown>): Promise<unknown>;
   /** Extract readable text from a document (pdf/docx/…). (capability: orch:read) Example: const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40); */
   extract_document(args?: Record<string, unknown>): Promise<ResultRef>;
   /** Find files in the jailed workspace by name/glob. (capability: orch:read) Example: const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40); */
@@ -81,6 +83,8 @@ export interface ComisTools {
   memory_search(args?: Record<string, unknown>): Promise<unknown>;
   /** Read a file from the jailed workspace (offset/limit). (capability: orch:read) Example: const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40); */
   read(args?: Record<string, unknown>): Promise<ResultRef>;
+  /** Return this run's last checkpoint state (wrapped as data, never executed) or null if none: comis_tools.resume(). Requires the resume surface. (capability: orch:read) Example: const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40); */
+  resume(args?: Record<string, unknown>): Promise<unknown>;
   /** Search across the agent's own session history. (capability: orch:read) Example: const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40); */
   session_search(args?: Record<string, unknown>): Promise<unknown>;
   /** Read the status of one of the agent's sessions. (capability: orch:read) Example: const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40); */

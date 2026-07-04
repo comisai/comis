@@ -12,6 +12,12 @@ import { invoke, wrapResultRef, callCapSocket } from "./orchestrate-sdk-runtime.
 
 const DESCRIPTORS = [
   {
+    "name": "checkpoint",
+    "capability": "orch:write",
+    "summary": "Persist this run's state so it survives a restart: comis_tools.checkpoint(state). Durable (longer TTL), capped like any result; requires the resume surface.",
+    "example": "await comis_tools.write({ path: 'summary.md', content: '# Findings' });"
+  },
+  {
     "name": "extract_document",
     "capability": "orch:read",
     "summary": "Extract readable text from a document (pdf/docx/…).",
@@ -72,6 +78,12 @@ const DESCRIPTORS = [
     "example": "const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40);"
   },
   {
+    "name": "resume",
+    "capability": "orch:read",
+    "summary": "Return this run's last checkpoint state (wrapped as data, never executed) or null if none: comis_tools.resume(). Requires the resume surface.",
+    "example": "const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40);"
+  },
+  {
     "name": "session_search",
     "capability": "orch:read",
     "summary": "Search across the agent's own session history.",
@@ -124,6 +136,9 @@ const DESCRIPTORS = [
 export const comis_tools = {
   describe() {
     return DESCRIPTORS;
+  },
+  async checkpoint(args) {
+    return invoke("checkpoint", args);
   },
   async extract_document(args) {
     return wrapResultRef(await invoke("extract_document", args));
@@ -180,6 +195,9 @@ export const comis_tools = {
   },
   async read(args) {
     return wrapResultRef(await invoke("read", args));
+  },
+  async resume(args) {
+    return invoke("resume", args);
   },
   async session_search(args) {
     return invoke("session_search", args);
