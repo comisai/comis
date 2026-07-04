@@ -156,6 +156,7 @@ export { buildThreadingHeaders, extractThreadId } from "./email/threading.js";
 export { createMsTeamsAdapter } from "./msteams/msteams-adapter.js";
 export type { MsTeamsAdapterDeps, MsTeamsAdapterHandle } from "./msteams/msteams-adapter.js";
 export { createMsTeamsPlugin } from "./msteams/msteams-plugin.js";
+export type { MsTeamsPluginHandle } from "./msteams/msteams-plugin.js";
 
 // Microsoft Teams utilities
 export { mapMsTeamsActivityToNormalized } from "./msteams/message-mapper.js";

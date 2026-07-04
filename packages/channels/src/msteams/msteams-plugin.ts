@@ -18,6 +18,7 @@
 import type {
   ChannelCapability,
   ChannelPluginPort,
+  MediaResolverPort,
   PluginRegistryApi,
 } from "@comis/core";
 import { ok, type Result } from "@comis/shared";
@@ -25,6 +26,54 @@ import {
   createMsTeamsAdapter,
   type MsTeamsAdapterDeps,
 } from "./msteams-adapter.js";
+import { createMsTeamsResolver } from "./msteams-resolver.js";
+
+// ---------------------------------------------------------------------------
+// Structural interfaces (avoid a circular dep on @comis/skills)
+// ---------------------------------------------------------------------------
+
+/**
+ * Structural interface for the auth-capable SSRF-guarded fetcher (avoids a
+ * circular dep on the package that owns the HTTP transport). It is the auth
+ * superset of the plain `fetch(url)` seam: `opts` carries the Authorization
+ * header value and the host allowlist the header may ride.
+ */
+interface SsrfFetcher {
+  fetch(
+    url: string,
+    opts?: { authHeader?: string; authAllowHosts?: readonly string[] },
+  ): Promise<Result<{ buffer: Buffer; mimeType: string; sizeBytes: number }, Error>>;
+}
+
+/** Minimal logger interface for the media resolver. */
+interface ResolverLogger {
+  debug(obj: Record<string, unknown>, msg: string): void;
+  warn(obj: Record<string, unknown>, msg: string): void;
+}
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
+/**
+ * The Teams plugin handle. Widens ChannelPluginPort with `createResolver`, which
+ * builds the Teams media resolver closing over the adapter's Connector-token
+ * getter (mirrors TelegramPluginHandle).
+ */
+export interface MsTeamsPluginHandle extends ChannelPluginPort {
+  /**
+   * Create the Teams media resolver. The injected fetcher is the auth-capable
+   * SSRF-guarded fetcher the media pipeline already uses; `mediaAuthAllowHosts`
+   * is the config passthrough (the resolver applies a built-in default when it
+   * is empty).
+   */
+  createResolver(deps: {
+    ssrfFetcher: SsrfFetcher;
+    maxBytes: number;
+    logger: ResolverLogger;
+    mediaAuthAllowHosts: readonly string[];
+  }): MediaResolverPort;
+}
 
 /** Microsoft Teams platform capabilities — self-declared, matching the adapter. */
 const CAPABILITIES: ChannelCapability = {
@@ -36,7 +85,9 @@ const CAPABILITIES: ChannelCapability = {
     // Bot Framework deleteActivity.
     deleteMessages: true,
     fetchHistory: false,
-    attachments: false,
+    // Base64-inline image send via sendAttachment; inbound media resolves through
+    // the msteams-file resolver createResolver builds.
+    attachments: true,
     // A {type:"typing"} keepalive over the injected timer.
     typing: true,
     // Channel/group thread root via replyToId.
@@ -58,7 +109,7 @@ const CAPABILITIES: ChannelCapability = {
  */
 export function createMsTeamsPlugin(
   deps: MsTeamsAdapterDeps,
-): ChannelPluginPort {
+): MsTeamsPluginHandle {
   const adapter = createMsTeamsAdapter(deps);
 
   return {
@@ -79,6 +130,18 @@ export function createMsTeamsPlugin(
 
     async deactivate(): Promise<Result<void, Error>> {
       return adapter.stop();
+    },
+
+    createResolver({ ssrfFetcher, maxBytes, logger, mediaAuthAllowHosts }) {
+      return createMsTeamsResolver({
+        // Close over the adapter's cached Connector-token getter; the resolver
+        // mints the Bearer once and the fetcher decides per-hop whether to attach it.
+        getToken: () => adapter.getConnectorToken(),
+        ssrfFetcher,
+        maxBytes,
+        logger,
+        mediaAuthAllowHosts,
+      });
     },
   };
 }

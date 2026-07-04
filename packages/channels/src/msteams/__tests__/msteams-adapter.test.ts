@@ -1823,7 +1823,8 @@ describe("createMsTeamsPlugin — capability parity metadata", () => {
         editMessages: true,
         deleteMessages: true,
         fetchHistory: false,
-        attachments: false,
+        // Backed by sendAttachment (base64-inline image) + the msteams-file resolver.
+        attachments: true,
         typing: true,
         threads: true,
         buttons: "adaptivecard",
