@@ -56,6 +56,11 @@ describe("tool.invoke default-deny by absence", () => {
       "web_fetch",
       "mcp",
       "write",
+      // The durable specialized writing pair (RESUME-01): checkpoint reuses the
+      // orch:write floor cap, resume the orch:read floor cap — the real gate is the
+      // daemon-side orchestrateResumeEnabled surface predicate, not a new cap.
+      "checkpoint",
+      "resume",
     ]);
     expect(allowed).toEqual(expected);
   });

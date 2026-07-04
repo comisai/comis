@@ -156,6 +156,43 @@ describe("MUT-01: the write tool is cap-mapped + executor-routed (the first muta
   });
 });
 
+describe("RESUME-01: checkpoint/resume are cap-mapped to the FLOOR caps + executor-routed (no new cap)", () => {
+  it("maps `checkpoint` to orch:write and `resume` to orch:read (REUSE the floor caps, adopted Open Q1)", () => {
+    // The durable specialized writing pair reuses the existing floor caps rather
+    // than minting an orch:checkpoint cap (avoids the 5-consumer fan-out); the
+    // authoritative gate is the daemon-side orchestrateResumeEnabled surface
+    // predicate (default-off autonomy.durability.orchestrateResume), NOT the cap.
+    const cap = TOOL_CAPABILITY_MAP as Record<string, unknown>;
+    expect(cap.checkpoint).toBe("orch:write");
+    expect(cap.resume).toBe("orch:read");
+  });
+
+  it("routes `checkpoint` and `resume` to the daemon-side executor (mirrors the file builtins / write)", () => {
+    const route = TOOL_ROUTE_MAP as Record<string, unknown>;
+    expect(route.checkpoint).toEqual({ kind: "executor" });
+    expect(route.resume).toEqual({ kind: "executor" });
+  });
+
+  it("keeps cap-map ↔ route ↔ denylist soundness with checkpoint/resume present (the import-time assertion held)", () => {
+    // assertToolMapSoundness runs at import; a throw would have failed this file's
+    // import. Re-pin the invariant for the pair: cap-mapped, exactly one route each,
+    // and NEITHER on the admin/destructive denylist.
+    const cap = TOOL_CAPABILITY_MAP as Record<string, unknown>;
+    const route = TOOL_ROUTE_MAP as Record<string, unknown>;
+    expect("checkpoint" in cap && "checkpoint" in route).toBe(true);
+    expect("resume" in cap && "resume" in route).toBe(true);
+    expect(SUB_AGENT_TOOL_DENYLIST.has("checkpoint")).toBe(false);
+    expect(SUB_AGENT_TOOL_DENYLIST.has("resume")).toBe(false);
+  });
+
+  it("does NOT introduce a new orch:checkpoint capability (floor-cap reuse; no AGENT_CAPABILITIES churn)", () => {
+    // Correctness pin for the adopted Open Q1 recommendation: the pair reuses
+    // orch:write/orch:read, so no cap-map VALUE is a non-existent "orch:checkpoint".
+    const values = new Set(Object.values(TOOL_CAPABILITY_MAP));
+    expect(values.has("orch:checkpoint" as unknown as string)).toBe(false);
+  });
+});
+
 describe("MUT-01: the typed write SURFACE is default-off (write toggle), even though orch:write is a floor cap", () => {
   // The honest framing (correction #2): orch:write is NOT a new default-off CAP —
   // it is a FLOOR cap granted in standard+. What P3 adds is the typed SDK SURFACE

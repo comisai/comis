@@ -231,6 +231,45 @@ describe("orchestrate comis_tools SDK drift gate", () => {
     expect(dts).toContain("write(args?: Record<string, unknown>): Promise<unknown>;");
   });
 
+  it("renders `checkpoint`/`resume` as standard tool.invoke methods (orch:write/orch:read), not ResultRef/proxy (RESUME-01)", () => {
+    // checkpoint→orch:write and resume→orch:read reuse the FLOOR caps (no new
+    // orch:checkpoint cap); the real gate is the orchestrateResumeEnabled surface
+    // predicate, daemon-side. The moment the pair joins the cap-map the generator
+    // renders them like any other non-ResultRef tool: a flat invoke("checkpoint"|
+    // "resume", …) in js/py + a typed .d.ts signature. checkpoint returns a small
+    // ack and resume returns the (daemon-wrapped) state|null, so NEITHER wraps a
+    // ResultRef, and NEITHER is the mcp proxy special-case.
+    const tmp = mkdtempSync(join(tmpdir(), "comis-sdk-resume-"));
+    let js: string;
+    let py: string;
+    let dts: string;
+    try {
+      const result = runCodegen(tmp);
+      js = result.js;
+      py = result.py;
+      dts = result.dts;
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+
+    // JS: flat invoke methods (NOT wrapResultRef — a checkpoint ack / a resume
+    // state blob is not offloaded here; resume's data-not-control wrap is daemon-side).
+    expect(js).toContain('async checkpoint(args) {\n    return invoke("checkpoint", args);\n  }');
+    expect(js).toContain('async resume(args) {\n    return invoke("resume", args);\n  }');
+    expect(js, "checkpoint must NOT be wrapped as a ResultRef").not.toMatch(
+      /wrapResultRef\(await invoke\("checkpoint"/,
+    );
+    expect(js, "resume must NOT be wrapped as a ResultRef").not.toMatch(
+      /wrapResultRef\(await invoke\("resume"/,
+    );
+    // Python: module-level functions delegating to _invoke (NOT _wrap_result_ref).
+    expect(py).toContain('def checkpoint(args=None):\n    return _invoke("checkpoint", args)');
+    expect(py).toContain('def resume(args=None):\n    return _invoke("resume", args)');
+    // .d.ts: typed methods returning Promise<unknown> (not Promise<ResultRef>).
+    expect(dts).toContain("checkpoint(args?: Record<string, unknown>): Promise<unknown>;");
+    expect(dts).toContain("resume(args?: Record<string, unknown>): Promise<unknown>;");
+  });
+
   it("describe() carries a worked example per capability group in all three SDKs", () => {
     // Read the committed artifacts (the exact bytes the drift gate above locks).
     const committedDts = readFileSync(OUT_DTS, "utf8");
