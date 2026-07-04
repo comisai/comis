@@ -46,6 +46,13 @@ export interface ChannelHealthEntry {
   readonly state: ChannelHealthState;
   readonly lastCheckedAt: number;
   readonly lastMessageAt: number | null;
+  /**
+   * Timestamp of the last INBOUND message, distinct from lastMessageAt (which
+   * an outbound send also bumps). A send-only bot leaves this null while
+   * lastMessageAt advances, so a dead ingress cannot report healthy — the
+   * doctor recent-inbound probe keys on this, never lastMessageAt.
+   */
+  readonly lastInboundAt: number | null;
   readonly error: string | null;
   readonly consecutiveFailures: number;
   readonly stateChangedAt: number;
@@ -112,6 +119,7 @@ interface MutableHealthEntry {
   state: ChannelHealthState;
   lastCheckedAt: number;
   lastMessageAt: number | null;
+  lastInboundAt: number | null;
   error: string | null;
   consecutiveFailures: number;
   stateChangedAt: number;
@@ -202,6 +210,7 @@ export function createChannelHealthMonitor(
       state: "startup-grace",
       lastCheckedAt: now,
       lastMessageAt: null,
+      lastInboundAt: null,
       error: null,
       consecutiveFailures: 0,
       stateChangedAt: now,
@@ -307,6 +316,9 @@ export function createChannelHealthMonitor(
       } else {
         entry.consecutiveFailures = 0; // reset on successful getStatus
         entry.lastMessageAt = status.lastMessageAt ?? entry.lastMessageAt;
+        // Inbound-only signal, captured beside last-activity but never conflated
+        // with it (an outbound send bumps lastMessageAt, not this).
+        entry.lastInboundAt = status.lastInboundAt ?? entry.lastInboundAt;
         entry.error = status.error ?? null;
 
         if (!status.connected) {
