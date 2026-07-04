@@ -24,6 +24,7 @@ const CHANNEL_CREDENTIAL_TYPES: Record<string, readonly string[]> = {
   discord:   ["botToken"],
   slack:     ["botToken", "appToken"],
   line:      ["channelToken", "channelSecret"],
+  msteams:   ["appId", "appPassword", "tenantId"],
   whatsapp:  [],
   signal:    [],
   irc:       [],
@@ -136,6 +137,51 @@ function validateLine(
   return undefined;
 }
 
+// ---------- Microsoft Teams ----------
+
+// App (client) IDs and directory (tenant) IDs are GUIDs (8-4-4-4-12 hex).
+const MSTEAMS_GUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// App password (client secret) values are long; a short one is a typo.
+const MSTEAMS_APP_PASSWORD_MIN_LENGTH = 8;
+
+function validateMsTeams(
+  credentialType: string,
+  value: string,
+): ValidationResult | undefined {
+  if (credentialType === "appId") {
+    if (!MSTEAMS_GUID_PATTERN.test(value)) {
+      return {
+        message: "Invalid Microsoft Teams app ID.",
+        hint: "The bot application (client) ID is a GUID (8-4-4-4-12).",
+        field: "msteamsAppId",
+      };
+    }
+  }
+
+  if (credentialType === "tenantId") {
+    if (!MSTEAMS_GUID_PATTERN.test(value)) {
+      return {
+        message: "Invalid Microsoft Teams tenant ID.",
+        hint: "The directory (tenant) ID is a GUID (8-4-4-4-12).",
+        field: "msteamsTenantId",
+      };
+    }
+  }
+
+  if (credentialType === "appPassword") {
+    if (value.length < MSTEAMS_APP_PASSWORD_MIN_LENGTH) {
+      return {
+        message: "Invalid Microsoft Teams app password.",
+        hint: "The app password (client secret) from the bot registration.",
+        field: "msteamsAppPassword",
+      };
+    }
+  }
+
+  return undefined;
+}
+
 // ---------- Public API ----------
 
 /**
@@ -174,6 +220,8 @@ export function validateChannelCredential(
       return validateSlack(credentialType, trimmed);
     case "line":
       return validateLine(credentialType, trimmed);
+    case "msteams":
+      return validateMsTeams(credentialType, trimmed);
     case "whatsapp":
     case "signal":
     case "irc":
