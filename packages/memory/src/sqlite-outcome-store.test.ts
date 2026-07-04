@@ -20,6 +20,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
 import { initSchema } from "./schema.js";
+import { ensureOutcomeEventsTable } from "./schema-outcome-events.js";
 import { createSqliteOutcomeStore } from "./sqlite-outcome-store.js";
 import { systemNowMs } from "@comis/core";
 import type { OutcomeObservation } from "@comis/core";
@@ -47,6 +48,7 @@ function makeObs(overrides: Partial<OutcomeObservation> = {}): OutcomeObservatio
     ...(overrides.senderTrust !== undefined ? { senderTrust: overrides.senderTrust } : {}),
     ...(overrides.recalledIds !== undefined ? { recalledIds: overrides.recalledIds } : {}),
     ...(overrides.usedSkillIds !== undefined ? { usedSkillIds: overrides.usedSkillIds } : {}),
+    ...(overrides.procedureDescriptor !== undefined ? { procedureDescriptor: overrides.procedureDescriptor } : {}),
   };
 }
 
@@ -85,6 +87,16 @@ describe("createSqliteOutcomeStore", () => {
       )
       .get(TENANT_A, AGENT_A, trajectoryId, source) as { id: string } | undefined;
     return row?.id;
+  }
+
+  /** Read the raw procedure_descriptor JSON column for the single row of a (trajectory, source). */
+  function storedProcedureDescriptor(source = "explicit", trajectoryId = TRAJ): string | null {
+    const row = db
+      .prepare(
+        "SELECT procedure_descriptor AS d FROM outcome_events WHERE tenant_id = ? AND agent_id = ? AND trajectory_id = ? AND source = ?",
+      )
+      .get(TENANT_A, AGENT_A, trajectoryId, source) as { d: string | null } | undefined;
+    return row?.d ?? null;
   }
 
   beforeEach(() => {
@@ -198,6 +210,60 @@ describe("createSqliteOutcomeStore", () => {
         expect(r.value.usedSkillIds).toContain("skill-y");
         expect(r.value.recalledIds).toContain("mem-2");
       }
+    });
+  });
+
+  describe("observe() — procedure_descriptor column (content-free tool-NAME descriptor)", () => {
+    it("writes the JSON tool-NAME array to procedure_descriptor when procedureDescriptor is present", async () => {
+      // A neutral explicit/unknown carrier (the run_summary descriptor row shape) — the
+      // content-free tool-NAME set is JSON-encoded onto the column, mirroring used_skill_ids.
+      await store.observe(
+        makeObs({ source: "explicit", outcome: "unknown", confidence: 0, procedureDescriptor: ["jq", "web_fetch"] }),
+      );
+      expect(storedProcedureDescriptor("explicit")).toBe('["jq","web_fetch"]');
+    });
+
+    it("leaves procedure_descriptor NULL when no descriptor is attributed (tool/pipeline paths)", async () => {
+      await store.observe(makeObs({ source: "tool", outcome: "success" }));
+      expect(storedProcedureDescriptor("tool")).toBeNull();
+    });
+
+    it("resolve() round-trips a descriptor-carrying row without a strictObject MapperError (SELECT ↔ schema lockstep)", async () => {
+      // If the DDL column, the resolve SELECT projection, and the z.strictObject row schema
+      // drift apart, this resolve() surfaces the mismatch as a MapperError (err), NOT ok.
+      await store.observe(
+        makeObs({ source: "explicit", outcome: "unknown", confidence: 0, procedureDescriptor: ["jq", "web_fetch"] }),
+      );
+      const r = await store.resolve(TRAJ, SCOPE_A);
+      expect(r.ok).toBe(true);
+    });
+
+    it("migrates a PRE-EXISTING (column-less) DB and round-trips the descriptor through observe + resolve", async () => {
+      // The silent-regression path (Pitfall 1): a DB a prior build created WITHOUT the
+      // column. The guarded ALTER must add it, then a full observe→resolve must not throw
+      // a strictObject MapperError AND the descriptor must round-trip on the migrated DB.
+      const preDb = new Database(":memory:");
+      preDb.exec(`
+        CREATE TABLE outcome_events (
+          id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, agent_id TEXT NOT NULL,
+          session_id TEXT NOT NULL, trajectory_id TEXT NOT NULL,
+          outcome TEXT NOT NULL, source TEXT NOT NULL, confidence REAL NOT NULL DEFAULT 0.5,
+          sender_trust TEXT, recalled_ids TEXT, used_skill_ids TEXT, observed_at INTEGER NOT NULL,
+          UNIQUE (tenant_id, agent_id, trajectory_id, source, observed_at)
+        );
+      `);
+      ensureOutcomeEventsTable(preDb); // the guarded ALTER adds procedure_descriptor
+      const preStore = createSqliteOutcomeStore({ db: preDb });
+      await preStore.observe(
+        makeObs({ source: "explicit", outcome: "unknown", confidence: 0, procedureDescriptor: ["jq", "web_fetch"] }),
+      );
+      const r = await preStore.resolve(TRAJ, SCOPE_A);
+      expect(r.ok).toBe(true); // no MapperError on a migrated pre-existing DB
+      const stored = preDb
+        .prepare("SELECT procedure_descriptor AS d FROM outcome_events WHERE trajectory_id = ?")
+        .get(TRAJ) as { d: string | null };
+      expect(stored.d).toBe('["jq","web_fetch"]');
+      preDb.close();
     });
   });
 
