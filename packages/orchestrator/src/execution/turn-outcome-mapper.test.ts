@@ -41,6 +41,24 @@ describe("mapAbortToTurnOutcome", () => {
     expect(outcome.reason).toMatch(/loop/i);
   });
 
+  it("maps a spend_exceeded abort to a truthful resource failure mentioning the spend limit (never a stale tool errorKind)", () => {
+    // Observed live: a spend-aborted turn fell through this mapper
+    // (undefined), finalized via the success branch, and the coordinator's
+    // failed-event reclassify stamped the status pill with the turn's
+    // TRANSIENT recovered tool errorKind — the user saw "❌ validation" for a
+    // budget stop.
+    const outcome = mapAbortToTurnOutcome({
+      finishReason: "spend_exceeded",
+      resourceAborted: true,
+      abortReason: "spend_exceeded",
+    });
+    expect(outcome).toBeDefined();
+    expect(outcome?.kind).toBe("failure");
+    if (outcome?.kind !== "failure") throw new Error("expected failure");
+    expect(outcome.errorKind).toBe("resource");
+    expect(outcome.reason).toMatch(/spend|budget/i);
+  });
+
   it("returns undefined for a normal stop so the success/silent branches are untouched", () => {
     expect(
       mapAbortToTurnOutcome({ finishReason: "stop", resourceAborted: false }),
