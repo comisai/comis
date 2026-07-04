@@ -20,6 +20,7 @@ import {
   durableOrphanedEventToRow,
   durableResumedEventToRow,
   autonomyRevokedEventToRow,
+  autonomyBudgetWarningEventToRow,
   autonomyKilledEventToRow,
   autonomyDenialBreakerEventToRow,
   setupObsPersistence,
@@ -1126,6 +1127,32 @@ describe("durableResumedEventToRow", () => {
     expect(details.stepIndex).toBe(4);
     expect(details.rootRunId).toBe("root-resumed");
     expect(Object.keys(details).sort()).toEqual(["rootRunId", "signal", "stepIndex"]);
+  });
+});
+
+describe("autonomyBudgetWarningEventToRow", () => {
+  it("maps autonomy:budget_warning to a health_signal row (severity warning) with limb + counts only", () => {
+    // The pre-trip budget warning: a session at 80% of an autonomy.budget limb
+    // must surface on the fleet lens BEFORE the abort wedges it (observed
+    // live: the wedge arrived with zero warning). Counts + closed labels only.
+    const row = autonomyBudgetWarningEventToRow({
+      rootRunId: "root-session-default:u1:c1",
+      limb: "aggregateUsd",
+      spent: 1.7,
+      cap: 2,
+      unit: "usd",
+      fraction: 0.85,
+      timestamp: 5_000,
+    });
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    const details = JSON.parse(row.details) as Record<string, unknown>;
+    expect(details.signal).toBe("autonomy_budget_warning");
+    expect(details.limb).toBe("aggregateUsd");
+    expect(details.spent).toBe(1.7);
+    expect(details.cap).toBe(2);
+    expect(details.unit).toBe("usd");
+    expect(details.rootRunId).toBe("root-session-default:u1:c1");
   });
 });
 

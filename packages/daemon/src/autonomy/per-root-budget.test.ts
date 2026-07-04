@@ -144,6 +144,54 @@ describe("per-root-budget — $/token/wall-clock limbs reusing the 3-state gate"
     }
   });
 
+  it("fires onLimbWarning ONCE per root+limb when the token limb crosses 80% of its cap", () => {
+    // The wedge arrived with zero warning (observed live): the meter enforced
+    // silently until the abort. A once-per-(root,limb) pre-trip warning gives
+    // the fleet lens a health signal BEFORE the session dies.
+    const clock = createFakeClock(1_000_000);
+    const warnings: Array<{ rootRunId: string; limb: string; spent: number; cap: number; unit: string }> = [];
+    const budget = createPerRootBudget({
+      clock,
+      config: { aggregateUsd: 100, tokens: 1_000, wallClockMs: 3_600_000 },
+      logger: createMockLogger(),
+      onLimbWarning: (w) => { warnings.push(w); },
+    });
+    budget.registerRoot("root-W80");
+
+    // 500/1000 = 50% -> no warning yet.
+    budget.reserveBudget("root-W80", FREE_PROVIDER, FREE_MODEL, 0, 500);
+    expect(warnings).toHaveLength(0);
+    // 850/1000 = 85% -> the token limb warning fires once.
+    budget.reserveBudget("root-W80", FREE_PROVIDER, FREE_MODEL, 0, 350);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ rootRunId: "root-W80", limb: "tokens", cap: 1_000, unit: "tokens" });
+    // Further reserves above the threshold do NOT re-fire (once per root+limb).
+    budget.reserveBudget("root-W80", FREE_PROVIDER, FREE_MODEL, 0, 50);
+    expect(warnings).toHaveLength(1);
+  });
+
+  it("fires onLimbWarning for the $ limb at 80% of aggregateUsd and re-arms after evictRoot", () => {
+    const clock = createFakeClock(1_000_000);
+    const warnings: Array<{ limb: string; unit: string }> = [];
+    const budget = createPerRootBudget({
+      clock,
+      config: { aggregateUsd: 1.0, tokens: 1_000_000, wallClockMs: 3_600_000 },
+      logger: createMockLogger(),
+      onLimbWarning: (w) => { warnings.push(w); },
+    });
+    budget.registerRoot("root-D80");
+
+    budget.reserveBudget("root-D80", PRICED_PROVIDER, PRICED_MODEL, 0.85, 10);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ limb: "aggregateUsd", unit: "usd" });
+
+    // Eviction clears the once-guard so a fresh root warns again.
+    budget.evictRoot("root-D80");
+    budget.registerRoot("root-D80");
+    budget.reserveBudget("root-D80", PRICED_PROVIDER, PRICED_MODEL, 0.85, 10);
+    expect(warnings).toHaveLength(2);
+  });
+
   it("never trips the dollar limb for a free model yet still enforces the token limb", () => {
     const { budget } = makeBudget({ aggregateUsd: 0.0001, tokens: 1000 });
     budget.registerRoot("root-F");
