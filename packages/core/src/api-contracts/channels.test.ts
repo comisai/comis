@@ -226,6 +226,52 @@ describe("ChannelsHealthContract", () => {
       })
     ).toThrow();
   });
+
+  it("carries an optional inbound-only lastInboundAt on a channel entry", () => {
+    const parsed = ChannelsHealthContract.response.parse({
+      channels: [{
+        channelType: "msteams",
+        state: "healthy",
+        connectionMode: "webhook",
+        lastCheckedAt: 1000,
+        lastMessageAt: 999,
+        lastInboundAt: 950,
+        error: null,
+        stateChangedAt: 500,
+        consecutiveFailures: 0,
+        activeRuns: 0,
+        restartAttempts: 0,
+        uptimeMs: 12000,
+      }],
+      timestamp: 1234,
+      enabled: true,
+    });
+    // The inbound-only liveness value must SURVIVE the parse (not be stripped
+    // as an unknown key) so the doctor recent-inbound probe can read it.
+    expect(parsed.channels[0]).toHaveProperty("lastInboundAt", 950);
+  });
+
+  it("still accepts a channel entry that omits lastInboundAt (additive optional)", () => {
+    expect(() =>
+      ChannelsHealthContract.response.parse({
+        channels: [{
+          channelType: "telegram",
+          state: "healthy",
+          connectionMode: "polling",
+          lastCheckedAt: 1000,
+          lastMessageAt: 999,
+          error: null,
+          stateChangedAt: 500,
+          consecutiveFailures: 0,
+          activeRuns: 1,
+          restartAttempts: 0,
+          uptimeMs: 12000,
+        }],
+        timestamp: 1234,
+        enabled: true,
+      })
+    ).not.toThrow();
+  });
 });
 
 describe("DeliveryQueueStatusContract", () => {
