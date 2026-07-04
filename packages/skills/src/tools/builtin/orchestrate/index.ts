@@ -38,6 +38,13 @@ export type {
   MaterializeError,
 } from "./result-ref-store.js";
 
+// The resumable-durable-row lifecycle for the flat runner (register at start,
+// mark resumable on a timeout + the skip-clean decision, load the pinned bytes on
+// resume). The daemon threads its real durable-run store as the `durableRuns`
+// seam; only the port TYPE is surfaced here (the runner imports the helpers
+// directly).
+export type { OrchestrateDurableRuns } from "./orchestrate-durable.js";
+
 // The shipped daemon-side `tool.invoke` executor cores: the real
 // read/grep/find/ls/jq file cores + the web_search core the executor
 // routes to. Consumed by the daemon's dormancy-activation wiring.

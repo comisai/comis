@@ -330,6 +330,8 @@ export {
 export type {
   OrchestrateToolDeps,
   OrchestrateResultStore,
+  // The durable-run store port the daemon threads to make the runner resumable.
+  OrchestrateDurableRuns,
   ResultRefStore,
   ResultRefStoreDeps,
   MaterializeContext,

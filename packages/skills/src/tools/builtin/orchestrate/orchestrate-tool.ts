@@ -92,6 +92,13 @@ import type {
   OrchestrateSpawnFn,
   OrchestrateSpawnedChild,
 } from "./orchestrate-repair.js";
+import {
+  loadResumeSpec,
+  markResumable,
+  registerDurableRun,
+  defaultOrchestrateDurableFs,
+} from "./orchestrate-durable.js";
+import type { OrchestrateDurableRuns } from "./orchestrate-durable.js";
 import type { ResultRef } from "@comis/core";
 
 // The jailed-child execution engine + its seam types live in orchestrate-repair;
@@ -126,6 +133,12 @@ const OrchestrateParams = Type.Object({
   captureStdout: Type.Optional(
     Type.Boolean({ description: "Reserved — stdout is always the (only) captured channel." }),
   ),
+  resumeRunId: Type.Optional(
+    Type.String({
+      description:
+        "Resume a timed-out durable run by its id: re-spawns the PINNED stored script. The `script` param is IGNORED on resume — no new bytes are accepted. Requires the durable-resume surface.",
+    }),
+  ),
 });
 
 type OrchestrateParamsType = {
@@ -133,6 +146,7 @@ type OrchestrateParamsType = {
   language: "ts" | "js" | "py";
   timeoutMs?: number;
   captureStdout?: boolean;
+  resumeRunId?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -160,13 +174,14 @@ export interface OrchestrateResultStore {
 }
 
 /** Dependencies for the orchestrate runner (AGENTS.md §2.4 — injected). */
-// @optional-field-count: 16 — the daemon-minted optional wiring seams. Six
+// @optional-field-count: 17 — the daemon-minted optional wiring seams. Six
 // required fields (logger / workspace / cap-socket / sandbox / store / baseEnv)
 // are always present; each optional field is a presence-conditional collaborator
 // the composition root threads ONLY when its feature is active — the broker
 // lease-env + per-run lease mint, the event-bus run_summary, the pre-flight
-// allowed-caps + approval gate, and the capability-class + one-shot repair seam —
-// plus the test-injected seams (spawn / jail-node / jail-python / jail-agent-cli /
+// allowed-caps + approval gate, the capability-class + one-shot repair seam, and
+// the clustered durable-run resume store (threaded only when resume is on) — plus
+// the test-injected seams (spawn / jail-node / jail-python / jail-agent-cli /
 // seccomp-fd / clock / sdk-assets-dir) that default to the real implementation
 // when absent. Each read site already guards on its own presence; clustering them
 // would couple unrelated wiring. Grows by one per new daemon-threaded seam.
@@ -315,6 +330,12 @@ export interface OrchestrateToolDeps {
     stderrTail: string;
     describeDigest: string;
   }) => Promise<string | undefined>;
+  /**
+   * The durable-run store port, threaded ONLY when the resume surface is on: the
+   * run registers a resumable row at start (scriptRef), a TIMEOUT re-affirms it +
+   * SKIPS cleanupRun, `resumeRunId` loads the pinned bytes. Absent ⇒ default-off.
+   */
+  readonly durableRuns?: OrchestrateDurableRuns;
 }
 
 // ---------------------------------------------------------------------------
@@ -450,6 +471,27 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
       // Bound the model-supplied timeout (fallback default, clamp ceiling)
       // so a jailed script cannot pin a child for an arbitrarily long window.
       const timeoutMs = clampTimeoutMs(params.timeoutMs);
+      // Durable row key = the tree rootRunId (also the checkpoint core's key);
+      // `skipCleanup` gates the finally on a resumable timeout.
+      const durableKey = deps.rootRunId ?? runId;
+      let skipCleanup = false;
+
+      // A resume loads the PINNED bytes (the `script` param is IGNORED); else params.
+      let script = params.script;
+      let language = params.language;
+      let scriptName = `${runId}.${params.language}`;
+      if (params.resumeRunId !== undefined && deps.durableRuns !== undefined) {
+        const loaded = await loadResumeSpec(deps.durableRuns, defaultOrchestrateDurableFs, {
+          resumeRunId: params.resumeRunId,
+          workspacePath,
+        });
+        if (!loaded.ok) {
+          throwToolError("not_found", "The orchestrate run to resume could not be loaded.", { hint: loaded.error });
+        }
+        script = loaded.value.scriptBytes;
+        language = loaded.value.language;
+        scriptName = loaded.value.scriptRef;
+      }
 
       // Static pre-flight, run BEFORE any resource is acquired — no seccomp fd
       // opened, no run_summary emitted, no child spawned on a rejection (it precedes
@@ -467,7 +509,7 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
       // scan (a dynamic/computed call → empty footprint) proceeds past here and is
       // still denied at the cap-socket endpoint by default-deny-by-absence, the sole
       // authoritative boundary.
-      const footprint = extractCapabilityFootprint(params.script);
+      const footprint = extractCapabilityFootprint(script);
       if (deps.allowedCaps) {
         const held = new Set(deps.allowedCaps);
         const missing = [...footprint.caps].filter((cap) => !held.has(cap)).sort();
@@ -544,7 +586,7 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
             rootRunId: deps.rootRunId ?? runId,
             ...(deps.sessionKey !== undefined ? { sessionKey: deps.sessionKey } : {}),
             ...(turnTraceId !== undefined ? { traceId: turnTraceId } : {}),
-            language: params.language,
+            language,
             durationMs: now() - startedMs,
             exitCode: outcome.exitCode,
             ...(outcome.failureClass !== undefined ? { failureClass: outcome.failureClass } : {}),
@@ -574,7 +616,7 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         }
       };
 
-      log.debug({ runId, step: "start", language: params.language }, "orchestrate run starting");
+      log.debug({ runId, step: "start", language }, "orchestrate run starting");
 
       // Resolve the seccomp fd ONCE, BEFORE the try (see the fd-lifecycle
       // contract in seccomp-profile.ts). The fd is opened WITHOUT O_CLOEXEC so the bwrap child inherits
@@ -588,11 +630,10 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
       const seccompFd = loadSeccompFd();
 
       try {
-        // 1. Resolve the script path in the jailed workspace. The actual write is
-        //    deferred to the run engine (step 6) so the one-shot repair can re-write
-        //    the SAME path with the regenerated script and re-run it, sharing the
-        //    identical jail/cap/lease envelope.
-        const scriptName = `${runId}.${params.language}`;
+        // 1. Resolve the script path (scriptName resolved above — the run's
+        //    `<runId>.<language>`, or the pinned scriptRef on a resume). The write
+        //    is deferred to the run engine (step 6) so the one-shot repair can
+        //    re-write the SAME path and re-run in the identical envelope.
         const scriptPath = safePath(workspacePath, scriptName);
 
         // 2. Copy the committed SDK + the runtime shim so the script can
@@ -628,7 +669,7 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         //     PATH and would exit 127 (the #236 lesson). Python has no BIND net, so
         //     `resolveJailPython` returns the absolute pythonBin directly.
         let interp: string;
-        if (params.language === "py") {
+        if (language === "py") {
           const jailPython = resolvePython();
           if (jailPython.mode === "unavailable") {
             log.warn(
@@ -750,6 +791,17 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         // mintRunLease). A run with none is degraded — flagged lease_absent below.
         const leasePresent = childEnv.COMIS_CAP_LEASE !== undefined;
 
+        // 5c. Register a resumable durable row (scriptRef set) BEFORE the run so a
+        //     mid-pipeline restart's boot sweep finds it (after the honest-degrade
+        //     refusals so a refused run writes no row). Best-effort; COALESCE-safe.
+        if (deps.durableRuns !== undefined) {
+          await registerDurableRun(deps.durableRuns, {
+            rootRunId: durableKey,
+            scriptRef: scriptName,
+            nowMs: now(),
+          });
+        }
+
         // 6. Run the jailed child, with a bounded one-shot auto-repair. Writes the
         //    script into the workspace then drives the jailed child to completion
         //    (stdout ONLY re-enters; stderr/intermediate never do). The initial run
@@ -765,8 +817,8 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
           childEnv,
           scriptPath,
           timeoutMs,
-          script: params.script,
-          language: params.language,
+          script,
+          language,
           capabilityClass: deps.capabilityClass,
           repairSeam: deps.repairSeam,
           log,
@@ -797,6 +849,17 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         // (the stderr tail stays on THAT surface, never on the bus).
         const { failureClass, exitCode } = classifyRunError(err);
         emitRunSummary({ exitCode, failureClass, stdoutBytesRaw: 0, stdoutCharsReentered: 0 });
+        // A durable-registered run that TIMED OUT becomes resumable: re-affirm the
+        // row + SKIP the finally cleanupRun so the pinned script + last checkpoint
+        // survive (the orphan sweep reclaims a truly-dead run). Others clean normally.
+        if (failureClass === "timeout" && deps.durableRuns !== undefined) {
+          const decision = await markResumable(deps.durableRuns, {
+            rootRunId: durableKey,
+            scriptRef: scriptName,
+            nowMs: now(),
+          });
+          skipCleanup = decision.skipCleanup;
+        }
         throw err;
       } finally {
         // 7. Close the PARENT's copy of the seccomp fd. By the time the
@@ -821,7 +884,11 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
             "orchestrate gcRun failed (non-fatal)",
           );
         }
-        await deps.store.cleanupRun({ workspacePath, runId });
+        // A resumable timeout SKIPS cleanupRun (which wipes ALL of results/, where
+        // the checkpoint lives). gcRun stays — the checkpoint's longer TTL spares it.
+        if (!skipCleanup) {
+          await deps.store.cleanupRun({ workspacePath, runId });
+        }
       }
     },
   };

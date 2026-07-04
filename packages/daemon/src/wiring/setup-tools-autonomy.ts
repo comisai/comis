@@ -35,7 +35,7 @@ import {
   type TypedEventBus,
 } from "@comis/core";
 import type { PlatformToolProvider } from "@comis/skills";
-import type { SandboxProvider } from "@comis/skills/tools";
+import type { OrchestrateDurableRuns, SandboxProvider } from "@comis/skills/tools";
 import { createOrchestrateTool, createResultRefStore } from "@comis/skills/tools";
 import type { CapabilityClass, OrchestrateRepairSeam } from "@comis/agent";
 
@@ -121,6 +121,13 @@ export interface AutonomyToolInputs {
    * Absent ⇒ no repair (frontier/mid, or no resolvable utility model).
    */
   readonly repairSeam?: OrchestrateRepairSeam;
+  /**
+   * The durable-run store port, threaded into the orchestrate runner ONLY when the
+   * resume surface is on (the caller resolves the surface gate). Present ⇒ the
+   * runner registers a resumable row + honors `resumeRunId` + skips cleanupRun on a
+   * timeout. Absent (default-off / older wiring) ⇒ no durable row, normal cleanup.
+   */
+  readonly durableRuns?: OrchestrateDurableRuns;
 }
 
 /** The wiring {@link buildAutonomyToolWiring} returns: the minted env + the orchestrate tool. */
@@ -266,6 +273,9 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
           // not repair (no regression to older wiring).
           ...(input.capabilityClass !== undefined ? { capabilityClass: input.capabilityClass } : {}),
           ...(input.repairSeam !== undefined ? { repairSeam: input.repairSeam } : {}),
+          // The durable-run store — threaded ONLY when the resume surface is on
+          // (the caller sets input.durableRuns), making the runner resumable.
+          ...(input.durableRuns !== undefined ? { durableRuns: input.durableRuns } : {}),
           rootRunId,
           sessionKey,
         }) as unknown as AgentTool)
