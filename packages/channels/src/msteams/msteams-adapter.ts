@@ -30,6 +30,8 @@ import type {
   NormalizedMessage,
   NormalizedReaction,
   ReactionHandler,
+  ReconcileSendOutcome,
+  ReconcileSendQuery,
   SendMessageOptions,
   TimerPort,
 } from "@comis/core";
@@ -904,6 +906,26 @@ export function createMsTeamsAdapter(
         error: _lastError,
         connectionMode: "webhook",
       };
+    },
+
+    async reconcileSend(
+      _query: ReconcileSendQuery,
+    ): Promise<Result<ReconcileSendOutcome, Error>> {
+      // The Bot Connector REST API exposes no history read, so a crash-
+      // interrupted send can never be *proven* to have landed from here —
+      // proving delivery would need Microsoft Graph (ChannelMessage.Read,
+      // deferred). unresolved is the only honest verdict: the recovery engine
+      // parks it (never a replay → never a double-send), and the exactly-once
+      // guarantee is the outward-send ledger's write-ahead dedup, not this
+      // oracle. Never claim a definitive absence the platform cannot prove.
+      deps.logger.debug(
+        {
+          channelType: "msteams" as const,
+          hint: "Bot Connector exposes no history read; proving a send needs Graph ChannelMessage.Read (deferred)",
+        },
+        "reconcileSend unresolved",
+      );
+      return ok({ kind: "unresolved" });
     },
 
     handleWebhookEvents(activities: TeamsActivity[]): void {
