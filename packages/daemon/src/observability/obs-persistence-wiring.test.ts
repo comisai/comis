@@ -7,6 +7,7 @@ import {
   sessionSummaryEventToRow,
   dagDegradedEventToRow,
   healthBudgetExceededEventToRow,
+  channelInboundSilentEventToRow,
   reflectFunnelEventToRow,
   lifecycleSweptEventToRow,
   mcpReconnectFailedEventToRow,
@@ -583,6 +584,56 @@ describe("healthBudgetExceededEventToRow", () => {
 
     const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
     expect(details).toEqual({ signal: "alert_budget", kind: "dependency", count: 5, windowMs: 60_000 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// channelInboundSilentEventToRow (dead webhook ingress → health_signal)
+// ---------------------------------------------------------------------------
+
+describe("channelInboundSilentEventToRow", () => {
+  it("maps a channel:inbound_silent payload to a warning health_signal row (labels/counts only)", () => {
+    const row = channelInboundSilentEventToRow({
+      channelType: "msteams",
+      lastInboundAt: null,
+      silentForMs: 25_200_000,
+      thresholdMs: 21_600_000,
+      timestamp: 3000,
+    });
+
+    expect(row.timestamp).toBe(3000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.message).toBe("channel:inbound_silent");
+    // Daemon-global signal — no agentId/sessionKey/traceId.
+    expect(row.agentId).toBeUndefined();
+    expect(row.sessionKey).toBeUndefined();
+    expect(row.traceId).toBeUndefined();
+
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    // The label the generic health_signal:<label> fleet rollup groups on, plus
+    // channelType + counts only — no message bodies.
+    expect(details).toEqual({
+      signal: "channel_ingress_silent",
+      channelType: "msteams",
+      silentForMs: 25_200_000,
+      thresholdMs: 21_600_000,
+    });
+  });
+
+  it("preserves a numeric lastInboundAt via the counts-only details (no bodies leak)", () => {
+    const row = channelInboundSilentEventToRow({
+      channelType: "msteams",
+      lastInboundAt: 1000,
+      silentForMs: 30_000,
+      thresholdMs: 21_600_000,
+      timestamp: 4000,
+    });
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details.signal).toBe("channel_ingress_silent");
+    expect(details.silentForMs).toBe(30_000);
+    // lastInboundAt is a timestamp, not a body — kept out of details (counts only).
+    expect(details.lastInboundAt).toBeUndefined();
   });
 });
 
