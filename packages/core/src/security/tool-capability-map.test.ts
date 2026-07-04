@@ -51,8 +51,9 @@ describe("TOOL_CAPABILITY_MAP", () => {
     expect(TOOL_CAPABILITY_MAP.jsonpath).toBe("orch:read");
     // A query engine must NEVER carry a write/admin/web cap — confine it to the
     // read surface so the default-deny gate authorizes only an in-jail read.
-    // orch:read / orch:web are the only two caps on this surface,
-    // so "not orch:web" pins both off the write/web side.
+    // The curated surface carries only read/web/mcp data-plane caps (no write/admin),
+    // and the exact orch:read pins above already fix sql/jsonpath; "not orch:web"
+    // keeps them off the net-needing side too.
     expect(TOOL_CAPABILITY_MAP.sql).not.toBe("orch:web");
     expect(TOOL_CAPABILITY_MAP.jsonpath).not.toBe("orch:web");
   });
@@ -79,9 +80,12 @@ describe("TOOL_CAPABILITY_MAP", () => {
     }
   });
 
-  it("uses only orch:read or orch:web on the curated read/web surface", () => {
+  it("uses only orch:read, orch:web, or orch:mcp on the curated surface", () => {
+    // The curated surface carries only the read/web/mcp data-plane caps — never a
+    // write/admin cap. orch:mcp gates the fixed literal `mcp` data-plane tool (the
+    // dynamic {server,tool} ride inside args).
     for (const cap of Object.values(TOOL_CAPABILITY_MAP)) {
-      expect(["orch:read", "orch:web"]).toContain(cap);
+      expect(["orch:read", "orch:web", "orch:mcp"]).toContain(cap);
     }
   });
 
