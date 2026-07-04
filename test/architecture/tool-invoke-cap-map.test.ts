@@ -35,6 +35,7 @@ import {
   API_CONTRACTS_ORDERED,
   RESULT_REF_THRESHOLDS,
   shouldMaterialize,
+  resolveAutonomy,
 } from "@comis/core";
 // The daemon-side tables the INV-3 keystone + the orch:mcp audit class read (the
 // COMPILED @comis/daemon barrel — the cap socket's own closed-door source, so the
@@ -127,6 +128,57 @@ describe("MCP-01: the dynamic mcp tool is cap-mapped + executor-routed", () => {
     const route = TOOL_ROUTE_MAP as Record<string, unknown>;
     expect("mcp" in cap && "mcp" in route).toBe(true);
     expect(SUB_AGENT_TOOL_DENYLIST.has("mcp")).toBe(false);
+  });
+});
+
+describe("MUT-01: the write tool is cap-mapped + executor-routed (the first mutating builtin)", () => {
+  it("maps the `write` tool to orch:write (the dispatch shape that did not exist before)", () => {
+    // At HEAD orch:write was cap-ONLY (a union member + toggle + floor + audit
+    // class) with NO tool dispatching it. This entry CREATES the dispatch shape:
+    // the endpoint gates the write tool on requireCapability(orch:write).
+    expect((TOOL_CAPABILITY_MAP as Record<string, unknown>).write).toBe("orch:write");
+  });
+
+  it("routes `write` to the daemon-side executor (the workspace-confined write core, mirrors the file builtins)", () => {
+    // The write core runs daemon-side over the lease's resolved workspace, path-
+    // confined by safePath — NOT an RPC method. Same route kind as read/grep/jq.
+    expect((TOOL_ROUTE_MAP as Record<string, unknown>).write).toEqual({ kind: "executor" });
+  });
+
+  it("keeps cap-map ↔ route ↔ denylist soundness with write present (the import-time assertion held)", () => {
+    // assertToolMapSoundness runs at import; a throw would have failed this file's
+    // import. Re-pin the invariant for `write`: cap-mapped, exactly one route, and
+    // NOT on the admin/destructive denylist (a write core is reversible-ish + jailed).
+    const cap = TOOL_CAPABILITY_MAP as Record<string, unknown>;
+    const route = TOOL_ROUTE_MAP as Record<string, unknown>;
+    expect("write" in cap && "write" in route).toBe(true);
+    expect(SUB_AGENT_TOOL_DENYLIST.has("write")).toBe(false);
+  });
+});
+
+describe("MUT-01: the typed write SURFACE is default-off (write toggle), even though orch:write is a floor cap", () => {
+  // The honest framing (correction #2): orch:write is NOT a new default-off CAP —
+  // it is a FLOOR cap granted in standard+. What P3 adds is the typed SDK SURFACE
+  // (comis_tools.write). Reachability is gated at the endpoint by the held cap, and
+  // the `write` per-surface toggle is the enable signal for an agent that lacks the
+  // floor grant. Proven end-to-end via the real resolveAutonomy resolver.
+  it("the write tool requires exactly orch:write (the endpoint gate)", () => {
+    expect((TOOL_CAPABILITY_MAP as Record<string, unknown>).write).toBe("orch:write");
+  });
+
+  it("an agent WITHOUT the write toggle (assistant, no floor caps) does NOT hold orch:write — the typed method is inert", () => {
+    const caps = resolveAutonomy({ profile: "assistant" }).capabilities;
+    expect(caps).not.toContain("orch:write");
+  });
+
+  it("the `write` toggle is the enable signal: assistant + write:true DOES hold orch:write", () => {
+    const caps = resolveAutonomy({ profile: "assistant", write: true }).capabilities;
+    expect(caps).toContain("orch:write");
+  });
+
+  it("honest framing: orch:write is a FLOOR cap — standard+ holds it (so the CAP is not default-off; only the typed SURFACE is new)", () => {
+    const caps = resolveAutonomy({ profile: "standard" }).capabilities;
+    expect(caps).toContain("orch:write");
   });
 });
 

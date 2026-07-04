@@ -11,7 +11,7 @@
  * @module
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ComisLogger } from "@comis/core";
@@ -58,10 +58,10 @@ beforeEach(() => {
 });
 
 describe("createOrchestrateExecutorCores", () => {
-  it("exposes the 7 file cores (read/grep/find/ls/jq/sql/jsonpath) + a web_search core", () => {
+  it("exposes the 8 file cores (read/grep/find/ls/jq/sql/jsonpath + write) + a web_search core", () => {
     const cores = createOrchestrateExecutorCores({ logger: makeLogger() });
     expect(Object.keys(cores.fileExecutors).sort()).toEqual(
-      ["find", "grep", "jq", "jsonpath", "ls", "read", "sql"],
+      ["find", "grep", "jq", "jsonpath", "ls", "read", "sql", "write"],
     );
     expect(typeof cores.webSearch).toBe("function");
   });
@@ -146,6 +146,77 @@ describe("createOrchestrateExecutorCores", () => {
       if (prevOffline === undefined) delete process.env.COMIS_OFFLINE;
       else process.env.COMIS_OFFLINE = prevOffline;
       rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // The `write` core — the FIRST general writing core on this surface (the
+  // module was read-only by construction). It adapts the shipped
+  // createComisWriteTool under ctx.workspaceDir; every path is safePath-confined
+  // to the run workspace (a `..`/absolute escape is refused, nothing is written
+  // outside), the write is run-EPHEMERAL (the workspace root only, NOT a
+  // persistent/arbitrary path), and a guard that would throw honest-degrades to
+  // an { error } (never a throw), like the jq/sql/jsonpath slicers. Ground
+  // truth: a real file under a real temp workspace; a real absence outside it.
+  // -------------------------------------------------------------------------
+
+  it("runs the write core under the lease's workspaceDir and writes a real file (a small success ack)", async () => {
+    const ws = makeWorkspace();
+    try {
+      const cores = createOrchestrateExecutorCores({ logger: makeLogger() });
+      const result = (await cores.fileExecutors.write(
+        { path: "note.txt", content: "hello orchestrate write" },
+        { workspaceDir: ws },
+      )) as { error?: string };
+      // Ground truth: the file exists UNDER the workspace with the exact content.
+      const written = join(ws, "note.txt");
+      expect(existsSync(written)).toBe(true);
+      expect(readFileSync(written, "utf8")).toBe("hello orchestrate write");
+      // The core returns the write tool's AgentToolResult (a small ack), never an error.
+      expect(result.error).toBeUndefined();
+    } finally {
+      rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
+  it("write refuses a `..` traversal ({ error }, nothing written outside the workspace, never throws)", async () => {
+    const ws = makeWorkspace();
+    // The escape target is one level ABOVE the workspace (a writable temp parent):
+    // if the confinement failed, the write would create it there — so its ABSENCE
+    // is the ground-truth proof that nothing escaped the run workspace.
+    const escaped = join(ws, "..", "orch-write-escape-canary.txt");
+    try {
+      const cores = createOrchestrateExecutorCores({ logger: makeLogger() });
+      const result = await cores.fileExecutors.write(
+        { path: "../orch-write-escape-canary.txt", content: "escaped" },
+        { workspaceDir: ws },
+      );
+      expect(result).toEqual({ error: expect.stringContaining("escape") });
+      expect(existsSync(escaped)).toBe(false); // nothing written outside the workspace
+    } finally {
+      rmSync(escaped, { force: true }); // clean up if the confinement ever regressed
+      rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
+  it("write refuses an absolute path ({ error }, nothing written to the absolute target)", async () => {
+    const ws = makeWorkspace();
+    // An absolute path into a sibling temp dir OUTSIDE the workspace: it is
+    // writable, so its absence proves the absolute path was denied (not merely
+    // unreachable). safePath resolves an absolute segment to itself → escapes.
+    const outside = mkdtempSync(join(tmpdir(), "orch-write-abs-"));
+    const absTarget = join(outside, "abs-canary.txt");
+    try {
+      const cores = createOrchestrateExecutorCores({ logger: makeLogger() });
+      const result = await cores.fileExecutors.write(
+        { path: absTarget, content: "abs" },
+        { workspaceDir: ws },
+      );
+      expect(result).toEqual({ error: expect.stringContaining("escape") });
+      expect(existsSync(absTarget)).toBe(false); // the absolute path was denied
+    } finally {
+      rmSync(ws, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
     }
   });
 

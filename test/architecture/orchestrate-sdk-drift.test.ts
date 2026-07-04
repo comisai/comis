@@ -189,6 +189,36 @@ describe("orchestrate comis_tools SDK drift gate", () => {
     expect(dts).toContain("message_react(args?: Record<string, unknown>): Promise<unknown>;");
   });
 
+  it("renders `write` as a standard tool.invoke method (orch:write), not a ResultRef/proxy (MUT-01)", () => {
+    // orch:write finally has a dispatch shape (write → orch:write in the cap-map).
+    // The moment it joins the cap-map the generator renders it like any other
+    // non-ResultRef tool: a flat invoke("write", …) method in js/py + a typed
+    // .d.ts signature. It is NOT a ResultRef tool (a write returns a small ack, so
+    // no wrapResultRef) and NOT the mcp proxy special-case.
+    const tmp = mkdtempSync(join(tmpdir(), "comis-sdk-write-"));
+    let js: string;
+    let py: string;
+    let dts: string;
+    try {
+      const result = runCodegen(tmp);
+      js = result.js;
+      py = result.py;
+      dts = result.dts;
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+
+    // JS: a flat invoke method (NOT wrapResultRef — a write ack is small/inline).
+    expect(js).toContain('async write(args) {\n    return invoke("write", args);\n  }');
+    expect(js, "write must NOT be wrapped as a ResultRef (a write returns a small ack)").not.toMatch(
+      /wrapResultRef\(await invoke\("write"/,
+    );
+    // Python: a module-level function delegating to _invoke (NOT _wrap_result_ref).
+    expect(py).toContain('def write(args=None):\n    return _invoke("write", args)');
+    // .d.ts: a typed method returning Promise<unknown> (not Promise<ResultRef>).
+    expect(dts).toContain("write(args?: Record<string, unknown>): Promise<unknown>;");
+  });
+
   it("describe() carries a worked example per capability group in all three SDKs", () => {
     // Read the committed artifacts (the exact bytes the drift gate above locks).
     const committedDts = readFileSync(OUT_DTS, "utf8");
@@ -247,8 +277,8 @@ describe("orchestrate comis_tools SDK drift gate", () => {
       }
       expect(
         new Set(entries.map((entry) => entry.capability)).size,
-        `${label}: expected exactly three capability groups (orch:read, orch:web, orch:mcp)`,
-      ).toBe(3);
+        `${label}: expected exactly four capability groups (orch:read, orch:web, orch:mcp, orch:write)`,
+      ).toBe(4);
       for (const [capability, examples] of examplesByCap) {
         expect(
           examples.size,

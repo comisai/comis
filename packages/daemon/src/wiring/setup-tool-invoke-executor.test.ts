@@ -95,6 +95,7 @@ function makeDeps(over: Record<string, unknown> = {}) {
       jq: vi.fn(async () => ({ kind: "jq", value: 1 })),
       sql: vi.fn(async () => ({ kind: "sql", rows: [] })),
       jsonpath: vi.fn(async () => ({ kind: "jsonpath", value: 1 })),
+      write: vi.fn(async () => ({ content: [{ type: "text", text: '{"path":"note.txt","created":true}' }] })),
     },
     webSearch: vi.fn(async () => ({ kind: "search", results: [] })),
     ...over,
@@ -286,6 +287,25 @@ describe("createToolInvokeExecutor — file builtins run workspace-scoped", () =
     // The sql core received the agent's resolved workspace ctx (workspace scoping).
     const [, sqlCtx] = deps.fileExecutors.sql.mock.calls[0];
     expect((sqlCtx as { workspaceDir: string }).workspaceDir).toBe("/ws/agent-7");
+  });
+
+  it("routes write to the injected workspace-confined write core under the agent's resolved workspace (MUT-01)", async () => {
+    // The write tool is the first MUTATING {kind:"executor"} builtin. It rides the
+    // SAME workspace-scoped file-builtin dispatch as read/grep (case "write" →
+    // executeFileBuiltin("write", …)), so the injected core receives the args plus
+    // the lease-resolved workspace ctx — the confinement root. The core itself
+    // (safePath confinement + escape-denied) is proven against a real temp
+    // workspace in orchestrate-executor-cores.test.ts; here we pin the ROUTING.
+    const deps = makeDeps();
+    const exec = createToolInvokeExecutor(deps);
+
+    await exec("write", { path: "note.txt", content: "hi" }, LEASE);
+
+    expect(deps.resolveWorkspace).toHaveBeenCalledWith("agent-7");
+    expect(deps.fileExecutors.write).toHaveBeenCalledTimes(1);
+    const [writeArgs, writeCtx] = deps.fileExecutors.write.mock.calls[0];
+    expect(writeArgs).toMatchObject({ path: "note.txt", content: "hi" });
+    expect((writeCtx as { workspaceDir: string }).workspaceDir).toBe("/ws/agent-7");
   });
 
   it("routes web_search to the injected daemon-side search core", async () => {
