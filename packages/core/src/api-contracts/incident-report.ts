@@ -723,6 +723,22 @@ export interface IncidentSignals {
    */
   perRootBudget?: { limb: string; spent: number; cap: number; unit: string };
   /**
+   * Σ of the session's `session.summary` records' `costUsd` — the
+   * trajectory-derived session cost. Each summary record carries ONE
+   * execution's cost, while the sessionEnd rollup is overwritten per execution
+   * (last write wins), so the rollup's costUsd is the FINAL execution's cost
+   * only. The assembler prefers this sum; absent ⇒ no summary records in the
+   * trajectory (log-only session → rollup fallback). A single number.
+   */
+  summaryCostUsd?: number;
+  /**
+   * Σ of the session's `model.completed` records' token fields — the
+   * trajectory-derived token ledger. Source for `cost.totalTokens` and
+   * `cost.cacheReadRatio` (the rollup never carries a cache ratio). Counts
+   * only. Absent ⇒ no model.completed records in the trajectory.
+   */
+  modelTokens?: { input: number; output: number; cacheRead: number; cacheCreation: number };
+  /**
    * The number of DISTINCT turns (envelope
    * `traceId`, one per agent turn) the trajectory spans. The session trajectory JSONL
    * is append-only across `session.reset_conversation` severs, so the whole-session

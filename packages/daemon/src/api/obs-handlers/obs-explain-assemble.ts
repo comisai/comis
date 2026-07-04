@@ -277,13 +277,29 @@ export function assembleIncidentReport(
       : "ok";
 
   // --- cost ----------------------------------------------------------------
-  const costUsd = readRollupNumber(sessionEnd, metadata, rollupPayload, "costUsd", "sessionCostUsd", 0);
-  const totalTokens = readRollupNumber(sessionEnd, metadata, rollupPayload, "totalTokens", "totalTokens", 0);
+  // Prefer the TRAJECTORY-derived ledger sums (signals.summaryCostUsd = Σ of
+  // the per-execution session.summary costs; signals.modelTokens = Σ of the
+  // per-call model.completed token fields). The sessionEnd rollup is
+  // overwritten by every execution, so its costUsd holds only the FINAL
+  // execution's cost — a multi-execution session under-reported ~16× live —
+  // and no rollup writer ever populates a cacheReadRatio. The rollup chain
+  // stays the fallback for log-only sessions with no trajectory records.
+  const costUsd =
+    signals.summaryCostUsd ??
+    readRollupNumber(sessionEnd, metadata, rollupPayload, "costUsd", "sessionCostUsd", 0);
+  const mt = signals.modelTokens;
+  const totalTokens =
+    mt !== undefined
+      ? mt.input + mt.output + mt.cacheRead + mt.cacheCreation
+      : readRollupNumber(sessionEnd, metadata, rollupPayload, "totalTokens", "totalTokens", 0);
   // Read cacheReadRatio from the metadata top level too (the field name
   // is identical at the top level), matching durationMs/totalTokens — the frozen
   // 678 fixture is flat (no nested sessionEnd), so a top-level-only value would
   // be silently dropped when topAlias is undefined and mis-reported as 0.
-  const cacheReadRatio = readRollupNumber(sessionEnd, metadata, rollupPayload, "cacheReadRatio", "cacheReadRatio", 0);
+  const cacheReadRatio =
+    mt !== undefined && mt.input + mt.cacheRead > 0
+      ? mt.cacheRead / (mt.input + mt.cacheRead)
+      : readRollupNumber(sessionEnd, metadata, rollupPayload, "cacheReadRatio", "cacheReadRatio", 0);
 
   // --- timing --------------------------------------------------------------
   // durationMs also lives at the metadata top level in the frozen-678 shape.

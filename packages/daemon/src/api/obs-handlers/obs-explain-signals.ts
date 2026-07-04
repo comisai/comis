@@ -344,6 +344,27 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       });
       return;
     }
+    case "session.summary": {
+      // One summary record per EXECUTION, each carrying that execution's own
+      // costUsd — Σ them for the session cost. The sessionEnd rollup is
+      // overwritten per execution (last write wins), so it holds only the
+      // FINAL execution's cost; the assembler prefers this ledger sum.
+      const c = asNumber(data.costUsd);
+      if (c !== undefined) acc.summaryCostUsd = (acc.summaryCostUsd ?? 0) + c;
+      return;
+    }
+    case "model.completed": {
+      // The per-LLM-call token ledger: Σ the four token fields across the
+      // session's completions. Source of cost.totalTokens and cacheReadRatio
+      // (no rollup writer ever populates a cache ratio).
+      const t = acc.modelTokens ?? { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 };
+      t.input += asNumber(data.inputTokens) ?? 0;
+      t.output += asNumber(data.outputTokens) ?? 0;
+      t.cacheRead += asNumber(data.cacheReadTokens) ?? 0;
+      t.cacheCreation += asNumber(data.cacheCreationTokens) ?? 0;
+      acc.modelTokens = t;
+      return;
+    }
     // The spend kill-switch breach (LAST wins) — delegated to a fold helper (learning-fold mold) for the subdir cap.
     case "spend.exceeded": accumulateSpendExceeded(acc, data); return;
     // The terminal `execution.aborted` record carries the per-ROOT
@@ -594,6 +615,8 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     // The per-ROOT autonomy.budget limb that tripped (token/wall-clock/$),
     // with its numbers in their unit — lets the spend verdict name the exact knob.
     ...(acc.perRootBudget !== undefined ? { perRootBudget: acc.perRootBudget } : {}),
+    ...(acc.summaryCostUsd !== undefined ? { summaryCostUsd: acc.summaryCostUsd } : {}),
+    ...(acc.modelTokens !== undefined ? { modelTokens: acc.modelTokens } : {}),
     ...(acc.abortReason !== undefined ? { abortReason: acc.abortReason } : {}),
     // Surface the turn span ONLY when >1 — it flags the whole-session toolStats
     // as cumulative across N turns (the trajectory is append-only across severs), so a

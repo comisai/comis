@@ -86,6 +86,14 @@ export interface Acc {
    *  tokens / ms in `spent`/`cap` (NOT dollars), and the right knob is
    *  `autonomy.budget.<limb>`, not `observability.spend.*`. Content-free. */
   perRootBudget?: { limb: string; spent: number; cap: number; unit: string };
+  /** Σ of the session's `session.summary` records' costUsd (one record per
+   *  execution) — the trajectory-derived session cost the assembler prefers
+   *  over the last-write-wins sessionEnd rollup. Absent ⇒ no summary records. */
+  summaryCostUsd?: number;
+  /** Σ of the session's `model.completed` token fields — the trajectory-derived
+   *  token ledger (source of cost.totalTokens + cacheReadRatio). Absent ⇒ no
+   *  model.completed records. */
+  modelTokens?: { input: number; output: number; cacheRead: number; cacheCreation: number };
   /** The terminal
    *  `execution.aborted` record's `reason` (e.g. "spend_exceeded"). A HARD abort
    *  skips the clean `sessionEnd` rollup, so the assembler's metadata-derived
