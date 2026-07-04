@@ -83,7 +83,49 @@ export const DEFAULT_MEDIA_AUTH_ALLOW_HOSTS = [
   ".botframework.com",
 ] as const;
 
+/**
+ * Teams attachment hosts an inbound media fetch may target at HOP 0 (the initial,
+ * pre-redirect attachment URL). BROADER than {@link DEFAULT_MEDIA_AUTH_ALLOW_HOSTS}
+ * (the token-attach set): a SharePoint or Graph download host receives NO Connector
+ * bearer but IS a legitimate initial attachment host, so it is fetch-allowed here
+ * while staying token-excluded there.
+ *
+ * The gate is HOP-0 ONLY. The injected fetcher re-validates every hop against the
+ * SSRF firewall (private/loopback/link-local/cloud-metadata IPs) but does NOT
+ * restrict arbitrary PUBLIC hosts — so without this list an attacker-influenced
+ * `contentUrl` could drive a blind GET to any public host (egress-IP disclosure,
+ * attacker-log ping, a fetch-proxy) and hand the response bytes to the
+ * vision/STT/doc-extract pipeline. A REDIRECT target is deliberately NOT re-checked
+ * against this list: a pre-authed SharePoint `downloadUrl` 302-redirects to blob
+ * storage, and that hop must still be followed (token-free, re-validated for SSRF by
+ * the fetcher). Only the INITIAL host is gated here.
+ *
+ * A leading-dot entry matches that apex domain and any subdomain (anchored on the
+ * dot, so `evilbotframework.com` never matches `.botframework.com`); a dotless entry
+ * is an exact host match.
+ */
+export const DEFAULT_MEDIA_FETCH_ALLOW_HOSTS = [
+  "smba.trafficmanager.net",
+  ".botframework.com",
+  ".sharepoint.com",
+  "graph.microsoft.com",
+] as const;
+
 const MSTEAMS_FILE_SCHEME = /^msteams-file:\/\//;
+
+/**
+ * Case-insensitive host match against an allowlist. A leading-dot entry matches
+ * that apex domain OR any subdomain of it — anchored on the dot, so a look-alike
+ * host (e.g. `evilbotframework.com`) never matches `.botframework.com`; any other
+ * entry is an exact host match. Mirrors the fetcher's auth-host suffix semantics.
+ */
+function matchesHostSuffix(host: string, list: readonly string[]): boolean {
+  const h = host.toLowerCase();
+  return list.some((entry) => {
+    const e = entry.toLowerCase();
+    return e.startsWith(".") ? h === e.slice(1) || h.endsWith(e) : h === e;
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -132,6 +174,34 @@ export function createMsTeamsResolver(deps: MsTeamsResolverDeps): MediaResolverP
         deps.mediaAuthAllowHosts.length > 0
           ? deps.mediaAuthAllowHosts
           : DEFAULT_MEDIA_AUTH_ALLOW_HOSTS;
+
+      // Hop-0 fetch-host allowlist: the INITIAL attachment host must be a known
+      // Teams/SharePoint/Bot-Framework/Graph attachment host before any GET. The
+      // fetcher re-validates every hop for SSRF (private/metadata IPs) but does NOT
+      // restrict arbitrary PUBLIC hosts, so an attacker-influenced contentUrl pointing
+      // at a non-Teams host is dropped here — closing the blind-public-SSRF residual.
+      // REDIRECTS are not gated (the fetcher follows a SharePoint 302 → blob-storage
+      // hop token-free); only hop 0 is checked. Any operator-configured Connector host
+      // in the auth allowlist is fetch-trusted too (a host trusted to receive the
+      // bearer is trusted to fetch from), so it is unioned in.
+      const fetchHost = tryCatch(() => new URL(realUrl).hostname);
+      if (
+        !fetchHost.ok ||
+        !matchesHostSuffix(fetchHost.value, [
+          ...DEFAULT_MEDIA_FETCH_ALLOW_HOSTS,
+          ...allowHosts,
+        ])
+      ) {
+        deps.logger.warn(
+          {
+            platform: "msteams",
+            errorKind: "validation" as const,
+            hint: "Drop the attachment: its URL host is not a Teams/SharePoint/Bot-Framework/Graph attachment host",
+          },
+          "Teams media resolve blocked: off-allowlist fetch host",
+        );
+        return err(new Error("attachment host not permitted"));
+      }
 
       // Mint the Bearer once; the fetcher decides per-hop whether to attach it. A mint
       // failure is non-fatal — a pre-authed downloadUrl fetches with no Authorization header.
