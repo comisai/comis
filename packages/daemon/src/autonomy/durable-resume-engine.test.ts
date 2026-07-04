@@ -34,14 +34,18 @@ import {
   reconcileLedgerRow,
   createDurableResumeEngine,
   orphanReasonToEnum,
+  reclaimOrphanedOrchestrateRun,
   type ReconcileLedgerDeps,
   type DurableResumeEngineDeps,
+  type OrchestrateReclaimSeams,
 } from "./durable-resume-engine.js";
 import {
   verifyOrchestrateResumable,
   buildDurableResume,
   type OrchestrateResumeSeams,
+  type OrchestrateResumeWiring,
 } from "../wiring/setup-durable-resume.js";
+import { createResultRefStore } from "@comis/skills/tools";
 
 // ─── test logger (records nothing; the engine never inspects it) ──────────────
 function makeLogger() {
@@ -763,9 +767,23 @@ function seedArtifacts(ws: string, opts: { script?: string; checkpoint?: string 
   }
 }
 
-/** The arm seams pointed at a real temp workspace (real existsSync). */
-function orchSeams(ws: string | undefined): OrchestrateResumeSeams {
-  return { workspaceFor: () => ws, fileExists: (p) => existsSync(p) };
+/**
+ * The full orchestrate-resume wiring cluster pointed at a real temp workspace:
+ * the arm seams (workspaceFor + real existsSync) PLUS the reclaim seams. The
+ * reclaim reuses the REAL result-ref-store.cleanupRun (rmSync-recursive of
+ * results/) — proving NG4 (compose the shipped GC, no new primitive) against real fs.
+ */
+function orchSeams(ws: string | undefined): OrchestrateResumeWiring {
+  const store = createResultRefStore({ logger: silentLog });
+  return {
+    workspaceFor: () => ws,
+    fileExists: (p) => existsSync(p),
+    cleanupResults: (workspacePath, runId) => store.cleanupRun({ workspacePath, runId }),
+    removePinnedScript: (workspacePath, scriptRef) => {
+      // guarded rmSync — force:true makes a missing file a no-op (idempotent)
+      rmSync(join(workspacePath, scriptRef), { force: true });
+    },
+  };
 }
 
 describe("verifyOrchestrateResumable — the orchestrate-kind arm over injected seams (surface-only, A2)", () => {
@@ -848,7 +866,7 @@ function makeLeaseMgr(): LeaseManager {
 
 interface WiringOver {
   store: DurableRunPort;
-  orchestrateResume?: OrchestrateResumeSeams;
+  orchestrateResume?: OrchestrateResumeWiring;
   resumeGraph?: (record: DurableRunRecord) => Promise<Result<void, Error>>;
 }
 function buildWiring(over: WiringOver): {
@@ -931,5 +949,128 @@ describe("buildDurableResume — orchestrate-kind dispatch (flat + scriptRef != 
     // Not surfaced as a resumed run — an honest orphan, never a silent re-anchor.
     expect(events.some((e) => e.event === "durable:resumed" && e.payload.rootRunId === "root-gone")).toBe(false);
     expect(registerRoot).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Task 2 (233): the orphan-reclaim hook — reclaim a dead resumable run's artifacts.
+//
+// A run orphaned on boot (missing checkpoint) or on a lapsed-heartbeat watchdog
+// tick has NO surviving runner to GC its workspace, so the engine's orphan path
+// owns the reclaim (RESUME-04): delete the surviving results/ (the checkpoint blob)
+// + the pinned <scriptRef>. Composes the EXISTING result-ref-store.cleanupRun +
+// a guarded rmSync (NG4 — no new GC primitive). Scoped to orchestrate-kind rows;
+// idempotent. Proven against a REAL temp workspace (real fs).
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("reclaimOrphanedOrchestrateRun — the orphan-reclaim hook (real fs, reuses cleanupRun, NG4)", () => {
+  it("reclaims a dead resumable orchestrate run's results/ (checkpoint blob) + pinned script — real files gone", async () => {
+    const ws = makeTempWorkspace();
+    seedArtifacts(ws, { script: "orch-a.py", checkpoint: "results/cp.json" });
+    writeFileSync(join(ws, "results", "leftover.json"), "{}"); // a surviving materialized result also reclaimed
+    const record = durableRecord({ rootRunId: "root-r1", scriptRef: "orch-a.py", checkpointRef: "results/cp.json" });
+
+    await reclaimOrphanedOrchestrateRun(record, orchSeams(ws));
+
+    expect(existsSync(join(ws, "orch-a.py"))).toBe(false);
+    expect(existsSync(join(ws, "results"))).toBe(false);
+  });
+
+  it("is idempotent — a second reclaim of the same run is a no-op, never a throw", async () => {
+    const ws = makeTempWorkspace();
+    seedArtifacts(ws, { script: "orch-a.py", checkpoint: "results/cp.json" });
+    const record = durableRecord({ rootRunId: "root-r2", scriptRef: "orch-a.py", checkpointRef: "results/cp.json" });
+
+    await reclaimOrphanedOrchestrateRun(record, orchSeams(ws));
+    // second pass: the files are already gone — resolves without throwing
+    await expect(reclaimOrphanedOrchestrateRun(record, orchSeams(ws))).resolves.toBeUndefined();
+    expect(existsSync(join(ws, "orch-a.py"))).toBe(false);
+    expect(existsSync(join(ws, "results"))).toBe(false);
+  });
+
+  it("is scoped to orchestrate-kind rows — a record with no scriptRef is a no-op (a DAG/flat legacy orphan is unaffected)", async () => {
+    const ws = makeTempWorkspace();
+    seedArtifacts(ws, { checkpoint: "results/cp.json" });
+    writeFileSync(join(ws, "sentinel.txt"), "keep");
+    const flatLegacy = durableRecord({ rootRunId: "root-flat", spawnTree: ["lease-a"] }); // no scriptRef
+
+    await reclaimOrphanedOrchestrateRun(flatLegacy, orchSeams(ws));
+
+    // nothing reclaimed — the row is not orchestrate-kind (scriptRef == null)
+    expect(existsSync(join(ws, "results"))).toBe(true);
+    expect(existsSync(join(ws, "sentinel.txt"))).toBe(true);
+  });
+});
+
+describe("createDurableResumeEngine — orphan-path reclaim + closed not_resumable reason", () => {
+  it("calls reclaimOrchestrateRun(record) on the orphan path when a resumable orchestrate row's resume fails (RESUME-04)", async () => {
+    const record = durableRecord({ rootRunId: "root-reclaim", scriptRef: "orch-a.py", checkpointRef: "results/cp.json" });
+    const resumeRun = vi.fn(async () => err(new Error("orchestrate resume not resumable: the checkpoint blob is gone")));
+    const reclaimOrchestrateRun = vi.fn(async () => {});
+    const deps = makeEngineDeps({
+      durableRuns: makeDurableRuns({ resumable: [record], byRootRun: new Map([["root-reclaim", record]]) }),
+      resumeRun,
+      reclaimOrchestrateRun,
+    });
+
+    const r = await createDurableResumeEngine(deps).resumeAll();
+
+    expect(r.ok).toBe(true);
+    expect(reclaimOrchestrateRun).toHaveBeenCalledTimes(1);
+    expect(reclaimOrchestrateRun.mock.calls[0]![0].rootRunId).toBe("root-reclaim");
+  });
+
+  it("a missing-checkpoint resume failure orphans with the closed not_resumable reason (the arm's err text propagates, never the raw free string)", async () => {
+    const record = durableRecord({ rootRunId: "root-nr", scriptRef: "orch-a.py", checkpointRef: "results/cp.json" });
+    const resumeRun = vi.fn(async () => err(new Error("orchestrate resume not resumable: the checkpoint blob is gone")));
+    const deps = makeEngineDeps({
+      durableRuns: makeDurableRuns({ resumable: [record], byRootRun: new Map([["root-nr", record]]) }),
+      resumeRun,
+      nowMs: () => 555,
+    });
+
+    await createDurableResumeEngine(deps).resumeAll();
+
+    const bus = deps.eventBus as ReturnType<typeof makeEventBus>;
+    const orphanEvent = bus.events.find((e) => e.event === "durable:orphaned");
+    expect(orphanEvent?.payload.reason).toBe("not_resumable");
+    // Content-free (INV-5): the free-text arm reason NEVER crosses onto the event.
+    expect(orphanEvent?.payload.reason).not.toBe("orchestrate resume not resumable: the checkpoint blob is gone");
+    expect(orphanEvent?.payload.timestamp).toBe(555);
+  });
+
+  it("does NOT reclaim on a happy resume — reclaim is an orphan-path-only hook", async () => {
+    const record = durableRecord({ rootRunId: "root-ok", scriptRef: "orch-a.py" });
+    const reclaimOrchestrateRun = vi.fn(async () => {});
+    const deps = makeEngineDeps({
+      durableRuns: makeDurableRuns({ resumable: [record], byRootRun: new Map([["root-ok", record]]) }),
+      resumeRun: vi.fn(async () => ok(undefined)),
+      reclaimOrchestrateRun,
+    });
+
+    await createDurableResumeEngine(deps).resumeAll();
+
+    expect(reclaimOrchestrateRun).not.toHaveBeenCalled();
+  });
+});
+
+describe("buildDurableResume — orphan-reclaim end-to-end (missing checkpoint → orphaned + reclaim, real files gone)", () => {
+  it("a flat + scriptRef row whose checkpoint is gone → durable:orphaned(not_resumable) AND its results/ + pinned script are reclaimed", async () => {
+    const ws = makeTempWorkspace();
+    seedArtifacts(ws, { script: "orch-x.py" }); // pinned script present
+    mkdirSync(join(ws, "results"), { recursive: true });
+    writeFileSync(join(ws, "results", "leftover.json"), "{}"); // a surviving result, but the checkpoint cp.json is GONE
+    const record = durableRecord({ rootRunId: "root-e2e", scriptRef: "orch-x.py", checkpointRef: "results/cp.json" });
+    const store = makeDurableRuns({ resumable: [record], byRootRun: new Map([["root-e2e", record]]) });
+    const { wiring, events } = buildWiring({ store, orchestrateResume: orchSeams(ws) });
+
+    await wiring.startAndResumeDurable();
+    wiring.durableResume.shutdown();
+
+    const orphan = events.find((e) => e.event === "durable:orphaned" && e.payload.rootRunId === "root-e2e");
+    expect(orphan?.payload.reason).toBe("not_resumable");
+    // RESUME-04: the dead run's surviving artifacts are reclaimed (no workspace leak).
+    expect(existsSync(join(ws, "orch-x.py"))).toBe(false);
+    expect(existsSync(join(ws, "results"))).toBe(false);
   });
 });
