@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createMsTeamsResolver,
   DEFAULT_MEDIA_AUTH_ALLOW_HOSTS,
+  DEFAULT_MEDIA_FETCH_ALLOW_HOSTS,
   type MsTeamsResolverDeps,
 } from "./msteams-resolver.js";
 
@@ -262,5 +263,99 @@ describe("msteams-resolver / createMsTeamsResolver", () => {
       expect(result.error.message).toMatch(/malformed|Invalid/i);
     }
     expect(deps.ssrfFetcher.fetch).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // Hop-0 fetch-host allowlist: the INITIAL attachment host must be a known
+  // Teams/SharePoint/Bot-Framework/Graph host BEFORE the guarded fetch runs. The
+  // fetcher re-validates every hop for SSRF (private/metadata IPs) but does NOT
+  // restrict arbitrary PUBLIC hosts, so without this gate an attacker-influenced
+  // contentUrl drives a blind GET to any public host (egress-IP disclosure +
+  // attacker-influenced bytes into the vision/STT pipeline). Redirects stay
+  // unrestricted — only hop 0 is gated.
+  // -------------------------------------------------------------------------
+
+  it("exports a DEFAULT_MEDIA_FETCH_ALLOW_HOSTS that is a superset of the auth set (SharePoint/Graph fetch-allowed but token-excluded)", () => {
+    // Every token-attach host must also be fetch-allowed.
+    for (const h of DEFAULT_MEDIA_AUTH_ALLOW_HOSTS) {
+      expect(DEFAULT_MEDIA_FETCH_ALLOW_HOSTS as readonly string[]).toContain(h);
+    }
+    // SharePoint + Graph download hosts are legitimate hop-0 targets but must NOT
+    // be on the narrower token-attach list.
+    expect(DEFAULT_MEDIA_FETCH_ALLOW_HOSTS as readonly string[]).toContain(".sharepoint.com");
+    expect(DEFAULT_MEDIA_FETCH_ALLOW_HOSTS as readonly string[]).toContain("graph.microsoft.com");
+    expect(DEFAULT_MEDIA_AUTH_ALLOW_HOSTS.join(",")).not.toContain("sharepoint");
+    expect(DEFAULT_MEDIA_AUTH_ALLOW_HOSTS.join(",")).not.toContain("graph");
+  });
+
+  it("rejects an off-allowlist hop-0 fetch host BEFORE any fetch (closes the blind-public-SSRF residual)", async () => {
+    const deps = mockDeps();
+    const resolver = createMsTeamsResolver(deps);
+
+    const result = await resolver.resolve(
+      makeAttachment(teamsFileUrl("https://attacker.example.com/collect?x=1")),
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/host not permitted/i);
+    }
+    // The malicious host is dropped before the guarded fetcher is ever invoked.
+    expect(deps.ssrfFetcher.fetch).not.toHaveBeenCalled();
+    const validationWarn = vi
+      .mocked(deps.logger.warn)
+      .mock.calls.map((c) => c[0])
+      .find((p) => (p as { errorKind?: string }).errorKind === "validation");
+    expect(validationWarn).toBeDefined();
+    expect((validationWarn as { hint?: string }).hint).toMatch(/host/i);
+  });
+
+  it("rejects a look-alike hop-0 host that only suffix-collides with a Teams host (anchored leading-dot match)", async () => {
+    const deps = mockDeps();
+    const resolver = createMsTeamsResolver(deps);
+
+    // `evilbotframework.com` must NOT satisfy `.botframework.com`.
+    const result = await resolver.resolve(
+      makeAttachment(teamsFileUrl("https://evilbotframework.com/x.png")),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(deps.ssrfFetcher.fetch).not.toHaveBeenCalled();
+  });
+
+  it("fetches a legitimate smba.trafficmanager.net hop-0 (Bot Framework hosted content)", async () => {
+    const deps = mockDeps();
+    const resolver = createMsTeamsResolver(deps);
+
+    const result = await resolver.resolve(makeAttachment(teamsFileUrl(BF_ATTACHMENT_URL)));
+
+    expect(result.ok).toBe(true);
+    expect(deps.ssrfFetcher.fetch).toHaveBeenCalledWith(BF_ATTACHMENT_URL, expect.anything());
+  });
+
+  it("fetches a legitimate *.sharepoint.com hop-0 (the pre-authed downloadUrl entry point; the 302→blob hop is followed inside the fetcher)", async () => {
+    const deps = mockDeps();
+    const resolver = createMsTeamsResolver(deps);
+    const spUrl =
+      "https://contoso.sharepoint.com/sites/s/_layouts/15/download.aspx?SourceUrl=/a.png";
+
+    const result = await resolver.resolve(makeAttachment(teamsFileUrl(spUrl)));
+
+    expect(result.ok).toBe(true);
+    expect(deps.ssrfFetcher.fetch).toHaveBeenCalledWith(spUrl, expect.anything());
+  });
+
+  it("fetches a hop-0 host that is only on the operator-configured auth allowlist (self-hosted Connector)", async () => {
+    // A host trusted enough to receive the bearer (configured mediaAuthAllowHosts)
+    // is trusted enough to fetch from, so the fetch gate unions it in.
+    const deps = mockDeps({ mediaAuthAllowHosts: ["private-connector.example.com"] });
+    const resolver = createMsTeamsResolver(deps);
+
+    const result = await resolver.resolve(
+      makeAttachment(teamsFileUrl("https://private-connector.example.com/v3/attachments/x")),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(deps.ssrfFetcher.fetch).toHaveBeenCalled();
   });
 });
