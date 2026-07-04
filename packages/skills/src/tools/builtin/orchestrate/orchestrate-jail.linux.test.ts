@@ -325,6 +325,63 @@ describe.skipIf(!jailAvailable)("orchestrate jail containment (real bwrap, Linux
     copyFileSync(distPy, join(sdkAssetsDir, "comis_tools.py"));
   }
 
+  /** Copy the REAL generated `comis_tools.js` (which `import`s
+   *  `./orchestrate-sdk-runtime.js`, so pair it with {@link copyRealSdkRuntime})
+   *  over the fixture stub, so a jailed `.js` doing
+   *  `import { comis_tools } from "./comis_tools.js"` resolves the genuine typed
+   *  SDK — the `mcp` runtime Proxy and the `message_send` direct method — and
+   *  speaks the real cap-socket wire. validate:full builds dist/ first. */
+  function copyRealComisToolsJs(): void {
+    const distJs = new URL(
+      "../../../../dist/tools/builtin/orchestrate/comis_tools.js",
+      import.meta.url,
+    ).pathname;
+    expect(existsSync(distJs), "dist comis_tools.js must exist (run pnpm build)").toBe(true);
+    copyFileSync(distJs, join(sdkAssetsDir, "comis_tools.js"));
+  }
+
+  /**
+   * A cap server that sees the FULL `{ method, params }` of each request — needed
+   * for BOTH the `tool.invoke {tool:"mcp"}` proxy calls AND the DIRECT `message.*`
+   * methods (which are NOT `tool.invoke`, so {@link startCapServer}'s
+   * `params.tool`/`params.args` shape does not carry them). `handle` returns the
+   * reply `result`, or THROWS to send an `{ error }` reply — which the in-jail
+   * `callCapSocket`/`_call_cap_socket` surfaces as a rejection (the allowlist-deny
+   * path). It stands in for the daemon capability endpoint exactly as the other
+   * fake servers in this suite do; the REAL executor allowlist/wrap + the REAL
+   * outward-step ledger are unit-proven on the macOS floor (see the drive notes).
+   */
+  function startMethodCapServer(
+    handle: (method: string, params: Record<string, unknown>) => unknown,
+  ): Promise<net.Server> {
+    return new Promise((resolve, reject) => {
+      const srv = net.createServer((conn) => {
+        let buf = "";
+        conn.setEncoding("utf8");
+        conn.on("data", (chunk: string) => {
+          buf += chunk;
+          const nl = buf.indexOf("\n");
+          if (nl === -1) return;
+          const line = buf.slice(0, nl);
+          try {
+            const req = JSON.parse(line) as {
+              method?: string;
+              params?: Record<string, unknown>;
+            };
+            const result = handle(req.method ?? "", req.params ?? {});
+            conn.end(JSON.stringify({ result }) + "\n");
+          } catch (err) {
+            conn.end(
+              JSON.stringify({ error: err instanceof Error ? err.message : String(err) }) + "\n",
+            );
+          }
+        });
+      });
+      srv.once("error", reject);
+      srv.listen(socketPath, () => resolve(srv));
+    });
+  }
+
   /**
    * Wire a lease-backed orchestrate tool over a REAL LeaseManager: mint the
    * assembly lease, thread the per-run child mint seam (parentLeaseId=assembly,
@@ -953,6 +1010,144 @@ describe.skipIf(!jailAvailable)("orchestrate jail containment (real bwrap, Linux
       expect(runSummaries).toHaveLength(1);
       expect(runSummaries[0]!.leaseId).toBe(childLeaseId);
       expect(runSummaries[0]!.exitCode).toBe(0);
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // Real-jail MCP inbound surface + typed message.send outward surface.
+  //
+  // These extend the containment suite with the orch:mcp inbound surface
+  // (`comis_tools.mcp.<server>.<tool>()`) and the typed outward surface
+  // (`comis_tools.message_send`). As with EVERY drive in this file, the fake cap
+  // server stands in for the daemon capability endpoint: the REAL executor
+  // allowlist gate + sanitize/wrap/offload (orch:mcp) and the REAL exactly-once
+  // outward-step ledger (`allocateOutwardStepIfNeeded`, keyed (rootRunId,
+  // stepIndex) on durableRuns) are unit-proven against the real code on the macOS
+  // floor. What ONLY the real bwrap jail proves — and what these add — is that a
+  // jailed `comis_tools.mcp.<server>.<tool>()` / `comis_tools.message_send()` call
+  // crosses the --unshare-net jail over the real cap socket, an unlisted server is
+  // denied, direct net egress stays cut, and a duplicated outward step commits
+  // once. They SKIP on the macOS floor (the outer describe.skipIf) and run on
+  // comisvps via `pnpm validate:full`; a macOS run is NOT a pass and the real-jail
+  // proof stays owed to that VPS run (never claimed green from macOS).
+  // -------------------------------------------------------------------------
+
+  it(
+    "in-jail mcp: an allowlisted comis_tools.mcp.<server>.<tool>() round-trips daemon-side; an unlisted server is denied; --unshare-net holds",
+    { timeout: 20_000 },
+    async () => {
+      // The fake endpoint plays the daemon-side MCP executor's allowlist gate: an
+      // ALLOWLISTED server returns the result (wrapped/sanitized on the real path);
+      // an UNLISTED server is denied (→ { error }) — never dispatched. The connected
+      // MCP call runs daemon-side, so the jail itself stays --unshare-net.
+      server = await startMethodCapServer((method, params) => {
+        if (method === "tool.invoke" && params.tool === "mcp") {
+          const inner = params.args as { server?: string };
+          if (inner.server !== "allowedserver") {
+            throw new Error("orch:mcp: server not allowlisted");
+          }
+          return { text: "MCP-DAEMON-SIDE-RESULT" };
+        }
+        throw new Error(`unexpected method: ${String(method)}`);
+      });
+      // The jailed .py needs the REAL comis_tools.py to resolve the mcp proxy.
+      copyRealComisToolsPy();
+
+      // Call an ALLOWLISTED MCP tool (daemon-side round-trip), then an UNLISTED
+      // server (must be denied), then a direct TCP egress (must fail).
+      const script = [
+        "import comis_tools",
+        "import socket",
+        "try:",
+        '    r = comis_tools.mcp.allowedserver.mytool({"q": "x"})',
+        '    print("MCP_RESULT=" + str(r.get("text") if isinstance(r, dict) else r))',
+        "except Exception as e:",
+        '    print("MCP_THREW=" + str(e))',
+        "try:",
+        "    comis_tools.mcp.unlistedserver.mytool({})",
+        '    print("DENY_OPEN")',
+        "except Exception:",
+        '    print("MCP_DENY=1")',
+        "try:",
+        '    s = socket.create_connection(("1.1.1.1", 80), timeout=3)',
+        '    print("EGRESS-OPEN")',
+        "    s.close()",
+        "except Exception as e:",
+        '    print("EGRESS-CUT:" + type(e).__name__)',
+      ].join("\n");
+      const tool = makeTool();
+
+      const result = await tool.execute("c", { script, language: "py" });
+      const text = result.content.map((b) => b.text ?? "").join("");
+
+      // The allowlisted MCP call round-tripped daemon-side; only its result re-entered.
+      expect(text).toContain("MCP_RESULT=MCP-DAEMON-SIDE-RESULT");
+      // The unlisted server was denied at the socket (never dispatched).
+      expect(text).toContain("MCP_DENY=1");
+      expect(text).not.toContain("DENY_OPEN");
+      // --unshare-net intact: no direct egress from the jail (only the cap socket).
+      expect(text).not.toContain("EGRESS-OPEN");
+      expect(text).toMatch(/EGRESS-CUT:/);
+    },
+  );
+
+  it(
+    "in-jail message: a fetch→transform→message_send chain delivers over the jail; a duplicated outward step commits once",
+    { timeout: 20_000 },
+    async () => {
+      // The fake endpoint returns a small web_fetch result and records each outward
+      // message.send. A re-submitted identical outward step commits EXACTLY ONCE — a
+      // stand-in for the endpoint's allocateOutwardStepIfNeeded ledger (keyed
+      // (rootRunId, stepIndex) on durableRuns), which is unit-proven against the REAL
+      // allocator on the macOS floor and owed to the VPS live drive with durableRuns
+      // wired. This drive proves the JAILED transport: the fetch→transform→send chain
+      // runs in one --unshare-net turn over the real cap socket, and the outward send
+      // is a DIRECT message.send (not a tool.invoke).
+      const deliveries: string[] = [];
+      const committed = new Set<string>();
+      server = await startMethodCapServer((method, params) => {
+        if (method === "tool.invoke" && params.tool === "web_fetch") {
+          return { total: 42 }; // a small inline fetched result (transform reads .total)
+        }
+        if (method === "message.send") {
+          const key = JSON.stringify([params.channel_type, params.channel_id, params.text]);
+          if (!committed.has(key)) {
+            committed.add(key);
+            deliveries.push(key);
+          }
+          return { messageId: `m-${committed.size}`, channelId: params.channel_id };
+        }
+        throw new Error(`unexpected method: ${String(method)}`);
+      });
+      // The jailed .js needs the REAL comis_tools.js + runtime to speak the wire.
+      copyRealSdkRuntime();
+      copyRealComisToolsJs();
+
+      const script = [
+        'import { comis_tools } from "./comis_tools.js";',
+        // fetch (daemon-side) → transform in-jail → send outward (orch:message).
+        'const report = await comis_tools.web_fetch({ url: "https://example.com/r.json" });',
+        "const total = report.total;",
+        'const send1 = await comis_tools.message_send({ channel_type: "test", channel_id: "c1", text: "total=" + total });',
+        // A duplicated outward step (a retry of the SAME logical send) — the ledger
+        // stand-in commits it exactly once (same messageId, no second delivery).
+        'const send2 = await comis_tools.message_send({ channel_type: "test", channel_id: "c1", text: "total=" + total });',
+        'console.log("TOTAL=" + total);',
+        'console.log("SEND1=" + JSON.stringify(send1));',
+        'console.log("SEND2=" + JSON.stringify(send2));',
+      ].join("\n");
+      const tool = makeTool();
+
+      const result = await tool.execute("c", { script, language: "js" });
+      const text = result.content.map((b) => b.text ?? "").join("");
+
+      // The chain ran in one jailed turn: the transform read the fetched field and
+      // the send crossed the jail as a DIRECT message.send returning a messageId.
+      expect(text).toContain("TOTAL=42");
+      expect(text).toContain("SEND1=");
+      expect(text).toMatch(/"messageId":"m-1"/);
+      // Exactly-once (transport half): the duplicated outward step committed once.
+      expect(deliveries).toHaveLength(1);
     },
   );
 });
