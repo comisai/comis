@@ -173,6 +173,10 @@ export function createMsTeamsAdapter(
   let _connected = false;
   let _startedAt: number | undefined;
   let _lastMessageAt: number | undefined;
+  // Inbound-only liveness: bumped ONLY at the inbound sites (message/reaction/
+  // card action), never on an outbound send — so a send-only bot cannot mask a
+  // dead ingress the way the outbound-polluted _lastMessageAt would.
+  let _lastInboundAt: number | undefined;
   let _lastError: string | undefined;
 
   /**
@@ -298,6 +302,7 @@ export function createMsTeamsAdapter(
     }
 
     _lastMessageAt = now();
+    _lastInboundAt = now();
 
     // An inbound reaction is an inbound activity too: refresh the routing tuple so
     // a later proactive send recovers the freshest reference. Key by the same
@@ -475,6 +480,7 @@ export function createMsTeamsAdapter(
     }
 
     _lastMessageAt = now();
+    _lastInboundAt = now();
 
     const traceId = randomUUID();
     normalized.metadata.traceId = traceId;
@@ -528,6 +534,7 @@ export function createMsTeamsAdapter(
     }
 
     _lastMessageAt = now();
+    _lastInboundAt = now();
 
     // Capture the routing tuple so a later proactive send can recover it. Key by
     // the stripped normalized.channelId — the SAME id a proactive send targets —
@@ -903,6 +910,7 @@ export function createMsTeamsAdapter(
         uptime:
           _connected && _startedAt !== undefined ? now() - _startedAt : undefined,
         lastMessageAt: _lastMessageAt,
+        lastInboundAt: _lastInboundAt,
         error: _lastError,
         connectionMode: "webhook",
       };
