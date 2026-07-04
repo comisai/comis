@@ -79,6 +79,7 @@ import {
   setupDeliveryMirror,
   buildDurableStores,
   buildDurableResume,
+  buildOrchestrateResumeWiring,
   createWorktreeRegistry,
   toLifecycleGitExec,
   setupWorktreeSweep,
@@ -2101,6 +2102,8 @@ async function bootChannels(boot: BootContext): Promise<void> {
     channelAdaptersRef: handle.channelAdaptersRef, eventBus: container.eventBus, logger: daemonLogger, clock: handle.clock, timers: handle.timers,
     // Route a DAG record (spawn_tree objects w/ status) to coordinator.resumeGraph via the late-bound holder.
     resumeGraph: (record) => graphResumeHolder.ref ? graphResumeHolder.ref(record) : Promise.resolve(err(new Error("resumeGraph holder unpopulated (coordinator not built)"))),
+    // The orchestrate-kind resume + orphan-reclaim seams (workspace resolver + real existsSync + result-ref-store.cleanupRun + a safePath-guarded rmSync). Populated ONLY when durability is enabled (a default install builds no unused store) so a resumable orchestrate row's pinned script + checkpoint are VERIFIED on boot and a dead run's artifacts are RECLAIMED on orphan; absent ⇒ a scriptRef row degrades to the plain flat re-anchor (deny-by-absence — the runner only writes scriptRef rows under orchestrateResume).
+    ...(durabilityCfg.enabled ? { orchestrateResume: buildOrchestrateResumeWiring({ defaultWorkspaceDir, logger: daemonLogger }) } : {}),
   });
   Object.assign(boot, { durableRunStore: durableResume.durableRunStore, outwardLedger: durableResume.outwardLedger, durableResumeShutdown: durableResume.shutdown });
 

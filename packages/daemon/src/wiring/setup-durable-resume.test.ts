@@ -29,7 +29,15 @@ import type {
 } from "@comis/core";
 import { ok } from "@comis/shared";
 import type { ComisLogger, LeaseManager } from "@comis/infra";
-import { setupDurableResume, buildDurableResume, type SetupDurableResumeDeps } from "./setup-durable-resume.js";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  setupDurableResume,
+  buildDurableResume,
+  buildOrchestrateResumeWiring,
+  type SetupDurableResumeDeps,
+} from "./setup-durable-resume.js";
 import type { DurableRunRecord as DRR } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -295,5 +303,77 @@ describe("buildDurableResume resumeGraph dispatch", () => {
     expect(boundedAutonomy.registerRoot).toHaveBeenCalledTimes(1);
     expect(boundedAutonomy.registerRoot.mock.calls[0]![0]).toBe("root-flat");
     expect(resumeGraph).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildOrchestrateResumeWiring — the production OrchestrateResumeWiring cluster
+// the composition root threads into buildDurableResume so the boot-sweep arm
+// VERIFIES a resumable orchestrate row's pinned script + checkpoint on disk and
+// the orphan path RECLAIMS a dead run's artifacts. The seams are REAL fs ops
+// (existsSync / result-ref-store.cleanupRun / a safePath-guarded rmSync), proven
+// against a REAL temp workspace — never a mock (design §4.5).
+// ---------------------------------------------------------------------------
+describe("buildOrchestrateResumeWiring (the composition-root cluster)", () => {
+  function makeWiringLogger(): ComisLogger {
+    const noop = () => {};
+    const l = { debug: noop, info: noop, warn: noop, error: noop } as unknown as ComisLogger;
+    (l as unknown as { child: () => ComisLogger }).child = () => l;
+    return l;
+  }
+
+  let tmp: string;
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "comis-orwiring-"));
+  });
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("resolves workspaceFor to the default-agent workspace (a bare durable row carries no agentId)", () => {
+    const wiring = buildOrchestrateResumeWiring({ defaultWorkspaceDir: tmp, logger: makeWiringLogger() });
+    // The record has no agentId; the single-agent default workspace is the target.
+    const record = { rootRunId: "orch-x", scriptRef: "orch-x.ts" } as unknown as DurableRunRecord;
+    expect(wiring.workspaceFor(record)).toBe(tmp);
+  });
+
+  it("fileExists reflects the real existsSync (present → true, absent → false)", () => {
+    const wiring = buildOrchestrateResumeWiring({ defaultWorkspaceDir: tmp, logger: makeWiringLogger() });
+    const present = join(tmp, "orch-x.ts");
+    writeFileSync(present, "console.log(1)");
+    expect(wiring.fileExists(present)).toBe(true);
+    expect(wiring.fileExists(join(tmp, "gone.ts"))).toBe(false);
+  });
+
+  it("cleanupResults wipes the run's results/ dir (reuses the real result-ref-store.cleanupRun)", async () => {
+    const wiring = buildOrchestrateResumeWiring({ defaultWorkspaceDir: tmp, logger: makeWiringLogger() });
+    const resultsDir = join(tmp, "results");
+    mkdirSync(resultsDir, { recursive: true });
+    writeFileSync(join(resultsDir, "checkpoint.json"), "{}");
+    expect(existsSync(resultsDir)).toBe(true);
+    await wiring.cleanupResults(tmp, "orch-x");
+    expect(existsSync(resultsDir)).toBe(false);
+  });
+
+  it("removePinnedScript deletes the workspace-root pinned script and is idempotent", () => {
+    const wiring = buildOrchestrateResumeWiring({ defaultWorkspaceDir: tmp, logger: makeWiringLogger() });
+    const pinned = join(tmp, "orch-x.ts");
+    writeFileSync(pinned, "console.log(1)");
+    wiring.removePinnedScript(tmp, "orch-x.ts");
+    expect(existsSync(pinned)).toBe(false);
+    // A second reclaim finds it already gone — no throw (idempotent).
+    expect(() => wiring.removePinnedScript(tmp, "orch-x.ts")).not.toThrow();
+  });
+
+  it("removePinnedScript refuses a traversal scriptRef — never deletes outside the workspace", () => {
+    const wiring = buildOrchestrateResumeWiring({ defaultWorkspaceDir: tmp, logger: makeWiringLogger() });
+    // A sibling file OUTSIDE the workspace that a `../` scriptRef would target.
+    const outsideDir = mkdtempSync(join(tmpdir(), "comis-outside-"));
+    const victim = join(outsideDir, "victim.ts");
+    writeFileSync(victim, "secret");
+    // A traversal ref must be refused by safePath (no throw escapes, no delete).
+    expect(() => wiring.removePinnedScript(tmp, "../" + join("..", outsideDir.split("/").pop()!, "victim.ts"))).not.toThrow();
+    expect(existsSync(victim)).toBe(true);
+    rmSync(outsideDir, { recursive: true, force: true });
   });
 });

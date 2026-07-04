@@ -48,6 +48,7 @@ export {
   setupDurableResume,
   buildDurableStores,
   buildDurableResume,
+  buildOrchestrateResumeWiring,
   type DurableResumeResult,
   type DurableResumeConfig,
   type SetupDurableResumeDeps,

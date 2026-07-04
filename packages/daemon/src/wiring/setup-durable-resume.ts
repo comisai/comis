@@ -28,9 +28,11 @@
  * @module
  */
 
+import { existsSync, rmSync } from "node:fs";
 import type { ChannelPort, ClockPort, TimerPort, TimerHandle, DurableRunPort, OutwardSendLedgerPort, OutwardSendRecord, DurableRunRecord, PerAgentConfig, AgentCapability, DeliveryAdapter, TypedEventBus } from "@comis/core";
 import { resolveAutonomy, DurabilityConfigSchema, safePath } from "@comis/core";
 import { createSqliteDurableRunStore, createSqliteOutwardSendLedger } from "@comis/memory";
+import { createResultRefStore } from "@comis/skills/tools";
 import type { ComisLogger, LeaseManager } from "@comis/infra";
 import { ok, err, type Result } from "@comis/shared";
 import {
@@ -139,6 +141,46 @@ export interface OrchestrateResumeWiring extends OrchestrateResumeSeams {
   readonly cleanupResults: (workspacePath: string, runId: string) => Promise<void>;
   /** Delete the pinned `<scriptRef>` (guarded rmSync — a missing file is a no-op → idempotent). */
   readonly removePinnedScript: (workspacePath: string, scriptRef: string) => void;
+}
+
+/**
+ * Build the production {@link OrchestrateResumeWiring} cluster for the composition
+ * root — the LIVE seams the boot-sweep arm + the RESUME-04 orphan reclaim run
+ * against. A `DurableRunRecord` carries no `agentId` (an orchestrate row's
+ * caps/leaseIds/spawnTree are all `[]`), so `workspaceFor` resolves to the
+ * default-agent workspace — the correct target for the common single-agent case;
+ * the resolver is the multi-agent extension point. The reclaim REUSES the existing
+ * `result-ref-store.cleanupRun` (rmSync-recursive of `results/`) for the checkpoint
+ * blob + a `safePath`-guarded `rmSync` for the pinned `<runId>.<language>` script at
+ * the workspace root — no new GC primitive (NG4), scoped, and idempotent (a missing
+ * file / a traversal-escape scriptRef is a no-op, never a throw that aborts the sweep).
+ */
+export function buildOrchestrateResumeWiring(deps: {
+  /** The default-agent jailed workspace root (a bare durable row's resume target). */
+  defaultWorkspaceDir: string;
+  /** Logger for the reused result-ref store (its cleanupRun path). */
+  logger: ComisLogger;
+}): OrchestrateResumeWiring {
+  // Reuse the SHIPPED result-ref store for cleanupRun (results/ wipe) — never a
+  // hand-rolled results-dir resolver that could drift from the store's layout.
+  const resultStore = createResultRefStore({ logger: deps.logger });
+  return {
+    workspaceFor: () => deps.defaultWorkspaceDir,
+    fileExists: (absPath) => existsSync(absPath),
+    cleanupResults: (workspacePath, runId) => resultStore.cleanupRun({ workspacePath, runId }),
+    removePinnedScript: (workspacePath, scriptRef) => {
+      // safePath refuses a `..`/absolute escape BEFORE any unlink; rmSync force:true
+      // makes a missing file a no-op (idempotent). A refused/failed path is a silent
+      // no-op — the reclaim must never throw and abort the boot/watchdog sweep.
+      try {
+        const abs = safePath(workspacePath, scriptRef);
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- safePath-confined to the run workspace root (mirrors result-ref-store.ts).
+        rmSync(abs, { force: true });
+      } catch {
+        /* traversal-escape scriptRef (safePath threw) or an unlink failure — no-op. */
+      }
+    },
+  };
 }
 
 /** The resolved `autonomy.durability` config the wiring reads. */
