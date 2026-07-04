@@ -35,16 +35,21 @@ const stubValidator = async (
 interface AppOverrides {
   validateActivityJwt?: MsTeamsIngressDeps["validateActivityJwt"];
   handleWebhookEvents?: Mock;
+  onAuthRejected?: Mock;
 }
 
 function createApp(overrides: AppOverrides = {}) {
   const handleWebhookEvents: Mock = overrides.handleWebhookEvents ?? vi.fn();
-  const app = createMsTeamsIngress({
+  // The auth-reject hook is OPTIONAL: it is threaded only when a test supplies
+  // it, so the existing cases exercise the no-op-when-absent composition path.
+  const deps: MsTeamsIngressDeps = {
     validateActivityJwt: overrides.validateActivityJwt ?? stubValidator,
     handleWebhookEvents,
     logger: noopLogger(),
-  });
-  return { app, handleWebhookEvents };
+    ...(overrides.onAuthRejected ? { onAuthRejected: overrides.onAuthRejected } : {}),
+  };
+  const app = createMsTeamsIngress(deps);
+  return { app, handleWebhookEvents, onAuthRejected: overrides.onAuthRejected };
 }
 
 function post(
@@ -218,5 +223,84 @@ describe("createMsTeamsIngress", () => {
     // A message activity is fire-and-forget — it keeps the bare 202 ack.
     expect(res.status).toBe(202);
     expect(handleWebhookEvents).toHaveBeenCalledOnce();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Content-free auth-reject fleet signal.
+//
+// Each 401 gate fires an injected content-free hook so a forged / expired /
+// wrong-audience / missing-token FLOOD is COUNTABLE by the fleet lens — while
+// the rejection behavior and the opaque 401 response stay exactly as they were.
+// ---------------------------------------------------------------------------
+describe("createMsTeamsIngress — content-free auth-reject signal", () => {
+  it("signals reason 'missing_bearer' on the missing-bearer 401, behavior + opaque body unchanged", async () => {
+    const onAuthRejected: Mock = vi.fn();
+    const { app, handleWebhookEvents } = createApp({ onAuthRejected });
+
+    const res = await post(app, {}, JSON.stringify({ type: "message", text: "hi" }));
+
+    // The 401 gate + fixed opaque body are UNCHANGED — the signal is additive.
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "unauthorized" });
+    expect(handleWebhookEvents).not.toHaveBeenCalled();
+
+    // The content-free signal fired exactly once with ONLY the closed reason.
+    expect(onAuthRejected).toHaveBeenCalledOnce();
+    expect(onAuthRejected).toHaveBeenCalledWith("missing_bearer");
+  });
+
+  it("signals reason 'invalid_token' on the JWT-invalid 401 and carries no token material", async () => {
+    const onAuthRejected: Mock = vi.fn();
+    const { app, handleWebhookEvents } = createApp({ onAuthRejected });
+
+    const res = await post(
+      app,
+      { authorization: "Bearer bad" },
+      JSON.stringify({ type: "message", text: "hi" }),
+    );
+
+    expect(res.status).toBe(401);
+    expect(handleWebhookEvents).not.toHaveBeenCalled();
+    expect(onAuthRejected).toHaveBeenCalledOnce();
+
+    // Content-free: the ONLY argument is the closed reason string — no token,
+    // no Authorization header, no body can ride the signal.
+    const call = onAuthRejected.mock.calls[0] as unknown[];
+    expect(call).toEqual(["invalid_token"]);
+    expect(JSON.stringify(call)).not.toContain("Bearer");
+    expect(JSON.stringify(call)).not.toContain("bad");
+  });
+
+  it("does NOT signal on a valid activity (no false-positive flood counts)", async () => {
+    const onAuthRejected: Mock = vi.fn();
+    const { app, handleWebhookEvents } = createApp({ onAuthRejected });
+
+    const res = await post(
+      app,
+      { authorization: "Bearer good" },
+      JSON.stringify({ type: "message", text: "hi" }),
+    );
+
+    expect([200, 202]).toContain(res.status);
+    expect(handleWebhookEvents).toHaveBeenCalledOnce();
+    expect(onAuthRejected).not.toHaveBeenCalled();
+  });
+
+  it("still rejects 401 with no onAuthRejected hook injected (no-op when absent)", async () => {
+    // The composition path may omit the hook — the gate stays intact and must
+    // not throw for a missing bearer or an invalid token.
+    const { app, handleWebhookEvents } = createApp(); // no onAuthRejected
+
+    const missing = await post(app, {}, JSON.stringify({ type: "message", text: "hi" }));
+    expect(missing.status).toBe(401);
+
+    const invalid = await post(
+      app,
+      { authorization: "Bearer bad" },
+      JSON.stringify({ type: "message", text: "hi" }),
+    );
+    expect(invalid.status).toBe(401);
+    expect(handleWebhookEvents).not.toHaveBeenCalled();
   });
 });
