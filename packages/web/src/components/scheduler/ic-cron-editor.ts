@@ -494,6 +494,9 @@ export class IcCronEditor extends LitElement {
   @state() private _deliveryChannelId = "";
   @state() private _wakeGateScript = "";
   @state() private _wakeGateLanguage: "js" | "ts" = "js";
+  /** True when the edited job arrived WITH a gate — so clearing the script field
+   *  sends an explicit empty script (removes the gate) rather than omitting it. */
+  @state() private _hadWakeGate = false;
   @state() private _nextRuns: string[] = [];
 
   /** Controller owns preview-debounce orchestration + next-runs dispatch. */
@@ -571,6 +574,7 @@ export class IcCronEditor extends LitElement {
     }
     this._wakeGateScript = job.wakeGate?.script ?? "";
     this._wakeGateLanguage = job.wakeGate?.language ?? "js";
+    this._hadWakeGate = job.wakeGate != null;
   }
 
   /* ---- Preview ---- */
@@ -633,11 +637,15 @@ export class IcCronEditor extends LitElement {
       maxConcurrent: this._maxConcurrent,
       sessionTarget: this._sessionTarget,
       deliveryTarget,
-      // Optional: omit entirely when no script is entered so an un-gated
-      // job's assembled output is byte-identical to a form without this field.
+      // A non-empty script sets/replaces the gate. An empty field on a job that
+      // HAD a gate sends an explicit empty script so the handler removes it
+      // (an omitted field would leave the existing gate untouched). A never-gated
+      // job omits the field entirely, so its output stays byte-identical.
       ...(this._wakeGateScript.trim()
         ? { wakeGate: { script: this._wakeGateScript, language: this._wakeGateLanguage } }
-        : {}),
+        : this._hadWakeGate
+          ? { wakeGate: { script: "" } }
+          : {}),
     };
   }
 

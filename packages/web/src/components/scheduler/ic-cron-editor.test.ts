@@ -296,6 +296,35 @@ describe("IcCronEditor", () => {
     expect(detail.wakeGate).toEqual({ script: "check()", language: "ts" });
   });
 
+  it("clearing the script on a gated job sends an empty wakeGate so the handler removes the gate", async () => {
+    const el = await createElement<IcCronEditor>("ic-cron-editor", {
+      agents: ["default"],
+      job: {
+        id: "monitor",
+        name: "Monitor",
+        agentId: "default",
+        schedule: { kind: "cron", expr: "*/10 * * * *", tz: "UTC" },
+        message: "Check the feed",
+        enabled: true,
+        maxConcurrent: 1,
+        sessionTarget: "main",
+        wakeGate: { script: "check()", language: "ts" },
+      },
+    });
+    // The user clears the script textarea to remove the gate.
+    (el as any)._wakeGateScript = "";
+    await el.updateComplete;
+
+    const handler = vi.fn();
+    el.addEventListener("save", handler);
+    (el.shadowRoot!.querySelector(".btn-save") as HTMLButtonElement).click();
+
+    const detail = (handler.mock.calls[0][0] as CustomEvent).detail;
+    // An explicit empty script tells the handler to CLEAR the gate; an omitted
+    // field would leave the old gate in place (the reappears-on-reload bug).
+    expect(detail.wakeGate).toEqual({ script: "" });
+  });
+
   it("cancel button fires cancel event", async () => {
     const el = await createElement<IcCronEditor>("ic-cron-editor");
     const handler = vi.fn();
