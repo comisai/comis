@@ -133,6 +133,37 @@ describe("extractCapabilityFootprint", () => {
     expect(out.sequence).toEqual(["web_fetch", "jq"]);
     expect(out.unknownMethods).toEqual(["not_a_tool"]);
   });
+
+  it("detects the MCP proxy call shape comis_tools.mcp.<server>.<tool>( as orch:mcp", () => {
+    // The SDK's SOLE path to a connected MCP tool is the nested proxy
+    // `comis_tools.mcp.<server>.<tool>()`. The flat CALL_SITE_RE misses it — the
+    // ident after `comis_tools` is "mcp", followed by ".", not "(" — so a real MCP
+    // call yielded an EMPTY footprint, skipping BOTH the fail-fast cap check (a script
+    // needing orch:mcp on an mcp-off agent got the cryptic endpoint lease error
+    // mid-run instead of a pre-spawn cap-named reject) AND the procedure descriptor.
+    const out = extractCapabilityFootprint("const r = await comis_tools.mcp.myserver.mytool({ q: 1 });");
+
+    expect([...out.caps]).toEqual(["orch:mcp"]);
+    expect(out.methods).toEqual(["mcp"]);
+    expect(out.sequence).toEqual(["mcp"]);
+  });
+
+  it("keeps the MCP proxy call in SOURCE ORDER within a mixed footprint (a faithful descriptor)", () => {
+    const script = 'comis_tools.web_search({q:1}); await comis_tools.mcp.srv.tool({}); comis_tools.jq({a:1});';
+    const out = extractCapabilityFootprint(script);
+
+    // The mcp step lands between web_search and jq (source order), not appended.
+    expect(out.sequence).toEqual(["web_search", "mcp", "jq"]);
+    expect([...out.caps].sort()).toEqual(["orch:mcp", "orch:read", "orch:web"]);
+  });
+
+  it("still maps a DIRECT comis_tools.mcp( call to orch:mcp (no double-count with the proxy shape)", () => {
+    // The flat form (already matched) and the proxy form are distinct call sites.
+    const out = extractCapabilityFootprint("comis_tools.mcp({ server: 's', tool: 't', args: {} });");
+
+    expect([...out.caps]).toEqual(["orch:mcp"]);
+    expect(out.sequence).toEqual(["mcp"]);
+  });
 });
 
 describe("classifyRecoverableStderr", () => {
