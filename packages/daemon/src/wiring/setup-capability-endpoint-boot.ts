@@ -63,7 +63,12 @@ import {
   type ResultRefStore,
 } from "@comis/skills/tools";
 import { readFileSync } from "node:fs";
-import { createCapabilityEndpoint, type CapabilityEndpoint } from "./setup-capability-endpoint.js";
+import {
+  createCapabilityEndpoint,
+  createReplayRecorder,
+  type CapabilityEndpoint,
+  type ReplayRecorder,
+} from "./setup-capability-endpoint.js";
 import type { EmitCapabilityAuditDeps } from "../api/shared/emit-capability-audit.js";
 import { createToolInvokeExecutor, type ExecuteToolInvoke } from "./setup-tool-invoke-executor.js";
 import type { RpcCall } from "@comis/skills/platform-tools";
@@ -431,6 +436,58 @@ function buildToolInvokeExecutor(
 }
 
 /**
+ * Build the content-free replay recorder over the SAME workspace resolver +
+ * ResultRef store the tool-invoke executor uses. The recorder is the SOLE writer
+ * of `<workspace>/results/replay.jsonl`; injected into the endpoint it appends one
+ * content-free `{seq, method, paramsDigest} → pointer` line per SUCCESSFUL cap
+ * dispatch (INV-5), so a later deterministic replay has recorded results to serve
+ * back. Returns `undefined` when the workspace inputs are absent (the boot-gate
+ * unit tests) — the endpoint then records nothing (byte-identical to a run without
+ * the resume surface). Recording is ALSO gated per-run on
+ * `autonomy.durability.orchestrateResume` (default-off), so a wired-but-disabled
+ * agent still records nothing.
+ */
+function buildReplayRecorder(
+  deps: CapabilityLayerDeps,
+  resultRefStore: ResultRefStore,
+): ReplayRecorder | undefined {
+  const { workspaceDirs, defaultWorkspaceDir, daemonLogger } = deps;
+  if (!workspaceDirs || defaultWorkspaceDir === undefined) return undefined;
+  const now = deps.clock.now;
+  const resolveWorkspace = (agentId: string): string =>
+    workspaceDirs.get(agentId) ?? defaultWorkspaceDir;
+  return createReplayRecorder({
+    // Default-OFF per-run gate: record ONLY when orchestrateResume is on for the
+    // lease's agent (prototype-safe own-entry lookup, EXACTLY mirroring the
+    // executor's orchestrateResumeEnabled predicate). Absent/false ⇒ a full no-op.
+    isEnabled: (agentId): boolean => {
+      const agentCfg = Object.entries(deps.agents).find(([id]) => id === agentId)?.[1];
+      return agentCfg?.autonomy?.durability?.orchestrateResume === true;
+    },
+    // The SAME resolver the tool-invoke executor uses — the recorded pointer files +
+    // replay.jsonl live under the offloading agent's jailed workspace results/ dir.
+    resolveWorkspace,
+    // Bind each recorded result to the ResultRef store under a fixed tool name so the
+    // bytes live in the jailed results/ under the same caps/TTL/GC. A ResultRef maps
+    // to its pointer; an over-cap { error } / undefined passes through (honest-degrade).
+    materialize: async (payload, ctx) => {
+      const result = await resultRefStore.materialize(payload, "orchestrate_replay", {
+        workspacePath: ctx.workspacePath,
+        runId: ctx.runId,
+        nowMs: ctx.nowMs,
+        ...(ctx.ttlMs !== undefined ? { ttlMs: ctx.ttlMs } : {}),
+      });
+      return result !== undefined && "ref" in result ? { ref: result.ref } : result;
+    },
+    nowMs: now,
+    // A checkpoint-length TTL so a resumable run stays replayable (mirrors the
+    // checkpoint materialize's TTL).
+    ttlMs: CHECKPOINT_TTL_MS,
+    logger: daemonLogger,
+  });
+}
+
+/**
  * Construct the daemon-wide capability layer (gated on an autonomy-bearing
  * profile, mirroring how the broker is gated on `executor.broker`), ACTIVATE it
  * (inject the executor + start the 0600 socket), AND run the
@@ -550,6 +607,11 @@ export async function constructCapabilityLayer(
     // (NOT a mutable setter on a security boundary). The bounded-autonomy service
     // backs the executor's real budgetHook (the flat web charge).
     const toolInvokeExecutor = buildToolInvokeExecutor(deps, resultRefStore, boundedAutonomy);
+    // Step 1b: build the content-free replay recorder over the SAME workspace
+    // resolver + ResultRef store, and inject it below — the SOLE writer of
+    // results/replay.jsonl. Without this, recordReplay short-circuits on every
+    // dispatch and a later deterministic replay diverges on the first cap call.
+    const replayRecorder = buildReplayRecorder(deps, resultRefStore);
     // Thread the daemon logger so the socket boundary is observable: a
     // post-listen server error and per-connection errors are logged with the
     // canonical err/errorKind/hint rather than silently swallowed. The
@@ -568,6 +630,9 @@ export async function constructCapabilityLayer(
       // The durable store — the jail leg allocates a monotonic
       // _outwardStepIndex for an outward message method. Absent ⇒ pass-through.
       ...(deps.durableRuns ? { durableRuns: deps.durableRuns } : {}),
+      // The content-free replay recorder (REPLAY-01). Absent (boot-gate tests /
+      // no workspace) ⇒ recordReplay is a no-op, byte-identical to today.
+      ...(replayRecorder ? { replayRecorder } : {}),
     });
     // Step 2: ACTIVATE — start the daemon-wide 0600 socket ONCE. Construction
     // leaves it DORMANT (no startSocket; active:false). Now the cap surface is LIVE:

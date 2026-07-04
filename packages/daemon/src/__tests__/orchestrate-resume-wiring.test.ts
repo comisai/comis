@@ -14,7 +14,13 @@
  *   2. the M2 boot-sweep's orchestrate-kind arm + orphan reclaim cluster is populated
  *      (daemon.ts → buildOrchestrateResumeWiring → buildDurableResume.orchestrateResume);
  *   3. the `orchestrate.replay` RPC's re-spawn seam is assembled (daemon.ts →
- *      createOrchestrateReplayRespawn → OrchestratorApiDeps.orchestrateReplay).
+ *      createOrchestrateReplayRespawn → OrchestratorApiDeps.orchestrateReplay);
+ *   4. the content-free replay RECORDER is built + injected into the capability
+ *      endpoint at the boot layer (setup-capability-endpoint-boot.ts →
+ *      createReplayRecorder → createCapabilityEndpoint({ …, replayRecorder })).
+ *      Without this the ONLY writer of `results/replay.jsonl` has no production
+ *      caller, so `recordReplay` short-circuits and a replay of any real run
+ *      diverges on its first cap call (the recorder ships dormant).
  *
  * These are SOURCE assertions (mirrors the daemon.ts line-cap + api-dir arch tests):
  * the real end-to-end jailed round-trip is the VPS/`.linux` tier, but the WIRING
@@ -32,6 +38,7 @@ const SRC_ROOT = resolve(here, "..");
 const DAEMON_TS = readFileSync(resolve(SRC_ROOT, "daemon.ts"), "utf8");
 const SETUP_TOOLS = readFileSync(resolve(SRC_ROOT, "wiring", "setup-tools.ts"), "utf8");
 const SETUP_TOOLS_AUTONOMY = readFileSync(resolve(SRC_ROOT, "wiring", "setup-tools-autonomy.ts"), "utf8");
+const SETUP_CAP_BOOT = readFileSync(resolve(SRC_ROOT, "wiring", "setup-capability-endpoint-boot.ts"), "utf8");
 
 describe("orchestrate durable-resume + replay composition-root wiring (anti-dormancy)", () => {
   describe("seam 1 — durableRuns → the orchestrate runner (RESUME-02)", () => {
@@ -84,6 +91,27 @@ describe("orchestrate durable-resume + replay composition-root wiring (anti-dorm
       expect(
         /orchestrateReplay:\s*\{/.test(DAEMON_TS),
         "daemon.ts must set OrchestratorApiDeps.orchestrateReplay so rpc-dispatch registers orchestrate.replay.",
+      ).toBe(true);
+    });
+  });
+
+  describe("seam 4 — the content-free replay recorder → the capability endpoint (REPLAY-01)", () => {
+    it("setup-capability-endpoint-boot.ts builds the recorder via createReplayRecorder", () => {
+      // createReplayRecorder is the SOLE writer of results/replay.jsonl. Without a
+      // production caller, recordReplay short-circuits on every dispatch → replay
+      // diverges on the first cap call of any real run (the recorder ships dormant).
+      expect(
+        SETUP_CAP_BOOT.includes("createReplayRecorder("),
+        "setup-capability-endpoint-boot.ts must build the recorder via createReplayRecorder — else results/replay.jsonl is never written.",
+      ).toBe(true);
+    });
+
+    it("injects the recorder into the endpoint as createCapabilityEndpoint({ …, replayRecorder })", () => {
+      // The endpoint's recordReplay is a no-op unless the `replayRecorder` dep is
+      // passed at construction — pin the injection so a refactor cannot drop it.
+      expect(
+        /replayRecorder/.test(SETUP_CAP_BOOT),
+        "setup-capability-endpoint-boot.ts must pass replayRecorder into createCapabilityEndpoint — else the recorder is built but never observed.",
       ).toBe(true);
     });
   });
