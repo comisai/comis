@@ -968,12 +968,15 @@ Optional session configuration containing reset policy, DM scope, pruning, and c
 
 **Cron (agents.*.scheduler.cron)**
 
+Setting **any** field here replaces the global `scheduler.cron` block **wholesale** -- unlike `heartbeat` below, per-agent cron fields do **not** merge with the global block field-by-field. An agent that overrides one cron field (e.g. `maxJobs`) therefore does **not** inherit the global `scheduler.cron.wakeGate` toggle; re-declare `wakeGate` in the agent's block to keep it.
+
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | `boolean` | `true` | Enable cron job scheduling |
 | `maxConcurrentRuns` | `number` | `3` | Maximum concurrent cron job runs |
 | `defaultTimezone` | `string` | `""` | Default timezone (empty = UTC) |
 | `maxJobs` | `number` | `100` | Maximum cron jobs (0 = unlimited) |
+| `wakeGate` | `boolean` | _(unset)_ | Per-agent [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters) toggle (same semantics as the global `scheduler.cron.wakeGate`). Because the block is whole-replace, this is **not** inherited from the global toggle -- set it here explicitly. |
 
 **Heartbeat (agents.*.scheduler.heartbeat)**
 
@@ -1647,6 +1650,7 @@ Proactive automation configuration for cron scheduling, heartbeat monitoring, qu
 | `maxConcurrentRuns` | `number` | `3` | Max concurrent cron job runs |
 | `defaultTimezone` | `string` | `""` | Default timezone (empty = UTC) |
 | `maxJobs` | `number` | `100` | Max cron jobs (0 = unlimited) |
+| `wakeGate` | `boolean` | _(unset)_ | Enable scheduler-initiated [wake-gates](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters). `true` forces on, `false` forces off (an explicit `false` wins even if the agent's `autonomy.script` surface is on); when unset, a gate runs only if that script surface is explicitly on. A gate still executes under the agent's own resolved caps -- the toggle grants no new capability. |
 
 **Heartbeat (scheduler.heartbeat)**
 

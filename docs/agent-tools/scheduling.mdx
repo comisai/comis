@@ -186,7 +186,7 @@ The gate runs in the same jailed sandbox an autonomous [`orchestrate`](/agent-to
 | `language` | `js` \| `ts` | `js` | The gate language |
 | `timeoutSeconds` | integer | `30` | Wall-clock budget for the gate (1--300); a gate that overruns wakes the model |
 
-An agent attaches a gate when it creates or edits a job -- pass the gate source as **`wake_gate_script`** (and optionally **`wake_gate_language`**, `js` or `ts`) to the `cron` tool's `add` or `update` action.
+An agent attaches a gate when it creates or edits a job -- pass the gate source as **`wake_gate_script`** (and optionally **`wake_gate_language`**, `js` or `ts`) to the `cron` tool's `add` or `update` action. Only the script and language are authorable this way: a gate created through the `cron` tool or the web editor always uses the 30-second default `timeoutSeconds` -- the field is not exposed as a tool or editor parameter.
 
 ### The verdict protocol
 
@@ -212,16 +212,20 @@ The sentinel match is case-insensitive. Both `context` and `deliver` are bounded
 A gate that checks a build queue and only wakes the agent when something is waiting:
 
 ```javascript
-// wake-gate script (language: js)
-const res = await tools.web_fetch({ url: "https://ci.example.com/api/queue" });
-const queue = JSON.parse(res.body);
+// wake-gate script (language: js). The jailed SDK is imported, not global —
+// the same typed `comis_tools` an orchestrate script uses.
+import { comis_tools } from "./comis_tools.js";
 
-if (queue.pending.length === 0) {
+// web_fetch returns a ResultRef; inspect it with .jq()/.grep() (or .preview).
+const queue = await comis_tools.web_fetch({ url: "https://ci.example.com/api/queue" });
+const pending = await queue.jq(".pending | length");
+
+if (pending === 0) {
   // Nothing to triage -- deliver a one-line status, no model turn.
   console.log('{"wake": false, "deliver": "Build queue clear ✓"}');
 } else {
-  // Wake the agent with the pending items pre-gathered as context.
-  console.log(JSON.stringify({ wake: true, context: `Pending builds: ${queue.pending.join(", ")}` }));
+  // Wake the agent with the pending count pre-gathered as context.
+  console.log(JSON.stringify({ wake: true, context: `Pending builds: ${pending}` }));
 }
 ```
 
