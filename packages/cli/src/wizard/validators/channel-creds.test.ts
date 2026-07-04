@@ -187,6 +187,28 @@ describe("validateChannelCredential", () => {
       expect(result!.message).toContain("Invalid Microsoft Teams app password");
     });
 
+    it("rejects a truncated appPassword below the calibrated client-secret floor", () => {
+      // A 16-char paste is well under the ~40-char length of a real Azure
+      // client secret -- almost certainly a truncated copy. The floor should
+      // catch it at wizard time rather than deferring to a daemon auth failure.
+      const result = validateChannelCredential(
+        "msteams",
+        "appPassword",
+        "a".repeat(16),
+      );
+      expect(result).toBeDefined();
+      expect(result!.message).toContain("Invalid Microsoft Teams app password");
+    });
+
+    it("accepts an appPassword at the calibrated floor length", () => {
+      const result = validateChannelCredential(
+        "msteams",
+        "appPassword",
+        "a".repeat(32),
+      );
+      expect(result).toBeUndefined();
+    });
+
     it("rejects an empty appPassword", () => {
       const result = validateChannelCredential("msteams", "appPassword", "");
       expect(result).toBeDefined();
