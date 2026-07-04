@@ -342,8 +342,7 @@ export interface OrchestrateToolDeps {
 // Constants.
 // ---------------------------------------------------------------------------
 
-/** The SDK asset filenames copied into the jail workspace. Exported so the
- *  deterministic-replay re-spawn reuses the IDENTICAL asset set as a live run. */
+/** The SDK asset filenames copied into the jail workspace (exported: the replay re-spawn reuses them). */
 export const SDK_ASSETS = [
   "comis_tools.d.ts",
   "comis_tools.js",
@@ -917,8 +916,7 @@ function sizeBounceStdout(stdout: string): TextBlock[] {
   return result.content.map((b) => ({ type: "text" as const, text: b.text ?? "" }));
 }
 
-/** The default real spawn (the unit suite injects `spawnFn`; this is production).
- *  Exported so the deterministic-replay re-spawn drives the SAME production spawn. */
+/** The default real spawn (the unit suite injects `spawnFn`; exported: the replay re-spawn drives it too). */
 export const defaultSpawn: OrchestrateSpawnFn = (bin, args, opts) =>
   spawn(bin, args, {
     env: opts.env,
@@ -926,8 +924,7 @@ export const defaultSpawn: OrchestrateSpawnFn = (bin, args, opts) =>
     stdio: ["ignore", "pipe", "pipe"],
   }) as unknown as OrchestrateSpawnedChild;
 
-/** The default jail-node resolver — probe the jail PATH / bind the daemon node.
- *  Exported so the deterministic-replay re-spawn resolves the jail identically. */
+/** The default jail-node resolver — probe the jail PATH / bind the daemon node (exported: the replay re-spawn resolves identically). */
 export function defaultResolveJailNode(): JailNodeResolution {
   return resolveJailNode({ pathDirs: SYSTEM_RO_PATHS, execPath: readExecPath() });
 }
