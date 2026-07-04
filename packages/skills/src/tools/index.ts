@@ -33,6 +33,10 @@ export { createWebFetchTool, fetchUrlContent, __clearFetchCache } from "./builti
 // (undici, DNS-pinned, NO impit re-resolve), distinct from the in-process web_fetch tool.
 export { fetchPinned, createPinnedAgent } from "./integrations/pinned-fetch.js";
 export { extractReadableContent, type ExtractMode } from "./builtin/web-fetch-utils.js";
+// The MCP result sanitizer (NFKC + invisible-char strip) reused by the
+// daemon-side `case "mcp"` tool.invoke executor — a FRESH call site from the
+// in-process mcp-tool-bridge, so the sanitize+wrap pair is replicated there.
+export { sanitizeMcpToolResult } from "./integrations/mcp-result-sanitizer.js";
 
 // Built-in tools -- Source profiles (per-tool limits and extraction config)
 export {

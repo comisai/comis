@@ -44,8 +44,9 @@
  * @module
  */
 
-import { validateUrl, shouldMaterialize, systemNowMs, type ResultRef } from "@comis/core";
-import { fetchPinned, extractReadableContent } from "@comis/skills/tools";
+import { validateUrl, shouldMaterialize, systemNowMs, wrapExternalContent, type ResultRef } from "@comis/core";
+import { fetchPinned, extractReadableContent, sanitizeMcpToolResult } from "@comis/skills/tools";
+import { qualifyToolName, type McpClientManager } from "@comis/skills";
 import type { ComisLogger } from "@comis/infra";
 
 /** The validated lease projection the dispatch hands the executor (no secret). */
@@ -133,6 +134,22 @@ export interface ToolInvokeExecutorDeps {
   materialize?: MaterializeWriter;
   /** Web-fetch timeout in ms (default 30s). */
   webTimeoutMs?: number;
+  /**
+   * The daemon-wide MCP client manager — `case "mcp"` dispatches through
+   * `callTool(qualifyToolName(server,tool))` on the DAEMON's network (the jail
+   * stays `--unshare-net`, exactly like web_fetch). OPTIONAL: absent ⇒ `executeMcp`
+   * honest-degrades to an "MCP not available" error-result (an un-wired daemon is
+   * safe, never crashy — defense-in-depth beside the boot-required
+   * `CapabilityLayerDeps.mcpClientManager`).
+   */
+  mcpClientManager?: McpClientManager;
+  /**
+   * The per-agent inbound MCP allowlist — the layer-2 default-deny gate consulted
+   * BEFORE any dispatch (232-02 `permitsMcpTool`, resolved per-agent at boot from
+   * that agent's `autonomy.mcp.allow`). OPTIONAL: absent ⇒ every mcp call denies
+   * (deny-by-absence). A deny is an audited error-result — `callTool` is never reached.
+   */
+  mcpAllowlist?: { permits(agentId: string, server: string, tool: string): boolean };
   /** Daemon logger for boundary observability (AGENTS.md §2.7). */
   logger?: ComisLogger;
 }
@@ -262,6 +279,112 @@ export function createToolInvokeExecutor(
     return { url, text, ...(title !== undefined ? { title } : {}), status: res.status };
   }
 
+  /**
+   * The daemon-side MCP dispatch (MCP-01/02/03). The whole path is `web_fetch`
+   * with a different daemon-side callee: gate on the per-agent inbound allowlist →
+   * `callTool(qualifyToolName(server,tool))` on the DAEMON's network (the jail
+   * stays `--unshare-net`) → sanitize + `wrapExternalContent(source:"mcp_tool")`
+   * (INV-5, data-not-control) → `shouldMaterialize("mcp")` ResultRef offload.
+   *
+   * NEVER throws for a tool failure — a transport error (`!res.ok`) or a tool-level
+   * `isError` honest-degrades to an error-SHAPED result (the module-doc contract).
+   * The `{server,tool}` ride INSIDE `args` and are COMPOSED into the qualified name;
+   * they are NEVER treated as an RPC method (no path to `mcp.connect`/`mcp.oauth_login`).
+   * The allowlist deny is a content-free audited error-result (the log carries the
+   * tool-NAME `"mcp"` + the decision, NEVER the `{server,tool,args}` — INV-5/V7).
+   */
+  async function executeMcp(
+    args: Record<string, unknown>,
+    lease: ToolInvokeLease,
+  ): Promise<unknown> {
+    const started = systemNowMs();
+    const server = typeof args.server === "string" ? args.server : "";
+    const tool = typeof args.tool === "string" ? args.tool : "";
+    const inner =
+      args.args !== null && typeof args.args === "object"
+        ? (args.args as Record<string, unknown>)
+        : {};
+    if (server === "" || tool === "") {
+      log?.warn(
+        { errorKind: "validation" as const, hint: "mcp called without string `server`/`tool`", toolName: "mcp" },
+        "tool.invoke mcp missing server/tool",
+      );
+      return errorResult("mcp requires string `server` and `tool`");
+    }
+
+    // (a) INBOUND GATE — the layer-2 per-agent allowlist (deny by absence, 232-02
+    // permitsMcpTool). A deny short-circuits BEFORE any dispatch — callTool is NEVER
+    // reached — and emits a content-free audited deny (NO {server,tool,args} — INV-5/V7).
+    if (!deps.mcpAllowlist?.permits(lease.agentId, server, tool)) {
+      log?.warn(
+        { errorKind: "auth" as const, toolName: "mcp", decision: "deny", hint: "MCP tool not on the agent's inbound allowlist" },
+        "tool.invoke mcp denied (allowlist)",
+      );
+      return errorResult("MCP tool not permitted for this agent");
+    }
+    // Guard the manager present — an un-wired daemon honest-degrades (never crashes).
+    if (!deps.mcpClientManager) {
+      log?.warn(
+        { errorKind: "config" as const, toolName: "mcp", hint: "no MCP client manager wired into the tool.invoke executor" },
+        "tool.invoke mcp unavailable",
+      );
+      return errorResult("MCP not available");
+    }
+
+    // (b) DAEMON net call — COMPOSE the qualified name "mcp:{server}/{tool}" (never
+    // an RPC method). callTool owns the connection lifecycle / breaker / timeouts.
+    log?.debug({ step: "mcp-dispatch", toolName: "mcp" }, "tool.invoke mcp dispatching (daemon-side)");
+    const res = await deps.mcpClientManager.callTool(qualifyToolName(server, tool), inner);
+    if (!res.ok) {
+      log?.warn(
+        { err: res.error, errorKind: "network" as const, toolName: "mcp", hint: "MCP callTool failed (transport/timeout)" },
+        "tool.invoke mcp call failed",
+      );
+      return errorResult(`MCP tool error: ${res.error.message}`); // honest-degrade, NOT a throw
+    }
+    if (res.value.isError) {
+      log?.warn(
+        { errorKind: "dependency" as const, toolName: "mcp", hint: "the MCP server returned a tool-level error result" },
+        "tool.invoke mcp tool-level error",
+      );
+      return errorResult("MCP tool reported an error");
+    }
+
+    // (c) sanitize (NFKC + invisible strip) + wrap as UNTRUSTED external content
+    // (INV-5) — the return is DATA the jailed script reads; only its stdout ever
+    // re-enters model context. Replicated from mcp-tool-bridge (the daemon executor
+    // is a FRESH call site — the wrap is NOT shared).
+    let text = res.value.content
+      .filter((c) => c.type === "text" && c.text)
+      .map((c) => c.text ?? "")
+      .join("\n");
+    text = sanitizeMcpToolResult(text);
+    text = wrapExternalContent(text, { source: "mcp_tool" });
+
+    // (d) over-threshold → offload to a ResultRef (only the handle re-enters
+    // context; the in-jail jq/read slices it) — identical to web_fetch's tail.
+    const bytes = Buffer.byteLength(text, "utf8");
+    if (deps.materialize && shouldMaterialize("mcp", bytes)) {
+      log?.debug(
+        { step: "materialize", toolName: "mcp", bytes },
+        "tool.invoke mcp over threshold — materializing to ResultRef",
+      );
+      const ref = await deps.materialize(text, "mcp", lease);
+      if (ref) {
+        log?.info(
+          { toolName: "mcp", durationMs: systemNowMs() - started, bytes, materialized: true },
+          "tool.invoke mcp complete (ResultRef)",
+        );
+        return ref;
+      }
+    }
+    log?.info(
+      { toolName: "mcp", durationMs: systemNowMs() - started, bytes, materialized: false },
+      "tool.invoke mcp complete (inline)",
+    );
+    return { text };
+  }
+
   /** A file builtin (read/grep/find/ls/jq/sql/jsonpath) run under the agent's workspace dir. */
   async function executeFileBuiltin(
     tool: "read" | "grep" | "find" | "ls" | "jq" | "sql" | "jsonpath",
@@ -284,6 +407,10 @@ export function createToolInvokeExecutor(
     switch (tool) {
       case "web_fetch":
         return executeWebFetch(args, lease);
+      case "mcp":
+        // Daemon-side MCP dispatch (net-needing → runs on the daemon like
+        // web_fetch; the jail stays --unshare-net). Gate → callTool → wrap → offload.
+        return executeMcp(args, lease);
       case "web_search": {
         const started = systemNowMs();
         // The daemon-side search core is injected and pinned the same way as
