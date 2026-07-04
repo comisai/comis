@@ -180,9 +180,12 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
   // genuine replay (identical tuple, same columns) COALESCEs to the same values — still a
   // no-op; a tool/pipeline collision (all id-columns null) is a no-op on these SETs and never
   // touches outcome/confidence, so fusion is byte-identical. All columns are bound `?`.
-  // AGGREGATE EDGE (procedure_descriptor): a turn may hold multiple orchestrate runs but the
-  // row keys on one trajectory_id — COALESCE keeps the FIRST run's descriptor (first-run wins);
-  // a set-union across runs is a deliberate non-goal for this advisory, single-run-common case.
+  // AGGREGATE EDGE (procedure_descriptor): COALESCE only MERGES carriers that COLLIDE on the
+  // UNIQUE tuple (a same-millisecond observed_at). Two orchestrate runs in ONE turn land as two
+  // DISTINCT rows — same trajectory_id but different observed_at — so ON CONFLICT never fires and
+  // COALESCE never merges them; the per-turn descriptor is instead resolved at READ time by the
+  // listStmt's MAX(procedure_descriptor) (see there). A set-union across a turn's runs is a
+  // deliberate non-goal for this advisory, single-run-common case.
   const insertStmt = db.prepare(
     "INSERT INTO outcome_events (id, tenant_id, agent_id, session_id, trajectory_id, outcome, source, confidence, sender_trust, recalled_ids, used_skill_ids, procedure_descriptor, observed_at) " +
       "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
@@ -218,6 +221,10 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
   // across its multiple source rows (the carrier is one `source:"explicit"` row; the
   // tool/pipeline siblings are NULL, which MAX ignores) — the read-back the reflection
   // source attaches onto its per-turn ReflectionSourceTrajectory. NULL when no procedure ran.
+  // For a turn with MULTIPLE orchestrate runs (each run writes its OWN carrier row under the same
+  // trajectory_id), MAX returns the lexicographically-LARGEST descriptor JSON — a deterministic
+  // but ARBITRARY pick among the turn's runs (NOT first- or last-run). Faithful multi-run-per-turn
+  // attribution is a non-goal for this advisory, single-run-common case.
   const listStmt = db.prepare(
     "SELECT trajectory_id AS t, session_id AS s, MAX(observed_at) AS ts, MAX(procedure_descriptor) AS d FROM outcome_events " +
       "WHERE tenant_id = ? AND agent_id = ? GROUP BY trajectory_id, session_id ORDER BY ts DESC LIMIT ?",
