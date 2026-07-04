@@ -68,6 +68,20 @@ const PREVIEW_MAX_BYTES = 2048;
  */
 const DEFAULT_TTL_MS = 30 * 60 * 1000;
 
+/**
+ * The TTL for a durable CHECKPOINT ResultRef (RESUME-05) — deliberately far
+ * LONGER than {@link DEFAULT_TTL_MS} so a checkpoint outlives a full run PLUS a
+ * resume window: a run may last up to MAX_TIMEOUT_MS (~10 min) and then sit as a
+ * resumable durable row until an operator (or the boot sweep) resumes it, so the
+ * last checkpoint must survive well beyond the 30-min ordinary-result default.
+ * 24 h gives an overnight run that times out a full day to be resumed before the
+ * orphan sweep reclaims the (still capped) blob. The runner threads this via
+ * `MaterializeContext.ttlMs`; the per-file (8 MiB) + per-run aggregate caps are
+ * UNCHANGED — a checkpoint is capped exactly like any ResultRef (T-WS4-02), only
+ * its lifetime is longer.
+ */
+export const CHECKPOINT_TTL_MS = 24 * 60 * 60 * 1000;
+
 /** The materialized-content kinds (mirrors `ResultRef.kind`). */
 type ResultKind = ResultRef["kind"];
 

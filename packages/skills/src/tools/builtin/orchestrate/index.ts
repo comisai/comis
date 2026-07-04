@@ -27,6 +27,7 @@ export {
   createResultRefStore,
   buildPreview,
   inferKind,
+  CHECKPOINT_TTL_MS,
 } from "./result-ref-store.js";
 export type {
   ResultRefStore,

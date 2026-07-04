@@ -59,8 +59,10 @@ import { namespacePreflight, type NamespacePreflightResult, type McpClientManage
 import {
   createOrchestrateExecutorCores,
   createResultRefStore,
+  CHECKPOINT_TTL_MS,
   type ResultRefStore,
 } from "@comis/skills/tools";
+import { readFileSync } from "node:fs";
 import { createCapabilityEndpoint, type CapabilityEndpoint } from "./setup-capability-endpoint.js";
 import type { EmitCapabilityAuditDeps } from "../api/shared/emit-capability-audit.js";
 import { createToolInvokeExecutor, type ExecuteToolInvoke } from "./setup-tool-invoke-executor.js";
@@ -378,6 +380,51 @@ function buildToolInvokeExecutor(
     writeSurfaceEnabled: (agentId): boolean => {
       const agentCfg = Object.entries(deps.agents).find(([id]) => id === agentId)?.[1];
       return agentCfg?.autonomy?.write === true;
+    },
+    // The default-OFF RESUME surface gate (RESUME-01/04, T-233-04): checkpoint/
+    // resume reuse the orch:write/orch:read FLOOR caps, so the cap is NOT the gate —
+    // this predicate is (default-off `autonomy.durability.orchestrateResume`).
+    // Resolved PER agentId from THAT agent's nested durability toggle
+    // (prototype-safe own-entry lookup, EXACTLY mirroring writeSurfaceEnabled).
+    // Absent/false ⇒ the executor denies BOTH arms even though the lease holds the
+    // floor cap — deny-by-absence, fail-closed.
+    orchestrateResumeEnabled: (agentId): boolean => {
+      const agentCfg = Object.entries(deps.agents).find(([id]) => id === agentId)?.[1];
+      return agentCfg?.autonomy?.durability?.orchestrateResume === true;
+    },
+    // The durable-run store — checkpoint stamps checkpointRef onto the run's row
+    // (COALESCE-preserve; the store's upsertCheckpoint never writes outward_step) and
+    // resume reads the last checkpointRef back. Absent ⇒ checkpoint/resume degrade.
+    ...(deps.durableRuns ? { durableRuns: deps.durableRuns } : {}),
+    // The checkpoint materialize bridge (RESUME-05): a distinguished, LONGER-TTL
+    // (CHECKPOINT_TTL_MS) kind:json ResultRef, keyed on lease.rootRunId so resume
+    // finds it after a restart. The SAME per-file (8 MiB) + per-run aggregate caps
+    // apply (the store enforces them regardless of TTL). A non-ResultRef return
+    // (over-cap refuse / failed write) surfaces as undefined ⇒ the executor refuses
+    // the checkpoint content-free.
+    materializeCheckpoint: async (stateJson, lease): Promise<ResultRef | undefined> => {
+      const workspacePath = resolveWorkspace(lease.agentId);
+      const runId = lease.rootRunId ?? `checkpoint-${now().toString(36)}`;
+      const result = await resultRefStore.materialize(stateJson, "orchestrate_checkpoint", {
+        workspacePath,
+        runId,
+        nowMs: now(),
+        ttlMs: CHECKPOINT_TTL_MS,
+      });
+      return result !== undefined && "ref" in result ? result : undefined;
+    },
+    // Load a checkpoint blob back for resume — a workspace-confined read of the
+    // recorded ResultRef.ref. safePath refuses any escape; a missing/absent file
+    // (expired / GC'd) degrades to undefined ⇒ resume returns null (never a throw).
+    loadCheckpoint: async (ref, lease): Promise<string | undefined> => {
+      const workspacePath = resolveWorkspace(lease.agentId);
+      try {
+        const abs = safePath(workspacePath, ref);
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- safePath-confined to the agent's workspace; ref is a store-minted results/ path
+        return readFileSync(abs, "utf8");
+      } catch {
+        return undefined;
+      }
     },
     logger: daemonLogger,
   });

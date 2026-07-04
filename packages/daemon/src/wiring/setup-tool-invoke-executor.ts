@@ -44,7 +44,15 @@
  * @module
  */
 
-import { validateUrl, shouldMaterialize, systemNowMs, wrapExternalContent, type ResultRef } from "@comis/core";
+import {
+  validateUrl,
+  shouldMaterialize,
+  systemNowMs,
+  wrapExternalContent,
+  type ResultRef,
+  type DurableRunPort,
+  type DurableRunRecord,
+} from "@comis/core";
 import { fetchPinned, extractReadableContent, sanitizeMcpToolResult } from "@comis/skills/tools";
 import { qualifyToolName, type McpClientManager } from "@comis/skills";
 import type { ComisLogger } from "@comis/infra";
@@ -163,6 +171,42 @@ export interface ToolInvokeExecutorDeps {
    * content-free error-result; `executeFileBuiltin("write", …)` is never reached.
    */
   writeSurfaceEnabled?: (agentId: string) => boolean;
+  /**
+   * The per-agent RESUME-SURFACE gate — the default-OFF durability toggle
+   * (`autonomy.durability.orchestrateResume`) consulted BEFORE any checkpoint/resume
+   * dispatch. checkpoint→orch:write and resume→orch:read reuse the FLOOR caps, so
+   * the cap the lease holds is NOT enough — this surface is the AUTHORITATIVE gate
+   * (deny-by-absence, fail-closed — mirrors {@link writeSurfaceEnabled}). Resolved
+   * per-agentId at boot from that agent's `autonomy.durability.orchestrateResume ===
+   * true`. OPTIONAL: absent/false ⇒ BOTH arms deny with a content-free error-result
+   * (no materialize, no durable read/write) — even though the lease holds the floor cap.
+   */
+  orchestrateResumeEnabled?: (agentId: string) => boolean;
+  /**
+   * The durable-run store (RESUME-01). checkpoint persists the checkpoint
+   * ResultRef id onto the run's row (`upsertCheckpoint`, COALESCE-preserve so ONLY
+   * checkpointRef is set — NEVER `outward_step`); resume reads the last
+   * checkpointRef back (`getByRootRun`). Only these two methods are used. OPTIONAL:
+   * absent ⇒ checkpoint honest-degrades to an error-result / resume to null.
+   */
+  durableRuns?: Pick<DurableRunPort, "upsertCheckpoint" | "getByRootRun">;
+  /**
+   * Materialize a checkpoint state blob as a distinguished, LONGER-TTL kind:"json"
+   * ResultRef keyed on `lease.rootRunId` (DISTINCT from {@link materialize}: a
+   * longer TTL that outlives a full run + a resume window, and a rootRunId-scoped
+   * on-disk run so resume finds it after a restart). Returns the ref, or `undefined`
+   * when the store REFUSED (over the per-file cap) or the write failed — the
+   * executor then refuses the checkpoint content-free (T-WS4-02). OPTIONAL: absent ⇒
+   * checkpoint honest-degrades.
+   */
+  materializeCheckpoint?: (stateJson: string, lease: ToolInvokeLease) => Promise<ResultRef | undefined>;
+  /**
+   * Load a previously-materialized checkpoint blob back by its `ResultRef.ref`
+   * (workspace-confined read). `undefined` when the ref/file is absent (expired /
+   * GC'd / never written) — resume then returns null. OPTIONAL: absent ⇒ resume
+   * degrades to null.
+   */
+  loadCheckpoint?: (ref: string, lease: ToolInvokeLease) => Promise<string | undefined>;
   /** Daemon logger for boundary observability (AGENTS.md §2.7). */
   logger?: ComisLogger;
 }
@@ -420,6 +464,111 @@ export function createToolInvokeExecutor(
     return result;
   }
 
+  /**
+   * The RESUME surface gate (deny-by-absence, fail-closed) shared by checkpoint +
+   * resume. checkpoint→orch:write / resume→orch:read are FLOOR caps, so the cap the
+   * lease holds is NOT the gate — the default-OFF `orchestrateResumeEnabled`
+   * predicate is (mirrors the write surface). Absent predicate ⇒ deny (T-233-04).
+   * Returns a content-free error-result on deny, `undefined` on allow.
+   */
+  function resumeSurfaceDeny(tool: "checkpoint" | "resume", lease: ToolInvokeLease): { error: string } | undefined {
+    if (!deps.orchestrateResumeEnabled?.(lease.agentId)) {
+      log?.warn(
+        { errorKind: "auth" as const, toolName: tool, decision: "deny", hint: "the orchestrate resume/checkpoint surface is not enabled for this agent (set autonomy.durability.orchestrateResume:true to opt in)" },
+        `tool.invoke ${tool} denied (resume surface off)`,
+      );
+      return errorResult("orchestrate resume surface not enabled for this agent");
+    }
+    return undefined;
+  }
+
+  /**
+   * checkpoint(stateJson) — the durable SPECIALIZED writing core (RESUME-01/05).
+   * Serializes the script-authored state, materializes it as a distinguished,
+   * longer-TTL kind:"json" ResultRef (capped like any ResultRef — T-WS4-02), and
+   * stamps ONLY the ref onto the run's durable row (COALESCE-preserve; NEVER
+   * `outward_step`, so the exactly-once outward ledger is untouched). Surface-gated
+   * fail-closed. Honest-degrades to a content-free error on refuse/failure.
+   */
+  async function executeCheckpoint(args: Record<string, unknown>, lease: ToolInvokeLease): Promise<unknown> {
+    const denied = resumeSurfaceDeny("checkpoint", lease);
+    if (denied) return denied;
+    const rootRunId = lease.rootRunId;
+    if (rootRunId === undefined) return errorResult("checkpoint requires a durable run identity");
+    if (!deps.materializeCheckpoint || !deps.durableRuns) {
+      return errorResult("checkpoint is unavailable (durable store not wired)");
+    }
+    // The state is the script-authored args, serialized to a JSON blob (kind:json).
+    const stateJson = JSON.stringify(args ?? {});
+    const ref = await deps.materializeCheckpoint(stateJson, lease);
+    if (ref === undefined) {
+      // Over the per-file cap OR a failed write — refuse content-free, write no row.
+      log?.warn(
+        { errorKind: "resource" as const, toolName: "checkpoint", rootRunId, hint: "checkpoint state exceeded the per-file cap or the contained write failed — the checkpoint was NOT persisted" },
+        "tool.invoke checkpoint refused",
+      );
+      return errorResult("checkpoint refused (over the per-file cap or the write failed)");
+    }
+    // Persist ONLY checkpointRef on the run's durable row (keyed on rootRunId,
+    // status running). The plan-01 COALESCE-preserve upsert keeps a scriptRef the
+    // runner sets, and the store's upsertCheckpoint NEVER writes outward_step — so
+    // stepIndex stays the -1 'never-sent' sentinel and the outward ledger is safe.
+    const record: DurableRunRecord = {
+      rootRunId,
+      spawnTree: [], // a FLAT orchestrate row (not a DAG spawn tree)
+      caps: [],
+      leaseIds: [],
+      budgetConsumed: 0,
+      cronOrigin: null,
+      stepIndex: -1,
+      status: "running",
+      lastHeartbeatAt: systemNowMs(),
+      checkpointRef: ref.ref,
+    };
+    const upserted = await deps.durableRuns.upsertCheckpoint(record);
+    if (!upserted.ok) {
+      log?.warn(
+        { err: upserted.error, errorKind: "internal" as const, toolName: "checkpoint", rootRunId, hint: "the checkpoint blob was materialized but the durable-row upsert failed — resume may not find it" },
+        "tool.invoke checkpoint failed to persist the ref",
+      );
+      return errorResult("checkpoint failed to persist");
+    }
+    log?.info({ toolName: "checkpoint", rootRunId, ref: ref.ref }, "tool.invoke checkpoint persisted");
+    return { ok: true };
+  }
+
+  /**
+   * resume(): stateJson | null — reads the run's last checkpointRef off the durable
+   * row, loads the blob, and returns it WRAPPED as UNTRUSTED external content
+   * (T-WS4-01, data-not-control): the checkpoint was script-authored, so on resume
+   * it re-enters the NEXT run as DATA the script reads, NEVER as control (it is
+   * never eval'd/executed — exactly like the MCP core wraps a tool return). null
+   * when there is no prior checkpoint (or the ref's blob is gone). Surface-gated
+   * fail-closed.
+   */
+  async function executeResume(lease: ToolInvokeLease): Promise<unknown> {
+    const denied = resumeSurfaceDeny("resume", lease);
+    if (denied) return denied;
+    const rootRunId = lease.rootRunId;
+    if (rootRunId === undefined) return errorResult("resume requires a durable run identity");
+    if (!deps.durableRuns || !deps.loadCheckpoint) return null; // no store wired ⇒ no checkpoint
+    const row = await deps.durableRuns.getByRootRun(rootRunId);
+    if (!row.ok) {
+      log?.warn(
+        { err: row.error, errorKind: "internal" as const, toolName: "resume", rootRunId, hint: "reading the durable run row failed" },
+        "tool.invoke resume failed to read the durable run",
+      );
+      return errorResult("resume failed to read the durable run");
+    }
+    const checkpointRef = row.value?.checkpointRef;
+    if (checkpointRef === undefined || checkpointRef === null) return null; // no prior checkpoint
+    const state = await deps.loadCheckpoint(checkpointRef, lease);
+    if (state === undefined) return null; // ref recorded but the blob is gone (expired/GC'd)
+    // T-WS4-01: wrap-on-read — script-authored state re-enters as DATA, never control.
+    log?.info({ toolName: "resume", rootRunId, ref: checkpointRef }, "tool.invoke resume returned the last checkpoint (wrapped)");
+    return wrapExternalContent(state, { source: "orchestrate_checkpoint" });
+  }
+
   return async function executeToolInvoke(
     tool: string,
     args: Record<string, unknown>,
@@ -500,6 +649,13 @@ export function createToolInvokeExecutor(
         // root (run-ephemeral). No ResultRef threshold: a write returns a small ack.
         return executeFileBuiltin(tool, args, lease);
       }
+      case "checkpoint":
+        // The durable SPECIALIZED writing core — a longer-TTL kind:json ResultRef
+        // stamped as checkpointRef on the run's durable row. Surface-gated fail-closed.
+        return executeCheckpoint(args, lease);
+      case "resume":
+        // Reads the last checkpoint back WRAPPED (data-not-control, T-WS4-01) or null.
+        return executeResume(lease);
       default:
         // Defensive default-deny: the dispatch allow-list (cap-map) already
         // rejects any tool absent from TOOL_CAPABILITY_MAP, and only the 7

@@ -313,6 +313,9 @@ export {
   createOrchestrateTool,
   scrubSecretEnv,
   createResultRefStore,
+  // The durable checkpoint TTL (RESUME-05) — the daemon boot wiring threads it as
+  // MaterializeContext.ttlMs for the checkpoint materialize bridge.
+  CHECKPOINT_TTL_MS,
   // The daemon-side executor cores (read/grep/find/ls/jq + web_search) the
   // tool.invoke executor routes to.
   createOrchestrateExecutorCores,
