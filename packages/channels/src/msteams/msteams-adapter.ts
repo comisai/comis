@@ -56,6 +56,7 @@ import {
   isSafeConversationId,
   isSafeServiceUrl,
   postConnectorActivity,
+  type MsTeamsCloud,
 } from "./msteams-connector.js";
 import {
   createConnectorTokenProviderFor,
@@ -109,6 +110,13 @@ export interface MsTeamsAdapterDeps {
    * without touching the filesystem.
    */
   certReadFileImpl?: (path: string) => Promise<string>;
+  /**
+   * Deployment cloud selecting the exact Bot Framework Connector host set the
+   * bearer token may be sent to. Threaded into the connector and every adapter-side
+   * serviceUrl callsite (send/edit/typing/proactive). Optional — absent defaults to
+   * "public", so a public deployment is unchanged.
+   */
+  cloud?: MsTeamsCloud;
   /** Sender ids (aadObjectId) and/or conversation ids allowed to reach handlers. */
   allowFrom: string[];
   /** "allowlist" (default) drops unknown senders; "open" processes any sender. */
