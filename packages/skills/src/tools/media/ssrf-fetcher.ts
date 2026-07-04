@@ -26,7 +26,7 @@
 import { validateUrl, validateLocalServerUrl } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
 import type { Result } from "@comis/shared";
-import { fromPromise, suppressError } from "@comis/shared";
+import { fromPromise, suppressError, tryCatch } from "@comis/shared";
 import { fetch, type Response } from "undici";
 import { createPinnedAgent, fetchPinned } from "../integrations/pinned-fetch.js";
 
@@ -309,7 +309,23 @@ async function runAuthenticatedFetch(
           if (!location) {
             throw new Error("Redirect response missing a Location header");
           }
-          current = new URL(location, current).toString();
+          // Parse the redirect target under the per-hop failure contract: a
+          // malformed Location must carry the same classified hint+errorKind as
+          // every other failure branch (§2.7), not a bare TypeError that reaches
+          // the caller stripped of which hop failed and why.
+          const next = tryCatch(() => new URL(location, current).toString());
+          if (!next.ok) {
+            logger.warn(
+              {
+                hop,
+                errorKind: "validation" as const,
+                hint: "Redirect Location was not a parseable URL — the hop was stopped before re-validation",
+              },
+              "SSRF-guarded auth fetch failed — malformed redirect target",
+            );
+            throw next.error;
+          }
+          current = next.value;
           continue;
         }
 
