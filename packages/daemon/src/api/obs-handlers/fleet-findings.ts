@@ -128,8 +128,15 @@ export function buildFindings(
 
   // health_signal — one finding per closed `signal` label (counts only). The
   // dedicated-signal labels are EXCLUDED here (they get dedicated findings below).
+  // Severity-info rows are EXCLUDED too: the ingest layer stamps benign
+  // reasons (session_rebase / serialized_wait — BENIGN_DAG_DEGRADED_REASONS)
+  // severity "info" precisely so they do not read as degradation; folding them
+  // here anyway surfaced a fresh session's once-per-start rebase as an
+  // actionable lcd_divergence finding with a dead-end hint. Only warning+
+  // rows are findings (the model_health rollup's established discipline).
   const bySignal = new Map<string, number>();
   for (const row of healthSignals) {
+    if (row.severity === "info") continue;
     const label = healthSignalLabel(row);
     if (DEDICATED_SCRIPT_SIGNALS.has(label)) continue;
     bySignal.set(label, (bySignal.get(label) ?? 0) + 1);
