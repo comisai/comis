@@ -51,6 +51,8 @@ import {
   LeaseRevokeContract,
   RunKillContract,
   AutonomyEvictContract,
+  // replay-handlers.ts (1) — admin-scoped deterministic-replay contract
+  OrchestrateReplayContract,
   ORCHESTRATOR_CONTRACTS,
   INTERNAL_FIELD_NAMES,
 } from "./index.js";
@@ -60,8 +62,8 @@ import {
 // ===========================================================================
 
 describe("orchestrator-umbrella domain contracts", () => {
-  it("ORCHESTRATOR_CONTRACTS has exactly 30 entries (8 cron + 12 graph + 4 heartbeat + 3 subagent + 3 autonomy)", () => {
-    expect(ORCHESTRATOR_CONTRACTS.length).toBe(30);
+  it("ORCHESTRATOR_CONTRACTS has exactly 31 entries (8 cron + 12 graph + 4 heartbeat + 3 subagent + 3 autonomy + 1 replay)", () => {
+    expect(ORCHESTRATOR_CONTRACTS.length).toBe(31);
   });
 
   it("method names match the 4 handler-factory PropertyAssignment keys", () => {
@@ -103,6 +105,8 @@ describe("orchestrator-umbrella domain contracts", () => {
         "lease.revoke",
         "run.kill",
         "autonomy.evict",
+        // replay-handlers.ts (1)
+        "orchestrate.replay",
       ].sort(),
     );
   });
@@ -174,6 +178,14 @@ describe("orchestrator-umbrella domain contracts", () => {
     // self-un-evict (elevation-of-privilege guard).
     const autonomy = [LeaseRevokeContract, RunKillContract, AutonomyEvictContract];
     for (const c of autonomy) expect(c.scopes, `${c.method} scopes`).toEqual(["admin"]);
+  });
+
+  it("replay-handlers: orchestrate.replay admin-scoped (→ ADMIN_METHODS → deny-by-origin)", () => {
+    // scopes:["admin"] is the confused-deputy mitigation: it lands
+    // orchestrate.replay in the DERIVED ADMIN_METHODS set so assertNotAgentOrigin
+    // denies any _agentId-bearing (agent-origin) call automatically — an agent
+    // cannot self-invoke a replay of a run (INV-3), with no manual _agentId check.
+    expect(OrchestrateReplayContract.scopes, "orchestrate.replay scopes").toEqual(["admin"]);
   });
 
   // -------------------------------------------------------------------------
