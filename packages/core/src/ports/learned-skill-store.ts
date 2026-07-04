@@ -115,6 +115,20 @@ export interface AdmitMentalModelInput {
   kind?: "skill" | "profile" | "topic";
   /** The topic key for a 'topic' doc — omitted ⇒ `''`. */
   topicKey?: string;
+  /**
+   * DETERMINISTIC required-tools footprint (content-free tool NAMES) bound to the
+   * `required_tools` column — the procedure run derives it from the AUDITED
+   * descriptor (NEVER LLM-authored; INV-4). Omitted ⇒ the column is written NULL
+   * (the user-intent skill path). Advisory only: the model re-authors the run under
+   * its already-permissioned tools; this is metadata, not an executable surface.
+   */
+  requiredTools?: ReadonlyArray<string>;
+  /**
+   * The advisory params schema bound to the `params_schema` column — a fixed
+   * content-free value (`"{}"`) for a procedure doc (advisory docs have no replay
+   * parameters). Omitted ⇒ NULL.
+   */
+  paramsSchema?: string;
   /** Initial proof count at admission (capped LOW regardless of cluster size — anti-domination). */
   proofCount: number;
   /** Confidence in [0, 1]. */

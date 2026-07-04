@@ -186,6 +186,15 @@ export interface RunReflectionDeps {
    * ungroupable and skipped (never corroborates — a singleton).
    */
   groupKey?: (t: ReflectionSourceTrajectory) => string;
+  /**
+   * PROCEDURE run only — gates BOTH the descriptor-into-input thread (the ordered
+   * tool-sequence section appended to the reflect input) AND the DETERMINISTIC
+   * `required_tools`/`params_schema` bind at admit. Set ONLY on the 4th (procedure)
+   * reflectKinds entry. Pitfall 5: gate on THIS flag, NOT on "descriptor present" —
+   * the user-intent skill run also reads descriptor-carrying sources, and mis-binding
+   * its `required_tools` would mis-classify it as a learnable procedure.
+   */
+  populateProcedureMetadata?: boolean;
   config: RunReflectionConfig;
   /** The LCD-merged source history the daemon injects (with the daemon-derived trustedOrigin). */
   sourceTrajectories: ReflectionSourceTrajectory[];
@@ -343,9 +352,34 @@ export function classifyReflectOutcome(f: {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Flatten a topic group's member text into one block for the reflect call (the adapter wraps it). */
-function groupText(members: ReflectionSourceTrajectory[]): string {
-  return members.map((m) => m.text).join("\n\n---\n\n");
+/**
+ * Flatten a topic group's member text into one block for the reflect call (the
+ * adapter wraps it). For the PROCEDURE run (`includeToolSequence`) also append a
+ * bounded, content-free tool-SEQUENCE section: the reflect adapter sees a
+ * tool-STRIPPED transcript (`m.text` drops the tool_use/tool_result blocks), so the
+ * ordered tool NAMES + counts are the channel that carries the procedure SHAPE into
+ * the reflect input. All grouped members share one descriptor key ⇒ one ordered
+ * sequence; render the representative (first member's). NAMES only — no args/bodies/
+ * secrets (INV-5). Gated on the flag so ONLY the procedure reflect input carries it.
+ */
+function groupText(members: ReflectionSourceTrajectory[], includeToolSequence: boolean): string {
+  const transcript = members.map((m) => m.text).join("\n\n---\n\n");
+  if (!includeToolSequence) return transcript;
+  const sequence = members[0]?.procedureDescriptor?.sequence ?? [];
+  if (sequence.length === 0) return transcript;
+  return `${transcript}\n\n---\n\nTool sequence for this procedure: ${sequence.join(" → ")}`;
+}
+
+/**
+ * The DETERMINISTIC required-tools footprint for a procedure doc: the dedupe+sorted
+ * union of the members' content-free ordered descriptor sequences (the SET of tool
+ * NAMES the procedure touches). NEVER LLM-authored — bound at admit from the AUDITED
+ * descriptor so an advisory doc carries no learned-code envelope (INV-4). The ORDER +
+ * counts live on the groupKey + the reflect input, NOT here (required_tools is a SET).
+ * Clock-/order-independent: the sort makes it byte-stable across calls.
+ */
+export function deriveRequiredTools(members: ReflectionSourceTrajectory[]): string[] {
+  return [...new Set(members.flatMap((m) => m.procedureDescriptor?.sequence ?? []))].sort();
 }
 
 /**
@@ -644,8 +678,13 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
   const priorSections: DocSection[] = prior?.structuredBody?.sections ?? [];
 
   // 4b. ONE cheap LLM call per topic (the adapter wraps the UNTRUSTED transcript).
+  //     The procedure run augments the tool-STRIPPED transcript with the ordered
+  //     tool-sequence section (gated on populateProcedureMetadata; Pitfall 2).
   const reflectRes = await fromPromise(
-    reflectionAdapter.reflect({ trajectoryText: groupText(members), currentSections: priorSections }),
+    reflectionAdapter.reflect({
+      trajectoryText: groupText(members, deps.populateProcedureMetadata ?? false),
+      currentSections: priorSections,
+    }),
   );
   if (!reflectRes.ok || !reflectRes.value.ok) {
     // A per-topic reflect fault (transport / model error). NON-FATAL: the topic is
@@ -768,6 +807,14 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
         confidence: REFLECT_ADMISSION_CONFIDENCE,
         sourceTrajIds,
         createdAt: clock.now(),
+        // PROCEDURE run only (gated on populateProcedureMetadata, NOT "descriptor present" —
+        // Pitfall 5): bind the DETERMINISTIC advisory metadata derived from the AUDITED
+        // descriptor — required_tools = the content-free footprint SET, params_schema = a
+        // fixed content-free "{}" (advisory docs have no replay params). NEVER LLM-authored
+        // (INV-4). The user-intent skill run omits both → the store binds NULL.
+        ...(deps.populateProcedureMetadata
+          ? { requiredTools: deriveRequiredTools(members), paramsSchema: "{}" }
+          : {}),
       },
       scope,
     ),

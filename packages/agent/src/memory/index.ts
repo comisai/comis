@@ -49,11 +49,11 @@ export type {
   ReflectionAdapterLogger,
   ReflectInput,
 } from "./llm-reflection-adapter.js";
-// REFLECT_PROMPT is the skill default the adapter falls back to; PROFILE_REFLECT_PROMPT
-// + TOPIC_REFLECT_PROMPT are the per-kind variants the daemon
-// `__REFLECT__` cron injects as the adapter `systemPrompt` for the profile/
-// topic kinds — exported here so the daemon composition root can pass them per kind.
-export { REFLECT_PROMPT, PROFILE_REFLECT_PROMPT, TOPIC_REFLECT_PROMPT, parseReflectionResult } from "./reflection-prompt.js";
+// REFLECT_PROMPT is the skill default the adapter falls back to; PROFILE_REFLECT_PROMPT,
+// TOPIC_REFLECT_PROMPT, and PROCEDURE_REFLECT_PROMPT are the per-kind variants the daemon
+// `__REFLECT__` cron injects as the adapter `systemPrompt` for the profile/topic/procedure
+// passes — exported here so the daemon composition root can pass them per kind.
+export { REFLECT_PROMPT, PROFILE_REFLECT_PROMPT, TOPIC_REFLECT_PROMPT, PROCEDURE_REFLECT_PROMPT, parseReflectionResult } from "./reflection-prompt.js";
 export type { ReflectionResult } from "./reflection-prompt.js";
 export { runReflection, classifyReflectOutcome } from "./reflection-job.js";
 export type {

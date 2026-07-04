@@ -588,8 +588,8 @@ export type { OrchestrateRepairSeam, OrchestrateRepairSeamDeps } from "./memory/
 export { createLlmReflectionAdapter, runReflection, classifyReflectOutcome } from "./memory/index.js";
 // The per-kind reflect prompts the daemon `__REFLECT__` cron injects as the adapter
 // `systemPrompt`: REFLECT_PROMPT (skill default), PROFILE_REFLECT_PROMPT,
-// TOPIC_REFLECT_PROMPT. One engine, varied per-kind prompt.
-export { REFLECT_PROMPT, PROFILE_REFLECT_PROMPT, TOPIC_REFLECT_PROMPT } from "./memory/index.js";
+// TOPIC_REFLECT_PROMPT, PROCEDURE_REFLECT_PROMPT. One engine, varied per-kind prompt.
+export { REFLECT_PROMPT, PROFILE_REFLECT_PROMPT, TOPIC_REFLECT_PROMPT, PROCEDURE_REFLECT_PROMPT } from "./memory/index.js";
 export type {
   LlmReflectionAdapterDeps,
   ReflectionAdapter,
