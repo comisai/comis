@@ -75,6 +75,7 @@ export function isSafeServiceUrl(
   const parsed = tryCatch(() => new URL(serviceUrl));
   if (!parsed.ok || parsed.value.protocol !== "https:") return false;
   const host = parsed.value.hostname.toLowerCase();
+  // eslint-disable-next-line security/detect-object-injection -- cloud is a closed "public"|"china" union matching the literal record's keys
   return CLOUD_CONNECTOR_HOSTS[cloud].includes(host);
 }
 
