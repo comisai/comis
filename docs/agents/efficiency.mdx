@@ -245,6 +245,39 @@ Because it is labeled an estimate at every surface (`estSavedTokens`, never `sav
 reads as a directional efficiency signal -- "this run kept ~30k tokens of fetched data out of
 context" -- not a billing figure.
 
+## Resumable runs
+
+A genuinely long pipeline should survive a daemon restart mid-run instead of
+starting over. That is opt-in and nested under the durability posture: with
+[`autonomy.durability.orchestrateResume`](/reference/config-yaml#autonomy-agents-autonomy)
+on (**off by default**, inside the already-off-by-default `autonomy.durability`
+block), an `orchestrate` run gains three durability affordances.
+
+- **Checkpoint / resume inside the script.** The in-jail SDK exposes
+  `checkpoint(stateJson)` and `resume()`: a run persists a small progress blob (a
+  longer-TTL `ResultRef`, same per-file/per-run caps as any result) and reads the
+  last one back on a later attempt. `resume()` returns that state **wrapped as
+  untrusted data** -- it re-enters as data the script inspects, never as control
+  it executes.
+- **Timeout &rarr; a resumable row.** When a resume-enabled run hits its wall-clock
+  timeout, instead of only being killed and rejected it records a content-free
+  resumable row `{ runId, scriptRef, checkpointRef }` and **skips** the run-end
+  cleanup so the pinned script + checkpoint survive. `orchestrate({ resumeRunId })`
+  then re-spawns the **pinned original bytes** (the `script` argument is ignored on
+  resume -- no new bytes are ever accepted) and `resume()` hands back the last
+  checkpoint, so the run picks up where it left off.
+- **Restart survival.** The resumable row rides the durable-runs boot sweep: after a
+  restart the daemon surfaces the run as resumable once it verifies the pinned
+  script + checkpoint are still on disk (it does **not** re-execute the bytes on
+  boot -- resuming is an explicit `resumeRunId` call). If the checkpoint is gone, the
+  run is surfaced as an honest orphan (a closed-enum reason) rather than silently
+  lost, and its leftover workspace artifacts are reclaimed.
+
+All of this is default-off: with `orchestrateResume` off, a timed-out run is killed
+and cleaned exactly as before, and no durable row is written. For debugging, an
+operator can deterministically re-run a durable run's pinned bytes against a
+separate replay socket with [`comis orchestrate replay <runId>`](/reference/cli#comis-orchestrate).
+
 ## 30-second progress fork
 
 A delegated task can run for a long time, and an isolated child by design does
