@@ -16,6 +16,7 @@ import {
 import { createFakeEnv } from "../../../../../test/support/fake-env.js";
 import {
   createActivityJwtValidator,
+  createLocalActivityJwtValidator,
   createConnectorTokenProvider,
   createConnectorTokenProviderFor,
   type ActivityJwtValidatorOpts,
@@ -52,6 +53,75 @@ function mintToken(
     .setExpirationTime(opts.exp ?? "5m")
     .sign(privateKey);
 }
+
+describe("createLocalActivityJwtValidator — offline JWKS validator (the test-seam builder)", () => {
+  it("accepts a token signed by the JWKS' key (correct iss/aud/RS256)", async () => {
+    const { publicKey, privateKey } = await generateKeyPair("RS256");
+    const jwk = await exportJWK(publicKey);
+    jwk.alg = "RS256";
+    jwk.kid = "k1";
+    // Built from the RAW JWKS JSON (what a test-seam reads off disk), not a
+    // pre-constructed key set — that construction is the whole point of the helper.
+    const validate = createLocalActivityJwtValidator({ keys: [jwk] });
+    const token = await new SignJWT({})
+      .setProtectedHeader({ alg: "RS256", kid: "k1" })
+      .setIssuer(BF_ISSUER)
+      .setAudience(APP_ID)
+      .setExpirationTime("5m")
+      .sign(privateKey);
+    const verdict = await validate(`Bearer ${token}`, APP_ID);
+    expect(verdict.ok).toBe(true);
+  });
+
+  it("rejects a wrong audience and a token signed by a DIFFERENT key", async () => {
+    const { publicKey, privateKey } = await generateKeyPair("RS256");
+    const jwk = await exportJWK(publicKey);
+    jwk.alg = "RS256";
+    jwk.kid = "k1";
+    const validate = createLocalActivityJwtValidator({ keys: [jwk] });
+    const token = await new SignJWT({})
+      .setProtectedHeader({ alg: "RS256", kid: "k1" })
+      .setIssuer(BF_ISSUER)
+      .setAudience(APP_ID)
+      .setExpirationTime("5m")
+      .sign(privateKey);
+    // Wrong audience → reject.
+    expect((await validate(`Bearer ${token}`, "some-other-app")).ok).toBe(false);
+    // A validator built over a DIFFERENT keypair's JWKS must reject the token.
+    const other = await generateKeyPair("RS256");
+    const otherJwk = await exportJWK(other.publicKey);
+    otherJwk.alg = "RS256";
+    otherJwk.kid = "k2";
+    const validateOther = createLocalActivityJwtValidator({ keys: [otherJwk] });
+    expect((await validateOther(`Bearer ${token}`, APP_ID)).ok).toBe(false);
+  });
+
+  it("honors an injected issuer override (defaults to the Bot Framework issuer)", async () => {
+    const { publicKey, privateKey } = await generateKeyPair("RS256");
+    const jwk = await exportJWK(publicKey);
+    jwk.alg = "RS256";
+    jwk.kid = "k1";
+    const validate = createLocalActivityJwtValidator(
+      { keys: [jwk] },
+      { issuer: "https://test.issuer.example" },
+    );
+    const token = await new SignJWT({})
+      .setProtectedHeader({ alg: "RS256", kid: "k1" })
+      .setIssuer("https://test.issuer.example")
+      .setAudience(APP_ID)
+      .setExpirationTime("5m")
+      .sign(privateKey);
+    expect((await validate(`Bearer ${token}`, APP_ID)).ok).toBe(true);
+    // A token from the DEFAULT BF issuer is rejected when the override is set.
+    const bfToken = await new SignJWT({})
+      .setProtectedHeader({ alg: "RS256", kid: "k1" })
+      .setIssuer(BF_ISSUER)
+      .setAudience(APP_ID)
+      .setExpirationTime("5m")
+      .sign(privateKey);
+    expect((await validate(`Bearer ${bfToken}`, APP_ID)).ok).toBe(false);
+  });
+});
 
 describe("createActivityJwtValidator — Bearer pre-gate (no network on reject)", () => {
   it("rejects an undefined Authorization header without touching the key set", async () => {
