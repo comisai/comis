@@ -1129,7 +1129,7 @@ Teams authenticates with an app registration rather than a single bot token. Inb
 | `managedIdentityClientId` | `string` | _(unset)_ | Managed-identity client ID (managed-identity credential mode) |
 | `allowFrom` | `string[]` | `[]` | Allowed sender IDs — each an `aadObjectId` or a `conversation.id` |
 | `allowMode` | `enum` | `"allowlist"` | Sender gate: `allowlist` (default, blocks all unless listed) or `open` |
-| `mediaAuthAllowHosts` | `string[]` | _(unset)_ | Extra hosts permitted for inbound media fetches |
+| `mediaAuthAllowHosts` | `string[]` | _(Connector hosts)_ | Hosts allowed to receive the bot's auth token on an inbound media fetch. When unset, the token rides only the built-in Bot Framework Connector attachment hosts and is dropped on any cross-host redirect; set this to override that built-in list |
 | `cloud` | `enum` | `"public"` | Target cloud environment |
 | `mediaProcessing` | `MediaProcessing` | _(all true)_ | Per-channel media processing overrides |
 | `ackReaction` | `AckReaction` | _(disabled)_ | Ack reaction sent when the agent starts processing |
