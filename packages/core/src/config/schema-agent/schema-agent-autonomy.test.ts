@@ -632,3 +632,60 @@ describe("resolveEffectiveMode (fail-closed mode resolution)", () => {
     expect(resolveEffectiveMode({ mode: "max" } as never)).toBe("default");
   });
 });
+
+// ---------------------------------------------------------------------------
+// The `orch:mcp` grant surface + the nested `autonomy.mcp` inbound leaf.
+// Two-layer default-deny. LAYER 1 (here) is the cap grant: the `autonomy.mcp`
+// surface gate (`autonomy.mcp.enabled`) unions `orch:mcp` into the resolved caps
+// via SURFACE_TOGGLE_TO_CAP — the same "one cap model" as the web/analyze/write/
+// browse toggles. Absent ⇒ the cap is NOT granted, so `requireCapability` denies
+// the whole surface. LAYER 2 (the per-server allowlist) lives in
+// schema-agent-autonomy-mcp.ts. A fresh agent has the surface dark at BOTH layers
+// (mcp.enabled false, allow {}). `orch:mcp` is NOT in any profile's floor set —
+// it is grantable ONLY via the surface gate (default-off by construction).
+// ---------------------------------------------------------------------------
+describe("resolveAutonomy (the orch:mcp grant surface — layer 1 of default-deny)", () => {
+  it("autonomy.mcp.enabled:true unions orch:mcp into the resolved caps", () => {
+    const r = resolveAutonomy(AutonomyConfigSchema.parse({ mcp: { enabled: true } }));
+    expect(r.capabilities).toContain("orch:mcp");
+  });
+
+  it("the mcp surface gate OVERRIDES the profile posture — { profile:assistant, mcp:{enabled:true} } grants orch:mcp yet resolves enabled:false", () => {
+    const r = resolveAutonomy(
+      AutonomyConfigSchema.parse({ profile: "assistant", mcp: { enabled: true } }),
+    );
+    expect(r.enabled).toBe(false);
+    expect(r.capabilities).toContain("orch:mcp");
+  });
+
+  it("an absent autonomy.mcp surface does NOT grant orch:mcp (layer-1 default-deny by absence)", () => {
+    expect(resolveAutonomy(AutonomyConfigSchema.parse({})).capabilities).not.toContain("orch:mcp");
+    expect(resolveAutonomy({ profile: "standard" }).capabilities).not.toContain("orch:mcp");
+    expect(resolveAutonomy(undefined).capabilities).not.toContain("orch:mcp");
+  });
+
+  it("mcp.enabled:false does NOT grant orch:mcp (the gate is the enable signal, honored as false)", () => {
+    const r = resolveAutonomy(AutonomyConfigSchema.parse({ mcp: { enabled: false } }));
+    expect(r.capabilities).not.toContain("orch:mcp");
+  });
+
+  it("orch:mcp is NOT floor-granted by ANY named profile (default-off; never a floor member)", () => {
+    for (const profile of ["assistant", "standard", "unattended", "max"] as const) {
+      expect(
+        resolveAutonomy({ profile }).capabilities,
+        `${profile} must not floor-grant orch:mcp`,
+      ).not.toContain("orch:mcp");
+    }
+  });
+});
+
+describe("AutonomyConfigSchema (the nested autonomy.mcp inbound leaf defaults off)", () => {
+  it("a fully-omitted autonomy block resolves a default mcp block { enabled:false, allow:{} }", () => {
+    const parsed = AutonomyConfigSchema.parse({});
+    expect(parsed.mcp).toEqual({ enabled: false, allow: {} });
+  });
+
+  it("strictObject rejects an unknown key under autonomy.mcp (typo guard, fails-closed)", () => {
+    expect(AutonomyConfigSchema.safeParse({ mcp: { enabld: true } }).success).toBe(false);
+  });
+});
