@@ -336,7 +336,9 @@ describe("generateImagesCodex — empty/failed stream", () => {
 
     expect(res.stopReason).toBe("error");
     expect(res.errorMessage).toContain("empty_response");
-  });
+    // Higher timeout: pushing >1 MiB through the SSE parser to trip the buffer cap
+    // is CPU-bound and exceeds the 5s default on slower (e.g. small-VPS) hosts.
+  }, 20_000);
 
   it("exposes a sane positive SSE buffer cap constant", () => {
     expect(CODEX_SSE_MAX_BUFFER_BYTES).toBeGreaterThan(1_000_000);

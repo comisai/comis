@@ -87,7 +87,10 @@ describe("credential-validator / validateWhatsAppAuth", () => {
     }
   });
 
-  it("returns err for unwritable authDir", async () => {
+  // root bypasses directory permissions, so a chmod-based unwritable-dir failure
+  // cannot be induced as root — skip there (mirrors setup-mcp.test.ts's isRoot guard).
+  const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
+  (isRoot ? it.skip : it)("returns err for unwritable authDir", async () => {
     const authDir = await makeTempDir();
     // Make directory read-only
     await chmod(authDir, 0o444);
