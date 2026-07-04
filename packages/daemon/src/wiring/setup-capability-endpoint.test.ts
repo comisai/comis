@@ -916,6 +916,15 @@ describe("createCapabilityEndpoint rate-limit + cron self-ownership", () => {
   // The jail leg allocates a monotonic
   // _outwardStepIndex for an OUTWARD message method (orch:message) and strips a
   // forged inbound value before re-injecting the trusted allocated one.
+  //
+  // DURABILITY-POSTURE DEPENDENCY (documented): the exactly-once outward dedup is
+  // ACTIVE only under `autonomy.durability.enabled` — that flag is what wires
+  // `deps.durableRuns`, the sole source of the allocated index. Otherwise the send
+  // is a best-effort, un-ledgered pass-through (still delivered). Durable resumable
+  // runs are a separate, not-yet-wired capability. So the exactly-once proof below
+  // REQUIRES a durableRuns stub (Pitfall 2 — a distinctness assertion that passed
+  // without the stub would be vacuous); the companion pass-through test proves the
+  // honest degradation when the store is absent.
   // -------------------------------------------------------------------------
 
   /** A durableRuns stub whose allocateOutwardStep returns a monotonic 0,1,… per root. */
