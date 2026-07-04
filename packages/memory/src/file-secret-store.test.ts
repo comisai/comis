@@ -232,7 +232,11 @@ describe("createFileSecretStore", () => {
     expect(fs.existsSync(leftoverTmp)).toBe(false);
   });
 
-  it("set cleans up temp file on write failure before propagating the error", () => {
+  // root bypasses directory permissions, so a chmod-based write failure cannot be
+  // induced as root — skip there (mirrors setup-mcp.test.ts's isRoot guard); non-root
+  // CI/dev keeps full coverage.
+  const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
+  (isRoot ? it.skip : it)("set cleans up temp file on write failure before propagating the error", () => {
     // To simulate a write failure, make the data dir read-only after creation
     fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     const store = createFileSecretStore({ dataDir });
