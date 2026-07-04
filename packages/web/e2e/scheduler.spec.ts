@@ -32,6 +32,24 @@ const MOCK_JOBS = [
     consecutiveErrors: 2,
     createdAtMs: Date.now() - 604800000,
   },
+  // A job WITH a pre-run wake-gate — exercises the editor's wake-gate field
+  // populate-from-existing path in a real browser (the piece the RPC/component
+  // tests cover but no full-SPA e2e did). cron.list must carry wakeGate for this
+  // to surface (the daemon-side fix that makes the gate editable in the UI).
+  {
+    id: "gated-monitor",
+    name: "Gated Monitor",
+    agentId: "agent-default",
+    schedule: { kind: "every", everyMs: 3600000 },
+    payload: { kind: "message", message: "check CI" },
+    sessionTarget: "dedicated",
+    enabled: true,
+    nextRunAtMs: Date.now() + 3600000,
+    lastRunAtMs: null,
+    consecutiveErrors: 0,
+    createdAtMs: Date.now() - 604800000,
+    wakeGate: { script: 'console.log(JSON.stringify({ wake: false }));', language: "js", timeoutSeconds: 30 },
+  },
 ];
 
 /** RPC handlers for scheduler methods, merged with default handlers */
@@ -99,6 +117,29 @@ test.describe("Scheduler - Cron Jobs", () => {
 
     // The header has "+ New Job" button
     await expect(scheduler.getByRole("button", { name: "+ New Job" })).toBeVisible();
+  });
+
+  test("editor surfaces and populates the wake-gate script field for a gated job", async ({ page }) => {
+    // The pre-run wake-gate must be VIEWABLE and EDITABLE in the dashboard, not
+    // just addable — that needs cron.list to carry wakeGate (daemon-side) AND the
+    // editor to bind it (component-side). Prove the full SPA path in a real
+    // browser via the route-param auto-open (#/scheduler/<jobId> opens the editor
+    // for that job). Complements the RPC/component tests with a live render.
+    const scheduler = page.locator("ic-scheduler-view");
+    await expect(scheduler).toBeVisible({ timeout: 10_000 });
+    await expect(scheduler.getByText("Gated Monitor")).toBeVisible();
+
+    // Navigate to the job's route → the view auto-opens the editor overlay for it.
+    await page.goto("/app/#/scheduler/gated-monitor");
+
+    // The wake-gate textarea surfaces and is populated from the job's wakeGate.script
+    // (Playwright pierces the nested shadow roots).
+    const field = page.locator("ic-cron-editor #cron-wake-gate");
+    await expect(field).toBeVisible({ timeout: 10_000 });
+    await expect(field).toHaveValue(/wake["\s:]*false/);
+
+    // The language selector reflects the stored language too.
+    await expect(page.locator("ic-cron-editor #cron-wake-gate-lang")).toHaveValue("js");
   });
 });
 
