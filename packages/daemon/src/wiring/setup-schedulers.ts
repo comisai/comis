@@ -12,7 +12,7 @@
  */
 
 import type { AppContainer, SkillsConfig, ClockPort, TimerPort } from "@comis/core";
-import { safePath, SkillsConfigSchema, formatSessionKey, systemNowMs, systemSetTimeout, resolveAutonomy } from "@comis/core";
+import { safePath, SkillsConfigSchema, formatSessionKey, systemNowMs, systemSetTimeout, resolveAutonomy, resolveCronWakeGateEnabled, wrapExternalContent } from "@comis/core";
 import type { BoundedAutonomyBudgetHolder } from "@comis/agent";
 import type { ComisLogger, LeaseManager } from "@comis/infra";
 import type { createSessionStore } from "@comis/memory";
@@ -23,13 +23,17 @@ import {
   createCronScheduler,
   createCronStore,
   createExecutionTracker,
+  isInQuietHours,
   resolveEffectiveHeartbeatConfig,
   resolveHeartbeatSessionKey,
   type CronScheduler,
+  type CronJob,
   type SystemEventQueue,
   type ExecutionTracker,
 } from "@comis/scheduler";
 import type { ComputeDailyResetNextRun } from "@comis/core";
+import type { SessionTrajectoryHandleRegistry } from "@comis/observability";
+import type { WakeGateRunner } from "./wake-gate-runner.js";
 
 /**
  * Record a completed `__REFLECT__` run to the firing
@@ -113,6 +117,23 @@ export interface SchedulersResult {
 }
 
 // ---------------------------------------------------------------------------
+// Wake-gate context injection
+// ---------------------------------------------------------------------------
+
+/**
+ * Return a copy of `job` with `wrapped` (an already-`wrapExternalContent`-wrapped
+ * gate finding) prepended to the text the model reads: the `agent_turn` message or
+ * the `system_event` text. A job whose gate does not inject is never passed here,
+ * so a no-gate / no-context fire stays byte-identical.
+ */
+function withInjectedContext(job: CronJob, wrapped: string): CronJob {
+  if (job.payload.kind === "agent_turn") {
+    return { ...job, payload: { ...job.payload, message: `${wrapped}\n\n${job.payload.message}` } };
+  }
+  return { ...job, payload: { ...job.payload, text: `${wrapped}\n\n${job.payload.text}` } };
+}
+
+// ---------------------------------------------------------------------------
 // Setup function
 // ---------------------------------------------------------------------------
 
@@ -155,8 +176,20 @@ export async function setupSchedulers(deps: {
    *  reads `holder.current` at FIRE time; registerRoot anchors the cron run. Optional
    *  — absent / `current` undefined ⇒ no mint. */
   boundedAutonomyHolder?: BoundedAutonomyBudgetHolder;
+  /** The daemon-wide LATE-BOUND pre-payload wake-gate runner. The schedulers are
+   *  built in bootAgents BEFORE the cap layer that constructs the runner (bootChannels),
+   *  so executeJob reads `ref` at FIRE time. Absent / `ref` undefined ⇒ no gate (a job
+   *  runs exactly as today). A job WITHOUT `wakeGate` never consults it. */
+  wakeGateRunnerRef?: { ref?: WakeGateRunner };
+  /** The daemon-wide per-session trajectory recorder registry. A WOKE wake-gate
+   *  fire opens the job's main session, so the hook records a content-free
+   *  wake-gate event directly onto that session's trajectory (off-turn: the
+   *  cron/daemon context has no live bus bridge). Best-effort: an absent registry
+   *  / a recorder that resolves undefined ⇒ no record (never a throw). A SKIP
+   *  records nothing (it opens no session). */
+  trajectoryRegistry?: SessionTrajectoryHandleRegistry;
 }): Promise<SchedulersResult> {
-  const { container, workspaceDirs, sessionStore, sessionManager, schedulerLogger, agentLogger, skillsLogger, subprocessEnv, systemEventQueue, onCronWake, clock, timers, leaseManager, boundedAutonomyHolder } = deps;
+  const { container, workspaceDirs, sessionStore, sessionManager, schedulerLogger, agentLogger, skillsLogger, subprocessEnv, systemEventQueue, onCronWake, clock, timers, leaseManager, boundedAutonomyHolder, wakeGateRunnerRef, trajectoryRegistry } = deps;
   const agents = container.config.agents; // Always populated after schema transform
   const schedulerConfig = container.config.scheduler;
 
@@ -201,10 +234,226 @@ export async function setupSchedulers(deps: {
 
     const scheduler = createCronScheduler({
       store: agentCronStore,
-      executeJob: async (job) => {
+      executeJob: async (jobInput) => {
+        // `let job` is the seam: the wake-gate may reassign it with injected
+        // context, and every downstream `job.` read then resolves against the
+        // (possibly enriched) local. No gate ⇒ job === jobInput ⇒ byte-identical.
+        let job: CronJob = jobInput;
         const startTs = systemNowMs();
         const jobLogger = schedulerLogger.child({ agentId, jobId: job.id, jobName: job.name });
         try {
+          // Pre-payload wake-gate. When the job carries a `wakeGate` AND a runner
+          // ref is populated (read at FIRE time — the runner is built after this
+          // scheduler, in the cap layer), run the gate BEFORE the payload branch:
+          //   - runAsToday (host cannot jail / autonomy off) → fall through unchanged.
+          //   - wake:false → skip the payload entirely (the model never runs), record
+          //     a visible skipped row, and return status:ok so the job re-arms cleanly
+          //     (a status:error would wrongly trigger backoff).
+          //   - wake:true + context → prepend the wrapExternalContent-wrapped finding
+          //     so the model starts informed, then fall through to the normal dispatch.
+          // runWakeGate never throws (it fails open to wake), so a broken gate can
+          // never silently drop a monitored job. A job without `wakeGate` (or with no
+          // runner ref) is byte-identical to today.
+          // Consult the operator toggle BEFORE running the gate. A
+          // scheduler-initiated gate is a distinct trust context — no human or
+          // model in the loop at fire time — so an operator can allow
+          // model-initiated orchestrate while disabling these gates. When the
+          // toggle resolves OFF (explicit false, or unset with the agent's
+          // script surface off), runWakeGate is never called and the job falls
+          // straight through to the existing dispatch, byte-identical to a
+          // no-wakeGate job. The gate rides the agent's existing caps at the cap
+          // socket; the toggle grants none.
+          const gateRunner = wakeGateRunnerRef?.ref;
+          if (
+            job.wakeGate &&
+            gateRunner &&
+            resolveCronWakeGateEnabled(effectiveCron.wakeGate, agentConfig.autonomy?.script)
+          ) {
+            const outcome = await gateRunner.runWakeGate(job.wakeGate, {
+              agentId: job.agentId,
+              jobId: job.id,
+              sessionKey: resolveMainSessionKey(job.agentId),
+            });
+            if (!("runAsToday" in outcome)) {
+              // The verdict drives the existing skip/deliver/context branches; the
+              // per-fire counts (durationMs + toolCalls from the runner) plus the
+              // derived estTurnsSaved (1 avoided model turn per skip, 0 on wake)
+              // feed the content-free scheduler:wake_gate emitted ONCE below for
+              // BOTH branches. A runAsToday degrade never reaches here (the job ran
+              // as today — no gate to measure), so it emits nothing.
+              const { verdict, durationMs, toolCalls, failedOpen, rootRunId } = outcome;
+              const estTurnsSaved = verdict.wake ? 0 : 1;
+              // Content-free savings/health signal (I5): ids / verdict enum /
+              // counts ONLY — NEVER the gathered finding, the script source, or a
+              // secret. This is the fleet fork's feed (a cross-session skip-rate /
+              // turns-saved / net-cost rollup); it is wired independently of the
+              // woke case's direct trajectory record below.
+              container.eventBus.emit("scheduler:wake_gate", {
+                jobId: job.id,
+                agentId: job.agentId,
+                wake: verdict.wake,
+                durationMs,
+                toolCalls,
+                estTurnsSaved,
+                failedOpen,
+                timestamp: systemNowMs(),
+              });
+              if (!verdict.wake) {
+                // Deliver-on-skip: a routine ✓ status delivered directly with NO
+                // model turn. verdict.deliver is already OutputGuard-scrubbed by the
+                // runner (safe to ship verbatim). Reuse the existing cron delivery
+                // path (scheduler:job_result) with payloadKind:"system_event" (→ the
+                // listener's raw verbatim branch) and NO onComplete (the deferred
+                // resolver is the sole model trigger — omitting it means the model
+                // never runs). Honor quiet-hours: a routine ✓ must not ping off-hours;
+                // when quiet, suppress the delivery but STILL record the skip.
+                const nowMs = systemNowMs();
+                if (verdict.deliver && job.deliveryTarget) {
+                  // isInQuietHours throws on a malformed quietHours.start/end (the
+                  // schema does not validate HH:MM). Contain the throw here: it must
+                  // NOT reach executeJob's catch, where this DECIDED skip would degrade
+                  // to status:"error" → consecutiveErrors → auto-suspend, silently
+                  // killing the monitor. Fail toward not-pinging (treat as quiet) so a
+                  // routine status never fires at the wrong time; the skip is still recorded.
+                  let quiet: boolean;
+                  try {
+                    quiet = isInQuietHours(schedulerConfig.quietHours, nowMs);
+                  } catch (qhErr) {
+                    jobLogger.warn(
+                      {
+                        err: qhErr,
+                        step: "wake-gate",
+                        errorKind: "config" as const,
+                        hint: "scheduler.quietHours.start/end must be HH:MM — suppressing this routine deliver and recording the skip",
+                      },
+                      "Wake-gate quiet-hours check failed — suppressing deliver",
+                    );
+                    quiet = true;
+                  }
+                  if (quiet) {
+                    jobLogger.debug(
+                      { step: "wake-gate", wake: false, quietHours: true },
+                      "Wake-gate deliver suppressed (quiet hours) — recording skip only",
+                    );
+                  } else {
+                    container.eventBus.emit("scheduler:job_result", {
+                      jobId: job.id,
+                      jobName: job.name,
+                      agentId: job.agentId,
+                      result: verdict.deliver, // pre-scrubbed by the runner
+                      success: true,
+                      deliveryTarget: job.deliveryTarget,
+                      timestamp: nowMs,
+                      payloadKind: "system_event", // force the raw verbatim branch — NO model turn
+                      // onComplete OMITTED → nothing runs the model
+                    });
+                    jobLogger.info(
+                      { step: "wake-gate", wake: false, delivered: true, durationMs, toolCalls, estTurnsSaved, ...(rootRunId ? { rootRunId } : {}) },
+                      "Wake-gate delivered a routine status (no model turn)",
+                    );
+                  }
+                } else if (verdict.deliver) {
+                  // A deliver on a deliveryTarget-less job is dropped — there is no
+                  // channel to send to. Log it distinctly so a gate author sees the
+                  // status was discarded (vs a plain no-deliver skip).
+                  jobLogger.debug(
+                    {
+                      step: "wake-gate",
+                      wake: false,
+                      hint: "gate returned a deliver but the job has no deliveryTarget — nothing to deliver to; recording skip only",
+                    },
+                    "Wake-gate deliver dropped (no delivery target)",
+                  );
+                } else {
+                  jobLogger.info(
+                    { step: "wake-gate", wake: false, durationMs, toolCalls, estTurnsSaved, ...(rootRunId ? { rootRunId } : {}) },
+                    "Wake-gate skipped the job (no model turn)",
+                  );
+                }
+                await agentExecTracker.record({
+                  ts: systemNowMs(), jobId: job.id, status: "skipped",
+                  durationMs: systemNowMs() - startTs, summary: "wake-gate: skipped",
+                  // The skip lens: the counts (never any finding text) let
+                  // `cron.runs "<jobName>"` reconstruct each suppressed fire. The
+                  // rootRunId lets an operator pivot to `comis explain <rootRunId>`
+                  // for a gate that made cap-calls before skipping (a skip-after-fetch).
+                  toolCalls, estTurnsSaved, ...(rootRunId ? { rootRunId } : {}),
+                });
+                return { status: "ok" as const, summary: "wake-gate: skipped" };
+              }
+              // §2.7 completion line for a WOKE fire. A skip already logs its own
+              // INFO above; a wake previously logged only DEBUG, so a raw-log reader
+              // saw skips but never wakes — the log was not self-sufficient. One INFO
+              // per gated fire (wake OR skip) makes every decision reconstructable
+              // from the log alone. `failedOpen` distinguishes a broken fail-open wake
+              // (crash/timeout/over-cap) from a clean decision; `rootRunId` lets an
+              // operator reconstruct the gate's cap-calls via `security audit-log`.
+              jobLogger.info(
+                { step: "wake-gate", wake: true, failedOpen, durationMs, toolCalls, estTurnsSaved, ...(rootRunId ? { rootRunId } : {}) },
+                failedOpen ? "Wake-gate woke the model (fail-open)" : "Wake-gate woke the model",
+              );
+              if (verdict.context) {
+                // The wrapExternalContent markers exist to inform the MODEL, so
+                // only inject where the payload actually reaches one: an agent_turn
+                // (always model) or a main-routed system_event (heartbeat → model).
+                // A non-main system_event with a deliveryTarget is delivered as RAW
+                // text with no model — injecting there would leak the untrusted-
+                // content boundary markers verbatim to the channel. Mirror the
+                // main+system_event → heartbeat branch condition below exactly.
+                const reachesModel =
+                  job.payload.kind === "agent_turn" ||
+                  (job.sessionTarget === "main" && job.payload.kind === "system_event" && !!systemEventQueue);
+                if (reachesModel) {
+                  job = withInjectedContext(job, wrapExternalContent(verdict.context, { source: "unknown" }));
+                } else {
+                  jobLogger.debug(
+                    { step: "wake-gate", wake: true },
+                    "Wake-gate context dropped — this fire delivers verbatim (no model to inform)",
+                  );
+                }
+              }
+              // A woke fire runs the model in the job's main session — record a
+              // content-free wake-gate event DIRECTLY onto that session's trajectory
+              // so `comis explain <sessionKey|rootRunId>` folds the fire and its
+              // cap-calls. Off-turn: the cron/daemon context has no live bus bridge,
+              // so this mirrors the image / capability-audit direct emits (a
+              // per-session recorder call, not a bus subscription) — the incident
+              // fork's feed, wired independently of the fleet emit above.
+              //
+              // BEST-EFFORT enrichment: this trajectory record is the ONLY source of
+              // the woke cronWakeGate fact, so it reaches `comis explain` ONLY when
+              // the main-session recorder is already open. When it is not — a daemon
+              // restart (the registry is empty until the first turn opens the main
+              // session), a monitor-only agent whose main session no turn ever
+              // opens, or an idle-evicted session — getRecorder resolves undefined
+              // and the fact is DROPPED. The fire stays reconstructable from the
+              // DURABLE fleet fork (the cron_wake_gate DiagnosticRow /
+              // cron_wake_gate_efficiency block) and the cap-audit stream
+              // (`explain <rootRunId>`), so the drop degrades one lens, never the
+              // fire's record. Emit a DEBUG on the drop so it is observable rather
+              // than a silent no-op; never throw (a throw here would degrade the
+              // job). A SKIP records NOTHING here — it opens no session; its lens is
+              // the enriched cron.runs row.
+              // Content-free (I5): ids / enum / counts ONLY — never the finding.
+              const wakeRecorder = trajectoryRegistry?.getRecorder?.(resolveMainSessionKey(job.agentId));
+              if (wakeRecorder) {
+                wakeRecorder.recordEvent(
+                  "scheduler.wake_gate",
+                  { jobId: job.id, agentId: job.agentId, wake: true, durationMs, toolCalls, estTurnsSaved: 0 },
+                );
+              } else {
+                jobLogger.debug(
+                  {
+                    step: "wake-gate",
+                    wake: true,
+                    hint: "no open main-session recorder — the woke trajectory fact was dropped; the fire is still captured by the fleet cron_wake_gate lens and the cap-audit stream (explain <rootRunId>)",
+                  },
+                  "Wake-gate woke trajectory record dropped (no open session recorder)",
+                );
+              }
+            }
+          }
+
           // Route main-session systemEvent jobs through heartbeat pipeline
           if (job.sessionTarget === "main" && job.payload.kind === "system_event" && systemEventQueue) {
             const mainSessionKey = resolveMainSessionKey(agentId);

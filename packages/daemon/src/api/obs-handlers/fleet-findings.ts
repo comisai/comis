@@ -123,6 +123,9 @@ export function buildFindings(
   // The windowed `memory_lifecycle` rows (the forget sweep). Defaulted
   // `[]` so callers that do not read this category stay unchanged.
   memoryLifecycle: readonly DiagnosticRow[] = [],
+  // The windowed `cron_wake_gate` rows (each gated cron fire). Defaulted
+  // `[]` so callers that do not read this category stay unchanged.
+  cronWakeGate: readonly DiagnosticRow[] = [],
 ): Finding[] {
   const findings: Finding[] = [];
 
@@ -513,6 +516,42 @@ export function buildFindings(
       detail: `${memoryLifecycle.length} forget sweep(s) in the window; evicted=${evictedSum}, demoted=${demotedSum}`,
       count: memoryLifecycle.length,
       hint: 'run `cron.runs jobName "Memory lifecycle"` for the per-sweep counts; evicted=0 is usually healthy (no corroborated-wrong / dormant candidates) — NOT a fault. Eviction is gated by learning.forget + the anti-induced-eviction exemptions (pinned/high-proof/system survive).',
+    });
+  }
+
+  // The dedicated cron_wake_gate_efficiency finding — the wake-gate rolled up over
+  // the window (the fleet-visible savings + suppression signal). Counts ONLY (fire count
+  // + summed skipped/turnsSaved/toolCalls; every details field parsed defensively — never
+  // the gate's script/payload). A skip is SAVINGS, not a fault (info severity — it must
+  // NOT inflate the fleet degrade count, the benign-reason discipline), so the hint says
+  // so; the two signals to inspect are a 100% skip-rate on a monitor you expect to fire,
+  // and toolCalls exceeding turnsSaved (a gate that costs more than it saves). The
+  // per-agent breakdown lives in the FleetHealthReport.cronWakeGate block.
+  if (cronWakeGate.length > 0) {
+    let skippedSum = 0;
+    let failedOpenSum = 0;
+    let turnsSavedSum = 0;
+    let toolCallsSum = 0;
+    for (const row of cronWakeGate) {
+      const d = parseDetailsObject(row.details);
+      if (d.wake === false) skippedSum += 1;
+      if (d.failedOpen === true) failedOpenSum += 1;
+      if (typeof d.estTurnsSaved === "number") turnsSavedSum += d.estTurnsSaved;
+      if (typeof d.toolCalls === "number") toolCallsSum += d.toolCalls;
+    }
+    // A fail-open wake (crash/timeout/over-cap/no-verdict) saves nothing and costs
+    // the gate's own cap-calls + jail spawn; a gate that fails open EVERY fire is
+    // broken but reads skipRate 0 (looks like a busy monitor). Surface the count so
+    // it is legible beside the 100%-skip poison signal.
+    const failOpenNote =
+      failedOpenSum > 0
+        ? ` A fail-open wake saves nothing and costs the gate's own run; a gate failing open every fire is broken (not a busy monitor).`
+        : "";
+    findings.push({
+      code: "cron_wake_gate_efficiency",
+      detail: `${cronWakeGate.length} gated cron fire(s) in the window; skipped=${skippedSum}, failedOpen=${failedOpenSum}, turnsSaved=${turnsSavedSum}, toolCalls=${toolCallsSum}`,
+      count: cronWakeGate.length,
+      hint: `run \`cron.runs jobName "<job>"\` for the per-fire gate decisions; a high skip-rate is the gate WORKING (savings), not a fault; a 100% skip-rate on a monitor you expect to fire, a high failedOpen count, or toolCalls exceeding turnsSaved, is the signal to inspect.${failOpenNote}`,
     });
   }
 

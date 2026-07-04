@@ -126,6 +126,7 @@ import { createModelCatalog, resolveWorkspaceDir } from "@comis/core";
 import { createFileStateTracker, detectSandboxProvider } from "@comis/skills";
 import { reapNeverTaskedDrives as reapNeverTaskedDrivesInRegistry } from "@comis/skills/tools";
 import { constructCapabilityLayer } from "./wiring/setup-capability-endpoint-boot.js"; // the sandbox/capability endpoint layer
+import { createWakeGateRunner, buildWakeGateRunnerDeps, type WakeGateRunner } from "./wiring/wire-wake-gate-runner.js"; // the pre-payload wake-gate runner + its deps builder
 // The single process-singleton activity circuit breaker is constructed
 // here and threaded down through ChannelsDeps → buildAndStartChannelManager
 // into every per-turn coordinator. The daemon is the composition root that owns
@@ -1861,6 +1862,7 @@ async function bootAgents(
   // Deferred wake callback ref -- populated by bootChannels once wakeCoalescer is
   // constructed (the channelPluginsRef / bgNotifyRef cross-stage deferred-ref pattern).
   const cronWakeCallbackRef: { ref?: (reason: string) => void } = {};
+  const wakeGateRunnerRef: { ref?: WakeGateRunner } = {}; // populated post-cap-layer (bootChannels); read at FIRE time (absent ⇒ cron runs as today)
 
   // 6.6.4.9. System event queue (created early for cron-heartbeat routing)
   const systemEventQueue = createSystemEventQueue({ logger: schedulerLogger });
@@ -1889,7 +1891,7 @@ async function bootAgents(
         );
       }
     },
-    clock, timers,
+    clock, timers, wakeGateRunnerRef, trajectoryRegistry, // wakeGateRunnerRef: late-bound pre-payload wake-gate runner (executeJob reads .ref at fire time); trajectoryRegistry: a woke fire's direct per-session wake-gate trajectory record
     leaseManager: sharedLeaseManager, boundedAutonomyHolder: boundedAutonomyBudgetHolder, // the cron-fire fresh-lease mint (shared LeaseManager + late-bound holder)
   });
 
@@ -1990,7 +1992,7 @@ async function bootAgents(
     transcriber, ssrfFetcher, fileExtractor, voiceSelection,
     rpcCall, wireDispatch, approvalGate, interactiveCallbackWiring,
     channelAdaptersRef, deliveryQueue, drainAndStartDeliveryPrune, shutdownDeliveryQueue,
-    cronWakeCallbackRef, trajectoryRegistry, executionPlanPorts, oauthManagers, authStorages, servedWindowComparisons, agentBootWindowInfo,
+    cronWakeCallbackRef, wakeGateRunnerRef, trajectoryRegistry, executionPlanPorts, oauthManagers, authStorages, servedWindowComparisons, agentBootWindowInfo,
   });
 }
 
@@ -2045,7 +2047,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     | "sessionTrackerRegistry" | "auditAggregator" | "onSuspiciousContent"
     | "mcpClientManager" | "singleAgentDeps" | "providerHealth"
     | "channelAdaptersRef" | "deliveryQueue" | "drainAndStartDeliveryPrune"
-    | "shutdownDeliveryQueue" | "cronWakeCallbackRef" | "trajectoryRegistry"
+    | "shutdownDeliveryQueue" | "cronWakeCallbackRef" | "wakeGateRunnerRef" | "trajectoryRegistry"
     | "executionPlanPorts" | "oauthManagers"
   >>;
   // Names consumed by bootChannels body itself; helper functions
@@ -2058,7 +2060,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     defaultAgentId, defaultWorkspaceDir, executors, workspaceDirs,
     agentsConfig: agents, toolCapabilityPorts, mcpClientManager,
     linkRunner, systemEventQueue, rpcCall, approvalGate,
-    deliveryQueue, cronWakeCallbackRef, singleAgentDeps,
+    deliveryQueue, cronWakeCallbackRef, wakeGateRunnerRef, singleAgentDeps,
     // The concrete LCD ContextStorePort (createLcdStore),
     // populated on the BootContext by bootFoundation's setupMemory Object.assign.
     // Threaded into setupTools so assembleToolsForAgent wires the dag-mode ctx_*
@@ -2110,6 +2112,10 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // 7.9. Capability-lease layer + ACTIVATION — constructed BEFORE setupTools so the KEPT handle threads capMint + the orchestrate capSocketPath into tool assembly; on `boot` for bootShutdown. cronJobCount binds the bounded-autonomy rate count to the per-agent CronScheduler. durableRuns threads into the jail-leg chokepoint for the _outwardStepIndex allocation.
   const { capEndpointHandle, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, timers: handle.timers, cronJobCount: (agentId) => { try { return handle.getAgentCronScheduler(agentId).getJobs().length; } catch { return 0; } }, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager, boundedAutonomyHolder: handle.boundedAutonomyBudgetHolder, leaseManager: handle.sharedLeaseManager, container, ...(durableRunStoreEarly ? { durableRuns: durableRunStoreEarly } : {}) }); // POPULATES the late-bound budget holder (read by the bridge at turn time) + shares the SAME LeaseManager as the cron-fire mint; the container is passed so the SOCKET chokepoint emits the per-cap audit (audit:event + capability:audited) for jailed tool.invoke calls
   Object.assign(boot, { capEndpointHandle, namespacePreflightOk });
+
+  if (capEndpointHandle && sandboxProvider) { // pre-payload wake-gate runner: built after the cap layer (deps from capEndpointHandle), read at fire time
+    wakeGateRunnerRef.ref = createWakeGateRunner(buildWakeGateRunnerDeps(handle, capEndpointHandle, sandboxProvider, namespacePreflightOk));
+  }
 
   // 7.9.1. The durable-resume engine built AFTER the cap layer (BoundedAutonomy reachable); its closures resolve at resumeAndStart() (AFTER channels — boot-order). See buildDurableResume.
   // Late-bound holder for coordinator.resumeGraph — the coordinator is built later (after channels) but resumeRun only fires at resumeAndStart() (also after channels), so it is set by then. A DAG record routes here.

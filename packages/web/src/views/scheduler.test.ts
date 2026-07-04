@@ -447,6 +447,142 @@ describe("IcSchedulerView", () => {
     expect(priv(el)._editorOpen).toBe(false);
   });
 
+  it("25 - save in create mode threads the nested wakeGate onto cron.add and the optimistic job", async () => {
+    const rpc = createSchedulerMockRpcClient();
+    const el = await createElement({ rpcClient: rpc });
+    await flush(el);
+
+    const btn = el.shadowRoot?.querySelector(".btn-primary") as HTMLElement;
+    btn.click();
+    await (el as any).updateComplete;
+
+    const editor = el.shadowRoot?.querySelector("ic-cron-editor") as HTMLElement;
+    editor.dispatchEvent(
+      new CustomEvent("save", {
+        detail: {
+          id: "gated-monitor",
+          name: "Gated Monitor",
+          agentId: "default",
+          schedule: { kind: "cron", expr: "*/5 * * * *" },
+          message: "watch the feed",
+          enabled: true,
+          maxConcurrent: 1,
+          sessionTarget: "main",
+          wakeGate: { script: "check()", language: "js" },
+        },
+      }),
+    );
+    await flush(el);
+
+    expect(rpc.call).toHaveBeenCalledWith(
+      "cron.add",
+      expect.objectContaining({ wakeGate: { script: "check()", language: "js" } }),
+    );
+    const created = priv(el)._jobs.find((j) => (j as { wakeGate?: unknown }).wakeGate) as
+      | { wakeGate?: unknown }
+      | undefined;
+    expect(created?.wakeGate).toEqual({ script: "check()", language: "js" });
+  });
+
+  it("26 - save in edit mode threads the nested wakeGate onto cron.update and the optimistic job", async () => {
+    const rpc = createSchedulerMockRpcClient();
+    const el = await createElement({ rpcClient: rpc });
+    await flush(el);
+
+    const row = el.shadowRoot?.querySelector(".grid-row") as HTMLElement;
+    row.click();
+    await (el as any).updateComplete;
+
+    const editor = el.shadowRoot?.querySelector("ic-cron-editor") as HTMLElement;
+    editor.dispatchEvent(
+      new CustomEvent("save", {
+        detail: {
+          id: "daily-report",
+          name: "Daily Report",
+          agentId: "default",
+          schedule: { kind: "cron", expr: "0 9 * * *" },
+          message: "Generate daily report",
+          enabled: true,
+          maxConcurrent: 1,
+          sessionTarget: "isolated",
+          wakeGate: { script: "poll()", language: "js" },
+        },
+      }),
+    );
+    await flush(el);
+
+    expect(rpc.call).toHaveBeenCalledWith(
+      "cron.update",
+      expect.objectContaining({ wakeGate: { script: "poll()", language: "js" } }),
+    );
+    const updated = priv(el)._jobs.find(
+      (j) => (j as { id: string }).id === "daily-report",
+    ) as { wakeGate?: unknown } | undefined;
+    expect(updated?.wakeGate).toEqual({ script: "poll()", language: "js" });
+  });
+
+  it("27 - maps a loaded job's wakeGate into the editor input on edit-open", async () => {
+    const rpc = createSchedulerMockRpcClient([
+      {
+        id: "monitor",
+        name: "Monitor",
+        agentId: "default",
+        schedule: { kind: "cron", expr: "*/10 * * * *" },
+        payload: { kind: "agent_turn", message: "check the feed" },
+        sessionTarget: "main",
+        enabled: true,
+        consecutiveErrors: 0,
+        createdAtMs: Date.now(),
+        wakeGate: { script: "check()", language: "ts" },
+      },
+    ]);
+    const el = await createElement({ rpcClient: rpc });
+    await flush(el);
+
+    const row = el.shadowRoot?.querySelector(".grid-row") as HTMLElement;
+    row.click();
+    await (el as any).updateComplete;
+
+    const editor = el.shadowRoot?.querySelector("ic-cron-editor");
+    expect((editor as unknown as { job?: { wakeGate?: unknown } })?.job?.wakeGate).toEqual({
+      script: "check()",
+      language: "ts",
+    });
+  });
+
+  it("28 - saving a job without a wake-gate carries no wakeGate on cron.add (byte-identical)", async () => {
+    const rpc = createSchedulerMockRpcClient();
+    const el = await createElement({ rpcClient: rpc });
+    await flush(el);
+
+    const btn = el.shadowRoot?.querySelector(".btn-primary") as HTMLElement;
+    btn.click();
+    await (el as any).updateComplete;
+
+    const editor = el.shadowRoot?.querySelector("ic-cron-editor") as HTMLElement;
+    editor.dispatchEvent(
+      new CustomEvent("save", {
+        detail: {
+          id: "plain-job",
+          name: "Plain Job",
+          agentId: "default",
+          schedule: { kind: "cron", expr: "0 9 * * *" },
+          message: "just run",
+          enabled: true,
+          maxConcurrent: 1,
+          sessionTarget: "main",
+        },
+      }),
+    );
+    await flush(el);
+
+    const addCall = (rpc.call as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c: unknown[]) => c[0] === "cron.add",
+    );
+    expect(addCall).toBeTruthy();
+    expect(addCall![1]).not.toHaveProperty("wakeGate");
+  });
+
   it("21 - heartbeat tab shows global status when enabled", async () => {
     const rpc = createSchedulerMockRpcClient();
     const el = await createElement({ rpcClient: rpc });

@@ -3235,6 +3235,23 @@
         "timezone": {
           "description": "IANA timezone (e.g. America/Los_Angeles). REQUIRED for any time-of-day schedule (schedule_kind=cron or at) so it fires at the USER'S local wall-clock time, not the server's. Set it to the user's known timezone (from memory/USER.md); without it a naive time like 09:00 is interpreted in the server timezone (UTC). E.g. a Pacific user's 'remind me at 9am' must pass timezone=America/Los_Angeles.",
           "type": "string"
+        },
+        "wake_gate_language": {
+          "anyOf": [
+            {
+              "const": "js",
+              "type": "string"
+            },
+            {
+              "const": "ts",
+              "type": "string"
+            }
+          ],
+          "description": "Language of wake_gate_script. Valid values: js, ts. Default: js."
+        },
+        "wake_gate_script": {
+          "description": "Optional pre-run gate script for a monitoring job (add/update). When set, the scheduler runs it before each fire and wakes the model ONLY if the script signals a change; otherwise the fire is skipped cheaply. The script prints its verdict on stdout — see this tool's description for the protocol and a worked example.",
+          "type": "string"
         }
       },
       "required": [

@@ -254,6 +254,82 @@ describe("FleetHealthReportSchema (bounded/deterministic fleet wire shape)", () 
     expect(parsed.autonomy?.worstRootRunId).toBe("root-run-xyz");
   });
 
+  // -------------------------------------------------------------------------
+  // The additive-optional `cronWakeGate` block: the cross-session wake-gate
+  // efficiency slice (per-agent skip-rate + turns-saved + tool-call cost). The
+  // gate suppresses model turns; `skipRate == 1.0` per agent is the suppression
+  // signal (a monitor that never fires), and `toolCalls` (the gate's cost)
+  // beside `turnsSaved` (the benefit) is the net-cost legibility (a gate that
+  // costs more than it saves). Counts + agent ids ONLY. Without the schema
+  // field, the non-strict z.object STRIPS the block on .parse() and it never
+  // reaches the operator — the round-trip proof, one signal class over.
+  // -------------------------------------------------------------------------
+  it("the populated `cronWakeGate` block SURVIVES .parse() (round-trip; a 100%-skip agent is visible + net-cost legible)", () => {
+    // Without the schema field, the non-strict z.object STRIPS this key on parse
+    // → the wake-gate slice never reaches the wire. Declaring it in
+    // FleetHealthReportSchema is what makes .parse() PRESERVE it.
+    const withGate = {
+      ...validReport(),
+      cronWakeGate: {
+        fires: { total: 5, skipped: 4, skipRate: 0.8, failedOpen: 1, failOpenRate: 0.2 },
+        turnsSaved: 4,
+        toolCalls: 7,
+        perAgent: [
+          { agentId: "agent-a", fires: 4, skipped: 3, skipRate: 0.75, failedOpen: 0, failOpenRate: 0, turnsSaved: 3, toolCalls: 7 },
+          // A 100%-skip gate — the suppression signal. skipRate === 1.0 MUST be
+          // visible (a monitor that never wakes the model is either working hard
+          // OR silently poisoned; either way the operator must see it).
+          { agentId: "agent-b", fires: 1, skipped: 1, skipRate: 1, failedOpen: 1, failOpenRate: 1, turnsSaved: 1, toolCalls: 0 },
+        ],
+      },
+    };
+    const parsed = FleetHealthReportSchema.parse(withGate);
+    expect(parsed.cronWakeGate).toBeDefined();
+    expect(parsed.cronWakeGate?.fires).toEqual({ total: 5, skipped: 4, skipRate: 0.8, failedOpen: 1, failOpenRate: 0.2 });
+    // Net-cost legibility: BOTH the benefit (turnsSaved) and the cost (toolCalls)
+    // survive .parse(), so an operator can compare a gate that costs more than it saves.
+    expect(parsed.cronWakeGate?.turnsSaved).toBe(4);
+    expect(parsed.cronWakeGate?.toolCalls).toBe(7);
+    // The 100%-skip agent survives with skipRate === 1.0 (the suppression signal is visible).
+    const agentB = parsed.cronWakeGate?.perAgent.find((a) => a.agentId === "agent-b");
+    expect(agentB?.skipRate).toBe(1);
+    // schemaVersion stays the literal 1 (additive, not a version bump).
+    expect(parsed.schemaVersion).toBe(1);
+  });
+
+  it("treats `cronWakeGate` as optional (additive — a report WITHOUT it still parses, schemaVersion stays 1)", () => {
+    const without = validReport() as Partial<FleetHealthReport>;
+    expect(without).not.toHaveProperty("cronWakeGate"); // validReport() omits it.
+    const parsed = FleetHealthReportSchema.parse(without);
+    expect(parsed.cronWakeGate).toBeUndefined();
+    expect(parsed.schemaVersion).toBe(1);
+  });
+
+  it("CONTENT-FREE: a smuggled gate script/payload key inside the cronWakeGate block is STRIPPED on parse", () => {
+    // The block carries counts + agent ids ONLY. A caller who smuggles the gate's
+    // gathered payload / script source must have it stripped by the non-strict
+    // z.object — it can never reach the operator-facing report.
+    const smuggled = {
+      ...validReport(),
+      cronWakeGate: {
+        fires: { total: 1, skipped: 1, skipRate: 1, failedOpen: 0, failOpenRate: 0 },
+        turnsSaved: 1,
+        toolCalls: 0,
+        perAgent: [{ agentId: "agent-a", fires: 1, skipped: 1, skipRate: 1, failedOpen: 0, failOpenRate: 0, turnsSaved: 1, toolCalls: 0 }],
+        script: "gather the inbox then decide whether to wake", // smuggled gate script
+        payload: "the gathered message body", // smuggled gathered payload
+      },
+    } as Record<string, unknown>;
+    const parsed = FleetHealthReportSchema.parse(smuggled) as {
+      cronWakeGate?: Record<string, unknown>;
+    };
+    expect(parsed.cronWakeGate).toBeDefined();
+    expect(parsed.cronWakeGate).not.toHaveProperty("script");
+    expect(parsed.cronWakeGate).not.toHaveProperty("payload");
+    // The declared keys survive; only the smuggled ones are dropped.
+    expect(parsed.cronWakeGate?.turnsSaved).toBe(1);
+  });
+
   it("carries degradedByCause — a required bounded Record<cause, count> of named causes", () => {
     // The fleet-level degradation detector. Required (the assembler always emits
     // it, possibly {}). Each value is a count (bounded, no raw bodies).

@@ -221,6 +221,32 @@ describe("execution-tracker", () => {
     });
   });
 
+  describe("estTurnsSaved field", () => {
+    it("round-trips estTurnsSaved on a skipped row through the JSONL Zod parse", async () => {
+      const tracker = createExecutionTracker({ logDir: testDir });
+      const entry = makeEntry({
+        status: "skipped",
+        estTurnsSaved: 1,
+        toolCalls: 0,
+      });
+      await tracker.record(entry);
+
+      const history = await tracker.getHistory("test-job");
+      expect(history).toHaveLength(1);
+      expect(history[0].estTurnsSaved).toBe(1);
+      expect(history[0].toolCalls).toBe(0);
+    });
+
+    it("reads estTurnsSaved back as undefined when the row omits it (optional)", async () => {
+      const tracker = createExecutionTracker({ logDir: testDir });
+      await tracker.record(makeEntry());
+
+      const history = await tracker.getHistory("test-job");
+      expect(history).toHaveLength(1);
+      expect(history[0].estTurnsSaved).toBeUndefined();
+    });
+  });
+
   describe("computeMedian", () => {
     it("returns correct median for odd-length array", () => {
       expect(computeMedian([1, 3, 5])).toBe(3);

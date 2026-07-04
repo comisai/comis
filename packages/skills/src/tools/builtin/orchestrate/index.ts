@@ -12,16 +12,24 @@
  *
  * @module
  */
+export { createOrchestrateTool } from "./orchestrate-tool.js";
+
+// The shared cap-socket jailed-run core the orchestrate tool delegates to.
+// Exposed so other jailed-run callers drive the SAME jail (never a second one).
 export {
-  createOrchestrateTool,
+  runJailedScript,
   scrubSecretEnv,
-} from "./orchestrate-tool.js";
+  clampTimeoutMs,
+  STDOUT_HARD_CAP_BYTES,
+  DEFAULT_TIMEOUT_MS,
+  MAX_TIMEOUT_MS,
+} from "./jailed-script-runner.js";
 export type {
-  OrchestrateToolDeps,
-  OrchestrateResultStore,
-  OrchestrateSpawnFn,
-  OrchestrateSpawnedChild,
-} from "./orchestrate-tool.js";
+  JailedScriptRunnerDeps,
+  JailedScriptResultStore,
+  JailedScriptSpawnFn,
+  JailedScriptSpawnedChild,
+} from "./jailed-script-runner.js";
 
 export {
   createResultRefStore,

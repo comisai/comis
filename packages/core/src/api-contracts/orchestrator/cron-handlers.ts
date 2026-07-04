@@ -70,6 +70,12 @@ export const CronAddContract = defineContract({
     forward_to_main: z.boolean().optional(),
     session_strategy: z.string().optional(),
     max_history_turns: z.number().optional(),
+    // Optional pre-run wake-gate authoring: the flat chat-tool fields plus the
+    // nested web shape. Kept loose here (the closed js|ts language enum and its
+    // defaults are enforced downstream at the store).
+    wake_gate_script: z.string().optional(),
+    wake_gate_language: z.string().optional(),
+    wakeGate: z.record(z.string(), z.unknown()).optional(),
   }),
   response: z.object({
     jobId: z.string(),
@@ -139,6 +145,12 @@ export const CronUpdateContract = defineContract({
     schedule: z.record(z.string(), z.unknown()).optional(),
     message: z.string().optional(),
     deliveryTarget: z.nullable(z.record(z.string(), z.unknown())).optional(),
+    // Optional pre-run wake-gate authoring: the flat chat-tool fields plus the
+    // nested web shape. Kept loose here (the closed js|ts language enum and its
+    // defaults are enforced downstream at the store).
+    wake_gate_script: z.string().optional(),
+    wake_gate_language: z.string().optional(),
+    wakeGate: z.record(z.string(), z.unknown()).optional(),
   }),
   response: z.object({
     jobName: z.string(),
