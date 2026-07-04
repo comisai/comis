@@ -136,6 +136,50 @@ describe("applyEdits", () => {
     ).toThrow(/not find|Could not find/i);
   });
 
+  it("includes the CLOSEST ACTUAL text in a not-found error so the model can self-correct a one-char drift in one retry", () => {
+    // The live onboarding failure: the model's oldText dropped the trailing
+    // "?" from the Creature placeholder. The anchor line "- **Creature:**"
+    // matches, so the error surfaces the real next line ("…weirder?)_") — the
+    // model sees the exact byte it got wrong instead of blindly re-reading.
+    const file = [
+      "- **Name:** Dash",
+      "- **Creature:**",
+      "  _(AI? robot? familiar? ghost in the machine? something weirder?)_",
+      "- **Vibe:**",
+    ].join("\n");
+    let thrown: Error | undefined;
+    try {
+      applyEdits(
+        file,
+        [
+          { oldText: "- **Name:** Dash", newText: "- **Name:** Dash 🚀" },
+          // trailing "?" dropped → not found
+          { oldText: "- **Creature:**\n  _(AI? robot? familiar? ghost in the machine? something weirder)_", newText: "- **Creature:** AI" },
+        ],
+        "IDENTITY.md",
+      );
+    } catch (e) {
+      thrown = e as Error;
+    }
+    expect(thrown, "expected a not-found throw").toBeDefined();
+    expect(thrown!.message).toMatch(/edits\[1\]/);
+    // The actionable hint: the real file line with the "?" the model dropped.
+    expect(thrown!.message).toMatch(/[Cc]losest actual text/);
+    expect(thrown!.message).toContain("something weirder?)_");
+  });
+
+  it("omits the closest-text hint when no oldText line anchors in the file (no misleading guess)", () => {
+    let thrown: Error | undefined;
+    try {
+      applyEdits("alpha\nbeta\ngamma", [{ oldText: "totally unrelated content xyz", newText: "z" }], "test.ts");
+    } catch (e) {
+      thrown = e as Error;
+    }
+    expect(thrown).toBeDefined();
+    expect(thrown!.message).toMatch(/not find|Could not find/i);
+    expect(thrown!.message).not.toMatch(/[Cc]losest actual text/);
+  });
+
   it("throws error containing 'occurrences' when oldText matches multiple locations", () => {
     expect(() =>
       applyEdits(
