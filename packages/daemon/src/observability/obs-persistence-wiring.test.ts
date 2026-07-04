@@ -1781,6 +1781,32 @@ describe("auditEventToRow (the content-free audit row-builder)", () => {
     expect(row.kind).toBe(expectedKind);
   });
 
+  it("a routine secret READ (successful get / expected-absent probe) persists severity info — denials stay warning", () => {
+    // Observed live: every daemon boot probes ~10 optional provider keys
+    // (outcome not_found) and the canary reads its env seed on every inbound
+    // message — all stamped severity "warning" on a perfectly healthy install,
+    // inflating every severity-filtered audit sweep. A routine read resolution
+    // is the audit TRAIL, not an alert; only denials/errors (and mutations,
+    // pinned below) belong at warning.
+    const probeNotFound = auditEventToRow(
+      { timestamp: 1, agentId: "a", tenantId: "t", actionType: "ANTHROPIC_API_KEY", kind: "secret_access", classification: "read", outcome: "not_found" } as EventMap["audit:event"],
+      "t", "a", undefined,
+    );
+    expect(probeNotFound.severity).toBe("info");
+
+    const readOk = auditEventToRow(
+      { timestamp: 1, agentId: "a", tenantId: "t", actionType: "secrets.get", kind: "secret_access", classification: "read", outcome: "success" } as EventMap["audit:event"],
+      "t", "a", undefined,
+    );
+    expect(readOk.severity).toBe("info");
+
+    const denied = auditEventToRow(
+      { timestamp: 1, agentId: "a", tenantId: "t", actionType: "secrets.get", kind: "secret_access", classification: "read", outcome: "denied" } as EventMap["audit:event"],
+      "t", "a", undefined,
+    );
+    expect(denied.severity).toBe("warning");
+  });
+
   it("a secrets.delete persists as a security-signal kind (severity warning), not generic info", () => {
     // The emit sites now set kind explicitly; verify the row carries the
     // security-signal kind + the "warning" severity (not "audit"/"info"), so a
