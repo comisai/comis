@@ -175,6 +175,7 @@ export async function postConnectorActivity(
   const res = responded.value;
   if (!res.ok) {
     const classified = classifyMsTeamsError(res.status);
+    const retryAfter = parseRetryAfterSeconds(res);
     logger.warn(
       {
         channelType: "msteams" as const,
@@ -184,7 +185,9 @@ export async function postConnectorActivity(
       },
       "Connector send failed: connector returned an error status",
     );
-    return err(new Error(`connector send returned status ${res.status}`));
+    // Structural status (+ Retry-After on a 429) so the bounded-retry executor can
+    // classify the disposition and time the backoff off the error alone.
+    return err(connectorRestError(res.status, retryAfter));
   }
 
   const parsed = await fromPromise(res.json() as Promise<{ id?: string }>);
@@ -236,6 +239,88 @@ function parseRetryAfterSeconds(res: {
   if (typeof raw !== "string") return undefined;
   const seconds = Number.parseInt(raw, 10);
   return Number.isFinite(seconds) && seconds >= 0 ? seconds : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Bounded send retry (explicit-status only)
+// ---------------------------------------------------------------------------
+
+/** Retries the send makes on top of the first attempt before surfacing the failure. */
+const MAX_RETRIES = 4;
+/** Exponential-backoff base + ceiling for a retryable 5xx (a 429 uses its Retry-After). */
+const RETRY_BACKOFF_BASE_MS = 500;
+const RETRY_BACKOFF_CAP_MS = 8_000;
+
+/** Read the structural HTTP status a Connector REST error carries (absent on a transport fault). */
+function connectorErrorStatus(error: Error): number | undefined {
+  const status = (error as Partial<ConnectorRestError>).status;
+  return typeof status === "number" ? status : undefined;
+}
+
+/** Read the structural Retry-After seconds a 429 Connector error carries, when present. */
+function connectorErrorRetryAfter(error: Error): number | undefined {
+  const retryAfter = (error as Partial<ConnectorRestError>).retryAfter;
+  return typeof retryAfter === "number" ? retryAfter : undefined;
+}
+
+/** Extra dependency the retry executor needs beyond a single send: the backoff timer. */
+export interface PostConnectorActivityRetryDeps {
+  /** Injected timer for the bounded backoff; absent → a single attempt, no retry. */
+  timer?: TimerPort;
+}
+
+/**
+ * Send an activity with a bounded retry that engages ONLY on an EXPLICIT
+ * retryable non-2xx status (429 → Retry-After, 5xx → capped exponential backoff).
+ * A status-less transport fault is never retried: the fetch may already have
+ * landed, so a resend risks a duplicate activity — the send-safety axis is
+ * distinct from the classifier's transience axis, which marks a network fault
+ * retryable. The backoff always runs on the injected {@link TimerPort}, never a
+ * raw timer, and total retries are capped at {@link MAX_RETRIES}. This is the
+ * send entry point the adapter drives.
+ */
+export async function postConnectorActivityWithRetry(
+  params: PostConnectorActivityParams,
+  retryDeps: PostConnectorActivityRetryDeps = {},
+): Promise<Result<string, Error>> {
+  const { timer } = retryDeps;
+  for (let attempt = 0; ; attempt++) {
+    const result = await postConnectorActivity(params);
+    if (result.ok) return result;
+
+    const status = connectorErrorStatus(result.error);
+    // Send-safety gate: no explicit status ⇒ an ambiguous transport fault ⇒ never resend.
+    if (status === undefined) return result;
+
+    const classified = classifyMsTeamsError(status);
+    if (!classified.retryable || attempt >= MAX_RETRIES || timer === undefined) {
+      return result;
+    }
+
+    const retryAfter = connectorErrorRetryAfter(result.error);
+    const delayMs =
+      status === 429 && retryAfter !== undefined
+        ? retryAfter * 1000
+        : Math.min(RETRY_BACKOFF_BASE_MS * 2 ** attempt, RETRY_BACKOFF_CAP_MS);
+
+    params.logger.debug(
+      {
+        step: "channels-outbound",
+        channelType: "msteams" as const,
+        status,
+        attempt: attempt + 1,
+        durationMs: delayMs,
+        hint: classified.hint,
+        errorKind: classified.errorKind,
+      },
+      "Connector send retry scheduled after a retryable status",
+    );
+
+    await new Promise<void>((resolve) => {
+      const handle = timer.setTimeout(() => resolve(), delayMs);
+      handle.unref();
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
