@@ -435,6 +435,14 @@ export function assembleIncidentReport(
     // numbers from the terminal execution.aborted record (absent unless a per-root
     // meter tripped). Lets the Incident view + the spend verdict name the exact knob.
     ...(signals.perRootBudget !== undefined ? { perRootBudget: signals.perRootBudget } : {}),
+    // The terminal user-surface state (which pill label / delete the renderer
+    // painted, and whether a failed event reclassified the outcome) + the
+    // blocks an aborted delivery left unsent — together they answer "what did
+    // the user's chat actually show this turn" from the trajectory alone.
+    ...(signals.turnFinalized !== undefined ? { activityFinalize: signals.turnFinalized } : {}),
+    ...(signals.deliveryAborts !== undefined
+      ? { deliverySkipped: { events: signals.deliveryAborts.events, chunksNotSent: signals.deliveryAborts.chunksNotSent } }
+      : {}),
     // The turn span (>1 only) — flags the
     // whole-session toolStats as cumulative across N turns (append-only trajectory).
     ...(signals.turnCount !== undefined ? { turnCount: signals.turnCount } : {}),

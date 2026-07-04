@@ -8557,6 +8557,48 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           ],
           "additionalProperties": false
         },
+        "activityFinalize": {
+          "type": "object",
+          "properties": {
+            "strategy": {
+              "type": "string"
+            },
+            "outcome": {
+              "type": "string"
+            },
+            "errorKind": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "reclassified": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "strategy",
+            "outcome",
+            "reclassified"
+          ],
+          "additionalProperties": false
+        },
+        "deliverySkipped": {
+          "type": "object",
+          "properties": {
+            "events": {
+              "type": "number"
+            },
+            "chunksNotSent": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "events",
+            "chunksNotSent"
+          ],
+          "additionalProperties": false
+        },
         "turnCount": {
           "type": "number"
         },

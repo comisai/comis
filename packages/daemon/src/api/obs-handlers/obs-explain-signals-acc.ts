@@ -86,6 +86,11 @@ export interface Acc {
    *  tokens / ms in `spent`/`cap` (NOT dollars), and the right knob is
    *  `autonomy.budget.<limb>`, not `observability.spend.*`. Content-free. */
   perRootBudget?: { limb: string; spent: number; cap: number; unit: string };
+  /** The LAST `activity.turn_finalized` record — the terminal user-surface
+   *  state (strategy + effective outcome + reclassified flag). Content-free. */
+  turnFinalized?: { strategy: string; outcome: string; errorKind?: string; reason?: string; reclassified: boolean };
+  /** Σ over `delivery.aborted` records: events + blocks never sent. */
+  deliveryAborts?: { events: number; chunksNotSent: number };
   /** Σ of the session's `session.summary` records' costUsd (one record per
    *  execution) — the trajectory-derived session cost the assembler prefers
    *  over the last-write-wins sessionEnd rollup. Absent ⇒ no summary records. */

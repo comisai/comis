@@ -362,6 +362,33 @@ export function translatePayload(
         origin: payload.origin,
       };
 
+    case "delivery:aborted":
+      // Counts + the closed abort reason only. chunksDelivered: 0 with a
+      // non-zero totalChunks is the "reply never sent" signature explain's
+      // deliverySkipped section folds.
+      return {
+        channelType: payload.channelType,
+        channelId: payload.channelId,
+        reason: payload.reason,
+        chunksDelivered: payload.chunksDelivered,
+        totalChunks: payload.totalChunks,
+        durationMs: payload.durationMs,
+        origin: payload.origin,
+      };
+
+    case "activity:turn_finalized":
+      // The terminal user-surface state: closed outcome kind + closed
+      // ErrorKind + the fixed named-constant reason + the strategy name.
+      return {
+        channelType: payload.channelType,
+        strategy: payload.strategy,
+        outcome: payload.outcome,
+        ...(payload.errorKind !== undefined ? { errorKind: payload.errorKind } : {}),
+        ...(payload.reason !== undefined ? { reason: payload.reason } : {}),
+        reclassified: payload.reclassified,
+        failedEventCount: payload.failedEventCount,
+      };
+
     case "delivery:complete": {
       const totalChunks = (payload.totalChunks as number) ?? 0;
       const deliveredChunks = (payload.deliveredChunks as number) ?? 0;

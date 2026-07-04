@@ -299,6 +299,21 @@ export async function deliverExecutionResponse(
       hint: "Execution abort cut delivery short — the remaining blocks were never sent and the user did not receive them; check the execution:aborted reason for this turn",
       errorKind: "precondition" as const,
     }, "Block delivery skipped by aborted execution");
+    // The pacer's hard stop never reaches deliverToChannel, so none of the
+    // delivery events fire — the trajectory records NOTHING for a turn whose
+    // reply was never sent. Announce the skip on the existing
+    // delivery:aborted event (chunksDelivered counts what DID go out before
+    // the signal fired) so `explain` shows the undelivered turn.
+    deps.eventBus.emit("delivery:aborted", {
+      channelId: effectiveMsg.channelId,
+      channelType: effectiveMsg.channelType ?? "unknown",
+      reason: typeof deliverySignal.reason === "string" ? deliverySignal.reason : "aborted",
+      chunksDelivered: deliveredChunks,
+      totalChunks: coalescedGroups.length,
+      durationMs: Math.round(performance.now() - deliveryStartMs),
+      origin: "agent",
+      timestamp: systemNowMs(),
+    });
   }
   deps.logger.debug({
     traceId: deliveryCtx?.traceId,

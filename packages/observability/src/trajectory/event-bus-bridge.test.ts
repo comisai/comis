@@ -1142,6 +1142,28 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       durationMs: 10,
       timestamp: 0,
     },
+    "delivery:aborted": {
+      channelId: "c",
+      channelType: "telegram",
+      reason: "spend_exceeded",
+      chunksDelivered: 0,
+      totalChunks: 2,
+      durationMs: 5,
+      origin: "agent",
+      timestamp: 0,
+    },
+    "activity:turn_finalized": {
+      sessionKey: "t1:u1:c1",
+      agentId: "agent-1",
+      channelType: "telegram",
+      strategy: "EditPlace",
+      outcome: "failure",
+      errorKind: "resource",
+      reason: "stopped — spend limit reached",
+      reclassified: false,
+      failedEventCount: 1,
+      timestamp: 0,
+    },
     "context:pipeline": {
       tokensLoaded: 100,
       tokensEvicted: 10,
@@ -3725,7 +3747,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // This count guards TRAJECTORY_BRIDGE_MAPPING against a silent add or
     // removal: any change to the mapping must update this number in lockstep,
     // forcing a deliberate review of every newly-bridged or dropped event.
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(113);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(115);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

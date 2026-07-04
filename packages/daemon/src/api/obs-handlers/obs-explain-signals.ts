@@ -344,6 +344,34 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       });
       return;
     }
+    case "activity.turn_finalized": {
+      // The terminal user-surface state (LAST wins — the final turn's
+      // finalize explains what the chat shows now). Closed labels only.
+      const strategy = asString(data.strategy);
+      const outcome = asString(data.outcome);
+      if (strategy !== undefined && outcome !== undefined) {
+        acc.turnFinalized = {
+          strategy,
+          outcome,
+          ...(asString(data.errorKind) !== undefined ? { errorKind: asString(data.errorKind) } : {}),
+          ...(asString(data.reason) !== undefined ? { reason: asString(data.reason) } : {}),
+          reclassified: data.reclassified === true,
+        };
+      }
+      return;
+    }
+    case "delivery.aborted": {
+      // Blocks an abort left unsent — the "reply never reached the user"
+      // ledger (no delivery.dispatched fires for these).
+      const total = asNumber(data.totalChunks) ?? 0;
+      const delivered = asNumber(data.chunksDelivered) ?? 0;
+      const prev = acc.deliveryAborts ?? { events: 0, chunksNotSent: 0 };
+      acc.deliveryAborts = {
+        events: prev.events + 1,
+        chunksNotSent: prev.chunksNotSent + Math.max(0, total - delivered),
+      };
+      return;
+    }
     case "session.summary": {
       // One summary record per EXECUTION, each carrying that execution's own
       // costUsd — Σ them for the session cost. The sessionEnd rollup is
@@ -617,6 +645,8 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.perRootBudget !== undefined ? { perRootBudget: acc.perRootBudget } : {}),
     ...(acc.summaryCostUsd !== undefined ? { summaryCostUsd: acc.summaryCostUsd } : {}),
     ...(acc.modelTokens !== undefined ? { modelTokens: acc.modelTokens } : {}),
+    ...(acc.turnFinalized !== undefined ? { turnFinalized: acc.turnFinalized } : {}),
+    ...(acc.deliveryAborts !== undefined ? { deliveryAborts: acc.deliveryAborts } : {}),
     ...(acc.abortReason !== undefined ? { abortReason: acc.abortReason } : {}),
     // Surface the turn span ONLY when >1 — it flags the whole-session toolStats
     // as cumulative across N turns (the trajectory is append-only across severs), so a

@@ -443,6 +443,38 @@ export const IncidentReportSchema = z.object({
       unit: z.string(),
     })
     .optional(),
+  /** The terminal user-surface state: which outcome the activity renderer's
+   *  finalize painted (the kept "❌ {errorKind}" pill / deleted scaffold /
+   *  no-op — deterministic per strategy), and whether an observed failed
+   *  event RECLASSIFIED a success outcome to failure. Answers "what did the
+   *  user's chat show this turn" from the trajectory alone. From the LAST
+   *  `activity.turn_finalized` record; absent when none. */
+  activityFinalize: z
+    .object({
+      /** The renderer strategy that painted the surface (EditPlace / AppendOnly / …). */
+      strategy: z.string(),
+      /** The EFFECTIVE outcome kind dispatched to the renderer. */
+      outcome: z.string(),
+      /** The failure errorKind, when the outcome is a failure. */
+      errorKind: z.string().optional(),
+      /** The fixed one-line resource-abort reason, when present. */
+      reason: z.string().optional(),
+      /** True when a failed event flipped a non-failure outcome to failure. */
+      reclassified: z.boolean(),
+    })
+    .optional(),
+  /** Reply blocks an aborted execution left UNSENT — the pacer's hard stop
+   *  never reaches the delivery service, so no `delivery.dispatched` fires
+   *  and the user silently receives nothing. Σ over the session's
+   *  `delivery.aborted` records; absent when none. */
+  deliverySkipped: z
+    .object({
+      /** How many aborted-delivery events the session recorded. */
+      events: z.number(),
+      /** Total blocks that were never sent across those events. */
+      chunksNotSent: z.number(),
+    })
+    .optional(),
   /** Distinct turns (envelope traceId) the
    *  trajectory spans. Present only when >1 — it flags the whole-session toolStats as
    *  cumulative-across-N-turns (the trajectory JSONL is append-only across severs), so
@@ -722,6 +754,25 @@ export interface IncidentSignals {
    * not a per-root spend-abort.
    */
   perRootBudget?: { limb: string; spent: number; cap: number; unit: string };
+  /**
+   * The LAST `activity.turn_finalized` record — the terminal user-surface
+   * state the renderer painted (closed outcome kind + closed ErrorKind + a
+   * fixed named-constant reason + the strategy) and the reclassified flag.
+   * Absent ⇒ no finalize record in the trajectory.
+   */
+  turnFinalized?: {
+    strategy: string;
+    outcome: string;
+    errorKind?: string;
+    reason?: string;
+    reclassified: boolean;
+  };
+  /**
+   * Σ over the session's `delivery.aborted` records — aborted-delivery events
+   * and the blocks they left unsent (chunksNotSent = Σ(totalChunks −
+   * chunksDelivered)). Absent ⇒ no aborted deliveries.
+   */
+  deliveryAborts?: { events: number; chunksNotSent: number };
   /**
    * Σ of the session's `session.summary` records' `costUsd` — the
    * trajectory-derived session cost. Each summary record carries ONE

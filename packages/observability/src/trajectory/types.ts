@@ -191,6 +191,8 @@ export const TRAJECTORY_EVENT_TYPES = [
   // Delivery queue lifecycle.
   "delivery.queued",
   "delivery.dispatched",
+  "delivery.aborted",
+  "activity.turn_finalized",
 
   // Lifecycle envelopes. Direct-emit by the agent executor — NOT via the
   // EventBus bridge.
