@@ -126,6 +126,7 @@ const TOOL_SUMMARIES: Record<string, string> = {
   web_search: "Search the web (daemon-side, DNS-pinned).",
   web_fetch: "Fetch a URL's readable content (daemon-side, DNS-pinned).",
   mcp: "Call an allowlisted connected MCP server's tool: comis_tools.mcp.<server>.<tool>(args). The server/tool set is operator-configured.",
+  write: "Write a file into the jailed run workspace (path-confined, run-ephemeral).",
 };
 
 // ---------------------------------------------------------------------------
@@ -153,6 +154,8 @@ const CAPABILITY_GROUP_EXAMPLES: Record<string, string> = {
     "const hits = await comis_tools.web_search({ query: 'site reliability' }); const top3 = await hits.jq('.[0:3]'); const page = await comis_tools.web_fetch({ url: top3[0].url }); const text = await page.read(0, 200);",
   "orch:mcp":
     "const result = await comis_tools.mcp.myserver.mytool({ query: 'hello' });",
+  "orch:write":
+    "await comis_tools.write({ path: 'summary.md', content: '# Findings' });",
 };
 
 /**
@@ -169,6 +172,8 @@ const CAPABILITY_GROUP_EXAMPLES_PY: Record<string, string> = {
     'hits = comis_tools.web_search({"query": "site reliability"}); top3 = hits.jq(".[0:3]"); page = comis_tools.web_fetch({"url": top3[0]["url"]}); text = page.read(0, 200)',
   "orch:mcp":
     'result = comis_tools.mcp.myserver.mytool({"query": "hello"})',
+  "orch:write":
+    'comis_tools.write({"path": "summary.md", "content": "# Findings"})',
 };
 
 // ---------------------------------------------------------------------------

@@ -112,6 +112,12 @@ const DESCRIPTORS = [
     "capability": "orch:web",
     "summary": "Search the web (daemon-side, DNS-pinned).",
     "example": "const hits = await comis_tools.web_search({ query: 'site reliability' }); const top3 = await hits.jq('.[0:3]'); const page = await comis_tools.web_fetch({ url: top3[0].url }); const text = await page.read(0, 200);"
+  },
+  {
+    "name": "write",
+    "capability": "orch:write",
+    "summary": "Write a file into the jailed run workspace (path-confined, run-ephemeral).",
+    "example": "await comis_tools.write({ path: 'summary.md', content: '# Findings' });"
   }
 ];
 
@@ -185,6 +191,9 @@ export const comis_tools = {
   },
   async web_search(args) {
     return wrapResultRef(await invoke("web_search", args));
+  },
+  async write(args) {
+    return invoke("write", args);
   },
   async message_send(args) {
     return callCapSocket("message.send", args);

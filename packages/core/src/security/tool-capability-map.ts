@@ -46,11 +46,13 @@ import { SUB_AGENT_TOOL_DENYLIST } from "../domain/sub-agent-tool-denylist.js";
  * keeps the literal cap strings exact at the type level (the no-typo'd-cap
  * invariant) while typing the whole table.
  *
- * SCOPE: the read/web surface only — `orch:read` (RPC-backed reads +
- * in-process workspace builtins) and `orch:web` (daemon-side, DNS-pinned).
- * Admin/management tools (`mcp_manage`, `gateway`, `agents_create`, …) are
- * NEVER mapped: they stay unreachable via this curated surface, and the
- * deny-by-origin chokepoint covers the control plane.
+ * SCOPE: the read/web + inbound-MCP + workspace-write surface — `orch:read`
+ * (RPC-backed reads + in-process workspace builtins), `orch:web` (daemon-side,
+ * DNS-pinned), `orch:mcp` (the fixed-literal connected-MCP-server call), and
+ * `orch:write` (the workspace-confined, run-ephemeral write core). Admin/
+ * management tools (`mcp_manage`, `gateway`, `agents_create`, …) are NEVER
+ * mapped: they stay unreachable via this curated surface, and the deny-by-origin
+ * chokepoint covers the control plane.
  */
 export const TOOL_CAPABILITY_MAP = {
   // orch:read — RPC-backed reads (route → an existing registered handler)
@@ -88,6 +90,14 @@ export const TOOL_CAPABILITY_MAP = {
   // (validated at the executor allowlist), so ONE entry governs the whole
   // runtime-dynamic namespace — MCP tools are never enumerated into this map.
   mcp: "orch:mcp",
+  // orch:write — daemon-side workspace mutation, the FIRST mutating builtin. A
+  // MINIMAL, run-EPHEMERAL write confined to the run's workspace root via safePath
+  // (the same root the read cores read) — NOT a persistent store, NOT an
+  // arbitrary/absolute path (the durable, results/-confined checkpoint is a
+  // separate, later concern). Gated by requireCapability(orch:write) at the
+  // endpoint; the typed SDK SURFACE is default-off behind the write toggle
+  // (orch:write itself is a floor cap in standard+ — only the surface is new).
+  write: "orch:write",
 } as const satisfies Record<string, AgentCapability>;
 
 /** The tool-name keys of {@link TOOL_CAPABILITY_MAP} (mirrors `GatedMethodName`). */
@@ -125,6 +135,7 @@ export const TOOL_ROUTE_MAP = {
   web_search: { kind: "executor" },
   web_fetch: { kind: "executor" },
   mcp: { kind: "executor" },
+  write: { kind: "executor" }, // workspace-confined write core (mirrors the file builtins)
 } as const satisfies Record<ToolName, ToolRoute>;
 
 // ---------------------------------------------------------------------------

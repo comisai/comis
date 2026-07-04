@@ -125,6 +125,8 @@ export interface ToolInvokeExecutorDeps {
     sql: FileExecutor;
     /** JSONPath via DuckDB json_extract over a ResultRef (no eval lib). */
     jsonpath: FileExecutor;
+    /** Workspace-confined, run-ephemeral write (safePath; the first mutating builtin). */
+    write: FileExecutor;
   };
   /** The injected daemon-side web-search core. */
   webSearch: WebSearchExecutor;
@@ -385,9 +387,9 @@ export function createToolInvokeExecutor(
     return { text };
   }
 
-  /** A file builtin (read/grep/find/ls/jq/sql/jsonpath) run under the agent's workspace dir. */
+  /** A file builtin (read/grep/find/ls/jq/sql/jsonpath/write) run under the agent's workspace dir. */
   async function executeFileBuiltin(
-    tool: "read" | "grep" | "find" | "ls" | "jq" | "sql" | "jsonpath",
+    tool: "read" | "grep" | "find" | "ls" | "jq" | "sql" | "jsonpath" | "write",
     args: Record<string, unknown>,
     lease: ToolInvokeLease,
   ): Promise<unknown> {
@@ -457,6 +459,11 @@ export function createToolInvokeExecutor(
       case "jq":
       case "sql":
       case "jsonpath":
+      // `write` is the first MUTATING builtin — it rides the SAME workspace-scoped
+      // file-builtin path (the injected core is safePath-confined to the run's
+      // workspace root; the endpoint already required orch:write before dispatch).
+      // No ResultRef threshold: a write returns a small ack.
+      case "write":
         return executeFileBuiltin(tool, args, lease);
       default:
         // Defensive default-deny: the dispatch allow-list (cap-map) already

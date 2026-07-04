@@ -217,6 +217,12 @@ DESCRIPTORS = [
     "capability": "orch:web",
     "summary": "Search the web (daemon-side, DNS-pinned).",
     "example": "hits = comis_tools.web_search({\"query\": \"site reliability\"}); top3 = hits.jq(\".[0:3]\"); page = comis_tools.web_fetch({\"url\": top3[0][\"url\"]}); text = page.read(0, 200)"
+  },
+  {
+    "name": "write",
+    "capability": "orch:write",
+    "summary": "Write a file into the jailed run workspace (path-confined, run-ephemeral).",
+    "example": "comis_tools.write({\"path\": \"summary.md\", \"content\": \"# Findings\"})"
   }
 ]
 
@@ -272,6 +278,9 @@ def web_fetch(args=None):
 
 def web_search(args=None):
     return _wrap_result_ref(_invoke("web_search", args))
+
+def write(args=None):
+    return _invoke("write", args)
 
 def message_send(args=None):
     return _call_cap_socket("message.send", args or {})

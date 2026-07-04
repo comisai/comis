@@ -95,6 +95,8 @@ export interface ComisTools {
   web_fetch(args?: Record<string, unknown>): Promise<ResultRef>;
   /** Search the web (daemon-side, DNS-pinned). (capability: orch:web) Example: const hits = await comis_tools.web_search({ query: 'site reliability' }); const top3 = await hits.jq('.[0:3]'); const page = await comis_tools.web_fetch({ url: top3[0].url }); const text = await page.read(0, 200); */
   web_search(args?: Record<string, unknown>): Promise<ResultRef>;
+  /** Write a file into the jailed run workspace (path-confined, run-ephemeral). (capability: orch:write) Example: await comis_tools.write({ path: 'summary.md', content: '# Findings' }); */
+  write(args?: Record<string, unknown>): Promise<unknown>;
   /** Send a message to a channel (outward). (capability: orch:message) */
   message_send(args?: Record<string, unknown>): Promise<unknown>;
   /** Reply to a message in a channel (outward). (capability: orch:message) */
