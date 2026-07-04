@@ -1622,3 +1622,156 @@ describe("runReflection — procedure metadata: deterministic required_tools + r
     expect(PROCEDURE_REFLECT_PROMPT).not.toMatch(/"(requiredTools|paramsSchema)"\s*:/);
   });
 });
+
+// ===========================================================================
+// PROC-05 — the PROCEDURE path rides the SHIPPED anti-poison gate VERBATIM.
+//
+// The procedure reflection is a 4th kind:'skill' reflectKinds pass grouped by the
+// content-free descriptor KEY (populateProcedureMetadata:true) — see 231-04. This suite
+// is the REUSE PROOF: the procedure groupKey flows THROUGH the exact same
+// distinctSenderCardinality >= 2 gate + BOTH trust axes as skill/profile/topic. A GREEN
+// here PROVES the reuse (no new admission path — R3); a RED would mean the procedure path
+// BYPASSED the gate = a real bug to fix at the AUTHORITATIVE seam (distinctSenderCardinality
+// / the trust SELECT), never a parallel guard (CLAUDE.md Root-Cause).
+//
+// The demote half (a verified failure/correction stales the admitted procedure doc) rides
+// the name-keyed demote seam and is proven in setup-learning-skill-transitions.test.ts.
+// ===========================================================================
+describe("runReflection — anti-poison gate reuse through the PROCEDURE path (PROC-05)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  // The procedure groupKey: the content-free descriptor KEY (231-03/04) — a DEFINED custom
+  // groupKey, so `useSignatureMerge` is FALSE (the Jaccard merge is bypassed) and only
+  // byte-identical descriptor keys collide. Same shape the daemon wires
+  // (setup-channels-memory-crons-wire.ts: `groupKey: (t) => t.procedureDescriptor?.key ?? ""`).
+  const procGroupKey = (t: ReflectionSourceTrajectory): string => t.procedureDescriptor?.key ?? "";
+  function procTraj(over: Partial<ReflectionSourceTrajectory>, sequence: readonly string[]): ReflectionSourceTrajectory {
+    return { ...traj(over), procedureDescriptor: { key: sequence.join(">"), sequence } };
+  }
+  // web_search → jq → jq : ordered with a repeat (order + counts ride the groupKey + reflect
+  // input; required_tools collapses to the dedupe+sorted SET ["jq","web_search"]).
+  const SEQ = ["web_search", "jq", "jq"] as const;
+  const PROC = { kind: "skill", groupKey: procGroupKey, populateProcedureMetadata: true } as Partial<RunReflectionDeps>;
+
+  it("(a) TWO independent-sender procedure runs of one task shape ADMIT a kind:'skill' doc (distinctSenderCardinality 2 >= 2)", async () => {
+    const mocks: Partial<Mocks> = {};
+    // SAME descriptor key, DISTINCT (sessionId, sender) → the shipped ≥2 corroboration gate admits.
+    const deps = makeDeps(
+      [
+        procTraj({ trajectoryId: "a", sessionId: "s1", sender: "u1" }, SEQ),
+        procTraj({ trajectoryId: "b", sessionId: "s2", sender: "u2" }, SEQ),
+      ],
+      PROC,
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    // The procedure groupKey rode the SAME cardinality gate → 2 distinct (session,sender) → admit.
+    expect(res.value.maxTopicCardinality).toBe(2);
+    expect(res.value.admitted).toBe(1);
+    expect(res.value.admissionOutcome).toBe("admitted");
+    const admitArg = (mocks.admit as Mock).mock.calls[0][0];
+    // Admitted as kind:'skill' (surfaces through the shipped skill path) with the DETERMINISTIC
+    // dedupe+sorted required_tools bound from the AUDITED descriptor — never LLM-authored (INV-4).
+    expect(admitArg.kind).toBe("skill");
+    expect(admitArg.requiredTools).toEqual(["jq", "web_search"]);
+    expect(admitArg.paramsSchema).toBe("{}");
+    // The anti-domination caps are the SHIPPED ones (proof=1 regardless of cluster size; 0.7 seed).
+    expect(admitArg.proofCount).toBe(1);
+    expect(admitArg.confidence).toBe(0.7);
+  });
+
+  it("(b) ONE sender's N replays of a procedure do NOT admit (distinctSenderCardinality 1 < 2 — the anti-domination belt)", async () => {
+    const mocks: Partial<Mocks> = {};
+    // 5 procedure successes, SAME descriptor key, SAME (session,sender) — an attacker repeating
+    // one successful run N times must NOT corroborate a procedure doc.
+    const trajectories = Array.from({ length: 5 }, (_, i) =>
+      procTraj({ trajectoryId: `rep-${i}`, sessionId: "sess-A", sender: "u1" }, SEQ),
+    );
+    const deps = makeDeps(trajectories, PROC, mocks);
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.selected).toBe(5);
+    expect(res.value.maxTopicCardinality).toBe(1); // distinct (session,sender) = 1
+    expect(res.value.admitted).toBe(0);
+    expect(res.value.admissionOutcome).toBe("uncorroborated");
+    expect(mocks.admit).not.toHaveBeenCalled();
+  });
+
+  it("(d1) an UNTRUSTED-origin procedure success seeds NOTHING (axis 1 — the session-origin belt), even with 2 distinct senders", async () => {
+    const mocks: Partial<Mocks> = {};
+    // Two procedure successes that WOULD corroborate (2 distinct (session,sender), same key) BUT
+    // both are untrusted-origin → dropped at SELECT. The descriptor never bypasses the trust belt.
+    const deps = makeDeps(
+      [
+        procTraj({ trajectoryId: "a", sessionId: "s1", sender: "u1", trustedOrigin: false }, SEQ),
+        procTraj({ trajectoryId: "b", sessionId: "s2", sender: "u2", trustedOrigin: false }, SEQ),
+      ],
+      PROC,
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.selected).toBe(0);
+    expect(res.value.admitted).toBe(0);
+    expect(res.value.untrustedDrops).toBe(2);
+    expect(res.value.admissionOutcome).toBe("untrusted_origin");
+    expect(mocks.admit).not.toHaveBeenCalled();
+    expect(mocks.reflect).not.toHaveBeenCalled();
+  });
+
+  it("(d2) an EXTERNAL-trust procedure success riding a TRUSTED session seeds NOTHING (axis 2 — both belts compose)", async () => {
+    const mocks: Partial<Mocks> = {};
+    // BOTH ride a trustedOrigin:true session (axis 1 passes) BUT carry the per-memory external
+    // source-trust marker (axis 2 fails-closed). A planted external memory riding a trusted
+    // session seeds nothing — the descriptor does not weaken either belt.
+    const deps = makeDeps(
+      [
+        procTraj({ trajectoryId: "a", sessionId: "s1", sender: "u1", trustedOrigin: true, sourceTrustExternal: true }, SEQ),
+        procTraj({ trajectoryId: "b", sessionId: "s2", sender: "u2", trustedOrigin: true, sourceTrustExternal: true }, SEQ),
+      ],
+      PROC,
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.selected).toBe(0); // axis 2 excludes the external-trust sources at SELECT
+    expect(res.value.admitted).toBe(0);
+    expect(mocks.admit).not.toHaveBeenCalled();
+    expect(mocks.reflect).not.toHaveBeenCalled();
+  });
+});
+
+// ===========================================================================
+// PROC-05 seam-integrity (SCOPED, not a whole-file diff — plans 03/04 legitimately edit
+// OTHER regions of reflection-job.ts, so a `git diff --stat` is false by wave 5). Assert
+// the anti-poison seam TOKENS are byte-intact verbatim in the SAME-package source: the
+// cardinality fn + the <2 gate. The store's promote proof-bar / demote step seams live in
+// @comis/memory (a different package) and are grepped verbatim in the plan's shell
+// verification (`proof_count + 1 >= ?`, `WHEN state = 'active' THEN 'stale'`).
+// ===========================================================================
+describe("PROC-05 seam-integrity — the anti-poison tokens are byte-intact (scoped verbatim greps)", () => {
+  it("reflection-job.ts still contains distinctSenderCardinality + the `if (cardinality < 2) continue;` <2 gate verbatim", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const url = await import("node:url");
+    const here = path.dirname(url.fileURLToPath(import.meta.url));
+    const src = fs.readFileSync(path.resolve(here, "reflection-job.ts"), "utf-8");
+    // The cardinality metric (N replays of one (session,sender) = 1) — REUSE-verbatim (:296/:314).
+    expect(src).toContain("function distinctSenderCardinality(");
+    // The anti-domination <2 gate — the exact seam text, unchanged (:558/:601).
+    expect(src).toContain("if (cardinality < 2) continue;");
+  });
+});
