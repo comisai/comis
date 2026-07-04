@@ -360,7 +360,7 @@ export interface OrchestrationEvents {
    * the bridge attaches at execute() START; this fires at run COMPLETION.
    *
    * Content-free by construction (AGENTS §2.7): ids + closed enums + counts +
-   * token ESTIMATES only. `failureClass` is a CLOSED union — the free-text
+   * token ESTIMATES + a bounded cap-mapped tool-NAME sequence only. `failureClass` is a CLOSED union — the free-text
    * failure reason (stderr tail, thrown message) is mapped to a member BEFORE the
    * emit and stays ONLY on the bounded tool-error surface (the runner's
    * STDERR_TAIL_MAX_CHARS tail), NEVER on the bus. The bus never carries the
@@ -381,6 +381,13 @@ export interface OrchestrationEvents {
     rootRunId: string;
     /** The owning session — an attribution key. Absent for a heartbeat/cron run with no session. */
     sessionKey?: string;
+    /**
+     * The owning TURN's trace correlator — distinct from `runId`/`rootRunId`
+     * (the orchestrate-RUN ids). Carried so the learning ledger keys the
+     * descriptor row on the turn trajectory. Content-free: a UUID correlator, the
+     * same class as `rootRunId`/`sessionKey`. Absent outside a request scope.
+     */
+    traceId?: string;
     /** The script language (mirrors the orchestrate `language` param). */
     language: "ts" | "js" | "py";
     /** Wall-clock duration of the run (ms). */
@@ -405,6 +412,14 @@ export interface OrchestrationEvents {
     estSavedTokens?: number;
     /** estSavedTokens / wouldBeTokens in [0,1]; absent/0 when nothing was materialized. */
     savedRatio?: number;
+    /**
+     * The run's bounded, content-free declared tool-NAME ORDERED call-site
+     * sequence + counts from the pre-flight footprint — cap-mapped identifiers,
+     * repeats = per-method counts, source-order, capped. Absent on a run with no
+     * cap-mapped call sites. Like `capability:audited`'s `tool`, the NAMES are
+     * safe; NEVER args/values/bodies.
+     */
+    toolSequence?: readonly string[];
     timestamp: number;
   };
 }

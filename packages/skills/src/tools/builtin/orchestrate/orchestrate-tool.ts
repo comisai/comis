@@ -508,6 +508,12 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
       // assembly bearer authenticates instead).
       let childLeaseId: string | undefined;
 
+      // The owning TURN's trace correlator — snapshotted ONCE from the framework
+      // request context (distinct from runId/rootRunId, the orchestrate-run ids).
+      // Carried on run_summary so the learning ledger keys the descriptor row on
+      // the turn trajectory. Undefined outside a request scope (heartbeat/cron).
+      const turnTraceId = tryGetContext()?.traceId;
+
       // Emit the content-free run_summary (EXPLAIN-02) — success AND every failure
       // class route through here. Captures the run's materialized {count,bytes}
       // BEFORE the finally's cleanup wipes results/ (Pitfall 3), computes the
@@ -537,6 +543,7 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
             ...(childLeaseId !== undefined ? { leaseId: childLeaseId } : {}),
             rootRunId: deps.rootRunId ?? runId,
             ...(deps.sessionKey !== undefined ? { sessionKey: deps.sessionKey } : {}),
+            ...(turnTraceId !== undefined ? { traceId: turnTraceId } : {}),
             language: params.language,
             durationMs: now() - startedMs,
             exitCode: outcome.exitCode,
@@ -553,6 +560,10 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
             ...(agg.count > 0
               ? { estSavedTokens: savings.estSavedTokens, savedRatio: savings.savedRatio }
               : {}),
+            // The content-free ordered call-site sequence + counts from the pre-flight
+            // footprint (already computed above) — names only, never args/bodies.
+            // Omitted (like the sibling optional spreads) when no cap-mapped call site.
+            ...(footprint.sequence.length > 0 ? { toolSequence: footprint.sequence } : {}),
             timestamp: now(),
           });
         } catch (emitErr) {

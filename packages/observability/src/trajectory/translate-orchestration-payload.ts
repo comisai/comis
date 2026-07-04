@@ -130,12 +130,15 @@ export function translateOrchestrationPayload(
 
     case "orchestrate:run_summary":
       // The per-run summary — ids + the closed failureClass enum + counts +
-      // token estimates ONLY. rootRunId is the self-attribution key (forwarded
+      // token estimates + the bounded content-free toolSequence (the pre-flight
+      // ordered call-site sequence + counts — order + repeats preserved VERBATIM,
+      // NOT sorted/deduped) ONLY. rootRunId is the self-attribution key (forwarded
       // into data, the capability:audited precedent); agentId/sessionKey/
       // timestamp are envelope-only and stripped (the daemon-shared bus fans out
       // to every session bridge — data self-attributes via rootRunId, never the
-      // envelope sessionKey). The stderr tail / script body / tool params are
-      // NEVER on the payload and are not forwarded here.
+      // envelope sessionKey). The turn traceId is deliberately NOT forwarded (the
+      // trajectory record is already traceId-keyed). The stderr tail / script body
+      // / tool params are NEVER on the payload and are not forwarded here.
       return {
         runId: payload.runId,
         leaseId: payload.leaseId,
@@ -150,6 +153,7 @@ export function translateOrchestrationPayload(
         resultRefBytes: payload.resultRefBytes,
         estSavedTokens: payload.estSavedTokens,
         savedRatio: payload.savedRatio,
+        toolSequence: payload.toolSequence,
       };
 
     default: {

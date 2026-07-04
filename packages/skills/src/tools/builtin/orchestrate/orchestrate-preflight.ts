@@ -27,12 +27,18 @@
  */
 import { TOOL_CAPABILITY_MAP, type AgentCapability } from "@comis/core";
 
-/** The declared capability footprint of a script: the caps, the known methods, the unknowns. */
+/** The declared capability footprint of a script: the caps, the known methods, the ordered call-site sequence, the unknowns. */
 export interface CapabilityFootprint {
   /** The distinct {@link AgentCapability} values the script's call sites require. */
   readonly caps: ReadonlySet<AgentCapability>;
   /** The sorted, deduped cap-mapped method names the script calls. */
   readonly methods: readonly string[];
+  /**
+   * The source-ordered call-site sequence of cap-mapped methods — repeats
+   * PRESERVED (= per-method call counts), bounded by {@link SEQUENCE_CAP}.
+   * Content-free: method NAMES only (never args/values/bodies).
+   */
+  readonly sequence: readonly string[];
   /** The sorted, deduped `comis_tools.<x>(` methods NOT in the cap-map (advisory). */
   readonly unknownMethods: readonly string[];
 }
@@ -45,15 +51,25 @@ export interface CapabilityFootprint {
 const CALL_SITE_RE = /\bcomis_tools\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
 
 /**
+ * Upper bound on {@link CapabilityFootprint.sequence} — it keeps the first N
+ * cap-mapped call sites in source order. Bounds the content-free descriptor so a
+ * pathological script cannot bloat it (a security bound, not a correctness one).
+ */
+const SEQUENCE_CAP = 64;
+
+/**
  * Statically extract the capability footprint of a model-authored script by
  * scanning its `comis_tools.<method>(` call sites and mapping each method to its
  * required capability via `TOOL_CAPABILITY_MAP`. Reads the script as inert text
  * (no eval/fs/net). Total: an unknown method is DATA in `unknownMethods`, never
- * an error; a script with no call sites yields three empty results.
+ * an error; a script with no call sites yields empty results. Also yields the
+ * source-ordered `sequence` (cap-mapped call sites, repeats preserved = per-method
+ * counts, capped at {@link SEQUENCE_CAP}) beside the sorted/deduped `methods` SET.
  */
 export function extractCapabilityFootprint(script: string): CapabilityFootprint {
   const caps = new Set<AgentCapability>();
   const methods = new Set<string>();
+  const sequence: string[] = [];
   const unknownMethods = new Set<string>();
   for (const match of script.matchAll(CALL_SITE_RE)) {
     const method = match[1];
@@ -61,6 +77,9 @@ export function extractCapabilityFootprint(script: string): CapabilityFootprint 
     if (cap) {
       caps.add(cap);
       methods.add(method);
+      // Ordered call-site sequence — repeats preserved (= per-method counts),
+      // bounded so a pathological script cannot bloat the descriptor.
+      if (sequence.length < SEQUENCE_CAP) sequence.push(method);
     } else {
       unknownMethods.add(method);
     }
@@ -68,6 +87,7 @@ export function extractCapabilityFootprint(script: string): CapabilityFootprint 
   return {
     caps,
     methods: [...methods].sort(),
+    sequence,
     unknownMethods: [...unknownMethods].sort(),
   };
 }
