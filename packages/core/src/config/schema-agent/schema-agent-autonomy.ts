@@ -255,6 +255,10 @@ const SURFACE_TOGGLE_TO_CAP = {
   analyze: "orch:analyze",
   write: "orch:write",
   browse: "orch:browse",
+  // orch:mcp — connected MCP-server tools in the jailed SDK (default off, no
+  // floor). The grant signal is the nested `autonomy.mcp.enabled` gate; the
+  // `autonomy.mcp.allow` map is the second default-deny layer (permitsMcpTool).
+  mcp: "orch:mcp",
 } as const satisfies Record<string, AgentCapability>;
 
 // ── The resolved profile table ──────────────────────────────────────────────
@@ -441,6 +445,10 @@ export function resolveAutonomy(cfg?: AutonomyConfig): ResolvedAutonomy {
     [cfg?.analyze, SURFACE_TOGGLE_TO_CAP.analyze],
     [cfg?.write, SURFACE_TOGGLE_TO_CAP.write],
     [cfg?.browse, SURFACE_TOGGLE_TO_CAP.browse],
+    // The nested `autonomy.mcp` leaf's `enabled` field is the mcp surface gate
+    // (default-off). The :433 loop unions orch:mcp into capSet when it is `true`
+    // — grantable ONLY here, never a floor member (NG2 default-deny).
+    [cfg?.mcp?.enabled, SURFACE_TOGGLE_TO_CAP.mcp],
   ];
   for (const [enabled, cap] of surfaceToggles) {
     if (enabled === true) capSet.add(cap);
