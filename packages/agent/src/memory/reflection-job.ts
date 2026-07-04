@@ -190,7 +190,7 @@ export interface RunReflectionDeps {
    * PROCEDURE run only — gates BOTH the descriptor-into-input thread (the ordered
    * tool-sequence section appended to the reflect input) AND the DETERMINISTIC
    * `required_tools`/`params_schema` bind at admit. Set ONLY on the 4th (procedure)
-   * reflectKinds entry. Pitfall 5: gate on THIS flag, NOT on "descriptor present" —
+   * reflectKinds entry. Gate on THIS flag, NOT on "descriptor present" —
    * the user-intent skill run also reads descriptor-carrying sources, and mis-binding
    * its `required_tools` would mis-classify it as a learnable procedure.
    */
@@ -679,7 +679,7 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
 
   // 4b. ONE cheap LLM call per topic (the adapter wraps the UNTRUSTED transcript).
   //     The procedure run augments the tool-STRIPPED transcript with the ordered
-  //     tool-sequence section (gated on populateProcedureMetadata; Pitfall 2).
+  //     tool-sequence section (gated on populateProcedureMetadata).
   const reflectRes = await fromPromise(
     reflectionAdapter.reflect({
       trajectoryText: groupText(members, deps.populateProcedureMetadata ?? false),
@@ -807,8 +807,8 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
         confidence: REFLECT_ADMISSION_CONFIDENCE,
         sourceTrajIds,
         createdAt: clock.now(),
-        // PROCEDURE run only (gated on populateProcedureMetadata, NOT "descriptor present" —
-        // Pitfall 5): bind the DETERMINISTIC advisory metadata derived from the AUDITED
+        // PROCEDURE run only (gated on populateProcedureMetadata, NOT "descriptor present"):
+        // bind the DETERMINISTIC advisory metadata derived from the AUDITED
         // descriptor — required_tools = the content-free footprint SET, params_schema = a
         // fixed content-free "{}" (advisory docs have no replay params). NEVER LLM-authored
         // (INV-4). The user-intent skill run omits both → the store binds NULL.
