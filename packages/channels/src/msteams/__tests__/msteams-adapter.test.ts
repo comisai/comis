@@ -948,6 +948,255 @@ describe("createMsTeamsAdapter — outbound sendMessage via the Connector REST",
   });
 });
 
+describe("createMsTeamsAdapter — outbound sendAttachment (base64-inline image) via the Connector REST", () => {
+  /** A disk-free byte source: readFileImpl returns the given bytes as a Buffer. */
+  const readingBytes = (bytes = "PNGBYTES") => vi.fn(async () => Buffer.from(bytes));
+
+  it("posts a base64 data-URI image top-level in a DM with no replyToId", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl, readFileImpl: readingBytes() });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.sendAttachment!(
+      "19:dm-convo",
+      { type: "image", url: "/tmp/x.png", mimeType: "image/png", fileName: "x.png", caption: "hi" },
+      { extra: { serviceUrl: SERVICE_URL, chatType: "dm" } },
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toBe("sent-1");
+
+    const sendCall = findSendCall(spy);
+    expect(sendCall).toBeDefined();
+    const [url, init] = sendCall!;
+    expect(url).toBe(
+      `${SERVICE_URL}v3/conversations/${encodeURIComponent("19:dm-convo")}/activities`,
+    );
+    expect(init.method).toBe("POST");
+    const headers = init.headers as Record<string, string>;
+    expect(headers["content-type"]).toBe("application/json");
+    const body = JSON.parse(String(init.body)) as {
+      type: string;
+      text?: string;
+      replyToId?: string;
+      attachments: Array<{ contentType: string; contentUrl: string; name?: string }>;
+    };
+    expect(body.type).toBe("message");
+    expect(body.text).toBe("hi");
+    // A DM is always sent top-level: no replyToId even though inbound stamps one.
+    expect(body.replyToId).toBeUndefined();
+    expect(body.attachments.length).toBe(1);
+    expect(body.attachments[0]!.contentType).toBe("image/png");
+    expect(body.attachments[0]!.contentUrl).toBe(
+      `data:image/png;base64,${Buffer.from("PNGBYTES").toString("base64")}`,
+    );
+    expect(body.attachments[0]!.name).toBe("x.png");
+  });
+
+  it("threads a channel attachment reply by including replyToId in the activity body", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl, readFileImpl: readingBytes() });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.sendAttachment!(
+      "19:channel-convo@thread.tacv2",
+      { type: "image", url: "/tmp/x.png", mimeType: "image/png" },
+      { replyTo: "parent-activity-id", extra: { serviceUrl: SERVICE_URL, chatType: "channel" } },
+    );
+
+    expect(result.ok).toBe(true);
+    const body = JSON.parse(String(findSendCall(spy)![1].body)) as { replyToId?: string };
+    expect(body.replyToId).toBe("parent-activity-id");
+  });
+
+  it("keeps a DM attachment top-level even when a replyTo is supplied (chatType dm)", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl, readFileImpl: readingBytes() });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.sendAttachment!(
+      "19:dm-convo",
+      { type: "image", url: "/tmp/x.png", mimeType: "image/png" },
+      { replyTo: "parent-activity-id", extra: { serviceUrl: SERVICE_URL, chatType: "dm" } },
+    );
+
+    expect(result.ok).toBe(true);
+    const body = JSON.parse(String(findSendCall(spy)![1].body)) as { replyToId?: string };
+    expect(body.replyToId).toBeUndefined();
+  });
+
+  it("defaults the attachment contentType to image/png and omits text/name when unspecified", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl, readFileImpl: readingBytes() });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.sendAttachment!(
+      "19:dm-convo",
+      { type: "image", url: "/tmp/x" },
+      { extra: { serviceUrl: SERVICE_URL, chatType: "dm" } },
+    );
+
+    expect(result.ok).toBe(true);
+    const body = JSON.parse(String(findSendCall(spy)![1].body)) as {
+      text?: string;
+      attachments: Array<{ contentType: string; contentUrl: string; name?: string }>;
+    };
+    expect(body.attachments[0]!.contentType).toBe("image/png");
+    expect(body.attachments[0]!.contentUrl.startsWith("data:image/png;base64,")).toBe(true);
+    // No caption → no text key; no fileName → no name key.
+    expect(body.text).toBeUndefined();
+    expect(body.attachments[0]!.name).toBeUndefined();
+  });
+
+  it("rejects a path-traversal conversation id on the attachment path before any Connector fetch", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps, loggerSpy } = makeAdapterDeps({ fetchImpl, readFileImpl: readingBytes() });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.sendAttachment!(
+      "../evil",
+      { type: "image", url: "/tmp/x.png", mimeType: "image/png" },
+      { extra: { serviceUrl: SERVICE_URL } },
+    );
+
+    expect(result.ok).toBe(false);
+    // Neither the token mint nor the send POST may fire for an unsafe id.
+    expect(spy).not.toHaveBeenCalled();
+    const preconditionWarn = loggerSpy.warn.mock.calls
+      .map((c) => c[0])
+      .find(
+        (p) =>
+          p !== null &&
+          typeof p === "object" &&
+          (p as { errorKind?: string }).errorKind === "precondition",
+      );
+    expect(preconditionWarn).toBeDefined();
+  });
+
+  it("rejects a non-Bot-Framework serviceUrl on the attachment path, never minting the token", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl, readFileImpl: readingBytes() });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.sendAttachment!(
+      "19:dm-convo",
+      { type: "image", url: "/tmp/x.png", mimeType: "image/png" },
+      { extra: { serviceUrl: "https://attacker.example/" } },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("returns a classified platform err and warns when the Connector rejects the attachment non-2xx", async () => {
+    const { fetchImpl } = makeConnectorFetch({ sendStatus: 500 });
+    const { deps, loggerSpy } = makeAdapterDeps({ fetchImpl, readFileImpl: readingBytes() });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.sendAttachment!(
+      "19:dm-convo",
+      { type: "image", url: "/tmp/x.png", mimeType: "image/png" },
+      { extra: { serviceUrl: SERVICE_URL, chatType: "dm" } },
+    );
+
+    expect(result.ok).toBe(false);
+    const platformWarn = loggerSpy.warn.mock.calls
+      .map((c) => c[0])
+      .find(
+        (p) =>
+          p !== null &&
+          typeof p === "object" &&
+          (p as { errorKind?: string }).errorKind === "platform",
+      );
+    expect(platformWarn).toBeDefined();
+    expect(typeof (platformWarn as { hint?: unknown }).hint).toBe("string");
+  });
+
+  it("returns a resource err and warns when the attachment bytes cannot be read, never posting", async () => {
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const failingRead = vi.fn(async () => {
+      throw new Error("ENOENT: temp file missing");
+    });
+    const { deps, loggerSpy } = makeAdapterDeps({ fetchImpl, readFileImpl: failingRead });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.sendAttachment!(
+      "19:dm-convo",
+      { type: "image", url: "/tmp/missing.png", mimeType: "image/png" },
+      { extra: { serviceUrl: SERVICE_URL, chatType: "dm" } },
+    );
+
+    expect(result.ok).toBe(false);
+    // The connector POST must never fire when the bytes are unreadable.
+    expect(findSendCall(spy)).toBeUndefined();
+    const resourceWarn = loggerSpy.warn.mock.calls
+      .map((c) => c[0])
+      .find(
+        (p) =>
+          p !== null &&
+          typeof p === "object" &&
+          (p as { errorKind?: string }).errorKind === "resource",
+      );
+    expect(resourceWarn).toBeDefined();
+  });
+
+  it("never logs the Connector bearer token or the base64 data URI on the attachment path", async () => {
+    const { fetchImpl, spy, token } = makeConnectorFetch();
+    const secretBytes = "SECRET-PIXELS-DO-NOT-LOG";
+    const { deps, loggerSpy } = makeAdapterDeps({
+      fetchImpl,
+      readFileImpl: readingBytes(secretBytes),
+    });
+    const adapter = createMsTeamsAdapter(deps);
+
+    await adapter.sendAttachment!(
+      "19:dm-convo",
+      { type: "image", url: "/tmp/x.png", mimeType: "image/png", caption: "look" },
+      { extra: { serviceUrl: SERVICE_URL, chatType: "dm" } },
+    );
+
+    // Sanity: the base64 payload really did ride the POST body.
+    const b64 = Buffer.from(secretBytes).toString("base64");
+    expect(String(findSendCall(spy)![1].body)).toContain(b64);
+    // …but neither the token nor the base64 payload may appear in any log field (T-5).
+    expect(loggerSpy.serialized()).not.toContain(token);
+    expect(loggerSpy.serialized()).not.toContain(b64);
+  });
+
+  it("logs an outbound INFO completion carrying durationMs on a successful attachment send", async () => {
+    const { fetchImpl } = makeConnectorFetch();
+    const { deps, loggerSpy } = makeAdapterDeps({ fetchImpl, readFileImpl: readingBytes() });
+    const adapter = createMsTeamsAdapter(deps);
+
+    await adapter.sendAttachment!(
+      "19:dm-convo",
+      { type: "image", url: "/tmp/x.png", mimeType: "image/png" },
+      { extra: { serviceUrl: SERVICE_URL, chatType: "dm" } },
+    );
+
+    const outboundInfo = loggerSpy.info.mock.calls
+      .map((c) => c[0])
+      .find(
+        (p) =>
+          p !== null &&
+          typeof p === "object" &&
+          (p as { step?: string }).step === "channels-outbound",
+      );
+    expect(outboundInfo).toBeDefined();
+    expect(typeof (outboundInfo as { durationMs?: unknown }).durationMs).toBe("number");
+  });
+
+  it("delegates getConnectorToken to the cached Connector token provider", async () => {
+    const { fetchImpl, token } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl });
+    const adapter = createMsTeamsAdapter(deps);
+
+    const result = await adapter.getConnectorToken();
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toBe(token);
+  });
+});
+
 /** A shape-valid Bot Framework bot id (`28:<guid>`) — mentionable. */
 const MENTIONABLE_BOT_ID = "28:6f2c8e1a-1b2c-3d4e-5f6a-7b8c9d0e1f2a";
 
