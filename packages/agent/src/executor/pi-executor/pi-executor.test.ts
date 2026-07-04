@@ -6475,6 +6475,27 @@ describe("populated runtimeSnapshot.skills", () => {
     ]);
   });
 
+  it("stamps deps.appVersion into runtimeSnapshot.harness.version (the trajectory build stamp)", async () => {
+    // trace.metadata stamped version:"unknown", so triage could not confirm
+    // which build produced an artifact (observed live — HEAD had diverged from
+    // the deployed release). Thread the daemon version through.
+    const deps = createMockDeps({ appVersion: "9.9.9" });
+    const executor = createPiExecutor(testConfig, deps);
+    await executor.execute(testMessage, testSessionKey);
+
+    const bridgeCall = (createPiEventBridge as Mock).mock.calls[0]![0]!;
+    expect(bridgeCall.runtimeSnapshot.harness.version).toBe("9.9.9");
+  });
+
+  it("falls back to \"unknown\" harness.version when appVersion is absent (existing callers unchanged)", async () => {
+    const deps = createMockDeps();
+    const executor = createPiExecutor(testConfig, deps);
+    await executor.execute(testMessage, testSessionKey);
+
+    const bridgeCall = (createPiEventBridge as Mock).mock.calls[0]![0]!;
+    expect(bridgeCall.runtimeSnapshot.harness.version).toBe("unknown");
+  });
+
   it("skillRegistry_without_getSnapshot_keeps_skills_empty", async () => {
     // Arrange: legacy two-method mock (no getSnapshot) — back-compat preserved.
     const legacySkillRegistry = {
