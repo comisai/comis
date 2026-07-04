@@ -9,6 +9,15 @@ const INGRESS_STEP = "msteams-ingress";
 const BEARER_PREFIX = "Bearer ";
 
 /**
+ * The closed rejection class passed to the content-free auth-reject hook.
+ * `missing_bearer` — the request carried no bearer token (the cheap pre-gate);
+ * `invalid_token` — a bearer token was present but failed signed-token
+ * validation (forged / unsigned / expired / wrong-audience). The class is the
+ * ONLY thing the hook ever receives — never the token, header, or body.
+ */
+export type MsTeamsIngressAuthRejectReason = "missing_bearer" | "invalid_token";
+
+/**
  * Dependencies for the Microsoft Teams inbound ingress.
  *
  * The factory is framework-agnostic over these injected closures: it holds
@@ -33,6 +42,16 @@ export interface MsTeamsIngressDeps {
    * the adapter boundary.
    */
   readonly handleWebhookEvents: (activities: unknown[]) => void;
+  /**
+   * Optional content-free hook fired on every auth-gate rejection (before any
+   * body parse or adapter dispatch), carrying ONLY the closed rejection class.
+   * The composition root binds it to a daemon eventBus emit so an ingress
+   * forged/expired/wrong-audience/missing-token FLOOD is COUNTABLE by the fleet
+   * lens instead of living only in a raw WARN. A no-op when absent — the gate
+   * and its opaque 401 are unchanged either way; the hook NEVER receives the
+   * token, the Authorization header, or the request body.
+   */
+  readonly onAuthRejected?: (reason: MsTeamsIngressAuthRejectReason) => void;
   readonly logger: ComisLogger;
 }
 
@@ -64,7 +83,8 @@ export interface MsTeamsIngressDeps {
  * internal error text is ever surfaced to the caller.
  */
 export function createMsTeamsIngress(deps: MsTeamsIngressDeps): Hono {
-  const { validateActivityJwt, handleWebhookEvents, logger } = deps;
+  const { validateActivityJwt, handleWebhookEvents, onAuthRejected, logger } =
+    deps;
   const app = new Hono();
 
   app.post("/api/messages", async (c) => {
@@ -82,6 +102,8 @@ export function createMsTeamsIngress(deps: MsTeamsIngressDeps): Hono {
         },
         "Rejected inbound activity: missing bearer token",
       );
+      // Fleet-visible, content-free: the class only — never the (absent) token.
+      onAuthRejected?.("missing_bearer");
       return c.json({ error: "unauthorized" }, 401);
     }
 
@@ -98,6 +120,8 @@ export function createMsTeamsIngress(deps: MsTeamsIngressDeps): Hono {
         },
         "Rejected inbound activity: token validation failed",
       );
+      // Fleet-visible, content-free: the class only — never the forged token.
+      onAuthRejected?.("invalid_token");
       return c.json({ error: "unauthorized" }, 401);
     }
 
