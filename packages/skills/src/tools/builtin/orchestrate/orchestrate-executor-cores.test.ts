@@ -187,7 +187,7 @@ describe("createOrchestrateExecutorCores", () => {
     }
   });
 
-  it("write is RUN-EPHEMERAL: a written file is GONE after the run's cleanupRun (OQ-Q1)", async () => {
+  it("write is RUN-EPHEMERAL: a written file is GONE after the run's cleanupRun", async () => {
     const ws = makeWorkspace();
     try {
       const cores = createOrchestrateExecutorCores({ logger: makeLogger() });
@@ -232,7 +232,7 @@ describe("createOrchestrateExecutorCores", () => {
     }
   });
 
-  it("write PRESERVES the distinct failure kind instead of collapsing to 'not writable' (LO-03)", async () => {
+  it("write PRESERVES the distinct failure kind instead of collapsing to 'not writable'", async () => {
     const ws = makeWorkspace();
     try {
       const cores = createOrchestrateExecutorCores({ logger: makeLogger() });

@@ -640,7 +640,7 @@ export function createOrchestrateExecutorCores(
     // Resolve the RUN-SCOPED, EPHEMERAL write root (<workspace>/results/writes) —
     // NOT the persistent workspace root. results/ is reaped wholesale by
     // ResultRefStore.cleanupRun on run end, so a write here is genuinely
-    // run-ephemeral (OQ-Q1) and isolated from the workspace-root discovery/config
+    // run-ephemeral and isolated from the workspace-root discovery/config
     // subtrees (skills/, .learned-skills/, memory, config).
     let writeRoot: string;
     try {

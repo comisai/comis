@@ -361,7 +361,7 @@ export default comis_tools;
  * with the fixed wire literal `"mcp"` — the `{server,tool}` ride inside `args`.
  * Composes only the shim's exported `callCapSocket` (no import beyond the header).
  *
- * NOT thenable (LO-01): the `get` trap on BOTH levels returns `undefined` for
+ * NOT thenable: the `get` trap on BOTH levels returns `undefined` for
  * symbol keys and the promise-protocol / inspection names (`then`/`catch`/
  * `finally`/`toJSON`), so a common model mistake — `await comis_tools.mcp.server`
  * (awaiting a partial namespace instead of calling a tool) — is a clean no-op
@@ -624,7 +624,7 @@ class _McpNamespace:
         # Dunder / special-attribute probes (introspection, copy, pickle, the
         # format/await protocols) must NOT build a fresh namespace or a bound
         # call -- raise the normal AttributeError so a partial-namespace probe is
-        # a clean miss (mirrors the JS proxy dropping then/catch/finally, LO-01).
+        # a clean miss (mirrors the JS proxy dropping then/catch/finally).
         if name.startswith("__") and name.endswith("__"):
             raise AttributeError(name)
         server = self.__dict__.get("_server")

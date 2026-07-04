@@ -127,13 +127,13 @@ describe("orchestrate comis_tools SDK drift gate", () => {
       'import { invoke, wrapResultRef, callCapSocket } from "./orchestrate-sdk-runtime.js"',
     );
     // The `mcp` binding is a runtime Proxy, NOT a flat `async mcp(args)` invoke
-    // method. An IIFE scopes the shared thenable-guard predicate around it (LO-01).
+    // method. An IIFE scopes the shared thenable-guard predicate around it.
     expect(js, "mcp must be an IIFE-scoped runtime Proxy binding").toMatch(/mcp:\s*\(\(\) =>/);
     expect(js, "mcp must construct a runtime Proxy").toContain("new Proxy");
     expect(js, "mcp must NOT be a flat invoke method").not.toMatch(/async mcp\s*\(/);
-    // LO-01: the proxy is NOT thenable — the get trap drops the promise-protocol
-    // names + symbol keys on both levels, so `await comis_tools.mcp.server` is a
-    // clean no-op, never a spurious tool:"then" cap dispatch.
+    // The proxy is NOT thenable — the get trap drops the promise-protocol names +
+    // symbol keys on both levels, so `await comis_tools.mcp.server` is a clean
+    // no-op, never a spurious tool:"then" cap dispatch.
     expect(js, "the mcp proxy must guard thenable/inspection keys").toContain("isNonToolKey");
     expect(js).toMatch(/k === "then"/);
     expect(js).toMatch(/typeof k === "symbol"/);
@@ -147,7 +147,7 @@ describe("orchestrate comis_tools SDK drift gate", () => {
     expect(py, "the proxy resolves attribute access via __getattr__").toContain("def __getattr__");
     expect(py, "mcp is bound to the namespace at module level").toMatch(/^mcp = _McpNamespace\(\)$/m);
     expect(py, "mcp must NOT be a flat def").not.toMatch(/^def mcp\(/m);
-    // LO-01: __getattr__ short-circuits dunder names (the Python analogue of the JS
+    // __getattr__ short-circuits dunder names (the Python analogue of the JS
     // thenable guard) so a partial-namespace introspection probe is a clean miss.
     expect(py, "the py __getattr__ must short-circuit dunder names").toContain('name.startswith("__")');
     expect(py).toContain("raise AttributeError(name)");

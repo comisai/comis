@@ -442,7 +442,7 @@ describe("createToolInvokeExecutor — case \"mcp\" (daemon-side MCP dispatch)",
     expect(result.text).not.toBe("small mcp payload"); // NOT the raw payload
   });
 
-  it("falls back to a 'no text content' marker when the MCP result carries ONLY non-text content (LO-02)", async () => {
+  it("falls back to a 'no text content' marker when the MCP result carries ONLY non-text content", async () => {
     // An image/data/embedded-resource-only result: the text-only extraction yields
     // "" — without a fallback the jailed script gets an opaque wrapper around empty
     // with NO signal that content was present but dropped. Mirror the in-process
