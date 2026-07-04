@@ -114,6 +114,10 @@ function buildNonInteractiveOptionsFromCommander(
     msteamsAppId: options.msteamsAppId as string | undefined,
     msteamsAppPassword: options.msteamsAppPassword as string | undefined,
     msteamsTenantId: options.msteamsTenantId as string | undefined,
+    // Commander yields an arbitrary string here; this assertion to the closed
+    // union is made sound by validateNonInteractiveOptions, which runs before
+    // any consumer and rejects a value outside secret|certificate|managedIdentity
+    // (same cast-then-validate contract as --storage below).
     msteamsAuthMode: options.msteamsAuthMode as
       | "secret"
       | "certificate"

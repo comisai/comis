@@ -277,6 +277,23 @@ export function validateNonInteractiveOptions(
     }
   }
 
+  // --msteams-auth-mode, when provided, must be one of the closed Bot Framework
+  // auth vocabulary. Like the media-provider enums above (and the --storage
+  // enum) this is a fixed config enum — a typo would be written verbatim into
+  // config.yaml and only rejected by the daemon's MsTeamsChannelEntrySchema at
+  // boot (a FATAL, or a crash loop under --start-daemon). Reject early with a
+  // clear hint. This also restores parity with the interactive path, which
+  // bounds authMode to exactly these three values via a select prompt.
+  if (
+    opts.msteamsAuthMode !== undefined &&
+    !["secret", "certificate", "managedIdentity"].includes(opts.msteamsAuthMode)
+  ) {
+    throw new NonInteractiveError(
+      "--msteams-auth-mode must be one of: secret, certificate, managedIdentity",
+      "msteamsAuthMode",
+    );
+  }
+
   // Validate channel credentials
   if (opts.channels && opts.channels.length > 0) {
     for (const channel of opts.channels) {
