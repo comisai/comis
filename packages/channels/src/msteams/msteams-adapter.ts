@@ -21,6 +21,7 @@
  */
 
 import type {
+  AttachmentPayload,
   ChannelPort,
   ChannelStatus,
   ComisLogger,
@@ -35,6 +36,7 @@ import type {
 import { runWithContext, systemNowMs } from "@comis/core";
 import { err, fromPromise, ok, type Result } from "@comis/shared";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { buildMentionEntities } from "./mentions.js";
 import {
   mapMsTeamsActivityToNormalized,
@@ -76,6 +78,8 @@ export interface MsTeamsAdapterDeps {
   logger: ComisLogger;
   /** Injected fetch, defaulting to the global; lets a unit test stub the send. */
   fetchImpl?: typeof fetch;
+  /** Injected attachment-byte reader (default: node:fs/promises readFile); lets a test run sendAttachment disk-free. */
+  readFileImpl?: (path: string) => Promise<Buffer>;
   /** Injected clock in ms, defaulting to systemNowMs; makes timing deterministic. */
   now?: () => number;
   /**
@@ -101,6 +105,8 @@ export interface MsTeamsAdapterDeps {
 export interface MsTeamsAdapterHandle extends ChannelPort {
   /** Process authenticated inbound Teams activities from the gateway ingress. */
   handleWebhookEvents(activities: TeamsActivity[]): void;
+  /** The cached Connector bearer, exposed so the media resolver can authenticate a hosted-content fetch. */
+  getConnectorToken(): Promise<Result<string, Error>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -111,6 +117,9 @@ export interface MsTeamsAdapterHandle extends ChannelPort {
 function withTrailingSlash(raw: string): string {
   return raw.endsWith("/") ? raw : `${raw}/`;
 }
+
+/** Default attachment byte reader — the url is a safePath temp file the outbound handler wrote (no path build here). */
+const defaultReadFile: (path: string) => Promise<Buffer> = readFile;
 
 /**
  * Resolve the reply target. A Teams direct message is always sent top-level, so
@@ -726,6 +735,68 @@ export function createMsTeamsAdapter(
         }),
       );
     },
+
+    async sendAttachment(
+      conversationId: string,
+      attachment: AttachmentPayload,
+      options?: SendMessageOptions,
+    ): Promise<Result<string, Error>> {
+      // Reuses the sendMessage scaffolding verbatim (routing context → id/serviceUrl
+      // safety → token → POST via postConnectorActivity); only the activity body
+      // differs. Reply → the caller's serviceUrl; proactive (none) → the store.
+      const ctx = await resolveConnectorServiceContext(conversationId, options);
+      if (!ctx.ok) return sendContextError(ctx.error);
+      const replyToId = resolveReplyToId(options, ctx.value.threadId);
+
+      // Read the bytes the shared outbound handler already wrote to a safePath temp
+      // file; Teams has no separate upload step, so the image inlines as a data: URI
+      // on the activity. Neither the token nor the data URI is ever logged (T-5).
+      const read = await fromPromise(
+        (deps.readFileImpl ?? defaultReadFile)(attachment.url),
+      );
+      if (!read.ok) {
+        _lastError = read.error.message;
+        deps.logger.warn(
+          {
+            channelType: "msteams" as const,
+            hint: "Verify the outbound attachment temp file exists and is readable",
+            errorKind: "resource" as const,
+          },
+          "Connector attachment send blocked: could not read the attachment bytes",
+        );
+        return err(read.error);
+      }
+
+      const mime = attachment.mimeType ?? "image/png";
+      const activityBody: Record<string, unknown> = {
+        type: "message",
+        ...(attachment.caption ? { text: attachment.caption } : {}),
+        attachments: [
+          {
+            contentType: mime,
+            contentUrl: `data:${mime};base64,${read.value.toString("base64")}`,
+            ...(attachment.fileName ? { name: attachment.fileName } : {}),
+          },
+        ],
+      };
+      // DM → top-level; channel/group → threaded reply under the parent.
+      if (replyToId !== undefined) activityBody.replyToId = replyToId;
+
+      return recordActivity(
+        await postConnectorActivity({
+          serviceUrl: ctx.value.serviceUrl,
+          conversationId,
+          activityBody,
+          tokens,
+          fetchImpl: deps.fetchImpl,
+          logger: deps.logger,
+          now,
+        }),
+      );
+    },
+
+    /** Expose the cached Connector bearer for the media resolver (delegating getter). */
+    getConnectorToken: () => tokens.getToken(),
 
     async editMessage(
       channelId: string,
