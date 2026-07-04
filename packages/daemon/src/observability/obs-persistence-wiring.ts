@@ -321,6 +321,34 @@ export function healthBudgetExceededEventToRow(
 }
 
 /**
+ * Map a `channel:inbound_silent` event (a webhook channel that has received no
+ * inbound activity past its configured threshold) to a flat DiagnosticRow under
+ * `category:"health_signal"`, `severity:"warning"`. The `details.signal`
+ * label `"channel_ingress_silent"` is what the generic `health_signal:<label>`
+ * fleet-findings rollup groups on, so this row surfaces automatically as a
+ * `comis fleet` finding with no extractor change. Content-free: the `details`
+ * carry only the channelType + the silent/threshold counts — never a message
+ * body, and (being a daemon-global signal) no agentId/sessionKey.
+ */
+export function channelInboundSilentEventToRow(
+  payload: EventMap["channel:inbound_silent"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "warning",
+    message: "channel:inbound_silent",
+    details: JSON.stringify({
+      signal: "channel_ingress_silent",
+      channelType: payload.channelType,
+      silentForMs: payload.silentForMs,
+      thresholdMs: payload.thresholdMs,
+    }),
+    traceId: undefined,
+  };
+}
+
+/**
  * Map a `reflect:funnel` event → a flat DiagnosticRow under
  * `category:"learning_health"`, so the fleet lens surfaces the daemon-wide reflection posture
  * (is learning admitting? why-0-admitted?) as a queryable finding instead of a daemon.log grep. Severity
@@ -733,6 +761,12 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   });
   eventBus.on("health:budget_exceeded", (payload) => {
     diagnosticBuffer.push(healthBudgetExceededEventToRow(payload));
+  });
+  // A silently-dead webhook ingress (past its missed-inbound threshold) → a
+  // health_signal row, so the fleet lens surfaces it (health_signal:channel_ingress_silent)
+  // the moment the liveness timer fires. Content-free (channelType + counts only).
+  eventBus.on("channel:inbound_silent", (payload) => {
+    diagnosticBuffer.push(channelInboundSilentEventToRow(payload));
   });
   eventBus.on("mcp:server:reconnect_failed", (payload) => {
     diagnosticBuffer.push(mcpReconnectFailedEventToRow(payload));
