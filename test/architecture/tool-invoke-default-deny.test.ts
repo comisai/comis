@@ -28,12 +28,14 @@ describe("tool.invoke default-deny by absence", () => {
     expect(map.__proto__pollution).toBeUndefined();
   });
 
-  it("the curated surface holds only known read/web/mcp tool names", () => {
+  it("the curated surface holds only known read/web/mcp/write tool names", () => {
     // Defense-in-depth: enumerate the allowed names so an accidental future
     // addition of an admin tool is caught here too (not just by the denylist
     // arch-test). This is the closed surface the default-deny gate protects.
     // `mcp` is the fixed literal data-plane tool (orch:mcp) — the dynamic
     // {server,tool} ride inside args, so it is ONE curated key, not many.
+    // `write` is the one MUTATING member (orch:write) — a workspace-confined,
+    // run-ephemeral write core; its typed SDK surface is default-off (write toggle).
     const allowed = new Set(Object.keys(TOOL_CAPABILITY_MAP));
     const expected = new Set([
       "memory_search",
@@ -53,6 +55,7 @@ describe("tool.invoke default-deny by absence", () => {
       "web_search",
       "web_fetch",
       "mcp",
+      "write",
     ]);
     expect(allowed).toEqual(expected);
   });
