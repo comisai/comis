@@ -146,7 +146,7 @@ describe("buildReplayChildEnv — COMIS_ORCH_SOCKET points at the replay socket 
 });
 
 // ---------------------------------------------------------------------------
-// resolveReplaySocketPathIn — bound under the unix sun_path limit (LR-02)
+// resolveReplaySocketPathIn — bound under the unix sun_path limit
 // ---------------------------------------------------------------------------
 
 describe("resolveReplaySocketPathIn — stays under the unix sun_path limit", () => {
