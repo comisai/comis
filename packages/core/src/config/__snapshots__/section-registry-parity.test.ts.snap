@@ -22210,8 +22210,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("cha
         },
         "missedInboundThresholdMs": {
           "default": 21600000,
-          "exclusiveMinimum": 0,
           "maximum": 9007199254740991,
+          "minimum": 60000,
           "type": "integer"
         },
         "tenantId": {
@@ -33788,8 +33788,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             },
             "missedInboundThresholdMs": {
               "default": 21600000,
-              "exclusiveMinimum": 0,
               "maximum": 9007199254740991,
+              "minimum": 60000,
               "type": "integer"
             },
             "tenantId": {
