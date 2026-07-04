@@ -459,11 +459,11 @@ export function createToolInvokeExecutor(
       case "jq":
       case "sql":
       case "jsonpath":
-      // `write` is the first MUTATING builtin — it rides the SAME workspace-scoped
-      // file-builtin path (the injected core is safePath-confined to the run's
-      // workspace root; the endpoint already required orch:write before dispatch).
-      // No ResultRef threshold: a write returns a small ack.
       case "write":
+        // `write` is the first MUTATING builtin — it rides the SAME workspace-scoped
+        // file-builtin path (the injected core is safePath-confined to the run's
+        // workspace root; the endpoint already required orch:write before dispatch).
+        // No ResultRef threshold: a write returns a small ack.
         return executeFileBuiltin(tool, args, lease);
       default:
         // Defensive default-deny: the dispatch allow-list (cap-map) already
