@@ -276,6 +276,28 @@ describe("ChannelEvents payload structure", () => {
     expect(received.channelId).toBe("chat-456");
   });
 
+  it("channel:inbound_silent delivers channelType, lastInboundAt, silentForMs, thresholdMs", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["channel:inbound_silent"] = {
+      channelType: "msteams",
+      lastInboundAt: null,
+      silentForMs: 25_200_000,
+      thresholdMs: 21_600_000,
+      timestamp: Date.now(),
+    };
+
+    bus.on("channel:inbound_silent", handler);
+    bus.emit("channel:inbound_silent", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const received = handler.mock.calls[0]![0] as EventMap["channel:inbound_silent"];
+    expect(received.channelType).toBe("msteams");
+    expect(received.lastInboundAt).toBeNull();
+    expect(received.silentForMs).toBe(25_200_000);
+    expect(received.thresholdMs).toBe(21_600_000);
+  });
+
   it("type safety: @ts-expect-error for missing required fields", () => {
     const bus = new TypedEventBus();
 

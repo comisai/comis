@@ -432,6 +432,35 @@ describe("MsTeamsChannelEntrySchema", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it("defaults missedInboundThresholdMs to six hours when omitted", () => {
+    const result = MsTeamsChannelEntrySchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.missedInboundThresholdMs).toBe(21_600_000);
+    }
+  });
+
+  it("accepts a positive integer missedInboundThresholdMs override", () => {
+    const result = MsTeamsChannelEntrySchema.safeParse({
+      enabled: true,
+      missedInboundThresholdMs: 900_000,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.missedInboundThresholdMs).toBe(900_000);
+    }
+  });
+
+  it("rejects a non-positive missedInboundThresholdMs (zero or negative)", () => {
+    expect(MsTeamsChannelEntrySchema.safeParse({ missedInboundThresholdMs: 0 }).success).toBe(false);
+    expect(MsTeamsChannelEntrySchema.safeParse({ missedInboundThresholdMs: -1 }).success).toBe(false);
+  });
+
+  it("rejects a fractional missedInboundThresholdMs (must be an integer)", () => {
+    const result = MsTeamsChannelEntrySchema.safeParse({ missedInboundThresholdMs: 1000.5 });
+    expect(result.success).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
