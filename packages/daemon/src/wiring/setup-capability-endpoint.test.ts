@@ -947,6 +947,41 @@ describe("createCapabilityEndpoint rate-limit + cron self-ownership", () => {
     expect((rpcCall.mock.calls[1][1] as Record<string, unknown>)._outwardStepIndex).toBe(1);
   });
 
+  // MUT-02 (the typed SDK method rides the shipped ledger): comis_tools.message_send(...)
+  // dispatches callCapSocket("message.send", args) → the endpoint's DIRECT-method
+  // branch of handleCapCall (NOT tool.invoke), so allocateOutwardStepIfNeeded fires.
+  // Two IDENTICAL message.send in ONE run (the duplicate-send / retry shape — a
+  // double-effect risk) therefore get DISTINCT indices 0 then 1, so a duplicated
+  // outward step dedupes exactly-once. This exercises the SAME wire path the typed
+  // method takes, against the REAL allocateOutwardStepIfNeeded (a durableRuns stub,
+  // NOT a mock of the allocator). No new dedup code — MUT-02 rides the shipped ledger.
+  it("two identical message.send in one run get distinct _outwardStepIndex 0 then 1 (duplicate-send exactly-once)", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:message"], "agent-dup");
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const durableRuns = makeAllocStore();
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall, durableRuns });
+
+    // The SAME outward method twice in one run (mintValidLease pins rootRunId "run-1").
+    await endpoint.handleCapCall(bearer, "message.send", { channelId: "c", text: "first" });
+    await endpoint.handleCapCall(bearer, "message.send", { channelId: "c", text: "retry" });
+
+    expect(rpcCall).toHaveBeenCalledTimes(2); // both deliver — neither dropped
+    expect((rpcCall.mock.calls[0][1] as Record<string, unknown>)._outwardStepIndex).toBe(0);
+    expect((rpcCall.mock.calls[1][1] as Record<string, unknown>)._outwardStepIndex).toBe(1);
+    // Pitfall-2 (self-documenting): the distinctness above REQUIRES the stub — the
+    // real allocateOutwardStep(rootRunId) is what produced 0 then 1, keyed on the
+    // tree-stable rootRunId. The companion pass-through test below (no durableRuns)
+    // asserts the index is undefined, so a distinctness proof that passed WITHOUT the
+    // stub would be exposed as vacuous rather than exercising the ledger.
+    const alloc = (durableRuns as unknown as { allocateOutwardStep: ReturnType<typeof vi.fn> })
+      .allocateOutwardStep;
+    expect(alloc).toHaveBeenCalledTimes(2);
+    expect(alloc).toHaveBeenNthCalledWith(1, "run-1");
+    expect(alloc).toHaveBeenNthCalledWith(2, "run-1");
+  });
+
   it("a forged inbound _outwardStepIndex is stripped, then the trusted allocated index is injected", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });

@@ -143,6 +143,52 @@ describe("orchestrate comis_tools SDK drift gate", () => {
     expect(py).toContain('"tool": "mcp"');
   });
 
+  it("emits the orch:message outward triplet (send/reply/react) as DIRECT callCapSocket methods, not tool.invoke", () => {
+    // message.send/reply/react are DIRECT RPC methods (HANDLER_CAPABILITY_MAP →
+    // orch:message), NOT tool.invoke tools (they are not in TOOL_CAPABILITY_MAP) —
+    // so the SDK MUST render them via callCapSocket(method, args) (the arbitrary-
+    // method wire), NEVER invoke(...) (the tool.invoke wire). This render choice is
+    // load-bearing for exactly-once: the outward-step ledger
+    // (allocateOutwardStepIfNeeded) fires ONLY in the endpoint's direct-method
+    // branch of handleCapCall, so routing the triplet through tool.invoke would
+    // silently bypass the ledger (and — since message.* is absent from the cap-map —
+    // be default-denied anyway).
+    const tmp = mkdtempSync(join(tmpdir(), "comis-sdk-msg-"));
+    let js: string;
+    let py: string;
+    let dts: string;
+    try {
+      const result = runCodegen(tmp);
+      js = result.js;
+      py = result.py;
+      dts = result.dts;
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+
+    // JS: each method delegates to callCapSocket with the DIRECT wire method literal.
+    expect(js).toContain('async message_send(args) {\n    return callCapSocket("message.send", args);\n  }');
+    expect(js).toContain('async message_reply(args) {\n    return callCapSocket("message.reply", args);\n  }');
+    expect(js).toContain('async message_react(args) {\n    return callCapSocket("message.react", args);\n  }');
+    // The MUT-02 keystone: the triplet is NEVER rendered as a tool.invoke route.
+    expect(js, "message.* must not route via invoke (would bypass the outward ledger)").not.toMatch(
+      /invoke\("message[._]/,
+    );
+
+    // Python: module-level functions delegating to _call_cap_socket (the direct wire).
+    expect(py).toContain('def message_send(args=None):\n    return _call_cap_socket("message.send", args or {})');
+    expect(py).toContain('def message_reply(args=None):\n    return _call_cap_socket("message.reply", args or {})');
+    expect(py).toContain('def message_react(args=None):\n    return _call_cap_socket("message.react", args or {})');
+    expect(py, "message.* must not route via _invoke (would bypass the outward ledger)").not.toMatch(
+      /_invoke\("message[._]/,
+    );
+
+    // .d.ts: the triplet is a typed method on the SDK surface.
+    expect(dts).toContain("message_send(args?: Record<string, unknown>): Promise<unknown>;");
+    expect(dts).toContain("message_reply(args?: Record<string, unknown>): Promise<unknown>;");
+    expect(dts).toContain("message_react(args?: Record<string, unknown>): Promise<unknown>;");
+  });
+
   it("describe() carries a worked example per capability group in all three SDKs", () => {
     // Read the committed artifacts (the exact bytes the drift gate above locks).
     const committedDts = readFileSync(OUT_DTS, "utf8");
