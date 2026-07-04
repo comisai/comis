@@ -45,7 +45,7 @@ export type MediaKind = "photo" | "voice" | "document" | "video" | "video_note";
  * the same `http` base.
  */
 export interface ChannelCaps {
-  /** The platform this descriptor describes. One of the 9 real channels. */
+  /** The platform this descriptor describes. One of the real channels. */
   channel:
     | "telegram"
     | "discord"
@@ -55,7 +55,8 @@ export interface ChannelCaps {
     | "imessage"
     | "line"
     | "irc"
-    | "email";
+    | "email"
+    | "msteams";
   /** What the channel can deliver INTO the agent (inbound surface). */
   inbound: {
     text: boolean;
