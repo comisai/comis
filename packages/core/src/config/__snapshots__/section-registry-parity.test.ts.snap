@@ -4650,7 +4650,8 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("chann
       "allowMode": "allowlist",
       "authMode": "secret",
       "cloud": "public",
-      "enabled": false
+      "enabled": false,
+      "missedInboundThresholdMs": 21600000
     },
     "immutable": true,
     "path": "channels.msteams",
@@ -4777,6 +4778,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("chann
     "immutable": false,
     "path": "channels.msteams.mediaProcessing.understandLinks",
     "type": "boolean"
+  },
+  {
+    "default": 21600000,
+    "immutable": true,
+    "path": "channels.msteams.missedInboundThresholdMs",
+    "type": "integer"
   },
   {
     "immutable": true,
@@ -8956,7 +8963,8 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "allowMode": "allowlist",
         "authMode": "secret",
         "cloud": "public",
-        "enabled": false
+        "enabled": false,
+        "missedInboundThresholdMs": 21600000
       },
       "signal": {
         "allowFrom": [],
@@ -10172,7 +10180,8 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       "allowMode": "allowlist",
       "authMode": "secret",
       "cloud": "public",
-      "enabled": false
+      "enabled": false,
+      "missedInboundThresholdMs": 21600000
     },
     "immutable": true,
     "path": "channels.msteams",
@@ -10299,6 +10308,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": false,
     "path": "channels.msteams.mediaProcessing.understandLinks",
     "type": "boolean"
+  },
+  {
+    "default": 21600000,
+    "immutable": true,
+    "path": "channels.msteams.missedInboundThresholdMs",
+    "type": "integer"
   },
   {
     "immutable": true,
@@ -22054,7 +22069,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("cha
         "allowMode": "allowlist",
         "authMode": "secret",
         "cloud": "public",
-        "enabled": false
+        "enabled": false,
+        "missedInboundThresholdMs": 21600000
       },
       "properties": {
         "ackReaction": {
@@ -22192,6 +22208,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("cha
           ],
           "type": "object"
         },
+        "missedInboundThresholdMs": {
+          "default": 21600000,
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
         "tenantId": {
           "type": "string"
         }
@@ -22201,7 +22223,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("cha
         "authMode",
         "allowFrom",
         "allowMode",
-        "cloud"
+        "cloud",
+        "missedInboundThresholdMs"
       ],
       "type": "object"
     },
@@ -32067,7 +32090,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "allowMode": "allowlist",
           "authMode": "secret",
           "cloud": "public",
-          "enabled": false
+          "enabled": false,
+          "missedInboundThresholdMs": 21600000
         },
         "signal": {
           "allowFrom": [],
@@ -33623,7 +33647,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "allowMode": "allowlist",
             "authMode": "secret",
             "cloud": "public",
-            "enabled": false
+            "enabled": false,
+            "missedInboundThresholdMs": 21600000
           },
           "properties": {
             "ackReaction": {
@@ -33761,6 +33786,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               ],
               "type": "object"
             },
+            "missedInboundThresholdMs": {
+              "default": 21600000,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
             "tenantId": {
               "type": "string"
             }
@@ -33770,7 +33801,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "authMode",
             "allowFrom",
             "allowMode",
-            "cloud"
+            "cloud",
+            "missedInboundThresholdMs"
           ],
           "type": "object"
         },
