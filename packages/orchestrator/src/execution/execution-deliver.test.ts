@@ -161,7 +161,8 @@ describe("deliverExecutionResponse — aborted-signal skip honesty", () => {
     const logger = deps.logger as unknown as { debug: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn> };
     const completion = logger.debug.mock.calls.find((c) => c[1] === "Block delivery complete");
     expect(completion, "the completion line must still be logged").toBeDefined();
-    expect(completion?.[0]).toMatchObject({ success: false, skippedChunks: 1 });
+    // "hello world" chunks into 2 groups at chunkMaxChars 10 — BOTH skipped.
+    expect(completion?.[0]).toMatchObject({ success: false, skippedChunks: 2 });
     const warn = logger.warn.mock.calls.find((c) => c[1] === "Block delivery skipped by aborted execution");
     expect(warn, "an operator-actionable WARN must record the skip").toBeDefined();
     expect(warn?.[0]).toMatchObject({ errorKind: "precondition" });
