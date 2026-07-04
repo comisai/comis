@@ -87,6 +87,22 @@ export const DurableRunRecordSchema = z.strictObject({
   status: DurableRunStatusSchema,
   /** The last keep-alive heartbeat write, epoch ms. */
   lastHeartbeatAt: z.number(),
+  /**
+   * The pinned script path RELATIVE to the run workspace (`<runId>.<language>`)
+   * for a RE-RUNNABLE orchestrate row. Its presence is the orchestrate-kind
+   * discriminator the boot sweep routes on. Content-free: a path, NOT the script
+   * bytes (INV-5). Optional/nullable so EVERY existing row (which has neither
+   * this nor `checkpointRef`) still parses — the closed-union resume gate is
+   * unweakened.
+   */
+  scriptRef: z.string().nullable().optional(),
+  /**
+   * The `ResultRef.ref` id of the last checkpoint blob (a distinguished
+   * `kind:"json"` ResultRef). Content-free: an id pointer, NOT the checkpoint
+   * body (INV-5) — the bytes live in the capped/TTL'd `results/` store.
+   * Optional/nullable for the same reason as `scriptRef`.
+   */
+  checkpointRef: z.string().nullable().optional(),
 });
 
 export type DurableRunRecord = z.infer<typeof DurableRunRecordSchema>;

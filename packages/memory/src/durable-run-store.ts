@@ -99,6 +99,11 @@ function rowToRecord(row: DurableRunDbRow): Result<DurableRunRecord, Error> {
     stepIndex: row.outward_step,
     status: row.status as DurableRunRecord["status"],
     lastHeartbeatAt: row.last_heartbeat_at,
+    // Additive resumable-orchestrate pointers. SQLite NULL (a pre-migration row or
+    // a non-orchestrate/never-checkpointed run) maps to `undefined` on the optional
+    // domain fields — never surfaced as a spurious null.
+    scriptRef: row.script_ref ?? undefined,
+    checkpointRef: row.checkpoint_ref ?? undefined,
   });
 }
 
@@ -130,11 +135,17 @@ export function createSqliteDurableRunStore(
   // sentinel); on CONFLICT, the SET clause leaves it untouched so a concurrent
   // allocate's value survives. There is no coarse per-step index column to
   // write — the DDL has only outward_step.
+  //
+  // script_ref / checkpoint_ref use COALESCE(excluded.x, x) on CONFLICT: a bound
+  // NULL PRESERVES the existing value. This lets the checkpoint core set only
+  // checkpoint_ref and the resumable-timeout runner set only script_ref WITHOUT
+  // clobbering each other (the outcome_events COALESCE precedent). On a fresh
+  // INSERT the bound value (or NULL) is written directly.
   const upsertStmt = db.prepare(`
     INSERT INTO durable_runs (
       root_run_id, spawn_tree, caps, lease_ids, budget_consumed, cron_origin,
-      status, last_heartbeat_at, created_at_ms, updated_at_ms
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      status, last_heartbeat_at, created_at_ms, updated_at_ms, script_ref, checkpoint_ref
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(root_run_id) DO UPDATE SET
       spawn_tree = excluded.spawn_tree,
       caps = excluded.caps,
@@ -143,7 +154,9 @@ export function createSqliteDurableRunStore(
       cron_origin = excluded.cron_origin,
       status = excluded.status,
       last_heartbeat_at = excluded.last_heartbeat_at,
-      updated_at_ms = excluded.updated_at_ms
+      updated_at_ms = excluded.updated_at_ms,
+      script_ref = COALESCE(excluded.script_ref, script_ref),
+      checkpoint_ref = COALESCE(excluded.checkpoint_ref, checkpoint_ref)
   `);
 
   const getStmt = db.prepare(`SELECT * FROM durable_runs WHERE root_run_id = ?`);
@@ -217,6 +230,10 @@ export function createSqliteDurableRunStore(
           record.lastHeartbeatAt,
           t, // created_at_ms (ignored on CONFLICT — PK row keeps its original)
           t, // updated_at_ms
+          // A bound NULL is COALESCE-preserved on CONFLICT (keeps a prior ref);
+          // written directly on a fresh INSERT.
+          record.scriptRef ?? null,
+          record.checkpointRef ?? null,
         );
         return Promise.resolve(ok(undefined));
       } catch (e) {
