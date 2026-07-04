@@ -1,10 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ComisLogger } from "@comis/core";
-import { generateKeyPair, exportJWK, createLocalJWKSet, SignJWT } from "jose";
+import {
+  generateKeyPair,
+  exportJWK,
+  createLocalJWKSet,
+  SignJWT,
+  decodeProtectedHeader,
+  decodeJwt,
+} from "jose";
+import { createFakeEnv } from "../../../../../test/support/fake-env.js";
 import {
   createActivityJwtValidator,
   createConnectorTokenProvider,
+  createConnectorTokenProviderFor,
   type ActivityJwtValidatorOpts,
   type ConnectorTokenDeps,
 } from "../msteams-auth.js";
@@ -407,5 +420,365 @@ describe("createConnectorTokenProvider — client-credentials mint", () => {
         (p as { errorKind?: string }).errorKind === "network",
     );
     expect(networkWarn).toBeDefined();
+  });
+});
+
+// --- 3-mode token factory: secret (done) + certificate + managed-identity ---
+
+const FACTORY_APP_ID = "app-client-id";
+const MI_CLIENT_ID = "mi-user-assigned-client-id";
+const CONNECTOR_SCOPE = "https://api.botframework.com/.default";
+const MI_RESOURCE = "https://api.botframework.com";
+
+/**
+ * Mint a throwaway self-signed RSA cert + PKCS#8 key at runtime and bundle them
+ * into one PEM the way an operator's certificate file bundles key + cert. Never a
+ * pasted real cert — the subject is a neutral placeholder and the material lives
+ * only for the test's lifetime. openssl mirrors the gateway mTLS test's cert-gen,
+ * so no new dependency is pulled in.
+ */
+function generateSelfSignedPemBundle(): {
+  combinedPem: string;
+  bundlePath: string;
+  cleanup: () => void;
+} {
+  const dir = mkdtempSync(join(tmpdir(), "comis-msteams-cert-"));
+  const keyPath = join(dir, "key.pem");
+  const certPath = join(dir, "cert.pem");
+  const bundlePath = join(dir, "bundle.pem");
+  execFileSync(
+    "openssl",
+    [
+      "req",
+      "-x509",
+      "-newkey",
+      "rsa:2048",
+      "-nodes",
+      "-keyout",
+      keyPath,
+      "-out",
+      certPath,
+      "-days",
+      "1",
+      "-subj",
+      "/CN=comis-msteams-test",
+    ],
+    { stdio: "pipe" },
+  );
+  const combinedPem = `${readFileSync(keyPath, "utf8")}\n${readFileSync(certPath, "utf8")}`;
+  writeFileSync(bundlePath, combinedPem);
+  return {
+    combinedPem,
+    bundlePath,
+    cleanup: () => rmSync(dir, { recursive: true, force: true }),
+  };
+}
+
+describe("createConnectorTokenProviderFor — certificate mode (AUTH-02)", () => {
+  let pem: ReturnType<typeof generateSelfSignedPemBundle>;
+  beforeAll(() => {
+    pem = generateSelfSignedPemBundle();
+  });
+  afterAll(() => {
+    pem.cleanup();
+  });
+
+  function makeCertDeps(overrides: Partial<ConnectorTokenDeps> = {}) {
+    const loggerSpy = makeLoggerSpy();
+    const { fetchImpl, spy } = makeTokenFetch();
+    const deps: ConnectorTokenDeps = {
+      appId: FACTORY_APP_ID,
+      appPassword: "", // certificate mode carries no client secret
+      tenantId: TENANT,
+      logger: loggerSpy.logger,
+      fetchImpl,
+      now: () => 1_000_000,
+      certPath: pem.bundlePath,
+      readFileImpl: async () => pem.combinedPem, // hermetic — no real fs read
+      ...overrides,
+    };
+    return { deps, spy, loggerSpy };
+  }
+
+  it("mints via a signed client-assertion whose body carries the assertion type, a JWT, the connector scope, and no client_secret", async () => {
+    const { deps, spy } = makeCertDeps();
+    const provider = createConnectorTokenProviderFor("certificate", deps);
+    const result = await provider.getToken();
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toBe(MINTED_TOKEN);
+    expect(spy).toHaveBeenCalledTimes(1);
+    const [url, init] = spy.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(
+      `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/token`,
+    );
+    expect(init.method).toBe("POST");
+    const body = new URLSearchParams(String(init.body));
+    expect(body.get("grant_type")).toBe("client_credentials");
+    expect(body.get("client_assertion_type")).toBe(
+      "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+    );
+    const assertion = body.get("client_assertion") ?? "";
+    expect(assertion.length).toBeGreaterThan(0);
+    expect(assertion.split(".")).toHaveLength(3); // a compact JWS
+    expect(body.get("scope")).toBe(CONNECTOR_SCOPE);
+    expect(body.get("client_secret")).toBeNull();
+  });
+
+  it("signs the assertion with an x5t#S256 thumbprint header and iss=sub=appId, aud=token endpoint, plus a jti", async () => {
+    const { deps, spy } = makeCertDeps();
+    const provider = createConnectorTokenProviderFor("certificate", deps);
+    await provider.getToken();
+    const [, init] = spy.mock.calls[0] as unknown as [string, RequestInit];
+    const assertion =
+      new URLSearchParams(String(init.body)).get("client_assertion") ?? "";
+    const header = decodeProtectedHeader(assertion);
+    expect(typeof header["x5t#S256"]).toBe("string");
+    // base64url — no +, /, or = padding
+    expect(header["x5t#S256"] as string).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(["PS256", "RS256"]).toContain(header.alg);
+    const claims = decodeJwt(assertion);
+    expect(claims.iss).toBe(FACTORY_APP_ID);
+    expect(claims.sub).toBe(FACTORY_APP_ID);
+    expect(claims.aud).toBe(
+      `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/token`,
+    );
+    expect(typeof claims.jti).toBe("string");
+  });
+
+  it("never records the PEM private key, the signed assertion, or the minted token in any log field", async () => {
+    const { deps, spy, loggerSpy } = makeCertDeps();
+    const provider = createConnectorTokenProviderFor("certificate", deps);
+    await provider.getToken();
+    const [, init] = spy.mock.calls[0] as unknown as [string, RequestInit];
+    const assertion =
+      new URLSearchParams(String(init.body)).get("client_assertion") ?? "";
+    const blob = loggerSpy.serialized();
+    expect(blob).not.toContain(MINTED_TOKEN);
+    expect(blob).not.toContain(assertion);
+    // A stable needle from the private-key body (armor + whitespace stripped).
+    const keyNeedle = pem.combinedPem
+      .replace(/-----[^-]+-----/g, "")
+      .replace(/\s+/g, "")
+      .slice(0, 40);
+    expect(keyNeedle.length).toBeGreaterThan(0);
+    expect(blob).not.toContain(keyNeedle);
+  });
+
+  it("serves the cached assertion-minted token on a second call inside the skew window", async () => {
+    const { deps, spy } = makeCertDeps();
+    const provider = createConnectorTokenProviderFor("certificate", deps);
+    const first = await provider.getToken();
+    const second = await provider.getToken();
+    expect(first.ok && second.ok).toBe(true);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads the certificate bundle through the default filesystem reader when no readFileImpl is injected", async () => {
+    const { deps, spy } = makeCertDeps({ readFileImpl: undefined });
+    const provider = createConnectorTokenProviderFor("certificate", deps);
+    const result = await provider.getToken();
+    expect(result.ok).toBe(true);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns a precondition error and no network call when certPath is absent", async () => {
+    const { deps, spy, loggerSpy } = makeCertDeps({ certPath: undefined });
+    const provider = createConnectorTokenProviderFor("certificate", deps);
+    const result = await provider.getToken();
+    expect(result.ok).toBe(false);
+    expect(spy).not.toHaveBeenCalled();
+    const preconditionWarn = loggerSpy.warn.mock.calls
+      .map((c) => c[0])
+      .find(
+        (p) =>
+          p !== null &&
+          typeof p === "object" &&
+          (p as { errorKind?: string }).errorKind === "precondition",
+      );
+    expect(preconditionWarn).toBeDefined();
+  });
+
+  it("returns an error and no network call when the certificate PEM is malformed", async () => {
+    const { deps, spy } = makeCertDeps({
+      readFileImpl: async () => "not a valid pem file",
+    });
+    const provider = createConnectorTokenProviderFor("certificate", deps);
+    const result = await provider.getToken();
+    expect(result.ok).toBe(false);
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe("createConnectorTokenProviderFor — managed-identity mode (AUTH-03)", () => {
+  function makeMiDeps(
+    overrides: Partial<ConnectorTokenDeps> = {},
+    envRecord: Record<string, string | undefined> = {},
+  ) {
+    const loggerSpy = makeLoggerSpy();
+    const { fetchImpl, spy } = makeTokenFetch();
+    const deps: ConnectorTokenDeps = {
+      appId: FACTORY_APP_ID,
+      appPassword: "", // managed identity carries no client secret
+      tenantId: TENANT,
+      logger: loggerSpy.logger,
+      fetchImpl,
+      now: () => 1_000_000,
+      managedIdentityClientId: MI_CLIENT_ID,
+      env: createFakeEnv(envRecord),
+      ...overrides,
+    };
+    return { deps, spy, loggerSpy };
+  }
+
+  it("mints from IMDS with a Metadata header and the botframework resource when no IDENTITY_ENDPOINT is present", async () => {
+    const { deps, spy } = makeMiDeps({}, {}); // no IDENTITY_ENDPOINT → IMDS path
+    const provider = createConnectorTokenProviderFor("managedIdentity", deps);
+    const result = await provider.getToken();
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toBe(MINTED_TOKEN);
+    expect(spy).toHaveBeenCalledTimes(1);
+    const [url, init] = spy.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toContain("169.254.169.254/metadata/identity/oauth2/token");
+    expect(url).toContain(`resource=${MI_RESOURCE}`);
+    expect(url).toContain(`client_id=${MI_CLIENT_ID}`);
+    expect(init.method).toBe("GET");
+    expect((init.headers as Record<string, string>).Metadata).toBe("true");
+  });
+
+  it("mints from the App Service identity endpoint carrying the live X-IDENTITY-HEADER when IDENTITY_ENDPOINT is present", async () => {
+    const nowSec = Math.floor(1_000_000 / 1000);
+    const loggerSpy = makeLoggerSpy();
+    const spy = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        access_token: MINTED_TOKEN,
+        expires_on: String(nowSec + 3600), // App Service returns absolute epoch seconds
+      }),
+    }));
+    const { deps } = makeMiDeps(
+      { fetchImpl: spy as unknown as typeof fetch, logger: loggerSpy.logger },
+      {
+        IDENTITY_ENDPOINT: "https://appservice.local/msi/token",
+        IDENTITY_HEADER: "header-v1",
+      },
+    );
+    const provider = createConnectorTokenProviderFor("managedIdentity", deps);
+    const result = await provider.getToken();
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toBe(MINTED_TOKEN);
+    const [url, init] = spy.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toContain("https://appservice.local/msi/token?");
+    expect(url).toContain("api-version=2019-08-01");
+    expect(url).toContain(`resource=${MI_RESOURCE}`);
+    expect(url).toContain(`client_id=${MI_CLIENT_ID}`);
+    expect(init.method).toBe("GET");
+    expect((init.headers as Record<string, string>)["X-IDENTITY-HEADER"]).toBe(
+      "header-v1",
+    );
+  });
+
+  it("reads a rotated IDENTITY_HEADER live on each mint rather than a boot snapshot", async () => {
+    const envRecord: Record<string, string | undefined> = {
+      IDENTITY_ENDPOINT: "https://appservice.local/msi/token",
+      IDENTITY_HEADER: "header-v1",
+    };
+    let clock = 1_000_000;
+    const spy = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ access_token: MINTED_TOKEN, expires_in: 3600 }),
+    }));
+    const { deps } = makeMiDeps(
+      {
+        fetchImpl: spy as unknown as typeof fetch,
+        now: () => clock,
+        skewMs: 60_000,
+      },
+      envRecord,
+    );
+    const provider = createConnectorTokenProviderFor("managedIdentity", deps);
+    await provider.getToken();
+    envRecord.IDENTITY_HEADER = "header-v2"; // rotate between mints
+    clock = 1_000_000 + 3_600_000 - 60_000 + 1; // advance past skew → re-mint
+    await provider.getToken();
+    expect(spy).toHaveBeenCalledTimes(2);
+    const h1 = (spy.mock.calls[0][1] as RequestInit).headers as Record<
+      string,
+      string
+    >;
+    const h2 = (spy.mock.calls[1][1] as RequestInit).headers as Record<
+      string,
+      string
+    >;
+    expect(h1["X-IDENTITY-HEADER"]).toBe("header-v1");
+    expect(h2["X-IDENTITY-HEADER"]).toBe("header-v2");
+  });
+
+  it("never records the minted managed-identity token in any log field", async () => {
+    const { deps, loggerSpy } = makeMiDeps({}, {});
+    const provider = createConnectorTokenProviderFor("managedIdentity", deps);
+    const result = await provider.getToken();
+    expect(result.ok).toBe(true);
+    expect(loggerSpy.serialized()).not.toContain(MINTED_TOKEN);
+  });
+
+  it("returns a classified auth error when the identity endpoint responds non-2xx", async () => {
+    const loggerSpy = makeLoggerSpy();
+    const spy = vi.fn(async () => ({
+      ok: false,
+      status: 401,
+      json: async () => ({}),
+    }));
+    const { deps } = makeMiDeps(
+      { fetchImpl: spy as unknown as typeof fetch, logger: loggerSpy.logger },
+      {},
+    );
+    const provider = createConnectorTokenProviderFor("managedIdentity", deps);
+    const result = await provider.getToken();
+    expect(result.ok).toBe(false);
+    const authWarn = loggerSpy.warn.mock.calls
+      .map((c) => c[0])
+      .find(
+        (p) =>
+          p !== null &&
+          typeof p === "object" &&
+          (p as { errorKind?: string }).errorKind === "auth",
+      );
+    expect(authWarn).toBeDefined();
+  });
+
+  it("returns a precondition error and no network call when managedIdentityClientId is absent", async () => {
+    const { deps, spy, loggerSpy } = makeMiDeps(
+      { managedIdentityClientId: undefined },
+      {},
+    );
+    const provider = createConnectorTokenProviderFor("managedIdentity", deps);
+    const result = await provider.getToken();
+    expect(result.ok).toBe(false);
+    expect(spy).not.toHaveBeenCalled();
+    const preconditionWarn = loggerSpy.warn.mock.calls
+      .map((c) => c[0])
+      .find(
+        (p) =>
+          p !== null &&
+          typeof p === "object" &&
+          (p as { errorKind?: string }).errorKind === "precondition",
+      );
+    expect(preconditionWarn).toBeDefined();
+  });
+});
+
+describe("createConnectorTokenProviderFor — secret mode routing", () => {
+  it("routes secret mode to the unchanged client-credentials mint (client_secret present, no client_assertion)", async () => {
+    const { deps, spy } = makeTokenDeps();
+    const provider = createConnectorTokenProviderFor("secret", deps);
+    const result = await provider.getToken();
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toBe(MINTED_TOKEN);
+    const [, init] = spy.mock.calls[0] as unknown as [string, RequestInit];
+    const body = new URLSearchParams(String(init.body));
+    expect(body.get("client_secret")).toBe(APP_PASSWORD);
+    expect(body.get("client_assertion")).toBeNull();
   });
 });
