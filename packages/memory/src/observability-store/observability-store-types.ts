@@ -311,8 +311,11 @@ export interface CostBucketFilter {
 
 /**
  * Per-session health rollup (A1 `aggregateSessionsInWindow`) over the latest
- * (`MAX(id)`) `session_summary` row per `session_key`; fields parsed from its
- * `details` JSON. `source` is the provenance enum the A2 reducer filters on.
+ * reduce over ALL in-window `session_summary` rows per `session_key` (one row
+ * per execution): additive fields (`costUsd`/`turnCount`/`breakerTripCount`/
+ * `toolStats`/`topErrorKinds`) are summed, `degraded` ORs, and `endReason`
+ * keeps the latest degraded execution's named cause. Fields parsed from each
+ * row's `details` JSON. `source` is the provenance enum the A2 reducer filters on.
  */
 export interface SessionSummaryRollup {
   sessionKey: string;
