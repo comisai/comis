@@ -8,6 +8,7 @@ import type { OutwardSendLedgerPort, OutwardSendRecord } from "@comis/core";
 
 import {
   createAnnouncementDeadLetterQueue,
+  type ChannelType,
   type DeadLetterEntry,
   type AnnouncementLogger,
 } from "./announcement-dead-letter.js";
@@ -496,6 +497,43 @@ describe("AnnouncementDeadLetterQueue", () => {
     dlq.enqueue(makeEntry({ runId: "run-size-3" }));
 
     expect(dlq.size()).toBe(3);
+  });
+
+  it("accepts msteams as a ChannelType and round-trips a dead-letter entry through enqueue and drain", async () => {
+    // Type-level: msteams is a member of the closed ChannelType union. The
+    // build type-check rejects both this assignment and the makeEntry call
+    // below until the union admits "msteams".
+    const channelType: ChannelType = "msteams";
+    expect(channelType).toBe("msteams");
+
+    const eventBus = createMockEventBus();
+    const dlq = createAnnouncementDeadLetterQueue({ filePath, eventBus, retryIntervalMs: 0 });
+
+    dlq.enqueue(
+      makeEntry({
+        runId: "run-msteams-1",
+        channelType: "msteams",
+        channelId: "19:meeting@thread.v2",
+      }),
+    );
+    // Wait for the fire-and-forget append so drain reloads it from disk.
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Persisted with channelType "msteams".
+    const content = await readFile(filePath, "utf-8");
+    const parsed = JSON.parse(content.trim()) as DeadLetterEntry;
+    expect(parsed.channelType).toBe("msteams");
+
+    // And it round-trips through drain to sendToChannel with the msteams type.
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+    await dlq.drain(sendToChannel);
+    expect(sendToChannel).toHaveBeenCalledWith(
+      "msteams",
+      "19:meeting@thread.v2",
+      "Task completed successfully",
+      undefined,
+    );
+    expect(dlq.size()).toBe(0);
   });
 });
 
