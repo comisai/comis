@@ -31,7 +31,6 @@ import {
   validateIrcConnection,
   validateEmailCredentials,
   validateMsTeamsCredentials,
-  validateActivityJwt,
   type TelegramPluginHandle,
   type LinePluginHandle,
   type EmailAdapterDeps,
@@ -40,6 +39,10 @@ import {
   type TeamsActivity,
 } from "@comis/channels";
 import { createMsTeamsIngress } from "@comis/gateway";
+import {
+  resolveTestActivityValidator,
+  resolveTestConnectorFetch,
+} from "./msteams-test-seams.js";
 import os from "node:os";
 import { safePath, systemNowMs } from "@comis/core";
 
@@ -423,6 +426,16 @@ export async function bootstrapAdapters(deps: {
           ? Boolean(managedIdentityClientId)
           : Boolean(appPassword);
     if (validation.ok && appId && tenantId && perModeCredentialPresent) {
+      // OFF-BY-DEFAULT live-test seams (see msteams-test-seams.ts): with the
+      // COMIS_MSTEAMS_TEST_* env vars unset — the production case — getEnv returns
+      // undefined, so testConnectorFetch is undefined (adapter keeps the global
+      // fetch) and the ingress validator is the live remote-JWKS one. Neither seam
+      // relaxes a security control; they only let a loopback emulator round-trip.
+      // Reads via the injected EnvPort (the sanctioned env boundary — never direct
+      // process.env); the live daemon EnvPort wraps process.env, so the operator's
+      // COMIS_MSTEAMS_TEST_* vars are seen. Absent env → the seams stay off.
+      const getEnv = (name: string): string | undefined => env?.get(name);
+      const testConnectorFetch = resolveTestConnectorFetch(getEnv);
       const plugin = createMsTeamsPlugin({
         authMode,
         appId,
@@ -443,6 +456,8 @@ export async function bootstrapAdapters(deps: {
         ...(msTeamsConversationStore ? { conversationStore: msTeamsConversationStore } : {}),
         ...(timer ? { timer } : {}),
         ...(env ? { env } : {}),
+        // Test-only outbound redirect (undefined in production → global fetch).
+        ...(testConnectorFetch ? { fetchImpl: testConnectorFetch } : {}),
       });
       adaptersByType.set("msteams", plugin.adapter);
       channelPlugins.set("msteams", plugin);
@@ -451,7 +466,12 @@ export async function bootstrapAdapters(deps: {
       msTeamsPlugin = plugin as MsTeamsPluginHandle;
       const teamsAdapter = plugin.adapter as MsTeamsAdapterHandle;
       msTeamsIngress = createMsTeamsIngress({
-        validateActivityJwt: (authHeader) => validateActivityJwt(authHeader, appId),
+        // Default: the live remote-JWKS validator bound to appId. With the
+        // off-by-default COMIS_MSTEAMS_TEST_JWKS seam set, a local-JWKS validator
+        // instead — a full verify against the emulator's key, not a bypass.
+        validateActivityJwt: resolveTestActivityValidator(appId, getEnv, {
+          logger: channelsLogger,
+        }),
         handleWebhookEvents: (activities) => teamsAdapter.handleWebhookEvents(activities as TeamsActivity[]),
         // Bridge the ingress auth-gate rejections onto the daemon eventBus as a
         // content-free health_signal, so a forged/expired/wrong-audience/missing-
