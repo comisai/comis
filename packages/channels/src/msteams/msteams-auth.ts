@@ -183,7 +183,7 @@ interface TokenResponse {
 }
 
 /** The three ways an enterprise bot mints a Bot Connector token. */
-export type ConnectorAuthMode = "secret" | "certificate";
+export type ConnectorAuthMode = "secret" | "certificate" | "managedIdentity";
 
 /** A planned token request: the URL to call and the fetch init (verb/headers/body). */
 interface TokenRequestPlan {
@@ -203,6 +203,9 @@ type BuildTokenRequest = (
 const FORM_CONTENT_TYPE = "application/x-www-form-urlencoded";
 const CLIENT_ASSERTION_TYPE =
   "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
+
+/** The resource a managed identity requests to obtain a Bot Connector token. */
+const MANAGED_IDENTITY_RESOURCE = "https://api.botframework.com";
 
 /** The two PEM blocks a certificate bundle must carry. */
 const PEM_KEY_BLOCK =
@@ -521,10 +524,65 @@ function createCertAssertionTokenProvider(
 }
 
 /**
+ * Build the managed-identity-mode request: a single authenticated GET to the
+ * local identity endpoint, no signing. Two environments, detected by the
+ * presence of `IDENTITY_ENDPOINT`:
+ *
+ *  - App Service / Container Apps: GET `$IDENTITY_ENDPOINT` with the
+ *    `X-IDENTITY-HEADER` secret. That header rotates several times a day, so it
+ *    is read live on every mint (never snapshotted at construction).
+ *  - VM / AKS: GET the fixed `169.254.169.254` instance-metadata endpoint with
+ *    a `Metadata: true` header (no env needed).
+ *
+ * The minted token is only ever in the response body — never logged.
+ */
+async function buildManagedIdentityRequest(
+  deps: ConnectorTokenDeps,
+): Promise<Result<TokenRequestPlan, Error>> {
+  const clientId = deps.managedIdentityClientId;
+  if (!clientId) {
+    deps.logger.warn(
+      {
+        channelType: "msteams" as const,
+        hint: "Set msteams.managedIdentityClientId to the user-assigned identity's client id",
+        errorKind: "precondition" as const,
+      },
+      "Connector token mint blocked: managed-identity mode requires managedIdentityClientId",
+    );
+    return err(new Error("managed-identity mode requires managedIdentityClientId"));
+  }
+  const encodedClientId = encodeURIComponent(clientId);
+  const idEndpoint = deps.env?.get("IDENTITY_ENDPOINT");
+  if (idEndpoint) {
+    // App Service / Container Apps — the identity header rotates; read it live.
+    const idHeader = deps.env?.get("IDENTITY_HEADER") ?? "";
+    return ok({
+      url: `${idEndpoint}?api-version=2019-08-01&resource=${MANAGED_IDENTITY_RESOURCE}&client_id=${encodedClientId}`,
+      init: { method: "GET", headers: { "X-IDENTITY-HEADER": idHeader } },
+    });
+  }
+  // VM / AKS instance metadata service — a fixed link-local endpoint, no env.
+  return ok({
+    url: `http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=${MANAGED_IDENTITY_RESOURCE}&client_id=${encodedClientId}`,
+    init: { method: "GET", headers: { Metadata: "true" } },
+  });
+}
+
+/** Build a managed-identity-mode Connector token provider. */
+function createManagedIdentityTokenProvider(
+  deps: ConnectorTokenDeps,
+): ConnectorTokenProvider {
+  return createCachingTokenProvider(deps, () =>
+    buildManagedIdentityRequest(deps),
+  );
+}
+
+/**
  * Build a Connector token provider for the configured auth mode. All modes share
  * the same cache/skew/tenant-guard/logging scaffold; they differ only in how the
  * token request is constructed (`secret` sends a client secret, `certificate`
- * sends a signed client assertion).
+ * sends a signed client assertion, `managedIdentity` GETs the local identity
+ * endpoint).
  */
 export function createConnectorTokenProviderFor(
   authMode: ConnectorAuthMode,
@@ -535,6 +593,8 @@ export function createConnectorTokenProviderFor(
       return createConnectorTokenProvider(deps);
     case "certificate":
       return createCertAssertionTokenProvider(deps);
+    case "managedIdentity":
+      return createManagedIdentityTokenProvider(deps);
     default: {
       const _exhaustive: never = authMode;
       return _exhaustive;
