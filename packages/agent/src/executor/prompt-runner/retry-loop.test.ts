@@ -225,6 +225,34 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
     expect(emit.mock.calls.filter((c) => c[0] === "execution:tool_schema_unsupported")).toHaveLength(0);
   });
 
+  it("a run the bridge ABORTED (abortResponse set, e.g. spend_exceeded) is NOT a silent failure — no strip-and-retry re-entry, the abort outcome stands", async () => {
+    // The safety-abort cuts the stream mid-loop, so the final turn is empty
+    // and textEmitted is false — the exact shape the silent-failure detector
+    // keys on. Re-entering the model here re-drives a deliberately-stopped
+    // run with the bridge's aborted latch disarming every safety gate
+    // (observed live: a budget-aborted turn re-ran to completion, spent 2×
+    // more, and re-ingested the prompt into the conversation store as a
+    // duplicate). The abort path already owns the user-facing outcome via
+    // abortResponse.
+    vi.mocked(runWithModelRetry).mockResolvedValue({ succeeded: true });
+    const { params } = makeDispatchParams([], "", "c-aborted-run");
+    (params.bridge.getResult as ReturnType<typeof vi.fn>).mockReturnValue({
+      llmCalls: 2,
+      stepsExecuted: 3,
+      textEmitted: false,
+      finishReason: "spend_exceeded",
+      abortResponse: "[Stopped: spend_exceeded] Your request was: 'hello'. Please try again.",
+      lastLlmErrorMessage: undefined,
+    });
+
+    const outcome = await runRetryLoop(params, "hello", undefined, false);
+
+    // The initial prompt only — the aborted run must not re-enter the model.
+    expect(vi.mocked(runWithModelRetry)).toHaveBeenCalledTimes(1);
+    expect(outcome.promptSucceeded).toBe(true);
+    expect(outcome.promptError).toBeUndefined();
+  });
+
   // -------------------------------------------------------------------------
   // The THROWN path. When session.prompt() throws the
   // grammar-400, runWithModelRetry's grammar-ladder guard returns
