@@ -86,6 +86,34 @@ case "$status" in
   *)   warn "webhook-mounted" "unsigned POST → ${status:-<none>} (unexpected — inspect manually)";;
 esac
 
+# 4b) msteams ingress mounted + BF-JWT active (ONLY when channels.msteams is enabled) — an
+#     UNSIGNED POST to /channels/msteams/api/messages must be 401 (route mounted + the Bearer
+#     pre-gate active), NOT 404 (channel disabled / not built) and NOT 2xx (auth bypassed). This
+#     is the Teams analog of the webhook probe: the inbound is a signed webhook, so the missing-
+#     bearer pre-gate is the liveness proof. Skipped (as a note) when msteams is not enabled.
+if [ -f "$CONFIG" ] && sudo -u "$COMIS_USER" test -r "$CONFIG" 2>/dev/null \
+   && sudo -u "$COMIS_USER" grep -qE '^\s*msteams:\s*$' "$CONFIG" 2>/dev/null \
+   && sudo -u "$COMIS_USER" sed -n '/^\s*msteams:/,/^\s*[a-z]/p' "$CONFIG" 2>/dev/null | grep -qE 'enabled:\s*true'; then
+  tstatus=$(H="$GW_HOST" P="$GW_PORT" node -e '
+    const http=require("http");
+    const body=Buffer.from("{}");
+    const req=http.request({host:process.env.H,port:+process.env.P,path:"/channels/msteams/api/messages",method:"POST",
+      headers:{"content-type":"application/json","content-length":body.length}},
+      r=>{r.resume();r.on("end",()=>{console.log(r.statusCode);process.exit(0)})});
+    req.on("error",e=>{console.log("ERR:"+(e.code||e.message));process.exit(0)});
+    req.write(body);req.end();
+  ' 2>/dev/null)
+  case "$tstatus" in
+    401) pass "msteams-mounted" "unsigned POST → 401 (ingress mounted, BF-JWT pre-gate active)";;
+    404) fail "msteams-mounted" "unsigned POST → 404 (ingress ABSENT — msteams disabled or credentials failed to validate)";;
+    2*)  fail "msteams-mounted" "unsigned POST → $tstatus (mounted but auth NOT enforced — a security regression!)";;
+    ERR:*) fail "msteams-mounted" "probe failed ($tstatus) — gateway not reachable";;
+    *)   warn "msteams-mounted" "unsigned POST → ${tstatus:-<none>} (unexpected — inspect manually)";;
+  esac
+else
+  warn "msteams-mounted" "channels.msteams not enabled — skipping the Teams ingress probe (Telegram is the default drive target)"
+fi
+
 # 5) terminal capability config present — the drive needs the `terminal` tool allowed for its origin/agent
 #    AND a complete `worker` block (the FATAL this run hit: schema requires worker.{maxSessions,idleTtlMs,
 #    ringBytes,stuckMs,maxConcurrentAttentionTurns} + defaults.{cols,rows,scrollback}).
