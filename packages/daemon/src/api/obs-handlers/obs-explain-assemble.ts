@@ -286,7 +286,10 @@ export function assembleIncidentReport(
   // stays the fallback for log-only sessions with no trajectory records.
   const costUsd =
     signals.summaryCostUsd ??
-    readRollupNumber(sessionEnd, metadata, rollupPayload, "costUsd", "executionCostUsd", 0);
+    // The topAlias is the FROZEN 678 fixture's flat metadata field name
+    // (`sessionCostUsd`) — a data key on an immutable on-disk artifact, NOT the
+    // renamed bridge field. It must stay `sessionCostUsd` to read the fixture.
+    readRollupNumber(sessionEnd, metadata, rollupPayload, "costUsd", "sessionCostUsd", 0);
   const mt = signals.modelTokens;
   const totalTokens =
     mt !== undefined
