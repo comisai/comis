@@ -57,10 +57,7 @@ import {
 // AutonomyConfigSchema below. Sibling leaf to keep this file under the
 // schema-agent file-size cap; re-exported via the schema-agent barrel.
 import { DurabilityConfigSchema } from "./schema-agent-autonomy-durability.js";
-// The inbound MCP allowlist + 3-tier classification. Default-off; nested into
-// AutonomyConfigSchema below. Its `enabled` field is the surface gate paired
-// with the `orch:mcp` grant (SURFACE_TOGGLE_TO_CAP.mcp); its `allow` map is the
-// second default-deny layer the daemon-side executor consults per invocation.
+// The inbound MCP allowlist leaf (default-off) — nested below; docs in the leaf.
 import { AutonomyMcpConfigSchema } from "./schema-agent-autonomy-mcp.js";
 // The autonomy MODE vocabulary + the fail-closed `resolveEffectiveMode`
 // primitive + the two `unattended`/`max` posture notices live in a sibling leaf
@@ -220,12 +217,7 @@ export const AutonomyConfigSchema = z.strictObject({
   // budget/rate/spawn/outward blocks above; a bare `.default({})` does not
   // typecheck because every nested field is itself `.default()`-ed).
   durability: DurabilityConfigSchema.default(() => DurabilityConfigSchema.parse({})),
-  // MCP inbound-allowlist sub-block. Default-off (`{ enabled:false, allow:{} }`
-  // on a fully-omitted block) — a fresh agent has the whole MCP surface dark:
-  // `enabled:false` withholds the `orch:mcp` grant (layer one) and the empty
-  // `allow` map denies every server/tool (layer two). Same `.parse({})` idiom as
-  // the message/durability blocks (a bare `.default({})` does not typecheck —
-  // every nested field is itself `.default()`-ed).
+  // MCP inbound-allowlist sub-block (default-off): the orch:mcp grant + allowlist.
   mcp: AutonomyMcpConfigSchema.default(() => AutonomyMcpConfigSchema.parse({})),
   // ── per-surface ergonomic toggles → matching orch:* cap ("one cap model") ──
   /** orch:web — untrusted external content (Rule-of-Two leg A). */
@@ -255,9 +247,7 @@ const SURFACE_TOGGLE_TO_CAP = {
   analyze: "orch:analyze",
   write: "orch:write",
   browse: "orch:browse",
-  // orch:mcp — connected MCP-server tools in the jailed SDK (default off, no
-  // floor). The grant signal is the nested `autonomy.mcp.enabled` gate; the
-  // `autonomy.mcp.allow` map is the second default-deny layer (permitsMcpTool).
+  // orch:mcp — MCP tools in the jailed SDK; grant gated on autonomy.mcp.enabled.
   mcp: "orch:mcp",
 } as const satisfies Record<string, AgentCapability>;
 
@@ -445,10 +435,7 @@ export function resolveAutonomy(cfg?: AutonomyConfig): ResolvedAutonomy {
     [cfg?.analyze, SURFACE_TOGGLE_TO_CAP.analyze],
     [cfg?.write, SURFACE_TOGGLE_TO_CAP.write],
     [cfg?.browse, SURFACE_TOGGLE_TO_CAP.browse],
-    // The nested `autonomy.mcp` leaf's `enabled` field is the mcp surface gate
-    // (default-off). The :433 loop unions orch:mcp into capSet when it is `true`
-    // — grantable ONLY here, never a floor member (NG2 default-deny).
-    [cfg?.mcp?.enabled, SURFACE_TOGGLE_TO_CAP.mcp],
+    [cfg?.mcp?.enabled, SURFACE_TOGGLE_TO_CAP.mcp], // orch:mcp gated on autonomy.mcp.enabled
   ];
   for (const [enabled, cap] of surfaceToggles) {
     if (enabled === true) capSet.add(cap);
