@@ -133,6 +133,108 @@ console.log(summaries.join("\n---\n"));
 The three searches and three fetches — and all their intermediate payloads — happen inside the
 jail in **one** turn. The model's context only ever sees the final `console.log`.
 
+## Connected MCP tools (`comis_tools.mcp`)
+
+When the operator connects one or more MCP servers and **explicitly allowlists** their tools for
+an agent (see [Autonomy → Connected MCP tools](/agents/autonomy#connected-mcp-tools)), those tools
+surface in the jailed SDK under a dynamic namespace:
+
+```typescript
+// Call an allowlisted tool on a connected MCP server. The server/tool set is
+// operator-configured; comis_tools.mcp.<server>.<tool>(args) resolves at runtime.
+const result = await comis_tools.mcp.myserver.mytool({ query: "hello" });
+console.log(JSON.stringify(result));
+```
+
+Because a server's tool set is discovered per connection, `comis_tools.mcp` is a **runtime
+namespace**, not a fixed list — `comis_tools.mcp.<server>.<tool>(args)` resolves each `<server>`
+and `<tool>` on the fly to a single cap-socket call. It runs under the `orch:mcp` capability, which
+is **off in every default profile** — the one genuinely new default-off capability of this surface
+(contrast the write/message surfaces below, whose capabilities are already on in `standard`).
+
+The call runs exactly like `web_fetch`: **daemon-side**, on the daemon's network, so the jail
+stays `--unshare-net`. The jailed script's call crosses the `0600` capability socket to the
+daemon, which invokes the connected MCP client and returns the tool's result as **data**:
+
+- **Wrapped, never control.** The return is sanitized and wrapped as untrusted external content
+  (the same treatment as `web_fetch`) — the script reads it as data; it can never be interpreted
+  as instructions to the model.
+- **High-volume returns offload to a ResultRef.** A large MCP result is materialized to the
+  workspace's `results/` directory and returns a `ResultRef` handle, sliced in-jail with
+  `.jq`/`.grep`/`.read`/`.sql` — identical to `web_fetch`. Only the slice you log re-enters context.
+- **Allowlisted or denied — nothing in between.** A `{server, tool}` pair the operator has not
+  allowlisted is denied at the socket (a content-free capability denial); the jailed call surfaces
+  the deny as a thrown error in the same turn.
+
+The MCP **control plane** — connecting, disconnecting, or authenticating a server
+(`mcp_manage`/`mcp_login`) — is **never** on this surface. The proxy can only ever name a connected
+server's *tool*; it has no path to a management method.
+
+Python is identical, in the synchronous idiom:
+
+```python
+result = comis_tools.mcp.myserver.mytool({"query": "hello"})
+print(result)
+```
+
+## The typed mutation surface (`write` and `message`)
+
+Beyond reading and fetching, an autonomy-bearing agent can **write to its workspace** and **send
+outward** from inside the same jailed turn — so a `fetch → transform → send` chain that would
+otherwise take several round-trips runs in one script:
+
+```typescript
+// orch:write — write a file into the jailed run workspace (path-confined, run-ephemeral).
+await comis_tools.write({ path: "summary.md", content: "# Findings" });
+
+// orch:message — send outward to the agent's own origin channel.
+await comis_tools.message_send({ channel_type: "telegram", channel_id: "chat123", text: "Done." });
+```
+
+The outward triplet is `message_send`, `message_reply`, and `message_react` — the
+genuinely-outward send subset (dispatching [`message.send`/`reply`/`react`](/reference/json-rpc#message-send)).
+
+<Warning>
+**What is new here is the typed surface, not the capabilities.** `orch:write` and `orch:message`
+are **floor capabilities** — on by default in `standard` and up (only the `assistant` profile
+withholds them). What ships new is the **typed `comis_tools` methods** (`write`,
+`message_send`/`reply`/`react`) that let a script reach those already-held capabilities directly
+in one turn. The methods are inert for an agent that does not hold the underlying capability: an
+`assistant`-profile agent, or one you gate with `write: false`, cannot call them. Only `orch:mcp`
+above is a genuinely new default-off capability — do not read "typed surface is new" as "the
+write/message capabilities are off by default".
+</Warning>
+
+`write` is **path-confined to the run's workspace** and **run-ephemeral**: every path resolves
+under the agent's jailed workspace root (a `../` or absolute path is refused), and the workspace is
+cleaned when the run ends, exactly like the files the read tools see. It is not a persistent store.
+`message_send`/`reply`/`react` target the agent's **own origin channel** by default — a send to a
+new channel escalates for approval (see [Autonomy](/agents/autonomy#what-standard-turns-on)) — and
+the [`message.*`](/reference/json-rpc#message-send) edit/delete/fetch subset stays admin-only, not
+part of `orch:message`.
+
+### Worked example — fetch, transform, send in one turn
+
+```typescript
+import { comis_tools } from "./comis_tools.js";
+
+// 1. Fetch (daemon-side, DNS-pinned) → a ResultRef, not a wall of text in context.
+const report = await comis_tools.web_fetch({ url: "https://example.com/report.json" });
+// 2. Transform in-jail — slice just the field we need out of the handle.
+const total = (await report.jq(".summary.total")) as number;
+// 3. Persist a working note into the run workspace (orch:write).
+await comis_tools.write({ path: "note.md", content: `Report total: ${total}` });
+// 4. Send the one-line result outward to the origin channel (orch:message).
+await comis_tools.message_send({ channel_type: "telegram", channel_id: "chat123", text: `Report total: ${total}` });
+// 5. Only this final line re-enters the conversation.
+console.log(`sent total=${total}`);
+```
+
+The fetch, the transform, the write, and the send all happen inside the jail in **one** turn; the
+large fetched payload never enters context. The outward send rides an **exactly-once** guarantee
+when [durability](/agents/autonomy#durability--resume) is enabled — otherwise it is a best-effort
+pass-through: the send still goes, it is just not deduped across a crash.
+
 ## Python (`language: "py"`)
 
 Set `language: "py"` to write the script in Python instead of TypeScript/JavaScript. It runs in

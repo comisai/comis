@@ -199,6 +199,62 @@ defaulting safe so a runaway agent is bounded out of the box:
 
 See the full field list in the [config reference](/reference/config-yaml#autonomy-agents-autonomy).
 
+## Connected MCP Tools
+
+By default an agent cannot reach any connected MCP server's tools from a jailed
+[`orchestrate`](/agent-tools/orchestrate) script -- the surface is **off**, and
+the [`orch:mcp`](/security/capability-model#connected-mcp-tools-orch-mcp)
+capability is in no default profile. To turn it on for one agent, set the nested
+`autonomy.mcp` block: flip `enabled: true` (which grants `orch:mcp`) **and**
+allowlist the exact `{server -> tools}` the agent may call.
+
+```yaml title="~/.comis/config.yaml -- expose two allowlisted MCP tools to one agent"
+agents:
+  research:
+    autonomy:
+      profile: standard
+      mcp:
+        enabled: true                    # grants orch:mcp (off by default)
+        allow:
+          weather-server:
+            tools: [forecast, current]   # explicit tool names -- no wildcard
+            classification: safe         # inbound tier: safe | permission-gated
+```
+
+`autonomy.mcp` defaults to `{ enabled: false, allow: {} }` -- a fresh agent's MCP
+surface is dark at **both** layers: it holds no `orch:mcp` capability, and its
+allowlist is empty. Both must be set for a tool to be reachable:
+
+- **`enabled`** is the surface gate. `true` grants the agent the `orch:mcp`
+  capability; `false` (the default) means the capability is never granted and the
+  whole surface stays off -- no `allow` entry can override that. (There is no
+  separate boolean `mcp:` toggle beside `web`/`analyze`/`write`/`browse`; the
+  nested block's own `enabled` field is the grant signal, mirroring
+  `durability.enabled`.)
+- **`allow`** is the per-server inbound allowlist. Each key is a connected
+  server's name; its `tools` is the **explicit** list of tool names reachable on
+  that server (there is no `*` wildcard -- you name each tool), and
+  `classification` is the inbound tier.
+
+The `classification` is a **three-tier inbound gate**:
+
+| Tier | Meaning |
+|------|---------|
+| `safe` | The allowlisted tool is reachable directly. |
+| `permission-gated` | The tool is reachable, but each call fires the [approval workflow](/security/approvals) first. |
+| *absent* | **Unreachable.** A server with no `classification` is denied -- the default-deny safety net. |
+
+Reachability is thus **unlisted ⇒ unreachable** at every step: an unlisted
+server, an unlisted tool on a listed server, or a listed server with no inbound
+classification are all denied. Enforcement is the daemon's, at the capability
+socket -- the config only ever *widens* from the dark default, and never past
+what the operator explicitly names. The connected MCP tool runs **daemon-side**
+so the jail stays `--unshare-net`, and the management plane (connecting or
+authenticating a server) is never reachable from a jailed script. This inbound
+allowlist is a **separate** control from the outbound `/mcp/v1` export policy
+that governs which of *this* daemon's tools are exposed to external MCP clients;
+turning one on never affects the other.
+
 ## One-shot auto-repair
 
 When an [`orchestrate`](/agent-tools/orchestrate) script fails on a **recoverable**
@@ -267,7 +323,13 @@ agents:
   the direct [`message.send`/`reply`/`react`](/reference/json-rpc#message-send)
   path **and** the sub-agent completion-announcement path -- the announcement
   dead-letter queue consults the same ledger on restart, so a recovered
-  announcement is never delivered twice.
+  announcement is never delivered twice. The typed
+  [`comis_tools.message_send`/`reply`/`react`](/agent-tools/orchestrate#the-typed-mutation-surface-write-and-message)
+  outward methods dispatch that same `message.*` path, so they ride the same
+  ledger. **This dedup is active only under durability.** With durability off
+  (the default), an outward send is a best-effort pass-through -- still delivered,
+  just not deduped across a crash; the exactly-once guarantee attaches only once
+  `autonomy.durability.enabled` is on.
 - **A resumed run never broadens its authority.** On resume the lease is
   re-minted from the run's **persisted, already-attenuated** capabilities -- never
   re-attenuated from a live parent (which could be broader), and never a superset
