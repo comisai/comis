@@ -82,6 +82,18 @@ export interface MentalModel {
    * throw). The shape mirrors `MemoryEntry["history"]`.
    */
   history?: ReadonlyArray<{ previousContent: string; changedAt: number }> | undefined;
+  /**
+   * The deterministic tool-NAME footprint of a learned PROCEDURE doc (advisory) —
+   * the read-side mirror of the write-side `required_tools` bind. `undefined` for a
+   * user-intent skill / profile / topic (the `required_tools` column is NULL), or
+   * when the column holds corrupt JSON (degrade-to-absent, never a throw). It is
+   * the SURFACE DISCRIMINATOR: the learned-skill surface caps the procedure-doc
+   * subset (`requiredTools` populated) at a per-agent budget, leaving user-intent
+   * skills + topic docs on a separate, uncapped path. Content-free (tool NAMES
+   * only); advisory — the model re-authors the run under its already-permissioned
+   * tools, this is not an executable surface.
+   */
+  requiredTools?: ReadonlyArray<string>;
   /** Injected epoch ms the row was admitted. */
   createdAt: number;
 }

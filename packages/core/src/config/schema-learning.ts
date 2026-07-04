@@ -59,8 +59,22 @@ export const LearningConfigSchema = z.strictObject({
       /** Per-run admitted-doc cap (a finite DoS bound — kept finite for safety even with cost ignored).
        *  Default 100 (best-out-of-box: don't artificially throttle a burst of corroborated learning). */
       maxDocsPerRun: z.number().int().positive().default(100),
+      /** Per-agent PROCEDURE-doc surface budget: the max number of orchestrate-derived docs (the
+       *  `required_tools`-populated subset) surfaced into one prompt's `<available_skills>`. The
+       *  scaling guard — with no ranked top-K at surface time, a burst of procedure docs would
+       *  otherwise bloat every prompt. Caps that subset only (oldest-first); user-intent skills +
+       *  topic docs are UNAFFECTED. Positive integer, default 10. */
+      maxProcedureDocsSurfaced: z.number().int().positive().default(10),
     })
-    .default(() => ({ schedule: "0 */3 * * *", minConfidence: 0.6, promoteAtProofCount: 3, maxDocsPerRun: 100 })),
+    .default(() => ({
+      schedule: "0 */3 * * *",
+      minConfidence: 0.6,
+      promoteAtProofCount: 3,
+      maxDocsPerRun: 100,
+      // MUST mirror the field default — a ZodDefault returns this object as-is (no per-field
+      // re-parse), so an omitted key here would be dropped on an empty/partial config parse.
+      maxProcedureDocsSurfaced: 10,
+    })),
   /** Forgetting sub-policy. Has its own `.default()` so a partial config fills it in. */
   forget: z
     .strictObject({

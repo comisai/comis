@@ -89,6 +89,12 @@ export function wireAgentLearnedSkillSurface(args: {
   workspaceDir: string;
   logger: ComisLogger;
   registry?: LearnedSkillSurfaceRegistry;
+  /**
+   * Per-agent procedure-doc surface budget (`learning.reflect.maxProcedureDocsSurfaced`),
+   * threaded through to the refresh so the orchestrate-derived procedure-doc subset is
+   * capped per agent. Omitted only by tests; production passes the resolved config value.
+   */
+  maxProcedureDocsSurfaced?: number | undefined;
 }): { readonly current: readonly MentalModel[] } {
   // Default-off ⇒ no store threaded ⇒ refreshLearnedSkillSurface returns []
   // and runs NO list()/rmSync — the cache stays empty (platform-only, byte-identical).
@@ -98,6 +104,7 @@ export function wireAgentLearnedSkillSurface(args: {
     scope: args.scope,
     workspaceDir: args.workspaceDir,
     logger: args.logger,
+    maxProcedureDocsSurfaced: args.maxProcedureDocsSurfaced,
   });
   // Register so the promote/demote loop can re-refresh this agent's surface.
   args.registry?.register(args.agentId, { refresh });

@@ -126,6 +126,24 @@ function parseStructuredBody(raw: string | null): StructuredBody | undefined {
   }
 }
 
+/**
+ * Parse the nullable JSON-encoded `required_tools` column into the tool-NAME set,
+ * or `undefined` when the column is NULL (a user-intent skill / profile / topic) or
+ * holds corrupt JSON (degrade-to-absent, mirroring {@link parseStructuredBody} — a
+ * corrupt column must never throw a read). This is the read-side of the write-side
+ * bind: the surface uses `requiredTools !== undefined` as the procedure-doc
+ * discriminator, so an absent/corrupt column reads as "not a procedure doc".
+ */
+function parseRequiredTools(raw: string | null): string[] | undefined {
+  if (raw === null) return undefined;
+  try {
+    const parsed = StringArraySchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** One prior-body history entry (the supersede trail). */
 type HistoryEntry = { previousContent: string; changedAt: number };
 
@@ -178,6 +196,10 @@ function mentalModelId(s: {
 
 /** Map a parsed `mental_models` row to the domain {@link MentalModel}. */
 function rowToMentalModel(row: z.infer<typeof MentalModelRowSchema>): MentalModel {
+  // Read-side of the write-side bind: the surface discriminator. Spread in ONLY
+  // when the column parses to a value (NULL / corrupt ⇒ the field is absent), so a
+  // user-intent skill / profile / topic reads `requiredTools` undefined.
+  const requiredTools = parseRequiredTools(row.required_tools);
   return {
     id: row.id,
     name: row.name,
@@ -200,6 +222,8 @@ function rowToMentalModel(row: z.infer<typeof MentalModelRowSchema>): MentalMode
     // The supersede trail — lenient parse; undefined when the
     // column is NULL (never superseded) or corrupt (degrade-to-absent).
     history: parseHistoryColumn(row.history),
+    // The procedure-doc tool footprint (advisory); absent for a user-intent skill.
+    ...(requiredTools !== undefined ? { requiredTools } : {}),
     createdAt: row.created_at,
   };
 }
