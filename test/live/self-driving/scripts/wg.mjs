@@ -66,22 +66,52 @@ const name = spec.name;
 const agentId = spec.agentId || "default";
 const script = spec.scriptFile ? readFileSync(spec.scriptFile, "utf8") : spec.script;
 
+const isNonDefault = agentId !== "default";
+
 // 1. Replace any same-name job so cron.run resolves unambiguously + the store is fresh.
+//    NOTE: cron.remove has no agentId param (the operator gateway strips _agentId), so it
+//    only removes from the DEFAULT agent — a non-default job cannot be replaced this way
+//    (F-CRON-2). For a non-default agent, re-run with a FRESH name or a WIPE_CRONS restart.
 try { await call("cron.remove", { jobName: name }); } catch { /* not found — ok */ }
 
-// 2. Author with the flat chat-tool fields.
-const addParams = {
-  name,
-  agentId,
-  schedule_kind: "every",
-  schedule_every_ms: 86_400_000,
-  payload_kind: spec.payloadKind || "agent_turn",
-  payload_text: spec.payloadText || "respond with exactly: ACK",
-  wake_gate_script: script,
-  wake_gate_language: spec.language || "js",
-  ...(spec.deliveryTarget ? { deliveryTarget: spec.deliveryTarget } : {}),
-  ...(spec.sessionTarget ? { session_target: spec.sessionTarget } : {}),
-};
+// 2. Author the job. The FLAT cron.add shape (schedule_kind/payload_kind/…) IGNORES
+//    `agentId` — the operator gateway strips `_agentId` and the flat normalize never
+//    re-maps the user `agentId`, so a flat add always lands on the DEFAULT agent
+//    (F-CRON-1). Only the WEB/nested shape (nested `schedule` + `message` + `wakeGate`)
+//    re-derives `_agentId` from the user `agentId` — but it forces payload_kind:agent_turn.
+//    So: default agent → flat shape (supports system_event); non-default agent → nested
+//    shape (agent_turn only; a system_event on a non-default agent is NOT operator-authorable).
+let addParams;
+if (isNonDefault) {
+  if (spec.payloadKind && spec.payloadKind !== "agent_turn") {
+    console.error(
+      `wg.mjs: WARN agentId=${agentId} → nested shape forces payload_kind:agent_turn ` +
+      `(only the web shape maps agentId); ignoring payloadKind=${spec.payloadKind}. ` +
+      `A non-default-agent system_event cron is not operator-authorable (F-CRON-1).`,
+    );
+  }
+  addParams = {
+    name,
+    agentId, // the WEB shape maps this -> _agentId in normalizeCronAddParams
+    schedule: { kind: "every", everyMs: 86_400_000 },
+    message: spec.payloadText || "respond with exactly: ACK",
+    wakeGate: { script, language: spec.language || "js" },
+    ...(spec.deliveryTarget ? { deliveryTarget: spec.deliveryTarget } : {}),
+  };
+} else {
+  addParams = {
+    name,
+    agentId,
+    schedule_kind: "every",
+    schedule_every_ms: 86_400_000,
+    payload_kind: spec.payloadKind || "agent_turn",
+    payload_text: spec.payloadText || "respond with exactly: ACK",
+    wake_gate_script: script,
+    wake_gate_language: spec.language || "js",
+    ...(spec.deliveryTarget ? { deliveryTarget: spec.deliveryTarget } : {}),
+    ...(spec.sessionTarget ? { session_target: spec.sessionTarget } : {}),
+  };
+}
 const added = await call("cron.add", addParams);
 
 if (spec.noFire) {
