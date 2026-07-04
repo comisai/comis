@@ -298,6 +298,31 @@ describe("ChannelEvents payload structure", () => {
     expect(received.thresholdMs).toBe(21_600_000);
   });
 
+  it("channel:ingress_auth_rejected delivers channelType + the closed reason class, content-free", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["channel:ingress_auth_rejected"] = {
+      channelType: "msteams",
+      reason: "invalid_token",
+      timestamp: Date.now(),
+    };
+
+    bus.on("channel:ingress_auth_rejected", handler);
+    bus.emit("channel:ingress_auth_rejected", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const received = handler.mock.calls[0]![0] as EventMap["channel:ingress_auth_rejected"];
+    expect(received.channelType).toBe("msteams");
+    expect(received.reason).toBe("invalid_token");
+    // Content-free: ONLY the label + closed reason class + timestamp — no token,
+    // Authorization header, or body field can ride this event.
+    expect(Object.keys(received).sort()).toEqual([
+      "channelType",
+      "reason",
+      "timestamp",
+    ]);
+  });
+
   it("type safety: @ts-expect-error for missing required fields", () => {
     const bus = new TypedEventBus();
 
