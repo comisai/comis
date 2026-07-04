@@ -210,9 +210,11 @@ export const MsTeamsChannelEntrySchema = z.strictObject({
    * monitor's stale-reap, so a dead ingress reports healthy indefinitely; a
    * dedicated liveness timer compares the inbound-only last-received timestamp
    * to this threshold and, on breach, emits a `channel:inbound_silent` event +
-   * a WARN that surface as a `comis fleet` health signal. Default: 6 hours.
+   * a WARN that surface as a `comis fleet` health signal. The check interval is
+   * derived from this value, so it is floored at 1 minute — a smaller window
+   * would drive a CPU-pegging busy-loop poll. Default: 6 hours.
    */
-  missedInboundThresholdMs: z.number().int().positive().default(21_600_000),
+  missedInboundThresholdMs: z.number().int().min(60_000).default(21_600_000),
   /** Per-channel media processing overrides (defaults: all enabled) */
   mediaProcessing: MediaProcessingSchema.optional(),
   /** Ack reaction sent when the agent starts processing a message */

@@ -457,6 +457,14 @@ describe("MsTeamsChannelEntrySchema", () => {
     expect(MsTeamsChannelEntrySchema.safeParse({ missedInboundThresholdMs: -1 }).success).toBe(false);
   });
 
+  it("rejects a missedInboundThresholdMs below the one-minute floor (no busy-loop poll)", () => {
+    // A tiny value would drive the liveness monitor's setInterval to a ~1ms poll
+    // that pegs a CPU, so the schema floors it at one minute.
+    expect(MsTeamsChannelEntrySchema.safeParse({ missedInboundThresholdMs: 1 }).success).toBe(false);
+    expect(MsTeamsChannelEntrySchema.safeParse({ missedInboundThresholdMs: 59_999 }).success).toBe(false);
+    expect(MsTeamsChannelEntrySchema.safeParse({ missedInboundThresholdMs: 60_000 }).success).toBe(true);
+  });
+
   it("rejects a fractional missedInboundThresholdMs (must be an integer)", () => {
     const result = MsTeamsChannelEntrySchema.safeParse({ missedInboundThresholdMs: 1000.5 });
     expect(result.success).toBe(false);
