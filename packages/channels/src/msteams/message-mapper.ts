@@ -22,6 +22,7 @@ import type { NormalizedMessage } from "@comis/core";
 import { systemNowMs } from "@comis/core";
 import { randomUUID } from "node:crypto";
 import { detectBotMention } from "./mentions.js";
+import { mimeToAttachmentType } from "../shared/media-utils.js";
 
 /** The reply-suffix marker that carries the parent-message id in a channel conversation id. */
 const MESSAGE_ID_MARKER = ";messageid=";
@@ -55,6 +56,21 @@ export interface TeamsActivity {
    * identity is ever sourced from here.
    */
   value?: { action?: { verb?: string; data?: { cb?: string } } };
+  /**
+   * Inbound file/media attachments. `contentUrl` is a hosted-content link that
+   * needs the Connector Bearer at fetch time; `content.downloadUrl` is a
+   * pre-authed SharePoint link that carries no header and 302-redirects to
+   * storage. The mapper never fetches these — it only rewrites each to the
+   * custom `msteams-file://` scheme so the composite routes deferred,
+   * SSRF-guarded resolution to the Teams resolver rather than the https
+   * fallback.
+   */
+  attachments?: Array<{
+    contentType: string;
+    contentUrl?: string;
+    name?: string;
+    content?: { downloadUrl?: string };
+  }>;
 }
 
 /**
@@ -153,6 +169,25 @@ export function mapMsTeamsActivityToNormalized(
   if (threadRoot !== undefined) metadata.msteamsThreadId = threadRoot;
   metadata.mentionedBot = detectBotMention(activity.entities, activity.recipient?.id);
 
+  // Rewrite each attachment to the custom `msteams-file://` scheme carrying the
+  // encodeURIComponent-wrapped real URL. encodeURIComponent guarantees no bare
+  // "://" inside the payload, so the composite resolver's scheme split sees
+  // exactly `msteams-file` and routes to the Teams resolver (never the https
+  // fallback). The pre-authed `content.downloadUrl` is preferred over the
+  // hosted-content `contentUrl`; an attachment with no fetchable URL is dropped.
+  const attachments = (activity.attachments ?? []).flatMap((att) => {
+    const realUrl = att.content?.downloadUrl ?? att.contentUrl;
+    if (realUrl == null || realUrl.length === 0) return [];
+    return [
+      {
+        type: mimeToAttachmentType(att.contentType),
+        url: `msteams-file://${encodeURIComponent(realUrl)}`,
+        ...(att.contentType != null && { mimeType: att.contentType }),
+        ...(att.name != null && { fileName: att.name }),
+      },
+    ];
+  });
+
   return {
     id: randomUUID(),
     channelId: stripMessageIdSuffix(activity.conversation.id),
@@ -160,7 +195,7 @@ export function mapMsTeamsActivityToNormalized(
     senderId: activity.from?.aadObjectId ?? activity.from?.id ?? "unknown",
     text: toPlainText(activity.text),
     timestamp: systemNowMs(),
-    attachments: [],
+    attachments,
     chatType,
     metadata,
   };
