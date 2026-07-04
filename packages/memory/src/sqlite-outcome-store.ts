@@ -167,22 +167,27 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
 
   // --- Prepared statements (parameterized; reused across calls) ---
   // Insert keyed on the (tenant_id, agent_id, trajectory_id, source, observed_at) UNIQUE
-  // tuple. On conflict, MERGE the two attribution columns rather than drop the row:
-  // `recalled_ids` (memory:recall_used) and `used_skill_ids` (memory:skill_used) are written
-  // as SEPARATE source:"explicit" carriers at post-execution, so when their `observed_at`
-  // lands in the SAME millisecond they collide on this tuple — a plain DO NOTHING then
-  // SILENTLY dropped whichever lost the race, intermittently losing one credit on any turn
-  // that BOTH recalled memory AND reused a skill (the ~1/3 reuse-credit miss). COALESCE keeps
-  // each column's first non-null value, so the two carriers MERGE onto one row instead of one
-  // dropping. A genuine replay (identical tuple, same columns) COALESCEs to the same values —
-  // still a no-op; a tool/pipeline collision (both id-columns null) is a no-op on these SETs and
-  // never touches outcome/confidence, so fusion is byte-identical. All columns are bound `?`.
+  // tuple. On conflict, MERGE the attribution columns rather than drop the row:
+  // `recalled_ids` (memory:recall_used), `used_skill_ids` (memory:skill_used), and
+  // `procedure_descriptor` (orchestrate:run_summary) are written as SEPARATE
+  // source:"explicit" carriers at post-execution, so when their `observed_at` lands in the
+  // SAME millisecond they collide on this tuple — a plain DO NOTHING then SILENTLY dropped
+  // whichever lost the race, intermittently losing one credit on any turn that BOTH recalled
+  // memory AND reused a skill (the ~1/3 reuse-credit miss). COALESCE keeps each column's
+  // first non-null value, so the carriers MERGE onto one row instead of one dropping. A
+  // genuine replay (identical tuple, same columns) COALESCEs to the same values — still a
+  // no-op; a tool/pipeline collision (all id-columns null) is a no-op on these SETs and never
+  // touches outcome/confidence, so fusion is byte-identical. All columns are bound `?`.
+  // AGGREGATE EDGE (procedure_descriptor): a turn may hold multiple orchestrate runs but the
+  // row keys on one trajectory_id — COALESCE keeps the FIRST run's descriptor (first-run wins);
+  // a set-union across runs is a deliberate non-goal for this advisory, single-run-common case.
   const insertStmt = db.prepare(
-    "INSERT INTO outcome_events (id, tenant_id, agent_id, session_id, trajectory_id, outcome, source, confidence, sender_trust, recalled_ids, used_skill_ids, observed_at) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+    "INSERT INTO outcome_events (id, tenant_id, agent_id, session_id, trajectory_id, outcome, source, confidence, sender_trust, recalled_ids, used_skill_ids, procedure_descriptor, observed_at) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
       "ON CONFLICT(tenant_id, agent_id, trajectory_id, source, observed_at) DO UPDATE SET " +
       "recalled_ids = COALESCE(excluded.recalled_ids, recalled_ids), " +
-      "used_skill_ids = COALESCE(excluded.used_skill_ids, used_skill_ids)",
+      "used_skill_ids = COALESCE(excluded.used_skill_ids, used_skill_ids), " +
+      "procedure_descriptor = COALESCE(excluded.procedure_descriptor, procedure_descriptor)",
   );
 
   // Scoped read for resolve(): the `tenant_id = ? AND agent_id = ?` filter is the
@@ -191,7 +196,7 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
   // without it an unindexed scan can return same-tier rows in any order, so
   // an equal-confidence tie-break that keyed on `rows[0]` flipped run-to-run.
   const readStmt = db.prepare(
-    "SELECT id, session_id, trajectory_id, outcome, source, confidence, sender_trust, recalled_ids, used_skill_ids, observed_at " +
+    "SELECT id, session_id, trajectory_id, outcome, source, confidence, sender_trust, recalled_ids, used_skill_ids, procedure_descriptor, observed_at " +
       "FROM outcome_events WHERE tenant_id = ? AND agent_id = ? AND trajectory_id = ? " +
       "ORDER BY observed_at ASC, id ASC",
   );
@@ -229,6 +234,9 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
           obs.senderTrust ?? null,
           obs.recalledIds && obs.recalledIds.length > 0 ? JSON.stringify(obs.recalledIds) : null,
           obs.usedSkillIds && obs.usedSkillIds.length > 0 ? JSON.stringify(obs.usedSkillIds) : null,
+          obs.procedureDescriptor && obs.procedureDescriptor.length > 0
+            ? JSON.stringify(obs.procedureDescriptor)
+            : null,
           obs.observedAt,
         );
         const durationMs = systemNowMs() - startMs;

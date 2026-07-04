@@ -14,12 +14,13 @@
  *   - INTEGER `observed_at` → `z.number()`; REAL `confidence` → `z.number()`.
  *
  * PROJECTION: the scoped `SELECT id, session_id, trajectory_id, outcome, source,
- * confidence, sender_trust, recalled_ids, used_skill_ids, observed_at FROM
- * outcome_events WHERE tenant_id=? AND agent_id=? AND trajectory_id=?` read.
+ * confidence, sender_trust, recalled_ids, used_skill_ids, procedure_descriptor,
+ * observed_at FROM outcome_events WHERE tenant_id=? AND agent_id=? AND trajectory_id=?` read.
  * `tenant_id`/`agent_id` are NOT projected — the WHERE pins them, the load-bearing
  * tenant/agent isolation boundary (mirror the usefulness-row JSDoc). `outcome`/`source`
- * are NOT NULL (the DDL CHECK pins the closed enums); `recalled_ids`/`used_skill_ids`
- * are JSON TEXT parsed downstream (NULL when absent — empty when no skills recorded).
+ * are NOT NULL (the DDL CHECK pins the closed enums); `recalled_ids`/`used_skill_ids`/
+ * `procedure_descriptor` are JSON TEXT parsed downstream (NULL when absent — empty when
+ * no skills recorded).
  *
  * @module
  */
@@ -45,6 +46,8 @@ export const OutcomeEventRowSchema = z.strictObject({
   recalled_ids: z.string().nullable(),
   /** JSON-encoded string[] of used-skill ids; NULL/empty when none are recorded. */
   used_skill_ids: z.string().nullable(),
+  /** JSON-encoded string[] of the run's content-free tool-NAME descriptor; NULL when absent. */
+  procedure_descriptor: z.string().nullable(),
   /** Epoch ms the observation was made (part of the idempotency tuple). */
   observed_at: z.number(),
 });

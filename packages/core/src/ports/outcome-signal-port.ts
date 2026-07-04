@@ -76,6 +76,13 @@ export interface OutcomeObservation {
   recalledIds?: string[];
   /** Opaque used-skill ids attributed to this trajectory — ids only, never bodies; absent when no skill use was attributed. */
   usedSkillIds?: string[];
+  /**
+   * Content-free procedure descriptor for this trajectory — the run's bounded tool-NAME
+   * set (the pre-flight footprint); NAMES only, never args/bodies/secrets. Absent when no
+   * cap-mapped tool call sites were declared. Persisted JSON-encoded to `procedure_descriptor`;
+   * NOT part of any key/index (the sha256 id tuple is untouched).
+   */
+  procedureDescriptor?: ReadonlyArray<string>;
   /** Injected epoch ms the observation was made (part of the idempotency tuple). */
   observedAt: number;
 }
