@@ -152,6 +152,62 @@ describe("mapMsTeamsActivityToNormalized", () => {
     expect(result?.attachments).toEqual([]);
   });
 
+  it("maps a message activity's attachments[] to NormalizedMessage.attachments with the msteams-file scheme", () => {
+    const result = mapMsTeamsActivityToNormalized(
+      makeActivity({
+        attachments: [
+          { contentType: "image/png", contentUrl: "https://smba.example/att/1", name: "pic.png" },
+        ],
+      }),
+    );
+    expect(result?.attachments).toHaveLength(1);
+    const att = result?.attachments[0];
+    expect(att?.type).toBe("image");
+    expect(att?.url).toBe(`msteams-file://${encodeURIComponent("https://smba.example/att/1")}`);
+    expect(att?.mimeType).toBe("image/png");
+    expect(att?.fileName).toBe("pic.png");
+    // The custom-scheme url is a clean inverse of the deferred media resolver's
+    // decode: decodeURIComponent(url minus the scheme prefix) === the real https url.
+    expect(decodeURIComponent((att?.url ?? "").replace(/^msteams-file:\/\//, ""))).toBe(
+      "https://smba.example/att/1",
+    );
+  });
+
+  it("prefers content.downloadUrl (pre-authed) over contentUrl and maps a pdf to type file", () => {
+    const result = mapMsTeamsActivityToNormalized(
+      makeActivity({
+        attachments: [
+          {
+            contentType: "application/pdf",
+            contentUrl: "https://hosted/x",
+            content: { downloadUrl: "https://sharepoint/y" },
+          },
+        ],
+      }),
+    );
+    expect(result?.attachments).toHaveLength(1);
+    const att = result?.attachments[0];
+    expect(att?.type).toBe("file");
+    expect(att?.url).toBe(`msteams-file://${encodeURIComponent("https://sharepoint/y")}`);
+    expect(att?.mimeType).toBe("application/pdf");
+  });
+
+  it("skips an attachment carrying neither content.downloadUrl nor contentUrl", () => {
+    const result = mapMsTeamsActivityToNormalized(
+      makeActivity({
+        attachments: [
+          { contentType: "image/png", contentUrl: "https://smba.example/keep", name: "keep.png" },
+          { contentType: "application/octet-stream", name: "no-url.bin" },
+        ],
+      }),
+    );
+    // Only the fetchable attachment is emitted; the URL-less one is dropped.
+    expect(result?.attachments).toHaveLength(1);
+    expect(result?.attachments[0]?.url).toBe(
+      `msteams-file://${encodeURIComponent("https://smba.example/keep")}`,
+    );
+  });
+
   it("extracts the channel thread root from the messageid suffix, leaving channelId stripped", () => {
     const result = mapMsTeamsActivityToNormalized(
       makeActivity({
