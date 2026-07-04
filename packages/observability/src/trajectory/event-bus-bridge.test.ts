@@ -2420,6 +2420,28 @@ describe("queue + execution + sender bridge", () => {
     expect(data.reclassified).toBe(false);
   });
 
+  it("tool_executed forwards a failure's argsPreview onto the tool.result record (the input the failed call attempted)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("tool:executed", {
+      toolName: "edit",
+      toolCallId: "tc-e",
+      durationMs: 7,
+      success: false,
+      errorKind: "validation",
+      errorMessage: "[text_not_found] ...",
+      argsPreview: { path: "IDENTITY.md", edits: "[244 chars]" },
+      timestamp: Date.now(),
+    } as any);
+
+    const rec = recorder.calls.find((c) => c.type === "tool.result");
+    expect(rec).toBeDefined();
+    const data = rec!.data as Record<string, unknown>;
+    expect(data.argsPreview).toEqual({ path: "IDENTITY.md", edits: "[244 chars]" });
+  });
+
   it("execution_recovery_attempted maps to execution.recovery_attempted carrying the closed reason + succeeded", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();

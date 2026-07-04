@@ -963,6 +963,43 @@ function cacheBreakRecord(
   };
 }
 
+describe("assembleIncidentReport — failed tool-call argsPreview", () => {
+  // The failing tool's INPUT is what an operator needs ("what did the edit try
+  // to change?"). Previously recoverable only from a raw memory.db dive; now
+  // the bounded+redacted argsPreview rides the tool.result record onto the
+  // failure so `comis explain` answers it in one call.
+  it("surfaces the bounded argsPreview of a failed tool call on failures[]", () => {
+    const signals = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "tool.result",
+        seq: 1,
+        sessionKey: SESSION_KEY,
+        data: {
+          toolName: "edit",
+          toolCallId: "tc-e",
+          success: false,
+          errorKind: "validation",
+          errorMessage: "[text_not_found] Could not find edits[1] in IDENTITY.md.",
+          argsPreview: { path: "IDENTITY.md", edits: "[244 chars]" },
+        },
+      },
+    ]);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 1);
+    const f = report.failures.find((x) => x.toolName === "edit");
+    expect(f).toBeDefined();
+    expect(f!.argsPreview).toEqual({ path: "IDENTITY.md", edits: "[244 chars]" });
+  });
+
+  it("omits argsPreview when the failure record carries none (backward-safe)", () => {
+    const signals = toIncidentSignals([
+      { traceSchema: "comis-trajectory", type: "tool.result", seq: 1, sessionKey: SESSION_KEY, data: { toolName: "web_fetch", success: false, errorKind: "dependency" } },
+    ]);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 1);
+    expect(report.failures.find((x) => x.toolName === "web_fetch")!.argsPreview).toBeUndefined();
+  });
+});
+
 describe("assembleIncidentReport — recovery attempts", () => {
   // The strip-and-re-enter / LKW-fallback / continuation-nudge recovery paths
   // mutate a run (re-prompt, model swap) and were log-only — explain couldn't

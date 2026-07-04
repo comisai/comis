@@ -507,6 +507,36 @@ describe("createPiEventBridge", () => {
       expect(endEmit).toBeDefined();
     });
 
+    it("carries a bounded+redacted argsPreview on a FAILED tool:executed so explain can show what the call attempted", () => {
+      // The failing tool's input is the load-bearing diagnostic (a live edit
+      // failure was only root-caused by a raw memory.db dive because the args
+      // reached neither the trajectory nor explain). Surface a bounded shape:
+      // small values verbatim, large values as "[N chars]".
+      const { listener } = createPiEventBridge(deps);
+      const bigOld = "x".repeat(300);
+      listener({ type: "tool_execution_start", toolName: "edit", toolCallId: "tc-e", args: { path: "IDENTITY.md", edits: [{ oldText: bigOld, newText: "y" }] } } as any);
+      listener(makeToolExecutionEndEvent("edit", "tc-e", true) as any);
+
+      const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+      const endEmit = emit.mock.calls.find((c) => c[0] === "tool:executed" && c[1].toolName === "edit" && c[1].success === false);
+      expect(endEmit).toBeDefined();
+      const ap = endEmit![1].argsPreview;
+      expect(ap, "failed tool:executed must carry argsPreview").toBeDefined();
+      expect(ap.path).toBe("IDENTITY.md"); // small value verbatim
+      expect(String(ap.edits)).toMatch(/^\[\d+ chars\]$/); // large value bounded to a size placeholder
+    });
+
+    it("does NOT carry argsPreview on a SUCCESSFUL tool:executed (failure-only — keeps the trajectory lean)", () => {
+      const { listener } = createPiEventBridge(deps);
+      listener(makeToolExecutionStartEvent("read", "tc-ok") as any);
+      listener(makeToolExecutionEndEvent("read", "tc-ok", false) as any);
+
+      const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+      const okEmit = emit.mock.calls.find((c) => c[0] === "tool:executed" && c[1].toolName === "read" && c[1].success === true);
+      expect(okEmit).toBeDefined();
+      expect(okEmit![1].argsPreview).toBeUndefined();
+    });
+
     // -----------------------------------------------------------------------
     // The bridge captures the recordResult transition verdict and
     // emits tool:breaker_opened / tool:breaker_reset (the breaker stays
