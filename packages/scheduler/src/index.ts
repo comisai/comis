@@ -7,6 +7,7 @@ export type { SchedulerLogger } from "./shared-types.js";
 
 // Cron types
 export type { CronJob, CronSchedule } from "./cron/index.js";
+export { CronDeliveryTargetSchema } from "./cron/index.js";
 
 // Cron engine
 export { computeNextRunAtMs } from "./cron/index.js";
@@ -14,6 +15,10 @@ export { createCronStore } from "./cron/index.js";
 export type { CronStore } from "./cron/index.js";
 export { createCronScheduler } from "./cron/index.js";
 export type { CronScheduler } from "./cron/index.js";
+
+// Pre-run wake-gate: pure, fail-open verdict parser
+export { parseWakeGateVerdict } from "./cron/index.js";
+export type { WakeGateVerdict } from "./cron/index.js";
 
 // Execution safety
 export { createExecutionTracker } from "./execution/index.js";

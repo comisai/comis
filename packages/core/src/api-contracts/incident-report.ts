@@ -21,6 +21,7 @@ import { defineContract } from "./types.js";
 import {
   IncidentContextBudgetSchema,
   IncidentContextBudgetHistoryEntrySchema,
+  IncidentCronWakeGateSchema,
   IncidentPromptTimeoutSchema,
   SpawnTreeNodeSchema,
   OrchestrateRunSchema,
@@ -28,6 +29,7 @@ import {
 import type {
   IncidentContextBudget,
   IncidentContextBudgetHistoryEntry,
+  IncidentCronWakeGate,
   IncidentPromptTimeout,
   SpawnTreeNode,
   OrchestrateRun,
@@ -54,11 +56,12 @@ import type {
 // the file-size split.
 export {
   IncidentContextBudgetSchema,
+  IncidentCronWakeGateSchema,
   IncidentPromptTimeoutSchema,
   SpawnTreeNodeSchema,
   OrchestrateRunSchema,
 };
-export type { IncidentContextBudget, IncidentContextBudgetHistoryEntry, IncidentPromptTimeout, SpawnTreeNode, OrchestrateRun };
+export type { IncidentContextBudget, IncidentContextBudgetHistoryEntry, IncidentCronWakeGate, IncidentPromptTimeout, SpawnTreeNode, OrchestrateRun };
 
 export const IncidentReportSchema = z.object({
   schemaVersion: z.literal(1),
@@ -163,6 +166,12 @@ export const IncidentReportSchema = z.object({
    *  session's trajectory carries `context.budget` records; additive, schemaVersion
    *  stays 1). */
   contextBudget: IncidentContextBudgetSchema.optional(),
+  /** The woke-fire wake-gate fact (optional — present ONLY when the session's
+   *  trajectory carries a `scheduler.wake_gate` record, i.e. a gate that woke the
+   *  model). A skipped fire opens no session, so it never reaches here. Content-free;
+   *  additive, schemaVersion stays 1. MUST stay declared — the non-strict `.parse()`
+   *  strips any undeclared key. {@link IncidentCronWakeGateSchema}. */
+  cronWakeGate: IncidentCronWakeGateSchema.optional(),
   /** The per-turn context-budget CASCADE — the progression of budget checks toward
    *  the terminal `contextBudget`. Present only when ≥2 distinct budget states occurred (a single
    *  check adds nothing over `contextBudget`). Dedup'd on transition + capped to the most recent 40,
@@ -693,6 +702,13 @@ export interface IncidentSignals {
   /** The per-turn context-budget cascade toward the terminal `contextBudget` (≥2 distinct states;
    *  deduped on transition, most-recent-40 capped). The assembler folds it onto IncidentReport. */
   contextBudgetHistory?: IncidentContextBudgetHistoryEntry[];
+  /**
+   * The woke-fire wake-gate fact from the session's `scheduler.wake_gate`
+   * trajectory record (LAST wins). Present ONLY for a fire the gate woke (a skip
+   * opens no session). Content-free counts/ids/boolean. Absent ⇒ no wake-gate
+   * record in the trajectory (the assembler omits it from the report).
+   */
+  cronWakeGate?: IncidentCronWakeGate;
   /**
    * The LAST `execution.prompt_timeout` trajectory record (the
    * terminal kill explains the end state). Lets the `prompt_timeout` heuristic

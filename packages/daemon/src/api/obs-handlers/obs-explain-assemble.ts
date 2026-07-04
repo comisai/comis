@@ -407,6 +407,9 @@ export function assembleIncidentReport(
     ...(signals.contextBudget !== undefined ? { contextBudget: signals.contextBudget } : {}),
     // The per-turn budget cascade toward that terminal (present only when ≥2 distinct states).
     ...(signals.contextBudgetHistory !== undefined ? { contextBudgetHistory: signals.contextBudgetHistory } : {}),
+    // The woke-fire wake-gate fact (absent when the trajectory has no
+    // scheduler.wake_gate record — a skip opens no session, so its report never exists).
+    ...(signals.cronWakeGate !== undefined ? { cronWakeGate: signals.cronWakeGate } : {}),
     // The memory-recall outcome (absent when the trajectory has no recall records).
     ...(signals.recall !== undefined ? { recall: signals.recall } : {}),
     // The per-reason cache breaks (absent when the session

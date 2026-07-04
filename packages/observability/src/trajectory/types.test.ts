@@ -68,3 +68,21 @@ describe("TrajectoryEvent forward-declared optional fields", () => {
     expectTypeOf<TrajectoryEvent["parentEntryId"]>().toEqualTypeOf<string | null | undefined>();
   });
 });
+
+// The daemon-emitted cron wake-gate type is APPENDED to the closed tuple so a
+// later recorder.recordEvent("scheduler.wake_gate", …) typechecks — recordEvent
+// REJECTS a type absent from TRAJECTORY_EVENT_TYPES. Emitted off-turn via a
+// direct per-session recorder (the image.*/capability.audited precedent — no
+// bus bridge in the daemon cron context); content-free counts/enums/ids only.
+describe("TRAJECTORY_EVENT_TYPES contains the cron wake-gate type (append-only)", () => {
+  it("includes scheduler.wake_gate", () => {
+    expect((TRAJECTORY_EVENT_TYPES as readonly string[]).includes("scheduler.wake_gate")).toBe(true);
+  });
+
+  it("uses the dot-form trajectory convention, not the colon bus-event form", () => {
+    // The bus event key is `scheduler:wake_gate` (colon); the trajectory member
+    // is the dot form. Only the dot form is a valid TrajectoryEventType.
+    expect((TRAJECTORY_EVENT_TYPES as readonly string[]).includes("scheduler:wake_gate")).toBe(false);
+    expect((TRAJECTORY_EVENT_TYPES as readonly string[]).includes("scheduler.wake_gate")).toBe(true);
+  });
+});

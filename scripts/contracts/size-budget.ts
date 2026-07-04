@@ -3,7 +3,7 @@
  * Bundle-size measurement for `packages/web/src/api/contracts.generated.ts`.
  *
  * Budget:
- *   - 134 KB minified  (`BUDGET_MINIFIED_BYTES`)
+ *   - 138 KB minified  (`BUDGET_MINIFIED_BYTES`)
  *   - 38 KB  gzipped   (`BUDGET_GZIPPED_BYTES`)
  *
  * Measurement architecture:
@@ -24,7 +24,7 @@ import { transformSync } from "esbuild";
 import { gzipSync } from "node:zlib";
 
 /**
- * Budget: 134 KB minified.
+ * Budget: 138 KB minified.
  *
  * This cap tracks legitimate additive contract growth — new admin RPCs and
  * bounded, content-free optional sections on the IncidentReport /
@@ -32,11 +32,16 @@ import { gzipSync } from "node:zlib";
  * wire constraint. The real wire cost is the gzipped total, which stays far under
  * the 38 KB gzipped budget; only the minified cap needs to move as contracts are
  * added. Raise it only when a bounded, additive addition overflows it, after
- * confirming the gzipped total still has ample headroom. Last raised for the
- * additive, content-free `IncidentReport.orchestrate` per-run section (gzipped
- * total ~13.5 KB — far under the 38 KB gzipped budget).
+ * confirming the gzipped total still has ample headroom.
+ *
+ * Last raised for two additive, content-free report additions that landed
+ * together: the `IncidentReport.orchestrate` per-run section, and the cron
+ * wake-gate sections — the `cronWakeGate` efficiency block on `FleetHealthReport`
+ * (per-agent skip-rate / turns-saved / net-cost) and the `cronWakeGate` fact on
+ * `IncidentReport`, plus the cron authoring-contract fields. Gzipped stays
+ * ~13.7 KB (far under the 38 KB gzipped budget).
  */
-export const BUDGET_MINIFIED_BYTES = 134_000;
+export const BUDGET_MINIFIED_BYTES = 138_000;
 
 /** Budget: 38 KB gzipped. */
 export const BUDGET_GZIPPED_BYTES = 38_912;

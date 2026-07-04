@@ -322,6 +322,30 @@ export interface InfraEvents {
     onComplete?: (result: { status: "ok" | "error"; error?: string }) => void;
   };
 
+  /** Scheduler: pre-run wake-gate fired — content-free savings/health signal.
+   *  Counts/enums/ids ONLY (jobId, agentId, wake, durationMs, toolCalls,
+   *  estTurnsSaved) — NEVER the gathered payload, the script source, a prompt,
+   *  or a secret. Emitted per gated fire (skip AND wake). */
+  "scheduler:wake_gate": {
+    jobId: string;
+    agentId: string;
+    /** false = the model turn was skipped; true = the gate woke the model. */
+    wake: boolean;
+    /** Gate run wall-clock (the runner's now()-delta span, fail-open included). */
+    durationMs: number;
+    /** Count of allow-decision cap-calls the gate made this fire (0 if none/unknown). */
+    toolCalls: number;
+    /** Derived heuristic: model turns avoided (1 on skip, 0 on wake). */
+    estTurnsSaved: number;
+    /** true = a FAIL-OPEN wake the runner caught (jailed run rejected —
+     *  timeout/overflow/non-zero-exit/spawn-error/unavailable-jail — or the lease
+     *  mint threw), not a clean decision. Distinguishes a broken gate (fails open
+     *  every fire — saves nothing, costs its cap-calls) from a healthy monitor that
+     *  legitimately always wakes; both otherwise read `wake:true, skipRate 0`. */
+    failedOpen: boolean;
+    timestamp: number;
+  };
+
   /** Scheduler: heartbeat check performed */
   "scheduler:heartbeat_check": {
     checksRun: number;

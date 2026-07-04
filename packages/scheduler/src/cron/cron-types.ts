@@ -142,6 +142,12 @@ export const CronJobSchema = z.strictObject({
       allow: z.array(z.string()).default([]),
       deny: z.array(z.string()).default([]),
     }).optional(),
+    /** Optional pre-run wake-gate: a jailed script that decides whether to invoke the model. */
+    wakeGate: z.strictObject({
+      script: z.string().min(1),
+      language: z.enum(["js", "ts"]).default("js"),
+      timeoutSeconds: z.number().int().positive().max(300).default(30),
+    }).optional(),
     /** Delivery target for routing results to originating channel */
     deliveryTarget: CronDeliveryTargetSchema.optional(),
     /** Whether this job is currently enabled */

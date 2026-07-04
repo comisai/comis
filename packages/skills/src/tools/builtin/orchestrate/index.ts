@@ -23,6 +23,18 @@ export type {
   OrchestrateSpawnedChild,
 } from "./orchestrate-tool.js";
 
+// The shared cap-socket jailed-run core, reused by the cron wake-gate (and any
+// other jailed-run caller) so they drive the SAME base jail. The `orchestrate`
+// tool keeps its own richer run lifecycle (durable resume, one-shot repair,
+// savings estimate, py) in orchestrate-tool.js.
+export { runJailedScript } from "./jailed-script-runner.js";
+export type {
+  JailedScriptRunnerDeps,
+  JailedScriptResultStore,
+  JailedScriptSpawnFn,
+  JailedScriptSpawnedChild,
+} from "./jailed-script-runner.js";
+
 export {
   createResultRefStore,
   buildPreview,

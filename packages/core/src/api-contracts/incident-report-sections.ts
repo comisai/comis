@@ -57,6 +57,32 @@ export const IncidentContextBudgetSchema = z.object({
 export type IncidentContextBudget = z.infer<typeof IncidentContextBudgetSchema>;
 
 /**
+ * The woke-fire wake-gate fact (content-free — counts/ids/boolean ONLY, no free
+ * text). A wake gate that WOKE the model runs the job in its main session, so
+ * that fire (and only that fire) has a session/trajectory to post-mortem; the
+ * `obs.explain` normalizer folds its `scheduler.wake_gate` trajectory record here
+ * (LAST wins). A SKIPPED fire opens no session and produces no IncidentReport at
+ * all — its lens is the enriched `cron.runs` row, not `comis explain`. The gate's
+ * gathered finding / script source never rides this fact (bounded z.object; any
+ * off-vocabulary key is stripped on parse).
+ */
+export const IncidentCronWakeGateSchema = z.object({
+  /** The cron job whose gated fire woke the model. */
+  jobId: z.string(),
+  /** Always true on the report path — only a woke fire has a session (a skip records nothing here). */
+  wake: z.boolean(),
+  /** Wall-clock ms the gate's pre-flight took. */
+  durationMs: z.number(),
+  /** Tool calls the gate's pre-flight made (reconstructed in detail via the content-free cap-audit stream). */
+  toolCalls: z.number(),
+  /** Model turns the gate estimated it saved (0 on a wake — the model ran). */
+  estTurnsSaved: z.number(),
+});
+
+/** The woke-fire wake-gate fact (see {@link IncidentCronWakeGateSchema}). */
+export type IncidentCronWakeGate = z.infer<typeof IncidentCronWakeGateSchema>;
+
+/**
  * One COMPACT per-turn budget-check entry — the cascade
  * shape. `IncidentReport.contextBudget` keeps only the TERMINAL fit-check; a `context_exhausted`
  * abort needs the PROGRESSION (each turn's assembled-input growth + eviction + verdict) to see the

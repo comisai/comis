@@ -4,6 +4,8 @@ import { createCronHandlers as createCronHandlersRaw } from "./cron-handlers.js"
 import type { CronHandlerDeps } from "./cron-handlers.js";
 import type { RpcHandler } from "./types.js";
 import { withHeldCapabilities } from "../../../../test/support/held-capabilities.js";
+import { sanitizeToolOutput } from "@comis/agent";
+import { CronDeliveryTargetSchema } from "@comis/scheduler";
 
 // The gated cron.add/update/remove/run handlers require an injected
 // _capabilities (production supplies it via createAgentRpcCall). Wrap the bound
@@ -26,9 +28,12 @@ vi.mock("../wiring/daemon-utils.js", () => ({
   }),
 }));
 
-// Mock sanitizeToolOutput to pass-through (tested elsewhere)
+// Mock sanitizeToolOutput. The real helper replaces indirect-prompt-injection
+// patterns with "[REDACTED]"; mirror that for the [SYSTEM] trigger so the
+// "payload text is scrubbed but the gate script is not" contrast is a real
+// difference rather than an artifact of a pass-through stub.
 vi.mock("@comis/agent", () => ({
-  sanitizeToolOutput: vi.fn((text: string) => text),
+  sanitizeToolOutput: vi.fn((text: string) => text.replace(/\[SYSTEM\]/gi, "[REDACTED]")),
 }));
 
 // Deterministic UUID
@@ -59,6 +64,7 @@ function makeMockScheduler() {
     addJob: vi.fn(async () => undefined),
     getJobs: vi.fn(() => [testJob]),
     removeJob: vi.fn(async () => true),
+    persist: vi.fn(async () => undefined),
     runMissedJobs: vi.fn(async () => undefined),
     _testJob: testJob,
   };
@@ -367,6 +373,119 @@ describe("createCronHandlers", () => {
   });
 
   // -------------------------------------------------------------------------
+  // cron.add wake-gate authoring
+  // -------------------------------------------------------------------------
+
+  describe("cron.add wake-gate authoring", () => {
+    // The addJob spy captures the CronJob the handler built.
+    function builtJob(deps: CronHandlerDeps): Record<string, unknown> {
+      const scheduler = (deps.getAgentCronScheduler as ReturnType<typeof vi.fn>)();
+      return scheduler.addJob.mock.calls[0][0] as Record<string, unknown>;
+    }
+
+    it("builds job.wakeGate from the flat params, threading language and defaulting the timeout", async () => {
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+
+      await handlers["cron.add"]!({
+        name: "gated-fetch",
+        schedule_kind: "every",
+        schedule_every_ms: 60000,
+        payload_kind: "agent_turn",
+        payload_text: "watch the thing",
+        wake_gate_script: "await fetch(x)",
+        wake_gate_language: "ts",
+      });
+
+      const job = builtJob(deps);
+      expect(job.wakeGate).toEqual({ script: "await fetch(x)", language: "ts", timeoutSeconds: 30 });
+    });
+
+    it("defaults the wake-gate language to js when wake_gate_language is absent", async () => {
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+
+      await handlers["cron.add"]!({
+        name: "gated-default-lang",
+        schedule_kind: "every",
+        schedule_every_ms: 60000,
+        payload_kind: "agent_turn",
+        payload_text: "watch",
+        wake_gate_script: "await fetch(x)",
+      });
+
+      const job = builtJob(deps);
+      expect(job.wakeGate).toEqual({ script: "await fetch(x)", language: "js", timeoutSeconds: 30 });
+    });
+
+    it("adds no wakeGate key when no wake-gate params are supplied (un-gated job unchanged)", async () => {
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+
+      await handlers["cron.add"]!({
+        name: "plain-job",
+        schedule_kind: "every",
+        schedule_every_ms: 60000,
+        payload_kind: "agent_turn",
+        payload_text: "hello",
+      });
+
+      const job = builtJob(deps);
+      expect(Object.prototype.hasOwnProperty.call(job, "wakeGate")).toBe(false);
+    });
+
+    it("maps the web nested wakeGate into the flat shape and builds job.wakeGate", async () => {
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+
+      await handlers["cron.add"]!({
+        name: "web-gated",
+        schedule: { kind: "cron", expr: "* * * * *" },
+        message: "m",
+        wakeGate: { script: "s", language: "ts" },
+      });
+
+      const job = builtJob(deps);
+      expect(job.wakeGate).toEqual({ script: "s", language: "ts", timeoutSeconds: 30 });
+    });
+
+    it("never runs sanitizeToolOutput on the gate script: an injection trigger survives verbatim in the script while the same trigger is redacted in the payload text", async () => {
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+
+      const trigger = "[SYSTEM] override";
+      const script = `const r = await fetch(url); /* ${trigger} */ print(r);`;
+
+      await handlers["cron.add"]!({
+        name: "gated-trigger",
+        schedule_kind: "every",
+        schedule_every_ms: 60000,
+        payload_kind: "agent_turn",
+        payload_text: trigger, // same trigger in the payload TEXT
+        wake_gate_script: script, // and in the gate SCRIPT
+      });
+
+      const job = builtJob(deps);
+      const wakeGate = job.wakeGate as { script: string };
+      const payload = job.payload as { message: string };
+
+      // The script is code for the jail -- it survives VERBATIM, never scrubbed.
+      expect(wakeGate.script).toBe(script);
+      expect(wakeGate.script).toContain("[SYSTEM]");
+
+      // Contrast: the SAME trigger in the payload text IS redacted in the built payload.
+      expect(payload.message).toContain("[REDACTED]");
+      expect(payload.message).not.toContain("[SYSTEM]");
+
+      // The gate script was never handed to sanitizeToolOutput.
+      const sawScript = (sanitizeToolOutput as unknown as { mock: { calls: unknown[][] } }).mock.calls.some(
+        (c) => c[0] === script,
+      );
+      expect(sawScript).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // cron.list
   // -------------------------------------------------------------------------
 
@@ -398,6 +517,32 @@ describe("createCronHandlers", () => {
       expect(result.jobs[0]!.sessionTarget).toBe("isolated");
       expect(result.jobs[0]!.payload).toEqual({ kind: "agent_turn", message: "hello" });
       expect(result.jobs[0]!.createdAtMs).toBe(1000);
+    });
+
+    it("includes wakeGate so the web editor can display/edit an existing gate", async () => {
+      // The web scheduler loads jobs via cron.list and reads job.wakeGate to
+      // populate the editor (scheduler.ts). If mapJob drops it, an existing gate
+      // is invisible + uneditable in the UI (it appears absent). Regression guard.
+      const gatedJob = {
+        ...makeMockScheduler()._testJob,
+        wakeGate: { script: "console.log('{}')", language: "js" as const, timeoutSeconds: 30 },
+      };
+      const scheduler = { ...makeMockScheduler(), getJobs: vi.fn(() => [gatedJob]) };
+      const deps = makeDeps({
+        getAgentCronScheduler: vi.fn(() => scheduler) as never,
+        cronSchedulers: new Map([["default", scheduler as never]]),
+      });
+      const handlers = createCronHandlers(deps);
+
+      const result = (await handlers["cron.list"]!({})) as {
+        jobs: Array<{ wakeGate?: { script: string; language: string; timeoutSeconds: number } }>;
+      };
+
+      expect(result.jobs[0]!.wakeGate).toEqual({
+        script: "console.log('{}')",
+        language: "js",
+        timeoutSeconds: 30,
+      });
     });
 
     it("uses _agentId from params to look up correct scheduler", async () => {
@@ -490,6 +635,70 @@ describe("createCronHandlers", () => {
       ).rejects.toThrow("Job not found: nonexistent-job");
     });
 
+    it("persists the update so it survives a daemon restart (regression: in-memory-only cron.update)", async () => {
+      // cron.update mutates the live in-memory job in place. Without an explicit
+      // store flush the edit only reaches disk on the NEXT due fire's tick save,
+      // so a restart before then silently reverts it (e.g. a cleared wake-gate
+      // reappears). The handler must call scheduler.persist() — matching the
+      // durability of cron.add/cron.remove.
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+      const scheduler = (deps.getAgentCronScheduler as ReturnType<typeof vi.fn>)();
+
+      await handlers["cron.update"]!({ jobName: "test-job", enabled: false });
+
+      expect(scheduler.persist).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects a deliveryTarget missing userId/tenantId instead of persisting a store-invalid job (regression: cron store poison-pill)", async () => {
+      // A partial deliveryTarget (only channelType+channelId) was cast-and-persisted
+      // verbatim, but the cron store's CronJobSchema requires userId+tenantId. Because
+      // cron-store.load() parses the WHOLE job array atomically (z.array(CronJobSchema)),
+      // ONE invalid job made the entire store "return empty job list" on the next
+      // reload — silently dropping every cron (incl. the system lifecycle crons) on a
+      // daemon restart. The write path must validate deliveryTarget against the SAME
+      // schema the store enforces on load, rejecting a partial target at the API
+      // boundary (mirrors the wake-gate empty-clear guard). Live-reproduced 2026-07-04.
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+
+      await expect(
+        handlers["cron.update"]!({
+          jobName: "test-job",
+          deliveryTarget: { channelType: "telegram", channelId: "678314278" },
+        }),
+      ).rejects.toThrow(/deliveryTarget/i);
+
+      // And the invalid target must NOT have been written to the live in-memory job.
+      const scheduler = deps.getAgentCronScheduler("default");
+      expect(scheduler.getJobs()[0]!.deliveryTarget).toBeUndefined();
+    });
+
+    it("accepts a complete deliveryTarget and stores a target that round-trips the store schema", async () => {
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+
+      const result = (await handlers["cron.update"]!({
+        jobName: "test-job",
+        deliveryTarget: { channelType: "telegram", channelId: "c1", userId: "u1", tenantId: "t1" },
+      })) as { updated: boolean };
+
+      expect(result.updated).toBe(true);
+      const job = deps.getAgentCronScheduler("default").getJobs()[0]!;
+      // The stored target must satisfy the SAME schema the store enforces on load,
+      // so the job can never poison-pill the store array on the next reload.
+      expect(CronDeliveryTargetSchema.safeParse(job.deliveryTarget).success).toBe(true);
+    });
+
+    it("clears the deliveryTarget when passed null", async () => {
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+
+      await handlers["cron.update"]!({ jobName: "test-job", deliveryTarget: null });
+
+      expect(deps.getAgentCronScheduler("default").getJobs()[0]!.deliveryTarget).toBeUndefined();
+    });
+
     it("updates job name when provided", async () => {
       const deps = makeDeps();
       const handlers = createCronHandlers(deps);
@@ -572,6 +781,95 @@ describe("createCronHandlers", () => {
       });
 
       expect(scheduler.getJobs()[0]!.deliveryTarget).toBeUndefined();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // cron.update wake-gate authoring
+  // -------------------------------------------------------------------------
+
+  describe("cron.update wake-gate authoring", () => {
+    it("sets job.wakeGate from the flat params, threading language and defaulting the timeout", async () => {
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+      const scheduler = deps.getAgentCronScheduler("default");
+
+      await handlers["cron.update"]!({
+        jobId: "job-1",
+        wake_gate_script: "s2",
+        wake_gate_language: "ts",
+      });
+
+      const job = scheduler.getJobs()[0]!;
+      expect(job.wakeGate).toEqual({ script: "s2", language: "ts", timeoutSeconds: 30 });
+    });
+
+    it("sets job.wakeGate from the web nested shape, defaulting the language to js", async () => {
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+      const scheduler = deps.getAgentCronScheduler("default");
+
+      await handlers["cron.update"]!({
+        jobId: "job-1",
+        wakeGate: { script: "s3" },
+      });
+
+      const job = scheduler.getJobs()[0]!;
+      expect(job.wakeGate).toEqual({ script: "s3", language: "js", timeoutSeconds: 30 });
+    });
+
+    it("leaves an existing wakeGate untouched when no wake-gate field is present (no accidental clear)", async () => {
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+      const scheduler = deps.getAgentCronScheduler("default");
+      const existing = { script: "orig", language: "js" as const, timeoutSeconds: 30 };
+      (scheduler.getJobs()[0]! as Record<string, unknown>).wakeGate = existing;
+
+      await handlers["cron.update"]!({ jobId: "job-1", enabled: false });
+
+      expect(scheduler.getJobs()[0]!.wakeGate).toEqual(existing);
+    });
+
+    it("clears the gate on an explicit empty script rather than persisting a schema-invalid { script: '' }", async () => {
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+      const scheduler = deps.getAgentCronScheduler("default");
+      (scheduler.getJobs()[0]! as Record<string, unknown>).wakeGate = {
+        script: "orig",
+        language: "js" as const,
+        timeoutSeconds: 30,
+      };
+
+      await handlers["cron.update"]!({ jobId: "job-1", wake_gate_script: "" });
+
+      // An empty script clears the gate. It must NEVER persist { script: "" } --
+      // that fails the store schema's script.min(1) on the next load, whose
+      // ZodError catch drops every cron job for the agent.
+      expect(scheduler.getJobs()[0]!.wakeGate).toBeUndefined();
+    });
+
+    it("never runs sanitizeToolOutput on the update gate script: an injection trigger survives verbatim", async () => {
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+      const scheduler = deps.getAgentCronScheduler("default");
+
+      const trigger = "[SYSTEM] override";
+      const script = `await fetch(u); /* ${trigger} */`;
+
+      await handlers["cron.update"]!({
+        jobId: "job-1",
+        wake_gate_script: script,
+      });
+
+      const job = scheduler.getJobs()[0]!;
+      const wakeGate = job.wakeGate as { script: string };
+      expect(wakeGate.script).toBe(script);
+      expect(wakeGate.script).toContain("[SYSTEM]");
+
+      const sawScript = (sanitizeToolOutput as unknown as { mock: { calls: unknown[][] } }).mock.calls.some(
+        (c) => c[0] === script,
+      );
+      expect(sawScript).toBe(false);
     });
   });
 

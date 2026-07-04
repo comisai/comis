@@ -311,6 +311,9 @@ export type { VideoGenRateLimiter } from "./integrations/video-gen/index.js";
 // imports it by a relative in-jail path, never through this barrel.
 export {
   createOrchestrateTool,
+  // The shared cap-socket jailed-run core the orchestrate tool delegates to,
+  // reusable by other jailed-run callers so they drive the SAME jail.
+  runJailedScript,
   scrubSecretEnv,
   createResultRefStore,
   // The durable checkpoint TTL (RESUME-05) — the daemon boot wiring threads it as
@@ -339,6 +342,11 @@ export type {
   OrchestrateReplayRespawnDeps,
   OrchestrateReplayRespawnFn,
   OrchestrateReplayRespawnInput,
+  // The shared jailed-run core types (the cron wake-gate reuses runJailedScript).
+  JailedScriptRunnerDeps,
+  JailedScriptResultStore,
+  JailedScriptSpawnFn,
+  JailedScriptSpawnedChild,
   ResultRefStore,
   ResultRefStoreDeps,
   MaterializeContext,

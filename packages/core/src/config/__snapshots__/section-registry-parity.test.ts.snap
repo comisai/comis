@@ -2412,6 +2412,11 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "immutable": true,
+    "path": "agents.scheduler.cron.wakeGate",
+    "type": "boolean"
+  },
+  {
+    "immutable": true,
     "path": "agents.scheduler.heartbeat",
     "type": "object"
   },
@@ -7441,6 +7446,11 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("sched
     "immutable": false,
     "path": "scheduler.cron.storeDir",
     "type": "string"
+  },
+  {
+    "immutable": false,
+    "path": "scheduler.cron.wakeGate",
+    "type": "boolean"
   },
   {
     "default": {
@@ -14313,6 +14323,11 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "string"
   },
   {
+    "immutable": false,
+    "path": "scheduler.cron.wakeGate",
+    "type": "boolean"
+  },
+  {
     "default": {
       "keepLines": 2000,
       "lockDir": "./data/scheduler/locks",
@@ -18619,6 +18634,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
               "maximum": 9007199254740991,
               "minimum": 0,
               "type": "integer"
+            },
+            "wakeGate": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -25627,6 +25645,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sch
         "storeDir": {
           "default": "./data/scheduler",
           "type": "string"
+        },
+        "wakeGate": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -29610,6 +29631,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                     "maximum": 9007199254740991,
                     "minimum": 0,
                     "type": "integer"
+                  },
+                  "wakeGate": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
@@ -39162,6 +39186,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "storeDir": {
               "default": "./data/scheduler",
               "type": "string"
+            },
+            "wakeGate": {
+              "type": "boolean"
             }
           },
           "required": [

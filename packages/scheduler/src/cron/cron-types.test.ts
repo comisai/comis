@@ -304,6 +304,85 @@ describe("CronJobSchema", () => {
       });
     }
   });
+
+  // wakeGate -----------------------------------------------------------------
+
+  describe("wakeGate", () => {
+    it("parses a job WITHOUT wakeGate unchanged (optional field, old shape preserved)", () => {
+      const result = CronJobSchema.safeParse(validJob);
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect(result.data.wakeGate).toBeUndefined();
+    });
+
+    it("accepts wakeGate with explicit script, language, and timeoutSeconds", () => {
+      const result = CronJobSchema.safeParse({
+        ...validJob,
+        wakeGate: {
+          script: "console.log('{\"wake\":false}')",
+          language: "ts",
+          timeoutSeconds: 15,
+        },
+      });
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect(result.data.wakeGate?.language).toBe("ts");
+      expect(result.data.wakeGate?.timeoutSeconds).toBe(15);
+    });
+
+    it("defaults language to 'js' and timeoutSeconds to 30 when only script is given", () => {
+      const result = CronJobSchema.safeParse({ ...validJob, wakeGate: { script: "x" } });
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect(result.data.wakeGate?.language).toBe("js");
+      expect(result.data.wakeGate?.timeoutSeconds).toBe(30);
+    });
+
+    it("rejects wakeGate with an empty script", () => {
+      const result = CronJobSchema.safeParse({ ...validJob, wakeGate: { script: "" } });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects wakeGate with timeoutSeconds below the lower bound (0)", () => {
+      const result = CronJobSchema.safeParse({
+        ...validJob,
+        wakeGate: { script: "x", timeoutSeconds: 0 },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects wakeGate with timeoutSeconds above the upper bound (301)", () => {
+      const result = CronJobSchema.safeParse({
+        ...validJob,
+        wakeGate: { script: "x", timeoutSeconds: 301 },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects wakeGate with a non-integer timeoutSeconds", () => {
+      const result = CronJobSchema.safeParse({
+        ...validJob,
+        wakeGate: { script: "x", timeoutSeconds: 12.5 },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects wakeGate with an unsupported language", () => {
+      const result = CronJobSchema.safeParse({
+        ...validJob,
+        wakeGate: { script: "x", language: "py" },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects wakeGate with an unknown key (strict)", () => {
+      const result = CronJobSchema.safeParse({
+        ...validJob,
+        wakeGate: { script: "x", foo: 1 },
+      });
+      expect(result.success).toBe(false);
+    });
+  });
 });
 
 describe("CronSessionStrategySchema", () => {

@@ -283,6 +283,49 @@ describe("assembleIncidentReport — orchestrate section", () => {
 });
 
 // ---------------------------------------------------------------------------
+// The cronWakeGate section is surfaced when the signals carry the woke-fire fact
+// (folded from a scheduler.wake_gate record) and OMITTED otherwise — the
+// nodeBudgetBreaches/spawnTree presence-conditional mold. A SKIPPED fire opens no
+// session, so its report never exists; the omit case is a non-gate / woke-less session.
+// ---------------------------------------------------------------------------
+
+describe("assembleIncidentReport — cronWakeGate (the woke-fire fact)", () => {
+  const wokeFact = { jobId: "j1", wake: true, durationMs: 20, toolCalls: 2, estTurnsSaved: 0 };
+
+  it("surfaces cronWakeGate when the signals carry it; schemaVersion stays 1", () => {
+    const report = assembleIncidentReport(
+      makeSignals({ cronWakeGate: wokeFact }),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+    expect(report.schemaVersion).toBe(1);
+    expect(report.cronWakeGate).toEqual(wokeFact);
+  });
+
+  it("end-to-end: a scheduler.wake_gate trajectory record reaches report.cronWakeGate (record → toIncidentSignals → assemble)", () => {
+    const signals = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "scheduler.wake_gate",
+        seq: 1,
+        data: { jobId: "nightly", agentId: "default", wake: true, durationMs: 42, toolCalls: 3, estTurnsSaved: 0 },
+      },
+    ]);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, READ_COUNT);
+    expect(report.cronWakeGate).toEqual({ jobId: "nightly", wake: true, durationMs: 42, toolCalls: 3, estTurnsSaved: 0 });
+  });
+
+  it("OMITS cronWakeGate when the signal field is absent (a woke-less / skipped session; schemaVersion stays 1)", () => {
+    const report = assembleIncidentReport(makeSignals(), makeMetadata(), null, SESSION_KEY, READ_COUNT);
+    expect(report.cronWakeGate).toBeUndefined();
+    expect(report.schemaVersion).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // cost — the F1-primary fallback chain (the frozen-fixture 1.320669 invariant).
 // ---------------------------------------------------------------------------
 

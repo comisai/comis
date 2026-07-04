@@ -148,7 +148,7 @@ export type { OutputRetentionConfig, RetentionClass } from "./schema-output-rete
 export { SkillsConfigSchema, PromptSkillsConfigSchema } from "./schema-skills.js";
 export type { TerminalAllowEntry, TerminalDriverConfig } from "./schema-skills.js";
 export { DaemonConfigSchema, LoggingConfigSchema, TracingDefaultsSchema, ConfigWebhookSchema } from "./schema-daemon.js";
-export { HeartbeatConfigSchema, SchedulerConfigSchema } from "./schema-scheduler.js";
+export { HeartbeatConfigSchema, SchedulerConfigSchema, resolveCronWakeGateEnabled } from "./schema-scheduler.js";
 export {
   GatewayConfigSchema,
   GatewayTlsConfigSchema,

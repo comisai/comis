@@ -362,6 +362,16 @@ export const TRAJECTORY_EVENT_TYPES = [
   "spend.warning",
   "spend.exceeded",
   "spend.unpriceable",
+
+  // The cron wake-gate signal on the explain timeline (woke case).
+  // Direct-emitted OFF-TURN by the scheduler wake-gate hook via the job's
+  // per-session recorder (the daemon cron context has NO EventBus bridge —
+  // direct-emit is the sanctioned path, the image.*/capability.audited
+  // precedent). APPEND-ONLY beside the frozen tuples above — never a rename.
+  // Content-free: jobId/agentId/wake/durationMs/toolCalls/estTurnsSaved —
+  // counts/enums/ids ONLY, never the gathered payload, the script source, a
+  // prompt, or a secret. No bridge mapping: daemon direct-emit, unscanned.
+  "scheduler.wake_gate",
 ] as const;
 
 /** Closed union of trajectory event type strings. */
