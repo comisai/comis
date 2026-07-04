@@ -35,7 +35,6 @@ import type {
 import { runWithContext, systemNowMs } from "@comis/core";
 import { err, fromPromise, ok, type Result } from "@comis/shared";
 import { randomUUID } from "node:crypto";
-import { classifyMsTeamsError } from "./errors.js";
 import { buildMentionEntities } from "./mentions.js";
 import {
   mapMsTeamsActivityToNormalized,
@@ -51,6 +50,7 @@ import {
   createMsTeamsConnector,
   isSafeConversationId,
   isSafeServiceUrl,
+  postConnectorActivity,
 } from "./msteams-connector.js";
 import { createConnectorTokenProvider } from "./msteams-auth.js";
 import { normalizeCardAction } from "./msteams-actions.js";
@@ -584,8 +584,12 @@ export function createMsTeamsAdapter(
     return direct ?? fromExtra;
   }
 
-  /** Health-state update for an edit/delete Connector result (the connector logs the branch). */
-  function recordMutation(result: Result<void, Error>): Result<void, Error> {
+  /**
+   * Health-state update for any outbound Connector result (the connector/helper
+   * logs the failure branch). Generic over the ok value so the send path (the new
+   * activity id) and the edit/delete path (void) share one health fold.
+   */
+  function recordActivity<T>(result: Result<T, Error>): Result<T, Error> {
     if (result.ok) {
       _lastMessageAt = now();
       _lastError = undefined;
@@ -593,6 +597,24 @@ export function createMsTeamsAdapter(
       _lastError = result.error.message;
     }
     return result;
+  }
+
+  /**
+   * A send (text or attachment) whose serviceUrl could not be resolved: record +
+   * WARN + err. Shared by sendMessage and sendAttachment so the "no usable service
+   * url" branch is emitted in exactly one place.
+   */
+  function sendContextError(error: Error): Result<string, Error> {
+    _lastError = error.message;
+    deps.logger.warn(
+      {
+        channelType: "msteams" as const,
+        hint: "Pass serviceUrl in extra, or capture an inbound so a proactive send can recover its routing tuple",
+        errorKind: "precondition" as const,
+      },
+      "Connector send blocked: no usable service url",
+    );
+    return err(error);
   }
 
   /** A proactive edit/delete that could not recover a serviceUrl: WARN + record + err. */
@@ -667,60 +689,13 @@ export function createMsTeamsAdapter(
       text: string,
       options?: SendMessageOptions,
     ): Promise<Result<string, Error>> {
-      const startedAt = now();
-
-      // Path-safety gate: validate the conversation id before any store lookup or
-      // REST path build — a traversal id must never reach a fetch.
-      if (!isSafeConversationId(conversationId)) {
-        _lastError = "conversation id failed the path-safety check";
-        deps.logger.warn(
-          {
-            channelType: "msteams" as const,
-            hint: "Reject the conversation id: it must be free of path separators and '..'",
-            errorKind: "precondition" as const,
-          },
-          "Connector send blocked: unsafe conversation id",
-        );
-        return err(new Error("unsafe conversation id"));
-      }
-
       // Reply → the caller's serviceUrl; proactive (none) → the stored reference.
+      // The id/serviceUrl safety gates + token mint + POST + classification live in
+      // the shared postConnectorActivity helper; this method only builds the body.
       const ctx = await resolveConnectorServiceContext(conversationId, options);
-      if (!ctx.ok) {
-        _lastError = ctx.error.message;
-        deps.logger.warn(
-          {
-            channelType: "msteams" as const,
-            hint: "Pass serviceUrl in extra, or capture an inbound so a proactive send can recover its routing tuple",
-            errorKind: "precondition" as const,
-          },
-          "Connector send blocked: no usable service url",
-        );
-        return err(ctx.error);
-      }
-      const serviceUrl = ctx.value.serviceUrl;
+      if (!ctx.ok) return sendContextError(ctx.error);
       const replyToId = resolveReplyToId(options, ctx.value.threadId);
 
-      if (!isSafeServiceUrl(serviceUrl)) {
-        _lastError = "service url failed the path-safety check";
-        deps.logger.warn(
-          {
-            channelType: "msteams" as const,
-            hint: "Reject the serviceUrl: it must be an https Bot Framework Connector host (e.g. *.botframework.com / *.trafficmanager.net) free of '..'",
-            errorKind: "precondition" as const,
-          },
-          "Connector send blocked: unsafe service url",
-        );
-        return err(new Error("unsafe service url"));
-      }
-
-      const tok = await tokens.getToken();
-      if (!tok.ok) {
-        _lastError = tok.error.message;
-        return err(tok.error);
-      }
-
-      const url = `${serviceUrl}v3/conversations/${encodeURIComponent(conversationId)}/activities`;
       // Rewrite id-shape-valid @[Name](id) markup into <at>…</at> tags + paired
       // mention entities; text with no valid mention markup is left byte-identical.
       const built = buildMentionEntities(text);
@@ -739,66 +714,17 @@ export function createMsTeamsAdapter(
         ];
       }
 
-      const responded = await fromPromise(
-        (deps.fetchImpl ?? fetch)(url, {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${tok.value}`,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify(activityBody),
+      return recordActivity(
+        await postConnectorActivity({
+          serviceUrl: ctx.value.serviceUrl,
+          conversationId,
+          activityBody,
+          tokens,
+          fetchImpl: deps.fetchImpl,
+          logger: deps.logger,
+          now,
         }),
       );
-      if (!responded.ok) {
-        // No response reached us: a transport-level fault (undefined status).
-        const classified = classifyMsTeamsError(undefined, responded.error);
-        _lastError = responded.error.message;
-        deps.logger.warn(
-          {
-            channelType: "msteams" as const,
-            hint: classified.hint,
-            errorKind: classified.errorKind,
-          },
-          "Connector send failed: no response from the connector",
-        );
-        return err(responded.error);
-      }
-
-      const res = responded.value;
-      if (!res.ok) {
-        const classified = classifyMsTeamsError(res.status);
-        _lastError = `connector send returned status ${res.status}`;
-        deps.logger.warn(
-          {
-            channelType: "msteams" as const,
-            status: res.status,
-            hint: classified.hint,
-            errorKind: classified.errorKind,
-          },
-          "Connector send failed: connector returned an error status",
-        );
-        return err(new Error(`connector send returned status ${res.status}`));
-      }
-
-      const parsed = await fromPromise(res.json() as Promise<{ id?: string }>);
-      const sentId =
-        parsed.ok && typeof parsed.value.id === "string"
-          ? parsed.value.id
-          : "sent";
-
-      _lastMessageAt = now();
-      _lastError = undefined;
-      deps.logger.info(
-        {
-          step: "channels-outbound",
-          channelType: "msteams" as const,
-          messageId: sentId,
-          chatId: conversationId,
-          durationMs: now() - startedAt,
-        },
-        "Outbound message",
-      );
-      return ok(sentId);
     },
 
     async editMessage(
@@ -811,7 +737,7 @@ export function createMsTeamsAdapter(
       // stored reference (the edit-in-place renderer supplies no serviceUrl).
       const ctx = await resolveConnectorServiceContext(channelId, options);
       if (!ctx.ok) return mutationContextError(ctx.error, "edit");
-      return recordMutation(
+      return recordActivity(
         await connector.editActivity(ctx.value.serviceUrl, channelId, messageId, text),
       );
     },
@@ -824,7 +750,7 @@ export function createMsTeamsAdapter(
       // inbound captured — exactly how the edit-in-place renderer calls it.
       const ctx = await resolveConnectorServiceContext(channelId);
       if (!ctx.ok) return mutationContextError(ctx.error, "delete");
-      return recordMutation(
+      return recordActivity(
         await connector.deleteActivity(ctx.value.serviceUrl, channelId, messageId),
       );
     },

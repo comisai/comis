@@ -70,6 +70,130 @@ export function isSafeServiceUrl(serviceUrl: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Shared create-activity POST (the adapter's text send + attachment send)
+// ---------------------------------------------------------------------------
+
+/** Arguments for a single Connector create-activity POST. */
+export interface PostConnectorActivityParams {
+  /** The resolved Bot Framework Connector service base URL (trailing slash). */
+  serviceUrl: string;
+  /** The conversation id to post into — URL-encoded before path interpolation. */
+  conversationId: string;
+  /** The fully-built activity body (text/entities/cards or a data-URI attachment). */
+  activityBody: Record<string, unknown>;
+  /** Cached token provider — the bearer is minted only after the safety gates pass. */
+  tokens: ConnectorTokenProvider;
+  /** Injected fetch, defaulting to the global; lets a unit test stub the send. */
+  fetchImpl?: typeof fetch;
+  /** Logger for the §2.7 outbound boundary matrix. */
+  logger: ComisLogger;
+  /** Injected clock in ms; makes durationMs deterministic. */
+  now: () => number;
+}
+
+/**
+ * POST a fully-built activity to the Bot Framework Connector create-activity
+ * endpoint. The single wire path shared by the adapter's text send and its
+ * attachment send: it runs the id- and serviceUrl-safety gates (T-8/T-3) BEFORE
+ * minting the bearer, so an unsafe target never triggers a token mint or a fetch;
+ * classifies a non-2xx (or a transport fault) through the shared taxonomy; and
+ * never places the token or the activity body in a structured log field (T-5).
+ * Returns the created activity id on success. Holds no adapter state — the caller
+ * folds the Result into its health tracking.
+ */
+export async function postConnectorActivity(
+  params: PostConnectorActivityParams,
+): Promise<Result<string, Error>> {
+  const { serviceUrl, conversationId, activityBody, tokens, logger, now } = params;
+  const startedAt = now();
+
+  // Path-safety gate: validate the interpolated id before any store lookup or
+  // REST path build — a traversal id must never reach a fetch.
+  if (!isSafeConversationId(conversationId)) {
+    logger.warn(
+      {
+        channelType: "msteams" as const,
+        hint: "Reject the conversation id: it must be free of path separators and '..'",
+        errorKind: "precondition" as const,
+      },
+      "Connector send blocked: unsafe conversation id",
+    );
+    return err(new Error("unsafe conversation id"));
+  }
+
+  if (!isSafeServiceUrl(serviceUrl)) {
+    logger.warn(
+      {
+        channelType: "msteams" as const,
+        hint: "Reject the serviceUrl: it must be an https Bot Framework Connector host (e.g. *.botframework.com / *.trafficmanager.net) free of '..'",
+        errorKind: "precondition" as const,
+      },
+      "Connector send blocked: unsafe service url",
+    );
+    return err(new Error("unsafe service url"));
+  }
+
+  const tok = await tokens.getToken();
+  if (!tok.ok) return err(tok.error);
+
+  const url = `${serviceUrl}v3/conversations/${encodeURIComponent(conversationId)}/activities`;
+  const responded = await fromPromise(
+    (params.fetchImpl ?? fetch)(url, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${tok.value}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(activityBody),
+    }),
+  );
+  if (!responded.ok) {
+    // No response reached us: a transport-level fault (undefined status).
+    const classified = classifyMsTeamsError(undefined, responded.error);
+    logger.warn(
+      {
+        channelType: "msteams" as const,
+        hint: classified.hint,
+        errorKind: classified.errorKind,
+      },
+      "Connector send failed: no response from the connector",
+    );
+    return err(responded.error);
+  }
+
+  const res = responded.value;
+  if (!res.ok) {
+    const classified = classifyMsTeamsError(res.status);
+    logger.warn(
+      {
+        channelType: "msteams" as const,
+        status: res.status,
+        hint: classified.hint,
+        errorKind: classified.errorKind,
+      },
+      "Connector send failed: connector returned an error status",
+    );
+    return err(new Error(`connector send returned status ${res.status}`));
+  }
+
+  const parsed = await fromPromise(res.json() as Promise<{ id?: string }>);
+  const sentId =
+    parsed.ok && typeof parsed.value.id === "string" ? parsed.value.id : "sent";
+
+  logger.info(
+    {
+      step: "channels-outbound",
+      channelType: "msteams" as const,
+      messageId: sentId,
+      chatId: conversationId,
+      durationMs: now() - startedAt,
+    },
+    "Outbound message",
+  );
+  return ok(sentId);
+}
+
+// ---------------------------------------------------------------------------
 // Structural Connector error (the edit-in-place renderer classifies on it)
 // ---------------------------------------------------------------------------
 
