@@ -28,7 +28,8 @@ import { join } from "node:path";
 import { EventEmitter } from "node:events";
 
 import { runWithContext } from "@comis/core";
-import type { AgentCapability, ComisLogger, RequestContext } from "@comis/core";
+import type { AgentCapability, ComisLogger, DurableRunRecord, RequestContext } from "@comis/core";
+import { ok, type Result } from "@comis/shared";
 
 import {
   createOrchestrateTool,
@@ -42,6 +43,7 @@ import type {
   OrchestrateSpawnFn,
   OrchestrateSpawnedChild,
 } from "./orchestrate-tool.js";
+import type { OrchestrateDurableRuns } from "./orchestrate-durable.js";
 import { estimateSavings } from "./savings-estimate.js";
 import { BwrapProvider } from "../sandbox/bwrap-provider.js";
 
@@ -146,6 +148,10 @@ describe("orchestrate-tool", () => {
       stderrTail: string;
       describeDigest: string;
     }) => Promise<string | undefined>;
+    // The durable-run store seam (threaded ONLY when orchestrateResume is on).
+    // Present ⇒ the run registers a resumable row + honors resumeRunId + skips
+    // cleanupRun on a timeout. Conditional-spread like mintRunLease/eventBus.
+    durableRuns?: OrchestrateDurableRuns;
   }) {
     const cleanupRun = over?.cleanupRun ?? vi.fn(async () => {});
     return {
@@ -194,8 +200,30 @@ describe("orchestrate-tool", () => {
         ...(over?.approvalGate ? { approvalGate: over.approvalGate } : {}),
         ...(over?.capabilityClass !== undefined ? { capabilityClass: over.capabilityClass } : {}),
         ...(over?.repairSeam ? { repairSeam: over.repairSeam } : {}),
+        ...(over?.durableRuns ? { durableRuns: over.durableRuns } : {}),
       },
       cleanupRun,
+    };
+  }
+
+  /**
+   * A fake durable-run store: captures every upsert + serves a canned
+   * getByRootRun, so the resumable-row writes + the resume lookup are assertable
+   * without a real sqlite store.
+   */
+  function makeFakeDurableRuns(over?: {
+    getRow?: DurableRunRecord;
+  }): OrchestrateDurableRuns & { upserts: DurableRunRecord[] } {
+    const upserts: DurableRunRecord[] = [];
+    return {
+      upserts,
+      upsertCheckpoint: vi.fn(async (record: DurableRunRecord): Promise<Result<void, Error>> => {
+        upserts.push(record);
+        return ok(undefined);
+      }),
+      getByRootRun: vi.fn(
+        async (): Promise<Result<DurableRunRecord | undefined, Error>> => ok(over?.getRow),
+      ),
     };
   }
 
@@ -1266,6 +1294,126 @@ describe("orchestrate-tool", () => {
     await tool.execute("c", { script: "1", language: "ts" }).catch(() => {});
 
     expect(cleanupRun).toHaveBeenCalledTimes(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // Durable-resumable runs: a durable-registered run registers a resumable row
+  // at start; on a TIMEOUT it re-affirms the row + SKIPS cleanupRun so the
+  // pinned script + checkpoint survive; a `resumeRunId` re-spawns the PINNED
+  // stored bytes and IGNORES a differing `script` param (no new bytes on
+  // resume). All gated on the injected durableRuns seam (default-off).
+  // -------------------------------------------------------------------------
+  describe("durable-resumable runs", () => {
+    it("registers a FLAT resumable durable row carrying scriptRef at run start", async () => {
+      const durableRuns = makeFakeDurableRuns();
+      const { deps } = makeDeps({ durableRuns, rootRunId: "root-reg" });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "console.log(1)", language: "ts" });
+
+      // The row is registered from the start, keyed on the tree rootRunId, with a
+      // FLAT spawnTree + scriptRef set and no outward-step drift.
+      expect(durableRuns.upserts.length).toBeGreaterThanOrEqual(1);
+      const row = durableRuns.upserts[0]!;
+      expect(row.rootRunId).toBe("root-reg");
+      expect(row.status).toBe("running");
+      expect(row.spawnTree).toEqual([]);
+      expect(row.scriptRef).toMatch(/^orch-.*\.ts$/);
+      expect(row.stepIndex).toBe(-1);
+    });
+
+    it("a durable-registered run that TIMES OUT marks the row resumable and SKIPS cleanupRun", async () => {
+      const cleanupRun = vi.fn(async () => {});
+      const durableRuns = makeFakeDurableRuns();
+      const { deps } = makeDeps({
+        spawnFn: () => makeHangingChild(),
+        durableRuns,
+        rootRunId: "root-timeout",
+        cleanupRun,
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(
+        tool.execute("c", { script: "1", language: "ts", resumeRunId: undefined, timeoutMs: 1 }),
+      ).rejects.toThrow(/timeout/i);
+
+      // R7: the resumable timeout must NOT wipe results/ (the checkpoint lives there).
+      expect(cleanupRun).not.toHaveBeenCalled();
+      // The row was re-affirmed resumable (status running, scriptRef set) on timeout.
+      const last = durableRuns.upserts.at(-1)!;
+      expect(last.rootRunId).toBe("root-timeout");
+      expect(last.status).toBe("running");
+      expect(last.scriptRef).toMatch(/^orch-.*\.ts$/);
+    });
+
+    it("a durable-registered run that SUCCEEDS still calls cleanupRun (skip-clean is timeout-only)", async () => {
+      const cleanupRun = vi.fn(async () => {});
+      const durableRuns = makeFakeDurableRuns();
+      const { deps } = makeDeps({ durableRuns, rootRunId: "root-ok", cleanupRun });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "1", language: "ts" });
+
+      expect(cleanupRun).toHaveBeenCalledTimes(1);
+    });
+
+    it("a durable-registered run that fails NON-timeout still calls cleanupRun", async () => {
+      const cleanupRun = vi.fn(async () => {});
+      const durableRuns = makeFakeDurableRuns();
+      const { deps } = makeDeps({
+        spawnFn: () => makeFakeChild("", 1, "boom"),
+        durableRuns,
+        rootRunId: "root-fail",
+        cleanupRun,
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(tool.execute("c", { script: "1", language: "ts" })).rejects.toThrow();
+
+      // Only a timeout is resumable; a nonzero-exit still cleans as before.
+      expect(cleanupRun).toHaveBeenCalledTimes(1);
+    });
+
+    it("resumeRunId re-spawns the PINNED stored bytes and IGNORES a differing script param", async () => {
+      const pinnedBytes = 'console.log("PINNED-RESUME-BYTES");\n';
+      const scriptRef = "orch-oldrun-abc.ts";
+      // The pinned script lives at the workspace ROOT (cleanupRun is results/-only,
+      // so it survives) — pre-write it so the default fs seam reads it back.
+      writeFileSync(join(workspacePath, scriptRef), pinnedBytes);
+      const durableRuns = makeFakeDurableRuns({
+        getRow: {
+          rootRunId: "root-resume",
+          spawnTree: [],
+          caps: [],
+          leaseIds: [],
+          budgetConsumed: 0,
+          cronOrigin: null,
+          stepIndex: -1,
+          status: "running",
+          lastHeartbeatAt: 1,
+          scriptRef,
+        },
+      });
+      let writtenScript: string | undefined;
+      const spawnFn: OrchestrateSpawnFn = (_bin, args) => {
+        const scriptName = scriptNameFromArgs(args);
+        writtenScript = readFileSync(join(workspacePath, scriptName), "utf8");
+        return makeFakeChild("resumed\n");
+      };
+      const { deps } = makeDeps({ spawnFn, durableRuns, rootRunId: "root-resume" });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", {
+        script: 'console.log("DIFFERENT-PARAM-BYTES");',
+        language: "ts",
+        resumeRunId: "root-resume",
+      });
+
+      // The re-spawned script is the PINNED bytes — never the differing param.
+      expect(writtenScript).toBe(pinnedBytes);
+      expect(writtenScript).not.toContain("DIFFERENT-PARAM-BYTES");
+      expect(durableRuns.getByRootRun).toHaveBeenCalledWith("root-resume");
+    });
   });
 
   // Diagnosability: if a failing orchestrate script surfaced ONLY "jailed child
