@@ -412,6 +412,7 @@ export function wakeGateEventToRow(
       durationMs: payload.durationMs,
       toolCalls: payload.toolCalls,
       estTurnsSaved: payload.estTurnsSaved,
+      failedOpen: payload.failedOpen,
     }),
     traceId: undefined,
   };

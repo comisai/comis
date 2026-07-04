@@ -9086,12 +9086,20 @@
                 },
                 "skipRate": {
                   "type": "number"
+                },
+                "failedOpen": {
+                  "type": "number"
+                },
+                "failOpenRate": {
+                  "type": "number"
                 }
               },
               "required": [
                 "total",
                 "skipped",
-                "skipRate"
+                "skipRate",
+                "failedOpen",
+                "failOpenRate"
               ],
               "additionalProperties": false
             },
@@ -9118,6 +9126,12 @@
                   "skipRate": {
                     "type": "number"
                   },
+                  "failedOpen": {
+                    "type": "number"
+                  },
+                  "failOpenRate": {
+                    "type": "number"
+                  },
                   "turnsSaved": {
                     "type": "number"
                   },
@@ -9130,6 +9144,8 @@
                   "fires",
                   "skipped",
                   "skipRate",
+                  "failedOpen",
+                  "failOpenRate",
                   "turnsSaved",
                   "toolCalls"
                 ],

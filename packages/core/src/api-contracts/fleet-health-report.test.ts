@@ -271,21 +271,21 @@ describe("FleetHealthReportSchema (bounded/deterministic fleet wire shape)", () 
     const withGate = {
       ...validReport(),
       cronWakeGate: {
-        fires: { total: 5, skipped: 4, skipRate: 0.8 },
+        fires: { total: 5, skipped: 4, skipRate: 0.8, failedOpen: 1, failOpenRate: 0.2 },
         turnsSaved: 4,
         toolCalls: 7,
         perAgent: [
-          { agentId: "agent-a", fires: 4, skipped: 3, skipRate: 0.75, turnsSaved: 3, toolCalls: 7 },
+          { agentId: "agent-a", fires: 4, skipped: 3, skipRate: 0.75, failedOpen: 0, failOpenRate: 0, turnsSaved: 3, toolCalls: 7 },
           // A 100%-skip gate — the suppression signal. skipRate === 1.0 MUST be
           // visible (a monitor that never wakes the model is either working hard
           // OR silently poisoned; either way the operator must see it).
-          { agentId: "agent-b", fires: 1, skipped: 1, skipRate: 1, turnsSaved: 1, toolCalls: 0 },
+          { agentId: "agent-b", fires: 1, skipped: 1, skipRate: 1, failedOpen: 1, failOpenRate: 1, turnsSaved: 1, toolCalls: 0 },
         ],
       },
     };
     const parsed = FleetHealthReportSchema.parse(withGate);
     expect(parsed.cronWakeGate).toBeDefined();
-    expect(parsed.cronWakeGate?.fires).toEqual({ total: 5, skipped: 4, skipRate: 0.8 });
+    expect(parsed.cronWakeGate?.fires).toEqual({ total: 5, skipped: 4, skipRate: 0.8, failedOpen: 1, failOpenRate: 0.2 });
     // Net-cost legibility: BOTH the benefit (turnsSaved) and the cost (toolCalls)
     // survive .parse(), so an operator can compare a gate that costs more than it saves.
     expect(parsed.cronWakeGate?.turnsSaved).toBe(4);
@@ -312,10 +312,10 @@ describe("FleetHealthReportSchema (bounded/deterministic fleet wire shape)", () 
     const smuggled = {
       ...validReport(),
       cronWakeGate: {
-        fires: { total: 1, skipped: 1, skipRate: 1 },
+        fires: { total: 1, skipped: 1, skipRate: 1, failedOpen: 0, failOpenRate: 0 },
         turnsSaved: 1,
         toolCalls: 0,
-        perAgent: [{ agentId: "agent-a", fires: 1, skipped: 1, skipRate: 1, turnsSaved: 1, toolCalls: 0 }],
+        perAgent: [{ agentId: "agent-a", fires: 1, skipped: 1, skipRate: 1, failedOpen: 0, failOpenRate: 0, turnsSaved: 1, toolCalls: 0 }],
         script: "gather the inbox then decide whether to wake", // smuggled gate script
         payload: "the gathered message body", // smuggled gathered payload
       },

@@ -281,7 +281,7 @@ export async function setupSchedulers(deps: {
               // feed the content-free scheduler:wake_gate emitted ONCE below for
               // BOTH branches. A runAsToday degrade never reaches here (the job ran
               // as today — no gate to measure), so it emits nothing.
-              const { verdict, durationMs, toolCalls } = outcome;
+              const { verdict, durationMs, toolCalls, failedOpen, rootRunId } = outcome;
               const estTurnsSaved = verdict.wake ? 0 : 1;
               // Content-free savings/health signal (I5): ids / verdict enum /
               // counts ONLY — NEVER the gathered finding, the script source, or a
@@ -295,6 +295,7 @@ export async function setupSchedulers(deps: {
                 durationMs,
                 toolCalls,
                 estTurnsSaved,
+                failedOpen,
                 timestamp: systemNowMs(),
               });
               if (!verdict.wake) {
@@ -347,7 +348,7 @@ export async function setupSchedulers(deps: {
                       // onComplete OMITTED → nothing runs the model
                     });
                     jobLogger.info(
-                      { step: "wake-gate", wake: false, delivered: true },
+                      { step: "wake-gate", wake: false, delivered: true, durationMs, toolCalls, estTurnsSaved, ...(rootRunId ? { rootRunId } : {}) },
                       "Wake-gate delivered a routine status (no model turn)",
                     );
                   }
@@ -365,7 +366,7 @@ export async function setupSchedulers(deps: {
                   );
                 } else {
                   jobLogger.info(
-                    { step: "wake-gate", wake: false },
+                    { step: "wake-gate", wake: false, durationMs, toolCalls, estTurnsSaved, ...(rootRunId ? { rootRunId } : {}) },
                     "Wake-gate skipped the job (no model turn)",
                   );
                 }
@@ -373,11 +374,24 @@ export async function setupSchedulers(deps: {
                   ts: systemNowMs(), jobId: job.id, status: "skipped",
                   durationMs: systemNowMs() - startTs, summary: "wake-gate: skipped",
                   // The skip lens: the counts (never any finding text) let
-                  // `cron.runs "<jobName>"` reconstruct each suppressed fire.
-                  toolCalls, estTurnsSaved,
+                  // `cron.runs "<jobName>"` reconstruct each suppressed fire. The
+                  // rootRunId lets an operator pivot to `comis explain <rootRunId>`
+                  // for a gate that made cap-calls before skipping (a skip-after-fetch).
+                  toolCalls, estTurnsSaved, ...(rootRunId ? { rootRunId } : {}),
                 });
                 return { status: "ok" as const, summary: "wake-gate: skipped" };
               }
+              // §2.7 completion line for a WOKE fire. A skip already logs its own
+              // INFO above; a wake previously logged only DEBUG, so a raw-log reader
+              // saw skips but never wakes — the log was not self-sufficient. One INFO
+              // per gated fire (wake OR skip) makes every decision reconstructable
+              // from the log alone. `failedOpen` distinguishes a broken fail-open wake
+              // (crash/timeout/over-cap) from a clean decision; `rootRunId` lets an
+              // operator reconstruct the gate's cap-calls via `security audit-log`.
+              jobLogger.info(
+                { step: "wake-gate", wake: true, failedOpen, durationMs, toolCalls, estTurnsSaved, ...(rootRunId ? { rootRunId } : {}) },
+                failedOpen ? "Wake-gate woke the model (fail-open)" : "Wake-gate woke the model",
+              );
               if (verdict.context) {
                 // The wrapExternalContent markers exist to inform the MODEL, so
                 // only inject where the payload actually reaches one: an agent_turn

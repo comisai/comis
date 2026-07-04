@@ -36,35 +36,41 @@ export type CronWakeGateSlice = NonNullable<FleetHealthReport["cronWakeGate"]>;
 interface AgentAccumulator {
   fires: number;
   skipped: number;
+  failedOpen: number;
   turnsSaved: number;
   toolCalls: number;
 }
 
 /**
  * Defensive reader for the counts/verdict off a `cron_wake_gate` row's `details`
- * — reads ONLY `wake`/`estTurnsSaved`/`toolCalls` (malformed/missing folds to a
- * safe default, never throws, NEVER echoes a body). A row with an undefined
- * `wake` still represents a fire; it is simply not counted as a skip.
+ * — reads ONLY `wake`/`estTurnsSaved`/`toolCalls`/`failedOpen` (malformed/missing
+ * folds to a safe default, never throws, NEVER echoes a body). A row with an
+ * undefined `wake` still represents a fire; it is simply not counted as a skip.
+ * `failedOpen` defaults `false` (a row from a build before the field is a normal
+ * fire, never counted as a break).
  */
 function readGateCounts(details: string | undefined): {
   wake: boolean | undefined;
   estTurnsSaved: number;
   toolCalls: number;
+  failedOpen: boolean;
 } {
-  if (details === undefined) return { wake: undefined, estTurnsSaved: 0, toolCalls: 0 };
+  if (details === undefined) return { wake: undefined, estTurnsSaved: 0, toolCalls: 0, failedOpen: false };
   try {
     const parsed = JSON.parse(details) as {
       wake?: unknown;
       estTurnsSaved?: unknown;
       toolCalls?: unknown;
+      failedOpen?: unknown;
     };
     return {
       wake: typeof parsed.wake === "boolean" ? parsed.wake : undefined,
       estTurnsSaved: typeof parsed.estTurnsSaved === "number" ? parsed.estTurnsSaved : 0,
       toolCalls: typeof parsed.toolCalls === "number" ? parsed.toolCalls : 0,
+      failedOpen: parsed.failedOpen === true,
     };
   } catch {
-    return { wake: undefined, estTurnsSaved: 0, toolCalls: 0 };
+    return { wake: undefined, estTurnsSaved: 0, toolCalls: 0, failedOpen: false };
   }
 }
 
@@ -90,6 +96,7 @@ export function computeCronWakeGateSlice(
   const perAgent = new Map<string, AgentAccumulator>();
   let total = 0;
   let skipped = 0;
+  let failedOpen = 0;
   let turnsSaved = 0;
   let toolCalls = 0;
 
@@ -98,15 +105,17 @@ export function computeCronWakeGateSlice(
     const counts = readGateCounts(row.details);
     const isSkip = counts.wake === false;
     const agentId = row.agentId ?? "unknown";
-    const bucket = perAgent.get(agentId) ?? { fires: 0, skipped: 0, turnsSaved: 0, toolCalls: 0 };
+    const bucket = perAgent.get(agentId) ?? { fires: 0, skipped: 0, failedOpen: 0, turnsSaved: 0, toolCalls: 0 };
     bucket.fires += 1;
     if (isSkip) bucket.skipped += 1;
+    if (counts.failedOpen) bucket.failedOpen += 1;
     bucket.turnsSaved += counts.estTurnsSaved;
     bucket.toolCalls += counts.toolCalls;
     perAgent.set(agentId, bucket);
 
     total += 1;
     if (isSkip) skipped += 1;
+    if (counts.failedOpen) failedOpen += 1;
     turnsSaved += counts.estTurnsSaved;
     toolCalls += counts.toolCalls;
   }
@@ -115,7 +124,17 @@ export function computeCronWakeGateSlice(
   if (total === 0) return undefined;
 
   return {
-    fires: { total, skipped, skipRate: total > 0 ? skipped / total : 0 },
+    // `failedOpen`/`failOpenRate` distinguish a BROKEN gate (fails open every
+    // fire — saves nothing, costs its cap-calls) from a healthy monitor that
+    // legitimately always wakes; both otherwise read skipRate 0. It is the
+    // signal symmetric to a 100% skipRate (a poisoned suppress).
+    fires: {
+      total,
+      skipped,
+      skipRate: total > 0 ? skipped / total : 0,
+      failedOpen,
+      failOpenRate: total > 0 ? failedOpen / total : 0,
+    },
     turnsSaved,
     toolCalls,
     perAgent: [...perAgent.entries()]
@@ -124,6 +143,8 @@ export function computeCronWakeGateSlice(
         fires: b.fires,
         skipped: b.skipped,
         skipRate: b.fires > 0 ? b.skipped / b.fires : 0,
+        failedOpen: b.failedOpen,
+        failOpenRate: b.fires > 0 ? b.failedOpen / b.fires : 0,
         turnsSaved: b.turnsSaved,
         toolCalls: b.toolCalls,
       }))

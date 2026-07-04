@@ -1522,8 +1522,8 @@ describe("setupSchedulers", () => {
      *  `verdict` for its branch AND the `durationMs`/`toolCalls` counts for the
      *  emit + the skip-row enrichment; counts default to 0 but a case can pin them
      *  to prove they flow from the runner's outcome into the event/row/record. */
-    function wgOutcome(verdict: unknown, counts: { durationMs?: number; toolCalls?: number } = {}) {
-      return { verdict, durationMs: counts.durationMs ?? 0, toolCalls: counts.toolCalls ?? 0 };
+    function wgOutcome(verdict: unknown, counts: { durationMs?: number; toolCalls?: number; failedOpen?: boolean; rootRunId?: string } = {}) {
+      return { verdict, durationMs: counts.durationMs ?? 0, toolCalls: counts.toolCalls ?? 0, failedOpen: counts.failedOpen ?? false, rootRunId: counts.rootRunId ?? "root-wakegate-job-wg-1-abc-0" };
     }
 
     /** An agents map whose agent-1 drives the two inputs of the gate-run toggle:
@@ -1965,7 +1965,7 @@ describe("setupSchedulers", () => {
     // -------------------------------------------------------------------------
 
     /** The content-free allowlist — the ONLY keys a scheduler:wake_gate may carry. */
-    const WAKE_GATE_KEYS = ["jobId", "agentId", "wake", "durationMs", "toolCalls", "estTurnsSaved", "timestamp"];
+    const WAKE_GATE_KEYS = ["jobId", "agentId", "wake", "durationMs", "toolCalls", "estTurnsSaved", "failedOpen", "timestamp"];
 
     /** The scheduler:wake_gate emit calls captured on the eventBus spy. */
     function wakeGateEmits(deps: ReturnType<typeof createMinimalDeps>) {
@@ -1987,7 +1987,7 @@ describe("setupSchedulers", () => {
       const payload = emits[0][1] as Record<string, unknown>;
       expect(payload).toMatchObject({
         jobId: "job-wg-1", agentId: "agent-1", wake: false,
-        durationMs: 42, toolCalls: 3, estTurnsSaved: 1,
+        durationMs: 42, toolCalls: 3, estTurnsSaved: 1, failedOpen: false,
       });
       expect(typeof payload.timestamp).toBe("number");
       // Content-free (I5): EXACTLY the allowlist keys — no gathered finding /
@@ -2008,9 +2008,43 @@ describe("setupSchedulers", () => {
       const payload = emits[0][1] as Record<string, unknown>;
       expect(payload).toMatchObject({
         jobId: "job-wg-1", agentId: "agent-1", wake: true,
-        durationMs: 42, toolCalls: 3, estTurnsSaved: 0,
+        durationMs: 42, toolCalls: 3, estTurnsSaved: 0, failedOpen: false,
       });
       expect(Object.keys(payload).sort()).toEqual([...WAKE_GATE_KEYS].sort());
+    });
+
+    it("logs an INFO completion line on a WOKE fire (a skip already has one; a wake previously only DEBUG)", async () => {
+      const runWakeGate = vi.fn(async () =>
+        wgOutcome({ wake: true }, { durationMs: 42, toolCalls: 3, rootRunId: "root-wakegate-job-wg-1-abc-0" }),
+      );
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = withFastComplete(createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(runWakeGate) }));
+      await setupSchedulers(deps);
+
+      await extractExecuteJob()(gatedAgentTurnJob());
+
+      // child() returns the same mock, so the jobLogger.info calls land here.
+      const info = deps.schedulerLogger.info as ReturnType<typeof vi.fn>;
+      const woke = info.mock.calls.find((c) => /woke the model/i.test(String(c[1])));
+      expect(woke, "a woke gate fire must log an INFO completion line (raw-log self-sufficiency)").toBeDefined();
+      expect(woke![0]).toMatchObject({
+        step: "wake-gate", wake: true, failedOpen: false,
+        durationMs: 42, toolCalls: 3, rootRunId: "root-wakegate-job-wg-1-abc-0",
+      });
+    });
+
+    it("marks a FAIL-OPEN woke fire distinctly in the INFO line (the broken-gate signal in the raw log)", async () => {
+      const runWakeGate = vi.fn(async () => wgOutcome({ wake: true }, { failedOpen: true }));
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = withFastComplete(createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(runWakeGate) }));
+      await setupSchedulers(deps);
+
+      await extractExecuteJob()(gatedAgentTurnJob());
+
+      const info = deps.schedulerLogger.info as ReturnType<typeof vi.fn>;
+      const failOpen = info.mock.calls.find((c) => /fail-open/i.test(String(c[1])));
+      expect(failOpen, "a fail-open woke fire must be marked in the log").toBeDefined();
+      expect(failOpen![0]).toMatchObject({ step: "wake-gate", wake: true, failedOpen: true });
     });
 
     it("enriches the skip's ExecutionTracker row with toolCalls + estTurnsSaved:1 (the cron.runs skip lens)", async () => {
@@ -2023,11 +2057,13 @@ describe("setupSchedulers", () => {
       await extractExecuteJob()(gatedAgentTurnJob());
 
       // The skip row now carries the counts so `cron.runs "<jobName>"` reconstructs
-      // the suppressed fire (the fixed summary string is unchanged — no residue).
+      // the suppressed fire (the fixed summary string is unchanged — no residue) —
+      // plus the rootRunId so an operator can `comis explain <rootRunId>` a gate that
+      // made cap-calls before skipping (a skip-after-fetch).
       expect(tracker.record).toHaveBeenCalledWith(
         expect.objectContaining({
           jobId: "job-wg-1", status: "skipped", summary: "wake-gate: skipped",
-          toolCalls: 3, estTurnsSaved: 1,
+          toolCalls: 3, estTurnsSaved: 1, rootRunId: "root-wakegate-job-wg-1-abc-0",
         }),
       );
     });

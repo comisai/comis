@@ -18,6 +18,7 @@ function gateRow(fields: {
   wake: boolean;
   toolCalls?: number;
   estTurnsSaved?: number;
+  failedOpen?: boolean;
   ts?: number;
 }): DiagnosticRow {
   return {
@@ -32,6 +33,7 @@ function gateRow(fields: {
       durationMs: 5,
       toolCalls: fields.toolCalls ?? 0,
       estTurnsSaved: fields.estTurnsSaved ?? (fields.wake ? 0 : 1),
+      failedOpen: fields.failedOpen ?? false,
     }),
   };
 }
@@ -54,8 +56,8 @@ describe("computeCronWakeGateSlice", () => {
     const slice = computeCronWakeGateSlice(rows);
     expect(slice).toBeDefined();
 
-    // Top-level window totals.
-    expect(slice!.fires).toEqual({ total: 5, skipped: 4, skipRate: 0.8 });
+    // Top-level window totals. No fail-open fires in this set.
+    expect(slice!.fires).toEqual({ total: 5, skipped: 4, skipRate: 0.8, failedOpen: 0, failOpenRate: 0 });
     expect(slice!.turnsSaved).toBe(4);
     expect(slice!.toolCalls).toBe(2);
 
@@ -65,6 +67,8 @@ describe("computeCronWakeGateSlice", () => {
       fires: 4,
       skipped: 3,
       skipRate: 0.75,
+      failedOpen: 0,
+      failOpenRate: 0,
       turnsSaved: 3,
       toolCalls: 2,
     });
@@ -91,6 +95,31 @@ describe("computeCronWakeGateSlice", () => {
     expect(c!.turnsSaved).toBe(1); // the gate's benefit
     // toolCalls (10) > turnsSaved (1): the gate is uneconomic — legible from the slice.
     expect(c!.toolCalls).toBeGreaterThan(c!.turnsSaved);
+  });
+
+  it("surfaces failOpenRate so a BROKEN gate (fails open every fire) is distinct from a healthy always-waking one", () => {
+    const rows: DiagnosticRow[] = [
+      // agent-broken: 3 fires, all FAIL-OPEN wakes (crash/timeout) — saves nothing.
+      gateRow({ agentId: "agent-broken", wake: true, failedOpen: true, estTurnsSaved: 0 }),
+      gateRow({ agentId: "agent-broken", wake: true, failedOpen: true, estTurnsSaved: 0 }),
+      gateRow({ agentId: "agent-broken", wake: true, failedOpen: true, estTurnsSaved: 0 }),
+      // agent-healthy: 2 fires, both CLEAN wakes (the monitor legitimately found
+      // something + made a cap-call each). Same wake:true + skipRate 0 as broken —
+      // ONLY failOpenRate tells them apart.
+      gateRow({ agentId: "agent-healthy", wake: true, failedOpen: false, toolCalls: 1, estTurnsSaved: 0 }),
+      gateRow({ agentId: "agent-healthy", wake: true, failedOpen: false, toolCalls: 1, estTurnsSaved: 0 }),
+    ];
+    const slice = computeCronWakeGateSlice(rows);
+    expect(slice!.fires.failedOpen).toBe(3);
+    expect(slice!.fires.failOpenRate).toBe(0.6); // 3/5
+
+    const broken = slice!.perAgent.find((p) => p.agentId === "agent-broken");
+    expect(broken!.skipRate).toBe(0); // looks like a busy monitor…
+    expect(broken!.failOpenRate).toBe(1); // …but failOpenRate 1.0 exposes it as broken
+
+    const healthy = slice!.perAgent.find((p) => p.agentId === "agent-healthy");
+    expect(healthy!.skipRate).toBe(0); // identical skipRate…
+    expect(healthy!.failOpenRate).toBe(0); // …but 0 fail-opens — a real monitor
   });
 
   it("is PURE + defensive: a malformed details still counts as a fire; foreign-category rows are ignored", () => {

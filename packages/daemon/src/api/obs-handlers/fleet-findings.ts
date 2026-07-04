@@ -529,19 +529,29 @@ export function buildFindings(
   // per-agent breakdown lives in the FleetHealthReport.cronWakeGate block.
   if (cronWakeGate.length > 0) {
     let skippedSum = 0;
+    let failedOpenSum = 0;
     let turnsSavedSum = 0;
     let toolCallsSum = 0;
     for (const row of cronWakeGate) {
       const d = parseDetailsObject(row.details);
       if (d.wake === false) skippedSum += 1;
+      if (d.failedOpen === true) failedOpenSum += 1;
       if (typeof d.estTurnsSaved === "number") turnsSavedSum += d.estTurnsSaved;
       if (typeof d.toolCalls === "number") toolCallsSum += d.toolCalls;
     }
+    // A fail-open wake (crash/timeout/over-cap/no-verdict) saves nothing and costs
+    // the gate's own cap-calls + jail spawn; a gate that fails open EVERY fire is
+    // broken but reads skipRate 0 (looks like a busy monitor). Surface the count so
+    // it is legible beside the 100%-skip poison signal.
+    const failOpenNote =
+      failedOpenSum > 0
+        ? ` A fail-open wake saves nothing and costs the gate's own run; a gate failing open every fire is broken (not a busy monitor).`
+        : "";
     findings.push({
       code: "cron_wake_gate_efficiency",
-      detail: `${cronWakeGate.length} gated cron fire(s) in the window; skipped=${skippedSum}, turnsSaved=${turnsSavedSum}, toolCalls=${toolCallsSum}`,
+      detail: `${cronWakeGate.length} gated cron fire(s) in the window; skipped=${skippedSum}, failedOpen=${failedOpenSum}, turnsSaved=${turnsSavedSum}, toolCalls=${toolCallsSum}`,
       count: cronWakeGate.length,
-      hint: 'run `cron.runs jobName "<job>"` for the per-fire gate decisions; a high skip-rate is the gate WORKING (savings), not a fault; a 100% skip-rate on a monitor you expect to fire, or toolCalls exceeding turnsSaved, is the signal to inspect',
+      hint: `run \`cron.runs jobName "<job>"\` for the per-fire gate decisions; a high skip-rate is the gate WORKING (savings), not a fault; a 100% skip-rate on a monitor you expect to fire, a high failedOpen count, or toolCalls exceeding turnsSaved, is the signal to inspect.${failOpenNote}`,
     });
   }
 

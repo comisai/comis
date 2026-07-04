@@ -62,8 +62,21 @@ const CTX: WakeGateRunContext = { agentId: "agent-1", jobId: "job-1", sessionKey
  * The richer runWakeGate outcome wrapped around a bare verdict. Under the default
  * constant test clock `durationMs` is 0; with no event bus in deps `toolCalls` is 0.
  */
-function outcome(verdict: unknown, over: { durationMs?: number; toolCalls?: number } = {}) {
-  return { verdict, durationMs: over.durationMs ?? 0, toolCalls: over.toolCalls ?? 0 };
+function outcome(
+  verdict: unknown,
+  over: { durationMs?: number; toolCalls?: number; failedOpen?: boolean; rootRunId?: unknown } = {},
+) {
+  return {
+    verdict,
+    durationMs: over.durationMs ?? 0,
+    toolCalls: over.toolCalls ?? 0,
+    // Default false — a clean run; the fail-open (catch) cases pass true.
+    failedOpen: over.failedOpen ?? false,
+    // The runner mints a per-fire root-wakegate-<jobId>-<ts>-<nonce>; the ts/nonce
+    // vary, so match the shape (present on every verdict outcome; the mint runs
+    // before the run/catch). Override for an exact assertion.
+    rootRunId: over.rootRunId ?? expect.stringMatching(/^root-wakegate-/),
+  };
 }
 
 /**
@@ -133,8 +146,10 @@ describe("createWakeGateRunner — exception-safety (fail-open, never throws)", 
       const { deps, runJailedScriptFn } = makeDeps();
       runJailedScriptFn.mockRejectedValue(err);
       const runner = createWakeGateRunner(deps);
-      // `.resolves` proves the promise did not reject — the never-throw invariant.
-      await expect(runner.runWakeGate(GATE, CTX)).resolves.toEqual(outcome({ wake: true }));
+      // `.resolves` proves the promise did not reject — the never-throw invariant;
+      // `failedOpen:true` marks it as a caught run failure (the broken-gate signal),
+      // not a clean wake decision.
+      await expect(runner.runWakeGate(GATE, CTX)).resolves.toEqual(outcome({ wake: true }, { failedOpen: true }));
     });
   }
 
@@ -156,7 +171,7 @@ describe("createWakeGateRunner — exception-safety (fail-open, never throws)", 
       throw new Error("lease mint boom");
     });
     const runner = createWakeGateRunner(deps);
-    await expect(runner.runWakeGate(GATE, CTX)).resolves.toEqual(outcome({ wake: true }));
+    await expect(runner.runWakeGate(GATE, CTX)).resolves.toEqual(outcome({ wake: true }, { failedOpen: true }));
   });
 });
 
@@ -415,7 +430,7 @@ describe("createWakeGateRunner — richer outcome (durationMs on the clean AND f
 
     const result = await createWakeGateRunner(deps).runWakeGate(GATE, CTX);
 
-    expect(result).toEqual(outcome({ wake: true }, { durationMs: 42 }));
+    expect(result).toEqual(outcome({ wake: true }, { durationMs: 42, failedOpen: true }));
   });
 });
 
@@ -483,7 +498,7 @@ describe("createWakeGateRunner — scoped, leak-safe capability:audited toolCall
     const result = await createWakeGateRunner(deps).runWakeGate(GATE, CTX);
 
     // Fail-open wake; the count survives to the fail-open return AND the listener is gone.
-    expect(result).toEqual(outcome({ wake: true }, { toolCalls: 2 }));
+    expect(result).toEqual(outcome({ wake: true }, { toolCalls: 2, failedOpen: true }));
     expect(bus.listenerCount("capability:audited")).toBe(0);
   });
 

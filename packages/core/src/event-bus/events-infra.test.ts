@@ -581,6 +581,7 @@ describe("scheduler:wake_gate content-free event", () => {
     "agentId",
     "durationMs",
     "estTurnsSaved",
+    "failedOpen",
     "jobId",
     "timestamp",
     "toolCalls",
@@ -647,6 +648,7 @@ describe("scheduler:wake_gate content-free event", () => {
       durationMs: 12,
       toolCalls: 0,
       estTurnsSaved: 1,
+      failedOpen: false,
       timestamp: Date.now(),
     };
     bus.on("scheduler:wake_gate", handler);
@@ -659,7 +661,8 @@ describe("scheduler:wake_gate content-free event", () => {
       expect(received).not.toHaveProperty(forbidden);
     }
 
-    // The woke case mirrors the same shape (no extra fields on wake).
+    // The woke case mirrors the same shape (no extra fields on wake); a fail-open
+    // wake carries failedOpen:true — still content-free (a boolean).
     const wake: EventMap["scheduler:wake_gate"] = {
       jobId: "job-2",
       agentId: "agent-1",
@@ -667,6 +670,7 @@ describe("scheduler:wake_gate content-free event", () => {
       durationMs: 40,
       toolCalls: 3,
       estTurnsSaved: 0,
+      failedOpen: true,
       timestamp: Date.now(),
     };
     bus.emit("scheduler:wake_gate", wake);
@@ -675,5 +679,6 @@ describe("scheduler:wake_gate content-free event", () => {
     expect(receivedWake.wake).toBe(true);
     expect(receivedWake.toolCalls).toBe(3);
     expect(receivedWake.estTurnsSaved).toBe(0);
+    expect(receivedWake.failedOpen).toBe(true);
   });
 });

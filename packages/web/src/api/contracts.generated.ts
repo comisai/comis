@@ -9208,12 +9208,20 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
                 },
                 "skipRate": {
                   "type": "number"
+                },
+                "failedOpen": {
+                  "type": "number"
+                },
+                "failOpenRate": {
+                  "type": "number"
                 }
               },
               "required": [
                 "total",
                 "skipped",
-                "skipRate"
+                "skipRate",
+                "failedOpen",
+                "failOpenRate"
               ],
               "additionalProperties": false
             },
@@ -9240,6 +9248,12 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
                   "skipRate": {
                     "type": "number"
                   },
+                  "failedOpen": {
+                    "type": "number"
+                  },
+                  "failOpenRate": {
+                    "type": "number"
+                  },
                   "turnsSaved": {
                     "type": "number"
                   },
@@ -9252,6 +9266,8 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
                   "fires",
                   "skipped",
                   "skipRate",
+                  "failedOpen",
+                  "failOpenRate",
                   "turnsSaved",
                   "toolCalls"
                 ],

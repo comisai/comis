@@ -337,6 +337,12 @@ export interface InfraEvents {
     toolCalls: number;
     /** Derived heuristic: model turns avoided (1 on skip, 0 on wake). */
     estTurnsSaved: number;
+    /** true = a FAIL-OPEN wake the runner caught (jailed run rejected —
+     *  timeout/overflow/non-zero-exit/spawn-error/unavailable-jail — or the lease
+     *  mint threw), not a clean decision. Distinguishes a broken gate (fails open
+     *  every fire — saves nothing, costs its cap-calls) from a healthy monitor that
+     *  legitimately always wakes; both otherwise read `wake:true, skipRate 0`. */
+    failedOpen: boolean;
     timestamp: number;
   };
 

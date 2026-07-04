@@ -33,6 +33,10 @@ export interface ExecutionLogEntry {
   toolCalls?: number;
   /** Estimated model turns avoided by a wake-gate skip (1 per skipped fire, 0 on wake). Content-free — a count only. */
   estTurnsSaved?: number;
+  /** The wake-gate fire's `root-wakegate-<jobId>-<ts>-<nonce>` root, when the gate ran.
+   *  Lets `cron.runs "<jobName>"` hand an operator the root to reconstruct the gate's
+   *  cap-calls via `comis explain <rootRunId>` (the cap-audit stream keys on it). */
+  rootRunId?: string;
   /** Number of LLM API calls made. */
   llmCalls?: number;
   /** Names of tools that failed during execution. */
@@ -51,6 +55,7 @@ const ExecutionLogEntrySchema = z.object({
   costUsd: z.number().optional(),
   toolCalls: z.number().optional(),
   estTurnsSaved: z.number().optional(),
+  rootRunId: z.string().optional(),
   llmCalls: z.number().optional(),
   failedTools: z.array(z.string()).optional(),
 });

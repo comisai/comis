@@ -205,21 +205,34 @@ export const FleetHealthReportSchema = z.object({
    */
   cronWakeGate: z
     .object({
-      /** Window totals: `total` gated fires, `skipped` (wake===false) fires, and
-       *  `skipRate = skipped/total` (0 when total is 0). */
-      fires: z.object({ total: z.number(), skipped: z.number(), skipRate: z.number() }),
+      /** Window totals: `total` gated fires, `skipped` (wake===false) fires,
+       *  `skipRate = skipped/total`, `failedOpen` (fail-open wakes: crash/timeout/
+       *  over-cap/no-verdict) and `failOpenRate = failedOpen/total` (0 when total
+       *  is 0). `failOpenRate` is the signal symmetric to a 100% `skipRate`: a
+       *  broken gate that fails open every fire saves nothing and costs its own
+       *  cap-calls, yet otherwise looks like a healthy always-waking monitor. */
+      fires: z.object({
+        total: z.number(),
+        skipped: z.number(),
+        skipRate: z.number(),
+        failedOpen: z.number(),
+        failOpenRate: z.number(),
+      }),
       /** Sum of the derived per-fire `estTurnsSaved` (the avoided model turns). */
       turnsSaved: z.number(),
       /** Sum of the gate's cap-call cost across the window (the net-cost numerator). */
       toolCalls: z.number(),
-      /** Per-agent breakdown — the suppression (skipRate) + net-cost
-       *  (toolCalls vs turnsSaved) legibility keyed by agent id. */
+      /** Per-agent breakdown — the suppression (skipRate), the broken-gate signal
+       *  (failOpenRate), and net-cost (toolCalls vs turnsSaved) legibility keyed
+       *  by agent id. */
       perAgent: z.array(
         z.object({
           agentId: z.string(),
           fires: z.number(),
           skipped: z.number(),
           skipRate: z.number(),
+          failedOpen: z.number(),
+          failOpenRate: z.number(),
           turnsSaved: z.number(),
           toolCalls: z.number(),
         }),

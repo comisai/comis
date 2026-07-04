@@ -266,7 +266,7 @@ describe("assembleFleetHealthReport (4-source read fan-in)", () => {
     const report = await assembleFleetHealthReport({ obsStore: store, dataDir: makeDataDirWithActivity(), clock: createFakeClock(now) }, 24);
     // The slice is present (fleet-health queried the category + computed it).
     expect(report.cronWakeGate, "fleet-health must query category:cron_wake_gate + compute the slice").toBeDefined();
-    expect(report.cronWakeGate?.fires).toEqual({ total: 2, skipped: 2, skipRate: 1 });
+    expect(report.cronWakeGate?.fires).toEqual({ total: 2, skipped: 2, skipRate: 1, failedOpen: 0, failOpenRate: 0 });
     // The 100%-skip agent is visible in the per-agent breakdown.
     const a = report.cronWakeGate?.perAgent.find((p) => p.agentId === "agent-a");
     expect(a?.skipRate).toBe(1);

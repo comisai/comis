@@ -65,12 +65,31 @@ export interface WakeGateRunContext {
  * The content-free outcome of a gated fire. A run that reached a verdict carries
  * the verdict plus two counts an operator can reconstruct the fire from — the
  * `durationMs` the gate took (measured on the clean AND the fail-open path) and
- * the `toolCalls` it made (the scoped allow-decision cap-audit count). A host
- * that cannot jail / has autonomy disabled honestly degrades to `runAsToday`
- * (the job ran as today) and carries NO metrics — there was no gate to measure.
+ * the `toolCalls` it made (the scoped allow-decision cap-audit count) — plus
+ * `failedOpen`: `true` when the runner CAUGHT a run failure and woke defensively
+ * (the jailed run rejected — SIGKILL-timeout / 4 MiB overflow / non-zero exit /
+ * spawn error / unavailable jail — or the per-fire lease mint threw), rather than
+ * resolving a verdict from a clean run. (A clean run that the PARSER fail-opens on
+ * — empty/bare/non-verdict stdout — is `failedOpen:false`: the gate ran fine, it
+ * just did not print a verdict; that softer case is not a broken run.) It
+ * distinguishes a broken gate (fails open every fire — saves nothing, costs its
+ * cap-calls + jail spawn) from a healthy monitor that legitimately always wakes;
+ * both otherwise look identical (`wake:true`, `skipRate 0`) in the fleet lens. A host that cannot
+ * jail / has autonomy disabled honestly degrades to `runAsToday` (the job ran as
+ * today) and carries NO metrics — there was no gate to measure.
  */
 export type WakeGateOutcome =
-  | { verdict: WakeGateVerdict; durationMs: number; toolCalls: number }
+  | {
+      verdict: WakeGateVerdict;
+      durationMs: number;
+      toolCalls: number;
+      failedOpen: boolean;
+      /** The per-fire `root-wakegate-<jobId>-<ts>-<nonce>` the gate's cap-calls are
+       *  audited under. Surfaced so an operator can reconstruct a fire's tool.invoke
+       *  sequence with `comis explain <rootRunId>` (the cap-audit stream keys on it).
+       *  Absent only on the rare pre-mint throw (nothing was audited to explain). */
+      rootRunId?: string;
+    }
   | { runAsToday: true };
 
 /** The late-bound runner the scheduler holds a ref to. */
@@ -178,6 +197,9 @@ export function createWakeGateRunner(deps: WakeGateRunnerDeps): WakeGateRunner {
       const now = deps.now ?? systemNowMs;
       const startedAt = now();
       let toolCalls = 0;
+      // Hoisted so the fail-open catch can still report the root the fire's cap-calls
+      // were audited under (a gate can fetch then crash — those calls are explainable).
+      let rootRunId: string | undefined;
       try {
         // 1. Honest degrade. Resolve the agent's autonomy through the SAME
         //    preflight-driven downshift the tool wiring uses; a disabled posture
@@ -204,7 +226,7 @@ export function createWakeGateRunner(deps: WakeGateRunnerDeps): WakeGateRunner {
         //    counter (which filters by THIS root) can never cross-count a
         //    concurrent fire and the per-fire lease/root index never collides.
         const ts = now().toString(36);
-        const rootRunId = `root-wakegate-${ctx.jobId}-${ts}-${(fireSeq++).toString(36)}`;
+        rootRunId = `root-wakegate-${ctx.jobId}-${ts}-${(fireSeq++).toString(36)}`;
         const capMint: CapabilityMintDeps = {
           leaseManager: deps.leaseManager,
           outputGuard: deps.outputGuard,
@@ -271,6 +293,8 @@ export function createWakeGateRunner(deps: WakeGateRunnerDeps): WakeGateRunner {
                 verdict: { ...verdict, deliver: scanned.value.sanitized },
                 durationMs: now() - startedAt,
                 toolCalls,
+                failedOpen: false,
+                rootRunId,
               };
             }
             // A scrub fault must never egress unscrubbed untrusted text: DROP the
@@ -290,9 +314,11 @@ export function createWakeGateRunner(deps: WakeGateRunnerDeps): WakeGateRunner {
               verdict: { wake: verdict.wake, ...(verdict.context !== undefined ? { context: verdict.context } : {}) },
               durationMs: now() - startedAt,
               toolCalls,
+              failedOpen: false,
+              rootRunId,
             };
           }
-          return { verdict, durationMs: now() - startedAt, toolCalls };
+          return { verdict, durationMs: now() - startedAt, toolCalls, failedOpen: false, rootRunId };
         } finally {
           // Unsubscribe on EVERY exit of the run region — clean return, deliver-scrub
           // return, or a runFn reject that propagates to the outer fail-open catch.
@@ -309,7 +335,7 @@ export function createWakeGateRunner(deps: WakeGateRunnerDeps): WakeGateRunner {
           },
           "Wake-gate failed — waking (fail-open)",
         );
-        return { verdict: { wake: true }, durationMs: now() - startedAt, toolCalls };
+        return { verdict: { wake: true }, durationMs: now() - startedAt, toolCalls, failedOpen: true, rootRunId };
       }
     },
   };
