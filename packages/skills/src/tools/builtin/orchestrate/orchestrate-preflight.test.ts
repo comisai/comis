@@ -96,6 +96,43 @@ describe("extractCapabilityFootprint", () => {
     expect(out.methods).toEqual(["web_fetch"]);
     expect([...out.caps]).toEqual(["orch:web"]);
   });
+
+  it("yields the SOURCE-ORDERED call-site sequence with repeats preserved (= per-method counts), leaving the deduped methods SET unchanged", () => {
+    // web_search, jq, jq, web_fetch in source order — jq appears TWICE (its call count).
+    const script =
+      'comis_tools.web_search({q:1}); comis_tools.jq({a:1}); comis_tools.jq({b:2}); comis_tools.web_fetch({url:"x"});';
+    const out = extractCapabilityFootprint(script);
+
+    // The ordered sequence preserves source order AND repeats (jq twice = its count).
+    expect(out.sequence).toEqual(["web_search", "jq", "jq", "web_fetch"]);
+    // The existing sorted/deduped SET is UNCHANGED — the sequence is ADDITIVE (no regression).
+    expect(out.methods).toEqual(["jq", "web_fetch", "web_search"]);
+  });
+
+  it("bounds the ordered sequence to a fixed cap, keeping the first N cap-mapped call sites in source order", () => {
+    // The descriptor is bounded so a pathological script cannot bloat it. This value
+    // MUST match SEQUENCE_CAP in orchestrate-preflight.ts — a security bound pinned
+    // here so a change to the production cap fails this test loudly.
+    const SEQUENCE_CAP = 64;
+    const script = "comis_tools.read({});\n".repeat(SEQUENCE_CAP + 10);
+    const out = extractCapabilityFootprint(script);
+
+    expect(out.sequence).toHaveLength(SEQUENCE_CAP);
+    expect(out.sequence.every((m) => m === "read")).toBe(true);
+    // The deduped SET still collapses the repeats to the single method.
+    expect(out.methods).toEqual(["read"]);
+  });
+
+  it("excludes unknown (non-cap-mapped) methods from the ordered sequence (mirrors methods/unknownMethods)", () => {
+    const out = extractCapabilityFootprint(
+      "comis_tools.web_fetch({}); comis_tools.not_a_tool({}); comis_tools.jq({});",
+    );
+
+    // not_a_tool is NOT cap-mapped → excluded from the sequence; only the cap-mapped
+    // web_fetch, jq remain, in source order.
+    expect(out.sequence).toEqual(["web_fetch", "jq"]);
+    expect(out.unknownMethods).toEqual(["not_a_tool"]);
+  });
 });
 
 describe("classifyRecoverableStderr", () => {

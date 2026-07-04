@@ -226,6 +226,64 @@ describe("translateOrchestrationPayload — orchestrate:run_summary (content-fre
     expect("params" in data).toBe(false);
     expect("apiKey" in data).toBe(false);
   });
+
+  it("forwards toolSequence verbatim — order + repeats preserved (NOT sorted/deduped); the turn traceId is NOT forwarded", () => {
+    const data = translateOrchestrationPayload(
+      "orchestrate:run_summary" as OrchestrationBridgedEventName,
+      {
+        agentId: "agent-seq",
+        sessionKey: "tenant:user:channel",
+        timestamp: 1_717_171_720,
+        // the turn correlator rides the event but is redundant on the (already
+        // traceId-keyed) trajectory record — it MUST NOT be forwarded into data:
+        traceId: "7f1c9a2e-3b4d-4c5e-8a6f-0d1e2f3a4b5c",
+        runId: "orch-seq",
+        leaseId: "child-lease-seq",
+        rootRunId: "root-agent-seq",
+        language: "ts",
+        durationMs: 500,
+        exitCode: 0,
+        stdoutBytesRaw: 20,
+        stdoutCharsReentered: 20,
+        resultRefCount: 2,
+        resultRefBytes: 4096,
+        estSavedTokens: 900,
+        savedRatio: 0.9,
+        // the content-free ordered descriptor — jq appears TWICE (its call count):
+        toolSequence: ["web_search", "jq", "jq", "web_fetch"],
+      },
+    );
+    // Rides verbatim — order + repeats preserved, NOT sorted, NOT deduped.
+    expect(data.toolSequence).toEqual(["web_search", "jq", "jq", "web_fetch"]);
+    // The turn traceId is deliberately stripped (the trajectory record is already traceId-keyed).
+    expect(data.traceId).toBeUndefined();
+    expect("traceId" in data).toBe(false);
+    // The shipped projection is unchanged (no regression to the existing fields).
+    expect(data.runId).toBe("orch-seq");
+    expect(data.resultRefCount).toBe(2);
+    expect(data.savedRatio).toBe(0.9);
+  });
+
+  it("omits toolSequence for a tool-less run — no phantom descriptor (sibling omit discipline)", () => {
+    const data = translateOrchestrationPayload(
+      "orchestrate:run_summary" as OrchestrationBridgedEventName,
+      {
+        runId: "orch-empty",
+        rootRunId: "root-agent-empty",
+        language: "js",
+        durationMs: 5,
+        exitCode: 0,
+        stdoutBytesRaw: 0,
+        stdoutCharsReentered: 0,
+        resultRefCount: 0,
+        resultRefBytes: 0,
+        // toolSequence ABSENT — a run with zero cap-mapped call sites.
+      },
+    );
+    // Mirrors the estSavedTokens/failureClass omit shape in this file (absent key → undefined).
+    expect(data.toolSequence).toBeUndefined();
+    expect(data.runId).toBe("orch-empty");
+  });
 });
 
 describe("translateOrchestrationPayload — graph:node_spawned (content-free)", () => {

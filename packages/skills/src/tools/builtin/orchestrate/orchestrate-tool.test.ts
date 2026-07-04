@@ -27,7 +27,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
 
-import type { AgentCapability, ComisLogger } from "@comis/core";
+import { runWithContext } from "@comis/core";
+import type { AgentCapability, ComisLogger, RequestContext } from "@comis/core";
 
 import {
   createOrchestrateTool,
@@ -1579,6 +1580,50 @@ describe("orchestrate-tool", () => {
       expect("estSavedTokens" in payload).toBe(false);
       expect("savedRatio" in payload).toBe(false);
       expect(Object.keys(payload).sort()).toEqual(SUCCESS_KEYS_NO_SAVINGS);
+    });
+
+    it("carries the content-free ordered toolSequence (the pre-flight footprint) + the turn traceId, populated under a request context", async () => {
+      // A cap-mapped script: web_search, jq, jq, web_fetch → the source-ordered
+      // call-site sequence with jq TWICE (its call count). The descriptor rides the
+      // emit as toolSequence (names only). The turn traceId — distinct from
+      // runId/rootRunId (the orchestrate-run ids) — rides it so a later learning
+      // ledger can key the descriptor row on the turn trajectory (OQ-2).
+      const TURN_TRACE_ID = "7f1c9a2e-3b4d-4c5e-8a6f-0d1e2f3a4b5c";
+      const PROC_SCRIPT =
+        'await comis_tools.web_search({q:1}); await comis_tools.jq({a:1}); await comis_tools.jq({b:2}); await comis_tools.web_fetch({url:"x"});';
+      const { eventBus, emitted } = makeEventBusSpy();
+      const { deps } = makeDeps({
+        eventBus,
+        rootRunId: "root-agent-1",
+        sessionKey: "tenant:user:channel",
+        spawnFn: () => makeFakeChild("ok\n"),
+      });
+      const tool = createOrchestrateTool(deps);
+
+      const ctx: RequestContext = {
+        tenantId: "default",
+        userId: "test-user",
+        sessionKey: "tenant:user:channel",
+        traceId: TURN_TRACE_ID,
+        startedAt: 1_700_000_000_000,
+        trustLevel: "admin",
+      };
+      await runWithContext(ctx, () =>
+        tool.execute("c", { script: PROC_SCRIPT, language: "ts" }),
+      );
+
+      expect(emitted).toHaveLength(1);
+      const { event, payload } = emitted[0]!;
+      expect(event).toBe("orchestrate:run_summary");
+      // The ordered call-site sequence + counts (repeats preserved), sourced from
+      // extractCapabilityFootprint(script).sequence — content-free (names only).
+      expect(payload.toolSequence).toEqual(["web_search", "jq", "jq", "web_fetch"]);
+      // The owning turn's trace correlator (OQ-2), distinct from runId/rootRunId.
+      expect(payload.traceId).toBe(TURN_TRACE_ID);
+      // INV-5: names + counts + a correlator ONLY — never the script body / call args.
+      const json = JSON.stringify(payload);
+      expect(json).not.toContain("web_fetch({url");
+      expect(json).not.toContain("q:1");
     });
 
     it("a NON-ZERO exit emits failureClass nonzero_exit + the real exit code (no stderr tail on the bus)", async () => {
