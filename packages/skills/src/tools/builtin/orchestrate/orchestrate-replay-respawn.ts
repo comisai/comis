@@ -32,8 +32,7 @@ import { copyFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { safePath } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import { safePath, type ComisLogger } from "@comis/core";
 
 import {
   SDK_ASSETS,
