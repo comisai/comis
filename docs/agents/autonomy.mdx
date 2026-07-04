@@ -143,6 +143,19 @@ hard to reverse: `orch:browse` (a real browser) and messaging a **new** channel
 (beyond the agent's own). Opt into the browser explicitly with `browse: true`;
 even then it always escalates for approval -- it is never auto-decided.
 
+### Learned procedures stay advisory
+
+When an agent solves a task with an [`orchestrate`](/agent-tools/orchestrate) run and that
+approach proves out across verified successes, the learning layer distils it into an **advisory
+procedure doc** -- a learned skill that records the run's tool footprint. It surfaces into the
+agent's `<available_skills>` listing like any other learned skill, bounded by a **per-agent
+budget** ([`learning.reflect.maxProcedureDocsSurfaced`](/agents/memory-config#the-one-learning-reflection-engine),
+default `10`) so a burst of procedures can never bloat every prompt. Crucially, surfacing a
+procedure doc grants **no new capability and no new execution path**: it is guidance the model
+**re-authors** into a fresh `orchestrate` script, run under the **same** capability gate and jail
+as any other run. A learned procedure can never widen the agent's autonomy posture -- the profile
+and its guard rails still bound every tool the re-authored script may touch.
+
 ## Overriding Individual Knobs (Progressive Disclosure)
 
 Most operators set only `profile:` (or nothing). When you need a single

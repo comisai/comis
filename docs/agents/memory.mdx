@@ -348,7 +348,13 @@ corroborated across runs out-ranks a one-off mention at recall time.
 
 The reflection engine is **outcome-gated** (it learns only from trusted-origin
 successful trajectories) and gated by `learning.enabled` under the master
-`memory.enabled` switch. The configuration lives in the
+`memory.enabled` switch. In the same pass it also distils **advisory procedure
+docs** from **verifiably-successful `orchestrate` runs** — a `kind:"skill"` doc
+that records the run's deterministic tool footprint and surfaces into
+`<available_skills>` bounded by a per-agent budget. Such a doc is **advisory**:
+the model reads it and **re-authors** the script through its own permissioned
+tools; it is never a stored/replayed template and adds **no new execution path**.
+The configuration lives in the
 [Memory configuration](/agents/memory-config#the-one-learning-reflection-engine)
 reference; this page describes the concept.
 

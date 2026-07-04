@@ -269,6 +269,27 @@ non-zero surfaces as the run's `failureClass` + `exitCode`, and the failing tool
 stderr tail rides the tool-error result — never the content-free audit fold.
 </Note>
 
+## Proven procedures become advisory docs
+
+When a script solves a task and that approach **proves out across verified successes**, the
+[learning engine](/agents/memory-config#the-one-learning-reflection-engine) distils it into an
+**advisory procedure doc** — a learned `kind: skill` doc that additionally records the run's
+**deterministic tool footprint** (the audited tool names). It surfaces into the agent's
+`<available_skills>` listing like any other learned skill.
+
+The doc is **advisory guidance, not a stored or replayed template**. On a matching later task the
+model **re-authors** a fresh script from the guidance and runs it under the **same** jail and
+per-run capability lease as any other `orchestrate` call — there is **no new execution path**, no
+saved script, and no capability the agent did not already hold. The tool footprint is metadata
+that helps the model reconstruct the approach; it never executes on its own.
+
+To keep a burst of procedure docs from bloating every prompt, the surfaced procedure-doc subset is
+capped per agent by
+[`learning.reflect.maxProcedureDocsSurfaced`](/agents/memory-config#the-one-learning-reflection-engine)
+(default `10`), oldest-first so the most-corroborated procedures keep their slot. User-intent
+skill docs and topic docs keep a separate, uncapped path. A procedure doc is outcome-gated and
+**demotes on sustained failing reuse** like every learned doc.
+
 ## Related
 
 <CardGroup cols={2}>

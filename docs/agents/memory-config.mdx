@@ -130,6 +130,7 @@ agents:
         minConfidence: 0.6           # reflection-side confidence floor [0..1]
         promoteAtProofCount: 3       # verified-success count at which a doc promotes candidate → active
         maxDocsPerRun: 100           # finite DoS bound, set high so it does not throttle learning
+        maxProcedureDocsSurfaced: 10 # per-agent cap on orchestrate-derived procedure docs in <available_skills> (the scaling guard)
       forget:                        # the wrongness-based soft-eviction policy (the __LIFECYCLE__ sweep reads these)
         maxDormantDays: 365          # best-out-of-box: remember ~a year (forget pure-disuse less)
         failureEvictionFloor: 3      # corroborated failure_count at/above which a non-exempt memory is soft-evicted
@@ -174,6 +175,7 @@ agents:
         minConfidence: 0.6     # the reflection-side confidence floor
         promoteAtProofCount: 3 # candidate → active after this many attributed successes
         maxDocsPerRun: 25      # per-run cost bound
+        maxProcedureDocsSurfaced: 10 # per-agent surface cap on procedure docs (default 10)
       forget:
         maxDormantDays: 90
         failureEvictionFloor: 3
@@ -192,7 +194,18 @@ agents:
   (`kind:"topic"`) are maintained in the **same pass** — a profile **correction supersedes**
   the prior doc with a bi-temporal **history-append** (the prior body is preserved in the doc's
   `history`, never hard-deleted), and external-trust sources are excluded by the engine's
-  two-axis anti-poison SELECT.
+  two-axis anti-poison SELECT. The same pass also distils **advisory procedure docs** from
+  **verifiably-successful `orchestrate` runs** — a `kind:"skill"` doc that additionally records
+  the deterministic **tool footprint** of the run (the audited tool names). It is outcome-gated
+  and **demote-on-failure** like every learned doc, and it is **advisory**: the model reads the
+  guidance and **re-authors** the script through its own already-permissioned tools — the doc is
+  never a stored or replayed template, and there is **no new execution path**.
+- **Procedure-doc surface budget (`learning.reflect.maxProcedureDocsSurfaced`, default `10`)** —
+  a per-agent cap on how many procedure docs surface into one prompt's `<available_skills>`. With
+  no ranked top-K at surface time, a burst of procedure docs would otherwise bloat every prompt;
+  the budget caps that subset only (oldest-first, so the most-corroborated procedures keep their
+  slot). User-intent **skill** docs and **topic** docs are **unaffected** — they keep a separate,
+  uncapped path.
 - **Forgetting (`learning.forget.*`)** — couples a memory's decay to its outcome-attributed
   `failure_count`, so **wrong fades faster than merely old**, and **soft-evicts** a sufficiently
   weak or stale memory: it is marked `evicted_at` (excluded from recall, still resolvable via
