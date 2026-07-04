@@ -25,7 +25,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PER_FILE_CAP_BYTES } from "@comis/core";
-import { buildPreview, createResultRefStore, inferKind } from "./result-ref-store.js";
+import { buildPreview, CHECKPOINT_TTL_MS, createResultRefStore, inferKind } from "./result-ref-store.js";
 
 // Spy on execFile so the slice-only guarantee test can drive the `sql` core's
 // daemon-side duckdb with a controlled tiny row-slice stdout — proving ONLY the
@@ -430,6 +430,96 @@ describe("result-ref-store", () => {
       // Fresh workspace, nothing materialized → an empty aggregate, never a throw.
       const agg = store.runAggregate?.({ workspacePath });
       expect(agg).toEqual({ count: 0, bytes: 0 });
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // CHECKPOINT_TTL_MS — the durable specialized checkpoint TTL (RESUME-05).
+  //
+  // A checkpoint is a distinguished kind:"json" ResultRef with a LONGER TTL than
+  // any ordinary tool result, so it outlives a full (up to MAX_TIMEOUT_MS) run
+  // PLUS a resume window — while still riding the SAME per-file (8 MiB) and
+  // per-run (aggregate) caps as any ResultRef (T-WS4-02 parity). The store already
+  // honors ctx.ttlMs + enforces the caps; this pins the checkpoint TTL constant.
+  // -------------------------------------------------------------------------
+  describe("CHECKPOINT_TTL_MS — the durable specialized checkpoint TTL (RESUME-05)", () => {
+    it("is a longer TTL than the 30-min default (outlives a full run + a resume window)", () => {
+      expect(CHECKPOINT_TTL_MS).toBeGreaterThan(30 * 60 * 1000);
+    });
+
+    it("materializes a checkpoint as a kind:json ResultRef whose expiry honors the LONGER TTL", async () => {
+      const store = makeStore();
+      const state = JSON.stringify({ step: 7, cursor: "xyz" });
+
+      const ref = await store.materialize(state, "orchestrate_checkpoint", {
+        workspacePath,
+        runId,
+        nowMs,
+        ttlMs: CHECKPOINT_TTL_MS,
+      });
+      if (ref === undefined || "error" in ref) throw new Error("expected a ResultRef");
+
+      // A JSON blob → kind json (the distinguished checkpoint kind).
+      expect(ref.kind).toBe("json");
+      // The expiry is nowMs + the LONGER checkpoint TTL (not the 30-min default).
+      expect(Date.parse(ref.expiresAt)).toBe(nowMs + CHECKPOINT_TTL_MS);
+      // On disk with the exact state bytes (resume reads these back).
+      expect(readFileSync(join(workspacePath, ref.ref), "utf8")).toBe(state);
+    });
+
+    it("a checkpoint's longer TTL SURVIVES a gcRun at a normal-run-length elapsed time (30 min)", async () => {
+      const store = makeStore();
+      const ref = await store.materialize(JSON.stringify({ a: 1 }), "orchestrate_checkpoint", {
+        workspacePath,
+        runId,
+        nowMs,
+        ttlMs: CHECKPOINT_TTL_MS,
+      });
+      if (ref === undefined || "error" in ref) throw new Error("expected a ResultRef");
+
+      // A default-run-length (30 min) GC must NOT TTL-evict the checkpoint — its
+      // expiry is CHECKPOINT_TTL_MS out (the whole point of the longer TTL).
+      await store.gcRun({
+        workspacePath,
+        runId,
+        aggregateCapBytes: 1024 * 1024,
+        nowMs: nowMs + 30 * 60 * 1000,
+      });
+      expect(existsSync(join(workspacePath, ref.ref))).toBe(true);
+    });
+
+    it("still refuses an over-per-file-cap checkpoint payload (RESUME-05 cap parity), writing nothing", async () => {
+      const store = makeStore();
+      const tooBig = Buffer.alloc(PER_FILE_CAP_BYTES + 1, 0x7b); // '{'
+      const ref = await store.materialize(tooBig, "orchestrate_checkpoint", {
+        workspacePath,
+        runId,
+        nowMs,
+        ttlMs: CHECKPOINT_TTL_MS,
+      });
+      // Content-free refusal (NOT a ResultRef) — the longer TTL does not exempt the cap.
+      expect(ref !== undefined && "error" in ref).toBe(true);
+      const resultsDir = join(workspacePath, "results");
+      expect(existsSync(resultsDir) ? readdirSync(resultsDir).length : 0).toBe(0);
+    });
+
+    it("respects the per-run aggregate cap even for long-TTL checkpoints (oldest-evicted past the budget)", async () => {
+      const store = makeStore();
+      for (let i = 0; i < 3; i++) {
+        const r = await store.materialize(JSON.stringify({ i }), "orchestrate_checkpoint", {
+          workspacePath,
+          runId,
+          nowMs: nowMs + i * 1000,
+          ttlMs: CHECKPOINT_TTL_MS,
+        });
+        if (r === undefined || "error" in r) throw new Error("materialize failed");
+      }
+      const resultsDir = join(workspacePath, "results");
+      expect(readdirSync(resultsDir).length).toBe(3);
+      // A tiny aggregate cap forces oldest-first eviction even though the TTL is long
+      // (the aggregate cap bounds a checkpoint the same as any ResultRef).
+      await store.gcRun({ workspacePath, runId, aggregateCapBytes: 12, nowMs: nowMs + 5000 });
+      expect(readdirSync(resultsDir).length).toBeLessThan(3);
     });
   });
 });

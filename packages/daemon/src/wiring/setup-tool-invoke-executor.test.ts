@@ -21,7 +21,10 @@
  *
  * @module
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import type { ValidatedUrl } from "@comis/core";
 
 // Mock @comis/core's validateUrl (preserve every other export — shouldMaterialize,
@@ -531,5 +534,188 @@ describe("createToolInvokeExecutor — case \"mcp\" (daemon-side MCP dispatch)",
     // spawn a jail. The bwrap --unshare-net round-trip is VPS-deferred (232-07).
     expect(callTool).toHaveBeenCalledTimes(1);
     expect(fetchPinnedMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// case "checkpoint" / case "resume" — the durable specialized writing core
+// (RESUME-01/05). checkpoint materializes the script-authored state as a
+// longer-TTL kind:json ResultRef (the injected `materializeCheckpoint` seam,
+// keyed on lease.rootRunId) and stamps ONLY the ref onto the run's durable row
+// (upsertCheckpoint, never outward_step). resume reads the last checkpointRef
+// back, loads the blob, and returns it WRAPPED (T-WS4-01 data-not-control) — the
+// REAL wrapExternalContent(source:"orchestrate_checkpoint"), never eval'd. Both
+// are gated by the deny-by-absence `orchestrateResumeEnabled` surface predicate
+// (fail-closed) even though orch:write/orch:read are FLOOR caps.
+//
+// Ground truth: the materialize + load seams here are REAL fs round-trips over a
+// per-test temp workspace (not a canned mock), so the wrap is applied to bytes
+// that actually hit disk and came back — the mock-store trap the CLAUDE.md
+// troubleshooting loop calls out is avoided.
+// ---------------------------------------------------------------------------
+describe("createToolInvokeExecutor — checkpoint/resume (durable specialized writing core)", () => {
+  const RESUME_LEASE = {
+    agentId: "agent-7",
+    caps: ["orch:read", "orch:write"] as const,
+    rootRunId: "root-abc",
+  };
+  let ws: string;
+
+  beforeEach(() => {
+    ws = mkdtempSync(join(tmpdir(), "comis-checkpoint-exec-"));
+  });
+  afterEach(() => {
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  /** REAL-fs materialize + load seams over the temp workspace (mirrors the store's ref shape). */
+  function realFsSeams() {
+    let seq = 0;
+    const materializeCheckpoint = vi.fn(async (stateJson: string) => {
+      const rel = `results/ckpt-${seq++}.json`;
+      const abs = join(ws, rel);
+      mkdirSync(dirname(abs), { recursive: true });
+      writeFileSync(abs, stateJson);
+      return {
+        ref: rel,
+        kind: "json" as const,
+        bytes: Buffer.byteLength(stateJson, "utf8"),
+        preview: stateJson.slice(0, 64),
+        expiresAt: "2030-01-01T00:00:00.000Z",
+      };
+    });
+    const loadCheckpoint = vi.fn(async (ref: string) => {
+      const abs = join(ws, ref);
+      return existsSync(abs) ? readFileSync(abs, "utf8") : undefined;
+    });
+    return { materializeCheckpoint, loadCheckpoint };
+  }
+
+  /**
+   * A faithful in-memory DurableRunPort (only upsertCheckpoint + getByRootRun are
+   * used). COALESCE-preserve on checkpointRef so a partial upsert never clobbers a
+   * prior ref (the plan-01 store semantics; the real sqlite round-trip is proven
+   * in durable-run-store.test.ts).
+   */
+  function memDurableRuns() {
+    const rows = new Map<string, Record<string, unknown>>();
+    const upsertCheckpoint = vi.fn(async (record: Record<string, unknown>) => {
+      const key = record.rootRunId as string;
+      const prev = rows.get(key) ?? {};
+      rows.set(key, { ...prev, ...record, checkpointRef: record.checkpointRef ?? prev.checkpointRef });
+      return { ok: true as const, value: undefined };
+    });
+    const getByRootRun = vi.fn(async (rootRunId: string) => ({
+      ok: true as const,
+      value: rows.get(rootRunId),
+    }));
+    return { upsertCheckpoint, getByRootRun, rows };
+  }
+
+  it("checkpoint persists ONLY checkpointRef on the durable row; resume returns the last state WRAPPED (real fs round-trip)", async () => {
+    const { materializeCheckpoint, loadCheckpoint } = realFsSeams();
+    const durableRuns = memDurableRuns();
+    const exec = createToolInvokeExecutor(
+      makeDeps({ orchestrateResumeEnabled: () => true, materializeCheckpoint, loadCheckpoint, durableRuns }),
+    );
+
+    const ack = await exec("checkpoint", { step: 3, cursor: "abc" }, RESUME_LEASE);
+    expect(ack).toEqual({ ok: true });
+
+    // The script-authored state was serialized to JSON and materialized (real disk).
+    expect(materializeCheckpoint).toHaveBeenCalledTimes(1);
+    expect(materializeCheckpoint.mock.calls[0][0]).toBe(JSON.stringify({ step: 3, cursor: "abc" }));
+
+    // The durable row carries checkpointRef, keyed on rootRunId, status running.
+    expect(durableRuns.upsertCheckpoint).toHaveBeenCalledTimes(1);
+    const record = durableRuns.upsertCheckpoint.mock.calls[0][0] as Record<string, unknown>;
+    expect(record.rootRunId).toBe("root-abc");
+    expect(record.checkpointRef).toBe("results/ckpt-0.json");
+    expect(record.status).toBe("running");
+    // The outward-send ledger is NEVER reset by a checkpoint — stepIndex stays at the
+    // -1 'never-sent' sentinel (upsertCheckpoint omits outward_step, plan 01).
+    expect(record.stepIndex).toBe(-1);
+
+    // resume reads the last checkpointRef, loads the REAL bytes, wraps as untrusted DATA.
+    const resumed = (await exec("resume", {}, RESUME_LEASE)) as string;
+    expect(typeof resumed).toBe("string");
+    // The REAL wrapExternalContent boundary marker — data-not-control (T-WS4-01).
+    expect(resumed).toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/);
+    // The state rides INSIDE the wrap, and the return is NOT the bare state (never eval'd).
+    expect(resumed).toContain('"step":3');
+    expect(resumed).not.toBe(JSON.stringify({ step: 3, cursor: "abc" }));
+  });
+
+  it("resume returns null when the run has no prior checkpoint", async () => {
+    const { materializeCheckpoint, loadCheckpoint } = realFsSeams();
+    const durableRuns = memDurableRuns();
+    const exec = createToolInvokeExecutor(
+      makeDeps({ orchestrateResumeEnabled: () => true, materializeCheckpoint, loadCheckpoint, durableRuns }),
+    );
+
+    const resumed = await exec("resume", {}, RESUME_LEASE);
+    expect(resumed).toBeNull();
+    expect(loadCheckpoint).not.toHaveBeenCalled(); // no checkpointRef → no blob load
+  });
+
+  it("DENIES checkpoint AND resume when the resume surface predicate is ABSENT (fail-closed)", async () => {
+    const { materializeCheckpoint, loadCheckpoint } = realFsSeams();
+    const durableRuns = memDurableRuns();
+    // No orchestrateResumeEnabled dep ⇒ deny by absence (mirrors the write/mcp gates).
+    const exec = createToolInvokeExecutor(
+      makeDeps({ materializeCheckpoint, loadCheckpoint, durableRuns }),
+    );
+
+    const ckDeny = (await exec("checkpoint", { step: 1 }, RESUME_LEASE)) as { error?: string };
+    const rsDeny = (await exec("resume", {}, RESUME_LEASE)) as { error?: string };
+
+    // Content-free, error-SHAPED denies (never a throw), and NO dispatch happened.
+    expect(ckDeny.error).toMatch(/resume surface/i);
+    expect(rsDeny.error).toMatch(/resume surface/i);
+    expect(materializeCheckpoint).not.toHaveBeenCalled();
+    expect(loadCheckpoint).not.toHaveBeenCalled();
+    expect(durableRuns.upsertCheckpoint).not.toHaveBeenCalled();
+    expect(durableRuns.getByRootRun).not.toHaveBeenCalled();
+  });
+
+  it("DENIES both when orchestrateResumeEnabled returns false, consulting the lease agentId", async () => {
+    const { materializeCheckpoint, loadCheckpoint } = realFsSeams();
+    const durableRuns = memDurableRuns();
+    const orchestrateResumeEnabled = vi.fn(() => false);
+    const exec = createToolInvokeExecutor(
+      makeDeps({ orchestrateResumeEnabled, materializeCheckpoint, loadCheckpoint, durableRuns }),
+    );
+
+    const ck = (await exec("checkpoint", { step: 1 }, RESUME_LEASE)) as { error?: string };
+    expect(ck.error).toBeTruthy();
+    expect(orchestrateResumeEnabled).toHaveBeenCalledWith("agent-7");
+    expect(materializeCheckpoint).not.toHaveBeenCalled();
+    expect(durableRuns.upsertCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it("REFUSES checkpoint (content-free) when the store declines (over the per-file cap) — no durable write", async () => {
+    const durableRuns = memDurableRuns();
+    const materializeCheckpoint = vi.fn(async () => undefined); // over-cap refuse / failed write
+    const exec = createToolInvokeExecutor(
+      makeDeps({ orchestrateResumeEnabled: () => true, materializeCheckpoint, durableRuns }),
+    );
+
+    const refused = (await exec("checkpoint", { big: "x" }, RESUME_LEASE)) as { error?: string };
+    expect(refused.error).toBeTruthy();
+    // No ref was minted, so nothing is stamped onto the durable row.
+    expect(durableRuns.upsertCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it("honest-degrades (no throw) when the lease carries no durable run identity (rootRunId absent)", async () => {
+    const { materializeCheckpoint, loadCheckpoint } = realFsSeams();
+    const durableRuns = memDurableRuns();
+    const exec = createToolInvokeExecutor(
+      makeDeps({ orchestrateResumeEnabled: () => true, materializeCheckpoint, loadCheckpoint, durableRuns }),
+    );
+
+    // LEASE has no rootRunId — checkpoint cannot key a durable row → content-free error.
+    const ck = (await exec("checkpoint", { step: 1 }, LEASE)) as { error?: string };
+    expect(ck.error).toBeTruthy();
+    expect(materializeCheckpoint).not.toHaveBeenCalled();
   });
 });
