@@ -1369,7 +1369,7 @@ describe("setupCrossSession", () => {
 
     it("SUB_AGENT_TOOL_DENYLIST contains expected tools", () => {
       expect(SUB_AGENT_TOOL_DENYLIST).toBeInstanceOf(Set);
-      expect(SUB_AGENT_TOOL_DENYLIST.size).toBe(11);
+      expect(SUB_AGENT_TOOL_DENYLIST.size).toBe(12);
       expect(SUB_AGENT_TOOL_DENYLIST.has("gateway")).toBe(true);
       expect(SUB_AGENT_TOOL_DENYLIST.has("channels_manage")).toBe(true);
       expect(SUB_AGENT_TOOL_DENYLIST.has("agents_manage")).toBe(true);
@@ -1381,6 +1381,7 @@ describe("setupCrossSession", () => {
       expect(SUB_AGENT_TOOL_DENYLIST.has("memory_manage")).toBe(true);
       expect(SUB_AGENT_TOOL_DENYLIST.has("heartbeat_manage")).toBe(true);
       expect(SUB_AGENT_TOOL_DENYLIST.has("mcp_manage")).toBe(true);
+      expect(SUB_AGENT_TOOL_DENYLIST.has("mcp_login")).toBe(true);
     });
   });
 
