@@ -941,6 +941,35 @@ describe("buildFindings — health_signal rollup counts only degraded (warning) 
     expect(f).toHaveLength(1);
     expect(f[0]!.count).toBe(1);
   });
+
+  it("breaks the lcd_divergence finding down by reason so the operator sees WHICH failure class recurred", () => {
+    // Grouping by signal label alone forced a per-session explain to learn
+    // whether the divergences were fail_closed_rollover (a security refusal) or
+    // live_store_divergence (a heal/compaction shrink). details.reason is right
+    // there in the rows — surface a per-reason breakdown in the detail.
+    const row = (reason: string, ts: number): DiagnosticRow => ({
+      timestamp: ts,
+      category: "health_signal",
+      severity: "warning",
+      message: "context:dag_degraded",
+      details: JSON.stringify({ signal: "lcd_divergence", reason, durationMs: 5 }),
+    });
+    const findings = buildFindings(
+      [
+        row("fail_closed_rollover", 1_000),
+        row("fail_closed_rollover", 2_000),
+        row("live_store_divergence", 3_000),
+      ],
+      [],
+      [],
+    );
+    const f = findings.find((x) => x.code === "health_signal:lcd_divergence");
+    expect(f).toBeDefined();
+    expect(f!.count).toBe(3);
+    // Deterministic order (count desc, then reason asc) with per-reason counts.
+    expect(f!.detail).toContain("fail_closed_rollover=2");
+    expect(f!.detail).toContain("live_store_divergence=1");
+  });
 });
 
 describe("buildFindings — model_health 'provider degradation' counts only degraded (warning) rows", () => {
