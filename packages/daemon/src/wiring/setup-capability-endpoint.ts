@@ -176,6 +176,16 @@ export const DENYLISTED_RPC_METHODS: Readonly<Record<string, string>> = {
   "heartbeat.states": "heartbeat_manage",
   "heartbeat.trigger": "heartbeat_manage",
   "heartbeat.update": "heartbeat_manage",
+  // mcp_manage (connect/disconnect/reconnect -> MCP server config persistence -> SIGUSR2)
+  // + mcp_login (oauth_login -> control-plane credential flow). DEFENSE-IN-DEPTH: the
+  // control plane is already unreachable BY ABSENCE from TOOL_CAPABILITY_MAP + the lease
+  // audience (the authoritative gate, arch-test-pinned); this pre-check denies the
+  // methods BEFORE validate as belt-and-suspenders so a future cap-map edit can never
+  // accidentally expose mcp.connect / mcp.oauth_login.
+  "mcp.connect": "mcp_manage",
+  "mcp.disconnect": "mcp_manage",
+  "mcp.reconnect": "mcp_manage",
+  "mcp.oauth_login": "mcp_login",
 };
 
 // Soundness: every mapped tool name must be a member of the shipped denylist,
