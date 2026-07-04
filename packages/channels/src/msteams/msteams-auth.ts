@@ -15,10 +15,12 @@
  * @module
  */
 
+import { X509Certificate, randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { systemNowMs } from "@comis/core";
-import type { ComisLogger } from "@comis/core";
-import { ok, err, fromPromise, type Result } from "@comis/shared";
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import type { ComisLogger, EnvPort } from "@comis/core";
+import { ok, err, fromPromise, tryCatch, type Result } from "@comis/shared";
+import { createRemoteJWKSet, jwtVerify, importPKCS8, SignJWT } from "jose";
 import { classifyMsTeamsError } from "./errors.js";
 
 /** Bot Framework activity issuer (verified against the live issuer metadata). */
@@ -142,6 +144,27 @@ export interface ConnectorTokenDeps {
   now?: () => number;
   /** Refresh margin before expiry, in ms. Defaults to 60s. */
   skewMs?: number;
+  /**
+   * Certificate mode: an absolute path to a PEM that bundles the private key and
+   * the certificate. The key signs the client assertion; the certificate's
+   * SHA-256 thumbprint becomes the assertion's `x5t#S256` header.
+   */
+  certPath?: string;
+  /**
+   * Injected PEM reader, defaulting to `node:fs/promises` readFile. Lets a unit
+   * test supply the certificate bundle without touching the filesystem.
+   */
+  readFileImpl?: (path: string) => Promise<string>;
+  /**
+   * Managed-identity mode: the user-assigned identity's client id. Selects which
+   * identity mints the token at the local metadata endpoint.
+   */
+  managedIdentityClientId?: string;
+  /**
+   * Live environment accessor for the App-Service identity endpoint and header.
+   * Read on every mint (the header rotates), never snapshotted at construction.
+   */
+  env?: EnvPort;
 }
 
 /** Provides a cached Connector access token, minted on demand. */
@@ -153,21 +176,73 @@ export interface ConnectorTokenProvider {
 /** The token-endpoint success fields consumed here. */
 interface TokenResponse {
   access_token?: string;
+  /** Relative lifetime in seconds (AAD token endpoint + IMDS). */
   expires_in?: number;
+  /** Absolute expiry as epoch seconds (App-Service managed identity). */
+  expires_on?: number | string;
+}
+
+/** The three ways an enterprise bot mints a Bot Connector token. */
+export type ConnectorAuthMode = "secret" | "certificate";
+
+/** A planned token request: the URL to call and the fetch init (verb/headers/body). */
+interface TokenRequestPlan {
+  url: string;
+  init: RequestInit;
 }
 
 /**
- * Build a Connector token provider. The first `getToken()` mints a token via
- * the client-credentials grant against the single-tenant token endpoint and
- * caches it; subsequent calls reuse the cache until expiry-minus-skew, then
- * refresh.
- *
- * The app-password is sent only in the request body and is never logged; the
- * minted token is never logged either. Every failure branch returns a `Result`
- * and logs a WARN carrying the classified `hint` + `errorKind`.
+ * Build the mode-specific token request. Returns a `Result` because certificate
+ * signing can fail before any network call; a failing builder has already logged
+ * its own actionable WARN.
  */
-export function createConnectorTokenProvider(
+type BuildTokenRequest = (
+  tokenUrl: string,
+) => Promise<Result<TokenRequestPlan, Error>>;
+
+const FORM_CONTENT_TYPE = "application/x-www-form-urlencoded";
+const CLIENT_ASSERTION_TYPE =
+  "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
+
+/** The two PEM blocks a certificate bundle must carry. */
+const PEM_KEY_BLOCK =
+  /-----BEGIN PRIVATE KEY-----[\s\S]*?-----END PRIVATE KEY-----/;
+const PEM_CERT_BLOCK =
+  /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/;
+
+/**
+ * Resolve a token response's expiry to an absolute epoch-ms deadline. Accepts
+ * both a relative `expires_in` (seconds) and an absolute `expires_on` (epoch
+ * seconds, possibly a string). Returns undefined for a missing/non-positive
+ * value so a NaN/0 expiry can never poison the cache.
+ */
+function resolveExpiresAtMs(
+  parsed: TokenResponse,
+  nowMs: number,
+): number | undefined {
+  const on = parsed.expires_on;
+  const onSec = typeof on === "string" ? Number(on) : on;
+  if (typeof onSec === "number" && Number.isFinite(onSec) && onSec > 0) {
+    return onSec * 1000;
+  }
+  const inSec = parsed.expires_in;
+  if (typeof inSec === "number" && Number.isFinite(inSec) && inSec > 0) {
+    return nowMs + inSec * 1000;
+  }
+  return undefined;
+}
+
+/**
+ * The shared POST/GET-and-cache half every auth mode reuses: the tenant
+ * path-safety gate, the cache-hit-with-skew short-circuit, the fetch, the
+ * transport and status failure branches, response validation, and the cache-set
+ * + completion INFO line. Only request construction differs per mode, injected
+ * as `buildRequest`. No token, assertion, key, or identity header is ever placed
+ * in a log field.
+ */
+function createCachingTokenProvider(
   deps: ConnectorTokenDeps,
+  buildRequest: BuildTokenRequest,
 ): ConnectorTokenProvider {
   const now = deps.now ?? systemNowMs;
   const doFetch = deps.fetchImpl ?? fetch;
@@ -197,23 +272,19 @@ export function createConnectorTokenProvider(
       }
 
       const startedAt = now();
-      const body = new URLSearchParams({
-        grant_type: "client_credentials",
-        client_id: deps.appId,
-        client_secret: deps.appPassword,
-        scope: CONNECTOR_SCOPE,
-      });
       deps.logger.debug(
         { step: "msteams-token-mint", channelType: "msteams" as const },
         "Minting Connector token",
       );
 
+      const planned = await buildRequest(tokenUrl);
+      if (!planned.ok) {
+        // The builder logged the actionable WARN for its precondition/signing failure.
+        return err(planned.error);
+      }
+
       const responded = await fromPromise(
-        doFetch(tokenUrl, {
-          method: "POST",
-          headers: { "content-type": "application/x-www-form-urlencoded" },
-          body,
-        }),
+        doFetch(planned.value.url, planned.value.init),
       );
       if (!responded.ok) {
         // No response reached us: a transport-level fault (undefined status).
@@ -258,20 +329,12 @@ export function createConnectorTokenProvider(
       }
 
       const accessToken = parsed.value.access_token;
-      const expiresInSec = parsed.value.expires_in;
-      // typeof NaN === "number", so a bare typeof guard would let a NaN/0/negative
-      // expiry through and poison the cache (expiresAtMs = NaN → re-mint every call).
-      // The typeof arm also narrows expiresInSec to a number for the range checks.
-      if (
-        !accessToken ||
-        typeof expiresInSec !== "number" ||
-        !Number.isFinite(expiresInSec) ||
-        expiresInSec <= 0
-      ) {
+      const expiresAtMs = resolveExpiresAtMs(parsed.value, now());
+      if (!accessToken || expiresAtMs === undefined) {
         deps.logger.warn(
           {
             channelType: "msteams" as const,
-            hint: "The token endpoint response was missing access_token or expires_in",
+            hint: "The token endpoint response was missing access_token or a positive expiry",
             errorKind: "platform" as const,
           },
           "Connector token mint failed: incomplete token response",
@@ -279,7 +342,7 @@ export function createConnectorTokenProvider(
         return err(new Error("incomplete token response"));
       }
 
-      cache = { token: accessToken, expiresAtMs: now() + expiresInSec * 1000 };
+      cache = { token: accessToken, expiresAtMs };
       deps.logger.info(
         {
           step: "msteams-token-mint",
@@ -291,4 +354,190 @@ export function createConnectorTokenProvider(
       return ok(accessToken);
     },
   };
+}
+
+/**
+ * Build a secret-mode (client-credentials) Connector token provider. The first
+ * `getToken()` mints a token against the single-tenant token endpoint and caches
+ * it; subsequent calls reuse the cache until expiry-minus-skew, then refresh.
+ *
+ * The app-password is sent only in the request body and is never logged; the
+ * minted token is never logged either.
+ */
+export function createConnectorTokenProvider(
+  deps: ConnectorTokenDeps,
+): ConnectorTokenProvider {
+  return createCachingTokenProvider(deps, (tokenUrl) =>
+    Promise.resolve(
+      ok({
+        url: tokenUrl,
+        init: {
+          method: "POST",
+          headers: { "content-type": FORM_CONTENT_TYPE },
+          body: new URLSearchParams({
+            grant_type: "client_credentials",
+            client_id: deps.appId,
+            client_secret: deps.appPassword,
+            scope: CONNECTOR_SCOPE,
+          }),
+        },
+      }),
+    ),
+  );
+}
+
+/**
+ * Build the certificate-mode request: read the PEM bundle at `certPath`, sign a
+ * client-assertion JWT with the private key (carrying the certificate's SHA-256
+ * thumbprint as the `x5t#S256` header), and present it as `client_assertion` in
+ * a client-credentials grant. The key and the signed assertion never leave the
+ * request body — they are never logged.
+ */
+async function buildCertAssertionRequest(
+  deps: ConnectorTokenDeps,
+  tokenUrl: string,
+): Promise<Result<TokenRequestPlan, Error>> {
+  if (!deps.certPath) {
+    deps.logger.warn(
+      {
+        channelType: "msteams" as const,
+        hint: "Set msteams.certPath to a PEM bundling the private key and the certificate",
+        errorKind: "precondition" as const,
+      },
+      "Connector token mint blocked: certificate mode requires certPath",
+    );
+    return err(new Error("certificate mode requires certPath"));
+  }
+
+  const readPem =
+    deps.readFileImpl ??
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- certPath is an operator-configured absolute path, not user input
+    ((path: string) => readFile(path, "utf8"));
+  const pemRes = await fromPromise(readPem(deps.certPath));
+  if (!pemRes.ok) {
+    deps.logger.warn(
+      {
+        channelType: "msteams" as const,
+        hint: "Ensure msteams.certPath points to a readable PEM file",
+        errorKind: "precondition" as const,
+      },
+      "Connector token mint failed: certificate file is not readable",
+    );
+    return err(pemRes.error);
+  }
+
+  const keyBlock = pemRes.value.match(PEM_KEY_BLOCK)?.[0];
+  const certBlock = pemRes.value.match(PEM_CERT_BLOCK)?.[0];
+  if (!keyBlock || !certBlock) {
+    deps.logger.warn(
+      {
+        channelType: "msteams" as const,
+        hint: "The certPath PEM must contain both a PRIVATE KEY and a CERTIFICATE block",
+        errorKind: "precondition" as const,
+      },
+      "Connector token mint failed: certificate bundle is missing a key or certificate block",
+    );
+    return err(new Error("certificate bundle missing key or certificate block"));
+  }
+
+  const keyRes = await fromPromise(importPKCS8(keyBlock, "PS256"));
+  if (!keyRes.ok) {
+    deps.logger.warn(
+      {
+        channelType: "msteams" as const,
+        hint: "The private key must be an unencrypted PKCS#8 PEM",
+        errorKind: "precondition" as const,
+      },
+      "Connector token mint failed: private key could not be loaded",
+    );
+    return err(keyRes.error);
+  }
+
+  const certRes = tryCatch(() => new X509Certificate(certBlock));
+  if (!certRes.ok) {
+    deps.logger.warn(
+      {
+        channelType: "msteams" as const,
+        hint: "The certificate block is not a valid X.509 certificate",
+        errorKind: "precondition" as const,
+      },
+      "Connector token mint failed: certificate could not be parsed",
+    );
+    return err(certRes.error);
+  }
+
+  // x5t#S256 = base64url(SHA-256(DER(cert))). node:crypto yields colon-hex; convert.
+  const thumbprint = Buffer.from(
+    certRes.value.fingerprint256.replace(/:/g, ""),
+    "hex",
+  ).toString("base64url");
+
+  const signed = await fromPromise(
+    new SignJWT({})
+      .setProtectedHeader({ alg: "PS256", typ: "JWT", "x5t#S256": thumbprint })
+      .setIssuer(deps.appId) // iss = sub = the bot (client) app id
+      .setSubject(deps.appId)
+      .setAudience(tokenUrl) // aud = the single-tenant token endpoint
+      .setJti(randomUUID())
+      .setIssuedAt()
+      .setExpirationTime("10m")
+      .sign(keyRes.value),
+  );
+  if (!signed.ok) {
+    deps.logger.warn(
+      {
+        channelType: "msteams" as const,
+        hint: "The client assertion could not be signed with the certificate key",
+        errorKind: "internal" as const,
+      },
+      "Connector token mint failed: client assertion signing failed",
+    );
+    return err(signed.error);
+  }
+
+  return ok({
+    url: tokenUrl,
+    init: {
+      method: "POST",
+      headers: { "content-type": FORM_CONTENT_TYPE },
+      body: new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: deps.appId,
+        scope: CONNECTOR_SCOPE,
+        client_assertion_type: CLIENT_ASSERTION_TYPE,
+        client_assertion: signed.value,
+      }),
+    },
+  });
+}
+
+/** Build a certificate-mode (client-assertion) Connector token provider. */
+function createCertAssertionTokenProvider(
+  deps: ConnectorTokenDeps,
+): ConnectorTokenProvider {
+  return createCachingTokenProvider(deps, (tokenUrl) =>
+    buildCertAssertionRequest(deps, tokenUrl),
+  );
+}
+
+/**
+ * Build a Connector token provider for the configured auth mode. All modes share
+ * the same cache/skew/tenant-guard/logging scaffold; they differ only in how the
+ * token request is constructed (`secret` sends a client secret, `certificate`
+ * sends a signed client assertion).
+ */
+export function createConnectorTokenProviderFor(
+  authMode: ConnectorAuthMode,
+  deps: ConnectorTokenDeps,
+): ConnectorTokenProvider {
+  switch (authMode) {
+    case "secret":
+      return createConnectorTokenProvider(deps);
+    case "certificate":
+      return createCertAssertionTokenProvider(deps);
+    default: {
+      const _exhaustive: never = authMode;
+      return _exhaustive;
+    }
+  }
 }

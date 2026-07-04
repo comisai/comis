@@ -165,6 +165,12 @@ export {
   validateActivityJwt,
   createActivityJwtValidator,
   createConnectorTokenProvider,
+  createConnectorTokenProviderFor,
+} from "./msteams/msteams-auth.js";
+export type {
+  ConnectorAuthMode,
+  ConnectorTokenDeps,
+  ConnectorTokenProvider,
 } from "./msteams/msteams-auth.js";
 export { validateMsTeamsCredentials } from "./msteams/credential-validator.js";
 export { classifyMsTeamsError } from "./msteams/errors.js";
