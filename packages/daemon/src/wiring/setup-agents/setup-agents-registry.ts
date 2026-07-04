@@ -145,6 +145,8 @@ export async function setupAgents(deps: {
   memoryAdapter: SqliteMemoryAdapter;
   sessionStore: ReturnType<typeof createSessionStore>;
   agentLogger: ComisLogger;
+  /** The daemon package.json version → each agent's trace.metadata build stamp. */
+  daemonVersion?: string;
   /** When true, executor includes MEDIA: directive instructions in system prompt. */
   outboundMediaEnabled?: boolean;
   /** When true, executor system prompt includes attachment hint processing guidance.
@@ -420,6 +422,7 @@ export async function setupAgents(deps: {
   // Construct shared deps struct once before the loop (for hot-add reuse)
   const singleAgentDeps: SingleAgentDeps = {
     container,
+    ...(deps.daemonVersion !== undefined ? { appVersion: deps.daemonVersion } : {}),
     memoryAdapter,
     sessionStore,
     agentLogger,

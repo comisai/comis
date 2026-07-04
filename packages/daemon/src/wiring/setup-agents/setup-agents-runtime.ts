@@ -428,6 +428,7 @@ export async function setupSingleAgent(
     stepCounter,
     eventBus: container.eventBus,
     logger: perAgentLogger,
+    ...(deps.appVersion !== undefined ? { appVersion: deps.appVersion } : {}),
     authStorage: piAuthStorage,
     // Thread OAuthTokenManager into the executor so the per-LLM-call
     // dispatch hook (PiExecutor.execute pre-hook + the two compaction

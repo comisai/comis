@@ -1814,8 +1814,10 @@ describe("PiExecutor", () => {
 
       const result = await executor.execute(testMessage, testSessionKey);
 
-      // SDK session stats now populate cacheRead/cacheWrite alongside bridge values
-      expect(result.tokensUsed).toEqual({ input: 100, output: 50, total: 150, cacheRead: 0, cacheWrite: 0 });
+      // tokensUsed is the PER-EXECUTION bridge total (scope-consistent with
+      // cost); the SDK's CUMULATIVE session stats ride sessionTokensUsed.
+      expect(result.tokensUsed).toEqual({ input: 100, output: 50, total: 150 });
+      expect(result.sessionTokensUsed).toEqual({ input: 100, output: 50, total: 150, cacheRead: 0, cacheWrite: 0 });
       expect(result.cost).toEqual({ total: 0.01 });
       expect(result.stepsExecuted).toBe(2);
       expect(result.llmCalls).toBe(1);
