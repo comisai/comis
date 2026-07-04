@@ -64,6 +64,18 @@ export const DurabilityConfigSchema = z.strictObject({
    * thundering herd on a large crash backlog. Default 30s.
    */
   recoveryBudgetMs: z.number().int().positive().default(30_000),
+  /**
+   * The single gate every resumable-orchestrate behavior nests under
+   * (default FALSE). Off ⇒ an `orchestrate` run that times out is SIGKILL'd +
+   * rejected as today (no resumable durable row written, no checkpoint
+   * survival). On ⇒ a durable-registered `orchestrate` timeout records a
+   * resumable `{scriptRef, checkpointRef}` row so `orchestrate({resumeRunId})`
+   * can re-spawn the PINNED original script and `resume()` yields the last
+   * checkpoint. Nested INSIDE this block (not a flat toggle) so it inherits the
+   * durability posture's deny-by-absence: an omitted block resolves it to
+   * false, and the per-agent surface predicate fails closed on absent config.
+   */
+  orchestrateResume: z.boolean().default(false),
 });
 
 export type DurabilityConfig = z.infer<typeof DurabilityConfigSchema>;

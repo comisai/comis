@@ -82,6 +82,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
       "durability": {
         "enabled": false,
         "keepAliveMs": 30000,
+        "orchestrateResume": false,
         "recoveryBudgetMs": 30000,
         "staleHeartbeatMs": 120000
       },
@@ -186,6 +187,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "default": {
       "enabled": false,
       "keepAliveMs": 30000,
+      "orchestrateResume": false,
       "recoveryBudgetMs": 30000,
       "staleHeartbeatMs": 120000
     },
@@ -204,6 +206,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.autonomy.durability.keepAliveMs",
     "type": "integer"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "agents.autonomy.durability.orchestrateResume",
+    "type": "boolean"
   },
   {
     "default": 30000,
@@ -8278,6 +8286,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "durability": {
             "enabled": false,
             "keepAliveMs": 30000,
+            "orchestrateResume": false,
             "recoveryBudgetMs": 30000,
             "staleHeartbeatMs": 120000
           },
@@ -15790,6 +15799,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "durability": {
           "enabled": false,
           "keepAliveMs": 30000,
+          "orchestrateResume": false,
           "recoveryBudgetMs": 30000,
           "staleHeartbeatMs": 120000
         },
@@ -15904,6 +15914,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "default": {
             "enabled": false,
             "keepAliveMs": 30000,
+            "orchestrateResume": false,
             "recoveryBudgetMs": 30000,
             "staleHeartbeatMs": 120000
           },
@@ -15917,6 +15928,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
               "exclusiveMinimum": 0,
               "maximum": 9007199254740991,
               "type": "integer"
+            },
+            "orchestrateResume": {
+              "default": false,
+              "type": "boolean"
             },
             "recoveryBudgetMs": {
               "default": 30000,
@@ -15935,7 +15950,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "enabled",
             "staleHeartbeatMs",
             "keepAliveMs",
-            "recoveryBudgetMs"
+            "recoveryBudgetMs",
+            "orchestrateResume"
           ],
           "type": "object"
         },
@@ -26774,6 +26790,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "durability": {
                 "enabled": false,
                 "keepAliveMs": 30000,
+                "orchestrateResume": false,
                 "recoveryBudgetMs": 30000,
                 "staleHeartbeatMs": 120000
               },
@@ -26888,6 +26905,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "default": {
                   "enabled": false,
                   "keepAliveMs": 30000,
+                  "orchestrateResume": false,
                   "recoveryBudgetMs": 30000,
                   "staleHeartbeatMs": 120000
                 },
@@ -26901,6 +26919,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991,
                     "type": "integer"
+                  },
+                  "orchestrateResume": {
+                    "default": false,
+                    "type": "boolean"
                   },
                   "recoveryBudgetMs": {
                     "default": 30000,
@@ -26919,7 +26941,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "enabled",
                   "staleHeartbeatMs",
                   "keepAliveMs",
-                  "recoveryBudgetMs"
+                  "recoveryBudgetMs",
+                  "orchestrateResume"
                 ],
                 "type": "object"
               },
@@ -31146,6 +31169,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "durability": {
               "enabled": false,
               "keepAliveMs": 30000,
+              "orchestrateResume": false,
               "recoveryBudgetMs": 30000,
               "staleHeartbeatMs": 120000
             },
