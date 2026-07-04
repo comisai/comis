@@ -31,9 +31,15 @@ vi.mock("@comis/channels", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/channels")>();
   return {
     ...actual,
-    createBlockPacer: vi.fn((_config: PacerConfig) => ({
+    createBlockPacer: vi.fn((config: PacerConfig) => ({
       deliver: vi.fn(async (blocks: string[], send: (text: string) => Promise<void>) => {
-        for (const b of blocks) await send(b);
+        for (const b of blocks) {
+          // Faithful to the real pacer's external-abort hard stop
+          // (block-pacer.ts): an aborted external signal skips the remaining
+          // blocks WITHOUT sending — the seam the skip-honesty contract pins.
+          if (config.externalSignal?.aborted) return;
+          await send(b);
+        }
       }),
       cancel: vi.fn(),
     })),
@@ -129,6 +135,39 @@ const NO_TYPING: TypingLifecycleController | undefined = undefined;
 // ---------------------------------------------------------------------------
 // Result receipt + deliveredAtMs ordering
 // ---------------------------------------------------------------------------
+
+describe("deliverExecutionResponse — aborted-signal skip honesty", () => {
+  it("reports skipped blocks honestly when the delivery signal is already aborted (never success:true with zero sends)", async () => {
+    // Observed live: a spend-aborted turn's delivery logged "Block delivery
+    // complete success:true" + "Delivery complete" while the pacer had
+    // hard-skipped every block — the user received nothing and the logs said
+    // success. The skip must be visible: success:false + a skippedChunks count
+    // on the completion line, plus an operator-actionable WARN.
+    const send = vi.fn(async () => ok("msg-x"));
+    const adapter = makeAdapter(send as unknown as ChannelPort["sendMessage"]);
+    const deps = makeDeps();
+    const abortedController = new AbortController();
+    abortedController.abort("user_cancel");
+
+    const result = await deliverExecutionResponse(
+      deps, adapter, makeMessage(), "hello world", makeBlockStreamCfg(),
+      new Set<BlockPacer>(), undefined, abortedController.signal, NO_TYPING,
+    );
+
+    // Nothing was sent (the pacer's external-abort hard stop).
+    expect(send).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+
+    const logger = deps.logger as unknown as { debug: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn> };
+    const completion = logger.debug.mock.calls.find((c) => c[1] === "Block delivery complete");
+    expect(completion, "the completion line must still be logged").toBeDefined();
+    expect(completion?.[0]).toMatchObject({ success: false, skippedChunks: 1 });
+    const warn = logger.warn.mock.calls.find((c) => c[1] === "Block delivery skipped by aborted execution");
+    expect(warn, "an operator-actionable WARN must record the skip").toBeDefined();
+    expect(warn?.[0]).toMatchObject({ errorKind: "precondition" });
+    expect(String(warn?.[0]?.hint ?? "")).toMatch(/not.*sent|never sent|did not receive/i);
+  });
+});
 
 describe("deliverExecutionResponse — delivery receipt", () => {
   it("returns ok(receipt) with deliveredChunks and the real lastChunkMessageId on full success", async () => {
