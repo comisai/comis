@@ -96,10 +96,12 @@ describe("CLI entry point", () => {
       "mcp",
       // Cost-attribution exports/reports (`comis cost export`).
       "cost",
+      // Operator-only deterministic replay of a recorded run (`comis orchestrate replay`).
+      "orchestrate",
     ] as const;
 
-    it("registers exactly 27 commands", () => {
-      expect(program.commands).toHaveLength(27);
+    it("registers exactly 28 commands", () => {
+      expect(program.commands).toHaveLength(28);
     });
 
     it.each(expectedCommands)("registers the '%s' command", (name) => {
