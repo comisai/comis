@@ -1597,6 +1597,16 @@
                   }
                 ]
               },
+              "lastInboundAt": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "error": {
                 "anyOf": [
                   {

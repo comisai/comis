@@ -1719,6 +1719,16 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
                   }
                 ]
               },
+              "lastInboundAt": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "error": {
                 "anyOf": [
                   {

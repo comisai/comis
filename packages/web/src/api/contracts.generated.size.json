@@ -1,6 +1,6 @@
 {
-  "totalMinified": 132321,
-  "totalGzipped": 13327,
+  "totalMinified": 132375,
+  "totalGzipped": 13336,
   "budget": {
     "minified": 133000,
     "gzipped": 38912
@@ -43,7 +43,7 @@
     "channels.disable": 448,
     "channels.enable": 448,
     "channels.get": 483,
-    "channels.health": 1027,
+    "channels.health": 1089,
     "channels.list": 547,
     "channels.restart": 448,
     "config.apply": 712,
