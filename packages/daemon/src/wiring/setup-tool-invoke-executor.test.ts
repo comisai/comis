@@ -40,13 +40,25 @@ const { fetchPinnedMock, extractMock } = vi.hoisted(() => ({
   fetchPinnedMock: vi.fn(),
   extractMock: vi.fn(),
 }));
+// `sanitizeMcpToolResult` is a tiny pure NFKC + invisible-strip (the real
+// `mcp-result-sanitizer.ts`), replicated inline so the mock does NOT load the
+// heavy `@comis/skills/tools` barrel (browser/media/sharp) while still running
+// the executor's REAL sanitize→wrap chain — the security-relevant boundary is
+// the REAL `wrapExternalContent` from the (partially-real) `@comis/core` mock.
 vi.mock("@comis/skills/tools", () => ({
   fetchPinned: fetchPinnedMock,
   extractReadableContent: extractMock,
+  sanitizeMcpToolResult: (text: string): string =>
+    text.length === 0
+      ? ""
+      : text
+          .normalize("NFKC")
+          .replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\u180E\uFEFF]/g, ""),
 }));
 
 import { validateUrl } from "@comis/core";
 import { createToolInvokeExecutor } from "./setup-tool-invoke-executor.js";
+import type { McpClientManager, McpToolCallResult } from "@comis/skills";
 
 const mockValidateUrl = vi.mocked(validateUrl);
 
@@ -290,5 +302,145 @@ describe("createToolInvokeExecutor — file builtins run workspace-scoped", () =
   it("rejects an unknown executor tool (the dispatch allow-list is the gate, but the executor is defensive)", async () => {
     const exec = createToolInvokeExecutor(makeDeps());
     await expect(exec("not_a_tool", {}, LEASE)).rejects.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// case "mcp" — the daemon-side MCP dispatch (MCP-01/02/03). The whole path is
+// web_fetch with a different daemon-side callee: gate on the per-agent inbound
+// allowlist → callTool(qualifyToolName(server,tool)) on the DAEMON's network
+// (the jail stays --unshare-net) → sanitize + wrapExternalContent(mcp_tool) →
+// shouldMaterialize("mcp") offload. Proven here with a FAKE McpClientManager
+// seam; the REAL jailed --unshare-net round-trip is the VPS `.linux` drive (232-07).
+// Ground truth: the wrap is the REAL wrapExternalContent output (<<<UNTRUSTED_hex>>>),
+// NOT a bare-JSON mock.
+// ---------------------------------------------------------------------------
+describe("createToolInvokeExecutor — case \"mcp\" (daemon-side MCP dispatch)", () => {
+  const MCP_LEASE = { agentId: "agent-7", caps: ["orch:read", "orch:mcp"] as const };
+
+  /** A fake McpClientManager whose ONLY exercised method is callTool (the seam). */
+  function fakeMcpManager(callTool: ReturnType<typeof vi.fn>): McpClientManager {
+    return { callTool } as unknown as McpClientManager;
+  }
+
+  /** An ok Result<McpToolCallResult> with a single text content block. */
+  function okMcpResult(text: string, isError = false): { ok: true; value: McpToolCallResult } {
+    return { ok: true, value: { content: [{ type: "text", text }], isError } };
+  }
+
+  it("DENIES an unlisted {server,tool} via the allowlist and NEVER calls callTool (MCP-02)", async () => {
+    const callTool = vi.fn(async () => okMcpResult("should-not-run"));
+    const permits = vi.fn(() => false); // unlisted ⇒ deny by absence (232-02 permitsMcpTool)
+    const exec = createToolInvokeExecutor(
+      makeDeps({ mcpClientManager: fakeMcpManager(callTool), mcpAllowlist: { permits } }),
+    );
+
+    const result = (await exec(
+      "mcp",
+      { server: "ctx7", tool: "search", args: { q: "x" } },
+      MCP_LEASE,
+    )) as { error?: string };
+
+    expect(result.error).toBeTruthy(); // an error-SHAPED audited deny, not a throw
+    expect(permits).toHaveBeenCalledWith("agent-7", "ctx7", "search");
+    expect(callTool).not.toHaveBeenCalled(); // the deny short-circuits BEFORE any dispatch
+  });
+
+  it("DISPATCHES a permitted call via callTool with the COMPOSED qualified name (MCP-01)", async () => {
+    const callTool = vi.fn(async () => okMcpResult("hello from mcp"));
+    const exec = createToolInvokeExecutor(
+      makeDeps({ mcpClientManager: fakeMcpManager(callTool), mcpAllowlist: { permits: () => true } }),
+    );
+
+    await exec("mcp", { server: "ctx7", tool: "search", args: { q: "comis" } }, MCP_LEASE);
+
+    expect(callTool).toHaveBeenCalledTimes(1);
+    // The qualified name is COMPOSED "mcp:{server}/{tool}" — NEVER a raw RPC method
+    // (no path to mcp.connect / mcp.oauth_login).
+    expect(callTool.mock.calls[0][0]).toBe("mcp:ctx7/search");
+    expect(callTool.mock.calls[0][1]).toEqual({ q: "comis" });
+  });
+
+  it("WRAPS the MCP return as untrusted external content before it re-enters the script (MCP-03, INV-5)", async () => {
+    const callTool = vi.fn(async () => okMcpResult("small mcp payload"));
+    const exec = createToolInvokeExecutor(
+      makeDeps({ mcpClientManager: fakeMcpManager(callTool), mcpAllowlist: { permits: () => true } }),
+    );
+
+    const result = (await exec("mcp", { server: "ctx7", tool: "search" }, MCP_LEASE)) as { text?: string };
+
+    // The REAL wrapExternalContent(source:"mcp_tool") delimiter + label — data-not-control.
+    expect(result.text).toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/);
+    expect(result.text).toContain("Source: MCP tool result");
+    expect(result.text).toContain("small mcp payload"); // the payload rides INSIDE the wrap
+    expect(result.text).not.toBe("small mcp payload"); // NOT the raw payload
+  });
+
+  it("OFFLOADS an over-threshold (>15 KB) MCP return to a ResultRef handle (MCP-03)", async () => {
+    const callTool = vi.fn(async () => okMcpResult("x".repeat(20_000)));
+    const ref = {
+      ref: "results/mcp-1.text",
+      kind: "text" as const,
+      bytes: 20_000,
+      preview: "xxx",
+      expiresAt: "2030-01-01T00:00:00.000Z",
+    };
+    const materialize = vi.fn(async () => ref);
+    const exec = createToolInvokeExecutor(
+      makeDeps({
+        mcpClientManager: fakeMcpManager(callTool),
+        mcpAllowlist: { permits: () => true },
+        materialize,
+      }),
+    );
+
+    const result = await exec("mcp", { server: "ctx7", tool: "big" }, MCP_LEASE);
+
+    expect(materialize).toHaveBeenCalledTimes(1);
+    expect(materialize.mock.calls[0][1]).toBe("mcp"); // tagged "mcp" (the RESULT_REF_THRESHOLDS key)
+    expect(result).toEqual(ref); // the handle re-enters context — NOT the 20 KB body
+  });
+
+  it("HONEST-DEGRADES a transport failure to an error-SHAPED result (never throws)", async () => {
+    const callTool = vi.fn(async () => ({ ok: false as const, error: new Error("timed out") }));
+    const exec = createToolInvokeExecutor(
+      makeDeps({ mcpClientManager: fakeMcpManager(callTool), mcpAllowlist: { permits: () => true } }),
+    );
+
+    const result = (await exec("mcp", { server: "ctx7", tool: "search" }, MCP_LEASE)) as { error?: string };
+
+    expect(result.error).toMatch(/MCP tool error/i);
+  });
+
+  it("HONEST-DEGRADES a tool-level isError result (never throws)", async () => {
+    const callTool = vi.fn(async () => okMcpResult("boom", true)); // isError:true
+    const exec = createToolInvokeExecutor(
+      makeDeps({ mcpClientManager: fakeMcpManager(callTool), mcpAllowlist: { permits: () => true } }),
+    );
+
+    const result = (await exec("mcp", { server: "ctx7", tool: "search" }, MCP_LEASE)) as { error?: string };
+
+    expect(result.error).toMatch(/reported an error/i);
+  });
+
+  it("honest-degrades to an error when NO mcpClientManager is wired (an un-wired daemon is safe, not crashy)", async () => {
+    const exec = createToolInvokeExecutor(makeDeps({ mcpAllowlist: { permits: () => true } }));
+    const result = (await exec("mcp", { server: "ctx7", tool: "search" }, MCP_LEASE)) as { error?: string };
+    expect(result.error).toMatch(/not available/i);
+  });
+
+  it("runs DAEMON-side: the only egress is the injected callTool — the jail stays net-closed (real --unshare-net proof is the VPS .linux drive, 232-07)", async () => {
+    const callTool = vi.fn(async () => okMcpResult("ok"));
+    const exec = createToolInvokeExecutor(
+      makeDeps({ mcpClientManager: fakeMcpManager(callTool), mcpAllowlist: { permits: () => true } }),
+    );
+
+    await exec("mcp", { server: "ctx7", tool: "search" }, MCP_LEASE);
+
+    // Structural: the executor dispatches through the DAEMON-side manager (like
+    // web_fetch runs on the daemon), and does NOT touch the web-fetch seam nor
+    // spawn a jail. The bwrap --unshare-net round-trip is VPS-deferred (232-07).
+    expect(callTool).toHaveBeenCalledTimes(1);
+    expect(fetchPinnedMock).not.toHaveBeenCalled();
   });
 });
