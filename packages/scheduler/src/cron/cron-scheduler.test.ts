@@ -99,6 +99,42 @@ describe("CronScheduler", () => {
     scheduler.stop();
   });
 
+  it("persist() flushes an in-place job mutation to the store so it survives a reload", async () => {
+    // Reproduces the cron.update durability shape: a caller mutates the live
+    // in-memory job through a getJobs() reference, then persist() must flush it.
+    // Without the flush the edit only lands on the next due tick's save, so a
+    // reload (a daemon restart) before then reverts it.
+    //
+    // Uses a JSON round-tripping store (DEEP copy on load/save) rather than the
+    // shared reference mock: otherwise the in-memory mutation would leak into the
+    // "reload" through a shared object reference and mask a missing persist().
+    const job = makeJob({ id: "j1", enabled: true, nextRunAtMs: clock + 60_000 });
+    let saved = JSON.stringify([job]);
+    const store: CronStore = {
+      load: vi.fn(async () => JSON.parse(saved) as CronJob[]),
+      save: vi.fn(async (jobs: CronJob[]) => { saved = JSON.stringify(jobs); }),
+      addJob: vi.fn(async () => undefined),
+      removeJob: vi.fn(async () => true),
+      updateJob: vi.fn(async () => true),
+    };
+    const scheduler = createCronScheduler({
+      store,
+      executeJob: vi.fn(async () => ({ status: "ok" as const })),
+      eventBus: new TypedEventBus(),
+      logger: createMockLogger(),
+      config: { maxConcurrentRuns: 5, defaultTimezone: "UTC", maxJobs: 100, maxConsecutiveErrors: 5 },
+      nowMs: () => clock,
+    });
+    await scheduler.start();
+
+    scheduler.getJobs().find((j) => j.id === "j1")!.enabled = false;
+    await scheduler.persist();
+
+    const reloaded = await store.load();
+    expect(reloaded.find((j) => j.id === "j1")?.enabled).toBe(false);
+    scheduler.stop();
+  });
+
   it("stop() clears active cron-scheduler timer to release event-loop reference", async () => {
     const job = makeJob({ id: "j1", nextRunAtMs: clock + 30_000 });
     const { scheduler } = makeScheduler({ jobs: [job] });

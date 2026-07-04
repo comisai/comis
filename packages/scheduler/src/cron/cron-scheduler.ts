@@ -42,6 +42,14 @@ export interface CronScheduler {
   removeJob(jobId: string): Promise<boolean>;
   /** Return a shallow copy of in-memory job list. */
   getJobs(): CronJob[];
+  /**
+   * Flush the current in-memory job list to the store. Callers that mutate a job
+   * in place (via a {@link getJobs} reference) MUST call this to make the change
+   * durable — otherwise it only persists on the next `tick()` (the next due
+   * fire), and a daemon restart before then LOSES the edit. `cron.update` mutates
+   * in place, so it relies on this (regression: updates were in-memory-only).
+   */
+  persist(): Promise<void>;
   /** Check all jobs for due status and run any overdue ones. */
   runMissedJobs(): Promise<void>;
 }
@@ -240,6 +248,13 @@ export function createCronScheduler(deps: CronSchedulerDeps): CronScheduler {
 
     getJobs(): CronJob[] {
       return [...jobs];
+    },
+
+    async persist(): Promise<void> {
+      // Flush the current in-memory list (mirrors tick()'s post-run save). A
+      // caller that mutated a job through a getJobs() reference (e.g. cron.update)
+      // makes that edit durable here instead of waiting for the next due fire.
+      await store.save(jobs);
     },
 
     async runMissedJobs(): Promise<void> {

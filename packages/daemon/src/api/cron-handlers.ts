@@ -275,6 +275,11 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
         consecutiveErrors: j.consecutiveErrors,
         createdAtMs: j.createdAtMs,
         deliveryTarget: j.deliveryTarget,
+        // Surface the pre-run wake-gate so the web scheduler editor can DISPLAY
+        // and edit an existing gate (scheduler.ts reads job.wakeGate). Without
+        // this the gate is invisible in the UI (appears absent) and uneditable.
+        // Content is the operator's own authored job config, like `payload`.
+        wakeGate: j.wakeGate,
       });
 
       // `agentId: "*"` → every agent's jobs (the admin inventory view; without
@@ -371,6 +376,12 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
               channelType?: string;
             });
       }
+      // Persist the in-place mutations NOW. The field-by-field updates above mutate
+      // the live in-memory job (a getJobs() reference); without this flush the edit
+      // only reaches the store on the next due fire's tick save, so a daemon
+      // restart before then silently REVERTS the update (e.g. a cleared wake-gate
+      // reappears). This makes cron.update durable, matching cron.add/remove.
+      await agentScheduler.persist();
       const result = { jobName: job.name, updated: true };
       if (IS_DEV) CronUpdateContract.response.parse(result);
       return result;

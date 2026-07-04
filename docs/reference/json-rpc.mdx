@@ -1401,7 +1401,7 @@ List all scheduled jobs. Returns each job's name, schedule expression, next run 
 |----------|-------|
 | **Scope** | `rpc` |
 | **Parameters** | None |
-| **Returns** | `{ jobs: Array<{ id, name, scheduleKind, expr?, tz?, everyMs?, nextRunAtMs, enabled, lastRunAtMs?, lastError? }> }` |
+| **Returns** | `{ jobs: Array<{ id, name, scheduleKind, expr?, tz?, everyMs?, nextRunAtMs, enabled, lastRunAtMs?, lastError?, wakeGate? }> }` (a gated job carries its `wakeGate` so the web scheduler editor can display and edit the existing gate) |
 
 <CodeGroup>
 ```json Request

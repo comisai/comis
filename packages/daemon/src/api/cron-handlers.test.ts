@@ -63,6 +63,7 @@ function makeMockScheduler() {
     addJob: vi.fn(async () => undefined),
     getJobs: vi.fn(() => [testJob]),
     removeJob: vi.fn(async () => true),
+    persist: vi.fn(async () => undefined),
     runMissedJobs: vi.fn(async () => undefined),
     _testJob: testJob,
   };
@@ -517,6 +518,32 @@ describe("createCronHandlers", () => {
       expect(result.jobs[0]!.createdAtMs).toBe(1000);
     });
 
+    it("includes wakeGate so the web editor can display/edit an existing gate", async () => {
+      // The web scheduler loads jobs via cron.list and reads job.wakeGate to
+      // populate the editor (scheduler.ts). If mapJob drops it, an existing gate
+      // is invisible + uneditable in the UI (it appears absent). Regression guard.
+      const gatedJob = {
+        ...makeMockScheduler()._testJob,
+        wakeGate: { script: "console.log('{}')", language: "js" as const, timeoutSeconds: 30 },
+      };
+      const scheduler = { ...makeMockScheduler(), getJobs: vi.fn(() => [gatedJob]) };
+      const deps = makeDeps({
+        getAgentCronScheduler: vi.fn(() => scheduler) as never,
+        cronSchedulers: new Map([["default", scheduler as never]]),
+      });
+      const handlers = createCronHandlers(deps);
+
+      const result = (await handlers["cron.list"]!({})) as {
+        jobs: Array<{ wakeGate?: { script: string; language: string; timeoutSeconds: number } }>;
+      };
+
+      expect(result.jobs[0]!.wakeGate).toEqual({
+        script: "console.log('{}')",
+        language: "js",
+        timeoutSeconds: 30,
+      });
+    });
+
     it("uses _agentId from params to look up correct scheduler", async () => {
       const mockScheduler = makeMockScheduler();
       const deps = makeDeps({
@@ -605,6 +632,21 @@ describe("createCronHandlers", () => {
       await expect(
         handlers["cron.update"]!({ jobName: "nonexistent-job", enabled: true }),
       ).rejects.toThrow("Job not found: nonexistent-job");
+    });
+
+    it("persists the update so it survives a daemon restart (regression: in-memory-only cron.update)", async () => {
+      // cron.update mutates the live in-memory job in place. Without an explicit
+      // store flush the edit only reaches disk on the NEXT due fire's tick save,
+      // so a restart before then silently reverts it (e.g. a cleared wake-gate
+      // reappears). The handler must call scheduler.persist() — matching the
+      // durability of cron.add/cron.remove.
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+      const scheduler = (deps.getAgentCronScheduler as ReturnType<typeof vi.fn>)();
+
+      await handlers["cron.update"]!({ jobName: "test-job", enabled: false });
+
+      expect(scheduler.persist).toHaveBeenCalledTimes(1);
     });
 
     it("updates job name when provided", async () => {
