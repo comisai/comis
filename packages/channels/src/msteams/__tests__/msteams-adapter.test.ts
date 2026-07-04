@@ -2273,7 +2273,7 @@ describe("createMsTeamsAdapter — enterprise auth modes (cert / managed-identit
 });
 
 // ---------------------------------------------------------------------------
-// SEC-01 adapter-side cloud threading + ERR-01 revoked-proxy resend + retry
+// Adapter-side cloud threading to every serviceUrl callsite + bounded send retry
 // ---------------------------------------------------------------------------
 
 describe("createMsTeamsAdapter — configured cloud threaded to every serviceUrl callsite (SEC-01)", () => {
@@ -2382,61 +2382,5 @@ describe("createMsTeamsAdapter — bounded send retry via postConnectorActivityW
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value).toBe("ok-after-429");
     expect(sendCount).toBe(2); // retried exactly once
-  });
-});
-
-describe("createMsTeamsAdapter — defensive revoked-proxy store resend (ERR-01)", () => {
-  const storedRef: ConversationReference = {
-    conversationId: "19:dm-convo",
-    serviceUrl: "https://smba.trafficmanager.net/emea/",
-    tenantId: "t",
-    threadId: undefined,
-    updatedAt: FIXED_NOW,
-  };
-
-  it("re-resolves the serviceUrl from the store and resends once on a revoked-proxy failure", async () => {
-    const { store, get } = makeFakeStore(storedRef);
-    let sendCount = 0;
-    const spy = vi.fn(async (url: string) => {
-      if (String(url).includes("/oauth2/v2.0/token")) {
-        return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ access_token: "tok", expires_in: 3600 }) };
-      }
-      sendCount++;
-      if (sendCount === 1) throw new Error("Operation failed: the proxy that has been revoked");
-      return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ id: "resent-1" }) };
-    });
-    const { deps } = makeAdapterDeps({ fetchImpl: spy as unknown as typeof fetch, conversationStore: store });
-    const adapter = createMsTeamsAdapter(deps);
-
-    // A reply (explicit serviceUrl) whose first send hits a revoked relay: the
-    // adapter drops the explicit serviceUrl, re-resolves via the store, resends once.
-    const result = await adapter.sendMessage("19:dm-convo", "hi", { extra: { serviceUrl: SERVICE_URL } });
-
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.value).toBe("resent-1");
-    expect(get).toHaveBeenCalledWith("19:dm-convo"); // store consulted for the re-resolve
-    expect(sendCount).toBe(2); // exactly one resend
-    const conversationSends = spy.mock.calls.filter(([u]) => String(u).includes("/v3/conversations/"));
-    expect(String(conversationSends[1]![0]).startsWith("https://smba.trafficmanager.net/emea/")).toBe(true);
-  });
-
-  it("does NOT resend on a non-revoked-proxy send failure (the store is not consulted)", async () => {
-    const { store, get } = makeFakeStore(storedRef);
-    let sendCount = 0;
-    const spy = vi.fn(async (url: string) => {
-      if (String(url).includes("/oauth2/v2.0/token")) {
-        return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ access_token: "tok", expires_in: 3600 }) };
-      }
-      sendCount++;
-      throw new Error("connect ECONNREFUSED");
-    });
-    const { deps } = makeAdapterDeps({ fetchImpl: spy as unknown as typeof fetch, conversationStore: store });
-    const adapter = createMsTeamsAdapter(deps);
-
-    const result = await adapter.sendMessage("19:dm-convo", "hi", { extra: { serviceUrl: SERVICE_URL } });
-
-    expect(result.ok).toBe(false);
-    expect(get).not.toHaveBeenCalled(); // no store re-resolve for a non-revoked error
-    expect(sendCount).toBe(1); // single attempt, no resend
   });
 });

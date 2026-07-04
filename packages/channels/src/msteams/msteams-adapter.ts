@@ -49,10 +49,7 @@ import {
   mapMsTeamsReaction,
   type TeamsReactionActivity,
 } from "./msteams-reaction-binder.js";
-import {
-  isRevokedProxyError,
-  rebuildConversationReference,
-} from "./msteams-proactive.js";
+import { rebuildConversationReference } from "./msteams-proactive.js";
 import {
   createMsTeamsConnector,
   isSafeConversationId,
@@ -730,16 +727,14 @@ export function createMsTeamsAdapter(
       const replyToId = resolveReplyToId(options, ctx.value.threadId);
       const activityBody = buildTextActivityBody(text, replyToId, options);
 
-      // Send via the bounded retry executor (429 Retry-After / 5xx backoff; a
-      // status-less transport fault is never retried). Defense-in-depth: if the
-      // reply relay was revoked after the turn, drop the explicit serviceUrl,
-      // re-resolve it from the store (the proactive path, re-validated) and resend
-      // exactly once. The lean fetch path rarely raises this, so it is a tested
-      // seam, not a hot path.
-      const sendVia = (serviceUrl: string) =>
-        postConnectorActivityWithRetry(
+      // Send via the bounded retry executor. A reply rides the caller's
+      // serviceUrl; a proactive send re-derived it from the conversation store
+      // above — both already passed the one host-safety gate before the token
+      // mint, so there is a single resolved serviceUrl to POST to.
+      return recordActivity(
+        await postConnectorActivityWithRetry(
           {
-            serviceUrl,
+            serviceUrl: ctx.value.serviceUrl,
             conversationId,
             activityBody,
             tokens,
@@ -749,14 +744,8 @@ export function createMsTeamsAdapter(
             cloud,
           },
           { timer: deps.timer },
-        );
-
-      const sent = await sendVia(ctx.value.serviceUrl);
-      if (!sent.ok && isRevokedProxyError(sent.error)) {
-        const proactive = await resolveConnectorServiceContext(conversationId, undefined);
-        if (proactive.ok) return recordActivity(await sendVia(proactive.value.serviceUrl));
-      }
-      return recordActivity(sent);
+        ),
+      );
     },
 
     async sendAttachment(

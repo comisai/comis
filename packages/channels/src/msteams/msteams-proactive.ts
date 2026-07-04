@@ -14,17 +14,12 @@
  *    tampered), so a poisoned value is rejected before a token is ever minted —
  *    the freshly minted Connector bearer token can never be sent to a foreign
  *    host.
- *  - {@link isRevokedProxyError} (re-exported from the error taxonomy) detects the
- *    revoked-relay signal that routes an after-the-turn send to this proactive
- *    path.
  *
  * @module
  */
 
 import type { ConversationReference } from "@comis/core";
 import { err, ok, type Result } from "@comis/shared";
-
-export { isRevokedProxyError } from "./errors.js";
 
 /** The routing inputs a proactive Connector send needs, recovered from the store. */
 export interface ProactiveSendTarget {

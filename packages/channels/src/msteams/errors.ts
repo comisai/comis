@@ -94,22 +94,3 @@ export function classifyMsTeamsError(
     hint: "Unexpected response status — inspect the request shape and payload",
   };
 }
-
-/**
- * True when a Connector failure carries the "proxy that has been revoked" signal
- * — raised when a per-turn reply relay is used after the turn returned (a
- * debounced or delayed send). It is the cue to stop replying inline and recover
- * the routing tuple from the conversation store for a proactive send instead.
- *
- * Matches only the durable BF phrase, so an unrelated transport/status error is
- * left to {@link classifyMsTeamsError}.
- */
-export function isRevokedProxyError(cause: unknown): boolean {
-  const message =
-    cause instanceof Error
-      ? cause.message
-      : typeof cause === "string"
-        ? cause
-        : "";
-  return /proxy that has been revoked/i.test(message);
-}

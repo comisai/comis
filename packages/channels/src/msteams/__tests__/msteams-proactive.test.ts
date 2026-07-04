@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
 import type { ConversationReference } from "@comis/core";
-import {
-  rebuildConversationReference,
-  isRevokedProxyError,
-} from "../msteams-proactive.js";
+import { rebuildConversationReference } from "../msteams-proactive.js";
 
 const storedRef: ConversationReference = {
   conversationId: "19:convo",
@@ -40,28 +37,5 @@ describe("rebuildConversationReference", () => {
       return true;
     });
     expect(seen).toEqual(["https://smba.trafficmanager.net/emea/"]);
-  });
-});
-
-describe("isRevokedProxyError", () => {
-  it("detects a revoked-proxy connector error so the caller routes to the store-backed send", () => {
-    expect(
-      isRevokedProxyError(
-        new Error("The bot cannot use this proxy that has been revoked for the conversation"),
-      ),
-    ).toBe(true);
-  });
-
-  it("detects the revoked-proxy signal in a bare string too", () => {
-    expect(isRevokedProxyError("proxy that has been revoked")).toBe(true);
-  });
-
-  it("returns false for an unrelated connector error", () => {
-    expect(isRevokedProxyError(new Error("connector send returned status 500"))).toBe(false);
-  });
-
-  it("returns false for a non-error value", () => {
-    expect(isRevokedProxyError(undefined)).toBe(false);
-    expect(isRevokedProxyError({ nope: true })).toBe(false);
   });
 });
