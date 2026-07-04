@@ -104,14 +104,31 @@ export interface AuditRowSink {
  * audit / auth-mutation → "info". Mirrors `kindIsSecuritySignal` but kept local
  * (a string label, not a boolean) so the row carries an operator-readable
  * severity without importing the exhaustiveness guard into the wiring layer.
+ *
+ * `secret_access` is outcome-aware: a routine READ resolution — a successful
+ * get or an expected-absent probe (boot resolves optional provider keys, the
+ * canary reads its env seed per inbound message) — is the audit TRAIL, not an
+ * alert; at "warning" a healthy boot wrote ~10 warning rows and inflated every
+ * severity-filtered sweep. Secret MUTATIONS (classification mutate/destructive)
+ * and non-routine outcomes (denied/error/unknown) stay "warning" —
+ * fail-toward-visibility.
  */
-export function kindToSeverity(kind: string): string {
+export function kindToSeverity(
+  kind: string,
+  opts?: { outcome?: string | null; classification?: string | null },
+): string {
   switch (kind) {
     case "audit":
     case "auth_mutation":
       return "info";
+    case "secret_access": {
+      const mutation =
+        opts?.classification === "mutate" || opts?.classification === "destructive";
+      const routineRead = opts?.outcome === "success" || opts?.outcome === "not_found";
+      return !mutation && routineRead ? "info" : "warning";
+    }
     default:
-      // Every security-signal kind (secret_access/injection_*/canary_leak/
+      // Every other security-signal kind (injection_*/canary_leak/
       // implied_tool_call/command_blocked/hook_blocked/sandbox_downgrade_refused)
       // and any unknown kind → warning (fail-toward-visibility).
       return "warning";
@@ -193,7 +210,7 @@ export function auditEventToRow(
     action: payload.actionType,
     actor: resolvedAgent ?? "system",
     outcome: payload.outcome,
-    severity: kindToSeverity(kind),
+    severity: kindToSeverity(kind, { outcome: payload.outcome, classification }),
     traceId: resolvedTraceId ?? null,
     refs: scrubbed !== undefined ? JSON.stringify(scrubbed) : null,
   };
@@ -236,7 +253,7 @@ export function buildAuditRow(args: BuildAuditRowArgs): AuditEventRow {
     action: args.action,
     actor: args.actor,
     outcome: args.outcome,
-    severity: kindToSeverity(args.kind),
+    severity: kindToSeverity(args.kind, { outcome: args.outcome, classification: null }),
     traceId: args.traceId ?? null,
     refs: JSON.stringify(scrubbed),
   };
