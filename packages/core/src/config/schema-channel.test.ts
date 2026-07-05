@@ -9,6 +9,7 @@ import {
   IrcChannelEntrySchema,
   EmailChannelEntrySchema,
   MsTeamsChannelEntrySchema,
+  GoogleChatChannelEntrySchema,
 } from "./schema-channel.js";
 
 describe("ChannelEntrySchema", () => {
@@ -472,6 +473,101 @@ describe("MsTeamsChannelEntrySchema", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Google Chat channel entry schema
+// ---------------------------------------------------------------------------
+
+describe("GoogleChatChannelEntrySchema", () => {
+  it("produces pubsub-mode defaults with the channel disabled", () => {
+    const result = GoogleChatChannelEntrySchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.enabled).toBe(false);
+      expect(result.data.mode).toBe("pubsub");
+      expect(result.data.audienceType).toBe("project-number");
+      expect(result.data.allowFrom).toEqual([]);
+      expect(result.data.allowMode).toBe("allowlist");
+      expect(result.data.missedInboundThresholdMs).toBe(21_600_000);
+      // Optional fields are undefined until an operator supplies them.
+      expect(result.data.serviceAccountKey).toBeUndefined();
+      expect(result.data.subscriptionName).toBeUndefined();
+      expect(result.data.audience).toBeUndefined();
+      expect(result.data.mediaProcessing).toBeUndefined();
+    }
+  });
+
+  it("parses a full pubsub-mode block with serviceAccountKey, subscriptionName and allowlist", () => {
+    const result = GoogleChatChannelEntrySchema.safeParse({
+      enabled: true,
+      mode: "pubsub",
+      serviceAccountKey: "sa-json-string",
+      subscriptionName: "projects/p/subscriptions/s",
+      allowFrom: ["users/123"],
+      allowMode: "allowlist",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.enabled).toBe(true);
+      expect(result.data.serviceAccountKey).toBe("sa-json-string");
+      expect(result.data.subscriptionName).toBe("projects/p/subscriptions/s");
+      expect(result.data.allowFrom).toEqual(["users/123"]);
+    }
+  });
+
+  it("accepts serviceAccountKey as a plain string AND as a SecretRef object", () => {
+    const asString = GoogleChatChannelEntrySchema.safeParse({
+      enabled: true,
+      serviceAccountKey: "plaintext-sa-key",
+    });
+    expect(asString.success).toBe(true);
+    if (asString.success) {
+      expect(asString.data.serviceAccountKey).toBe("plaintext-sa-key");
+    }
+
+    const asSecretRef = GoogleChatChannelEntrySchema.safeParse({
+      enabled: true,
+      serviceAccountKey: { source: "env", provider: "googlechat", id: "GOOGLECHAT_SA_KEY" },
+    });
+    expect(asSecretRef.success).toBe(true);
+    if (asSecretRef.success) {
+      expect(asSecretRef.data.serviceAccountKey).toEqual({
+        source: "env",
+        provider: "googlechat",
+        id: "GOOGLECHAT_SA_KEY",
+      });
+    }
+  });
+
+  it("rejects an unknown key inside the entry (strict object)", () => {
+    expect(GoogleChatChannelEntrySchema.safeParse({ enabled: true, bogus: 1 }).success).toBe(false);
+  });
+
+  it("rejects an ackReaction key (reactions are not part of this schema)", () => {
+    // Reactions are user-auth-only on this platform, so no ack-reaction knob exists;
+    // the strict object rejects the key rather than silently ignoring it.
+    expect(GoogleChatChannelEntrySchema.safeParse({ enabled: true, ackReaction: {} }).success).toBe(false);
+  });
+
+  it("rejects a mode outside pubsub and webhook", () => {
+    expect(GoogleChatChannelEntrySchema.safeParse({ enabled: true, mode: "grpc" }).success).toBe(false);
+  });
+
+  it("rejects an audienceType outside project-number and app-url", () => {
+    expect(GoogleChatChannelEntrySchema.safeParse({ enabled: true, audienceType: "email" }).success).toBe(false);
+  });
+
+  it("rejects an allowMode outside allowlist and open", () => {
+    expect(GoogleChatChannelEntrySchema.safeParse({ enabled: true, allowMode: "denylist" }).success).toBe(false);
+  });
+
+  it("defaults missedInboundThresholdMs to six hours and floors it at one minute", () => {
+    expect(GoogleChatChannelEntrySchema.parse({}).missedInboundThresholdMs).toBe(21_600_000);
+    expect(GoogleChatChannelEntrySchema.safeParse({ missedInboundThresholdMs: 59_999 }).success).toBe(false);
+    expect(GoogleChatChannelEntrySchema.safeParse({ missedInboundThresholdMs: 60_000 }).success).toBe(true);
+    expect(GoogleChatChannelEntrySchema.safeParse({ missedInboundThresholdMs: 21_600_000 }).success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Top-level channel config
 // ---------------------------------------------------------------------------
 
@@ -581,5 +677,35 @@ describe("ChannelConfigSchema", () => {
 
   it("rejects an unknown key inside the nested msteams block", () => {
     expect(() => ChannelConfigSchema.parse({ msteams: { enabled: true, bogusKey: 1 } })).toThrow();
+  });
+
+  it("defaults the googlechat entry to disabled pubsub-mode with a project-number audience", () => {
+    const parsed = ChannelConfigSchema.parse({});
+    expect(parsed.googlechat.enabled).toBe(false);
+    expect(parsed.googlechat.mode).toBe("pubsub");
+    expect(parsed.googlechat.audienceType).toBe("project-number");
+    expect(parsed.googlechat.allowFrom).toEqual([]);
+    expect(parsed.googlechat.allowMode).toBe("allowlist");
+    expect(parsed.googlechat.missedInboundThresholdMs).toBe(21_600_000);
+  });
+
+  it("parses a full googlechat block supplied under the channels config", () => {
+    const parsed = ChannelConfigSchema.parse({
+      googlechat: {
+        enabled: true,
+        mode: "pubsub",
+        serviceAccountKey: "sa-json",
+        subscriptionName: "projects/p/subscriptions/s",
+        allowFrom: ["users/123"],
+        allowMode: "allowlist",
+      },
+    });
+    expect(parsed.googlechat.enabled).toBe(true);
+    expect(parsed.googlechat.subscriptionName).toBe("projects/p/subscriptions/s");
+    expect(parsed.googlechat.allowFrom).toEqual(["users/123"]);
+  });
+
+  it("rejects an unknown key inside the nested googlechat block", () => {
+    expect(() => ChannelConfigSchema.parse({ googlechat: { enabled: true, bogusKey: 1 } })).toThrow();
   });
 });
