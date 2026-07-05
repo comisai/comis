@@ -243,13 +243,15 @@ export function createGoogleChatAdapter(
       }
 
       if (deps.mode && deps.mode !== "pubsub") {
+        // The webhook transport is not wired: name the knob, state what is
+        // actually running, and do not silently pretend webhook ingress is live.
         deps.logger.warn(
           {
             channelType: "googlechat" as const,
-            hint: "Webhook-mode ingress is not available yet; only pubsub pull is supported",
-            errorKind: "precondition" as const,
+            hint: "Webhook ingress is not active; set channels.googlechat.mode to 'pubsub' — the Pub/Sub pull loop is being used instead",
+            errorKind: "config" as const,
           },
-          "Requested mode not available; using pubsub pull",
+          "Webhook ingress unavailable; running the Pub/Sub pull loop",
         );
       }
 

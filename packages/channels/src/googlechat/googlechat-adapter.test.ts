@@ -367,6 +367,22 @@ describe("createGoogleChatAdapter — lifecycle", () => {
     expect(typeof holder.sourceDeps?.getPubSubToken).toBe("function");
   });
 
+  it("WARNs (errorKind 'config', knob-naming hint) but still boots the pull loop when mode is 'webhook'", async () => {
+    // The webhook transport is not wired; mode:"webhook" must not silently pass.
+    // Emit a clear config WARN naming the knob, then run the Pub/Sub pull loop.
+    const { deps, loggerSpy, fake } = await makeDeps({ mode: "webhook" });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const result = await adapter.start();
+
+    expect(result.ok).toBe(true);
+    expect(fake.start).toHaveBeenCalledTimes(1);
+    const warn = findByErrorKind(loggerSpy.warn, "config");
+    expect(warn).toBeDefined();
+    expect(String(warn?.hint)).toContain("channels.googlechat.mode");
+    expect(String(warn?.hint).toLowerCase()).toContain("pubsub");
+  });
+
   it("stop() stops the source and marks disconnected", async () => {
     const { deps, fake } = await makeDeps();
     const adapter = createGoogleChatAdapter(deps);
