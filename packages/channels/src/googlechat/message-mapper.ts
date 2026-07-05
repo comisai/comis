@@ -96,9 +96,15 @@ export function mapGoogleChatEventToNormalized(
   // as replyToMetaKey "googlechatMessageName" — write it so the inbound-message-id
   // resolver records the native id and the reply-to path can quote this message.
   if (message.name) metadata.googlechatMessageName = message.name;
-  // Capture the thread resource name for routing; replying into the thread is
-  // handled elsewhere on the send path.
-  if (message.thread?.name) metadata.googlechatThreadId = message.thread.name;
+  // Capture the inbound thread resource name for routing. The generic
+  // metadata.threadId key is the one the shared inbound→outbound thread
+  // propagation consumes to route a reply back into the same thread; the
+  // channel-scoped key is retained alongside it. Replying into the thread is
+  // handled on the send path, not here.
+  if (message.thread?.name) {
+    metadata.threadId = message.thread.name;
+    metadata.googlechatThreadId = message.thread.name;
+  }
 
   return {
     id: randomUUID(),
