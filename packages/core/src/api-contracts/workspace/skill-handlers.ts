@@ -17,10 +17,35 @@ import { defineContract } from "../types.js";
 // ===========================================================================
 
 /**
- * PromptSkillDescription wire shape. Tight model — the source type at
- * `packages/skills/src/skills/prompt/processor.ts:19-28` is fully
- * allowlist-shaped (5 primitive fields, no nested records). The
- * `source` enum mirrors the source-tag emitted by the registry.
+ * Acquisition channel for an imported skill (HOW the bytes arrived) — distinct
+ * from the trust-tier `source` below. Only `github` / `archive` land in this
+ * slice; the registry-resolver channels (`wellknown` / `clawhub`) are modeled
+ * ahead of their handlers so the provenance summary is forward-stable.
+ */
+const AcquisitionSourceSchema = z.enum([
+  "github",
+  "archive",
+  "wellknown",
+  "clawhub",
+  "upload",
+]);
+
+/**
+ * Content-free provenance digest surfaced on a listed skill. Populated for
+ * imported skills from the durable provenance store; absent for bundled /
+ * workspace / local / learned skills.
+ */
+const ProvenanceSummarySchema = z.object({
+  source: AcquisitionSourceSchema,
+  registry: z.string().optional(),
+  hashPrefix: z.string().optional(),
+  importedAt: z.string().optional(),
+});
+
+/**
+ * PromptSkillDescription wire shape. The `source` enum is the trust tier
+ * emitted by the registry; `provenanceSummary` carries the content-free import
+ * digest (acquisition channel + hash prefix + timestamp) for imported skills.
  */
 const SkillDescriptionSchema = z.object({
   name: z.string(),
@@ -30,6 +55,7 @@ const SkillDescriptionSchema = z.object({
   source: z
     .enum(["bundled", "workspace", "local", "learned", "imported"])
     .optional(),
+  provenanceSummary: ProvenanceSummarySchema.optional(),
 });
 
 /**
@@ -95,12 +121,6 @@ export const SkillsUploadContract = defineContract({
     scope: SkillScopeSchema.optional(),
     files: z.array(SkillUploadFileSchema),
     agentId: z.string().optional(),
-    // When the uploaded SKILL.md declares an mcpServers block whose entry name
-    // collides with an existing user-owned or cross-bundle MCP entry,
-    // `force: true` archives the prior entry to `_bundleArchive` and installs
-    // the bundle entry. Optional — default false (collision rejects with
-    // [bundle_install_rejected:name_collision]).
-    force: z.boolean().optional(),
   }),
   response: z.object({
     ok: z.literal(true),
@@ -116,28 +136,40 @@ export const SkillsUploadContract = defineContract({
 });
 
 /**
- * `skills.import` — import a skill from a GitHub directory URL. ADMIN
- * scope. The handler fetches the directory tree from the GitHub
- * Contents API and writes each file into the resolved skill folder.
+ * `skills.import` — import a skill from a GitHub directory URL or an archive
+ * ({@link AcquisitionSourceSchema}). Every source funnels through the single
+ * staged pipeline: the content scan + the MCP Phase-A check run PRE-write, and
+ * a rejecting import leaves zero live files. A successful import is stamped the
+ * `imported` trust tier and pinned in the provenance store.
  *
- * Request: `{ url, scope?, agentId? }`.
+ * Request: `{ url? | archiveUrl? | archiveBytes?, source?, name?, scope?,
+ * agentId?, confirm? }`. `source` selects the acquisition channel (defaults to
+ * `github` when a `url` is present). `confirm` overrides ONLY a pin-divergence
+ * on a provenance-matched re-import — never a collision on an unprovenanced /
+ * foreign-source name (there is intentionally NO force override).
  *
- * Response: `{ ok: true, path, name, fileCount }`.
+ * Response: `{ ok: true, path, name, fileCount, source: "imported",
+ * resolvedAgentId }`. `resolvedAgentId` is the agent the import acted on.
  */
 export const SkillsImportContract = defineContract({
   method: "skills.import",
   request: z.object({
-    url: z.string().min(1),
+    url: z.string().min(1).optional(),
+    source: z.enum(["github", "archive"]).optional(),
+    archiveUrl: z.string().min(1).optional(),
+    archiveBytes: z.string().min(1).optional(),
+    name: z.string().optional(),
     scope: SkillScopeSchema.optional(),
     agentId: z.string().optional(),
-    // See SkillsUploadContract.request.force comment.
-    force: z.boolean().optional(),
+    confirm: z.boolean().optional(),
   }),
   response: z.object({
     ok: z.literal(true),
     path: z.string(),
     name: z.string(),
     fileCount: z.number(),
+    source: z.literal("imported"),
+    resolvedAgentId: z.string(),
   }),
   // orch:skill surface, rpc-scoped (see skills.upload rationale).
   scopes: ["rpc"] as const,
@@ -191,7 +223,11 @@ export const SkillsCreateContract = defineContract({
     content: z.string().min(1),
     scope: SkillScopeSchema.optional(),
     agentId: z.string().optional(),
-    // See SkillsUploadContract.request.force comment.
+    // When the created SKILL.md declares an mcpServers block whose entry name
+    // collides with an existing MCP entry, `force: true` archives the prior
+    // entry to `_bundleArchive` and installs the bundle entry. Optional —
+    // default false (a collision rejects with
+    // [bundle_install_rejected:name_collision]).
     force: z.boolean().optional(),
   }),
   response: z.object({

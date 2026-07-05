@@ -97,6 +97,7 @@ export type {
   StageAuditContext,
 } from "./import/import-pipeline.js";
 export type { AcquireInput } from "./import/acquire.js";
+export { DEFAULT_UNPACK_CAPS } from "./import/archive-unpack.js";
 export type { UnpackCaps } from "./import/archive-unpack.js";
 export {
   readProvenanceStore,

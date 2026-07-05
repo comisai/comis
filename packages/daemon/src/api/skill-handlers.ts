@@ -62,6 +62,15 @@ import { rmSync, existsSync } from "node:fs";
 import type { RpcHandler } from "./types.js";
 import { runBundleInstallHook } from "../skills/bundle-install-helper.js";
 import { unwindImportedSkillOnDelete, repinLocallyModifiedSkill } from "../skills/skill-provenance-hooks.js";
+import {
+  importThroughPipeline,
+  uploadFileSetIdentifier,
+  archiveBytesIdentifier,
+  formatImportReject,
+  enrichWithProvenanceSummary,
+  type ImportCtx,
+} from "../skills/skill-import-runner.js";
+import type { AcquireInput, AcquisitionSource } from "@comis/skills";
 
 const logger = createLogger({ name: "skill-handlers" });
 
@@ -130,6 +139,8 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       const userParams = stripInternalFields(rawParams);
       SkillsListContract.request.parse(userParams);
 
+      const dataDir = (deps.container.config.dataDir as string | undefined) ?? "";
+
       // If agentId specified, return skills for that agent only
       if (agentId) {
         const registry = deps.skillRegistries.get(agentId);
@@ -138,7 +149,9 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
           if (IS_DEV) SkillsListContract.response.parse(empty);
           return empty;
         }
-        const result = { skills: registry.getPromptSkillDescriptions() };
+        const result = {
+          skills: enrichWithProvenanceSummary(registry.getPromptSkillDescriptions(), dataDir, agentId),
+        };
         if (IS_DEV) SkillsListContract.response.parse(result);
         return result;
       }
@@ -152,7 +165,13 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         if (IS_DEV) SkillsListContract.response.parse(empty);
         return empty;
       }
-      const result = { skills: fallbackRegistry.getPromptSkillDescriptions() };
+      const result = {
+        skills: enrichWithProvenanceSummary(
+          fallbackRegistry.getPromptSkillDescriptions(),
+          dataDir,
+          deps.defaultAgentId,
+        ),
+      };
       if (IS_DEV) SkillsListContract.response.parse(result);
       return result;
     },
@@ -223,99 +242,29 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         skillsBaseDir = safePath(wsDir, "skills");
       }
 
-      const skillDir = safePath(skillsBaseDir, params.name);
-
-      // Prevent overwrite of existing skill
-      if (existsSync(skillDir)) {
-        throw new Error(`Skill directory already exists: ${params.name}`);
-      }
-
-      // Route skill-folder dir creation + per-file writes
-      // through the shared fs-safe substrate so every artifact honors
-      // the §1.4 `0o700`/`0o600` invariant. `confinedBaseDir` is the
-      // scope-resolved `skillsBaseDir` (either `dataDir/skills` for
-      // shared or `wsDir/skills` for local) — the operation-specific
-      // confinement bound that already exists on disk by construction.
-      // Result.err propagates to the gateway via thrown Error (file
-      // header @allow-throw notes that all throws here are caught +
-      // converted to JSON-RPC error responses by rpc-dispatch.ts).
-      const skillDirResult = ensureContainedDir({
-        dir: skillDir,
-        mode: 0o700,
-        confinedBaseDir: skillsBaseDir,
+      // Route the uploaded file set through the SINGLE staged pipeline: the
+      // unconditional content scan + the MCP Phase-A check run PRE-write (a
+      // reject leaves zero live files), the install is stamped the `imported`
+      // trust tier, and its provenance is pinned. The uploaded set's identifier
+      // is a sha256 over the canonicalized {path,content} set — an upload has no
+      // stable upstream identity, so its update path is delete + re-upload.
+      const uploadFiles = params.files.filter(
+        (f): f is { path: string; content: string } =>
+          typeof f.path === "string" && typeof f.content === "string",
+      );
+      const uploadCtx = rawParams._context as ImportCtx;
+      const uploaded = await importThroughPipeline(deps, {
+        acquireInput: { kind: "fileSet", files: uploadFiles },
+        source: "upload",
+        identifier: uploadFileSetIdentifier(uploadFiles),
+        scope,
+        agentId: callingAgentId,
+        skillsDir: skillsBaseDir,
+        ctx: uploadCtx,
       });
-      if (!skillDirResult.ok) {
-        logger.warn(
-          {
-            err: skillDirResult.error,
-            skillName: params.name,
-            agentId: callingAgentId,
-            hint: "Skill directory creation rejected by fs-safe substrate; check parent dir mode / symlink",
-            errorKind: "resource" as const,
-          },
-          "Skill upload dir creation failed",
-        );
-        throw new Error(`Skill directory creation failed: ${skillDirResult.error.message}`);
-      }
+      if (!uploaded.ok) throw new Error(formatImportReject(uploaded.error));
 
-      // Write each file
-      for (const file of params.files) {
-        if (typeof file.path !== "string" || typeof file.content !== "string") continue;
-        // file.path is relative within the skill folder (e.g. "SKILL.md" or "examples/foo.md")
-        const filePath = safePath(skillDir, file.path);
-        // Ensure parent directory exists for nested files
-        const parentDir = filePath.substring(0, filePath.lastIndexOf("/"));
-        if (parentDir && !existsSync(parentDir)) {
-          const parentDirResult = ensureContainedDir({
-            dir: parentDir,
-            mode: 0o700,
-            confinedBaseDir: skillsBaseDir,
-          });
-          if (!parentDirResult.ok) {
-            logger.warn(
-              {
-                err: parentDirResult.error,
-                skillName: params.name,
-                agentId: callingAgentId,
-                hint: "Nested parent dir creation rejected by fs-safe substrate",
-                errorKind: "resource" as const,
-              },
-              "Skill upload nested parent dir creation failed",
-            );
-            throw new Error(`Skill nested parent dir creation failed: ${parentDirResult.error.message}`);
-          }
-        }
-        const writeResult = writeRegularFile({
-          path: filePath,
-          content: file.content,
-          confinedBaseDir: skillsBaseDir,
-        });
-        if (!writeResult.ok) {
-          logger.warn(
-            {
-              err: writeResult.error,
-              skillName: params.name,
-              agentId: callingAgentId,
-              hint: "Skill file write rejected by fs-safe substrate",
-              errorKind: "resource" as const,
-            },
-            "Skill upload file write failed",
-          );
-          throw new Error(`Skill file write failed: ${writeResult.error.message}`);
-        }
-      }
-
-      // Scope-aware re-discovery
-      if (scope === "shared" && deps.skillRegistries) {
-        for (const registry of deps.skillRegistries.values()) {
-          registry.init();
-        }
-      } else if (deps.skillRegistries) {
-        deps.skillRegistries.get(callingAgentId)?.init();
-      }
-      await runBundleInstallHook(deps, params.name, skillDir, rawParams);
-
-      const result = { ok: true as const, path: skillDir };
+      const result = { ok: true as const, path: uploaded.value.commit.path };
       if (IS_DEV) SkillsUploadContract.response.parse(result);
       return result;
     },
@@ -329,14 +278,13 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       const userParams = stripInternalFields(rawParams);
       const params = SkillsImportContract.request.parse(userParams);
 
-      const url = params.url.trim();
       const scope = params.scope === "shared" ? "shared" : "local";
 
       if (!callingAgentId) {
         throw new Error("Agent ID is required for skill operations. Provide agentId or call via agent tool.");
       }
 
-      // Scope guard: fail fast before expensive network fetch
+      // Scope guard: fail fast before any network fetch
       if (scope === "shared" && callingAgentId !== deps.defaultAgentId) {
         throw new Error(
           `Only the default agent ("${deps.defaultAgentId}") can manage shared skills. ` +
@@ -344,133 +292,90 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         );
       }
 
-      if (!url) {
-        throw new Error("URL is required");
-      }
-
-      // Parse GitHub URL
-      const parsed = parseGitHubDirUrl(url);
-      if (!parsed) {
-        throw new Error("Invalid GitHub URL. Expected: https://github.com/{owner}/{repo}/tree/{branch}/{path}");
-      }
-
-      // Derive skill name from the last path segment
-      const segments = parsed.path.split("/").filter(Boolean);
-      const name = segments[segments.length - 1];
-      if (!name || name.length > 64 || !SKILL_NAME_RE.test(name) || name.includes("--")) {
-        throw new Error(`Invalid skill name derived from URL: "${name}". Must be lowercase alphanumeric with hyphens.`);
-      }
-
-      // Fetch all files from the GitHub directory
-      const fetchedFiles = await fetchGitHubDir(parsed.owner, parsed.repo, parsed.path, parsed.branch);
-      if (fetchedFiles.length === 0) {
-        throw new Error("No files found at the given URL");
-      }
-
-      // Must include a SKILL.md
-      const hasSkillMd = fetchedFiles.some((f) => f.path === "SKILL.md" || f.path.endsWith("/SKILL.md"));
-      if (!hasSkillMd) {
-        throw new Error("Repository folder must contain a SKILL.md file");
-      }
-
-      // Scope-based path resolution
-      const dataDir = deps.container.config.dataDir || ".";
-      let skillsBaseDir: string;
-
-      if (scope === "shared") {
-        skillsBaseDir = safePath(dataDir, "skills");
+      // Build the acquire input for the requested source. Archive and GitHub
+      // both funnel through the SINGLE staged pipeline (pre-write scan +
+      // Phase-A + provenance => imported tier) — never a parallel install path.
+      // Source validation runs BEFORE workspace resolution so a bad URL / empty
+      // archive surfaces its own error, not a workspace-dir error.
+      let acquireInput: AcquireInput;
+      let acqSource: AcquisitionSource;
+      let identifier: string;
+      const isArchive =
+        params.source === "archive" ||
+        params.archiveUrl !== undefined ||
+        params.archiveBytes !== undefined;
+      if (isArchive) {
+        if (typeof params.archiveUrl === "string" && params.archiveUrl.trim().length > 0) {
+          const archiveUrl = params.archiveUrl.trim();
+          acquireInput = { kind: "archiveUrl", url: archiveUrl };
+          identifier = archiveUrl;
+        } else if (typeof params.archiveBytes === "string" && params.archiveBytes.length > 0) {
+          acquireInput = { kind: "archiveBytes", base64: params.archiveBytes };
+          identifier = archiveBytesIdentifier(params.archiveBytes);
+        } else {
+          throw new Error("Archive import requires archiveUrl or archiveBytes");
+        }
+        acqSource = "archive";
       } else {
-        // Default: agent's own workspace skills directory
+        const url = (params.url ?? "").trim();
+        if (!url) {
+          throw new Error("URL is required");
+        }
+        // Parse the GitHub directory URL (the fixed-host, bounded Contents-API
+        // fetch is kept as-is — depth/file-count/timeout bounded).
+        const parsed = parseGitHubDirUrl(url);
+        if (!parsed) {
+          throw new Error("Invalid GitHub URL. Expected: https://github.com/{owner}/{repo}/tree/{branch}/{path}");
+        }
+        const fetchedFiles = await fetchGitHubDir(parsed.owner, parsed.repo, parsed.path, parsed.branch);
+        if (fetchedFiles.length === 0) {
+          throw new Error("No files found at the given URL");
+        }
+        // Friendly pre-check; the pipeline re-validates SKILL.md presence.
+        const hasSkillMd = fetchedFiles.some((f) => f.path === "SKILL.md" || f.path.endsWith("/SKILL.md"));
+        if (!hasSkillMd) {
+          throw new Error("Repository folder must contain a SKILL.md file");
+        }
+        acquireInput = { kind: "fileSet", files: fetchedFiles };
+        identifier = url;
+        acqSource = "github";
+      }
+
+      // Scope-based path resolution — the LIVE base dir the pipeline commits
+      // into (the staged tree moves to <importBaseDir>/<manifest-name>).
+      const importDataDir = deps.container.config.dataDir || ".";
+      let importBaseDir: string;
+      if (scope === "shared") {
+        importBaseDir = safePath(importDataDir, "skills");
+      } else {
         const wsDir = deps.workspaceDirs?.get(callingAgentId);
         if (!wsDir) {
           throw new Error(`No workspace directory found for agent: ${callingAgentId}`);
         }
-        skillsBaseDir = safePath(wsDir, "skills");
+        importBaseDir = safePath(wsDir, "skills");
       }
 
-      const skillDir = safePath(skillsBaseDir, name);
-
-      // Prevent overwrite
-      if (existsSync(skillDir)) {
-        throw new Error(`Skill directory already exists: ${name}`);
-      }
-
-      // Route skill-folder dir creation + per-file writes
-      // through the shared fs-safe substrate so every artifact honors
-      // the §1.4 `0o700`/`0o600` invariant. Mirrors the skills.upload
-      // migration; same scope-resolved `skillsBaseDir` confinement bound.
-      const skillDirResult = ensureContainedDir({
-        dir: skillDir,
-        mode: 0o700,
-        confinedBaseDir: skillsBaseDir,
+      const importCtx = rawParams._context as ImportCtx;
+      const imported = await importThroughPipeline(deps, {
+        acquireInput,
+        source: acqSource,
+        identifier,
+        scope,
+        agentId: callingAgentId,
+        skillsDir: importBaseDir,
+        ...(params.confirm !== undefined && { confirm: params.confirm }),
+        ctx: importCtx,
       });
-      if (!skillDirResult.ok) {
-        logger.warn(
-          {
-            err: skillDirResult.error,
-            skillName: name,
-            agentId: callingAgentId,
-            hint: "Imported skill dir creation rejected by fs-safe substrate; check parent dir mode / symlink",
-            errorKind: "resource" as const,
-          },
-          "Skill import dir creation failed",
-        );
-        throw new Error(`Skill directory creation failed: ${skillDirResult.error.message}`);
-      }
-      for (const file of fetchedFiles) {
-        const filePath = safePath(skillDir, file.path);
-        const parentDir = filePath.substring(0, filePath.lastIndexOf("/"));
-        if (parentDir && !existsSync(parentDir)) {
-          const parentDirResult = ensureContainedDir({
-            dir: parentDir,
-            mode: 0o700,
-            confinedBaseDir: skillsBaseDir,
-          });
-          if (!parentDirResult.ok) {
-            logger.warn(
-              {
-                err: parentDirResult.error,
-                skillName: name,
-                agentId: callingAgentId,
-                hint: "Nested parent dir creation rejected by fs-safe substrate",
-                errorKind: "resource" as const,
-              },
-              "Skill import nested parent dir creation failed",
-            );
-            throw new Error(`Skill nested parent dir creation failed: ${parentDirResult.error.message}`);
-          }
-        }
-        const writeResult = writeRegularFile({
-          path: filePath,
-          content: file.content,
-          confinedBaseDir: skillsBaseDir,
-        });
-        if (!writeResult.ok) {
-          logger.warn(
-            {
-              err: writeResult.error,
-              skillName: name,
-              agentId: callingAgentId,
-              hint: "Imported skill file write rejected by fs-safe substrate",
-              errorKind: "resource" as const,
-            },
-            "Skill import file write failed",
-          );
-          throw new Error(`Skill file write failed: ${writeResult.error.message}`);
-        }
-      }
+      if (!imported.ok) throw new Error(formatImportReject(imported.error));
 
-      // Scope-aware re-discovery
-      if (scope === "shared" && deps.skillRegistries) {
-        for (const registry of deps.skillRegistries.values()) {
-          registry.init();
-        }
-      } else if (deps.skillRegistries) {
-        deps.skillRegistries.get(callingAgentId)?.init();
-      }
-      await runBundleInstallHook(deps, name, skillDir, rawParams);
-
-      const result = { ok: true as const, path: skillDir, name, fileCount: fetchedFiles.length };
+      const result = {
+        ok: true as const,
+        path: imported.value.commit.path,
+        name: imported.value.commit.name,
+        fileCount: imported.value.fileCount,
+        source: imported.value.commit.source,
+        resolvedAgentId: callingAgentId,
+      };
       if (IS_DEV) SkillsImportContract.response.parse(result);
       return result;
     },

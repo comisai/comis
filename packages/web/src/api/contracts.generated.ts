@@ -11402,6 +11402,24 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "type": "string",
           "minLength": 1
         },
+        "source": {
+          "type": "string",
+          "enum": [
+            "github",
+            "archive"
+          ]
+        },
+        "archiveUrl": {
+          "type": "string",
+          "minLength": 1
+        },
+        "archiveBytes": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string"
+        },
         "scope": {
           "type": "string",
           "enum": [
@@ -11412,13 +11430,10 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         "agentId": {
           "type": "string"
         },
-        "force": {
+        "confirm": {
           "type": "boolean"
         }
       },
-      "required": [
-        "url"
-      ],
       "additionalProperties": false
     },
     "response": {
@@ -11437,13 +11452,22 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "fileCount": {
           "type": "number"
+        },
+        "source": {
+          "type": "string",
+          "const": "imported"
+        },
+        "resolvedAgentId": {
+          "type": "string"
         }
       },
       "required": [
         "ok",
         "path",
         "name",
-        "fileCount"
+        "fileCount",
+        "source",
+        "resolvedAgentId"
       ],
       "additionalProperties": false
     },
@@ -11492,6 +11516,34 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
                   "learned",
                   "imported"
                 ]
+              },
+              "provenanceSummary": {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "github",
+                      "archive",
+                      "wellknown",
+                      "clawhub",
+                      "upload"
+                    ]
+                  },
+                  "registry": {
+                    "type": "string"
+                  },
+                  "hashPrefix": {
+                    "type": "string"
+                  },
+                  "importedAt": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "source"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [
@@ -11601,9 +11653,6 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "agentId": {
           "type": "string"
-        },
-        "force": {
-          "type": "boolean"
         }
       },
       "required": [
