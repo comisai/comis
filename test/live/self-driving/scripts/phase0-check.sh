@@ -18,12 +18,14 @@
 #        COMIS_USER (comis). Override WH_PATH via arg 1.
 
 set -uo pipefail
+[ -f /root/comis-rig.env ] && . /root/comis-rig.env
 DATA="${DATA:-/home/comis/.comis}"
 GW_HOST="${GW_HOST:-127.0.0.1}"
 GW_PORT="${GW_PORT:-4766}"
 WH_BASE="${WH_BASE:-/hooks}"
 WH_PATH="${1:-devtask}"
 COMIS_USER="${COMIS_USER:-comis}"
+SERVICE="${SERVICE:-comis}"
 CONFIG="${COMIS_CONFIG:-$DATA/config.yaml}"
 
 fails=0
@@ -33,11 +35,21 @@ warn() { printf '  \033[33mWARN\033[0m  %-22s %s\n' "$1" "$2"; }
 
 echo "=== phase0 preflight (DATA=$DATA, gateway=$GW_HOST:$GW_PORT, hook=$WH_BASE/$WH_PATH) ==="
 
-# 1) daemon process alive
+# 1) daemon process alive + the systemd unit healthy (the production install runs under comis.service)
 if pgrep -f 'node.*daemon\.js' >/dev/null 2>&1; then
   pass "daemon-process" "node …/daemon.js is running (pid $(pgrep -f 'node.*daemon\.js' | head -1))"
 else
-  fail "daemon-process" "no 'node …/daemon.js' — start it (clean-restart.sh / restart-m1.sh)"
+  fail "daemon-process" "no 'node …/daemon.js' — start it (restart-daemon.sh / clean-restart.sh)"
+fi
+if command -v systemctl >/dev/null 2>&1 && [ -f "/etc/systemd/system/$SERVICE.service" ]; then
+  state=$(systemctl is-active "$SERVICE" 2>/dev/null)
+  if [ "$state" = "active" ]; then
+    pass "service" "$SERVICE.service active"
+  else
+    fail "service" "$SERVICE.service is '$state' — systemctl status $SERVICE / journalctl -u $SERVICE"
+  fi
+else
+  warn "service" "no $SERVICE.service unit — not the production systemd install? (source-rig runs are legacy)"
 fi
 
 # 2) gateway TCP port bound — pure-bash /dev/tcp connect, no curl/ss needed

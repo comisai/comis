@@ -18,18 +18,19 @@
 //   checks `.ok`. A mis-called guard fabricates a verdict — when in doubt, read the source first.
 //
 // Usage (on the VPS):  node /root/gate-probe.mjs [floor|ssrf|invisible|all]   (default: all)
-//   SRC=/root/comis-src overridable (the deployed source tree whose dist is the build under test).
+//   Code root via _rig.mjs (installed comisai package or source checkout; COMIS_SRC overrides).
 //   Exit 0 = all PASS, 1 = any FAIL. NOTE: the bwrap egress oracle is a kernel/shell test, not an
 //   importable guard — run it separately (see `scripts/README.md` / `03-OBSERVABILITY.md`):
 //     bwrap --unshare-all --unshare-net --ro-bind / / --dev /dev --proc /proc \
 //       node -e "fetch('https://example.com').then(r=>console.log('REACHABLE',r.status)).catch(e=>console.log('BLOCKED',e.code||e.cause?.code))"
 //   → must print BLOCKED (control without --unshare-net prints REACHABLE 200 = the flag is load-bearing).
 
-const SRC = process.env.SRC || "/root/comis-src";
+import { rig, comisDist } from "./_rig.mjs";
+const SRC = rig.codeRoot; // printed in verdicts; COMIS_SRC env overrides the code root via _rig
 const PATHS = {
-  floor: `${SRC}/packages/skills/dist/tools/builtin/exec-security/exec-security-allowlist.js`,
-  ssrf: `${SRC}/packages/core/dist/security/ssrf-guard.js`,
-  invisible: `${SRC}/packages/core/dist/security/patterns/invisible-chars.js`,
+  floor: comisDist("skills", "dist/tools/builtin/exec-security/exec-security-allowlist.js"),
+  ssrf: comisDist("core", "dist/security/ssrf-guard.js"),
+  invisible: comisDist("core", "dist/security/patterns/invisible-chars.js"),
 };
 
 // dynamic import() handles both ESM and CJS dist; named exports may sit on the module or `.default`.

@@ -13,7 +13,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$HERE/../scripts/.live-env" ] && . "$HERE/../scripts/.live-env"
 VPS="${VPS:?set VPS=user@host in scripts/.live-env (see .live-env.example) or pass inline}"
-DEST="${SIM_DEST:-/home/comis/sim}"     # where the daemon (comis) will read the sim from
+DEST="${SIM_DEST:-${COMIS_HOME:-/home/comis}/sim}"   # where the daemon (comis) will read the sim from
 
 echo "Shipping sim/ → $VPS:$DEST"
 # ROBUST tar-pipe (mirrors scripts/deploy-dist.sh), NOT scp -r. Two reasons it replaced scp -rq:
@@ -33,12 +33,13 @@ tar czf - -C "$HERE/.." "$(basename "$HERE")" | ssh -o ConnectTimeout=20 -o Serv
   for d in '$DEST'/*/; do [ -f \"\$d/tools.json\" ] && basename \"\$d\"; done
 "
 echo
-echo "Deployed. Next — INSTALL onto the running daemon (CLI is not on PATH):"
+echo "Deployed. Next — INSTALL onto the running daemon (run ON the box; comis CLI is on the"
+echo "comis user's PATH under the production install):"
 echo "  # 1. connect a workload's MCP server (LIVE, no restart):"
 echo "  #    NOTE: --args is VARIADIC (space-separated) — do NOT comma-join path,workload"
-echo "  node packages/cli/dist/cli.js mcp connect th-sim \\"
-echo "    --transport stdio --command node --args $DEST/bin/mcp-server.mjs threat-hunting"
-echo "  node packages/cli/dist/cli.js mcp list          # confirm: th-sim connected, N tools"
+echo "  su - comis -c 'comis mcp connect th-sim \\"
+echo "    --transport stdio --command node --args $DEST/bin/mcp-server.mjs threat-hunting'"
+echo "  su - comis -c 'comis mcp list'          # confirm: th-sim connected, N tools"
 echo "  # 2. let the agent discover that workload's SKILL.md (add to discoveryPaths + restart once):"
 echo "  #    cfg-patch agents.<id>.skills.discoveryPaths += \"$DEST/threat-hunting\""
 echo "  # See sim/README.md for the full from-scratch memory/learning drive."

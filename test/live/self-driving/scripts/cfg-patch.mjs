@@ -4,9 +4,9 @@
 // the whole file (which would drop the real secrets you redacted when reading it). Hand-editing YAML
 // over ssh→su is error-prone; this deep-merges a JSON patch in-process via the daemon's `yaml` lib.
 //
-// Run AS comis so it can write the comis-owned config + read the daemon's node_modules:
+// Run as root (deployed at /root/cfg-patch.mjs; ownership is restored after the write) or as comis:
 //   ssh root@$VPS 'printf "%s" "{\"security\":{\"agentToAgent\":{\"tokenBudget\":1500}}}" > /tmp/patch.json; \
-//                  su - comis -c "node /tmp/cfg-patch.mjs"'
+//                  node /root/cfg-patch.mjs'
 //
 // Patch source: argv[2] inline JSON, ELSE /tmp/patch.json.
 //   ⚠ GOTCHA: `su - comis -c "..."` does NOT cross env vars or inline single-quotes cleanly — write the
@@ -23,12 +23,12 @@
 //                            or:   {"agents":{"default":{"elevatedReply":"__DELETE__"}}}
 //   not-allowed (no turn):        {"channels":{"telegram":{"allowFrom":["999999999"]}}}
 //
-// Adjust the require path if the daemon src tree isn't at /root/comis-src.
+// Code root (the yaml lib) + data dir resolve via _rig.mjs — installed package or source checkout.
 import { readFileSync, writeFileSync, copyFileSync, existsSync } from 'node:fs';
-import { createRequire } from 'node:module';
-const require = createRequire('/root/comis-src/packages/daemon/package.json');
-const YAML = require('yaml');
-const path = (process.env.HOME || '/home/comis') + '/.comis/config.yaml';
+import { execSync } from 'node:child_process';
+import { rig, requireCodeRoot } from './_rig.mjs';
+const YAML = requireCodeRoot('yaml');
+const path = rig.dataDir + '/config.yaml';
 // argv[2] is inline JSON, OR a path to a JSON file, ELSE fall back to /tmp/patch.json. The
 // path-detection avoids the footgun where passing
 // `cfg-patch.mjs /tmp/patch.json` JSON.parsed the PATH STRING and threw "Unexpected token '/'"
@@ -51,6 +51,11 @@ function merge(t, s) {
 copyFileSync(path, path + '.bak-patch');
 merge(cfg, patch);
 writeFileSync(path, YAML.stringify(cfg));
+try {
+  // A root-run patch must not leave root-owned files in the service user's data dir.
+  if (typeof process.getuid === 'function' && process.getuid() === 0)
+    execSync(`chown ${rig.comisUser}:${rig.comisUser} '${path}' '${path}.bak-patch'`);
+} catch { /* ownership already right on non-root runs */ }
 console.log('patched config.yaml (backup: config.yaml.bak-patch)');
 // Echo the load-bearing sections so you can eyeball the result without re-reading the file:
 console.log('agentToAgent=' + JSON.stringify(cfg.security?.agentToAgent ?? null));

@@ -14,8 +14,9 @@
 //   - NOTE the DAG caveat: a `pipeline`/`graph.execute` turn ENDS at the agent's "running it now" answer,
 //     then the GRAPH runs separately — poll `graph.status`/the daemon log for the final node, not this.
 import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { rig } from './_rig.mjs';
 const [, , chatIdArg, text, quiesceMsArg, maxMsArg, dataArg] = process.argv;
-const chatId = chatIdArg || '678314278';
+const chatId = chatIdArg || rig.chatId;
 const quiesceMs = Number(quiesceMsArg || 8000);
 const maxMs = Number(maxMsArg || 240000);
 // Guard the #1 mis-invocation: passing DATA in the maxMs slot
@@ -27,14 +28,14 @@ if (Number.isNaN(quiesceMs) || Number.isNaN(maxMs)) {
     `Usage: drive.mjs <chatId> "<text>" [quiesceMs=8000] [maxMs=240000] [DATA=/home/comis/.comis]`);
   process.exit(2);
 }
-const DATA = dataArg || process.env.DATA || '/home/comis/.comis';
+const DATA = dataArg || rig.dataDir;
 // FROMUSER (env) — drive a chat as a DIFFERENT sender than the chatId. The session/trajectory stays
 // keyed by chatId, but the inbound message author is FROMUSER. Lets one trusted sender drive N distinct
 // chat-SESSIONS (reflection anti-domination cardinality is distinct (sessionId, sender) — so two chats
 // from the SAME trusted sender = card 2, with SHARED memory + trusted origin + no cross-sender recall
 // pollution / no per-sender priming). Default: fromUserId == chatId.
 const fromUser = process.env.FROMUSER ? Number(process.env.FROMUSER) : Number(chatId);
-const emu = JSON.parse(readFileSync('/tmp/comis-emu.json', 'utf8'));
+const emu = JSON.parse(readFileSync(rig.emuWiringPath, 'utf8'));
 const base = emu.apiRoot;
 
 // Resilient long-poll: a loaded machine or a long slow-model turn (a cold local 35b can run >200s)
