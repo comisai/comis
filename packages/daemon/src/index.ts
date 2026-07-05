@@ -112,6 +112,23 @@ export type {
   ApplyBundleInstallArgs,
   ApplyBundleInstallResult,
 } from "./skills/bundle-install-helper.js";
+
+// The single skill-import orchestration + serialized commit. Surfaced through
+// the barrel so the RPC retrofit consumes ONE path (Phase-A always runs
+// pre-write) and the ground-truth integration test
+// (test/integration/skill-import-commit.test.ts) drives stage→commit against a
+// REAL provenance store + REAL discovery. Mirrors the applyBundleInstall
+// test-driven re-export precedent above.
+export { runSkillImport, commitStagedImport, parseCommitIntent, COMMIT_MARKER_FILENAME } from "./skills/import-commit.js";
+export type {
+  RunSkillImportOpts,
+  SkillImportDeps,
+  CommitResult,
+  CommitIntent,
+  ProvenanceSummary,
+  PersistImportedBundle,
+  PersistImportedBundleArgs,
+} from "./skills/import-commit.js";
 export { setupSkillBundles, buildSkillRegistriesForBundles } from "./wiring/setup-skill-bundles.js";
 export type { SetupSkillBundlesDeps } from "./wiring/setup-skill-bundles.js";
 

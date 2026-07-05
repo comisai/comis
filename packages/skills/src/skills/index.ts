@@ -78,6 +78,49 @@ export type { PromptSkillDescription } from "./prompt/processor.js";
 // Content scanner (security scan before write)
 export { scanSkillContent, type ContentScanResult, type ContentScanFinding } from "./prompt/content-scanner.js";
 
+// ===========================================================================
+// Staged skill-import pipeline + provenance store + keyed import mutex.
+//
+// The daemon-side serialized commit (`import-commit.ts`) wires the real
+// `resolveBundle` as the pipeline's Phase-A seam, moves the staged tree live,
+// persists provenance under the module-singleton mutex, and discovery
+// enrichment reads the store to stamp `imported`. These were kept off the
+// barrel until this consumer existed (the dead-export gate).
+// ===========================================================================
+export { stageImport } from "./import/import-pipeline.js";
+export type {
+  StageImportInput,
+  StageImportDeps,
+  StagedImport,
+  ImportReject,
+  ImportStage,
+  BundleCheckSeam,
+  BundleCheckReject,
+  BundleCheckContext,
+  ScanVerdict,
+  KeptFileBytes,
+  SkillScope,
+  ImportLogger,
+  StageAuditContext,
+} from "./import/import-pipeline.js";
+export type { AcquireInput, Acquired } from "./import/acquire.js";
+export type { UnpackCaps } from "./import/archive-unpack.js";
+export {
+  readProvenanceStore,
+  writeProvenanceRecord,
+  removeProvenanceRecord,
+  provenanceKey,
+  computeInstalledSetHash,
+  withSkillImportLock,
+  SKILL_IMPORT_COMMIT_LOCK,
+} from "./import/provenance-store.js";
+export type {
+  ProvenanceRecord,
+  ProvenanceStore,
+  ProvenanceError,
+  AcquisitionSource,
+} from "./import/provenance-store.js";
+
 // Integrations -- MCP client manager
 export { createMcpClientManager, qualifyToolName, parseQualifiedName } from "./integrations/mcp-client/index.js";
 // OAuth login orchestrator + disk token-store factory.

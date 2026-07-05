@@ -53,7 +53,12 @@ import { acquire, type AcquireDeps, type AcquireInput } from "./acquire.js";
 /** Skill scope (mirrors the RPC scope enum). */
 export type SkillScope = "local" | "shared";
 
-/** The stages the pipeline can reject at (for the typed reject + obs). */
+/**
+ * The stages the pipeline (and the downstream serialized commit) can reject at,
+ * for the typed reject + obs. `collision` and `commit` are the commit-side
+ * stages: a name-collision routing refusal and a mid-commit (move / provenance /
+ * install) failure respectively.
+ */
 export type ImportStage =
   | "acquire"
   | "unpack"
@@ -62,7 +67,9 @@ export type ImportStage =
   | "body-length"
   | "scan"
   | "bundle-check"
-  | "write";
+  | "write"
+  | "collision"
+  | "commit";
 
 /** A rejecting bundle-check outcome from the injected seam. */
 export interface BundleCheckReject {
@@ -157,6 +164,13 @@ export interface ImportReject {
   readonly ruleIds?: readonly string[];
   /** Bundle-check stage: the seam's reject class. */
   readonly bundleKind?: string;
+  /**
+   * Commit stage: a provenance-matched re-import diverged from the pinned hash
+   * and requires an explicit `confirm` to swap + re-pin. Distinct from a flat
+   * refuse (unprovenanced / foreign source-identifier), which is NEVER
+   * confirm-able and leaves this unset.
+   */
+  readonly needsConfirm?: boolean;
 }
 
 /** Dependencies for {@link stageImport}. */
