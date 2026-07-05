@@ -1753,6 +1753,22 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               },
               "uptimeMs": {
                 "type": "number"
+              },
+              "verification": {
+                "type": "object",
+                "properties": {
+                  "crossSigningReady": {
+                    "type": "boolean"
+                  },
+                  "deviceVerified": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "crossSigningReady",
+                  "deviceVerified"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [
