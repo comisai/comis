@@ -1,6 +1,6 @@
 {
-  "totalMinified": 135049,
-  "totalGzipped": 13734,
+  "totalMinified": 135752,
+  "totalGzipped": 13830,
   "budget": {
     "minified": 138000,
     "gzipped": 38912
@@ -43,7 +43,7 @@
     "channels.disable": 448,
     "channels.enable": 448,
     "channels.get": 483,
-    "channels.health": 1027,
+    "channels.health": 1089,
     "channels.list": 547,
     "channels.restart": 448,
     "config.apply": 712,
@@ -155,7 +155,7 @@
     "obs.delivery.recent": 462,
     "obs.delivery.stats": 414,
     "obs.diagnostics": 596,
-    "obs.explain": 11921,
+    "obs.explain": 12657,
     "obs.fleet.health": 5105,
     "obs.getCacheStats": 358,
     "obs.reset": 571,

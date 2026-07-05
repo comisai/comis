@@ -9,7 +9,7 @@
  * @module
  */
 
-import type { DoctorResult } from "./types.js";
+import type { DoctorResult, DoctorFinding } from "./types.js";
 import { json } from "../output/format.js";
 import {
   renderFindings,
@@ -56,14 +56,28 @@ export function renderDoctorTable(result: DoctorResult): void {
 }
 
 /**
- * Render doctor results as structured JSON to stdout.
+ * Build the structured doctor.json object from a DoctorResult.
  *
- * Outputs a JSON object with checksRun, summary counts, and findings.
+ * Single source of the doctor.json shape: `renderDoctorJson` prints it, and
+ * callers that need the same object on disk write it directly — neither
+ * re-derives the counts. Values are copied verbatim from the aggregate fields;
+ * findings pass through by reference.
  *
- * @param result - The aggregated doctor result to render
+ * @param result - The aggregated doctor result
+ * @returns The `{ checksRun, summary, findings }` object
  */
-export function renderDoctorJson(result: DoctorResult): void {
-  json({
+export function buildDoctorJson(result: DoctorResult): {
+  checksRun: number;
+  summary: {
+    pass: number;
+    fail: number;
+    warn: number;
+    skip: number;
+    repairable: number;
+  };
+  findings: readonly DoctorFinding[];
+} {
+  return {
     checksRun: result.checksRun,
     summary: {
       pass: result.passCount,
@@ -73,5 +87,16 @@ export function renderDoctorJson(result: DoctorResult): void {
       repairable: result.repairableCount,
     },
     findings: result.findings,
-  });
+  };
+}
+
+/**
+ * Render doctor results as structured JSON to stdout.
+ *
+ * Outputs a JSON object with checksRun, summary counts, and findings.
+ *
+ * @param result - The aggregated doctor result to render
+ */
+export function renderDoctorJson(result: DoctorResult): void {
+  json(buildDoctorJson(result));
 }

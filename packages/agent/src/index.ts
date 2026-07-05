@@ -56,7 +56,7 @@ export type { CostTracker, CostRecord, UsageInput } from "./budget/cost-tracker.
 // cross-package (public-export-consumers gate: a barrel export needs a
 // cross-package consumer).
 export { createSpendAccumulator, SpendError } from "./budget/spend-accumulator.js";
-export type { SpendAccumulator, SpendScope } from "./budget/spend-accumulator.js";
+export type { SpendAccumulator, SpendScope, SpendLimb, SpendUnit } from "./budget/spend-accumulator.js";
 export { checkSpendCeiling } from "./budget/budget-guard.js";
 export type { SpendGateOutcome, SpendGateConfig } from "./budget/budget-guard.js";
 export { createTurnBudgetTracker } from "./budget/turn-budget-tracker.js";

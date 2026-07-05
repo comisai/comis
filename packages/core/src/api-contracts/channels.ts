@@ -105,6 +105,10 @@ export const ChannelsHealthContract = defineContract({
       connectionMode: z.string(),
       lastCheckedAt: z.number(),
       lastMessageAt: z.nullable(z.number()),
+      // Inbound-only liveness signal (additive optional), distinct from the
+      // outbound-polluted lastMessageAt. The doctor recent-inbound probe keys
+      // on this so a send-only bot cannot mask a dead ingress.
+      lastInboundAt: z.nullable(z.number()).optional(),
       error: z.nullable(z.string()),
       stateChangedAt: z.number(),
       consecutiveFailures: z.number(),

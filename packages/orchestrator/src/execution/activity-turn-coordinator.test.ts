@@ -335,6 +335,58 @@ describe("createActivityTurnCoordinator — delete gate", () => {
     coord.dispose();
   });
 
+  it("emits activity:turn_finalized with the effective outcome + reclassified flag (the user-surface trajectory input)", async () => {
+    // The finalize decision — including the failed-event reclassify that
+    // paints the pill's terminal "❌ {errorKind}" — used to happen with zero
+    // log or event: explaining WHY a pill showed a stale errorKind required
+    // reading coordinator source (observed live). The event makes the
+    // user-visible terminal surface reconstructable from the trajectory.
+    const clock = createFakeClock(5_000);
+    const { deps, timer, stream } = makeCoordinatorDeps({ clock });
+    const emit = vi.fn();
+    const coord = createActivityTurnCoordinator({ ...deps, eventBus: { emit } as never });
+    coord.start(makeCtx());
+
+    stream.emit(makeEvent({ status: "failed", errorKind: "validation", phase: "end" }));
+    timer.advance(800);
+    await coord.finalize({ kind: "success", trivial: false, delivery: makeReceipt(1_000) });
+
+    const calls = emit.mock.calls.filter((c) => c[0] === "activity:turn_finalized");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]![1]).toMatchObject({
+      sessionKey: "default:user-1:chat-1",
+      agentId: "agent-1",
+      channelType: "telegram",
+      strategy: "EditPlace",
+      outcome: "failure",
+      errorKind: "validation",
+      reclassified: true,
+    });
+
+    coord.dispose();
+  });
+
+  it("emits activity:turn_finalized with reclassified:false for an unmodified failure outcome (e.g. a resource abort)", async () => {
+    const clock = createFakeClock(5_000);
+    const { deps } = makeCoordinatorDeps({ clock });
+    const emit = vi.fn();
+    const coord = createActivityTurnCoordinator({ ...deps, eventBus: { emit } as never });
+    coord.start(makeCtx());
+
+    await coord.finalize({ kind: "failure", errorKind: "resource", failedEvents: [], reason: "stopped — spend limit reached" });
+
+    const calls = emit.mock.calls.filter((c) => c[0] === "activity:turn_finalized");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]![1]).toMatchObject({
+      outcome: "failure",
+      errorKind: "resource",
+      reason: "stopped — spend limit reached",
+      reclassified: false,
+    });
+
+    coord.dispose();
+  });
+
   it("reclassify carries the observed failed event's errorKind, never the hardcoded platform default", async () => {
     const clock = createFakeClock(5_000);
     const { deps, timer, stream, renderer } = makeCoordinatorDeps({ clock });

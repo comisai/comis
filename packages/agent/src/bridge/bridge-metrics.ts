@@ -116,8 +116,8 @@ export interface BridgeMetricsState {
   timedOutRequests: number;
 
   // Session-cumulative cost tracking (accumulated across all turns in the session)
-  sessionCumulativeCostUsd: number;
-  sessionCumulativeCacheSavedUsd: number;
+  executionCostUsd: number;
+  executionCacheSavedUsd: number;
 
   // Thinking token tracking (gap between SDK output and visible completion)
   totalThinkingTokens: number;
@@ -249,8 +249,8 @@ export function createBridgeMetrics(): BridgeMetricsState {
     lastStopReason: undefined,
     ghostCostUsd: 0,
     timedOutRequests: 0,
-    sessionCumulativeCostUsd: 0,
-    sessionCumulativeCacheSavedUsd: 0,
+    executionCostUsd: 0,
+    executionCacheSavedUsd: 0,
     totalThinkingTokens: 0,
     budgetWarningEmitted: false,
     perRootReanchored: false,
@@ -297,8 +297,8 @@ export function buildBridgeResult(
   lastStopReason?: string;
   cacheWrite5mTokens?: number;
   cacheWrite1hTokens?: number;
-  sessionCostUsd?: number;
-  sessionCacheSavedUsd?: number;
+  executionCostUsd?: number;
+  executionCacheSavedUsd?: number;
   thinkingTokens?: number;
   budgetWarningEmitted?: boolean;
   // diagnostic counters surfaced for the "Execution complete" bookend.
@@ -349,8 +349,8 @@ export function buildBridgeResult(
     cacheWrite5mTokens: metrics.totalCacheWrite5mTokens,
     cacheWrite1hTokens: metrics.totalCacheWrite1hTokens,
     // Session-cumulative cost fields
-    sessionCostUsd: metrics.sessionCumulativeCostUsd,
-    sessionCacheSavedUsd: metrics.sessionCumulativeCacheSavedUsd,
+    executionCostUsd: metrics.executionCostUsd,
+    executionCacheSavedUsd: metrics.executionCacheSavedUsd,
     // Thinking tokens (omitted when 0 to avoid log noise)
     thinkingTokens: metrics.totalThinkingTokens > 0 ? metrics.totalThinkingTokens : undefined,
     // Budget trajectory warning flag

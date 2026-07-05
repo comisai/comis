@@ -40,6 +40,21 @@ export function healthSignalLabel(row: DiagnosticRow): string {
   }
 }
 
+/** The closed `reason` sub-label from a health_signal row's details JSON (the
+ *  divergence class: fail_closed_rollover / live_store_divergence / …). Lets
+ *  the finding break a signal down by which failure class recurred without a
+ *  per-session explain. Malformed/missing → undefined (the finding then omits
+ *  the breakdown). The healthSignalLabel clone — counts + a closed label, no body. */
+export function healthSignalReason(row: DiagnosticRow): string | undefined {
+  if (row.details === undefined) return undefined;
+  try {
+    const parsed = JSON.parse(row.details) as { reason?: unknown };
+    return typeof parsed.reason === "string" && parsed.reason.length > 0 ? parsed.reason : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** servedBelowConfiguredCount from a config_posture row's details JSON.
  *  Defensive parse — malformed/missing folds to 0 (soft-fail, counts only;
  *  the healthSignalLabel clone). */

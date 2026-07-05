@@ -57,6 +57,9 @@ import type { TelegramThreadScope } from "./index.js";
 // it adds NO runtime export (the no-`@comis/*`-runtime-edge rule holds),
 // mirroring the thread-context precedent.
 import type { SignalEnvelope, SignalAttachment } from "./index.js";
+// Namespace import so a not-yet-exported msteams symbol reads as `undefined`
+// (a clean, isolated failure) rather than breaking the whole barrel module load.
+import * as channelsBarrel from "./index.js";
 
 describe("@comis/channels barrel exports", () => {
   it("exports all 4 adapter factories as functions", () => {
@@ -152,6 +155,19 @@ describe("@comis/channels barrel exports", () => {
     // drives the REAL structural classifier (429/400-edit/403/default) rather than
     // re-implementing it — the thread-context precedent applied to classification.
     expect(typeof classifyTelegramError).toBe("function");
+  });
+
+  it("exports the Microsoft Teams surface (plugin, adapter, mapper, auth, credential + error helpers)", () => {
+    // The composition root imports these to register the channel and build the
+    // gateway ingress; the barrel is the only path it may import through.
+    expect(typeof channelsBarrel.createMsTeamsPlugin).toBe("function");
+    expect(typeof channelsBarrel.createMsTeamsAdapter).toBe("function");
+    expect(typeof channelsBarrel.mapMsTeamsActivityToNormalized).toBe("function");
+    expect(typeof channelsBarrel.validateActivityJwt).toBe("function");
+    expect(typeof channelsBarrel.createActivityJwtValidator).toBe("function");
+    expect(typeof channelsBarrel.createConnectorTokenProvider).toBe("function");
+    expect(typeof channelsBarrel.validateMsTeamsCredentials).toBe("function");
+    expect(typeof channelsBarrel.classifyMsTeamsError).toBe("function");
   });
 
   it("the structural classifier maps the four GrammyError classes through the real public fn", () => {

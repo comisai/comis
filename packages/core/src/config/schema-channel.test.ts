@@ -8,6 +8,7 @@ import {
   LineChannelEntrySchema,
   IrcChannelEntrySchema,
   EmailChannelEntrySchema,
+  MsTeamsChannelEntrySchema,
 } from "./schema-channel.js";
 
 describe("ChannelEntrySchema", () => {
@@ -346,6 +347,131 @@ describe("EmailChannelEntrySchema", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Microsoft Teams channel entry schema
+// ---------------------------------------------------------------------------
+
+describe("MsTeamsChannelEntrySchema", () => {
+  it("produces secret-mode defaults with the channel disabled", () => {
+    const result = MsTeamsChannelEntrySchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.enabled).toBe(false);
+      expect(result.data.authMode).toBe("secret");
+      expect(result.data.allowFrom).toEqual([]);
+      expect(result.data.allowMode).toBe("allowlist");
+      expect(result.data.cloud).toBe("public");
+    }
+  });
+
+  it("parses a full secret-mode block with appId, appPassword, tenantId and allowlist", () => {
+    const result = MsTeamsChannelEntrySchema.safeParse({
+      enabled: true,
+      authMode: "secret",
+      appId: "app-id",
+      appPassword: "pw",
+      tenantId: "tenant",
+      allowFrom: ["aad-guid"],
+      allowMode: "allowlist",
+      cloud: "public",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.enabled).toBe(true);
+      expect(result.data.appId).toBe("app-id");
+      expect(result.data.appPassword).toBe("pw");
+      expect(result.data.tenantId).toBe("tenant");
+      expect(result.data.allowFrom).toEqual(["aad-guid"]);
+    }
+  });
+
+  it("accepts a SecretRef for appPassword (string and SecretRef forms are both valid)", () => {
+    const result = MsTeamsChannelEntrySchema.safeParse({
+      enabled: true,
+      appId: "app-id",
+      appPassword: { source: "env", provider: "msteams", id: "MSTEAMS_APP_PASSWORD" },
+      tenantId: "tenant",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.appPassword).toEqual({
+        source: "env",
+        provider: "msteams",
+        id: "MSTEAMS_APP_PASSWORD",
+      });
+    }
+  });
+
+  it("rejects an unknown key inside the entry (strict object)", () => {
+    const result = MsTeamsChannelEntrySchema.safeParse({
+      enabled: true,
+      bogusKey: 1,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an authMode outside secret, certificate, managedIdentity", () => {
+    const result = MsTeamsChannelEntrySchema.safeParse({
+      enabled: true,
+      authMode: "sharedKey",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an allowMode outside allowlist and open", () => {
+    const result = MsTeamsChannelEntrySchema.safeParse({
+      enabled: true,
+      allowMode: "denylist",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a cloud value other than public", () => {
+    const result = MsTeamsChannelEntrySchema.safeParse({
+      enabled: true,
+      cloud: "usgov",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("defaults missedInboundThresholdMs to six hours when omitted", () => {
+    const result = MsTeamsChannelEntrySchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.missedInboundThresholdMs).toBe(21_600_000);
+    }
+  });
+
+  it("accepts a positive integer missedInboundThresholdMs override", () => {
+    const result = MsTeamsChannelEntrySchema.safeParse({
+      enabled: true,
+      missedInboundThresholdMs: 900_000,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.missedInboundThresholdMs).toBe(900_000);
+    }
+  });
+
+  it("rejects a non-positive missedInboundThresholdMs (zero or negative)", () => {
+    expect(MsTeamsChannelEntrySchema.safeParse({ missedInboundThresholdMs: 0 }).success).toBe(false);
+    expect(MsTeamsChannelEntrySchema.safeParse({ missedInboundThresholdMs: -1 }).success).toBe(false);
+  });
+
+  it("rejects a missedInboundThresholdMs below the one-minute floor (no busy-loop poll)", () => {
+    // A tiny value would drive the liveness monitor's setInterval to a ~1ms poll
+    // that pegs a CPU, so the schema floors it at one minute.
+    expect(MsTeamsChannelEntrySchema.safeParse({ missedInboundThresholdMs: 1 }).success).toBe(false);
+    expect(MsTeamsChannelEntrySchema.safeParse({ missedInboundThresholdMs: 59_999 }).success).toBe(false);
+    expect(MsTeamsChannelEntrySchema.safeParse({ missedInboundThresholdMs: 60_000 }).success).toBe(true);
+  });
+
+  it("rejects a fractional missedInboundThresholdMs (must be an integer)", () => {
+    const result = MsTeamsChannelEntrySchema.safeParse({ missedInboundThresholdMs: 1000.5 });
+    expect(result.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Top-level channel config
 // ---------------------------------------------------------------------------
 
@@ -424,5 +550,36 @@ describe("ChannelConfigSchema", () => {
       expect(result.data.line.webhookPath).toBe("/webhooks/line");
       expect(result.data.irc.tls).toBe(true);
     }
+  });
+
+  it("defaults the msteams entry to disabled secret-mode public cloud", () => {
+    const parsed = ChannelConfigSchema.parse({});
+    expect(parsed.msteams.enabled).toBe(false);
+    expect(parsed.msteams.authMode).toBe("secret");
+    expect(parsed.msteams.allowFrom).toEqual([]);
+    expect(parsed.msteams.allowMode).toBe("allowlist");
+    expect(parsed.msteams.cloud).toBe("public");
+  });
+
+  it("parses a full msteams block supplied under the channels config", () => {
+    const parsed = ChannelConfigSchema.parse({
+      msteams: {
+        enabled: true,
+        authMode: "secret",
+        appId: "app-id",
+        appPassword: "pw",
+        tenantId: "tenant",
+        allowFrom: ["aad-guid"],
+        allowMode: "allowlist",
+        cloud: "public",
+      },
+    });
+    expect(parsed.msteams.enabled).toBe(true);
+    expect(parsed.msteams.appId).toBe("app-id");
+    expect(parsed.msteams.tenantId).toBe("tenant");
+  });
+
+  it("rejects an unknown key inside the nested msteams block", () => {
+    expect(() => ChannelConfigSchema.parse({ msteams: { enabled: true, bogusKey: 1 } })).toThrow();
   });
 });

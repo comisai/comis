@@ -1,0 +1,453 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Safe writer for the support bundle — the security backbone.
+ *
+ * Every directory is created via `ensureContainedDir` (mode 0o700, real-path
+ * confined to the data dir, symlinked-dir refusal); every file is written via
+ * `writeRegularFile` (0o600, O_NOFOLLOW, unlink-before-open); every path is
+ * composed with `safePath`. The raw path-join and unchecked file-write calls
+ * are deliberately avoided. The write set is an explicit allowlist of up to
+ * nine files, never a data-dir glob.
+ *
+ * Redaction is scoped per file. `doctor.json` echoes config-derived free text
+ * (DoctorFinding messages — e.g. a configured gateway URL with `user:pass@`), so
+ * every string leaf there is value-shape masked before it reaches disk. The
+ * reducer's own outputs (`triage.json`, `issue-summary.md`, `ai-issue-draft.md`)
+ * and the content-free digests (`fleet.json`, `config-posture.json`)
+ * are content-free by construction — counts, category labels, signal codes,
+ * section names, version facts, static placeholders, and
+ * static remediation strings — so they get path-token normalization ONLY; the
+ * value-shape pass is withheld there because it treats their own
+ * field-name-like tokens ("key", "secret", "message") and token-shaped ids as
+ * payloads and would corrupt the verdict/digest (and desync triage.json's
+ * privacy block from the manifest's verbatim copy). Section-failure and upstream warning strings folded into the
+ * manifest keep the full masking pass (they can carry error text). A section that
+ * cannot be produced folds into a manifest warning and the writer continues
+ * (partial output); only a failure to create the bundle directory is a hard error.
+ *
+ * @module
+ */
+
+import { safePath, systemDateFrom, systemGetEnv } from "@comis/core";
+import { ok, err, type Result } from "@comis/shared";
+import {
+  ensureContainedDir,
+  writeRegularFile,
+  redactString,
+  substitutePathsInString,
+  walkAndRedactStrings,
+  type RedactionOpts,
+} from "@comis/observability";
+
+import {
+  type SupportTriage,
+  type SupportBundleWarning,
+  type SupportBundleManifest,
+} from "./types.js";
+
+/** Inputs for a single bundle write. Every read happens in the caller. */
+export interface WriteSupportBundleInput {
+  /** The resolved data dir root; the bundle is written under it. */
+  readonly dataDir: string;
+  /** Generation instant in epoch ms — stamps the manifest and the dir name. */
+  readonly generatedAtMs: number;
+  /** The deterministic triage verdict (written as triage.json). */
+  readonly triage: SupportTriage;
+  /** The rendered issue summary (written as issue-summary.md). */
+  readonly issueSummaryMd: string;
+  /** The rendered AI issue draft (written as ai-issue-draft.md). */
+  readonly aiIssueDraftMd: string;
+  /** The doctor diagnostic object (written as doctor.json). */
+  readonly doctorJson: unknown;
+  /**
+   * The fleet health report (written as fleet.json when present). A content-free
+   * trusted leaf: path substitution only, never the value-shape pass — which
+   * would mangle its ids/codes. Omitted from the write set when undefined (the
+   * fleet read threw).
+   */
+  readonly fleetJson?: unknown;
+  /**
+   * The config-posture membership digest (written as config-posture.json when
+   * present). A content-free trusted leaf: section names + the closed
+   * fleet-finding labels only. Omitted from the write set when undefined (the
+   * config did not parse).
+   */
+  readonly configPostureJson?: unknown;
+  /**
+   * The embedded incident report (written as explain.json when present, on
+   * `--session`). An UNTRUSTED free-text leaf: the report is content-free by
+   * construction but carries genuine free-text (`errorPreview`, `resultDigest`,
+   * `likelyRootCause.detail`) that could surface a secret-shaped substring from a
+   * tool error, so every string leaf is value-shape masked before it reaches
+   * disk. The masking preserves the content-free correlation ids (a UUID
+   * traceId, a non-numeric colon-form sessionKey, tool names, clean root-cause
+   * codes) verbatim; it INTENTIONALLY redacts PII shapes it also catches — a 9+
+   * digit numeric channel/user id in a sessionKey (long-decimal-id) and a code
+   * that embeds a payload keyword (e.g. `context_exhausted` → "text"). Omitted
+   * from the write set when undefined (no `--session`).
+   */
+  readonly explainJson?: unknown;
+  /**
+   * The window-scoped audit `{ total, byKind }` digest (written as
+   * audit-summary.json when present). A content-free TRUSTED leaf: pure counts
+   * keyed by the closed `AuditKind` labels — path substitution only, never the
+   * value-shape pass (which would mask a kind label like `secret_access`).
+   * Omitted from the write set when undefined (the audit store was absent or
+   * unreadable — the caller records a manifest warning instead).
+   */
+  readonly auditSummaryJson?: unknown;
+  /**
+   * A pre-created bundle dir (from `ensureSupportBundleDir`). When provided the
+   * writer writes into it and skips re-deriving/creating the dir — the seam the
+   * orchestrator uses to export the trace bundle INTO the dir before the manifest
+   * write. When absent the writer derives + creates the dir itself, keeping every
+   * existing caller working.
+   */
+  readonly bundleDir?: string;
+  /** Upstream coverage/section warnings folded into the manifest. */
+  readonly warnings?: readonly SupportBundleWarning[];
+}
+
+/** Success payload — the bundle dir and the merged warning set. */
+export interface WriteSupportBundleSuccess {
+  readonly bundleDir: string;
+  readonly warnings: SupportBundleWarning[];
+}
+
+/**
+ * The one hard failure: the bundle directory could not be created (a symlinked
+ * slot, an ENOTDIR collision, a confinement escape). Section-level failures are
+ * recorded as warnings, not errors, so a partial bundle is still produced.
+ */
+export type WriteSupportBundleError = {
+  readonly kind: "bundle-dir-create-failed";
+  readonly reason: string;
+};
+
+/** Best-effort human-readable reason from a Result error or thrown value. */
+function describeError(error: unknown): string {
+  if (error !== null && typeof error === "object" && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "string") return code;
+  }
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+/**
+ * Build the redaction backstop options. `safePath` resolves real paths and can
+ * throw on a symlink that escapes the data dir, so the workspace token is
+ * derived defensively — falling back to state/home substitution only.
+ */
+function buildRedactionOpts(dataDir: string): RedactionOpts {
+  const homeDir = systemGetEnv("HOME");
+  try {
+    return { stateDir: dataDir, homeDir, workspaceDir: safePath(dataDir, "workspace") };
+  } catch {
+    return { stateDir: dataDir, homeDir };
+  }
+}
+
+/**
+ * Recurse through a data graph and apply path-token substitution to every string
+ * leaf, leaving numbers/booleans/null untouched. The trusted-leaf counterpart to
+ * `walkAndRedactStrings`: it deliberately omits the value-shape masking pass, so
+ * it never rewrites a field-name token. Safe for the reducer's own content-free
+ * output (counts, labels, signal codes, static remediation strings) while still
+ * normalizing any embedded `$HOME`/`$STATE_DIR`/`$WORKSPACE_DIR` path. Cycles
+ * fold to a marker so a self-referential graph cannot loop; the input is never
+ * mutated.
+ */
+function walkAndSubstitutePaths(
+  value: unknown,
+  opts: RedactionOpts,
+  seen: WeakSet<object> = new WeakSet(),
+): unknown {
+  if (typeof value === "string") {
+    return substitutePathsInString(value, opts);
+  }
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+  const obj = value as object;
+  if (seen.has(obj)) {
+    return { __cycle: true };
+  }
+  seen.add(obj);
+  if (Array.isArray(obj)) {
+    return (obj as unknown[]).map((v) => walkAndSubstitutePaths(v, opts, seen));
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+    out[k] = walkAndSubstitutePaths(v, opts, seen);
+  }
+  return out;
+}
+
+/**
+ * Resolve and create the support-bundles parent and the per-bundle dir under
+ * the symlink-safe, real-path-confined primitive. `safePath` throws on a
+ * symlink escape and `ensureContainedDir` returns `err` on a refused/failed
+ * create; both fold into the one hard error so the writer never throws.
+ */
+function prepareBundleDir(
+  dataDir: string,
+  bundleDirName: string,
+): Result<string, WriteSupportBundleError> {
+  try {
+    const supportBundlesDir = safePath(dataDir, "support-bundles");
+    const parentResult = ensureContainedDir({
+      dir: supportBundlesDir,
+      mode: 0o700,
+      confinedBaseDir: dataDir,
+    });
+    if (!parentResult.ok) {
+      return err({ kind: "bundle-dir-create-failed", reason: describeError(parentResult.error) });
+    }
+
+    const bundleDir = safePath(supportBundlesDir, bundleDirName);
+    const bundleDirResult = ensureContainedDir({
+      dir: bundleDir,
+      mode: 0o700,
+      confinedBaseDir: dataDir,
+    });
+    if (!bundleDirResult.ok) {
+      return err({ kind: "bundle-dir-create-failed", reason: describeError(bundleDirResult.error) });
+    }
+    return ok(bundleDir);
+  } catch (thrown) {
+    return err({ kind: "bundle-dir-create-failed", reason: describeError(thrown) });
+  }
+}
+
+/** Derive the timestamp-only bundle dir name from the generation instant. */
+function bundleDirNameFor(generatedAtMs: number): string {
+  const tsIso = systemDateFrom(generatedAtMs).toISOString().replace(/[:.]/g, "-");
+  return `comis-support-${tsIso}`;
+}
+
+/**
+ * Resolve and create the per-bundle dir under `<dataDir>/support-bundles/`,
+ * returning the same path `writeSupportBundle` writes into. Exported so the
+ * orchestrator can create the dir FIRST (and export the trace bundle into it)
+ * before handing it back to the writer via `WriteSupportBundleInput.bundleDir`.
+ *
+ * The name carries a timestamp only (no host component), derived deterministically
+ * from `generatedAtMs`. Creation goes through the symlink-safe, real-path-confined
+ * `ensureContainedDir`, so a second call with the same instant is a no-op create
+ * (idempotent). A symlink escape or a refused create folds into the one hard error.
+ *
+ * @param dataDir - the resolved data-dir root.
+ * @param generatedAtMs - the generation instant (stamps the dir name).
+ * @returns `ok(bundleDir)`, or `err({ kind: "bundle-dir-create-failed" })`.
+ */
+export function ensureSupportBundleDir(
+  dataDir: string,
+  generatedAtMs: number,
+): Result<string, WriteSupportBundleError> {
+  return prepareBundleDir(dataDir, bundleDirNameFor(generatedAtMs));
+}
+
+/**
+ * Write the support bundle (up to nine files) under `<dataDir>/support-bundles/`.
+ *
+ * Creates `comis-support-<tsIso>/` (a timestamp-only name — no host component)
+ * and writes `issue-summary.md`, `ai-issue-draft.md`, `triage.json`,
+ * `doctor.json`, and `manifest.json`, plus `fleet.json`, `config-posture.json`,
+ * `explain.json` (on `--session`), and `audit-summary.json` when their inputs are
+ * present, each through the symlink-safe primitives with the redaction backstop
+ * applied. The manifest is written last so it records every section that failed.
+ * Returns `err` only when the directory itself cannot be created.
+ *
+ * @param input - The bundle inputs (all pre-read by the caller).
+ * @returns `ok({ bundleDir, warnings })` on a full or partial write, or
+ *   `err({ kind: "bundle-dir-create-failed" })` when the dir is unproducible.
+ */
+export function writeSupportBundle(
+  input: WriteSupportBundleInput,
+): Result<WriteSupportBundleSuccess, WriteSupportBundleError> {
+  const {
+    dataDir,
+    generatedAtMs,
+    triage,
+    issueSummaryMd,
+    aiIssueDraftMd,
+    doctorJson,
+    fleetJson,
+    configPostureJson,
+    explainJson,
+    auditSummaryJson,
+  } = input;
+
+  // The dir name + ISO stamp carry a timestamp only, never a host component,
+  // and are derived deterministically from the instant (so they stay consistent
+  // whether the dir is created here or was pre-created by the orchestrator).
+  const generatedAt = systemDateFrom(generatedAtMs).toISOString();
+  const bundleDirName = bundleDirNameFor(generatedAtMs);
+
+  // Create the per-bundle dir, or reuse the one the orchestrator pre-created (so
+  // it could export the trace bundle into it first). A failure to create is the
+  // one hard error (the bundle cannot be produced).
+  let bundleDir: string;
+  if (input.bundleDir !== undefined) {
+    bundleDir = input.bundleDir;
+  } else {
+    const dirResult = ensureSupportBundleDir(dataDir, generatedAtMs);
+    if (!dirResult.ok) {
+      return dirResult;
+    }
+    bundleDir = dirResult.value;
+  }
+
+  // The redaction backstop, built once. stateDir/homeDir/workspaceDir drive the
+  // path → placeholder substitution (longest-match-wins).
+  const redactionOpts = buildRedactionOpts(dataDir);
+
+  // Untrusted free-text leaf (config-derived or error text): mask value shapes,
+  // then substitute known paths. Reserved for doctor.json (which echoes
+  // DoctorFinding messages — e.g. a configured gateway URL with `user:pass@`) and
+  // the section-failure / upstream warning strings folded into the manifest.
+  const redactText = (text: string): string =>
+    substitutePathsInString(redactString(text), redactionOpts);
+
+  // Trusted, content-free leaf (the reducer's own counts, category labels, signal
+  // codes, version facts, and static remediation strings): normalize known paths
+  // ONLY. The value-shape pass is withheld here — it treats field-name tokens
+  // ("key", "secret", "message", "content") as payloads and would mangle the
+  // reducer's own constants, desyncing triage.json's privacy block from the copy
+  // the manifest writes verbatim.
+  const substitutePathsOnly = (text: string): string =>
+    substitutePathsInString(text, redactionOpts);
+
+  const sectionWarnings: SupportBundleWarning[] = [];
+  const recordSectionFailure = (name: string, reason: string): void => {
+    sectionWarnings.push({
+      source: "writer",
+      code: "section_write_failed",
+      count: 1,
+      message: redactText(`Failed to write ${name}: ${reason}`),
+    });
+  };
+
+  // The content files — the explicit allowlist. Each body is lazy so a
+  // serialization failure is caught per-section rather than crashing the run.
+  // Only doctor.json echoes untrusted config-derived text, so it alone keeps the
+  // value-shape masking pass; triage.json, issue-summary.md, and ai-issue-draft.md
+  // are content-free and get path normalization only. ai-issue-draft.md rides the
+  // trusted leaf like issue-summary.md — the value-shape pass would treat its
+  // `<REQUIRED: …>` idiom and field-name-like tokens as payloads and mangle it.
+  // fleet.json and config-posture.json ride the SAME trusted leaf (content-free
+  // by construction — codes, section names, closed labels + counts); each is
+  // appended ONLY when its input is defined, so a thrown fleet read omits
+  // fleet.json and an unparseable config omits config-posture.json.
+  const FILE_PLAN: ReadonlyArray<{ name: string; body: () => string }> = [
+    { name: "issue-summary.md", body: () => substitutePathsOnly(issueSummaryMd) },
+    { name: "ai-issue-draft.md", body: () => substitutePathsOnly(aiIssueDraftMd) },
+    {
+      name: "triage.json",
+      body: () => JSON.stringify(walkAndSubstitutePaths(triage, redactionOpts), null, 2),
+    },
+    {
+      name: "doctor.json",
+      body: () => JSON.stringify(walkAndRedactStrings(doctorJson, redactionOpts), null, 2),
+    },
+    ...(fleetJson !== undefined
+      ? [
+          {
+            name: "fleet.json",
+            body: (): string =>
+              JSON.stringify(walkAndSubstitutePaths(fleetJson, redactionOpts), null, 2),
+          },
+        ]
+      : []),
+    ...(configPostureJson !== undefined
+      ? [
+          {
+            name: "config-posture.json",
+            body: (): string =>
+              JSON.stringify(walkAndSubstitutePaths(configPostureJson, redactionOpts), null, 2),
+          },
+        ]
+      : []),
+    // explain.json rides the UNTRUSTED value-shape leaf (like doctor.json): the
+    // embedded incident report carries free-text (errorPreview/resultDigest/
+    // likelyRootCause.detail) that could surface a secret-shaped substring, so
+    // every string leaf is masked. The pass preserves content-free correlation
+    // ids and intentionally redacts PII shapes it catches. Appended only on
+    // `--session`.
+    ...(explainJson !== undefined
+      ? [
+          {
+            name: "explain.json",
+            body: (): string =>
+              JSON.stringify(walkAndRedactStrings(explainJson, redactionOpts), null, 2),
+          },
+        ]
+      : []),
+    // audit-summary.json rides the TRUSTED leaf (like fleet.json): pure counts +
+    // closed AuditKind labels — path substitution only. Appended only when the
+    // offline audit read returned a digest.
+    ...(auditSummaryJson !== undefined
+      ? [
+          {
+            name: "audit-summary.json",
+            body: (): string =>
+              JSON.stringify(walkAndSubstitutePaths(auditSummaryJson, redactionOpts), null, 2),
+          },
+        ]
+      : []),
+  ];
+
+  for (const { name, body } of FILE_PLAN) {
+    try {
+      const writeResult = writeRegularFile({
+        path: safePath(bundleDir, name),
+        content: body(),
+        confinedBaseDir: dataDir,
+      });
+      if (!writeResult.ok) {
+        recordSectionFailure(name, describeError(writeResult.error));
+      }
+    } catch (thrown) {
+      recordSectionFailure(name, describeError(thrown));
+    }
+  }
+
+  // Merge upstream warnings, redacting their free-text so the manifest honors
+  // the every-leaf-redacted contract.
+  const incoming = (input.warnings ?? []).map((warning) => ({
+    ...warning,
+    message: redactText(warning.message),
+  }));
+  const manifestWarnings: SupportBundleWarning[] = [...incoming, ...sectionWarnings];
+
+  // The manifest is structural metadata built here (privacy sourced from the
+  // triage so the two artifacts never drift). Only its free-text leaves — the
+  // warning messages — are redacted; the enum literal and generatedAt stay
+  // pristine so the manifest round-trips through its parser.
+  const manifest: SupportBundleManifest = {
+    schemaVersion: 1,
+    bundle: bundleDirName,
+    generatedAt,
+    redaction: { policy: "platform-aware-v1" },
+    privacy: triage.privacy,
+    ...(manifestWarnings.length > 0 ? { warnings: manifestWarnings } : {}),
+  };
+
+  try {
+    const manifestResult = writeRegularFile({
+      path: safePath(bundleDir, "manifest.json"),
+      content: JSON.stringify(manifest, null, 2),
+      confinedBaseDir: dataDir,
+    });
+    if (!manifestResult.ok) {
+      recordSectionFailure("manifest.json", describeError(manifestResult.error));
+    }
+  } catch (thrown) {
+    recordSectionFailure("manifest.json", describeError(thrown));
+  }
+
+  // The returned set includes a manifest-write failure (which the on-disk
+  // manifest cannot record about itself).
+  return ok({ bundleDir, warnings: [...incoming, ...sectionWarnings] });
+}

@@ -2,7 +2,7 @@
 /**
  * Tests for the CLI entry point (cli.ts).
  *
- * Verifies that all 16 commands are registered on the root program,
+ * Verifies that all 28 commands are registered on the root program,
  * program metadata is correct, and subcommand structure is intact.
  * Does NOT re-test command behavior (covered by per-command behavior tests).
  *
@@ -88,6 +88,8 @@ describe("CLI entry point", () => {
       // Cross-session FleetHealthReport triage (obs.fleet.health) — the
       // remote-admin sibling of `explain`, DISTINCT from the local `health` doctor.
       "fleet",
+      // Offline, paste-ready support bundle (triage verdict + health findings).
+      "support-bundle",
       "uninstall",
       "auth",
       // Cache stats.

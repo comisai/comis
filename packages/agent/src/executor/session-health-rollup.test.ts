@@ -33,7 +33,7 @@ describe("buildSessionHealthRollup", () => {
     ];
 
     const rollup: SessionHealthRollup = buildSessionHealthRollup(
-      { sessionCostUsd: 1.45, breakerTripCount: 1, toolExecResults },
+      { executionCostUsd: 1.45, breakerTripCount: 1, toolExecResults },
       "completed_with_tool_errors",
     );
 
@@ -92,7 +92,7 @@ describe("buildSessionHealthRollup", () => {
     ];
 
     const rollup = buildSessionHealthRollup(
-      { sessionCostUsd: 0.1, toolExecResults },
+      { executionCostUsd: 0.1, toolExecResults },
       "success",
     );
 

@@ -609,6 +609,50 @@ describe("createChannelHandlers - channel management", () => {
       const result = (await handlers["channels.health"]!({})) as { enabled: boolean };
       expect(result.enabled).toBe(false);
     });
+
+    it("carries the inbound-only lastInboundAt from the health entry onto the response", async () => {
+      const now = Date.now();
+      const inboundAt = now - 4000;
+      const mockSummary = new Map([
+        [
+          "msteams",
+          {
+            channelType: "msteams",
+            state: "healthy" as const,
+            connectionMode: "webhook" as const,
+            lastCheckedAt: now,
+            // Outbound-polluted last-activity is FRESHER than the inbound-only
+            // signal — the response must carry the dedicated inbound value so a
+            // send-only bot cannot mask a dead ingress (the doctor recent-inbound
+            // probe keys on lastInboundAt, never lastMessageAt).
+            lastMessageAt: now - 100,
+            lastInboundAt: inboundAt,
+            error: null,
+            stateChangedAt: now - 60000,
+            consecutiveFailures: 0,
+            activeRuns: 0,
+            lastRunStartedAt: null,
+            adapterStartedAt: now - 120000,
+            restartAttempts: 0,
+            busyStateInitialized: false,
+          },
+        ],
+      ]);
+      const mockHealthMonitor = {
+        getHealthSummary: vi.fn().mockReturnValue(mockSummary),
+        addAdapter: vi.fn(),
+        removeAdapter: vi.fn(),
+      };
+
+      const deps = makeDeps({ healthMonitor: mockHealthMonitor as never });
+      const handlers = createChannelHandlers(deps);
+
+      const result = (await handlers["channels.health"]!({})) as {
+        channels: Array<{ channelType: string; lastInboundAt?: number | null }>;
+      };
+      const teams = result.channels.find((c) => c.channelType === "msteams");
+      expect(teams?.lastInboundAt).toBe(inboundAt);
+    });
   });
 
   // -------------------------------------------------------------------------

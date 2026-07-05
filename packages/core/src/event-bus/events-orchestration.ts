@@ -328,6 +328,27 @@ export interface OrchestrationEvents {
   "autonomy:revoked": { rootRunId: string; revoked: number; timestamp: number };
 
   /**
+   * A per-root `autonomy.budget` limb crossed its warn threshold (80% of the
+   * cap) — the PRE-TRIP signal, fired once per (root, limb) so an operator sees
+   * a session approaching its budget BEFORE the abort wedges it. Counts + the
+   * closed limb/unit labels + the rootRunId ONLY.
+   */
+  "autonomy:budget_warning": {
+    rootRunId: string;
+    /** The warning limb: `tokens` | `wallClockMs` | `aggregateUsd`. */
+    limb: string;
+    /** The limb's running total, in `unit`. */
+    spent: number;
+    /** The limb's configured cap, in `unit`. */
+    cap: number;
+    /** The unit of `spent`/`cap`: `tokens` | `ms` | `usd`. */
+    unit: string;
+    /** spent/cap at emit time (≥ the 0.8 warn threshold). */
+    fraction: number;
+    timestamp: number;
+  };
+
+  /**
    * A spawn tree was HARD-killed (run.kill). DISTINCT from revoke —
    * kill flips durable status to 'revoked' INDISTINGUISHABLY from a cooperative
    * revoke in the table, so the separate EVENT is the only way to count killed

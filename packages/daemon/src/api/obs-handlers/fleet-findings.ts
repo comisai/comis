@@ -25,6 +25,7 @@ import {
   deliveryDeadletteredFromRow,
   flaggedPostureKeys,
   healthSignalLabel,
+  healthSignalReason,
   multilingualFromRow,
   nodeBudgetExceededFromRow,
   orchestrateEfficiencyFromRow,
@@ -142,16 +143,41 @@ export function buildFindings(
 
   // health_signal — one finding per closed `signal` label (counts only). The
   // dedicated-signal labels are EXCLUDED here (they get dedicated findings below).
+  // Severity-info rows are EXCLUDED too: the ingest layer stamps benign
+  // reasons (session_rebase / serialized_wait — BENIGN_DAG_DEGRADED_REASONS)
+  // severity "info" precisely so they do not read as degradation; folding them
+  // here anyway surfaced a fresh session's once-per-start rebase as an
+  // actionable lcd_divergence finding with a dead-end hint. Only warning+
+  // rows are findings (the model_health rollup's established discipline).
   const bySignal = new Map<string, number>();
+  // Per-signal reason breakdown — which failure class recurred (the row's
+  // details.reason), so a recurring finding names it without a per-session explain.
+  const reasonsBySignal = new Map<string, Map<string, number>>();
   for (const row of healthSignals) {
+    if (row.severity === "info") continue;
     const label = healthSignalLabel(row);
     if (DEDICATED_SCRIPT_SIGNALS.has(label)) continue;
     bySignal.set(label, (bySignal.get(label) ?? 0) + 1);
+    const reason = healthSignalReason(row);
+    if (reason !== undefined) {
+      const byReason = reasonsBySignal.get(label) ?? new Map<string, number>();
+      byReason.set(reason, (byReason.get(reason) ?? 0) + 1);
+      reasonsBySignal.set(label, byReason);
+    }
   }
   for (const [label, count] of bySignal) {
+    // Deterministic per-reason breakdown (count desc, then reason asc) appended
+    // to the detail when the signal's rows carried reasons.
+    const byReason = reasonsBySignal.get(label);
+    const breakdown = byReason
+      ? [...byReason.entries()]
+          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+          .map(([reason, n]) => `${reason}=${n}`)
+          .join(", ")
+      : "";
     findings.push({
       code: `health_signal:${label}`,
-      detail: `${count} ${label} health signal(s) in the window`,
+      detail: `${count} ${label} health signal(s) in the window${breakdown ? ` (${breakdown})` : ""}`,
       count,
       hint: "run `comis explain` on an affected session; inspect the recurring health WARNs",
     });

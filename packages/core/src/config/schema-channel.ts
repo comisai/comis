@@ -172,6 +172,55 @@ export const IrcChannelEntrySchema = ChannelEntrySchema.extend({
   nickservPassword: SecretRefOrStringSchema.optional(),
 });
 
+/**
+ * Microsoft Teams via the Bot Framework Connector.
+ *
+ * A dedicated entry rather than an extension of the base channel schema: Teams
+ * authenticates with an app registration (app ID + credential + tenant) instead
+ * of a single bot token. Inbound activities arrive as authenticated POSTs on the
+ * gateway's HTTP/TLS surface, so enabling this channel also requires the gateway
+ * to be enabled.
+ */
+export const MsTeamsChannelEntrySchema = z.strictObject({
+  /** Whether this channel is active */
+  enabled: z.boolean().default(false),
+  /** Credential mode for the bot app registration */
+  authMode: z.enum(["secret", "certificate", "managedIdentity"]).default("secret"),
+  /** Bot application (client) ID */
+  appId: z.string().optional(),
+  /** App password / client secret (string or SecretRef) */
+  appPassword: SecretRefOrStringSchema.optional(),
+  /** Directory (tenant) ID; single-tenant registration, required when enabled */
+  tenantId: z.string().optional(),
+  /** Client certificate path (certificate credential mode) */
+  certPath: z.string().optional(),
+  /** Managed-identity client ID (managed-identity credential mode) */
+  managedIdentityClientId: z.string().optional(),
+  /** Allowed sender IDs — aadObjectId or conversation.id (empty honors allowMode) */
+  allowFrom: z.array(z.string()).default([]),
+  /** Allowlist mode: "allowlist" (default, blocks all unless listed) or "open" */
+  allowMode: z.enum(["allowlist", "open"]).default("allowlist"),
+  /** Extra hosts permitted for inbound media fetches */
+  mediaAuthAllowHosts: z.array(z.string()).optional(),
+  /** Target cloud environment */
+  cloud: z.enum(["public"]).default("public"),
+  /**
+   * Silence window (ms) after which the daemon raises a missed-inbound alert
+   * for this webhook channel. Webhook adapters are exempt from the health
+   * monitor's stale-reap, so a dead ingress reports healthy indefinitely; a
+   * dedicated liveness timer compares the inbound-only last-received timestamp
+   * to this threshold and, on breach, emits a `channel:inbound_silent` event +
+   * a WARN that surface as a `comis fleet` health signal. The check interval is
+   * derived from this value, so it is floored at 1 minute — a smaller window
+   * would drive a CPU-pegging busy-loop poll. Default: 6 hours.
+   */
+  missedInboundThresholdMs: z.number().int().min(60_000).default(21_600_000),
+  /** Per-channel media processing overrides (defaults: all enabled) */
+  mediaProcessing: MediaProcessingSchema.optional(),
+  /** Ack reaction sent when the agent starts processing a message */
+  ackReaction: AckReactionConfigSchema.optional(),
+});
+
 // ---------------------------------------------------------------------------
 // Health check config
 // ---------------------------------------------------------------------------
@@ -216,6 +265,7 @@ export const ChannelConfigSchema = z.strictObject({
     line: LineChannelEntrySchema.default(() => LineChannelEntrySchema.parse({})),
     irc: IrcChannelEntrySchema.default(() => IrcChannelEntrySchema.parse({})),
     email: EmailChannelEntrySchema.default(() => EmailChannelEntrySchema.parse({})),
+    msteams: MsTeamsChannelEntrySchema.default(() => MsTeamsChannelEntrySchema.parse({})),
     /** Health monitoring configuration */
     healthCheck: ChannelHealthCheckSchema.default(() => ChannelHealthCheckSchema.parse({})),
   });
@@ -227,4 +277,5 @@ export type IMessageChannelEntry = z.infer<typeof IMessageChannelEntrySchema>;
 export type LineChannelEntry = z.infer<typeof LineChannelEntrySchema>;
 export type EmailChannelEntry = z.infer<typeof EmailChannelEntrySchema>;
 export type IrcChannelEntry = z.infer<typeof IrcChannelEntrySchema>;
+export type MsTeamsChannelEntry = z.infer<typeof MsTeamsChannelEntrySchema>;
 export type ChannelConfig = z.infer<typeof ChannelConfigSchema>;

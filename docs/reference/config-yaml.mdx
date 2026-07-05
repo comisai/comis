@@ -1119,6 +1119,27 @@ Channel adapter configuration. Each key is a channel platform name.
 | `channels` | `string[]` | _(unset)_ | Channels to auto-join on connect |
 | `nickservPassword` | `string \| SecretRef` | _(unset)_ | NickServ password for identification |
 
+**Microsoft Teams (channels.msteams)**
+
+Teams authenticates with an app registration rather than a single bot token. Inbound activities arrive as authenticated HTTPS POSTs on the gateway, so enabling this channel also requires the gateway to be enabled (`gateway.enabled: true`) — it rides the gateway's existing host/port and TLS surface; no separate port is opened. While `enabled` is `false` no inbound route is mounted.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Whether this channel is active (opt-in) |
+| `authMode` | `enum` | `"secret"` | Credential mode: `secret`, `certificate`, or `managedIdentity` |
+| `appId` | `string` | _(unset)_ | Bot application (client) ID |
+| `appPassword` | `string \| SecretRef` | _(unset)_ | App password / client secret. A secret — supply a `SecretRef` or a plain string, or set it via the `MSTEAMS_APP_PASSWORD` environment variable |
+| `tenantId` | `string` | _(unset)_ | Directory (tenant) ID; single-tenant registration, required when enabled |
+| `certPath` | `string` | _(unset)_ | Client certificate path (certificate credential mode) |
+| `managedIdentityClientId` | `string` | _(unset)_ | Managed-identity client ID (managed-identity credential mode) |
+| `allowFrom` | `string[]` | `[]` | Allowed sender IDs — each an `aadObjectId` or a `conversation.id` |
+| `allowMode` | `enum` | `"allowlist"` | Sender gate: `allowlist` (default, blocks all unless listed) or `open` |
+| `mediaAuthAllowHosts` | `string[]` | _(Connector hosts)_ | Hosts allowed to receive the bot's auth token on an inbound media fetch. When unset, the token rides only the built-in Bot Framework Connector attachment hosts and is dropped on any cross-host redirect; set this to override that built-in list |
+| `cloud` | `enum` | `"public"` | Target cloud environment |
+| `missedInboundThresholdMs` | `number` | `21600000` (6h) | Silence window before a missed-inbound alert fires. Webhook channels are exempt from the health monitor's stale-reap, so a dead ingress reports healthy indefinitely; a dedicated liveness timer compares the last inbound-activity timestamp to this threshold and, on breach, emits a `channel:inbound_silent` event + a WARN that surface as a `comis fleet` health signal (`health_signal:channel_ingress_silent`). Must be a positive integer |
+| `mediaProcessing` | `MediaProcessing` | _(all true)_ | Per-channel media processing overrides |
+| `ackReaction` | `AckReaction` | _(disabled)_ | Ack reaction sent when the agent starts processing |
+
 ```yaml
 channels:
   telegram:
@@ -1136,6 +1157,12 @@ channels:
     botToken: "${SLACK_BOT_TOKEN}"
     appToken: "${SLACK_APP_TOKEN}"
     mode: socket
+  msteams:
+    enabled: true
+    appId: "00000000-0000-0000-0000-000000000000"
+    appPassword: "${MSTEAMS_APP_PASSWORD}"
+    tenantId: "00000000-0000-0000-0000-000000000000"
+    allowFrom: ["29:1abcAADObjectId"]
 ```
 
 <Info>See the [Channels](/channels/index) section for platform-specific setup guides.</Info>

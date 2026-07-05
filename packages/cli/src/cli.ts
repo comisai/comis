@@ -11,8 +11,8 @@
  * @module
  */
 
-import { createRequire } from "node:module";
 import { Command } from "commander";
+import { readCliVersion } from "./util/cli-version.js";
 import { registerAgentCommand } from "./commands/agent.js";
 import { registerAuthCommand } from "./commands/auth.js";
 import { registerCacheCommand } from "./commands/cache.js";
@@ -40,14 +40,12 @@ import { registerOrchestrateCommand } from "./commands/orchestrate.js";
 import { registerWhoamiCommand } from "./commands/whoami.js";
 import { registerCostExportCommand } from "./commands/cost-export.js";
 import { registerFleetCommand } from "./commands/fleet.js";
+import { registerSupportBundleCommand } from "./commands/support-bundle.js";
 import { registerUninstallCommand } from "./commands/uninstall.js";
 
 export const program = new Command();
 
-const cliRequire = createRequire(import.meta.url);
-const cliPkg = cliRequire("../package.json") as { version: string };
-
-program.name("comis").description("Comis AI agent management CLI").version(cliPkg.version);
+program.name("comis").description("Comis AI agent management CLI").version(readCliVersion() ?? "");
 
 // Register command groups
 registerDaemonCommand(program);
@@ -77,6 +75,7 @@ registerOrchestrateCommand(program);
 registerWhoamiCommand(program);
 registerCostExportCommand(program);
 registerFleetCommand(program);
+registerSupportBundleCommand(program);
 registerUninstallCommand(program);
 
 // Parse and execute

@@ -39,6 +39,8 @@ import {
   type SpendAccumulator,
   type SpendGateConfig,
   type SpendGateOutcome,
+  type SpendLimb,
+  type SpendUnit,
 } from "@comis/agent";
 
 /** The per-root budget surface (the composite `BoundedAutonomy` holds one). */
@@ -73,7 +75,11 @@ export interface PerRootBudget {
    * @param rootRunId the tree root the spend accrues to (scope `agentId`).
    * @param provider the LLM/web provider id (consumed by the 3-state pricing gate).
    * @param model the model id at the provider (consumed by the 3-state pricing gate).
-   * @param estUsd the conservative estimated dollars for this call (the $-limb).
+   * @param estUsd the dollars this call accrues into the $-limb. The accumulator
+   *   has NO separate actual-adder and nothing reconciles a reserve after the
+   *   fact — whatever is passed here IS the root's recorded spend, so callers
+   *   pass the actual billed cost when known (the bridge reserves post-record).
+   *   A worst-case estimate here permanently consumes the ceiling.
    * @param estTokens the estimated tokens for this call (the token limb + the
    *   `burnedTokens` discriminator the 3-state gate reads).
    */
@@ -126,6 +132,14 @@ export function createPerRootBudget(deps: {
   clock: ClockPort;
   config: { aggregateUsd: number; tokens: number; wallClockMs: number };
   logger: ComisLogger;
+  /**
+   * Fired ONCE per (root, limb) when a limb crosses {@link WARN_FRACTION} of
+   * its cap — the PRE-TRIP signal (the wiring emits `autonomy:budget_warning`
+   * so the fleet lens sees a session approaching its budget BEFORE the abort
+   * wedges it). Re-armed by {@link PerRootBudget.evictRoot}. Optional — absent
+   * ⇒ no warning surface (existing callers unchanged).
+   */
+  onLimbWarning?: (w: { rootRunId: string; limb: SpendLimb; spent: number; cap: number; unit: SpendUnit }) => void;
 }): PerRootBudget {
   const { clock, config } = deps;
   const logger = deps.logger.child({ submodule: "per-root-budget" });
@@ -134,18 +148,31 @@ export function createPerRootBudget(deps: {
   const rootStartMs = new Map<string, number>();
   const tokenTotals = new Map<string, number>();
 
+  // Pre-trip warn threshold + the once-per-(root,limb) guards. Cleared on
+  // evictRoot so a re-registered root warns afresh.
+  const WARN_FRACTION = 0.8;
+  const warnedLimbs = new Map<string, Set<string>>();
+  function warnLimb(rootRunId: string, limb: SpendLimb, spent: number, cap: number, unit: SpendUnit): void {
+    if (deps.onLimbWarning === undefined) return;
+    const limbs = warnedLimbs.get(rootRunId) ?? new Set<string>();
+    if (limbs.has(limb)) return;
+    limbs.add(limb);
+    warnedLimbs.set(rootRunId, limbs);
+    deps.onLimbWarning({ rootRunId, limb, spent, cap, unit });
+  }
+
   // A SEPARATE per-root $ accumulator — the per-(tenant,agent) dimension is the
   // per-root $-cap (scope agentId=rootRunId); tenant/global are off (the
-  // daemon-wide accumulator owns those). warnAtFraction is set at the cap (1) so
-  // a granted reserve carries no warn — this meter has no bus wiring (the routing
-  // layer acts only on the `exceeded` outcome).
+  // daemon-wide accumulator owns those). warnAtFraction matches WARN_FRACTION:
+  // a granted reserve past the threshold carries `warn`, which reserveBudget
+  // routes to the once-per-(root,limb) onLimbWarning — the pre-trip signal.
   const perRootUsdAccumulator: SpendAccumulator = createSpendAccumulator({
     clock,
     ceilings: {
       perAgentUsd: config.aggregateUsd,
       perTenantUsd: null,
       daemonGlobalUsd: null,
-      warnAtFraction: 1,
+      warnAtFraction: WARN_FRACTION,
     },
   });
 
@@ -166,10 +193,11 @@ export function createPerRootBudget(deps: {
     },
 
     evictRoot(rootRunId): void {
-      // Drop the two unbounded maps this module owns. Bounded by the
+      // Drop the unbounded maps this module owns. Bounded by the
       // semaphore's release-to-zero hook (the composite calls this then).
       rootStartMs.delete(rootRunId);
       tokenTotals.delete(rootRunId);
+      warnedLimbs.delete(rootRunId);
     },
 
     reserveBudget(rootRunId, provider, model, estUsd, estTokens): SpendGateOutcome {
@@ -188,6 +216,9 @@ export function createPerRootBudget(deps: {
         rootStartMs.set(rootRunId, startMs);
       }
       const elapsedMs = clock.now() - startMs;
+      if (elapsedMs <= config.wallClockMs && elapsedMs >= WARN_FRACTION * config.wallClockMs) {
+        warnLimb(rootRunId, "wallClockMs", elapsedMs, config.wallClockMs, "ms");
+      }
       if (elapsedMs > config.wallClockMs) {
         logger.warn(
           { rootRunId, elapsedMs, capMs: config.wallClockMs, errorKind: "resource" as const },
@@ -210,6 +241,9 @@ export function createPerRootBudget(deps: {
         return { kind: "exceeded", error: new SpendError("agent", priorTokens, config.tokens, estTokens, "tokens", "tokens") };
       }
       tokenTotals.set(rootRunId, nextTokens);
+      if (nextTokens >= WARN_FRACTION * config.tokens) {
+        warnLimb(rootRunId, "tokens", nextTokens, config.tokens, "tokens");
+      }
 
       // ── Limb 3: $ via the existing 3-state gate (free→never trips; unknown+burn→
       // unpriceable/refuse; priced→atomic per-root reserve). burnedTokens = the
@@ -225,7 +259,33 @@ export function createPerRootBudget(deps: {
       );
       // checkSpendCeiling returns ok(...) on every branch (the breach is an
       // `exceeded` outcome, not an err); the Result err arm is defensive.
-      return r.ok ? r.value : { kind: "exceeded", error: r.error };
+      const outcome: SpendGateOutcome = r.ok ? r.value : { kind: "exceeded", error: r.error };
+      // The granted-reserve warn from the 3-state gate (post-reserve fraction
+      // >= WARN_FRACTION) is the $-limb's pre-trip signal.
+      if (outcome.kind === "ok" && outcome.warn !== null && outcome.warn !== undefined) {
+        warnLimb(rootRunId, "aggregateUsd", outcome.warn.totalUsd, outcome.warn.capUsd, "usd");
+      }
+      // Brand a $-limb trip with its limb identity. The gate's SpendError is
+      // shared with the daemon-wide observability.spend ceiling and carries no
+      // limb; without it the execution.aborted event has no perRootBudget
+      // payload for exactly this limb, and the explain spend verdict points
+      // the operator at observability.spend.* — the wrong knob tree for a
+      // per-root trip (the knob is autonomy.budget.aggregateUsd). The token
+      // and wall-clock limbs above already self-identify.
+      if (outcome.kind === "exceeded" && outcome.error.limb === undefined) {
+        return {
+          kind: "exceeded",
+          error: new SpendError(
+            outcome.error.scope,
+            outcome.error.currentUsd,
+            outcome.error.capUsd,
+            outcome.error.estUsd,
+            "aggregateUsd",
+            "usd",
+          ),
+        };
+      }
+      return outcome;
     },
 
     remaining(rootRunId): {

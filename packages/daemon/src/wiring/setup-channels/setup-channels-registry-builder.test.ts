@@ -16,7 +16,7 @@
 
 import { describe, it, expect } from "vitest";
 import type { ChannelPluginPort, ChannelCapability, ChannelPort } from "@comis/core";
-import { buildReadOnlyChannelRegistry } from "./setup-channels-registry-builder.js";
+import { buildChannelCredentialMap, buildReadOnlyChannelRegistry } from "./setup-channels-registry-builder.js";
 
 function makeStubAdapter(channelType: string): ChannelPort {
   return {
@@ -135,5 +135,18 @@ describe("buildReadOnlyChannelRegistry", () => {
     if (!result.ok) {
       expect(result.error.message).toMatch(/read-only/);
     }
+  });
+});
+
+describe("buildChannelCredentialMap", () => {
+  it("maps MSTEAMS_APP_PASSWORD to msteams when the msteams channel is enabled", () => {
+    // Enables targeted reconnect when the Teams app-password secret changes.
+    const m = buildChannelCredentialMap({ msteams: { enabled: true } });
+    expect(m.get("MSTEAMS_APP_PASSWORD")).toBe("msteams");
+  });
+
+  it("omits the msteams credential entry when msteams is disabled or absent", () => {
+    expect(buildChannelCredentialMap({ msteams: { enabled: false } }).has("MSTEAMS_APP_PASSWORD")).toBe(false);
+    expect(buildChannelCredentialMap({}).has("MSTEAMS_APP_PASSWORD")).toBe(false);
   });
 });

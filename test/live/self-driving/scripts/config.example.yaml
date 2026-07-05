@@ -39,6 +39,21 @@ channels:
     apiRoot: "http://127.0.0.1:PORT"                 # the kernel-allocated port from /tmp/comis-emu.json
     allowFrom:                                       # ONLY these senders reach the agent (un-listed => dropped at ingress,
       - "678314278"                                  # no turn). Drop/replace this id to test the not-allowed path (01-SETUP §3).
+  # Microsoft Teams self-drive — the INVERSE of Telegram (inbound is a signed webhook the
+  # daemon EXPOSES; outbound goes to the Bot Framework Connector). Uncomment to drive Teams
+  # via the emulator (test/live/bin/vps-emu-msteams.ts). The two loopback bridges are set as
+  # OFF-BY-DEFAULT ENV VARS on the daemon launch (NOT config keys) — never set them in prod:
+  #   COMIS_MSTEAMS_TEST_JWKS=<jwksPath>       # local-JWKS ingress validator (emulator's key)
+  #   COMIS_MSTEAMS_TEST_CONNECTOR=<apiRoot>   # redirect Connector egress → the loopback emulator
+  # Both paths are printed as `daemonEnv` in /tmp/comis-msteams-emu.json when the emulator boots.
+  # msteams:
+  #   enabled: true
+  #   authMode: secret
+  #   appId: "test-app-id"                           # == the emulator's appId (the inbound token aud)
+  #   tenantId: "00000000-0000-0000-0000-000000000001"
+  #   appPassword: "any-non-empty"                   # the emulator never validates it (it IS the Connector)
+  #   allowMode: open                                # process any sender (or allowlist aadObjectIds)
+  #   cloud: public                                  # outbound host is locked to smba.trafficmanager.net
 integrations:
   media:
     transcription:

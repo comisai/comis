@@ -7,6 +7,8 @@ import {
   sessionSummaryEventToRow,
   dagDegradedEventToRow,
   healthBudgetExceededEventToRow,
+  channelInboundSilentEventToRow,
+  channelIngressAuthRejectedEventToRow,
   reflectFunnelEventToRow,
   lifecycleSweptEventToRow,
   wakeGateEventToRow,
@@ -22,6 +24,7 @@ import {
   durableOrphanedEventToRow,
   durableResumedEventToRow,
   autonomyRevokedEventToRow,
+  autonomyBudgetWarningEventToRow,
   autonomyKilledEventToRow,
   autonomyDenialBreakerEventToRow,
   setupObsPersistence,
@@ -585,6 +588,102 @@ describe("healthBudgetExceededEventToRow", () => {
 
     const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
     expect(details).toEqual({ signal: "alert_budget", kind: "dependency", count: 5, windowMs: 60_000 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// channelInboundSilentEventToRow (dead webhook ingress → health_signal)
+// ---------------------------------------------------------------------------
+
+describe("channelInboundSilentEventToRow", () => {
+  it("maps a channel:inbound_silent payload to a warning health_signal row (labels/counts only)", () => {
+    const row = channelInboundSilentEventToRow({
+      channelType: "msteams",
+      lastInboundAt: null,
+      silentForMs: 25_200_000,
+      thresholdMs: 21_600_000,
+      timestamp: 3000,
+    });
+
+    expect(row.timestamp).toBe(3000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.message).toBe("channel:inbound_silent");
+    // Daemon-global signal — no agentId/sessionKey/traceId.
+    expect(row.agentId).toBeUndefined();
+    expect(row.sessionKey).toBeUndefined();
+    expect(row.traceId).toBeUndefined();
+
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    // The label the generic health_signal:<label> fleet rollup groups on, plus
+    // channelType + counts only — no message bodies.
+    expect(details).toEqual({
+      signal: "channel_ingress_silent",
+      channelType: "msteams",
+      silentForMs: 25_200_000,
+      thresholdMs: 21_600_000,
+    });
+  });
+
+  it("preserves a numeric lastInboundAt via the counts-only details (no bodies leak)", () => {
+    const row = channelInboundSilentEventToRow({
+      channelType: "msteams",
+      lastInboundAt: 1000,
+      silentForMs: 30_000,
+      thresholdMs: 21_600_000,
+      timestamp: 4000,
+    });
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details.signal).toBe("channel_ingress_silent");
+    expect(details.silentForMs).toBe(30_000);
+    // lastInboundAt is a timestamp, not a body — kept out of details (counts only).
+    expect(details.lastInboundAt).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// channelIngressAuthRejectedEventToRow (rejected ingress auth → health_signal)
+// ---------------------------------------------------------------------------
+
+describe("channelIngressAuthRejectedEventToRow", () => {
+  it("maps a channel:ingress_auth_rejected payload to a warning health_signal row (labels only)", () => {
+    const row = channelIngressAuthRejectedEventToRow({
+      channelType: "msteams",
+      reason: "invalid_token",
+      timestamp: 5000,
+    });
+
+    expect(row.timestamp).toBe(5000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.message).toBe("channel:ingress_auth_rejected");
+    // Daemon-global signal — no agentId/sessionKey/traceId.
+    expect(row.agentId).toBeUndefined();
+    expect(row.sessionKey).toBeUndefined();
+    expect(row.traceId).toBeUndefined();
+
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    // The label the generic health_signal:<label> fleet rollup groups on, plus
+    // the channel label + the closed reason class only — no token, header, or body.
+    expect(details).toEqual({
+      signal: "channel_ingress_auth_rejected",
+      channelType: "msteams",
+      reason: "invalid_token",
+    });
+  });
+
+  it("carries the missing_bearer reason class content-free (no token material can leak)", () => {
+    const row = channelIngressAuthRejectedEventToRow({
+      channelType: "msteams",
+      reason: "missing_bearer",
+      timestamp: 6000,
+    });
+    const serialized = JSON.stringify(row);
+    expect(serialized).not.toContain("Bearer");
+    expect(serialized).not.toContain("authorization");
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details.signal).toBe("channel_ingress_auth_rejected");
+    expect(details.reason).toBe("missing_bearer");
   });
 });
 
@@ -1285,6 +1384,32 @@ describe("durableResumedEventToRow", () => {
     expect(details.stepIndex).toBe(4);
     expect(details.rootRunId).toBe("root-resumed");
     expect(Object.keys(details).sort()).toEqual(["rootRunId", "signal", "stepIndex"]);
+  });
+});
+
+describe("autonomyBudgetWarningEventToRow", () => {
+  it("maps autonomy:budget_warning to a health_signal row (severity warning) with limb + counts only", () => {
+    // The pre-trip budget warning: a session at 80% of an autonomy.budget limb
+    // must surface on the fleet lens BEFORE the abort wedges it (observed
+    // live: the wedge arrived with zero warning). Counts + closed labels only.
+    const row = autonomyBudgetWarningEventToRow({
+      rootRunId: "root-session-default:u1:c1",
+      limb: "aggregateUsd",
+      spent: 1.7,
+      cap: 2,
+      unit: "usd",
+      fraction: 0.85,
+      timestamp: 5_000,
+    });
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    const details = JSON.parse(row.details) as Record<string, unknown>;
+    expect(details.signal).toBe("autonomy_budget_warning");
+    expect(details.limb).toBe("aggregateUsd");
+    expect(details.spent).toBe(1.7);
+    expect(details.cap).toBe(2);
+    expect(details.unit).toBe("usd");
+    expect(details.rootRunId).toBe("root-session-default:u1:c1");
   });
 });
 
@@ -1999,6 +2124,32 @@ describe("auditEventToRow (the content-free audit row-builder)", () => {
       undefined,
     );
     expect(row.kind).toBe(expectedKind);
+  });
+
+  it("a routine secret READ (successful get / expected-absent probe) persists severity info — denials stay warning", () => {
+    // Observed live: every daemon boot probes ~10 optional provider keys
+    // (outcome not_found) and the canary reads its env seed on every inbound
+    // message — all stamped severity "warning" on a perfectly healthy install,
+    // inflating every severity-filtered audit sweep. A routine read resolution
+    // is the audit TRAIL, not an alert; only denials/errors (and mutations,
+    // pinned below) belong at warning.
+    const probeNotFound = auditEventToRow(
+      { timestamp: 1, agentId: "a", tenantId: "t", actionType: "ANTHROPIC_API_KEY", kind: "secret_access", classification: "read", outcome: "not_found" } as EventMap["audit:event"],
+      "t", "a", undefined,
+    );
+    expect(probeNotFound.severity).toBe("info");
+
+    const readOk = auditEventToRow(
+      { timestamp: 1, agentId: "a", tenantId: "t", actionType: "secrets.get", kind: "secret_access", classification: "read", outcome: "success" } as EventMap["audit:event"],
+      "t", "a", undefined,
+    );
+    expect(readOk.severity).toBe("info");
+
+    const denied = auditEventToRow(
+      { timestamp: 1, agentId: "a", tenantId: "t", actionType: "secrets.get", kind: "secret_access", classification: "read", outcome: "denied" } as EventMap["audit:event"],
+      "t", "a", undefined,
+    );
+    expect(denied.severity).toBe("warning");
   });
 
   it("a secrets.delete persists as a security-signal kind (severity warning), not generic info", () => {

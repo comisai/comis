@@ -172,6 +172,19 @@ function buildConfigObject(state: WizardState): Record<string, unknown> {
       if (ch.type === "line" && ch.botToken) entry.channelAccessToken = "${LINE_CHANNEL_ACCESS_TOKEN}";
       if (ch.type === "line" && ch.channelSecret) entry.channelSecret = "${LINE_CHANNEL_SECRET}";
 
+      // Microsoft Teams: appId/tenantId/authMode are non-secret config written
+      // inline; only appPassword (the client secret) becomes a ${VAR} ref —
+      // mirrors slack signingSecret -> ${SLACK_SIGNING_SECRET}. The generic
+      // botToken fallback below does NOT fit Teams (it has no botToken), so this
+      // explicit block is required (paired with the collectManagedSecrets branch
+      // below, or the reference would dangle).
+      if (ch.type === "msteams") {
+        if (ch.appId) entry.appId = ch.appId;
+        if (ch.appPassword) entry.appPassword = "${MSTEAMS_APP_PASSWORD}";
+        if (ch.tenantId) entry.tenantId = ch.tenantId;
+        if (ch.authMode) entry.authMode = ch.authMode;
+      }
+
       // Generic fallback for other channel types
       if (ch.botToken && !entry.botToken && !entry.accessToken && !entry.channelAccessToken) {
         entry.botToken = `\${${ch.type.toUpperCase()}_BOT_TOKEN}`;
@@ -253,6 +266,13 @@ function collectManagedSecrets(state: WizardState): Map<string, string> {
       if (ch.channelSecret && ch.type === "line") {
         const lineEnvKeys = CHANNEL_ENV_KEYS["line"];
         if (lineEnvKeys?.[1]) managed.set(lineEnvKeys[1], ch.channelSecret);
+      }
+      // Microsoft Teams' secret is appPassword (not botToken/apiKey/channelSecret),
+      // so it needs its own branch — this is the join that keeps the config's
+      // ${MSTEAMS_APP_PASSWORD} reference from being a dangling, boot-fatal ref.
+      if (ch.appPassword && ch.type === "msteams") {
+        const msteamsEnvKeys = CHANNEL_ENV_KEYS["msteams"];
+        if (msteamsEnvKeys?.[0]) managed.set(msteamsEnvKeys[0], ch.appPassword);
       }
       if (ch.appToken) managed.set(`${ch.type.toUpperCase()}_APP_TOKEN`, ch.appToken);
     }

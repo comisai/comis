@@ -12,7 +12,6 @@
 import type { Command } from "commander";
 import * as os from "node:os";
 import { existsSync } from "node:fs";
-import { createRequire } from "node:module";
 import Database from "better-sqlite3";
 import { success, error, info } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
@@ -22,6 +21,7 @@ import { configHealthCheck } from "../doctor/checks/config-health.js";
 import { daemonHealthCheck } from "../doctor/checks/daemon-health.js";
 import { gatewayHealthCheck } from "../doctor/checks/gateway-health.js";
 import { channelHealthCheck } from "../doctor/checks/channel-health.js";
+import { msteamsHealthCheck } from "../doctor/checks/msteams-health.js";
 import { workspaceHealthCheck } from "../doctor/checks/workspace-health.js";
 import { oauthHealthCheck } from "../doctor/checks/oauth-health.js";
 import { lcdHealthCheck } from "../doctor/checks/lcd-health.js";
@@ -33,26 +33,10 @@ import { repairWorkspace } from "../doctor/repairs/repair-workspace.js";
 import { repairConfigAudit } from "../doctor/repairs/repair-config-audit.js";
 import { repairFtsDrift, repairContextItems } from "../doctor/repairs/repair-lcd.js";
 import { resolveDoctorConfig } from "../doctor/config-resolve.js";
+import { readCliVersion } from "../util/cli-version.js";
 import type { DoctorContext } from "../doctor/types.js";
 
-/**
- * This CLI's own version, read from `packages/cli/package.json` (mirrors how
- * `cli.ts` sets `program.version`). Threaded onto the DoctorContext so the
- * version-skew check compares it against the daemon's reported version without
- * re-reading the package at check time. `undefined` if the read fails (the
- * check then degrades to its own package.json fallback / a skip).
- */
-function readCliVersion(): string | undefined {
-  try {
-    const req = createRequire(import.meta.url);
-    const pkg = req("../../package.json") as { version?: string };
-    return pkg.version;
-  } catch {
-    return undefined;
-  }
-}
-
-/** All doctor checks in execution order (9 categories). */
+/** All doctor checks in execution order (10 checks). */
 const ALL_CHECKS = [
   configHealthCheck,
   daemonHealthCheck,
@@ -62,6 +46,10 @@ const ALL_CHECKS = [
   // schema failures (stale global `comis` incident).
   versionSkewHealthCheck,
   channelHealthCheck,
+  // Teams is a webhook channel (stale-reap-exempt), so its liveness cannot ride
+  // the health monitor — this check probes creds, the mounted ingress endpoint,
+  // recent INBOUND-ONLY activity, and tenant presence directly.
+  msteamsHealthCheck,
   workspaceHealthCheck,
   oauthHealthCheck,
   secretsAuditHealthCheck,
@@ -129,8 +117,8 @@ function buildDoctorContext(configPaths: string[]): DoctorContext {
  * Register the `doctor` command on the program.
  *
  * Provides:
- * - `comis doctor` -- run 8 health check categories (config, daemon, gateway,
- *   channel, workspace, OAuth, secrets-audit, LCD store)
+ * - `comis doctor` -- run 10 health check categories (config, daemon, gateway,
+ *   version-skew, channel, Teams, workspace, OAuth, secrets-audit, LCD store)
  * - `comis doctor --repair` -- auto-fix repairable issues
  * - `comis doctor --refresh-test` -- opt-in refresh probe per profile.
  *   WARNING: rotates the refresh token at OpenAI.
@@ -141,7 +129,7 @@ export function registerDoctorCommand(program: Command): void {
   program
     .command("doctor")
     .description(
-      "Diagnose configuration, daemon, gateway, channel, workspace, and OAuth health",
+      "Diagnose 10 subsystems: configuration, daemon, gateway, version-skew, channel, Teams, workspace, OAuth, secrets-audit, and LCD health",
     )
     .option("--repair", "Auto-fix repairable issues")
     .option("-c, --config <paths...>", "Config file paths to check")

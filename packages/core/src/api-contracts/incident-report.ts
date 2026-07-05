@@ -463,6 +463,50 @@ export const IncidentReportSchema = z.object({
       unit: z.string(),
     })
     .optional(),
+  /** The terminal user-surface state: which outcome the activity renderer's
+   *  finalize painted (the kept "❌ {errorKind}" pill / deleted scaffold /
+   *  no-op — deterministic per strategy), and whether an observed failed
+   *  event RECLASSIFIED a success outcome to failure. Answers "what did the
+   *  user's chat show this turn" from the trajectory alone. From the LAST
+   *  `activity.turn_finalized` record; absent when none. */
+  activityFinalize: z
+    .object({
+      /** The renderer strategy that painted the surface (EditPlace / AppendOnly / …). */
+      strategy: z.string(),
+      /** The EFFECTIVE outcome kind dispatched to the renderer. */
+      outcome: z.string(),
+      /** The failure errorKind, when the outcome is a failure. */
+      errorKind: z.string().optional(),
+      /** The fixed one-line resource-abort reason, when present. */
+      reason: z.string().optional(),
+      /** True when a failed event flipped a non-failure outcome to failure. */
+      reclassified: z.boolean(),
+    })
+    .optional(),
+  /** Silent-failure recovery attempts folded from the session's
+   *  `execution.recovery_attempted` records — the model re-entries
+   *  (silent_retry / lkw_fallback / continuation_nudge) that were previously
+   *  log-only. `total` attempts, `succeeded` count, and per-reason counts.
+   *  Absent ⇒ no recovery attempts this session. */
+  recoveries: z
+    .object({
+      total: z.number(),
+      succeeded: z.number(),
+      byReason: z.record(z.string(), z.number()),
+    })
+    .optional(),
+  /** Reply blocks an aborted execution left UNSENT — the pacer's hard stop
+   *  never reaches the delivery service, so no `delivery.dispatched` fires
+   *  and the user silently receives nothing. Σ over the session's
+   *  `delivery.aborted` records; absent when none. */
+  deliverySkipped: z
+    .object({
+      /** How many aborted-delivery events the session recorded. */
+      events: z.number(),
+      /** Total blocks that were never sent across those events. */
+      chunksNotSent: z.number(),
+    })
+    .optional(),
   /** Distinct turns (envelope traceId) the
    *  trajectory spans. Present only when >1 — it flags the whole-session toolStats as
    *  cumulative-across-N-turns (the trajectory JSONL is append-only across severs), so
@@ -557,6 +601,12 @@ export interface IncidentFailure {
   resultDigest: string;
   resultBytes: number;
   errorPreview: string;
+  /** The bounded+redacted argument shape the FAILED call was invoked with
+   *  (from the tool.result record's `argsPreview`): secrets/PII/paths masked,
+   *  each value capped (large values → "[N chars]"). Answers "what did the
+   *  failed call attempt?" without a raw conversation-store dive. Absent for a
+   *  failure record that carried no argsPreview (older trajectories). */
+  argsPreview?: Record<string, unknown>;
 }
 
 /**
@@ -756,6 +806,52 @@ export interface IncidentSignals {
    * not a per-root spend-abort.
    */
   perRootBudget?: { limb: string; spent: number; cap: number; unit: string };
+  /**
+   * The LAST `activity.turn_finalized` record — the terminal user-surface
+   * state the renderer painted (closed outcome kind + closed ErrorKind + a
+   * fixed named-constant reason + the strategy) and the reclassified flag.
+   * Absent ⇒ no finalize record in the trajectory.
+   */
+  turnFinalized?: {
+    strategy: string;
+    outcome: string;
+    errorKind?: string;
+    reason?: string;
+    reclassified: boolean;
+  };
+  /**
+   * Σ over the session's `delivery.aborted` records — aborted-delivery events
+   * and the blocks they left unsent (chunksNotSent = Σ(totalChunks −
+   * chunksDelivered)). Absent ⇒ no aborted deliveries.
+   */
+  deliveryAborts?: { events: number; chunksNotSent: number };
+  /**
+   * Recovery-attempt fold from `execution.recovery_attempted` records: total +
+   * succeeded tally + per-reason counts. Absent ⇒ no recovery attempts.
+   */
+  recoveries?: { total: number; succeeded: number; byReason: Record<string, number> };
+  /**
+   * Σ of the session's `session.summary` records' `turnCount` — the
+   * trajectory-derived turn total, preferred for `timing.turnCount` over the
+   * last-write-wins rollup turnCount. Absent ⇒ no summary records.
+   */
+  summaryTurnCount?: number;
+  /**
+   * Σ of the session's `session.summary` records' `costUsd` — the
+   * trajectory-derived session cost. Each summary record carries ONE
+   * execution's cost, while the sessionEnd rollup is overwritten per execution
+   * (last write wins), so the rollup's costUsd is the FINAL execution's cost
+   * only. The assembler prefers this sum; absent ⇒ no summary records in the
+   * trajectory (log-only session → rollup fallback). A single number.
+   */
+  summaryCostUsd?: number;
+  /**
+   * Σ of the session's `model.completed` records' token fields — the
+   * trajectory-derived token ledger. Source for `cost.totalTokens` and
+   * `cost.cacheReadRatio` (the rollup never carries a cache ratio). Counts
+   * only. Absent ⇒ no model.completed records in the trajectory.
+   */
+  modelTokens?: { input: number; output: number; cacheRead: number; cacheCreation: number };
   /**
    * The number of DISTINCT turns (envelope
    * `traceId`, one per agent turn) the trajectory spans. The session trajectory JSONL

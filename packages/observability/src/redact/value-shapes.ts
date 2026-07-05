@@ -2,12 +2,12 @@
 /**
  * Bundle-time value-shape redactors.
  *
- * The 11 patterns target the bundle export pipeline — distinct from
+ * The 13 patterns target the bundle export pipeline — distinct from
  * the Pino-level credential patterns in patterns.ts (which carry
  * different sentinel shape — edge-keeping masks, not `<REDACTED:type>`).
  *
  * Application contract:
- *   - redactString applies all 11 patterns to a string leaf.
+ *   - redactString applies all 13 patterns to a string leaf.
  *   - substitutePathsInString replaces literal filesystem paths with
  *     $WORKSPACE_DIR / $STATE_DIR / $HOME placeholders, longest-first.
  *     Uses String.replaceAll for literal matching — no regex metachar
@@ -22,10 +22,10 @@
  *
  * Pattern ordering: shape-anchored patterns (aws-access-key-id, jwt,
  * url-userinfo, url-param, email, long-decimal-id, basic-auth,
- * cookie-header) run BEFORE field-name patterns (secret-field,
- * payload-field, identifier-field) so a literal "Authorization: Basic …"
- * is caught by basic-auth first, with the residual "Authorization"
- * substring caught by the field-name pass.
+ * cookie-header, openai-key, bearer-token) run BEFORE field-name patterns
+ * (secret-field, payload-field, identifier-field) so a literal
+ * "Authorization: Basic …" is caught by basic-auth first, with the residual
+ * "Authorization" substring caught by the field-name pass.
  *
  * Path substitution ordering: workspaceDir before stateDir before homeDir —
  * sorted by literal path length descending so the most-specific (longest)
@@ -34,7 +34,7 @@
  *
  * Performance: all replacements go through replacePatternBounded for
  * ReDoS protection (CHUNK_SIZE=16384, SINGLE_PASS_THRESHOLD=32768).
- * Worst-case 11 patterns × bounded regex backtracking per event = O(n).
+ * Worst-case 13 patterns × bounded regex backtracking per event = O(n).
  *
  * @module
  */
@@ -72,11 +72,11 @@ export interface RedactionOpts {
 }
 
 // ---------------------------------------------------------------------------
-// Pattern definitions — 11 patterns
+// Pattern definitions — 13 patterns
 // ---------------------------------------------------------------------------
 
 /**
- * The 11 value-shape patterns, each producing a `<REDACTED:${id}>` sentinel.
+ * The 13 value-shape patterns, each producing a `<REDACTED:${id}>` sentinel.
  *
  * Field-name patterns (secret-field, payload-field, identifier-field):
  * Apply to string contents without `^...$` anchors — they catch substring
@@ -146,6 +146,24 @@ const PATTERNS: ReadonlyArray<ValueShapePattern> = Object.freeze([
     id: "cookie-header",
     regex: /\b(Cookie|Set-Cookie)\s*:\s*[^\r\n]+/gi,
     sentinel: "<REDACTED:cookie-header>",
+  },
+  {
+    id: "openai-key",
+    // sk- + 16+ token-body chars (OpenAI/Anthropic-style API keys). Mirrors the
+    // Pino-level sk-prefix shape so the export redactor also masks this
+    // credential — a raw sk- key in a failed tool's error body would otherwise
+    // survive into the --deep trace bundle (no Pino sanitize runs on that path).
+    regex: /\bsk-[A-Za-z0-9_-]{16,}\b/g,
+    sentinel: "<REDACTED:openai-key>",
+  },
+  {
+    id: "bearer-token",
+    // "Bearer <18+-char token>" — case-sensitive on Bearer so English prose
+    // ("the bearer of the news") is spared. Mirrors the Pino-level bare-bearer
+    // shape; without it an Authorization: Bearer value echoed by a tool error
+    // survives into the trace bundle.
+    regex: /\bBearer\s+[A-Za-z0-9._/+=:-]{18,}\b/g,
+    sentinel: "<REDACTED:bearer-token>",
   },
 ]);
 
@@ -256,7 +274,7 @@ export function substitutePathsInString(s: string, opts: RedactionOpts): string 
 }
 
 /**
- * Returns the frozen array of all 11 value-shape patterns.
+ * Returns the frozen array of all 13 value-shape patterns.
  * Each pattern has `id`, `regex`, and `sentinel` fields.
  * The sentinel is exactly `<REDACTED:${id}>`.
  *
@@ -267,7 +285,7 @@ export function getValueShapePatterns(): ReadonlyArray<ValueShapePattern> {
 }
 
 /**
- * Apply all 11 value-shape patterns to a single string, returning the
+ * Apply all 13 value-shape patterns to a single string, returning the
  * redacted string with `<REDACTED:type>` sentinels replacing each match.
  *
  * Shape-anchored patterns are applied before field-name patterns.
@@ -356,7 +374,7 @@ export function walkAndRedactStrings(
 }
 
 /**
- * Walk `event.data`, apply the 11 value-shape patterns then path
+ * Walk `event.data`, apply the 13 value-shape patterns then path
  * substitution to every string-typed leaf, and return a new event with
  * the redacted data. Envelope fields (`ts`, `seq`, `traceId`,
  * `sessionId`, etc.) are byte-equal pre/post — only `data` is

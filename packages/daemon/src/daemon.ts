@@ -41,8 +41,6 @@ import {
   writeMasterKeyIfAbsent,
   preReadStorageMode,
   systemNowMs,
-  type SecretStorePort,
-  type CredentialStorageMode,
   type ToolCapabilityPort,
   type PerAgentConfig,
   type WrapExternalContentOptions,
@@ -55,6 +53,7 @@ import {
   setupSecrets as _setupSecretsImpl,
   createNamedGraphStore,
   createObservabilityStore,
+  createSqliteMsTeamsConversationStore,
   selectSecretStore,
 } from "@comis/memory";
 import { createGatewayServer } from "@comis/gateway";
@@ -98,6 +97,7 @@ import {
   acquireDataDirLock,
   releaseDataDirLock,
 } from "./wiring/index.js";
+import { SENSITIVE_EXACT_KEYS, SENSITIVE_PREFIXES, buildMergedEnv } from "./wiring/env-scrub.js";
 import {
   createActiveRunRegistry,
   createBackgroundSessionResolver,
@@ -154,6 +154,7 @@ import { setupChannelHealthLogging } from "./observability/channel-health-logger
 import { createProcessMonitor } from "./process/process-monitor.js";
 import { ok, err, suppressError } from "@comis/shared";
 import { exportTrajectoryBundle } from "@comis/observability";
+import { exportSessionBundleFromKey } from "./export-session-bundle.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { writeFile as fsWriteFile, rm } from "node:fs/promises";
@@ -172,6 +173,7 @@ import { buildDialecticWiring, dialecticWiringDepsFromBoot } from "./wiring/setu
 import { createConversationReset } from "./wiring/conversation-reset.js";
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
 import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, createBoundedAutonomyWiring } from "./wiring/main-helpers.js";
+import { setupChannelLivenessMonitor } from "./wiring/setup-channel-liveness-monitor.js";
 import { hardenDataDirPermissions } from "./wiring/harden-data-dir.js";
 import { buildAudioResolverDeps } from "./wiring/setup-audio-provider.js";
 import { runPreflightDoctor } from "./wiring/preflight-doctor.js";
@@ -205,89 +207,10 @@ export { applyInspectDefaultsForLogging };
 export { runPreflightDoctor };
 
 // ---------------------------------------------------------------------------
-// Foundation helpers — scrub + store-wins env merge
+// Foundation helpers — scrub + store-wins env merge live in ./wiring/env-scrub.ts
+// (SENSITIVE_PREFIXES / SENSITIVE_EXACT_KEYS / buildMergedEnv), imported above to
+// keep this composition root within its architecture line cap.
 // ---------------------------------------------------------------------------
-
-/**
- * Sensitive environment variable prefixes to remove from process.env after
- * the SecretManager snapshot captures them. Prevents leakage through
- * subprocess inheritance.
- */
-const SENSITIVE_PREFIXES = [
-  "ANTHROPIC_",
-  "OPENAI_",
-  "TELEGRAM_",
-  "DISCORD_",
-  "SLACK_",
-  "WHATSAPP_",
-  "GOOGLE_",
-  "GROQ_",
-  "MISTRAL_",
-  "DEEPGRAM_",
-  "ELEVENLABS_",
-  "SENDGRID_",
-  "STRIPE_",
-] as const;
-
-/** Individual keys to scrub that don't match prefix patterns. */
-const SENSITIVE_EXACT_KEYS = new Set([
-  "SECRETS_MASTER_KEY",
-]);
-
-/**
- * Stage-1 scrub: remove sensitive env vars from process.env (ALL storage modes).
- * Preserves COMIS_* (filesystem-layout pointers, not credentials — kept for
- * subprocess path resolution; per-spawn-site envSubset() excludes them from
- * untrusted-child envs). Preserves PATH, HOME, NODE_ENV, etc.
- */
-function scrubProcessEnv(): void {
-
-  for (const key of Object.keys(process.env)) {
-    if (SENSITIVE_EXACT_KEYS.has(key)) {
-      // eslint-disable-next-line no-restricted-syntax -- see scrubProcessEnv comment above
-      delete process.env[key];
-      continue;
-    }
-    for (const prefix of SENSITIVE_PREFIXES) {
-      if (key.startsWith(prefix)) {
-        // eslint-disable-next-line no-restricted-syntax -- see scrubProcessEnv comment above
-        delete process.env[key];
-        break;
-      }
-    }
-  }
-}
-
-/** Build mergedEnv: store-wins, stage-1 scrub for ALL modes.
- * Returns shadowed names for deferred WARN logging (logger not yet available). */
-function buildMergedEnv(
-  secretStore: SecretStorePort,
-  mode: CredentialStorageMode,
-): { mergedEnv: Record<string, string | undefined>; shadowedNames: string[] } {
-  const merged: Record<string, string | undefined> = {
-    ...(process.env as Record<string, string | undefined>),
-  };
-  if (mode === "env") {
-    // Env mode: env IS the source. No store values to overlay.
-    scrubProcessEnv();
-    return { mergedEnv: merged, shadowedNames: [] };
-  }
-  // file / encrypted: store is authoritative.
-  const decryptResult = secretStore.decryptAll();
-  if (!decryptResult.ok) {
-    throw new Error(`Secret decryption failed: ${decryptResult.error.message}`);
-  }
-  const shadowedNames: string[] = [];
-  for (const [name, value] of decryptResult.value) {
-    if (merged[name] !== undefined && merged[name] !== value) {
-      // store wins; collect name for deferred WARN (logger not yet available).
-      shadowedNames.push(name);
-    }
-    merged[name] = value;
-  }
-  scrubProcessEnv();
-  return { mergedEnv: merged, shadowedNames };
-}
 
 // ---------------------------------------------------------------------------
 // Agents helpers
@@ -399,8 +322,9 @@ function buildChannelManagerDeps(deps: {
   assembleToolsForAgent: (agentId: string, options?: import("./wiring/setup-tools.js").AssembleToolsOptions) => Promise<any[]>;
   getInboundMessageIdResolver: () => InboundMessageIdResolver | undefined;
   getSessionTracker: () => import("./notification/session-tracker.js").SessionTracker | undefined;
+  msTeamsConversationStore?: import("@comis/core").MsTeamsConversationStorePort; // → bootstrapAdapters → createMsTeamsPlugin
 }): Parameters<typeof setupChannels>[0] {
-  const { agents, assembleToolsForAgent, getInboundMessageIdResolver, getSessionTracker } = deps;
+  const { agents, assembleToolsForAgent, getInboundMessageIdResolver, getSessionTracker, msTeamsConversationStore } = deps;
   const {
     container, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger, linkRunner, ssrfFetcher, transcriber,
@@ -409,7 +333,7 @@ function buildChannelManagerDeps(deps: {
     activeRunRegistry, sessionResolver, rpcCall,
     continuationTracker, approvalGate, interactiveCallbackWiring,
     piSessionAdapters, costTrackers, deliveryQueue, recordOutboundMessage, executionTrackers,
-    onSuspiciousContent, dataDir, clock, timers, activityBreaker, activityStream, activityRendererFactoryOverride,
+    onSuspiciousContent, dataDir, clock, timers, env, activityBreaker, activityStream, activityRendererFactoryOverride,
     executionPlanPorts, oauthManagers,
   } = agents;
   // Per-agent OAuth access-token resolver (auto-refreshing) so the
@@ -430,26 +354,23 @@ function buildChannelManagerDeps(deps: {
   // Complete three-layer forget for channel /new + /reset.
   const channelConversationReset = createConversationReset({ lcdStore: agents.lcdStore, piSessionAdapters, tenantId: container.config.tenantId, logger });
   // Build exportSessionBundle DI closure for the /export-trajectory slash
-  // command. Uses exportTrajectoryBundle from @comis/observability (same
-  // pipeline as `comis trace export`).
+  // command. Delegates to exportSessionBundleFromKey, which pointer-resolves the
+  // real session `.jsonl` before calling exportTrajectoryBundle — the session
+  // lives under <dataDir>/workspace/sessions/<tenant>/<channel>/, never a flat
+  // <dataDir>/sessions/<id>.jsonl path.
   const exportSessionBundle = async (sessionId: string): Promise<{ bundlePath: string }> => {
-    const sessionsDir = safePath(container.config.dataDir ?? dataDir, "sessions");
-    const sessionFile = safePath(sessionsDir, `${sessionId}.jsonl`);
-    const workspaceDir = defaultWorkspaceDir ?? safePath(container.config.dataDir ?? dataDir, "workspace");
-    const result = await exportTrajectoryBundle({
-      sessionId,
-      sessionKey: sessionId,
-      sessionFile,
-      workspaceDir,
-      traceId: sessionId,  // best-effort; bundle exporter uses for naming only
-      agentId: "unknown",  // best-effort; available in session file header
-    });
+    const activeDataDir = container.config.dataDir ?? dataDir;
+    const workspaceDir = defaultWorkspaceDir ?? safePath(activeDataDir, "workspace");
+    const result = await exportSessionBundleFromKey({ dataDir: activeDataDir, workspaceDir, sessionId });
     if (!result.ok) throw new Error(`Bundle export failed: ${result.error.kind}`);
-    return { bundlePath: result.value.bundleDir };
+    return { bundlePath: result.value.bundlePath };
   };
   return {
     container, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger, clock, timers,
+    // Live EnvPort → bootstrapAdapters → createMsTeamsPlugin (managed-identity
+    // App-Service IDENTITY_ENDPOINT/IDENTITY_HEADER read live per mint).
+    env,
     resolveAccessToken: resolveCronAccessToken, // OAuth-provider background jobs
 
     // the orchestrator-facing redacted ActivityStream (setupObservability)
@@ -501,7 +422,7 @@ function buildChannelManagerDeps(deps: {
     // recall lane via setupAgents (below); the recall recordUsage write lives in
     // setup-learning.ts.
     // outcomeStore + learnedSkillStore ride the SAME chain → the __REFLECT__ sentinel: the daemon assembles the closed-graph reflection bundle from them + the trusted-origin LCD source inside registerCronEventListeners. (The embedder is NOT threaded here — the reflection job groups by topicKey, no clustering embeddings.)
-    memoryLifecycleStore, outcomeStore, learnedSkillStore, memoryApi,
+    memoryLifecycleStore, outcomeStore, learnedSkillStore, memoryApi, msTeamsConversationStore,
     tenantId: container.config.tenantId,
     embeddingQueue, queueConfig: container.config.queue,
     onSuspiciousContent,
@@ -1802,7 +1723,7 @@ async function bootAgents(
     // from the SAME object the execution pipeline publishes into.
     executionPlanPorts, oauthManagers, authStorages, // oauthManagers: DEFAULT agent's → buildImageGenBundle (Codex OAuth bearer); authStorages: dialectic OAuth resolver
   } = await setupAgents({
-    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, learnedSkillStore, learnedSkillSurfaceRegistry, summarizerSpendBreaker, spendAccumulator,
+    container, memoryAdapter, sessionStore, agentLogger, daemonVersion: boot.daemonVersion, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, learnedSkillStore, learnedSkillSurfaceRegistry, summarizerSpendBreaker, spendAccumulator,
     boundedAutonomyBudget: boundedAutonomyBudgetHolder, resolveRootRunId, // per-root budget holder + rootRunId resolver → each bridge
     outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
@@ -2104,6 +2025,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   };
   // 7.8.9. Durable stores built EARLY (before the cap layer — the jail-leg chokepoint shares the SAME store for the _outwardStepIndex allocation). See buildDurableStores.
   const { durabilityCfg, durableRunStore: durableRunStoreEarly, outwardLedger: outwardLedgerEarly } = buildDurableStores({ agents, db });
+  const msTeamsConversationStore = createSqliteMsTeamsConversationStore(db); // shared memory.db → createMsTeamsPlugin (capture + proactive recovery)
 
   // 7.9. Capability-lease layer + ACTIVATION — constructed BEFORE setupTools so the KEPT handle threads capMint + the orchestrate capSocketPath into tool assembly; on `boot` for bootShutdown. cronJobCount binds the bounded-autonomy rate count to the per-agent CronScheduler. durableRuns threads into the jail-leg chokepoint for the _outwardStepIndex allocation.
   const { capEndpointHandle, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, timers: handle.timers, cronJobCount: (agentId) => { try { return handle.getAgentCronScheduler(agentId).getJobs().length; } catch { return 0; } }, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager, boundedAutonomyHolder: handle.boundedAutonomyBudgetHolder, leaseManager: handle.sharedLeaseManager, container, mcpClientManager, ...(durableRunStoreEarly ? { durableRuns: durableRunStoreEarly } : {}) }); // POPULATES the late-bound budget holder (read by the bridge at turn time) + shares the SAME LeaseManager as the cron-fire mint; the container is passed so the SOCKET chokepoint emits the per-cap audit (audit:event + capability:audited) for jailed tool.invoke calls
@@ -2195,9 +2117,9 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // pass accessor closures for sessionTracker / inboundMessageIdResolver
   // (const `{current?:T}` container pattern; populated after setupChannels
   // returns by mutating the .current field).
-  const { adaptersByType, channelManager, resolveAttachment, lifecycleReactors, channelPlugins, commandQueue, deliveryService } = await setupChannels(
+  const { adaptersByType, channelManager, resolveAttachment, lifecycleReactors, channelPlugins, msTeamsIngress, commandQueue, deliveryService } = await setupChannels(
     buildChannelManagerDeps({
-      agents: handle,
+      agents: handle, msTeamsConversationStore,
       assembleToolsForAgent,
       getInboundMessageIdResolver: () => inboundMessageIdResolverSlot.current,
       getSessionTracker: () => sessionTrackerSlot.current,
@@ -2286,6 +2208,10 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // eventBus.on("system:shutdown", () => stopChannelHealthMonitor?.())
   // deleted — stopChannelHealthMonitor is threaded directly into setupShutdown
   // via ShutdownDeps.stopChannelHealthMonitor.
+  // Missed-inbound liveness monitor (proactive dead-ingress alert for webhook
+  // channels, which the health monitor exempts from stale-reap). stop is threaded
+  // into setupShutdown via ShutdownDeps.stopChannelLivenessMonitor (no leaked timer).
+  const { stop: stopChannelLivenessMonitor } = setupChannelLivenessMonitor({ adaptersByType, daemonLogger, container, timer: handle.timers });
   setupChannelHealthLogging({ eventBus: container.eventBus, logger: daemonLogger });
 
   // 6.6.9. Cross-session sender + sub-agent runner
@@ -2405,8 +2331,9 @@ async function bootChannels(boot: BootContext): Promise<void> {
 
   Object.assign(boot, {
     adaptersByType, channelManager, resolveAttachment, lifecycleReactors, channelPlugins,
+    msTeamsIngress,
     commandQueue, deliveryService,
-    inboundMessageIdResolver, channelHealthMonitor, stopChannelHealthMonitor,
+    inboundMessageIdResolver, channelHealthMonitor, stopChannelHealthMonitor, stopChannelLivenessMonitor,
     notificationContext, bgCompletionRunnerContext, terminalWakeContext,
     crossSessionSender, subAgentRunner, sendToChannel, announceToParent,
     deadLetterQueue, announcementBatcher, gatewaySendRef,
@@ -2465,6 +2392,7 @@ async function bootGateway(
     assembleToolsForAgent, preprocessMessageText,
     suspendedAgents, gatewaySendRef,
     interactiveCallbackWiring,
+    msTeamsIngress,
     obsStore, // backs the obs_explain assembler closure (diagnostics rollup)
     dataDir: bootDataDir, // absolute fallback data dir (always abs; ~/.comis or $COMIS_DATA_DIR)
   } = channels;
@@ -2547,6 +2475,7 @@ async function bootGateway(
     suspendedAgents,
     instanceId, startupStartMs,
     interactiveCallbackWiring,
+    msTeamsIngress,
     obsExplainForMcpClient,
     obsFleetHealthForMcpClient,
   });
@@ -2675,7 +2604,7 @@ async function bootShutdown(
     | "sessionStoreBridge" | "shutdownRef" | "hotAdd" | "hotRemove" | "rpcDispatchDeps"
     | "activeExecutions" | "getActiveConnectionCount" | "wsConnections"
     | "heartbeatRunner" | "duplicateDetector" | "perAgentRunner"
-    | "stopChannelHealthMonitor" | "shutdownBackgroundProcesses" | "proxyTypingCleanup"
+    | "stopChannelHealthMonitor" | "stopChannelLivenessMonitor" | "shutdownBackgroundProcesses" | "proxyTypingCleanup"
     | "outputRetentionHandle"
     | "bgCompletionRunnerContext" | "trajectoryRegistry"
     | "auditAggregator" | "onSuspiciousContent"
@@ -2713,7 +2642,7 @@ async function bootShutdown(
     // 9 new teardown handles surfaced through BootContext.
     shutdownBackgroundProcesses, proxyTypingCleanup,
     outputRetentionHandle, shutdownDeliveryQueue, shutdownMirror,
-    bgCompletionRunnerContext, terminalWakeContext, stopChannelHealthMonitor, mcpClientManager,
+    bgCompletionRunnerContext, terminalWakeContext, stopChannelHealthMonitor, stopChannelLivenessMonitor, mcpClientManager,
     // The background video poller (undefined when video disabled) —
     // its shutdown is threaded into setupShutdown below.
     videoPoller,
@@ -2770,6 +2699,7 @@ async function bootShutdown(
     shutdownDeliveryMirror: shutdownMirror,
     outputRetentionShutdown: outputRetentionHandle ? () => outputRetentionHandle.shutdown() : undefined,
     stopChannelHealthMonitor: stopChannelHealthMonitor ?? undefined,
+    stopChannelLivenessMonitor: stopChannelLivenessMonitor ?? undefined,
     // Thunk reads _healthAggRef.fn at teardown time — populated by emitStartupInvariants.
     unsubscribeHealthAggregator: () => _healthAggRef.fn?.(),
     // Credential broker teardown (no-op when executor.broker is absent)

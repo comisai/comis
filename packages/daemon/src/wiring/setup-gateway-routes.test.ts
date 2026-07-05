@@ -302,6 +302,36 @@ describe("mountGatewayRoutes", () => {
   });
 
   // -----------------------------------------------------------------------
+  // Microsoft Teams inbound ingress mount (the wiring half of the two-part
+  // mounted-route test). The route exists ONLY when the composition root
+  // threaded a built ingress sub-app (channel enabled + creds valid); it is
+  // absent otherwise. This is the guard that a caller-less, silently-dead
+  // route can never ship: presence of the threaded ingress IS the mount signal.
+  // -----------------------------------------------------------------------
+
+  it("mounts /channels/msteams when the threaded ingress is present (enabled)", () => {
+    const deps = createMockDeps({ msTeamsIngress: new Hono() });
+
+    mountGatewayRoutes(deps);
+
+    expect(deps.gatewayHandle.app.route).toHaveBeenCalledWith(
+      "/channels/msteams",
+      expect.any(Hono),
+    );
+  });
+
+  it("does NOT mount /channels/msteams when the ingress is absent (disabled)", () => {
+    const deps = createMockDeps();
+
+    mountGatewayRoutes(deps);
+
+    expect(deps.gatewayHandle.app.route).not.toHaveBeenCalledWith(
+      "/channels/msteams",
+      expect.anything(),
+    );
+  });
+
+  // -----------------------------------------------------------------------
   // OpenAI routes
   // -----------------------------------------------------------------------
 

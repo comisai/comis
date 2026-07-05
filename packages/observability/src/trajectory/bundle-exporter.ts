@@ -489,7 +489,7 @@ export async function exportTrajectoryBundle(
       : [];
 
   // Step 6b: apply bundle-time redaction.
-  // The 11 value-shape patterns plus path substitution apply to every
+  // The 13 value-shape patterns plus path substitution apply to every
   // string-typed leaf in event.data. Number-typed fields (timestamps,
   // counts, seq) pass through untouched — prevents false positives on
   // numeric IDs.
@@ -556,6 +556,19 @@ export async function exportTrajectoryBundle(
     ...overflowWarnings,
   ]);
 
+  // Host-path substitution for the manifest's OWN path fields — the same pass
+  // (redactionOpts) every content file already receives. Without it the manifest
+  // shipped raw absolute paths (session/runtime/workspace), disclosing the OS
+  // username and host directory structure under the default data-dir layout in a
+  // bundle designed to be shared. Path-only: content is value-shape redacted
+  // elsewhere, so there is no double-masking here.
+  const manifestWorkspaceDir = substitutePathsInString(params.workspaceDir, redactionOpts);
+  const manifestSessionFile = substitutePathsInString(params.sessionFile, redactionOpts);
+  const manifestRuntimeFile =
+    runtimeRead.runtimeFile !== undefined
+      ? substitutePathsInString(runtimeRead.runtimeFile, redactionOpts)
+      : undefined;
+
   // Manifest base (without contents — added after writing content files).
   const manifestBase: Omit<TrajectoryBundleManifest, "contents"> = {
     traceSchema: "comis-trajectory" as const,
@@ -564,15 +577,15 @@ export async function exportTrajectoryBundle(
     traceId: params.traceId,
     sessionId: params.sessionId,
     ...(params.sessionKey !== undefined ? { sessionKey: params.sessionKey } : {}),
-    workspaceDir: params.workspaceDir,
+    workspaceDir: manifestWorkspaceDir,
     leafId: sessionLeafId,
     eventCount: capped.length,
     runtimeEventCount: runtimeRead.events.length,
     transcriptEventCount: transcriptEvents.length,
     sourceFiles: {
-      session: params.sessionFile,
-      ...(runtimeRead.runtimeFile !== undefined
-        ? { runtime: runtimeRead.runtimeFile }
+      session: manifestSessionFile,
+      ...(manifestRuntimeFile !== undefined
+        ? { runtime: manifestRuntimeFile }
         : {}),
     },
     ...(allWarnings.length > 0 ? { warnings: allWarnings } : {}),

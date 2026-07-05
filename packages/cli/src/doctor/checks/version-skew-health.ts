@@ -24,26 +24,14 @@
  * @module
  */
 
-import { createRequire } from "node:module";
 import { GatewayStatusContract } from "@comis/core";
 import type { DoctorCheck } from "../types.js";
 import { isDaemonRunning } from "../../sync-tooling/daemon-guard.js";
 import { withClient, callTyped } from "../../client/rpc-client.js";
+import { readCliVersion } from "../../util/cli-version.js";
 
 const CATEGORY = "version";
 const LIVENESS_PROBE_TIMEOUT_MS = 1_000;
-
-/** Resolve the CLI's own version from packages/cli/package.json (fallback path). */
-function readOwnCliVersion(): string | undefined {
-  try {
-    const req = createRequire(import.meta.url);
-    // ../../../package.json relative to dist/doctor/checks/version-skew-health.js
-    const pkg = req("../../../package.json") as { version?: string };
-    return pkg.version;
-  } catch {
-    return undefined;
-  }
-}
 
 /** Extract "major.minor" from a semver-ish string ("2.30.1" -> "2.30"). */
 function majorMinor(version: string): string {
@@ -61,7 +49,7 @@ export const versionSkewHealthCheck: DoctorCheck = {
   id: "version-skew-health",
   name: "Version",
   run: async (context) => {
-    const cliVersion = context.cliVersion ?? readOwnCliVersion();
+    const cliVersion = context.cliVersion ?? readCliVersion();
     if (!cliVersion) {
       // Unknowable CLI version — nothing to compare against. Skip rather than
       // guess (the doctor command normally threads this in).

@@ -59,6 +59,9 @@ export function translatePayload(
         success: payload.success,
         ...(payload.errorKind !== undefined ? { errorKind: payload.errorKind } : {}),
         ...(payload.errorMessage !== undefined ? { errorMessage: payload.errorMessage } : {}),
+        // The bounded+redacted failed-call arguments (emit-site gated to
+        // failures only; obs.explain surfaces it on failures[]).
+        ...(payload.argsPreview !== undefined ? { argsPreview: payload.argsPreview } : {}),
         ...(payload.truncated !== undefined ? { truncated: payload.truncated } : {}),
         // Provenance forwarding (obs.explain reads it).
         // matchedToken is already sanitized+bounded at the emit (pi-event-bridge),
@@ -363,6 +366,33 @@ export function translatePayload(
         origin: payload.origin,
       };
 
+    case "delivery:aborted":
+      // Counts + the closed abort reason only. chunksDelivered: 0 with a
+      // non-zero totalChunks is the "reply never sent" signature explain's
+      // deliverySkipped section folds.
+      return {
+        channelType: payload.channelType,
+        channelId: payload.channelId,
+        reason: payload.reason,
+        chunksDelivered: payload.chunksDelivered,
+        totalChunks: payload.totalChunks,
+        durationMs: payload.durationMs,
+        origin: payload.origin,
+      };
+
+    case "activity:turn_finalized":
+      // The terminal user-surface state: closed outcome kind + closed
+      // ErrorKind + the fixed named-constant reason + the strategy name.
+      return {
+        channelType: payload.channelType,
+        strategy: payload.strategy,
+        outcome: payload.outcome,
+        ...(payload.errorKind !== undefined ? { errorKind: payload.errorKind } : {}),
+        ...(payload.reason !== undefined ? { reason: payload.reason } : {}),
+        reclassified: payload.reclassified,
+        failedEventCount: payload.failedEventCount,
+      };
+
     case "delivery:complete": {
       const totalChunks = (payload.totalChunks as number) ?? 0;
       const deliveredChunks = (payload.deliveredChunks as number) ?? 0;
@@ -482,6 +512,13 @@ export function translatePayload(
       return {
         originalMaxTokens: payload.originalMaxTokens,
         escalatedMaxTokens: payload.escalatedMaxTokens,
+      };
+
+        case "execution:recovery_attempted":
+      // Closed recovery reason + a boolean — content-free.
+      return {
+        reason: payload.reason,
+        succeeded: payload.succeeded,
       };
 
     case "execution:signed_replay_recovered":

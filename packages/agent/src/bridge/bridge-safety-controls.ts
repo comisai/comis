@@ -326,6 +326,12 @@ export function emitSpendAbort(
   const perRoot = source === "per_root";
   deps.logger.warn(
     {
+      // The tripped limb + its numbers on the LOG LINE itself (counts,
+      // content-free) — a raw-log reader should not need `comis explain`
+      // to learn which limb tripped and by how much.
+      ...(perRootBudget !== undefined
+        ? { limb: perRootBudget.limb, spent: perRootBudget.spent, cap: perRootBudget.cap, unit: perRootBudget.unit }
+        : {}),
       hint: perRoot
         ? "Per-root autonomy budget exhausted — raise this agent's autonomy.budget.{aggregateUsd|tokens|wallClockMs} (NOT observability.spend); run `comis explain <session>` for the exact limb + numbers (the spend-verdict names autonomy.budget.<limb>)"
         : "Spend ceiling exceeded; raise observability.spend.* or set action:'warn'",

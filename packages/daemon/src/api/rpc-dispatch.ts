@@ -797,7 +797,14 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
         {
           method,
           params: safeParams,
-          err,
+          // An expected typed refusal (auth/validation/precondition — level
+          // "warn") logs its MESSAGE only: passing the Error object makes the
+          // serializer emit the full stack, and a routine operator flow (every
+          // `comis explain` run probes the admin-gated obs.explain before
+          // falling back offline) then reads as a fault in the daemon log.
+          // Stack traces are DEBUG-only; unclassified internal errors keep the
+          // full err (the stack IS the diagnostic there).
+          err: classified.level === "warn" ? (err instanceof Error ? err.message : String(err)) : err,
           hint: classified.hint,
           errorKind: classified.errorKind,
         },

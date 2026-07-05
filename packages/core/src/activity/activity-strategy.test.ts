@@ -3,7 +3,7 @@
  * selectStrategy routing tests.
  *
  * Capability fixtures are the ground-truth feature/limits shapes declared by
- * the 10 in-tree `*-plugin.ts` files — verified
+ * the 11 in-tree `*-plugin.ts` files — verified
  * against the live plugin sources. ACP carries no ChannelPlugin/capability, so
  * its "Structured" routing rides on the channelType signal.
  */

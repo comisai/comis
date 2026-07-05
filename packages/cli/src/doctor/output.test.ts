@@ -13,7 +13,7 @@ vi.mock("../output/format.js", () => ({
   json: vi.fn(),
 }));
 
-import { renderDoctorTable, renderDoctorJson } from "./output.js";
+import { renderDoctorTable, renderDoctorJson, buildDoctorJson } from "./output.js";
 import { json } from "../output/format.js";
 
 describe("renderDoctorTable", () => {
@@ -117,5 +117,34 @@ describe("renderDoctorJson", () => {
       },
       findings: result.findings,
     });
+  });
+});
+
+describe("buildDoctorJson", () => {
+  it("maps every DoctorResult aggregate field into the doctor.json shape", () => {
+    // Distinct counts so a mis-wired field (e.g. summary.pass <- failCount)
+    // is caught rather than masked by equal values.
+    const result: DoctorResult = {
+      findings: [
+        { category: "config", check: "C1", status: "pass", message: "OK", repairable: false },
+        { category: "daemon", check: "C2", status: "fail", message: "Bad", repairable: true },
+      ],
+      checksRun: 14,
+      passCount: 2,
+      failCount: 3,
+      warnCount: 4,
+      skipCount: 5,
+      repairableCount: 1,
+    };
+
+    const output = buildDoctorJson(result);
+
+    expect(output).toEqual({
+      checksRun: 14,
+      summary: { pass: 2, fail: 3, warn: 4, skip: 5, repairable: 1 },
+      findings: result.findings,
+    });
+    // Findings pass through by reference — no re-derivation or copy.
+    expect(output.findings).toBe(result.findings);
   });
 });
