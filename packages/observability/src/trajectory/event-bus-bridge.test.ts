@@ -1373,6 +1373,12 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       pluginId: "tg",
       timestamp: 0,
     },
+    "channel:decrypt_failed": {
+      channelType: "matrix",
+      roomId: "!room:example.org",
+      reason: "missing_session",
+      timestamp: 0,
+    },
     // security events
     "security:memory_tainted": {
       agentId: "agent-1",
@@ -3808,6 +3814,77 @@ describe("attachTrajectoryToEventBus -- dedup events", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Content-free decrypt-health event. A failure to decrypt an encrypted-room
+// message surfaces as channel:decrypt_failed -> channel.decrypt_failed so
+// "why didn't the bot reply in that encrypted room?" is answerable via
+// comis explain/fleet. The translator whitelist-forwards channelType + roomId
+// (an id) + the closed reason kind ONLY — never ciphertext, key material, a
+// sender display name, or the raw SDK failure code.
+// ---------------------------------------------------------------------------
+describe("attachTrajectoryToEventBus -- channel:decrypt_failed (content-free decrypt health)", () => {
+  it("maps channel:decrypt_failed -> channel.decrypt_failed and the trajectory type is a known member", () => {
+    const mapping = TRAJECTORY_BRIDGE_MAPPING as Record<string, string>;
+    expect(mapping["channel:decrypt_failed"]).toBe("channel.decrypt_failed");
+    expect(Array.from(TRAJECTORY_EVENT_TYPES as readonly string[])).toContain("channel.decrypt_failed");
+  });
+
+  it("translates to a content-free record (channelType + roomId + reason only — an injected sensitive field is dropped)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("channel:decrypt_failed" as keyof EventMap, {
+      channelType: "matrix",
+      roomId: "!room:example.org",
+      reason: "missing_session",
+      timestamp: 1000,
+      // Fields that must NEVER cross the bridge — injected to prove the
+      // translator whitelist-forwards and drops everything else.
+      ciphertext: "AwgAEnB-encrypted-body",
+      megolmSessionKey: "megolm-session-secret",
+      senderDisplayName: "Alice",
+      failureReason: "MEGOLM_UNKNOWN_INBOUND_SESSION_ID",
+      deviceKeys: { ed25519: "raw-key-material" },
+    } as never);
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("channel.decrypt_failed");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    // Exactly the three whitelisted fields cross — nothing else.
+    expect(data.channelType).toBe("matrix");
+    expect(data.roomId).toBe("!room:example.org");
+    expect(data.reason).toBe("missing_session");
+    expect(Object.keys(data).sort()).toEqual(["channelType", "reason", "roomId"]);
+    // No ciphertext / key material / display name / raw code leaks.
+    for (const forbidden of ["ciphertext", "megolmSessionKey", "senderDisplayName", "failureReason", "deviceKeys"]) {
+      expect(data[forbidden], `forbidden field on trajectory record: ${forbidden}`).toBeUndefined();
+    }
+    const serialized = JSON.stringify(data);
+    expect(serialized).not.toMatch(/megolm-session-secret|raw-key-material|encrypted-body|Alice|MEGOLM_UNKNOWN/);
+  });
+
+  it("forwards the closed reason kind verbatim and never a raw failure string; timestamp is envelope-only", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("channel:decrypt_failed" as keyof EventMap, {
+      channelType: "matrix",
+      roomId: "!other:example.org",
+      reason: "unverified_device",
+      timestamp: 2000,
+    } as never);
+
+    expect(recorder.calls).toHaveLength(1);
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    // The translated reason equals the input closed enum value.
+    expect(data.reason).toBe("unverified_device");
+    // timestamp is envelope-only — never echoed into data.
+    expect("timestamp" in data).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Health budget exceeded + mapping entry-count guard
 // ---------------------------------------------------------------------------
 
@@ -3816,7 +3893,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // This count guards TRAJECTORY_BRIDGE_MAPPING against a silent add or
     // removal: any change to the mapping must update this number in lockstep,
     // forcing a deliberate review of every newly-bridged or dropped event.
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(117);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(118);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {
