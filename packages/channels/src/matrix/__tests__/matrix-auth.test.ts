@@ -365,4 +365,64 @@ describe("createMatrixAuth", () => {
     // The fresh token was persisted for the next boot.
     expect(saves.some((s) => s.accessToken === "fresh-after-fallback")).toBe(true);
   });
+
+  it("reauthenticate re-logins with the password and returns fresh credentials reusing the persisted device id", async () => {
+    // The token-expiry recovery seam: mint a fresh token via the password, pinning
+    // the persisted device id so the identity survives the re-login, and hand the
+    // credentials back for the caller to apply to the live client + persist.
+    const rec = newRecord();
+    const createClientImpl = makeCreateClientImpl(
+      {
+        loginResponse: { access_token: "reauth-token", device_id: "PERSISTDEV", user_id: "@bot:hs" },
+        whoamiResponse: { user_id: "@bot:hs", device_id: "PERSISTDEV" },
+      },
+      rec,
+    );
+    const { store, saves } = makeStateStore({ deviceId: "PERSISTDEV" });
+
+    const auth = createMatrixAuth({
+      homeserverUrl: "https://hs.example",
+      userId: "@bot:hs",
+      password: "pw-secret",
+      stateStore: store,
+      logger: makeLogger(),
+      createClientImpl,
+    });
+
+    const result = await auth.reauthenticate();
+
+    expect(result.ok).toBe(true);
+    // Re-login ran, pinning the persisted device id so the identity is preserved.
+    expect(rec.loginCalls).toHaveLength(1);
+    expect(rec.loginCalls[0]?.data.device_id).toBe("PERSISTDEV");
+    // The fresh token + device id are persisted and returned to the caller.
+    expect(saves.some((s) => s.accessToken === "reauth-token")).toBe(true);
+    if (result.ok) {
+      expect(result.value.accessToken).toBe("reauth-token");
+      expect(result.value.deviceId).toBe("PERSISTDEV");
+    }
+  });
+
+  it("reauthenticate errs when no password is configured (token-only deployment)", async () => {
+    // A token-only deployment has nothing to re-login with — the caller keeps the
+    // loud dark-token health path instead of an impossible re-login.
+    const rec = newRecord();
+    const createClientImpl = makeCreateClientImpl({}, rec);
+    const { store } = makeStateStore({ accessToken: "some-tok" });
+
+    const auth = createMatrixAuth({
+      homeserverUrl: "https://hs.example",
+      userId: "@bot:hs",
+      accessToken: "some-tok",
+      stateStore: store,
+      logger: makeLogger(),
+      createClientImpl,
+    });
+
+    const result = await auth.reauthenticate();
+
+    expect(result.ok).toBe(false);
+    // No login was attempted — there is no password to re-login with.
+    expect(rec.loginCalls).toHaveLength(0);
+  });
 });
