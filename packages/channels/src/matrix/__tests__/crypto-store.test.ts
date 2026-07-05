@@ -13,7 +13,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { IDBFactory as FakeIDBFactory, IDBDatabase as FakeIDBDatabase } from "fake-indexeddb";
 import { deserialize } from "node:v8";
-import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MatrixClient } from "matrix-js-sdk";
@@ -545,6 +545,108 @@ describe("initMatrixCrypto: cross-signing bootstrap + readable verification stat
     for (const method of ["info", "warn", "error", "debug"] as const) {
       const blob = JSON.stringify(vi.mocked(logger[method]).mock.calls);
       expect(blob).not.toContain(VALID_RECOVERY_KEY);
+    }
+    await res.value.stop();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// initMatrixCrypto — at-rest storage-key encryption of the crypto store
+// ---------------------------------------------------------------------------
+
+/** The persisted 32-byte at-rest key file — a 0600 sibling of the store. */
+const STORAGE_KEY_FILE = "crypto-storage-key";
+
+describe("initMatrixCrypto: at-rest storage-key encryption", () => {
+  it("mints a random 32-byte 0600 storage key on first init and passes it to initRustCrypto", async () => {
+    const stateDir = tempStateDir();
+    let passedKey: unknown;
+    const { client } = fakeClient(async (args) => {
+      passedKey = (args as { storageKey?: unknown }).storageKey;
+    });
+
+    const res = await initMatrixCrypto(client, {
+      stateDir,
+      logger: mkLogger(),
+      importCryptoWasm: vi.fn(stubWasmImport),
+      importFakeIndexedDb: vi.fn(realIdbImport),
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+
+    // A 32-byte key (AES-256) is handed to initRustCrypto so the store is
+    // encrypted at rest — the durable snapshot is opaque without it.
+    expect(passedKey).toBeInstanceOf(Uint8Array);
+    expect((passedKey as Uint8Array).length).toBe(32);
+
+    // The key is persisted 0600 (owner-only) beside the store, and it matches what
+    // was passed to initRustCrypto.
+    const keyPath = join(stateDir, STORAGE_KEY_FILE);
+    expect(statSync(keyPath).mode & 0o777).toBe(0o600);
+    const onDisk = readFileSync(keyPath);
+    expect(onDisk.length).toBe(32);
+    expect(Array.from(onDisk)).toEqual(Array.from(passedKey as Uint8Array));
+
+    await res.value.stop();
+  });
+
+  it("reuses the SAME persisted storage key across restarts (a fresh key would orphan the store)", async () => {
+    const stateDir = tempStateDir();
+    const keysPassed: Uint8Array[] = [];
+    const mkClient = (): MatrixClient =>
+      fakeClient(async (args) => {
+        keysPassed.push((args as { storageKey: Uint8Array }).storageKey);
+      }).client;
+
+    const res1 = await initMatrixCrypto(mkClient(), {
+      stateDir,
+      logger: mkLogger(),
+      importCryptoWasm: vi.fn(stubWasmImport),
+      importFakeIndexedDb: vi.fn(realIdbImport),
+    });
+    expect(res1.ok).toBe(true);
+    if (res1.ok) await res1.value.stop();
+
+    const res2 = await initMatrixCrypto(mkClient(), {
+      stateDir,
+      logger: mkLogger(),
+      importCryptoWasm: vi.fn(stubWasmImport),
+      importFakeIndexedDb: vi.fn(realIdbImport),
+    });
+    expect(res2.ok).toBe(true);
+    if (res2.ok) await res2.value.stop();
+
+    // The key MUST be identical each init for a given device, or the encrypted
+    // store can no longer be decrypted and the device is lost.
+    expect(keysPassed).toHaveLength(2);
+    expect(keysPassed[0]?.length).toBe(32);
+    expect(Array.from(keysPassed[1] as Uint8Array)).toEqual(Array.from(keysPassed[0] as Uint8Array));
+  });
+
+  it("never writes the storage key material to any log line", async () => {
+    const stateDir = tempStateDir();
+    let passedKey: Uint8Array | undefined;
+    const { client } = fakeClient(async (args) => {
+      passedKey = (args as { storageKey: Uint8Array }).storageKey;
+    });
+    const logger = mkLogger();
+
+    const res = await initMatrixCrypto(client, {
+      stateDir,
+      logger,
+      importCryptoWasm: vi.fn(stubWasmImport),
+      importFakeIndexedDb: vi.fn(realIdbImport),
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    await res.value.snapshotNow();
+
+    const hex = Buffer.from(passedKey as Uint8Array).toString("hex");
+    const b64 = Buffer.from(passedKey as Uint8Array).toString("base64");
+    for (const method of ["info", "warn", "error", "debug"] as const) {
+      const blob = JSON.stringify(vi.mocked(logger[method]).mock.calls);
+      expect(blob).not.toContain(hex);
+      expect(blob).not.toContain(b64);
     }
     await res.value.stop();
   });
