@@ -40,6 +40,7 @@ import {
   type MatrixEvent,
   type Room,
   type Membership,
+  type SyncStateData,
 } from "matrix-js-sdk";
 import { systemNowMs } from "@comis/core";
 import type { NormalizedMessage, ComisLogger } from "@comis/core";
@@ -48,7 +49,7 @@ import { ok, err, fromPromise } from "@comis/shared";
 import { shouldDeliverTimelineEvent } from "./watermark.js";
 import { decideInvite, type InviteAllowMode } from "./invite-policy.js";
 import { mapMatrixEventToNormalized } from "./message-mapper.js";
-import { classifyMatrixError, type MatrixErrorInput } from "./errors.js";
+import { classifyMatrixError, type MatrixErrorInput, type MatrixErrorKind } from "./errors.js";
 import type { MatrixState, MatrixStateStore } from "./matrix-state.js";
 
 /** The Matrix event type that carries a chat message. */
@@ -60,6 +61,22 @@ const DEFAULT_TIMELINE_LIMIT = 20;
 
 /** A callback the transport invokes for each delivered (post-guard) message. */
 export type MatrixMessageHandler = (message: NormalizedMessage) => void | Promise<void>;
+
+/** Fresh credentials a reauthenticate seam yields after a mid-run token expiry. */
+export interface MatrixReauthResult {
+  /** The freshly minted access token, persisted so a restart resumes with it. */
+  accessToken: string;
+  /** The device id the re-login resolved, when the homeserver reported one. */
+  deviceId?: string;
+}
+
+/** A loud, secret-free health signal for the operator dashboard / event bus. */
+export interface MatrixHealthSignal {
+  /** The observability error kind (`auth` for a dark token). */
+  errorKind: MatrixErrorKind;
+  /** An operator-actionable next step naming the exact config knob. Never a secret. */
+  hint: string;
+}
 
 /** Inputs the `/sync` transport needs; the client is the injected seam. */
 export interface MatrixClientDeps {
@@ -81,6 +98,15 @@ export interface MatrixClientDeps {
   isDirectRoom?: (room: Room) => boolean;
   /** Override the initial-sync `limit=`. */
   initialSyncLimit?: number;
+  /**
+   * Token-expiry recovery seam. When configured (a password login is
+   * available), a mid-run `M_UNKNOWN_TOKEN` triggers a re-login that yields a
+   * fresh token + device id; absent, the transport emits a loud health signal
+   * rather than silently going dark.
+   */
+  reauthenticate?: () => Promise<Result<MatrixReauthResult, Error>>;
+  /** Health-signal seam for the dark-token branch (never carries a secret). */
+  emitHealth?: (signal: MatrixHealthSignal) => void;
 }
 
 /** The `/sync` lifecycle handle the adapter drives. */
@@ -98,6 +124,12 @@ function toMatrixErrorInput(cause: unknown): MatrixErrorInput {
   if (e !== null && typeof e.errcode === "string") input.errcode = e.errcode;
   if (e !== null && typeof e.httpStatus === "number") input.status = e.httpStatus;
   return input;
+}
+
+/** The Matrix `errcode` string of an SDK error, when present. */
+function errcodeOf(cause: unknown): string | undefined {
+  const e = cause as { errcode?: unknown } | null;
+  return e !== null && typeof e.errcode === "string" ? e.errcode : undefined;
 }
 
 /**
@@ -137,6 +169,9 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
   let persistedState: MatrixState = { watermark: 0 };
   let watermark = 0;
   let syncReady = false;
+  // Guards against parallel re-logins while one recovery is in flight — a
+  // homeserver re-emits the sync error until the token is actually replaced.
+  let reauthInFlight = false;
 
   /** Persist the current state; a write failure is loud but non-fatal. */
   async function persistState(persistField: string): Promise<void> {
@@ -162,8 +197,12 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
     return sender !== null && sender !== undefined && sender.length > 0 ? sender : undefined;
   }
 
-  /** ClientEvent.Sync: track readiness and persist the advanced batch token. */
-  async function onSyncState(state: SyncState): Promise<void> {
+  /** ClientEvent.Sync: track readiness, persist the batch token, route errors. */
+  async function onSyncState(
+    state: SyncState,
+    _prevState: SyncState | null,
+    data?: SyncStateData,
+  ): Promise<void> {
     syncReady = state === SyncState.Prepared || state === SyncState.Syncing;
     logger.debug(
       { channelType: "matrix", step: "sync-state", syncState: state },
@@ -177,6 +216,11 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
         persistedState = { ...persistedState, syncToken: token };
         await persistState("syncToken");
       }
+      return;
+    }
+
+    if (state === SyncState.Error && data?.error !== undefined) {
+      await handleSyncError(data.error);
     }
   }
 
@@ -293,6 +337,103 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
       { channelType: "matrix", step: "invite-join" },
       "Matrix auto-joined room on a permitted invite",
     );
+  }
+
+  /** Route a mid-run sync error: token-expiry recovery, stale-since, or WARN. */
+  async function handleSyncError(cause: unknown): Promise<void> {
+    const classified = classifyMatrixError(toMatrixErrorInput(cause));
+    const errcode = errcodeOf(cause);
+
+    // The access token was revoked/expired mid-run.
+    if (errcode === "M_UNKNOWN_TOKEN") {
+      await recoverFromTokenExpiry();
+      return;
+    }
+
+    // The homeserver rejected the sync request (e.g. a purged/stale `since`
+    // token). Clear the persisted token and re-enter initial sync; the retained
+    // watermark keeps that re-entry guarded (a forced full re-sync is safe
+    // precisely because the watermark blocks the room backlog).
+    if (errcode === "M_UNKNOWN") {
+      if (persistedState.syncToken !== undefined) {
+        const { syncToken: _dropped, ...rest } = persistedState;
+        persistedState = rest;
+        await persistState("syncToken");
+      }
+      logger.warn(
+        {
+          channelType: "matrix",
+          step: "sync-recover",
+          errorKind: classified.errorKind,
+          hint: "The homeserver rejected the stored sync position; re-entering initial sync (the persisted watermark keeps this guarded)",
+        },
+        "Matrix sync token rejected: re-entering initial sync",
+      );
+      return;
+    }
+
+    logger.warn(
+      {
+        channelType: "matrix",
+        step: "sync-recover",
+        errorKind: classified.errorKind,
+        hint: classified.hint,
+      },
+      "Matrix sync error",
+    );
+  }
+
+  /** Re-login on a fresh token when a seam is configured, else signal loudly. */
+  async function recoverFromTokenExpiry(): Promise<void> {
+    if (deps.reauthenticate !== undefined) {
+      if (reauthInFlight) return;
+      reauthInFlight = true;
+      try {
+        const re = await deps.reauthenticate();
+        if (re.ok) {
+          persistedState = {
+            ...persistedState,
+            accessToken: re.value.accessToken,
+            ...(re.value.deviceId !== undefined ? { deviceId: re.value.deviceId } : {}),
+          };
+          await persistState("accessToken");
+          const resumed = await fromPromise(
+            client.startClient({ initialSyncLimit, filter: buildSyncFilter(client.getUserId()) }),
+          );
+          if (resumed.ok) {
+            logger.info(
+              { channelType: "matrix", step: "token-recovery" },
+              "Matrix access token refreshed after expiry; resumed sync",
+            );
+            return;
+          }
+          const classified = classifyMatrixError(toMatrixErrorInput(resumed.error));
+          logger.error(
+            {
+              channelType: "matrix",
+              step: "token-recovery",
+              errorKind: classified.errorKind,
+              hint: classified.hint,
+            },
+            "Matrix sync failed to resume after token refresh",
+          );
+          return;
+        }
+        // Re-login failed — fall through to the loud dark-token signal.
+      } finally {
+        reauthInFlight = false;
+      }
+    }
+
+    // No recovery seam (or the re-login failed): never go silently dark. Name
+    // the exact knob the operator must turn.
+    const hint =
+      "Replace channels.matrix.accessToken (it was revoked or expired), or configure channels.matrix.password for automatic re-login";
+    logger.error(
+      { channelType: "matrix", step: "token-recovery", errorKind: "auth" as const, hint },
+      "Matrix access token rejected: the channel is dark until it is replaced",
+    );
+    deps.emitHealth?.({ errorKind: "auth", hint });
   }
 
   return {
