@@ -38,7 +38,8 @@ function matrixError(errcode: string, httpStatus: number, message: string): Erro
 
 interface FakeClientBehavior {
   loginResponse?: { access_token: string; device_id: string; user_id: string };
-  whoamiResponse?: { user_id: string; device_id?: string };
+  /** `user_id` is optional so a malformed 200 (no user id) can be modeled — a real homeserver may omit it. */
+  whoamiResponse?: { user_id?: string; device_id?: string };
   loginError?: unknown;
   whoamiError?: unknown;
   /**
@@ -424,5 +425,71 @@ describe("createMatrixAuth", () => {
     expect(result.ok).toBe(false);
     // No login was attempted — there is no password to re-login with.
     expect(rec.loginCalls).toHaveLength(0);
+  });
+
+  it("returns err (never throws) when whoami returns 200 without a user id and no fallback is configured", async () => {
+    // A malformed homeserver answers whoami 200 with no user_id. The token path
+    // must resolve to a classified err — it must NOT let a `.length`-of-undefined
+    // TypeError escape authenticate() (the never-throw-across-the-port contract).
+    // On the pre-patch code the deref throws, so authenticate() REJECTS and this
+    // `.resolves` assertion fails (RED).
+    const rec = newRecord();
+    const createClientImpl = makeCreateClientImpl({ whoamiResponse: { device_id: "DEV1" } }, rec);
+    const { store } = makeStateStore();
+
+    const auth = createMatrixAuth({
+      homeserverUrl: "https://hs.example",
+      // No userId configured → no fallback → a clean err, not a throw.
+      accessToken: "token-abc",
+      stateStore: store,
+      logger: makeLogger(),
+      createClientImpl,
+    });
+
+    await expect(auth.authenticate()).resolves.toMatchObject({ ok: false });
+  });
+
+  it("falls back to the configured userId when whoami 200 omits the user id", async () => {
+    // The intended fallback still works: a whoami without user_id resolves to the
+    // operator-configured userId rather than failing.
+    const rec = newRecord();
+    const createClientImpl = makeCreateClientImpl({ whoamiResponse: { device_id: "DEV1" } }, rec);
+    const { store } = makeStateStore();
+
+    const auth = createMatrixAuth({
+      homeserverUrl: "https://hs.example",
+      userId: "@bot:hs",
+      accessToken: "token-abc",
+      stateStore: store,
+      logger: makeLogger(),
+      createClientImpl,
+    });
+
+    const result = await auth.authenticate();
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.userId).toBe("@bot:hs");
+  });
+
+  it("still resolves ok with a valid whoami user id (regression)", async () => {
+    const rec = newRecord();
+    const createClientImpl = makeCreateClientImpl(
+      { whoamiResponse: { user_id: "@real:hs", device_id: "DEV1" } },
+      rec,
+    );
+    const { store } = makeStateStore();
+
+    const auth = createMatrixAuth({
+      homeserverUrl: "https://hs.example",
+      accessToken: "token-abc",
+      stateStore: store,
+      logger: makeLogger(),
+      createClientImpl,
+    });
+
+    const result = await auth.authenticate();
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.userId).toBe("@real:hs");
   });
 });
