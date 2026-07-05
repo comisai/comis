@@ -1180,4 +1180,50 @@ describe("createGoogleChatAdapter — 429 auto-resend (send-safety)", () => {
     expect(timers.delays).toHaveLength(0);
     expect(findByErrorKind(loggerSpy.error, "network")).toBeDefined();
   });
+
+  it("stop() during a 429 retry backoff cancels the pending resend — no POST lands after shutdown", async () => {
+    const timers = makeFakeTimers();
+    const { fetchImpl, spy } = makeChatFetch({
+      sendStatuses: [200, 429, 200],
+      retryAfter: "1",
+    });
+    const { deps } = await makeDeps({
+      fetchImpl,
+      setTimeoutImpl: timers.setTimeoutImpl,
+      clearTimeoutImpl: timers.clearTimeoutImpl,
+    });
+    const adapter = createGoogleChatAdapter(deps);
+
+    // Warm the token cache with a send to a DIFFERENT space so the target send's
+    // token mint resolves without a real-time tick and the only parked timer is
+    // the retry backoff (not a pace-wait).
+    await settleWithTimers(adapter.sendMessage("spaces/WARM", "warm"), timers);
+    const postsAfterWarm = spy.mock.calls.filter(([u]) =>
+      String(u).includes("/messages"),
+    ).length;
+    expect(postsAfterWarm).toBe(1);
+
+    // This send hits a 429 and parks a retry backoff (Retry-After 1s, under cap).
+    const pending = adapter.sendMessage("spaces/AAAA", "hi");
+    await flushMicrotasks();
+    const postsAfterFirst = spy.mock.calls.filter(([u]) =>
+      String(u).includes("/messages"),
+    ).length;
+    expect(postsAfterFirst).toBe(2); // the first attempt fired and got a 429
+    expect(timers.pendingCount()).toBe(1); // a retry backoff is parked
+    expect(timers.cleared).toHaveLength(0);
+
+    // Shutdown must cancel the parked retry backoff — mirror the abort-awareness
+    // the pace-wait already has, so a resend never lands after the adapter stops.
+    await adapter.stop();
+    await flushMicrotasks();
+    expect(timers.cleared.length).toBeGreaterThan(0); // the retry timer was cancelled
+
+    const result = await pending;
+    expect(result.ok).toBe(false); // aborted during backoff → err, not a late send
+    const finalPosts = spy.mock.calls.filter(([u]) =>
+      String(u).includes("/messages"),
+    ).length;
+    expect(finalPosts).toBe(2); // no third POST — the resend was cancelled by stop()
+  });
 });
