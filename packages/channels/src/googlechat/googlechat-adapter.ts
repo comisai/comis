@@ -360,6 +360,11 @@ export function createGoogleChatAdapter(
         // mirrors the non-allowlisted-sender WARN below.
         switch (result.reason) {
           case "ignored":
+            // Unreachable in this branch: the normalizer returns "ignored" ONLY
+            // for a non-CARD_CLICKED event, but this switch runs inside the
+            // `type === "CARD_CLICKED"` guard above. Kept so the switch stays
+            // total over the closed CardActionDropReason union — a benign,
+            // silent drop either way.
             break;
           case "unrendered-method":
             deps.logger.warn(
