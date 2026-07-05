@@ -90,8 +90,9 @@ describe("comis skills import", () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.method).toBe(SkillsImportContract.method);
+    // --source archive routes <ref> to archiveUrl (the handler's archive branch).
     expect(calls[0]?.params).toMatchObject({
-      url: "https://example.com/skill.zip",
+      archiveUrl: "https://example.com/skill.zip",
       source: "archive",
       scope: "shared",
       confirm: true,
@@ -129,7 +130,11 @@ describe("comis skills import", () => {
 
     const program = createTestProgram();
     registerSkillsCommand(program);
-    await program.parseAsync(["node", "test", "skills", "import", "https://example.com/s.zip"]);
+    // The catch calls process.exit(1), which the test spy throws — surfacing as
+    // a parseAsync rejection.
+    await expect(
+      program.parseAsync(["node", "test", "skills", "import", "https://example.com/s.zip"]),
+    ).rejects.toThrow(/process\.exit called/);
 
     // The token pre-check ran and failed; the socket was never opened.
     expect(ensureGatewayToken).toHaveBeenCalledTimes(1);
