@@ -2,7 +2,7 @@
 name: autonomy
 description: Use when a task is more than a single step — a read/research fan-out, spawning sub-agents, running a DAG, scheduling your own work, or messaging your channel. Teaches when to route work through `orchestrate(script)`, how to fan out with capability attenuation, how to read a denial, and the bounded contract you operate under.
 metadata:
-  version: "0.2.0"
+  version: "0.2.1"
 ---
 
 # Acting on your own (the orchestration surface)

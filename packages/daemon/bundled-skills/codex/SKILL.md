@@ -2,7 +2,7 @@
 name: codex
 description: Drive the OpenAI Codex CLI interactively in a terminal session to build, fix, or extend software — launch it in a NAMED project folder, give it the task, detect completion, and verify. Use this when the user explicitly wants to use Codex (the OpenAI coding CLI) for a software task. For general coding without a named tool, prefer the claude-code skill. This is for INTERACTIVE sessions only; never the headless exec mode.
 metadata:
-  version: "1.1.1"
+  version: "1.1.2"
 ---
 
 # Driving Codex CLI (interactive)

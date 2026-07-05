@@ -2,7 +2,7 @@
 name: gsd-builder
 description: Implement a design document end-to-end in a target repo by driving Claude Code through the GSD workflow — define a GSD milestone from the doc, then run /gsd-autonomous (TDD, skip-discuss) to build all phases unattended. Use when the operator hands you a design/spec document and asks to autonomously build, implement, or "ship" it as a milestone in a specific repository. This is a LONG, durable drive (often hours) — not a quick task.
 metadata:
-  version: "0.3.1"
+  version: "0.3.2"
 ---
 
 # Driving a GSD autonomous build from a design doc
