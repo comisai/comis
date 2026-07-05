@@ -167,8 +167,8 @@ describe("liftAuthoredFrontmatter metadata carrier extraction", () => {
     expect(result.value["metadata"]).toBe("not-a-map");
   });
 
-  it("ignores unrecognized and prototype keys inside the metadata.comis bag", () => {
-    const payload = '{"__proto__":{"polluted":true},"unknownExtension":1,"userInvocable":false}';
+  it("ignores an unrecognized key inside the metadata.comis bag while merging the known ones", () => {
+    const payload = '{"unknownExtension":1,"userInvocable":false}';
     const result = liftAuthoredFrontmatter(
       { name: "p", description: "d", metadata: { comis: payload } },
       {},
@@ -177,6 +177,17 @@ describe("liftAuthoredFrontmatter metadata carrier extraction", () => {
     if (!result.ok) return;
     expect(result.value["userInvocable"]).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(result.value, "unknownExtension")).toBe(false);
+  });
+
+  it("refuses a metadata.comis bag carrying a prototype-polluting key at any depth", () => {
+    const payload = '{"comis":{"__proto__":{"polluted":true},"primary-env":"discord"}}';
+    const result = liftAuthoredFrontmatter(
+      { name: "p", description: "d", metadata: { comis: payload } },
+      {},
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toContain("metadata.comis");
     expect(({} as Record<string, unknown>)["polluted"]).toBeUndefined();
     expect(Object.prototype).not.toHaveProperty("polluted");
   });

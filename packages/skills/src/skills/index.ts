@@ -44,6 +44,8 @@ export { parseSkillManifest } from "./manifest/parser.js";
 // The spec-pure allowed-set rule — one shared source consumed by the manifest
 // lift, the bundled-corpus gate, and the import mapper.
 export { isSpecPureFrontmatter, SPEC_PURE_TOP_LEVEL_FIELDS } from "./manifest/spec-purity.js";
+// The authored-frontmatter normalize transform run before strict validation.
+export { liftAuthoredFrontmatter, type LiftContext } from "./manifest/lift.js";
 
 // Eligibility
 export { createRuntimeEligibilityContext } from "./registry/eligibility.js";

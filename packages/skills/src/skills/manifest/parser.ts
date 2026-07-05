@@ -4,6 +4,7 @@ import { ok, err } from "@comis/shared";
 import { parse as parseYaml } from "yaml";
 import type { SkillManifestParsed } from "./schema.js";
 import { SkillManifestSchema } from "./schema.js";
+import { liftAuthoredFrontmatter, type LiftContext } from "./lift.js";
 
 // ---------------------------------------------------------------------------
 // ParsedFrontmatter
@@ -69,21 +70,33 @@ export function parseFrontmatter<T extends Record<string, unknown> = Record<stri
 /**
  * Parse a SKILL.md file and validate its frontmatter against SkillManifestSchema.
  *
- * Extracts YAML frontmatter, parses it, then validates with Zod.
- * Comis-only fields must be under the `comis:` namespace block.
- * Returns a validated SkillManifestParsed on success, or a descriptive
- * Error on failure (parse error, validation error, or missing frontmatter).
+ * Extracts YAML frontmatter, normalizes the authored carrier into the internal
+ * shape (the spec-pure form and the pre-migration top-level form both converge),
+ * then validates with Zod. Comis-only fields ride under `metadata.comis`; the
+ * pre-migration top-level form is read with a deprecation warning when a logger
+ * is supplied. Returns a validated SkillManifestParsed on success, or a
+ * descriptive Error on failure (parse error, malformed `metadata.comis`,
+ * validation error, or missing frontmatter).
  *
  * @param content - Raw SKILL.md file content
+ * @param ctx - Optional logger + skill name for the deprecation / advisory warnings
  * @returns Validated skill manifest or descriptive error
  */
-export function parseSkillManifest(content: string): Result<SkillManifestParsed, Error> {
+export function parseSkillManifest(
+  content: string,
+  ctx?: LiftContext,
+): Result<SkillManifestParsed, Error> {
   const parsed = parseFrontmatter<Record<string, unknown>>(content);
   if (!parsed.ok) {
     return parsed;
   }
 
-  const validation = SkillManifestSchema.safeParse(parsed.value.frontmatter);
+  const lifted = liftAuthoredFrontmatter(parsed.value.frontmatter, ctx ?? {});
+  if (!lifted.ok) {
+    return lifted;
+  }
+
+  const validation = SkillManifestSchema.safeParse(lifted.value);
   if (!validation.success) {
     const issues = validation.error.issues
       .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
