@@ -52,6 +52,7 @@ import {
 import { createMatrixAuth } from "./matrix-auth.js";
 import {
   createMatrixClient,
+  type DecryptFailureSignal,
   type MatrixHealthSignal,
   type MatrixSyncController,
 } from "./matrix-client.js";
@@ -74,6 +75,14 @@ export interface MatrixAdapterDeps {
   password?: string;
   /** A device id to pin, when configured. */
   deviceId?: string;
+  /**
+   * E2EE master switch. When `true`, the `/sync` transport bootstraps the crypto
+   * store (`initMatrixCrypto`) before `startClient`; false/undefined keeps the
+   * plaintext path (no WASM loaded).
+   */
+  e2ee?: boolean;
+  /** Recovery-key SecretRef (resolved string) for cross-signing. Never logged. */
+  recoveryKey?: string;
   /** Absolute per-adapter state directory (created 0700) for the durable store. */
   stateDir: string;
   /** Trusted MXIDs — the one key both the invite gate and the speaker gate read. */
@@ -98,6 +107,12 @@ export interface MatrixAdapterDeps {
    * loud ERROR log still fires. Never carries a token or message body.
    */
   emitHealth?: (signal: MatrixHealthSignal) => void;
+  /**
+   * Fail-closed decrypt seam: the `/sync` transport hands a raw, content-free
+   * signal here when an inbound encrypted event cannot be decrypted (T-5 drops
+   * the event regardless). The per-room degrade decider wires here.
+   */
+  onDecryptFailure?: (signal: DecryptFailureSignal) => void;
 }
 
 /**
@@ -305,8 +320,15 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
         onMessage: onSyncMessage,
         isDirectRoom: (room) => isRoomDirect(authedClient, room),
         logger: deps.logger,
+        // E2EE threading: the crypto store bootstraps before /sync starts on the
+        // e2ee path; recoveryKey + onDecryptFailure ride the same conditional-
+        // spread convention as reauthenticate/emitHealth.
+        e2ee: deps.e2ee === true,
+        stateDir: deps.stateDir,
         ...(canReauthenticate ? { reauthenticate: () => auth.reauthenticate() } : {}),
         ...(deps.emitHealth !== undefined ? { emitHealth: deps.emitHealth } : {}),
+        ...(deps.recoveryKey !== undefined ? { recoveryKey: deps.recoveryKey } : {}),
+        ...(deps.onDecryptFailure !== undefined ? { onDecryptFailure: deps.onDecryptFailure } : {}),
       });
       const started = await controller.start();
       if (!started.ok) {

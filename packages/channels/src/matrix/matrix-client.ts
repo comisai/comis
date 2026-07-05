@@ -51,6 +51,7 @@ import { decideInvite, type InviteAllowMode } from "./invite-policy.js";
 import { mapMatrixEventToNormalized } from "./message-mapper.js";
 import { classifyMatrixError, type MatrixErrorInput, type MatrixErrorKind } from "./errors.js";
 import type { MatrixState, MatrixStateStore } from "./matrix-state.js";
+import { initMatrixCrypto, type MatrixCryptoHandle } from "./crypto-store.js";
 
 /** The Matrix event type that carries a chat message. */
 const ROOM_MESSAGE_TYPE = "m.room.message";
@@ -76,6 +77,23 @@ export interface MatrixHealthSignal {
   errorKind: MatrixErrorKind;
   /** An operator-actionable next step naming the exact config knob. Never a secret. */
   hint: string;
+}
+
+/**
+ * The raw, pre-classification signal the transport hands the adapter when an
+ * inbound encrypted event fails to decrypt. The adapter's degrade decider turns
+ * it into a one-per-room operator note; this carries only ids + the SDK failure
+ * enum — NEVER ciphertext, a sender display name, or any key material (T-4).
+ */
+export interface DecryptFailureSignal {
+  /** The room the undecryptable event arrived in (an id — safe to carry). */
+  roomId: string;
+  /** Whether e2ee was configured on this channel (`deps.e2ee`). */
+  e2eeConfigured: boolean;
+  /** Whether the crypto backend is live (`client.getCrypto() !== undefined`). */
+  cryptoAvailable: boolean;
+  /** The SDK `DecryptionFailureCode` (a content-free enum string), or null. */
+  failureReason: string | null;
 }
 
 /** Inputs the `/sync` transport needs; the client is the injected seam. */
@@ -113,6 +131,32 @@ export interface MatrixClientDeps {
    * injected in tests for a deterministic join moment.
    */
   now?: () => number;
+  /**
+   * E2EE master switch. When `true`, the transport bootstraps the crypto store
+   * (`initMatrixCrypto`) BEFORE `startClient` so encrypted rooms decrypt from the
+   * first sync batch. When false/undefined the crypto path is NEVER touched — the
+   * lazy import boundary holds and no WASM is loaded on a plaintext install.
+   */
+  e2ee?: boolean;
+  /**
+   * The per-adapter state directory the crypto snapshot lives under (a 0600
+   * sibling of the sync-state file). Required for the e2ee path; the adapter
+   * always supplies it. Unused when `e2ee` is false/undefined.
+   */
+  stateDir?: string;
+  /**
+   * Recovery-key SecretRef (resolved string). Forwarded to the crypto bootstrap
+   * for cross-signing; NEVER logged (mirror the accessToken discipline, T-4).
+   */
+  recoveryKey?: string;
+  /**
+   * Fail-closed decrypt seam: invoked with a raw signal when an inbound encrypted
+   * event cannot be decrypted, so the adapter can degrade honestly (one note per
+   * room). The event itself is always DROPPED regardless (T-5).
+   */
+  onDecryptFailure?: (signal: DecryptFailureSignal) => void;
+  /** Test seam for the crypto bootstrap; defaults to the real `initMatrixCrypto`. */
+  initCryptoImpl?: typeof initMatrixCrypto;
 }
 
 /** The `/sync` lifecycle handle the adapter drives. */
@@ -178,6 +222,10 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
   // Guards against parallel re-logins while one recovery is in flight — a
   // homeserver re-emits the sync error until the token is actually replaced.
   let reauthInFlight = false;
+  // The E2EE snapshot handle, retained so stop() can flush a final snapshot.
+  // Undefined on the plaintext path or when the crypto bootstrap failed (the
+  // channel then runs as an UNVERIFIED device rather than going dark, D3).
+  let cryptoHandle: MatrixCryptoHandle | undefined;
 
   /** Persist the current state; a write failure is loud but non-fatal. */
   async function persistState(persistField: string): Promise<void> {
@@ -525,6 +573,46 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
         client.store.setSyncToken(persistedState.syncToken);
       }
 
+      // E2EE (E2EE-01): bootstrap the crypto store BEFORE startClient so the rust
+      // engine is initialised and inbound events from the very first sync batch
+      // can decrypt. A bootstrap failure is NON-FATAL (D3): log loud, run as an
+      // UNVERIFIED device, and STILL start /sync — never brick the channel. The
+      // handle is retained so stop() flushes a final snapshot. On the non-e2ee
+      // path this branch is skipped entirely, so the lazy crypto import boundary
+      // is never crossed and no WASM is loaded (D1).
+      if (deps.e2ee === true && deps.stateDir !== undefined) {
+        const cryptoStartedAt = systemNowMs();
+        const initCrypto = deps.initCryptoImpl ?? initMatrixCrypto;
+        const cryptoResult = await initCrypto(client, {
+          stateDir: deps.stateDir,
+          logger,
+          ...(deps.recoveryKey !== undefined ? { recoveryKey: deps.recoveryKey } : {}),
+        });
+        if (cryptoResult.ok) {
+          cryptoHandle = cryptoResult.value;
+          logger.info(
+            {
+              channelType: "matrix",
+              step: "crypto-init",
+              durationMs: systemNowMs() - cryptoStartedAt,
+            },
+            "Matrix E2EE crypto store initialized",
+          );
+        } else {
+          // Loud + actionable, but content-free (no error object → no chance of
+          // leaking the recoveryKey or key material into the log line, T-4).
+          logger.warn(
+            {
+              channelType: "matrix",
+              step: "crypto-init",
+              errorKind: "internal" as const,
+              hint: "E2EE backend failed to initialize — the bot runs as an UNVERIFIED device and encrypted rooms may not decrypt. Set channels.matrix.recoveryKey or verify the device from Element",
+            },
+            "Matrix E2EE crypto bootstrap failed — running unverified",
+          );
+        }
+      }
+
       const startedAt = systemNowMs();
       const filter = buildSyncFilter(client.getUserId());
       const started = await fromPromise(client.startClient({ initialSyncLimit, filter }));
@@ -550,6 +638,10 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
     },
 
     stop(): void {
+      // Flush a final crypto snapshot (best-effort) before tearing down /sync so
+      // the device identity + Megolm keys survive the restart. The handle logs
+      // its own failure; a plaintext channel has no handle to flush.
+      void cryptoHandle?.stop();
       client.stopClient();
       logger.info({ channelType: "matrix", step: "sync-stop" }, "Matrix sync stopped");
     },
