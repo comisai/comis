@@ -548,6 +548,38 @@ describe("createGoogleChatActivityRenderer (EditPlace wiring + signer consumptio
     expect(fake.recorded.calls.some((c) => c.op === "delete")).toBe(false);
   });
 
+  it("CONTRACT: a success_with_recovered_failures finalize ALSO retires buttons (successLabel coupling holds for both success variants)", async () => {
+    // The render-actions recognizes the terminal render by EXACT-matching
+    // successLabel(markers); the shared finalize emits successLabel(markers)
+    // (no recoveredFailures arg) for BOTH `success` and
+    // `success_with_recovered_failures`, so a recovered-failures resolve must
+    // retire the buttons exactly like a plain success. If finalize ever switches
+    // to successLabel(markers, n) for this variant, the exact-match silently
+    // breaks and buttons stop retiring — this cross-file guard fails loudly.
+    const timer = createFakeTimers();
+    const clock = createFakeClock(0);
+    const fake = createFakeGoogleChatAdapter();
+    const r = createGoogleChatActivityRenderer(fake, "spaces/AAAA", { timer, clock, signCallbackData: sign });
+
+    await r.apply(approvalFrame());
+
+    const deliveredAtMs = clock.now() + 10_000;
+    await r.finalize({
+      kind: "success_with_recovered_failures",
+      trivial: false,
+      delivery: receiptAt(deliveredAtMs),
+      recoveredFailures: [makeEvent()] as [ActivityEvent, ...ActivityEvent[]],
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const edits = fake.recorded.calls.filter((c): c is Extract<FakeCall, { op: "edit" }> => c.op === "edit");
+    const resolveEdit = edits[edits.length - 1];
+    expect(resolveEdit?.text).toBe(successLabel());
+    expect(resolveEdit?.cards).toBeDefined();
+    expect(resolveEdit?.cards?.[0]?.buttons).toBeUndefined();
+  });
+
   it("END-TO-END: a non-approval completion stays TEXT-ONLY through its own finalize", async () => {
     const timer = createFakeTimers();
     const clock = createFakeClock(0);
