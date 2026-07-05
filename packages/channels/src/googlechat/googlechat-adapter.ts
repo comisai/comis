@@ -80,23 +80,20 @@ const RETRY_AFTER_CAP_MS = 60_000;
 // Path safety for edit/delete resource names
 // ---------------------------------------------------------------------------
 
-/** True if the id carries an ASCII control character (never valid, always dropped). */
-function hasControlChar(id: string): boolean {
-  for (let i = 0; i < id.length; i++) {
-    const code = id.charCodeAt(i);
-    if (code <= 0x1f || code === 0x7f) return true;
-  }
-  return false;
-}
-
 /**
- * Reject a message resource name that is empty, `..`-escaping, or carries a
- * control character before it is interpolated into the edit/delete REST path.
- * Path separators are allowed: a Chat message resource name is
- * `spaces/{space}/messages/{id}` and legitimately contains `/`.
+ * Reject a Chat resource name before it is interpolated into a REST path.
+ *
+ * A valid Chat resource name (`spaces/{space}/messages/{id}` or `spaces/{space}`)
+ * is drawn from a strict charset — letters, digits, and `._/-` only. Allowlisting
+ * that charset rejects every query/fragment metacharacter (`?`, `&`, `#`, space,
+ * control chars) in one check, so a caller-supplied name can never carry its own
+ * query string to defeat a pinned query parameter — the edit path pins
+ * `updateMask=text`, and a name like `…/CCC?updateMask=*` would otherwise widen
+ * it to a full-field patch. The explicit `..` check still stands because the
+ * charset permits `.`; `/` is legitimately part of the resource name.
  */
 function isSafeMessageName(id: string): boolean {
-  return id.length > 0 && !id.includes("..") && !hasControlChar(id);
+  return id.length > 0 && !id.includes("..") && /^[A-Za-z0-9._/-]+$/.test(id);
 }
 
 /** Dependencies for the Google Chat adapter. */
@@ -503,7 +500,7 @@ export function createGoogleChatAdapter(
         deps.logger.warn(
           {
             channelType: "googlechat" as const,
-            hint: "messageId must be a spaces/{space}/messages/{id} resource name without .. or control characters",
+            hint: "messageId must be a spaces/{space}/messages/{id} resource name — letters, digits, and ._/- only, with no query, fragment, or traversal characters",
             errorKind: "validation" as const,
           },
           "Rejected an unsafe message resource name",
@@ -567,7 +564,7 @@ export function createGoogleChatAdapter(
         deps.logger.warn(
           {
             channelType: "googlechat" as const,
-            hint: "messageId must be a spaces/{space}/messages/{id} resource name without .. or control characters",
+            hint: "messageId must be a spaces/{space}/messages/{id} resource name — letters, digits, and ._/- only, with no query, fragment, or traversal characters",
             errorKind: "validation" as const,
           },
           "Rejected an unsafe message resource name",
