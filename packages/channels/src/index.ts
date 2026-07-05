@@ -183,6 +183,7 @@ export type {
   GoogleChatAdapterHandle,
 } from "./googlechat/googlechat-adapter.js";
 export { createGoogleChatPlugin } from "./googlechat/googlechat-plugin.js";
+export type { GoogleChatPluginHandle } from "./googlechat/googlechat-plugin.js";
 
 // Google Chat utilities
 export { mapGoogleChatEventToNormalized } from "./googlechat/message-mapper.js";

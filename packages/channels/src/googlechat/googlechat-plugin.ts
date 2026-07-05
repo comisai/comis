@@ -16,8 +16,10 @@
  * method deliberately OMITTED — the honest-capability contract.
  *
  * activate() delegates to adapter.start() (which opens the pull loop) and
- * deactivate() to adapter.stop(). The plugin returns a plain ChannelPluginPort:
- * an inbound-media resolver handle is not part of this surface.
+ * deactivate() to adapter.stop(). Beyond the ChannelPluginPort surface the plugin
+ * is a GoogleChatPluginHandle: it exposes createResolver, which builds the
+ * inbound-media resolver that resolves attachments over the supported bot download
+ * path, closing over the adapter's shared per-scope chat.bot token provider.
  *
  * @module
  */
@@ -25,6 +27,7 @@
 import type {
   ChannelCapability,
   ChannelPluginPort,
+  MediaResolverPort,
   PluginRegistryApi,
 } from "@comis/core";
 import { ok, type Result } from "@comis/shared";
@@ -32,6 +35,46 @@ import {
   createGoogleChatAdapter,
   type GoogleChatAdapterDeps,
 } from "./googlechat-adapter.js";
+import { createGoogleChatResolver } from "./googlechat-resolver.js";
+import { CHAT_SCOPE } from "./googlechat-auth.js";
+
+// ---------------------------------------------------------------------------
+// Structural interfaces (avoid a circular dep on @comis/skills)
+// ---------------------------------------------------------------------------
+
+/**
+ * Structural interface for the auth-capable SSRF-guarded fetcher (avoids a
+ * circular dep on the package that owns the HTTP transport). It is the auth
+ * superset of the plain `fetch(url)` seam: `opts` carries the Authorization
+ * header value and the host allowlist the header may ride.
+ */
+interface SsrfFetcher {
+  fetch(
+    url: string,
+    opts?: { authHeader?: string; authAllowHosts?: readonly string[] },
+  ): Promise<Result<{ buffer: Buffer; mimeType: string; sizeBytes: number }, Error>>;
+}
+
+/** Minimal logger interface for the media resolver. */
+interface ResolverLogger {
+  debug(obj: Record<string, unknown>, msg: string): void;
+  warn(obj: Record<string, unknown>, msg: string): void;
+}
+
+/**
+ * The Google Chat plugin handle. Widens ChannelPluginPort with `createResolver`,
+ * which builds the inbound-media resolver closing over the adapter's shared
+ * per-scope chat.bot token provider. Unlike the Teams handle it takes no host
+ * allowlist: the resolver pins the Bearer to the single media host with no config
+ * escape hatch.
+ */
+export interface GoogleChatPluginHandle extends ChannelPluginPort {
+  createResolver(deps: {
+    ssrfFetcher: SsrfFetcher;
+    maxBytes: number;
+    logger: ResolverLogger;
+  }): MediaResolverPort;
+}
 
 /** Google Chat platform capabilities — the honest app-auth capability matrix. */
 const CAPABILITIES: ChannelCapability = {
@@ -58,7 +101,7 @@ const CAPABILITIES: ChannelCapability = {
  */
 export function createGoogleChatPlugin(
   deps: GoogleChatAdapterDeps,
-): ChannelPluginPort {
+): GoogleChatPluginHandle {
   const adapter = createGoogleChatAdapter(deps);
 
   return {
@@ -79,6 +122,18 @@ export function createGoogleChatPlugin(
 
     async deactivate(): Promise<Result<void, Error>> {
       return adapter.stop();
+    },
+
+    createResolver({ ssrfFetcher, maxBytes, logger }) {
+      return createGoogleChatResolver({
+        ssrfFetcher,
+        maxBytes,
+        logger,
+        // Close over the adapter's SHARED per-scope token provider at the chat.bot
+        // scope — the one provider minted for the pull loop and the send path, not a
+        // second one (which would re-parse the service-account key).
+        getToken: () => adapter.getPubSubTokenProvider().getToken(CHAT_SCOPE),
+      });
     },
   };
 }
