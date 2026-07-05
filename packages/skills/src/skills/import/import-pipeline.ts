@@ -33,7 +33,7 @@ import { rmSync } from "node:fs";
 import { stringify as stringifyYaml } from "yaml";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
-import { safePath, type ErrorKind, type TypedEventBus } from "@comis/core";
+import { safePath, systemNowMs, type ErrorKind, type TypedEventBus } from "@comis/core";
 import { ensureContainedDir, writeRegularFile } from "@comis/observability";
 import { parseFrontmatter, parseSkillManifest } from "../manifest/parser.js";
 import type { SkillManifestParsed } from "../manifest/schema.js";
@@ -347,7 +347,7 @@ export async function stageImport(
   input: StageImportInput,
   deps: StageImportDeps,
 ): Promise<Result<StagedImport, ImportReject>> {
-  const startedAt = Date.now();
+  const startedAt = systemNowMs();
   const { logger } = deps;
 
   /** Emit the failure obs (log + audit + skill:failed) and return the reject. */
@@ -369,7 +369,7 @@ export async function stageImport(
         error: reject.message,
         phase: "import",
         agentId: input.agentId,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
     }
     return err(reject);
@@ -405,7 +405,7 @@ export async function stageImport(
   for (const drop of filtered.drops) {
     warnings.push(`${drop.relPath}: ${drop.reason}`);
     logger.warn(
-      { step: "text-filter", relPath: drop.relPath, errorKind: "validation", hint: "import keeps text only; this entry was dropped and will not be staged" },
+      { step: "text-filter", relPath: drop.relPath, errorKind: "validation" as const, hint: "import keeps text only; this entry was dropped and will not be staged" },
       `import: dropped ${drop.relPath} (${drop.reason})`,
     );
   }
@@ -494,7 +494,7 @@ export async function stageImport(
   if (hasCritical) {
     const ruleIds = findings.filter((f) => f.severity === "CRITICAL").map((f) => f.ruleId);
     logger.error(
-      { step: "scan", errorKind: "validation", findingCount: findings.length, hint: "remove the flagged content; the import scan rejects any CRITICAL finding unconditionally" },
+      { step: "scan", errorKind: "validation" as const, findingCount: findings.length, hint: "remove the flagged content; the import scan rejects any CRITICAL finding unconditionally" },
       `import: rejected — ${ruleIds.length} CRITICAL content-scan finding(s)`,
     );
     if (deps.eventBus && deps.audit) {
@@ -521,7 +521,7 @@ export async function stageImport(
   }
   for (const f of findings) {
     logger.warn(
-      { step: "scan", ruleId: f.ruleId, category: f.category, severity: f.severity, errorKind: "validation", hint: "review the flagged skill content" },
+      { step: "scan", ruleId: f.ruleId, category: f.category, severity: f.severity, errorKind: "validation" as const, hint: "review the flagged skill content" },
       `import: non-blocking scan finding ${f.ruleId}`,
     );
   }
@@ -556,7 +556,7 @@ export async function stageImport(
     bytes: Buffer.from(k.content, "utf-8"),
   }));
   const contentHash = computeInstalledSetHash(keptFiles);
-  const durationMs = Date.now() - startedAt;
+  const durationMs = systemNowMs() - startedAt;
 
   logger.info(
     { step: "complete", durationMs, fileCount: keptFiles.length, contentHash: contentHash.slice(0, 12), skillName },

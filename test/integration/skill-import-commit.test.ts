@@ -147,6 +147,7 @@ function makeDeps(dataDir: string): SkillImportDeps {
     readCurrentMcpServers: () => [],
     readInstalledBundleState: () => ({}),
     reinitRegistry: () => {},
+    now: () => new Date().toISOString(),
   };
 }
 

@@ -104,9 +104,9 @@ function makeDeps(dataDir: string, o: DepsOverrides = {}): SkillImportDeps {
     readCurrentMcpServers: () => current,
     readInstalledBundleState: () => o.installedBundleState ?? {},
     reinitRegistry: o.reinitRegistry ?? vi.fn(),
+    now: o.now ?? (() => "2026-01-01T00:00:00.000Z"),
     ...(o.persistImportedBundle && { persistImportedBundle: o.persistImportedBundle }),
     ...(o.writeProvenanceRecord && { writeProvenanceRecord: o.writeProvenanceRecord }),
-    ...(o.now && { now: o.now }),
   };
 }
 

@@ -89,21 +89,14 @@ export { scanSkillContent, type ContentScanResult, type ContentScanFinding } fro
 // ===========================================================================
 export { stageImport } from "./import/import-pipeline.js";
 export type {
-  StageImportInput,
-  StageImportDeps,
   StagedImport,
   ImportReject,
   ImportStage,
   BundleCheckSeam,
-  BundleCheckReject,
-  BundleCheckContext,
-  ScanVerdict,
-  KeptFileBytes,
   SkillScope,
-  ImportLogger,
   StageAuditContext,
 } from "./import/import-pipeline.js";
-export type { AcquireInput, Acquired } from "./import/acquire.js";
+export type { AcquireInput } from "./import/acquire.js";
 export type { UnpackCaps } from "./import/archive-unpack.js";
 export {
   readProvenanceStore,
@@ -117,7 +110,6 @@ export {
 export type {
   ProvenanceRecord,
   ProvenanceStore,
-  ProvenanceError,
   AcquisitionSource,
 } from "./import/provenance-store.js";
 

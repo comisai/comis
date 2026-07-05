@@ -2397,6 +2397,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "setupSkillBundles",
       "buildSkillRegistriesForBundles",
       "SetupSkillBundlesDeps",
+      // The single skill-import orchestration surfaced through the daemon barrel
+      // so the ground-truth integration test
+      // (test/integration/skill-import-commit.test.ts) drives runSkillImport
+      // (stage→commit) against a REAL provenance store + REAL discovery, and the
+      // RPC retrofit consumes ONE pre-write-Phase-A path. The
+      // public-export-consumers AST walker excludes test/**; this is the canonical
+      // place to record the test consumer (mirrors the applyBundleInstall
+      // precedent above). The commit + boot-sweep helpers stay module-local.
+      "runSkillImport",
+      "RunSkillImportOpts",
+      "SkillImportDeps",
       // Resolve-seam learned-skill promote/demote loop body + the in-process
       // decay-aware trend tracker, surfaced through the daemon barrel so the
       // source-agnostic characterization test
@@ -3128,6 +3139,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "DedupCheckResult",
     ])],
     ["@comis/skills", new Set<string>([
+      // The installed-set content-hash primitive. Consumed by the ground-truth
+      // import tests (test/integration/skill-import-commit.test.ts +
+      // packages/daemon/src/skills/import-commit.test.ts) to re-verify a
+      // provenance pin against the bytes actually on disk. The
+      // public-export-consumers walker excludes test/**; the daemon commit reads
+      // the pipeline-computed `contentHash` field rather than recomputing, so this
+      // is a documented test-facing verification primitive.
+      "computeInstalledSetHash",
       "createWebSearchTool",
       "__clearSearchCache",
       "createWebFetchTool",

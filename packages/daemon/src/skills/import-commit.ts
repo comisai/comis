@@ -35,7 +35,7 @@
 
 import { existsSync, statSync, renameSync, rmSync } from "node:fs";
 import { ok, err, type Result } from "@comis/shared";
-import { safePath, type McpServerEntry, type ErrorKind, type TypedEventBus } from "@comis/core";
+import { safePath, systemNowMs, type McpServerEntry, type ErrorKind, type TypedEventBus } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import { ensureContainedDir, writeRegularFile } from "@comis/observability";
 import {
@@ -51,7 +51,6 @@ import {
   type ImportStage,
   type BundleCheckSeam,
   type SkillScope,
-  type ScanVerdict,
   type StageAuditContext,
   type AcquireInput,
   type UnpackCaps,
@@ -150,8 +149,8 @@ export interface SkillImportDeps {
   /** Optional bus + actor context for obs. */
   readonly eventBus?: TypedEventBus;
   readonly audit?: StageAuditContext;
-  /** Injectable ISO clock (deterministic tests). */
-  readonly now?: () => string;
+  /** ISO clock for provenance timestamps (injected — no ambient wall-clock read). */
+  readonly now: () => string;
   /** Optional deterministic staging id (tests). */
   readonly stagingId?: string;
 }
@@ -303,7 +302,7 @@ function emitReject(deps: SkillImportDeps, agentId: string, skillName: string, r
       error: reject.message,
       phase: "import",
       agentId,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
   }
 }
@@ -322,13 +321,13 @@ export async function commitStagedImport(
   opts: RunSkillImportOpts,
   deps: SkillImportDeps,
 ): Promise<Result<CommitResult, ImportReject>> {
-  const startedAt = Date.now();
+  const startedAt = systemNowMs();
   const name = staged.skillName;
   const key = provenanceKey(opts.scope, opts.agentId, name);
   const writeProv = deps.writeProvenanceRecord ?? skillsWriteProvenanceRecord;
   const removeProv = deps.removeProvenanceRecord ?? skillsRemoveProvenanceRecord;
   const readStore = deps.readProvenanceStore ?? skillsReadProvenanceStore;
-  const nowIso = (): string => (deps.now ? deps.now() : new Date().toISOString());
+  const nowIso = (): string => deps.now();
   const liveDir = safePath(deps.skillsDir, name);
   const parkedDir = safePath(staged.importRoot, "parked");
 
@@ -519,7 +518,7 @@ export async function commitStagedImport(
         step: "complete",
         skillName: name,
         mode,
-        durationMs: Date.now() - startedAt,
+        durationMs: systemNowMs() - startedAt,
         fileCount: staged.keptFiles.length,
         contentHash: staged.contentHash.slice(0, 12),
       },
