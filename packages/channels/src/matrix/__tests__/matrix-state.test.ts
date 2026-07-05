@@ -107,9 +107,11 @@ describe("createMatrixStateStore", () => {
     expect(() => matrixStateFilePath(stateDir, "../escape")).toThrow(PathTraversalError);
   });
 
-  it("refuses to reset the watermark when the state file is corrupt", async () => {
-    // A corrupt file must not silently default to watermark 0 — that would
-    // replay the entire room backlog past the initial-sync guard.
+  it("recovers to defaults instead of bricking the channel when the state file is corrupt", async () => {
+    // A truncated/corrupt file must not hard-fail the whole channel (an operator
+    // would have to delete it by hand). Recover to fresh defaults: the sync-ready
+    // gate — not the watermark — is the authoritative boot-backlog guard, so a
+    // lost watermark degrades to a guarded fresh sync rather than a replay.
     const stateDir = path.join(tempDir(), "state");
     const store = createMatrixStateStore(stateDir);
     await store.save({ watermarks: { "!r:hs": 42 } });
@@ -119,6 +121,28 @@ describe("createMatrixStateStore", () => {
     }
 
     const loaded = await store.load();
-    expect(loaded.ok).toBe(false);
+    expect(loaded.ok).toBe(true);
+    if (loaded.ok) expect(loaded.value.watermarks).toEqual({});
+  });
+
+  it("replaces the state file atomically (new inode per save) rather than truncating in place", async () => {
+    // A temp-then-rename swaps the file, so a crash mid-write leaves either the
+    // old or the new file — never a truncated one. Observable signature: the
+    // target gets a NEW inode each save (rename), unlike an in-place writeFile
+    // (O_TRUNC, same inode) which a reader can catch half-written.
+    const stateDir = path.join(tempDir(), "state");
+    const store = createMatrixStateStore(stateDir);
+    const file = matrixStateFilePath(stateDir, "sync-state.json");
+
+    await store.save({ watermarks: { "!r:hs": 1 } });
+    const inode1 = fs.statSync(file).ino;
+    await store.save({ watermarks: { "!r:hs": 2 } });
+    const inode2 = fs.statSync(file).ino;
+
+    expect(inode2).not.toBe(inode1);
+    // No temp file is left behind after a successful save.
+    expect(fs.readdirSync(stateDir)).toEqual(["sync-state.json"]);
+    const loaded = await store.load();
+    expect(loaded.ok && loaded.value.watermarks["!r:hs"]).toBe(2);
   });
 });
