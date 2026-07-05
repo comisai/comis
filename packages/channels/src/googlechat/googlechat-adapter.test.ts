@@ -1798,3 +1798,127 @@ describe("createGoogleChatAdapter — CARD_CLICKED routing + default-deny", () =
     expect(msg.metadata.isButtonCallback).toBeUndefined();
   });
 });
+
+describe("createGoogleChatAdapter — inbound Drive-picker skip WARN", () => {
+  /** A MESSAGE event from `sender` carrying the given raw attachment objects. */
+  function messageEventWithAttachments(
+    attachment: unknown[],
+    over: { senderName?: string; text?: string } = {},
+  ): unknown {
+    const space = { name: "spaces/AAAA", spaceType: "SPACE" };
+    return {
+      type: "MESSAGE",
+      space,
+      message: {
+        name: "spaces/AAAA/messages/CCC",
+        sender: { name: over.senderName ?? "users/123" },
+        text: over.text ?? "see attached",
+        space,
+        attachment,
+      },
+    };
+  }
+
+  /** The Drive-picker skip WARN calls (distinct from the non-allowlisted-sender WARN). */
+  function skipWarns(spy: ReturnType<typeof vi.fn>): unknown[][] {
+    return spy.mock.calls.filter(
+      ([, msg]) =>
+        typeof msg === "string" && msg.includes("Drive-file attachment skipped"),
+    );
+  }
+
+  it("emits ONE skip WARN (source, errorKind precondition, OAuth+Drive-scope hint) for a resource-name-less share on an allowlisted message, and still fans out", async () => {
+    const { deps, loggerSpy } = await makeDeps({ allowFrom: ["users/123"] });
+    const adapter = createGoogleChatAdapter(deps);
+    const handler = vi.fn();
+    adapter.onMessage(handler);
+
+    await adapter.handleChatEvent(
+      messageEventWithAttachments([
+        { source: "DRIVE_FILE", contentName: "shared.pdf", driveDataRef: { driveFileId: "DRIVE_SECRET_ID" } },
+      ]),
+    );
+
+    const warns = skipWarns(loggerSpy.warn);
+    expect(warns).toHaveLength(1);
+    const obj = warns[0][0] as Record<string, unknown>;
+    expect(obj.channelType).toBe("googlechat");
+    expect(obj.source).toBe("DRIVE_FILE");
+    expect(obj.errorKind).toBe("precondition");
+    expect(String(obj.hint).toLowerCase()).toContain("oauth");
+    expect(String(obj.hint).toLowerCase()).toContain("drive");
+    // The message still reaches the handler despite the un-fetchable share.
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT emit a skip WARN when every attachment carries a resolvable resource name", async () => {
+    const { deps, loggerSpy } = await makeDeps({ allowFrom: ["users/123"] });
+    const adapter = createGoogleChatAdapter(deps);
+    const handler = vi.fn();
+    adapter.onMessage(handler);
+
+    await adapter.handleChatEvent(
+      messageEventWithAttachments([
+        { contentType: "image/png", attachmentDataRef: { resourceName: "spaces/AAAA/attachments/C" } },
+      ]),
+    );
+
+    expect(skipWarns(loggerSpy.warn)).toHaveLength(0);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT emit a skip WARN for a resource-name-less share from a NON-allowlisted sender (dropped by the gate first)", async () => {
+    const { deps, loggerSpy } = await makeDeps({ allowFrom: [] });
+    const adapter = createGoogleChatAdapter(deps);
+    const handler = vi.fn();
+    adapter.onMessage(handler);
+
+    await adapter.handleChatEvent(
+      messageEventWithAttachments(
+        [{ source: "DRIVE_FILE", driveDataRef: { driveFileId: "x" } }],
+        { senderName: "users/999" },
+      ),
+    );
+
+    // The WARN sits AFTER the allowlist gate, so a dropped message announces no media.
+    expect(skipWarns(loggerSpy.warn)).toHaveLength(0);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("the skip WARN carries only content-free diagnostic keys — no resource name, message text, driveFileId, or token", async () => {
+    const { deps, loggerSpy } = await makeDeps({ allowFrom: ["users/123"] });
+    const adapter = createGoogleChatAdapter(deps);
+    adapter.onMessage(vi.fn());
+
+    await adapter.handleChatEvent(
+      messageEventWithAttachments(
+        [{ source: "DRIVE_FILE", contentName: "shared.pdf", driveDataRef: { driveFileId: "DRIVE_SECRET_ID" } }],
+        { text: "SENSITIVE_MESSAGE_BODY" },
+      ),
+    );
+
+    const warns = skipWarns(loggerSpy.warn);
+    expect(warns).toHaveLength(1);
+    const obj = warns[0][0] as Record<string, unknown>;
+    expect(Object.keys(obj).sort()).toEqual(["channelType", "errorKind", "hint", "source"]);
+    const serialized = JSON.stringify(warns);
+    expect(serialized).not.toContain("DRIVE_SECRET_ID");
+    expect(serialized).not.toContain("SENSITIVE_MESSAGE_BODY");
+    expect(serialized).not.toContain(MINTED_TOKEN);
+  });
+
+  it("emits one skip WARN per resource-name-less share (two shares → two WARNs)", async () => {
+    const { deps, loggerSpy } = await makeDeps({ allowFrom: ["users/123"] });
+    const adapter = createGoogleChatAdapter(deps);
+    adapter.onMessage(vi.fn());
+
+    await adapter.handleChatEvent(
+      messageEventWithAttachments([
+        { source: "DRIVE_FILE", contentName: "a.pdf", driveDataRef: { driveFileId: "x" } },
+        { source: "DRIVE_FILE", contentName: "b.pdf", driveDataRef: { driveFileId: "y" } },
+      ]),
+    );
+
+    expect(skipWarns(loggerSpy.warn)).toHaveLength(2);
+  });
+});
