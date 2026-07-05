@@ -38,6 +38,7 @@ vi.mock("@comis/core", async (importOriginal) => {
 
 const { createLeaseManager } = await import("@comis/infra");
 const { createCapabilityEndpoint } = await import("./setup-capability-endpoint.js");
+const { deniedResult } = await import("./setup-tool-invoke-executor.js");
 
 /** A test ClockPort backed by a mutable epoch. */
 function createTestClock(startMs = 1_700_000_000_000): { now: () => number; advance(ms: number): void } {
@@ -193,6 +194,67 @@ describe("createCapabilityEndpoint — per-cap audit at the socket chokepoint", 
       expect(blob).toContain("memory_search");
       expect(blob).not.toContain("\"args\"");
     }
+  });
+
+  it("a cap-HELD tool.invoke DENIED by a daemon-side SURFACE gate (MCP allowlist) audits decision=deny / kind=capability_denied, NOT allow (F-1)", async () => {
+    // The cap (orch:mcp) IS held → the chokepoint's requireCapability passes and it
+    // routes to the executor. The executor's inbound-allowlist gate denies with a
+    // MARKED error-result. Before F-1 the chokepoint emitted decision:allow (the
+    // route "resolved"), so explain.orchestrate showed a denied MCP call as allowed.
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const { bearer, leaseId } = leaseManager.mintLease({
+      agentId: "agent-sock",
+      caps: ["orch:mcp"], // cap HELD → chokepoint allows the capability, routes to the executor
+      budgetRef: "budget-1",
+      sessionKey: "tenant-sock:user-1:chan-1",
+      rootRunId: "run-root-1",
+      parentLeaseId: "lease-parent-9",
+    });
+
+    const cap = makeAuditCapture();
+    // Mirrors executeMcp's inbound-allowlist deny: a content-free, marked error-result.
+    const toolInvokeExecutor = vi.fn(async () =>
+      deniedResult("MCP tool not permitted for this agent", "mcp_allowlist"),
+    );
+    const endpoint = createCapabilityEndpoint({
+      leaseManager,
+      rpcCall: vi.fn(),
+      toolInvokeExecutor,
+      container: cap.container,
+    } as never);
+
+    const result = await endpoint.handleCapCall(bearer, "tool.invoke", {
+      tool: "mcp",
+      args: { server: "depot", tool: "query", args: { sku: "ABC-123" } },
+    });
+
+    // The FINAL authorization decision is DENY — the surface gate denied.
+    const treeDeny = cap.tree().filter((a) => a.decision === "deny");
+    expect(treeDeny).toHaveLength(1);
+    expect(treeDeny[0]!.capability).toBe("orch:mcp");
+    expect(treeDeny[0]!.tool).toBe("mcp");
+    expect(treeDeny[0]!.leaseId).toBe(leaseId);
+    expect(treeDeny[0]!.rootRunId).toBe("run-root-1");
+    expect(treeDeny[0]!.parentLeaseId).toBe("lease-parent-9");
+    // And NOT a spurious allow for the same call.
+    expect(cap.tree().filter((a) => a.decision === "allow")).toHaveLength(0);
+
+    // The durable trail records the capability_denied.
+    const denyAudits = cap
+      .audit()
+      .filter((a) => (a.metadata as Record<string, unknown>)?.decision === "deny");
+    expect(denyAudits).toHaveLength(1);
+    expect(denyAudits[0]!.kind).toBe("capability_denied");
+    expect(denyAudits[0]!.outcome).toBe("denied");
+
+    // The jailed script still gets the plain error envelope — the deny marker is a
+    // non-enumerable Symbol, so it never serializes across the socket to the jail,
+    // and the gate name / server / tool never ride the content-free audit.
+    expect(JSON.stringify(result)).toBe(JSON.stringify({ error: "MCP tool not permitted for this agent" }));
+    const auditBlob = JSON.stringify(cap.audit()) + JSON.stringify(cap.tree());
+    expect(auditBlob).not.toContain("depot");
+    expect(auditBlob).not.toContain("mcp_allowlist");
   });
 });
 
