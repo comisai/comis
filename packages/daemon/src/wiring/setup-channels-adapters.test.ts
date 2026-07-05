@@ -855,4 +855,60 @@ describe("bootstrapAdapters", () => {
     expect(createMatrixPlugin).not.toHaveBeenCalled();
     expect(validateHomeserverUrl).not.toHaveBeenCalled();
   });
+
+  it("threads e2ee + recoveryKey into the Matrix plugin and bridges the decrypt-health + dark-token signals to the event bus", async () => {
+    const emit = vi.fn();
+    const container = makeContainer(
+      {
+        matrix: {
+          enabled: true,
+          homeserverUrl: "https://matrix.example.com",
+          userId: "@bot:example.com",
+          accessToken: "syt-token",
+          e2ee: true,
+        },
+      },
+      { MATRIX_RECOVERY_KEY: "recovery-key-from-store" },
+    );
+    (container as unknown as { eventBus: { emit: typeof emit } }).eventBus = { emit };
+
+    await bootstrapAdapters({ container, channelsLogger });
+
+    // The e2ee switch + the resolved recovery key are threaded into the factory.
+    expect(createMatrixPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({ e2ee: true, recoveryKey: "recovery-key-from-store" }),
+    );
+
+    const pluginDeps = vi.mocked(createMatrixPlugin).mock.calls[0]![0] as unknown as {
+      emitDecryptHealth: (s: { roomId: string; reason: string }) => void;
+      emitHealth: (s: { errorKind: string; hint: string }) => void;
+    };
+
+    // A decrypt failure bridges to the content-free channel:decrypt_failed event
+    // (channel label + room id + the closed reason kind only).
+    pluginDeps.emitDecryptHealth({ roomId: "!room:example.com", reason: "missing_session" });
+    expect(emit).toHaveBeenCalledWith(
+      "channel:decrypt_failed",
+      expect.objectContaining({
+        channelType: "matrix",
+        roomId: "!room:example.com",
+        reason: "missing_session",
+      }),
+    );
+
+    // The dark-access-token health signal bridges to a correctly-named channel
+    // HEALTH event. Matrix is a polling channel with NO ingress, so it must NEVER
+    // borrow the ingress-auth-rejected event.
+    pluginDeps.emitHealth({ errorKind: "auth", hint: "Set channels.matrix.accessToken" });
+    expect(emit).toHaveBeenCalledWith(
+      "channel:health_changed",
+      expect.objectContaining({
+        channelType: "matrix",
+        connectionMode: "polling",
+        currentState: "degraded",
+      }),
+    );
+    const emittedEventNames = emit.mock.calls.map((call) => call[0]);
+    expect(emittedEventNames).not.toContain("channel:ingress_auth_rejected");
+  });
 });
