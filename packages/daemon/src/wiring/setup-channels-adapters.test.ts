@@ -39,6 +39,17 @@ const mockMsTeamsPlugin = {
 // A sentinel the mocked ingress factory returns, so the registration's
 // caller-backed wiring can be asserted by identity.
 const mockMsTeamsIngress = { __msteamsIngress: true };
+// Matrix is a pull channel (Client-Server /sync long-poll): a plain plugin with
+// the honest plaintext capabilities, no route-driven inbound driver.
+const mockMatrixPlugin = {
+  adapter: { sendMessage: vi.fn() },
+  channelType: "matrix",
+  capabilities: {
+    features: { reactions: false, editMessages: false, deleteMessages: false, fetchHistory: false, attachments: false, typing: false, threads: false, buttons: "none" },
+    limits: { maxMessageChars: 32_768 },
+    replyToMetaKey: "matrixEventId",
+  },
+};
 
 vi.mock("@comis/channels", () => ({
   createTelegramPlugin: vi.fn(() => mockTelegramPlugin),
@@ -64,6 +75,14 @@ vi.mock("@comis/channels", () => ({
   validateMsTeamsCredentials: vi.fn(() => ({ ok: true, value: undefined })),
   // The bound inbound activity-token validator (authHeader, appId) => Result.
   validateActivityJwt: vi.fn(async () => ({ ok: true, value: undefined })),
+  createMatrixPlugin: vi.fn(() => mockMatrixPlugin),
+  // Synchronous field-presence precondition — returns a Result directly.
+  validateMatrixCredentials: vi.fn(() => ({ ok: true, value: undefined })),
+  // Async SSRF homeserver guard — resolves a Result<ValidatedUrl, Error>.
+  validateHomeserverUrl: vi.fn(async () => ({
+    ok: true,
+    value: { hostname: "matrix.example.com", ip: "203.0.113.10", url: new URL("https://matrix.example.com") },
+  })),
 }));
 
 // The Teams ingress sub-app is built in @comis/gateway; the registration block
@@ -95,6 +114,9 @@ import {
   validateEmailCredentials,
   createMsTeamsPlugin,
   validateMsTeamsCredentials,
+  createMatrixPlugin,
+  validateMatrixCredentials,
+  validateHomeserverUrl,
 } from "@comis/channels";
 import { createMsTeamsIngress } from "@comis/gateway";
 
@@ -114,6 +136,7 @@ function makeChannelConfig(overrides: Record<string, any> = {}) {
     irc: { enabled: false, host: undefined, port: 6667, nick: undefined, tls: false, channels: [], nickservPassword: undefined, ...overrides.irc },
     email: { enabled: false, address: undefined, imapHost: undefined, imapPort: 993, smtpHost: undefined, smtpPort: 587, secure: true, authType: "password", allowFrom: [], allowMode: "allowlist", pollingIntervalMs: 60_000, ...overrides.email },
     msteams: { enabled: false, authMode: "secret", appId: undefined, appPassword: undefined, tenantId: undefined, certPath: undefined, managedIdentityClientId: undefined, cloud: "public", allowFrom: [], allowMode: "allowlist", ...overrides.msteams },
+    matrix: { enabled: false, homeserverUrl: undefined, userId: undefined, accessToken: undefined, password: undefined, deviceId: undefined, stateDir: undefined, allowFrom: [], allowMode: "allowlist", autoJoinOnInvite: true, allowPrivateHomeserver: false, ...overrides.matrix },
   };
 }
 
@@ -719,5 +742,117 @@ describe("bootstrapAdapters", () => {
       expect.objectContaining({ errorKind: "auth" }),
       expect.stringContaining("Teams credential validation failed"),
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // Matrix — a pull channel (Client-Server /sync long-poll). Like Telegram it
+  // is polling: the block runs the field-presence precondition + the SSRF
+  // homeserver guard, constructs the plugin, and registers BOTH maps. There is
+  // no gateway ingress, no liveness monitor, and no daemon boot handle.
+  // -------------------------------------------------------------------------
+
+  it("registers the Matrix adapter and plugin under 'matrix' when enabled with valid creds + homeserver", async () => {
+    const container = makeContainer({
+      matrix: {
+        enabled: true,
+        homeserverUrl: "https://matrix.example.com",
+        userId: "@bot:example.com",
+        accessToken: "syt-token",
+        allowFrom: ["@alice:example.com"],
+        allowMode: "allowlist",
+        autoJoinOnInvite: true,
+        allowPrivateHomeserver: false,
+      },
+    });
+    const result = await bootstrapAdapters({ container, channelsLogger });
+
+    expect(validateMatrixCredentials).toHaveBeenCalledWith(
+      expect.objectContaining({ homeserverUrl: "https://matrix.example.com", userId: "@bot:example.com", accessToken: "syt-token" }),
+    );
+    // The SSRF homeserver guard runs BEFORE construction (T-3): (url, opt-in flag, logger).
+    expect(validateHomeserverUrl).toHaveBeenCalledWith("https://matrix.example.com", false, channelsLogger);
+    expect(createMatrixPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({
+        homeserverUrl: "https://matrix.example.com",
+        userId: "@bot:example.com",
+        accessToken: "syt-token",
+        allowFrom: ["@alice:example.com"],
+        allowMode: "allowlist",
+        autoJoinOnInvite: true,
+        allowPrivateHomeserver: false,
+        logger: channelsLogger,
+      }),
+    );
+    expect(result.adaptersByType.get("matrix")).toBe(mockMatrixPlugin.adapter);
+    expect(result.channelPlugins.get("matrix")).toBe(mockMatrixPlugin);
+    expect(channelsLogger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ channelType: "matrix", userId: "@bot:example.com" }),
+      "Channel adapter initialized",
+    );
+    // Polling posture: Matrix never routes through the Teams gateway ingress.
+    expect(createMsTeamsIngress).not.toHaveBeenCalled();
+    expect(result.msTeamsIngress).toBeUndefined();
+  });
+
+  it("defaults the Matrix stateDir under the home dir when config omits it", async () => {
+    const container = makeContainer({
+      matrix: { enabled: true, homeserverUrl: "https://matrix.example.com", accessToken: "syt-token" },
+    });
+    await bootstrapAdapters({ container, channelsLogger });
+
+    const call = vi.mocked(createMatrixPlugin).mock.calls[0]![0] as unknown as { stateDir: string };
+    expect(call.stateDir).toContain("matrix-state");
+  });
+
+  it("falls back to MATRIX_ACCESS_TOKEN from the secret store when config omits accessToken", async () => {
+    const container = makeContainer(
+      { matrix: { enabled: true, homeserverUrl: "https://matrix.example.com", userId: "@bot:example.com" } },
+      { MATRIX_ACCESS_TOKEN: "syt-from-store" },
+    );
+    const result = await bootstrapAdapters({ container, channelsLogger });
+
+    expect(container.secretManager.get).toHaveBeenCalledWith("MATRIX_ACCESS_TOKEN");
+    expect(createMatrixPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({ accessToken: "syt-from-store" }),
+    );
+    expect(result.adaptersByType.get("matrix")).toBe(mockMatrixPlugin.adapter);
+  });
+
+  it("warns with errorKind config and does not register when Matrix is enabled but unconfigured", async () => {
+    vi.mocked(validateMatrixCredentials).mockReturnValueOnce({ ok: false, error: new Error("homeserverUrl must not be empty") } as any);
+    const container = makeContainer({ matrix: { enabled: true } });
+    const result = await bootstrapAdapters({ container, channelsLogger });
+
+    expect(result.adaptersByType.has("matrix")).toBe(false);
+    expect(createMatrixPlugin).not.toHaveBeenCalled();
+    expect(channelsLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "config" }),
+      expect.stringContaining("Matrix enabled but not configured"),
+    );
+  });
+
+  it("does not register Matrix when the homeserver URL is blocked by the SSRF guard", async () => {
+    // T-3: a blocked homeserver → the plugin is never constructed (WARN, no register).
+    vi.mocked(validateHomeserverUrl).mockResolvedValueOnce({ ok: false, error: new Error("blocked: private range") } as any);
+    const container = makeContainer({
+      matrix: { enabled: true, homeserverUrl: "http://169.254.169.254", accessToken: "syt-token" },
+    });
+    const result = await bootstrapAdapters({ container, channelsLogger });
+
+    expect(result.adaptersByType.has("matrix")).toBe(false);
+    expect(createMatrixPlugin).not.toHaveBeenCalled();
+    expect(channelsLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "config" }),
+      expect.stringContaining("Matrix enabled but not configured"),
+    );
+  });
+
+  it("does not register the Matrix adapter when the channel is disabled", async () => {
+    const container = makeContainer({ matrix: { enabled: false } });
+    const result = await bootstrapAdapters({ container, channelsLogger });
+
+    expect(result.adaptersByType.has("matrix")).toBe(false);
+    expect(createMatrixPlugin).not.toHaveBeenCalled();
+    expect(validateHomeserverUrl).not.toHaveBeenCalled();
   });
 });
