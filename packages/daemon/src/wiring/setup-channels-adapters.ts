@@ -511,8 +511,9 @@ export async function bootstrapAdapters(deps: {
   // never a crash, never a silent skip. `allowFrom` needs no wiring here: the
   // generic central per-sender filter reads config.channels.matrix.allowFrom.
   if (channelConfig.matrix.enabled) {
-    const { homeserverUrl, userId, deviceId, allowFrom, allowMode, autoJoinOnInvite, allowPrivateHomeserver } = channelConfig.matrix;
+    const { homeserverUrl, userId, deviceId, allowFrom, allowMode, autoJoinOnInvite, allowPrivateHomeserver, e2ee } = channelConfig.matrix;
     const accessToken = (channelConfig.matrix.accessToken as string | undefined) || getSecret("MATRIX_ACCESS_TOKEN");
+    const recoveryKey = (channelConfig.matrix.recoveryKey as string | undefined) || getSecret("MATRIX_RECOVERY_KEY");
     const password = channelConfig.matrix.password as string | undefined;
     const stateDir = channelConfig.matrix.stateDir ?? safePath(os.homedir(), ".comis", "matrix-state");
     const credCheck = validateMatrixCredentials({ homeserverUrl, userId, accessToken, password });
@@ -524,12 +525,38 @@ export async function bootstrapAdapters(deps: {
         accessToken,
         password,
         deviceId,
+        e2ee,
+        recoveryKey,
         stateDir,
         allowFrom,
         allowMode,
         autoJoinOnInvite,
         allowPrivateHomeserver,
         logger: channelsLogger,
+        // Matrix's dark-access-token and decrypt signals are channel HEALTH
+        // events. Matrix is a polling channel with NO gateway ingress, so it
+        // MUST NOT borrow the ingress-auth-rejected event — a wrong-direction
+        // label. `error: signal.hint` carries a fixed operator hint (a config-
+        // knob name), never a token or message body.
+        emitHealth: (signal) =>
+          container.eventBus.emit("channel:health_changed", {
+            channelType: "matrix",
+            previousState: "active",
+            currentState: "degraded",
+            connectionMode: "polling",
+            error: signal.hint,
+            lastMessageAt: null,
+            timestamp: systemNowMs(),
+          }),
+        // A decrypt failure surfaces content-free: room id + the closed reason
+        // kind only — never ciphertext, key material, or the raw failure code.
+        emitDecryptHealth: (signal) =>
+          container.eventBus.emit("channel:decrypt_failed", {
+            channelType: "matrix",
+            roomId: signal.roomId,
+            reason: signal.reason,
+            timestamp: systemNowMs(),
+          }),
       });
       adaptersByType.set("matrix", plugin.adapter);
       channelPlugins.set("matrix", plugin);
