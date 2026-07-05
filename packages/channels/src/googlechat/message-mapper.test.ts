@@ -199,7 +199,7 @@ describe("mapGoogleChatEventToNormalized", () => {
     expect(result?.metadata.googlechatMessageName).toBeUndefined();
   });
 
-  it("captures the thread resource name under a googlechat metadata key", () => {
+  it("captures the thread resource name under BOTH the generic threadId and the googlechat key", () => {
     const result = mapGoogleChatEventToNormalized(
       makeChatEvent({
         message: {
@@ -210,15 +210,19 @@ describe("mapGoogleChatEventToNormalized", () => {
         },
       }),
     );
+    // The generic key is what the shared inbound→outbound thread propagation
+    // consumes; the channel-scoped key is retained alongside it.
+    expect(result?.metadata.threadId).toBe("spaces/AAAA/threads/TTTT");
     expect(result?.metadata.googlechatThreadId).toBe("spaces/AAAA/threads/TTTT");
   });
 
-  it("omits the thread metadata key when no thread is present", () => {
+  it("omits both thread metadata keys when no thread is present", () => {
     const result = mapGoogleChatEventToNormalized(
       makeChatEvent({
         message: { name: "spaces/AAAA/messages/1", sender: { name: "users/1" }, text: "hi" },
       }),
     );
+    expect(result?.metadata.threadId).toBeUndefined();
     expect(result?.metadata.googlechatThreadId).toBeUndefined();
   });
 
