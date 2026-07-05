@@ -21,7 +21,7 @@
  * shared executor concern applied to every channel, deliberately not duplicated
  * here.
  *
- * Outbound edit patches the bot's own message in place. Delete, reaction, and
+ * Outbound edit and delete mutate the bot's own message in place. Reaction and
  * attachment methods are OMITTED: a service-account app cannot reach those
  * method/auth surfaces, so advertising them would be dishonest — the daemon
  * capability gate blocks any call the (false) capability flags forbid.
@@ -552,6 +552,65 @@ export function createGoogleChatAdapter(
         );
         return err(
           new Error(`chat messages.patch returned status ${res.status}`),
+        );
+      }
+      return ok(undefined);
+    },
+
+    async deleteMessage(
+      _channelId: string,
+      messageId: string,
+    ): Promise<Result<void, Error>> {
+      // Removes the bot's own message. The resource name is guarded before it
+      // reaches the token mint or the REST path, exactly as the edit path does.
+      if (!isSafeMessageName(messageId)) {
+        deps.logger.warn(
+          {
+            channelType: "googlechat" as const,
+            hint: "messageId must be a spaces/{space}/messages/{id} resource name without .. or control characters",
+            errorKind: "validation" as const,
+          },
+          "Rejected an unsafe message resource name",
+        );
+        return err(new Error("unsafe message resource name"));
+      }
+      const tok = await tokens.getToken(CHAT_SCOPE);
+      if (!tok.ok) return err(tok.error); // auth already logged a secret-free WARN
+      const chatBase = deps.chatBaseUrl ?? "https://chat.googleapis.com/v1";
+      const doFetch = deps.fetchImpl ?? fetch;
+      // A delete carries no request body — the resource name is the whole request.
+      const url = `${chatBase}/${messageId}`;
+      const init: RequestInit = {
+        method: "DELETE",
+        headers: { authorization: `Bearer ${tok.value}` },
+      };
+      const responded = await fromPromise(doFetch(url, init));
+      if (!responded.ok) {
+        const c = classifyGoogleChatError(undefined, responded.error);
+        deps.logger.error(
+          {
+            channelType: "googlechat" as const,
+            hint: c.hint,
+            errorKind: c.errorKind,
+          },
+          "Google Chat delete failed: no response",
+        );
+        return err(responded.error);
+      }
+      const res = responded.value;
+      if (!res.ok) {
+        const c = classifyGoogleChatError(res.status);
+        deps.logger.error(
+          {
+            channelType: "googlechat" as const,
+            status: res.status,
+            hint: c.hint,
+            errorKind: c.errorKind,
+          },
+          "Google Chat delete failed: error status",
+        );
+        return err(
+          new Error(`chat messages.delete returned status ${res.status}`),
         );
       }
       return ok(undefined);

@@ -152,14 +152,14 @@ describe("createGoogleChatPlugin — capability parity (every false flag omits i
     const plugin = createGoogleChatPlugin(deps);
     const adapter = plugin.adapter as Record<string, unknown>;
 
-    // For a text-only app these capabilities are advertised false AND their
-    // adapter methods are omitted, so the daemon capability gate (requireMethod)
-    // blocks the call rather than reaching an unimplemented path. editMessage now
-    // ships as a function with editMessages still false: method-present/flag-false
-    // is gate-safe (assertCapability blocks the false-flag RPC before requireMethod
-    // is reached), so it is not listed here.
+    // For a text-only app the reaction, history, and attachment capabilities are
+    // advertised false AND their adapter methods are omitted, so the daemon
+    // capability gate (requireMethod) blocks the call rather than reaching an
+    // unimplemented path. editMessage/deleteMessage now ship as functions with
+    // their flags still false: method-present/flag-false is gate-safe
+    // (assertCapability blocks the false-flag RPC before requireMethod is reached),
+    // so they are not listed here.
     const omittedForFalseFlag: Record<string, string> = {
-      deleteMessage: "deleteMessages:false",
       reactToMessage: "reactions:false",
       removeReaction: "reactions:false",
       onReaction: "reactions:false",
