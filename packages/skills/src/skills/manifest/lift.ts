@@ -117,7 +117,17 @@ function liftSpecPure(
   }
 
   const authoredTools = raw["allowed-tools"];
-  if (typeof authoredTools === "string") {
+  if (authoredTools !== undefined) {
+    // A present-but-non-string allowed-tools is refused, not dropped: an empty
+    // internal allowedTools means "no restriction", so silently discarding a
+    // list would fail open on the tool-restriction boundary.
+    if (typeof authoredTools !== "string") {
+      return err(
+        new Error(
+          "allowed-tools must be a space-separated string naming the exact tools the skill may use, not a list",
+        ),
+      );
+    }
     internal["allowedTools"] = authoredTools.split(/\s+/).filter(Boolean);
   }
 
