@@ -14,6 +14,13 @@
  * `alt=media`. The attachment's browser-facing download link is never read or
  * fetched — it is a human-user URL that rejects a service-account Bearer.
  *
+ * The resource name is untrusted inbound JSON, so it is guarded twice before it can
+ * steer a request: a cheap denylist rejects genuine injection/traversal
+ * metacharacters before any mint or fetch, and the URL is then built via the URL
+ * API with its host and `/v1/media/` pathname asserted — the authoritative control.
+ * The guard is format-agnostic on purpose: an opaque base64/token resource name is
+ * NOT dropped by a charset allowlist.
+ *
  * Dependency-clean by construction: this file pulls in neither the SSRF-fetcher's
  * home package nor its underlying HTTP transport. The fetcher arrives as a local
  * structural interface, so the DNS-pinning + redirect machinery stays in the
@@ -24,11 +31,14 @@
  * mismatch). Raw bytes are returned — the pipeline applies the external-content
  * fence on the DERIVED text (transcription/vision/doc-extract), not this resolver.
  *
+ * Secret discipline: the service-account Bearer and the constructed URL are never
+ * placed in a log field, and are stripped from a returned Error before it surfaces.
+ *
  * @module
  */
 
 import type { Attachment, MediaResolverPort, ResolvedMedia } from "@comis/core";
-import { systemNowMs } from "@comis/core";
+import { sanitizeLogString, systemNowMs } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err, tryCatch } from "@comis/shared";
 import { fileTypeFromBuffer } from "file-type";
@@ -76,6 +86,27 @@ const CHAT_MEDIA_HOST = "chat.googleapis.com";
 
 const GOOGLECHAT_ATTACHMENT_SCHEME = /^googlechat-attachment:\/\//;
 
+/**
+ * Reject a resource name carrying a genuine injection or traversal metacharacter,
+ * WITHOUT constraining its charset. The media.download resource name is an OPAQUE
+ * token — it may legitimately carry base64 (`+`, `=`), `~`, `:`, and `/` for a
+ * multi-segment name — so a strict character allowlist would silently drop a valid
+ * attachment. This denylist rejects only `?`, `#`, `&`, whitespace, any control
+ * character, and `..`, while permitting opaque token characters. The authoritative
+ * control remains the host + `/v1/media/` pathname assertion built in `resolve`;
+ * this is the cheap pre-check that keeps a hostile ref from ever being minted for
+ * or fetched. A char-code scan avoids a control-character regex.
+ */
+function hasResourceNameInjection(id: string): boolean {
+  if (id.includes("..")) return true;
+  for (let i = 0; i < id.length; i++) {
+    const c = id.charCodeAt(i);
+    if (c <= 0x20 || c === 0x7f) return true; // whitespace + all control chars
+    if (c === 0x3f || c === 0x23 || c === 0x26) return true; // ? # &
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -89,6 +120,14 @@ const GOOGLECHAT_ATTACHMENT_SCHEME = /^googlechat-attachment:\/\//;
  * MIME type.
  */
 export function createGoogleChatResolver(deps: GoogleChatResolverDeps): MediaResolverPort {
+  /** Strip the constructed URL and the Bearer from an error message, then sanitize free-text. */
+  function sanitizeError(message: string, url: string, token: string | undefined): string {
+    let stripped = message;
+    if (url.length > 0) stripped = stripped.replaceAll(url, "[REDACTED_URL]");
+    if (token && token.length > 0) stripped = stripped.replaceAll(token, "[REDACTED_TOKEN]");
+    return sanitizeLogString(stripped);
+  }
+
   return {
     schemes: ["googlechat-attachment"],
 
@@ -99,19 +138,61 @@ export function createGoogleChatResolver(deps: GoogleChatResolverDeps): MediaRes
       const decoded = tryCatch(() =>
         decodeURIComponent(attachment.url.replace(GOOGLECHAT_ATTACHMENT_SCHEME, "")),
       );
-      if (!decoded.ok) return err(decoded.error);
+      if (!decoded.ok || decoded.value.length === 0) {
+        deps.logger.warn(
+          {
+            platform: "googlechat",
+            errorKind: "validation" as const,
+            hint: "Drop the attachment: its googlechat-attachment:// payload is not valid percent-encoding",
+          },
+          "Google Chat media resolve failed: malformed attachment ref",
+        );
+        return err(new Error("Invalid googlechat-attachment:// URL"));
+      }
       const resourceName = decoded.value;
 
-      // Build the download URL via the URL API from the FIXED host. The multi-segment
-      // resource name goes into the path; `alt=media` is the only query parameter.
+      // Injection/traversal pre-check — BEFORE any mint or fetch. Permits opaque token
+      // characters; rejects only genuine query/fragment/traversal injection.
+      if (hasResourceNameInjection(resourceName)) {
+        deps.logger.warn(
+          {
+            platform: "googlechat",
+            errorKind: "validation" as const,
+            hint: "Drop the attachment: its resource name carries a disallowed metacharacter (query, fragment, whitespace, control, or ..)",
+          },
+          "Google Chat media resolve blocked: unsafe resource name",
+        );
+        return err(new Error("attachment resource name not permitted"));
+      }
+
+      // Build the download URL via the URL API from the FIXED host, then ASSERT the host
+      // and `/v1/media/` pathname — the authoritative control. A traversal that slips the
+      // pre-check would collapse the pathname off `/v1/media/` and be caught here; the
+      // injected fetcher re-pins the host per hop as defense-in-depth.
       const built = tryCatch(() => new URL(`https://${CHAT_MEDIA_HOST}/v1/media/${resourceName}`));
-      if (!built.ok) return err(built.error);
+      if (
+        !built.ok ||
+        built.value.hostname !== CHAT_MEDIA_HOST ||
+        !built.value.pathname.startsWith("/v1/media/")
+      ) {
+        deps.logger.warn(
+          {
+            platform: "googlechat",
+            errorKind: "validation" as const,
+            hint: "Drop the attachment: the resource name did not resolve to a chat.googleapis.com /v1/media/ path",
+          },
+          "Google Chat media resolve blocked: off-host or off-path ref",
+        );
+        return err(new Error("attachment host not permitted"));
+      }
       built.value.searchParams.set("alt", "media");
       const url = built.value.toString();
 
+      // The download ALWAYS needs the Bearer, so a mint failure is fatal — never a
+      // header-less fetch. The token provider already logged a secret-free WARN.
       const tok = await deps.getToken();
-      const token = tok.ok ? tok.value : undefined;
-      const authHeader = token !== undefined ? `Bearer ${token}` : undefined;
+      if (!tok.ok) return err(tok.error);
+      const authHeader = `Bearer ${tok.value}`;
 
       const startMs = systemNowMs();
       const fetched = await deps.ssrfFetcher.fetch(url, {
@@ -119,19 +200,52 @@ export function createGoogleChatResolver(deps: GoogleChatResolverDeps): MediaRes
         authAllowHosts: [CHAT_MEDIA_HOST],
       });
       const durationMs = systemNowMs() - startMs;
-      if (!fetched.ok) return err(fetched.error);
+
+      if (!fetched.ok) {
+        deps.logger.warn(
+          {
+            platform: "googlechat",
+            durationMs,
+            errorKind: "platform" as const,
+            hint: "Google Chat media fetch failed — verify the service account has the chat.bot scope and the attachment is uploaded content, not a Drive file",
+          },
+          "Google Chat media fetch failed",
+        );
+        // The constructed URL / Bearer must never surface in the returned error.
+        const msg = fetched.error instanceof Error ? fetched.error.message : String(fetched.error);
+        return err(new Error(sanitizeError(msg, url, tok.value)));
+      }
 
       const { buffer, mimeType: fetchedMime, sizeBytes } = fetched.value;
 
       // Secondary size cap at the resolver (defense-in-depth over the fetcher's own cap).
       if (sizeBytes > deps.maxBytes) {
+        deps.logger.warn(
+          {
+            platform: "googlechat",
+            sizeBytes,
+            maxBytes: deps.maxBytes,
+            durationMs,
+            errorKind: "precondition" as const,
+            hint: "Raise the Google Chat media size limit or ask the sender to shrink the file",
+          },
+          "Google Chat media rejected: body exceeds the configured size cap",
+        );
         return err(new Error(`media size ${sizeBytes} exceeds limit of ${deps.maxBytes} bytes`));
       }
 
-      // The port contract mandates a VERIFIED (sniffed) MIME; the recognized type is
-      // authoritative, else fall back to the fetched header.
+      // The port contract mandates a VERIFIED (sniffed) MIME. The platform can mislabel
+      // bytes and the model vision API rejects a declared type that mismatches the actual
+      // bytes — sniff the downloaded bytes; the recognized type is authoritative, else
+      // fall back to the fetched header.
       const sniffed = await fileTypeFromBuffer(buffer);
       const mimeType = sniffed?.mime ?? fetchedMime;
+      if (sniffed && sniffed.mime !== fetchedMime) {
+        deps.logger.debug(
+          { platform: "googlechat", declaredMime: fetchedMime, sniffedMime: sniffed.mime },
+          "Google Chat media MIME corrected from sniffed bytes (declared type mismatched)",
+        );
+      }
 
       deps.logger.debug(
         { platform: "googlechat", sizeBytes, durationMs },
