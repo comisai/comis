@@ -173,7 +173,10 @@ export function createGoogleChatAdapter(
   const pacer = createSendPacer({
     now,
     setTimeout: deps.setTimeoutImpl ?? systemSetTimeout,
-    ...(deps.clearTimeoutImpl && { clearTimeout: deps.clearTimeoutImpl }),
+    // Default the canceller too (not only when a test injects one), so an
+    // aborted pace-wait actively cancels its unref'd timer in production rather
+    // than leaving it to fire as a late no-op — mirrors the pull source.
+    clearTimeout: deps.clearTimeoutImpl ?? systemClearTimeout,
   });
   // Aborted on stop() so a send parked in a pending pace-wait OR a 429 retry
   // backoff cancels its wait promptly rather than holding shutdown. Abort is
