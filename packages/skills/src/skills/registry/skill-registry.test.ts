@@ -898,6 +898,93 @@ describe("createSkillRegistry", () => {
   });
 
   // -------------------------------------------------------------------------
+  // Spec-pure carrier at the load path (lift-before-validate)
+  // -------------------------------------------------------------------------
+
+  it("loadPromptSkill loads a spec-pure skill and its manifest carries the lifted allowed-tools", async () => {
+    const skillsDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(skillsDir, { recursive: true });
+
+    // Spec-pure carrier: extensions ride metadata.comis; tools are a space
+    // string. Pre-lift, the top-level `allowed-tools` key hard-rejects at the
+    // strict schema, so this load fails until the load path runs the lift.
+    const extensionBag = JSON.stringify({
+      userInvocable: false,
+      comis: { requires: { bins: ["node"] } },
+    });
+    const content = `---
+name: spec-pure-load
+description: "A spec-pure skill loaded through the registry"
+allowed-tools: read write
+metadata:
+  version: "1.0.0"
+  comis: '${extensionBag}'
+---
+
+Spec-pure body content.
+`;
+    fs.writeFileSync(path.join(skillsDir, "spec-pure-load.md"), content, "utf-8");
+
+    const eventBus = createMockEventBus();
+    const registry = createSkillRegistry(makeConfig([skillsDir]), eventBus, auditCtx);
+    registry.init();
+
+    const result = await registry.loadPromptSkill("spec-pure-load");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // The lift split the `allowed-tools` string into the internal allowedTools[]
+    // and the strict schema accepted the spec-pure carrier.
+    expect(result.value.allowedTools).toEqual(["read", "write"]);
+  });
+
+  it("loadPromptSkill reads a pre-migration top-level skill and emits exactly one deprecation warning", async () => {
+    const skillsDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(skillsDir, { recursive: true });
+
+    // Pre-migration top-level form: version + userInvocable + comis at top level.
+    const content = `---
+name: pre-migration-load
+description: "A skill authored in the pre-migration top-level form"
+version: "1.0.0"
+userInvocable: false
+comis:
+  requires:
+    bins:
+      - node
+---
+
+Pre-migration body content.
+`;
+    fs.writeFileSync(path.join(skillsDir, "pre-migration-load.md"), content, "utf-8");
+
+    const warns: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+    const logger = {
+      info: () => {},
+      warn: (obj: Record<string, unknown>, msg: string) => { warns.push({ obj, msg }); },
+      error: () => {},
+      debug: () => {},
+    };
+
+    const eventBus = createMockEventBus();
+    const registry = createSkillRegistry(makeConfig([skillsDir]), eventBus, auditCtx, logger as any);
+    registry.init();
+
+    const result = await registry.loadPromptSkill("pre-migration-load");
+    // Read-compat: the pre-migration form loads, never a hard reject.
+    expect(result.ok).toBe(true);
+
+    // The deprecation warning fires exactly once — the load path owns it; the
+    // discovery pass lifts normalize-only (no logger), so there is no duplicate.
+    // Its payload names each moved key and its new authored home.
+    const migrationWarns = warns.filter((w) => Array.isArray(w.obj.movedKeys));
+    expect(migrationWarns).toHaveLength(1);
+    const moved = migrationWarns[0].obj.movedKeys as Array<{ from: string; to: string }>;
+    expect(moved.map((m) => m.from)).toEqual(
+      expect.arrayContaining(["version", "userInvocable", "comis"]),
+    );
+  });
+
+  // -------------------------------------------------------------------------
   // Prompt skill accessor methods
   // -------------------------------------------------------------------------
 
