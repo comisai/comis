@@ -117,6 +117,30 @@ describe("liftAuthoredFrontmatter allowed-tools carrier", () => {
     if (!result.ok) return;
     expect(Object.prototype.hasOwnProperty.call(result.value, "allowedTools")).toBe(false);
   });
+
+  it("fails closed when allowed-tools is a list instead of a space-separated string", () => {
+    // A YAML list is the natural mistake when authoring the kebab key from the
+    // old array form. It must be REJECTED, never silently dropped: dropping it
+    // leaves allowedTools at the unrestricted default -- a fail-open on the
+    // tool-restriction security boundary.
+    const result = liftAuthoredFrontmatter(
+      { name: "restrict-me", description: "intended to be limited to read + grep", "allowed-tools": ["read", "grep"] },
+      {},
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toContain("allowed-tools");
+  });
+
+  it("fails closed when allowed-tools is a non-string scalar", () => {
+    const result = liftAuthoredFrontmatter(
+      { name: "restrict-me", description: "d", "allowed-tools": 42 },
+      {},
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toContain("allowed-tools");
+  });
 });
 
 describe("liftAuthoredFrontmatter metadata carrier extraction", () => {
