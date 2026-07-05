@@ -440,3 +440,41 @@ describe("createMatrixClient — fail-closed decrypt in onTimeline (T-5)", () =>
     expect(h.received).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// /sync filter widens to encrypted wire events on the e2ee path (E2EE-01)
+// ---------------------------------------------------------------------------
+
+/** Read the timeline `types` of the filter passed to the first startClient call. */
+function startFilterTypes(fake: FakeCryptoClient): string[] {
+  const opts = fake.startCalls[0] as { filter?: { getDefinition(): unknown } } | undefined;
+  const def = opts?.filter?.getDefinition() as
+    | { room?: { timeline?: { types?: string[] } } }
+    | undefined;
+  return def?.room?.timeline?.types ?? [];
+}
+
+describe("createMatrixClient — /sync filter includes encrypted wire events on the e2ee path (E2EE-01)", () => {
+  it("adds m.room.encrypted to the sync filter when e2ee is on, so encrypted wire events are delivered to the timeline handler", async () => {
+    // The server-side filter keys on the WIRE type; an encrypted message arrives as
+    // an m.room.encrypted wire event (its clear type only becomes m.room.message
+    // after local decryption). Without this widening the homeserver never returns
+    // encrypted events, so the crypto engine + fail-closed branch see nothing.
+    const h = makeCryptoHarness({ e2ee: true, stateDir: "/data/matrix", crypto: true });
+
+    await h.controller.start();
+
+    const types = startFilterTypes(h.fake);
+    expect(types).toContain("m.room.encrypted");
+    expect(types).toContain("m.room.message");
+  });
+
+  it("keeps the plaintext sync filter scoped to m.room.message only", async () => {
+    const h = makeCryptoHarness({ stateDir: "/data/matrix" }); // e2ee omitted
+
+    await h.controller.start();
+
+    // The plaintext path is unchanged — no encrypted wire events requested.
+    expect(startFilterTypes(h.fake)).toEqual(["m.room.message"]);
+  });
+});
