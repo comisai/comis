@@ -80,6 +80,8 @@ class FakeMatrixClient {
   stopCalls = 0;
   whoamiCalls = 0;
   sendError?: unknown;
+  startError?: unknown;
+  whoamiError?: unknown;
   private token: string | null = null;
   private readonly userId: string;
   readonly store: { getSyncToken(): string | null; setSyncToken(token: string): void };
@@ -97,6 +99,7 @@ class FakeMatrixClient {
 
   async whoami(): Promise<{ user_id: string; device_id: string }> {
     this.whoamiCalls += 1;
+    if (this.whoamiError !== undefined) throw this.whoamiError;
     return { user_id: this.userId, device_id: "DEV1" };
   }
 
@@ -117,6 +120,7 @@ class FakeMatrixClient {
   startClient(opts?: { initialSyncLimit?: number; filter?: unknown }): Promise<void> {
     void opts;
     this.startCalls += 1;
+    if (this.startError !== undefined) return Promise.reject(this.startError);
     return Promise.resolve();
   }
 
@@ -203,10 +207,12 @@ async function deliver(
 // ---------------------------------------------------------------------------
 
 describe("createMatrixAdapter", () => {
-  it("reports channelType matrix and a polling connectionMode", () => {
+  it("reports channelId and channelType matrix and a polling connectionMode", () => {
     const { adapter } = makeAdapter();
+    expect(adapter.channelId).toBe("matrix");
     expect(adapter.channelType).toBe("matrix");
     const status = adapter.getStatus?.();
+    expect(status?.channelId).toBe("matrix");
     expect(status?.channelType).toBe("matrix");
     expect(status?.connectionMode).toBe("polling");
   });
@@ -322,5 +328,77 @@ describe("createMatrixAdapter", () => {
     expect(result.ok).toBe(true);
     expect(fake.stopCalls).toBe(1);
     expect(adapter.getStatus?.().connected).toBe(false);
+  });
+
+  it("propagates a send failure as err with a platform errorKind hint", async () => {
+    const fake = new FakeMatrixClient();
+    fake.sendError = new Error("forbidden in room");
+    const { adapter, logger } = makeAdapter({ fake });
+    await adapter.start();
+
+    const result = await adapter.sendMessage("!room:hs", "hi");
+
+    expect(result.ok).toBe(false);
+    const warn = vi.mocked(logger.warn);
+    const platformWarn = warn.mock.calls.find(
+      ([fields]) => (fields as { errorKind?: string }).errorKind === "platform",
+    );
+    expect(platformWarn).toBeDefined();
+  });
+
+  it("errs from start when the token fails whoami validation (auth failure)", async () => {
+    const fake = new FakeMatrixClient();
+    fake.whoamiError = new Error("token rejected");
+    const { adapter } = makeAdapter({ fake });
+
+    const result = await adapter.start();
+
+    expect(result.ok).toBe(false);
+    expect(fake.startCalls).toBe(0);
+    expect(adapter.getStatus?.().connected).toBe(false);
+  });
+
+  it("errs from start when the sync client fails to start and reports disconnected", async () => {
+    const fake = new FakeMatrixClient();
+    fake.startError = new Error("sync boom");
+    const { adapter } = makeAdapter({ fake });
+
+    const result = await adapter.start();
+
+    expect(result.ok).toBe(false);
+    expect(adapter.getStatus?.().connected).toBe(false);
+  });
+
+  it("errs on an unsupported platformAction with a validation hint", async () => {
+    const { adapter, logger } = makeAdapter();
+
+    const result = await adapter.platformAction("pin", {});
+
+    expect(result.ok).toBe(false);
+    const warn = vi.mocked(logger.warn);
+    const actionWarn = warn.mock.calls.find(
+      ([fields]) => (fields as { errorKind?: string }).errorKind === "validation",
+    );
+    expect(actionWarn).toBeDefined();
+  });
+
+  it("logs a synchronously-throwing and an async-rejecting inbound handler without aborting siblings", async () => {
+    // The collector handler is registered first by makeAdapter; a handler that
+    // throws synchronously (outer catch) and one that rejects asynchronously
+    // (the .catch arrow) must both be caught and logged without aborting the
+    // sibling delivery.
+    const { adapter, fake, received, logger } = makeAdapter({ allowFrom: [] });
+    adapter.onMessage(() => {
+      throw new Error("handler boom");
+    });
+    adapter.onMessage(() => Promise.reject(new Error("async handler boom")));
+    await adapter.start();
+
+    await deliver(fake, fakeEvent({ sender: "@x:hs", body: "hey" }));
+    // Flush the microtask the rejected-promise .catch is scheduled on.
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(received).toHaveLength(1);
+    expect(vi.mocked(logger.error)).toHaveBeenCalled();
   });
 });
