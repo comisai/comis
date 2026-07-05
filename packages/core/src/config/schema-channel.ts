@@ -221,6 +221,48 @@ export const MsTeamsChannelEntrySchema = z.strictObject({
   ackReaction: AckReactionConfigSchema.optional(),
 });
 
+/**
+ * Matrix channel configuration.
+ *
+ * Connects to a homeserver over the Client-Server API using either an access
+ * token or a password login, with a persisted device identity. Trust is keyed
+ * on the full sender MXID: `allowFrom` gates both auto-join on invite and which
+ * senders the agent responds to, while `allowMode` decides how an empty
+ * allowlist behaves. `allowPrivateHomeserver` relaxes the SSRF private-range
+ * block for a self-hosted homeserver — cloud-metadata endpoints stay blocked
+ * regardless.
+ */
+export const MatrixChannelEntrySchema = z.strictObject({
+  /** Whether this channel is active */
+  enabled: z.boolean().default(false),
+  /** Homeserver base URL (Client-Server API); SSRF-validated before use */
+  homeserverUrl: z.string().optional(),
+  /** Full bot MXID, e.g. "@bot:example.org" */
+  userId: z.string().optional(),
+  /** Access token for token login (string or SecretRef) */
+  accessToken: SecretRefOrStringSchema.optional(),
+  /** Password for password login (string or SecretRef) */
+  password: SecretRefOrStringSchema.optional(),
+  /** Secure-backup recovery key for encrypted-session restore (string or SecretRef) */
+  recoveryKey: SecretRefOrStringSchema.optional(),
+  /** Device ID persisted with the access token for a stable identity across restarts */
+  deviceId: z.string().optional(),
+  /** Enable end-to-end encryption for Matrix rooms */
+  e2ee: z.boolean().default(true),
+  /** Directory for durable channel state (sync token, device id, watermark); default resolved at wiring */
+  stateDir: z.string().optional(),
+  /** Allowed sender MXIDs; gates invite auto-join and per-sender trust (empty honors allowMode) */
+  allowFrom: z.array(z.string()).default([]),
+  /** Allowlist mode: "allowlist" (default, blocks all unless listed) or "open" */
+  allowMode: z.enum(["allowlist", "open"]).default("allowlist"),
+  /** Whether to auto-join a room when invited by an allowlisted MXID */
+  autoJoinOnInvite: z.boolean().default(true),
+  /** Allow a private-range homeserver URL (cloud-metadata endpoints remain blocked) */
+  allowPrivateHomeserver: z.boolean().default(false),
+  /** Per-channel media processing overrides (defaults: all enabled) */
+  mediaProcessing: MediaProcessingSchema.optional(),
+});
+
 // ---------------------------------------------------------------------------
 // Health check config
 // ---------------------------------------------------------------------------
@@ -266,6 +308,7 @@ export const ChannelConfigSchema = z.strictObject({
     irc: IrcChannelEntrySchema.default(() => IrcChannelEntrySchema.parse({})),
     email: EmailChannelEntrySchema.default(() => EmailChannelEntrySchema.parse({})),
     msteams: MsTeamsChannelEntrySchema.default(() => MsTeamsChannelEntrySchema.parse({})),
+    matrix: MatrixChannelEntrySchema.default(() => MatrixChannelEntrySchema.parse({})),
     /** Health monitoring configuration */
     healthCheck: ChannelHealthCheckSchema.default(() => ChannelHealthCheckSchema.parse({})),
   });
@@ -278,4 +321,5 @@ export type LineChannelEntry = z.infer<typeof LineChannelEntrySchema>;
 export type EmailChannelEntry = z.infer<typeof EmailChannelEntrySchema>;
 export type IrcChannelEntry = z.infer<typeof IrcChannelEntrySchema>;
 export type MsTeamsChannelEntry = z.infer<typeof MsTeamsChannelEntrySchema>;
+export type MatrixChannelEntry = z.infer<typeof MatrixChannelEntrySchema>;
 export type ChannelConfig = z.infer<typeof ChannelConfigSchema>;

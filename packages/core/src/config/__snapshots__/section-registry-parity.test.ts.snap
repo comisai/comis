@@ -4694,6 +4694,170 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("chann
     "default": {
       "allowFrom": [],
       "allowMode": "allowlist",
+      "allowPrivateHomeserver": false,
+      "autoJoinOnInvite": true,
+      "e2ee": true,
+      "enabled": false
+    },
+    "immutable": true,
+    "path": "channels.matrix",
+    "type": "object"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.accessToken",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.accessToken.id",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.accessToken.provider",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.accessToken.source",
+    "type": "string"
+  },
+  {
+    "default": [],
+    "immutable": true,
+    "path": "channels.matrix.allowFrom",
+    "type": "array"
+  },
+  {
+    "default": "allowlist",
+    "immutable": true,
+    "path": "channels.matrix.allowMode",
+    "type": "string"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "channels.matrix.allowPrivateHomeserver",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "channels.matrix.autoJoinOnInvite",
+    "type": "boolean"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.deviceId",
+    "type": "string"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "channels.matrix.e2ee",
+    "type": "boolean"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "channels.matrix.enabled",
+    "type": "boolean"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.homeserverUrl",
+    "type": "string"
+  },
+  {
+    "immutable": false,
+    "path": "channels.matrix.mediaProcessing",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "channels.matrix.mediaProcessing.analyzeImages",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "channels.matrix.mediaProcessing.describeVideos",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "channels.matrix.mediaProcessing.extractDocuments",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "channels.matrix.mediaProcessing.transcribeAudio",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "channels.matrix.mediaProcessing.understandLinks",
+    "type": "boolean"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.password",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.password.id",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.password.provider",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.password.source",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.recoveryKey",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.recoveryKey.id",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.recoveryKey.provider",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.recoveryKey.source",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.stateDir",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.userId",
+    "type": "string"
+  },
+  {
+    "default": {
+      "allowFrom": [],
+      "allowMode": "allowlist",
       "authMode": "secret",
       "cloud": "public",
       "enabled": false,
@@ -9015,6 +9179,14 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         },
         "webhookPath": "/webhooks/line"
       },
+      "matrix": {
+        "allowFrom": [],
+        "allowMode": "allowlist",
+        "allowPrivateHomeserver": false,
+        "autoJoinOnInvite": true,
+        "e2ee": true,
+        "enabled": false
+      },
       "msteams": {
         "allowFrom": [],
         "allowMode": "allowlist",
@@ -10229,6 +10401,170 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   {
     "immutable": true,
     "path": "channels.line.webhookUrl",
+    "type": "string"
+  },
+  {
+    "default": {
+      "allowFrom": [],
+      "allowMode": "allowlist",
+      "allowPrivateHomeserver": false,
+      "autoJoinOnInvite": true,
+      "e2ee": true,
+      "enabled": false
+    },
+    "immutable": true,
+    "path": "channels.matrix",
+    "type": "object"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.accessToken",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.accessToken.id",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.accessToken.provider",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.accessToken.source",
+    "type": "string"
+  },
+  {
+    "default": [],
+    "immutable": true,
+    "path": "channels.matrix.allowFrom",
+    "type": "array"
+  },
+  {
+    "default": "allowlist",
+    "immutable": true,
+    "path": "channels.matrix.allowMode",
+    "type": "string"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "channels.matrix.allowPrivateHomeserver",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "channels.matrix.autoJoinOnInvite",
+    "type": "boolean"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.deviceId",
+    "type": "string"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "channels.matrix.e2ee",
+    "type": "boolean"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "channels.matrix.enabled",
+    "type": "boolean"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.homeserverUrl",
+    "type": "string"
+  },
+  {
+    "immutable": false,
+    "path": "channels.matrix.mediaProcessing",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "channels.matrix.mediaProcessing.analyzeImages",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "channels.matrix.mediaProcessing.describeVideos",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "channels.matrix.mediaProcessing.extractDocuments",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "channels.matrix.mediaProcessing.transcribeAudio",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "channels.matrix.mediaProcessing.understandLinks",
+    "type": "boolean"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.password",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.password.id",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.password.provider",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.password.source",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.recoveryKey",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.recoveryKey.id",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.recoveryKey.provider",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.recoveryKey.source",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.stateDir",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.matrix.userId",
     "type": "string"
   },
   {
@@ -22197,6 +22533,206 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("cha
       ],
       "type": "object"
     },
+    "matrix": {
+      "additionalProperties": false,
+      "default": {
+        "allowFrom": [],
+        "allowMode": "allowlist",
+        "allowPrivateHomeserver": false,
+        "autoJoinOnInvite": true,
+        "e2ee": true,
+        "enabled": false
+      },
+      "properties": {
+        "accessToken": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "provider": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "source": {
+                  "enum": [
+                    "env",
+                    "file",
+                    "exec"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source",
+                "provider",
+                "id"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "allowFrom": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allowMode": {
+          "default": "allowlist",
+          "enum": [
+            "allowlist",
+            "open"
+          ],
+          "type": "string"
+        },
+        "allowPrivateHomeserver": {
+          "default": false,
+          "type": "boolean"
+        },
+        "autoJoinOnInvite": {
+          "default": true,
+          "type": "boolean"
+        },
+        "deviceId": {
+          "type": "string"
+        },
+        "e2ee": {
+          "default": true,
+          "type": "boolean"
+        },
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "homeserverUrl": {
+          "type": "string"
+        },
+        "mediaProcessing": {
+          "additionalProperties": false,
+          "properties": {
+            "analyzeImages": {
+              "default": true,
+              "type": "boolean"
+            },
+            "describeVideos": {
+              "default": true,
+              "type": "boolean"
+            },
+            "extractDocuments": {
+              "default": true,
+              "type": "boolean"
+            },
+            "transcribeAudio": {
+              "default": true,
+              "type": "boolean"
+            },
+            "understandLinks": {
+              "default": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "transcribeAudio",
+            "analyzeImages",
+            "describeVideos",
+            "extractDocuments",
+            "understandLinks"
+          ],
+          "type": "object"
+        },
+        "password": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "provider": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "source": {
+                  "enum": [
+                    "env",
+                    "file",
+                    "exec"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source",
+                "provider",
+                "id"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "recoveryKey": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "provider": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "source": {
+                  "enum": [
+                    "env",
+                    "file",
+                    "exec"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source",
+                "provider",
+                "id"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "stateDir": {
+          "type": "string"
+        },
+        "userId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "enabled",
+        "e2ee",
+        "allowFrom",
+        "allowMode",
+        "autoJoinOnInvite",
+        "allowPrivateHomeserver"
+      ],
+      "type": "object"
+    },
     "msteams": {
       "additionalProperties": false,
       "default": {
@@ -23303,6 +23839,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("cha
     "irc",
     "email",
     "msteams",
+    "matrix",
     "healthCheck"
   ],
   "type": "object"
@@ -32302,6 +32839,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           },
           "webhookPath": "/webhooks/line"
         },
+        "matrix": {
+          "allowFrom": [],
+          "allowMode": "allowlist",
+          "allowPrivateHomeserver": false,
+          "autoJoinOnInvite": true,
+          "e2ee": true,
+          "enabled": false
+        },
         "msteams": {
           "allowFrom": [],
           "allowMode": "allowlist",
@@ -33857,6 +34402,206 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           ],
           "type": "object"
         },
+        "matrix": {
+          "additionalProperties": false,
+          "default": {
+            "allowFrom": [],
+            "allowMode": "allowlist",
+            "allowPrivateHomeserver": false,
+            "autoJoinOnInvite": true,
+            "e2ee": true,
+            "enabled": false
+          },
+          "properties": {
+            "accessToken": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "provider": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "source": {
+                      "enum": [
+                        "env",
+                        "file",
+                        "exec"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "source",
+                    "provider",
+                    "id"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "allowFrom": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "allowMode": {
+              "default": "allowlist",
+              "enum": [
+                "allowlist",
+                "open"
+              ],
+              "type": "string"
+            },
+            "allowPrivateHomeserver": {
+              "default": false,
+              "type": "boolean"
+            },
+            "autoJoinOnInvite": {
+              "default": true,
+              "type": "boolean"
+            },
+            "deviceId": {
+              "type": "string"
+            },
+            "e2ee": {
+              "default": true,
+              "type": "boolean"
+            },
+            "enabled": {
+              "default": false,
+              "type": "boolean"
+            },
+            "homeserverUrl": {
+              "type": "string"
+            },
+            "mediaProcessing": {
+              "additionalProperties": false,
+              "properties": {
+                "analyzeImages": {
+                  "default": true,
+                  "type": "boolean"
+                },
+                "describeVideos": {
+                  "default": true,
+                  "type": "boolean"
+                },
+                "extractDocuments": {
+                  "default": true,
+                  "type": "boolean"
+                },
+                "transcribeAudio": {
+                  "default": true,
+                  "type": "boolean"
+                },
+                "understandLinks": {
+                  "default": true,
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "transcribeAudio",
+                "analyzeImages",
+                "describeVideos",
+                "extractDocuments",
+                "understandLinks"
+              ],
+              "type": "object"
+            },
+            "password": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "provider": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "source": {
+                      "enum": [
+                        "env",
+                        "file",
+                        "exec"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "source",
+                    "provider",
+                    "id"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "recoveryKey": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "provider": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "source": {
+                      "enum": [
+                        "env",
+                        "file",
+                        "exec"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "source",
+                    "provider",
+                    "id"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "stateDir": {
+              "type": "string"
+            },
+            "userId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "enabled",
+            "e2ee",
+            "allowFrom",
+            "allowMode",
+            "autoJoinOnInvite",
+            "allowPrivateHomeserver"
+          ],
+          "type": "object"
+        },
         "msteams": {
           "additionalProperties": false,
           "default": {
@@ -34963,6 +35708,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "irc",
         "email",
         "msteams",
+        "matrix",
         "healthCheck"
       ],
       "type": "object"
