@@ -318,20 +318,33 @@ export function createGoogleChatAdapter(
     async sendMessage(
       channelId: string,
       text: string,
-      _options?: SendMessageOptions,
+      options?: SendMessageOptions,
     ): Promise<Result<string, Error>> {
       const tok = await tokens.getToken(CHAT_SCOPE);
       if (!tok.ok) return err(tok.error); // auth already logged a secret-free WARN
       const chatBase = deps.chatBaseUrl ?? "https://chat.googleapis.com/v1";
       const doFetch = deps.fetchImpl ?? fetch;
+      // A reply to a threaded inbound rides its thread. The thread resource name
+      // is a BODY value (never interpolated into the URL path); the reply option
+      // is a query param. REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD makes the platform
+      // start a new thread when the target thread is gone rather than failing the
+      // send, so no dead-thread branch is needed here.
+      const threadName =
+        typeof options?.threadId === "string" && options.threadId.length > 0
+          ? options.threadId
+          : undefined;
+      const url = threadName
+        ? `${chatBase}/${channelId}/messages?messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD`
+        : `${chatBase}/${channelId}/messages`;
+      const body = threadName ? { text, thread: { name: threadName } } : { text };
       const responded = await fromPromise(
-        doFetch(`${chatBase}/${channelId}/messages`, {
+        doFetch(url, {
           method: "POST",
           headers: {
             authorization: `Bearer ${tok.value}`,
             "content-type": "application/json",
           },
-          body: JSON.stringify({ text }),
+          body: JSON.stringify(body),
         }),
       );
       if (!responded.ok) {
