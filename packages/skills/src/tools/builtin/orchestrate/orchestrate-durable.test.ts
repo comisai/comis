@@ -20,6 +20,7 @@ import {
   registerDurableRun,
   markResumable,
   loadResumeSpec,
+  resolveScriptSource,
   defaultOrchestrateDurableFs,
   type OrchestrateDurableRuns,
   type OrchestrateDurableFs,
@@ -218,6 +219,25 @@ describe("orchestrate-durable — loadResumeSpec", () => {
     expect(result.ok && result.value.scriptBytes).toBe("THE-ONLY-PINNED-BYTES");
   });
 
+  it("carries the resumed run's checkpointRef so resume() rehydrates its checkpoint (F-WS4-A)", async () => {
+    // The resumed run HAS a prior checkpoint. loadResumeSpec must surface its ref so the
+    // caller seeds it onto the NEW run's durable row → the replayed script's resume() returns
+    // that checkpoint (skip completed work) instead of an empty new-root checkpoint.
+    const runs = makeFakeRuns({
+      getRow: makeRow({ scriptRef: "orch-abc-def.ts", checkpointRef: "results/ckpt-x.json" }),
+    });
+    const result = await loadResumeSpec(runs, makeFakeFs(), { resumeRunId: "root-abc", workspacePath });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.checkpointRef).toBe("results/ckpt-x.json");
+  });
+
+  it("checkpointRef is undefined when the resumed run never checkpointed", async () => {
+    const runs = makeFakeRuns({ getRow: makeRow({ scriptRef: "orch-abc-def.ts" }) }); // no checkpointRef
+    const result = await loadResumeSpec(runs, makeFakeFs(), { resumeRunId: "root-abc", workspacePath });
+    expect(result.ok && result.value.checkpointRef).toBeUndefined();
+  });
+
   it("honest-errors when the durable row is missing", async () => {
     const runs = makeFakeRuns({ getRow: undefined });
     const result = await loadResumeSpec(runs, makeFakeFs(), {
@@ -287,6 +307,38 @@ describe("orchestrate-durable — loadResumeSpec", () => {
     expect(result.ok).toBe(false);
     // The traversal is refused BEFORE the fs read is ever attempted.
     expect(readCalled).toBe(false);
+  });
+});
+
+describe("orchestrate-durable — resolveScriptSource (F-WS4-A checkpoint carry)", () => {
+  const ctx = { workspacePath: "/ws", runId: "orch-new-run" };
+
+  it("threads the resumed run's checkpointRef onto the resolved source", async () => {
+    const runs = makeFakeRuns({
+      getRow: makeRow({ scriptRef: "orch-old.js", checkpointRef: "results/ckpt-old.json" }),
+    });
+    const resolved = await resolveScriptSource(
+      { script: "IGNORED", language: "js", resumeRunId: "root-old" },
+      runs,
+      makeFakeFs({ read: () => "PINNED" }),
+      ctx,
+    );
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    // pinned bytes (smuggled `script` ignored) AND the resumed checkpointRef carried through
+    expect(resolved.value.script).toBe("PINNED");
+    expect(resolved.value.checkpointRef).toBe("results/ckpt-old.json");
+  });
+
+  it("a fresh run (no resumeRunId) carries no checkpointRef", async () => {
+    const resolved = await resolveScriptSource(
+      { script: "fresh();", language: "ts" },
+      makeFakeRuns(),
+      makeFakeFs(),
+      ctx,
+    );
+    expect(resolved.ok && resolved.value.script).toBe("fresh();");
+    expect(resolved.ok && resolved.value.checkpointRef).toBeUndefined();
   });
 });
 

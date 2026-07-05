@@ -486,7 +486,7 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
       if (!resolved.ok) {
         throwToolError(resolved.error.code, resolved.error.message, { hint: resolved.error.hint });
       }
-      const { script, language, scriptName } = resolved.value;
+      const { script, language, scriptName, checkpointRef: resumedCheckpointRef } = resolved.value;
 
       // Static pre-flight, run BEFORE any resource is acquired — no seccomp fd
       // opened, no run_summary emitted, no child spawned on a rejection (it precedes
@@ -793,6 +793,12 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
           await registerDurableRun(deps.durableRuns, {
             rootRunId: durableKey,
             scriptRef: scriptName,
+            // F-WS4-A: on a resume, carry the resumed run's checkpointRef onto THIS run's
+            // durable row so the replayed script's `resume()` returns that checkpoint (skip
+            // completed work) instead of an empty new-root checkpoint. `undefined` for a fresh
+            // run ⇒ omitted by buildResumableRow (no-op). The blob is workspace-scoped (same
+            // agent), so the ref resolves in this run.
+            ...(resumedCheckpointRef !== undefined ? { checkpointRef: resumedCheckpointRef } : {}),
             nowMs: now(),
           });
         }

@@ -89,6 +89,14 @@ export interface ResumeSpec {
   readonly scriptBytes: string;
   /** The interpreter language, derived from the scriptRef extension. */
   readonly language: "ts" | "js" | "py";
+  /**
+   * The resumed run's last checkpointRef, carried onto the NEW run's durable row so
+   * the replayed script's `comis_tools.resume()` returns the resumed run's checkpoint
+   * (skip-completed-work), not an empty new-root checkpoint. `undefined` when the
+   * resumed run never checkpointed. The blob is workspace-scoped (same agent) so the
+   * ref resolves in the new run. (F-WS4-A.)
+   */
+  readonly checkpointRef?: string;
 }
 
 /** Inputs shared by the row builders (the content-free durable pointers + clock). */
@@ -179,7 +187,7 @@ export async function finalizeCompletedRun(
   const done = await runs.markCompleted?.(input.rootRunId);
   if (done !== undefined && !done.ok) {
     logger?.warn(
-      { runId: input.runId, rootRunId: input.rootRunId, err: done.error, errorKind: "internal" as const, hint: "the durable row could not be marked completed — the watchdog orphan-sweep eventually reclaims the stale 'running' row (no live impact)" },
+      { runId: input.runId, rootRunId: input.rootRunId, err: done.error, errorKind: "internal" as const, hint: "the durable row could not be marked completed — the watchdog re-anchor cap eventually orphans the stale 'running' row after repeated no-progress attempts (no live impact)" },
       "orchestrate durable markCompleted failed (non-fatal)",
     );
   }
@@ -212,6 +220,12 @@ export interface ResolvedScriptSource {
   readonly language: "ts" | "js" | "py";
   /** The workspace-relative script path (`<runId>.<language>`, or the pinned scriptRef). */
   readonly scriptName: string;
+  /**
+   * On a RESUME (`resumeRunId`), the resumed run's last checkpointRef — the runner seeds it
+   * onto the new run's durable row so the replayed script's `resume()` returns the resumed
+   * run's checkpoint. `undefined` for a fresh run or a resumed run that never checkpointed.
+   */
+  readonly checkpointRef?: string;
 }
 
 /**
@@ -247,7 +261,12 @@ export async function resolveScriptSource(
   if (!loaded.ok) {
     return err({ code: "not_found", message: "The orchestrate run to resume could not be loaded.", hint: loaded.error });
   }
-  return ok({ script: loaded.value.scriptBytes, language: loaded.value.language, scriptName: loaded.value.scriptRef });
+  return ok({
+    script: loaded.value.scriptBytes,
+    language: loaded.value.language,
+    scriptName: loaded.value.scriptRef,
+    checkpointRef: loaded.value.checkpointRef,
+  });
 }
 
 /**
@@ -285,7 +304,7 @@ export async function loadResumeSpec(
   } catch {
     return err("the pinned script could not be read");
   }
-  return ok({ scriptRef, scriptBytes, language });
+  return ok({ scriptRef, scriptBytes, language, checkpointRef: row.checkpointRef ?? undefined });
 }
 
 /** Derive the interpreter language from a `<runId>.<language>` scriptRef extension. */
