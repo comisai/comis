@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { PathTraversalError } from "@comis/core";
+import { PathTraversalError, type ComisLogger } from "@comis/core";
 import {
   createMatrixStateStore,
   matrixStateFilePath,
@@ -123,6 +123,28 @@ describe("createMatrixStateStore", () => {
     const loaded = await store.load();
     expect(loaded.ok).toBe(true);
     if (loaded.ok) expect(loaded.value.watermarks).toEqual({});
+  });
+
+  it("logs a secret-free warning naming the recovery when the state file is corrupt", async () => {
+    // The recovery must be observable — a once-per-operation WARN, not silent.
+    const warn = vi.fn();
+    const logger = { warn, info: vi.fn(), debug: vi.fn(), error: vi.fn() } as unknown as ComisLogger;
+    const stateDir = path.join(tempDir(), "state");
+    const store = createMatrixStateStore(stateDir, logger);
+    await store.save({ accessToken: "not-a-real-token", watermarks: { "!r:hs": 7 } });
+
+    for (const name of fs.readdirSync(stateDir)) {
+      fs.writeFileSync(matrixStateFilePath(stateDir, name), "not json at all");
+    }
+    const loaded = await store.load();
+
+    expect(loaded.ok).toBe(true);
+    expect(warn).toHaveBeenCalledTimes(1);
+    const ctx = warn.mock.calls[0]?.[0] as { errorKind?: string; hint?: string };
+    expect(ctx.errorKind).toBe("resource");
+    expect(ctx.hint).toContain("recovering with fresh defaults");
+    // The corrupt bytes are never echoed, and no persisted secret leaks.
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("not-a-real-token");
   });
 
   it("replaces the state file atomically (new inode per save) rather than truncating in place", async () => {

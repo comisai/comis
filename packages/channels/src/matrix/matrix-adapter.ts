@@ -111,7 +111,7 @@ function isRoomDirect(client: MatrixClient, room: Room): boolean {
  */
 export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
   const now = deps.now ?? systemNowMs;
-  const stateStore = createMatrixStateStore(deps.stateDir);
+  const stateStore = createMatrixStateStore(deps.stateDir, deps.logger);
   const handlers: MessageHandler[] = [];
   // Stable adapter identity; the per-message room id rides on each
   // NormalizedMessage.channelId, so the adapter reports a constant channelId.

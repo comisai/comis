@@ -5,20 +5,32 @@
  * password-login access token, and the initial-sync watermark.
  *
  * Security posture (T-4, credential-at-rest):
- *  - The directory is created 0700 and the state file 0600 — no group/other
- *    bits — because the file holds the access token and device identity. The
- *    modes are set EXPLICITLY and re-`chmod`'d on every save: `mkdir`'s mode is
- *    ignored once the directory exists, and `writeFile`'s mode is ignored once
- *    the file exists, so relying on the creation mode alone would leave a
- *    later-widened directory or a pre-existing file world-readable.
+ *  - The directory is created 0700 and both the state file and its write-temp
+ *    0600 — no group/other bits — because the file holds the access token and
+ *    device identity. The modes are set EXPLICITLY and re-`chmod`'d on every
+ *    save: `mkdir`'s mode is ignored once the directory exists, and
+ *    `writeFile`'s mode is ignored once the file exists, so relying on the
+ *    creation mode alone would leave a later-widened directory or a pre-existing
+ *    file world-readable. The temp is chmod'd 0600 BEFORE the rename, so the
+ *    real file is never briefly world-readable.
  *  - Every path is built through `safePath`, never raw path joining, so a
  *    malformed segment can never escape the stateDir.
  *
- * Correctness posture (T-1, backlog replay):
- *  - `load()` returns defaults (watermark 0) ONLY for a genuinely fresh
- *    stateDir (the file is absent). A present-but-corrupt file is a hard error,
- *    never a silent reset — resetting the watermark to 0 would replay the whole
- *    room backlog past the initial-sync guard.
+ * Correctness / availability posture:
+ *  - Writes are ATOMIC: the state is written to a temp file then `rename`d over
+ *    the target (rename is atomic on POSIX). `save()` runs on every delivered
+ *    message and every sync-token batch, so a crash / power-loss during a direct
+ *    write could truncate the file; the temp-then-rename leaves either the old
+ *    or the new file, never a partial one.
+ *  - `load()` returns defaults for a fresh stateDir (the file is absent) AND
+ *    recovers to defaults — with a loud WARN — from a present-but-corrupt file,
+ *    rather than bricking the channel until an operator deletes the file. This
+ *    is safe because the AUTHORITATIVE boot-backlog guard is the sync-ready gate
+ *    (an initial sync started without a token never delivers the backlog to the
+ *    handler), not the watermark: a lost watermark degrades to a guarded fresh
+ *    sync, not a replay (T-1). A genuine read I/O error (e.g. a permission
+ *    problem) remains a hard error — that is operator misconfiguration, not the
+ *    self-inflicted corruption path.
  *
  * The crypto-store snapshot is a separate concern and lands later; this store
  * intentionally owns only the plaintext-lifecycle fields and exposes its path
@@ -27,13 +39,16 @@
  * @module
  */
 
-import { mkdir, writeFile, readFile, chmod } from "node:fs/promises";
+import { mkdir, writeFile, readFile, chmod, rename } from "node:fs/promises";
 import type { Result } from "@comis/shared";
 import { ok, err, fromPromise, tryCatch } from "@comis/shared";
 import { safePath } from "@comis/core";
+import type { ComisLogger } from "@comis/core";
 
 /** The single JSON file the state store persists into the stateDir. */
 const MATRIX_STATE_FILE = "sync-state.json";
+/** The temp file an atomic save writes before renaming over the target. */
+const MATRIX_STATE_TMP_FILE = "sync-state.json.tmp";
 
 /** Owner-only directory permissions (rwx------), no group/other bits. */
 const DIR_MODE = 0o700;
@@ -120,9 +135,10 @@ function toWatermarks(raw: unknown): Record<string, number> {
  * Create a durable state store rooted at `stateDir`.
  *
  * @param stateDir - The absolute per-adapter state directory (created 0700).
+ * @param logger - Optional logger; a corrupt-file recovery is logged as a WARN.
  * @returns A store whose `save`/`load` round-trip the MatrixState.
  */
-export function createMatrixStateStore(stateDir: string): MatrixStateStore {
+export function createMatrixStateStore(stateDir: string, logger?: ComisLogger): MatrixStateStore {
   return {
     async load(): Promise<Result<MatrixState, Error>> {
       const built = tryCatch(() => matrixStateFilePath(stateDir, MATRIX_STATE_FILE));
@@ -130,20 +146,27 @@ export function createMatrixStateStore(stateDir: string): MatrixStateStore {
 
       const read = await fromPromise(readFile(built.value, "utf-8"));
       if (!read.ok) {
-        // A genuinely fresh stateDir → defaults. A corrupt or unreadable file
-        // is NOT silently defaulted: a watermark reset to 0 would replay the
-        // whole backlog past the initial-sync guard (T-1).
+        // A genuinely fresh stateDir → defaults. A genuine read I/O error (e.g.
+        // a permission problem) is operator misconfiguration → a hard error.
         if (isNotFound(read.error)) return ok({ ...DEFAULT_STATE });
         return err(read.error);
       }
 
       const parsed = tryCatch(() => JSON.parse(read.value) as unknown);
       if (!parsed.ok) {
-        return err(
-          new Error(
-            "Matrix state file is not valid JSON — refusing to reset the sync watermark (would replay backlog); repair or remove the file",
-          ),
+        // A corrupt/partial file (e.g. a pre-atomic-write crash, bit-rot, or a
+        // hand-edit) recovers to defaults rather than bricking the channel. The
+        // sync-ready gate — not the watermark — is the authoritative boot-backlog
+        // guard, so a lost watermark degrades to a guarded fresh sync (T-1).
+        logger?.warn(
+          {
+            channelType: "matrix" as const,
+            errorKind: "resource" as const,
+            hint: "The Matrix state file was unreadable JSON (likely a partial write from a crash); recovering with fresh defaults — the sync-ready gate keeps the boot backlog guarded",
+          },
+          "Matrix state file corrupt: recovering with defaults",
         );
+        return ok({ ...DEFAULT_STATE });
       }
       return ok(toState(parsed.value));
     },
@@ -152,14 +175,20 @@ export function createMatrixStateStore(stateDir: string): MatrixStateStore {
       return fromPromise(
         (async () => {
           // mkdir's mode is ignored when the directory already exists, and
-          // writeFile's mode is ignored when the file already exists — chmod
-          // after each so the owner-only bits hold on every save, not just on
-          // first creation.
+          // writeFile's mode is ignored when the temp already exists (a prior
+          // crashed save) — chmod after each so the owner-only bits hold every
+          // save, not just on first creation.
           await mkdir(stateDir, { recursive: true, mode: DIR_MODE });
           await chmod(stateDir, DIR_MODE);
           const file = matrixStateFilePath(stateDir, MATRIX_STATE_FILE);
-          await writeFile(file, JSON.stringify(state), { mode: FILE_MODE });
-          await chmod(file, FILE_MODE);
+          const tmp = matrixStateFilePath(stateDir, MATRIX_STATE_TMP_FILE);
+          // Write the temp then atomically rename over the target: a crash
+          // mid-write leaves either the old or the new file, never a truncated
+          // one. Chmod the temp to 0600 BEFORE the rename so the real file is
+          // never momentarily world-readable.
+          await writeFile(tmp, JSON.stringify(state), { mode: FILE_MODE });
+          await chmod(tmp, FILE_MODE);
+          await rename(tmp, file);
         })(),
       );
     },
