@@ -306,6 +306,23 @@ describe("scanEnvForSecrets", () => {
     expect(findings[0].message).toContain("msteams");
     expect(findings[0].message).not.toContain("unknown");
   });
+
+  it("names matrix as the provider for MATRIX_ACCESS_TOKEN instead of the generic unknown fallthrough", () => {
+    const env = {
+      MATRIX_ACCESS_TOKEN: "access-token-value",
+    };
+
+    const findings = scanEnvForSecrets("/home/user/.comis/.env", env);
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0].code).toBe("KNOWN_PROVIDER_ENV");
+    expect(findings[0].jsonPath).toBe("MATRIX_ACCESS_TOKEN");
+    // First-match-wins: the specific MATRIX_ACCESS_TOKEN pattern must precede
+    // the generic /_TOKEN$/ fallthrough, so the audit names the real provider
+    // rather than mis-attributing the stranded token to "unknown".
+    expect(findings[0].message).toContain("matrix");
+    expect(findings[0].message).not.toContain("unknown");
+  });
 });
 
 // ── auditSecrets ───────────────────────────────────────────────────
