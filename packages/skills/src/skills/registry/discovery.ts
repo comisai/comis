@@ -22,7 +22,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import ignore from "ignore";
-import { safePath, type ToolCapabilityMetadata } from "@comis/core";
+import { safePath, type SkillsConfig, type ToolCapabilityMetadata } from "@comis/core";
 import { parseFrontmatter } from "../manifest/parser.js";
 import { liftAuthoredFrontmatter } from "../manifest/lift.js";
 import { parseComisCapabilityDefensively } from "../manifest/capability-parser.js";
@@ -189,6 +189,35 @@ function resolveSource(pathIndex: number, totalPaths: number): SkillSource {
   if (pathIndex === 0) return "bundled";
   if (pathIndex === totalPaths - 1) return "local";
   return "workspace";
+}
+
+/**
+ * Resolve the EFFECTIVE `enableDynamicContext` for a single skill — the
+ * authoritative per-skill resolution point, co-located with the `SkillSource`
+ * type it discriminates on.
+ *
+ * An imported skill's SKILL.md body is remote-authored and untrusted, so its
+ * dynamic-context (shell-in-body) expansion is forced OFF regardless of the
+ * global `promptSkills.enableDynamicContext` toggle: the imported trust tier
+ * never runs body-expansion. Every other source defers to the global config
+ * value.
+ *
+ * Any consumer that acts on dynamic-context expansion MUST read the effective
+ * value from here rather than the raw global config, so the imported-tier
+ * force-off cannot be bypassed by a caller that reads the global toggle
+ * directly.
+ *
+ * @param skillSource - The skill's resolved trust-tier source (the value
+ *   `getPromptSkillDescriptions` stamps — `imported` for a provenance match).
+ * @param config - The skills config carrying the global `promptSkills` toggle.
+ * @returns `false` for an imported skill; otherwise the global config value.
+ */
+export function resolveEffectiveDynamicContext(
+  skillSource: SkillSource | undefined,
+  config: SkillsConfig,
+): boolean {
+  if (skillSource === "imported") return false;
+  return config.promptSkills.enableDynamicContext;
 }
 
 /** Fields extracted from frontmatter during discovery (excludes path and source). */

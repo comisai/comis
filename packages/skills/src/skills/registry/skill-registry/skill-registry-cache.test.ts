@@ -17,7 +17,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { SkillsConfig, TypedEventBus } from "@comis/core";
 import { createSkillRegistry } from "./index.js";
-import { resolveEffectiveDynamicContext } from "./skill-registry-cache.js";
+import { resolveEffectiveDynamicContext } from "../discovery.js";
 import type { SdkSkill } from "./skill-registry-types.js";
 
 function mockBus(): TypedEventBus {
