@@ -1,0 +1,147 @@
+---
+title: "Importing Skills"
+description: "Import a skill from a GitHub directory or a packaged archive through the staged, scan-first pipeline"
+icon: "file-import"
+---
+
+Comis can install a skill you did not author yourself -- from a GitHub directory or a packaged archive. Every import runs through **one staged pipeline** and lands the skill at the `imported` trust tier: a deliberately cautious posture that treats the skill's contents as untrusted until you say otherwise.
+
+This page covers how to import, what actually lands on disk, the trust model an imported skill runs under, and -- honestly -- what the import-time scan does and does not prove.
+
+## How to Import
+
+There are two ways to import a skill.
+
+**From the CLI:**
+
+```bash
+# Import a skill from a GitHub directory URL (the default source)
+comis skills import https://github.com/owner/repo/tree/main/skills/my-skill
+
+# Import a packaged archive (.skill, .zip, or .tar/.tar.gz) by URL
+comis skills import https://example.com/my-skill.skill --source archive
+```
+
+**From an agent** with the `skills_manage` tool: the `import` action takes the same parameters. It stays behind the tool's admin-trust + approval + `orch:skill` triple gate -- importing is never a silent, unattended action.
+
+### Sources
+
+| Source | What `<ref>` is | How the bytes arrive |
+|--------|-----------------|----------------------|
+| `github` (default) | A GitHub directory URL, e.g. `https://github.com/{owner}/{repo}/tree/{branch}/{path}` | Fetched file-by-file from the GitHub Contents API (fixed host, bounded depth + file count) |
+| `archive` | A URL to a `.skill` / `.zip` / `.tar` / `.tar.gz` archive | Fetched through the SSRF guard (DNS-pinned, metadata-blocked), then unpacked in-house against strict size caps |
+
+An archive may also be supplied as base64 bytes (`archiveBytes`) rather than a URL -- this is how an uploaded file reaches the pipeline. Whichever way the bytes arrive, they funnel into the **same** acquire -> unpack -> map -> scan -> install pipeline.
+
+<Info>
+The registry-backed sources (a well-known index and a community hub) are modeled as future acquisition channels. They enter the pipeline at the same staging step; only `github` and `archive` (plus operator uploads) install today.
+</Info>
+
+## What Actually Lands: Text-Only Import
+
+An import keeps **only UTF-8 text files**. Everything that could carry an execution vector is dropped before anything is written, and each drop is logged with a warning naming the exact trigger:
+
+- Anything under a `scripts/` directory
+- Any entry that arrived with a Unix executable bit
+- Any file with a known executable, script, or compiled-binary extension
+- Any file that is not valid UTF-8 text
+
+An imported skill is therefore **prompt-only**: the SKILL.md instructions and its text reference files, never a shipped executable. A skill that bundled a helper script installs without that script, and the warning tells you which files were left behind.
+
+## The Staged Pipeline
+
+Every import -- regardless of source -- passes through the same ordered stages. A rejection at any stage is **atomic**: the staging area is removed and **zero** files reach your live skills directory.
+
+<Steps>
+  <Step title="Acquire">
+    Fetch the bytes. Archive URLs go through the SSRF guard with a compressed-size cap; GitHub directories are walked through the fixed-host Contents API.
+  </Step>
+
+  <Step title="Unpack (bounded)">
+    Archives are unpacked by in-house readers that reject absolute paths, `..` traversal segments, symlink and hardlink entries, and over-depth paths, while stream-counting uncompressed bytes against a total cap. The [size caps](#configuration) are operator-dialable.
+  </Step>
+
+  <Step title="Map the manifest">
+    A skill authored for another ecosystem -- or in a legacy Comis form -- is converged onto the spec-pure `SKILL.md` shape. Fields with no internal home are dropped with a warning naming each key; an executable-entrypoint declaration is never carried across. See the [manifest mapping reference](/skills/manifest#foreign-frontmatter-mapping).
+  </Step>
+
+  <Step title="Scan (fail-closed, pre-write)">
+    The content scanner runs on the SKILL.md body **and every kept text file** before anything is written. Any CRITICAL finding rejects the whole import. This scan is unconditional -- it does not consult the load-time `contentScanning` toggles. See [Security Scanning](/skills/security-scanning#import-time-scanning).
+  </Step>
+
+  <Step title="Install + pin provenance">
+    Only the kept text files move into the live skills directory, under a serialized lock, and a provenance record is pinned recording the source, a content hash over the installed files, and the scan verdict. The install is stamped the `imported` trust tier.
+  </Step>
+</Steps>
+
+## The Imported Trust Tier
+
+A bundled skill that ships with Comis is platform-trusted. An **imported** skill is not -- and the tier has teeth that make that distinction real, not cosmetic:
+
+- **Prompt-only.** No executables land (see above), so there is nothing to run directly.
+- **Dynamic context is off.** Shell-command execution inside a skill body (`enableDynamicContext`) is forced off for an imported skill regardless of the global setting -- an imported skill can never opt itself into running commands during context assembly.
+- **Bundled MCP servers persist disabled.** If an imported skill declares MCP servers, those entries are written with `enabled: false` and are **never auto-connected** at install. You opt in per server, and each connect re-runs the supply-chain (OSV) check at the connect site. There is intentionally no "auto-connect bundled MCP" configuration knob.
+- **The model sees the tier.** A listed imported skill carries `source: "imported"` and a content-free provenance summary (acquisition channel, hash prefix, import timestamp), so both operators and the agent can tell a platform skill from an imported one.
+
+The durable discriminator behind all of this is the provenance store (`<dataDir>/skill-provenance.json`, owner-only). Because the imported skills directory is the same one bundled skills seed into, the provenance record is the **only** thing that marks a skill imported -- and it is advisory downward only: a record can demote a skill to the imported tier, but its absence never elevates one.
+
+## What the Scan Proves -- and What It Does Not
+
+The import-time scan is a **strong, deterministic safety net**: it runs fail-closed on all staged text before any write, catches six categories of known-dangerous patterns, and cannot be silently disabled for imports. It meaningfully raises the bar against a hostile skill.
+
+<Warning>
+The scanner is a strong deterministic net, **not a proof of safety.** It matches known-dangerous patterns; it cannot prove that a kept text file is benign. A prompt-only skill body is still natural-language text that can *describe* commands, argue for an action, or try to steer an agent toward one.
+
+That is why import trust and execution authority are kept separate: **an exec-capable agent remains governed by its tool policy, the approval gates, and the OS-level sandbox -- never by a skill's trust tier.** Importing a skill does not grant it the ability to run anything; it only adds instructions the agent may read. Scope your agents' tools with the same care whether a skill was authored in-house or imported.
+</Warning>
+
+This is defense in depth: the scan is one layer, and the tool policy plus sandbox are the layers that actually bound what an agent can do with what a skill tells it.
+
+## Re-Importing and Updates
+
+Re-importing a name that is already under provenance re-runs the full pipeline (the scan always runs again) and compares the recomputed content hash:
+
+- **Identical hash** -- an idempotent no-op.
+- **Divergent hash** -- refuses unless you pass `--confirm`, which swaps in the new content and re-pins the record.
+- **A name with no provenance record, or whose record names a different source** -- refuses flatly. This is **not** overridable by `--confirm`; delete the existing skill first, then import.
+
+<Note>
+There is no `force` override for import. `--confirm` narrowly acknowledges a content change on a re-import of the **same** source -- it never overwrites an unrelated or platform-trusted skill of the same name. Editing an imported skill locally re-pins its hash and marks it locally modified, so the change is visible rather than silently diverging from the pinned content.
+</Note>
+
+## Migrating Skills Imported Before the Pipeline
+
+Provenance is **forward-only**. A skill installed by an older import path -- before the staged pipeline existed -- has no provenance record, so it keeps its path-derived source and is not retroactively stamped `imported`. There is deliberately no heuristic backfill: guessing a trust tier from a directory on disk is exactly the mistake the provenance store exists to prevent.
+
+To bring such a skill under provenance, **delete it and re-import it** through the pipeline. The re-import scans it, records provenance, and stamps the imported tier -- the same sanctioned path as any first import.
+
+## Configuration
+
+The bounded-unpack caps live under each agent's `skills.import` block. The defaults are conservative; raise them only if you knowingly import large skills. See [`skills.import` in the config reference](/reference/config-yaml#skills-agents-skills).
+
+| Cap | Default |
+|-----|---------|
+| `maxArchiveBytes` | 8 MiB (compressed archive accepted for fetch/decode) |
+| `maxTotalUncompressedBytes` | 64 MiB (stream-counted mid-inflate) |
+| `maxFileCount` | 200 entries |
+| `maxFileBytes` | 4 MiB per unpacked file |
+| `maxPathDepth` | 10 |
+
+<Warning>
+The `documentation.skillsMarketplaceUrl` setting is unrelated to importing. It is only a link injected into the agent's system prompt as a hint -- it is **not** an allowlist and it does not gate, restrict, or authorize what `skills.import` will fetch. Import safety comes from the pipeline (SSRF-guarded fetch, bounded unpack, fail-closed scan, imported tier), not from that URL.
+</Warning>
+
+<CardGroup cols={2}>
+  <Card title="Security Scanning" icon="shield-check" href="/skills/security-scanning">
+    The six-category scanner that runs fail-closed at import time
+  </Card>
+  <Card title="Skill Manifest" icon="file-code" href="/skills/manifest">
+    The SKILL.md format and the foreign-frontmatter mapping table
+  </Card>
+  <Card title="MCP Integration" icon="plug" href="/skills/mcp">
+    How bundled MCP servers work -- and why imported ones start disabled
+  </Card>
+  <Card title="Tool Policy" icon="shield-halved" href="/skills/tool-policy">
+    Bound what any agent can do, whatever a skill tells it
+  </Card>
+</CardGroup>

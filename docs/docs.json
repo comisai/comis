@@ -65,7 +65,7 @@
         "groups": [
           { "group": "Overview", "pages": ["skills/index", "skills/built-in-tools", "skills/platform-tools"] },
           { "group": "Custom Skills", "pages": ["skills/prompt-skills", "skills/examples"] },
-          { "group": "Building", "pages": ["skills/manifest", "skills/security-scanning", "skills/tool-policy"] },
+          { "group": "Building", "pages": ["skills/manifest", "skills/security-scanning", "skills/importing", "skills/tool-policy"] },
           { "group": "Integrations", "pages": ["skills/mcp", "skills/tooling-layer", "integrations/mcp-server"] }
         ]
       },
