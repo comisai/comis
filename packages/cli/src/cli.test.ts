@@ -2,7 +2,7 @@
 /**
  * Tests for the CLI entry point (cli.ts).
  *
- * Verifies that all 28 commands are registered on the root program,
+ * Verifies that all 29 commands are registered on the root program,
  * program metadata is correct, and subcommand structure is intact.
  * Does NOT re-test command behavior (covered by per-command behavior tests).
  *
@@ -102,8 +102,8 @@ describe("CLI entry point", () => {
       "orchestrate",
     ] as const;
 
-    it("registers exactly 28 commands", () => {
-      expect(program.commands).toHaveLength(28);
+    it("registers exactly 29 commands", () => {
+      expect(program.commands).toHaveLength(29);
     });
 
     it.each(expectedCommands)("registers the '%s' command", (name) => {
