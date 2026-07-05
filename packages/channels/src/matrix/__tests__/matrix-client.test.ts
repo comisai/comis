@@ -161,6 +161,12 @@ class FakeMatrixClient {
   }
 }
 
+/** A secret-free health signal shape (structural — no import of the SUT type). */
+interface HealthSignalRecord {
+  errorKind: string;
+  hint: string;
+}
+
 interface HarnessOverrides {
   autoJoinOnInvite?: boolean;
   allowMode?: "allowlist" | "open";
@@ -168,6 +174,9 @@ interface HarnessOverrides {
   onMessage?: (m: NormalizedMessage) => void | Promise<void>;
   seed?: Partial<MatrixState>;
   clientOpts?: FakeClientOptions;
+  reauthenticate?: () => Promise<
+    { ok: true; value: { accessToken: string; deviceId?: string } } | { ok: false; error: Error }
+  >;
 }
 
 function makeHarness(over: HarnessOverrides = {}): {
@@ -175,6 +184,7 @@ function makeHarness(over: HarnessOverrides = {}): {
   saves: MatrixState[];
   logger: ComisLogger;
   received: NormalizedMessage[];
+  healthSignals: HealthSignalRecord[];
   storeHandle: { failSave: boolean };
   controller: ReturnType<typeof createMatrixClient>;
 } {
@@ -191,6 +201,7 @@ function makeHarness(over: HarnessOverrides = {}): {
     ((m: NormalizedMessage) => {
       received.push(m);
     });
+  const healthSignals: HealthSignalRecord[] = [];
   const controller = createMatrixClient({
     client: fake.asClient(),
     stateStore: stateStore.store,
@@ -199,12 +210,17 @@ function makeHarness(over: HarnessOverrides = {}): {
     allowFrom: over.allowFrom ?? [],
     onMessage,
     logger,
+    emitHealth: (signal: HealthSignalRecord) => {
+      healthSignals.push(signal);
+    },
+    ...(over.reauthenticate !== undefined ? { reauthenticate: over.reauthenticate } : {}),
   });
   return {
     fake,
     saves: stateStore.saves,
     logger,
     received,
+    healthSignals,
     storeHandle: stateStore,
     controller,
   };
@@ -499,5 +515,90 @@ describe("createMatrixClient — /sync lifecycle, watermark guard, invite gate",
     expect(started.ok).toBe(false);
     // A corrupt state must never silently reset the watermark → no sync started.
     expect(fake.startCalls).toHaveLength(0);
+  });
+});
+
+describe("createMatrixClient — token-expiry recovery + stale-since re-entry", () => {
+  it("re-logins, persists the fresh token and device id, and resumes syncing on a mid-run token expiry", async () => {
+    const reauthenticate = vi
+      .fn()
+      .mockResolvedValue({ ok: true, value: { accessToken: "fresh-token", deviceId: "DEV2" } });
+    const h = makeHarness({ seed: { syncToken: "s0", watermark: 5 }, reauthenticate });
+    await h.controller.start();
+    const startsBefore = h.fake.startCalls.length;
+
+    await h.fake.emit(
+      ClientEvent.Sync,
+      SyncState.Error,
+      SyncState.Syncing,
+      { error: matrixError("M_UNKNOWN_TOKEN", 401, "token expired mid-run") },
+    );
+
+    expect(reauthenticate).toHaveBeenCalledTimes(1);
+    // The fresh token + device id are persisted so a restart uses them.
+    const tokenSave = h.saves.find((s) => s.accessToken === "fresh-token");
+    expect(tokenSave).toBeDefined();
+    expect(tokenSave?.deviceId).toBe("DEV2");
+    // Sync resumed (startClient re-invoked).
+    expect(h.fake.startCalls.length).toBeGreaterThan(startsBefore);
+    // The fresh token is persisted to disk but never written to a log line.
+    expect(JSON.stringify(vi.mocked(h.logger.info).mock.calls)).not.toContain("fresh-token");
+    expect(JSON.stringify(vi.mocked(h.logger.error).mock.calls)).not.toContain("fresh-token");
+  });
+
+  it("emits a loud health signal naming channels.matrix.accessToken and never silently stops when no re-login is available", async () => {
+    const h = makeHarness({ seed: { syncToken: "s0", watermark: 5 } });
+    await h.controller.start();
+
+    await h.fake.emit(
+      ClientEvent.Sync,
+      SyncState.Error,
+      SyncState.Syncing,
+      { error: matrixError("M_UNKNOWN_TOKEN", 401, "token revoked") },
+    );
+
+    expect(h.healthSignals).toHaveLength(1);
+    expect(h.healthSignals[0]?.errorKind).toBe("auth");
+    expect(h.healthSignals[0]?.hint).toContain("channels.matrix.accessToken");
+    // Loud on the log too, and never silently dark: the client is not stopped.
+    expect(vi.mocked(h.logger.error)).toHaveBeenCalled();
+    expect(h.fake.stopCalls).toBe(0);
+  });
+
+  it("clears the persisted sync token but retains the watermark when the homeserver rejects a stale since", async () => {
+    const h = makeHarness({ seed: { syncToken: "stale-tok", watermark: 42 } });
+    await h.controller.start();
+
+    await h.fake.emit(
+      ClientEvent.Sync,
+      SyncState.Error,
+      SyncState.Syncing,
+      { error: matrixError("M_UNKNOWN", 400, "unrecognised since token") },
+    );
+
+    // The token is cleared (so a restart re-enters initial sync) but the
+    // watermark is retained (so that re-entry stays guarded against the backlog).
+    const clearSave = h.saves.find((s) => s.syncToken === undefined && s.watermark === 42);
+    expect(clearSave).toBeDefined();
+  });
+
+  it("never leaks a secret from the sync error into the health signal or logs", async () => {
+    const h = makeHarness({ seed: { syncToken: "s0", watermark: 5 } });
+    await h.controller.start();
+
+    await h.fake.emit(
+      ClientEvent.Sync,
+      SyncState.Error,
+      SyncState.Syncing,
+      { error: matrixError("M_UNKNOWN_TOKEN", 401, "rejected token super-secret-leak-xyz") },
+    );
+
+    const logDump = JSON.stringify([
+      vi.mocked(h.logger.error).mock.calls,
+      vi.mocked(h.logger.warn).mock.calls,
+      vi.mocked(h.logger.info).mock.calls,
+    ]);
+    expect(logDump).not.toContain("super-secret-leak-xyz");
+    expect(JSON.stringify(h.healthSignals)).not.toContain("super-secret-leak-xyz");
   });
 });
