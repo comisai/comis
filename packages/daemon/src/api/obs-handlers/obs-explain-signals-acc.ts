@@ -58,6 +58,9 @@ export interface Acc {
   /** The per-turn context-budget CASCADE (the progression toward `contextBudget`). Deduped on
    *  transition + most-recent-40 capped (see the context.budget fold). Surfaced only when ≥2 states. */
   contextBudgetHistory: IncidentContextBudgetHistoryEntry[];
+  /** The LAST `scheduler.wake_gate` record (a woke fire's content-free wake-gate
+   *  fact). Present ONLY for a fire the gate woke — a skip opens no session. */
+  cronWakeGate?: IncidentSignals["cronWakeGate"];
   /** The LAST execution.prompt_timeout record (the terminal kill
    *  explains the end state — a retry-path kill earlier in the session is
    *  superseded by the kill that actually ended it). */
@@ -86,6 +89,26 @@ export interface Acc {
    *  tokens / ms in `spent`/`cap` (NOT dollars), and the right knob is
    *  `autonomy.budget.<limb>`, not `observability.spend.*`. Content-free. */
   perRootBudget?: { limb: string; spent: number; cap: number; unit: string };
+  /** The LAST `activity.turn_finalized` record — the terminal user-surface
+   *  state (strategy + effective outcome + reclassified flag). Content-free. */
+  turnFinalized?: { strategy: string; outcome: string; errorKind?: string; reason?: string; reclassified: boolean };
+  /** Σ over `delivery.aborted` records: events + blocks never sent. */
+  deliveryAborts?: { events: number; chunksNotSent: number };
+  /** Recovery-attempt fold from `execution.recovery_attempted` records:
+   *  total + succeeded tally + per-reason counts. */
+  recoveries?: { total: number; succeeded: number; byReason: Record<string, number> };
+  /** Σ of the session's `session.summary` records' costUsd (one record per
+   *  execution) — the trajectory-derived session cost the assembler prefers
+   *  over the last-write-wins sessionEnd rollup. Absent ⇒ no summary records. */
+  summaryCostUsd?: number;
+  /** Σ of the session's `session.summary` records' turnCount — the
+   *  trajectory-derived turn total the assembler prefers over the
+   *  last-write-wins rollup turnCount. Absent ⇒ no summary records. */
+  summaryTurnCount?: number;
+  /** Σ of the session's `model.completed` token fields — the trajectory-derived
+   *  token ledger (source of cost.totalTokens + cacheReadRatio). Absent ⇒ no
+   *  model.completed records. */
+  modelTokens?: { input: number; output: number; cacheRead: number; cacheCreation: number };
   /** The terminal
    *  `execution.aborted` record's `reason` (e.g. "spend_exceeded"). A HARD abort
    *  skips the clean `sessionEnd` rollup, so the assembler's metadata-derived

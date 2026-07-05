@@ -209,6 +209,7 @@
     "edge-tts-universal": "1.4.0",
     "file-type": "21.3.4",
     "file-uri-to-path": "1.0.0",
+    "glob": "13.0.6",
     "grammy": "1.43.0",
     "hono": "4.12.27",
     "hono-rate-limiter": "0.5.3",

@@ -45,6 +45,9 @@ type PiSessionAdapter = ReturnType<typeof createComisSessionManager>;
  *  the struct in a closure for hot-add without re-deriving deps. */
 export interface SingleAgentDeps {
   container: AppContainer;
+  /** The daemon package.json version, threaded into createPiExecutor as
+   *  appVersion so trace.metadata records which build produced the session. */
+  appVersion?: string;
   memoryAdapter: SqliteMemoryAdapter;
   sessionStore: ReturnType<typeof createSessionStore>;
   agentLogger: ComisLogger;

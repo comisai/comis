@@ -87,6 +87,18 @@ const CronToolParams = Type.Object({
   model: Type.Optional(Type.String({
     description: "Model to use when this cron job fires (e.g. gemini-2.5-flash). Only applies to agent_turn payload kind.",
   })),
+  // wake-gate (monitoring) params — see the tool description for the verdict protocol
+  wake_gate_script: Type.Optional(
+    Type.String({
+      description:
+        "Optional pre-run gate script for a monitoring job (add/update). When set, the scheduler runs it before each fire and wakes the model ONLY if the script signals a change; otherwise the fire is skipped cheaply. The script prints its verdict on stdout — see this tool's description for the protocol and a worked example.",
+    }),
+  ),
+  wake_gate_language: Type.Optional(
+    Type.Union([Type.Literal("js"), Type.Literal("ts")], {
+      description: "Language of wake_gate_script. Valid values: js, ts. Default: js.",
+    }),
+  ),
   // update/remove/runs/run params
   job_name: Type.Optional(
     Type.String({ description: "Job name (required for update, remove, runs, run)" }),
@@ -145,7 +157,8 @@ export function createCronTool(rpcCall: RpcCall): AgentTool<typeof CronToolParam
     label: "Cron Scheduler",
     description:
       "Manage cron jobs, scheduled tasks, wake events. Write reminder text as user-facing message. " +
-      "SCHEDULING RULE: for a RELATIVE reminder ('in 2 minutes', 'in an hour', 'remind me in 30 seconds', 'N minutes from now') you MUST use schedule_kind='in' with schedule_in_seconds = the number of seconds — do NOT compute an absolute datetime or timezone for a relative request (that is the #1 source of wrong-time reminders). Use schedule_kind='at' ONLY for an explicit clock time like 'at 9am tomorrow', and then always pass the user's timezone.",
+      "SCHEDULING RULE: for a RELATIVE reminder ('in 2 minutes', 'in an hour', 'remind me in 30 seconds', 'N minutes from now') you MUST use schedule_kind='in' with schedule_in_seconds = the number of seconds — do NOT compute an absolute datetime or timezone for a relative request (that is the #1 source of wrong-time reminders). Use schedule_kind='at' ONLY for an explicit clock time like 'at 9am tomorrow', and then always pass the user's timezone. " +
+      "MONITORING (wake-gate): for a job that watches something, supply a wake_gate_script that fetches or greps the thing to watch and prints a JSON verdict on stdout — {\"wake\":false} when nothing changed (the fire is skipped cheaply), or {\"wake\":true,\"context\":\"what you found\"} otherwise. The model runs ONLY when the gate wakes it, so a quiet monitor costs almost nothing. Example: a wake_gate_script that fetches a CI status prints {\"wake\":false} while the build is green, else {\"wake\":true,\"context\":\"build #123 failed\"}; set wake_gate_language to js (default) or ts. This wake-gate is NOT the `wake` action — that action just wakes/replays the scheduler loop to re-check due jobs, it is not a pre-run gate.",
     parameters: CronToolParams,
 
     async execute(
@@ -179,6 +192,8 @@ export function createCronTool(rpcCall: RpcCall): AgentTool<typeof CronToolParam
               session_strategy: readStringParam(p, "session_strategy", false),
               max_history_turns: readNumberParam(p, "max_history_turns", false),
               model: readStringParam(p, "model", false),
+              wake_gate_script: readStringParam(p, "wake_gate_script", false),
+              wake_gate_language: readStringParam(p, "wake_gate_language", false),
             });
             return jsonResult(result);
           }
@@ -192,7 +207,13 @@ export function createCronTool(rpcCall: RpcCall): AgentTool<typeof CronToolParam
             const jobName = readStringParam(p, "job_name");
             const enabled = readBooleanParam(p, "enabled", false);
             const name = readStringParam(p, "name", false);
-            const result = await rpcCall("cron.update", { jobName, enabled, name });
+            const result = await rpcCall("cron.update", {
+              jobName,
+              enabled,
+              name,
+              wake_gate_script: readStringParam(p, "wake_gate_script", false),
+              wake_gate_language: readStringParam(p, "wake_gate_language", false),
+            });
             return jsonResult(result);
           }
 

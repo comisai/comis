@@ -837,6 +837,57 @@ describe("context.budget extraction", () => {
 });
 
 // ---------------------------------------------------------------------------
+// scheduler.wake_gate extraction — a fire the gate WOKE runs the model in its
+// main session, so its content-free wake-gate record must reach IncidentSignals
+// (the incident fork). A SKIP records nothing here (it opens no session) — the
+// fold-side negative that keeps the two forks independent.
+// ---------------------------------------------------------------------------
+
+function wakeGateEvent(
+  jobId: string,
+  overrides: Record<string, unknown> = {},
+  seq = 1,
+): Record<string, unknown> {
+  return {
+    traceSchema: "comis-trajectory",
+    schemaVersion: 1,
+    type: "scheduler.wake_gate",
+    seq,
+    // The real record (daemon-emitted on a woke fire) carries agentId too — it is
+    // stripped by the bounded fact schema.
+    data: { jobId, agentId: "default", wake: true, durationMs: 20, toolCalls: 2, estTurnsSaved: 0, ...overrides },
+  };
+}
+
+describe("scheduler.wake_gate extraction (incident fork)", () => {
+  it("folds a woke fire's scheduler.wake_gate record into signals.cronWakeGate (content-free)", () => {
+    const s = toIncidentSignals([wakeGateEvent("j1")]);
+    expect(s.cronWakeGate).toEqual({ jobId: "j1", wake: true, durationMs: 20, toolCalls: 2, estTurnsSaved: 0 });
+  });
+
+  it("the LAST scheduler.wake_gate record wins (the terminal fire explains the session)", () => {
+    const s = toIncidentSignals([
+      wakeGateEvent("j1", { toolCalls: 1 }, 1),
+      wakeGateEvent("j1", { toolCalls: 5, durationMs: 99 }, 2),
+    ]);
+    expect(s.cronWakeGate?.toolCalls).toBe(5);
+    expect(s.cronWakeGate?.durationMs).toBe(99);
+  });
+
+  it("ignores a malformed scheduler.wake_gate record missing its counts (forward-compatible)", () => {
+    const s = toIncidentSignals([
+      { traceSchema: "comis-trajectory", type: "scheduler.wake_gate", data: { jobId: "j1", wake: true } },
+    ]);
+    expect(s.cronWakeGate).toBeUndefined();
+  });
+
+  it("a session WITHOUT any scheduler.wake_gate record omits cronWakeGate (the fold-side negative)", () => {
+    const s = toIncidentSignals([budgetEvent("fits", 10_000, 1)]);
+    expect(s.cronWakeGate).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // toolStats fidelity. A live explain reported
 // ctx_search ok:2 for ONE call — the cache-trace tool:after record (traceSchema
 // comis-cache-trace, carrying toolName + success:true) fell into the log-shape

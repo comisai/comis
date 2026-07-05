@@ -898,6 +898,80 @@ describe("buildFindings — node_budget_exceeded finding", () => {
 // degradation; the multilingual advisory (read from the latest row) is
 // severity-independent and must keep firing.
 // ---------------------------------------------------------------------------
+describe("buildFindings — health_signal rollup counts only degraded (warning) rows", () => {
+  it("does NOT surface a severity-info session_rebase row as an lcd_divergence finding (benign continuation, not degradation)", () => {
+    // The ingest layer deliberately stamps benign context:dag_degraded reasons
+    // (session_rebase / serialized_wait) severity "info" so they do not inflate
+    // the fleet lens — but the findings rollup ignored severity and folded
+    // them anyway. Observed live: a fresh session's once-per-start rebase
+    // (reason session_rebase, 5ms) surfaced as an actionable-looking
+    // "health_signal:lcd_divergence" finding whose hint ("inspect the
+    // recurring health WARNs") dead-ended — no such WARNs exist.
+    const findings = buildFindings(
+      [
+        {
+          timestamp: 1_000,
+          category: "health_signal",
+          severity: "info",
+          message: "context:dag_degraded",
+          details: JSON.stringify({ signal: "lcd_divergence", reason: "session_rebase", durationMs: 5 }),
+        },
+      ],
+      [],
+      [],
+    );
+    expect(findings.some((f) => f.code === "health_signal:lcd_divergence")).toBe(false);
+  });
+
+  it("still surfaces a severity-warning lcd_divergence row (a genuine live/store shrink)", () => {
+    const findings = buildFindings(
+      [
+        {
+          timestamp: 1_000,
+          category: "health_signal",
+          severity: "warning",
+          message: "context:dag_degraded",
+          details: JSON.stringify({ signal: "lcd_divergence", reason: "live_store_divergence", durationMs: 5 }),
+        },
+      ],
+      [],
+      [],
+    );
+    const f = findings.filter((x) => x.code === "health_signal:lcd_divergence");
+    expect(f).toHaveLength(1);
+    expect(f[0]!.count).toBe(1);
+  });
+
+  it("breaks the lcd_divergence finding down by reason so the operator sees WHICH failure class recurred", () => {
+    // Grouping by signal label alone forced a per-session explain to learn
+    // whether the divergences were fail_closed_rollover (a security refusal) or
+    // live_store_divergence (a heal/compaction shrink). details.reason is right
+    // there in the rows — surface a per-reason breakdown in the detail.
+    const row = (reason: string, ts: number): DiagnosticRow => ({
+      timestamp: ts,
+      category: "health_signal",
+      severity: "warning",
+      message: "context:dag_degraded",
+      details: JSON.stringify({ signal: "lcd_divergence", reason, durationMs: 5 }),
+    });
+    const findings = buildFindings(
+      [
+        row("fail_closed_rollover", 1_000),
+        row("fail_closed_rollover", 2_000),
+        row("live_store_divergence", 3_000),
+      ],
+      [],
+      [],
+    );
+    const f = findings.find((x) => x.code === "health_signal:lcd_divergence");
+    expect(f).toBeDefined();
+    expect(f!.count).toBe(3);
+    // Deterministic order (count desc, then reason asc) with per-reason counts.
+    expect(f!.detail).toContain("fail_closed_rollover=2");
+    expect(f!.detail).toContain("live_store_divergence=1");
+  });
+});
+
 describe("buildFindings — model_health 'provider degradation' counts only degraded (warning) rows", () => {
   const MH_CODE = "model_health";
 
@@ -1182,5 +1256,63 @@ describe("buildFindings — channel_ingress_auth_rejected generic rollup", () =>
     expect(f).toBeDefined();
     expect(JSON.stringify(f)).not.toContain("Bearer");
     expect(JSON.stringify(f)).not.toContain("authorization");
+  });
+});
+
+describe("buildFindings — cron_wake_gate_efficiency (wake-gate rollup)", () => {
+  function gateRow(fields: { agentId: string; wake: boolean; toolCalls?: number; estTurnsSaved?: number }): DiagnosticRow {
+    return {
+      timestamp: 1_000,
+      category: "cron_wake_gate",
+      severity: "info",
+      agentId: fields.agentId,
+      message: "scheduler:wake_gate",
+      details: JSON.stringify({
+        signal: "cron_wake_gate",
+        wake: fields.wake,
+        durationMs: 5,
+        toolCalls: fields.toolCalls ?? 0,
+        estTurnsSaved: fields.estTurnsSaved ?? (fields.wake ? 0 : 1),
+      }),
+    };
+  }
+
+  it("emits a cron_wake_gate_efficiency finding: fire count + summed skipped/turnsSaved/toolCalls", () => {
+    const rows: DiagnosticRow[] = [
+      gateRow({ agentId: "a", wake: false, estTurnsSaved: 1 }),
+      gateRow({ agentId: "a", wake: false, estTurnsSaved: 1 }),
+      gateRow({ agentId: "a", wake: true, toolCalls: 2, estTurnsSaved: 0 }),
+    ];
+    const findings = buildFindings([], [], [], [], [], rows);
+    const f = findings.filter((x) => x.code === "cron_wake_gate_efficiency");
+    expect(f).toHaveLength(1);
+    expect(f[0]!.count).toBe(3); // 3 gated fires in the window
+    expect(f[0]!.detail).toContain("skipped=2");
+    expect(f[0]!.detail).toContain("turnsSaved=2");
+    expect(f[0]!.detail).toContain("toolCalls=2");
+  });
+
+  it("carries a BENIGN hint (a high skip-rate is the gate WORKING, not a fault) pointing at cron.runs", () => {
+    const findings = buildFindings([], [], [], [], [], [gateRow({ agentId: "a", wake: false })]);
+    const f = findings.find((x) => x.code === "cron_wake_gate_efficiency");
+    expect(f).toBeDefined();
+    // The hint names cron.runs for the per-fire decisions + says a skip is savings,
+    // and calls out the two signals to inspect (100% skip / toolCalls > turnsSaved).
+    expect(f!.hint).toContain("cron.runs");
+    expect(f!.hint.toLowerCase()).toMatch(/working|savings/);
+  });
+
+  it("no cron_wake_gate_efficiency finding when there are no gate rows (callers omitting the argument are unchanged)", () => {
+    expect(buildFindings([], [], [], [], []).some((f) => f.code === "cron_wake_gate_efficiency")).toBe(false);
+  });
+
+  it("never echoes a gate script/payload even if smuggled into details (content-free)", () => {
+    const row: DiagnosticRow = {
+      timestamp: 1, category: "cron_wake_gate", severity: "info", agentId: "a", message: "scheduler:wake_gate",
+      details: JSON.stringify({ signal: "cron_wake_gate", wake: false, estTurnsSaved: 1, toolCalls: 0, script: "gather the inbox rm -rf /" }),
+    };
+    const f = buildFindings([], [], [], [], [], [row]).filter((x) => x.code === "cron_wake_gate_efficiency");
+    expect(JSON.stringify(f)).not.toContain("rm -rf");
+    expect(JSON.stringify(f)).not.toContain("gather the inbox");
   });
 });

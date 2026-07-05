@@ -1485,10 +1485,11 @@ async function runSessionLocked(
     runtimeSnapshot: {
       harness: {
         type: "comis" as const,
-        // version is not yet threaded into PiExecutorDeps; a future change
-        // will wire deps.appVersion here. Use package.json version constant
-        // when available, otherwise "unknown" until that wiring lands.
-        version: "unknown",
+        // The daemon package.json version, threaded via deps.appVersion so the
+        // trajectory records which build produced it (triage otherwise cannot
+        // confirm the artifact's version). "unknown" when unwired (tests / a
+        // non-daemon embedder).
+        version: deps.appVersion ?? "unknown",
         os: process.platform,
         node: process.version,
         ...(effectiveWorkspaceDir !== undefined ? { workspaceDir: effectiveWorkspaceDir } : {}),

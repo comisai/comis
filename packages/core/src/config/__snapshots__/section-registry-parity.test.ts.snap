@@ -2371,6 +2371,11 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "immutable": true,
+    "path": "agents.scheduler.cron.wakeGate",
+    "type": "boolean"
+  },
+  {
+    "immutable": true,
     "path": "agents.scheduler.heartbeat",
     "type": "object"
   },
@@ -5692,7 +5697,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("diagn
       "enabled": true,
       "includeMessages": false,
       "includePrompt": true,
-      "includeSystem": true,
+      "includeSystem": false,
       "maxFileBytes": 52428800
     },
     "immutable": false,
@@ -5723,7 +5728,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("diagn
     "type": "boolean"
   },
   {
-    "default": true,
+    "default": false,
     "immutable": false,
     "path": "diagnostics.cacheTrace.includeSystem",
     "type": "boolean"
@@ -7546,6 +7551,11 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("sched
     "immutable": false,
     "path": "scheduler.cron.storeDir",
     "type": "string"
+  },
+  {
+    "immutable": false,
+    "path": "scheduler.cron.wakeGate",
+    "type": "boolean"
   },
   {
     "default": {
@@ -11438,7 +11448,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "enabled": true,
         "includeMessages": false,
         "includePrompt": true,
-        "includeSystem": true,
+        "includeSystem": false,
         "maxFileBytes": 52428800
       },
       "configAudit": {
@@ -11464,7 +11474,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       "enabled": true,
       "includeMessages": false,
       "includePrompt": true,
-      "includeSystem": true,
+      "includeSystem": false,
       "maxFileBytes": 52428800
     },
     "immutable": false,
@@ -11495,7 +11505,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "boolean"
   },
   {
-    "default": true,
+    "default": false,
     "immutable": false,
     "path": "diagnostics.cacheTrace.includeSystem",
     "type": "boolean"
@@ -14564,6 +14574,11 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": false,
     "path": "scheduler.cron.storeDir",
     "type": "string"
+  },
+  {
+    "immutable": false,
+    "path": "scheduler.cron.wakeGate",
+    "type": "boolean"
   },
   {
     "default": {
@@ -18802,6 +18817,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
               "maximum": 9007199254740991,
               "minimum": 0,
               "type": "integer"
+            },
+            "wakeGate": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -23414,7 +23432,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dia
       "enabled": true,
       "includeMessages": false,
       "includePrompt": true,
-      "includeSystem": true,
+      "includeSystem": false,
       "maxFileBytes": 52428800
     },
     "configAudit": {
@@ -23438,7 +23456,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dia
         "enabled": true,
         "includeMessages": false,
         "includePrompt": true,
-        "includeSystem": true,
+        "includeSystem": false,
         "maxFileBytes": 52428800
       },
       "properties": {
@@ -23458,7 +23476,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dia
           "type": "boolean"
         },
         "includeSystem": {
-          "default": true,
+          "default": false,
           "type": "boolean"
         },
         "maxFileBytes": {
@@ -25977,6 +25995,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sch
         "storeDir": {
           "default": "./data/scheduler",
           "type": "string"
+        },
+        "wakeGate": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -29890,6 +29911,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                     "maximum": 9007199254740991,
                     "minimum": 0,
                     "type": "integer"
+                  },
+                  "wakeGate": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
@@ -35235,7 +35259,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "enabled": true,
           "includeMessages": false,
           "includePrompt": true,
-          "includeSystem": true,
+          "includeSystem": false,
           "maxFileBytes": 52428800
         },
         "configAudit": {
@@ -35259,7 +35283,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "enabled": true,
             "includeMessages": false,
             "includePrompt": true,
-            "includeSystem": true,
+            "includeSystem": false,
             "maxFileBytes": 52428800
           },
           "properties": {
@@ -35279,7 +35303,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "type": "boolean"
             },
             "includeSystem": {
-              "default": true,
+              "default": false,
               "type": "boolean"
             },
             "maxFileBytes": {
@@ -39611,6 +39635,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "storeDir": {
               "default": "./data/scheduler",
               "type": "string"
+            },
+            "wakeGate": {
+              "type": "boolean"
             }
           },
           "required": [

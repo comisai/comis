@@ -38,6 +38,7 @@ import {
 } from "@comis/core";
 import { buildCronSchedule } from "../wiring/daemon-utils.js";
 import type { CronSchedule } from "@comis/scheduler";
+import { CronDeliveryTargetSchema } from "@comis/scheduler";
 import { randomUUID } from "node:crypto";
 
 import type { RpcHandler } from "./types.js";
@@ -143,6 +144,11 @@ function normalizeCronAddParams(params: Record<string, unknown>): Record<string,
     schedule_every_ms: schedule?.everyMs,
     schedule_at: schedule?.at,
     schedule_in_seconds: schedule?.seconds,
+    // Fold the web nested wake-gate into the flat authoring fields the cron.add
+    // body reads. The script is code for the jail and is carried through
+    // untouched -- it is never scrubbed as payload text.
+    wake_gate_script: (params.wakeGate as { script?: string } | undefined)?.script,
+    wake_gate_language: (params.wakeGate as { language?: string } | undefined)?.language,
   };
 }
 
@@ -202,6 +208,11 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
       const forwardToMain = (normalized.forward_to_main as boolean) ?? false;
       const sessionStrategy = (normalized.session_strategy as string) ?? "fresh";
       const maxHistoryTurns = (normalized.max_history_turns as number) ?? undefined;
+      // Pre-run wake-gate authoring. The script is CODE for the jail, so it is
+      // read raw and NEVER passed through sanitizeToolOutput (that helper scrubs
+      // payload TEXT). Language falls back to the store schema value.
+      const wakeGateScript = normalized.wake_gate_script as string | undefined;
+      const wakeGateLanguage = normalized.wake_gate_language as "js" | "ts" | undefined;
       const job = {
         id: randomUUID(),
         name,
@@ -213,6 +224,13 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
         forwardToMain,
         sessionStrategy: sessionStrategy as "fresh" | "rolling" | "accumulate",
         ...(maxHistoryTurns !== undefined ? { maxHistoryTurns } : {}),
+        // A wake-gate is added only when a script was authored -- an un-gated job
+        // is byte-identical to one built without these params. The script is
+        // stored verbatim (never sanitized); language falls back to the store
+        // schema value.
+        ...(wakeGateScript
+          ? { wakeGate: { script: wakeGateScript, language: wakeGateLanguage ?? "js", timeoutSeconds: 30 } }
+          : {}),
         enabled: true,
         consecutiveErrors: 0,
         createdAtMs: systemNowMs(),
@@ -258,6 +276,11 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
         consecutiveErrors: j.consecutiveErrors,
         createdAtMs: j.createdAtMs,
         deliveryTarget: j.deliveryTarget,
+        // Surface the pre-run wake-gate so the web scheduler editor can DISPLAY
+        // and edit an existing gate (scheduler.ts reads job.wakeGate). Without
+        // this the gate is invisible in the UI (appears absent) and uneditable.
+        // Content is the operator's own authored job config, like `payload`.
+        wakeGate: j.wakeGate,
       });
 
       // `agentId: "*"` → every agent's jobs (the admin inventory view; without
@@ -320,17 +343,58 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
       if (rawParams.message !== undefined) {
         job.payload = { ...job.payload, kind: "agent_turn" as const, message: rawParams.message as string };
       }
-      // Delivery target: set structured target or clear with null
-      if (rawParams.deliveryTarget !== undefined) {
-        job.deliveryTarget = rawParams.deliveryTarget === null
-          ? undefined
-          : (rawParams.deliveryTarget as {
-              channelId: string;
-              userId: string;
-              tenantId: string;
-              channelType?: string;
-            });
+      // Wake-gate: accept the flat (chat tool) or nested (web) shape. The script
+      // is CODE for the jail, so it is set raw and NEVER passed through
+      // sanitizeToolOutput. A non-empty script sets/replaces the gate; an
+      // explicit empty script CLEARS it; an absent script leaves the existing
+      // gate untouched. Language falls back to the store schema value.
+      const wakeGateNested = rawParams.wakeGate as
+        | { script?: string; language?: "js" | "ts"; timeoutSeconds?: number }
+        | undefined;
+      const updateWakeGateScript = (rawParams.wake_gate_script as string | undefined) ?? wakeGateNested?.script;
+      if (updateWakeGateScript === "") {
+        // An explicit empty script clears the gate. Writing { script: "" } would
+        // fail the store schema (script.min(1)) and drop the whole job on the
+        // next reload -- clearing is the only safe reading of "".
+        job.wakeGate = undefined;
+      } else if (updateWakeGateScript !== undefined) {
+        const updateWakeGateLanguage =
+          (rawParams.wake_gate_language as "js" | "ts" | undefined) ?? wakeGateNested?.language;
+        job.wakeGate = {
+          script: updateWakeGateScript,
+          language: updateWakeGateLanguage ?? "js",
+          timeoutSeconds: wakeGateNested?.timeoutSeconds ?? 30,
+        };
       }
+      // Delivery target: set structured target or clear with null. Validate a
+      // caller-supplied target against the SAME schema the cron store enforces on
+      // load (CronDeliveryTargetSchema, required channelId/userId/tenantId) — a
+      // bare cast let a partial target (e.g. {channelType,channelId}) persist, and
+      // because cron-store.load() parses the WHOLE job array atomically, that one
+      // invalid job made the store "return empty job list" on the next reload,
+      // silently dropping every cron on a restart. Reject at the API boundary
+      // instead (mirrors the wake-gate empty-clear guard above).
+      if (rawParams.deliveryTarget !== undefined) {
+        if (rawParams.deliveryTarget === null) {
+          job.deliveryTarget = undefined;
+        } else {
+          const parsed = CronDeliveryTargetSchema.safeParse(rawParams.deliveryTarget);
+          if (!parsed.success) {
+            throw new Error(
+              `Invalid deliveryTarget: ${parsed.error.issues
+                .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
+                .join("; ")}. Required: channelId, userId, tenantId (channelType optional).`,
+            );
+          }
+          job.deliveryTarget = parsed.data;
+        }
+      }
+      // Persist the in-place mutations NOW. The field-by-field updates above mutate
+      // the live in-memory job (a getJobs() reference); without this flush the edit
+      // only reaches the store on the next due fire's tick save, so a daemon
+      // restart before then silently REVERTS the update (e.g. a cleared wake-gate
+      // reappears). This makes cron.update durable, matching cron.add/remove.
+      await agentScheduler.persist();
       const result = { jobName: job.name, updated: true };
       if (IS_DEV) CronUpdateContract.response.parse(result);
       return result;

@@ -25,6 +25,7 @@ import {
   deliveryDeadletteredFromRow,
   flaggedPostureKeys,
   healthSignalLabel,
+  healthSignalReason,
   multilingualFromRow,
   nodeBudgetExceededFromRow,
   pipelineAuthoringFromRow,
@@ -123,21 +124,49 @@ export function buildFindings(
   // The windowed `memory_lifecycle` rows (the forget sweep). Defaulted
   // `[]` so callers that do not read this category stay unchanged.
   memoryLifecycle: readonly DiagnosticRow[] = [],
+  // The windowed `cron_wake_gate` rows (each gated cron fire). Defaulted
+  // `[]` so callers that do not read this category stay unchanged.
+  cronWakeGate: readonly DiagnosticRow[] = [],
 ): Finding[] {
   const findings: Finding[] = [];
 
   // health_signal — one finding per closed `signal` label (counts only). The
   // dedicated-signal labels are EXCLUDED here (they get dedicated findings below).
+  // Severity-info rows are EXCLUDED too: the ingest layer stamps benign
+  // reasons (session_rebase / serialized_wait — BENIGN_DAG_DEGRADED_REASONS)
+  // severity "info" precisely so they do not read as degradation; folding them
+  // here anyway surfaced a fresh session's once-per-start rebase as an
+  // actionable lcd_divergence finding with a dead-end hint. Only warning+
+  // rows are findings (the model_health rollup's established discipline).
   const bySignal = new Map<string, number>();
+  // Per-signal reason breakdown — which failure class recurred (the row's
+  // details.reason), so a recurring finding names it without a per-session explain.
+  const reasonsBySignal = new Map<string, Map<string, number>>();
   for (const row of healthSignals) {
+    if (row.severity === "info") continue;
     const label = healthSignalLabel(row);
     if (DEDICATED_SCRIPT_SIGNALS.has(label)) continue;
     bySignal.set(label, (bySignal.get(label) ?? 0) + 1);
+    const reason = healthSignalReason(row);
+    if (reason !== undefined) {
+      const byReason = reasonsBySignal.get(label) ?? new Map<string, number>();
+      byReason.set(reason, (byReason.get(reason) ?? 0) + 1);
+      reasonsBySignal.set(label, byReason);
+    }
   }
   for (const [label, count] of bySignal) {
+    // Deterministic per-reason breakdown (count desc, then reason asc) appended
+    // to the detail when the signal's rows carried reasons.
+    const byReason = reasonsBySignal.get(label);
+    const breakdown = byReason
+      ? [...byReason.entries()]
+          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+          .map(([reason, n]) => `${reason}=${n}`)
+          .join(", ")
+      : "";
     findings.push({
       code: `health_signal:${label}`,
-      detail: `${count} ${label} health signal(s) in the window`,
+      detail: `${count} ${label} health signal(s) in the window${breakdown ? ` (${breakdown})` : ""}`,
       count,
       hint: "run `comis explain` on an affected session; inspect the recurring health WARNs",
     });
@@ -513,6 +542,42 @@ export function buildFindings(
       detail: `${memoryLifecycle.length} forget sweep(s) in the window; evicted=${evictedSum}, demoted=${demotedSum}`,
       count: memoryLifecycle.length,
       hint: 'run `cron.runs jobName "Memory lifecycle"` for the per-sweep counts; evicted=0 is usually healthy (no corroborated-wrong / dormant candidates) — NOT a fault. Eviction is gated by learning.forget + the anti-induced-eviction exemptions (pinned/high-proof/system survive).',
+    });
+  }
+
+  // The dedicated cron_wake_gate_efficiency finding — the wake-gate rolled up over
+  // the window (the fleet-visible savings + suppression signal). Counts ONLY (fire count
+  // + summed skipped/turnsSaved/toolCalls; every details field parsed defensively — never
+  // the gate's script/payload). A skip is SAVINGS, not a fault (info severity — it must
+  // NOT inflate the fleet degrade count, the benign-reason discipline), so the hint says
+  // so; the two signals to inspect are a 100% skip-rate on a monitor you expect to fire,
+  // and toolCalls exceeding turnsSaved (a gate that costs more than it saves). The
+  // per-agent breakdown lives in the FleetHealthReport.cronWakeGate block.
+  if (cronWakeGate.length > 0) {
+    let skippedSum = 0;
+    let failedOpenSum = 0;
+    let turnsSavedSum = 0;
+    let toolCallsSum = 0;
+    for (const row of cronWakeGate) {
+      const d = parseDetailsObject(row.details);
+      if (d.wake === false) skippedSum += 1;
+      if (d.failedOpen === true) failedOpenSum += 1;
+      if (typeof d.estTurnsSaved === "number") turnsSavedSum += d.estTurnsSaved;
+      if (typeof d.toolCalls === "number") toolCallsSum += d.toolCalls;
+    }
+    // A fail-open wake (crash/timeout/over-cap/no-verdict) saves nothing and costs
+    // the gate's own cap-calls + jail spawn; a gate that fails open EVERY fire is
+    // broken but reads skipRate 0 (looks like a busy monitor). Surface the count so
+    // it is legible beside the 100%-skip poison signal.
+    const failOpenNote =
+      failedOpenSum > 0
+        ? ` A fail-open wake saves nothing and costs the gate's own run; a gate failing open every fire is broken (not a busy monitor).`
+        : "";
+    findings.push({
+      code: "cron_wake_gate_efficiency",
+      detail: `${cronWakeGate.length} gated cron fire(s) in the window; skipped=${skippedSum}, failedOpen=${failedOpenSum}, turnsSaved=${turnsSavedSum}, toolCalls=${toolCallsSum}`,
+      count: cronWakeGate.length,
+      hint: `run \`cron.runs jobName "<job>"\` for the per-fire gate decisions; a high skip-rate is the gate WORKING (savings), not a fault; a 100% skip-rate on a monitor you expect to fire, a high failedOpen count, or toolCalls exceeding turnsSaved, is the signal to inspect.${failOpenNote}`,
     });
   }
 

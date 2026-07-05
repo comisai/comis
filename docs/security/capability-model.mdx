@@ -79,6 +79,38 @@ construction, asserted by architecture tests:
   </Step>
 </Steps>
 
+## Wake-Gate Suppression Bound
+
+A scheduled cron job may carry a [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters) -- a pre-run script that decides whether that fire invokes the model. The gate is a caller of the same curated `tool.invoke` surface above, and it stays inside the same envelope as any other autonomous script:
+
+- **No new capability.** The gate runs under the agent's own resolved [autonomy](/agents/autonomy) capabilities in the standard jail. Authoring and running a gated job is the existing `orch:cron` capability, and the gate's tool reach is exactly the agent's granted `orch:*` set (through the tool-capability map) -- never a gate-specific grant. A job cannot use a gate to reach a tool the agent does not already hold.
+- **Per-fire least privilege.** Each fire mints a fresh attenuated lease under its own root, so one job's gate can never act for -- or suppress -- another job.
+
+The gate is an **efficiency** layer, not a guaranteed-fire security control, and it matters not to confuse the two. A gate decides whether a fire *wakes the model*; it is not a mechanism that guarantees a monitor fires. That distinction bounds the worst case a hostile or broken gate can reach:
+
+<Steps>
+  <Step title="It cannot escalate">
+    A gate holds no capability the agent lacks, so it can reach no tool and no
+    surface the agent could not already reach directly. It is also
+    [fail-open](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters):
+    an errored, timed-out, or over-capped gate **wakes** the model rather than
+    silently swallowing the fire.
+  </Step>
+  <Step title="It cannot suppress another job">
+    The only suppression a gate can cause is on **its own** job -- an explicit
+    skip verdict on its own fires, a self-inflicted denial of service. Because
+    each fire runs under its own per-fire root, a gate never reaches a different
+    job's fires or another agent's runs.
+  </Step>
+  <Step title="A self-DoS is visible, not silent">
+    A gate that skips every fire shows up as a **100% skip-rate** in the
+    [`comis fleet`](/reference/cli#comis-fleet) health report, so a monitor gated
+    into silence is legible rather than a quiet gap. Each denied tool call inside
+    a gate is the same content-free `CapabilityDeniedError` audit signal as
+    anywhere else.
+  </Step>
+</Steps>
+
 ## One Gate, No Bypass, No Wildcard
 
 A single predicate decides every privileged action. It is a plain membership

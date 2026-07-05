@@ -9,7 +9,12 @@ import type { ErrorKind } from "@comis/core";
  *                       budget/breaker/provider trips, or a hard error). Derived
  *                       from the mapped `endReason` (≠ "success"), the SAME source
  *                       of truth as the co-persisted `sessionEnd.endReason`.
- * - `costUsd`         — cumulative USD cost for the session.
+ * - `costUsd`         — THIS execution's USD cost. The rollup is emitted once
+ *                       per execution, so a session's total is the SUM of its
+ *                       executions' rollups — the fleet aggregate and the
+ *                       explain assembler both sum; the last-written
+ *                       `sessionEnd` alone under-reports a multi-execution
+ *                       session.
  * - `toolStats`       — per-tool {ok, failed} counts; bounded by the distinct
  *                       tool count of one execution (small).
  * - `breakerTripCount`— how many times a tool circuit breaker opened.
@@ -32,7 +37,7 @@ export interface SessionHealthRollup {
  * `errorKind`, and `breakerTripCount` is accumulated on the bridge.
  */
 interface RollupInput {
-  sessionCostUsd?: number;
+  executionCostUsd?: number;
   breakerTripCount?: number;
   toolExecResults?: ReadonlyArray<{
     toolName: string;
@@ -114,7 +119,7 @@ export function buildSessionHealthRollup(
 
   return {
     degraded,
-    costUsd: bridgeResult.sessionCostUsd ?? 0,
+    costUsd: bridgeResult.executionCostUsd ?? 0,
     toolStats: Object.fromEntries(toolStatsMap),
     breakerTripCount: bridgeResult.breakerTripCount ?? 0,
     topErrorKinds,

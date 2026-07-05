@@ -32,6 +32,7 @@ import {
   durableOrphanedEventToRow,
   durableResumedEventToRow,
   autonomyRevokedEventToRow,
+  autonomyBudgetWarningEventToRow,
   autonomyKilledEventToRow,
   autonomyDenialBreakerEventToRow,
 } from "./obs-autonomy-rows.js";
@@ -442,6 +443,40 @@ export function lifecycleSweptEventToRow(
 }
 
 /**
+ * Map a `scheduler:wake_gate` event → a flat DiagnosticRow under
+ * `category:"cron_wake_gate"`, so the fleet lens surfaces the daemon-wide wake-gate
+ * EFFICIENCY (per-agent skip-rate / turns-saved / tool-call cost) as a queryable slice
+ * instead of a daemon.log grep. Severity is ALWAYS `"info"`: a gated fire — a skip
+ * (savings) OR a wake (the gate did its job) — is healthy posture, not an alert (it must
+ * NOT inflate the fleet degrade count, the BENIGN-reason discipline). The `details` JSON
+ * carries the closed `signal` label + the verdict enum (`wake`) + COUNTS ONLY (AGENTS.md
+ * §2.7 — the scheduler:wake_gate event is content-free by construction; NEVER the gate's
+ * gathered payload, script source, a prompt, or a secret). The `jobId` is deliberately
+ * DROPPED (the fleet fork rolls up per-AGENT — `agentId` rides the row column); a
+ * per-fire reconstruction is the `cron.runs` skip lens, not this cross-session rollup.
+ */
+export function wakeGateEventToRow(
+  payload: EventMap["scheduler:wake_gate"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "cron_wake_gate",
+    severity: "info",
+    agentId: payload.agentId,
+    message: "scheduler:wake_gate",
+    details: JSON.stringify({
+      signal: "cron_wake_gate",
+      wake: payload.wake,
+      durationMs: payload.durationMs,
+      toolCalls: payload.toolCalls,
+      estTurnsSaved: payload.estTurnsSaved,
+      failedOpen: payload.failedOpen,
+    }),
+    traceId: undefined,
+  };
+}
+
+/**
  * Map a `mcp:server:reconnect_failed` event payload (MCP
  * reconnect exhaustion) to a flat DiagnosticRow stored under
  * `category:"health_signal"`, `severity:"warning"`. The `details` JSON carries
@@ -615,6 +650,7 @@ export {
   durableOrphanedEventToRow,
   durableResumedEventToRow,
   autonomyRevokedEventToRow,
+  autonomyBudgetWarningEventToRow,
   autonomyKilledEventToRow,
   autonomyDenialBreakerEventToRow,
 };
@@ -820,6 +856,14 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   eventBus.on("learning:lifecycle_swept", (payload) => {
     diagnosticBuffer.push(lifecycleSweptEventToRow(payload));
   });
+  // Each gated cron fire → a cron_wake_gate row, so the fleet lens
+  // surfaces the daemon-wide wake-gate efficiency (per-agent skip-rate / turns-saved /
+  // tool-call cost) cross-session. Content-free (counts + the wake verdict enum only —
+  // never the gate's gathered payload/script). Info severity (a skip is savings, not a
+  // degrade — the benign-reason discipline).
+  eventBus.on("scheduler:wake_gate", (payload) => {
+    diagnosticBuffer.push(wakeGateEventToRow(payload));
+  });
   // The two multilingual signals → health_signal rows (same diagnosticBuffer),
   // so they reach the fleet lens the moment they fire.
   eventBus.on("context:script_zero_hit", (payload) => {
@@ -864,6 +908,9 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   });
   eventBus.on("durable:resumed", (payload) => {
     diagnosticBuffer.push(durableResumedEventToRow(payload));
+  });
+  eventBus.on("autonomy:budget_warning", (payload) => {
+    diagnosticBuffer.push(autonomyBudgetWarningEventToRow(payload));
   });
   eventBus.on("autonomy:revoked", (payload) => {
     diagnosticBuffer.push(autonomyRevokedEventToRow(payload));

@@ -147,31 +147,22 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     FROM obs_token_usage WHERE timestamp >= ? GROUP BY (timestamp / 3600000) ORDER BY hour
   `);
 
-  // Fleet aggregate: one rollup per session_key over session_summary rows,
-  // latest-wins via the MAX(id) correlated subquery (a session with >1 summary
-  // row collapses to its newest member, not an arbitrary one). The health fields
-  // live inside `details` JSON — parsed per row in the bound method below. Rides
-  // the idx_obs_diag_session_cat composite index.
-  //
-  // The MAX(id) subquery is WINDOW-CONSISTENT: it carries the same `timestamp >= ?`
-  // predicate as the outer query so "latest" means "latest WITHIN the window". A
-  // backdated/clock-skewed global-latest row (event-time below the window while its
-  // insert-order id is highest) must not be the one the subquery picks and then have
-  // the outer window predicate drop — that silently under-counts the session. With
-  // the predicate pushed in, a session is represented by its latest in-window summary,
-  // so an in-window session whose only in-window row is not the global-latest still
-  // counts. `sinceMs` is therefore bound TWICE (subquery, then outer).
+  // Fleet aggregate: ALL in-window session_summary rows, ordered by insert id so
+  // the bound method's per-session reduce sees a session's executions in order
+  // (last row seen = latest state). A session emits ONE summary row per
+  // EXECUTION — each row carries that execution's own cost/turns/toolStats —
+  // so a rollup must SUM the additive fields across the session's in-window
+  // rows; representing the session by its latest row alone under-reported every
+  // additive field (a 4-execution session that spent ~$0.50 fleet-reported at
+  // $0.03 with empty toolStats). The health fields live inside `details` JSON —
+  // parsed per row in the bound method below. Rides the
+  // idx_obs_diag_session_cat composite index.
   const aggSessionsInWindowStmt = db.prepare(`
-    SELECT session_key, MAX(timestamp) as last_ts, details, severity
+    SELECT session_key, timestamp as last_ts, details, severity
     FROM obs_diagnostics
     WHERE category = 'session_summary'
       AND timestamp >= ?
-      AND id IN (
-        SELECT MAX(id) FROM obs_diagnostics
-        WHERE category = 'session_summary' AND timestamp >= ?
-        GROUP BY session_key
-      )
-    GROUP BY session_key
+    ORDER BY id
   `);
 
   const deliveryStatsAllStmt = db.prepare(`
@@ -302,14 +293,15 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
   }
 
   function aggregateSessionsInWindow(sinceMs: number): SessionSummaryRollup[] {
-    // `sinceMs` is bound twice: once for the windowed MAX(id) subquery, once for
-    // the outer window predicate (see the prepared-statement comment above).
-    const parsed = sessionSummaryRollupMapper.parseRows(
-      aggSessionsInWindowStmt.all(sinceMs, sinceMs),
-    );
+    const parsed = sessionSummaryRollupMapper.parseRows(aggSessionsInWindowStmt.all(sinceMs));
     // Degrade-on-validation-error: observability aggregate -> empty.
     const rows = parsed.ok ? parsed.value : [];
-    const out: SessionSummaryRollup[] = [];
+    // One accumulator per session_key, reduced over ALL its in-window rows
+    // (one row per execution). Additive fields SUM; `degraded` ORs; the state
+    // fields (`lastTs`/`source`) take the latest row (rows arrive in id order);
+    // `endReason` keeps the latest DEGRADED row's named cause so a later clean
+    // execution does not erase what degradedByCause buckets on.
+    const bySession = new Map<string, SessionSummaryRollup>();
     for (const r of rows) {
       let d: Record<string, unknown>;
       try {
@@ -327,32 +319,50 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
         // A corrupt `details` JSON for one row never aborts the scan.
         continue;
       }
-      out.push({
+      const acc = bySession.get(r.session_key) ?? {
         sessionKey: r.session_key,
         lastTs: r.last_ts,
-        degraded: d.degraded === true,
-        costUsd: typeof d.costUsd === "number" ? d.costUsd : 0,
-        // Validate the nested record shapes rather than blind-casting: a malformed
-        // value (a bare number for toolStats, a string for an errorKind count)
-        // would otherwise flow unchecked into the fleet reducer and corrupt its
-        // arithmetic (NaN / string concatenation). Mirrors the session reader's
-        // `typeof … && Number.isFinite(…)` discipline (fleet-session-index.ts).
-        toolStats: parseToolStats(d.toolStats),
-        breakerTripCount: typeof d.breakerTripCount === "number" ? d.breakerTripCount : 0,
-        turnCount: typeof d.turnCount === "number" ? d.turnCount : 0,
-        topErrorKinds: parseErrorKinds(d.topErrorKinds),
-        // Pre-change rows lack `source` -> parse-default "runtime" (additive
-        // read-time default per AGENTS §2.9; not a migration shim). The fleet
-        // reducer filters on this.
-        source: typeof d.source === "string" ? d.source : "runtime",
-        // The named degradation cause. Pre-change rows (and a blank
-        // value) parse-default to "unknown" (additive read-time default) so the
-        // fleet reducer's degradedByCause always has a stable, finite bucket key.
-        endReason:
-          typeof d.endReason === "string" && d.endReason.length > 0 ? d.endReason : "unknown",
-      });
+        degraded: false,
+        costUsd: 0,
+        toolStats: {},
+        breakerTripCount: 0,
+        turnCount: 0,
+        topErrorKinds: {},
+        source: "runtime",
+        endReason: "unknown",
+      };
+      const rowDegraded = d.degraded === true;
+      acc.lastTs = Math.max(acc.lastTs, r.last_ts);
+      acc.costUsd += typeof d.costUsd === "number" ? d.costUsd : 0;
+      acc.breakerTripCount += typeof d.breakerTripCount === "number" ? d.breakerTripCount : 0;
+      acc.turnCount += typeof d.turnCount === "number" ? d.turnCount : 0;
+      // Validate the nested record shapes rather than blind-casting: a malformed
+      // value (a bare number for toolStats, a string for an errorKind count)
+      // would otherwise flow unchecked into the fleet reducer and corrupt its
+      // arithmetic (NaN / string concatenation). Mirrors the session reader's
+      // `typeof … && Number.isFinite(…)` discipline (fleet-session-index.ts).
+      for (const [tool, s] of Object.entries(parseToolStats(d.toolStats))) {
+        const t = acc.toolStats[tool] ?? { ok: 0, failed: 0 }; // eslint-disable-line security/detect-object-injection -- validated tool-name key from parseToolStats
+        acc.toolStats[tool] = { ok: t.ok + s.ok, failed: t.failed + s.failed }; // eslint-disable-line security/detect-object-injection -- validated tool-name key from parseToolStats
+      }
+      for (const [kind, n] of Object.entries(parseErrorKinds(d.topErrorKinds))) {
+        acc.topErrorKinds[kind] = (acc.topErrorKinds[kind] ?? 0) + n; // eslint-disable-line security/detect-object-injection -- validated ErrorKind key from parseErrorKinds
+      }
+      // Pre-change rows lack `source` -> parse-default "runtime" (additive
+      // read-time default per AGENTS §2.9; not a migration shim). The fleet
+      // reducer filters on this; the latest row's provenance wins.
+      acc.source = typeof d.source === "string" ? d.source : "runtime";
+      // The named degradation cause. Pre-change rows (and a blank value)
+      // parse-default to "unknown" so degradedByCause always has a stable,
+      // finite bucket key. A degraded row's cause overwrites; a clean row's
+      // endReason only applies while the session has no degradation yet.
+      const rowEndReason =
+        typeof d.endReason === "string" && d.endReason.length > 0 ? d.endReason : "unknown";
+      if (rowDegraded || !acc.degraded) acc.endReason = rowEndReason;
+      acc.degraded = acc.degraded || rowDegraded;
+      bySession.set(r.session_key, acc);
     }
-    return out;
+    return [...bySession.values()];
   }
 
   function queryDelivery(params?: DeliveryQueryParams): DeliveryRow[] {

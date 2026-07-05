@@ -250,7 +250,7 @@ export function assembleIncidentReport(
   // --- outcome -------------------------------------------------------------
   // The FROZEN 678 fixture's session-metadata.json carries the rollup fields at
   // the metadata TOP LEVEL with no nested `sessionEnd` (endReason / durationMs /
-  // totalTokens / sessionCostUsd / degraded). Live sessions nest them under
+  // totalTokens / executionCostUsd / degraded). Live sessions nest them under
   // `sessionEnd`. Read `sessionEnd.<field>` first, then the metadata top-level
   // field of the same name — so BOTH on-disk shapes resolve.
   const endReason =
@@ -277,26 +277,52 @@ export function assembleIncidentReport(
       : "ok";
 
   // --- cost ----------------------------------------------------------------
-  const costUsd = readRollupNumber(sessionEnd, metadata, rollupPayload, "costUsd", "sessionCostUsd", 0);
-  const totalTokens = readRollupNumber(sessionEnd, metadata, rollupPayload, "totalTokens", "totalTokens", 0);
+  // Prefer the TRAJECTORY-derived ledger sums (signals.summaryCostUsd = Σ of
+  // the per-execution session.summary costs; signals.modelTokens = Σ of the
+  // per-call model.completed token fields). The sessionEnd rollup is
+  // overwritten by every execution, so its costUsd holds only the FINAL
+  // execution's cost — a multi-execution session under-reported ~16× live —
+  // and no rollup writer ever populates a cacheReadRatio. The rollup chain
+  // stays the fallback for log-only sessions with no trajectory records.
+  const costUsd =
+    signals.summaryCostUsd ??
+    // The topAlias is the FROZEN 678 fixture's flat metadata field name
+    // (`sessionCostUsd`) — a data key on an immutable on-disk artifact, NOT the
+    // renamed bridge field. It must stay `sessionCostUsd` to read the fixture.
+    readRollupNumber(sessionEnd, metadata, rollupPayload, "costUsd", "sessionCostUsd", 0);
+  const mt = signals.modelTokens;
+  const totalTokens =
+    mt !== undefined
+      ? mt.input + mt.output + mt.cacheRead + mt.cacheCreation
+      : readRollupNumber(sessionEnd, metadata, rollupPayload, "totalTokens", "totalTokens", 0);
   // Read cacheReadRatio from the metadata top level too (the field name
   // is identical at the top level), matching durationMs/totalTokens — the frozen
   // 678 fixture is flat (no nested sessionEnd), so a top-level-only value would
   // be silently dropped when topAlias is undefined and mis-reported as 0.
-  const cacheReadRatio = readRollupNumber(sessionEnd, metadata, rollupPayload, "cacheReadRatio", "cacheReadRatio", 0);
+  const cacheReadRatio =
+    mt !== undefined && mt.input + mt.cacheRead > 0
+      ? mt.cacheRead / (mt.input + mt.cacheRead)
+      : readRollupNumber(sessionEnd, metadata, rollupPayload, "cacheReadRatio", "cacheReadRatio", 0);
 
   // --- timing --------------------------------------------------------------
   // durationMs also lives at the metadata top level in the frozen-678 shape.
   const durationMs = readRollupNumber(sessionEnd, metadata, rollupPayload, "durationMs", "durationMs", 0);
-  // turnCount: prefer an explicit rollup turn count; else derive from the
-  // per-tool invocation totals (a deterministic lower bound, never 0 when any
-  // tool ran), else 0.
+  // turnCount: prefer the SUMMED per-execution ledger (Σ session.summary
+  // turnCount — the rollup's turnCount is last-write-wins, so a multi-execution
+  // session under-reported it: the incident's 11-turn session showed 1). Then
+  // the explicit rollup turn count (log-only sessions), then the per-tool
+  // invocation total (a deterministic lower bound, never 0 when any tool ran).
   const explicitTurns = readRollupNumber(sessionEnd, metadata, rollupPayload, "turnCount", "turnCount", 0);
   let toolInvocations = 0;
   for (const stat of Object.values(signals.toolStats)) {
     toolInvocations += stat.ok + stat.failed;
   }
-  const turnCount = explicitTurns > 0 ? explicitTurns : toolInvocations;
+  const turnCount =
+    signals.summaryTurnCount !== undefined && signals.summaryTurnCount > 0
+      ? signals.summaryTurnCount
+      : explicitTurns > 0
+        ? explicitTurns
+        : toolInvocations;
 
   // --- toolStats merge (signal counts win on overlap; rollup-only surfaced) -
   const toolStats: IncidentReport["toolStats"] = {};
@@ -401,6 +427,9 @@ export function assembleIncidentReport(
     ...(signals.contextBudget !== undefined ? { contextBudget: signals.contextBudget } : {}),
     // The per-turn budget cascade toward that terminal (present only when ≥2 distinct states).
     ...(signals.contextBudgetHistory !== undefined ? { contextBudgetHistory: signals.contextBudgetHistory } : {}),
+    // The woke-fire wake-gate fact (absent when the trajectory has no
+    // scheduler.wake_gate record — a skip opens no session, so its report never exists).
+    ...(signals.cronWakeGate !== undefined ? { cronWakeGate: signals.cronWakeGate } : {}),
     // The memory-recall outcome (absent when the trajectory has no recall records).
     ...(signals.recall !== undefined ? { recall: signals.recall } : {}),
     // The per-reason cache breaks (absent when the session
@@ -419,6 +448,17 @@ export function assembleIncidentReport(
     // numbers from the terminal execution.aborted record (absent unless a per-root
     // meter tripped). Lets the Incident view + the spend verdict name the exact knob.
     ...(signals.perRootBudget !== undefined ? { perRootBudget: signals.perRootBudget } : {}),
+    // The terminal user-surface state (which pill label / delete the renderer
+    // painted, and whether a failed event reclassified the outcome) + the
+    // blocks an aborted delivery left unsent — together they answer "what did
+    // the user's chat actually show this turn" from the trajectory alone.
+    ...(signals.turnFinalized !== undefined ? { activityFinalize: signals.turnFinalized } : {}),
+    ...(signals.deliveryAborts !== undefined
+      ? { deliverySkipped: { events: signals.deliveryAborts.events, chunksNotSent: signals.deliveryAborts.chunksNotSent } }
+      : {}),
+    // The silent-failure recovery re-drives (model re-entry) — previously
+    // log-only, so explain could not show a session re-entered the model.
+    ...(signals.recoveries !== undefined ? { recoveries: signals.recoveries } : {}),
     // The turn span (>1 only) — flags the
     // whole-session toolStats as cumulative across N turns (append-only trajectory).
     ...(signals.turnCount !== undefined ? { turnCount: signals.turnCount } : {}),

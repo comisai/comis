@@ -236,6 +236,45 @@ describe("assembleFleetHealthReport (4-source read fan-in)", () => {
     expect(ml!.detail).toContain("evicted=1");
   });
 
+  it("does NOT root-cause the fleet to recurring-health-WARNs from severity-info benign signals (session_rebase)", async () => {
+    // The ingest layer stamps benign context:dag_degraded reasons severity
+    // "info" (session_rebase fires once per fresh session start). The verdict's
+    // healthSignalCount counted every row regardless, so a healthy fleet whose
+    // only health rows were benign rebases root-caused to "recurring health
+    // WARN signal(s)" — chronic noise ranked as the fleet's root cause.
+    const now = systemNowMs();
+    const store = makeStore();
+    store.insertDiagnostic({
+      timestamp: now - 1_000, category: "session_summary", severity: "info", sessionKey: "s-ok",
+      message: "session:summary",
+      details: summaryDetails({ degraded: false, costUsd: 0.1, turnCount: 2 }),
+    });
+    store.insertDiagnostic({
+      timestamp: now - 900, category: "health_signal", severity: "info",
+      message: "context:dag_degraded",
+      details: JSON.stringify({ signal: "lcd_divergence", reason: "session_rebase", durationMs: 5 }),
+    });
+    const report = await assembleFleetHealthReport({ obsStore: store, dataDir: makeDataDirWithActivity(), clock: createFakeClock(now) }, 24);
+    expect(report.likelyRootCause?.code).not.toBe("fleet_recurring_health_signal");
+  });
+
+  it("still root-causes to recurring-health-WARNs from severity-warning signals (genuine divergence)", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    store.insertDiagnostic({
+      timestamp: now - 1_000, category: "session_summary", severity: "info", sessionKey: "s-ok",
+      message: "session:summary",
+      details: summaryDetails({ degraded: false, costUsd: 0.1, turnCount: 2 }),
+    });
+    store.insertDiagnostic({
+      timestamp: now - 900, category: "health_signal", severity: "warning",
+      message: "context:dag_degraded",
+      details: JSON.stringify({ signal: "lcd_divergence", reason: "live_store_divergence", durationMs: 5 }),
+    });
+    const report = await assembleFleetHealthReport({ obsStore: store, dataDir: makeDataDirWithActivity(), clock: createFakeClock(now) }, 24);
+    expect(report.likelyRootCause?.code).toBe("fleet_recurring_health_signal");
+  });
+
   it("surfaces the learning_health finding from reflection-funnel rows (handler wiring)", async () => {
     const now = systemNowMs();
     const store = makeStore();
@@ -245,6 +284,46 @@ describe("assembleFleetHealthReport (4-source read fan-in)", () => {
     });
     const report = await assembleFleetHealthReport({ obsStore: store, dataDir: makeDataDirWithActivity(), clock: createFakeClock(now) }, 24);
     expect(report.findings.find((f) => f.code === "learning_health"), "fleet-health must query category:learning_health").toBeDefined();
+  });
+
+  // WIRING GUARD: assembleFleetHealthReport must QUERY category:cron_wake_gate,
+  // compute the slice onto report.cronWakeGate, AND fold the benign rollup finding. The
+  // reducer/finding unit tests prove they are BUILT from rows; this proves fleet-health
+  // actually queries the category + threads it (the wiring a unit test can't see).
+  it("surfaces the cronWakeGate slice + a benign cron_wake_gate_efficiency finding from wake-gate rows (handler wiring)", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    // A 100%-skip gate on agent-a: two skips, no wake — the suppression signal.
+    store.insertDiagnostic({
+      timestamp: now - 1_000, category: "cron_wake_gate", severity: "info", agentId: "agent-a", message: "scheduler:wake_gate",
+      details: JSON.stringify({ signal: "cron_wake_gate", wake: false, durationMs: 9, toolCalls: 0, estTurnsSaved: 1 }),
+    });
+    store.insertDiagnostic({
+      timestamp: now - 900, category: "cron_wake_gate", severity: "info", agentId: "agent-a", message: "scheduler:wake_gate",
+      details: JSON.stringify({ signal: "cron_wake_gate", wake: false, durationMs: 8, toolCalls: 0, estTurnsSaved: 1 }),
+    });
+    const report = await assembleFleetHealthReport({ obsStore: store, dataDir: makeDataDirWithActivity(), clock: createFakeClock(now) }, 24);
+    // The slice is present (fleet-health queried the category + computed it).
+    expect(report.cronWakeGate, "fleet-health must query category:cron_wake_gate + compute the slice").toBeDefined();
+    expect(report.cronWakeGate?.fires).toEqual({ total: 2, skipped: 2, skipRate: 1, failedOpen: 0, failOpenRate: 0 });
+    // The 100%-skip agent is visible in the per-agent breakdown.
+    const a = report.cronWakeGate?.perAgent.find((p) => p.agentId === "agent-a");
+    expect(a?.skipRate).toBe(1);
+    // The benign rollup finding is folded (count == fires).
+    const f = report.findings.find((x) => x.code === "cron_wake_gate_efficiency");
+    expect(f, "fleet-health must pass cron_wake_gate rows to buildFindings").toBeDefined();
+    expect(f!.count).toBe(2);
+    // BENIGN: an info-severity gate fire does NOT inflate the fleet degrade count
+    // (no degraded session was seeded — the gate rows must not create one).
+    expect(report.sessions.degraded).toBe(0);
+  });
+
+  it("omits cronWakeGate when there are no wake-gate rows (honest omit)", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    const report = await assembleFleetHealthReport({ obsStore: store, dataDir: makeDataDirWithActivity(), clock: createFakeClock(now) }, 24);
+    expect(report.cronWakeGate).toBeUndefined();
+    expect(report.findings.some((f) => f.code === "cron_wake_gate_efficiency")).toBe(false);
   });
 
   it("merges the session rollup + activity index + diagnostic findings onto FleetHealthReport (digest-only, with coverage)", async () => {

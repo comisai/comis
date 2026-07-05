@@ -39,6 +39,7 @@ export {
   TracingDefaultsSchema,
   ConfigWebhookSchema,
   SchedulerConfigSchema,
+  resolveCronWakeGateEnabled,
   GatewayConfigSchema,
   GatewayTlsConfigSchema,
   GatewayTokenSchema,

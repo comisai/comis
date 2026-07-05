@@ -356,6 +356,115 @@ describe("cron tool", () => {
     });
   });
 
+  describe("cron tool — wake-gate authoring params", () => {
+    it("add threads wake_gate_script and wake_gate_language onto the cron.add rpcCall", async () => {
+      const mockRpcCall: RpcCall = vi.fn(async (method) => {
+        if (method === "cron.add") {
+          return { id: "job-gate", created: true };
+        }
+        throw new Error(`Unexpected method: ${method}`);
+      });
+
+      const tool = createCronTool(mockRpcCall);
+      await tool.execute("call-gate-add", {
+        action: "add",
+        name: "ci-monitor",
+        schedule_kind: "cron",
+        schedule_expr: "* * * * *",
+        payload_kind: "agent_turn",
+        payload_text: "m",
+        wake_gate_script: "await fetch(x)",
+        wake_gate_language: "ts",
+      } as never);
+
+      expect(mockRpcCall).toHaveBeenCalledWith(
+        "cron.add",
+        expect.objectContaining({
+          wake_gate_script: "await fetch(x)",
+          wake_gate_language: "ts",
+        }),
+      );
+    });
+
+    it("update threads wake_gate_script onto the cron.update rpcCall", async () => {
+      const mockRpcCall: RpcCall = vi.fn(async (method, params) => {
+        if (method === "cron.update") {
+          return { updated: true, jobName: params.jobName };
+        }
+        throw new Error(`Unexpected method: ${method}`);
+      });
+
+      const tool = createCronTool(mockRpcCall);
+      await tool.execute("call-gate-update", {
+        action: "update",
+        job_name: "j",
+        wake_gate_script: "s2",
+      } as never);
+
+      expect(mockRpcCall).toHaveBeenCalledWith(
+        "cron.update",
+        expect.objectContaining({ wake_gate_script: "s2" }),
+      );
+    });
+
+    it("add without wake-gate params leaves the wake-gate values undefined (unchanged behavior)", async () => {
+      const mockRpcCall = vi.fn(async () => ({ id: "job-plain", created: true }));
+
+      const tool = createCronTool(mockRpcCall);
+      await tool.execute("call-plain-add", {
+        action: "add",
+        name: "plain-job",
+        schedule_kind: "every",
+        schedule_every_ms: 60000,
+        payload_kind: "system_event",
+        payload_text: "Hello",
+      } as never);
+
+      const [method, params] = mockRpcCall.mock.calls[0]! as [string, Record<string, unknown>];
+      expect(method).toBe("cron.add");
+      expect(params.wake_gate_script).toBeUndefined();
+      expect(params.wake_gate_language).toBeUndefined();
+    });
+  });
+
+  describe("cron tool — wake-gate monitoring pattern in the description", () => {
+    // The tool description is how a model learns to author a monitor that runs
+    // nearly free: a pre-run gate script that prints a JSON wake verdict, so the
+    // model only runs when something actually changed.
+    function getToolDescription(): string {
+      const mockRpcCall: RpcCall = vi.fn(async () => ({}));
+      return createCronTool(mockRpcCall).description;
+    }
+
+    it('teaches the skip verdict — print {"wake":false} when nothing changed', () => {
+      expect(getToolDescription()).toContain('{"wake":false}');
+    });
+
+    it('teaches the wake verdict — {"wake":true,"context":"…"} with what changed', () => {
+      const desc = getToolDescription();
+      expect(desc).toContain('"wake":true');
+      expect(desc).toContain("context");
+    });
+
+    it("states the model runs only when the gate wakes", () => {
+      expect(getToolDescription().toLowerCase()).toContain("only when the gate wakes");
+    });
+
+    it("includes a worked gate example demonstrating the verdict", () => {
+      const desc = getToolDescription();
+      expect(desc.toLowerCase()).toContain("example");
+      // The worked example demonstrates the skip verdict a second time (rule + example).
+      const skipVerdicts = desc.split('{"wake":false}').length - 1;
+      expect(skipVerdicts).toBeGreaterThanOrEqual(2);
+    });
+
+    it("disambiguates the wake-gate from the `wake` action (a scheduler-loop restart-replay)", () => {
+      const desc = getToolDescription();
+      expect(desc).toContain("`wake` action");
+      expect(desc.toLowerCase()).toContain("not the");
+    });
+  });
+
   describe("session_strategy parameter description", () => {
     // The tool steers the LLM toward `fresh` for long cadences via the
     // session_strategy parameter description. Cron uses a 5-min prompt cache TTL

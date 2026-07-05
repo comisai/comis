@@ -563,6 +563,9 @@ importers:
       file-uri-to-path:
         specifier: 1.0.0
         version: 1.0.0
+      glob:
+        specifier: 13.0.6
+        version: 13.0.6
       grammy:
         specifier: 1.43.0
         version: 1.43.0

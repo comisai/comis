@@ -203,16 +203,20 @@ describe("ObservabilityStore — aggregateSessionsInWindow (A1)", () => {
     expect(keys).toEqual(["s1", "s2"]);
   });
 
-  it("reflects the LATEST row per session_key (latest-wins via MAX(id))", () => {
+  it("reduces over ALL in-window rows per session_key: additive fields SUM, state fields take the latest (a session emits one summary row per execution)", () => {
+    // A session's summary rows are per-EXECUTION snapshots (each execution
+    // emits its own cost/turns/toolStats). Representing the session by its
+    // latest row alone under-reports every additive field — observed live: a
+    // 4-execution session that spent ~$0.50 was fleet-reported at $0.03 (the
+    // final execution's cost), with toolStats {} despite 10 real tool calls.
     store.insertDiagnostic({
       timestamp: 1_000,
       category: "session_summary",
       severity: "info",
       sessionKey: "s1",
       message: "session:summary",
-      details: summaryDetails({ degraded: false, costUsd: 0.1, turnCount: 1 }),
+      details: summaryDetails({ degraded: false, costUsd: 0.13, turnCount: 1, endReason: "success" }),
     });
-    // Later (higher id) row for the SAME key — this is the one that must win.
     store.insertDiagnostic({
       timestamp: 2_000,
       category: "session_summary",
@@ -221,12 +225,27 @@ describe("ObservabilityStore — aggregateSessionsInWindow (A1)", () => {
       message: "session:summary",
       details: summaryDetails({
         degraded: true,
-        costUsd: 0.4,
-        turnCount: 4,
+        costUsd: 0.27,
+        turnCount: 6,
         breakerTripCount: 2,
-        toolStats: { web_fetch: { ok: 1, failed: 3 } },
+        toolStats: { web_fetch: { ok: 1, failed: 3 }, edit: { ok: 1, failed: 1 } },
         topErrorKinds: { dependency: 3 },
-        source: "runtime",
+        endReason: "spend_exceeded",
+      }),
+    });
+    store.insertDiagnostic({
+      timestamp: 3_000,
+      category: "session_summary",
+      severity: "warning",
+      sessionKey: "s1",
+      message: "session:summary",
+      details: summaryDetails({
+        degraded: true,
+        costUsd: 0.03,
+        turnCount: 1,
+        toolStats: { web_fetch: { ok: 2, failed: 0 } },
+        topErrorKinds: { dependency: 1, validation: 2 },
+        endReason: "spend_exceeded",
       }),
     });
 
@@ -234,15 +253,47 @@ describe("ObservabilityStore — aggregateSessionsInWindow (A1)", () => {
     expect(rollups).toHaveLength(1);
     const r = rollups[0]!;
     expect(r.sessionKey).toBe("s1");
-    // Latest (id=2) row's fields, NOT the first row's.
-    expect(r.degraded).toBe(true);
-    expect(r.costUsd).toBe(0.4);
-    expect(r.turnCount).toBe(4);
+    // Additive fields: the SUM across the session's in-window executions.
+    expect(r.costUsd).toBeCloseTo(0.43);
+    expect(r.turnCount).toBe(8);
     expect(r.breakerTripCount).toBe(2);
-    expect(r.toolStats).toEqual({ web_fetch: { ok: 1, failed: 3 } });
-    expect(r.topErrorKinds).toEqual({ dependency: 3 });
+    expect(r.toolStats).toEqual({ web_fetch: { ok: 3, failed: 3 }, edit: { ok: 1, failed: 1 } });
+    expect(r.topErrorKinds).toEqual({ dependency: 4, validation: 2 });
+    // State fields: any degraded execution degrades the session; the named
+    // cause is the latest DEGRADED execution's endReason.
+    expect(r.degraded).toBe(true);
+    expect(r.endReason).toBe("spend_exceeded");
     expect(r.source).toBe("runtime");
-    expect(r.lastTs).toBe(2_000);
+    expect(r.lastTs).toBe(3_000);
+  });
+
+  it("keeps the degradation cause when a later clean execution follows the degraded one (endReason = latest degraded row's cause)", () => {
+    store.insertDiagnostic({
+      timestamp: 1_000,
+      category: "session_summary",
+      severity: "warning",
+      sessionKey: "s-recovered",
+      message: "session:summary",
+      details: summaryDetails({ degraded: true, costUsd: 0.2, turnCount: 2, endReason: "context_exhausted" }),
+    });
+    store.insertDiagnostic({
+      timestamp: 2_000,
+      category: "session_summary",
+      severity: "info",
+      sessionKey: "s-recovered",
+      message: "session:summary",
+      details: summaryDetails({ degraded: false, costUsd: 0.1, turnCount: 1, endReason: "success" }),
+    });
+
+    const rollups = store.aggregateSessionsInWindow(0);
+    expect(rollups).toHaveLength(1);
+    const r = rollups[0]!;
+    // The session saw a degradation in-window: degraded stays true and the
+    // NAMED cause survives (degradedByCause buckets on it) even though the
+    // latest execution ended clean.
+    expect(r.degraded).toBe(true);
+    expect(r.endReason).toBe("context_exhausted");
+    expect(r.costUsd).toBeCloseTo(0.3);
   });
 
   it("excludes rows whose timestamp < sinceMs (window predicate)", () => {

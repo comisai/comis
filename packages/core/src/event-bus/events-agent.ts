@@ -101,6 +101,13 @@ export interface AgentEvents {
     /** Sanitised tool params for activity rendering. MUST be redacted via
      *  redactValue() at the emit site before emit. */
     params?: Record<string, unknown>;
+    /** On FAILURE only: the bounded+redacted argument shape (redactValue then
+     *  sanitizeToolArgs — secrets/PII/paths masked, each value capped, large
+     *  values → "[N chars]"). Forwarded to the tool.result trajectory record
+     *  and explain's failures[] so "what did the failed call attempt?" is
+     *  answerable in one `comis explain` — no raw conversation-store dive.
+     *  Omitted on success (the input is only load-bearing on a failure). */
+    argsPreview?: Record<string, unknown>;
     /** Truncated error message when success=false (max 1500 chars). */
     errorMessage?: string;
     /** Error classification (closed ErrorKind union). "timeout" for

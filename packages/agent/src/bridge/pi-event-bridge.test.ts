@@ -507,6 +507,36 @@ describe("createPiEventBridge", () => {
       expect(endEmit).toBeDefined();
     });
 
+    it("carries a bounded+redacted argsPreview on a FAILED tool:executed so explain can show what the call attempted", () => {
+      // The failing tool's input is the load-bearing diagnostic (a live edit
+      // failure was only root-caused by a raw memory.db dive because the args
+      // reached neither the trajectory nor explain). Surface a bounded shape:
+      // small values verbatim, large values as "[N chars]".
+      const { listener } = createPiEventBridge(deps);
+      const bigOld = "x".repeat(300);
+      listener({ type: "tool_execution_start", toolName: "edit", toolCallId: "tc-e", args: { path: "IDENTITY.md", edits: [{ oldText: bigOld, newText: "y" }] } } as any);
+      listener(makeToolExecutionEndEvent("edit", "tc-e", true) as any);
+
+      const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+      const endEmit = emit.mock.calls.find((c) => c[0] === "tool:executed" && c[1].toolName === "edit" && c[1].success === false);
+      expect(endEmit).toBeDefined();
+      const ap = endEmit![1].argsPreview;
+      expect(ap, "failed tool:executed must carry argsPreview").toBeDefined();
+      expect(ap.path).toBe("IDENTITY.md"); // small value verbatim
+      expect(String(ap.edits)).toMatch(/^\[\d+ chars\]$/); // large value bounded to a size placeholder
+    });
+
+    it("does NOT carry argsPreview on a SUCCESSFUL tool:executed (failure-only — keeps the trajectory lean)", () => {
+      const { listener } = createPiEventBridge(deps);
+      listener(makeToolExecutionStartEvent("read", "tc-ok") as any);
+      listener(makeToolExecutionEndEvent("read", "tc-ok", false) as any);
+
+      const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+      const okEmit = emit.mock.calls.find((c) => c[0] === "tool:executed" && c[1].toolName === "read" && c[1].success === true);
+      expect(okEmit).toBeDefined();
+      expect(okEmit![1].argsPreview).toBeUndefined();
+    });
+
     // -----------------------------------------------------------------------
     // The bridge captures the recordResult transition verdict and
     // emits tool:breaker_opened / tool:breaker_reset (the breaker stays
@@ -3129,7 +3159,7 @@ describe("createPiEventBridge", () => {
       expect(recordedCost.total).toBeCloseTo(event.message.usage.cost.total + expectedDelta, 8);
     });
 
-    it("m.sessionCumulativeCostUsd uses corrected cost when ttlSplit present", () => {
+    it("m.executionCostUsd uses corrected cost when ttlSplit present", () => {
       const ttlSplit = { cacheWrite5mTokens: 858, cacheWrite1hTokens: 23400 };
       deps = createMockDeps({
         provider: "anthropic",
@@ -3965,13 +3995,13 @@ describe("createPiEventBridge", () => {
   // ---------------------------------------------------------------------------
 
   describe("session-cumulative cost accumulators", () => {
-    it("createBridgeMetrics initializes sessionCumulativeCostUsd=0 and sessionCumulativeCacheSavedUsd=0", () => {
+    it("createBridgeMetrics initializes executionCostUsd=0 and executionCacheSavedUsd=0", () => {
       const m = createBridgeMetrics();
-      expect(m.sessionCumulativeCostUsd).toBe(0);
-      expect(m.sessionCumulativeCacheSavedUsd).toBe(0);
+      expect(m.executionCostUsd).toBe(0);
+      expect(m.executionCacheSavedUsd).toBe(0);
     });
 
-    it("after 3 turn_end events with costs [0.15, 0.05, 0.10], sessionCumulativeCostUsd = 0.30", () => {
+    it("after 3 turn_end events with costs [0.15, 0.05, 0.10], executionCostUsd = 0.30", () => {
       deps = createMockDeps({ provider: "anthropic", model: "claude-sonnet-4-5-20250929" });
       const { listener, getResult } = createPiEventBridge(deps);
 
@@ -3986,10 +4016,10 @@ describe("createPiEventBridge", () => {
       }
 
       const result = getResult();
-      expect(result.sessionCostUsd).toBeCloseTo(0.30);
+      expect(result.executionCostUsd).toBeCloseTo(0.30);
     });
 
-    it("after 3 turn_end events with savings, sessionCacheSavedUsd accumulates correctly", () => {
+    it("after 3 turn_end events with savings, executionCacheSavedUsd accumulates correctly", () => {
       deps = createMockDeps({
         provider: "anthropic",
         model: "claude-sonnet-4-5-20250929",
@@ -4009,18 +4039,18 @@ describe("createPiEventBridge", () => {
 
       const result = getResult();
       // Session cache saved should be > 0 when cache reads happened
-      expect(result.sessionCacheSavedUsd).toBeDefined();
-      expect(typeof result.sessionCacheSavedUsd).toBe("number");
+      expect(result.executionCacheSavedUsd).toBeDefined();
+      expect(typeof result.executionCacheSavedUsd).toBe("number");
     });
 
-    it("buildBridgeResult includes sessionCostUsd and sessionCacheSavedUsd", () => {
+    it("buildBridgeResult includes executionCostUsd and executionCacheSavedUsd", () => {
       const m = createBridgeMetrics();
-      m.sessionCumulativeCostUsd = 0.42;
-      m.sessionCumulativeCacheSavedUsd = 0.15;
+      m.executionCostUsd = 0.42;
+      m.executionCacheSavedUsd = 0.15;
 
       const result = buildBridgeResult(m, 3);
-      expect(result.sessionCostUsd).toBeCloseTo(0.42);
-      expect(result.sessionCacheSavedUsd).toBeCloseTo(0.15);
+      expect(result.executionCostUsd).toBeCloseTo(0.42);
+      expect(result.executionCacheSavedUsd).toBeCloseTo(0.15);
     });
   });
 
@@ -4280,16 +4310,16 @@ describe("createPiEventBridge", () => {
   });
 
   describe("ExecutionResult.cost session fields", () => {
-    it("sessionCostUsd and sessionCacheSavedUsd present on ExecutionResult.cost type", () => {
+    it("executionCostUsd and executionCacheSavedUsd present on ExecutionResult.cost type", () => {
       // Type-level test: ensure the fields exist in the type
       const cost: ExecutionResult["cost"] = {
         total: 0.50,
         cacheSaved: 0.10,
-        sessionCostUsd: 1.20,
-        sessionCacheSavedUsd: 0.35,
+        executionCostUsd: 1.20,
+        executionCacheSavedUsd: 0.35,
       };
-      expect(cost.sessionCostUsd).toBe(1.20);
-      expect(cost.sessionCacheSavedUsd).toBe(0.35);
+      expect(cost.executionCostUsd).toBe(1.20);
+      expect(cost.executionCacheSavedUsd).toBe(0.35);
     });
   });
 
@@ -6498,7 +6528,7 @@ describe("createPiEventBridge — per-root budget sibling", () => {
     expect(evictRootIfIdle).toHaveBeenCalledWith("root-session-conv");
   });
 
-  it("calls the per-root reserve with the REAL per-call provider/model/tokens (the same locals checkSpendCeiling consumes)", () => {
+  it("calls the per-root reserve with the REAL per-call provider/model/tokens and the ACTUAL corrected call cost (never the perTurnMax estimate)", () => {
     const clock = createFakeClock(1_000_000);
     const spy = vi.fn().mockReturnValue({ kind: "ok" as const, reservation: { scopeKey: "_root root-args", tenantKey: "_root", reservedUsd: 0, warn: false }, warn: null });
     deps = createMockDeps({
@@ -6513,10 +6543,50 @@ describe("createPiEventBridge — per-root budget sibling", () => {
     } as Partial<PiEventBridgeDeps>);
     const { listener } = createPiEventBridge(deps);
 
-    listener(makeTurnEndEvent({ totalTokens: 222 }) as any);
+    listener(makeTurnEndEvent({
+      totalTokens: 222,
+      cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
+    }) as any);
 
-    // rootRunId, the LIVE provider, the LIVE getCurrentModel(), the perTurnMax est $, the real totalTokens.
-    expect(spy).toHaveBeenCalledWith("root-args", "anthropic", "claude-opus-4-1", 0.5, 222);
+    // rootRunId, the LIVE provider, the LIVE getCurrentModel(), the ACTUAL
+    // corrected $ of this call (the per-root accumulator's sole accrual source —
+    // NOT the perTurnMax admission estimate), the real totalTokens.
+    expect(spy).toHaveBeenCalledWith("root-args", "anthropic", "claude-opus-4-1", 0.03, 222);
+  });
+
+  it("accrues the ACTUAL corrected per-call cost into the per-root $-limb — five cheap calls under the cap do NOT abort (the perTurnMax admission estimate must not permanently consume the aggregate ceiling)", () => {
+    // A priced provider/model + a $2 per-root aggregate cap + perTurnMax $0.50.
+    // Five completions costing $0.06 each = $0.30 of REAL spend — far under the
+    // $2 cap. If the bridge reserves the $0.50 perTurnMax estimate per call and
+    // never settles it to the actual, the phantom holds cross $2 at the 5th
+    // call and the turn falsely aborts with spend_exceeded (observed live: an
+    // interactive session wedged after 5 LLM calls at ~$0.23 of real spend).
+    const clock = createFakeClock(1_000_000);
+    const meter = makePerRootMeter({ clock, tokens: 1_000_000, wallClockMs: 600_000, aggregateUsd: 2.0 });
+    deps = createMockDeps({
+      provider: "anthropic",
+      model: "claude-sonnet-4-5-20250929",
+      getCurrentModel: () => "claude-sonnet-4-5-20250929",
+      // spendConfig alone (no spendAccumulator/spendScope): the sibling
+      // per-(tenant,agent) ceiling block is skipped, isolating the per-root path;
+      // the per-root block still reads spendConfig.perTurnMax as its estimate.
+      spendConfig: { perAgentUsd: null, perTenantUsd: null, daemonGlobalUsd: null, perTurnMax: 0.5, action: "abort", warnAtFraction: 0.8, pricingFallback: "snapshot", onUnknownPricing: "warn" } as SpendConfig,
+      boundedAutonomyBudget: { current: meter },
+      resolveRootRunId: () => "root-session-cheap",
+    } as Partial<PiEventBridgeDeps>);
+    const { listener, getResult } = createPiEventBridge(deps);
+
+    for (let call = 0; call < 5; call += 1) {
+      listener(makeTurnEndEvent({
+        totalTokens: 1_000,
+        cost: { input: 0.02, output: 0.04, cacheRead: 0, cacheWrite: 0, total: 0.06 },
+      }) as any);
+    }
+
+    // $0.30 of real spend against a $2 cap: the run must NOT be aborted.
+    expect(getResult().finishReason).not.toBe("spend_exceeded");
+    const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+    expect(emit.mock.calls.filter((c) => c[0] === "execution:aborted")).toHaveLength(0);
   });
 
   it("ADDITIVE: with boundedAutonomyBudget ABSENT the bridge path is byte-identical (no per-root reserve, no abort on a normal priced turn)", () => {

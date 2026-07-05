@@ -342,7 +342,11 @@ export interface ChannelEvents {
     timestamp: number;
   };
 
-  /** Emitted when delivery is aborted (e.g., via AbortSignal). */
+  /** Emitted when delivery is aborted (e.g., via AbortSignal). Also emitted by
+   *  the orchestrator delivery stage when an already-aborted execution signal
+   *  made the block pacer skip EVERY block without reaching deliverToChannel —
+   *  the trajectory otherwise records nothing for a turn whose reply was never
+   *  sent (`chunksDelivered: 0`, `reason` = the abort reason). */
   "delivery:aborted": {
     channelId: string;
     channelType: string;
@@ -351,6 +355,34 @@ export interface ChannelEvents {
     totalChunks: number;
     durationMs: number;
     origin: string;
+    timestamp: number;
+  };
+
+  /**
+   * The per-turn activity coordinator dispatched `renderer.finalize` — the
+   * decision that paints the activity surface's TERMINAL state (the kept
+   * "❌ {errorKind}" pill, the deleted scaffold, the silent no-op). Content-free:
+   * a closed outcome kind + the closed ErrorKind + a fixed named-constant
+   * `reason` + the strategy name. `reclassified` marks the failed-event
+   * reclassify (a success outcome flipped to failure because a tool step
+   * failed mid-turn) so a stale-looking pill label is explainable from the
+   * trajectory alone instead of coordinator source-reading.
+   */
+  "activity:turn_finalized": {
+    sessionKey: string;
+    agentId: string;
+    channelType: string;
+    /** The renderer strategy that painted the surface (EditPlace / AppendOnly / …). */
+    strategy: string;
+    /** The EFFECTIVE outcome kind dispatched to the renderer. */
+    outcome: "success" | "success_with_recovered_failures" | "failure" | "silent" | "aborted";
+    errorKind?: string;
+    /** The fixed one-line human reason for a resource abort, when present. */
+    reason?: string;
+    /** True when a non-failure outcome was flipped to failure by an observed failed event. */
+    reclassified: boolean;
+    /** How many observed events had status "failed" during the turn. */
+    failedEventCount: number;
     timestamp: number;
   };
 

@@ -134,9 +134,18 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
   const agents = container.config.agents;
 
   container.eventBus.on("scheduler:job_result", async (payload) => {
-    // -- Memory review sentinel intercept --
     const resultText = payload.result;
-    if (resultText === "__MEMORY_REVIEW__") {
+    // The memory-cron sentinels (__MEMORY_REVIEW__ and those dispatched by
+    // handleMemoryCronSentinel) are control tokens for INTERNAL, deliveryTarget-less
+    // jobs — registered as target-less __SENTINEL__ system_event jobs. A user-facing
+    // delivery (a normal cron result OR a wake-gate deliver-on-skip) ALWAYS carries a
+    // deliveryTarget, so only a target-less emit may be interpreted as a control token.
+    // This keeps an untrusted, model-authored deliver equal to a sentinel from being
+    // intercepted: it falls through to verbatim delivery below and never fires an LLM turn.
+    const noDeliveryTarget = !payload.deliveryTarget?.channelType;
+
+    // -- Memory review sentinel intercept (internal, target-less jobs only) --
+    if (noDeliveryTarget && resultText === "__MEMORY_REVIEW__") {
       const { agentId } = payload;
       if (!agentId) {
         logger.warn({ hint: "Memory review job fired without agentId", errorKind: "config" as const }, "Skipping memory review -- no agentId");
@@ -208,7 +217,8 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
     //    to keep this leaf under the 600L cap. Both re-check cfg.enabled (the opt-in
     //    cost gate, defence-in-depth) and inject the segregated stores as port TYPES
     //    (the agent↛memory cut). Returns true when handled → we return here.
-    const handledMemoryCron = await handleMemoryCronSentinel(resultText, payload, {
+    // Same target-less scoping for the remaining memory-cron sentinels.
+    const handledMemoryCron = noDeliveryTarget && await handleMemoryCronSentinel(resultText, payload, {
       container,
       logger,
       clock: deps.clock,

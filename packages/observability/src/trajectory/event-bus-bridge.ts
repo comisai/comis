@@ -255,6 +255,17 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // ---- Delivery lifecycle ----
   "delivery:enqueued": "delivery.queued",
   "delivery:complete": "delivery.dispatched",
+  // Fires when an abort cut delivery short — including the orchestrator
+  // stage's whole-turn skip (an already-aborted signal -> the pacer never
+  // reaches deliverToChannel), where NO other delivery event fires. Without
+  // this record a never-sent reply is invisible to `explain`.
+  "delivery:aborted": "delivery.aborted",
+
+  // ---- Activity surface (the user-visible status pill) ----
+  // The per-turn coordinator's finalize decision — which terminal state the
+  // renderer painted (kept failure label / deleted scaffold / no-op) and
+  // whether a failed event reclassified the outcome.
+  "activity:turn_finalized": "activity.turn_finalized",
 
   // ---- Context engine ----
   // Context pipeline runs once per turn (pre-LLM context assembly).
@@ -280,6 +291,9 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // Maps to "execution.replay_recovered" (NOT "execution.signed_replay_recovered")
   // per canonical name.
   "execution:signed_replay_recovered": "execution.replay_recovered",
+  // The silent-failure recovery re-drives (silent_retry / lkw_fallback /
+  // continuation_nudge) — the model re-entry that used to be log-only.
+  "execution:recovery_attempted": "execution.recovery_attempted",
   // GBNF strip-retry self-heal. Payload is already content-free
   // (tool + keyword NAMES only) — translator forwards all 4 data fields.
   "execution:tool_schema_unsupported": "execution.tool_schema_unsupported",

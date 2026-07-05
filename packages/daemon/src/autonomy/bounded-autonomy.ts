@@ -167,6 +167,10 @@ export function createBoundedAutonomy(deps: {
   config: ResolvedAutonomy;
   cronJobCount?: (agentId: string) => number;
   logger: ComisLogger;
+  /** Pre-trip budget warning hook, threaded verbatim into the per-root meter
+   *  (fired once per (root, limb) at 80% of a limb's cap). Optional — the boot
+   *  wiring emits `autonomy:budget_warning` from it. */
+  onLimbWarning?: Parameters<typeof createPerRootBudget>[0]["onLimbWarning"];
 }): BoundedAutonomy {
   const { clock, timers, config } = deps;
   const logger = deps.logger.child({ submodule: "bounded-autonomy" });
@@ -179,6 +183,7 @@ export function createBoundedAutonomy(deps: {
   });
 
   const budget = createPerRootBudget({
+    ...(deps.onLimbWarning !== undefined ? { onLimbWarning: deps.onLimbWarning } : {}),
     clock,
     config: {
       aggregateUsd: config.budget.aggregateUsd,

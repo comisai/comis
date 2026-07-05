@@ -608,6 +608,22 @@ export interface MessagingEvents {
     timestamp: number;
   };
 
+  /** A silent-failure recovery path fired — the runner re-entered the model
+   *  after an empty/thinking-only turn. `reason` is the closed recovery class:
+   *  `silent_retry` (strip empty turn + re-enter — the budget incident's
+   *  re-drive path), `lkw_fallback` (retry on the last-known-working model
+   *  after a silent auth failure), `continuation_nudge` (a single followUp on a
+   *  thinking-only "stop" turn). These paths mutate the run (re-prompt / model
+   *  swap) and were previously log-only — the event lets `explain` show a
+   *  session re-entered the model. Content-free: a closed reason + a boolean. */
+  "execution:recovery_attempted": {
+    agentId: string;
+    sessionKey: string;
+    reason: "silent_retry" | "lkw_fallback" | "continuation_nudge";
+    succeeded: boolean;
+    timestamp: number;
+  };
+
   /** Tool-schema self-heal fired: the provider rejected the tool JSON Schema at
    *  grammar-compile/unmarshal time (llama.cpp "JSON schema conversion
    *  failed", Ollama Go-side tools unmarshal). The runner stripped

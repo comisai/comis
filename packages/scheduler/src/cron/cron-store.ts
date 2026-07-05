@@ -2,7 +2,6 @@
 // @allow-throw: boundary for file-IO + lock-acquisition errors in CronStore; consumed via daemon cron-handlers + setup-schedulers.
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { z } from "zod";
 import type { CronJob } from "./cron-types.js";
 import { CronJobSchema } from "./cron-types.js";
 // Scheduler internals consume the canonical FileLockPort.withLock() API
@@ -36,8 +35,6 @@ export interface CronStore {
   updateJob(jobId: string, update: Partial<CronJob>): Promise<boolean>;
 }
 
-const CronJobArraySchema = z.array(CronJobSchema);
-
 /** Lock options for CronStore mutations: short stale/update since operations are fast. */
 const LOCK_OPTIONS = { staleMs: 30_000, updateMs: 5_000 };
 
@@ -55,35 +52,66 @@ export function createCronStore(filePath: string, logger?: SchedulerLogger): Cro
 
   /** Internal load: reads and parses the store file. */
   async function loadFromFile(): Promise<CronJob[]> {
+    let raw: string;
     try {
-      const raw = await fs.readFile(filePath, "utf-8");
-      const parsed = JSON.parse(raw);
-      return CronJobArraySchema.parse(parsed);
+      raw = await fs.readFile(filePath, "utf-8");
     } catch (err: unknown) {
       // File doesn't exist -- return empty without warning
       if (isNodeError(err) && err.code === "ENOENT") {
         return [];
       }
-      // JSON parse corruption -- log warning
-      if (err instanceof SyntaxError) {
-        logger?.warn({
-          err: (err as Error).message,
-          hint: "Cron store file contains invalid JSON; returning empty job list. Check .bak file for recovery.",
-          errorKind: "validation" as const,
-        }, "Cron store corruption detected");
-        return [];
-      }
-      // Zod validation failure -- log warning
-      if (err instanceof z.ZodError) {
-        logger?.warn({
-          err: (err as z.ZodError).message,
-          hint: "Cron store data failed schema validation; returning empty job list. Check .bak file for recovery.",
-          errorKind: "validation" as const,
-        }, "Cron store schema validation failed");
-        return [];
-      }
       throw err;
     }
+    // JSON parse corruption -- the whole file is unreadable, so nothing loads.
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err: unknown) {
+      logger?.warn({
+        err: (err as Error).message,
+        hint: "Cron store file contains invalid JSON; returning empty job list. Check .bak file for recovery.",
+        errorKind: "validation" as const,
+      }, "Cron store corruption detected");
+      return [];
+    }
+    // Per-JOB validation, NOT an atomic array parse. A `z.array(CronJobSchema)`
+    // parse throws on the FIRST invalid element, which dropped EVERY job — one
+    // malformed job silently disabled all scheduling (incl. the system lifecycle
+    // crons) on the next reload. Instead quarantine only the invalid jobs and keep
+    // the valid ones; name each dropped job (id/name, never the body) so an
+    // operator can recover it from the .bak file. Prod trigger seen: a partial
+    // deliveryTarget persisted by a bare-cast cron.update (now validated on write).
+    const rows: unknown[] = Array.isArray(parsed) ? parsed : [];
+    const jobs: CronJob[] = [];
+    const dropped: Array<{ index: number; name?: unknown }> = [];
+    let firstErr: string | undefined;
+    if (!Array.isArray(parsed)) {
+      // Root is not an array — treat the whole file as unloadable, but still via
+      // the same "kept/dropped" WARN shape below so the signal is uniform.
+      dropped.push({ index: -1 });
+      firstErr = "cron store root is not a JSON array";
+    } else {
+      rows.forEach((row, index) => {
+        const result = CronJobSchema.safeParse(row);
+        if (result.success) {
+          jobs.push(result.data);
+        } else {
+          dropped.push({ index, name: (row as { name?: unknown })?.name });
+          firstErr ??= result.error.message;
+        }
+      });
+    }
+    if (dropped.length > 0) {
+      logger?.warn({
+        dropped: dropped.length,
+        kept: jobs.length,
+        droppedJobs: dropped, // ids/counts only — never the job body/script/secret
+        err: firstErr,
+        hint: `Cron store data failed schema validation; ${dropped.length} job(s) dropped, ${jobs.length} kept (a single bad job no longer empties the whole store). Check .bak file for recovery.`,
+        errorKind: "validation" as const,
+      }, "Cron store schema validation failed");
+    }
+    return jobs;
   }
 
   /** Internal save: writes jobs atomically (write tmp, rename). */

@@ -237,6 +237,25 @@ describe("createDynamicMethodRouter trace logging", () => {
     expect((calls.warn[0]![0] as { errorKind: string }).errorKind).toBe("auth");
   });
 
+  it("logs a typed refusal (AuthorizationError) message-only — no stack rides the warn (expected flow, not a fault)", async () => {
+    const { logger, calls } = makeLogger();
+    const router = createDynamicMethodRouter(undefined, logger);
+    router.registerMethod("cron.denied", "rpc", () => {
+      const e = new Error("Admin access required for obs.explain");
+      e.name = "AuthorizationError";
+      throw e;
+    });
+    await router.server.receive(
+      { jsonrpc: "2.0", method: "cron.denied", params: {}, id: 105 },
+      RPC_CTX,
+    );
+    expect(calls.warn.length).toBe(1);
+    const logged = calls.warn[0]![0] as { err: unknown; errorKind: string };
+    expect(logged.errorKind).toBe("auth");
+    expect(typeof logged.err, "expected refusals log the message, not the Error object (whose serializer emits the stack)").toBe("string");
+    expect(String(logged.err)).not.toMatch(/\n\s+at /);
+  });
+
   it("classifies not-found errors as validation errorKind and emits warn-level log entry", async () => {
     const { logger, calls } = makeLogger();
     const router = createDynamicMethodRouter(undefined, logger);
