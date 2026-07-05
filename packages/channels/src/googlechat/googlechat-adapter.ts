@@ -373,6 +373,21 @@ export function createGoogleChatAdapter(
       text: string,
       options?: SendMessageOptions,
     ): Promise<Result<string, Error>> {
+      // Guard the agent-supplied space name before it reaches the token mint,
+      // the pacer, or the REST path — it is interpolated into
+      // `${chatBase}/${channelId}/messages`, so a traversal or query
+      // metacharacter would otherwise redirect the write under the bot's bearer.
+      if (!isSafeMessageName(channelId)) {
+        deps.logger.warn(
+          {
+            channelType: "googlechat" as const,
+            hint: "channelId must be a spaces/{space} resource name — letters, digits, and ._/- only, with no query, fragment, or traversal characters",
+            errorKind: "validation" as const,
+          },
+          "Rejected an unsafe space resource name",
+        );
+        return err(new Error("unsafe space resource name"));
+      }
       const tok = await tokens.getToken(CHAT_SCOPE);
       if (!tok.ok) return err(tok.error); // auth already logged a secret-free WARN
       const chatBase = deps.chatBaseUrl ?? "https://chat.googleapis.com/v1";
