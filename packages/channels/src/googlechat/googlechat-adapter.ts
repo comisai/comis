@@ -41,6 +41,7 @@ import type {
   ChannelStatus,
   ComisLogger,
   MessageHandler,
+  NormalizedMessage,
   ReconcileSendOutcome,
   ReconcileSendQuery,
   SendMessageOptions,
@@ -63,6 +64,10 @@ import {
   mapGoogleChatEventToNormalized,
   type GoogleChatEvent,
 } from "./message-mapper.js";
+import {
+  normalizeGoogleChatCardAction,
+  type GoogleChatCardClickEvent,
+} from "./googlechat-actions.js";
 import {
   renderGoogleChatCards,
   renderGoogleChatButtons,
@@ -238,25 +243,17 @@ export function createGoogleChatAdapter(
     );
   }
 
-  async function handleChatEvent(event: unknown): Promise<void> {
-    const normalized = mapGoogleChatEventToNormalized(event as GoogleChatEvent);
-    if (!normalized) return; // non-MESSAGE → nothing to dispatch → ack (resolve)
-
-    if (!isAllowedSender(normalized.senderId, normalized.channelId)) {
-      deps.logger.warn(
-        {
-          channelType: "googlechat" as const,
-          senderId: normalized.senderId,
-          hint: "Add the sender users/{id} or the space spaces/{id} to channels.googlechat.allowFrom",
-          errorKind: "precondition" as const,
-        },
-        "Inbound from non-allowlisted sender dropped",
-      );
-      return; // drop BEFORE any processing → ack (resolve)
-    }
-
+  /**
+   * Admit a gated inbound and fan it out to the registered handlers under a fresh
+   * request context. An inbound that arrives before onMessage() has wired a
+   * handler skip-acks (throws) so the pull loop redelivers it rather than
+   * acking-and-dropping; a handler failure likewise skip-acks. Shared by the
+   * message path and the card-click path so both traverse one fanout — one
+   * liveness bump, one skip-ack boundary, no duplicated dispatch.
+   */
+  async function fanOutMessage(normalized: NormalizedMessage): Promise<void> {
     if (handlers.length === 0) {
-      // A pull channel drains the backlog immediately on start(); a message that
+      // A pull channel drains the backlog immediately on start(); an inbound that
       // arrives before onMessage() has wired a handler must redeliver, not be
       // acked-and-dropped. No liveness bump — a never-wired ingress must look
       // stale to the health monitor rather than falsely healthy.
@@ -269,7 +266,7 @@ export function createGoogleChatAdapter(
         "Inbound arrived before a handler was registered; skipping ack",
       );
       // Skip-ack via the same pull-loop boundary as a handler failure (the file
-      // carries the @allow-throw annotation) so the message redelivers.
+      // carries the @allow-throw annotation) so the inbound redelivers.
       throw new Error("no inbound handler registered");
     }
 
@@ -304,16 +301,108 @@ export function createGoogleChatAdapter(
             },
             "Inbound message handler error",
           );
-          // @allow-throw: handleChatEvent is the pull loop's onEvent boundary — a
-          // rejected promise IS the skip-ack (redeliver) signal, which the loop
-          // catches and translates. Rethrow so the failed enqueue redelivers
-          // rather than being acked-and-dropped.
+          // @allow-throw: fanOutMessage runs inside handleChatEvent, the pull
+          // loop's onEvent boundary — a rejected promise IS the skip-ack
+          // (redeliver) signal, which the loop catches and translates. Rethrow so
+          // the failed enqueue redelivers rather than being acked-and-dropped.
           throw failed.reason instanceof Error
             ? failed.reason
             : new Error(String(failed.reason));
         }
       },
     );
+  }
+
+  async function handleChatEvent(event: unknown): Promise<void> {
+    // A card click arrives as a CARD_CLICKED event on the same ingress; route it
+    // through the card-action normalizer BEFORE the message mapper (which yields
+    // null for it), so it traverses the same default-deny gate the message path
+    // uses. A null/undefined or primitive payload safely misses this branch and
+    // flows to the mapper, which already handles it.
+    const clickEvent = event as GoogleChatCardClickEvent | null | undefined;
+    if (clickEvent?.type === "CARD_CLICKED") {
+      const result = normalizeGoogleChatCardAction(clickEvent);
+      if (result.message === null) {
+        // Distinguish the benign non-click drop (silent) from the security-
+        // relevant rejects, each carrying a distinct errorKind + hint and NO
+        // secret/callback, so a probe naming a method the bot never rendered, a
+        // malformed click, or a click that cannot be authorized is diagnosable —
+        // mirrors the non-allowlisted-sender WARN below.
+        switch (result.reason) {
+          case "ignored":
+            break;
+          case "unrendered-method":
+            deps.logger.warn(
+              {
+                channelType: "googlechat" as const,
+                hint: "Card-action method is not in the rendered set; a click cannot invoke a method the bot never rendered",
+                errorKind: "validation" as const,
+              },
+              "Inbound card action dropped: unrendered method",
+            );
+            break;
+          case "missing-callback":
+            deps.logger.warn(
+              {
+                channelType: "googlechat" as const,
+                hint: "Card-action click carried no opaque callback; the action is malformed",
+                errorKind: "validation" as const,
+              },
+              "Inbound card action dropped: missing callback",
+            );
+            break;
+          case "missing-clicker":
+            deps.logger.warn(
+              {
+                channelType: "googlechat" as const,
+                hint: "Card-action click carried no verified user.name; the clicker cannot be authorized",
+                errorKind: "precondition" as const,
+              },
+              "Inbound card action dropped: no verified clicker id",
+            );
+            break;
+        }
+        return; // every card-action drop acks (resolves) — never redelivers
+      }
+
+      const clicked = result.message;
+      // Authorize the click through the SAME default-deny gate the message path
+      // uses — on the VERIFIED clicker id the normalizer read from user.name,
+      // never a payload field. One authoritative gate, no parallel allowlist.
+      if (!isAllowedSender(clicked.senderId, clicked.channelId)) {
+        deps.logger.warn(
+          {
+            channelType: "googlechat" as const,
+            senderId: clicked.senderId,
+            hint: "Add the sender users/{id} or the space spaces/{id} to channels.googlechat.allowFrom",
+            errorKind: "precondition" as const,
+          },
+          "Inbound from non-allowlisted sender dropped",
+        );
+        return; // drop BEFORE any processing → ack (resolve)
+      }
+
+      await fanOutMessage(clicked);
+      return;
+    }
+
+    const normalized = mapGoogleChatEventToNormalized(event as GoogleChatEvent);
+    if (!normalized) return; // non-MESSAGE → nothing to dispatch → ack (resolve)
+
+    if (!isAllowedSender(normalized.senderId, normalized.channelId)) {
+      deps.logger.warn(
+        {
+          channelType: "googlechat" as const,
+          senderId: normalized.senderId,
+          hint: "Add the sender users/{id} or the space spaces/{id} to channels.googlechat.allowFrom",
+          errorKind: "precondition" as const,
+        },
+        "Inbound from non-allowlisted sender dropped",
+      );
+      return; // drop BEFORE any processing → ack (resolve)
+    }
+
+    await fanOutMessage(normalized);
   }
 
   const adapter: GoogleChatAdapterHandle = {
