@@ -288,6 +288,19 @@ describe("createGoogleChatAdapter — inbound gate + dispatch", () => {
     );
     expect(sibling).toHaveBeenCalledTimes(1);
   });
+
+  it("resolves (ack, not skip-ack) for a decoded literal JSON null — never throws a TypeError into the redelivery path", async () => {
+    const { deps } = await makeDeps({ allowMode: "open" });
+    const adapter = createGoogleChatAdapter(deps);
+    const handler = vi.fn();
+    adapter.onMessage(handler);
+
+    // A payload of the literal JSON null reaches the mapper un-guarded (it
+    // JSON.parses fine, so the pull loop's decode catch is bypassed). It must
+    // resolve so the pull loop ACKs it, not reject into infinite redelivery.
+    await expect(adapter.handleChatEvent(null)).resolves.toBeUndefined();
+    expect(handler).not.toHaveBeenCalled();
+  });
 });
 
 describe("createGoogleChatAdapter — status + lastInboundAt semantics", () => {

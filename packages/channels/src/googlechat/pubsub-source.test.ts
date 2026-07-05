@@ -6,6 +6,7 @@ import {
   createPubSubSource,
   type PubSubSourceDeps,
 } from "./pubsub-source.js";
+import { mapGoogleChatEventToNormalized } from "./message-mapper.js";
 
 const SUB = "projects/my-project/subscriptions/comis-sub";
 const BASE = "https://pubsub.googleapis.com/v1";
@@ -275,6 +276,33 @@ describe("createPubSubSource — pull + ack-on-enqueue + dedup (pollOnce)", () =
     // First was skipped; second succeeded and was acked.
     expect(fetch.allAckedIds()).not.toContain("ack-1");
     expect(fetch.allAckedIds()).toContain("ack-2");
+  });
+
+  it("acks-and-drops a message whose data decodes to JSON null (mapper rejects it) — never skip-acks it into infinite redelivery", async () => {
+    // base64("null") JSON.parses to the literal null, so the decode catch is
+    // bypassed. Wired to the real map-then-drop dispatch contract (the adapter's
+    // handleChatEvent), a payload the mapper rejects must resolve → be ACKed,
+    // NOT rejected into the enqueue-backpressure skip-ack (redeliver) path.
+    const nullData = Buffer.from("null", "utf8").toString("base64");
+    const fetch = makeFetch([
+      { receivedMessages: [{ ackId: "ack-null", message: { data: nullData } }] },
+    ]);
+    // Mirror handleChatEvent's contract: map the untrusted event; a null map is
+    // a benign drop (resolve → ack), only a real enqueue failure rejects.
+    const onEvent = vi.fn(async (event: unknown) => {
+      const normalized = mapGoogleChatEventToNormalized(
+        event as Parameters<typeof mapGoogleChatEventToNormalized>[0],
+      );
+      if (!normalized) return;
+    });
+    const { deps } = makeDeps({ fetchImpl: fetch.fetchImpl, onEvent });
+    const source = createPubSubSource(deps);
+
+    const out = await source.pollOnce();
+
+    expect(out.skippedCount).toBe(0);
+    expect(out.ackedCount).toBe(1);
+    expect(fetch.allAckedIds()).toContain("ack-null");
   });
 
   it("acks and skips an unparseable data payload without dispatching or throwing", async () => {

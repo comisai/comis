@@ -221,3 +221,29 @@ describe("mapGoogleChatEventToNormalized", () => {
     expect(parsed.ok).toBe(true);
   });
 });
+
+describe("mapGoogleChatEventToNormalized — untrusted-input boundary", () => {
+  // The module contract is "normalizes untrusted JSON": a decoded Pub/Sub
+  // payload can be the literal JSON `null` (base64 of "null" parses to null,
+  // typeof null === "object", and null.type throws) or any non-object JSON
+  // scalar/array. None of these may crash the mapper — each must return null so
+  // the pull loop ACK-drops it rather than misrouting a TypeError into the
+  // enqueue-backpressure path and redelivering forever.
+  it("returns null (never throws) for a decoded literal JSON null", () => {
+    expect(() =>
+      mapGoogleChatEventToNormalized(null as unknown as GoogleChatEvent),
+    ).not.toThrow();
+    expect(mapGoogleChatEventToNormalized(null as unknown as GoogleChatEvent)).toBeNull();
+  });
+
+  it("returns null (never throws) for non-object scalar/array decodes", () => {
+    for (const payload of [42, "a string", true, []]) {
+      expect(() =>
+        mapGoogleChatEventToNormalized(payload as unknown as GoogleChatEvent),
+      ).not.toThrow();
+      expect(
+        mapGoogleChatEventToNormalized(payload as unknown as GoogleChatEvent),
+      ).toBeNull();
+    }
+  });
+});

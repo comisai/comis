@@ -77,6 +77,11 @@ const UNKNOWN_SENDER = "unknown";
 export function mapGoogleChatEventToNormalized(
   event: GoogleChatEvent,
 ): NormalizedMessage | null {
+  // Untrusted-input boundary: a decoded payload can be the literal JSON `null`
+  // (typeof null === "object", and null.type throws) or a non-object scalar.
+  // Guard before any dereference so a hostile/malformed payload returns null and
+  // is ACK-dropped, never crashing into the enqueue-backpressure redelivery path.
+  if (event === null || typeof event !== "object") return null;
   if (event.type !== "MESSAGE" || !event.message) return null;
 
   const message = event.message;
