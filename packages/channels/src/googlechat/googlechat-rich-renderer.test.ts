@@ -200,6 +200,24 @@ describe("renderGoogleChatButtons buttonList widget", () => {
     expect(btns).toHaveLength(3);
     expect(btns.map((b) => b.text)).toEqual(["A", "B", "C"]);
   });
+
+  it("escapes &, <, > in a plain button label against the HTML subset (parity with card text widgets)", () => {
+    const btn = buttonsOf(renderGoogleChatButtons([[{ text: "Fish & <Chips>" }]]))[0]!;
+    expect(btn.text).toBe("Fish &amp; &lt;Chips&gt;");
+  });
+
+  it("escapes an interactive button label while leaving the opaque signed cb param byte-exact", () => {
+    const buttons: RichButton[][] = [
+      [{ text: "<b>Yes</b> & go", callback_data: SIGNED_CB }],
+    ];
+    const btn = buttonsOf(renderGoogleChatButtons(buttons))[0]!;
+    expect(btn.text).toBe("&lt;b&gt;Yes&lt;/b&gt; &amp; go");
+    const action = (btn.onClick as Record<string, unknown>).action as {
+      parameters: Array<{ key: string; value: string }>;
+    };
+    // The signed callback wire is opaque — escaping it would break the HMAC.
+    expect(action.parameters[0]!.value).toBe(SIGNED_CB);
+  });
 });
 
 describe("renderGoogleChatCards nested card buttons", () => {

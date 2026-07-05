@@ -82,9 +82,15 @@ function cardToWidgets(card: RichCard): Record<string, unknown>[] {
  * the interactive-first precedence of the other card-based channels.
  */
 function buttonToWidget(btn: RichButton): Record<string, unknown> {
+  // The button label renders in the same Cards v2 HTML subset as textParagraph
+  // content, so agent-supplied label text is escaped for parity with the card
+  // widgets — a `<b>`/`<font>` in a label can never inject card markup. The
+  // opaque signed `cb` callback and the `url` are NOT escaped (the callback is
+  // an HMAC-bearing wire string; the url is a plain openLink target).
+  const label = escapeCardText(btn.text);
   if (btn.callback_data !== undefined) {
     return {
-      text: btn.text,
+      text: label,
       onClick: {
         action: {
           function: GOOGLECHAT_APPROVAL_FUNCTION,
@@ -94,9 +100,9 @@ function buttonToWidget(btn: RichButton): Record<string, unknown> {
     };
   }
   if (btn.url !== undefined) {
-    return { text: btn.text, onClick: { openLink: { url: btn.url } } };
+    return { text: label, onClick: { openLink: { url: btn.url } } };
   }
-  return { text: btn.text };
+  return { text: label };
 }
 
 /** Wrap flattened button rows in one `buttonList` widget. */
