@@ -852,7 +852,7 @@ describe("skills.delete handler", () => {
     expect(reg.init).toHaveBeenCalled();
   });
 
-  it("removes the provenance record on a successful delete of a provenanced skill (PROV-05 wiring)", async () => {
+  it("removes the provenance record on a successful delete of a provenanced skill", async () => {
     const wsDir = join(tmpRoot, "ws");
     const skillPath = join(wsDir, "skills", "imp-skill");
     fs.mkdirSync(skillPath, { recursive: true });
@@ -878,7 +878,7 @@ describe("skills.delete handler", () => {
     });
 
     expect(result.ok).toBe(true);
-    // The delete handler unwinds the provenance record (PROV-05).
+    // The delete handler unwinds the provenance record.
     expect(readProvenanceStore(dataDir)[provenanceKey("local", "agent-a", "imp-skill")]).toBeUndefined();
   });
 });
@@ -1234,7 +1234,7 @@ describe("skills.update handler", () => {
     expect(fs.statSync(skillFile).mode & 0o777).toBe(0o600);
   });
 
-  it("re-pins the provenance record with locallyModified on a successful update of a provenanced skill (PROV-04 wiring)", async () => {
+  it("re-pins the provenance record with locallyModified on a successful update of a provenanced skill", async () => {
     const wsDir = join(tmpRoot, "ws");
     const skillDir = join(wsDir, "skills", "edit-me");
     fs.mkdirSync(skillDir, { recursive: true });

@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for the skill-mutation provenance/MCP consequence hooks:
- *   - unwindImportedSkillOnDelete (PROV-05): after a skill directory is removed,
+ *   - unwindImportedSkillOnDelete: after a skill directory is removed,
  *     disconnect + drop its bundle-owned MCP entries (keyed on the ownership
  *     ledger, so a legacy bundle-owning skill unwinds too) AND remove the
  *     provenance record.
- *   - repinLocallyModifiedSkill (PROV-04 local-edit): after an authorized local
- *     edit, recompute the content hash over the edited install set, bump
- *     updatedAt, and mark the record locallyModified (a visible divergence).
+ *   - repinLocallyModifiedSkill: after an authorized local edit, recompute the
+ *     content hash over the edited install set, bump updatedAt, and mark the
+ *     record locallyModified (a visible divergence).
  *
  * persistMcpServers is mocked (a controllable spy proving the filtered servers
  * array); the ledger + provenance store are exercised against a REAL temp
@@ -107,7 +107,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("unwindImportedSkillOnDelete — PROV-05 delete unwind", () => {
+describe("unwindImportedSkillOnDelete — delete unwind", () => {
   it("provenanced import: disconnects connected entries, removes the ledger-owned servers, forgets the ledger, and removes the provenance record", async () => {
     // Ledger owns srv-a + srv-b for skill 'imp'; a user server 'keep' is not owned.
     recordBundleEntries(dataDir, "imp", [entry("srv-a"), entry("srv-b")]);
@@ -190,7 +190,7 @@ describe("unwindImportedSkillOnDelete — PROV-05 delete unwind", () => {
   });
 });
 
-describe("repinLocallyModifiedSkill — PROV-04 local-edit re-pin", () => {
+describe("repinLocallyModifiedSkill — local-edit re-pin", () => {
   it("re-pins contentHash over the edited install set, bumps updatedAt, and marks locallyModified", async () => {
     const original = await seedRecord("edited", ["SKILL.md"]);
     // The live skill dir carries the edited SKILL.md.

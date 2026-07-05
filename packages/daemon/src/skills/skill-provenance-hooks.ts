@@ -47,7 +47,7 @@ import { readBundleInstallState, forgetBundle } from "./bundle-install-state.js"
 import type { WorkspaceApiDeps } from "../api/types.js";
 
 // ---------------------------------------------------------------------------
-// Delete unwind (PROV-05)
+// Delete unwind
 // ---------------------------------------------------------------------------
 
 /** Args identifying the deleted skill (scope/agent/name key the provenance store). */
@@ -155,7 +155,7 @@ export async function unwindImportedSkillOnDelete(
 }
 
 // ---------------------------------------------------------------------------
-// Update re-pin (PROV-04 local-edit path)
+// Update re-pin (local-edit path)
 // ---------------------------------------------------------------------------
 
 /** Args identifying the edited skill + its live directory (for the hash recompute). */
