@@ -53,8 +53,14 @@ export interface DiscoveryLogger {
  * produced by the path-index heuristic (`resolveSource`) -- the daemon merge
  * helper sets `source: 'learned'` explicitly from `learnedSkillStore.list()`,
  * never from a discovery path or model assertion.
+ *
+ * "imported" is the community-import trust tier: a skill installed through the
+ * staged import pipeline and recorded in the provenance store. Like "learned"
+ * it is stamped EXPLICITLY (discovery enrichment reads the provenance store for
+ * a matched skill) -- never produced by `resolveSource`, never left unset. An
+ * untagged import must never be representable as the platform-trusted "bundled".
  */
-export type SkillSource = "bundled" | "workspace" | "local" | "learned";
+export type SkillSource = "bundled" | "workspace" | "local" | "learned" | "imported";
 
 /** Metadata extracted from a SKILL.md or root .md frontmatter during discovery. */
 export interface SkillMetadata {

@@ -11366,7 +11366,9 @@
                 "enum": [
                   "bundled",
                   "workspace",
-                  "local"
+                  "local",
+                  "learned",
+                  "imported"
                 ]
               }
             },

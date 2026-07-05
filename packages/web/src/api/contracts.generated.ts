@@ -11488,7 +11488,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
                 "enum": [
                   "bundled",
                   "workspace",
-                  "local"
+                  "local",
+                  "learned",
+                  "imported"
                 ]
               }
             },

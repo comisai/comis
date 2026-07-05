@@ -46,10 +46,11 @@ export interface PromptSkillCapability {
   readonly replacesPackages: readonly string[];
   /**
    * Where the skill was discovered from. Mirrors `@comis/skills` `SkillSource`:
-   * "learned" is the verified-learning procedural source, set
-   * explicitly by the daemon merge helper (never model-asserted).
+   * "learned" is the verified-learning procedural source and "imported" is the
+   * community-import trust tier, both set explicitly by the daemon-side
+   * enrichment (never model-asserted, never path-derived).
    */
-  readonly source?: "bundled" | "workspace" | "local" | "learned";
+  readonly source?: "bundled" | "workspace" | "local" | "learned" | "imported";
 }
 
 /**

@@ -27,7 +27,9 @@ const SkillDescriptionSchema = z.object({
   description: z.string(),
   location: z.string(),
   disableModelInvocation: z.boolean().optional(),
-  source: z.enum(["bundled", "workspace", "local"]).optional(),
+  source: z
+    .enum(["bundled", "workspace", "local", "learned", "imported"])
+    .optional(),
 });
 
 /**

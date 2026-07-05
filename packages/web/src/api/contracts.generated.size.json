@@ -1,6 +1,6 @@
 {
-  "totalMinified": 135752,
-  "totalGzipped": 13830,
+  "totalMinified": 135773,
+  "totalGzipped": 13839,
   "budget": {
     "minified": 138000,
     "gzipped": 38912
@@ -195,7 +195,7 @@
     "skills.create": 573,
     "skills.delete": 430,
     "skills.import": 561,
-    "skills.list": 623,
+    "skills.list": 644,
     "skills.update": 514,
     "skills.upload": 675,
     "slack.action": 268,

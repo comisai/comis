@@ -25,11 +25,13 @@ export interface PromptSkillDescription {
   readonly disableModelInvocation?: boolean;
   /**
    * Origin of this skill: bundled (shared), workspace, local (agent-specific),
-   * or learned (a verified-learning procedure materialized read-only from the
-   * `learned_skills` store -- the trust distinction the model SEES, set by the
-   * daemon merge helper, never model-asserted).
+   * learned (a verified-learning procedure materialized read-only from the
+   * `learned_skills` store), or imported (installed through the staged import
+   * pipeline and provenance-tracked) -- the trust distinction the model SEES.
+   * The learned/imported tiers are stamped explicitly by the daemon-side
+   * enrichment, never model-asserted and never left unset.
    */
-  readonly source?: "bundled" | "workspace" | "local" | "learned";
+  readonly source?: "bundled" | "workspace" | "local" | "learned" | "imported";
 }
 
 // ---------------------------------------------------------------------------
