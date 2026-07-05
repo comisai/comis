@@ -478,6 +478,7 @@ export function createGoogleChatAdapter(
           deps.logger.error(
             {
               channelType: "googlechat" as const,
+              err: responded.error,
               hint: c.hint,
               errorKind: c.errorKind,
             },
@@ -594,6 +595,7 @@ export function createGoogleChatAdapter(
         deps.logger.error(
           {
             channelType: "googlechat" as const,
+            err: responded.error,
             hint: c.hint,
             errorKind: c.errorKind,
           },
@@ -653,6 +655,7 @@ export function createGoogleChatAdapter(
         deps.logger.error(
           {
             channelType: "googlechat" as const,
+            err: responded.error,
             hint: c.hint,
             errorKind: c.errorKind,
           },
