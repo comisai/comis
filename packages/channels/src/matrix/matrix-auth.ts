@@ -4,9 +4,15 @@
  * authenticated client, validated by `whoami`.
  *
  * Two paths, both returning a `Result` (never throwing across the port):
- *  - token: build a client with the configured access token, then `whoami` to
- *    prove the token is live before the caller starts syncing.
- *  - password: build a pre-login client, run the `m.login.password` flow, and
+ *  - token: build a client with the access token, then `whoami` to prove the
+ *    token is live before the caller starts syncing. The token is the configured
+ *    one when set (an explicit operator choice); otherwise the one a prior
+ *    password login PERSISTED — reusing it (and its device id) is what lets the
+ *    device identity survive a restart instead of minting a fresh device. A
+ *    rejected stored token falls back to a password re-login when one is
+ *    configured; a token-only deployment with no password is a hard auth error.
+ *  - password: build a pre-login client, run the `m.login.password` flow pinning
+ *    the persisted device id so the homeserver reuses the same device, and
  *    persist the RETURNED access token + device id so the device identity (and
  *    therefore its E2EE keys) survives a restart — a password re-login on every
  *    boot would mint a fresh device and orphan its keys. Persistence merges onto
@@ -64,6 +70,12 @@ export interface MatrixAuthResult {
   userId: string;
   /** The resolved device id, when the homeserver reported one. */
   deviceId?: string;
+  /**
+   * The access token this result authenticated with. The caller persists it (a
+   * password login mints a fresh one) so the next boot reuses it via the token
+   * path rather than re-logging in and minting a fresh device.
+   */
+  accessToken?: string;
 }
 
 /** The auth lifecycle handle. */
@@ -82,10 +94,14 @@ function toMatrixErrorInput(cause: unknown): MatrixErrorInput {
 }
 
 /** Build create-client options without setting undefined optionals. */
-function buildCreateOpts(deps: MatrixAuthDeps, accessToken: string | undefined): ICreateClientOpts {
+function buildCreateOpts(
+  deps: MatrixAuthDeps,
+  accessToken: string | undefined,
+  deviceId: string | undefined,
+): ICreateClientOpts {
   const opts: ICreateClientOpts = { baseUrl: deps.homeserverUrl };
   if (deps.userId !== undefined) opts.userId = deps.userId;
-  if (deps.deviceId !== undefined) opts.deviceId = deps.deviceId;
+  if (deviceId !== undefined) opts.deviceId = deviceId;
   if (accessToken !== undefined) opts.accessToken = accessToken;
   return opts;
 }
@@ -117,62 +133,119 @@ export function createMatrixAuth(deps: MatrixAuthDeps): MatrixAuth {
     return ok(res.value);
   }
 
+  /**
+   * Token path: build a client with `accessToken` (pinning `deviceId`), then
+   * `whoami`-validate before the caller syncs. Returns the token on the result
+   * so the caller can persist it for the next boot.
+   */
+  async function authenticateWithToken(
+    accessToken: string,
+    deviceId: string | undefined,
+  ): Promise<Result<MatrixAuthResult, Error>> {
+    const client = createClientImpl(buildCreateOpts(deps, accessToken, deviceId));
+    const who = await validateWithWhoami(client, "Matrix token validation failed");
+    if (!who.ok) return err(who.error);
+
+    const resolvedUserId = who.value.user_id.length > 0 ? who.value.user_id : deps.userId;
+    if (resolvedUserId === undefined || resolvedUserId.length === 0) {
+      return err(new Error("Matrix token login could not resolve a user id from whoami"));
+    }
+    const result: MatrixAuthResult = { client, userId: resolvedUserId, accessToken };
+    const resolvedDeviceId = who.value.device_id ?? deviceId;
+    if (resolvedDeviceId !== undefined) result.deviceId = resolvedDeviceId;
+    return ok(result);
+  }
+
+  /**
+   * Password path: build a pre-login client, run `m.login.password` pinning
+   * `deviceId` so the homeserver reuses the same device, persist the returned
+   * token + device id (merged onto prior state), then `whoami`-validate.
+   */
+  async function runPasswordLogin(
+    password: string,
+    deviceId: string | undefined,
+    persistedState: MatrixState | undefined,
+  ): Promise<Result<MatrixAuthResult, Error>> {
+    if (deps.userId === undefined || deps.userId.length === 0) {
+      return err(new Error("Matrix password login requires a userId"));
+    }
+    const client = createClientImpl(buildCreateOpts(deps, undefined, deviceId));
+    const loginData = {
+      user: deps.userId,
+      password,
+      ...(deviceId !== undefined ? { device_id: deviceId } : {}),
+    };
+    const loginRes = await fromPromise(client.login("m.login.password", loginData));
+    if (!loginRes.ok) {
+      const classified = classifyMatrixError(toMatrixErrorInput(loginRes.error));
+      log.warn(
+        { channelType: "matrix", errorKind: classified.errorKind, hint: classified.hint },
+        "Matrix password login failed",
+      );
+      return err(new Error(`Matrix password login failed: ${classified.hint}`));
+    }
+    const { access_token, device_id, user_id } = loginRes.value;
+
+    // Persist the returned token + device id so the device identity survives a
+    // restart. Merge onto existing state so a prior sync token / watermark is
+    // preserved — a blind overwrite would reset the watermark → replay.
+    const base: MatrixState = persistedState ?? { watermarks: {} };
+    const saved = await deps.stateStore.save({
+      ...base,
+      accessToken: access_token,
+      deviceId: device_id,
+    });
+    if (!saved.ok) return err(saved.error);
+
+    const who = await validateWithWhoami(client, "Matrix credential validation failed");
+    if (!who.ok) return err(who.error);
+
+    const result: MatrixAuthResult = { client, userId: user_id, accessToken: access_token };
+    if (device_id !== undefined) result.deviceId = device_id;
+    return ok(result);
+  }
+
   return {
     async authenticate(): Promise<Result<MatrixAuthResult, Error>> {
-      // --- Token path: an access token is configured. ---
-      if (deps.accessToken !== undefined && deps.accessToken.length > 0) {
-        const client = createClientImpl(buildCreateOpts(deps, deps.accessToken));
-        const who = await validateWithWhoami(client, "Matrix token validation failed");
-        if (!who.ok) return err(who.error);
+      // Load persisted identity FIRST: a token minted by a prior password login
+      // is reused (with its device id) so the E2EE device identity survives a
+      // restart, instead of re-running password login and minting a fresh device.
+      const persisted = await deps.stateStore.load();
+      const persistedState = persisted.ok ? persisted.value : undefined;
+      const hasPassword = deps.password !== undefined && deps.password.length > 0;
+      // The device id to pin: an operator-configured one wins; else the one a
+      // prior login persisted, so a re-login reuses the same device.
+      const effectiveDeviceId = deps.deviceId ?? persistedState?.deviceId;
 
-        const resolvedUserId = who.value.user_id.length > 0 ? who.value.user_id : deps.userId;
-        if (resolvedUserId === undefined || resolvedUserId.length === 0) {
-          return err(new Error("Matrix token login could not resolve a user id from whoami"));
-        }
-        const result: MatrixAuthResult = { client, userId: resolvedUserId };
-        const resolvedDeviceId = who.value.device_id ?? deps.deviceId;
-        if (resolvedDeviceId !== undefined) result.deviceId = resolvedDeviceId;
-        return ok(result);
+      // Token path: a configured token wins (explicit operator choice); else the
+      // token a prior password login persisted (device-identity reuse).
+      const configToken =
+        deps.accessToken !== undefined && deps.accessToken.length > 0 ? deps.accessToken : undefined;
+      const persistedToken =
+        persistedState?.accessToken !== undefined && persistedState.accessToken.length > 0
+          ? persistedState.accessToken
+          : undefined;
+      const tokenToTry = configToken ?? persistedToken;
+
+      if (tokenToTry !== undefined) {
+        const viaToken = await authenticateWithToken(tokenToTry, effectiveDeviceId);
+        if (viaToken.ok) return viaToken;
+        // A rejected token is a hard auth error UNLESS a password is configured,
+        // in which case recover by re-logging in (reusing the persisted device).
+        if (!hasPassword) return viaToken;
+        log.info(
+          {
+            channelType: "matrix",
+            errorKind: "auth" as const,
+            hint: "The stored Matrix access token was rejected; re-logging in with the configured password to mint a fresh token for the same device",
+          },
+          "Matrix stored access token rejected: falling back to password login",
+        );
       }
 
-      // --- Password path: no token, a password is configured. ---
+      // Password path: first boot, or a rejected stored token with a password set.
       if (deps.password !== undefined && deps.password.length > 0) {
-        if (deps.userId === undefined || deps.userId.length === 0) {
-          return err(new Error("Matrix password login requires a userId"));
-        }
-        const client = createClientImpl(buildCreateOpts(deps, undefined));
-        const loginData = {
-          user: deps.userId,
-          password: deps.password,
-          ...(deps.deviceId !== undefined ? { device_id: deps.deviceId } : {}),
-        };
-        const loginRes = await fromPromise(client.login("m.login.password", loginData));
-        if (!loginRes.ok) {
-          const classified = classifyMatrixError(toMatrixErrorInput(loginRes.error));
-          log.warn(
-            { channelType: "matrix", errorKind: classified.errorKind, hint: classified.hint },
-            "Matrix password login failed",
-          );
-          return err(new Error(`Matrix password login failed: ${classified.hint}`));
-        }
-        const { access_token, device_id, user_id } = loginRes.value;
-
-        // Persist the returned token + device id so the device identity survives
-        // a restart. Merge onto existing state so a prior sync token / watermark
-        // is preserved — a blind overwrite would reset the watermark → replay.
-        const existing = await deps.stateStore.load();
-        const base: MatrixState = existing.ok ? existing.value : { watermarks: {} };
-        const saved = await deps.stateStore.save({
-          ...base,
-          accessToken: access_token,
-          deviceId: device_id,
-        });
-        if (!saved.ok) return err(saved.error);
-
-        const who = await validateWithWhoami(client, "Matrix credential validation failed");
-        if (!who.ok) return err(who.error);
-
-        return ok({ client, userId: user_id, deviceId: device_id });
+        return runPasswordLogin(deps.password, effectiveDeviceId, persistedState);
       }
 
       return err(new Error("Matrix authentication requires an access token or a password"));
