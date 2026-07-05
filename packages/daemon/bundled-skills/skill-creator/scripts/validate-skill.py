@@ -193,8 +193,8 @@ def check_metadata_comis(meta, errors, warnings):
     if not isinstance(bag, dict):
         errors.append("metadata.comis must be a JSON object carrying the platform extension fields")
         return
-    if any(k in ("__proto__", "constructor", "prototype") for k in bag):
-        errors.append("metadata.comis carries a prototype-polluting key (__proto__, constructor, or prototype) and was refused")
+    if any(k == "__proto__" for k in bag):
+        errors.append("metadata.comis carries a prototype-polluting __proto__ key and was refused")
         return
     check_extension_fields(bag, errors, warnings)
 

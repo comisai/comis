@@ -55,11 +55,18 @@ const PRE_MIGRATION_KEYS: readonly string[] = [
   "allowedTools",
 ];
 
-/** Keys never copied from untrusted parsed input (prototype-pollution guard). */
-const DANGEROUS_KEYS = new Set<string>(["__proto__", "constructor", "prototype"]);
+/**
+ * The single own-key pollution vector: `__proto__`. `JSON.parse` and the YAML
+ * parser both materialize it as an own data property, and a later bracket copy
+ * (`residual[key] = ...`) would invoke the inherited `__proto__` setter. A
+ * `constructor` / `prototype` DATA key is NOT a vector -- copying it only shadows
+ * with an own property -- so it is not refused (a JSON-Schema property may be
+ * named either).
+ */
+const DANGEROUS_KEYS = new Set<string>(["__proto__"]);
 
 /**
- * Deep-scan a parsed JSON value for an own prototype-polluting key at any depth.
+ * Deep-scan a parsed JSON value for an own `__proto__` key at any depth.
  * `JSON.parse` materializes `__proto__` as an own data property (it does not
  * pollute the prototype), and the strict schema does not flag it, so the lift
  * refuses such a payload at this boundary rather than merge it onward.
@@ -219,7 +226,7 @@ function mergeExtensionBag(
   }
 
   if (hasDangerousKey(parsed)) {
-    return err(new Error("metadata.comis carries a prototype-polluting key (__proto__, constructor, or prototype) and was refused"));
+    return err(new Error("metadata.comis carries a prototype-polluting __proto__ key and was refused"));
   }
 
   const bag = parsed as Record<string, unknown>;
