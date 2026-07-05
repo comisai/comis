@@ -30,7 +30,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -70,7 +70,7 @@ vi.mock("@comis/skills", async (importOriginal) => {
 // Imports — applyBundleInstall is the symbol under test
 // ---------------------------------------------------------------------------
 
-import { applyBundleInstall } from "./bundle-install-helper.js";
+import { applyBundleInstall, applyImportedBundleInstall } from "./bundle-install-helper.js";
 import type { ComisLogger } from "@comis/infra";
 import type { McpServerEntry } from "@comis/core";
 
@@ -511,5 +511,80 @@ describe("applyBundleInstall — atomic two-phase install hook", () => {
     expect(yfin?._bundleArchive?.url).toBe("https://my.proxy/yfinance");
     // Connect fires for the bundle entry.
     expect(connectSpy.mock.calls.length).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyImportedBundleInstall — the imported trust tier's persist path.
+//
+// The imported tier's teeth: a bundled MCP entry persists DISABLED and is NEVER
+// auto-connected at install (the operator opts in per server later; each later
+// connect re-runs the malware/secret checks at the connect site). Contrast with
+// applyBundleInstall above (the trusted create/upload path), which persists
+// enabled + connects. The ownership ledger is recorded either way so a later
+// skills.delete can disconnect + remove exactly these entries.
+// ---------------------------------------------------------------------------
+
+describe("applyImportedBundleInstall — imported-tier persist-disabled + no auto-connect", () => {
+  it("persists every bundled entry enabled:false, NEVER connects, and records the ownership ledger", async () => {
+    const { deps, connectSpy } = makeDeps();
+    const dataDir = join(tmpRoot, "imported-data");
+    const bundleEntries = [
+      { name: "imp-alpha", transport: "stdio", command: "npx", args: ["pkg-alpha"], enabled: true },
+      { name: "imp-bravo", transport: "stdio", command: "npx", args: ["pkg-bravo"], enabled: true },
+    ] as unknown as McpServerEntry[];
+
+    const result = await applyImportedBundleInstall(
+      deps,
+      dataDir,
+      {
+        skillId: "imported-skill",
+        nextServers: [...bundleEntries],
+        bundleEntries,
+      },
+      undefined,
+    );
+
+    expect(result.ok).toBe(true);
+    // Single atomic config write.
+    expect(mockPersistMcpServers.mock.calls.length).toBe(1);
+    const persisted = mockPersistMcpServers.mock.calls[0]![1] as McpServerEntry[];
+    // Every bundled entry lands DISABLED — the imported-tier invariant.
+    expect(persisted.find((s) => s.name === "imp-alpha")?.enabled).toBe(false);
+    expect(persisted.find((s) => s.name === "imp-bravo")?.enabled).toBe(false);
+    // NEVER auto-connect at import — the operator opts in per server later.
+    expect(connectSpy.mock.calls.length).toBe(0);
+    // The ownership ledger records the entries so skills.delete can unwind them.
+    const ledger = JSON.parse(
+      readFileSync(join(dataDir, "installed-bundles.json"), "utf-8"),
+    ) as Record<string, Record<string, string>>;
+    expect(Object.keys(ledger["imported-skill"] ?? {}).sort()).toEqual([
+      "imp-alpha",
+      "imp-bravo",
+    ]);
+  });
+
+  it("returns err when the config write does not persist (fail-closed)", async () => {
+    const { deps, connectSpy } = makeDeps();
+    mockPersistMcpServers.mockResolvedValueOnce({
+      persistence: "runtime_only" as const,
+      warning: "disk write failed",
+    });
+    const dataDir = join(tmpRoot, "imported-data-2");
+    const bundleEntries = [
+      { name: "imp-only", transport: "stdio", command: "npx", args: ["pkg"], enabled: true },
+    ] as unknown as McpServerEntry[];
+
+    const result = await applyImportedBundleInstall(
+      deps,
+      dataDir,
+      { skillId: "imported-skill-2", nextServers: [...bundleEntries], bundleEntries },
+      undefined,
+    );
+
+    expect(result.ok).toBe(false);
+    // A non-imported entry (not in the bundle set) is left untouched, and the
+    // import still never connects even on the persist-failure path.
+    expect(connectSpy.mock.calls.length).toBe(0);
   });
 });
