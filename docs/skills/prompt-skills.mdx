@@ -94,7 +94,6 @@ invoking the skill:
 ---
 name: review
 description: "Code review skill"
-argumentHint: "[language] [focus-area]"
 ---
 Review the code for {language} best practices.
 Focus especially on: {focus-area}
@@ -120,7 +119,6 @@ You can also use numbered positions directly:
 ---
 name: translate
 description: "Translate text to a target language"
-argumentHint: "[language] [text to translate]"
 ---
 Translate the following text to $1:
 
@@ -134,8 +132,8 @@ Invoke it with:
 ```
 
 <Tip>
-Use `argumentHint` in the frontmatter to show users what inputs your skill expects.
-This hint appears in help listings and auto-complete suggestions.
+Add an `argumentHint` under `metadata.comis` to show users what inputs your skill
+expects. This hint appears in help listings and auto-complete suggestions.
 </Tip>
 
 ## Skill discovery
@@ -267,9 +265,9 @@ are short, real, and exercised by every Comis install. See
 
 Once you are comfortable with the basics, these options give you more control:
 
-- **Tool restrictions:** Use `allowedTools` in the frontmatter to limit which tools the agent can use while this skill is active. For example, a research skill might only allow `web_search` and `web_fetch`. See [Manifest Reference](/skills/manifest) for the full field list.
+- **Tool restrictions:** Use `allowed-tools` in the frontmatter -- a space-separated string in the six-field manifest -- to limit which tools the agent can use while this skill is active. For example, a research skill might set `allowed-tools: "web_search web_fetch"`. See [Manifest Reference](/skills/manifest) for the full field list.
 
-- **Input validation:** Use `inputSchema` to define a JSON Schema that validates arguments before the skill runs. Invalid input is rejected with a clear error message. See [Manifest Reference](/skills/manifest) for details.
+- **Input validation:** Use `inputSchema` (under `metadata.comis`) to document the arguments the skill expects. It is advisory -- surfaced as documentation, not enforced at invocation time. See [Manifest Reference](/skills/manifest) for details.
 
 - **Dynamic context:** Enable the `promptSkills.enableDynamicContext` config option to allow shell commands embedded in skill bodies. This lets skills pull in live data (like git status or system info) at invocation time.
 
@@ -281,7 +279,7 @@ Once you are comfortable with the basics, these options give you more control:
 
 - **Auto-injection:** Skills can be automatically injected into conversations without explicit invocation. The agent selects relevant skills based on their descriptions. You can control how many are injected per request with the `maxAutoInject` config setting (default: 3).
 
-- **Model invocation control:** Set `disableModelInvocation: true` in the frontmatter to hide a skill from the agent's automatic selection. The skill can still be invoked explicitly with `/skill:name`.
+- **Model invocation control:** Set `disableModelInvocation: true` under `metadata.comis` to hide a skill from the agent's automatic selection. The skill can still be invoked explicitly with `/skill:name`.
 
 ## Related
 

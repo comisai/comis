@@ -153,16 +153,13 @@ The resolution works like this:
 
 ## Per-Skill Tool Restrictions
 
-In addition to the agent-level tool policy, individual skills can restrict which tools are available while they are active. This is set with the `allowedTools` field in the [skill manifest](/skills/manifest):
+In addition to the agent-level tool policy, individual skills can restrict which tools are available while they are active. This is set with the `allowed-tools` field in the [skill manifest](/skills/manifest) -- a space-separated string in the six-field manifest:
 
 ```yaml
 ---
 name: research-assistant
 description: "Search the web and summarize findings"
-allowedTools:
-  - web_search
-  - web_fetch
-  - read
+allowed-tools: "web_search web_fetch read"
 ---
 ```
 

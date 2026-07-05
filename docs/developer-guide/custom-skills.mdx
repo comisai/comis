@@ -78,26 +78,23 @@ const manifest: SkillManifest = {
 };
 ```
 
-Additional manifest fields available in SKILL.md frontmatter:
+The authored SKILL.md frontmatter carries **six top-level fields**; every platform-specific extension rides under the `metadata.comis` carrier. The parser lifts both shapes into the internal `SkillManifest`.
+
+Top-level fields:
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `name` | string | **Required.** Unique skill identifier |
 | `description` | string | **Required.** What the skill does (shown to agent) |
-| `type` | string | Skill type: `prompt` (default) |
-| `version` | string | Semantic version |
-| `license` | string | License identifier |
-| `userInvocable` | boolean | Whether users can trigger directly (default: `true`) |
-| `disableModelInvocation` | boolean | Prevent agent from calling autonomously |
-| `allowedTools` | string[] | Restrict which tools the skill can use |
-| `argumentHint` | string | Hint for the argument format |
-| `inputSchema` | object | JSON Schema for parameters |
-| `permissions` | object | Security permissions: `fsRead`, `fsWrite`, `net`, `env` |
-| `metadata` | object | Arbitrary string-to-string key-value metadata |
-| `comis` | object | Comis-only namespace block: `os`, `requires` (`bins` + `env`), `skill-key`, `primary-env`, `command-dispatch` |
+| `license` | string | SPDX license identifier |
+| `compatibility` | string | Free-prose environment note (operator-visible; no platform semantics) |
+| `allowed-tools` | string | Space-separated tool-restriction list; empty means no restriction |
+| `metadata` | map string→string | Arbitrary key-value pairs; also carries `metadata.version` and the `metadata.comis` carrier |
+
+Carried inside the `metadata.comis` JSON string: `userInvocable`, `disableModelInvocation`, `argumentHint`, `inputSchema`, `permissions` (`fsRead`, `fsWrite`, `net`, `env`), the `comis` namespace (`os`, `requires` with `bins` + `env`, `skill-key`, `primary-env`, `command-dispatch`), and `mcpServers`. The version is authored as `metadata.version`.
 
 <Info>
-Comis-platform-only fields (`os`, `requires`, `skill-key`, `primary-env`, `command-dispatch`) live exclusively under the `comis:` namespace block in frontmatter. Other pi-coding-agent hosts ignore this block. The full schema is `SkillManifestSchema` in `packages/skills/src/manifest/schema.ts`.
+Comis-platform-only fields (`os`, `requires`, `skill-key`, `primary-env`, `command-dispatch`) live under the `comis` namespace inside the `metadata.comis` carrier. Hosts that implement only the skill spec ignore this key. The full schema is `SkillManifestSchema` in `packages/skills/src/manifest/schema.ts`.
 </Info>
 
 <Info>

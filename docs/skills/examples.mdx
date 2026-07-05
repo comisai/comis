@@ -27,9 +27,8 @@ description: |
   errors, warnings, daemon issues, slow operations, debugging daemon
   behavior, checking what happened, or investigating any kind of
   platform issue -- even if they don't explicitly mention "logs".
-comis:
-  requires:
-    bins: ["python3"]
+metadata:
+  comis: '{"comis": {"requires": {"bins": ["python3"]}}}'
 ---
 
 # Log Troubleshooting
@@ -43,16 +42,16 @@ NDJSON logs and produces structured, context-friendly summaries...
 **What this teaches you about SKILL.md authoring:**
 
 - **Two required fields, that is it.** `name` and `description` -- the rest is
-  optional. Notice there is no `allowedTools`, no `permissions`, no
+  optional. Notice there is no `allowed-tools`, no `permissions`, no
   `inputSchema`. Most real-world skills are this lean.
 - **The description does the heavy lifting.** Look at the trigger phrases packed
   into it ("logs", "errors", "warnings", "what happened", "investigating any
   kind of platform issue"). Comis uses this string to match the user's intent
   to the right skill -- a vague description like "log helper" would never get
   selected. Spend time on this field.
-- **`comis.requires.bins`** is how the skill says "I need `python3` on PATH".
-  At load time the runtime eligibility system checks this; if Python is
-  missing, the skill is skipped with a warning rather than silently failing.
+- **`comis.requires.bins`** (under `metadata.comis`) is how the skill says "I need
+  `python3` on PATH". At load time the runtime eligibility system checks this; if
+  Python is missing, the skill is skipped with a warning rather than silently failing.
 - **The body is just Markdown.** No special syntax beyond standard `{template}`
   / `$1` placeholders. The skill bundles a Python script next to the manifest
   in `scripts/log-digest.py`, and the body teaches the agent to call it.
@@ -85,8 +84,9 @@ with specific tone, escalation rules, and response templates.
 ---
 name: customer-support
 description: "Customer support persona with escalation rules"
-userInvocable: true
-allowedTools: ["message", "memory_search"]
+allowed-tools: "message memory_search"
+metadata:
+  comis: '{"userInvocable": true}'
 ---
 ```
 
@@ -111,11 +111,11 @@ You are a customer support representative for our company.
 
 **How it works:**
 
-- The `allowedTools` restriction ensures the agent only uses messaging and memory
+- The `allowed-tools` restriction ensures the agent only uses messaging and memory
   tools while this skill is active -- it cannot run shell commands, browse the web,
   or access other tools
-- The `userInvocable: true` setting (which is the default) means anyone in the chat
-  can activate it with `/skill:customer-support`
+- The `userInvocable: true` setting (the default, carried under `metadata.comis`)
+  means anyone in the chat can activate it with `/skill:customer-support`
 - The agent follows the tone, escalation, and response format rules for every reply
 
 **Test it:**
@@ -137,8 +137,8 @@ job. This example shows how skills and scheduling work together.
 ---
 name: daily-briefing
 description: "Generate a morning briefing with weather, news, and tasks"
-disableModelInvocation: false
-argumentHint: "[timezone]"
+metadata:
+  comis: '{"disableModelInvocation": false, "argumentHint": "[timezone]"}'
 ---
 ```
 
@@ -156,10 +156,11 @@ Format as a clean, readable message suitable for a chat channel.
 
 **How it works:**
 
-- The `argumentHint` shows users that the skill expects a timezone argument
+- The `argumentHint` (under `metadata.comis`) shows users that the skill expects a
+  timezone argument
 - The `{timezone}` placeholder gets replaced with whatever the user provides
-- The `disableModelInvocation: false` setting (the default) means the agent can
-  also decide to use this skill on its own when relevant
+- The `disableModelInvocation: false` setting (the default, under `metadata.comis`)
+  means the agent can also decide to use this skill on its own when relevant
 
 **Test it manually:**
 
@@ -195,11 +196,9 @@ tool access.
 ---
 name: code-review
 description: "Structured code review with checklist"
-argumentHint: "[file-path]"
-allowedTools: ["read", "grep", "find"]
-comis:
-  requires:
-    bins: ["git"]
+allowed-tools: "read grep find"
+metadata:
+  comis: '{"argumentHint": "[file-path]", "comis": {"requires": {"bins": ["git"]}}}'
 ---
 ```
 
@@ -227,10 +226,11 @@ Report findings with pass/fail for each item.
 **How it works:**
 
 - The `$1` placeholder is replaced with the file path the user provides
-- The `allowedTools` restriction limits the agent to read-only file tools -- it
+- The `allowed-tools` restriction limits the agent to read-only file tools -- it
   cannot modify files, run commands, or access the network during the review
-- The `comis.requires.bins` field ensures `git` is installed on the system before
-  the skill is loaded. If git is missing, the skill is marked as ineligible.
+- The `comis.requires.bins` field (under `metadata.comis`) ensures `git` is installed
+  on the system before the skill is loaded. If git is missing, the skill is marked as
+  ineligible.
 
 **Test it:**
 
@@ -251,9 +251,8 @@ shows how permissions control file access.
 ---
 name: csv-formatter
 description: "Format CSV data into a readable table"
-argumentHint: "[path-to-csv-file]"
-permissions:
-  fsRead: ["./data/*.csv"]
+metadata:
+  comis: '{"argumentHint": "[path-to-csv-file]", "permissions": {"fsRead": ["./data/*.csv"]}}'
 ---
 ```
 
@@ -270,8 +269,8 @@ Rules:
 
 **How it works:**
 
-- The `permissions.fsRead` field grants the skill read access to CSV files in the
-  `./data/` directory -- and only that directory
+- The `permissions.fsRead` field (under `metadata.comis`) grants the skill read access
+  to CSV files in the `./data/` directory -- and only that directory
 - The skill cannot read files outside of `./data/*.csv`, write any files, or
   access the network
 - The `argumentHint` shows users what input to provide
@@ -295,15 +294,16 @@ These tips apply to all prompt skills:
 2. **Use numbered steps for procedures.** The agent follows numbered steps more
    reliably than unstructured paragraphs.
 
-3. **Restrict tools to only what the skill needs.** Use `allowedTools` to follow
+3. **Restrict tools to only what the skill needs.** Use `allowed-tools` to follow
    the principle of least privilege. A research skill should not have access to
    file editing tools.
 
 4. **Test with simple inputs first.** Start with the most basic invocation and
    work up to complex cases. Check that template variables resolve correctly.
 
-5. **Use `argumentHint` to guide users.** Show users what inputs your skill expects
-   so they do not have to guess. For example: `argumentHint: "[language] [file-path]"`.
+5. **Use `argumentHint` to guide users.** Set it under `metadata.comis` to show users
+   what inputs your skill expects so they do not have to guess -- for example, an
+   `argumentHint` of `"[language] [file-path]"`.
 
 6. **Write clear descriptions.** The agent uses the `description` field to decide
    when to apply skills automatically. A vague description like "helper skill" gives
