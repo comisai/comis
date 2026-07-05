@@ -348,3 +348,246 @@ describe("createPubSubSource — pull + ack-on-enqueue + dedup (pollOnce)", () =
     expect(onEvent).toHaveBeenCalledTimes(3);
   });
 });
+
+/** Drain the microtask queue so an awaited async loop can make progress. */
+async function flushMicrotasks(n = 40): Promise<void> {
+  for (let i = 0; i < n; i += 1) await Promise.resolve();
+}
+
+/**
+ * A deterministic timer seam. It CAPTURES each scheduled delay and parks the
+ * callback (never firing on real time); `fireNext()` resolves the parked backoff
+ * so the loop advances one cycle without any real wait. `cleared` records the
+ * handles passed to the canceller so a stop()-cancels-backoff assertion can read
+ * them. Mirrors the fake-timers `unrefRecord` intent for leak assertions.
+ */
+function makeFakeTimers() {
+  const delays: number[] = [];
+  const cleared: unknown[] = [];
+  let pending: Array<{ id: number; cb: () => void }> = [];
+  let seq = 0;
+  const setTimeoutImpl = ((cb: () => void, ms: number) => {
+    const id = (seq += 1);
+    delays.push(ms);
+    pending.push({ id, cb });
+    return id;
+  }) as unknown as PubSubSourceDeps["setTimeoutImpl"];
+  const clearTimeoutImpl = ((handle: unknown) => {
+    cleared.push(handle);
+    pending = pending.filter((p) => p.id !== handle);
+  }) as unknown as PubSubSourceDeps["clearTimeoutImpl"];
+  async function fireNext(): Promise<void> {
+    const next = pending.shift();
+    if (!next) throw new Error("no pending backoff timer to fire");
+    next.cb();
+    await flushMicrotasks();
+  }
+  return {
+    setTimeoutImpl,
+    clearTimeoutImpl,
+    delays,
+    cleared,
+    fireNext,
+    pendingCount: () => pending.length,
+  };
+}
+
+/** A fetch that always fails with a retryable non-ok status. */
+function failingFetch() {
+  return vi.fn(async () => ({
+    ok: false,
+    status: 503,
+    json: async () => ({}),
+  })) as unknown as typeof fetch;
+}
+
+describe("createPubSubSource — bounded jittered backoff + AbortController stop + loud failure", () => {
+  it("backs off within [floor, floor+500] after the first pull failure (jitter bounded)", async () => {
+    const timers = makeFakeTimers();
+    const { deps } = makeDeps({
+      fetchImpl: failingFetch(),
+      setTimeoutImpl: timers.setTimeoutImpl,
+      clearTimeoutImpl: timers.clearTimeoutImpl,
+      rng: () => 0.5,
+      backoffFloorMs: 1000,
+      backoffCapMs: 30_000,
+    });
+    const source = createPubSubSource(deps);
+
+    source.start();
+    await flushMicrotasks();
+
+    expect(timers.delays.length).toBeGreaterThanOrEqual(1);
+    expect(timers.delays[0]).toBe(1250); // 1000 + floor(0.5 * 500)
+    expect(timers.delays[0]).toBeGreaterThanOrEqual(1000);
+    expect(timers.delays[0]).toBeLessThanOrEqual(1500);
+
+    await source.stop();
+  });
+
+  it("doubles the backoff base per consecutive failure and caps it at backoffCapMs", async () => {
+    const timers = makeFakeTimers();
+    const { deps } = makeDeps({
+      fetchImpl: failingFetch(),
+      setTimeoutImpl: timers.setTimeoutImpl,
+      clearTimeoutImpl: timers.clearTimeoutImpl,
+      rng: () => 0.5,
+      backoffFloorMs: 1000,
+      backoffCapMs: 30_000,
+    });
+    const source = createPubSubSource(deps);
+
+    source.start();
+    await flushMicrotasks(); // failure #1 → delays[0]
+    for (let i = 0; i < 6; i += 1) await timers.fireNext(); // 6 more failures
+    await source.stop();
+
+    const bases = timers.delays.map((d) => d - 250); // strip the fixed 250 jitter
+    expect(bases.slice(0, 7)).toEqual([
+      1000, 2000, 4000, 8000, 16000, 30000, 30000,
+    ]);
+  });
+
+  it("resets the backoff to the floor after a successful pull", async () => {
+    let call = 0;
+    const impl = vi.fn(async () => {
+      call += 1;
+      if (call === 3) {
+        return { ok: true, status: 200, json: async () => ({ receivedMessages: [] }) };
+      }
+      return { ok: false, status: 503, json: async () => ({}) };
+    });
+    const timers = makeFakeTimers();
+    const { deps } = makeDeps({
+      fetchImpl: impl as unknown as typeof fetch,
+      setTimeoutImpl: timers.setTimeoutImpl,
+      clearTimeoutImpl: timers.clearTimeoutImpl,
+      rng: () => 0.5,
+      backoffFloorMs: 1000,
+      backoffCapMs: 30_000,
+    });
+    const source = createPubSubSource(deps);
+
+    source.start();
+    await flushMicrotasks(); // #1 fail → 1250 (base 1000), backoff→2000
+    await timers.fireNext(); // #2 fail → 2250 (base 2000), backoff→4000
+    await timers.fireNext(); // #3 success → reset; #4 fail → 1250 (base 1000)
+    await source.stop();
+
+    expect(timers.delays[0]).toBe(1250);
+    expect(timers.delays[1]).toBe(2250);
+    expect(timers.delays[2]).toBe(1250); // floor again after the success
+  });
+
+  it("aborts the in-flight long-poll when stop() is called", async () => {
+    let capturedSignal: AbortSignal | undefined;
+    const impl = vi.fn((_url: unknown, init?: RequestInit) => {
+      capturedSignal = init?.signal ?? undefined;
+      return new Promise<Response>((_resolve, reject) => {
+        capturedSignal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("Aborted", "AbortError")),
+          { once: true },
+        );
+      });
+    });
+    const timers = makeFakeTimers();
+    const { deps } = makeDeps({
+      fetchImpl: impl as unknown as typeof fetch,
+      setTimeoutImpl: timers.setTimeoutImpl,
+      clearTimeoutImpl: timers.clearTimeoutImpl,
+    });
+    const source = createPubSubSource(deps);
+
+    source.start();
+    await flushMicrotasks();
+    expect(source.running).toBe(true);
+    expect(capturedSignal).toBeInstanceOf(AbortSignal);
+    expect(capturedSignal?.aborted).toBe(false);
+
+    await source.stop();
+
+    expect(source.running).toBe(false);
+    expect(capturedSignal?.aborted).toBe(true);
+  });
+
+  it("cancels a pending backoff timer when stop() is called", async () => {
+    const timers = makeFakeTimers();
+    const { deps } = makeDeps({
+      fetchImpl: failingFetch(),
+      setTimeoutImpl: timers.setTimeoutImpl,
+      clearTimeoutImpl: timers.clearTimeoutImpl,
+      rng: () => 0.5,
+    });
+    const source = createPubSubSource(deps);
+
+    source.start();
+    await flushMicrotasks(); // fail → parked in a backoff sleep
+    expect(timers.pendingCount()).toBe(1);
+
+    await source.stop();
+
+    expect(timers.cleared.length).toBeGreaterThanOrEqual(1);
+    expect(timers.pendingCount()).toBe(0);
+    expect(source.running).toBe(false);
+  });
+
+  it("logs a loud ERROR with errorKind and hint after errorLogThreshold consecutive failures and sets lastError", async () => {
+    const timers = makeFakeTimers();
+    const { deps, loggerSpy } = makeDeps({
+      fetchImpl: failingFetch(),
+      setTimeoutImpl: timers.setTimeoutImpl,
+      clearTimeoutImpl: timers.clearTimeoutImpl,
+      rng: () => 0.5,
+      errorLogThreshold: 3,
+    });
+    const source = createPubSubSource(deps);
+
+    source.start();
+    await flushMicrotasks(); // failure #1
+    await timers.fireNext(); // failure #2
+    await timers.fireNext(); // failure #3 → loud ERROR
+    await source.stop();
+
+    const errCall = loggerSpy.error.mock.calls
+      .map((c) => c[0])
+      .find(
+        (p) =>
+          p !== null &&
+          typeof p === "object" &&
+          typeof (p as { hint?: unknown }).hint === "string" &&
+          typeof (p as { errorKind?: unknown }).errorKind === "string",
+      );
+    expect(errCall).toBeDefined();
+    expect(typeof source.lastError).toBe("string");
+  });
+
+  it("resets the consecutive-failure count after a good pull so the loud ERROR does not re-fire", async () => {
+    let call = 0;
+    const impl = vi.fn(async () => {
+      call += 1;
+      if (call === 4) {
+        return { ok: true, status: 200, json: async () => ({ receivedMessages: [] }) };
+      }
+      return { ok: false, status: 503, json: async () => ({}) };
+    });
+    const timers = makeFakeTimers();
+    const { deps, loggerSpy } = makeDeps({
+      fetchImpl: impl as unknown as typeof fetch,
+      setTimeoutImpl: timers.setTimeoutImpl,
+      clearTimeoutImpl: timers.clearTimeoutImpl,
+      rng: () => 0.5,
+      errorLogThreshold: 3,
+    });
+    const source = createPubSubSource(deps);
+
+    source.start();
+    await flushMicrotasks(); // #1 fail (count 1)
+    await timers.fireNext(); // #2 fail (count 2)
+    await timers.fireNext(); // #3 fail (count 3 → ERROR)
+    await timers.fireNext(); // #4 success (reset); #5 fail (count 1)
+    await source.stop();
+
+    expect(loggerSpy.error).toHaveBeenCalledTimes(1);
+  });
+});
