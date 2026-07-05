@@ -41,6 +41,7 @@
  */
 
 import { serialize, deserialize } from "node:v8";
+import { randomUUID } from "node:crypto";
 import { mkdir, writeFile, readFile, chmod, rename } from "node:fs/promises";
 // `ClientEvent` is a value import; matrix-js-sdk itself pulls in NO crypto — the
 // WASM engine is lazy-loaded only inside `initRustCrypto`, so the crypto-engine
@@ -57,8 +58,6 @@ import { matrixStateFilePath } from "./matrix-state.js";
 
 /** The durable crypto-store snapshot: a 0600 sibling of sync-state.json under stateDir. */
 const CRYPTO_SNAPSHOT_FILE = "crypto-snapshot.json";
-/** The temp file an atomic snapshot write renames over the target. */
-const CRYPTO_SNAPSHOT_TMP_FILE = "crypto-snapshot.json.tmp";
 /** Owner-only directory permissions (rwx------). */
 const DIR_MODE = 0o700;
 /** Owner-only file permissions (rw-------) — the snapshot holds device + session keys. */
@@ -349,12 +348,19 @@ async function readCryptoSnapshot(stateDir: string): Promise<Buffer | undefined>
  * Write the snapshot blob atomically at 0600 under the 0700 stateDir: temp →
  * chmod 0600 → rename over the target, re-chmod'ing because the modes are
  * ignored once the path exists. The matrix-state discipline, verbatim.
+ *
+ * The temp name is UNIQUE per write (a random suffix). A shared constant temp
+ * would let two overlapping writes (a debounced tick racing the stop() flush)
+ * clobber the same temp: the second rename moves it away and the first then finds
+ * nothing to rename, leaving a truncated store that deserializes to junk on the
+ * next boot and mints a fresh device. A unique temp keeps each write independent —
+ * the target file always ends up as one complete blob (the last rename wins).
  */
 async function writeCryptoSnapshot(stateDir: string, blob: Buffer): Promise<void> {
   await mkdir(stateDir, { recursive: true, mode: DIR_MODE });
   await chmod(stateDir, DIR_MODE);
   const file = matrixStateFilePath(stateDir, CRYPTO_SNAPSHOT_FILE);
-  const tmp = matrixStateFilePath(stateDir, CRYPTO_SNAPSHOT_TMP_FILE);
+  const tmp = matrixStateFilePath(stateDir, `${CRYPTO_SNAPSHOT_FILE}.${randomUUID()}.tmp`);
   await writeFile(tmp, blob, { mode: FILE_MODE });
   await chmod(tmp, FILE_MODE); // the temp is 0600 BEFORE the rename → the real file is never world-readable
   await rename(tmp, file);
