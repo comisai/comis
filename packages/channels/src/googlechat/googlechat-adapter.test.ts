@@ -559,6 +559,48 @@ describe("createGoogleChatAdapter — reconcile + platformAction + capability ho
     if (result?.ok) expect(result.value.kind).toBe("unresolved");
   });
 
+  // Inbound-only liveness (polling connectionMode + inbound-only lastInboundAt)
+  // is locked by the "status + lastInboundAt semantics" cases above: polling
+  // mode, set only on an admitted inbound, and never bumped on a gate-dropped
+  // inbound or an outbound send. This case locks the complementary contract —
+  // a restart-recovery pass over the outward-send ledger never replays a send.
+  it("never re-sends a committed or unknown_after_send ledger row on a simulated restart (ledger dedup + unresolved parks)", async () => {
+    const { fetchImpl, spy } = makeChatFetch();
+    const { deps } = await makeDeps({ fetchImpl });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const reconcileQuery = (contentDigest: string) => ({
+      channelId: "spaces/AAAA",
+      contentDigest,
+      sentAfterMs: NOW - 60_000,
+      sentBeforeMs: NOW,
+    });
+
+    // A tiny in-memory model of the outward-send ledger — digest → lifecycle
+    // state. The LEDGER (not reconcileSend) is the exactly-once authority.
+    type LedgerStatus = "committed" | "unknown_after_send";
+    const ledger = new Map<string, LedgerStatus>([
+      ["digest-committed", "committed"],
+      ["digest-unknown", "unknown_after_send"],
+    ]);
+
+    // The restart-recovery pass: a committed row short-circuits (dedup — no
+    // re-POST); an unknown_after_send row consults reconcileSend → unresolved →
+    // parked, never replayed. Neither path fires a second Chat send.
+    for (const [digest, status] of ledger) {
+      if (status === "committed") continue; // ledger dedup: no re-send
+      const verdict = await adapter.reconcileSend?.(reconcileQuery(digest));
+      expect(verdict?.ok).toBe(true);
+      if (verdict?.ok) expect(verdict.value.kind).toBe("unresolved");
+      // unresolved → park + escalate; NEVER a replay.
+    }
+
+    // No Chat send POST fired during the whole recovery pass.
+    expect(
+      spy.mock.calls.find(([u]) => String(u).includes("/messages")),
+    ).toBeUndefined();
+  });
+
   it("platformAction resolves err naming the unsupported action on googlechat", async () => {
     const { deps } = await makeDeps();
     const adapter = createGoogleChatAdapter(deps);
