@@ -6,21 +6,23 @@ icon: "file-code"
 
 Every custom skill starts with a SKILL.md file. This file has two parts: a YAML frontmatter header (between `---` markers) that describes the skill, and a Markdown body that contains the instructions or code. This page documents every field available in the frontmatter.
 
+The authored frontmatter carries **exactly six top-level fields** -- `name`, `description`, `license`, `compatibility`, `allowed-tools`, and `metadata`. Every platform-specific extension rides under one `metadata.comis` key (documented below); nothing else is authored at the top level.
+
 ## Required Fields
 
 Every manifest must include these two fields:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `name` | string | Unique skill name. Lowercase letters, numbers, and hyphens only. 1-64 characters. |
-| `description` | string | Human-readable description shown to users and agents. 1-1024 characters. |
+| `name` | string | Unique skill name. Lowercase letters, numbers, and hyphens only, no leading, trailing, or consecutive hyphens. 1-64 characters. |
+| `description` | string | Human-readable description shown to users and agents. 1-1024 characters. This is the primary trigger mechanism -- include both what the skill does AND when to use it. |
 
 Here is a minimal SKILL.md that only uses the required fields:
 
 ```yaml
 ---
 name: my-skill
-description: "A brief description of what this skill does"
+description: "A brief description of what this skill does and when to use it"
 ---
 Your instructions here...
 ```
@@ -29,19 +31,14 @@ That is all you need to create a valid skill. Everything below is optional.
 
 ## Optional Fields
 
-These fields give you more control over how the skill behaves:
+These four top-level fields give you more control over how the skill behaves:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `type` | string | `"prompt"` | Always "prompt" for Markdown instruction skills. |
-| `version` | string | -- | Semver version string (e.g., "1.0.0"). Useful for tracking changes to your skill over time. |
 | `license` | string | -- | SPDX license identifier (e.g., "MIT", "Apache-2.0"). Declares the license for shared skills. |
-| `userInvocable` | boolean | `true` | Whether users can invoke this skill with `/skill:name` in chat. Set to `false` for background-only skills. |
-| `disableModelInvocation` | boolean | `false` | When `true`, the agent cannot select this skill on its own -- it must be invoked explicitly by a user or another skill. |
-| `allowedTools` | string[] | `[]` | Tools the agent can use while this skill is active. An empty list means no tool restriction is applied. |
-| `argumentHint` | string | -- | Hint text shown to users when invoking the skill (e.g., "[name] [language]"). |
-| `inputSchema` | object | -- | A JSON Schema that validates the input parameters passed to this skill. Useful for skills that expect structured input. |
-| `metadata` | object | -- | Arbitrary key-value pairs for your own use. Comis does not interpret these -- they are available for custom tooling or organizational tags. |
+| `compatibility` | string | -- | Free-prose environment or runtime note, operator-visible. It carries no platform semantics -- a note over 500 characters draws an advisory warning. Machine-readable prerequisites live under `metadata.comis` and are complementary, not a duplicate. |
+| `allowed-tools` | string | `""` | Space-separated tool-restriction list; an empty value means no restriction. Restriction-only -- it narrows the active tool set while the skill runs, it never grants a tool the agent lacks. |
+| `metadata` | map string→string | -- | Arbitrary string key-value pairs. Also carries `metadata.version` and the `metadata.comis` extension carrier (below). |
 
 ### Example with Optional Fields
 
@@ -49,89 +46,125 @@ These fields give you more control over how the skill behaves:
 ---
 name: translate
 description: "Translate text between languages"
-version: "1.2.0"
 license: "MIT"
-userInvocable: true
-argumentHint: "[text] [target-language]"
-allowedTools:
-  - web_fetch
+compatibility: "Needs Node 22+ and network access to the translation API."
+allowed-tools: "web_fetch"
 metadata:
+  version: "1.2.0"
   category: "utilities"
-  author: "team"
 ---
 Translate the following text to {target-language}:
 
 {text}
 ```
 
-## Permissions
+## Platform Extensions (`metadata.comis`)
 
-The `permissions` block declares what system resources this skill needs access to. By default, skills have no access to the filesystem, network, or environment variables. Each permission you add opens a specific door.
+Fields that only apply within Comis ride under a single `metadata.comis` key. Its value is a **JSON string** -- so `metadata` stays a plain string→string map -- that parses and then validates by the same rules as every other manifest field. The carrier moves, the semantics do not. Hosts that implement only the skill spec ignore this key.
 
-| Permission | Type | Description |
-|------------|------|-------------|
-| `permissions.fsRead` | string[] | Filesystem paths the skill can read. Supports glob patterns (e.g., `./data/*.csv`). |
-| `permissions.fsWrite` | string[] | Filesystem paths the skill can write to. |
-| `permissions.net` | string[] | Network domains the skill can access (e.g., `api.example.com`). |
-| `permissions.env` | string[] | Environment variables the skill can read (e.g., `API_KEY`). |
+The `metadata.comis` JSON object may carry:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `userInvocable` | boolean (default `true`) | Whether users can invoke this skill with `/skill:name` in chat. Set to `false` for background-only skills. |
+| `disableModelInvocation` | boolean (default `false`) | When `true`, the agent cannot select this skill on its own -- it must be invoked explicitly by a user or another skill. |
+| `argumentHint` | string | Hint text shown to users when invoking the skill (e.g., "[name] [language]"). |
+| `permissions` | object | Required filesystem, network, and environment permissions (see below). |
+| `inputSchema` | object | JSON Schema for input parameters (see below). |
+| `comis` | object | The Comis namespace block for runtime requirements and platform behavior (see below). |
+| `mcpServers` | array or object | Optional bundled MCP servers declaration. |
+
+The version is authored as `metadata.version` (a string in the metadata map), not inside the JSON carrier.
+
+Here is a skill that carries a couple of extensions through `metadata.comis`:
 
 ```yaml
-permissions:
-  fsRead: ["./data/*.csv", "./config/"]
-  fsWrite: ["./output/"]
-  net: ["api.example.com", "cdn.example.com"]
-  env: ["API_KEY", "DATABASE_URL"]
+---
+name: my-skill
+description: "What this skill does and when to use it"
+metadata:
+  version: "1.0.0"
+  comis: '{"userInvocable": true, "permissions": {"net": ["api.example.com"]}, "comis": {"os": ["linux"], "requires": {"bins": ["ripgrep"]}}}'
+---
 ```
+
+<Info>
+Malformed `metadata.comis` JSON fails to load with an error that names the key -- fix the JSON string, do not remove the `metadata` map.
+</Info>
+
+### Permissions
+
+The `permissions` object declares what system resources this skill needs. By default, skills have no access to the filesystem, network, or environment variables. Each permission you add opens a specific door. It is carried inside the `metadata.comis` JSON string:
+
+```json
+{
+  "permissions": {
+    "fsRead": ["./data/*.csv", "./config/"],
+    "fsWrite": ["./output/"],
+    "net": ["api.example.com", "cdn.example.com"],
+    "env": ["API_KEY", "DATABASE_URL"]
+  }
+}
+```
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `fsRead` | string[] | Filesystem paths the skill can read. Supports glob patterns (e.g., `./data/*.csv`). |
+| `fsWrite` | string[] | Filesystem paths the skill can write to. |
+| `net` | string[] | Network domains the skill can access (e.g., `api.example.com`). |
+| `env` | string[] | Environment variables the skill can read (e.g., `API_KEY`). |
 
 <Tip>
 Only grant the permissions your skill actually needs. Start with none and add them one at a time as required. This follows the **principle of least privilege** -- the less access a skill has, the less damage a bug or malicious skill can cause.
 </Tip>
 
-## Comis Namespace
+### Comis namespace
 
-The `comis:` block contains fields specific to the Comis platform. These control runtime requirements and platform-level behavior.
+The `comis` object controls runtime requirements and platform-level behavior. It is carried inside the `metadata.comis` JSON string:
+
+```json
+{
+  "comis": {
+    "os": ["linux", "darwin"],
+    "requires": {
+      "bins": ["ffmpeg", "git"],
+      "env": ["OPENAI_API_KEY"]
+    },
+    "skill-key": "video-processor",
+    "primary-env": "discord",
+    "command-dispatch": "my-command"
+  }
+}
+```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `comis.os` | string[] | Target operating systems (e.g., `["linux", "darwin"]`). The skill will only load on matching systems. |
-| `comis.requires.bins` | string[] | Required binary executables that must be available on the system (e.g., `["git", "ffmpeg"]`). The skill will not load if any are missing. |
-| `comis.requires.env` | string[] | Required environment variables. The skill will not load if any are unset. |
-| `comis.skill-key` | string | Override the auto-generated skill slug. By default, the slug is derived from the `name` field. |
-| `comis.primary-env` | string | Display and grouping hint for the primary runtime environment. Used for organizational purposes in the dashboard. |
-| `comis.command-dispatch` | string | Metadata tag for command routing. Used by advanced automation to direct invocations to specific handlers. |
-
-```yaml
-comis:
-  os: ["linux"]
-  requires:
-    bins: ["ffmpeg", "git"]
-    env: ["OPENAI_API_KEY"]
-  skill-key: "video-processor"
-```
+| `os` | string[] | Target operating systems (e.g., `["linux", "darwin"]`). A bare string is coerced to a one-element list. The skill only loads on matching systems. |
+| `requires.bins` | string[] | Required binary executables on PATH (e.g., `["git", "ffmpeg"]`). The skill does not load if any are missing. |
+| `requires.env` | string[] | Required environment variables. The skill does not load if any are unset. |
+| `skill-key` | string | Override the auto-generated skill slug. By default the slug is derived from the `name` field. |
+| `primary-env` | string | Display and grouping hint for the primary runtime environment. |
+| `command-dispatch` | string | Metadata-only tag for command routing. |
 
 <Info>
-The `comis.requires` fields are checked at startup using the **runtime eligibility** system. If a required binary or environment variable is missing, the skill is skipped with a warning -- it does not crash the system. You can disable this check with `skills.runtimeEligibility.enabled: false` in your config, but that is not recommended.
+The `comis.requires` fields are checked at startup by the **runtime eligibility** system. If a required binary or environment variable is missing, the skill is skipped with a warning -- it does not crash the system. You can disable this check with `skills.runtimeEligibility.enabled: false` in your config, but that is not recommended.
 </Info>
 
-## Input Schema
+### Input Schema
 
-For skills that expect structured input, you can attach a JSON Schema in the `inputSchema` field. The schema is stored alongside the manifest and surfaced as documentation -- agents can read it to understand what arguments the skill expects.
+For skills that expect structured input, attach a JSON Schema under `inputSchema` inside the `metadata.comis` carrier. The schema is stored alongside the manifest and surfaced as documentation -- agents can read it to understand what arguments the skill expects:
 
-```yaml
----
-name: generate-report
-description: "Generate a formatted report from data"
-inputSchema:
-  type: object
-  properties:
-    format:
-      type: string
-      enum: ["pdf", "html", "markdown"]
-    title:
-      type: string
-  required: ["format"]
----
-Generate a {format} report titled "{title}" from the provided data.
+```json
+{
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "format": { "type": "string", "enum": ["pdf", "html", "markdown"] },
+      "title": { "type": "string" }
+    },
+    "required": ["format"]
+  }
+}
 ```
 
 <Info>
@@ -140,42 +173,19 @@ Generate a {format} report titled "{title}" from the provided data.
 
 ## Complete Example
 
-Here is a full SKILL.md using fields from every section:
+Here is a full SKILL.md using the six top-level fields plus a `metadata.comis` carrier that bundles several extensions:
 
 ```yaml
 ---
 name: daily-report
 description: "Generate a daily activity report from project logs"
-type: prompt
-version: "2.1.0"
 license: "MIT"
-userInvocable: true
-disableModelInvocation: false
-argumentHint: "[project-name]"
-allowedTools:
-  - read
-  - web_fetch
-permissions:
-  fsRead: ["./logs/*.log", "./config/projects.yaml"]
-  fsWrite: ["./reports/"]
-  net: ["api.github.com"]
-  env: ["GITHUB_TOKEN"]
-inputSchema:
-  type: object
-  properties:
-    project-name:
-      type: string
-  required: ["project-name"]
+compatibility: "Needs git on PATH and a GITHUB_TOKEN in the environment."
+allowed-tools: "read web_fetch"
 metadata:
-  category: "reporting"
+  version: "2.1.0"
   team: "ops"
-comis:
-  os: ["linux", "darwin"]
-  requires:
-    bins: ["git"]
-    env: ["GITHUB_TOKEN"]
-  skill-key: "daily-report"
-  primary-env: "node"
+  comis: '{"userInvocable": true, "argumentHint": "[project-name]", "permissions": {"fsRead": ["./logs/*.log"], "fsWrite": ["./reports/"], "net": ["api.github.com"], "env": ["GITHUB_TOKEN"]}, "inputSchema": {"type": "object", "properties": {"project-name": {"type": "string"}}, "required": ["project-name"]}, "comis": {"os": ["linux", "darwin"], "requires": {"bins": ["git"], "env": ["GITHUB_TOKEN"]}, "skill-key": "daily-report", "primary-env": "node"}}'
 ---
 You are a reporting assistant. Read the project logs for {project-name}
 and generate a concise daily activity summary.
@@ -187,6 +197,17 @@ Include:
 
 Format the output as a Markdown document suitable for posting in a team channel.
 ```
+
+## Read Compatibility
+
+The pre-migration top-level form -- extension fields authored directly at the top level (`type`, `version`, `userInvocable`, `disableModelInvocation`, `allowedTools`, `argumentHint`, `permissions`, `inputSchema`, `comis`, `mcpServers`) -- still loads, emitting a **deprecation warning** that names each moved key and its new home:
+
+- `version` maps to `metadata.version`
+- `userInvocable` / `disableModelInvocation` / `argumentHint` / `permissions` / `inputSchema` / `comis` / `mcpServers` map to `metadata.comis`
+- `allowedTools` (array) maps to `allowed-tools` (space-separated string)
+- `type` is dropped -- skills are prompt-only
+
+It is read for compatibility only and is never written back. Author new skills in the spec-pure six-field form above.
 
 ## Template Substitution
 
