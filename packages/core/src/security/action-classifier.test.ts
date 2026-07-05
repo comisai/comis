@@ -170,6 +170,14 @@ describe("classifyAction", () => {
     it('classifies "skill.prompt.invoke" as mutate', () => {
       expect(classifyAction("skill.prompt.invoke")).toBe("mutate");
     });
+
+    it('classifies "skill.import" as mutate (mirrors skill.install)', () => {
+      expect(classifyAction("skill.import")).toBe("mutate");
+    });
+
+    it('classifies "skill.validation.coercion" as read (not fail-closed to destructive)', () => {
+      expect(classifyAction("skill.validation.coercion")).toBe("read");
+    });
   });
 
   describe("privileged tool actions", () => {
