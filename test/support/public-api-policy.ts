@@ -610,6 +610,20 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "ConnectorTokenDeps",
       "ConnectorTokenProvider",
       "classifyMsTeamsError",
+      // Matrix adapter building blocks — exported for API parity with the other
+      // channel adapters. Consumed within the package (the plugin wraps the
+      // adapter; the adapter drives the message mapper and error classifier) with
+      // no cross-package importer; the daemon consumes the plugin factory
+      // (createMatrixPlugin) and the credential + homeserver validators
+      // (validateMatrixCredentials / validateHomeserverUrl) instead, so those
+      // three are NOT listed here. MatrixAdapterDeps surfaces the credential /
+      // gating shape — the daemon builds it as an inline object, so no cross-
+      // package importer names the type. Shrink each as a real cross-package
+      // consumer lands.
+      "createMatrixAdapter",
+      "MatrixAdapterDeps",
+      "mapMatrixEventToNormalized",
+      "classifyMatrixError",
       "createIMessageAdapter",
       "IMessageAdapterDeps",
       "mapImsgToNormalized",

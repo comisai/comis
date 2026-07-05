@@ -176,6 +176,18 @@ export type {
 export { validateMsTeamsCredentials } from "./msteams/credential-validator.js";
 export { classifyMsTeamsError } from "./msteams/errors.js";
 
+// Matrix adapter (pull channel — Client-Server /sync long-poll, text round-trip)
+export { createMatrixAdapter } from "./matrix/matrix-adapter.js";
+export type { MatrixAdapterDeps } from "./matrix/matrix-adapter.js";
+export { createMatrixPlugin } from "./matrix/matrix-plugin.js";
+
+// Matrix utilities
+export { mapMatrixEventToNormalized } from "./matrix/message-mapper.js";
+export { classifyMatrixError } from "./matrix/errors.js";
+// validateMatrixCredentials is the field-presence precondition; validateHomeserverUrl
+// is the SSRF boundary the daemon runs before constructing the plugin.
+export { validateMatrixCredentials, validateHomeserverUrl } from "./matrix/credential-validator.js";
+
 // Echo adapter (testing)
 export { EchoChannelAdapter } from "./echo/echo-adapter.js";
 export type { EchoAdapterOptions } from "./echo/echo-adapter.js";
