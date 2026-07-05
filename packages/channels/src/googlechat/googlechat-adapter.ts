@@ -21,10 +21,10 @@
  * shared executor concern applied to every channel, deliberately not duplicated
  * here.
  *
- * Only the text-only surface is declared. Edit, delete, reaction, and attachment
- * methods are OMITTED: a service-account app cannot reach those method/auth
- * surfaces, so advertising them would be dishonest — the daemon capability gate
- * blocks any call the (false) capability flags forbid.
+ * Outbound edit patches the bot's own message in place. Delete, reaction, and
+ * attachment methods are OMITTED: a service-account app cannot reach those
+ * method/auth surfaces, so advertising them would be dishonest — the daemon
+ * capability gate blocks any call the (false) capability flags forbid.
  *
  * @module
  */
@@ -75,6 +75,29 @@ const RETRY_BACKOFF_CAP_MS = 8_000;
  * {@link MAX_RETRIES} times.
  */
 const RETRY_AFTER_CAP_MS = 60_000;
+
+// ---------------------------------------------------------------------------
+// Path safety for edit/delete resource names
+// ---------------------------------------------------------------------------
+
+/** True if the id carries an ASCII control character (never valid, always dropped). */
+function hasControlChar(id: string): boolean {
+  for (let i = 0; i < id.length; i++) {
+    const code = id.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
+/**
+ * Reject a message resource name that is empty, `..`-escaping, or carries a
+ * control character before it is interpolated into the edit/delete REST path.
+ * Path separators are allowed: a Chat message resource name is
+ * `spaces/{space}/messages/{id}` and legitimately contains `/`.
+ */
+function isSafeMessageName(id: string): boolean {
+  return id.length > 0 && !id.includes("..") && !hasControlChar(id);
+}
 
 /** Dependencies for the Google Chat adapter. */
 export interface GoogleChatAdapterDeps {
@@ -466,6 +489,72 @@ export function createGoogleChatAdapter(
         _lastMessageAt = now();
         return ok(parsed.value.name);
       }
+    },
+
+    async editMessage(
+      _channelId: string,
+      messageId: string,
+      text: string,
+      _options?: SendMessageOptions,
+    ): Promise<Result<void, Error>> {
+      // Guard the caller-supplied resource name before it ever reaches the token
+      // mint or the REST path — an unsafe name mints no bearer and fires no fetch.
+      if (!isSafeMessageName(messageId)) {
+        deps.logger.warn(
+          {
+            channelType: "googlechat" as const,
+            hint: "messageId must be a spaces/{space}/messages/{id} resource name without .. or control characters",
+            errorKind: "validation" as const,
+          },
+          "Rejected an unsafe message resource name",
+        );
+        return err(new Error("unsafe message resource name"));
+      }
+      const tok = await tokens.getToken(CHAT_SCOPE);
+      if (!tok.ok) return err(tok.error); // auth already logged a secret-free WARN
+      const chatBase = deps.chatBaseUrl ?? "https://chat.googleapis.com/v1";
+      const doFetch = deps.fetchImpl ?? fetch;
+      // updateMask is pinned to `text`: a `*` mask would clear every unspecified
+      // field on the message rather than editing only its text.
+      const url = `${chatBase}/${messageId}?updateMask=text`;
+      const init: RequestInit = {
+        method: "PATCH",
+        headers: {
+          authorization: `Bearer ${tok.value}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ text }),
+      };
+      const responded = await fromPromise(doFetch(url, init));
+      if (!responded.ok) {
+        const c = classifyGoogleChatError(undefined, responded.error);
+        deps.logger.error(
+          {
+            channelType: "googlechat" as const,
+            hint: c.hint,
+            errorKind: c.errorKind,
+          },
+          "Google Chat edit failed: no response",
+        );
+        return err(responded.error);
+      }
+      const res = responded.value;
+      if (!res.ok) {
+        const c = classifyGoogleChatError(res.status);
+        deps.logger.error(
+          {
+            channelType: "googlechat" as const,
+            status: res.status,
+            hint: c.hint,
+            errorKind: c.errorKind,
+          },
+          "Google Chat edit failed: error status",
+        );
+        return err(
+          new Error(`chat messages.patch returned status ${res.status}`),
+        );
+      }
+      return ok(undefined);
     },
 
     getStatus(): ChannelStatus {
