@@ -684,3 +684,66 @@ describe("createMatrixClient — token-expiry recovery + stale-since re-entry", 
     expect(h.fake.stopCalls).toBe(0);
   });
 });
+
+describe("createMatrixClient — per-room watermark (cross-room + mid-run-join)", () => {
+  it("does not drop a live message in a quiet room because a busier room advanced", async () => {
+    // Matrix does not guarantee cross-room timestamp monotonicity — different
+    // (federated) rooms are served by different homeservers with independent
+    // clocks. A single global watermark advanced by a busy room silently drops
+    // a live message that arrives in a quiet room with a lower server ts. The
+    // watermark must be tracked per room so each room is gated on its own
+    // last-processed timestamp.
+    const h = makeHarness();
+    await h.controller.start();
+    await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null, undefined);
+
+    // The busy room advances first (ts 1000).
+    await h.fake.emit(
+      RoomEvent.Timeline,
+      fakeEvent({ ts: 1000, body: "busy", sender: "@alice:hs" }),
+      fakeRoom("!busy:hs"),
+      false,
+    );
+    // A live message in a different, quiet room with a LOWER server ts.
+    await h.fake.emit(
+      RoomEvent.Timeline,
+      fakeEvent({ ts: 999, body: "quiet-live", sender: "@bob:hs" }),
+      fakeRoom("!quiet:hs"),
+      false,
+    );
+
+    expect(h.received.find((m) => m.text === "busy")).toBeDefined();
+    // Under a per-room watermark the quiet room has its own (0) watermark, so a
+    // genuinely-live message is delivered rather than lost to the busy room's.
+    expect(h.received.find((m) => m.text === "quiet-live")).toBeDefined();
+  });
+
+  it("does not process a mid-run-joined room's pre-join backlog", async () => {
+    // After an allowlisted invite the bot joins and the next /sync returns the
+    // joined room's recent timeline — live (syncReady, !toStartOfTimeline). With
+    // a single global watermark those pre-join events pass the `>` gate and the
+    // bot acts on stale, pre-allowlist history (T-1). A newly-joined room's
+    // watermark must be seeded to the join moment so its backlog is excluded.
+    const h = makeHarness({ allowMode: "allowlist", allowFrom: ["@alice:hs"] });
+    await h.controller.start();
+    await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null, undefined);
+
+    await h.fake.emit(
+      RoomEvent.MyMembership,
+      fakeRoom("!b:hs", { inviter: "@alice:hs" }),
+      KnownMembership.Invite,
+      KnownMembership.Leave,
+    );
+    expect(h.fake.joinCalls).toContain("!b:hs");
+
+    // The joined room's pre-join backlog arrives live. It must NOT be processed.
+    await h.fake.emit(
+      RoomEvent.Timeline,
+      fakeEvent({ ts: 100, body: "pre-join stale instruction", sender: "@stranger:hs" }),
+      fakeRoom("!b:hs"),
+      false,
+    );
+
+    expect(h.received.find((m) => m.text === "pre-join stale instruction")).toBeUndefined();
+  });
+});
