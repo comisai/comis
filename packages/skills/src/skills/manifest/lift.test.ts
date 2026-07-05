@@ -231,6 +231,38 @@ describe("liftAuthoredFrontmatter metadata carrier extraction", () => {
     expect(result.value["metadata"]).toBeUndefined();
     expect(Object.prototype).not.toHaveProperty("polluted");
   });
+
+  it("accepts an inputSchema whose property is named constructor or prototype", () => {
+    // `constructor` / `prototype` are valid JSON-Schema property names (a
+    // codegen or design skill). They are DATA keys inside an opaque value the
+    // lift stores whole, never an assignment key-path, so they cannot pollute.
+    const payload =
+      '{"inputSchema":{"type":"object","properties":{"constructor":{"type":"string"},"prototype":{"type":"string"}}}}';
+    const result = liftAuthoredFrontmatter(
+      { name: "codegen", description: "d", metadata: { comis: payload } },
+      {},
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value["inputSchema"]).toEqual({
+      type: "object",
+      properties: { constructor: { type: "string" }, prototype: { type: "string" } },
+    });
+  });
+
+  it("still refuses an inputSchema carrying a nested __proto__ data key (the real vector)", () => {
+    // Raw JSON string (not an object literal, whose `"__proto__"` would set the
+    // prototype rather than create an own key) so JSON.parse materializes an own
+    // __proto__ data property -- the genuine own-key pollution vector.
+    const payload = '{"inputSchema":{"properties":{"__proto__":{"type":"string"}}}}';
+    const result = liftAuthoredFrontmatter(
+      { name: "evil", description: "d", metadata: { comis: payload } },
+      {},
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toContain("__proto__");
+  });
 });
 
 describe("liftAuthoredFrontmatter honest failure on metadata.comis", () => {
