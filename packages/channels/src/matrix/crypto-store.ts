@@ -31,17 +31,26 @@
  *    across the port: a bootstrap failure returns `err` so the caller can run
  *    unverified rather than bricking the channel.
  *
- * Security posture (T-4, key material at rest):
- *  - The snapshot is a 0600 sibling of the plaintext sync-state file under the
- *    0700 `stateDir`, written temp→chmod→rename (the matrix-state discipline).
- *  - No device / session / recovery key material is ever logged — the snapshot
- *    log line carries only `{ step, durationMs, bytes }`-shaped fields.
+ * Security posture (key material at rest):
+ *  - The rust crypto store is encrypted at rest with a random 32-byte storage key
+ *    (AES-256): the key is passed to `initRustCrypto`, so the device identity +
+ *    Megolm sessions are encrypted BEFORE they reach IndexedDB — the durable
+ *    snapshot blob is opaque without the key. The key is minted once and persisted
+ *    as a 0600 sibling of the snapshot under the 0700 `stateDir` (temp→chmod→rename,
+ *    the matrix-state discipline) and read back verbatim on every start — it MUST
+ *    be identical each init for a device or the encrypted store is unrecoverable.
+ *    (The key is co-located with the ciphertext, so it defends a leaked
+ *    snapshot-without-key and a wrong-key open; a stronger posture would source it
+ *    from the secrets master key so the two are never adjacent.)
+ *  - The snapshot itself is a 0600 sibling of the plaintext sync-state file.
+ *  - No device / session / storage / recovery key material is ever logged — the
+ *    snapshot log line carries only `{ step, durationMs, bytes }`-shaped fields.
  *
  * @module
  */
 
 import { serialize, deserialize } from "node:v8";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes } from "node:crypto";
 import { mkdir, writeFile, readFile, chmod, rename } from "node:fs/promises";
 // `ClientEvent` is a value import; matrix-js-sdk itself pulls in NO crypto — the
 // WASM engine is lazy-loaded only inside `initRustCrypto`, so the crypto-engine
@@ -58,6 +67,10 @@ import { matrixStateFilePath } from "./matrix-state.js";
 
 /** The durable crypto-store snapshot: a 0600 sibling of sync-state.json under stateDir. */
 const CRYPTO_SNAPSHOT_FILE = "crypto-snapshot.json";
+/** The persisted at-rest storage key: a 0600 sibling that encrypts the store. */
+const CRYPTO_STORAGE_KEY_FILE = "crypto-storage-key";
+/** The storage key length `initRustCrypto` requires — exactly 32 bytes (AES-256). */
+const STORAGE_KEY_BYTES = 32;
 /** Owner-only directory permissions (rwx------). */
 const DIR_MODE = 0o700;
 /** Owner-only file permissions (rw-------) — the snapshot holds device + session keys. */
@@ -366,6 +379,46 @@ async function writeCryptoSnapshot(stateDir: string, blob: Buffer): Promise<void
   await rename(tmp, file);
 }
 
+/**
+ * Load the persisted 32-byte at-rest storage key, or mint + persist one on first
+ * init. This key is handed to `initRustCrypto` so the rust engine encrypts the
+ * store (device identity + Megolm sessions) at rest — the durable snapshot is
+ * opaque without it. It MUST be byte-identical on every init for a given device,
+ * so it is persisted (0600, temp→chmod→rename) and read back verbatim; minting a
+ * fresh key would leave the existing encrypted store unrecoverable (a new device).
+ * A present-but-wrong-length key is a hard error (surfaced to the initMatrixCrypto
+ * boundary as `err`) rather than a silent regenerate that would orphan the device.
+ */
+async function loadOrCreateStorageKey(stateDir: string): Promise<Uint8Array> {
+  const file = matrixStateFilePath(stateDir, CRYPTO_STORAGE_KEY_FILE);
+  let existing: Buffer | undefined;
+  try {
+    existing = await readFile(file);
+  } catch (error) {
+    // @allow-throw: a non-ENOENT read error (e.g. a permission problem) is operator
+    // misconfiguration — re-raise to the initMatrixCrypto fromPromise boundary.
+    if ((error as { code?: string } | null)?.code !== "ENOENT") throw error;
+  }
+  if (existing !== undefined) {
+    if (existing.length !== STORAGE_KEY_BYTES) {
+      // @allow-throw: a wrong-length key cannot decrypt the store it was written
+      // for; fail loud to the init boundary rather than orphan the device.
+      throw new Error("matrix crypto storage key has an unexpected length");
+    }
+    return new Uint8Array(existing);
+  }
+  // First init: mint a random 32-byte key and persist it 0600 BEFORE the store is
+  // created, so the very first store is encrypted from the start.
+  const key = randomBytes(STORAGE_KEY_BYTES);
+  await mkdir(stateDir, { recursive: true, mode: DIR_MODE });
+  await chmod(stateDir, DIR_MODE);
+  const tmp = matrixStateFilePath(stateDir, `${CRYPTO_STORAGE_KEY_FILE}.${randomUUID()}.tmp`);
+  await writeFile(tmp, key, { mode: FILE_MODE });
+  await chmod(tmp, FILE_MODE); // 0600 BEFORE the rename → the real key file is never world-readable
+  await rename(tmp, file);
+  return new Uint8Array(key);
+}
+
 /** Prune finished transactions from every live database in the factory (the OOM mitigation on the tick). */
 function pruneFactoryTransactions(factory: IDBFactory): number {
   const internal = (factory as unknown as { _databases?: Map<string, PrunableDatabase> })._databases;
@@ -570,16 +623,25 @@ export function initMatrixCrypto(
       // 2. Warm the WASM engine (the same lazy boundary — never reached on plaintext installs).
       const wasmModule = importCryptoWasm ? await importCryptoWasm() : await import("@matrix-org/matrix-sdk-crypto-wasm");
       await warmCryptoWasm(wasmModule);
-      // 3. Restore the durable snapshot BEFORE init so the WASM opens an EXISTING db.
+      // 3. Load (or mint + persist) the 32-byte at-rest storage key BEFORE restore
+      //    + init so the store is encrypted from its first write and reopened with
+      //    the identical key on every restart.
+      const storageKey = await loadOrCreateStorageKey(stateDir);
+      // 4. Restore the durable snapshot BEFORE init so the WASM opens an EXISTING db.
       const snapshot = await readCryptoSnapshot(stateDir);
       if (snapshot) await restoreCryptoStore(globalThis.indexedDB, snapshot);
-      // 4. Initialise the rust crypto store over the (possibly restored) shim.
-      await client.initRustCrypto({ useIndexedDB: true, cryptoDatabasePrefix: CRYPTO_DB_PREFIX });
-      // 5. Give the device a real trust posture: bootstrap cross-signing from the
+      // 5. Initialise the rust crypto store over the (possibly restored) shim,
+      //    encrypting it at rest with the storage key (AES-256).
+      await client.initRustCrypto({
+        useIndexedDB: true,
+        cryptoDatabasePrefix: CRYPTO_DB_PREFIX,
+        storageKey,
+      });
+      // 6. Give the device a real trust posture: bootstrap cross-signing from the
       //    recovery key, or run unverified + loud. NON-FATAL — never throws here,
       //    so a verification failure can never turn a successful init into an err.
       await bootstrapDeviceVerification(client, deps.recoveryKey, logger);
-      // 6. Build the handle + drive the snapshot cadence off the /sync batch.
+      // 7. Build the handle + drive the snapshot cadence off the /sync batch.
       return createHandle(client, stateDir, logger, snapshotDebounceMs, now);
     })(),
   );
