@@ -78,9 +78,17 @@ describe("format-googlechat", () => {
       );
     });
 
-    it("escapes stray brackets while preserving a valid link token in the same string", () => {
+    it("escapes a stray bracket after a valid link token while preserving the token", () => {
+      expect(formatGoogleChatText("see <https://x.com|x> then 5 > 6")).toBe(
+        "see <https://x.com|x> then 5 &gt; 6",
+      );
+    });
+
+    it("conservatively escapes a token an unmatched < swallows (never emits unbalanced markup)", () => {
+      // An unmatched "<" pairs with the next token's ">"; escaping the whole span
+      // is the safe outcome — no half-open tag ever reaches the wire.
       expect(formatGoogleChatText("5 < 6 see <https://x.com|x>")).toBe(
-        "5 &lt; 6 see <https://x.com|x>",
+        "5 &lt; 6 see &lt;https://x.com|x&gt;",
       );
     });
   });
