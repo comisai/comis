@@ -915,16 +915,20 @@ describe("createGoogleChatAdapter — sendMessage cardsV2 (cards/buttons)", () =
     expect("cardsV2" in body).toBe(false);
   });
 
-  it("routes the message text through formatGoogleChatText (a stray angle bracket is escaped)", async () => {
+  it("sends the message text field byte-identical — Chat text is markdown, not HTML, so &/</> are NEVER entity-escaped", async () => {
     const { fetchImpl, spy } = makeChatFetch();
     const { deps } = await makeDeps({ fetchImpl });
     const adapter = createGoogleChatAdapter(deps);
 
-    await adapter.sendMessage("spaces/AAAA", "1 < 2 & 3");
+    // A plain agent message with an ampersand, an angle span, and an mrkdwn
+    // marker. The Chat `text` field is Chat-markdown and does NOT decode HTML
+    // entities, so entity-escaping it (&amp; / &lt; / &gt;) would surface the
+    // literal entities and corrupt ordinary output. It must pass through verbatim.
+    await adapter.sendMessage("spaces/AAAA", "Tom & Jerry <tag> _x_");
 
     const [, init] = sendCallOf(spy);
     const body = JSON.parse(String(init.body)) as { text?: string };
-    expect(body.text).toBe("1 &lt; 2 &amp; 3");
+    expect(body.text).toBe("Tom & Jerry <tag> _x_");
   });
 
   it("threads a card send: thread{name} + reply query alongside cardsV2 when threadId and buttons are both set", async () => {

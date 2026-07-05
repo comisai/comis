@@ -72,7 +72,6 @@ import {
   renderGoogleChatCards,
   renderGoogleChatButtons,
 } from "./googlechat-rich-renderer.js";
-import { formatGoogleChatText } from "./format-googlechat.js";
 
 // ---------------------------------------------------------------------------
 // Send-safety knobs for the 429-only bounded resend
@@ -544,14 +543,18 @@ export function createGoogleChatAdapter(
       const url = threadName
         ? `${chatBase}/${channelId}/messages?messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD`
         : `${chatBase}/${channelId}/messages`;
-      // Format the message text through the conservative escape boundary — a
-      // markup-free string is returned byte-identical, so a plain send is
-      // unchanged. Attach a cardsV2 body ONLY when the caller supplies cards or
-      // button rows; otherwise the body stays the bare { text } (optionally with
-      // a thread) shape rather than carrying an empty cardsV2 key.
+      // The message `text` field is Chat-markdown (`*bold*`, `_italic_`,
+      // `` `code` ``, `<url|text>`, `<users/{id}>`) and does NOT decode HTML
+      // entities — entity-escaping it would surface literal `&amp;`/`&lt;` and
+      // corrupt ordinary output — so the agent text passes through verbatim. The
+      // HTML subset (and thus escaping) lives on the card `textParagraph` surface,
+      // handled in the rich renderer, not here. Attach a cardsV2 body ONLY when
+      // the caller supplies cards or button rows; otherwise the body stays the
+      // bare { text } (optionally with a thread) shape rather than carrying an
+      // empty cardsV2 key.
       const body: Record<string, unknown> = threadName
-        ? { text: formatGoogleChatText(text), thread: { name: threadName } }
-        : { text: formatGoogleChatText(text) };
+        ? { text, thread: { name: threadName } }
+        : { text };
       const hasButtons = (options?.buttons?.length ?? 0) > 0;
       const hasCards = (options?.cards?.length ?? 0) > 0;
       if (hasButtons || hasCards) {
