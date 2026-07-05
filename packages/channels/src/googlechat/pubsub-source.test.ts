@@ -1,0 +1,350 @@
+// SPDX-License-Identifier: Apache-2.0
+import { describe, it, expect, vi } from "vitest";
+import type { ComisLogger } from "@comis/core";
+import { ok, err } from "@comis/shared";
+import {
+  createPubSubSource,
+  type PubSubSourceDeps,
+} from "./pubsub-source.js";
+
+const SUB = "projects/my-project/subscriptions/comis-sub";
+const BASE = "https://pubsub.googleapis.com/v1";
+const PULL_URL = `${BASE}/${SUB}:pull`;
+const ACK_URL = `${BASE}/${SUB}:acknowledge`;
+const PUBSUB_TOKEN = "ya29.pubsub-access-token";
+
+/** A logger whose spies record every argument to every level. */
+function makeLoggerSpy() {
+  const info = vi.fn();
+  const warn = vi.fn();
+  const debug = vi.fn();
+  const error = vi.fn();
+  const noop = vi.fn();
+  const logger = {
+    level: "debug",
+    trace: noop,
+    debug,
+    info,
+    warn,
+    error,
+    fatal: noop,
+    audit: noop,
+    child: vi.fn().mockReturnThis(),
+  } as unknown as ComisLogger;
+  const serialized = () =>
+    JSON.stringify([
+      ...info.mock.calls,
+      ...warn.mock.calls,
+      ...debug.mock.calls,
+      ...error.mock.calls,
+    ]);
+  return { logger, serialized, info, warn, debug, error };
+}
+
+/** A classic Chat interaction event with a stable message resource name. */
+function makeChatEvent(name: string, text = "hello") {
+  return {
+    type: "MESSAGE",
+    eventTime: "2026-07-05T00:00:00Z",
+    user: { name: "users/1" },
+    space: { name: "spaces/AAAA", spaceType: "SPACE" },
+    message: {
+      name,
+      sender: { name: "users/1" },
+      text,
+    },
+  };
+}
+
+/** STANDARD base64 (not base64url) of the JSON-serialized event. */
+function encodeEvent(event: unknown): string {
+  return Buffer.from(JSON.stringify(event), "utf8").toString("base64");
+}
+
+interface ReceivedMessageFixture {
+  ackId: string;
+  message: { data: string; messageId?: string };
+}
+interface PullBodyFixture {
+  receivedMessages?: ReceivedMessageFixture[];
+}
+
+/**
+ * A plain-HTTP fake that answers `:pull` from a queue and records `:acknowledge`
+ * request bodies + pull request inits. No gRPC, no real network.
+ */
+function makeFetch(pullQueue: PullBodyFixture[]) {
+  const ackBodies: Array<{ ackIds: string[] }> = [];
+  const pullInits: RequestInit[] = [];
+  const impl = vi.fn(async (url: unknown, init?: RequestInit) => {
+    const u = String(url);
+    if (u.endsWith(":pull")) {
+      pullInits.push(init ?? {});
+      const body = pullQueue.shift() ?? { receivedMessages: [] };
+      return { ok: true, status: 200, json: async () => body } as unknown as Response;
+    }
+    if (u.endsWith(":acknowledge")) {
+      const parsed = JSON.parse(String(init?.body ?? "{}")) as { ackIds: string[] };
+      ackBodies.push(parsed);
+      return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;
+    }
+    throw new Error(`unexpected url ${u}`);
+  });
+  const allAckedIds = () => ackBodies.flatMap((b) => b.ackIds ?? []);
+  return {
+    fetchImpl: impl as unknown as typeof fetch,
+    ackBodies,
+    pullInits,
+    allAckedIds,
+    impl,
+  };
+}
+
+function makeDeps(over: Partial<PubSubSourceDeps> = {}): {
+  deps: PubSubSourceDeps;
+  loggerSpy: ReturnType<typeof makeLoggerSpy>;
+} {
+  const loggerSpy = makeLoggerSpy();
+  const deps: PubSubSourceDeps = {
+    subscriptionName: SUB,
+    getPubSubToken: vi.fn(async () => ok(PUBSUB_TOKEN)),
+    onEvent: vi.fn(async () => {}),
+    logger: loggerSpy.logger,
+    ...over,
+  };
+  return { deps, loggerSpy };
+}
+
+describe("createPubSubSource — pull + ack-on-enqueue + dedup (pollOnce)", () => {
+  it("POSTs subscription:pull with a pubsub Bearer and a maxMessages body carrying no returnImmediately", async () => {
+    const fetch = makeFetch([{ receivedMessages: [] }]);
+    const { deps } = makeDeps({ fetchImpl: fetch.fetchImpl });
+    const source = createPubSubSource(deps);
+
+    await source.pollOnce();
+
+    const pullCall = fetch.impl.mock.calls.find(([u]) =>
+      String(u).endsWith(":pull"),
+    );
+    expect(pullCall).toBeDefined();
+    const [url, init] = pullCall as unknown as [string, RequestInit];
+    expect(url).toBe(PULL_URL);
+    expect(init.method).toBe("POST");
+    const headers = init.headers as Record<string, string>;
+    expect(headers.authorization).toBe(`Bearer ${PUBSUB_TOKEN}`);
+    expect(headers["content-type"]).toBe("application/json");
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+    expect(body).toEqual({ maxMessages: 10 });
+    expect("returnImmediately" in body).toBe(false);
+    // The long-poll carries an abort signal so stop() can cancel it.
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("decodes standard base64 message.data, JSON.parses the classic event, and dispatches onEvent exactly once", async () => {
+    const event = makeChatEvent("spaces/AAAA/messages/m1");
+    const fetch = makeFetch([
+      { receivedMessages: [{ ackId: "ack-1", message: { data: encodeEvent(event) } }] },
+    ]);
+    const onEvent = vi.fn(async () => {});
+    const { deps } = makeDeps({ fetchImpl: fetch.fetchImpl, onEvent });
+    const source = createPubSubSource(deps);
+
+    const out = await source.pollOnce();
+
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(onEvent).toHaveBeenCalledWith(event);
+    expect(out.receivedCount).toBe(1);
+    expect(out.pullFailed).toBe(false);
+  });
+
+  it("decodes a payload whose STANDARD base64 contains + or / (proving standard, not base64url, decoding)", async () => {
+    // A payload engineered so its standard-base64 form carries + and/or /.
+    const event = makeChatEvent(
+      "spaces/AAAA/messages/m1",
+      ">>>???~~~ÿþ payload with padding bytes >>>",
+    );
+    const data = encodeEvent(event);
+    // Precondition: this payload's standard base64 uses the +// alphabet, which
+    // base64url would render as -/_ — a base64url decode here would corrupt it.
+    expect(data).toMatch(/[+/]/);
+    const onEvent = vi.fn(async () => {});
+    const fetch = makeFetch([
+      { receivedMessages: [{ ackId: "ack-1", message: { data } }] },
+    ]);
+    const { deps } = makeDeps({ fetchImpl: fetch.fetchImpl, onEvent });
+    const source = createPubSubSource(deps);
+
+    await source.pollOnce();
+
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(onEvent).toHaveBeenCalledWith(event);
+  });
+
+  it("acknowledges the ackId only after onEvent resolves (ack-on-enqueue)", async () => {
+    const event = makeChatEvent("spaces/AAAA/messages/m1");
+    const fetch = makeFetch([
+      { receivedMessages: [{ ackId: "ack-1", message: { data: encodeEvent(event) } }] },
+    ]);
+    const { deps } = makeDeps({
+      fetchImpl: fetch.fetchImpl,
+      onEvent: vi.fn(async () => {}),
+    });
+    const source = createPubSubSource(deps);
+
+    const out = await source.pollOnce();
+
+    expect(fetch.allAckedIds()).toContain("ack-1");
+    const ackCall = fetch.impl.mock.calls.find(([u]) =>
+      String(u).endsWith(":acknowledge"),
+    );
+    const [url, init] = ackCall as unknown as [string, RequestInit];
+    expect(url).toBe(ACK_URL);
+    expect((init.headers as Record<string, string>).authorization).toBe(
+      `Bearer ${PUBSUB_TOKEN}`,
+    );
+    expect(out.ackedCount).toBe(1);
+  });
+
+  it("skips the ack when onEvent rejects so Pub/Sub redelivers, logging a WARN with errorKind and hint", async () => {
+    const event = makeChatEvent("spaces/AAAA/messages/m1");
+    const fetch = makeFetch([
+      { receivedMessages: [{ ackId: "ack-1", message: { data: encodeEvent(event) } }] },
+    ]);
+    const onEvent = vi.fn(async () => {
+      throw new Error("inbound queue full");
+    });
+    const { deps, loggerSpy } = makeDeps({ fetchImpl: fetch.fetchImpl, onEvent });
+    const source = createPubSubSource(deps);
+
+    const out = await source.pollOnce();
+
+    expect(fetch.allAckedIds()).not.toContain("ack-1");
+    expect(out.skippedCount).toBe(1);
+    const warn = loggerSpy.warn.mock.calls
+      .map((c) => c[0])
+      .find(
+        (p) =>
+          p !== null &&
+          typeof p === "object" &&
+          typeof (p as { hint?: unknown }).hint === "string" &&
+          typeof (p as { errorKind?: unknown }).errorKind === "string",
+      );
+    expect(warn).toBeDefined();
+  });
+
+  it("dedupes a redelivered duplicate on message.name — dispatches once and acks the duplicate without re-dispatch", async () => {
+    const name = "spaces/AAAA/messages/dupe";
+    const event = makeChatEvent(name);
+    const fetch = makeFetch([
+      { receivedMessages: [{ ackId: "ack-first", message: { data: encodeEvent(event) } }] },
+      { receivedMessages: [{ ackId: "ack-redeliver", message: { data: encodeEvent(event) } }] },
+    ]);
+    const onEvent = vi.fn(async () => {});
+    const { deps } = makeDeps({ fetchImpl: fetch.fetchImpl, onEvent });
+    const source = createPubSubSource(deps);
+
+    await source.pollOnce();
+    await source.pollOnce();
+
+    // Dispatched exactly once across both deliveries...
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    // ...but BOTH ackIds acked, so the duplicate stops redelivering.
+    expect(fetch.allAckedIds()).toContain("ack-first");
+    expect(fetch.allAckedIds()).toContain("ack-redeliver");
+  });
+
+  it("re-dispatches a redelivery when the first delivery's onEvent rejected (name marked seen only on the ack path)", async () => {
+    const name = "spaces/AAAA/messages/retry";
+    const event = makeChatEvent(name);
+    const fetch = makeFetch([
+      { receivedMessages: [{ ackId: "ack-1", message: { data: encodeEvent(event) } }] },
+      { receivedMessages: [{ ackId: "ack-2", message: { data: encodeEvent(event) } }] },
+    ]);
+    let calls = 0;
+    const onEvent = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("transient enqueue failure");
+    });
+    const { deps } = makeDeps({ fetchImpl: fetch.fetchImpl, onEvent });
+    const source = createPubSubSource(deps);
+
+    await source.pollOnce(); // rejects → skip ack, NOT marked seen
+    await source.pollOnce(); // same name re-dispatched (not deduped)
+
+    expect(onEvent).toHaveBeenCalledTimes(2);
+    // First was skipped; second succeeded and was acked.
+    expect(fetch.allAckedIds()).not.toContain("ack-1");
+    expect(fetch.allAckedIds()).toContain("ack-2");
+  });
+
+  it("acks and skips an unparseable data payload without dispatching or throwing", async () => {
+    const bad = Buffer.from("not json {{{", "utf8").toString("base64");
+    const fetch = makeFetch([
+      { receivedMessages: [{ ackId: "ack-bad", message: { data: bad } }] },
+    ]);
+    const onEvent = vi.fn(async () => {});
+    const { deps } = makeDeps({ fetchImpl: fetch.fetchImpl, onEvent });
+    const source = createPubSubSource(deps);
+
+    const out = await source.pollOnce();
+
+    expect(onEvent).not.toHaveBeenCalled();
+    expect(fetch.allAckedIds()).toContain("ack-bad");
+    expect(out.pullFailed).toBe(false);
+  });
+
+  it("reports pullFailed and does not pull when the pubsub token mint fails", async () => {
+    const fetch = makeFetch([]);
+    const { deps } = makeDeps({
+      fetchImpl: fetch.fetchImpl,
+      getPubSubToken: vi.fn(async () => err(new Error("mint failed"))),
+    });
+    const source = createPubSubSource(deps);
+
+    const out = await source.pollOnce();
+
+    expect(out.pullFailed).toBe(true);
+    expect(fetch.impl).not.toHaveBeenCalled();
+    expect(source.lastError).toBeDefined();
+  });
+
+  it("reports pullFailed and sets lastError on a non-ok pull status", async () => {
+    const impl = vi.fn(async () => ({
+      ok: false,
+      status: 503,
+      json: async () => ({}),
+    }));
+    const { deps } = makeDeps({ fetchImpl: impl as unknown as typeof fetch });
+    const source = createPubSubSource(deps);
+
+    const out = await source.pollOnce();
+
+    expect(out.pullFailed).toBe(true);
+    expect(typeof source.lastError).toBe("string");
+  });
+
+  it("evicts the oldest entry when the bounded seen-set exceeds seenSetMax", async () => {
+    // seenSetMax=1: after m1 is seen, m2 evicts m1; a redelivery of m1 is then
+    // re-dispatched (no longer deduped) because it was evicted from the set.
+    const e1 = makeChatEvent("spaces/AAAA/messages/m1");
+    const e2 = makeChatEvent("spaces/AAAA/messages/m2");
+    const fetch = makeFetch([
+      { receivedMessages: [{ ackId: "a1", message: { data: encodeEvent(e1) } }] },
+      { receivedMessages: [{ ackId: "a2", message: { data: encodeEvent(e2) } }] },
+      { receivedMessages: [{ ackId: "a3", message: { data: encodeEvent(e1) } }] },
+    ]);
+    const onEvent = vi.fn(async () => {});
+    const { deps } = makeDeps({
+      fetchImpl: fetch.fetchImpl,
+      onEvent,
+      seenSetMax: 1,
+    });
+    const source = createPubSubSource(deps);
+
+    await source.pollOnce(); // m1 seen
+    await source.pollOnce(); // m2 seen → evicts m1
+    await source.pollOnce(); // m1 redelivered → re-dispatched (evicted)
+
+    expect(onEvent).toHaveBeenCalledTimes(3);
+  });
+});
