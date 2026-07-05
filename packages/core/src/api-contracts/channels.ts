@@ -90,7 +90,8 @@ import { defineContract } from "./types.js";
  * Returns an empty `channels: []` + `enabled: false` when `deps.healthMonitor`
  * is undefined; otherwise iterates the monitor's getHealthSummary() entries
  * and projects each into a tight shape (channelType, state, connectionMode,
- * timing fields, restart counts, uptimeMs).
+ * timing fields, restart counts, uptimeMs, and — for e2ee-capable channels —
+ * the device verification posture).
  *
  * Request: `{}`.
  * Response: `{ channels: HealthEntry[], timestamp: number, enabled: boolean }`.
@@ -115,6 +116,14 @@ export const ChannelsHealthContract = defineContract({
       activeRuns: z.number(),
       restartAttempts: z.number(),
       uptimeMs: z.number(),
+      // E2EE device verification posture (additive optional), present only for
+      // e2ee-capable channels with an active crypto backend — never key material.
+      verification: z
+        .object({
+          crossSigningReady: z.boolean(),
+          deviceVerified: z.boolean(),
+        })
+        .optional(),
     })),
     timestamp: z.number(),
     enabled: z.boolean(),

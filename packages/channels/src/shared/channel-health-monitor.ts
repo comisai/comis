@@ -16,7 +16,7 @@
  * @module
  */
 
-import type { TypedEventBus, ChannelPort } from "@comis/core";
+import type { TypedEventBus, ChannelPort, ChannelStatus } from "@comis/core";
 import { systemClearInterval, systemNowMs, systemSetInterval } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -62,6 +62,12 @@ export interface ChannelHealthEntry {
   readonly connectionMode: "socket" | "polling" | "webhook";
   readonly restartAttempts: number;
   readonly busyStateInitialized: boolean;
+  /**
+   * E2EE device verification posture, forwarded from the adapter's status for
+   * e2ee-capable channels only (absent on the plaintext path). Lets a doctor /
+   * fleet probe read whether the bot device is verified; carries no key material.
+   */
+  readonly verification?: ChannelStatus["verification"];
 }
 
 /** Configuration for the channel health monitor. */
@@ -129,6 +135,7 @@ interface MutableHealthEntry {
   connectionMode: "socket" | "polling" | "webhook";
   restartAttempts: number;
   busyStateInitialized: boolean;
+  verification?: ChannelStatus["verification"];
 }
 
 // ---------------------------------------------------------------------------
@@ -320,6 +327,9 @@ export function createChannelHealthMonitor(
         // with it (an outbound send bumps lastMessageAt, not this).
         entry.lastInboundAt = status.lastInboundAt ?? entry.lastInboundAt;
         entry.error = status.error ?? null;
+        // E2EE verification posture (absent on the plaintext path) — forwarded so
+        // it reaches the doctor/fleet surface instead of dying at getStatus().
+        entry.verification = status.verification;
 
         if (!status.connected) {
           newState = "disconnected";

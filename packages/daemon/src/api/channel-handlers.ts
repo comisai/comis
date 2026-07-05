@@ -91,6 +91,8 @@ export function createChannelHandlers(deps: ChannelHandlerDeps): Record<string, 
         activeRuns: entry.activeRuns,
         restartAttempts: entry.restartAttempts,
         uptimeMs: systemNowMs() - entry.adapterStartedAt,
+        // E2EE verification posture for e2ee-capable channels; absent otherwise.
+        verification: entry.verification,
       }));
       const result = { channels, timestamp: systemNowMs(), enabled: true };
       if (IS_DEV) ChannelsHealthContract.response.parse(result);
