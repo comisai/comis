@@ -110,6 +110,34 @@ describe("createChannelHealthMonitor", () => {
   });
 
   // -------------------------------------------------------------------------
+  // inbound-only liveness signal
+  // -------------------------------------------------------------------------
+
+  describe("inbound-only lastInboundAt", () => {
+    it("surfaces the adapter's inbound-only lastInboundAt on the summary entry", () => {
+      const { monitor } = createTestMonitor();
+      const inboundAt = Date.now() - 1000;
+      // lastMessageAt (outbound-polluted last-activity) is FRESHER than the
+      // inbound signal, so the entry must carry the dedicated inbound value —
+      // not a copy of last-activity — for a send-only bot to be detectable.
+      const adapter = createMockAdapter({
+        connected: true,
+        lastMessageAt: Date.now(),
+        lastInboundAt: inboundAt,
+      });
+
+      const stop = monitor.start(new Map([["echo", adapter]]));
+      monitor.checkNow();
+
+      const health = monitor.getHealth("echo") as
+        | { lastInboundAt?: number | null }
+        | undefined;
+      expect(health?.lastInboundAt).toBe(inboundAt);
+      stop();
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // 2. state: disconnected
   // -------------------------------------------------------------------------
 

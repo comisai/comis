@@ -236,6 +236,45 @@ describe("assembleFleetHealthReport (4-source read fan-in)", () => {
     expect(ml!.detail).toContain("evicted=1");
   });
 
+  it("does NOT root-cause the fleet to recurring-health-WARNs from severity-info benign signals (session_rebase)", async () => {
+    // The ingest layer stamps benign context:dag_degraded reasons severity
+    // "info" (session_rebase fires once per fresh session start). The verdict's
+    // healthSignalCount counted every row regardless, so a healthy fleet whose
+    // only health rows were benign rebases root-caused to "recurring health
+    // WARN signal(s)" — chronic noise ranked as the fleet's root cause.
+    const now = systemNowMs();
+    const store = makeStore();
+    store.insertDiagnostic({
+      timestamp: now - 1_000, category: "session_summary", severity: "info", sessionKey: "s-ok",
+      message: "session:summary",
+      details: summaryDetails({ degraded: false, costUsd: 0.1, turnCount: 2 }),
+    });
+    store.insertDiagnostic({
+      timestamp: now - 900, category: "health_signal", severity: "info",
+      message: "context:dag_degraded",
+      details: JSON.stringify({ signal: "lcd_divergence", reason: "session_rebase", durationMs: 5 }),
+    });
+    const report = await assembleFleetHealthReport({ obsStore: store, dataDir: makeDataDirWithActivity(), clock: createFakeClock(now) }, 24);
+    expect(report.likelyRootCause?.code).not.toBe("fleet_recurring_health_signal");
+  });
+
+  it("still root-causes to recurring-health-WARNs from severity-warning signals (genuine divergence)", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    store.insertDiagnostic({
+      timestamp: now - 1_000, category: "session_summary", severity: "info", sessionKey: "s-ok",
+      message: "session:summary",
+      details: summaryDetails({ degraded: false, costUsd: 0.1, turnCount: 2 }),
+    });
+    store.insertDiagnostic({
+      timestamp: now - 900, category: "health_signal", severity: "warning",
+      message: "context:dag_degraded",
+      details: JSON.stringify({ signal: "lcd_divergence", reason: "live_store_divergence", durationMs: 5 }),
+    });
+    const report = await assembleFleetHealthReport({ obsStore: store, dataDir: makeDataDirWithActivity(), clock: createFakeClock(now) }, 24);
+    expect(report.likelyRootCause?.code).toBe("fleet_recurring_health_signal");
+  });
+
   it("surfaces the learning_health finding from reflection-funnel rows (handler wiring)", async () => {
     const now = systemNowMs();
     const store = makeStore();

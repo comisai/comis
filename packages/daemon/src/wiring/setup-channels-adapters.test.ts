@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { AppContainer, ChannelPort } from "@comis/core";
+import type { AppContainer, ChannelPort, EnvPort, MsTeamsConversationStorePort, TimerPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 
 // ---------------------------------------------------------------------------
@@ -24,6 +24,21 @@ const mockEmailPlugin = {
     replyToMetaKey: "emailMessageId",
   },
 };
+// The Teams adapter carries handleWebhookEvents (the route-driven inbound
+// driver the gateway ingress calls) in addition to the base send surface.
+const mockMsTeamsAdapter = { sendMessage: vi.fn(), handleWebhookEvents: vi.fn() };
+const mockMsTeamsPlugin = {
+  adapter: mockMsTeamsAdapter,
+  channelType: "msteams",
+  capabilities: {
+    features: { reactions: false, editMessages: false, deleteMessages: false, fetchHistory: false, attachments: false, buttons: "none" },
+    limits: { maxMessageChars: 28_000 },
+    replyToMetaKey: "teamsActivityId",
+  },
+};
+// A sentinel the mocked ingress factory returns, so the registration's
+// caller-backed wiring can be asserted by identity.
+const mockMsTeamsIngress = { __msteamsIngress: true };
 
 vi.mock("@comis/channels", () => ({
   createTelegramPlugin: vi.fn(() => mockTelegramPlugin),
@@ -44,6 +59,18 @@ vi.mock("@comis/channels", () => ({
   validateIMessageConnection: vi.fn(async () => ({ ok: true, value: {} })),
   validateIrcConnection: vi.fn(async () => ({ ok: true, value: { nick: "ircbot" } })),
   validateEmailCredentials: vi.fn(async () => ({ ok: true, value: { user: "bot@example.com" } })),
+  createMsTeamsPlugin: vi.fn(() => mockMsTeamsPlugin),
+  // Synchronous credential presence guard — returns a Result directly, not a Promise.
+  validateMsTeamsCredentials: vi.fn(() => ({ ok: true, value: undefined })),
+  // The bound inbound activity-token validator (authHeader, appId) => Result.
+  validateActivityJwt: vi.fn(async () => ({ ok: true, value: undefined })),
+}));
+
+// The Teams ingress sub-app is built in @comis/gateway; the registration block
+// is its production caller. Mock the factory so the wiring is asserted without
+// standing up a real Hono app.
+vi.mock("@comis/gateway", () => ({
+  createMsTeamsIngress: vi.fn(() => mockMsTeamsIngress),
 }));
 
 import { bootstrapAdapters } from "./setup-channels-adapters.js";
@@ -66,7 +93,10 @@ import {
   validateIrcConnection,
   createEmailPlugin,
   validateEmailCredentials,
+  createMsTeamsPlugin,
+  validateMsTeamsCredentials,
 } from "@comis/channels";
+import { createMsTeamsIngress } from "@comis/gateway";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -83,6 +113,7 @@ function makeChannelConfig(overrides: Record<string, any> = {}) {
     imessage: { enabled: false, binaryPath: "/usr/local/bin/imsg", account: "", ...overrides.imessage },
     irc: { enabled: false, host: undefined, port: 6667, nick: undefined, tls: false, channels: [], nickservPassword: undefined, ...overrides.irc },
     email: { enabled: false, address: undefined, imapHost: undefined, imapPort: 993, smtpHost: undefined, smtpPort: 587, secure: true, authType: "password", allowFrom: [], allowMode: "allowlist", pollingIntervalMs: 60_000, ...overrides.email },
+    msteams: { enabled: false, authMode: "secret", appId: undefined, appPassword: undefined, tenantId: undefined, certPath: undefined, managedIdentityClientId: undefined, cloud: "public", allowFrom: [], allowMode: "allowlist", ...overrides.msteams },
   };
 }
 
@@ -487,5 +518,206 @@ describe("bootstrapAdapters", () => {
     // adaptersByType entry is the same object as plugin.adapter — proves SMTP sends
     // flow through deliver-to-channel.ts delivery queue retry
     expect(result.adaptersByType.get("email")).toBe(mockEmailPlugin.adapter);
+  });
+
+  // -------------------------------------------------------------------------
+  // Microsoft Teams — the registration block is the production CALLER that
+  // builds the mounted ingress from the real adapter's handleWebhookEvents +
+  // the bound activity-token validator. No factory without a caller.
+  // -------------------------------------------------------------------------
+
+  it("registers the Teams adapter and exposes a built ingress when enabled with valid creds", async () => {
+    const container = makeContainer({
+      msteams: { enabled: true, appId: "app-123", appPassword: "secret-pw", tenantId: "tenant-abc" },
+    });
+    const result = await bootstrapAdapters({ container, channelsLogger });
+
+    expect(validateMsTeamsCredentials).toHaveBeenCalledWith(
+      expect.objectContaining({ appId: "app-123", appPassword: "secret-pw", tenantId: "tenant-abc" }),
+    );
+    expect(createMsTeamsPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({ appId: "app-123", appPassword: "secret-pw", tenantId: "tenant-abc", logger: channelsLogger }),
+    );
+    expect(result.adaptersByType.get("msteams")).toBe(mockMsTeamsAdapter);
+    expect(result.channelPlugins.get("msteams")).toBe(mockMsTeamsPlugin);
+    // The ingress the gateway phase will mount is the one built here.
+    expect(result.msTeamsIngress).toBe(mockMsTeamsIngress);
+  });
+
+  it("wires the real adapter handleWebhookEvents into the built ingress (no factory without a caller)", async () => {
+    const container = makeContainer({
+      msteams: { enabled: true, appId: "app-123", appPassword: "secret-pw", tenantId: "tenant-abc" },
+    });
+    await bootstrapAdapters({ container, channelsLogger });
+
+    expect(createMsTeamsIngress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        validateActivityJwt: expect.any(Function),
+        handleWebhookEvents: expect.any(Function),
+        logger: channelsLogger,
+      }),
+    );
+    // The injected dispatch closure reaches the REAL adapter, not a stub: the
+    // mounted route can therefore drive the inbound pipeline end-to-end.
+    const ingressDeps = vi.mocked(createMsTeamsIngress).mock.calls[0]![0] as unknown as {
+      handleWebhookEvents: (activities: unknown[]) => void;
+    };
+    const activities = [{ type: "message", text: "hi" }];
+    ingressDeps.handleWebhookEvents(activities);
+    expect(mockMsTeamsAdapter.handleWebhookEvents).toHaveBeenCalledWith(activities);
+  });
+
+  it("falls back to MSTEAMS_APP_PASSWORD from the secret store when config omits appPassword", async () => {
+    const container = makeContainer(
+      { msteams: { enabled: true, appId: "app-123", tenantId: "tenant-abc" } },
+      { MSTEAMS_APP_PASSWORD: "secret-from-store" },
+    );
+    const result = await bootstrapAdapters({ container, channelsLogger });
+
+    expect(container.secretManager.get).toHaveBeenCalledWith("MSTEAMS_APP_PASSWORD");
+    expect(createMsTeamsPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({ appPassword: "secret-from-store" }),
+    );
+    expect(result.adaptersByType.get("msteams")).toBe(mockMsTeamsAdapter);
+    expect(result.msTeamsIngress).toBe(mockMsTeamsIngress);
+  });
+
+  it("injects the conversation store + TimerPort into createMsTeamsPlugin when provided", async () => {
+    // The composition root builds the conversation-reference store on the shared
+    // memory.db and passes it (+ the daemon TimerPort) through bootstrapAdapters.
+    // Both must reach createMsTeamsPlugin as the injected port types so capture /
+    // proactive recovery / the typing keepalive are live — never a raw db thread.
+    const conversationStore = { capture: vi.fn(), get: vi.fn() } as unknown as MsTeamsConversationStorePort;
+    const timer = { schedule: vi.fn(), cancel: vi.fn() } as unknown as TimerPort;
+    const container = makeContainer({
+      msteams: { enabled: true, appId: "app-123", appPassword: "secret-pw", tenantId: "tenant-abc" },
+    });
+    await bootstrapAdapters({ container, channelsLogger, msTeamsConversationStore: conversationStore, timer });
+
+    expect(createMsTeamsPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationStore, timer }),
+    );
+  });
+
+  it("omits conversationStore/timer from createMsTeamsPlugin when the composition root injects neither", async () => {
+    // The seams are optional: with neither injected the plugin is built without the
+    // fields (the adapter then skips capture and errs a proactive send — never a
+    // wrong-host default), not with `undefined` values.
+    const container = makeContainer({
+      msteams: { enabled: true, appId: "app-123", appPassword: "secret-pw", tenantId: "tenant-abc" },
+    });
+    await bootstrapAdapters({ container, channelsLogger });
+
+    const call = vi.mocked(createMsTeamsPlugin).mock.calls[0]![0] as Record<string, unknown>;
+    expect(call).not.toHaveProperty("conversationStore");
+    expect(call).not.toHaveProperty("timer");
+  });
+
+  it("warns with errorKind auth and does not register when enabled but a credential is missing", async () => {
+    vi.mocked(validateMsTeamsCredentials).mockReturnValueOnce({ ok: false, error: new Error("appPassword must not be empty") } as any);
+    const container = makeContainer({
+      msteams: { enabled: true, appId: "app-123", tenantId: "tenant-abc" }, // appPassword missing
+    });
+    const result = await bootstrapAdapters({ container, channelsLogger });
+
+    expect(result.adaptersByType.has("msteams")).toBe(false);
+    expect(result.msTeamsIngress).toBeUndefined();
+    expect(createMsTeamsIngress).not.toHaveBeenCalled();
+    expect(channelsLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "auth" }),
+      expect.stringContaining("Teams credential validation failed"),
+    );
+  });
+
+  it("does not register the Teams adapter or build an ingress when the channel is disabled", async () => {
+    const container = makeContainer({ msteams: { enabled: false } });
+    const result = await bootstrapAdapters({ container, channelsLogger });
+
+    expect(result.adaptersByType.has("msteams")).toBe(false);
+    expect(result.msTeamsIngress).toBeUndefined();
+    expect(createMsTeamsPlugin).not.toHaveBeenCalled();
+    expect(createMsTeamsIngress).not.toHaveBeenCalled();
+  });
+
+  // Enterprise auth: the appPassword-only gate is relaxed per authMode so a
+  // certificate / managed-identity config (which carries no appPassword) registers.
+  it("registers a certificate-mode Teams adapter with no appPassword (the appPassword gate is relaxed)", async () => {
+    const container = makeContainer({
+      msteams: {
+        enabled: true,
+        authMode: "certificate",
+        appId: "app-123",
+        tenantId: "tenant-abc",
+        certPath: "/etc/comis/teams.pem",
+      },
+    });
+    const result = await bootstrapAdapters({ container, channelsLogger });
+
+    expect(createMsTeamsPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authMode: "certificate",
+        certPath: "/etc/comis/teams.pem",
+        appId: "app-123",
+        tenantId: "tenant-abc",
+      }),
+    );
+    expect(result.adaptersByType.get("msteams")).toBe(mockMsTeamsAdapter);
+    expect(result.msTeamsIngress).toBe(mockMsTeamsIngress);
+  });
+
+  it("registers a managed-identity Teams adapter and threads the live env accessor into the plugin", async () => {
+    // The composition root's EnvPort must reach the plugin (for the MI App-Service
+    // endpoint + rotating header, read live per mint) — the SAME injected object,
+    // not a snapshot.
+    const env = { get: vi.fn(() => undefined) } as unknown as EnvPort;
+    const container = makeContainer({
+      msteams: {
+        enabled: true,
+        authMode: "managedIdentity",
+        appId: "app-123",
+        tenantId: "tenant-abc",
+        managedIdentityClientId: "mi-client-id",
+      },
+    });
+    const result = await bootstrapAdapters({ container, channelsLogger, env });
+
+    expect(createMsTeamsPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authMode: "managedIdentity",
+        managedIdentityClientId: "mi-client-id",
+        env,
+      }),
+    );
+    expect(result.adaptersByType.get("msteams")).toBe(mockMsTeamsAdapter);
+  });
+
+  it("warns with a certificate-mode hint and does not register when certPath is missing", async () => {
+    const container = makeContainer({
+      msteams: { enabled: true, authMode: "certificate", appId: "app-123", tenantId: "tenant-abc" },
+      // certPath missing → the per-mode credential precondition fails
+    });
+    const result = await bootstrapAdapters({ container, channelsLogger });
+
+    expect(result.adaptersByType.has("msteams")).toBe(false);
+    expect(createMsTeamsPlugin).not.toHaveBeenCalled();
+    expect(channelsLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "auth", hint: expect.stringContaining("certPath") }),
+      expect.stringContaining("Teams credential validation failed"),
+    );
+  });
+
+  it("secret mode with no appPassword still warns and does not register (unchanged)", async () => {
+    vi.mocked(validateMsTeamsCredentials).mockReturnValueOnce({ ok: false, error: new Error("appPassword must not be empty") } as any);
+    const container = makeContainer({
+      msteams: { enabled: true, authMode: "secret", appId: "app-123", tenantId: "tenant-abc" },
+    });
+    const result = await bootstrapAdapters({ container, channelsLogger });
+
+    expect(result.adaptersByType.has("msteams")).toBe(false);
+    expect(createMsTeamsPlugin).not.toHaveBeenCalled();
+    expect(channelsLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "auth" }),
+      expect.stringContaining("Teams credential validation failed"),
+    );
   });
 });

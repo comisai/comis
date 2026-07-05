@@ -39,6 +39,7 @@ import type {
   ChannelActivityRenderer,
   TurnActivityContext,
   TurnOutcome,
+  TypedEventBus,
   ProjectionConfig,
   PlanSnapshot,
   ClockPort,
@@ -197,6 +198,13 @@ export interface ActivityTurnCoordinatorDeps {
    * `releaseSubscription` (cleanup runs even on aborted turns via try/finally).
    */
   planStream?: PlanStream;
+  /**
+   * Optional event bus for the `activity:turn_finalized` emit — the
+   * user-surface trajectory record (which terminal state the renderer painted,
+   * and whether a failed event reclassified the outcome). Absent → no emit
+   * (existing callers unchanged); the daemon composition root injects it.
+   */
+  eventBus?: TypedEventBus;
 }
 
 /**
@@ -537,6 +545,31 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
         errorKind: deriveReclassifyErrorKind(failedEvents),
         failedEvents,
       };
+    }
+
+    // Announce the EFFECTIVE terminal surface state (the user-visible pill's
+    // fate is a pure function of this outcome + the strategy) so `explain` can
+    // answer "what did the user's chat show this turn" from the trajectory —
+    // the reclassify above used to be reconstructable only from source.
+    // Content-free: closed outcome kind + closed ErrorKind + a fixed
+    // named-constant reason + counts.
+    if (deps.eventBus && turnCtx !== undefined) {
+      deps.eventBus.emit("activity:turn_finalized", {
+        sessionKey: turnCtx.sessionKey,
+        agentId: turnCtx.agentId,
+        channelType: turnCtx.channelType,
+        strategy: deps.renderer.strategy,
+        outcome: effective.kind,
+        ...(effective.kind === "failure" && effective.errorKind !== undefined
+          ? { errorKind: effective.errorKind }
+          : {}),
+        ...(effective.kind === "failure" && effective.reason !== undefined
+          ? { reason: effective.reason }
+          : {}),
+        reclassified: effective !== outcome,
+        failedEventCount: events.filter((e) => e.status === "failed").length,
+        timestamp: deps.clock.now(),
+      });
     }
 
     // (2) Success path: the delete (owned by renderer.finalize) must

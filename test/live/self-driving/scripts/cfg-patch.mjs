@@ -60,3 +60,9 @@ console.log('autonomy.default=' + JSON.stringify(cfg.agents?.default?.autonomy ?
 // Inbound-trust knobs (verify a trust-flip landed — 01-SETUP.md §3):
 console.log('elevatedReply.default=' + JSON.stringify(cfg.agents?.default?.elevatedReply ?? null));
 console.log('telegram.allowFrom=' + JSON.stringify(cfg.channels?.telegram?.allowFrom ?? null));
+// Microsoft Teams inbound gate (allowMode:open processes any sender; allowlist keys on
+// aadObjectId/conversation.id). The loopback bridges live in the daemon ENV
+// (COMIS_MSTEAMS_TEST_JWKS / COMIS_MSTEAMS_TEST_CONNECTOR), not config — so they are NOT echoed here.
+console.log('msteams.enabled=' + JSON.stringify(cfg.channels?.msteams?.enabled ?? null));
+console.log('msteams.allowMode=' + JSON.stringify(cfg.channels?.msteams?.allowMode ?? null));
+console.log('msteams.allowFrom=' + JSON.stringify(cfg.channels?.msteams?.allowFrom ?? null));

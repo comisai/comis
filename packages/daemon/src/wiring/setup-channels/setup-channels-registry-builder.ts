@@ -37,6 +37,7 @@ export function buildChannelCredentialMap(channels: unknown): Map<string, string
   if (ch.line?.enabled) { m.set("LINE_CHANNEL_ACCESS_TOKEN", "line"); m.set("LINE_CHANNEL_SECRET", "line"); }
   if (ch.irc?.enabled) m.set("IRC_NICKSERV_PASSWORD", "irc");
   if (ch.email?.enabled) { m.set("EMAIL_PASSWORD", "email"); m.set("EMAIL_REFRESH_TOKEN", "email"); }
+  if (ch.msteams?.enabled) m.set("MSTEAMS_APP_PASSWORD", "msteams");
   return m;
 }
 

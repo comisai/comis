@@ -274,3 +274,89 @@ describe("executeLlm — agentId propagation (reaction-attribution keystone)", (
     ).toBe("mldag");
   });
 });
+
+// ---------------------------------------------------------------------------
+// executeLlm resource-abort delivery-signal recovery
+// ---------------------------------------------------------------------------
+
+describe("executeLlm — resource-abort delivery-signal recovery", () => {
+  /** Build an executor whose execute() fires the captured execution:aborted
+   *  listener mid-run with the given reason, then finishes with that reason. */
+  function makeAbortingHarness(reason: string): {
+    deps: ExecuteDeps;
+    executor: AgentExecutor;
+  } {
+    let abortListener: ((e: { sessionKey: SessionKey; reason: string }) => void) | undefined;
+    const bus = makeEventBus();
+    bus.on = vi.fn((event: string, fn: (e: { sessionKey: SessionKey; reason: string }) => void) => {
+      if (event === "execution:aborted") abortListener = fn;
+      return bus;
+    });
+    const deps = makeDeps({ eventBus: bus });
+    const executor: AgentExecutor = {
+      execute: vi.fn(async () => {
+        // The bridge's safety gate fires execution:aborted for this session
+        // mid-run — the delivery-scoped controller aborts.
+        abortListener?.({ sessionKey: makeSessionKey(), reason });
+        return {
+          response: `[Stopped: ${reason}] Your request was: 'Hello'. Please try again.`,
+          sessionKey: makeSessionKey(),
+          tokensUsed: { input: 10, output: 5, total: 15 },
+          cost: { total: 0.01 },
+          stepsExecuted: 1,
+          llmCalls: 1,
+          finishReason: reason,
+        };
+      }),
+    } as unknown as AgentExecutor;
+    return { deps, executor };
+  }
+
+  it("mints a FRESH delivery signal for a spend_exceeded abort so the stop notice can reach the user", async () => {
+    // Observed live: the spend abort left the delivery signal aborted, the
+    // block pacer hard-skipped every block (logging success), and the user got
+    // permanent silence — the designed "[Stopped: …]" notice never delivered.
+    const { deps, executor } = makeAbortingHarness("spend_exceeded");
+
+    const out = await executeLlm(
+      deps,
+      makeAdapter(),
+      makeMessage(),
+      makeSessionKey(),
+      "agent-1",
+      executor,
+      "user",
+      makeBlockStreamCfg(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    );
+
+    expect(out.resourceAborted, "spend_exceeded is a resource abort with a recovered response").toBe(true);
+    expect(out.deliverySignal.aborted, "the recovered response must ride a FRESH (non-aborted) delivery signal").toBe(false);
+    expect(out.abortReason).toBe("spend_exceeded");
+  });
+
+  it("keeps the aborted delivery signal for a non-resource abort (user-cancel semantics unchanged)", async () => {
+    const { deps, executor } = makeAbortingHarness("user_cancel");
+
+    const out = await executeLlm(
+      deps,
+      makeAdapter(),
+      makeMessage(),
+      makeSessionKey(),
+      "agent-1",
+      executor,
+      "user",
+      makeBlockStreamCfg(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    );
+
+    expect(out.resourceAborted).toBe(false);
+    expect(out.deliverySignal.aborted, "a user-cancel abort still suppresses delivery").toBe(true);
+  });
+});

@@ -4652,6 +4652,152 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("chann
   {
     "default": {
       "allowFrom": [],
+      "allowMode": "allowlist",
+      "authMode": "secret",
+      "cloud": "public",
+      "enabled": false,
+      "missedInboundThresholdMs": 21600000
+    },
+    "immutable": true,
+    "path": "channels.msteams",
+    "type": "object"
+  },
+  {
+    "immutable": true,
+    "path": "channels.msteams.ackReaction",
+    "type": "object"
+  },
+  {
+    "default": "ðŸ‘€",
+    "immutable": true,
+    "path": "channels.msteams.ackReaction.emoji",
+    "type": "string"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "channels.msteams.ackReaction.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": [],
+    "immutable": true,
+    "path": "channels.msteams.allowFrom",
+    "type": "array"
+  },
+  {
+    "default": "allowlist",
+    "immutable": true,
+    "path": "channels.msteams.allowMode",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.msteams.appId",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.msteams.appPassword",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.msteams.appPassword.id",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.msteams.appPassword.provider",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.msteams.appPassword.source",
+    "type": "string"
+  },
+  {
+    "default": "secret",
+    "immutable": true,
+    "path": "channels.msteams.authMode",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.msteams.certPath",
+    "type": "string"
+  },
+  {
+    "default": "public",
+    "immutable": true,
+    "path": "channels.msteams.cloud",
+    "type": "string"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "channels.msteams.enabled",
+    "type": "boolean"
+  },
+  {
+    "immutable": true,
+    "path": "channels.msteams.managedIdentityClientId",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.msteams.mediaAuthAllowHosts",
+    "type": "array"
+  },
+  {
+    "immutable": false,
+    "path": "channels.msteams.mediaProcessing",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "channels.msteams.mediaProcessing.analyzeImages",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "channels.msteams.mediaProcessing.describeVideos",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "channels.msteams.mediaProcessing.extractDocuments",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "channels.msteams.mediaProcessing.transcribeAudio",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "channels.msteams.mediaProcessing.understandLinks",
+    "type": "boolean"
+  },
+  {
+    "default": 21600000,
+    "immutable": true,
+    "path": "channels.msteams.missedInboundThresholdMs",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "channels.msteams.tenantId",
+    "type": "string"
+  },
+  {
+    "default": {
+      "allowFrom": [],
       "baseUrl": "http://127.0.0.1:8080",
       "enabled": false,
       "mediaProcessing": {
@@ -5551,7 +5697,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("diagn
       "enabled": true,
       "includeMessages": false,
       "includePrompt": true,
-      "includeSystem": true,
+      "includeSystem": false,
       "maxFileBytes": 52428800
     },
     "immutable": false,
@@ -5582,7 +5728,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("diagn
     "type": "boolean"
   },
   {
-    "default": true,
+    "default": false,
     "immutable": false,
     "path": "diagnostics.cacheTrace.includeSystem",
     "type": "boolean"
@@ -8822,6 +8968,14 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         },
         "webhookPath": "/webhooks/line"
       },
+      "msteams": {
+        "allowFrom": [],
+        "allowMode": "allowlist",
+        "authMode": "secret",
+        "cloud": "public",
+        "enabled": false,
+        "missedInboundThresholdMs": 21600000
+      },
       "signal": {
         "allowFrom": [],
         "baseUrl": "http://127.0.0.1:8080",
@@ -10033,6 +10187,152 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   {
     "default": {
       "allowFrom": [],
+      "allowMode": "allowlist",
+      "authMode": "secret",
+      "cloud": "public",
+      "enabled": false,
+      "missedInboundThresholdMs": 21600000
+    },
+    "immutable": true,
+    "path": "channels.msteams",
+    "type": "object"
+  },
+  {
+    "immutable": true,
+    "path": "channels.msteams.ackReaction",
+    "type": "object"
+  },
+  {
+    "default": "ðŸ‘€",
+    "immutable": true,
+    "path": "channels.msteams.ackReaction.emoji",
+    "type": "string"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "channels.msteams.ackReaction.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": [],
+    "immutable": true,
+    "path": "channels.msteams.allowFrom",
+    "type": "array"
+  },
+  {
+    "default": "allowlist",
+    "immutable": true,
+    "path": "channels.msteams.allowMode",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.msteams.appId",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.msteams.appPassword",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.msteams.appPassword.id",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.msteams.appPassword.provider",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.msteams.appPassword.source",
+    "type": "string"
+  },
+  {
+    "default": "secret",
+    "immutable": true,
+    "path": "channels.msteams.authMode",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.msteams.certPath",
+    "type": "string"
+  },
+  {
+    "default": "public",
+    "immutable": true,
+    "path": "channels.msteams.cloud",
+    "type": "string"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "channels.msteams.enabled",
+    "type": "boolean"
+  },
+  {
+    "immutable": true,
+    "path": "channels.msteams.managedIdentityClientId",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.msteams.mediaAuthAllowHosts",
+    "type": "array"
+  },
+  {
+    "immutable": false,
+    "path": "channels.msteams.mediaProcessing",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "channels.msteams.mediaProcessing.analyzeImages",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "channels.msteams.mediaProcessing.describeVideos",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "channels.msteams.mediaProcessing.extractDocuments",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "channels.msteams.mediaProcessing.transcribeAudio",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "channels.msteams.mediaProcessing.understandLinks",
+    "type": "boolean"
+  },
+  {
+    "default": 21600000,
+    "immutable": true,
+    "path": "channels.msteams.missedInboundThresholdMs",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "channels.msteams.tenantId",
+    "type": "string"
+  },
+  {
+    "default": {
+      "allowFrom": [],
       "baseUrl": "http://127.0.0.1:8080",
       "enabled": false,
       "mediaProcessing": {
@@ -11148,7 +11448,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "enabled": true,
         "includeMessages": false,
         "includePrompt": true,
-        "includeSystem": true,
+        "includeSystem": false,
         "maxFileBytes": 52428800
       },
       "configAudit": {
@@ -11174,7 +11474,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       "enabled": true,
       "includeMessages": false,
       "includePrompt": true,
-      "includeSystem": true,
+      "includeSystem": false,
       "maxFileBytes": 52428800
     },
     "immutable": false,
@@ -11205,7 +11505,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "boolean"
   },
   {
-    "default": true,
+    "default": false,
     "immutable": false,
     "path": "diagnostics.cacheTrace.includeSystem",
     "type": "boolean"
@@ -21780,6 +22080,172 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("cha
       ],
       "type": "object"
     },
+    "msteams": {
+      "additionalProperties": false,
+      "default": {
+        "allowFrom": [],
+        "allowMode": "allowlist",
+        "authMode": "secret",
+        "cloud": "public",
+        "enabled": false,
+        "missedInboundThresholdMs": 21600000
+      },
+      "properties": {
+        "ackReaction": {
+          "additionalProperties": false,
+          "properties": {
+            "emoji": {
+              "default": "ðŸ‘€",
+              "type": "string"
+            },
+            "enabled": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "enabled",
+            "emoji"
+          ],
+          "type": "object"
+        },
+        "allowFrom": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allowMode": {
+          "default": "allowlist",
+          "enum": [
+            "allowlist",
+            "open"
+          ],
+          "type": "string"
+        },
+        "appId": {
+          "type": "string"
+        },
+        "appPassword": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "provider": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "source": {
+                  "enum": [
+                    "env",
+                    "file",
+                    "exec"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source",
+                "provider",
+                "id"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "authMode": {
+          "default": "secret",
+          "enum": [
+            "secret",
+            "certificate",
+            "managedIdentity"
+          ],
+          "type": "string"
+        },
+        "certPath": {
+          "type": "string"
+        },
+        "cloud": {
+          "default": "public",
+          "enum": [
+            "public"
+          ],
+          "type": "string"
+        },
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "managedIdentityClientId": {
+          "type": "string"
+        },
+        "mediaAuthAllowHosts": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "mediaProcessing": {
+          "additionalProperties": false,
+          "properties": {
+            "analyzeImages": {
+              "default": true,
+              "type": "boolean"
+            },
+            "describeVideos": {
+              "default": true,
+              "type": "boolean"
+            },
+            "extractDocuments": {
+              "default": true,
+              "type": "boolean"
+            },
+            "transcribeAudio": {
+              "default": true,
+              "type": "boolean"
+            },
+            "understandLinks": {
+              "default": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "transcribeAudio",
+            "analyzeImages",
+            "describeVideos",
+            "extractDocuments",
+            "understandLinks"
+          ],
+          "type": "object"
+        },
+        "missedInboundThresholdMs": {
+          "default": 21600000,
+          "maximum": 9007199254740991,
+          "minimum": 60000,
+          "type": "integer"
+        },
+        "tenantId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "enabled",
+        "authMode",
+        "allowFrom",
+        "allowMode",
+        "cloud",
+        "missedInboundThresholdMs"
+      ],
+      "type": "object"
+    },
     "signal": {
       "additionalProperties": false,
       "default": {
@@ -22719,6 +23185,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("cha
     "line",
     "irc",
     "email",
+    "msteams",
     "healthCheck"
   ],
   "type": "object"
@@ -22965,7 +23432,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dia
       "enabled": true,
       "includeMessages": false,
       "includePrompt": true,
-      "includeSystem": true,
+      "includeSystem": false,
       "maxFileBytes": 52428800
     },
     "configAudit": {
@@ -22989,7 +23456,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dia
         "enabled": true,
         "includeMessages": false,
         "includePrompt": true,
-        "includeSystem": true,
+        "includeSystem": false,
         "maxFileBytes": 52428800
       },
       "properties": {
@@ -23009,7 +23476,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dia
           "type": "boolean"
         },
         "includeSystem": {
-          "default": true,
+          "default": false,
           "type": "boolean"
         },
         "maxFileBytes": {
@@ -31642,6 +32109,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           },
           "webhookPath": "/webhooks/line"
         },
+        "msteams": {
+          "allowFrom": [],
+          "allowMode": "allowlist",
+          "authMode": "secret",
+          "cloud": "public",
+          "enabled": false,
+          "missedInboundThresholdMs": 21600000
+        },
         "signal": {
           "allowFrom": [],
           "baseUrl": "http://127.0.0.1:8080",
@@ -33189,6 +33664,172 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           ],
           "type": "object"
         },
+        "msteams": {
+          "additionalProperties": false,
+          "default": {
+            "allowFrom": [],
+            "allowMode": "allowlist",
+            "authMode": "secret",
+            "cloud": "public",
+            "enabled": false,
+            "missedInboundThresholdMs": 21600000
+          },
+          "properties": {
+            "ackReaction": {
+              "additionalProperties": false,
+              "properties": {
+                "emoji": {
+                  "default": "ðŸ‘€",
+                  "type": "string"
+                },
+                "enabled": {
+                  "default": false,
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "enabled",
+                "emoji"
+              ],
+              "type": "object"
+            },
+            "allowFrom": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "allowMode": {
+              "default": "allowlist",
+              "enum": [
+                "allowlist",
+                "open"
+              ],
+              "type": "string"
+            },
+            "appId": {
+              "type": "string"
+            },
+            "appPassword": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "provider": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "source": {
+                      "enum": [
+                        "env",
+                        "file",
+                        "exec"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "source",
+                    "provider",
+                    "id"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "authMode": {
+              "default": "secret",
+              "enum": [
+                "secret",
+                "certificate",
+                "managedIdentity"
+              ],
+              "type": "string"
+            },
+            "certPath": {
+              "type": "string"
+            },
+            "cloud": {
+              "default": "public",
+              "enum": [
+                "public"
+              ],
+              "type": "string"
+            },
+            "enabled": {
+              "default": false,
+              "type": "boolean"
+            },
+            "managedIdentityClientId": {
+              "type": "string"
+            },
+            "mediaAuthAllowHosts": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "mediaProcessing": {
+              "additionalProperties": false,
+              "properties": {
+                "analyzeImages": {
+                  "default": true,
+                  "type": "boolean"
+                },
+                "describeVideos": {
+                  "default": true,
+                  "type": "boolean"
+                },
+                "extractDocuments": {
+                  "default": true,
+                  "type": "boolean"
+                },
+                "transcribeAudio": {
+                  "default": true,
+                  "type": "boolean"
+                },
+                "understandLinks": {
+                  "default": true,
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "transcribeAudio",
+                "analyzeImages",
+                "describeVideos",
+                "extractDocuments",
+                "understandLinks"
+              ],
+              "type": "object"
+            },
+            "missedInboundThresholdMs": {
+              "default": 21600000,
+              "maximum": 9007199254740991,
+              "minimum": 60000,
+              "type": "integer"
+            },
+            "tenantId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "enabled",
+            "authMode",
+            "allowFrom",
+            "allowMode",
+            "cloud",
+            "missedInboundThresholdMs"
+          ],
+          "type": "object"
+        },
         "signal": {
           "additionalProperties": false,
           "default": {
@@ -34128,6 +34769,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "line",
         "irc",
         "email",
+        "msteams",
         "healthCheck"
       ],
       "type": "object"
@@ -34617,7 +35259,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "enabled": true,
           "includeMessages": false,
           "includePrompt": true,
-          "includeSystem": true,
+          "includeSystem": false,
           "maxFileBytes": 52428800
         },
         "configAudit": {
@@ -34641,7 +35283,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "enabled": true,
             "includeMessages": false,
             "includePrompt": true,
-            "includeSystem": true,
+            "includeSystem": false,
             "maxFileBytes": 52428800
           },
           "properties": {
@@ -34661,7 +35303,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "type": "boolean"
             },
             "includeSystem": {
-              "default": true,
+              "default": false,
               "type": "boolean"
             },
             "maxFileBytes": {

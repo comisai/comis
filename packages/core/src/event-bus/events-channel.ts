@@ -342,7 +342,11 @@ export interface ChannelEvents {
     timestamp: number;
   };
 
-  /** Emitted when delivery is aborted (e.g., via AbortSignal). */
+  /** Emitted when delivery is aborted (e.g., via AbortSignal). Also emitted by
+   *  the orchestrator delivery stage when an already-aborted execution signal
+   *  made the block pacer skip EVERY block without reaching deliverToChannel —
+   *  the trajectory otherwise records nothing for a turn whose reply was never
+   *  sent (`chunksDelivered: 0`, `reason` = the abort reason). */
   "delivery:aborted": {
     channelId: string;
     channelType: string;
@@ -351,6 +355,34 @@ export interface ChannelEvents {
     totalChunks: number;
     durationMs: number;
     origin: string;
+    timestamp: number;
+  };
+
+  /**
+   * The per-turn activity coordinator dispatched `renderer.finalize` — the
+   * decision that paints the activity surface's TERMINAL state (the kept
+   * "❌ {errorKind}" pill, the deleted scaffold, the silent no-op). Content-free:
+   * a closed outcome kind + the closed ErrorKind + a fixed named-constant
+   * `reason` + the strategy name. `reclassified` marks the failed-event
+   * reclassify (a success outcome flipped to failure because a tool step
+   * failed mid-turn) so a stale-looking pill label is explainable from the
+   * trajectory alone instead of coordinator source-reading.
+   */
+  "activity:turn_finalized": {
+    sessionKey: string;
+    agentId: string;
+    channelType: string;
+    /** The renderer strategy that painted the surface (EditPlace / AppendOnly / …). */
+    strategy: string;
+    /** The EFFECTIVE outcome kind dispatched to the renderer. */
+    outcome: "success" | "success_with_recovered_failures" | "failure" | "silent" | "aborted";
+    errorKind?: string;
+    /** The fixed one-line human reason for a resource abort, when present. */
+    reason?: string;
+    /** True when a non-failure outcome was flipped to failure by an observed failed event. */
+    reclassified: boolean;
+    /** How many observed events had status "failed" during the turn. */
+    failedEventCount: number;
     timestamp: number;
   };
 
@@ -450,6 +482,38 @@ export interface ChannelEvents {
     channelType: string;
     state: string;
     responseTimeMs: number;
+    timestamp: number;
+  };
+
+  /**
+   * A webhook channel has received no inbound activity for longer than its
+   * configured missed-inbound threshold. Raised by the daemon liveness timer
+   * (independent of the stale-reap-exempt health monitor). Content-free —
+   * labels, counts, and timestamps only, never message bodies.
+   */
+  "channel:inbound_silent": {
+    channelType: string;
+    lastInboundAt: number | null;
+    silentForMs: number;
+    thresholdMs: number;
+    timestamp: number;
+  };
+
+  /**
+   * An inbound activity was REJECTED at a channel gateway ingress auth gate
+   * (a missing bearer pre-gate, or a signed-token validation failure) before
+   * any body parse or adapter dispatch. Raised by the ingress through an
+   * injected content-free hook so a forged / expired / wrong-audience /
+   * missing-token FLOOD against the public messaging endpoint is COUNTABLE by
+   * the fleet lens instead of living only in a raw WARN. Content-free by
+   * construction: the closed `reason` class + the channel label ONLY — never
+   * the bearer token, the Authorization header, or the request body (§2.7 and
+   * the opaque-401 contract: the forged material is counted without being
+   * echoed). Daemon-global — no agentId/sessionKey.
+   */
+  "channel:ingress_auth_rejected": {
+    channelType: string;
+    reason: "missing_bearer" | "invalid_token";
     timestamp: number;
   };
 

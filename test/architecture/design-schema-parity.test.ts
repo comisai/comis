@@ -53,7 +53,7 @@ const EXPECTED_DEFAULTS = {
     maxFileBytes: 50 * 1024 * 1024,
     includeMessages: false,
     includePrompt: true,
-    includeSystem: true,
+    includeSystem: false,
   },
   configAudit: {
     enabled: true,
@@ -99,7 +99,7 @@ describe("design-schema-parity for diagnostics.*", () => {
     );
   });
 
-  it("cacheTrace_includeSystem_default_true_in_both_design_and_schema", () => {
+  it("cacheTrace_includeSystem_default_false_in_both_design_and_schema", () => {
     expect(diag.cacheTrace.includeSystem).toBe(
       EXPECTED_DEFAULTS.cacheTrace.includeSystem,
     );

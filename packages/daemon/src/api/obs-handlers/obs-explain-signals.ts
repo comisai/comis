@@ -211,6 +211,11 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
         resultDigest: asString(data.resultDigest) ?? fingerprint(errorText ?? ""),
         resultBytes,
         errorPreview,
+        // The bounded+redacted arguments the failed call was invoked with
+        // (already sanitized at the emit) — "what did the failed call attempt?"
+        ...(data.argsPreview !== null && typeof data.argsPreview === "object" && !Array.isArray(data.argsPreview)
+          ? { argsPreview: data.argsPreview as Record<string, unknown> }
+          : {}),
       });
       return;
     }
@@ -350,6 +355,72 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
         count: prev.count + 1,
         estCostUsd: prev.estCostUsd + estCostUsd,
       });
+      return;
+    }
+    case "activity.turn_finalized": {
+      // The terminal user-surface state (LAST wins — the final turn's
+      // finalize explains what the chat shows now). Closed labels only.
+      const strategy = asString(data.strategy);
+      const outcome = asString(data.outcome);
+      if (strategy !== undefined && outcome !== undefined) {
+        acc.turnFinalized = {
+          strategy,
+          outcome,
+          ...(asString(data.errorKind) !== undefined ? { errorKind: asString(data.errorKind) } : {}),
+          ...(asString(data.reason) !== undefined ? { reason: asString(data.reason) } : {}),
+          reclassified: data.reclassified === true,
+        };
+      }
+      return;
+    }
+    case "delivery.aborted": {
+      // Blocks an abort left unsent — the "reply never reached the user"
+      // ledger (no delivery.dispatched fires for these).
+      const total = asNumber(data.totalChunks) ?? 0;
+      const delivered = asNumber(data.chunksDelivered) ?? 0;
+      const prev = acc.deliveryAborts ?? { events: 0, chunksNotSent: 0 };
+      acc.deliveryAborts = {
+        events: prev.events + 1,
+        chunksNotSent: prev.chunksNotSent + Math.max(0, total - delivered),
+      };
+      return;
+    }
+    case "execution.recovery_attempted": {
+      // Fold the model re-entry recoveries (silent_retry / lkw_fallback /
+      // continuation_nudge) → counts by reason + a succeeded tally.
+      const reason = asString(data.reason) ?? "unknown";
+      const prev = acc.recoveries ?? { total: 0, succeeded: 0, byReason: {} };
+      prev.total += 1;
+      if (data.succeeded === true) prev.succeeded += 1;
+      // eslint-disable-next-line security/detect-object-injection -- reason is a closed enum from the recovery emitter
+      prev.byReason[reason] = (prev.byReason[reason] ?? 0) + 1;
+      acc.recoveries = prev;
+      return;
+    }
+    case "session.summary": {
+      // One summary record per EXECUTION, each carrying that execution's own
+      // costUsd — Σ them for the session cost. The sessionEnd rollup is
+      // overwritten per execution (last write wins), so it holds only the
+      // FINAL execution's cost; the assembler prefers this ledger sum.
+      const c = asNumber(data.costUsd);
+      if (c !== undefined) acc.summaryCostUsd = (acc.summaryCostUsd ?? 0) + c;
+      // Σ the per-execution turn counts — the sessionEnd rollup's turnCount is
+      // last-write-wins (the final execution's only), so a multi-execution
+      // session under-reported (the incident's 11-turn session showed 1).
+      const t = asNumber(data.turnCount);
+      if (t !== undefined) acc.summaryTurnCount = (acc.summaryTurnCount ?? 0) + t;
+      return;
+    }
+    case "model.completed": {
+      // The per-LLM-call token ledger: Σ the four token fields across the
+      // session's completions. Source of cost.totalTokens and cacheReadRatio
+      // (no rollup writer ever populates a cache ratio).
+      const t = acc.modelTokens ?? { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 };
+      t.input += asNumber(data.inputTokens) ?? 0;
+      t.output += asNumber(data.outputTokens) ?? 0;
+      t.cacheRead += asNumber(data.cacheReadTokens) ?? 0;
+      t.cacheCreation += asNumber(data.cacheCreationTokens) ?? 0;
+      acc.modelTokens = t;
       return;
     }
     // The spend kill-switch breach (LAST wins) — delegated to a fold helper (learning-fold mold) for the subdir cap.
@@ -605,6 +676,12 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     // The per-ROOT autonomy.budget limb that tripped (token/wall-clock/$),
     // with its numbers in their unit — lets the spend verdict name the exact knob.
     ...(acc.perRootBudget !== undefined ? { perRootBudget: acc.perRootBudget } : {}),
+    ...(acc.summaryCostUsd !== undefined ? { summaryCostUsd: acc.summaryCostUsd } : {}),
+    ...(acc.summaryTurnCount !== undefined ? { summaryTurnCount: acc.summaryTurnCount } : {}),
+    ...(acc.modelTokens !== undefined ? { modelTokens: acc.modelTokens } : {}),
+    ...(acc.turnFinalized !== undefined ? { turnFinalized: acc.turnFinalized } : {}),
+    ...(acc.deliveryAborts !== undefined ? { deliveryAborts: acc.deliveryAborts } : {}),
+    ...(acc.recoveries !== undefined ? { recoveries: acc.recoveries } : {}),
     ...(acc.abortReason !== undefined ? { abortReason: acc.abortReason } : {}),
     // Surface the turn span ONLY when >1 — it flags the whole-session toolStats
     // as cumulative across N turns (the trajectory is append-only across severs), so a

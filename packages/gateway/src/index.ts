@@ -42,6 +42,11 @@ export { WsConnectionManager } from "./rpc/ws-handler.js";
 export { createMappedWebhookEndpoint } from "./webhook/webhook-endpoint.js";
 export { getPresetMappings } from "./webhook/webhook-presets.js";
 
+// Channel ingress -- Microsoft Teams inbound activities (mounted per-channel
+// by the daemon; framework-agnostic over injected validator + adapter driver)
+export { createMsTeamsIngress } from "./channel-ingress/msteams-ingress.js";
+export type { MsTeamsIngressDeps } from "./channel-ingress/msteams-ingress.js";
+
 // OAuth callback route exports
 export {
   createOAuthCallbackRoute,

@@ -1814,8 +1814,10 @@ describe("PiExecutor", () => {
 
       const result = await executor.execute(testMessage, testSessionKey);
 
-      // SDK session stats now populate cacheRead/cacheWrite alongside bridge values
-      expect(result.tokensUsed).toEqual({ input: 100, output: 50, total: 150, cacheRead: 0, cacheWrite: 0 });
+      // tokensUsed is the PER-EXECUTION bridge total (scope-consistent with
+      // cost); the SDK's CUMULATIVE session stats ride sessionTokensUsed.
+      expect(result.tokensUsed).toEqual({ input: 100, output: 50, total: 150 });
+      expect(result.sessionTokensUsed).toEqual({ input: 100, output: 50, total: 150, cacheRead: 0, cacheWrite: 0 });
       expect(result.cost).toEqual({ total: 0.01 });
       expect(result.stepsExecuted).toBe(2);
       expect(result.llmCalls).toBe(1);
@@ -6473,6 +6475,27 @@ describe("populated runtimeSnapshot.skills", () => {
       { id: "fileops", version: "1.0" },
       { id: "search" },
     ]);
+  });
+
+  it("stamps deps.appVersion into runtimeSnapshot.harness.version (the trajectory build stamp)", async () => {
+    // trace.metadata stamped version:"unknown", so triage could not confirm
+    // which build produced an artifact (observed live — HEAD had diverged from
+    // the deployed release). Thread the daemon version through.
+    const deps = createMockDeps({ appVersion: "9.9.9" });
+    const executor = createPiExecutor(testConfig, deps);
+    await executor.execute(testMessage, testSessionKey);
+
+    const bridgeCall = (createPiEventBridge as Mock).mock.calls[0]![0]!;
+    expect(bridgeCall.runtimeSnapshot.harness.version).toBe("9.9.9");
+  });
+
+  it("falls back to \"unknown\" harness.version when appVersion is absent (existing callers unchanged)", async () => {
+    const deps = createMockDeps();
+    const executor = createPiExecutor(testConfig, deps);
+    await executor.execute(testMessage, testSessionKey);
+
+    const bridgeCall = (createPiEventBridge as Mock).mock.calls[0]![0]!;
+    expect(bridgeCall.runtimeSnapshot.harness.version).toBe("unknown");
   });
 
   it("skillRegistry_without_getSnapshot_keeps_skills_empty", async () => {

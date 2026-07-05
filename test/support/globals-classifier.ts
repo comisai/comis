@@ -89,6 +89,12 @@ const BOOTSTRAP_PATH_PATTERNS: readonly RegExp[] = [
   // daemon.ts does (mirrors daemon.ts:1170; the single env read is also guarded by
   // an inline no-restricted-syntax eslint-disable). Bootstrap, not a port shortcut.
   /packages\/daemon\/src\/wiring\/setup-logging\.ts$/,
+  // The env scrub/merge helper EXTRACTED from daemon.ts (same bootstrap role): it
+  // snapshots, overlays store-wins, and scrubs process.env BEFORE the
+  // SecretManager/EnvPort seam exists — the stage-1 scrub is the entire reason
+  // process.env is touched directly here (each mutation carries an inline
+  // no-restricted-syntax eslint-disable). Bootstrap, not a port shortcut.
+  /packages\/daemon\/src\/wiring\/env-scrub\.ts$/,
   /packages\/cli\/src\/cli\.ts$/,
   /packages\/cli\/src\/index\.ts$/,
   /packages\/cli\/src\/commands\/[^/]+\.ts$/,

@@ -336,6 +336,24 @@ describe("emitSpendAbort", () => {
     expect(String(msg)).toMatch(/per-root/i);
   });
 
+  it("carries the tripped limb + numbers on the per-root WARN line itself (counts, content-free)", () => {
+    // The WARN used to be limb-less: a raw-log reader saw "budget exceeded"
+    // with no which-limb/by-how-much — the numbers lived only on the event for
+    // explain. They are counts (content-free), so the log line carries them too.
+    const eventBus = makeEventBus();
+    const logger = makeLogger();
+    emitSpendAbort(
+      { eventBus, sessionKey: testSessionKey, agentId: "agent-a", logger },
+      "per_root",
+      { limb: "aggregateUsd", spent: 2.04, cap: 2, unit: "usd" },
+    );
+    const [obj] = (logger.warn as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(obj.limb).toBe("aggregateUsd");
+    expect(obj.spent).toBe(2.04);
+    expect(obj.cap).toBe(2);
+    expect(obj.unit).toBe("usd");
+  });
+
   it("names observability.spend for the DEFAULT (ceiling) source — regression guard", () => {
     const eventBus = makeEventBus();
     const logger = makeLogger();

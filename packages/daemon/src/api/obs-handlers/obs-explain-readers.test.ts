@@ -393,7 +393,7 @@ describe("makeRealReader.readSessionMetadata", () => {
       realMetadataPath(dataDir),
       JSON.stringify({
         sessionId: SESSION_ID,
-        sessionCostUsd: 1.320669,
+        executionCostUsd: 1.320669,
         sessionEnd: { type: "session_end", endReason: "completed_with_tool_errors", degraded: true, costUsd: 1.320669 },
       }),
       "utf-8",
@@ -401,7 +401,7 @@ describe("makeRealReader.readSessionMetadata", () => {
     const reader = makeRealReader(dataDir);
     const meta = await reader.readSessionMetadata(SESSION_KEY);
     expect(meta).not.toBeNull();
-    expect(meta!.sessionCostUsd).toBeCloseTo(1.320669, 4);
+    expect(meta!.executionCostUsd).toBeCloseTo(1.320669, 4);
     expect((meta!.sessionEnd as Record<string, unknown>).degraded).toBe(true);
   });
 

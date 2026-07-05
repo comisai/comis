@@ -77,7 +77,7 @@ export type WizardError = {
 
 /** Per-channel collected credentials. */
 export type ChannelConfig = {
-  type: "telegram" | "discord" | "slack" | "whatsapp" | "signal" | "irc" | "line";
+  type: "telegram" | "discord" | "slack" | "whatsapp" | "signal" | "irc" | "line" | "msteams";
   botToken?: string;
   apiKey?: string;
   appToken?: string;
@@ -85,6 +85,12 @@ export type ChannelConfig = {
   guildIds?: string[];
   allowFrom?: string[];
   validated?: boolean;
+  // Microsoft Teams: bot app-registration credentials. appId and tenantId are
+  // non-secret config; appPassword is the secret (persisted as a ${VAR} ref).
+  appId?: string;
+  appPassword?: string;
+  tenantId?: string;
+  authMode?: "secret" | "certificate" | "managedIdentity";
 };
 
 /** Per-tool-provider collected credentials. */
@@ -287,6 +293,7 @@ export const SUPPORTED_CHANNELS: readonly SupportedChannel[] = [
   { type: "signal", label: "Signal", credentialHint: "Requires signal-cli" },
   { type: "irc", label: "IRC", credentialHint: "No credentials needed" },
   { type: "line", label: "LINE", credentialHint: "Channel token + secret required" },
+  { type: "msteams", label: "Microsoft Teams", credentialHint: "App ID + password + tenant ID" },
 ] as const;
 
 // ---------- Environment Key Maps ----------
@@ -524,4 +531,5 @@ export const CHANNEL_ENV_KEYS: Record<string, string[]> = {
   slack: ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET"],
   whatsapp: ["WHATSAPP_ACCESS_TOKEN", "WHATSAPP_VERIFY_TOKEN"],
   line: ["LINE_CHANNEL_ACCESS_TOKEN", "LINE_CHANNEL_SECRET"],
+  msteams: ["MSTEAMS_APP_PASSWORD"],
 };

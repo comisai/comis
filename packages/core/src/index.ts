@@ -27,4 +27,6 @@ export * from "./api-contracts/index.js";
 // (@comis/memory adapters, @comis/daemon wiring) can import them.
 export * from "./ports/durable-run.js";
 export * from "./ports/outward-send-ledger.js";
+export * from "./ports/msteams-conversation-store.js";
+export * from "./domain/msteams-conversation-reference.js";
 export * from "./domain/durable-run.js";

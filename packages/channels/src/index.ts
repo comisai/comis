@@ -152,6 +152,30 @@ export { createImapLifecycle } from "./email/imap-lifecycle.js";
 export type { ImapLifecycleOpts, ImapLifecycleHandle } from "./email/imap-lifecycle.js";
 export { buildThreadingHeaders, extractThreadId } from "./email/threading.js";
 
+// Microsoft Teams adapter (route-driven, text round-trip)
+export { createMsTeamsAdapter } from "./msteams/msteams-adapter.js";
+export type { MsTeamsAdapterDeps, MsTeamsAdapterHandle } from "./msteams/msteams-adapter.js";
+export { createMsTeamsPlugin } from "./msteams/msteams-plugin.js";
+export type { MsTeamsPluginHandle } from "./msteams/msteams-plugin.js";
+
+// Microsoft Teams utilities
+export { mapMsTeamsActivityToNormalized } from "./msteams/message-mapper.js";
+export type { TeamsActivity } from "./msteams/message-mapper.js";
+export {
+  validateActivityJwt,
+  createActivityJwtValidator,
+  createLocalActivityJwtValidator,
+  createConnectorTokenProvider,
+  createConnectorTokenProviderFor,
+} from "./msteams/msteams-auth.js";
+export type {
+  ConnectorAuthMode,
+  ConnectorTokenDeps,
+  ConnectorTokenProvider,
+} from "./msteams/msteams-auth.js";
+export { validateMsTeamsCredentials } from "./msteams/credential-validator.js";
+export { classifyMsTeamsError } from "./msteams/errors.js";
+
 // Echo adapter (testing)
 export { EchoChannelAdapter } from "./echo/echo-adapter.js";
 export type { EchoAdapterOptions } from "./echo/echo-adapter.js";
@@ -354,6 +378,7 @@ export type { EditPlaceDeps } from "./shared/strategies/edit-place.js";
 export { createTelegramActivityRenderer, classifyTelegramError } from "./telegram/telegram-activity.js";
 export { createDiscordActivityRenderer } from "./discord/discord-activity.js";
 export { createSlackActivityRenderer } from "./slack/slack-activity.js";
+export { createMSTeamsActivityRenderer } from "./msteams/msteams-activity.js";
 export { createWhatsAppActivityRenderer } from "./whatsapp/whatsapp-activity.js";
 export { createEchoActivityRenderer } from "./echo/echo-activity.js";
 // Non-EditPlace strategy factories — wired by

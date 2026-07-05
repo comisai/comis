@@ -125,6 +125,32 @@ describe("composite-resolver / createCompositeResolver", () => {
     );
   });
 
+  it("routes msteams-file:// to the declaring resolver, not the https SSRF fallback", async () => {
+    // A per-platform resolver declaring the `msteams-file` scheme auto-registers via
+    // the composite's scheme map — no code change needed here. This pins that a
+    // platform-scheme attachment reaches its resolver and is NEVER handed to the
+    // generic http/https SSRF fetcher, and that declaring `schemes:["https"]` would
+    // be the wrong shape (it would hijack Discord/Signal CDN URLs).
+    const teamsResolver = makeResolver(["msteams-file"]);
+    const deps = mockDeps({ resolvers: [teamsResolver] });
+    const composite = createCompositeResolver(deps);
+
+    const result = await composite.resolve(makeAttachment("msteams-file://eyJ0ZW5hbnQiOiJ4In0"));
+
+    expect(result.ok).toBe(true);
+    expect(teamsResolver.resolve).toHaveBeenCalledWith(
+      expect.objectContaining({ url: "msteams-file://eyJ0ZW5hbnQiOiJ4In0" }),
+    );
+    // Must NOT have fallen through to the generic SSRF fetcher.
+    expect(deps.ssrfFetcher.fetch).not.toHaveBeenCalled();
+
+    // Routing log shows the platform resolver was found for this scheme.
+    expect(deps.logger.debug).toHaveBeenCalledWith(
+      { scheme: "msteams-file", resolverFound: true, attachmentType: "file", attachmentSizeBytes: null },
+      "CompositeResolver routing",
+    );
+  });
+
   it("falls back to SSRF fetcher for https:// URLs with no registered resolver", async () => {
     const deps = mockDeps(); // No resolvers registered
     const composite = createCompositeResolver(deps);

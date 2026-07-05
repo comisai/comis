@@ -53,8 +53,8 @@ configuration.
 ### At the Gateway
 
 Comis exposes its HTTP, JSON-RPC, and WebSocket endpoints through a single
-gateway. Two layers protect that perimeter before any request even reaches the
-input checkpoint.
+gateway. These layers protect that perimeter before any request even reaches
+the input checkpoint.
 
 <AccordionGroup>
   <Accordion title="Bearer Token Authentication" icon="key-skeleton">
@@ -89,6 +89,33 @@ input checkpoint.
     **Do I need to configure it?** Optional but recommended for any remote
     deployment. Set `gateway.tls.certPath`, `keyPath`, and `caPath`. See
     [Hardening](/security/hardening) for the full setup.
+  </Accordion>
+
+  <Accordion title="Microsoft Teams Public Endpoint" icon="microsoft">
+    **What it does:** Microsoft Teams is the one channel that must receive
+    messages on a public HTTPS endpoint -- the Bot Framework Connector service
+    pushes activities to `/channels/msteams/api/messages` on your gateway. The
+    route is mounted **only** when the channel is enabled
+    (`channels.msteams.enabled: true`; off by default), rides the gateway's
+    existing TLS surface, and every inbound request is validated against the Bot
+    Framework signing keys before it reaches your agent.
+
+    **Why it matters:** A public endpoint is an exposed surface. Requiring the
+    channel to be explicitly enabled, validating every inbound request, and
+    terminating TLS at the gateway (or a reverse proxy / Tailscale Funnel in
+    front of it) keeps that surface closed by default and authenticated when
+    open. A webhook channel is also exempt from the health monitor's automatic
+    stale-reap, so a silently broken endpoint would otherwise report healthy
+    forever -- a bot that quietly stops receiving messages with no error.
+
+    **Do I need to configure it?** Yes if you enable Teams. Expose the gateway
+    over HTTPS (a reverse proxy or Tailscale Funnel is recommended), keep
+    `channels.msteams.enabled` off until the endpoint is wired, and rely on the
+    `comis doctor` Teams probes plus the missed-inbound alert
+    (`missedInboundThresholdMs`, default 6 hours) to catch a dead ingress -- it
+    surfaces as a `comis fleet` health signal. See the
+    [Microsoft Teams setup guide](/channels/msteams) for the full exposure and
+    liveness walkthrough.
   </Accordion>
 </AccordionGroup>
 

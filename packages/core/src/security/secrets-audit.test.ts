@@ -289,6 +289,23 @@ describe("scanEnvForSecrets", () => {
     const findings = scanEnvForSecrets("/.env", env);
     expect(findings).toHaveLength(0);
   });
+
+  it("names msteams as the provider for MSTEAMS_APP_PASSWORD instead of the generic unknown fallthrough", () => {
+    const env = {
+      MSTEAMS_APP_PASSWORD: "app-password-value",
+    };
+
+    const findings = scanEnvForSecrets("/home/user/.comis/.env", env);
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0].code).toBe("KNOWN_PROVIDER_ENV");
+    expect(findings[0].jsonPath).toBe("MSTEAMS_APP_PASSWORD");
+    // First-match-wins: the specific MSTEAMS_APP_PASSWORD pattern must precede
+    // the generic /_PASSWORD$/ fallthrough, so the audit names the real provider
+    // rather than mis-attributing the secret to "unknown".
+    expect(findings[0].message).toContain("msteams");
+    expect(findings[0].message).not.toContain("unknown");
+  });
 });
 
 // ── auditSecrets ───────────────────────────────────────────────────

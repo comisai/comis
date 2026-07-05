@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, MsTeamsConversationStorePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, EnvPort, TimerPort, ActivityStreamPort } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
@@ -58,6 +58,11 @@ export interface ChannelsResult {
    *  UUID resolver to translate daemon UUIDs back to native ids before
    *  calling the channel adapter). */
   channelPlugins: Map<string, ChannelPluginPort>;
+  /** Microsoft Teams inbound ingress sub-app, built by the adapter bootstrap
+   *  when the channel is enabled with valid credentials. The composition root
+   *  threads it into the gateway deps so `/channels/msteams` mounts only when a
+   *  caller-backed ingress exists. Undefined when the channel is disabled. */
+  msTeamsIngress?: import("hono").Hono;
   /** The command queue instance for parent session TTL extension during graph execution. */
   commandQueue?: CommandQueue;
   /** DeliveryService constructed once at the daemon composition root. Threaded
@@ -96,6 +101,12 @@ export interface ChannelsDeps {
   /** System timers (composition root). Threaded to buildActivityRenderers so the
    *  EditPlace renderer debounces edits via TimerPort (no raw setTimeout). */
   timers: TimerPort;
+  /** Live composition-root EnvPort. Threaded through bootstrapAdapters into
+   *  createMsTeamsPlugin so the managed-identity token path reads the App-Service
+   *  IDENTITY_ENDPOINT/IDENTITY_HEADER live per mint (they rotate). Absent → the
+   *  managed-identity header path falls back to no env (secret/certificate modes
+   *  are unaffected). */
+  env?: EnvPort;
   /** The orchestrator-facing redacted activity stream port (the
    *  setupObservability ActivityStream). Threaded into the inbound
    *  coordinatorFactory built in buildAndStartChannelManager as its
@@ -228,6 +239,12 @@ export interface ChannelsDeps {
   /** Mental-model store (skills) — forwarded to the __REFLECT__ cron path (runReflection get/admit).
    *  Built in setup-memory on the shared db; port TYPE only (the agent↛memory closed-graph cut). */
   learnedSkillStore?: MentalModelStorePort;
+  /** Microsoft Teams conversation-reference store — constructed once on the shared
+   *  memory.db and forwarded through bootstrapAdapters into createMsTeamsPlugin so
+   *  every inbound captures its routing tuple and a proactive send (cron/heartbeat)
+   *  recovers it. Injected as the @comis/core port TYPE (no SQLite dep in channels).
+   *  Absent → capture is skipped and a proactive Teams send errs. */
+  msTeamsConversationStore?: MsTeamsConversationStorePort;
   /** Default tenant ID for memory storage. */
   tenantId?: string;
   /** Embedding queue for new memory entries (optional). */
@@ -352,8 +369,19 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     recordOutboundMessage: deps.recordOutboundMessage,
   });
 
-  // Bootstrap enabled channel adapters from config
-  const { adaptersByType, tgPlugin, linePlugin, channelPlugins } = await bootstrapAdapters({ container, channelsLogger });
+  // Bootstrap enabled channel adapters from config. The Teams conversation store
+  // + the daemon TimerPort are injected into createMsTeamsPlugin here (both are
+  // optional @comis/core-port seams on the adapter): capture + proactive recovery
+  // + the typing keepalive.
+  const { adaptersByType, tgPlugin, linePlugin, channelPlugins, msTeamsIngress, msTeamsPlugin } = await bootstrapAdapters({
+    container,
+    channelsLogger,
+    msTeamsConversationStore: deps.msTeamsConversationStore,
+    timer: deps.timers,
+    // Live EnvPort → the managed-identity App-Service header path reads
+    // IDENTITY_ENDPOINT/IDENTITY_HEADER per mint (they rotate).
+    env: deps.env,
+  });
 
   // Assemble media pipeline (resolvers, preprocessor, preflight)
   const {
@@ -367,6 +395,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     adaptersByType,
     tgPlugin,
     linePlugin,
+    msTeamsPlugin,
     ssrfFetcher,
     linkRunner,
     transcriber,
@@ -473,6 +502,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     resolveAttachment: resolveAttachmentByUrl,
     lifecycleReactors,
     channelPlugins,
+    msTeamsIngress,
     commandQueue,
     deliveryService,
   };

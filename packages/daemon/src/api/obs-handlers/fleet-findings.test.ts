@@ -898,6 +898,80 @@ describe("buildFindings — node_budget_exceeded finding", () => {
 // degradation; the multilingual advisory (read from the latest row) is
 // severity-independent and must keep firing.
 // ---------------------------------------------------------------------------
+describe("buildFindings — health_signal rollup counts only degraded (warning) rows", () => {
+  it("does NOT surface a severity-info session_rebase row as an lcd_divergence finding (benign continuation, not degradation)", () => {
+    // The ingest layer deliberately stamps benign context:dag_degraded reasons
+    // (session_rebase / serialized_wait) severity "info" so they do not inflate
+    // the fleet lens — but the findings rollup ignored severity and folded
+    // them anyway. Observed live: a fresh session's once-per-start rebase
+    // (reason session_rebase, 5ms) surfaced as an actionable-looking
+    // "health_signal:lcd_divergence" finding whose hint ("inspect the
+    // recurring health WARNs") dead-ended — no such WARNs exist.
+    const findings = buildFindings(
+      [
+        {
+          timestamp: 1_000,
+          category: "health_signal",
+          severity: "info",
+          message: "context:dag_degraded",
+          details: JSON.stringify({ signal: "lcd_divergence", reason: "session_rebase", durationMs: 5 }),
+        },
+      ],
+      [],
+      [],
+    );
+    expect(findings.some((f) => f.code === "health_signal:lcd_divergence")).toBe(false);
+  });
+
+  it("still surfaces a severity-warning lcd_divergence row (a genuine live/store shrink)", () => {
+    const findings = buildFindings(
+      [
+        {
+          timestamp: 1_000,
+          category: "health_signal",
+          severity: "warning",
+          message: "context:dag_degraded",
+          details: JSON.stringify({ signal: "lcd_divergence", reason: "live_store_divergence", durationMs: 5 }),
+        },
+      ],
+      [],
+      [],
+    );
+    const f = findings.filter((x) => x.code === "health_signal:lcd_divergence");
+    expect(f).toHaveLength(1);
+    expect(f[0]!.count).toBe(1);
+  });
+
+  it("breaks the lcd_divergence finding down by reason so the operator sees WHICH failure class recurred", () => {
+    // Grouping by signal label alone forced a per-session explain to learn
+    // whether the divergences were fail_closed_rollover (a security refusal) or
+    // live_store_divergence (a heal/compaction shrink). details.reason is right
+    // there in the rows — surface a per-reason breakdown in the detail.
+    const row = (reason: string, ts: number): DiagnosticRow => ({
+      timestamp: ts,
+      category: "health_signal",
+      severity: "warning",
+      message: "context:dag_degraded",
+      details: JSON.stringify({ signal: "lcd_divergence", reason, durationMs: 5 }),
+    });
+    const findings = buildFindings(
+      [
+        row("fail_closed_rollover", 1_000),
+        row("fail_closed_rollover", 2_000),
+        row("live_store_divergence", 3_000),
+      ],
+      [],
+      [],
+    );
+    const f = findings.find((x) => x.code === "health_signal:lcd_divergence");
+    expect(f).toBeDefined();
+    expect(f!.count).toBe(3);
+    // Deterministic order (count desc, then reason asc) with per-reason counts.
+    expect(f!.detail).toContain("fail_closed_rollover=2");
+    expect(f!.detail).toContain("live_store_divergence=1");
+  });
+});
+
 describe("buildFindings — model_health 'provider degradation' counts only degraded (warning) rows", () => {
   const MH_CODE = "model_health";
 
@@ -1135,6 +1209,53 @@ describe("buildFindings — memory_lifecycle (forget sweep rollup)", () => {
     const ml = buildFindings([], [], [], [], [row]).filter((f) => f.code === "memory_lifecycle");
     expect(JSON.stringify(ml)).not.toContain("secret memory content");
     expect(JSON.stringify(ml)).not.toContain("deadbeef");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// channel_ingress_auth_rejected surfaces via the GENERIC health_signal rollup
+// (no dedicated extractor / DEDICATED_SCRIPT_SIGNALS entry) — a rejected-ingress
+// auth flood becomes a counted `comis fleet` finding, symmetric with the
+// channel_ingress_silent path.
+// ---------------------------------------------------------------------------
+describe("buildFindings — channel_ingress_auth_rejected generic rollup", () => {
+  function authRejectedRow(ts: number, reason: string): DiagnosticRow {
+    return {
+      timestamp: ts,
+      category: "health_signal",
+      severity: "warning",
+      message: "channel:ingress_auth_rejected",
+      details: JSON.stringify({
+        signal: "channel_ingress_auth_rejected",
+        channelType: "msteams",
+        reason,
+      }),
+    };
+  }
+
+  it("rolls a rejected-ingress flood up into ONE counted generic finding", () => {
+    const findings = buildFindings(
+      [
+        authRejectedRow(1_000, "invalid_token"),
+        authRejectedRow(2_000, "invalid_token"),
+        authRejectedRow(3_000, "missing_bearer"),
+      ],
+      [],
+      [],
+    );
+
+    const f = findings.filter((x) => x.code === "health_signal:channel_ingress_auth_rejected");
+    expect(f).toHaveLength(1);
+    // Both reason classes fold into the one signal label — the flood is COUNTED.
+    expect(f[0]!.count).toBe(3);
+  });
+
+  it("carries no token/header body in the generic finding text (content-free)", () => {
+    const findings = buildFindings([authRejectedRow(1_000, "invalid_token")], [], []);
+    const f = findings.find((x) => x.code === "health_signal:channel_ingress_auth_rejected");
+    expect(f).toBeDefined();
+    expect(JSON.stringify(f)).not.toContain("Bearer");
+    expect(JSON.stringify(f)).not.toContain("authorization");
   });
 });
 

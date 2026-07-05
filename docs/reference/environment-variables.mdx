@@ -252,6 +252,59 @@ When the daemon spawns a sandboxed child — a driven CLI via the [terminal-driv
 
 Source: `packages/skills/src/tools/builtin/terminal-driver/terminal-env-scrub.ts`
 
+### Microsoft Teams live-test seams (test-only)
+
+<Warning>
+These two variables exist ONLY to point the Microsoft Teams channel at a local
+loopback emulator for live testing (see the [self-drive
+emulator](/channels/msteams#local-emulator-self-drive-testing)). They are
+**unset in production** — with them unset the daemon behaves identically to a
+normal Teams deployment (the live Bot Framework JWKS validator + the global
+fetch). **Never set them on a production daemon.** Neither relaxes a security
+control: the inbound seam swaps in a full local-JWKS signature/issuer/audience
+verify, and the outbound seam only redirects the network egress of the
+already-allowlisted Connector host — the `isSafeServiceUrl` host gate is
+untouched.
+</Warning>
+
+#### `COMIS_MSTEAMS_TEST_JWKS`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Daemon (msteams ingress) |
+| **Format** | Absolute path to a public JWKS JSON file |
+| **Default** | (unset) — the live Bot Framework remote JWKS |
+
+When set, the Teams ingress verifies inbound activity tokens against the local
+JWKS at this path (the emulator's public signing key) instead of the remote Bot
+Framework keys. A full RS256 signature + issuer + audience verify — not a bypass.
+
+Source: `packages/daemon/src/wiring/msteams-test-seams.ts`
+
+```bash
+export COMIS_MSTEAMS_TEST_JWKS=/tmp/comis-msteams-jwks.json
+```
+
+#### `COMIS_MSTEAMS_TEST_CONNECTOR`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Daemon (msteams adapter) |
+| **Format** | Loopback base URL (`http://127.0.0.1:<port>`) |
+| **Default** | (unset) — the global `fetch` to the real Connector |
+
+When set, the Teams adapter's outbound Connector + token-mint calls are
+redirected to this loopback base (path + query preserved) — the programmatic
+equivalent of a hosts-override to the loopback emulator. The `isSafeServiceUrl`
+host allowlist still runs on the real `smba.trafficmanager.net` serviceUrl first;
+only the transport is redirected after the gate passes.
+
+Source: `packages/daemon/src/wiring/msteams-test-seams.ts`
+
+```bash
+export COMIS_MSTEAMS_TEST_CONNECTOR=http://127.0.0.1:53999
+```
+
 ## Secret Variables
 
 ### `SECRETS_MASTER_KEY`
@@ -615,6 +668,14 @@ Required only for channels you enable in `config.yaml`. Each value can also be s
 |----------|---------|
 | `LINE_CHANNEL_ACCESS_TOKEN` | Long-lived channel access token |
 | `LINE_CHANNEL_SECRET` | Channel secret for HMAC verification |
+
+### Microsoft Teams
+
+| Variable | Purpose |
+|----------|---------|
+| `MSTEAMS_APP_PASSWORD` | Bot app password (client secret) for secret-mode auth — the fallback source for `channels.msteams.appPassword` (also settable inline in config or as a SecretRef) |
+
+The bot app id (`channels.msteams.appId`) and directory/tenant id (`channels.msteams.tenantId`) are plain configuration values, not secrets, and are set in `config.yaml` rather than as environment variables.
 
 ### IRC
 

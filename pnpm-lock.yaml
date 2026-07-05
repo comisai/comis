@@ -92,6 +92,9 @@ importers:
       hono:
         specifier: '>=4.12.25'
         version: 4.12.27
+      jose:
+        specifier: 6.2.3
+        version: 6.2.3
       madge:
         specifier: 8.0.0
         version: 8.0.0(typescript@5.9.3)
@@ -249,6 +252,9 @@ importers:
       irc-framework:
         specifier: 4.14.0
         version: 4.14.0
+      jose:
+        specifier: 6.2.3
+        version: 6.2.3
       mailparser:
         specifier: 3.9.11
         version: 3.9.11
@@ -557,6 +563,9 @@ importers:
       file-uri-to-path:
         specifier: 1.0.0
         version: 1.0.0
+      glob:
+        specifier: 13.0.6
+        version: 13.0.6
       grammy:
         specifier: 1.43.0
         version: 1.43.0
@@ -584,6 +593,9 @@ importers:
       irc-framework:
         specifier: 4.14.0
         version: 4.14.0
+      jose:
+        specifier: 6.2.3
+        version: 6.2.3
       json-rpc-2.0:
         specifier: 1.7.1
         version: 1.7.1

@@ -93,8 +93,12 @@ const TrajectoryConfigSchema = z
  *   - `includePrompt: true` — reserved for future wrapper passes that
  *     may want to include / omit the raw prompt context. Currently
  *     informational.
- *   - `includeSystem: true` — gates the `system` raw field emit. When
- *     false, only `systemDigest` (the sha256 fingerprint) is recorded.
+ *   - `includeSystem: false` (default) — gates the `system` raw field emit.
+ *     Off by default (matching `includeMessages`) because the system prompt
+ *     embeds IDENTITY / USER / memory / SOUL content, at least as sensitive as
+ *     message bodies; only `systemDigest` (the sha256 fingerprint, sufficient
+ *     for cache-change detection) is recorded. Operators opt in (`true`) for a
+ *     short-lived debug session that needs the raw prompt.
  *
  * Uses the inner-then-default pattern from `TrajectoryConfigSchema`
  * (above) and `DiagnosticsConfigSchema` (below) so a missing key in
@@ -114,7 +118,7 @@ const CacheTraceConfigSchemaInner = z.object({
   maxFileBytes: z.number().int().positive().default(50 * 1024 * 1024),
   includeMessages: z.boolean().default(false),
   includePrompt: z.boolean().default(true),
-  includeSystem: z.boolean().default(true),
+  includeSystem: z.boolean().default(false),
 });
 
 const CacheTraceConfigSchema = CacheTraceConfigSchemaInner.default(() =>
