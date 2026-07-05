@@ -22,6 +22,14 @@
  *    unbounded-memory leak (`Database.transactions` grows 1:1 with every
  *    transaction ever created and is never trimmed). Called on every snapshot
  *    tick so the array stays bounded to one debounce window's churn.
+ *  - `initMatrixCrypto` — the lazy-import boundary. The WASM engine +
+ *    fake-indexeddb are reached ONLY through a dynamic `import()` this function
+ *    crosses; a plaintext-only install (which never calls it) never loads them.
+ *    It restores the snapshot → installs the shim → `client.initRustCrypto(...)`
+ *    → returns a handle whose `scheduleSnapshot()` debounces a snapshot+prune
+ *    off the /sync batch and `stop()` flushes a final snapshot. It NEVER throws
+ *    across the port: a bootstrap failure returns `err` so the caller can run
+ *    unverified rather than bricking the channel.
  *
  * Security posture (T-4, key material at rest):
  *  - The snapshot is a 0600 sibling of the plaintext sync-state file under the
@@ -33,6 +41,28 @@
  */
 
 import { serialize, deserialize } from "node:v8";
+import { mkdir, writeFile, readFile, chmod, rename } from "node:fs/promises";
+// `ClientEvent` is a value import; matrix-js-sdk itself pulls in NO crypto — the
+// WASM engine is lazy-loaded only inside `initRustCrypto`, so the D1 boundary
+// (no static crypto-wasm / fake-indexeddb import) still holds.
+import { ClientEvent, type MatrixClient } from "matrix-js-sdk";
+import type { Result } from "@comis/shared";
+import { fromPromise } from "@comis/shared";
+import type { ComisLogger } from "@comis/core";
+import { matrixStateFilePath } from "./matrix-state.js";
+
+/** The durable crypto-store snapshot: a 0600 sibling of sync-state.json under stateDir. */
+const CRYPTO_SNAPSHOT_FILE = "crypto-snapshot.json";
+/** The temp file an atomic snapshot write renames over the target. */
+const CRYPTO_SNAPSHOT_TMP_FILE = "crypto-snapshot.json.tmp";
+/** Owner-only directory permissions (rwx------). */
+const DIR_MODE = 0o700;
+/** Owner-only file permissions (rw-------) — the snapshot holds device + session keys. */
+const FILE_MODE = 0o600;
+/** The IndexedDB db-name prefix; the SDK appends `::matrix-sdk-crypto`. */
+const CRYPTO_DB_PREFIX = "comis-matrix";
+/** Default snapshot+prune debounce window (ms); injected small in tests. */
+const DEFAULT_SNAPSHOT_DEBOUNCE_MS = 30_000;
 
 /** A structured-clone record value plus its primary key (required for out-of-line stores). */
 interface RecordSnapshot {
@@ -196,4 +226,243 @@ export function pruneFinishedTransactions(db: PrunableDatabase): number {
   const before = txns.length;
   raw.transactions = txns.filter((t) => (t as { _state?: string } | null)?._state !== "finished");
   return before - raw.transactions.length;
+}
+
+// ---------------------------------------------------------------------------
+// initMatrixCrypto — the lazy-import boundary + snapshot lifecycle
+// ---------------------------------------------------------------------------
+
+/** Dependencies for the e2ee crypto bootstrap. */
+export interface InitMatrixCryptoDeps {
+  /** Absolute state dir (0700); the snapshot lands as a 0600 sibling of sync-state.json. */
+  stateDir: string;
+  /**
+   * Recovery-key SecretRef (resolved string). Consumed by cross-signing later
+   * (accepted now, held for that seam). NEVER logged.
+   */
+  recoveryKey?: string;
+  logger: ComisLogger;
+  /**
+   * LAZY-IMPORT SEAM: defaults to `() => import("@matrix-org/matrix-sdk-crypto-wasm")`.
+   * Injected + spied in tests to PROVE the boundary is not crossed on the non-e2ee path.
+   */
+  importCryptoWasm?: () => Promise<unknown>;
+  /** LAZY-IMPORT SEAM: defaults to `() => import("fake-indexeddb")`. */
+  importFakeIndexedDb?: () => Promise<unknown>;
+  /** Debounce window (ms) for the snapshot+prune tick. Default 30_000. Injected small in tests. */
+  snapshotDebounceMs?: number;
+  now?: () => number;
+}
+
+/** Handle the client lifecycle drives: schedule a snapshot, force one, or stop. */
+export interface MatrixCryptoHandle {
+  /** Debounced snapshot+prune scheduler tick trigger (called after crypto store writes). */
+  scheduleSnapshot(): void;
+  /** Force a synchronous snapshot+prune now (used on stop and in tests). */
+  snapshotNow(): Promise<Result<void, Error>>;
+  /** Stop: flush a final snapshot + clear the debounce timer + detach the sync listener. */
+  stop(): Promise<void>;
+}
+
+/** The fake-indexeddb module shape the shim installer needs (the full IDB global set). */
+interface FakeIndexedDbModule {
+  IDBFactory: new () => IDBFactory;
+  IDBKeyRange: unknown;
+  IDBDatabase: unknown;
+  IDBCursor: unknown;
+  IDBCursorWithValue: unknown;
+  IDBIndex: unknown;
+  IDBObjectStore: unknown;
+  IDBOpenDBRequest: unknown;
+  IDBRequest: unknown;
+  IDBTransaction: unknown;
+  IDBVersionChangeEvent: unknown;
+  IDBRecord?: unknown;
+}
+
+/**
+ * Install the FULL IndexedDB global constructor set onto `globalThis` from the
+ * (lazily-imported) fake-indexeddb module, with a FRESH factory instance.
+ *
+ * The full set is mandatory: `initRustCrypto` runs wasm-bindgen `instanceof
+ * IDBDatabase / IDBTransaction / ...` casts that throw "Dynamic cast failed" at
+ * store-open when those global constructors are absent — installing only
+ * `indexedDB` + `IDBKeyRange` is not enough.
+ */
+function installIndexedDbShim(mod: unknown): void {
+  const m = mod as FakeIndexedDbModule;
+  const g = globalThis as unknown as Record<string, unknown>;
+  g.indexedDB = new m.IDBFactory(); // fresh store; a restore repopulates it before init
+  g.IDBFactory = m.IDBFactory;
+  g.IDBKeyRange = m.IDBKeyRange;
+  g.IDBDatabase = m.IDBDatabase;
+  g.IDBCursor = m.IDBCursor;
+  g.IDBCursorWithValue = m.IDBCursorWithValue;
+  g.IDBIndex = m.IDBIndex;
+  g.IDBObjectStore = m.IDBObjectStore;
+  g.IDBOpenDBRequest = m.IDBOpenDBRequest;
+  g.IDBRequest = m.IDBRequest;
+  g.IDBTransaction = m.IDBTransaction;
+  g.IDBVersionChangeEvent = m.IDBVersionChangeEvent;
+  if (m.IDBRecord !== undefined) g.IDBRecord = m.IDBRecord;
+}
+
+/** Warm the WASM engine if the (lazily-imported) module exposes an async initializer (idempotent). */
+async function warmCryptoWasm(mod: unknown): Promise<void> {
+  const initAsync = (mod as { initAsync?: (url?: URL | string) => Promise<void> }).initAsync;
+  if (typeof initAsync === "function") await initAsync();
+}
+
+/** Read the durable snapshot blob; `undefined` for a fresh stateDir (ENOENT). Other read errors propagate. */
+async function readCryptoSnapshot(stateDir: string): Promise<Buffer | undefined> {
+  const file = matrixStateFilePath(stateDir, CRYPTO_SNAPSHOT_FILE);
+  try {
+    return await readFile(file);
+  } catch (error) {
+    if ((error as { code?: string } | null)?.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+/**
+ * Write the snapshot blob atomically at 0600 under the 0700 stateDir: temp →
+ * chmod 0600 → rename over the target, re-chmod'ing because the modes are
+ * ignored once the path exists. The matrix-state discipline, verbatim.
+ */
+async function writeCryptoSnapshot(stateDir: string, blob: Buffer): Promise<void> {
+  await mkdir(stateDir, { recursive: true, mode: DIR_MODE });
+  await chmod(stateDir, DIR_MODE);
+  const file = matrixStateFilePath(stateDir, CRYPTO_SNAPSHOT_FILE);
+  const tmp = matrixStateFilePath(stateDir, CRYPTO_SNAPSHOT_TMP_FILE);
+  await writeFile(tmp, blob, { mode: FILE_MODE });
+  await chmod(tmp, FILE_MODE); // the temp is 0600 BEFORE the rename → the real file is never world-readable
+  await rename(tmp, file);
+}
+
+/** Prune finished transactions from every live database in the factory (the OOM mitigation on the tick). */
+function pruneFactoryTransactions(factory: IDBFactory): number {
+  const internal = (factory as unknown as { _databases?: Map<string, PrunableDatabase> })._databases;
+  if (!internal) return 0;
+  let total = 0;
+  for (const db of internal.values()) total += pruneFinishedTransactions(db);
+  return total;
+}
+
+/** Build the snapshot handle once the store is up: debounced snapshot+prune + a guaranteed flush on stop. */
+function createHandle(
+  client: MatrixClient,
+  stateDir: string,
+  logger: ComisLogger,
+  debounceMs: number,
+  now: () => number,
+): MatrixCryptoHandle {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let stopped = false;
+
+  const snapshotNow = (): Promise<Result<void, Error>> => {
+    const started = now();
+    return fromPromise(
+      (async (): Promise<void> => {
+        const factory = globalThis.indexedDB;
+        const blob = await serializeCryptoStore(factory);
+        const prunedTx = pruneFactoryTransactions(factory); // OOM mitigation coupled to the tick
+        await writeCryptoSnapshot(stateDir, blob);
+        logger.debug(
+          { channelType: "matrix" as const, step: "crypto-snapshot", durationMs: now() - started, bytes: blob.length, prunedTx },
+          "matrix crypto store snapshot persisted",
+        );
+      })(),
+    );
+  };
+
+  // Coalescing debounce (fixed window from the first schedule, fire once): under
+  // sustained /sync churn a reset-on-each debounce could starve the snapshot and
+  // let the tx array grow unbounded — the OOM the prune exists to stop. This
+  // guarantees at least one snapshot+prune per window.
+  const scheduleSnapshot = (): void => {
+    if (stopped || timer !== undefined) return;
+    timer = setTimeout(() => {
+      timer = undefined;
+      void snapshotNow().then((r) => {
+        if (!r.ok) {
+          logger.warn(
+            { channelType: "matrix" as const, errorKind: "resource" as const, hint: "a scheduled crypto-store snapshot failed; the next tick or stop() retries" },
+            "matrix crypto store snapshot failed",
+          );
+        }
+      });
+    }, debounceMs);
+    (timer as { unref?: () => void }).unref?.(); // never keep the event loop alive for a pending snapshot
+  };
+
+  const onSync = (): void => scheduleSnapshot();
+  client.on(ClientEvent.Sync, onSync);
+
+  const stop = async (): Promise<void> => {
+    stopped = true;
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+    try {
+      client.off(ClientEvent.Sync, onSync);
+    } catch {
+      // best-effort detach
+    }
+    const flushed = await snapshotNow();
+    if (!flushed.ok) {
+      logger.warn(
+        { channelType: "matrix" as const, errorKind: "resource" as const, hint: "the final crypto-store snapshot on stop failed; the next start restores from the last good snapshot" },
+        "matrix crypto store final snapshot failed",
+      );
+    }
+  };
+
+  return { scheduleSnapshot, snapshotNow, stop };
+}
+
+/**
+ * Bootstrap the Matrix E2EE crypto store: cross the lazy-import boundary, restore
+ * the durable snapshot, initialise the rust crypto store over the fake-indexeddb
+ * shim, and return a snapshot handle. NEVER throws across the port — a bootstrap
+ * failure returns `err` so the caller logs loud + runs unverified.
+ *
+ * @param client - The authenticated matrix-js-sdk client.
+ * @param deps - State dir, logger, and the (spy-able) lazy-import seams.
+ * @returns The snapshot handle, or an error if crypto bootstrap failed.
+ */
+export function initMatrixCrypto(
+  client: MatrixClient,
+  deps: InitMatrixCryptoDeps,
+): Promise<Result<MatrixCryptoHandle, Error>> {
+  const {
+    stateDir,
+    logger,
+    importCryptoWasm,
+    importFakeIndexedDb,
+    snapshotDebounceMs = DEFAULT_SNAPSHOT_DEBOUNCE_MS,
+    now = (): number => Date.now(),
+  } = deps;
+
+  return fromPromise(
+    (async (): Promise<MatrixCryptoHandle> => {
+      // 1. Cross the lazy boundary: install the FULL fake-indexeddb global shim.
+      //    These two dynamic `import()`s are the ONLY references to the crypto
+      //    deps in the module — a plaintext-only install (which never calls
+      //    initMatrixCrypto) never loads them (E2EE-01 / D1). The seams default
+      //    to the real dynamic import; tests inject spies to prove the boundary.
+      const idbModule = importFakeIndexedDb ? await importFakeIndexedDb() : await import("fake-indexeddb");
+      installIndexedDbShim(idbModule);
+      // 2. Warm the WASM engine (the same lazy boundary — never reached on plaintext installs).
+      const wasmModule = importCryptoWasm ? await importCryptoWasm() : await import("@matrix-org/matrix-sdk-crypto-wasm");
+      await warmCryptoWasm(wasmModule);
+      // 3. Restore the durable snapshot BEFORE init so the WASM opens an EXISTING db.
+      const snapshot = await readCryptoSnapshot(stateDir);
+      if (snapshot) await restoreCryptoStore(globalThis.indexedDB, snapshot);
+      // 4. Initialise the rust crypto store over the (possibly restored) shim.
+      await client.initRustCrypto({ useIndexedDB: true, cryptoDatabasePrefix: CRYPTO_DB_PREFIX });
+      // 5. Build the handle + drive the snapshot cadence off the /sync batch.
+      return createHandle(client, stateDir, logger, snapshotDebounceMs, now);
+    })(),
+  );
 }

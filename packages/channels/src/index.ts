@@ -181,6 +181,15 @@ export { createMatrixAdapter } from "./matrix/matrix-adapter.js";
 export type { MatrixAdapterDeps } from "./matrix/matrix-adapter.js";
 export { createMatrixPlugin } from "./matrix/matrix-plugin.js";
 
+// Matrix E2EE crypto store (lazy-import boundary + durable snapshot lifecycle)
+export {
+  initMatrixCrypto,
+  serializeCryptoStore,
+  restoreCryptoStore,
+  pruneFinishedTransactions,
+} from "./matrix/crypto-store.js";
+export type { InitMatrixCryptoDeps, MatrixCryptoHandle } from "./matrix/crypto-store.js";
+
 // Matrix utilities
 export { mapMatrixEventToNormalized } from "./matrix/message-mapper.js";
 export { classifyMatrixError } from "./matrix/errors.js";
