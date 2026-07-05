@@ -41,10 +41,18 @@ interface FakeClientBehavior {
   whoamiResponse?: { user_id: string; device_id?: string };
   loginError?: unknown;
   whoamiError?: unknown;
+  /**
+   * Reject `whoami` for a client that was built with THIS exact access token —
+   * models a revoked/expired stored token, so the auth path can prove it fell
+   * back to a password login (the fresh pre-login client carries no token).
+   */
+  failWhoamiForToken?: string;
 }
 
 interface ClientRecord {
   createOpts?: ICreateClientOpts;
+  /** Every createClient opts in order — proves which tokens were attempted. */
+  createOptsHistory: ICreateClientOpts[];
   loginCalls: Array<{ type: string; data: Record<string, unknown> }>;
   whoamiCalls: number;
   client?: MatrixClient;
@@ -57,6 +65,10 @@ function makeCreateClientImpl(
 ): (opts: ICreateClientOpts) => MatrixClient {
   return (opts: ICreateClientOpts): MatrixClient => {
     rec.createOpts = opts;
+    rec.createOptsHistory.push(opts);
+    // Capture per-client so whoami's stale-token check keys on the token THIS
+    // client was built with, not a later client's opts.
+    const capturedToken = opts.accessToken;
     const client = {
       login: async (type: string, data: Record<string, unknown>) => {
         rec.loginCalls.push({ type, data });
@@ -72,6 +84,9 @@ function makeCreateClientImpl(
       whoami: async () => {
         rec.whoamiCalls += 1;
         if (behavior.whoamiError !== undefined) throw behavior.whoamiError;
+        if (behavior.failWhoamiForToken !== undefined && capturedToken === behavior.failWhoamiForToken) {
+          throw matrixError("M_UNKNOWN_TOKEN", 401, "stored token revoked");
+        }
         return behavior.whoamiResponse ?? { user_id: "@bot:hs", device_id: "SRVDEVICE" };
       },
     };
@@ -82,7 +97,7 @@ function makeCreateClientImpl(
 }
 
 function newRecord(): ClientRecord {
-  return { loginCalls: [], whoamiCalls: 0 };
+  return { createOptsHistory: [], loginCalls: [], whoamiCalls: 0 };
 }
 
 describe("createMatrixAuth", () => {
@@ -268,5 +283,86 @@ describe("createMatrixAuth", () => {
 
     expect(result.ok).toBe(false);
     expect(rec.createOpts).toBeUndefined();
+  });
+
+  it("reuses a persisted access token + device id on a later boot instead of re-running password login", async () => {
+    // A password deployment persists the server-returned token + device id on its
+    // FIRST login. On a later boot the auth path must AUTHENTICATE with that
+    // persisted token + device id (whoami validates it) rather than re-running
+    // m.login.password — otherwise the homeserver mints a brand-new device every
+    // restart and (once E2EE lands) orphans that device's Megolm keys.
+    const rec = newRecord();
+    const createClientImpl = makeCreateClientImpl(
+      { whoamiResponse: { user_id: "@bot:hs", device_id: "PERSISTDEV" } },
+      rec,
+    );
+    const { store, saves } = makeStateStore({ accessToken: "persisted-tok", deviceId: "PERSISTDEV" });
+
+    const auth = createMatrixAuth({
+      homeserverUrl: "https://hs.example",
+      userId: "@bot:hs",
+      // A password IS configured (this is a password deployment), but it must NOT
+      // be used on a boot where a valid persisted token is available.
+      password: "pw-secret",
+      stateStore: store,
+      logger: makeLogger(),
+      createClientImpl,
+    });
+
+    const result = await auth.authenticate();
+
+    expect(result.ok).toBe(true);
+    // The token path ran with the PERSISTED token + device id — no fresh login.
+    expect(rec.loginCalls).toHaveLength(0);
+    expect(rec.createOpts?.accessToken).toBe("persisted-tok");
+    expect(rec.createOpts?.deviceId).toBe("PERSISTDEV");
+    expect(rec.whoamiCalls).toBe(1);
+    // Nothing changed → no state re-written, and the device id is unchanged.
+    expect(saves).toHaveLength(0);
+    if (result.ok) {
+      expect(result.value.deviceId).toBe("PERSISTDEV");
+      expect(result.value.accessToken).toBe("persisted-tok");
+    }
+  });
+
+  it("falls back to password login when the persisted token is rejected, reusing the persisted device id", async () => {
+    // If the stored token was revoked while the bot was offline, whoami rejects
+    // it. A password deployment must then recover by re-logging in — reusing the
+    // persisted device id so the identity is still preserved — rather than
+    // failing to start.
+    const rec = newRecord();
+    const createClientImpl = makeCreateClientImpl(
+      {
+        failWhoamiForToken: "stale-tok",
+        loginResponse: {
+          access_token: "fresh-after-fallback",
+          device_id: "PERSISTDEV",
+          user_id: "@bot:hs",
+        },
+        whoamiResponse: { user_id: "@bot:hs", device_id: "PERSISTDEV" },
+      },
+      rec,
+    );
+    const { store, saves } = makeStateStore({ accessToken: "stale-tok", deviceId: "PERSISTDEV" });
+
+    const auth = createMatrixAuth({
+      homeserverUrl: "https://hs.example",
+      userId: "@bot:hs",
+      password: "pw-secret",
+      stateStore: store,
+      logger: makeLogger(),
+      createClientImpl,
+    });
+
+    const result = await auth.authenticate();
+
+    expect(result.ok).toBe(true);
+    // The persisted token WAS attempted (a client was built with it) before falling back.
+    expect(rec.createOptsHistory.some((o) => o.accessToken === "stale-tok")).toBe(true);
+    // Then a password re-login ran, reusing the persisted device id.
+    expect(rec.loginCalls).toHaveLength(1);
+    expect(rec.loginCalls[0]?.data.device_id).toBe("PERSISTDEV");
+    // The fresh token was persisted for the next boot.
+    expect(saves.some((s) => s.accessToken === "fresh-after-fallback")).toBe(true);
   });
 });
