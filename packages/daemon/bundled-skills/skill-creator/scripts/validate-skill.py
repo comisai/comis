@@ -92,8 +92,22 @@ def strip_code_fences(text):
     return re.sub(r"```[^\n]*\n.*?```", "", text, flags=re.DOTALL)
 
 
+# Sentinel returned as `fm` when the frontmatter block is present but was not
+# parsed because PyYAML is absent. The canonical frontmatter nests the version
+# and the platform extensions under `metadata`, which a line-based reader cannot
+# represent -- so structural checks are SKIPPED (with a clear note) rather than
+# run against a parser that would false-reject the very format this validator
+# is meant to bless.
+YAML_UNAVAILABLE = object()
+
+
 def parse_frontmatter(content):
-    """Parse YAML frontmatter from --- delimited block."""
+    """Parse YAML frontmatter from a --- delimited block.
+
+    Returns (fm, body, error) where `fm` is the parsed dict, None (empty /
+    non-object frontmatter), or the YAML_UNAVAILABLE sentinel when PyYAML is
+    not installed.
+    """
     if not content.startswith("---"):
         return None, content, "File must start with '---'"
 
@@ -110,31 +124,14 @@ def parse_frontmatter(content):
     yaml_block = "\n".join(lines[1:end_idx])
     body = "\n".join(lines[end_idx + 1:]).strip()
 
-    # Simple YAML parsing (avoid external dependency)
+    # A real YAML parser is required to read the nested metadata carrier.
     try:
         import yaml
-        fm = yaml.safe_load(yaml_block)
     except ImportError:
-        # Fallback: basic key-value parsing for simple frontmatter
-        fm = {}
-        for line in yaml_block.split("\n"):
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if ":" in line:
-                key, _, value = line.partition(":")
-                value = value.strip()
-                if value.startswith('"') and value.endswith('"'):
-                    value = value[1:-1]
-                elif value.startswith("'") and value.endswith("'"):
-                    value = value[1:-1]
-                elif value.lower() == "true":
-                    value = True
-                elif value.lower() == "false":
-                    value = False
-                elif value.isdigit():
-                    value = int(value)
-                fm[key.strip()] = value
+        return YAML_UNAVAILABLE, body, None
+
+    try:
+        fm = yaml.safe_load(yaml_block)
     except Exception as e:
         return None, body, f"YAML parse error: {e}"
 
@@ -199,6 +196,42 @@ def check_metadata_comis(meta, errors, warnings):
     check_extension_fields(bag, errors, warnings)
 
 
+def scan_content(body, errors, warnings):
+    """Body-size advisories + the content-security scan. Needs only the body, so
+    it runs whether or not the frontmatter could be structurally parsed."""
+    if len(body) > BODY_MAX:
+        warnings.append(f"Body is {len(body)} chars (max {BODY_MAX}) -- will be truncated at load time")
+
+    body_lines = body.count("\n") + 1
+    if body_lines > 500:
+        warnings.append(f"Body is {body_lines} lines (recommended max: 500) -- consider using references/")
+
+    # Content scanning (strip code fences to reduce false positives from examples)
+    scannable = strip_code_fences(body)
+    for pattern, desc in CRITICAL_PATTERNS:
+        if re.search(pattern, scannable, re.IGNORECASE):
+            errors.append(f"CRITICAL content scan: {desc}")
+
+    for pattern, desc in WARN_PATTERNS:
+        if re.search(pattern, scannable, re.IGNORECASE):
+            warnings.append(f"Content scan warning: {desc}")
+
+    # Also warn if the raw body (with code fences) would trigger the real scanner
+    for pattern, desc in CRITICAL_PATTERNS:
+        if re.search(pattern, body, re.IGNORECASE) and not re.search(pattern, scannable, re.IGNORECASE):
+            warnings.append(f"Code fence contains scannable pattern (may trigger real scanner): {desc}")
+
+
+def check_dir_structure(skill_dir, body, warnings):
+    """Advisory: a bundled script should be referenced in the SKILL.md body."""
+    scripts_dir = os.path.join(skill_dir, "scripts")
+    if os.path.isdir(scripts_dir):
+        scripts = [f for f in os.listdir(scripts_dir) if not f.startswith(".")]
+        for s in scripts:
+            if s not in body:
+                warnings.append(f"Bundled script '{s}' not referenced in SKILL.md body")
+
+
 def validate(path):
     """Validate a skill directory or SKILL.md file. Returns (errors, warnings)."""
     errors = []
@@ -227,6 +260,16 @@ def validate(path):
         return errors, warnings
     if fm is None:
         errors.append("Frontmatter: empty or missing")
+        return errors, warnings
+    if fm is YAML_UNAVAILABLE:
+        # No YAML parser: skip the structural field checks (they need a real
+        # parse of the nested metadata carrier) but still run the content scan.
+        warnings.append(
+            "PyYAML is not installed, so structural frontmatter validation was skipped; "
+            "install it (pip install pyyaml) for the full field checks. The content security scan still ran."
+        )
+        scan_content(body, errors, warnings)
+        check_dir_structure(skill_dir, body, warnings)
         return errors, warnings
 
     # Required fields
@@ -292,42 +335,8 @@ def validate(path):
     # level (pre-migration form).
     check_extension_fields(fm, errors, warnings)
 
-    # Body checks
-    if len(body) > BODY_MAX:
-        warnings.append(f"Body is {len(body)} chars (max {BODY_MAX}) -- will be truncated at load time")
-
-    body_lines = body.count("\n") + 1
-    if body_lines > 500:
-        warnings.append(f"Body is {body_lines} lines (recommended max: 500) -- consider using references/")
-
-    # Content scanning (strip code fences to reduce false positives from examples)
-    scannable = strip_code_fences(body)
-    for pattern, desc in CRITICAL_PATTERNS:
-        if re.search(pattern, scannable, re.IGNORECASE):
-            errors.append(f"CRITICAL content scan: {desc}")
-
-    for pattern, desc in WARN_PATTERNS:
-        if re.search(pattern, scannable, re.IGNORECASE):
-            warnings.append(f"Content scan warning: {desc}")
-
-    # Also warn if the raw body (with code fences) would trigger the real scanner
-    for pattern, desc in CRITICAL_PATTERNS:
-        if re.search(pattern, body, re.IGNORECASE) and not re.search(pattern, scannable, re.IGNORECASE):
-            warnings.append(f"Code fence contains scannable pattern (may trigger real scanner): {desc}")
-
-    # Directory structure hints
-    scripts_dir = os.path.join(skill_dir, "scripts")
-    refs_dir = os.path.join(skill_dir, "references")
-    assets_dir = os.path.join(skill_dir, "assets")
-
-    if os.path.isdir(scripts_dir):
-        scripts = [f for f in os.listdir(scripts_dir) if not f.startswith(".")]
-        if scripts:
-            # Check scripts are referenced in body
-            for s in scripts:
-                if s not in body:
-                    warnings.append(f"Bundled script '{s}' not referenced in SKILL.md body")
-
+    scan_content(body, errors, warnings)
+    check_dir_structure(skill_dir, body, warnings)
     return errors, warnings
 
 
