@@ -43,9 +43,12 @@
 import { serialize, deserialize } from "node:v8";
 import { mkdir, writeFile, readFile, chmod, rename } from "node:fs/promises";
 // `ClientEvent` is a value import; matrix-js-sdk itself pulls in NO crypto — the
-// WASM engine is lazy-loaded only inside `initRustCrypto`, so the D1 boundary
-// (no static crypto-wasm / fake-indexeddb import) still holds.
+// WASM engine is lazy-loaded only inside `initRustCrypto`, so the crypto-engine
+// boundary (no static crypto-wasm / fake-indexeddb import) still holds.
 import { ClientEvent, type MatrixClient } from "matrix-js-sdk";
+// `decodeRecoveryKey` is a PURE base58 helper (no WASM engine) — turning the
+// operator's recovery key into the secret-storage key that unlocks cross-signing.
+import { decodeRecoveryKey } from "matrix-js-sdk/lib/crypto-api/recovery-key.js";
 import type { Result } from "@comis/shared";
 import { fromPromise } from "@comis/shared";
 import type { ComisLogger } from "@comis/core";
@@ -237,8 +240,9 @@ export interface InitMatrixCryptoDeps {
   /** Absolute state dir (0700); the snapshot lands as a 0600 sibling of sync-state.json. */
   stateDir: string;
   /**
-   * Recovery-key SecretRef (resolved string). Consumed by cross-signing later
-   * (accepted now, held for that seam). NEVER logged.
+   * Recovery-key SecretRef (resolved string). When set, it unlocks 4S so the
+   * device bootstraps cross-signing and reads as verified; when absent, the bot
+   * runs unverified with a loud startup log. NEVER logged, returned, or exposed.
    */
   recoveryKey?: string;
   logger: ComisLogger;
@@ -262,6 +266,13 @@ export interface MatrixCryptoHandle {
   snapshotNow(): Promise<Result<void, Error>>;
   /** Stop: flush a final snapshot + clear the debounce timer + detach the sync listener. */
   stop(): Promise<void>;
+  /**
+   * Read the device's cross-signing / verification posture for the operator-facing
+   * health surface. `crossSigningReady` reflects `isCrossSigningReady()`;
+   * `deviceVerified` reflects this device's `getDeviceVerificationStatus(...)`.
+   * Returns all-false when the crypto backend is absent. NEVER carries key material.
+   */
+  getVerificationStatus(): Promise<{ crossSigningReady: boolean; deviceVerified: boolean }>;
 }
 
 /** The fake-indexeddb module shape the shim installer needs (the full IDB global set). */
@@ -418,7 +429,94 @@ function createHandle(
     }
   };
 
-  return { scheduleSnapshot, snapshotNow, stop };
+  // Read-only device-trust posture for the health surface. Delegates entirely to
+  // the SDK's verification API; carries no key material. All-false if crypto is absent.
+  const getVerificationStatus = async (): Promise<{ crossSigningReady: boolean; deviceVerified: boolean }> => {
+    const crypto = client.getCrypto();
+    if (!crypto) return { crossSigningReady: false, deviceVerified: false };
+    const crossSigningReady = await crypto.isCrossSigningReady();
+    const userId = client.getUserId();
+    const deviceId = client.getDeviceId();
+    let deviceVerified = false;
+    if (userId !== null && deviceId !== null) {
+      const status = await crypto.getDeviceVerificationStatus(userId, deviceId);
+      deviceVerified = status?.isVerified() ?? false;
+    }
+    return { crossSigningReady, deviceVerified };
+  };
+
+  return { scheduleSnapshot, snapshotNow, stop, getVerificationStatus };
+}
+
+/**
+ * Give the bot device a real, operator-visible trust posture. NEVER throws — a
+ * verification failure degrades to "unverified + loud" and must not brick /sync:
+ *  - recovery key configured → decode it to the secret-storage key, install the
+ *    `getSecretStorageKey` callback the SDK invokes to unlock secret storage, and
+ *    `bootstrapCrossSigning` so the device reads as verified. A rejection is logged
+ *    loud and swallowed (the bot runs unverified rather than dark).
+ *  - no recovery key → run UNVERIFIED, but say so with a loud, actionable startup
+ *    log naming `channels.matrix.recoveryKey`.
+ *
+ * The recovery key, the decoded secret-storage key, and any 4S material live only
+ * inside this function's closures and are NEVER logged, returned, or exposed (T-4).
+ */
+async function bootstrapDeviceVerification(
+  client: MatrixClient,
+  recoveryKey: string | undefined,
+  logger: ComisLogger,
+): Promise<void> {
+  if (recoveryKey === undefined || recoveryKey.length === 0) {
+    logger.warn(
+      {
+        channelType: "matrix" as const,
+        step: "crypto-verify" as const,
+        errorKind: "internal" as const,
+        hint: "The bot device is UNVERIFIED — encrypted rooms requiring verified devices may withhold keys. Set channels.matrix.recoveryKey or verify the bot from Element",
+      },
+      "Matrix bot device is unverified — no recovery key configured",
+    );
+    return;
+  }
+
+  // A recovery key IS configured: unlock 4S and bootstrap cross-signing so the
+  // device reads as verified. Wrapped so a rejection is non-fatal (loud + unverified).
+  const bootstrapped = await fromPromise(
+    (async (): Promise<void> => {
+      const crypto = client.getCrypto();
+      if (!crypto) throw new Error("crypto backend unavailable for cross-signing bootstrap");
+      // Decode the recovery key to the secret-storage key and install the callback
+      // the SDK invokes to unlock 4S during bootstrap. The decoded key stays in
+      // this closure — never logged, never returned.
+      const secretStorageKey = decodeRecoveryKey(recoveryKey);
+      client.cryptoCallbacks.getSecretStorageKey = async ({ keys }) => {
+        const [keyId] = Object.keys(keys);
+        return keyId === undefined ? null : [keyId, secretStorageKey];
+      };
+      await crypto.bootstrapCrossSigning({
+        authUploadDeviceSigningKeys: async (makeRequest) => {
+          await makeRequest(null);
+        },
+      });
+    })(),
+  );
+
+  if (bootstrapped.ok) {
+    logger.info(
+      { channelType: "matrix" as const, step: "crypto-verify" as const },
+      "Matrix cross-signing bootstrapped — device verified",
+    );
+  } else {
+    logger.warn(
+      {
+        channelType: "matrix" as const,
+        step: "crypto-verify" as const,
+        errorKind: "internal" as const,
+        hint: "Cross-signing bootstrap failed — the bot runs as an UNVERIFIED device. Check channels.matrix.recoveryKey is the homeserver recovery key, or verify the bot from Element",
+      },
+      "Matrix cross-signing bootstrap failed — running unverified",
+    );
+  }
 }
 
 /**
@@ -461,7 +559,11 @@ export function initMatrixCrypto(
       if (snapshot) await restoreCryptoStore(globalThis.indexedDB, snapshot);
       // 4. Initialise the rust crypto store over the (possibly restored) shim.
       await client.initRustCrypto({ useIndexedDB: true, cryptoDatabasePrefix: CRYPTO_DB_PREFIX });
-      // 5. Build the handle + drive the snapshot cadence off the /sync batch.
+      // 5. Give the device a real trust posture: bootstrap cross-signing from the
+      //    recovery key, or run unverified + loud. NON-FATAL — never throws here,
+      //    so a verification failure can never turn a successful init into an err.
+      await bootstrapDeviceVerification(client, deps.recoveryKey, logger);
+      // 6. Build the handle + drive the snapshot cadence off the /sync batch.
       return createHandle(client, stateDir, logger, snapshotDebounceMs, now);
     })(),
   );
