@@ -1041,6 +1041,36 @@ describe("createGoogleChatAdapter — per-space send pacing", () => {
 
     await pending; // the send resolves after the abandoned wait
   });
+
+  it("re-paces sends after a stop()->start() cycle — the send-abort signal is refreshed, not left aborted", async () => {
+    const timers = makeFakeTimers();
+    let clock = NOW;
+    const { fetchImpl } = makeChatFetch();
+    const { deps } = await makeDeps({
+      fetchImpl,
+      now: () => clock,
+      setTimeoutImpl: timers.setTimeoutImpl,
+      clearTimeoutImpl: timers.clearTimeoutImpl,
+    });
+    const adapter = createGoogleChatAdapter(deps);
+
+    // deactivate -> reactivate lifecycle (config reload). stop() aborts the send
+    // signal; start() must install a fresh one, or every later pace-wait rides a
+    // stale aborted signal and the pacer short-circuits — silently unpaced.
+    await adapter.start();
+    await adapter.stop();
+    await adapter.start();
+
+    // First send after restart primes the space (no prior write → no wait).
+    await adapter.sendMessage("spaces/AAAA", "one");
+    // 300ms later, a second same-space send must STILL wait the remaining ~700ms.
+    clock = NOW + 300;
+    const second = adapter.sendMessage("spaces/AAAA", "two");
+    await flushMicrotasks();
+    expect(timers.delays).toContain(700); // paced again — the signal was refreshed
+    await timers.fireNext(); // release the pace-wait so the POST proceeds
+    await second;
+  });
 });
 
 describe("createGoogleChatAdapter — 429 auto-resend (send-safety)", () => {
