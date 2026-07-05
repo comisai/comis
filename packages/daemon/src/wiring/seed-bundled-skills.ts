@@ -70,7 +70,7 @@ export function seedBundledSkills(deps: SeedBundledSkillsDeps): { seeded: string
 }
 
 /** Extract `version:` from the first 512 bytes of a SKILL.md (mirrors the old daemon IIFE regex). */
-function extractVersion(path: string, readFile: (p: string) => string): string | undefined {
+export function extractVersion(path: string, readFile: (p: string) => string): string | undefined {
   try {
     const head = readFile(path).slice(0, 512);
     const match = head.match(/^version:\s*["']?([^"'\n]+)/m);

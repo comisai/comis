@@ -8,7 +8,7 @@
  * @module
  */
 import { describe, it, expect, vi } from "vitest";
-import { seedBundledSkills } from "./seed-bundled-skills.js";
+import { seedBundledSkills, extractVersion } from "./seed-bundled-skills.js";
 
 describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled skills", () => {
   it("seeds missing skills, RE-seeds version-changed skills, and SKIPS up-to-date ones", () => {
@@ -76,5 +76,50 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
     });
     expect(r.seeded).toEqual([]);
     expect(r.skipped).toEqual([]);
+  });
+});
+
+describe("extractVersion — reads metadata.version from the whole frontmatter block", () => {
+  // Ground truth: a spec-pure manifest whose description is long enough that the
+  // nested metadata.version sits BEYOND byte 512, mirroring the real
+  // long-description bundled skill. A fixed head-window read truncates the
+  // version out of range and reports the skill as unversioned — which makes the
+  // seeder re-copy it on every boot, overwriting the installed copy.
+  const longDescription =
+    "Drive a capable coding agent interactively in a terminal session to build, fix, or extend software: " +
+    "launch it in a named project folder, hand it the task, answer its interactive prompts through keystrokes, " +
+    "watch closely for completion, and verify the result before reporting a concise summary back to the operator. " +
+    "Use this whenever the request is to write, build, debug, refactor, or test code or work on a software " +
+    "project of any size, even when the underlying tool is not named outright anywhere in the instruction text.";
+  const longManifest = `---\nname: coding-agent\ndescription: ${longDescription}\nmetadata:\n  version: "1.1.5"\n---\n\n# Body\n\nContent.\n`;
+
+  it("returns the nested version even when metadata.version is past byte 512 (long description)", () => {
+    // Prove the fixture genuinely places the metadata block beyond the old window.
+    expect(longManifest.indexOf("metadata:")).toBeGreaterThan(512);
+    expect(extractVersion("/x/SKILL.md", () => longManifest)).toBe("1.1.5");
+  });
+
+  it("returns the nested metadata.version for a short frontmatter", () => {
+    const manifest = `---\nname: tiny\ndescription: A short skill.\nmetadata:\n  version: "2.3.4"\n---\n\n# Body\n`;
+    expect(extractVersion("/x/SKILL.md", () => manifest)).toBe("2.3.4");
+  });
+
+  it("falls back to a top-level version when there is no metadata block", () => {
+    const manifest = `---\nname: tiny\nversion: "9.9.9"\ndescription: A hand-authored skill.\n---\n\n# Body\n`;
+    expect(extractVersion("/x/SKILL.md", () => manifest)).toBe("9.9.9");
+  });
+
+  it("returns undefined when no version is present anywhere", () => {
+    const manifest = `---\nname: tiny\ndescription: A short skill.\n---\n\n# Body\n`;
+    expect(extractVersion("/x/SKILL.md", () => manifest)).toBeUndefined();
+  });
+
+  it("returns undefined on malformed content and when the read throws (guard holds)", () => {
+    expect(extractVersion("/x/SKILL.md", () => "not a manifest at all")).toBeUndefined();
+    expect(
+      extractVersion("/x/SKILL.md", () => {
+        throw new Error("read failed");
+      }),
+    ).toBeUndefined();
   });
 });
