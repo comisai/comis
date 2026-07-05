@@ -176,9 +176,11 @@ export function createGoogleChatAdapter(
     ...(deps.clearTimeoutImpl && { clearTimeout: deps.clearTimeoutImpl }),
   });
   // Aborted on stop() so a send parked in a pending pace-wait OR a 429 retry
-  // backoff cancels its wait promptly rather than holding shutdown; abort is
-  // terminal for a given controller instance.
-  const sendAbort = new AbortController();
+  // backoff cancels its wait promptly rather than holding shutdown. Abort is
+  // terminal for a given controller instance, so start() installs a fresh one
+  // (see below) — otherwise a reactivated adapter would pace every send against
+  // an already-aborted signal.
+  let sendAbort = new AbortController();
 
   // Resolve after `ms`, or promptly if `signal` aborts — the same abort-aware
   // shape the pacer's pace-wait uses. The timer handle is unref'd so a pending
@@ -327,6 +329,11 @@ export function createGoogleChatAdapter(
       // call), which would double-pull the subscription and leak the old loop.
       if (_connected) return ok(undefined);
 
+      // A prior stop() left sendAbort aborted; install a fresh controller for
+      // this run so the pacer and the retry backoff are not short-circuited by a
+      // stale aborted signal. Mirrors the pull source recreating its controller.
+      sendAbort = new AbortController();
+
       // The token provider already parsed the service-account key once at
       // construction; reuse that result rather than re-parsing here. The
       // subscription is the only additional precondition (it is not a parse).
@@ -419,6 +426,11 @@ export function createGoogleChatAdapter(
         );
         return err(new Error("unsafe space resource name"));
       }
+      // Bind this send to the abort controller current at its start. A stop()
+      // aborts it (cancelling the pace-wait / retry backoff); a later start()
+      // installs a NEW controller for future sends and must never silently
+      // un-abort this in-flight one — the post-backoff resend stays cancelled.
+      const abortSignal = sendAbort.signal;
       const tok = await tokens.getToken(CHAT_SCOPE);
       if (!tok.ok) return err(tok.error); // auth already logged a secret-free WARN
       const chatBase = deps.chatBaseUrl ?? "https://chat.googleapis.com/v1";
@@ -447,7 +459,7 @@ export function createGoogleChatAdapter(
 
       // Pace the write against the per-space 1/s ceiling ONCE before the send. A
       // pending wait cancels promptly on stop() through the shared abort signal.
-      await pacer.acquire(channelId, sendAbort.signal);
+      await pacer.acquire(channelId, abortSignal);
 
       // Bounded resend loop. ONLY a 429 is safe to auto-resend: rate limiting
       // rejects the request BEFORE the message lands, so it definitively created
@@ -497,11 +509,11 @@ export function createGoogleChatAdapter(
             // The retry wait observes sendAbort so stop() cancels a parked
             // resend — a non-idempotent create must not fire a POST after the
             // adapter has been stopped. Bail on abort rather than continue.
-            if (sendAbort.signal.aborted) {
+            if (abortSignal.aborted) {
               return err(new Error("send aborted during retry backoff"));
             }
-            await abortableSleep(delayMs, sendAbort.signal);
-            if (sendAbort.signal.aborted) {
+            await abortableSleep(delayMs, abortSignal);
+            if (abortSignal.aborted) {
               return err(new Error("send aborted during retry backoff"));
             }
             continue;
