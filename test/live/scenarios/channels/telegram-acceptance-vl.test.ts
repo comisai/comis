@@ -129,6 +129,7 @@ function freshOutcomeDb(): string {
       sender_trust    TEXT,
       recalled_ids    TEXT,
       used_skill_ids  TEXT,
+      procedure_descriptor TEXT,
       observed_at     INTEGER NOT NULL,
       UNIQUE (tenant_id, agent_id, trajectory_id, source, observed_at)
     );

@@ -156,19 +156,16 @@ describe("Log Orchestration", () => {
       // Must have the method context (proves error propagation preserved context)
       expect(errorEntry).toHaveProperty("method", "config.read");
 
-      // Must have serialized error object (Pino error serializer)
+      // A classified (non-internal) refusal logs its MESSAGE only, not the
+      // Error object: the serializer would emit a full stack that reads as a
+      // fault for a routine operator flow. The message (the error context) is
+      // still preserved; only internal errors keep the full err object + stack.
       expect(errorEntry).toHaveProperty("err");
-      const errObj = errorEntry.err as Record<string, unknown>;
-
-      // Error message must be preserved (not swallowed or replaced with generic)
-      expect(errObj).toHaveProperty("message");
-      expect(typeof errObj.message).toBe("string");
-      expect((errObj.message as string).length).toBeGreaterThan(0);
-
-      // Stack trace must be preserved (proves Error object, not just string)
-      expect(errObj).toHaveProperty("stack");
-      expect(typeof errObj.stack).toBe("string");
-      expect((errObj.stack as string).length).toBeGreaterThan(0);
+      const errValue = errorEntry.err;
+      expect(typeof errValue).toBe("string");
+      expect((errValue as string).length).toBeGreaterThan(0);
+      // No stack rides the expected-refusal warn (message-only).
+      expect(errValue as string).not.toMatch(/\n\s+at /);
     });
 
     it("error entry includes timing context from trace logger", async () => {
