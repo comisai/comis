@@ -137,6 +137,37 @@ describe("createChannelHealthMonitor", () => {
     });
   });
 
+  describe("e2ee verification posture", () => {
+    it("surfaces the adapter's verification posture on the summary entry so it reaches the doctor/fleet surface", () => {
+      const { monitor } = createTestMonitor();
+      const adapter = createMockAdapter({
+        connected: true,
+        verification: { crossSigningReady: true, deviceVerified: false },
+      });
+
+      const stop = monitor.start(new Map([["echo", adapter]]));
+      monitor.checkNow();
+
+      const health = monitor.getHealth("echo") as
+        | { verification?: { crossSigningReady: boolean; deviceVerified: boolean } }
+        | undefined;
+      expect(health?.verification).toEqual({ crossSigningReady: true, deviceVerified: false });
+      stop();
+    });
+
+    it("leaves verification absent for a plaintext adapter that reports none", () => {
+      const { monitor } = createTestMonitor();
+      const adapter = createMockAdapter({ connected: true });
+
+      const stop = monitor.start(new Map([["echo", adapter]]));
+      monitor.checkNow();
+
+      const health = monitor.getHealth("echo") as { verification?: unknown } | undefined;
+      expect(health?.verification).toBeUndefined();
+      stop();
+    });
+  });
+
   // -------------------------------------------------------------------------
   // 2. state: disconnected
   // -------------------------------------------------------------------------
