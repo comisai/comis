@@ -221,6 +221,29 @@ export const MsTeamsChannelEntrySchema = z.strictObject({
   ackReaction: AckReactionConfigSchema.optional(),
 });
 
+/**
+ * Google Chat via a Pub/Sub REST pull transport (default) or an opt-in
+ * verified webhook.
+ *
+ * A dedicated entry rather than an extension of the base channel schema: the
+ * bot authenticates with a service-account key (minting a scoped JWT-bearer
+ * token) instead of a single bot token, and the default transport is a
+ * no-public-IP Pub/Sub pull loop rather than an inbound webhook.
+ */
+export const GoogleChatChannelEntrySchema = z.strictObject({
+  enabled: z.boolean().default(false),
+  mode: z.enum(["pubsub", "webhook"]).default("pubsub"),
+  serviceAccountKey: SecretRefOrStringSchema.optional(),
+  subscriptionName: z.string().optional(),                                    // pubsub: projects/X/subscriptions/Y
+  audienceType: z.enum(["project-number", "app-url"]).default("project-number"), // webhook mode (transport not wired yet)
+  audience: z.string().optional(),                                            // webhook mode (transport not wired yet)
+  allowFrom: z.array(z.string()).default([]),                                 // users/{id} or spaces/{id}
+  allowMode: z.enum(["allowlist", "open"]).default("allowlist"),
+  missedInboundThresholdMs: z.number().int().min(60_000).default(21_600_000), // webhook-mode liveness window; floor 1 min
+  mediaProcessing: MediaProcessingSchema.optional(),
+  // NO ackReaction — reactions are user-auth-only on this platform, so an ack-reaction knob would be inert dead surface.
+});
+
 // ---------------------------------------------------------------------------
 // Health check config
 // ---------------------------------------------------------------------------
@@ -266,6 +289,7 @@ export const ChannelConfigSchema = z.strictObject({
     irc: IrcChannelEntrySchema.default(() => IrcChannelEntrySchema.parse({})),
     email: EmailChannelEntrySchema.default(() => EmailChannelEntrySchema.parse({})),
     msteams: MsTeamsChannelEntrySchema.default(() => MsTeamsChannelEntrySchema.parse({})),
+    googlechat: GoogleChatChannelEntrySchema.default(() => GoogleChatChannelEntrySchema.parse({})),
     /** Health monitoring configuration */
     healthCheck: ChannelHealthCheckSchema.default(() => ChannelHealthCheckSchema.parse({})),
   });
@@ -278,4 +302,5 @@ export type LineChannelEntry = z.infer<typeof LineChannelEntrySchema>;
 export type EmailChannelEntry = z.infer<typeof EmailChannelEntrySchema>;
 export type IrcChannelEntry = z.infer<typeof IrcChannelEntrySchema>;
 export type MsTeamsChannelEntry = z.infer<typeof MsTeamsChannelEntrySchema>;
+export type GoogleChatChannelEntry = z.infer<typeof GoogleChatChannelEntrySchema>;
 export type ChannelConfig = z.infer<typeof ChannelConfigSchema>;
