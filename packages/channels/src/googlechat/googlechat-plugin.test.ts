@@ -124,8 +124,8 @@ describe("createGoogleChatPlugin — honest app-auth CAPABILITIES", () => {
     const plugin = createGoogleChatPlugin(deps);
 
     // Deep-equal on the DECLARED literal (not a schema-parsed shape): edit,
-    // delete, and threaded replies are on; reactions, history, attachments, and
-    // typing are off and there is no button surface.
+    // delete, threaded replies, and Cards v2 interactive buttons are on;
+    // reactions, history, attachments, and typing are off.
     expect(plugin.capabilities.features).toEqual({
       reactions: false,
       editMessages: true,
@@ -134,7 +134,7 @@ describe("createGoogleChatPlugin — honest app-auth CAPABILITIES", () => {
       attachments: false,
       typing: false,
       threads: true,
-      buttons: "none",
+      buttons: "cardsv2",
     });
   });
 
