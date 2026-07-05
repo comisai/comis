@@ -54,11 +54,17 @@ function makeLogger(): ComisLogger {
 }
 
 /** A no-op crypto handle (the shape `initMatrixCrypto` resolves to). */
-function fakeCryptoHandle(): MatrixCryptoHandle {
+function fakeCryptoHandle(
+  verification: { crossSigningReady: boolean; deviceVerified: boolean } = {
+    crossSigningReady: false,
+    deviceVerified: false,
+  },
+): MatrixCryptoHandle {
   return {
     scheduleSnapshot: vi.fn(),
     snapshotNow: vi.fn().mockResolvedValue(ok(undefined)),
     stop: vi.fn().mockResolvedValue(undefined),
+    getVerificationStatus: vi.fn().mockResolvedValue(verification),
   };
 }
 
@@ -153,6 +159,8 @@ interface CryptoHarnessOverrides {
   cryptoResult?: Result<MatrixCryptoHandle, Error>;
   onDecryptFailure?: (signal: unknown) => void;
   seed?: Partial<MatrixState>;
+  /** The verification posture the default fake crypto handle reports. */
+  verification?: { crossSigningReady: boolean; deviceVerified: boolean };
 }
 
 function makeCryptoHarness(over: CryptoHarnessOverrides = {}): {
@@ -174,7 +182,7 @@ function makeCryptoHarness(over: CryptoHarnessOverrides = {}): {
   // inspection, and resolves to the configured Result (ok(handle) by default).
   const initCryptoImpl = vi.fn(async () => {
     callLog.push("initCrypto");
-    return over.cryptoResult ?? ok(fakeCryptoHandle());
+    return over.cryptoResult ?? ok(fakeCryptoHandle(over.verification));
   });
 
   const deps: MatrixClientDeps = {
@@ -504,5 +512,49 @@ describe("createMatrixClient — /sync filter includes encrypted wire events on 
 
     // The plaintext path is unchanged — no encrypted wire events requested.
     expect(startFilterTypes(h.fake)).toEqual(["m.room.message"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Verification posture surfaced from the controller (E2EE-04 / OBS-01)
+// ---------------------------------------------------------------------------
+
+describe("createMatrixClient — verification posture surface", () => {
+  it("exposes the crypto handle's verification posture after start on the e2ee path", async () => {
+    const h = makeCryptoHarness({
+      e2ee: true,
+      stateDir: "/data/matrix",
+      crypto: true,
+      verification: { crossSigningReady: true, deviceVerified: false },
+    });
+
+    await h.controller.start();
+
+    // The controller surfaces the device's cross-signing / verification posture so
+    // the adapter can put it on the channel status for a doctor / fleet probe.
+    expect(await h.controller.getVerificationStatus()).toEqual({
+      crossSigningReady: true,
+      deviceVerified: false,
+    });
+  });
+
+  it("returns undefined on the plaintext path (no crypto handle, no verification surface)", async () => {
+    const h = makeCryptoHarness({ e2ee: false, stateDir: "/data/matrix" });
+
+    await h.controller.start();
+
+    expect(await h.controller.getVerificationStatus()).toBeUndefined();
+  });
+
+  it("returns undefined when the crypto bootstrap failed (no handle to read from)", async () => {
+    const h = makeCryptoHarness({
+      e2ee: true,
+      stateDir: "/data/matrix",
+      cryptoResult: err(new Error("crypto backend unavailable")),
+    });
+
+    await h.controller.start();
+
+    expect(await h.controller.getVerificationStatus()).toBeUndefined();
   });
 });
