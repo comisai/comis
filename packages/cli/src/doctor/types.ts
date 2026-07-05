@@ -36,6 +36,15 @@ export interface DoctorConfigResolution {
   };
   readonly unresolvedRefs?: readonly UnresolvedEnvRef[];
   readonly validationIssues?: readonly string[];
+  /**
+   * Raw top-level YAML keys captured before schema defaults were applied — the
+   * config-membership source (which top-level sections the file actually
+   * wrote, as opposed to the fully-defaulted validated `config`, which always
+   * reports every section present). Present on the success and
+   * validation-failure returns; absent when the file never parsed to an object
+   * (the `loadError` returns), where section membership is meaningless.
+   */
+  readonly rawTopLevelKeys?: readonly string[];
 }
 
 /**

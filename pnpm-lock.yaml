@@ -325,6 +325,9 @@ importers:
       yaml:
         specifier: 2.9.0
         version: 2.9.0
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
     devDependencies:
       '@types/better-sqlite3':
         specifier: 7.6.13
@@ -338,9 +341,6 @@ importers:
       vitest:
         specifier: 4.1.9
         version: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.9.0)(vite@8.1.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
-      zod:
-        specifier: 4.4.3
-        version: 4.4.3
 
   packages/comis:
     dependencies:

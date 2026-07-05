@@ -848,15 +848,23 @@ describe("exportTrajectoryBundle", () => {
     expect(new Date(manifest.generatedAt).toISOString()).toBe(manifest.generatedAt);
     expect(manifest.traceId).toBe(f.traceId);
     expect(manifest.sessionId).toBe(f.sessionId);
-    expect(manifest.workspaceDir).toBe(f.workspaceDir);
+    // The manifest's host-path fields are placeholder-substituted before the
+    // write (the same pass the content files receive), so no raw absolute path
+    // reaches disk. The fixture's session/runtime live under workspaceDir, so
+    // the substituted form is $WORKSPACE_DIR-prefixed.
+    expect(manifest.workspaceDir).toBe("$WORKSPACE_DIR");
     expect(manifest.leafId).toBe(f.leafId);
     expect(manifest.eventCount).toBe(
       (manifest.runtimeEventCount ?? 0) + (manifest.transcriptEventCount ?? 0),
     );
     expect(manifest.runtimeEventCount).toBe(5);
     expect(manifest.transcriptEventCount).toBe(3);
-    expect(manifest.sourceFiles.session).toBe(f.sessionFile);
-    expect(manifest.sourceFiles.runtime).toBe(f.runtimeFile);
+    expect(manifest.sourceFiles.session).toBe(
+      "$WORKSPACE_DIR" + f.sessionFile.slice(f.workspaceDir.length),
+    );
+    expect(manifest.sourceFiles.runtime).toBe(
+      "$WORKSPACE_DIR" + f.runtimeFile.slice(f.workspaceDir.length),
+    );
     expect(Array.isArray(manifest.contents)).toBe(true);
     expect(manifest.contents!.length).toBe(8);
     for (const entry of manifest.contents!) {
@@ -876,6 +884,45 @@ describe("exportTrajectoryBundle", () => {
       "system-prompt.txt",
       "tools.json",
     ]);
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 4b: manifest host-path fields are placeholder-substituted — the
+  // bundle ships no raw absolute host path. Under the default data-dir layout
+  // a raw session/workspace path discloses the OS username, so the manifest
+  // must receive the same path substitution the content files already get.
+  // -------------------------------------------------------------------------
+
+  it("manifest host-path fields are placeholder-substituted, leaking no raw host path", async () => {
+    const f = makeFixture();
+    const result = await exportTrajectoryBundle({
+      sessionId: f.sessionId,
+      sessionFile: f.sessionFile,
+      workspaceDir: f.workspaceDir,
+      traceId: f.traceId,
+      agentId: f.agentId,
+      clock: f.clock,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const manifestRaw = readFileSync(join(result.value.bundleDir, "manifest.json"), "utf-8");
+    const manifest = JSON.parse(manifestRaw) as TrajectoryBundleManifest;
+
+    // The workspace + source-file fields carry placeholders, never a raw path.
+    expect(manifest.workspaceDir).toBe("$WORKSPACE_DIR");
+    expect(manifest.sourceFiles.session.startsWith("$WORKSPACE_DIR/")).toBe(true);
+    expect(manifest.sourceFiles.runtime?.startsWith("$WORKSPACE_DIR/")).toBe(true);
+
+    // The raw absolute workspace path appears nowhere in the manifest text — the
+    // substitution that already covers every content file now covers the
+    // manifest, so a shared bundle discloses no host directory structure.
+    expect(manifestRaw).not.toContain(f.workspaceDir);
+
+    // The returned manifest object and the on-disk manifest agree: the exporter
+    // substitutes once, at manifest construction, so both surfaces match.
+    expect(result.value.manifest.workspaceDir).toBe("$WORKSPACE_DIR");
+    expect(result.value.manifest.sourceFiles.session).toBe(manifest.sourceFiles.session);
   });
 
   // -------------------------------------------------------------------------

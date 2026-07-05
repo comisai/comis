@@ -52,12 +52,12 @@ function makeEvent(data?: Record<string, unknown>): TrajectoryEvent {
 }
 
 // ---------------------------------------------------------------------------
-// Pattern set surface (11 patterns)
+// Pattern set surface (13 patterns)
 // ---------------------------------------------------------------------------
 
 describe("value-shape pattern set — surface", () => {
-  it("returns exactly 11 patterns", () => {
-    expect(getValueShapePatterns().length).toBe(11);
+  it("returns exactly 13 patterns", () => {
+    expect(getValueShapePatterns().length).toBe(13);
   });
 
   it("every pattern has id, regex, and sentinel fields", () => {
@@ -76,7 +76,7 @@ describe("value-shape pattern set — surface", () => {
 
   it("pattern ids are unique", () => {
     const ids = getValueShapePatterns().map((p) => p.id);
-    expect(new Set(ids).size).toBe(11);
+    expect(new Set(ids).size).toBe(13);
   });
 
   it("every pattern has the global flag (g) for replace semantics", () => {
@@ -90,7 +90,7 @@ describe("value-shape pattern set — surface", () => {
     expect(Object.isFrozen(patterns)).toBe(true);
   });
 
-  it("expected ids present: all 11 known ids", () => {
+  it("expected ids present: all 13 known ids", () => {
     const ids = new Set(getValueShapePatterns().map((p) => p.id));
     const expected = [
       "secret-field",
@@ -104,6 +104,8 @@ describe("value-shape pattern set — surface", () => {
       "long-decimal-id",
       "basic-auth",
       "cookie-header",
+      "openai-key",
+      "bearer-token",
     ];
     for (const id of expected) {
       expect(ids.has(id), `expected id "${id}" to be present`).toBe(true);
@@ -186,6 +188,18 @@ describe("redactString — per-pattern positive cases", () => {
     const result = redactString("Cookie: session=abc123; auth=xyz");
     expect(result).toBe("<REDACTED:cookie-header>");
   });
+
+  it("openai-key: redacts an sk- key of 16+ token chars", () => {
+    const result = redactString("apiKey=sk-test00000000000000000000000000000000000000abcd done");
+    expect(result).toContain("<REDACTED:openai-key>");
+    expect(result).not.toContain("sk-test00000000000000000000000000000000000000abcd");
+  });
+
+  it("bearer-token: redacts a `Bearer <token>` authorization value", () => {
+    const result = redactString("hdr Bearer aXbYcZ0123456789abcdefghij tail");
+    expect(result).toContain("<REDACTED:bearer-token>");
+    expect(result).not.toContain("aXbYcZ0123456789abcdefghij");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -254,6 +268,19 @@ describe("redactString — per-pattern negative cases", () => {
     // Regex requires Cookie\s*: with colon — 'Cookies are' has no colon
     const p = patternById("cookie-header");
     expect(patternMatches(p, "Cookies are tasty")).toBe(false);
+  });
+
+  it("openai-key: bare 'sk-' and a short 'sk-short' variant are NOT redacted", () => {
+    // Requires sk- + 16+ token chars — short labels and benign mentions pass.
+    const p = patternById("openai-key");
+    expect(patternMatches(p, "sk-")).toBe(false);
+    expect(patternMatches(p, "sk-short")).toBe(false);
+  });
+
+  it("bearer-token: lowercase 'bearer' prose (no long token) is NOT redacted", () => {
+    // Case-sensitive on `Bearer` + an 18+ char token, so English prose is spared.
+    const p = patternById("bearer-token");
+    expect(patternMatches(p, "the bearer of the news")).toBe(false);
   });
 });
 

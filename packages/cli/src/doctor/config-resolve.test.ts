@@ -150,3 +150,48 @@ describe("describeConfigUnavailable", () => {
     expect(describeConfigUnavailable(r)).toContain("No config file found");
   });
 });
+
+describe("resolveDoctorConfig rawTopLevelKeys", () => {
+  it("exposes the pre-defaults top-level keys the config wrote, not the fully-defaulted validated set", () => {
+    const r = resolveDoctorConfig(
+      ["/cfg/config.yaml"],
+      depsFor({
+        files: { "/cfg/config.yaml": CONFIG_YAML },
+        store: { COMIS_GATEWAY_TOKEN: TOKEN_48, TELEGRAM_BOT_TOKEN: "12345:abcdef" },
+      }),
+    );
+    expect(r.config).toBeDefined();
+    // Only the two sections the file actually wrote — NOT the dozens the
+    // validated, fully-defaulted AppConfig would report as present.
+    expect(new Set(r.rawTopLevelKeys)).toEqual(new Set(["gateway", "channels"]));
+    expect(r.rawTopLevelKeys?.length).toBe(2);
+  });
+
+  it("still exposes rawTopLevelKeys when the config parses but fails schema validation", () => {
+    // The unresolved ${...} placeholders fail the token gate -> validationIssues
+    // set. Section membership is still meaningful, so rawTopLevelKeys survives.
+    const r = resolveDoctorConfig(
+      ["/cfg/config.yaml"],
+      depsFor({ files: { "/cfg/config.yaml": CONFIG_YAML } }),
+    );
+    expect(r.validationIssues?.length).toBeGreaterThan(0);
+    expect(new Set(r.rawTopLevelKeys)).toEqual(new Set(["gateway", "channels"]));
+  });
+
+  it("omits rawTopLevelKeys when the config file is missing, unparseable, or not an object", () => {
+    const missing = resolveDoctorConfig(["/cfg/nope.yaml"], depsFor({}));
+    expect(missing.rawTopLevelKeys).toBeUndefined();
+
+    const unparseable = resolveDoctorConfig(
+      ["/cfg/config.yaml"],
+      depsFor({ files: { "/cfg/config.yaml": "gateway: [unclosed" } }),
+    );
+    expect(unparseable.rawTopLevelKeys).toBeUndefined();
+
+    const notObject = resolveDoctorConfig(
+      ["/cfg/config.yaml"],
+      depsFor({ files: { "/cfg/config.yaml": "- just\n- a\n- list" } }),
+    );
+    expect(notObject.rawTopLevelKeys).toBeUndefined();
+  });
+});

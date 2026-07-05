@@ -1578,6 +1578,78 @@ Requires an admin-scoped gateway token (same as `comis explain` / `comis trace`)
 
 ---
 
+### `comis support-bundle`
+
+Assemble a **paste-ready support bundle** — a single directory to hand to a maintainer or attach to a bug report. Each run writes up to nine content-free files (plus a `trace-exports/` directory with `--deep`) under `<dataDir>/support-bundles/comis-support-<ts>/`: a machine-readable triage verdict, the full health-check findings, a human-readable issue summary, an AI-fillable issue draft, a cross-session fleet health digest, a config-posture digest (config section membership only), a window-scoped audit-summary digest, and a manifest carrying the redaction fingerprint. Focusing on one session with `--session` adds a per-session `explain.json` incident digest; `--deep` additionally embeds that session's redacted trace bundle under `trace-exports/`. The fleet digest, config-posture digest, and audit-summary digest are each omitted when their source cannot be read — a thrown fleet assembly, an unparseable config, or an absent observability store — and the manifest records the gap. The verdict is derived from the local health checks only — no LLM is invoked, so the same install state always yields the same verdict.
+
+The command runs **fully offline**: it composes the same checks as `comis doctor` against a stopped daemon, folds them into the triage verdict, and writes the bundle without contacting the gateway. A **degraded or partial** triage is still a written bundle — the degraded verdict is the content, not a failure — so the command exits `0` on any bundle it manages to write. It is safe to run the moment something looks wrong.
+
+The bundle is content-free by construction: it excludes secrets, message bodies, and raw config values, and the directory name carries a timestamp only (no hostname). Every file is written under an owner-only (`0o700`) directory with `0o600` file modes through a symlink-refusing safe writer.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--since <hours>` | `number` | `24` | Diagnostic window in hours (same unit as `comis fleet`) |
+| `--format <format>` | `table` \| `json` | `table` | Output format |
+| `-c, --config <paths...>` | `string[]` | auto | Config file paths; defaults to `COMIS_CONFIG_PATHS` or the standard `~/.comis` / `/etc/comis` locations |
+| `--session <sessionKeyOrTraceId>` | `string` | — | Focus the bundle on one session — embeds its `explain.json` digest (valid on its own; add `--deep` for the full trace bundle) |
+| `--deep` | `boolean` | `false` | Include deep per-session evidence (requires `--session`) |
+
+**Output files** — written under `comis-support-<ts>/`:
+
+| File | Contents |
+|------|----------|
+| `issue-summary.md` | Human-readable triage summary, ready to paste into a bug report |
+| `ai-issue-draft.md` | A GitHub issue draft with the auto-known facts (versions, triage status, active signals, doctor summary) pre-filled and `<REQUIRED: … — do not invent>` placeholders for repro steps and expected-vs-actual, so an AI assistant can file a faithful issue without inventing missing facts |
+| `triage.json` | Machine-readable triage verdict (status, active signals, doctor summary) |
+| `doctor.json` | Full diagnostic findings from the health checks |
+| `fleet.json` | Cross-session fleet health digest — degraded rate, top error kinds, and findings — over the `--since` window |
+| `config-posture.json` | Which top-level config sections are present, plus any flagged-key labels — section names only, never config values |
+| `audit-summary.json` | Window-scoped security-audit digest — total and per-kind event counts over the `--since` window, read from the offline observability store; omitted when that store is absent |
+| `explain.json` | _With `--session`._ The per-session incident digest — the same content-free `IncidentReport` as [`comis explain`](#comis-explain), embedded verbatim |
+| `trace-exports/` | _With `--deep`._ A directory holding the redacted per-session trace bundle (the [`comis trace export`](/operations/incident-bundle) output), embedded in place instead of written under the workspace |
+| `manifest.json` | Bundle index with the redaction fingerprint and any partial-section warnings |
+
+```bash
+# Write a bundle for the last 24h (default window)
+comis support-bundle
+
+# Machine-readable summary of where the bundle landed and what it found
+comis support-bundle --format json
+#   { "bundleDir": "…/support-bundles/comis-support-…", "status": "degraded", "activeSignals": ["daemon_down"] }
+
+# Widen the diagnostic window to 72h
+comis support-bundle --since 72
+```
+
+In table format the command also prints the copy-paste commands to compress the bundle and open an issue from the summary — **you** run them; the command never does:
+
+```bash
+tar czf comis-support-<ts>.tar.gz -C <parent> comis-support-<ts>
+gh issue create --body-file <bundleDir>/issue-summary.md
+```
+
+When you did not pass `--session` and a best-effort local scan finds a recently-degraded session, the table view also prints a tip naming that session, so you can re-run with `--session <key> --deep` for a focused per-session bundle.
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| `0` | A bundle was written — including a **degraded** or **partial** triage |
+| `1` | The bundle could not be produced at all (e.g. the data dir is not writable) |
+| `2` | Usage error (e.g. `--deep` without `--session`) |
+
+<Warning>
+**Privacy notice**
+
+The bundle excludes secrets, message bodies, and raw config values by construction, and a redaction backstop masks value-shaped strings and substitutes absolute paths before anything reaches disk. Redaction is heuristic, though — always treat the bundle as sensitive: share it only with authorized engineers over a secure channel, and delete it after triage.
+
+With `--deep`, the bundle additionally embeds the redacted **raw session trajectory** (session content, PII-adjacent) under `trace-exports/` — strictly more sensitive than the default digest, and the command's printed notice escalates to match. Handle a `--deep` bundle with the same care as a [`comis trace export`](/operations/incident-bundle).
+</Warning>
+
+**No daemon required.** The bundle is assembled entirely from the local `~/.comis` files and the offline health checks, so it works when the daemon is stopped or crash-looping — exactly when you most need it. When the daemon happens to be running, the bundle also records its build version; otherwise that field is simply absent.
+
+---
+
 ### `comis whoami`
 
 Show the run's **resolved orchestration capabilities** plus the **remaining per-root budget and outward quota** — "what can I do, and how much budget is left". Backed by `CapabilitiesIntrospectContract` (`capabilities.introspect`, `rpc` scope — read-only, no capability required). The read is **self-scoped**: the daemon resolves the caller from the connection, so an operator token sees the default agent's posture and an in-process agent sees its OWN (never another agent's — the request carries no `agentId`).

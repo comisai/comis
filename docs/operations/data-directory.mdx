@@ -41,7 +41,9 @@ data directory.
 │   ├── daemon.N.log         # structured JSON log (pino-roll; live file = newest N)
 │   └── security-audit.jsonl # durable security-decision audit trail (0600, rotated; one scrubbed JSON line per event)
 ├── traces/                  # per-session JSONL execution traces
+├── support-bundles/         # comis support-bundle output — one comis-support-<ts>/ dir per run
 ├── workspace/               # default agent workspace (files, git, skills, projects/)
+│   └── trace-exports/       # comis trace export output — one comis-trace-<sid8>-<ts>/ dir per export
 ├── workspace-<agentId>/     # named-agent workspaces (one per extra agent)
 ├── terminal-drive/          # durable terminal-driver state (default; absent only with drive.durable: false)
 │   └── <agentId>/journals/<sessionId>.json
@@ -66,6 +68,8 @@ Some entries only appear under specific conditions.
 - `broker.sock` — present only when the credential broker is active (`executor.broker.enabled: true` in `config.yaml`). Ephemeral — deleted and recreated on each daemon start.
 - `cap.sock` — present only when an autonomy-bearing agent is configured (the loopback capability endpoint). Ephemeral — `0600` owner-only, deleted and recreated on each daemon start. The lease **bearer** itself is never persisted — it is re-minted on each resume from the run's persisted (attenuated) capabilities, so there is still no `cap.db` / lease-secret table on disk. The transient [bounded-autonomy](/agents/autonomy) control-plane *counters* (the per-root spawn-ceiling counters, the call-rate windows, and the outward-quota windows) remain **in-memory** and reset on restart. The in-flight **run state** need not be ephemeral, though: when [`autonomy.durability.enabled`](/reference/config-yaml#autonomy-agentsautonomy) is on (opt-in, **off by default**), the daemon persists each run's checkpoint and its outward-send ledger to `memory.db` (the [`durable_runs` + `outward_send_ledger`](#memory-db) tables), so a cron-fired pipeline **survives a daemon restart** — on resume the lease is re-minted from those persisted attenuated caps and the consumed budget is re-seeded from the record. With durability off (the default) the data-dir layout is unchanged by autonomy and those tables are never written. See [Durability & Resume](/agents/autonomy#durability-resume).
 - `ecosystem.config.js` — created only by `comis pm2 setup`.
+- `support-bundles/` — created only after the **first** `comis support-bundle` run; each run writes one timestamped `comis-support-<ts>/` directory. Absent on a fresh install.
+- `workspace/trace-exports/` — created only after the **first** `comis trace export` (or an owner `/export-trajectory`); each export writes one `comis-trace-<sid8>-<ts>/` directory under the agent's workspace. Absent until then.
 - Named workspaces like `workspace-myagent/` — appear only when you define more than one agent.
 - `terminal-drive/` — the per-agent **durable** terminal drive-state journals. A durable drive is the **default** (`drive.durable: true`), so this appears whenever an agent runs a terminal drive; absent only for an explicit `drive.durable: false` (non-durable) drive or on a tmux-less host.
 - `models/whisper/` — created only after the **first** voice transcription that uses the keyless in-process local STT engine (when `integrations.media.transcription.provider` resolves to `local` without a `local.baseUrl` server). Absent on a fresh install and whenever local STT never runs.
@@ -253,6 +257,15 @@ Per-session JSONL execution traces, rotated at 5 MB per file (3 files kept by de
 
 ---
 
+### `support-bundles/`
+
+Output of [`comis support-bundle`](/reference/cli#comis-support-bundle). Each run writes one timestamped `comis-support-<ts>/` directory containing `issue-summary.md`, `ai-issue-draft.md`, `triage.json`, `doctor.json`, and `manifest.json`, plus — when their source can be read — `fleet.json`, `config-posture.json`, and an `audit-summary.json` window digest (a thrown fleet read, an unparseable config, or an absent observability store omits the corresponding file). Focusing the bundle on one session adds `explain.json` (with `--session`) and, with `--deep`, a `trace-exports/` subdirectory holding that session's redacted trace bundle — so a run writes up to nine files plus the optional `trace-exports/` directory. It is a content-free, paste-ready diagnostic bundle assembled offline. The directory is created with mode `0o700` and every file with `0o600`; the name carries a timestamp only (no hostname). The bundle excludes secrets, message bodies, and raw config values by construction.
+
+**Written by:** `comis support-bundle`, on each run.
+**Safe to delete?** Yes. Bundles are point-in-time diagnostic artifacts — delete them once you have shared or triaged them (the privacy guidance is to delete after triage anyway).
+
+---
+
 ### `workspace/` and `workspace-<agentId>/`
 
 Each agent gets a dedicated workspace directory. The default agent uses `workspace/`; additional named agents get `workspace-<agentId>/`. Inside each workspace:
@@ -269,6 +282,15 @@ The `video_generate` tool persists generated videos to `media/videos/` inside th
 
 **Written by:** the daemon on first startup for each agent.
 **Safe to delete?** Deleting a workspace erases the agent's identity files, cron job definitions, and skill configurations. The daemon recreates the directory structure but not the content you or the agent wrote there.
+
+---
+
+### `workspace/trace-exports/`
+
+Output of [`comis trace export`](/operations/incident-bundle) and the owner `/export-trajectory` slash command. Each export writes one `comis-trace-<sid8>-<ts>/` directory **under the agent's workspace** (`workspace/trace-exports/` for the default agent, `workspace-<agentId>/trace-exports/` for a named one), holding the redacted per-session incident bundle. The directory is created with mode `0o700` and every file with `0o600`.
+
+**Written by:** `comis trace export` and the `/export-trajectory` owner command.
+**Safe to delete?** Yes. Exports are point-in-time diagnostic artifacts; delete them after handing off to an engineer.
 
 ---
 
