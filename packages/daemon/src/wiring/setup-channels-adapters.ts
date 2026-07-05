@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Per-platform channel adapter bootstrap: credential validation and plugin
- * creation for 10 platforms (Telegram, Discord, Slack, WhatsApp, Signal, LINE,
- * iMessage, IRC, Email, Microsoft Teams).
+ * creation for 11 platforms (Telegram, Discord, Slack, WhatsApp, Signal, LINE,
+ * iMessage, IRC, Email, Microsoft Teams, Google Chat).
  * Extracted from setup-channels.ts to isolate the per-platform bootstrap block
  * into a single-concern module.
  * @module
@@ -21,6 +21,7 @@ import {
   createIrcPlugin,
   createEmailPlugin,
   createMsTeamsPlugin,
+  createGoogleChatPlugin,
   validateBotToken,
   validateDiscordToken,
   validateSlackCredentials,
@@ -31,6 +32,7 @@ import {
   validateIrcConnection,
   validateEmailCredentials,
   validateMsTeamsCredentials,
+  validateGoogleChatCredentials,
   type TelegramPluginHandle,
   type LinePluginHandle,
   type EmailAdapterDeps,
@@ -495,6 +497,38 @@ export async function bootstrapAdapters(deps: {
             ? "Set msteams.managedIdentityClientId (managed-identity mode) and msteams.appId/tenantId"
             : "Verify msteams.appId/tenantId and MSTEAMS_APP_PASSWORD";
       channelsLogger.warn({ hint: credHint, errorKind: "auth" as const }, "Teams credential validation failed");
+    }
+  }
+
+  // Google Chat — a pull-driven channel: inbound arrives over a Cloud Pub/Sub
+  // pull loop the adapter opens on start(), so there is no gateway ingress to
+  // build here (unlike Teams — that's the webhook transport). On a valid config
+  // it registers the adapter/plugin and stops. The service-account key resolves
+  // as the config SecretRef (already resolved to a string upstream) OR the
+  // service-account-key env fallback, and is never placed in a log.
+  if (channelConfig.googlechat.enabled) {
+    const key = (channelConfig.googlechat.serviceAccountKey as string | undefined) || getSecret("GOOGLECHAT_SA_KEY");
+    const subscriptionName = channelConfig.googlechat.subscriptionName;
+    const validation = validateGoogleChatCredentials({
+      serviceAccountKey: key,
+      subscriptionName,
+      allowFrom: channelConfig.googlechat.allowFrom,
+      logger: channelsLogger,
+    });
+    if (validation.ok && key && subscriptionName) {
+      const plugin = createGoogleChatPlugin({
+        serviceAccountKey: key,
+        subscriptionName,
+        allowFrom: channelConfig.googlechat.allowFrom,
+        allowMode: channelConfig.googlechat.allowMode,
+        logger: channelsLogger,
+        mode: channelConfig.googlechat.mode,
+      });
+      adaptersByType.set("googlechat", plugin.adapter);
+      channelPlugins.set("googlechat", plugin);
+      channelsLogger.info({ channelType: "googlechat", mode: channelConfig.googlechat.mode }, "Channel adapter initialized");
+    } else {
+      channelsLogger.warn({ hint: "Set channels.googlechat.serviceAccountKey (SecretRef) or GOOGLECHAT_SA_KEY, and channels.googlechat.subscriptionName", errorKind: "auth" as const }, "Google Chat credential validation failed");
     }
   }
 

@@ -610,6 +610,32 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "ConnectorTokenDeps",
       "ConnectorTokenProvider",
       "classifyMsTeamsError",
+      // Google Chat adapter building blocks — exported for API parity with the
+      // other channel adapters, consumed WITHIN the package (the plugin wraps the
+      // adapter; the adapter drives the mapper, the service-account token
+      // provider and the error classifier) with no cross-package importer. The
+      // daemon composition root (setup-channels-adapters.ts) consumes the plugin
+      // factory (createGoogleChatPlugin) + the credential validator
+      // (validateGoogleChatCredentials) instead — so those two are NOT listed
+      // here (the public-export-consumers walker finds their real consumer). The
+      // adapter deps/handle types surface the same class as MsTeamsAdapterDeps:
+      // the plugin factory takes GoogleChatAdapterDeps by inference at the call
+      // site, so no cross-package importer names them. The two token scopes
+      // (CHAT_SCOPE/PUBSUB_SCOPE) + the token provider deps/handle/scope types are
+      // consumed by the adapter internally. Shrink each entry as a real
+      // cross-package consumer lands.
+      "createGoogleChatAdapter",
+      "GoogleChatAdapterDeps",
+      "GoogleChatAdapterHandle",
+      "mapGoogleChatEventToNormalized",
+      "GoogleChatEvent",
+      "createGoogleChatTokenProvider",
+      "CHAT_SCOPE",
+      "PUBSUB_SCOPE",
+      "GoogleChatTokenDeps",
+      "GoogleChatTokenProvider",
+      "GoogleChatScope",
+      "classifyGoogleChatError",
       "createIMessageAdapter",
       "IMessageAdapterDeps",
       "mapImsgToNormalized",
