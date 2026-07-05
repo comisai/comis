@@ -44,8 +44,10 @@ export { parseSkillManifest } from "./manifest/parser.js";
 // The spec-pure allowed-set rule — one shared source consumed by the manifest
 // lift, the bundled-corpus gate, and the import mapper.
 export { isSpecPureFrontmatter, SPEC_PURE_TOP_LEVEL_FIELDS } from "./manifest/spec-purity.js";
-// The authored-frontmatter normalize transform run before strict validation.
-export { liftAuthoredFrontmatter, type LiftContext } from "./manifest/lift.js";
+// The authored-frontmatter normalize transform (liftAuthoredFrontmatter +
+// LiftContext) is NOT re-exported: it is package-internal, consumed only via
+// relative imports by the manifest parser + registry discovery/cache. Keeping
+// it off the public barrel avoids a dead export.
 
 // Eligibility
 export { createRuntimeEligibilityContext } from "./registry/eligibility.js";

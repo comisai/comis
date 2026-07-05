@@ -3262,6 +3262,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // not a baseline orphan.
       "SkillManifestSchema",
       "SkillManifestParsed",
+      // The spec-purity allowed-set rule: the isSpecPureFrontmatter predicate +
+      // the frozen SPEC_PURE_TOP_LEVEL_FIELDS list are the single documented
+      // source of the manifest's authored top-level field set. Both are consumed
+      // through the @comis/skills barrel by the frontmatter-conformance
+      // architecture gate (test/architecture/skill-frontmatter-spec-conformance.test.ts)
+      // and the schema-drift integration gate (test/integration/skill-schema-drift.test.ts)
+      // — both TEST files, which the public-export-consumers AST walker excludes
+      // (it scans packages/*/src/** and skips *.test.ts). Part of the documented
+      // manifest API surface; not a baseline orphan.
+      "isSpecPureFrontmatter",
+      "SPEC_PURE_TOP_LEVEL_FIELDS",
       // The SkillValidationPort sandbox adapter (the bwrap dynamic-replay half + the
       // now-redundant static scan, which moved to @comis/core validateLearnedDocBody)
       // was the learned-code execution surface. An advisory doc has NO executable
