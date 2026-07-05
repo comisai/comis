@@ -30,7 +30,11 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { SPEC_PURE_TOP_LEVEL_FIELDS, parseSkillManifest } from "@comis/skills";
+import {
+  isSpecPureFrontmatter,
+  SPEC_PURE_TOP_LEVEL_FIELDS,
+  parseSkillManifest,
+} from "@comis/skills";
 import {
   formatViolations,
   type ViolationCitation,
@@ -83,10 +87,14 @@ describe("every bundled SKILL.md uses only the spec's six top-level fields", () 
     const violations: ViolationCitation[] = [];
     for (const { name, path } of files) {
       const content = readFileSync(path, "utf8");
-      const offending = [
-        ...new Set(topLevelFrontmatterKeys(content)),
-      ].filter((key) => !ALLOWED_TOP_LEVEL.has(key));
-      if (offending.length > 0) {
+      const topLevelKeys = topLevelFrontmatterKeys(content);
+      // Verdict from the shipped predicate, driven with the file's actual
+      // top-level keys; the offending-key list drives the citation.
+      const keyObject = Object.fromEntries(topLevelKeys.map((k) => [k, null]));
+      const offending = [...new Set(topLevelKeys)].filter(
+        (key) => !ALLOWED_TOP_LEVEL.has(key),
+      );
+      if (!isSpecPureFrontmatter(keyObject)) {
         violations.push({
           file: `packages/daemon/bundled-skills/${name}/SKILL.md`,
           line: 0,
