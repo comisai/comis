@@ -258,6 +258,26 @@ describe("createMatrixClient — /sync lifecycle, watermark guard, invite gate",
     expect(h.received).toHaveLength(0);
   });
 
+  it("does not deliver a timeline event the bot itself sent (no self-reply loop)", async () => {
+    // The bot's own messages appear in its rooms' timelines: a real homeserver
+    // returns them in /sync, and matrix-js-sdk local-echoes an outbound send onto
+    // the timeline the instant it is sent. Delivering one to onMessage — which
+    // replies — would echo the reply, local-echo THAT, and loop until the stack
+    // overflows. The controller must drop events whose sender is the bot's MXID.
+    const h = makeHarness(); // fake getUserId() === "@bot:hs"
+    await h.controller.start();
+    await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null);
+
+    await h.fake.emit(
+      RoomEvent.Timeline,
+      fakeEvent({ sender: "@bot:hs", ts: 200, body: "echo: hi" }),
+      fakeRoom("!r:hs"),
+      false,
+    );
+
+    expect(h.received).toHaveLength(0);
+  });
+
   it("does not deliver a backlog event delivered toStartOfTimeline even after PREPARED", async () => {
     const h = makeHarness({ seed: { watermark: 5 } });
     await h.controller.start();

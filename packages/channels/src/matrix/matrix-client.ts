@@ -232,6 +232,13 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
   ): Promise<void> {
     if (room === undefined) return;
 
+    // Never process the bot's own messages. They appear in the room timeline
+    // two ways — a real homeserver returns them in `/sync`, and matrix-js-sdk
+    // local-echoes an outbound send onto the timeline the instant it is sent —
+    // and delivering one to `onMessage` (which replies) would echo the reply,
+    // local-echo that, and loop until the stack overflows. Drop on the full MXID.
+    if (event.getSender() === client.getUserId()) return;
+
     const deliver = shouldDeliverTimelineEvent({
       syncReady,
       toStartOfTimeline: toStartOfTimeline === true,
