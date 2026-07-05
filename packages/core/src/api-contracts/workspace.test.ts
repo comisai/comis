@@ -436,6 +436,52 @@ describe("workspace-umbrella domain contracts", () => {
   });
 
   // -------------------------------------------------------------------------
+  // skills.list source enum — the trust tiers the model SEES
+  // -------------------------------------------------------------------------
+
+  describe("skills.list response source enum (trust tiers the model sees)", () => {
+    const baseSkill = {
+      name: "web-search",
+      description: "Search the web",
+      location: "/data/skills/web-search",
+    };
+
+    it("response accepts source \"imported\" — the community-import trust tier", () => {
+      expect(() =>
+        SkillsListContract.response.parse({
+          skills: [{ ...baseSkill, source: "imported" }],
+        }),
+      ).not.toThrow();
+    });
+
+    it("response accepts source \"learned\" — the materialized-procedure trust tier", () => {
+      expect(() =>
+        SkillsListContract.response.parse({
+          skills: [{ ...baseSkill, source: "learned" }],
+        }),
+      ).not.toThrow();
+    });
+
+    it("response still accepts the path-derived tiers bundled/workspace/local", () => {
+      for (const source of ["bundled", "workspace", "local"] as const) {
+        expect(() =>
+          SkillsListContract.response.parse({
+            skills: [{ ...baseSkill, source }],
+          }),
+        ).not.toThrow();
+      }
+    });
+
+    it("response rejects an unrecognized source value (closed enum)", () => {
+      expect(() =>
+        SkillsListContract.response.parse({
+          skills: [{ ...baseSkill, source: "counterfeit" }],
+        }),
+      ).toThrow();
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Spot-check request acceptance/rejection — browser.navigate
   // -------------------------------------------------------------------------
 
