@@ -40,12 +40,14 @@ import type {
   ReconcileSendQuery,
   SendMessageOptions,
 } from "@comis/core";
-import { ok, err, type Result } from "@comis/shared";
+import { ok, err, fromPromise, type Result } from "@comis/shared";
 import {
   createGoogleChatTokenProvider,
+  CHAT_SCOPE,
   PUBSUB_SCOPE,
   type GoogleChatTokenProvider,
 } from "./googlechat-auth.js";
+import { classifyGoogleChatError } from "./errors.js";
 import {
   createPubSubSource,
   type PubSubSource,
@@ -281,11 +283,66 @@ export function createGoogleChatAdapter(
     },
 
     async sendMessage(
-      _channelId: string,
-      _text: string,
+      channelId: string,
+      text: string,
       _options?: SendMessageOptions,
     ): Promise<Result<string, Error>> {
-      return err(new Error("send is not implemented"));
+      const tok = await tokens.getToken(CHAT_SCOPE);
+      if (!tok.ok) return err(tok.error); // auth already logged a secret-free WARN
+      const chatBase = deps.chatBaseUrl ?? "https://chat.googleapis.com/v1";
+      const doFetch = deps.fetchImpl ?? fetch;
+      const responded = await fromPromise(
+        doFetch(`${chatBase}/${channelId}/messages`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${tok.value}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ text }),
+        }),
+      );
+      if (!responded.ok) {
+        const c = classifyGoogleChatError(undefined, responded.error);
+        deps.logger.error(
+          {
+            channelType: "googlechat" as const,
+            hint: c.hint,
+            errorKind: c.errorKind,
+          },
+          "Google Chat send failed: no response",
+        );
+        return err(responded.error);
+      }
+      const res = responded.value;
+      if (!res.ok) {
+        const c = classifyGoogleChatError(res.status);
+        deps.logger.error(
+          {
+            channelType: "googlechat" as const,
+            status: res.status,
+            hint: c.hint,
+            errorKind: c.errorKind,
+          },
+          "Google Chat send failed: error status",
+        );
+        return err(new Error(`chat messages.create returned status ${res.status}`));
+      }
+      const parsed = await fromPromise(
+        res.json() as Promise<{ name?: string }>,
+      );
+      if (!parsed.ok || !parsed.value.name) {
+        deps.logger.error(
+          {
+            channelType: "googlechat" as const,
+            hint: "messages.create returned no message name",
+            errorKind: "platform" as const,
+          },
+          "Google Chat send failed: unreadable response",
+        );
+        return err(new Error("messages.create returned no name"));
+      }
+      _lastMessageAt = now();
+      return ok(parsed.value.name);
     },
 
     getStatus(): ChannelStatus {
