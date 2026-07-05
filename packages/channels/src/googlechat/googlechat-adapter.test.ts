@@ -75,16 +75,34 @@ function makeTokenFetch(token = MINTED_TOKEN) {
  * spy captures both the mint and the send.
  */
 function makeChatFetch(
-  opts: { sendStatus?: number; sendName?: string; sendThrows?: boolean } = {},
+  opts: {
+    sendStatus?: number;
+    sendName?: string;
+    sendThrows?: boolean;
+    /** A per-attempt status sequence for successive `/messages` hits (models a 429-then-200 resend). */
+    sendStatuses?: number[];
+    /** The `retry-after` header value returned on a `/messages` response. */
+    retryAfter?: string;
+  } = {},
 ) {
-  const sendStatus = opts.sendStatus ?? 200;
   const sendName = opts.sendName ?? "spaces/AAAA/messages/CCC";
+  let sendHits = 0;
   const spy = vi.fn(async (url: string, _init?: RequestInit) => {
     if (String(url).includes("/messages")) {
       if (opts.sendThrows) throw new Error("connect ECONNREFUSED");
+      // A status sequence models successive send attempts; the last entry repeats
+      // once the sequence is exhausted so a bounded-retry test can keep 429-ing.
+      const status = opts.sendStatuses
+        ? opts.sendStatuses[Math.min(sendHits, opts.sendStatuses.length - 1)]
+        : (opts.sendStatus ?? 200);
+      sendHits += 1;
       return {
-        ok: sendStatus >= 200 && sendStatus < 300,
-        status: sendStatus,
+        ok: status >= 200 && status < 300,
+        status,
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === "retry-after" ? (opts.retryAfter ?? null) : null,
+        },
         json: async () => ({ name: sendName }),
       };
     }
@@ -705,5 +723,146 @@ describe("createGoogleChatAdapter — per-space send pacing", () => {
     expect(timers.cleared.length).toBeGreaterThan(0);
 
     await pending; // the send resolves after the abandoned wait
+  });
+});
+
+describe("createGoogleChatAdapter — 429 auto-resend (send-safety)", () => {
+  it("resends ONLY on a 429: a 429-then-200 fires exactly 2 POSTs, returns the name, and backs off the clamped Retry-After", async () => {
+    const timers = makeFakeTimers();
+    const { fetchImpl, spy } = makeChatFetch({
+      sendStatuses: [429, 200],
+      retryAfter: "1",
+    });
+    const { deps, loggerSpy } = await makeDeps({
+      fetchImpl,
+      setTimeoutImpl: timers.setTimeoutImpl,
+      clearTimeoutImpl: timers.clearTimeoutImpl,
+    });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const p = adapter.sendMessage("spaces/AAAA", "hi");
+    await flushMicrotasks();
+    // GREEN: a retry backoff of Retry-After*1000 (=1000ms, under the 60s cap) is
+    // parked after the first 429. RED: the send already returned err, nothing parked.
+    if (timers.pendingCount() > 0) await timers.fireNext();
+    const result = await p;
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toBe("spaces/AAAA/messages/CCC");
+    const posts = spy.mock.calls.filter(([u]) => String(u).includes("/messages"));
+    expect(posts).toHaveLength(2);
+    expect(timers.delays).toContain(1000);
+    // No token on any retry/failure branch.
+    expect(loggerSpy.serialized()).not.toContain(MINTED_TOKEN);
+  });
+
+  it("falls back to capped exponential backoff on a 429 with no Retry-After header", async () => {
+    const timers = makeFakeTimers();
+    const { fetchImpl } = makeChatFetch({ sendStatuses: [429, 200] });
+    const { deps } = await makeDeps({
+      fetchImpl,
+      setTimeoutImpl: timers.setTimeoutImpl,
+      clearTimeoutImpl: timers.clearTimeoutImpl,
+    });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const p = adapter.sendMessage("spaces/AAAA", "hi");
+    await flushMicrotasks();
+    if (timers.pendingCount() > 0) await timers.fireNext();
+    const result = await p;
+
+    expect(result.ok).toBe(true);
+    // Attempt 0 backoff: RETRY_BACKOFF_BASE_MS * 2**0 = 500ms.
+    expect(timers.delays).toContain(500);
+  });
+
+  it("clamps a hostile Retry-After to the ceiling rather than awaiting it verbatim", async () => {
+    const timers = makeFakeTimers();
+    const { fetchImpl } = makeChatFetch({
+      sendStatuses: [429, 200],
+      retryAfter: "86400",
+    });
+    const { deps } = await makeDeps({
+      fetchImpl,
+      setTimeoutImpl: timers.setTimeoutImpl,
+      clearTimeoutImpl: timers.clearTimeoutImpl,
+    });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const p = adapter.sendMessage("spaces/AAAA", "hi");
+    await flushMicrotasks();
+    if (timers.pendingCount() > 0) await timers.fireNext();
+    const result = await p;
+
+    expect(result.ok).toBe(true);
+    // RETRY_AFTER_CAP_MS is 60_000 — a 86400s header is clamped, not awaited raw.
+    expect(timers.delays).toContain(60_000);
+    expect(timers.delays).not.toContain(86_400_000);
+  });
+
+  it("bounds the retries: repeated 429s stop after the max and return err (never loops forever)", async () => {
+    const timers = makeFakeTimers();
+    const { fetchImpl, spy } = makeChatFetch({
+      sendStatuses: [429, 429, 429, 429, 429, 429],
+      retryAfter: "1",
+    });
+    const { deps } = await makeDeps({
+      fetchImpl,
+      setTimeoutImpl: timers.setTimeoutImpl,
+      clearTimeoutImpl: timers.clearTimeoutImpl,
+    });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const p = adapter.sendMessage("spaces/AAAA", "hi");
+    // Drive each parked retry backoff; MAX_RETRIES is 4 retries on top of the first attempt.
+    for (let i = 0; i < 4; i += 1) {
+      await flushMicrotasks();
+      if (timers.pendingCount() > 0) await timers.fireNext();
+    }
+    await flushMicrotasks();
+    const result = await p;
+
+    expect(result.ok).toBe(false);
+    const posts = spy.mock.calls.filter(([u]) => String(u).includes("/messages"));
+    expect(posts).toHaveLength(5); // 1 initial attempt + 4 bounded retries
+  });
+
+  it("does NOT resend a 5xx (non-idempotent create): one POST, err, no backoff scheduled", async () => {
+    const timers = makeFakeTimers();
+    const { fetchImpl, spy } = makeChatFetch({ sendStatus: 500 });
+    const { deps, loggerSpy } = await makeDeps({
+      fetchImpl,
+      setTimeoutImpl: timers.setTimeoutImpl,
+      clearTimeoutImpl: timers.clearTimeoutImpl,
+    });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const result = await adapter.sendMessage("spaces/AAAA", "hi");
+
+    expect(result.ok).toBe(false);
+    const posts = spy.mock.calls.filter(([u]) => String(u).includes("/messages"));
+    expect(posts).toHaveLength(1); // a 5xx may already have landed → never resent
+    expect(timers.delays).toHaveLength(0); // no retry backoff for a 5xx
+    expect(findByErrorKind(loggerSpy.error, "platform")).toBeDefined();
+    expect(loggerSpy.serialized()).not.toContain(MINTED_TOKEN);
+  });
+
+  it("does NOT resend a status-less transport reject: one POST, err classified network", async () => {
+    const timers = makeFakeTimers();
+    const { fetchImpl, spy } = makeChatFetch({ sendThrows: true });
+    const { deps, loggerSpy } = await makeDeps({
+      fetchImpl,
+      setTimeoutImpl: timers.setTimeoutImpl,
+      clearTimeoutImpl: timers.clearTimeoutImpl,
+    });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const result = await adapter.sendMessage("spaces/AAAA", "hi");
+
+    expect(result.ok).toBe(false);
+    const posts = spy.mock.calls.filter(([u]) => String(u).includes("/messages"));
+    expect(posts).toHaveLength(1); // a transport fault may already have landed → never resent
+    expect(timers.delays).toHaveLength(0);
+    expect(findByErrorKind(loggerSpy.error, "network")).toBeDefined();
   });
 });
