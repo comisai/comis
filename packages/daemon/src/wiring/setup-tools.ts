@@ -484,7 +484,12 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         videoStatusEnabled: deps.videoStatusEnabled, // gates the video_status descriptor
         backgroundTaskManager: deps.backgroundTaskManager,
         toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),
-        contextEngineVersion: agentConfig?.contextEngine?.version ?? "pipeline",
+        // Default "dag" — the canonical default (schema `version.default("dag")` +
+        // setup-context-tools.ts's `?? "dag"` gate). `contextEngine` is optional/undefaulted,
+        // so a no-block agent lands here with version=undefined; using "pipeline" was a skew
+        // that would mis-signal any future consumer (the field is currently unused, so this is
+        // a defensive alignment, not a behavior change).
+        contextEngineVersion: agentConfig?.contextEngine?.version ?? "dag",
         builtinToolsBrowserEnabled: skillsConfig.builtinTools.browser,
         // Opt-in gate for the memory_ask (dialectic) tool. `=== true` so an
         // absent/typo'd `dialectic` block is OFF (default-OFF byte-identity — the tool
