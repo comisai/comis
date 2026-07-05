@@ -64,14 +64,26 @@ import type {
  * @param config - Skills configuration (discovery paths)
  * @param eventBus - Typed event bus for audit events
  * @param auditContext - Identity context for audit trail
+ * @param logger - Optional discovery logger
+ * @param eligibilityContext - Optional runtime-eligibility context
+ * @param importedSkillNames - Optional lookup of skill names recorded in the
+ *   provenance store (for this scope/agent). A matched skill is stamped
+ *   `source: "imported"` — advisory DOWNWARD only: it can demote a skill to the
+ *   imported tier, but its absence NEVER elevates one (an unmatched skill keeps
+ *   its path-derived source). Evaluated fresh per description build so a just-
+ *   completed import (which re-inits the registry) is reflected.
  * @returns SkillRegistry instance
  */
+/** Shared empty imported-name set (avoids a per-build allocation when unwired). */
+const EMPTY_IMPORTED_SET: ReadonlySet<string> = new Set<string>();
+
 export function createSkillRegistry(
   config: SkillsConfig,
   eventBus: TypedEventBus,
   auditContext: { agentId: string; tenantId: string; userId: string },
   logger?: SkillsLogger,
   eligibilityContext?: RuntimeEligibilityContext,
+  importedSkillNames?: () => ReadonlySet<string>,
 ): SkillRegistry {
   // Level 1: metadata storage
   const metadataMap = new Map<string, SkillMetadata>();
@@ -158,6 +170,10 @@ export function createSkillRegistry(
 
     getPromptSkillDescriptions(): PromptSkillDescription[] {
       const descriptions: PromptSkillDescription[] = [];
+      // Provenance enrichment: a matched name is stamped `imported` (advisory
+      // downward only — absence keeps the path-derived source). Read once per
+      // build; a fail-safe empty store simply stamps nothing.
+      const imported = importedSkillNames?.() ?? EMPTY_IMPORTED_SET;
       for (const metadata of metadataMap.values()) {
         // Eligibility filtering: allowedSkills/deniedSkills from config
         if (!isSkillEligible(metadata.name, config.promptSkills)) continue;
@@ -168,7 +184,7 @@ export function createSkillRegistry(
           description: metadata.description,
           location: metadata.path,
           disableModelInvocation: metadata.disableModelInvocation || undefined,
-          source: metadata.source,
+          source: imported.has(metadata.name) ? "imported" : metadata.source,
         });
       }
       return descriptions;
@@ -312,11 +328,15 @@ export function createSkillRegistry(
       );
 
       for (const sdkSkill of sdkSkills) {
-        // Map SDK Skill source to Comis SkillSource
+        // Map SDK Skill source to Comis SkillSource. `learned` + `imported` are
+        // carried through (both are stamped explicitly upstream, never derived);
+        // anything else falls back to `workspace`.
         const source: SkillSource =
           sdkSkill.source === "bundled" ? "bundled"
             : sdkSkill.source === "local" ? "local"
-              : "workspace";
+              : sdkSkill.source === "learned" ? "learned"
+                : sdkSkill.source === "imported" ? "imported"
+                  : "workspace";
 
         // Start with SDK-provided fields
         let userInvocable = true;

@@ -47,6 +47,7 @@ import { ensureWorkspace, resolveWorkspaceDir } from "@comis/core";
 import {
   createSkillRegistry,
   createRuntimeEligibilityContext,
+  readProvenanceStore,
   type SkillWatcherHandle,
 } from "@comis/skills";
 import { resolveAgentModel, deriveCanaryFallback, resolveEffectiveRerank } from "./setup-agents-tooling.js";
@@ -316,12 +317,27 @@ export async function setupSingleAgent(
     discoveryPaths: resolvedPaths,
   };
 
+  // Provenance enrichment: names imported for THIS agent (shared skills key on
+  // the shared owner; local skills on this agent). Read fresh per description
+  // build (a completed import re-inits the registry). Advisory downward only —
+  // a fail-safe empty store stamps nothing.
+  const importedSkillNames = (): ReadonlySet<string> => {
+    const names = new Set<string>();
+    for (const record of Object.values(readProvenanceStore(dataDir))) {
+      if (record.scope === "shared" || (record.scope === "local" && record.agentId === agentId)) {
+        names.add(record.name);
+      }
+    }
+    return names;
+  };
+
   const skillRegistry = createSkillRegistry(
     resolvedSkillsConfig,
     container.eventBus,
     { agentId, tenantId: container.config.tenantId, userId: "system" },
     perAgentLogger,
     eligibilityContext,  // Runtime eligibility context
+    importedSkillNames,
   );
   skillRegistry.init();
   // Per-agent cache of promoted read-only learned procedures, refreshed out-of-band (the sync seam reads `.current`). Gated on learning.enabled × the master cost switch (memory.enabled) so default-OFF does ZERO surface work (no list()/rmSync) and stays byte-identical; registers its refresh so the promote/demote loop re-refreshes it (next-session pickup).
