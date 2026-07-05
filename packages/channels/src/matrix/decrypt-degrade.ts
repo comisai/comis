@@ -6,18 +6,22 @@
  * operator-actionable hint that names the exact config knob to turn — never a
  * secret, never the failure text interpolated in.
  *
- * The wrong-knob guard is the whole point (INV-3): "this room is encrypted — set
+ * The wrong-knob guard is the whole point: "this room is encrypted — set
  * `channels.matrix.e2ee: true`" is the correct advice ONLY when the bot has no
- * crypto backend. When crypto IS live, the failure is a key / verification /
- * ratchet issue, and telling the operator to enable e2ee (which is already on)
- * would be the wrong knob. So the crypto-unavailable branch is evaluated FIRST
- * and is the ONLY path that returns the e2ee-off verdict; every reason-coded
- * branch below runs only when crypto is available and therefore can never emit
- * that hint. A dedicated test asserts this for every reason code.
+ * crypto backend AND e2ee is not configured. When crypto IS live, the failure is a
+ * key / verification / ratchet issue, and telling the operator to enable e2ee
+ * (which is already on) would be the wrong knob. So the crypto-unavailable branch
+ * is evaluated FIRST and is the ONLY path that returns the e2ee-off verdict; every
+ * reason-coded branch below runs only when crypto is available and therefore can
+ * never emit that hint. Within the crypto-unavailable branch the hint itself
+ * splits on whether e2ee is CONFIGURED: an already-configured-but-init-failed bot
+ * is pointed at the crypto backend / recovery key, never told to flip a switch
+ * that is already on. A dedicated test asserts this for every reason code.
  *
  *   | Condition                                  | kind              | Names the knob            |
  *   | ------------------------------------------ | ----------------- | ------------------------- |
- *   | crypto backend unavailable                 | (e2ee-off)        | channels.matrix.e2ee      |
+ *   | crypto unavailable, e2ee not configured    | (e2ee-off)        | channels.matrix.e2ee      |
+ *   | crypto unavailable, e2ee configured        | (e2ee-off)        | recoveryKey / daemon logs |
  *   | MEGOLM_UNKNOWN_INBOUND_SESSION_ID          | missing_session   | re-invite / re-share keys |
  *   | MEGOLM_KEY_WITHHELD                        | key_withheld      | verify the bot device     |
  *   | *_WITHHELD_FOR_UNVERIFIED_DEVICE /         | unverified_device | channels.matrix.recoveryKey
@@ -54,9 +58,11 @@ export type DecryptDegradeKind =
 /** The inputs the degrade verdict is a pure function of. */
 export interface DecryptDegradeInput {
   /**
-   * Whether e2ee is configured on this channel. Carried for the obs signal shape
-   * and future use; the verdict keys on `cryptoAvailable` (which is false whenever
-   * e2ee is unconfigured), so this field is informational, not decisive.
+   * Whether e2ee is configured on this channel. The `kind` keys on
+   * `cryptoAvailable`, but within the crypto-unavailable branch this field decides
+   * the HINT: configured-but-init-failed points at the crypto backend / recovery
+   * key, while genuinely-off names the `channels.matrix.e2ee` switch — so an
+   * operator with e2ee already on is never told to enable it.
    */
   e2eeConfigured: boolean;
   /** Whether the crypto backend is live (`client.getCrypto() !== undefined`). */
@@ -81,14 +87,20 @@ export interface DecryptDegradeVerdict {
  * @returns The closed cause and a fixed hint naming the exact config knob.
  */
 export function classifyDecryptDegrade(input: DecryptDegradeInput): DecryptDegradeVerdict {
-  // WRONG-KNOB GUARD (INV-3): the crypto backend being unavailable is the ONLY
-  // path to the e2ee-off verdict. When crypto is live the failure is a
-  // key/verification/ratchet issue (branched below), so the "set e2ee: true"
-  // hint is structurally unreachable on the on-but-failed path.
+  // WRONG-KNOB GUARD: the crypto backend being unavailable is the ONLY path to the
+  // e2ee-off verdict. When crypto is live the failure is a key/verification/ratchet
+  // issue (branched below), so the "set e2ee: true" hint is structurally
+  // unreachable on the on-but-failed path. Within the crypto-unavailable branch the
+  // hint further splits on whether e2ee is CONFIGURED: telling an operator to "set
+  // e2ee: true" when it is already true is itself the wrong knob, so the on-but-
+  // -crypto-failed case points at the real cause (the crypto backend / recovery
+  // key), and only the genuinely-off case names the e2ee switch.
   if (!input.cryptoAvailable) {
     return {
       kind: "e2ee_off",
-      hint: "this room is encrypted but the bot has no active crypto backend — set `channels.matrix.e2ee: true` so it can decrypt",
+      hint: input.e2eeConfigured
+        ? "e2ee is enabled but the crypto backend failed to initialize — check the daemon logs and `channels.matrix.recoveryKey`; the bot is running without decryption"
+        : "this room is encrypted but the bot has no active crypto backend — set `channels.matrix.e2ee: true` so it can decrypt",
     };
   }
 
