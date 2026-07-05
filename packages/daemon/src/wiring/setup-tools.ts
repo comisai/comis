@@ -19,8 +19,8 @@ import {
   systemNowMs,
   resolveAutonomy,
 } from "@comis/core";
-import { sessionKeyToPath } from "@comis/agent";
-import type { SessionTrackerRegistry, CapabilityClass } from "@comis/agent";
+import { sessionKeyToPath, capabilityClassFromProvider } from "@comis/agent";
+import type { SessionTrackerRegistry, CapabilityClass, OrchestrateRepairSeam } from "@comis/agent";
 import { toolResultsDirFromSessionPath } from "./tool-results-dir.js";
 import {
   WORKSPACE_FILE_NAMES,
@@ -119,6 +119,14 @@ export interface ToolsDeps {
   agents: Record<string, PerAgentConfig>;
   /** Resolve a provider's operator capabilityClass override (providers.entries.<id>.capabilities.capabilityClass) for ctx_expand's walk depth. */
   getProviderCapabilityClass?: (provider: string | undefined) => CapabilityClass | undefined;
+  /** Resolve a per-agent class-gated one-shot orchestrate repair seam (daemon-minted via
+   *  buildOrchestrateRepairResolver — keyless-safe; ON for small/nano, OFF for frontier/mid).
+   *  Absent ⇒ no repair seam threaded into the orchestrate runner (repair off). */
+  resolveOrchestrateRepairSeam?: (
+    agentConfig: PerAgentConfig | undefined,
+    agentId: string,
+    capabilityClass: CapabilityClass,
+  ) => OrchestrateRepairSeam | undefined;
   /** Default agent ID from routing config. */
   defaultAgentId: string;
   /** Per-agent workspace directory paths. */
@@ -575,12 +583,33 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         }
       }
 
+      // The effective capability class: operator override → provider-family
+      // heuristic → the "small" fail-safe (the platform resolve idiom). The
+      // one-shot auto-repair is a PURE class-gate off this (no config toggle);
+      // defaulting absent to "small" (repair-ON) keeps an unknown/keyless
+      // small-target deployment self-repairing rather than silently OFF.
+      const capabilityClass: CapabilityClass =
+        deps.getProviderCapabilityClass?.(agentConfig?.provider)
+        ?? capabilityClassFromProvider(agentConfig?.provider)
+        ?? "small";
+      // The daemon-minted repair closure — resolved ONLY when the class is
+      // repair-eligible AND a utility model resolves (else undefined → repair off).
+      const repairSeam = deps.resolveOrchestrateRepairSeam?.(agentConfig, agentId, capabilityClass);
+
       // Dormancy activation (setup-tools-autonomy.ts): the per-spawn lease + the
       // orchestrate tool minted ONCE (SAME env for exec+orchestrate; both off w/o autonomy/handle/sandbox).
       const { brokerSpawnEnv, orchestrateTool } = buildAutonomyToolWiring({
         agentConfig, agentId, agentWorkspaceDir, capEndpointHandle: deps.capEndpointHandle,
         brokerContext: deps.brokerContext, sandboxProvider, namespacePreflightOk: deps.namespacePreflightOk,
         sessionKey: options?.sessionKey, logger: skillsLogger, baseEnv: subprocessEnv,
+        eventBus, // the run_summary emit channel (reaches the live per-session trajectory bridge)
+        approvalGate, // the orchestrate pre-flight approval seam — undefined unless config.approvals.enabled
+        capabilityClass, // the one-shot auto-repair class-gate (pure class-gate off the model profile; no toggle)
+        ...(repairSeam !== undefined ? { repairSeam } : {}), // the daemon-minted repair closure (absent ⇒ repair off)
+        // The durable-run store — passed whenever the durable-resume subsystem is
+        // wired; buildAutonomyToolWiring forwards it into the runner only when THIS
+        // agent's autonomy.durability.orchestrateResume is on (the surface gate).
+        ...(deps.durableRuns !== undefined ? { durableRuns: deps.durableRuns } : {}),
       });
       // Exec tool -- always instantiated; builtinTools ceiling applied after profile filtering.
       // (agentWorkspaceDir + getToolResultsDir are HOISTED above — shared with the ctx_* wiring.)

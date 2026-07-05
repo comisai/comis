@@ -8132,6 +8132,115 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             "additionalProperties": false
           }
         },
+        "orchestrate": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "runId": {
+                "type": "string"
+              },
+              "leaseId": {
+                "type": "string"
+              },
+              "outcome": {
+                "type": "string",
+                "enum": [
+                  "success",
+                  "failure"
+                ]
+              },
+              "durationMs": {
+                "type": "number"
+              },
+              "exitCode": {
+                "type": "number"
+              },
+              "failureClass": {
+                "type": "string",
+                "enum": [
+                  "timeout",
+                  "stdout_cap",
+                  "nonzero_exit",
+                  "spawn_fail",
+                  "lease_absent"
+                ]
+              },
+              "toolCalls": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "tool": {
+                      "type": "string"
+                    },
+                    "capability": {
+                      "type": "string"
+                    },
+                    "decision": {
+                      "type": "string",
+                      "enum": [
+                        "allow",
+                        "deny"
+                      ]
+                    },
+                    "count": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "tool",
+                    "capability",
+                    "decision",
+                    "count"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "resultRefs": {
+                "type": "object",
+                "properties": {
+                  "count": {
+                    "type": "number"
+                  },
+                  "bytes": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "count",
+                  "bytes"
+                ],
+                "additionalProperties": false
+              },
+              "savings": {
+                "type": "object",
+                "properties": {
+                  "estSavedTokens": {
+                    "type": "number"
+                  },
+                  "savedRatio": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "estSavedTokens",
+                  "savedRatio"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "runId",
+              "outcome",
+              "durationMs",
+              "exitCode",
+              "toolCalls",
+              "resultRefs"
+            ],
+            "additionalProperties": false
+          }
+        },
         "contextBudget": {
           "type": "object",
           "properties": {
@@ -9761,6 +9870,41 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "required": [
         "events",
         "nextSinceMs"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
+  "orchestrate.replay": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "runId"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "stdout": {
+          "type": "string"
+        },
+        "diverged": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "stdout"
       ],
       "additionalProperties": false
     },

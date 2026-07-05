@@ -28,13 +28,16 @@
  * @module
  */
 
+import { existsSync, rmSync } from "node:fs";
 import type { ChannelPort, ClockPort, TimerPort, TimerHandle, DurableRunPort, OutwardSendLedgerPort, OutwardSendRecord, DurableRunRecord, PerAgentConfig, AgentCapability, DeliveryAdapter, TypedEventBus } from "@comis/core";
-import { resolveAutonomy, DurabilityConfigSchema } from "@comis/core";
+import { resolveAutonomy, DurabilityConfigSchema, safePath } from "@comis/core";
 import { createSqliteDurableRunStore, createSqliteOutwardSendLedger } from "@comis/memory";
+import { createResultRefStore } from "@comis/skills/tools";
 import type { ComisLogger, LeaseManager } from "@comis/infra";
 import { ok, err, type Result } from "@comis/shared";
 import {
   createDurableResumeEngine,
+  reclaimOrphanedOrchestrateRun,
   type MintLeaseInput,
   type IssuedLease,
   type NotifyFn,
@@ -43,6 +46,142 @@ import {
 import { detectStaleRuns } from "../autonomy/durable-watchdog.js";
 import type { BoundedAutonomy } from "../autonomy/bounded-autonomy.js";
 import { isDagSpawnTree } from "../graph/graph-durable-checkpoint.js";
+
+// ───────────────────────────────────────────────────────────────────────────
+// The orchestrate-kind resume arm (233). A durable row with a FLAT spawnTree
+// AND a pinned `scriptRef` is a RE-RUNNABLE orchestrate row (the runner writes
+// it). On boot the sweep dispatches it to THIS arm (never resumeGraph) to VERIFY
+// its pinned script + checkpoint survived the crash — surface-only; the byte
+// re-execution is the explicit `orchestrate({resumeRunId})` (A2).
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * The injected seams the orchestrate-kind resume arm verifies against — a
+ * workspace resolver + an fs-exists probe. Injected so the arm is PURE and
+ * macOS-unit-testable against a real temp workspace with no daemon boot.
+ */
+export interface OrchestrateResumeSeams {
+  /**
+   * Resolve a run's workspace ROOT from its record (undefined ⇒ unresolvable ⇒
+   * not resumable). The pinned script lives at the workspace root; the checkpoint
+   * blob lives under `<workspace>/results/`.
+   */
+  readonly workspaceFor: (record: DurableRunRecord) => string | undefined;
+  /** Whether an absolute path exists on disk (the real `existsSync` in production). */
+  readonly fileExists: (absPath: string) => boolean;
+}
+
+/**
+ * The orchestrate-kind resume arm: VERIFY the pinned script + (when a
+ * `checkpointRef` is set) the checkpoint blob are on disk. The refs are
+ * WORKSPACE-RELATIVE (a `<runId>.<language>` at the root / a `results/…`
+ * ResultRef), `safePath`-confined BEFORE any fs touch (a `..`/absolute escape is
+ * refused, never resumed). PRESENT → `ok` (the closure re-anchors + the engine
+ * surfaces `durable:resumed` — SURFACE-ONLY on boot; the byte re-execution is the
+ * explicit `orchestrate({resumeRunId})`, A2); MISSING → `err` (the engine's
+ * existing orphan path turns it into a `durable:orphaned` + reclaim). Every `err`
+ * message NAMES why AND contains "not resumable" so `orphanReasonToEnum` maps it
+ * to the closed `not_resumable` member — the free text stays on the WARN
+ * log / notify only (INV-5). Pure over the injected seams.
+ */
+export function verifyOrchestrateResumable(
+  record: DurableRunRecord,
+  seams: OrchestrateResumeSeams,
+): Result<void, Error> {
+  const workspacePath = seams.workspaceFor(record);
+  if (workspacePath === undefined) {
+    return err(new Error("orchestrate resume not resumable: workspace unavailable"));
+  }
+  const scriptRef = record.scriptRef;
+  if (scriptRef == null) {
+    // The closure discriminator guarantees scriptRef != null before this is
+    // called; a null here is a mis-routed non-orchestrate row — refuse honestly.
+    return err(new Error("orchestrate resume not resumable: no pinned script"));
+  }
+  // 1. the pinned script (workspace ROOT, `<runId>.<language>`).
+  let scriptAbs: string;
+  try {
+    scriptAbs = safePath(workspacePath, scriptRef);
+  } catch {
+    return err(new Error("orchestrate resume not resumable: pinned script path escaped the workspace"));
+  }
+  if (!seams.fileExists(scriptAbs)) {
+    return err(new Error("orchestrate resume not resumable: the pinned script is gone"));
+  }
+  // 2. the checkpoint blob (`<workspace>/results/…`), when a `checkpointRef` is
+  //    set. A null checkpointRef = a run that registered but never checkpointed —
+  //    still resumable from the pinned bytes alone (a re-run from scratch).
+  const checkpointRef = record.checkpointRef;
+  if (checkpointRef != null) {
+    let checkpointAbs: string;
+    try {
+      checkpointAbs = safePath(workspacePath, checkpointRef);
+    } catch {
+      return err(new Error("orchestrate resume not resumable: checkpoint path escaped the workspace"));
+    }
+    if (!seams.fileExists(checkpointAbs)) {
+      return err(new Error("orchestrate resume not resumable: the checkpoint blob is gone"));
+    }
+  }
+  return ok(undefined);
+}
+
+/**
+ * The full orchestrate-resume wiring cluster `buildDurableResume` binds: the arm
+ * seams ({@link OrchestrateResumeSeams}) PLUS the orphan-reclaim seams. ONE
+ * optional cluster (not N loose fields — optional-field-bloat honesty): the arm
+ * + the RESUME-04 reclaim are wired TOGETHER (both need the workspace resolver).
+ * Structurally a superset of both the arm's {@link OrchestrateResumeSeams} and the
+ * engine's `OrchestrateReclaimSeams`, so the SAME object passes to
+ * `verifyOrchestrateResumable` (the arm) and `reclaimOrphanedOrchestrateRun` (the
+ * reclaim) directly.
+ */
+export interface OrchestrateResumeWiring extends OrchestrateResumeSeams {
+  /** Delete a dead run's `results/` dir — reuses result-ref-store.cleanupRun (rmSync recursive). */
+  readonly cleanupResults: (workspacePath: string, runId: string) => Promise<void>;
+  /** Delete the pinned `<scriptRef>` (guarded rmSync — a missing file is a no-op → idempotent). */
+  readonly removePinnedScript: (workspacePath: string, scriptRef: string) => void;
+}
+
+/**
+ * Build the production {@link OrchestrateResumeWiring} cluster for the composition
+ * root — the LIVE seams the boot-sweep arm + the RESUME-04 orphan reclaim run
+ * against. A `DurableRunRecord` carries no `agentId` (an orchestrate row's
+ * caps/leaseIds/spawnTree are all `[]`), so `workspaceFor` resolves to the
+ * default-agent workspace — the correct target for the common single-agent case;
+ * the resolver is the multi-agent extension point. The reclaim REUSES the existing
+ * `result-ref-store.cleanupRun` (rmSync-recursive of `results/`) for the checkpoint
+ * blob + a `safePath`-guarded `rmSync` for the pinned `<runId>.<language>` script at
+ * the workspace root — no new GC primitive (NG4), scoped, and idempotent (a missing
+ * file / a traversal-escape scriptRef is a no-op, never a throw that aborts the sweep).
+ */
+export function buildOrchestrateResumeWiring(deps: {
+  /** The default-agent jailed workspace root (a bare durable row's resume target). */
+  defaultWorkspaceDir: string;
+  /** Logger for the reused result-ref store (its cleanupRun path). */
+  logger: ComisLogger;
+}): OrchestrateResumeWiring {
+  // Reuse the SHIPPED result-ref store for cleanupRun (results/ wipe) — never a
+  // hand-rolled results-dir resolver that could drift from the store's layout.
+  const resultStore = createResultRefStore({ logger: deps.logger });
+  return {
+    workspaceFor: () => deps.defaultWorkspaceDir,
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- absPath is safePath-confined by the caller (the boot-sweep arm resolves scriptRef/checkpointRef via safePath before probing).
+    fileExists: (absPath) => existsSync(absPath),
+    cleanupResults: (workspacePath, runId) => resultStore.cleanupRun({ workspacePath, runId }),
+    removePinnedScript: (workspacePath, scriptRef) => {
+      // safePath refuses a `..`/absolute escape BEFORE any unlink; rmSync force:true
+      // makes a missing file a no-op (idempotent). A refused/failed path is a silent
+      // no-op — the reclaim must never throw and abort the boot/watchdog sweep.
+      try {
+        const abs = safePath(workspacePath, scriptRef);
+        rmSync(abs, { force: true });
+      } catch {
+        /* traversal-escape scriptRef (safePath threw) or an unlink failure — no-op. */
+      }
+    },
+  };
+}
 
 /** The resolved `autonomy.durability` config the wiring reads. */
 export interface DurableResumeConfig {
@@ -77,6 +216,8 @@ export interface SetupDurableResumeDeps {
   remintLease: (input: MintLeaseInput) => IssuedLease;
   /** Resume a run from its checkpoint under the re-minted lease. */
   resumeRun: (record: DurableRunRecord, leaseId: string) => Promise<Result<void, Error>>;
+  /** Reclaim a dead resumable orchestrate run's artifacts on the orphan path (RESUME-04); threaded into the engine. Absent ⇒ no reclaim. */
+  reclaimOrchestrateRun?: (record: DurableRunRecord) => Promise<void>;
   /** Re-deliver a not_sent ledger row exactly once. */
   replaySend: (row: OutwardSendRecord) => Promise<Result<{ platformMessageId: string }, Error>>;
   /** Content-free operator notification for an orphan / unresolved reconcile. */
@@ -134,6 +275,9 @@ export function setupDurableResume(deps: SetupDurableResumeDeps): DurableResumeR
     recoveryBudgetMs: config.recoveryBudgetMs,
     logger,
     eventBus,
+    // RESUME-04: the engine calls this on the orphan path to reclaim a dead
+    // resumable orchestrate run's artifacts (scoped + idempotent). Absent ⇒ no reclaim.
+    ...(deps.reclaimOrchestrateRun ? { reclaimOrchestrateRun: deps.reclaimOrchestrateRun } : {}),
   });
 
   // ONE daemon-wide watchdog interval (Open Question 2 — NOT per-run). Cancelled
@@ -276,8 +420,25 @@ export function buildDurableResume(deps: {
    * to the flat re-anchor (no crash; node re-entry is simply unavailable).
    */
   resumeGraph?: (record: DurableRunRecord) => Promise<Result<void, Error>>;
+  /**
+   * The orchestrate-kind resume + orphan-reclaim seams (workspace resolver +
+   * fs-exists probe + cleanupRun/rmSync reclaim). When present: a flat row with
+   * `scriptRef != null` routes to the orchestrate arm — VERIFY the pinned script +
+   * checkpoint on disk (surface-only on boot; explicit `orchestrate({resumeRunId})`
+   * re-executes — A2) — and a dead resumable run's artifacts are reclaimed on the
+   * orphan path (RESUME-04). Absent ⇒ a scriptRef row degrades to the plain flat
+   * re-anchor (no disk verification, no reclaim) — the gated, deny-by-absence
+   * posture: the runner only writes scriptRef rows when `orchestrateResume` is on.
+   */
+  orchestrateResume?: OrchestrateResumeWiring;
 }): DurableResumeWiring {
-  const { durabilityCfg, durableRunStore, outwardLedger, boundedAutonomy, sharedLeaseManager, channelAdaptersRef, eventBus, logger, clock, timers, resumeGraph } = deps;
+  const { durabilityCfg, durableRunStore, outwardLedger, boundedAutonomy, sharedLeaseManager, channelAdaptersRef, eventBus, logger, clock, timers, resumeGraph, orchestrateResume } = deps;
+  // RESUME-04 orphan-reclaim: bind the engine's reclaim hook to the wiring's
+  // reclaim seams (workspace + cleanupRun + guarded rmSync). The bound helper is
+  // scoped (a non-orchestrate row is a no-op) + idempotent. Absent ⇒ no reclaim.
+  const reclaimOrchestrateRun = orchestrateResume
+    ? (record: DurableRunRecord): Promise<void> => reclaimOrphanedOrchestrateRun(record, orchestrateResume)
+    : undefined;
   const durableResume: DurableResumeResult = setupDurableResume({
     db: deps.db,
     ...(durableRunStore ? { durableRunStore } : {}),
@@ -296,11 +457,19 @@ export function buildDurableResume(deps: {
     // full re-spawnable task spec, so a run resumes-as-anchored (a richer re-spawn
     // from the checkpoint is a future enhancement).
     resumeRun: async (record: DurableRunRecord, leaseId: string): Promise<Result<void, Error>> => {
-      // DAG-vs-flat dispatch: a DAG record (spawn_tree entries are
-      // OBJECTS with a `status` field) routes to the graph coordinator's resumeGraph
-      // for node re-entry; a flat sub-agent run (string[] spawn_tree) takes the flat
-      // re-anchor below and can NEVER mis-route. The discriminator is the explicit
-      // entry-has-`status` check (isDagSpawnTree), not a heuristic.
+      // DAG-vs-flat-vs-orchestrate dispatch — all explicit discriminators, never a
+      // heuristic, so a flat run can NEVER mis-route:
+      //   - a DAG record (spawn_tree entries are OBJECTS with a `status` field →
+      //     isDagSpawnTree) routes to the graph coordinator's resumeGraph for node
+      //     re-entry;
+      //   - a flat RE-RUNNABLE orchestrate row (string[] spawn_tree AND a pinned
+      //     `scriptRef`, with the orchestrateResume seams wired) takes the
+      //     orchestrate arm — VERIFY the pinned script + checkpoint are on disk
+      //     (SURFACE-ONLY on boot; the byte re-execution is the explicit
+      //     `orchestrate({resumeRunId})` — A2). A MISSING artifact returns err so the
+      //     engine's orphan path emits `durable:orphaned` + reclaims (no silent loss);
+      //   - a plain flat sub-agent run (no scriptRef, or the seams unwired) takes the
+      //     flat re-anchor below.
       if (isDagSpawnTree(record.spawnTree)) {
         if (resumeGraph) return resumeGraph(record);
         // resumeGraph not wired (e.g. coordinator absent) ⇒ degrade to the flat
@@ -309,6 +478,13 @@ export function buildDurableResume(deps: {
           { rootRunId: record.rootRunId, hint: "DAG record but resumeGraph is unwired; falling back to the flat re-anchor (no node re-entry)", errorKind: "internal" as const },
           "Durable resume: DAG resume unavailable",
         );
+      } else if (record.scriptRef != null && orchestrateResume) {
+        // Orchestrate-kind arm: verify the pinned script + checkpoint on disk. On a
+        // MISSING artifact the engine's existing orphan path turns this err into a
+        // durable:orphaned (closed-enum) + reclaim — do NOT emit orphaned here.
+        const verified = verifyOrchestrateResumable(record, orchestrateResume);
+        if (!verified.ok) return verified;
+        // PRESENT → fall through to the re-anchor (surface-only; no re-spawn on boot).
       }
       try {
         boundedAutonomy?.registerRoot(record.rootRunId, leaseId);
@@ -317,6 +493,10 @@ export function buildDurableResume(deps: {
         return err(e instanceof Error ? e : new Error(String(e)));
       }
     },
+    // reclaimOrchestrateRun: the engine calls this on the orphan path to reclaim a
+    // dead resumable orchestrate run's results/ + pinned script (RESUME-04). Absent
+    // ⇒ no reclaim (the seams unwired / orchestrateResume off).
+    ...(reclaimOrchestrateRun ? { reclaimOrchestrateRun } : {}),
     // replaySend: the content-free ledger row has no body, so a replay that lacks
     // the original message is an err — the engine parks it unresolved rather than
     // double-sending a wrong body (honesty over a fabricated replay).

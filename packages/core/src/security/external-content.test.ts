@@ -482,6 +482,32 @@ describe("ExternalContentSource - learned_skill_reflection source", () => {
   });
 });
 
+describe("ExternalContentSource - learned_procedure_reflection source", () => {
+  // The procedure reflection adapter wraps the UNTRUSTED transcript under this label
+  // before the reflect LLM (the injection-defense keystone). Mirrors the
+  // learned_skill_reflection member+label shape.
+  it("wrapExternalContent accepts source: 'learned_procedure_reflection'", () => {
+    const result = wrapExternalContent("trajectory text", { source: "learned_procedure_reflection" });
+    expect(typeof result).toBe("string");
+  });
+
+  it("resolves the 'Learned-procedure reflection input' source label in wrapped output", () => {
+    const result = wrapExternalContent("trajectory text", { source: "learned_procedure_reflection" });
+    expect(result).toContain("Source: Learned-procedure reflection input");
+  });
+
+  it("includes the security warning by default for the procedure-reflection source", () => {
+    const result = wrapExternalContent("trajectory text", { source: "learned_procedure_reflection" });
+    expect(result).toContain("SECURITY NOTICE");
+  });
+
+  it("wraps the trajectory with delimiter markers (the boundary the injection cannot cross)", () => {
+    const result = wrapExternalContent("trajectory text", { source: "learned_procedure_reflection" });
+    expect(result).toMatch(/<<<UNTRUSTED_[a-f0-9]{24}>>>/);
+    expect(result).toMatch(/<<<END_UNTRUSTED_[a-f0-9]{24}>>>/);
+  });
+});
+
 describe("ExternalContentSource - memory_generalization source", () => {
   // The consolidation generalization pass wraps the UNTRUSTED cross-context
   // cluster under this label before the synthesis LLM (the injection boundary

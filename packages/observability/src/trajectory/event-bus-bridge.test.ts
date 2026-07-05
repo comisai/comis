@@ -1123,6 +1123,23 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       durationMs: 1_800_000,
       timestamp: 1000,
     },
+    "orchestrate:run_summary": {
+      agentId: "default",
+      sessionKey: "t1:u1:c1",
+      runId: "orch-1",
+      leaseId: "child-lease-1",
+      rootRunId: "root-1",
+      language: "ts",
+      durationMs: 1234,
+      exitCode: 0,
+      stdoutBytesRaw: 100,
+      stdoutCharsReentered: 100,
+      resultRefCount: 0,
+      resultRefBytes: 0,
+      estSavedTokens: 0,
+      savedRatio: 0,
+      timestamp: 1000,
+    },
     "delivery:enqueued": {
       entryId: "e",
       channelType: "telegram",
@@ -3799,7 +3816,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // This count guards TRAJECTORY_BRIDGE_MAPPING against a silent add or
     // removal: any change to the mapping must update this number in lockstep,
     // forcing a deliberate review of every newly-bridged or dropped event.
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(116);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(117);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

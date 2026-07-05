@@ -72,6 +72,8 @@ import {
   FULL_MAX_CACHE_BREAKS,
   SUMMARY_MAX_SPAWN_NODES,
   FULL_MAX_SPAWN_NODES,
+  SUMMARY_MAX_ORCHESTRATE_RUNS,
+  FULL_MAX_ORCHESTRATE_RUNS,
   SUMMARY_MAX_TOOLSTATS,
   FULL_MAX_TOOLSTATS,
   MAX_SHED_ITERATIONS,
@@ -99,6 +101,11 @@ const REPORT_ARRAY_FIELDS: ReadonlySet<string> = new Set([
   // backstop — otherwise a >64-lease fan-out becomes a {__bounded__} sentinel and
   // the typed `SpawnTreeNode[]` slot fails IncidentReportSchema.parse.
   "spawnTree",
+  // orchestrate is report-level-capped below (SUMMARY/FULL_MAX_ORCHESTRATE_RUNS,
+  // both can exceed the backstop's 64-item cap), so exempt it too — otherwise a
+  // >64-run session becomes a {__bounded__} sentinel and the typed
+  // `OrchestrateRun[]` slot fails IncidentReportSchema.parse.
+  "orchestrate",
 ]);
 
 // `TruncationEntry`, `capNewestFirst`, and `digestIfOversized` live in the
@@ -313,6 +320,22 @@ export function boundIncidentReport(
     spawnTree = spawnTree.slice(0, maxSpawn);
   }
 
+  // Cap orchestrate first-seen (the fold's materialization order —
+  // slicing the HEAD keeps the earliest runs), recording a truncations[] entry for
+  // the dropped tail. Combined with the REPORT_ARRAY_FIELDS exemption above, this
+  // keeps the typed `OrchestrateRun[]` shape so IncidentReportSchema.parse holds even
+  // on a run-heavy session (the spawnTree cap precedent).
+  let orchestrate = report.orchestrate;
+  const maxOrchestrate = depth === "summary" ? SUMMARY_MAX_ORCHESTRATE_RUNS : FULL_MAX_ORCHESTRATE_RUNS;
+  if (orchestrate !== undefined && orchestrate.length > maxOrchestrate) {
+    truncations.push({
+      field: "orchestrate",
+      reason: `capped at ${maxOrchestrate} runs (had ${orchestrate.length})`,
+      pointer: "obs.explain depth=full",
+    });
+    orchestrate = orchestrate.slice(0, maxOrchestrate);
+  }
+
   let bounded: IncidentReport = {
     ...report,
     channel,
@@ -326,6 +349,7 @@ export function boundIncidentReport(
     offloads,
     ...(cacheBreaks !== undefined ? { cacheBreaks } : {}),
     ...(spawnTree !== undefined ? { spawnTree } : {}),
+    ...(orchestrate !== undefined ? { orchestrate } : {}),
     truncations,
   };
 
@@ -467,6 +491,26 @@ export function boundIncidentReport(
             {
               field: "spawnTree",
               reason: `report exceeded ${SUMMARY_MAX_BYTES} bytes; spawnTree trimmed to ${half}`,
+              pointer: "obs.explain depth=full",
+            },
+          ],
+        };
+        continue;
+      }
+
+      // Halve the orchestrate section (first-seen retained) — the pre-loop
+      // cap already brings it to ≤40 at summary, so this is the convergence backstop
+      // for a run array whose entries are individually large (many toolCalls per run).
+      if (bounded.orchestrate !== undefined && bounded.orchestrate.length > 1) {
+        const half = Math.max(1, Math.floor(bounded.orchestrate.length / 2));
+        bounded = {
+          ...bounded,
+          orchestrate: bounded.orchestrate.slice(0, half),
+          truncations: [
+            ...bounded.truncations,
+            {
+              field: "orchestrate",
+              reason: `report exceeded ${SUMMARY_MAX_BYTES} bytes; orchestrate trimmed to ${half}`,
               pointer: "obs.explain depth=full",
             },
           ],

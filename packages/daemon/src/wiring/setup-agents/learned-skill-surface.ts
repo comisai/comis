@@ -208,8 +208,16 @@ export async function refreshLearnedSkillSurface(args: {
   scope: LearningScope;
   workspaceDir: string;
   logger: ComisLogger;
+  /**
+   * Per-agent PROCEDURE-doc surface budget (the `required_tools`-populated subset).
+   * Caps how many orchestrate-derived docs surface into `<available_skills>` so a
+   * burst can't bloat every prompt; user-intent skills + topic docs are uncapped.
+   * Omitted ⇒ no procedure cap (the production wiring always threads the config
+   * value; only manual unit callers omit it, and those carry no procedure docs).
+   */
+  maxProcedureDocsSurfaced?: number | undefined;
 }): Promise<readonly MentalModel[]> {
-  const { learnedSkillStore, scope, workspaceDir, logger } = args;
+  const { learnedSkillStore, scope, workspaceDir, logger, maxProcedureDocsSurfaced } = args;
   if (!learnedSkillStore) return [];
 
   // KIND-FILTER the wholesale surface to admit kind:"skill" AND kind:"topic"
@@ -239,12 +247,53 @@ export async function refreshLearnedSkillSurface(args: {
 
   // Admit skill + topic; exclude profile (the no-double-surface guard).
   const visible = result.value.filter((d) => d.kind === "skill" || d.kind === "topic");
-  materializeLearnedSkills(workspaceDir, visible, logger);
-  const surfaced = visible.filter(isSurfaceable);
+
+  // Per-agent PROCEDURE-doc budget (the scaling guard — there is NO ranked top-K
+  // surfacing today). A PROCEDURE doc is the `required_tools`-populated subset (an
+  // orchestrate-derived doc); a user-intent skill (required_tools NULL ⇒ requiredTools
+  // undefined) + a topic doc are NOT, and pass through UNCAPPED (a separate path).
+  //
+  // SELECTION and PRESENTATION are DECOUPLED so the budget can prefer corroboration
+  // WITHOUT churning the prompt cache:
+  //  - SELECTION (which procedure docs keep a slot when over budget): the MOST-
+  //    CORROBORATED win — order the procedure subset by proof_count DESC, then created_at
+  //    ASC, then id ASC (a fully deterministic, stable tiebreak) and keep the top
+  //    `maxProcedureDocsSurfaced`. This is the DoS-guard's intent: a burst of weakly-
+  //    corroborated procedures can NEVER crowd out a heavily-corroborated one, and lowering
+  //    the cap sheds the LEAST-corroborated docs, not the newest.
+  //  - PRESENTATION (the order they appear in <available_skills>): the survivors are
+  //    emitted in the original created_at-ASC list() order by FILTERING `visible` (never a
+  //    repartition), so the listing stays APPEND-ONLY — admitting an unrelated new user-
+  //    intent skill (newest created_at ⇒ lands LAST) never shifts a surviving procedure
+  //    doc's position, keeping the <available_skills> prompt-cache suffix stable cross-session.
+  // NO new execution path — the docs are still advisory markdown materialized via the
+  // existing enumeration; the model re-authors the run under the unchanged jail/cap gate.
+  const procedureCap = maxProcedureDocsSurfaced ?? Number.POSITIVE_INFINITY;
+  const isProcedureDoc = (d: MentalModel): boolean =>
+    d.requiredTools != null && d.requiredTools.length > 0;
+  const procedureDocs = visible.filter(isProcedureDoc);
+  // Select the kept procedure docs BY CORROBORATION (proof_count DESC, created_at ASC, id ASC).
+  const keptProcedureIds = new Set(
+    [...procedureDocs]
+      .sort(
+        (a, b) =>
+          b.proofCount - a.proofCount ||
+          a.createdAt - b.createdAt ||
+          (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+      )
+      .slice(0, procedureCap)
+      .map((d) => d.id),
+  );
+  // Present APPEND-ONLY: drop only the over-budget procedure docs, keep `visible`'s created_at order.
+  const budgeted = visible.filter((d) => !isProcedureDoc(d) || keptProcedureIds.has(d.id));
+
+  materializeLearnedSkills(workspaceDir, budgeted, logger);
+  const surfaced = budgeted.filter(isSurfaceable);
   // INFO, not DEBUG — a once-per-refresh summary so an operator can see how many
   // learned skills currently surface to the agent WITHOUT setting logLevel:debug
   // before the incident. Diagnosing "the learned skill doesn't appear in
   // <available_skills>" previously needed a DEBUG-level surfacedCount grep + asking the agent.
+  // The procedure counts are the budget's obs surface (COUNTS only — §2.7; no doc bodies/names).
   logger.info(
     {
       agentId: scope.agentId,
@@ -253,6 +302,11 @@ export async function refreshLearnedSkillSurface(args: {
       // The kind-VISIBLE total (skill + topic), so surfacedCount/totalCount reconcile
       // (profile docs are excluded upstream and are not part of this surface's denom).
       totalCount: visible.length,
+      // The per-agent procedure-doc budget: how many procedure docs the agent has, how
+      // many surfaced this refresh, and how many the cap omitted (the DoS-guard signal).
+      procedureDocCount: procedureDocs.length,
+      procedureDocsSurfaced: keptProcedureIds.size,
+      procedureDocsOmitted: procedureDocs.length - keptProcedureIds.size,
     },
     "Learned-skill surface refreshed",
   );
@@ -274,6 +328,8 @@ export function createLearnedSkillSurfaceCache(args: {
   scope: LearningScope;
   workspaceDir: string;
   logger: ComisLogger;
+  /** Per-agent procedure-doc surface budget (threaded to {@link refreshLearnedSkillSurface}). */
+  maxProcedureDocsSurfaced?: number | undefined;
 }): { readonly current: readonly MentalModel[] } {
   return createRefreshableLearnedSkillSurface(args).cache;
 }
@@ -292,6 +348,8 @@ export function createRefreshableLearnedSkillSurface(args: {
   scope: LearningScope;
   workspaceDir: string;
   logger: ComisLogger;
+  /** Per-agent procedure-doc surface budget — threaded into every refresh() via `args`. */
+  maxProcedureDocsSurfaced?: number | undefined;
 }): { cache: { readonly current: readonly MentalModel[] }; refresh: () => Promise<void> } {
   const cache: { current: readonly MentalModel[] } = { current: [] };
   const refresh = async (): Promise<void> => {

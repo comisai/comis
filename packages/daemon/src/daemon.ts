@@ -78,6 +78,7 @@ import {
   setupDeliveryMirror,
   buildDurableStores,
   buildDurableResume,
+  buildOrchestrateResumeWiring,
   createWorktreeRegistry,
   toLifecycleGitExec,
   setupWorktreeSweep,
@@ -124,8 +125,9 @@ import { seedBundledSkills, defaultSeedBundledSkillsDeps } from "./wiring/seed-b
 // createModelCatalog + resolveWorkspaceDir live in @comis/core.
 import { createModelCatalog, resolveWorkspaceDir } from "@comis/core";
 import { createFileStateTracker, detectSandboxProvider } from "@comis/skills";
-import { reapNeverTaskedDrives as reapNeverTaskedDrivesInRegistry } from "@comis/skills/tools";
+import { reapNeverTaskedDrives as reapNeverTaskedDrivesInRegistry, createOrchestrateReplayRespawn } from "@comis/skills/tools";
 import { constructCapabilityLayer } from "./wiring/setup-capability-endpoint-boot.js"; // the sandbox/capability endpoint layer
+import { buildOrchestrateRepairResolver } from "./wiring/setup-tools-orchestrate-repair.js"; // the class-gated one-shot orchestrate repair-seam resolver (daemon-minted, injected into setupTools)
 import { createWakeGateRunner, buildWakeGateRunnerDeps, type WakeGateRunner } from "./wiring/wire-wake-gate-runner.js"; // the pre-payload wake-gate runner + its deps builder
 // The single process-singleton activity circuit breaker is constructed
 // here and threaded down through ChannelsDeps → buildAndStartChannelManager
@@ -175,6 +177,7 @@ import { setupChannelLivenessMonitor } from "./wiring/setup-channel-liveness-mon
 import { hardenDataDirPermissions } from "./wiring/harden-data-dir.js";
 import { buildAudioResolverDeps } from "./wiring/setup-audio-provider.js";
 import { runPreflightDoctor } from "./wiring/preflight-doctor.js";
+import { applyInspectDefaultsForLogging } from "./wiring/apply-inspect-defaults.js";
 import { createInboundMessageIdResolver, type InboundMessageIdResolver } from "./wiring/inbound-message-id-resolver.js";
 import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import { emitStartupBanner } from "./wiring/emit-startup-banner.js";
@@ -184,44 +187,18 @@ import { buildPlaceholdersFromBindings } from "./wiring/broker-placeholder-build
 import { warnOnProviderTimeoutRedirect } from "./wiring/provider-timeout-redirect.js";
 import os from "node:os";
 import { dirname as pathDirname } from "node:path";
-import { inspect } from "node:util";
 
 export const DEFAULT_CONFIG_PATHS = [
   safePath(safePath(os.homedir(), ".comis"), "config.yaml"),
   safePath(safePath(os.homedir(), ".comis"), "config.local.yaml"),
 ];
 
-/**
- * When ANTHROPIC_LOG=debug|info is set, the Anthropic SDK calls
- * `console.debug('[req] sending request', { ...payload })`, which Node
- * formats with util.inspect using the default `depth: 2`. That collapses
- * the request body to `messages: [Array]`, so we lose the actual body
- * we are trying to capture.
- *
- * This helper deepens util.inspect ONLY when the SDK debug logger is
- * actually enabled. When ANTHROPIC_LOG is unset, the SDK emits no debug
- * lines anyway, so we leave inspect defaults alone — keeping production
- * logs unchanged.
- *
- * `breakLength: Infinity` keeps each log line single-line so grep-based
- * inspection of the daemon log keeps working.
- *
- * Returns whether each default was changed (used by tests; ignored at
- * runtime).
- */
-export function applyInspectDefaultsForLogging(
-  env: Record<string, string | undefined>,
-): { depthChanged: boolean; breakLengthChanged: boolean } {
-  const lvl = env["ANTHROPIC_LOG"];
-  if (lvl !== "debug" && lvl !== "info") {
-    return { depthChanged: false, breakLengthChanged: false };
-  }
-  const depthChanged = inspect.defaultOptions.depth !== null;
-  const breakLengthChanged = inspect.defaultOptions.breakLength !== Infinity;
-  inspect.defaultOptions.depth = null;
-  inspect.defaultOptions.breakLength = Infinity;
-  return { depthChanged, breakLengthChanged };
-}
+// util.inspect depth/breakLength deepening for Anthropic SDK debug logs —
+// extracted to wiring/apply-inspect-defaults.ts to keep this composition root
+// ≤3000 lines. Imported for the boot call site in main() AND re-exported so
+// `applyInspectDefaultsForLogging` stays on daemon.ts's public surface
+// (daemon.test.ts imports it from "./daemon.js").
+export { applyInspectDefaultsForLogging };
 
 // Preflight native-dep doctor — extracted to wiring/preflight-doctor.ts to keep
 // this composition root ≤3000 lines. Imported
@@ -812,6 +789,20 @@ function buildRpcDispatchDeps(deps: {
     ...(c.outwardLedger ? { outwardLedger: c.outwardLedger } : {}),
     // The never-hang control plane the dispatch chokepoint reads — the denial breaker (recordDenial/recordAllow → trip→abort), the evicted-rootRunId set (isEvicted → demote mid-run), and the content-free escalate. Constructed at the cap layer; absent when no autonomy agent ⇒ deny-without-escalate. Threading evictRegistry here ALSO flows it into createAutonomyHandlers via the `...deps` spread, activating the autonomy.evict handler.
     ...(c.capEndpointHandle ? { denialBreaker: c.capEndpointHandle.denialBreaker, evictRegistry: c.capEndpointHandle.evictRegistry, escalate: c.capEndpointHandle.escalate } : {}),
+    // The operator deterministic-replay wiring (plan 06 → LIVE): the daemon-wide OutputGuard the ephemeral bearer registers in + the sandbox-backed pinned-byte re-spawn seam that points COMIS_ORCH_SOCKET at the SEPARATE replay socket (INV-1), reusing the runner's loadResumeSpec + jail envelope. Assembled ONLY when the jail (capEndpointHandle + sandboxProvider) AND the durable store (a replayable row source) all exist — durableRunStore is present exactly when durability is enabled; absent ⇒ orchestrate.replay is not registered (rpc-dispatch gates the handler on this cluster + durableRuns). The REAL bwrap byte-identical round-trip is the .linux/VPS tier; the wiring + INV-1 target are proven on macOS.
+    ...(c.capEndpointHandle && c.sandboxProvider && c.durableRunStore
+      ? {
+          orchestrateReplay: {
+            outputGuard: c.capEndpointHandle.outputGuard,
+            respawn: createOrchestrateReplayRespawn({
+              sandbox: c.sandboxProvider,
+              durableRuns: c.durableRunStore,
+              logger: c.logger,
+              ...(c.execToolEnv ? { baseEnv: c.execToolEnv } : {}),
+            }),
+          },
+        }
+      : {}),
     graphCoordinator: c.graphCoordinator, namedGraphStore: c.namedGraphStore, nodeTypeRegistry: c.nodeTypeRegistry,
     securityConfig: c.container.config.security, adaptersByType: c.adaptersByType,
     inboundMessageIdResolver: c.inboundMessageIdResolver, visionRegistry: c.visionRegistry, resolveAgentMainProvider: resolveAgentMainProviderFor, mainModelIdFor: c.mediaVisionBundle?.resolveMainModelId, mainProviderVision: c.mediaVisionBundle?.capability, trajectoryRegistry: c.trajectoryRegistry,
@@ -2037,7 +2028,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   const msTeamsConversationStore = createSqliteMsTeamsConversationStore(db); // shared memory.db → createMsTeamsPlugin (capture + proactive recovery)
 
   // 7.9. Capability-lease layer + ACTIVATION — constructed BEFORE setupTools so the KEPT handle threads capMint + the orchestrate capSocketPath into tool assembly; on `boot` for bootShutdown. cronJobCount binds the bounded-autonomy rate count to the per-agent CronScheduler. durableRuns threads into the jail-leg chokepoint for the _outwardStepIndex allocation.
-  const { capEndpointHandle, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, timers: handle.timers, cronJobCount: (agentId) => { try { return handle.getAgentCronScheduler(agentId).getJobs().length; } catch { return 0; } }, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager, boundedAutonomyHolder: handle.boundedAutonomyBudgetHolder, leaseManager: handle.sharedLeaseManager, container, ...(durableRunStoreEarly ? { durableRuns: durableRunStoreEarly } : {}) }); // POPULATES the late-bound budget holder (read by the bridge at turn time) + shares the SAME LeaseManager as the cron-fire mint; the container is passed so the SOCKET chokepoint emits the per-cap audit (audit:event + capability:audited) for jailed tool.invoke calls
+  const { capEndpointHandle, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, timers: handle.timers, cronJobCount: (agentId) => { try { return handle.getAgentCronScheduler(agentId).getJobs().length; } catch { return 0; } }, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager, boundedAutonomyHolder: handle.boundedAutonomyBudgetHolder, leaseManager: handle.sharedLeaseManager, container, mcpClientManager, ...(durableRunStoreEarly ? { durableRuns: durableRunStoreEarly } : {}) }); // POPULATES the late-bound budget holder (read by the bridge at turn time) + shares the SAME LeaseManager as the cron-fire mint; the container is passed so the SOCKET chokepoint emits the per-cap audit (audit:event + capability:audited) for jailed tool.invoke calls
   Object.assign(boot, { capEndpointHandle, namespacePreflightOk });
 
   if (capEndpointHandle && sandboxProvider) { // pre-payload wake-gate runner: built after the cap layer (deps from capEndpointHandle), read at fire time
@@ -2053,6 +2044,8 @@ async function bootChannels(boot: BootContext): Promise<void> {
     channelAdaptersRef: handle.channelAdaptersRef, eventBus: container.eventBus, logger: daemonLogger, clock: handle.clock, timers: handle.timers,
     // Route a DAG record (spawn_tree objects w/ status) to coordinator.resumeGraph via the late-bound holder.
     resumeGraph: (record) => graphResumeHolder.ref ? graphResumeHolder.ref(record) : Promise.resolve(err(new Error("resumeGraph holder unpopulated (coordinator not built)"))),
+    // The orchestrate-kind resume + orphan-reclaim seams (workspace resolver + real existsSync + result-ref-store.cleanupRun + a safePath-guarded rmSync). Populated ONLY when durability is enabled (a default install builds no unused store) so a resumable orchestrate row's pinned script + checkpoint are VERIFIED on boot and a dead run's artifacts are RECLAIMED on orphan; absent ⇒ a scriptRef row degrades to the plain flat re-anchor (deny-by-absence — the runner only writes scriptRef rows under orchestrateResume).
+    ...(durabilityCfg.enabled ? { orchestrateResume: buildOrchestrateResumeWiring({ defaultWorkspaceDir, logger: daemonLogger }) } : {}),
   });
   Object.assign(boot, { durableRunStore: durableResume.durableRunStore, outwardLedger: durableResume.outwardLedger, durableResumeShutdown: durableResume.shutdown });
 
@@ -2064,6 +2057,13 @@ async function bootChannels(boot: BootContext): Promise<void> {
     // The per-provider operator capabilityClass override so ctx_expand's walk depth honors a pinned tier (same providers.entries source as the executor's ModelProfile). Undefined ⇒ provider-family heuristic.
     getProviderCapabilityClass: (provider) =>
       container.config.providers?.entries?.[provider ?? ""]?.capabilities?.capabilityClass,
+    // The class-gated one-shot orchestrate repair-seam resolver (mirrors the getProviderCapabilityClass sibling): the daemon mints the keyless-safe repair closure per agent (small/nano ON, frontier/mid OFF — pure class-gate off the model profile, no config toggle). setup-tools threads it into the orchestrate runner.
+    resolveOrchestrateRepairSeam: buildOrchestrateRepairResolver({
+      config: container.config,
+      secretManager: container.secretManager,
+      clock: boot.clock,
+      logger: daemonLogger,
+    }),
     dataDir: container.config.dataDir || ".",
     secretManager: container.secretManager, platformSecretNames: container.platformSecretNames,
     eventBus: container.eventBus, skillsLogger, linkRunner,

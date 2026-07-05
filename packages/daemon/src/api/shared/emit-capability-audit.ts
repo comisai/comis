@@ -21,6 +21,13 @@
  * NAME + method + decision ONLY — NEVER the `tool.invoke` args, a message body,
  * a file path, or a secret name. There is deliberately no args/body parameter.
  *
+ * CLASSIFICATION: the durable `audit:event.classification` is a member of the
+ * closed `AuditEventSchema` enum (`read | mutate | destructive`) or is OMITTED —
+ * never an out-of-enum sentinel (the sink coerces any such value to null,
+ * dropping the action class). A DENY is `destructive`; an ALLOW derives a
+ * `read`/`mutate` from the capability via {@link classifyCapabilityAction} and
+ * omits the field for an unrecognized cap (honest unknown, never a mislabel).
+ *
  * Chokepoint asymmetry: the in-process path has NO lease, so `leaseId` /
  * `parentLeaseId` / `tool` are honestly ABSENT (omitted) and `rootRunId` is the
  * synthetic `root-session-<key>`. The socket path passes the full real tuple.
@@ -29,7 +36,7 @@
  * @module
  */
 import { systemNowMs } from "@comis/core";
-import type { EventMap } from "@comis/core";
+import type { AgentCapability, EventMap } from "@comis/core";
 
 /**
  * The minimal structural deps the emitter reads. `ApiDispatchDeps` /
@@ -78,6 +85,47 @@ export interface CapabilityAuditRecord {
 }
 
 /**
+ * The closed capability→action-class map for the durable audit trail's
+ * `classification` (the `read|mutate|destructive` enum on `AuditEventSchema`).
+ * Read-class caps (they observe) → `"read"`; mutate-class caps (they change
+ * state or send outward) → `"mutate"`. Typed `Record<AgentCapability, ...>` so a
+ * new `AGENT_CAPABILITIES` member is a COMPILE-VISIBLE gap here — never a silent
+ * miss. There is no `"destructive"` entry: the allow path attributes read/mutate;
+ * a DENY is the only `"destructive"` emitter (a denied call is the signal).
+ */
+export const CAPABILITY_ACTION_CLASS: Record<AgentCapability, "read" | "mutate"> = {
+  "orch:read": "read",
+  "orch:web": "read",
+  "orch:analyze": "read",
+  "orch:browse": "read",
+  // MCP calls observe the connected server — a read-class action. (A deny is
+  // always emitted as `destructive`, so this class is the ALLOW-path attribution.)
+  "orch:mcp": "read",
+  "orch:write": "mutate",
+  "orch:message": "mutate",
+  "orch:spawn": "mutate",
+  "orch:graph": "mutate",
+  "orch:cron": "mutate",
+  "orch:skill": "mutate",
+};
+
+/**
+ * Classify a capability into the audit `classification` enum — a PURE lookup (no
+ * I/O, no throw; the `attenuateCaps` pure discipline). Returns the `read`/`mutate`
+ * action class for a known {@link import("@comis/core").AgentCapability}, or
+ * `undefined` for ANY OTHER string (the in-process dispatch path may pass a
+ * non-`orch:` cap) — an honest unknown that OMITS the field rather than
+ * mislabeling it (e.g. tagging a mutate as read).
+ */
+export function classifyCapabilityAction(
+  capability: string,
+): "read" | "mutate" | undefined {
+  return (CAPABILITY_ACTION_CLASS as Record<string, "read" | "mutate" | undefined>)[
+    capability
+  ];
+}
+
+/**
  * Emit the per-cap audit for a gated call's authorization decision — BOTH the
  * durable `audit:event` and the `capability:audited` trajectory
  * record. Pure emitter: emits, never throws.
@@ -95,6 +143,15 @@ export function emitCapabilityAudit(
   const timestamp = systemNowMs();
   const tenantId = deps.container.config.tenantId ?? "default";
 
+  // The action class for the durable trail: a DENY is the destructive-intent
+  // signal; an ALLOW derives a read|mutate from the capability's mutation
+  // semantics and is OMITTED for an unrecognized cap (an honest unknown — never
+  // an out-of-enum sentinel the sink would drop to null). Mirrors the
+  // conditional-carry of `createAuditEvent`.
+  const classification: "read" | "mutate" | "destructive" | undefined = isDeny
+    ? "destructive"
+    : classifyCapabilityAction(record.capability);
+
   // 1. The durable audit trail — ALWAYS emitted for a gated decision (the
   //    security trail is NOT coupled to tree-root resolution). The per-cap
   //    tuple rides the content-free `metadata` free-map; optional ids (incl.
@@ -106,7 +163,7 @@ export function emitCapabilityAudit(
     actionType: record.method,
     kind: isDeny ? "capability_denied" : "audit",
     outcome: isDeny ? "denied" : "success",
-    classification: isDeny ? "destructive" : "neutral",
+    ...(classification !== undefined ? { classification } : {}),
     metadata: {
       capability: record.capability,
       method: record.method,

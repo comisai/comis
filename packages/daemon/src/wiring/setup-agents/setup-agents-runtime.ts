@@ -325,7 +325,7 @@ export async function setupSingleAgent(
   );
   skillRegistry.init();
   // Per-agent cache of promoted read-only learned procedures, refreshed out-of-band (the sync seam reads `.current`). Gated on learning.enabled × the master cost switch (memory.enabled) so default-OFF does ZERO surface work (no list()/rmSync) and stays byte-identical; registers its refresh so the promote/demote loop re-refreshes it (next-session pickup).
-  const learnedSurface = wireAgentLearnedSkillSurface({ enabled: container.config.memory?.enabled !== false && effectiveConfig.learning?.enabled === true, agentId, learnedSkillStore: deps.learnedSkillStore, scope: { tenantId: container.config.tenantId, agentId }, workspaceDir: dir, logger: perAgentLogger, registry: deps.learnedSkillSurfaceRegistry });
+  const learnedSurface = wireAgentLearnedSkillSurface({ enabled: container.config.memory?.enabled !== false && effectiveConfig.learning?.enabled === true, agentId, learnedSkillStore: deps.learnedSkillStore, scope: { tenantId: container.config.tenantId, agentId }, workspaceDir: dir, logger: perAgentLogger, registry: deps.learnedSkillSurfaceRegistry, maxProcedureDocsSurfaced: effectiveConfig.learning?.reflect?.maxProcedureDocsSurfaced });
 
   // Per-agent ToolCapabilityPort adapter. Construction sits here so the adapter can close
   // over this agent's skillRegistry; reused by pi-executor (capability-index renderer) AND

@@ -160,6 +160,9 @@ export {
   // The autonomy.durability sub-block schema — the daemon reads it for
   // the boot-time durability resolution (setupDurableResume gate + thresholds).
   DurabilityConfigSchema,
+  // The pure inbound-MCP-allowlist resolver — the daemon-side `case "mcp"`
+  // executor's layer-2 deny-by-absence gate (resolved per-agent from autonomy.mcp).
+  permitsMcpTool,
   // Honest legible degrade — consumed by the daemon
   // boot log + the preflight doctor.
   degradeAutonomy,

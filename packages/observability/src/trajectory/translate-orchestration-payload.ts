@@ -37,7 +37,11 @@ export type OrchestrationBridgedEventName =
   | "capability:audited"
   // The per-graph-node spawn-tree producer.
   // Content-free: graph/node ids + child agentId + rootRunId + token cap ONLY.
-  | "graph:node_spawned";
+  | "graph:node_spawned"
+  // A completed orchestrate run's content-free
+  // per-run summary. Content-free: ids + the closed failureClass enum + counts +
+  // token estimates ONLY — never a stderr tail / script body / tool params.
+  | "orchestrate:run_summary";
 
 /**
  * Translate an authoring / orchestration EventBus payload into the
@@ -122,6 +126,34 @@ export function translateOrchestrationPayload(
         nodeAgentId: payload.agentId,
         rootRunId: payload.rootRunId,
         tokenBudget: payload.tokenBudget,
+      };
+
+    case "orchestrate:run_summary":
+      // The per-run summary — ids + the closed failureClass enum + counts +
+      // token estimates + the bounded content-free toolSequence (the pre-flight
+      // ordered call-site sequence + counts — order + repeats preserved VERBATIM,
+      // NOT sorted/deduped) ONLY. rootRunId is the self-attribution key (forwarded
+      // into data, the capability:audited precedent); agentId/sessionKey/
+      // timestamp are envelope-only and stripped (the daemon-shared bus fans out
+      // to every session bridge — data self-attributes via rootRunId, never the
+      // envelope sessionKey). The turn traceId is deliberately NOT forwarded (the
+      // trajectory record is already traceId-keyed). The stderr tail / script body
+      // / tool params are NEVER on the payload and are not forwarded here.
+      return {
+        runId: payload.runId,
+        leaseId: payload.leaseId,
+        rootRunId: payload.rootRunId,
+        language: payload.language,
+        durationMs: payload.durationMs,
+        exitCode: payload.exitCode,
+        failureClass: payload.failureClass,
+        stdoutBytesRaw: payload.stdoutBytesRaw,
+        stdoutCharsReentered: payload.stdoutCharsReentered,
+        resultRefCount: payload.resultRefCount,
+        resultRefBytes: payload.resultRefBytes,
+        estSavedTokens: payload.estSavedTokens,
+        savedRatio: payload.savedRatio,
+        toolSequence: payload.toolSequence,
       };
 
     default: {

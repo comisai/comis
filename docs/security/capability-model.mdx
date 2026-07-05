@@ -39,6 +39,7 @@ inferred from it, so the two can never drift.
 | `orch:skill` | Invoke skills |
 | `orch:message` | Send a message to the agent's origin channel (the outward send subset: `message.send`/`reply`/`react`). Editing, deleting, fetching, and attaching stay admin-only and are not part of this capability. |
 | `orch:browse` | Drive a real browser (outward; off in every default profile) |
+| `orch:mcp` | Call an allowlisted connected MCP server's tool from a jailed script (inbound; off in every default profile) |
 
 Every member is namespaced `orch:`. None of them is, or implies, a gateway
 scope -- the two sets are **disjoint**, and an architecture test asserts the
@@ -78,6 +79,63 @@ construction, asserted by architecture tests:
     plus the denylist are the only gates.
   </Step>
 </Steps>
+
+## Connected MCP Tools (`orch:mcp`)
+
+When the operator connects MCP servers, their tools can be surfaced **into** a
+jailed [`orchestrate`](/agent-tools/orchestrate) script as
+`comis_tools.mcp.<server>.<tool>()`, gated by a dedicated capability, `orch:mcp`.
+This is the **one genuinely new default-off capability** on this surface: unlike
+the floor capabilities below, `orch:mcp` is in **no** default profile. It is
+granted only by an explicit operator opt-in (`autonomy.mcp.enabled: true`), and
+even then a call is reachable only if the specific `{server, tool}` pair is on
+that agent's [inbound allowlist](/agents/autonomy#connected-mcp-tools).
+
+Reachability is therefore **default-deny at two independent layers**:
+
+<Steps>
+  <Step title="The capability grant">
+    Without `orch:mcp` in the resolved capability set, the gate denies every
+    `mcp` call outright -- the whole surface is dark. A fresh agent has no
+    `autonomy.mcp` block, so it never holds the capability.
+  </Step>
+  <Step title="The per-agent inbound allowlist">
+    Even holding `orch:mcp`, a `{server, tool}` pair absent from
+    `autonomy.mcp.allow` -- or on a server with no explicit inbound
+    classification -- is denied at the daemon-side executor. An unlisted server
+    or tool is unreachable by absence.
+  </Step>
+</Steps>
+
+The MCP call itself runs **daemon-side** (on the daemon's network, like
+`web_fetch`), so the jail stays `--unshare-net`; the result re-enters wrapped as
+untrusted data. The MCP **control plane** stays firmly on the far side of the
+gate: `mcp_manage`/`mcp_login` are on the never-delegate denylist, and the
+underlying `mcp.*` management methods are refused to any agent-origin call -- so
+a jailed script can invoke an *allowlisted server's tool* but can never connect,
+disconnect, or authenticate a server.
+
+<Note>
+**`orch:mcp` is not the `mcp-client` gateway scope.** They share the letters
+"mcp" and nothing else: `orch:mcp` is an `orch:`-namespaced **capability** gating
+an agent's inbound use of connected MCP tools from inside the jail; the
+`mcp-client` **gateway scope** governs an external network caller. The two axes
+stay disjoint -- the emptiness of their intersection is architecture-tested,
+exactly as for every other capability.
+</Note>
+
+### The write and message surfaces are new *typing*, not new capabilities
+
+The [typed mutation surface](/agent-tools/orchestrate#the-typed-mutation-surface-write-and-message)
+-- `comis_tools.write(...)` and `comis_tools.message_send`/`reply`/`react(...)` --
+is often described alongside `orch:mcp`, but its posture is different and worth
+stating plainly: **`orch:write` and `orch:message` are floor capabilities**, on
+by default in `standard` and up (only `assistant` withholds them). What is new is
+only the **typed SDK methods** that reach those already-granted capabilities in
+one jailed turn. Calling the write/message *capabilities* "default-off" would be
+inaccurate -- the honest statement is that the **typed surface** is new (and
+inert for an agent that does not hold the underlying floor capability), while
+**only `orch:mcp` is a new default-off capability**.
 
 ## Wake-Gate Suppression Bound
 

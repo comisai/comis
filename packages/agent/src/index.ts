@@ -512,7 +512,7 @@ export type { OperationModelResolution } from "./model/operation-model-resolver.
 // what actually runs). Only
 // the resolver + CapabilityClass type cross the package boundary; the memory jobs
 // (also in @comis/agent) own the resolveMemoryOpsStrategy call internally.
-export { resolveModelProfile, capabilityClassFromProvider } from "./executor/model-profile.js";
+export { resolveModelProfile, capabilityClassFromProvider, autoRepairForClass } from "./executor/model-profile.js";
 export type { CapabilityClass } from "./executor/model-profile.js";
 // Canonical DAG template seeding. seedDefaultDagTemplates is wired
 // into daemon bootstrap (idempotent INSERT-OR-IGNORE) so the four canonical
@@ -566,6 +566,16 @@ export { createOutcomeJudgeSeam } from "./memory/index.js";
 // resolveJudgeModel stays package-internal (the seams import it relatively).
 export type { CustomCompletionsModelSpec } from "./memory/index.js";
 
+// The one-shot orchestrate repair seam the daemon mints (in buildAutonomyToolWiring)
+// on a repair-eligible capability class and injects into the orchestrate runner:
+// ONE bounded utility-model re-prompt regenerates a failed script for exactly one
+// re-run. Built on the SAME resolveJudgeModel+completeSimple machinery as the
+// outcome-judge seam so @comis/skills consumes only the injected closure and never
+// imports the model layer — resolveJudgeModel stays package-internal; the FACTORY
+// (+ its closure/deps types) is the export.
+export { createOrchestrateRepairSeam } from "./memory/index.js";
+export type { OrchestrateRepairSeam, OrchestrateRepairSeamDeps } from "./memory/index.js";
+
 // Reflection engine. The
 // reflection JOB (runReflection) + the cheap-model reflect adapter + the
 // prompt/parser the daemon invokes from the __REFLECT__ cron: SELECT
@@ -578,8 +588,8 @@ export type { CustomCompletionsModelSpec } from "./memory/index.js";
 export { createLlmReflectionAdapter, runReflection, classifyReflectOutcome } from "./memory/index.js";
 // The per-kind reflect prompts the daemon `__REFLECT__` cron injects as the adapter
 // `systemPrompt`: REFLECT_PROMPT (skill default), PROFILE_REFLECT_PROMPT,
-// TOPIC_REFLECT_PROMPT. One engine, varied per-kind prompt.
-export { REFLECT_PROMPT, PROFILE_REFLECT_PROMPT, TOPIC_REFLECT_PROMPT } from "./memory/index.js";
+// TOPIC_REFLECT_PROMPT, PROCEDURE_REFLECT_PROMPT. One engine, varied per-kind prompt.
+export { REFLECT_PROMPT, PROFILE_REFLECT_PROMPT, TOPIC_REFLECT_PROMPT, PROCEDURE_REFLECT_PROMPT } from "./memory/index.js";
 export type {
   LlmReflectionAdapterDeps,
   ReflectionAdapter,

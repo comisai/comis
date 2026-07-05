@@ -76,6 +76,19 @@ export const FULL_MAX_CACHE_BREAKS = 20;
 export const SUMMARY_MAX_SPAWN_NODES = 40;
 export const FULL_MAX_SPAWN_NODES = 200;
 /**
+ * orchestrate cap: a session may run many orchestrate PTC
+ * scripts, so `orchestrate` (one entry per run) is reachable at scale — a heavy
+ * fan-out exceeds the structural backstop's 64-item cap and would otherwise be
+ * replaced WHOLESALE with a `{__bounded__}` sentinel (schema-invalid → the typed
+ * `OrchestrateRun[]` slot fails `comis explain` parse on exactly the run-heavy
+ * session the section exists to diagnose). First-N (NOT newest-first): the fold
+ * materializes first-seen order, so slicing the HEAD preserves the earliest runs.
+ * Relaxed at full depth (the whole run set fits, no byte gate). The spawnTree cap
+ * precedent (SUMMARY/FULL_MAX_SPAWN_NODES).
+ */
+export const SUMMARY_MAX_ORCHESTRATE_RUNS = 40;
+export const FULL_MAX_ORCHESTRATE_RUNS = 200;
+/**
  * toolStats cap. UNLIKE spawnTree/failures (arrays exempt
  * from the structural backstop via REPORT_ARRAY_FIELDS), `toolStats` is a RECORD —
  * so the backstop's plain-object KEY cap applies, and a >64-tool session (a long

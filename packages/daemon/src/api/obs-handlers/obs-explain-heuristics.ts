@@ -73,6 +73,7 @@ import { spendExceededVerdict } from "./obs-explain-spend-verdict.js"; // NAMED 
 import { recallMissVerdict } from "./obs-explain-recall-verdict.js"; // recall_miss verdict (sibling — subdir cap)
 import { terminalDriveNoTaskVerdict } from "./obs-explain-terminal-drive-verdict.js"; // unattended abandoned-drive (sibling — subdir cap)
 import { terminalDriveEvictedVerdict } from "./obs-explain-terminal-drive-evicted-verdict.js"; // reaper-killed drive (sibling — subdir cap)
+import { orchestrateFailedVerdict } from "./obs-explain-orchestrate-verdict.js"; // failed orchestrate run (sibling — subdir cap)
 
 // ---------------------------------------------------------------------------
 // Public shape: matches IncidentReport.likelyRootCause 1:1.
@@ -451,6 +452,16 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     incidental max_sessions LRU or the deliberate max_interactions budget — no wolf).
   //     Keys only on terminalDriveEvicted (absent on 678/503), so no regression. Sibling.
   terminalDriveEvictedVerdict,
+
+  // 9f) orchestrate_failed — an orchestrate run (a jailed child script driving tools
+  //     through the capability socket) exited non-zero, or a tool.invoke inside the
+  //     jail was denied by the run's attenuated lease. ABOVE the
+  //     completed_with_tool_errors catch-all: a failed run is a specific terminal
+  //     cause, more root than "some tools errored" (a stray failure during the run is
+  //     incidental). Keys only on s.orchestrate (absent on the frozen 678/503
+  //     fixtures — they carry no orchestrate records), so it cannot regress them.
+  //     Sibling file.
+  orchestrateFailedVerdict,
 
   // 10) completed_with_tool_errors (the CATCH-ALL ACUTE cause — last of the acute
   //     tier, above the BENIGN learning verdicts #11-13 below). A

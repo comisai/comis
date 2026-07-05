@@ -23,7 +23,10 @@
  * so a row under one (tenant, agent) is never visible to a read under another in
  * the multi-agent DB. No trust column exists: `confidence` /
  * `sender_trust` are descriptive, never authorization. No message bodies are
- * stored — ids + closed enums + confidence only (content-free).
+ * stored — ids + closed enums + confidence only (content-free). `procedure_descriptor`
+ * holds ONLY a JSON array of content-free tool NAMES (the pre-flight footprint) —
+ * never args/bodies/secrets — and is NOT part of any key/index (the sha256 id tuple
+ * is untouched).
  *
  * `better-sqlite3` durability is WAL + path-based chmod (never fd-based file
  * sync), so this DDL is permission-model-safe by construction — no fd-fs guard is
@@ -58,9 +61,29 @@ export function ensureOutcomeEventsTable(db: Database.Database): void {
       sender_trust    TEXT,
       recalled_ids    TEXT,
       used_skill_ids  TEXT,
+      procedure_descriptor TEXT,
       observed_at     INTEGER NOT NULL,
       UNIQUE (tenant_id, agent_id, trajectory_id, source, observed_at)
     );
     CREATE INDEX IF NOT EXISTS outcome_events_scope ON outcome_events(tenant_id, agent_id, trajectory_id);
   `);
+  // Forward-only, re-run-safe migration for the `procedure_descriptor` column.
+  // `CREATE TABLE IF NOT EXISTS` is a no-op on a table a PRIOR build (without this
+  // column) already created, so a fresh db gets the column from the CREATE above
+  // while an already-created `~/.comis/memory.db` needs this ALTER. Guard it with a
+  // `PRAGMA table_info` column-exists check so the ALTER runs at most once and
+  // re-running ensureOutcomeEventsTable never throws (a duplicate ADD COLUMN would).
+  // The additive column is nullable — every prior row reads back NULL (no descriptor).
+  // The sha256 id tuple `(tenant_id, agent_id, trajectory_id, source, observed_at)` is
+  // UNTOUCHED — the descriptor is a content-free attribution column, in no key/index.
+  // PRAGMA table_info shape is the sanctioned inline-object cast (the
+  // schema-video-jobs.ts:76-81 precedent) — the untyped-sqlite gate exempts
+  // `as { name: string }[]` (a one-off PRAGMA projection, not a domain row that needs
+  // the RowMapper); `as Array<{...}>` would trip it.
+  const cols = new Set(
+    (db.prepare(`PRAGMA table_info(outcome_events)`).all() as { name: string }[]).map((r) => r.name),
+  );
+  if (!cols.has("procedure_descriptor")) {
+    db.exec(`ALTER TABLE outcome_events ADD COLUMN procedure_descriptor TEXT`);
+  }
 }

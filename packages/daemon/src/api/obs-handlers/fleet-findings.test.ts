@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { DiagnosticRow } from "@comis/memory";
 import { buildFindings, pipelineAuthoringAggregateFromRows } from "./fleet-findings.js";
-import { pricingGapFromRow } from "./fleet-findings-extractors.js";
+import { orchestrateEfficiencyFromRow, pricingGapFromRow } from "./fleet-findings-extractors.js";
 
 // ---------------------------------------------------------------------------
 // The dedicated multilingual fleet advisory (standing state).
@@ -1209,6 +1209,217 @@ describe("buildFindings — memory_lifecycle (forget sweep rollup)", () => {
     const ml = buildFindings([], [], [], [], [row]).filter((f) => f.code === "memory_lifecycle");
     expect(JSON.stringify(ml)).not.toContain("secret memory content");
     expect(JSON.stringify(ml)).not.toContain("deadbeef");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The dedicated orchestrate_efficiency fleet finding + its defensive extractor.
+//
+// A completed orchestrate run emits a `health_signal` row labelled
+// `orchestrate_efficiency` carrying counts + token ESTIMATES (the measured
+// counterfactual savings from materializing large tool results as ResultRefs
+// instead of re-entering them into context) + the closed failureClass only.
+// buildFindings folds those rows into ONE counts+estimates-only finding: the run
+// count + the summed est. tokens saved (+ a degraded-run count). Content-free
+// (INV-5), deduped via DEDICATED_SCRIPT_SIGNALS (never ALSO in the generic
+// health_signal:<label> rollup), and zero-traffic-guarded.
+// ---------------------------------------------------------------------------
+
+const ORCH_CODE = "orchestrate_efficiency";
+
+/** A `health_signal` row labelled `orchestrate_efficiency` (the content-free
+ *  run-summary details shape: counts + estimates + the closed failureClass only). */
+function orchestrateEfficiencyRow(
+  ts: number,
+  estSavedTokens: number,
+  opts: { failureClass?: string; savedRatio?: number; resultRefCount?: number } = {},
+): DiagnosticRow {
+  return {
+    timestamp: ts,
+    category: "health_signal",
+    severity: "info",
+    sessionKey: "t:u:c",
+    message: "orchestrate:run_summary",
+    details: JSON.stringify({
+      signal: "orchestrate_efficiency",
+      ...(opts.failureClass !== undefined ? { failureClass: opts.failureClass } : {}),
+      estSavedTokens,
+      savedRatio: opts.savedRatio ?? 0.9,
+      resultRefCount: opts.resultRefCount ?? 1,
+    }),
+  };
+}
+
+describe("orchestrateEfficiencyFromRow — defensive extractor (pipelineAuthoringFromRow clone)", () => {
+  it("reads estSavedTokens + the closed failureClass from an orchestrate_efficiency row", () => {
+    const row = orchestrateEfficiencyRow(1_000, 30208, { failureClass: "nonzero_exit" });
+    expect(orchestrateEfficiencyFromRow(row)).toEqual({ estSavedTokens: 30208, failureClass: "nonzero_exit" });
+  });
+
+  it("coerces a missing / non-finite / non-positive estSavedTokens to 0 (a run that materialized nothing still counts)", () => {
+    const noSave: DiagnosticRow = {
+      timestamp: 1, category: "health_signal", severity: "info", message: "orchestrate:run_summary",
+      details: JSON.stringify({ signal: "orchestrate_efficiency", resultRefCount: 0 }),
+    };
+    expect(orchestrateEfficiencyFromRow(noSave)).toEqual({ estSavedTokens: 0, failureClass: undefined });
+    expect(orchestrateEfficiencyFromRow(orchestrateEfficiencyRow(2, Number.NaN))).toEqual({ estSavedTokens: 0, failureClass: undefined });
+    expect(orchestrateEfficiencyFromRow(orchestrateEfficiencyRow(3, -5))).toEqual({ estSavedTokens: 0, failureClass: undefined });
+  });
+
+  it("returns null for a wrong-signal row (never counts another signal's numbers)", () => {
+    const row: DiagnosticRow = {
+      timestamp: 1, category: "health_signal", severity: "warning", message: "h",
+      details: JSON.stringify({ signal: "lcd_divergence", estSavedTokens: 99999 }),
+    };
+    expect(orchestrateEfficiencyFromRow(row)).toBeNull();
+  });
+
+  it("returns null for malformed details JSON and for absent details (caught, never throws)", () => {
+    const malformed: DiagnosticRow = { timestamp: 1, category: "health_signal", severity: "info", message: "x", details: "not json {" };
+    const absent: DiagnosticRow = { timestamp: 1, category: "health_signal", severity: "info", message: "x" };
+    expect(orchestrateEfficiencyFromRow(malformed)).toBeNull();
+    expect(orchestrateEfficiencyFromRow(absent)).toBeNull();
+  });
+});
+
+describe("buildFindings — orchestrate_efficiency finding", () => {
+  it("emits ONE finding with the run count + the summed est. tokens saved", () => {
+    const findings = buildFindings(
+      [orchestrateEfficiencyRow(1_000, 30208), orchestrateEfficiencyRow(2_000, 15000)],
+      [],
+      [],
+    );
+    const f = findings.filter((x) => x.code === ORCH_CODE);
+    expect(f).toHaveLength(1);
+    expect(f[0]!.count).toBe(2); // 2 runs
+    expect(f[0]!.detail).toMatch(/2 orchestrate run\(s\)/);
+    expect(f[0]!.detail).toMatch(/45208/); // 30208 + 15000 total est. tokens saved
+    expect(f[0]!.hint.length).toBeGreaterThan(0);
+  });
+
+  it("names the degraded-run count when a run carried a failureClass (closed enum, content-free)", () => {
+    const findings = buildFindings(
+      [
+        orchestrateEfficiencyRow(1_000, 10000),
+        orchestrateEfficiencyRow(2_000, 0, { failureClass: "nonzero_exit" }),
+      ],
+      [],
+      [],
+    );
+    const f = findings.find((x) => x.code === ORCH_CODE)!;
+    expect(f.count).toBe(2);
+    expect(f.detail).toMatch(/1 degraded/);
+  });
+
+  it("EXCLUDES hard-killed runs (timeout / stdout_cap) from the summed savings but still counts them as (degraded) runs", () => {
+    // A hard kill SIGKILLs the child mid-materialization: runAggregate reports the
+    // bytes materialized BEFORE the kill, but the run never sliced/consumed them —
+    // those "savings" were never actually kept out of any context. They must NOT
+    // inflate the headline measured savings; the run still counts (degraded).
+    const findings = buildFindings(
+      [
+        orchestrateEfficiencyRow(1_000, 5000), // clean run — real savings
+        orchestrateEfficiencyRow(2_000, 10_000_000, { failureClass: "timeout" }), // hard-killed → phantom
+        orchestrateEfficiencyRow(3_000, 8_000_000, { failureClass: "stdout_cap" }), // hard-killed → phantom
+      ],
+      [],
+      [],
+    );
+    const f = findings.find((x) => x.code === ORCH_CODE)!;
+    // All three runs count toward the run total...
+    expect(f.count).toBe(3);
+    // ...two of them degraded (the hard kills)...
+    expect(f.detail).toMatch(/2 degraded/);
+    // ...but ONLY the clean run's 5000 tokens enter the summed savings — the 18M
+    // phantom tokens from the two hard-killed runs are excluded.
+    expect(f.detail).toMatch(/~5000 est\. tokens saved/);
+    expect(f.detail).not.toMatch(/10000000|8000000|18005000/);
+  });
+
+  it("KEEPS a completed-but-degraded run's savings (nonzero_exit / lease_absent ran to completion — real savings)", () => {
+    // nonzero_exit and lease_absent runs ran to COMPLETION, so their materialized
+    // bytes really were kept out of context — their savings are real and summed
+    // (only the interrupted timeout/stdout_cap classes are phantom). spawn_fail
+    // materializes nothing (empty results/), so it does not inflate either.
+    const findings = buildFindings(
+      [
+        orchestrateEfficiencyRow(1_000, 6000, { failureClass: "nonzero_exit" }),
+        orchestrateEfficiencyRow(2_000, 4000, { failureClass: "lease_absent" }),
+      ],
+      [],
+      [],
+    );
+    const f = findings.find((x) => x.code === ORCH_CODE)!;
+    expect(f.count).toBe(2);
+    expect(f.detail).toMatch(/2 degraded/);
+    expect(f.detail).toMatch(/~10000 est\. tokens saved/); // 6000 + 4000, both real
+  });
+
+  it("does NOT emit when there are zero orchestrate_efficiency rows (zero-traffic guard)", () => {
+    const findings = buildFindings(
+      [{ timestamp: 1, category: "health_signal", severity: "warning", message: "h", details: JSON.stringify({ signal: "lcd_divergence" }) }],
+      [],
+      [],
+    );
+    expect(findings.some((x) => x.code === ORCH_CODE)).toBe(false);
+  });
+
+  it("no double-report: orchestrate_efficiency does NOT also appear in the generic health_signal rollup (DEDICATED_SCRIPT_SIGNALS dedup)", () => {
+    const findings = buildFindings(
+      [orchestrateEfficiencyRow(1_000, 100), orchestrateEfficiencyRow(2_000, 200)],
+      [],
+      [],
+    );
+    // Exactly one finding mentions orchestrate_efficiency — the dedicated one.
+    const mentions = findings.filter(
+      (x) => x.code === ORCH_CODE || x.code === "health_signal:orchestrate_efficiency",
+    );
+    expect(mentions).toHaveLength(1);
+    expect(mentions[0]!.code).toBe(ORCH_CODE);
+    expect(findings.some((x) => x.code === "health_signal:orchestrate_efficiency")).toBe(false);
+  });
+
+  it("folds a malformed / wrong-signal row out (defensive parse, never throws; foreign numbers never enter the sum)", () => {
+    const malformed: DiagnosticRow = { timestamp: 1, category: "health_signal", severity: "info", message: "x", details: "not json {" };
+    const wrongSignal: DiagnosticRow = {
+      timestamp: 2, category: "health_signal", severity: "warning", message: "h",
+      details: JSON.stringify({ signal: "lcd_divergence", estSavedTokens: 99999 }),
+    };
+    const good = orchestrateEfficiencyRow(3_000, 5000);
+    expect(() => buildFindings([malformed, wrongSignal, good], [], [])).not.toThrow();
+    const f = buildFindings([malformed, wrongSignal, good], [], []).find((x) => x.code === ORCH_CODE)!;
+    expect(f.count).toBe(1); // only the good row counts
+    expect(f.detail).toMatch(/5000/);
+    expect(f.detail).not.toMatch(/99999/); // the wrong-signal's number never entered the sum
+  });
+
+  it("is SAFE TO PASTE — the detail+hint carry no runId, stdout body, URL, or secret (counts + estimates only)", () => {
+    const findings = buildFindings(
+      [orchestrateEfficiencyRow(1_000, 12345, { failureClass: "timeout" })],
+      [],
+      [],
+    );
+    const f = findings.find((x) => x.code === ORCH_CODE)!;
+    for (const text of [f.detail, f.hint]) {
+      expect(text).not.toMatch(/https?:\/\//);
+      expect(text).not.toMatch(/Bearer|sk-/i);
+      expect(text).not.toMatch(/orch-|run-|Error:|at .*\.ts:/);
+    }
+  });
+
+  it("rides the deterministic count-desc / code-asc sort beside other findings", () => {
+    // 3 orchestrate runs (count 3) vs 1 degraded model_health (count 1): the
+    // orchestrate finding sorts before model_health under count-desc.
+    const findings = buildFindings(
+      [orchestrateEfficiencyRow(1_000, 100), orchestrateEfficiencyRow(2_000, 200), orchestrateEfficiencyRow(3_000, 300)],
+      [degradedModelHealthRow(1_000)],
+      [],
+    );
+    const orchIdx = findings.findIndex((x) => x.code === ORCH_CODE);
+    const modelIdx = findings.findIndex((x) => x.code === "model_health");
+    expect(orchIdx).toBeGreaterThanOrEqual(0);
+    expect(modelIdx).toBeGreaterThanOrEqual(0);
+    expect(orchIdx).toBeLessThan(modelIdx); // count 3 before count 1
   });
 });
 

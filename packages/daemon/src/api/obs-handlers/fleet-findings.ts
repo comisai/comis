@@ -28,6 +28,7 @@ import {
   healthSignalReason,
   multilingualFromRow,
   nodeBudgetExceededFromRow,
+  orchestrateEfficiencyFromRow,
   pipelineAuthoringFromRow,
   pricingGapFromRow,
   sandboxDowngradeFromRow,
@@ -113,6 +114,16 @@ const REFLECT_ADMISSION_OUTCOMES: ReadonlySet<string> = new Set([
   "admitted", "uncorroborated", "rejected_validation", "rejected_name_length",
   "untrusted_origin", "empty_reflection", "no_successes",
 ]);
+
+/** The orchestrate failure classes that SIGKILL the child MID-run — the wall-clock
+ *  timeout and the stdout hard cap. runAggregate reports the bytes materialized
+ *  BEFORE the kill, but the run never sliced/consumed them, so their estSavedTokens
+ *  is phantom (nothing was actually kept out of any context). Excluded from the
+ *  summed fleet savings while the run still counts (degraded). A COMPLETED run —
+ *  clean, `nonzero_exit`, or `lease_absent` — really did keep its materialized bytes
+ *  out of context, so its savings are real and counted; `spawn_fail` materializes
+ *  nothing (empty results/) so it never inflates the sum either. */
+const ORCHESTRATE_HARD_KILL_CLASSES: ReadonlySet<string> = new Set(["timeout", "stdout_cap"]);
 
 export function buildFindings(
   healthSignals: readonly DiagnosticRow[],
@@ -261,6 +272,45 @@ export function buildFindings(
       detail: `${smallInvalid}/${smallTotal} small-tier pipeline authorings invalid (rate ${pct}%)`,
       count: smallInvalid,
       hint: "small/local models are failing to author valid pipeline DAGs; this is the small-model-authorable-DAGs gate metric — review before enabling orchestration.authoring.*",
+    });
+  }
+
+  // Dedicated orchestrate_efficiency finding — the daemon-wide MEASURED
+  // token savings from completed orchestrate runs, rolled up over the window: the
+  // run count + the summed est. tokens saved (+ a degraded-run count when any run
+  // carried a closed failureClass). The saving is the counterfactual of
+  // materializing large tool results as ResultRefs instead of re-entering them into
+  // context. Counts + token ESTIMATES + the closed failureClass ONLY — never the
+  // runId, the stdout, the resultRefBytes, or the stderr tail (safe to paste). Zero-
+  // traffic guard (the voice_health if-pattern). estSavedTokens coerces to 0 for a
+  // run that materialized nothing, so it still counts as a run without inflating the
+  // sum; a HARD-KILLED run (timeout / stdout_cap) is counted (degraded) but its
+  // PHANTOM savings are EXCLUDED from the summed estimate (see
+  // ORCHESTRATE_HARD_KILL_CLASSES) — the child was SIGKILLed before it consumed the
+  // bytes runAggregate measured, so those tokens were never actually kept out of
+  // context.
+  let orchestrateRunCount = 0;
+  let orchestrateEstSavedTotal = 0;
+  let orchestrateDegradedRuns = 0;
+  for (const row of healthSignals) {
+    const parsed = orchestrateEfficiencyFromRow(row);
+    if (parsed === null) continue;
+    orchestrateRunCount += 1;
+    if (parsed.failureClass !== undefined) orchestrateDegradedRuns += 1;
+    // Sum only savings that were REALLY kept out of context: a completed run
+    // (clean / nonzero_exit / lease_absent) or the coerced-0 no-materialization run.
+    // A hard-killed run's materialized bytes were never consumed — exclude them.
+    if (parsed.failureClass === undefined || !ORCHESTRATE_HARD_KILL_CLASSES.has(parsed.failureClass)) {
+      orchestrateEstSavedTotal += parsed.estSavedTokens;
+    }
+  }
+  if (orchestrateRunCount > 0) {
+    const base = `${orchestrateRunCount} orchestrate run(s), ~${orchestrateEstSavedTotal} est. tokens saved`;
+    findings.push({
+      code: "orchestrate_efficiency",
+      detail: orchestrateDegradedRuns > 0 ? `${base} (${orchestrateDegradedRuns} degraded)` : base,
+      count: orchestrateRunCount,
+      hint: "measured token savings from orchestrate runs materializing large tool results as ResultRefs instead of re-entering them into context; run `comis explain` on a session for the per-run savings breakdown",
     });
   }
 

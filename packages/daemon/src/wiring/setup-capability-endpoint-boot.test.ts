@@ -13,7 +13,9 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { PerAgentConfig, ClockPort, TimerPort, TimerHandle } from "@comis/core";
+import type { PerAgentConfig, ClockPort, TimerPort, TimerHandle, ComisLogger } from "@comis/core";
+import type { McpClientManager } from "@comis/skills";
+import { createLeaseManager } from "@comis/infra";
 import { constructCapabilityLayer } from "./setup-capability-endpoint-boot.js";
 
 /** Track temp data dirs + stop thunks so each socket-binding test tears down. */
@@ -54,6 +56,10 @@ function createDeps(
     timers: createNoopTimers(),
     dataDir: opts.dataDir ?? "/test/data",
     daemonLogger,
+    // A fake MCP manager satisfies the non-optional boot dep; the boot-gate tests
+    // never construct the executor (no skillsLogger/workspaceDirs), so callTool is
+    // never invoked here — the `case "mcp"` dispatch is proven in the executor unit.
+    mcpClientManager: { getTools: () => [], callTool: vi.fn() } as unknown as McpClientManager,
     ...(opts.cronJobCount ? { cronJobCount: opts.cronJobCount } : {}),
   };
 }
@@ -337,5 +343,72 @@ describe("constructCapabilityLayer — denial breaker + evict registry + escalat
       hint: "an unattended run hit a ceiling; the platform escalated and the run continues",
     });
     expect(out).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The content-free replay recorder is BUILT and INJECTED into the capability
+// endpoint at this boot layer (REPLAY-01). createReplayRecorder is the SOLE
+// writer of `results/replay.jsonl`; if the boot layer omits it, recordReplay
+// short-circuits on every dispatch and a later `comis orchestrate replay`
+// diverges on the first cap call. These drive a real cap call through the
+// constructed endpoint and assert the recorder wrote (or, when the per-run
+// surface is off, did NOT write) the content-free log.
+// ---------------------------------------------------------------------------
+describe("constructCapabilityLayer — replay recorder wiring (REPLAY-01)", () => {
+  /** A self-referential logger fake (nested `child` returns itself). */
+  function makeSkillsLogger(): ComisLogger {
+    const l: Record<string, unknown> = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    l.child = vi.fn(() => l);
+    return l as unknown as ComisLogger;
+  }
+
+  /** Construct the layer with a real leaseManager + workspace, then drive one
+   *  successful cap call (cron.add, orch:cron) and report whether the recorder
+   *  wrote `<workspace>/results/replay.jsonl`. */
+  async function recordsReplayFor(agentDurability: Record<string, unknown>): Promise<boolean> {
+    const dataDir = tempDataDir();
+    const workspace = tempDataDir();
+    const leaseManager = createLeaseManager({ clock: { now: () => 1_700_000_000_000 } });
+    const deps = {
+      ...createDeps(
+        {
+          a1: {
+            autonomy: { profile: "standard", ...agentDurability },
+          } as unknown as PerAgentConfig,
+        },
+        { dataDir },
+      ),
+      leaseManager,
+      skillsLogger: makeSkillsLogger(),
+      workspaceDirs: new Map<string, string>([["a1", workspace]]),
+      defaultWorkspaceDir: workspace,
+    };
+    const result = await constructCapabilityLayer(deps as Parameters<typeof constructCapabilityLayer>[0]);
+    cleanups.push(() => result.capEndpointHandle?.boundedAutonomy?.destroy());
+    cleanups.push(() => result.capEndpointStop?.());
+    const { bearer } = leaseManager.mintLease({
+      agentId: "a1",
+      caps: ["orch:cron"],
+      budgetRef: "budget-1",
+      sessionKey: "t:c:u",
+      rootRunId: "run-rec",
+    });
+    // cron.add is an orch:cron method (in audience); rpcCall is mocked to succeed,
+    // so recordReplay fires on the successful dispatch.
+    await result.capEndpointHandle!.endpoint.handleCapCall(bearer, "cron.add", { schedule: "x" });
+    return existsSync(join(workspace, "results", "replay.jsonl"));
+  }
+
+  it("records replay.jsonl on a successful cap call when orchestrateResume is enabled", async () => {
+    // The recorder is wired AND the per-run gate is open → the content-free log
+    // is written, so a later replay has recorded results to serve back.
+    expect(await recordsReplayFor({ durability: { orchestrateResume: true } })).toBe(true);
+  });
+
+  it("does NOT record replay.jsonl when orchestrateResume is off (the default-off per-run gate)", async () => {
+    // The recorder is still WIRED, but its per-run isEnabled gate is closed for an
+    // agent without the surface → byte-identical to a run that never records.
+    expect(await recordsReplayFor({})).toBe(false);
   });
 });

@@ -39,6 +39,19 @@ function manySpawnNodes(count: number): NonNullable<IncidentReport["spawnTree"]>
   }));
 }
 
+/** Build `count` orchestrate runs (one per runId, distinct leaseId, empty toolCalls). */
+function manyOrchestrateRuns(count: number): NonNullable<IncidentReport["orchestrate"]> {
+  return Array.from({ length: count }, (_, i) => ({
+    runId: `orch-${String(i).padStart(3, "0")}`,
+    leaseId: `lease-${String(i).padStart(3, "0")}`,
+    outcome: (i % 2 === 0 ? "success" : "failure") as "success" | "failure",
+    durationMs: 100,
+    exitCode: i % 2,
+    toolCalls: [],
+    resultRefs: { count: 0, bytes: 0 },
+  }));
+}
+
 /** Build a toolStats record with `count` distinct tool entries (each a valid {ok,failed} object). */
 function manyToolStats(count: number): IncidentReport["toolStats"] {
   const out: IncidentReport["toolStats"] = {};
@@ -477,6 +490,38 @@ describe("boundIncidentReport — report-level bounding pass", () => {
     // 80 < FULL_MAX_SPAWN_NODES (200) → full retains all, no spawnTree truncation.
     expect(bounded.spawnTree!.length).toBe(80);
     expect(bounded.truncations.some((t) => t.field === "spawnTree")).toBe(false);
+  });
+
+  // The orchestrate section is capped exactly like spawnTree: a
+  // >64-run session must NOT become a {__bounded__} sentinel (the typed
+  // OrchestrateRun[] slot would fail IncidentReportSchema.parse on exactly the
+  // run-heavy session the section exists to diagnose).
+  it("caps orchestrate at summary depth as a valid OrchestrateRun[] — never a {__bounded__} sentinel — + records a truncations[] entry", () => {
+    const report = makeReport({ orchestrate: manyOrchestrateRuns(80) });
+    const bounded = boundIncidentReport(report, "summary");
+
+    // (a) Still a real array of typed runs — NOT the structural sentinel object.
+    expect(Array.isArray(bounded.orchestrate)).toBe(true);
+    expect(bounded.orchestrate).not.toHaveProperty("__bounded__");
+    expect(bounded.orchestrate!.every((r) => typeof r.runId === "string")).toBe(true);
+
+    // (b) The whole report still satisfies the typed schema (the client-side parse).
+    expect(() => IncidentReportSchema.parse(bounded)).not.toThrow();
+
+    // (c) Capped first-seen (orch-000 survives) + an honest truncations[] entry.
+    expect(bounded.orchestrate!.length).toBeLessThanOrEqual(40);
+    expect(bounded.orchestrate!.some((r) => r.runId === "orch-000")).toBe(true);
+    expect(bounded.truncations.some((t) => t.field === "orchestrate")).toBe(true);
+  });
+
+  it("relaxes the orchestrate cap at full depth but stays a schema-valid array", () => {
+    const report = makeReport({ orchestrate: manyOrchestrateRuns(80) });
+    const bounded = boundIncidentReport(report, "full");
+    expect(Array.isArray(bounded.orchestrate)).toBe(true);
+    expect(() => IncidentReportSchema.parse(bounded)).not.toThrow();
+    // 80 < FULL_MAX_ORCHESTRATE_RUNS (200) → full retains all, no truncation.
+    expect(bounded.orchestrate!.length).toBe(80);
+    expect(bounded.truncations.some((t) => t.field === "orchestrate")).toBe(false);
   });
 });
 

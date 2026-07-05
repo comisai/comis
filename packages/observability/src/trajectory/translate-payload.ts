@@ -313,6 +313,7 @@ export function translatePayload(
     case "subagent:budget_exceeded":
     case "capability:audited":
     case "graph:node_spawned":
+    case "orchestrate:run_summary": // A completed orchestrate run's content-free per-run summary — ids + the closed failureClass enum + counts + token estimates ONLY, never a stderr tail / script body / tool params.
       return translateOrchestrationPayload(eventName, payload);
 
     case "learning:outcome_observed": // trajectoryId + closed-enum outcome/source + numeric confidence ONLY (no body/alpha/recalled ids; agentId/sessionKey/traceId envelope-only).

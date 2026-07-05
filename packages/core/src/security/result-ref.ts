@@ -75,8 +75,9 @@ export const DEFAULT_INLINE_THRESHOLD_BYTES = Number.POSITIVE_INFINITY;
  * (`MAX_INLINE_FILE_READ_RESULT_CHARS` / `MAX_INLINE_MCP_TOOL_RESULT_CHARS`,
  * `context-engine/constants.ts`) as a sane reference point — it is a fresh
  * constant, not a reuse. Only the high-volume tools (web fetch/search, document
- * extraction, recursive grep, file read) are listed; every other tool falls
- * through to {@link DEFAULT_INLINE_THRESHOLD_BYTES} (Infinity → stays inline).
+ * extraction, recursive grep, file read, MCP tool returns) are listed; every
+ * other tool falls through to {@link DEFAULT_INLINE_THRESHOLD_BYTES} (Infinity →
+ * stays inline).
  * The values are initial defaults, deliberately left tunable.
  */
 export const RESULT_REF_THRESHOLDS: Record<string, number> = {
@@ -85,6 +86,7 @@ export const RESULT_REF_THRESHOLDS: Record<string, number> = {
   extract_document: 15_000,
   grep: 15_000,
   read: 15_000,
+  mcp: 15_000,
 };
 
 /** Per-tool threshold lookup with the high default fallback. */

@@ -509,6 +509,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "PostureDimension",
       "PostureComparison",
       "SkillsPostureSlice",
+      // One-shot orchestrate auto-repair building blocks (the pure class-gate +
+      // the daemon-mintable repair closure). autoRepairForClass is the pure
+      // per-class policy and createOrchestrateRepairSeam builds the bounded
+      // utility-model re-prompt closure; both land AHEAD of their consumer (the
+      // orchestrate tool + the buildAutonomyToolWiring daemon thread wire them
+      // in a later wave). Surfaced here per the ahead-of-consumer precedent
+      // (mirror runMemoryTripleExtraction). Shrink each entry as the daemon
+      // wiring / orchestrate tool name-imports it cross-package.
+      "autoRepairForClass",
+      "createOrchestrateRepairSeam",
+      "OrchestrateRepairSeam",
+      "OrchestrateRepairSeamDeps",
     ])],
     // @comis/channels: baseline orphans tracked here. The 5 delivery
     // helpers + the Markdown IR pipeline (incl. telegram-file-ref-guard)
@@ -1713,6 +1725,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "LeaseRevokeContract",
       "RunKillContract",
       "AUTONOMY_HANDLERS_CONTRACTS",
+      // Replay-domain aggregator array. Same pattern as AUTONOMY_HANDLERS_CONTRACTS:
+      // composed into ORCHESTRATOR_CONTRACTS → API_CONTRACTS_ORDERED intra-package
+      // (the walker skips self-imports), and no external consumer imports the
+      // per-domain array directly. The per-method `OrchestrateReplayContract` is
+      // NOT policy-listed — it HAS in-repo consumers (its
+      // `[OrchestrateReplayContract.method]` handler in orchestrate-replay-handlers.ts
+      // + the `comis orchestrate replay` CLI in commands/orchestrate.ts).
+      "REPLAY_HANDLERS_CONTRACTS",
       // Capabilities-domain aggregator. Same pattern as
       // DAEMON_CONTRACTS / AUTH_CONTRACTS: the per-method
       // `CapabilitiesIntrospectContract` HAS in-repo consumers (its
@@ -2493,6 +2513,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // Consumer: test/architecture/comis-agent-same-gate.test.ts +
       //           test/architecture/comis-agent-no-admin.test.ts
       "DENYLISTED_RPC_METHODS",
+      // CAPABILITY_ACTION_CLASS — the closed capability→action-class map
+      // (read|mutate) the durable audit trail's `classification` reads. Re-exported
+      // from the TOP-LEVEL daemon barrel so the tool-invoke-cap-map arch-test PINS a
+      // cap's audit classification against the SAME runtime map the emitter uses
+      // (not a hand-copied literal that drifts). Same test-only-consumer shape as
+      // DENYLISTED_RPC_METHODS above: the sole consumer imports it statically from
+      // @comis/daemon under test/architecture/**, which the public-export-consumers
+      // AST walker (it scans packages/ only, excluding *.test.ts) does not see.
+      // SECURITY: read-only widening — an inert classification map; exporting it
+      // grants no new authority (the emitter behavior + the gate are untouched).
+      // Consumer: test/architecture/tool-invoke-cap-map.test.ts
+      "CAPABILITY_ACTION_CLASS",
     ])],
     // @comis/gateway: baseline orphans tracked here.
     // mTLS auth surface (validateCertificates, extractClientCN, CertPaths) is

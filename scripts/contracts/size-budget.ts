@@ -34,10 +34,12 @@ import { gzipSync } from "node:zlib";
  * added. Raise it only when a bounded, additive addition overflows it, after
  * confirming the gzipped total still has ample headroom.
  *
- * Last raised for the content-free cron wake-gate report sections — the
- * `cronWakeGate` efficiency block on `FleetHealthReport` (per-agent skip-rate /
- * turns-saved / net-cost) and the `cronWakeGate` fact on `IncidentReport` — plus
- * the cron authoring-contract fields. Gzipped stays ~13.5 KB (far under 38 KB).
+ * Last raised for two additive, content-free report additions that landed
+ * together: the `IncidentReport.orchestrate` per-run section, and the cron
+ * wake-gate sections — the `cronWakeGate` efficiency block on `FleetHealthReport`
+ * (per-agent skip-rate / turns-saved / net-cost) and the `cronWakeGate` fact on
+ * `IncidentReport`, plus the cron authoring-contract fields. Gzipped stays
+ * ~13.7 KB (far under the 38 KB gzipped budget).
  */
 export const BUDGET_MINIFIED_BYTES = 138_000;
 

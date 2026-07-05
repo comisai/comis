@@ -33,7 +33,12 @@ import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import os from "node:os";
 import { createHash } from "node:crypto";
-import { BwrapProvider, resolveJailNode, resolveJailAgentCli } from "./bwrap-provider.js";
+import {
+  BwrapProvider,
+  resolveJailNode,
+  resolveJailPython,
+  resolveJailAgentCli,
+} from "./bwrap-provider.js";
 import type { SandboxOptions } from "./types.js";
 
 /** sha256 of the given bytes, lowercase hex — the manifest pin shape. */
@@ -1141,6 +1146,83 @@ describe("resolveJailNode — Node-runtime honesty", () => {
     vi.mocked(existsSync).mockImplementation((p) => String(p) === "/usr/bin/node");
     const result = resolveJailNode({ pathDirs: ["/usr/bin"], execPath: "/opt/node" });
     expect(result.mode).toBe("path");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveJailPython — Python-runtime honesty.
+// PURE two-mode resolver: probe ABSOLUTE interpreter bin paths → mark
+// unavailable. There is NO bind fallback (no daemon-python to bind, unlike
+// node's process.execPath), so a missing interpreter is always a LOUD
+// unavailable — never a silent unjailed run. macOS-unit-testable via an
+// injected `exists` predicate.
+// ---------------------------------------------------------------------------
+
+describe("resolveJailPython — Python-runtime honesty", () => {
+  it("mode 'path' with pythonBin when an absolute interpreter path exists", () => {
+    const result = resolveJailPython({
+      interpreterPaths: ["/usr/bin/python3", "/bin/python3", "/usr/local/bin/python3"],
+      // A fake exists predicate: the interpreter lives at /usr/bin/python3.
+      exists: (p) => p === "/usr/bin/python3",
+    });
+    expect(result.mode).toBe("path");
+    if (result.mode === "path") {
+      // The absolute path to invoke — never a bare `python3` name.
+      expect(result.pythonBin).toBe("/usr/bin/python3");
+    }
+  });
+
+  it("probing directory ROOTS (not absolute bin paths) resolves to 'unavailable'", () => {
+    // The resolver MUST match absolute interpreter bin paths, never directory
+    // roots. Passing roots ["/usr","/bin"] while the interpreter actually lives
+    // at /usr/bin/python3 must NOT resolve. Probing roots (as resolveJailNode
+    // does with pathDirs: SYSTEM_RO_PATHS) would falsely report unavailable on a
+    // host that HAS python3 — and Python has no BIND safety net to cover the
+    // miss the way node's process.execPath does.
+    const result = resolveJailPython({
+      interpreterPaths: ["/usr", "/bin"],
+      exists: (p) => p === "/usr/bin/python3",
+    });
+    expect(result.mode).toBe("unavailable");
+  });
+
+  it("mode 'unavailable' with a non-empty hint when nothing resolves", () => {
+    const result = resolveJailPython({
+      interpreterPaths: ["/usr/bin/python3", "/bin/python3", "/usr/local/bin/python3"],
+      exists: () => false,
+    });
+    expect(result.mode).toBe("unavailable");
+    if (result.mode === "unavailable") {
+      expect(typeof result.hint).toBe("string");
+      expect(result.hint.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("the unavailable hint denies a bundled Python and forbids a silent unjailed run", () => {
+    const result = resolveJailPython({ interpreterPaths: [], exists: () => false });
+    expect(result.mode).toBe("unavailable");
+    if (result.mode === "unavailable") {
+      const h = result.hint.toLowerCase();
+      // Must explicitly DENY a bundled Python — a bundled-Python claim would
+      // spoof containment that does not exist.
+      expect(h).toContain("bundled");
+      // ... and forbid a silent unjailed fallback / name the interpreter to
+      // install so the missing-interpreter path stays fail-closed.
+      expect(h).toMatch(/silent|unjailed|python3/);
+    }
+  });
+
+  it("defaults to fs.existsSync when no exists predicate is injected", () => {
+    // Production omits the predicate → the resolver uses the real existsSync
+    // (mocked here). Mock says /usr/bin/python3 exists → "path".
+    vi.mocked(existsSync).mockImplementation((p) => String(p) === "/usr/bin/python3");
+    const result = resolveJailPython({
+      interpreterPaths: ["/usr/bin/python3", "/bin/python3", "/usr/local/bin/python3"],
+    });
+    expect(result.mode).toBe("path");
+    if (result.mode === "path") {
+      expect(result.pythonBin).toBe("/usr/bin/python3");
+    }
   });
 });
 

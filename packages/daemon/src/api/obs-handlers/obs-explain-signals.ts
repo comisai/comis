@@ -32,6 +32,7 @@ import {
   accumulateLearningRecord, accumulateSkillInvokedRecord, accumulateSkillUsedRecord, accumulateSkillSurfacedRecord, accumulateReflectFunnelRecord, accumulateSkillTransitionRecord, accumulateMemoryFailureRecord,
   accumulateToolSchemaRecord, buildLearningSignal, emptyLearningFold,
   accumulateSpendExceeded, accumulateCapabilityAuditedRecord, accumulateGraphNodeSpawnedRecord,
+  accumulateOrchestrateRunSummaryRecord, accumulateOrchestrateToolCall,
   parseContextBudgetRecord, parsePromptTimeoutRecord, parseWakeGateRecord,
 } from "./obs-explain-signal-folds.js";
 import type { Acc } from "./obs-explain-signals-acc.js";
@@ -270,6 +271,17 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       return;
     case "capability.audited":
       accumulateCapabilityAuditedRecord(acc.spawnNodesByLease, data, rec.agentId, acc.agentId);
+      // ALSO tally the run's tool calls keyed by the PER-RUN child leaseId. The
+      // same record feeds the spawn-tree node (benign — a run appears in both
+      // sections) AND the orchestrate section's per-run toolCalls; the per-run
+      // leaseId groups a deny under THE RUN (EXPLAIN-04), not the assembly.
+      accumulateOrchestrateToolCall(acc.orchestrateToolCallsByLease, data);
+      return;
+    // The per-run orchestrate summary → the run skeleton (grouped by runId,
+    // first-seen kept). Its toolCalls are joined from the leaseId tally at
+    // materialization below. Content-free fold (see obs-explain-signal-folds.ts).
+    case "orchestrate.run_summary":
+      accumulateOrchestrateRunSummaryRecord(acc.orchestrateRunsByRunId, data);
       return;
     // The budget equation (LCD pre-flight) + prompt-timeout attribution —
     // schema-validated LAST-wins folds delegated to helpers (subdir cap). An
@@ -525,6 +537,8 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     offloads: [],
     nodeBudgetBreaches: [],
     spawnNodesByLease: new Map(),
+    orchestrateRunsByRunId: new Map(),
+    orchestrateToolCallsByLease: new Map(),
     hasDoNotRetrySignal: false,
     synthesizedBreakerTools: new Set(),
     misclassTokenByTool: new Map(),
@@ -625,6 +639,21 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     // order); present ONLY when ≥1 capability.audited record (the presence-conditional mold).
     ...(acc.spawnNodesByLease.size > 0
       ? { spawnTree: [...acc.spawnNodesByLease.values()] }
+      : {}),
+    // Materialize the run skeletons → array (first-seen order), JOINing each run's
+    // toolCalls from the per-run leaseId tally (EXPLAIN-04: a deny is attributed to
+    // the run via its child leaseId). Present ONLY when ≥1 orchestrate.run_summary
+    // record (the presence-conditional spawnTree mold).
+    ...(acc.orchestrateRunsByRunId.size > 0
+      ? {
+          orchestrate: [...acc.orchestrateRunsByRunId.values()].map((run) => ({
+            ...run,
+            toolCalls:
+              run.leaseId !== undefined
+                ? [...(acc.orchestrateToolCallsByLease.get(run.leaseId)?.values() ?? [])]
+                : [],
+          })),
+        }
       : {}),
     ...(acc.breakerOpenedTool !== undefined ? { breakerOpenedTool: acc.breakerOpenedTool } : {}),
     hasDoNotRetrySignal: acc.hasDoNotRetrySignal,

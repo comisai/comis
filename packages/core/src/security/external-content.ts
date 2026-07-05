@@ -146,11 +146,13 @@ export type ExternalContentSource =
   | "video_description"
   | "mcp_tool"
   | "mcp_resource"
+  | "orchestrate_checkpoint"
   | "outcome_judge"
   | "learned_skill_synthesis"
   | "learned_skill_reflection"
   | "learned_profile_reflection"
   | "learned_topic_reflection"
+  | "learned_procedure_reflection"
   | "memory_generalization"
   | "unknown";
 
@@ -167,11 +169,13 @@ const EXTERNAL_SOURCE_LABELS: Record<ExternalContentSource, string> = {
   video_description: "Video description",
   mcp_tool: "MCP tool result",
   mcp_resource: "MCP resource content",
+  orchestrate_checkpoint: "Orchestrate checkpoint state",
   outcome_judge: "Outcome judge input",
   learned_skill_synthesis: "Learned-skill synthesis input",
   learned_skill_reflection: "Learned-skill reflection input",
   learned_profile_reflection: "Learned-profile reflection input",
   learned_topic_reflection: "Learned-topic reflection input",
+  learned_procedure_reflection: "Learned-procedure reflection input",
   memory_generalization: "Memory generalization cluster input",
   unknown: "External",
 };

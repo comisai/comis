@@ -318,7 +318,7 @@ export interface AgentsApiDeps {
 /**
  * Dependencies for cron-handlers + graph-handlers + heartbeat-handlers + subagent-handlers
  * (cron.list/run, graph.list/run, heartbeat.list/run, subagent.list).
- * @optional-field-count: 14 — daemon-internal orchestration-plane slice; every optional gates on a daemon-global resource (graph coordinator, heartbeat runner, leaseManager/durableRuns, the autonomy plane denialBreaker/evictRegistry/escalate). daemon.ts supplies each from the cap-endpoint handle or config; a non-autonomy boot leaves them absent. Keep until a structural slice split.
+ * @optional-field-count: 15 — daemon-internal orchestration-plane slice; every optional gates on a daemon-global resource (graph coordinator, heartbeat runner, leaseManager/durableRuns, the autonomy plane denialBreaker/evictRegistry/escalate, the orchestrateReplay wiring cluster). daemon.ts supplies each from the cap-endpoint handle or config; a non-autonomy boot leaves them absent. Keep until a structural slice split.
  */
 export interface OrchestratorApiDeps {
   getAgentCronScheduler: (agentId: string) => CronScheduler;
@@ -353,6 +353,8 @@ export interface OrchestratorApiDeps {
   /** The durable-run store — autonomy-handlers ALSO calls invalidateForRevoke(rootRunId) on lease.revoke/run.kill so a restart cannot resume pre-revoke caps. Optional; absent ⇒ the persisted record is not poisoned (only matters when durability is enabled, which is when the composition root wires it). */ durableRuns?: import("@comis/core").DurableRunPort;
   denialBreaker?: import("../autonomy/denial-breaker.js").DenialBreaker; // See the @optional-field-count JSDoc above. OPTIONAL ⇒ absent on a non-autonomy boot.
   evictRegistry?: import("../autonomy/evict-registry.js").EvictRegistry; // isEvicted→demote; flows into createAutonomyHandlers via `...deps` (activates autonomy.evict).
+  /** The operator deterministic-replay wiring cluster (outputGuard + the sandbox-backed pinned-byte re-spawn seam + an optional replay-socket factory). OPTIONAL — the composition root assembles it from the cap-endpoint handle + the sandbox; absent ⇒ `orchestrate.replay` is not registered. Combined in rpc-dispatch with `durableRuns` (runId validation) + a workspace resolver into the createOrchestrateReplayHandlers session deps. The SEPARATE replay socket + re-spawn are never a mode of the production endpoint (INV-1). */
+  orchestrateReplay?: import("../wiring/setup-orchestrate-replay.js").OrchestrateReplayWiring;
   escalate?: import("../autonomy/durable-resume-engine.js").NotifyFn; // Content-free NotifyFn, fired NEVER-awaited.
   eventBus?: AppContainer["eventBus"]; // graph-mutate.ts emits `pipeline:authored` via eventBus, tier from getProviderCapabilityClass+deps.agents at rpc-dispatch.ts (when-absent: AUDIT-orchestrator.md). Both optional; eventBus shape matches sibling slices (ApiDispatchDeps parity).
   getProviderCapabilityClass?: (provider: string | undefined) => import("@comis/agent").CapabilityClass | undefined;

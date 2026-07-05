@@ -81,7 +81,9 @@ export interface LlmReflectionAdapterDeps {
   /**
    * The per-kind `wrapExternalContent` source label — the
    * UNTRUSTED-input boundary the LLM sees. Omitted ⇒ `"learned_skill_reflection"`.
-   * Profile/topic adapters pass `"learned_profile_reflection"` / `"learned_topic_reflection"`.
+   * Profile/topic adapters pass `"learned_profile_reflection"` / `"learned_topic_reflection"`;
+   * the procedure pass passes `"learned_procedure_reflection"` (a distinct label so the
+   * procedure transcript is wrapped under its own boundary).
    */
   source?: ExternalContentSource;
   /** Structural logger (counts/ids/step only — never doc bodies). */

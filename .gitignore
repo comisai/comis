@@ -87,3 +87,7 @@ design/
 
 # Live-test rig per-box secret (kit: test/live/self-driving) — never commit the real gateway token
 test/live/self-driving/scripts/.live-env
+
+# Python bytecode cache (from comis_tools.py py_compile checks)
+__pycache__/
+*.pyc

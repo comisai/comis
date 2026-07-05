@@ -33,6 +33,10 @@ export { createWebFetchTool, fetchUrlContent, __clearFetchCache } from "./builti
 // (undici, DNS-pinned, NO impit re-resolve), distinct from the in-process web_fetch tool.
 export { fetchPinned, createPinnedAgent } from "./integrations/pinned-fetch.js";
 export { extractReadableContent, type ExtractMode } from "./builtin/web-fetch-utils.js";
+// The MCP result sanitizer (NFKC + invisible-char strip) reused by the
+// daemon-side `case "mcp"` tool.invoke executor — a FRESH call site from the
+// in-process mcp-tool-bridge, so the sanitize+wrap pair is replicated there.
+export { sanitizeMcpToolResult } from "./integrations/mcp-result-sanitizer.js";
 
 // Built-in tools -- Source profiles (per-tool limits and extraction config)
 export {
@@ -312,9 +316,15 @@ export {
   runJailedScript,
   scrubSecretEnv,
   createResultRefStore,
+  // The durable checkpoint TTL (RESUME-05) — the daemon boot wiring threads it as
+  // MaterializeContext.ttlMs for the checkpoint materialize bridge.
+  CHECKPOINT_TTL_MS,
   // The daemon-side executor cores (read/grep/find/ls/jq + web_search) the
   // tool.invoke executor routes to.
   createOrchestrateExecutorCores,
+  // The deterministic-replay pinned-byte re-spawn seam (INV-1 replay socket target);
+  // the daemon assembles it + threads it into the orchestrate.replay RPC wiring.
+  createOrchestrateReplayRespawn,
   // The git-worktree lifecycle for `spawn --worktree`, consumed by the daemon's
   // executeSubAgent + boot orphan-sweep (the daemon binds the real
   // execFile-backed GitExec at the composition root).
@@ -324,6 +334,15 @@ export {
   sweepOrphans,
 } from "./builtin/orchestrate/index.js";
 export type {
+  OrchestrateToolDeps,
+  OrchestrateResultStore,
+  // The durable-run store port the daemon threads to make the runner resumable.
+  OrchestrateDurableRuns,
+  // The deterministic-replay re-spawn seam types (the daemon assembles the closure).
+  OrchestrateReplayRespawnDeps,
+  OrchestrateReplayRespawnFn,
+  OrchestrateReplayRespawnInput,
+  // The shared jailed-run core types (the cron wake-gate reuses runJailedScript).
   JailedScriptRunnerDeps,
   JailedScriptResultStore,
   JailedScriptSpawnFn,

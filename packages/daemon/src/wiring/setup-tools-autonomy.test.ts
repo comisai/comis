@@ -21,6 +21,10 @@ vi.mock("@comis/skills/tools", () => ({
 }));
 
 import { buildAutonomyToolWiring, type AutonomyToolInputs } from "./setup-tools-autonomy.js";
+// A REAL LeaseManager (ground truth) for the revoke-reaches-child proof — the
+// child-lease attribution is the security keystone, never a green mock.
+import { createLeaseManager, type LeaseManager } from "@comis/infra";
+import { createFakeClock } from "../../../../test/support/fake-clock.js";
 
 function makeLogger() {
   const child = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
@@ -155,6 +159,131 @@ describe("buildAutonomyToolWiring", () => {
     expect(mockCreateOrchestrateTool).toHaveBeenCalledTimes(1);
   });
 
+  // -------------------------------------------------------------------------
+  // Static pre-flight wiring: the daemon threads the agent's HELD cap set
+  // (resolved.capabilities) as allowedCaps for the pre-spawn cap fail-fast, and
+  // the (approvals.enabled-gated) approvalGate seam — both into
+  // createOrchestrateTool, mirroring the shipped eventBus/mintRunLease threads.
+  // -------------------------------------------------------------------------
+  describe("pre-flight wiring (allowedCaps + approvalGate)", () => {
+    it("threads allowedCaps = resolved.capabilities (the held-cap set) into createOrchestrateTool", () => {
+      const input = baseInput();
+      buildAutonomyToolWiring(input);
+      const handle = input.capEndpointHandle!;
+      const mint = (handle.leaseManager as never as { mintLease: ReturnType<typeof vi.fn> }).mintLease;
+      // Ground truth: the SAME resolved.capabilities the assembly lease is minted
+      // with — the advisory pre-flight cap set must not drift from the endpoint's.
+      const mintedCaps = (mint.mock.calls[0]![0] as { caps: unknown }).caps;
+      const args = mockCreateOrchestrateTool.mock.calls[0]![0] as { allowedCaps?: readonly string[] };
+      expect(args.allowedCaps).toBeDefined();
+      expect(args.allowedCaps).toEqual(mintedCaps);
+      // A standard agent holds orch:web — the cap the pre-flight fail-fast keys on.
+      expect(args.allowedCaps).toContain("orch:web");
+    });
+
+    it("threads the approvalGate seam into createOrchestrateTool when one is wired (approvals.enabled)", () => {
+      const approvalGate = { requestApproval: vi.fn() } as never as NonNullable<
+        AutonomyToolInputs["approvalGate"]
+      >;
+      buildAutonomyToolWiring(baseInput({ approvalGate }));
+      const args = mockCreateOrchestrateTool.mock.calls[0]![0] as { approvalGate?: unknown };
+      expect(args.approvalGate).toBe(approvalGate);
+    });
+
+    it("OMITS the approvalGate key when none is wired (approvals disabled) — the conditional-spread stays off", () => {
+      buildAutonomyToolWiring(baseInput());
+      const args = mockCreateOrchestrateTool.mock.calls[0]![0] as Record<string, unknown>;
+      expect("approvalGate" in args).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // One-shot repair wiring: setup-tools resolves the effective capabilityClass +
+  // (for a repair-eligible class) a daemon-minted repairSeam and threads BOTH into
+  // createOrchestrateTool — conditional-spread like eventBus/approvalGate. The
+  // class-gate is pure (off the model profile); there is no config toggle.
+  // -------------------------------------------------------------------------
+  describe("one-shot repair wiring (capabilityClass + repairSeam)", () => {
+    it("threads capabilityClass + the daemon-minted repairSeam into createOrchestrateTool for a small-class agent", () => {
+      const repairSeam = vi.fn(async () => "regenerated") as never as NonNullable<
+        AutonomyToolInputs["repairSeam"]
+      >;
+      buildAutonomyToolWiring(baseInput({ capabilityClass: "small", repairSeam }));
+      const args = mockCreateOrchestrateTool.mock.calls[0]![0] as {
+        capabilityClass?: string;
+        repairSeam?: unknown;
+      };
+      expect(args.capabilityClass).toBe("small");
+      expect(args.repairSeam).toBe(repairSeam);
+    });
+
+    it("threads capabilityClass but OMITS repairSeam for a frontier agent (class-gated OFF → no seam resolved)", () => {
+      buildAutonomyToolWiring(baseInput({ capabilityClass: "frontier" }));
+      const args = mockCreateOrchestrateTool.mock.calls[0]![0] as Record<string, unknown>;
+      expect(args.capabilityClass).toBe("frontier");
+      expect("repairSeam" in args).toBe(false);
+    });
+
+    it("OMITS both capabilityClass and repairSeam keys when neither is threaded (older wiring)", () => {
+      buildAutonomyToolWiring(baseInput());
+      const args = mockCreateOrchestrateTool.mock.calls[0]![0] as Record<string, unknown>;
+      expect("capabilityClass" in args).toBe(false);
+      expect("repairSeam" in args).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Resumable-durable seam: the durable-run store is threaded into the
+  // orchestrate runner ONLY when the agent's autonomy.durability.orchestrateResume
+  // is ON — so a timed-out run records a resumable row + honors resumeRunId + skips
+  // cleanupRun. Default-OFF: an agent without the toggle gets NO durable row (the
+  // runner stays byte-identical to a non-resumable run). The gate lives HERE
+  // (co-located with the tool assembly), reading the same config path as the
+  // capability-endpoint's orchestrateResumeEnabled surface predicate — so the
+  // store the composition root always threads is forwarded to the runner only
+  // under the resume surface.
+  // -------------------------------------------------------------------------
+  describe("resumable-durable seam (durableRuns under orchestrateResume)", () => {
+    const fakeDurableRuns = {
+      upsertCheckpoint: vi.fn(),
+      getByRootRun: vi.fn(),
+    } as never as NonNullable<AutonomyToolInputs["durableRuns"]>;
+
+    it("threads durableRuns into createOrchestrateTool when autonomy.durability.orchestrateResume is ON", () => {
+      const input = baseInput({
+        agentConfig: {
+          autonomy: { profile: "standard", durability: { orchestrateResume: true } },
+        } as never,
+        durableRuns: fakeDurableRuns,
+      });
+      buildAutonomyToolWiring(input);
+      const args = mockCreateOrchestrateTool.mock.calls[0]![0] as { durableRuns?: unknown };
+      expect(args.durableRuns).toBe(fakeDurableRuns);
+    });
+
+    it("OMITS durableRuns when orchestrateResume is OFF, even when the store is supplied (default-off byte-identity)", () => {
+      const input = baseInput({
+        agentConfig: { autonomy: { profile: "standard" } } as never, // no durability block
+        durableRuns: fakeDurableRuns,
+      });
+      buildAutonomyToolWiring(input);
+      const args = mockCreateOrchestrateTool.mock.calls[0]![0] as Record<string, unknown>;
+      expect("durableRuns" in args).toBe(false);
+    });
+
+    it("OMITS durableRuns when orchestrateResume is explicitly false", () => {
+      const input = baseInput({
+        agentConfig: {
+          autonomy: { profile: "standard", durability: { orchestrateResume: false } },
+        } as never,
+        durableRuns: fakeDurableRuns,
+      });
+      buildAutonomyToolWiring(input);
+      const args = mockCreateOrchestrateTool.mock.calls[0]![0] as Record<string, unknown>;
+      expect("durableRuns" in args).toBe(false);
+    });
+  });
+
   it("does NOT mint a lease for a non-autonomy (assistant) agent", () => {
     const input = baseInput({ agentConfig: { autonomy: { profile: "assistant" } } as never });
     const { brokerSpawnEnv, orchestrateTool } = buildAutonomyToolWiring(input);
@@ -162,5 +291,95 @@ describe("buildAutonomyToolWiring", () => {
     expect((handle.leaseManager as never as { mintLease: ReturnType<typeof vi.fn> }).mintLease).not.toHaveBeenCalled();
     expect(brokerSpawnEnv).toBeUndefined();
     expect(orchestrateTool).toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // Per-run child lease seam (D5, EXPLAIN-01) — the correlation keystone.
+  // buildAutonomyToolWiring threads a mintRunLease(runId, timeoutMs) closure into
+  // createOrchestrateTool. The closure mints a short-TTL CHILD lease per run:
+  // same caps, SAME rootRunId (tree accounting untouched — registerRoot is NOT
+  // called for the child), parentLeaseId = the assembly leaseId, TTL clamped to
+  // the run timeout; it registers the child bearer in OutputGuard at mint.
+  // revokeByRootRun still reaches the child (it scans by the inherited rootRunId),
+  // so kill is preserved (INV-7).
+  // -------------------------------------------------------------------------
+  describe("per-run child lease seam (mintRunLease, D5)", () => {
+    it("threads a mintRunLease closure into createOrchestrateTool", () => {
+      buildAutonomyToolWiring(baseInput());
+      const args = mockCreateOrchestrateTool.mock.calls[0]![0] as { mintRunLease?: unknown };
+      expect(typeof args.mintRunLease).toBe("function");
+    });
+
+    it("mints the child with parentLeaseId=assembly + SAME rootRunId + TTL clamped to timeoutMs, registers the bearer, and does NOT registerRoot the child (INV-7)", () => {
+      const input = baseInput({ callerRootRunId: "root-stable-1" });
+      buildAutonomyToolWiring(input);
+      const handle = input.capEndpointHandle!;
+      const mint = (handle.leaseManager as never as { mintLease: ReturnType<typeof vi.fn> }).mintLease;
+      const reg = (handle.boundedAutonomy as never as { registerRoot: ReturnType<typeof vi.fn> }).registerRoot;
+      const registerSecret = (handle.outputGuard as never as { registerSecret: ReturnType<typeof vi.fn> }).registerSecret;
+
+      // The assembly lease was minted ONCE (buildBrokerSpawnEnv) and its root
+      // anchored ONCE — the seam is a closure, not invoked at wiring time.
+      expect(mint).toHaveBeenCalledTimes(1);
+      expect(reg).toHaveBeenCalledTimes(1);
+
+      const args = mockCreateOrchestrateTool.mock.calls[0]![0] as {
+        mintRunLease?: (runId: string, timeoutMs: number) => { leaseId: string; bearer: string };
+      };
+      expect(typeof args.mintRunLease).toBe("function");
+      const child = args.mintRunLease!("orch-abc", 42_000);
+
+      // A SECOND mintLease — the per-run child — with the D5 shape.
+      expect(mint).toHaveBeenCalledTimes(2);
+      const assemblyInput = mint.mock.calls[0]![0] as { caps: unknown };
+      const childInput = mint.mock.calls[1]![0] as {
+        parentLeaseId?: string;
+        rootRunId?: string;
+        ttlMs?: number;
+        maxTtlMs?: number;
+        caps: unknown;
+      };
+      expect(childInput.parentLeaseId).toBe("leaseid-1"); // = the assembly leaseId (BrokerSpawnEnv.leaseId)
+      expect(childInput.rootRunId).toBe("root-stable-1"); // SAME as the assembly (INV-7)
+      expect(childInput.ttlMs).toBe(42_000); // TTL clamped to the run timeout...
+      expect(childInput.maxTtlMs).toBe(42_000); // ...hard ceiling === soft TTL === timeoutMs
+      expect(childInput.caps).toEqual(assemblyInput.caps); // resolved.capabilities (never broadened)
+
+      // The child bearer is registered in OutputGuard at mint (Pitfall 1) —
+      // assembly (1) + child (1) = 2 registrations. The seam returns {leaseId,bearer}.
+      expect(registerSecret).toHaveBeenCalledTimes(2);
+      expect(registerSecret).toHaveBeenCalledWith(child.bearer);
+
+      // D5: registerRoot is NOT called for the child — the per-root
+      // budget/semaphore/kill accounting stays keyed on the single registered
+      // assembly lease (INV-7); the child rides the same rootRunId.
+      expect(reg).toHaveBeenCalledTimes(1);
+    });
+
+    it("revokeByRootRun reaches EVERY per-run child lease minted via the seam (INV-7 kill; registerRoot skipped is safe)", () => {
+      // A REAL LeaseManager (ground truth — not the fixed mock): the assembly
+      // lease + each per-run child share the rootRunId, so revokeByRootRun (which
+      // scans by rootRunId) reaches the children even though registerRoot was
+      // skipped for them. This is the INV-7 kill guarantee end-to-end.
+      const realLease = createLeaseManager({ clock: createFakeClock(1_700_000_000_000) });
+      const handle = makeHandle();
+      (handle as unknown as { leaseManager: LeaseManager }).leaseManager = realLease;
+      const input = baseInput({ capEndpointHandle: handle, callerRootRunId: "root-kill-1" });
+      buildAutonomyToolWiring(input);
+
+      const args = mockCreateOrchestrateTool.mock.calls[0]![0] as {
+        mintRunLease?: (runId: string, timeoutMs: number) => { leaseId: string; bearer: string };
+      };
+      expect(typeof args.mintRunLease).toBe("function");
+      // Two per-run child leases off the SAME assembly (same rootRunId).
+      const c1 = args.mintRunLease!("orch-1", 60_000);
+      const c2 = args.mintRunLease!("orch-2", 60_000);
+      // Two sequential runs → DISJOINT child leaseIds (a fresh id per run).
+      expect(c1.leaseId).not.toBe(c2.leaseId);
+
+      // revokeByRootRun scans by the inherited rootRunId → assembly + BOTH children.
+      const { revoked } = realLease.revokeByRootRun("root-kill-1");
+      expect(revoked).toBe(3);
+    });
   });
 });

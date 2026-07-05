@@ -951,6 +951,115 @@ describe("wireLearningOutcome — memory:recall_used → observe(recalledIds)", 
   });
 });
 
+// ---------------------------------------------------------------------------
+// orchestrate:run_summary → observe(procedureDescriptor) DAEMON-SIDE.
+// The orchestrate tool emits a content-free run_summary at run completion,
+// SYNCHRONOUSLY within the turn's ALS scope (the payload carries no agentId — the
+// carrier resolves it from tryGetContext()). There is NO daemon-side run_summary
+// ledger consumer today — this NEW carrier subscription threads the content-free
+// toolSequence onto the procedure_descriptor column as a neutral explicit/unknown
+// row keyed on the turn traceId. The agent never touches the store — closed graph.
+// ---------------------------------------------------------------------------
+
+function runSummaryPayload(
+  over?: Partial<EventMap["orchestrate:run_summary"]>,
+): EventMap["orchestrate:run_summary"] {
+  return {
+    runId: "orch-1",
+    rootRunId: "orch-1",
+    sessionKey: SESSION_KEY,
+    traceId: TRACE,
+    language: "ts",
+    durationMs: 42,
+    exitCode: 0,
+    stdoutBytesRaw: 0,
+    stdoutCharsReentered: 0,
+    resultRefCount: 0,
+    resultRefBytes: 0,
+    toolSequence: ["jq", "web_fetch"],
+    timestamp: NOW,
+    ...over,
+  };
+}
+
+describe("wireLearningOutcome — orchestrate:run_summary → observe(procedureDescriptor)", () => {
+  it("threads toolSequence onto a neutral explicit/unknown carrier row keyed on the turn traceId", async () => {
+    const bus = new TypedEventBus();
+    const { store, observe } = makeStubStore();
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+
+    // Emit SYNCHRONOUSLY within the turn's ALS scope — the run_summary payload has no
+    // agentId, so the carrier resolves it from tryGetContext() (valid: emit is in-turn).
+    withCtx(() =>
+      bus.emit("orchestrate:run_summary", runSummaryPayload({ toolSequence: ["jq", "web_fetch"] })),
+    );
+    await flushMicrotasks();
+
+    expect(observe).toHaveBeenCalledTimes(1);
+    const obs = observe.mock.calls[0]![0];
+    expect(obs.procedureDescriptor).toEqual(["jq", "web_fetch"]);
+    expect(obs.source).toBe("explicit"); // a pure attribution carrier
+    expect(obs.outcome).toBe("unknown"); // never wins resolve() fusion
+    expect(obs.trajectoryId).toBe(TRACE); // keyed on the turn traceId
+    expect(obs.agentId).toBe(AGENT);
+    expect(obs.observedAt).toBe(NOW);
+  });
+
+  it("byte-identity: learningOutcomeEnabled => false → run_summary triggers ZERO observe calls", async () => {
+    const bus = new TypedEventBus();
+    const { store, observe } = makeStubStore();
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => false,
+    });
+
+    withCtx(() => bus.emit("orchestrate:run_summary", runSummaryPayload()));
+    await flushMicrotasks();
+
+    expect(observe).not.toHaveBeenCalled();
+  });
+
+  it("an empty OR absent toolSequence writes NO carrier row (no attribution → no observe)", async () => {
+    const bus = new TypedEventBus();
+    const { store, observe } = makeStubStore();
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+
+    // Empty toolSequence → nothing to attribute → no row (mirrors the skill_used length===0 guard).
+    withCtx(() => bus.emit("orchestrate:run_summary", runSummaryPayload({ toolSequence: [] })));
+    await flushMicrotasks();
+    expect(observe).not.toHaveBeenCalled();
+
+    // Absent toolSequence → same.
+    withCtx(() => bus.emit("orchestrate:run_summary", runSummaryPayload({ toolSequence: undefined })));
+    await flushMicrotasks();
+    expect(observe).not.toHaveBeenCalled();
+  });
+});
+
 // ── the promote/demote loop at the resolve seam ──
 //
 // On a graph:completed → resolve() carrying the `usedSkillIds`, a `success`

@@ -1531,6 +1531,36 @@ Requires an admin-scoped gateway token (same as `comis trace`) — unless `--off
 
 ---
 
+### `comis orchestrate`
+
+Operator-only deterministic replay of an [`orchestrate`](/agent-tools/orchestrate) run. Available only when [`autonomy.durability.orchestrateResume`](/reference/config-yaml#autonomy-agentsautonomy) was on for the run (so the pinned script + its recorded results survived).
+
+| Subcommand | Description |
+|------------|-------------|
+| `orchestrate replay <runId>` | Deterministically re-run a durable run's **pinned** script bytes and print its stdout — **admin** |
+
+```
+comis orchestrate replay <runId>
+```
+
+`replay` re-runs the run's **pinned** `<runId>.<language>` script bytes against a **separate, operator-invoked replay socket** that serves the run's recorded cap-call results (from `results/replay.jsonl`) back in order — so the same pinned script + recorded responses produce **byte-identical stdout**. The caller supplies only the `runId`; **no script bytes are ever accepted** (the pinned bytes are the sole source). The replay socket is a physically separate Unix socket that speaks the capability wire but can only serve recorded results — it is **never** a mode of the production capability endpoint, so a replay cannot perform a live side effect. Backed by `OrchestrateReplayContract` (`orchestrate.replay`).
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--format <format>` | `text` \| `json` | `text` | `text` writes the recorded stdout verbatim; `json` emits `{ "stdout": "…", "diverged": false }` |
+
+```bash
+# Re-run a durable run's pinned bytes → the recorded, byte-identical stdout
+comis orchestrate replay orch-abc123
+
+# Machine-readable — the stdout plus a divergence flag
+comis orchestrate replay orch-abc123 --format json
+```
+
+`orchestrate.replay` is **admin-scoped and deny-by-origin**: an agent-origin call is rejected before the handler runs (an agent can never replay a run), and it requires an admin-scoped gateway token. An unknown `runId`, or a run with no pinned script (durability was off, or its checkpoint was reclaimed), returns a content-free error naming the failure class — never the `runId`.
+
+---
+
 ### `comis fleet`
 
 Assemble a `FleetHealthReport` — a bounded, **cross-session** triage over a recent window: the session count and degradation rate, the **degraded-by-cause breakdown** (degraded sessions bucketed by named `endReason` cause, e.g. `context_exhausted` / `output_starved`), the recurring `WARN` findings (recurring `lcd_divergence` / model / config-posture signals, counts + hints only), the total circuit-breaker trips, the window cost, and a deterministic likely root cause. Like `comis explain`, the report is derived from log + diagnostics evidence only; no LLM is invoked, so the same window yields the same verdict. Backed by `ObsFleetHealthContract` (`obs.fleet.health`).

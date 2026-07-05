@@ -98,6 +98,8 @@ describe("CLI entry point", () => {
       "mcp",
       // Cost-attribution exports/reports (`comis cost export`).
       "cost",
+      // Operator-only deterministic replay of a recorded run (`comis orchestrate replay`).
+      "orchestrate",
     ] as const;
 
     it("registers exactly 28 commands", () => {

@@ -53,6 +53,12 @@ export const DurableRunDbRowSchema = z.strictObject({
   last_heartbeat_at: z.number(),
   created_at_ms: z.number(),
   updated_at_ms: z.number(),
+  // Additive resumable-orchestrate columns (both nullable — SQLite NULL on every
+  // prior row + on a non-orchestrate/never-checkpointed run). Content-free: a
+  // workspace-relative script path + a ResultRef id, no bytes/bearer. The store
+  // maps `?? undefined` onto the optional domain fields at the boundary.
+  script_ref: z.string().nullable(),
+  checkpoint_ref: z.string().nullable(),
 });
 
 export type DurableRunDbRow = z.infer<typeof DurableRunDbRowSchema>;

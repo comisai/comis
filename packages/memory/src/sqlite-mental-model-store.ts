@@ -126,6 +126,24 @@ function parseStructuredBody(raw: string | null): StructuredBody | undefined {
   }
 }
 
+/**
+ * Parse the nullable JSON-encoded `required_tools` column into the tool-NAME set,
+ * or `undefined` when the column is NULL (a user-intent skill / profile / topic) or
+ * holds corrupt JSON (degrade-to-absent, mirroring {@link parseStructuredBody} — a
+ * corrupt column must never throw a read). This is the read-side of the write-side
+ * bind: the surface uses `requiredTools !== undefined` as the procedure-doc
+ * discriminator, so an absent/corrupt column reads as "not a procedure doc".
+ */
+function parseRequiredTools(raw: string | null): string[] | undefined {
+  if (raw === null) return undefined;
+  try {
+    const parsed = StringArraySchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** One prior-body history entry (the supersede trail). */
 type HistoryEntry = { previousContent: string; changedAt: number };
 
@@ -178,6 +196,10 @@ function mentalModelId(s: {
 
 /** Map a parsed `mental_models` row to the domain {@link MentalModel}. */
 function rowToMentalModel(row: z.infer<typeof MentalModelRowSchema>): MentalModel {
+  // Read-side of the write-side bind: the surface discriminator. Spread in ONLY
+  // when the column parses to a value (NULL / corrupt ⇒ the field is absent), so a
+  // user-intent skill / profile / topic reads `requiredTools` undefined.
+  const requiredTools = parseRequiredTools(row.required_tools);
   return {
     id: row.id,
     name: row.name,
@@ -200,6 +222,8 @@ function rowToMentalModel(row: z.infer<typeof MentalModelRowSchema>): MentalMode
     // The supersede trail — lenient parse; undefined when the
     // column is NULL (never superseded) or corrupt (degrade-to-absent).
     history: parseHistoryColumn(row.history),
+    // The procedure-doc tool footprint (advisory); absent for a user-intent skill.
+    ...(requiredTools !== undefined ? { requiredTools } : {}),
     createdAt: row.created_at,
   };
 }
@@ -225,17 +249,22 @@ export function createSqliteMentalModelStore(
   // string-built). kind/topic_key are bound (default 'skill'/'' at the call site).
   // structured_body (the Reflection section-AST) is bound as a
   // JSON `?` (NULL when the caller omits it) and updated in lockstep with body on
-  // conflict. `history` stays the DB default NULL on admit (supersede() owns the trail).
-  // The dropped `scripts` column was the literal NULL — its removal is a no-op.
+  // conflict. required_tools / params_schema are the DETERMINISTIC advisory metadata
+  // the procedure run derives from the AUDITED descriptor — bound `?` (NULL for the
+  // user-intent skill path) and updated in lockstep with body too; NEVER the
+  // trust_level (that stays the 'learned' LITERAL — the trust keystone). `history`
+  // stays the DB default NULL on admit (supersede() owns the trail). The dropped
+  // `scripts` column was the literal NULL — its removal is a no-op (no learned code).
   const insertStmt = db.prepare(
     "INSERT INTO mental_models " +
       "(id, tenant_id, agent_id, kind, topic_key, name, description, body, structured_body, required_tools, params_schema, " +
       " trust_level, state, proof_count, confidence, strength, source_traj_ids, validation_result, " +
       " mutating, pinned, validated_at, created_at, updated_at, evicted_at) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'learned', 'candidate', ?, ?, ?, ?, NULL, ?, 0, NULL, ?, NULL, NULL) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'learned', 'candidate', ?, ?, ?, ?, NULL, ?, 0, NULL, ?, NULL, NULL) " +
       "ON CONFLICT(id) DO UPDATE SET " +
       "description = excluded.description, body = excluded.body, " +
-      "structured_body = excluded.structured_body, proof_count = excluded.proof_count, " +
+      "structured_body = excluded.structured_body, required_tools = excluded.required_tools, " +
+      "params_schema = excluded.params_schema, proof_count = excluded.proof_count, " +
       "confidence = excluded.confidence, strength = excluded.strength, " +
       "source_traj_ids = excluded.source_traj_ids, mutating = excluded.mutating, " +
       // A re-admit of a previously-evicted doc resurrects it (clears evicted_at,
@@ -368,6 +397,12 @@ export function createSqliteMentalModelStore(
           // structured_body: JSON-stringify the AST, or NULL when omitted. Updated
           // in lockstep with body on the idempotent ON CONFLICT upsert.
           input.structuredBody !== undefined ? JSON.stringify(input.structuredBody) : null,
+          // required_tools / params_schema: the DETERMINISTIC advisory metadata (bound only on
+          // the procedure run — NULL for the user-intent skill path). required_tools is the
+          // JSON-encoded content-free tool-NAME set; params_schema is the fixed content-free
+          // string. NEVER the trust_level (the 'learned' LITERAL above is the trust keystone).
+          input.requiredTools !== undefined ? JSON.stringify([...input.requiredTools]) : null,
+          input.paramsSchema !== undefined ? input.paramsSchema : null,
           input.proofCount,
           input.confidence,
           // strength seeds from confidence (a verified candidate enters with a

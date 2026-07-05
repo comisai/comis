@@ -27,23 +27,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
 
-import type { ComisLogger } from "@comis/core";
+import { runWithContext } from "@comis/core";
+import type { AgentCapability, ComisLogger, DurableRunRecord, RequestContext } from "@comis/core";
+import { ok, type Result } from "@comis/shared";
 
-import { createOrchestrateTool } from "./orchestrate-tool.js";
-// The env-scrub + the clamp + the caps now live in the shared jailed-run core;
-// import them (and the spawn seam types) from there. Aliased to their prior
-// names so the assertions below stay byte-identical (import-only diff).
 import {
+  createOrchestrateTool,
   scrubSecretEnv,
   clampTimeoutMs,
   MAX_TIMEOUT_MS,
   DEFAULT_TIMEOUT_MS,
   STDOUT_HARD_CAP_BYTES,
-} from "./jailed-script-runner.js";
+} from "./orchestrate-tool.js";
 import type {
-  JailedScriptSpawnFn as OrchestrateSpawnFn,
-  JailedScriptSpawnedChild as OrchestrateSpawnedChild,
-} from "./jailed-script-runner.js";
+  OrchestrateSpawnFn,
+  OrchestrateSpawnedChild,
+} from "./orchestrate-tool.js";
+import type { OrchestrateDurableRuns } from "./orchestrate-durable.js";
+import { estimateSavings } from "./savings-estimate.js";
 import { BwrapProvider } from "../sandbox/bwrap-provider.js";
 
 function makeLogger(): ComisLogger {
@@ -90,13 +91,16 @@ describe("orchestrate-tool", () => {
 
   beforeEach(() => {
     workspacePath = mkdtempSync(join(tmpdir(), "comis-orchestrate-"));
-    // A fixture SDK-assets dir holding the three files the runner copies into the
+    // A fixture SDK-assets dir holding the files the runner copies into the
     // jail. (In production this dir is the built module dir, which carries the
-    // committed comis_tools.{d.ts,js} + the compiled orchestrate-sdk-runtime.js;
+    // committed comis_tools.{d.ts,js,py} + the compiled orchestrate-sdk-runtime.js;
     // the source dir lacks the compiled .js, so the unit suite injects a fixture.)
+    // comis_tools.py MUST be written too: it is in SDK_ASSETS, so the runner's
+    // unconditional copy loop would ENOENT without it.
     sdkAssetsDir = mkdtempSync(join(tmpdir(), "comis-orch-sdk-"));
     writeFileSync(join(sdkAssetsDir, "comis_tools.d.ts"), "// d.ts\n");
     writeFileSync(join(sdkAssetsDir, "comis_tools.js"), "// js\n");
+    writeFileSync(join(sdkAssetsDir, "comis_tools.py"), "# py\n");
     writeFileSync(join(sdkAssetsDir, "orchestrate-sdk-runtime.js"), "// runtime\n");
   });
 
@@ -108,11 +112,46 @@ describe("orchestrate-tool", () => {
   function makeDeps(over?: {
     spawnFn?: OrchestrateSpawnFn;
     resolveJailNodeFn?: () => { mode: "path" } | { mode: "bind"; execPath: string } | { mode: "unavailable"; hint: string };
+    resolveJailPythonFn?: () => { mode: "path"; pythonBin: string } | { mode: "unavailable"; hint: string };
     resolveJailAgentCliFn?: () => { mode: "bind"; binPath: string } | { mode: "unavailable"; hint: string };
     logger?: ComisLogger;
     cleanupRun?: ReturnType<typeof vi.fn>;
     baseEnv?: Record<string, string | undefined>;
     loadSeccompFdFn?: () => number | null;
+    mintRunLease?: (runId: string, timeoutMs: number) => { leaseId: string; bearer: string };
+    eventBus?: { emit: (event: string, payload: Record<string, unknown>) => unknown };
+    runAggregate?: (ctx: { workspacePath: string }) => { count: number; bytes: number };
+    rootRunId?: string;
+    sessionKey?: string;
+    // Drop the broker lease env so the child gets NO COMIS_CAP_LEASE (the
+    // lease_absent run_summary case).
+    dropBrokerSpawnEnv?: boolean;
+    // The static pre-flight seams (allowedCaps/approvalGate) + the declared repair
+    // contract (capabilityClass/repairSeam — unused by the pre-flight tests,
+    // consumed by the one-shot repair path). Conditional-spread like mintRunLease/eventBus.
+    allowedCaps?: readonly AgentCapability[];
+    approvalGate?: {
+      requestApproval: (req: {
+        toolName: string;
+        action: string;
+        params: Record<string, unknown>;
+        agentId: string;
+        sessionKey: string;
+        trustLevel: "admin" | "user" | "guest";
+        channelType?: string;
+      }) => Promise<{ approved: boolean; reason?: string }>;
+    };
+    capabilityClass?: "frontier" | "mid" | "small" | "nano";
+    repairSeam?: (input: {
+      script: string;
+      language: "ts" | "js" | "py";
+      stderrTail: string;
+      describeDigest: string;
+    }) => Promise<string | undefined>;
+    // The durable-run store seam (threaded ONLY when orchestrateResume is on).
+    // Present ⇒ the run registers a resumable row + honors resumeRunId + skips
+    // cleanupRun on a timeout. Conditional-spread like mintRunLease/eventBus.
+    durableRuns?: OrchestrateDurableRuns;
   }) {
     const cleanupRun = over?.cleanupRun ?? vi.fn(async () => {});
     return {
@@ -122,19 +161,29 @@ describe("orchestrate-tool", () => {
         capSocketPath,
         sandbox: new BwrapProvider(),
         sdkAssetsDir,
-        brokerSpawnEnv: {
-          placeholders: {
-            COMIS_CAP_LEASE: "lease-xyz",
-            COMIS_ORCH_SOCKET: capSocketPath,
-          },
-        },
+        ...(over?.dropBrokerSpawnEnv
+          ? {}
+          : {
+              brokerSpawnEnv: {
+                placeholders: {
+                  COMIS_CAP_LEASE: "lease-xyz",
+                  COMIS_ORCH_SOCKET: capSocketPath,
+                },
+              },
+            }),
         store: {
           materialize: vi.fn(),
           gcRun: vi.fn(async () => {}),
           cleanupRun,
+          ...(over?.runAggregate ? { runAggregate: over.runAggregate } : {}),
         },
         spawnFn: over?.spawnFn ?? ((): OrchestrateSpawnedChild => makeFakeChild("ok-output\n")),
         resolveJailNodeFn: over?.resolveJailNodeFn ?? (() => ({ mode: "path" as const })),
+        // Default to a resolved host python3 so a language:"py" run selects the
+        // interpreter by its absolute path unless a test overrides it.
+        resolveJailPythonFn:
+          over?.resolveJailPythonFn ??
+          (() => ({ mode: "path" as const, pythonBin: "/usr/bin/python3" })),
         // Default to a bound comis-agent so the CLI surface is on unless a test
         // overrides it (the default keeps unrelated tests' env/args stable).
         resolveJailAgentCliFn:
@@ -143,9 +192,72 @@ describe("orchestrate-tool", () => {
         loadSeccompFdFn: over?.loadSeccompFdFn ?? (() => null),
         now: () => 1_700_000_000_000,
         baseEnv: over?.baseEnv ?? { PATH: "/usr/bin", HOME: "/home/x" },
+        ...(over?.mintRunLease ? { mintRunLease: over.mintRunLease } : {}),
+        ...(over?.eventBus ? { eventBus: over.eventBus } : {}),
+        ...(over?.rootRunId !== undefined ? { rootRunId: over.rootRunId } : {}),
+        ...(over?.sessionKey !== undefined ? { sessionKey: over.sessionKey } : {}),
+        ...(over?.allowedCaps !== undefined ? { allowedCaps: over.allowedCaps } : {}),
+        ...(over?.approvalGate ? { approvalGate: over.approvalGate } : {}),
+        ...(over?.capabilityClass !== undefined ? { capabilityClass: over.capabilityClass } : {}),
+        ...(over?.repairSeam ? { repairSeam: over.repairSeam } : {}),
+        ...(over?.durableRuns ? { durableRuns: over.durableRuns } : {}),
       },
       cleanupRun,
     };
+  }
+
+  /**
+   * A fake durable-run store: captures every upsert + serves a canned
+   * getByRootRun, so the resumable-row writes + the resume lookup are assertable
+   * without a real sqlite store.
+   */
+  function makeFakeDurableRuns(over?: {
+    getRow?: DurableRunRecord;
+  }): OrchestrateDurableRuns & { upserts: DurableRunRecord[]; completed: string[] } {
+    const upserts: DurableRunRecord[] = [];
+    const completed: string[] = [];
+    return {
+      upserts,
+      completed,
+      upsertCheckpoint: vi.fn(async (record: DurableRunRecord): Promise<Result<void, Error>> => {
+        upserts.push(record);
+        return ok(undefined);
+      }),
+      getByRootRun: vi.fn(
+        async (): Promise<Result<DurableRunRecord | undefined, Error>> => ok(over?.getRow),
+      ),
+      markCompleted: vi.fn(async (rootRunId: string): Promise<Result<void, Error>> => {
+        completed.push(rootRunId);
+        return ok(undefined);
+      }),
+    };
+  }
+
+  /** A recording eventBus stub — captures every emit for run_summary assertions. */
+  function makeEventBusSpy(): {
+    eventBus: { emit: (event: string, payload: Record<string, unknown>) => unknown };
+    emitted: Array<{ event: string; payload: Record<string, unknown> }>;
+  } {
+    const emitted: Array<{ event: string; payload: Record<string, unknown> }> = [];
+    return {
+      emitted,
+      eventBus: {
+        emit(event: string, payload: Record<string, unknown>) {
+          emitted.push({ event, payload });
+          return undefined;
+        },
+      },
+    };
+  }
+
+  /** A fake child that spawns then hangs forever (never closes) — the timeout trip. */
+  function makeHangingChild(): OrchestrateSpawnedChild {
+    const child = new EventEmitter() as unknown as OrchestrateSpawnedChild & EventEmitter;
+    (child as { stdout: EventEmitter }).stdout = new EventEmitter();
+    (child as { stderr: EventEmitter }).stderr = new EventEmitter();
+    (child as { kill: () => void }).kill = () => {};
+    // Never emits "close"/"error" — the run can only settle via the timeout timer.
+    return child;
   }
 
   it("registers as an AgentTool named 'orchestrate' with the script/language schema", () => {
@@ -164,16 +276,19 @@ describe("orchestrate-tool", () => {
     return m ? m[1] : "";
   }
 
-  it("writes <workspace>/<runId>.<language> + the comis_tools SDK + the runtime before spawning (SDK-write)", async () => {
-    let writtenAtSpawn: { script: boolean; sdkJs: boolean; sdkDts: boolean; runtime: boolean } | undefined;
+  it("writes <workspace>/<runId>.<language> + the comis_tools SDK (js/dts/py) + the runtime before spawning (SDK-write)", async () => {
+    let writtenAtSpawn:
+      | { script: boolean; sdkJs: boolean; sdkDts: boolean; sdkPy: boolean; runtime: boolean }
+      | undefined;
     const spawnFn: OrchestrateSpawnFn = (_bin, args) => {
       // The bash command is `node <scriptName>`; capture the workspace file state
-      // NOW (the runner must have written all four files before spawning).
+      // NOW (the runner must have written all SDK assets before spawning).
       const scriptName = scriptNameFromArgs(args);
       writtenAtSpawn = {
         script: scriptName !== "" && existsSync(join(workspacePath, scriptName)),
         sdkJs: existsSync(join(workspacePath, "comis_tools.js")),
         sdkDts: existsSync(join(workspacePath, "comis_tools.d.ts")),
+        sdkPy: existsSync(join(workspacePath, "comis_tools.py")),
         runtime: existsSync(join(workspacePath, "orchestrate-sdk-runtime.js")),
       };
       return makeFakeChild("done\n");
@@ -187,6 +302,8 @@ describe("orchestrate-tool", () => {
     expect(writtenAtSpawn!.script).toBe(true);
     expect(writtenAtSpawn!.sdkJs).toBe(true);
     expect(writtenAtSpawn!.sdkDts).toBe(true);
+    // comis_tools.py is copied into the jail on EVERY run (like the js-unused .d.ts).
+    expect(writtenAtSpawn!.sdkPy).toBe(true);
     expect(writtenAtSpawn!.runtime).toBe(true);
   });
 
@@ -250,6 +367,93 @@ describe("orchestrate-tool", () => {
     const command = spawnArgs![cmdIdx + 1] ?? "";
     expect(command.startsWith(`${execPath} `)).toBe(true);
     expect(command).not.toMatch(/^node\s/);
+  });
+
+  // -------------------------------------------------------------------------
+  // The "py" language path: a language:"py" run writes <runId>.py, resolves the
+  // RO-bound host python3 via resolveJailPython (2-mode: {path,pythonBin} |
+  // {unavailable,hint}), and invokes it by its ABSOLUTE path. An unavailable
+  // interpreter REFUSES the run with NO spawn — a missing interpreter must never
+  // fall through to a silent unjailed run (fail-closed). The jail envelope is
+  // identical to js/ts — no new sandbox primitive.
+  // -------------------------------------------------------------------------
+  describe("language: 'py' runner path (interpreter selection + fail-closed refuse)", () => {
+    it("invokes the resolved absolute pythonBin for a language:'py' run (not a bare python3, not node)", async () => {
+      let spawnArgs: string[] | undefined;
+      const spawnFn: OrchestrateSpawnFn = (_bin, args) => {
+        spawnArgs = args;
+        return makeFakeChild("py-out\n");
+      };
+      const pythonBin = "/usr/bin/python3";
+      const { deps } = makeDeps({
+        spawnFn,
+        resolveJailPythonFn: () => ({ mode: "path", pythonBin }),
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "print(1)", language: "py" });
+
+      // Read the RAW `/bin/bash -c` command — NOT scriptNameFromArgs, which only
+      // matches `node <script>` and would miss a `<pythonBin> <script>` command.
+      const cmdIdx = spawnArgs!.indexOf("-c");
+      const command = spawnArgs![cmdIdx + 1] ?? "";
+      // The interpreter is the resolved ABSOLUTE pythonBin, and the script is <runId>.py.
+      expect(command.startsWith(`${pythonBin} `)).toBe(true);
+      const scriptToken = command.slice(pythonBin.length + 1);
+      expect(scriptToken.endsWith(".py")).toBe(true);
+      // NOT run under node (the ts/js interpreter) and NOT a bare `python3`.
+      expect(command).not.toMatch(/^node\s/);
+      expect(command).not.toMatch(/^python3\s/);
+      // Identical jail envelope — general IP egress is still cut (--unshare-net).
+      expect(spawnArgs).toContain("--unshare-net");
+    });
+
+    it("honest-degrades a language:'py' run when python is unavailable — throws, NO spawn (never a silent unjailed run)", async () => {
+      const spawnFn = vi.fn<OrchestrateSpawnFn>(() => makeFakeChild(""));
+      const { deps } = makeDeps({
+        spawnFn,
+        resolveJailPythonFn: () => ({ mode: "unavailable", hint: "no python3 inside the jail" }),
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(tool.execute("c", { script: "print(1)", language: "py" })).rejects.toThrow(
+        /not_implemented|unavailable|python|no python3 inside the jail/i,
+      );
+      // The fail-closed safety net: an absent interpreter must NEVER fall through
+      // to a silent unjailed run — the spawn seam is never called.
+      expect(spawnFn).not.toHaveBeenCalled();
+    });
+
+    it("uses the DEFAULT jail-python resolver for a language:'py' run when none is injected (resolves the host python3 by absolute path)", async () => {
+      // Every other py test injects resolveJailPythonFn; this one OMITS it so the
+      // real defaultResolveJailPython runs — it probes the ABSOLUTE host interpreter
+      // bin paths (/usr/bin/python3, /bin/python3, /usr/local/bin/python3), which are
+      // present on the dev + CI hosts (macOS has /usr/bin/python3; the Docker image
+      // apt-installs python3). The run then proceeds with the injected fake spawn,
+      // proving the default resolver returned a usable "path" mode and the interpreter
+      // is invoked by its absolute python3 path (never a bare `python3` → exit 127,
+      // never node). On a host genuinely missing python3 this would honest-degrade
+      // instead; that path is covered by the explicit-unavailable refuse test above.
+      let spawnArgs: string[] | undefined;
+      const spawnFn: OrchestrateSpawnFn = (_bin, args) => {
+        spawnArgs = args;
+        return makeFakeChild("py-default-ok\n");
+      };
+      const { deps } = makeDeps({ spawnFn });
+      // Drop the injected python resolver so the production default is used.
+      delete (deps as { resolveJailPythonFn?: unknown }).resolveJailPythonFn;
+      const tool = createOrchestrateTool(deps);
+
+      const result = await tool.execute("c", { script: "print(1)", language: "py" });
+
+      const text = result.content.map((b) => (b.type === "text" ? (b.text ?? "") : "")).join("");
+      expect(text).toContain("py-default-ok");
+      const cmdIdx = spawnArgs!.indexOf("-c");
+      const command = spawnArgs![cmdIdx + 1] ?? "";
+      // Invoked by an ABSOLUTE python3 path (…/python3 <script>.py) — not node, not bare.
+      expect(command).toMatch(/\/python3 \S+\.py$/);
+      expect(command).not.toMatch(/^node\s/);
+    });
   });
 
   // The runner passes `tempDir: <workspace>/.tmp`
@@ -403,6 +607,246 @@ describe("orchestrate-tool", () => {
     expect(childEnv!.COMIS_ORCH_SOCKET).toBe(capSocketPath);
   });
 
+  // -------------------------------------------------------------------------
+  // Per-run child lease (D5, EXPLAIN-01). When the daemon threads a
+  // `mintRunLease(runId, timeoutMs)` seam, the runner mints a per-run CHILD
+  // bearer and injects it as COMIS_CAP_LEASE — OVERRIDING the assembly bearer
+  // that rides brokerSpawnEnv.placeholders. Every in-jail cap call for the run
+  // then audits under THAT run's leaseId (INV-1 correlator). Two sequential
+  // runs on the same tool instance must mint TWICE (disjoint bearers). Absent
+  // the seam (older wiring), the runner falls back to the assembly bearer —
+  // never an unauthenticated run.
+  // -------------------------------------------------------------------------
+  describe("per-run child lease bearer (mintRunLease seam, D5)", () => {
+    it("injects a DISJOINT per-run child bearer per run as COMIS_CAP_LEASE, called with (runId, timeoutMs)", async () => {
+      // A mintRunLease stub: record each (runId, timeoutMs) + return a UNIQUE
+      // {leaseId,bearer} per call (the daemon seam that mints the real child
+      // lease is proven in setup-tools-autonomy.test.ts — HERE we prove the
+      // RUNNER consumes it, once per run, and overrides the assembly bearer).
+      const calls: Array<{ runId: string; timeoutMs: number }> = [];
+      let n = 0;
+      const mintRunLease = vi.fn((runId: string, timeoutMs: number) => {
+        calls.push({ runId, timeoutMs });
+        n += 1;
+        return { leaseId: `child-lease-${n}`, bearer: `child-bearer-${n}` };
+      });
+
+      const envs: Array<Record<string, string | undefined>> = [];
+      const spawnFn: OrchestrateSpawnFn = (_bin, _args, opts) => {
+        envs.push(opts?.env ?? {});
+        return makeFakeChild("ok\n");
+      };
+      const { deps } = makeDeps({ spawnFn, mintRunLease });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("call-1", { script: "1", language: "ts", timeoutMs: 42_000 });
+      await tool.execute("call-2", { script: "2", language: "ts", timeoutMs: 42_000 });
+
+      // Two sequential runs → the seam is invoked TWICE (per-run mint).
+      expect(mintRunLease).toHaveBeenCalledTimes(2);
+      // Each call carries the run's OWN runId + the resolved run timeout.
+      expect(calls[0]!.timeoutMs).toBe(42_000);
+      expect(calls[1]!.timeoutMs).toBe(42_000);
+      // The two runIds are DISTINCT (per-run) → the two child leases are disjoint.
+      expect(calls[0]!.runId).not.toBe(calls[1]!.runId);
+      expect(calls[0]!.runId.length).toBeGreaterThan(0);
+      // The per-run CHILD bearer rides COMIS_CAP_LEASE — NOT the assembly
+      // bearer ("lease-xyz") from brokerSpawnEnv.placeholders.
+      expect(envs[0]!.COMIS_CAP_LEASE).toBe("child-bearer-1");
+      expect(envs[1]!.COMIS_CAP_LEASE).toBe("child-bearer-2");
+      expect(envs[0]!.COMIS_CAP_LEASE).not.toBe("lease-xyz");
+      // The cap socket still comes from the assembly placeholders (unchanged).
+      expect(envs[0]!.COMIS_ORCH_SOCKET).toBe(capSocketPath);
+    });
+
+    it("clamps the child mint to the run timeout — passes the clamped timeoutMs (not the raw request)", async () => {
+      // A model-supplied timeout above the ceiling is clamped BEFORE the mint,
+      // so the child lease TTL can never exceed MAX_TIMEOUT_MS.
+      let seenTimeoutMs: number | undefined;
+      const mintRunLease = vi.fn((_runId: string, timeoutMs: number) => {
+        seenTimeoutMs = timeoutMs;
+        return { leaseId: "child-lease", bearer: "child-bearer" };
+      });
+      const { deps } = makeDeps({ mintRunLease });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "1", language: "ts", timeoutMs: 999_999_999 });
+
+      expect(seenTimeoutMs).toBe(MAX_TIMEOUT_MS);
+    });
+
+    it("falls back to the assembly bearer when NO mintRunLease seam is wired (never an unauthenticated run)", async () => {
+      let childEnv: Record<string, string | undefined> | undefined;
+      const spawnFn: OrchestrateSpawnFn = (_bin, _args, opts) => {
+        childEnv = opts?.env;
+        return makeFakeChild("ok\n");
+      };
+      // No mintRunLease injected — the older/non-seam wiring path.
+      const { deps } = makeDeps({ spawnFn });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "1", language: "ts" });
+
+      // The assembly bearer from brokerSpawnEnv.placeholders still authenticates.
+      expect(childEnv!.COMIS_CAP_LEASE).toBe("lease-xyz");
+    });
+
+    it("does NOT mint a child lease when the jail is unavailable (refuses before the mint)", async () => {
+      // The mint happens at the childEnv build (step 5), AFTER the jail-node
+      // honest-degrade (step 3). An unavailable jail throws first → no wasted mint.
+      const mintRunLease = vi.fn(() => ({ leaseId: "l", bearer: "b" }));
+      const { deps } = makeDeps({
+        mintRunLease,
+        resolveJailNodeFn: () => ({ mode: "unavailable", hint: "no node inside the jail" }),
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "1", language: "ts" }).catch(() => {});
+
+      expect(mintRunLease).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // The per-run child lease TTL must cover the one-shot repair window.
+  // The child lease is minted ONCE, before the run engine. When auto-repair is
+  // enabled for a run (a repair-eligible class AND a wired repairSeam), the
+  // engine awaits ONE utility-model completion — bounded by the seam's ~120s
+  // abort ceiling — BETWEEN the initial run and the repaired re-run, all under
+  // that SAME lease. A lease sized to the tight `timeoutMs` therefore expires
+  // during a slow repair, so the repaired re-run's in-jail cap calls
+  // authenticate with a dead lease and are denied at the endpoint (fails closed,
+  // but the repair silently no-ops for exactly the slow/local small models the
+  // feature targets). The runner must SIZE the child-lease TTL to
+  // `timeoutMs + repairBudget` when repair is enabled, and keep the tight
+  // `timeoutMs` when it is not — minting the lease exactly ONCE (single-leaseId
+  // attribution preserved; INV-1/INV-7 intact), just sized to the real window.
+  // -------------------------------------------------------------------------
+  describe("child-lease TTL sizing for the one-shot repair window", () => {
+    const importError = "ImportError: cannot import name 'foo' from 'comis_tools'";
+
+    /**
+     * A fake lease store keyed by a test-local virtual clock: `mintRunLease`
+     * records the bearer's expiry as `clock + ttlMs`; `advance(ms)` moves the
+     * clock forward to simulate a slow utility-model repair completion between the
+     * two runs; `validAtNow(bearer)` reports whether the lease is unexpired at the
+     * current clock — sampled at the re-run's spawn, the exact moment its in-jail
+     * cap calls would authenticate. Independent of the runner's own `deps.now`
+     * (the real LeaseManager tracks expiry against its own clock; the runner only
+     * passes a TTL number).
+     */
+    function makeLeaseClock(): {
+      mintRunLease: ReturnType<typeof vi.fn>;
+      advance: (ms: number) => void;
+      validAtNow: (bearer: string | undefined) => boolean;
+    } {
+      let clockMs = 0;
+      const leases = new Map<string, { expiresAt: number }>();
+      let n = 0;
+      const mintRunLease = vi.fn((_runId: string, ttlMs: number) => {
+        n += 1;
+        const bearer = `child-bearer-${n}`;
+        leases.set(bearer, { expiresAt: clockMs + ttlMs });
+        return { leaseId: `child-lease-${n}`, bearer };
+      });
+      return {
+        mintRunLease,
+        advance: (ms) => {
+          clockMs += ms;
+        },
+        validAtNow: (bearer) => {
+          if (bearer === undefined) return false;
+          const lease = leases.get(bearer);
+          return lease !== undefined && lease.expiresAt > clockMs;
+        },
+      };
+    }
+
+    it("keeps the re-run's lease valid across a slow repair completion when auto-repair is enabled", async () => {
+      const timeoutMs = 60_000;
+      const clock = makeLeaseClock();
+
+      // The repair seam consumes 90s of wall-clock — PAST the tight `timeoutMs`
+      // (60s) lease, but well within a repair-sized `timeoutMs + ~120s` lease.
+      const repairSeam = vi.fn(async () => {
+        clock.advance(90_000);
+        return "const fixed = 1;\n";
+      });
+
+      // Sample the re-run's lease validity at the moment its child is spawned.
+      let reRunLeaseValidAtSpawn: boolean | undefined;
+      let spawnCount = 0;
+      const spawnFn = vi.fn<OrchestrateSpawnFn>((_bin, _args, opts) => {
+        spawnCount += 1;
+        if (spawnCount === 2) {
+          reRunLeaseValidAtSpawn = clock.validAtNow(opts?.env?.COMIS_CAP_LEASE);
+        }
+        return spawnCount === 1
+          ? makeFakeChild("", 1, importError)
+          : makeFakeChild("repaired-ok\n");
+      });
+
+      const { deps } = makeDeps({
+        spawnFn,
+        capabilityClass: "small",
+        repairSeam,
+        mintRunLease: clock.mintRunLease,
+      });
+      const tool = createOrchestrateTool(deps);
+
+      const result = await tool.execute("c", { script: "import x", language: "ts", timeoutMs });
+
+      // The repaired re-run actually ran (its stdout came back) ...
+      const text = result.content.map((b) => (b.type === "text" ? (b.text ?? "") : "")).join("");
+      expect(text).toContain("repaired-ok");
+      // ... and its lease was STILL VALID when it spawned, so its in-jail cap
+      // calls would authenticate. Pre-fix: the tight 60s lease had
+      // already expired at t=90s → cap calls denied → silent repair no-op.
+      expect(reRunLeaseValidAtSpawn).toBe(true);
+      // The lease was minted exactly ONCE (sized, never re-minted — single-leaseId
+      // attribution preserved), with a TTL that EXCEEDS the tight run timeout.
+      expect(clock.mintRunLease).toHaveBeenCalledTimes(1);
+      expect(clock.mintRunLease.mock.calls[0]![1]).toBeGreaterThan(timeoutMs);
+    });
+
+    it("keeps the tight timeoutMs TTL when auto-repair is class-gated OFF (frontier)", async () => {
+      const timeoutMs = 60_000;
+      const clock = makeLeaseClock();
+      const repairSeam = vi.fn(async () => "const fixed = 1;\n");
+      const { deps } = makeDeps({
+        spawnFn: () => makeFakeChild("ok\n"),
+        capabilityClass: "frontier",
+        repairSeam,
+        mintRunLease: clock.mintRunLease,
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "1", language: "ts", timeoutMs });
+
+      // Repair is OFF for a frontier model — no repair window to cover — so the
+      // child lease stays sized to the tight run timeout (TTL unchanged).
+      expect(clock.mintRunLease).toHaveBeenCalledTimes(1);
+      expect(clock.mintRunLease.mock.calls[0]![1]).toBe(timeoutMs);
+    });
+
+    it("keeps the tight timeoutMs TTL when no repair seam is wired even under a small class", async () => {
+      const timeoutMs = 45_000;
+      const clock = makeLeaseClock();
+      const { deps } = makeDeps({
+        spawnFn: () => makeFakeChild("ok\n"),
+        capabilityClass: "small",
+        // No repairSeam → nothing to cover → tight TTL.
+        mintRunLease: clock.mintRunLease,
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "1", language: "ts", timeoutMs });
+
+      expect(clock.mintRunLease).toHaveBeenCalledTimes(1);
+      expect(clock.mintRunLease.mock.calls[0]![1]).toBe(timeoutMs);
+    });
+  });
+
   it("honest-degrades on an unavailable jail (no node/bwrap) — throws, NO spawn", async () => {
     const spawnFn = vi.fn<OrchestrateSpawnFn>(() => makeFakeChild(""));
     const { deps } = makeDeps({
@@ -415,6 +859,289 @@ describe("orchestrate-tool", () => {
       /no node inside the jail|unavailable|jail/i,
     );
     expect(spawnFn).not.toHaveBeenCalled();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Static pre-flight gate (fail-fast cap check + reused approval fire).
+  // The runner scans the model's script for its capability footprint BEFORE the
+  // spawn: a cap the agent lacks fails fast pre-spawn with a cap-named error
+  // (no jail burned), and — when an approval gate is wired (approvals.enabled) —
+  // one approval fires on the whole cap footprint. The pre-flight is ADVISORY UX
+  // only. A script that dodges the static scan (a dynamic/computed call → empty
+  // footprint) still proceeds here; the authoritative cap-socket endpoint
+  // (unchanged this phase) remains the sole boundary.
+  // ---------------------------------------------------------------------------
+  describe("static pre-flight gate (fail-fast cap check + approval fire + advisory-only)", () => {
+    it("rejects a script needing a cap the agent lacks BEFORE spawning, naming the missing orch:* cap (no child spawned)", async () => {
+      const spawnFn = vi.fn<OrchestrateSpawnFn>(() => makeFakeChild("ok\n"));
+      // Held caps = orch:read only; the script calls web_fetch (which needs orch:web).
+      const { deps } = makeDeps({ spawnFn, allowedCaps: ["orch:read"] });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(
+        tool.execute("c", {
+          script: "await comis_tools.web_fetch({url:'https://x'});",
+          language: "ts",
+        }),
+      ).rejects.toThrow(/orch:web/);
+
+      // Fail-fast: the missing-cap rejection fires PRE-SPAWN — no jail is burned.
+      expect(spawnFn).not.toHaveBeenCalled();
+    });
+
+    it("when approvals are configured (approved): fires requestApproval ONCE on the exact sorted cap set, then proceeds to spawn", async () => {
+      const spawnFn = vi.fn<OrchestrateSpawnFn>(() => makeFakeChild("ok\n"));
+      const requestApproval = vi.fn(async () => ({ approved: true }));
+      const { deps } = makeDeps({
+        spawnFn,
+        allowedCaps: ["orch:web"],
+        approvalGate: { requestApproval },
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", {
+        script: "await comis_tools.web_fetch({url:'https://x'});",
+        language: "ts",
+      });
+
+      // The approval fires exactly once, on the exact cap footprint.
+      expect(requestApproval).toHaveBeenCalledTimes(1);
+      const req = requestApproval.mock.calls[0]![0] as {
+        toolName: string;
+        action: string;
+        params: { caps?: unknown };
+      };
+      expect(req.toolName).toBe("orchestrate");
+      // The action string encodes the exact (sorted) cap set.
+      expect(req.action).toContain("orch:web");
+      expect(req.params.caps).toEqual(["orch:web"]);
+      // Approved → the run proceeds to spawn.
+      expect(spawnFn).toHaveBeenCalledTimes(1);
+    });
+
+    it("when approvals are configured (denied): a !approved resolution refuses the run with the reason in the hint — no child spawned", async () => {
+      const spawnFn = vi.fn<OrchestrateSpawnFn>(() => makeFakeChild("ok\n"));
+      const requestApproval = vi.fn(async () => ({ approved: false, reason: "operator said no" }));
+      const { deps } = makeDeps({
+        spawnFn,
+        allowedCaps: ["orch:web"],
+        approvalGate: { requestApproval },
+      });
+      const tool = createOrchestrateTool(deps);
+
+      const err = await tool
+        .execute("c", {
+          script: "await comis_tools.web_fetch({url:'https://x'});",
+          language: "ts",
+        })
+        .then(
+          () => undefined,
+          (e: unknown) => e as Error,
+        );
+
+      expect(requestApproval).toHaveBeenCalledTimes(1);
+      expect(err).toBeInstanceOf(Error);
+      // The denial refuses the run; the resolution reason rides the hint.
+      expect(err!.message).toMatch(/denied by the approval workflow/i);
+      expect(err!.message).toContain("operator said no");
+      // Denied → fail-fast, no spawn.
+      expect(spawnFn).not.toHaveBeenCalled();
+    });
+
+    it("advisory-only: a script whose static footprint is EMPTY (a dynamic/computed call) passes pre-flight and proceeds to spawn — the endpoint stays the sole gate", async () => {
+      const spawnFn = vi.fn<OrchestrateSpawnFn>(() => makeFakeChild("dodged\n"));
+      // Held caps = orch:read only. The script reaches web_fetch through a computed
+      // member (comis_tools[m]) the token scan cannot see → empty footprint. The
+      // pre-flight must NOT reject on a missing cap (it is fail-fast UX, NOT the
+      // security gate); the authoritative cap-socket endpoint (default-deny by
+      // absence, unchanged this phase) denies orch:web at runtime.
+      const { deps } = makeDeps({ spawnFn, allowedCaps: ["orch:read"] });
+      const tool = createOrchestrateTool(deps);
+
+      const result = await tool.execute("c", {
+        script: "const m = 'web_fetch'; await comis_tools[m]({});",
+        language: "ts",
+      });
+
+      const text = result.content.map((b) => (b.type === "text" ? (b.text ?? "") : "")).join("");
+      expect(text).toContain("dodged");
+      // Advisory: the run proceeded to spawn despite calling a cap the agent lacks.
+      expect(spawnFn).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // One-shot auto-repair (class-gated, bounded to exactly one attempt).
+  // On a non-zero exit whose bounded stderr tail matches a known-recoverable
+  // class (a bad import / comis_tools misuse / TypeError), the runner does ONE
+  // utility-model re-prompt (the injected repairSeam) to regenerate the script
+  // and re-runs it EXACTLY once. Class-gated: ON for weaker models (small/nano),
+  // OFF for stronger (frontier/mid). The repair resolves the FINAL outcome BEFORE
+  // the terminal run_summary emit, so a repaired-then-succeeded run emits exactly
+  // ONE (success) summary — never a failure+success pair. A repaired-then-failed
+  // run surfaces the ORIGINAL bounded error; there is no loop. The regenerated
+  // script re-runs in the identical jail/cap/lease envelope (same blast radius);
+  // the cap-socket endpoint stays the sole authoritative boundary.
+  // ---------------------------------------------------------------------------
+  describe("one-shot repair (class-gated auto-repair, bounded to one, single run_summary)", () => {
+    const importError = "ImportError: cannot import name 'foo' from 'comis_tools'";
+
+    /** The run_summary payloads captured by an event-bus spy. */
+    function runSummaries(
+      emitted: Array<{ event: string; payload: Record<string, unknown> }>,
+    ): Array<Record<string, unknown>> {
+      return emitted
+        .filter((e) => e.event === "orchestrate:run_summary")
+        .map((e) => e.payload);
+    }
+
+    it("repairs a recoverable non-zero exit once under a small-class profile then succeeds with the regenerated script's stdout", async () => {
+      // First spawn fails with a recoverable (bad-import) stderr; the second spawn
+      // — the single repaired re-run — succeeds. makeFakeChild is called LAZILY
+      // inside spawnFn so each child's emit is scheduled only once its listeners
+      // are attached (a pre-created child would emit "close" to zero listeners).
+      let spawnCount = 0;
+      const spawnFn = vi.fn<OrchestrateSpawnFn>(() => {
+        spawnCount += 1;
+        return spawnCount === 1
+          ? makeFakeChild("", 1, importError)
+          : makeFakeChild("repaired-ok\n");
+      });
+      const repairSeam = vi.fn(
+        async (_input: {
+          script: string;
+          language: "ts" | "js" | "py";
+          stderrTail: string;
+          describeDigest: string;
+        }): Promise<string | undefined> => "const fixed = 1;\n",
+      );
+      const { eventBus, emitted } = makeEventBusSpy();
+      const script = "import { bad } from 'nope';\n";
+      const { deps } = makeDeps({ spawnFn, capabilityClass: "small", repairSeam, eventBus });
+      const tool = createOrchestrateTool(deps);
+
+      const result = await tool.execute("c", { script, language: "ts" });
+
+      // The seam fired EXACTLY once and the child was spawned twice (initial run +
+      // the single repaired re-run).
+      expect(repairSeam).toHaveBeenCalledTimes(1);
+      expect(spawnFn).toHaveBeenCalledTimes(2);
+      // The tool RESULT is the repaired run's stdout.
+      const text = result.content.map((b) => (b.type === "text" ? (b.text ?? "") : "")).join("");
+      expect(text).toContain("repaired-ok");
+      // The seam received the STRUCTURED stderr tail (a field on the failure, not
+      // re-parsed from the "exited with code N" message), the ORIGINAL script, the
+      // language, and a non-empty describe digest.
+      const input = repairSeam.mock.calls[0]![0];
+      expect(input.stderrTail).toContain("ImportError");
+      expect(input.stderrTail).not.toContain("exited with code");
+      expect(input.script).toBe(script);
+      expect(input.language).toBe("ts");
+      expect(input.describeDigest).toContain("comis_tools");
+      // Exactly ONE run_summary — the final (success) outcome, never a failure+success pair.
+      const summaries = runSummaries(emitted);
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]!.exitCode).toBe(0);
+      expect(summaries[0]!.failureClass).toBeUndefined();
+    });
+
+    it("does not repair under a frontier-class profile and surfaces the original bounded error with one failure run_summary", async () => {
+      const spawnFn = vi.fn<OrchestrateSpawnFn>(() => makeFakeChild("", 1, importError));
+      const repairSeam = vi.fn(async () => "const fixed = 1;\n");
+      const { eventBus, emitted } = makeEventBusSpy();
+      const { deps } = makeDeps({ spawnFn, capabilityClass: "frontier", repairSeam, eventBus });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(tool.execute("c", { script: "import x", language: "ts" })).rejects.toThrow(
+        /exited with code 1|ImportError/,
+      );
+
+      // A stronger model is not auto-repaired: the seam is never consulted, the
+      // child spawns exactly once, and a single failure run_summary is emitted.
+      expect(repairSeam).not.toHaveBeenCalled();
+      expect(spawnFn).toHaveBeenCalledTimes(1);
+      const summaries = runSummaries(emitted);
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]!.failureClass).toBe("nonzero_exit");
+    });
+
+    it("does not repair a non-recoverable stderr even under a small-class profile (no seam call, original error surfaced)", async () => {
+      const spawnFn = vi.fn<OrchestrateSpawnFn>(() =>
+        makeFakeChild("", 1, "Segmentation fault (core dumped)"),
+      );
+      const repairSeam = vi.fn(async () => "const fixed = 1;\n");
+      const { deps } = makeDeps({ spawnFn, capabilityClass: "small", repairSeam });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(tool.execute("c", { script: "boom", language: "ts" })).rejects.toThrow(
+        /exited with code 1/,
+      );
+
+      // classifyRecoverableStderr → undefined for a segfault → the repair branch is
+      // skipped even though the class is repair-eligible.
+      expect(repairSeam).not.toHaveBeenCalled();
+      expect(spawnFn).toHaveBeenCalledTimes(1);
+    });
+
+    it("is bounded to exactly one attempt: a repaired-then-failed run surfaces the original bounded error and emits one run_summary", async () => {
+      // Both spawns fail with a recoverable stderr; the seam returns a (still-broken)
+      // script. The repair must NOT loop — exactly one re-run, then the ORIGINAL error.
+      const spawnFn = vi.fn<OrchestrateSpawnFn>(() => makeFakeChild("", 1, importError));
+      const repairSeam = vi.fn(async () => "const still_broken = 1;\n");
+      const { eventBus, emitted } = makeEventBusSpy();
+      const { deps } = makeDeps({ spawnFn, capabilityClass: "small", repairSeam, eventBus });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(tool.execute("c", { script: "import x", language: "ts" })).rejects.toThrow(
+        /exited with code 1/,
+      );
+
+      // The seam fired ONCE (no loop), the child spawned exactly twice (initial +
+      // the single re-run), and exactly ONE (failure) run_summary was emitted.
+      expect(repairSeam).toHaveBeenCalledTimes(1);
+      expect(spawnFn).toHaveBeenCalledTimes(2);
+      const summaries = runSummaries(emitted);
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]!.failureClass).toBe("nonzero_exit");
+    });
+
+    it("honest-degrades when the repair seam gives up (returns undefined) with no re-run and one run_summary", async () => {
+      const spawnFn = vi.fn<OrchestrateSpawnFn>(() => makeFakeChild("", 1, importError));
+      const repairSeam = vi.fn(async () => undefined);
+      const { eventBus, emitted } = makeEventBusSpy();
+      const { deps } = makeDeps({ spawnFn, capabilityClass: "small", repairSeam, eventBus });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(tool.execute("c", { script: "import x", language: "ts" })).rejects.toThrow(
+        /exited with code 1|ImportError/,
+      );
+
+      // The seam was consulted once; with no regenerated script there is NO re-run
+      // (spawned once) and a single failure run_summary.
+      expect(repairSeam).toHaveBeenCalledTimes(1);
+      expect(spawnFn).toHaveBeenCalledTimes(1);
+      expect(runSummaries(emitted)).toHaveLength(1);
+    });
+
+    it("treats an absent capabilityClass as repair-eligible (fail-safe default on) then repairs once and succeeds", async () => {
+      // No capabilityClass threaded (older wiring / unresolved) must default to the
+      // repair-eligible class so a keyless small-target deployment still gets the fix.
+      let spawnCount = 0;
+      const spawnFn = vi.fn<OrchestrateSpawnFn>(() => {
+        spawnCount += 1;
+        return spawnCount === 1 ? makeFakeChild("", 1, importError) : makeFakeChild("fixed\n");
+      });
+      const repairSeam = vi.fn(async () => "const fixed = 1;\n");
+      // capabilityClass intentionally omitted.
+      const { deps } = makeDeps({ spawnFn, repairSeam });
+      const tool = createOrchestrateTool(deps);
+
+      const result = await tool.execute("c", { script: "import x", language: "ts" });
+
+      expect(repairSeam).toHaveBeenCalledTimes(1);
+      const text = result.content.map((b) => (b.type === "text" ? (b.text ?? "") : "")).join("");
+      expect(text).toContain("fixed");
+    });
   });
 
   // -- Bind the comis-agent binary + honest-degrade the CLI surface --
@@ -565,45 +1292,6 @@ describe("orchestrate-tool", () => {
     expect(arg.runId.length).toBeGreaterThan(0);
   });
 
-  it("emits the operator-facing completion INFO carrying the runId and durationMs", async () => {
-    // Guards that the extraction did not drop the completion INFO (runId +
-    // durationMs) — the run stays observable, and the SAME runId that rides the
-    // INFO also rides the tool's `details` (correlatable end to end).
-    const infoCalls: Array<{ fields: Record<string, unknown>; msg: string }> = [];
-    const logger: ComisLogger = (() => {
-      const noop = (): void => {};
-      const base: ComisLogger = {
-        level: "silent",
-        trace: noop,
-        debug: noop,
-        info: (a?: unknown, b?: unknown) => {
-          infoCalls.push({
-            fields: (a ?? {}) as Record<string, unknown>,
-            msg: typeof b === "string" ? b : "",
-          });
-        },
-        warn: noop,
-        error: noop,
-        fatal: noop,
-        audit: noop,
-        child: () => base,
-      };
-      return base;
-    })();
-    const { deps } = makeDeps({ logger });
-    const tool = createOrchestrateTool(deps);
-
-    const result = await tool.execute("c", { script: "1", language: "ts" });
-
-    const completeInfo = infoCalls.find((i) => /orchestrate run complete/i.test(i.msg));
-    expect(completeInfo, "expected a completion INFO line").toBeDefined();
-    expect(typeof completeInfo!.fields.runId).toBe("string");
-    expect(String(completeInfo!.fields.runId).length).toBeGreaterThan(0);
-    expect(typeof completeInfo!.fields.durationMs).toBe("number");
-    const details = (result as { details?: { runId?: unknown } }).details;
-    expect(details?.runId).toBe(completeInfo!.fields.runId);
-  });
-
   it("calls cleanupRun even when the jailed child fails (runs in the finally)", async () => {
     const spawnFn: OrchestrateSpawnFn = () => makeFakeChild("partial", 1);
     const { deps, cleanupRun } = makeDeps({ spawnFn });
@@ -612,6 +1300,204 @@ describe("orchestrate-tool", () => {
     await tool.execute("c", { script: "1", language: "ts" }).catch(() => {});
 
     expect(cleanupRun).toHaveBeenCalledTimes(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // Durable-resumable runs: a durable-registered run registers a resumable row
+  // at start; on a TIMEOUT it re-affirms the row + SKIPS cleanupRun so the
+  // pinned script + checkpoint survive; a `resumeRunId` re-spawns the PINNED
+  // stored bytes and IGNORES a differing `script` param (no new bytes on
+  // resume). All gated on the injected durableRuns seam (default-off).
+  // -------------------------------------------------------------------------
+  describe("durable-resumable runs", () => {
+    it("registers a FLAT resumable durable row carrying scriptRef at run start", async () => {
+      const durableRuns = makeFakeDurableRuns();
+      const { deps } = makeDeps({ durableRuns, rootRunId: "root-reg" });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "console.log(1)", language: "ts" });
+
+      // The row is registered from the start, keyed on the tree rootRunId, with a
+      // FLAT spawnTree + scriptRef set and no outward-step drift.
+      expect(durableRuns.upserts.length).toBeGreaterThanOrEqual(1);
+      const row = durableRuns.upserts[0]!;
+      expect(row.rootRunId).toBe("root-reg");
+      expect(row.status).toBe("running");
+      expect(row.spawnTree).toEqual([]);
+      expect(row.scriptRef).toMatch(/^orch-.*\.ts$/);
+      expect(row.stepIndex).toBe(-1);
+    });
+
+    it("a durable-registered run that TIMES OUT marks the row resumable and SKIPS cleanupRun", async () => {
+      const cleanupRun = vi.fn(async () => {});
+      const durableRuns = makeFakeDurableRuns();
+      const { deps } = makeDeps({
+        spawnFn: () => makeHangingChild(),
+        durableRuns,
+        rootRunId: "root-timeout",
+        cleanupRun,
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(
+        tool.execute("c", { script: "1", language: "ts", resumeRunId: undefined, timeoutMs: 1 }),
+      ).rejects.toThrow(/timeout/i);
+
+      // R7: the resumable timeout must NOT wipe results/ (the checkpoint lives there).
+      expect(cleanupRun).not.toHaveBeenCalled();
+      // The row was re-affirmed resumable (status running, scriptRef set) on timeout.
+      const last = durableRuns.upserts.at(-1)!;
+      expect(last.rootRunId).toBe("root-timeout");
+      expect(last.status).toBe("running");
+      expect(last.scriptRef).toMatch(/^orch-.*\.ts$/);
+    });
+
+    it("a durable-registered run that SUCCEEDS still calls cleanupRun (skip-clean is timeout-only)", async () => {
+      const cleanupRun = vi.fn(async () => {});
+      const durableRuns = makeFakeDurableRuns();
+      const { deps } = makeDeps({ durableRuns, rootRunId: "root-ok", cleanupRun });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "1", language: "ts" });
+
+      expect(cleanupRun).toHaveBeenCalledTimes(1);
+    });
+
+    it("a SUCCESSFUL resumable-enabled run marks the durable row COMPLETED and cleans the pinned script", async () => {
+      // Without a terminal write the row stays status='running' forever + the
+      // pinned <runId>.<language> script (at the workspace ROOT, which cleanupRun
+      // does NOT touch) leaks, so listResumable re-surfaces the completed run and
+      // the orphan sweep false-orphans it on every boot.
+      const durableRuns = makeFakeDurableRuns();
+      const { deps } = makeDeps({ durableRuns, rootRunId: "root-done" });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "console.log(1)", language: "ts" });
+
+      // The row is marked terminal (no leaked 'running' row).
+      expect(durableRuns.completed).toContain("root-done");
+      // The pinned script at the workspace ROOT is cleaned on a non-resumable
+      // completion (only a resumable timeout keeps it — see below).
+      const pinnedScriptRef = durableRuns.upserts[0]!.scriptRef!;
+      expect(existsSync(join(workspacePath, pinnedScriptRef))).toBe(false);
+    });
+
+    it("a NON-timeout failure marks the durable row COMPLETED too (a dead run is not resumable)", async () => {
+      // A non-timeout failure is terminal-and-dead (only a timeout is resumable),
+      // so its row must not linger 'running' either.
+      const durableRuns = makeFakeDurableRuns();
+      const { deps } = makeDeps({
+        spawnFn: () => makeFakeChild("", 1, "boom"),
+        durableRuns,
+        rootRunId: "root-fail-term",
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(tool.execute("c", { script: "1", language: "ts" })).rejects.toThrow();
+
+      expect(durableRuns.completed).toContain("root-fail-term");
+    });
+
+    it("a TIMED-OUT resumable run is NOT marked completed and KEEPS its pinned script (only a genuine timeout stays resumable)", async () => {
+      const durableRuns = makeFakeDurableRuns();
+      const { deps } = makeDeps({
+        spawnFn: () => makeHangingChild(),
+        durableRuns,
+        rootRunId: "root-to",
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(
+        tool.execute("c", { script: "1", language: "ts", timeoutMs: 1 }),
+      ).rejects.toThrow(/timeout/i);
+
+      // A resumable timeout must leave the row resumable (never completed) and keep
+      // the pinned script for a later resume.
+      expect(durableRuns.completed).not.toContain("root-to");
+      const pinnedScriptRef = durableRuns.upserts[0]!.scriptRef!;
+      expect(existsSync(join(workspacePath, pinnedScriptRef))).toBe(true);
+    });
+
+    it("a durable-registered run that fails NON-timeout still calls cleanupRun", async () => {
+      const cleanupRun = vi.fn(async () => {});
+      const durableRuns = makeFakeDurableRuns();
+      const { deps } = makeDeps({
+        spawnFn: () => makeFakeChild("", 1, "boom"),
+        durableRuns,
+        rootRunId: "root-fail",
+        cleanupRun,
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(tool.execute("c", { script: "1", language: "ts" })).rejects.toThrow();
+
+      // Only a timeout is resumable; a nonzero-exit still cleans as before.
+      expect(cleanupRun).toHaveBeenCalledTimes(1);
+    });
+
+    it("resumeRunId re-spawns the PINNED stored bytes and IGNORES a differing script param", async () => {
+      const pinnedBytes = 'console.log("PINNED-RESUME-BYTES");\n';
+      const scriptRef = "orch-oldrun-abc.ts";
+      // The pinned script lives at the workspace ROOT (cleanupRun is results/-only,
+      // so it survives) — pre-write it so the default fs seam reads it back.
+      writeFileSync(join(workspacePath, scriptRef), pinnedBytes);
+      const durableRuns = makeFakeDurableRuns({
+        getRow: {
+          rootRunId: "root-resume",
+          spawnTree: [],
+          caps: [],
+          leaseIds: [],
+          budgetConsumed: 0,
+          cronOrigin: null,
+          stepIndex: -1,
+          status: "running",
+          lastHeartbeatAt: 1,
+          scriptRef,
+        },
+      });
+      let writtenScript: string | undefined;
+      const spawnFn: OrchestrateSpawnFn = (_bin, args) => {
+        const scriptName = scriptNameFromArgs(args);
+        writtenScript = readFileSync(join(workspacePath, scriptName), "utf8");
+        return makeFakeChild("resumed\n");
+      };
+      const { deps } = makeDeps({ spawnFn, durableRuns, rootRunId: "root-resume" });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", {
+        script: 'console.log("DIFFERENT-PARAM-BYTES");',
+        language: "ts",
+        resumeRunId: "root-resume",
+      });
+
+      // The re-spawned script is the PINNED bytes — never the differing param.
+      expect(writtenScript).toBe(pinnedBytes);
+      expect(writtenScript).not.toContain("DIFFERENT-PARAM-BYTES");
+      expect(durableRuns.getByRootRun).toHaveBeenCalledWith("root-resume");
+    });
+
+    it("REFUSES a resumeRunId when the durable-resume surface is OFF (fail-closed, never the caller's script)", async () => {
+      // With no durableRuns seam (surface off / older wiring) a resumeRunId must be
+      // REFUSED, never silently fall through to spawning the caller-supplied `script`
+      // bytes — a resume never accepts fresh bytes, even when the surface is off.
+      let spawned = false;
+      const spawnFn: OrchestrateSpawnFn = () => {
+        spawned = true;
+        return makeFakeChild("SHOULD-NOT-RUN\n");
+      };
+      const { deps } = makeDeps({ spawnFn }); // NO durableRuns
+      const tool = createOrchestrateTool(deps);
+
+      await expect(
+        tool.execute("c", {
+          script: "console.log('caller-supplied bytes')",
+          language: "ts",
+          resumeRunId: "root-x",
+        }),
+      ).rejects.toThrow(/resume/i);
+      // Fail-closed: the caller's script was NEVER executed.
+      expect(spawned).toBe(false);
+    });
   });
 
   // Diagnosability: if a failing orchestrate script surfaced ONLY "jailed child
@@ -815,6 +1701,297 @@ describe("orchestrate-tool", () => {
 
       // Fail-closed: the runaway child is SIGKILLed.
       expect(killSpy).toHaveBeenCalled();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // orchestrate:run_summary emit — the content-free per-run observability signal
+  // (EXPLAIN-02) carrying the SAVE-01 savings numbers + the per-run child leaseId.
+  // ---------------------------------------------------------------------------
+
+  describe("orchestrate:run_summary emit (EXPLAIN-02 + SAVE-01)", () => {
+    // The EXACT content-free key set on a MATERIALIZED-run SUCCESS emit (leaseId +
+    // sessionKey present; failureClass ABSENT; savings PRESENT because the run
+    // materialized ResultRefs). NEVER a stderr tail / script / params (INV-5).
+    const SUCCESS_KEYS = [
+      "durationMs",
+      "estSavedTokens",
+      "exitCode",
+      "language",
+      "leaseId",
+      "resultRefBytes",
+      "resultRefCount",
+      "rootRunId",
+      "runId",
+      "savedRatio",
+      "sessionKey",
+      "stdoutBytesRaw",
+      "stdoutCharsReentered",
+      "timestamp",
+    ];
+    // The key set on a ZERO-materialization SUCCESS: savings (estSavedTokens /
+    // savedRatio) is carried ONLY when the run materialized ResultRefs (the
+    // documented contract + the fold's omit-branch), so both keys are ABSENT here.
+    const SUCCESS_KEYS_NO_SAVINGS = SUCCESS_KEYS.filter(
+      (k) => k !== "estSavedTokens" && k !== "savedRatio",
+    );
+
+    it("a SUCCESSFUL run emits exactly one content-free run_summary with the child leaseId + SAVE-01 numbers, BEFORE cleanupRun", async () => {
+      const { eventBus, emitted } = makeEventBusSpy();
+      const runAggregate = vi.fn(() => ({ count: 3, bytes: 122_880 }));
+      // cleanupRun asserts the emit ALREADY fired (Pitfall 3 — before results/ is wiped).
+      const cleanupRun = vi.fn(async () => {
+        expect(emitted).toHaveLength(1);
+      });
+      const mintRunLease = vi.fn(() => ({ leaseId: "child-lease-1", bearer: "bearer-1" }));
+      const { deps } = makeDeps({
+        eventBus,
+        runAggregate,
+        cleanupRun,
+        mintRunLease,
+        rootRunId: "root-agent-1",
+        sessionKey: "tenant:user:channel",
+        spawnFn: () => makeFakeChild("ok-output\n"),
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "1", language: "ts" });
+
+      expect(emitted).toHaveLength(1);
+      const { event, payload } = emitted[0]!;
+      expect(event).toBe("orchestrate:run_summary");
+      expect(payload.exitCode).toBe(0);
+      expect(payload.failureClass).toBeUndefined();
+      expect(payload.leaseId).toBe("child-lease-1");
+      expect(payload.rootRunId).toBe("root-agent-1");
+      expect(payload.sessionKey).toBe("tenant:user:channel");
+      expect(payload.language).toBe("ts");
+      expect(payload.resultRefCount).toBe(3);
+      expect(payload.resultRefBytes).toBe(122_880);
+      // stdoutCharsReentered = the POST-bounce char count of "ok-output\n" (10).
+      expect(payload.stdoutCharsReentered).toBe(10);
+      expect(payload.stdoutBytesRaw).toBe("ok-output\n".length);
+      // SAVE-01: the estimate is EXACTLY estimateSavings(materializedBytes, reentered).
+      const expected = estimateSavings(122_880, 10);
+      expect(payload.estSavedTokens).toBe(expected.estSavedTokens);
+      expect(payload.savedRatio).toBe(expected.savedRatio);
+      // runAggregate was consulted (real counts, not 0) — proves capture-before-cleanup.
+      expect(runAggregate).toHaveBeenCalledWith({ workspacePath });
+      // INV-5: the payload key set is EXACTLY the content-free declared fields —
+      // savings PRESENT because this run materialized 3 ResultRefs.
+      expect(Object.keys(payload).sort()).toEqual(SUCCESS_KEYS);
+      expect("estSavedTokens" in payload).toBe(true);
+      expect("savedRatio" in payload).toBe(true);
+    });
+
+    it("a ZERO-materialization SUCCESS OMITS the savings keys (savings carried only when the run materialized ResultRefs)", async () => {
+      // No runAggregate → agg={count:0,bytes:0}: the run materialized nothing, so
+      // estimateSavings would return {estSavedTokens:0, savedRatio:0}. Per the
+      // documented contract (orchestrate.mdx / json-rpc.mdx), the fold's omit-branch,
+      // and the schema test, the emit must OMIT both savings keys rather than carry a
+      // phantom 0 — mirroring the sibling optional leaseId / sessionKey spreads.
+      const { eventBus, emitted } = makeEventBusSpy();
+      const mintRunLease = vi.fn(() => ({ leaseId: "child-lease-1", bearer: "bearer-1" }));
+      const { deps } = makeDeps({
+        eventBus,
+        mintRunLease,
+        rootRunId: "root-agent-1",
+        sessionKey: "tenant:user:channel",
+        spawnFn: () => makeFakeChild("ok-output\n"),
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "1", language: "ts" });
+
+      expect(emitted).toHaveLength(1);
+      const { payload } = emitted[0]!;
+      expect(payload.exitCode).toBe(0);
+      expect(payload.resultRefCount).toBe(0);
+      expect(payload.resultRefBytes).toBe(0);
+      // Savings keys ABSENT on a zero-materialization success (not carried as 0).
+      expect("estSavedTokens" in payload).toBe(false);
+      expect("savedRatio" in payload).toBe(false);
+      expect(Object.keys(payload).sort()).toEqual(SUCCESS_KEYS_NO_SAVINGS);
+    });
+
+    it("carries the content-free ordered toolSequence (the pre-flight footprint) + the turn traceId, populated under a request context", async () => {
+      // A cap-mapped script: web_search, jq, jq, web_fetch → the source-ordered
+      // call-site sequence with jq TWICE (its call count). The descriptor rides the
+      // emit as toolSequence (names only). The turn traceId — distinct from
+      // runId/rootRunId (the orchestrate-run ids) — rides it so a later learning
+      // ledger can key the descriptor row on the turn trajectory (OQ-2).
+      const TURN_TRACE_ID = "7f1c9a2e-3b4d-4c5e-8a6f-0d1e2f3a4b5c";
+      const PROC_SCRIPT =
+        'await comis_tools.web_search({q:1}); await comis_tools.jq({a:1}); await comis_tools.jq({b:2}); await comis_tools.web_fetch({url:"x"});';
+      const { eventBus, emitted } = makeEventBusSpy();
+      const { deps } = makeDeps({
+        eventBus,
+        rootRunId: "root-agent-1",
+        sessionKey: "tenant:user:channel",
+        spawnFn: () => makeFakeChild("ok\n"),
+      });
+      const tool = createOrchestrateTool(deps);
+
+      const ctx: RequestContext = {
+        tenantId: "default",
+        userId: "test-user",
+        sessionKey: "tenant:user:channel",
+        traceId: TURN_TRACE_ID,
+        startedAt: 1_700_000_000_000,
+        trustLevel: "admin",
+      };
+      await runWithContext(ctx, () =>
+        tool.execute("c", { script: PROC_SCRIPT, language: "ts" }),
+      );
+
+      expect(emitted).toHaveLength(1);
+      const { event, payload } = emitted[0]!;
+      expect(event).toBe("orchestrate:run_summary");
+      // The ordered call-site sequence + counts (repeats preserved), sourced from
+      // extractCapabilityFootprint(script).sequence — content-free (names only).
+      expect(payload.toolSequence).toEqual(["web_search", "jq", "jq", "web_fetch"]);
+      // The owning turn's trace correlator (OQ-2), distinct from runId/rootRunId.
+      expect(payload.traceId).toBe(TURN_TRACE_ID);
+      // INV-5: names + counts + a correlator ONLY — never the script body / call args.
+      const json = JSON.stringify(payload);
+      expect(json).not.toContain("web_fetch({url");
+      expect(json).not.toContain("q:1");
+    });
+
+    it("a NON-ZERO exit emits failureClass nonzero_exit + the real exit code (no stderr tail on the bus)", async () => {
+      const { eventBus, emitted } = makeEventBusSpy();
+      const { deps } = makeDeps({
+        eventBus,
+        rootRunId: "root-2",
+        spawnFn: () => makeFakeChild("", 3, "TypeError: boom on stderr"),
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(tool.execute("c", { script: "1", language: "ts" })).rejects.toThrow(/code 3/);
+
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0]!.payload.failureClass).toBe("nonzero_exit");
+      expect(emitted[0]!.payload.exitCode).toBe(3);
+      // INV-5: the stderr tail rides the tool-error surface ONLY, never the bus.
+      const json = JSON.stringify(emitted[0]!.payload);
+      expect(json).not.toContain("boom on stderr");
+      expect("stderrTail" in emitted[0]!.payload).toBe(false);
+    });
+
+    it("a TIMEOUT emits failureClass timeout", async () => {
+      const { eventBus, emitted } = makeEventBusSpy();
+      const { deps } = makeDeps({
+        eventBus,
+        rootRunId: "root-3",
+        spawnFn: () => makeHangingChild(),
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(
+        tool.execute("c", { script: "1", language: "ts", timeoutMs: 1 }),
+      ).rejects.toThrow(/timeout/i);
+
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0]!.payload.failureClass).toBe("timeout");
+    });
+
+    it("a SPAWN failure emits failureClass spawn_fail", async () => {
+      const { eventBus, emitted } = makeEventBusSpy();
+      const spawnFn: OrchestrateSpawnFn = () => {
+        throw new Error("spawn boom");
+      };
+      const { deps } = makeDeps({ eventBus, rootRunId: "root-4", spawnFn });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(tool.execute("c", { script: "1", language: "ts" })).rejects.toThrow(/spawn boom/);
+
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0]!.payload.failureClass).toBe("spawn_fail");
+    });
+
+    it("a STDOUT hard-cap trip emits failureClass stdout_cap", async () => {
+      const { eventBus, emitted } = makeEventBusSpy();
+      const spawnFn: OrchestrateSpawnFn = () => {
+        const child = new EventEmitter() as unknown as OrchestrateSpawnedChild & EventEmitter;
+        const out = new EventEmitter();
+        (child as { stdout: EventEmitter }).stdout = out;
+        (child as { stderr: EventEmitter }).stderr = new EventEmitter();
+        (child as { kill: () => void }).kill = () => {};
+        setImmediate(() => {
+          out.emit("data", Buffer.alloc(STDOUT_HARD_CAP_BYTES + 1, 0x41));
+          child.emit("close", 0);
+        });
+        return child;
+      };
+      const { deps } = makeDeps({ eventBus, rootRunId: "root-5", spawnFn });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(
+        tool.execute("c", { script: "1", language: "ts" }),
+      ).rejects.toThrow(/hard cap|exceeded/i);
+
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0]!.payload.failureClass).toBe("stdout_cap");
+    });
+
+    it("a run with NO lease emits failureClass lease_absent", async () => {
+      const { eventBus, emitted } = makeEventBusSpy();
+      // No brokerSpawnEnv AND no mintRunLease → childEnv has no COMIS_CAP_LEASE.
+      const { deps } = makeDeps({
+        eventBus,
+        rootRunId: "root-6",
+        dropBrokerSpawnEnv: true,
+        spawnFn: () => makeFakeChild("ok\n"),
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "1", language: "ts" });
+
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0]!.payload.failureClass).toBe("lease_absent");
+      expect(emitted[0]!.payload.exitCode).toBe(0);
+    });
+
+    it("does NOT emit (and does not throw) when no eventBus is wired — the emit is opt-in", async () => {
+      // The default makeDeps injects NO eventBus; a run must not throw for the
+      // absent emit channel (the ?. guard on deps.eventBus).
+      const { deps } = makeDeps({ spawnFn: () => makeFakeChild("ok\n") });
+      const tool = createOrchestrateTool(deps);
+      await expect(tool.execute("c", { script: "1", language: "ts" })).resolves.toBeDefined();
+    });
+
+    it("a THROWING run_summary subscriber does NOT flip a successful run to a failed tool call (emit never throws into the run)", async () => {
+      // EventEmitter.emit invokes subscribers synchronously and PROPAGATES a
+      // throwing one. If the success emit threw into the run's try, the catch would
+      // fire, re-classify the emit error as spawn_fail, re-emit a FAILURE summary
+      // (double record), and surface a SUCCESSFUL run as a failed tool call. The
+      // emit must swallow+log a throwing subscriber so it can never perturb the run.
+      const emitted: Array<{ event: string; payload: Record<string, unknown> }> = [];
+      const eventBus = {
+        emit(event: string, payload: Record<string, unknown>) {
+          emitted.push({ event, payload });
+          throw new Error("subscriber boom");
+        },
+      };
+      const { deps } = makeDeps({
+        eventBus,
+        rootRunId: "root-throw",
+        spawnFn: () => makeFakeChild("THE-ANSWER\n"),
+      });
+      const tool = createOrchestrateTool(deps);
+
+      // The run RESOLVES (success) despite the throwing subscriber — NOT flipped to
+      // a failed tool call, and the thrown subscriber error does not escape.
+      const result = await tool.execute("c", { script: "1", language: "ts" });
+      const text = result.content.map((b) => (b.type === "text" ? (b.text ?? "") : "")).join("");
+      expect(text).toContain("THE-ANSWER");
+
+      // Exactly ONE emit attempt (the success emit) — swallowing prevents the catch
+      // from re-emitting a second (failure) summary (no double-record).
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0]!.event).toBe("orchestrate:run_summary");
+      expect(emitted[0]!.payload.exitCode).toBe(0);
+      expect(emitted[0]!.payload.failureClass).toBeUndefined();
     });
   });
 });

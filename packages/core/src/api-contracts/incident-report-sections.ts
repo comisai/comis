@@ -153,3 +153,39 @@ export const SpawnTreeNodeSchema = z.object({
 
 /** One spawn-tree node (see {@link SpawnTreeNodeSchema}). */
 export type SpawnTreeNode = z.infer<typeof SpawnTreeNodeSchema>;
+
+/**
+ * One `orchestrate` PTC RUN folded from the session's
+ * `orchestrate.run_summary` trajectory record (one entry per run — a session may
+ * hold several runs). The per-run child `leaseId` (the daemon-minted correlator) is
+ * what groups each run's `toolCalls` — including a `decision:"deny"` — under THAT
+ * run, so an in-jail denial is attributed to the run that made it, not the assembly.
+ * Content-free by construction: ids + closed enums + counts + token ESTIMATES only —
+ * never the script, the stderr tail, tool args, or a secret. `failureClass` is the
+ * closed run-failure union (absent on a clean exit; a `lease_absent` may ride a clean
+ * exit-0 run — a distinct diagnostic from a run that ran with no lease AND failed).
+ * `savings` is a LABELED estimate (materialized-bytes counterfactual vs post-bounce
+ * re-entry), not exact accounting. Single source of truth for BOTH
+ * `IncidentReportSchema.orchestrate` and `IncidentSignals.orchestrate`.
+ */
+export const OrchestrateRunSchema = z.object({
+  runId: z.string(),
+  leaseId: z.string().optional(),
+  outcome: z.enum(["success", "failure"]),
+  durationMs: z.number(),
+  exitCode: z.number(),
+  failureClass: z.enum(["timeout", "stdout_cap", "nonzero_exit", "spawn_fail", "lease_absent"]).optional(),
+  toolCalls: z.array(
+    z.object({
+      tool: z.string(),
+      capability: z.string(),
+      decision: z.enum(["allow", "deny"]),
+      count: z.number(),
+    }),
+  ),
+  resultRefs: z.object({ count: z.number(), bytes: z.number() }),
+  savings: z.object({ estSavedTokens: z.number(), savedRatio: z.number() }).optional(),
+});
+
+/** One orchestrate PTC run (see {@link OrchestrateRunSchema}). */
+export type OrchestrateRun = z.infer<typeof OrchestrateRunSchema>;

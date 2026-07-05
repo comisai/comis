@@ -23,10 +23,11 @@ import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { ok } from "@comis/shared";
 import { applyDeltaOps, renderStructuredBody, MAX_DOC_NAME_LENGTH } from "@comis/core";
 import type { ResolvedOutcome, StructuredBody } from "@comis/core";
-import type { ReflectionResult } from "./reflection-prompt.js";
+import { PROCEDURE_REFLECT_PROMPT, type ReflectionResult } from "./reflection-prompt.js";
 import {
   runReflection,
   classifyReflectOutcome,
+  deriveRequiredTools,
   type RunReflectionDeps,
   type RunReflectionConfig,
   type ReflectionSourceTrajectory,
@@ -126,6 +127,12 @@ function makeDeps(
     // run (the common case) stays at the engine's skill defaults.
     ...(over.kind !== undefined ? { kind: over.kind } : {}),
     ...(over.groupKey !== undefined ? { groupKey: over.groupKey } : {}),
+    // The procedure-run flag — forwarded only when a test supplies it (gates the
+    // deterministic required_tools bind AND the descriptor-into-input thread; Pitfall 5:
+    // the user-intent skill run leaves it absent so its admit binds NULL required_tools).
+    ...((over as { populateProcedureMetadata?: boolean }).populateProcedureMetadata !== undefined
+      ? { populateProcedureMetadata: (over as { populateProcedureMetadata?: boolean }).populateProcedureMetadata }
+      : {}),
     config,
     sourceTrajectories: trajectories,
     reflectionAdapter: { reflect },
@@ -1400,5 +1407,450 @@ describe("runReflection — analogous-signature merge (under-merge fix)", () => 
     expect(res.value.maxTopicCardinality).toBe(1);
     expect(res.value.admitted).toBe(0);
     expect(res.value.admissionOutcome).toBe("uncorroborated");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Procedure descriptor key as the group key — order/count-sensitive + self-sufficient.
+// The procedure groupKey is `t.procedureDescriptor.key`, a DEFINED custom groupKey — so
+// `useSignatureMerge` is FALSE and the Jaccard signature-merge is BYPASSED. Only byte-identical
+// descriptor keys collide; a different ORDER or a different COUNT derives a different key and never
+// auto-merges — even when the source SIGNATURES are identical and WOULD have Jaccard-merged. This
+// pins the self-sufficiency the bypassed merge requires (the groupKey seed a later procedure
+// reflection builds on).
+// ---------------------------------------------------------------------------
+describe("runReflection — procedure descriptor key (order/count-sensitive; bypasses the Jaccard merge)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const procGroupKey = (t: ReflectionSourceTrajectory): string => t.procedureDescriptor?.key ?? "";
+
+  // The builder derives key = sequence.join(">"); mirror it so a source carries the same key shape.
+  function procTraj(over: Partial<ReflectionSourceTrajectory>, sequence: readonly string[]): ReflectionSourceTrajectory {
+    return { ...traj(over), procedureDescriptor: { key: sequence.join(">"), sequence } };
+  }
+
+  it("two sources with the SAME ordered sequence share the IDENTICAL key → ONE group → corroborated (admit)", async () => {
+    const mocks: Partial<Mocks> = {};
+    const deps = makeDeps(
+      [
+        procTraj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "fetch and filter the data" }, ["web_search", "jq", "jq"]),
+        procTraj({ trajectoryId: "b", sessionId: "s2", sender: "u2", signature: "fetch and filter the data" }, ["web_search", "jq", "jq"]),
+      ],
+      { kind: "skill", groupKey: procGroupKey } as Partial<RunReflectionDeps>,
+      mocks,
+    );
+    const res = await runReflection(deps);
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    // Identical descriptor keys collide into ONE corroboration group (card 2) → admit.
+    expect(res.value.distinctTopicKeys).toBe(1);
+    expect(res.value.maxTopicCardinality).toBe(2);
+    expect(res.value.admitted).toBe(1);
+  });
+
+  it("a DIFFERENT order derives a DIFFERENT key → SEPARATE groups even with identical signatures (Jaccard bypassed)", async () => {
+    const mocks: Partial<Mocks> = {};
+    // Identical SIGNATURES (which WOULD Jaccard-merge under the default skill grouping) but a
+    // different tool ORDER. The custom groupKey bypasses the signature-merge, so the two stay in
+    // SEPARATE groups → uncorroborated. Proves the key — not the signature — decides grouping.
+    const deps = makeDeps(
+      [
+        procTraj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "fetch and filter the data" }, ["web_search", "jq", "jq"]),
+        procTraj({ trajectoryId: "b", sessionId: "s2", sender: "u2", signature: "fetch and filter the data" }, ["jq", "web_search", "jq"]),
+      ],
+      { kind: "skill", groupKey: procGroupKey } as Partial<RunReflectionDeps>,
+      mocks,
+    );
+    const res = await runReflection(deps);
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.distinctTopicKeys).toBe(2); // no auto-merge — order is load-bearing
+    expect(res.value.maxTopicCardinality).toBe(1);
+    expect(res.value.admitted).toBe(0);
+  });
+
+  it("a DIFFERENT count (one fewer repeat) derives a DIFFERENT key → SEPARATE groups → uncorroborated", async () => {
+    const mocks: Partial<Mocks> = {};
+    const deps = makeDeps(
+      [
+        procTraj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "fetch and filter the data" }, ["web_search", "jq", "jq"]),
+        procTraj({ trajectoryId: "b", sessionId: "s2", sender: "u2", signature: "fetch and filter the data" }, ["web_search", "jq"]),
+      ],
+      { kind: "skill", groupKey: procGroupKey } as Partial<RunReflectionDeps>,
+      mocks,
+    );
+    const res = await runReflection(deps);
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.distinctTopicKeys).toBe(2); // counts are load-bearing
+    expect(res.value.admitted).toBe(0);
+  });
+});
+
+// ===========================================================================
+// PROCEDURE reflection metadata: the 4th reflectKinds entry threads the descriptor's
+// ORDERED sequence INTO the reflect input (Pitfall 2 — the tool-stripped transcript is
+// augmented with a bounded content-free tool-sequence section) and the admitted advisory
+// doc's required_tools is bound DETERMINISTICALLY from the audited descriptor — NEVER
+// LLM-authored. Pitfall 5: BOTH are gated on the `populateProcedureMetadata` flag, NOT on
+// "descriptor present" — the user-intent skill run (which also reads descriptor-carrying
+// sources) leaves required_tools NULL. INV-4: the prompt authors readable guidance only,
+// emitting no machine-readable requiredTools/paramsSchema JSON envelope.
+// ===========================================================================
+describe("runReflection — procedure metadata: deterministic required_tools + reflect-input thread (Pitfalls 2 & 5)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const procGroupKey = (t: ReflectionSourceTrajectory): string => t.procedureDescriptor?.key ?? "";
+
+  /** A source carrying a content-free procedure descriptor (key = the ordered sequence joined). */
+  function procTraj(over: Partial<ReflectionSourceTrajectory>, sequence: readonly string[]): ReflectionSourceTrajectory {
+    return { ...traj(over), procedureDescriptor: { key: sequence.join(">"), sequence } };
+  }
+
+  // web_search → jq → jq → web_fetch : ordered, with a repeated jq (order + counts matter for the
+  // groupKey + the reflect input; required_tools collapses it to the dedupe+sorted SET).
+  const SEQ = ["web_search", "jq", "jq", "web_fetch"] as const;
+
+  it("the PROCEDURE run (populateProcedureMetadata:true) admits with DETERMINISTIC required_tools (dedupe+sorted footprint SET) + kind:'skill' + paramsSchema '{}'", async () => {
+    const mocks: Partial<Mocks> = {};
+    const deps = makeDeps(
+      [
+        procTraj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "fetch and filter the data" }, SEQ),
+        procTraj({ trajectoryId: "b", sessionId: "s2", sender: "u2", signature: "fetch and filter the data" }, SEQ),
+      ],
+      { kind: "skill", groupKey: procGroupKey, populateProcedureMetadata: true } as Partial<RunReflectionDeps>,
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.admitted).toBe(1);
+    expect(mocks.admit).toHaveBeenCalledTimes(1);
+    const admitArg = (mocks.admit as Mock).mock.calls[0][0];
+    // required_tools = the dedupe+SORTED footprint SET of the audited tool NAMES (the ORDER +
+    // counts live on the groupKey + the reflect input, NOT on required_tools). Deterministic,
+    // content-free, NEVER LLM-authored.
+    expect(admitArg.requiredTools).toEqual(["jq", "web_fetch", "web_search"]);
+    // params_schema is a fixed content-free value — an advisory doc has no replay parameters.
+    expect(admitArg.paramsSchema).toBe("{}");
+    expect(admitArg.kind).toBe("skill");
+  });
+
+  it("the USER-INTENT skill run (no populateProcedureMetadata) admits WITHOUT required_tools/paramsSchema (Pitfall 5 — NULL bind)", async () => {
+    const mocks: Partial<Mocks> = {};
+    // The SAME descriptor-carrying sources, but the DEFAULT skill grouping (signature) and NO
+    // procedure flag → the two corroborate on the signature and admit, yet required_tools is
+    // NOT populated (a user-intent skill must never be mis-tagged as a learnable procedure).
+    const deps = makeDeps(
+      [
+        procTraj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "fetch and filter the data" }, SEQ),
+        procTraj({ trajectoryId: "b", sessionId: "s2", sender: "u2", signature: "fetch and filter the data" }, SEQ),
+      ],
+      {},
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.admitted).toBe(1);
+    const admitArg = (mocks.admit as Mock).mock.calls[0][0];
+    expect(admitArg.requiredTools).toBeUndefined();
+    expect(admitArg.paramsSchema).toBeUndefined();
+  });
+
+  it("the PROCEDURE reflect INPUT carries the ordered tool sequence (Pitfall 2 — augments the tool-stripped transcript; order/counts preserved)", async () => {
+    const mocks: Partial<Mocks> = {};
+    const deps = makeDeps(
+      [
+        procTraj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "fetch and filter the data" }, SEQ),
+        procTraj({ trajectoryId: "b", sessionId: "s2", sender: "u2", signature: "fetch and filter the data" }, SEQ),
+      ],
+      { kind: "skill", groupKey: procGroupKey, populateProcedureMetadata: true } as Partial<RunReflectionDeps>,
+      mocks,
+    );
+
+    await runReflection(deps);
+
+    const reflectArg = (mocks.reflect as Mock).mock.calls[0][0];
+    // The bounded content-free tool-sequence section is appended to the reflect input.
+    expect(reflectArg.trajectoryText).toContain("Tool sequence for this procedure:");
+    expect(reflectArg.trajectoryText).toContain("web_fetch");
+    // Order + counts preserved (web_search → jq → jq → web_fetch), NOT deduped/sorted.
+    expect(reflectArg.trajectoryText).toMatch(/web_search[\s\S]*jq[\s\S]*jq[\s\S]*web_fetch/);
+  });
+
+  it("the NON-procedure run does NOT thread the tool sequence into the reflect input", async () => {
+    const mocks: Partial<Mocks> = {};
+    const deps = makeDeps(
+      [
+        procTraj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "fetch and filter the data" }, SEQ),
+        procTraj({ trajectoryId: "b", sessionId: "s2", sender: "u2", signature: "fetch and filter the data" }, SEQ),
+      ],
+      {},
+      mocks,
+    );
+
+    await runReflection(deps);
+
+    const reflectArg = (mocks.reflect as Mock).mock.calls[0][0];
+    expect(reflectArg.trajectoryText).not.toContain("Tool sequence for this procedure:");
+  });
+
+  it("deriveRequiredTools is DETERMINISTIC — the dedupe+sorted union of the members' sequences, byte-equal across calls", () => {
+    const members = [
+      procTraj({ trajectoryId: "a" }, ["web_search", "jq", "jq"]),
+      procTraj({ trajectoryId: "b" }, ["web_fetch", "jq"]),
+    ];
+    const first = deriveRequiredTools(members);
+    const second = deriveRequiredTools(members);
+    // dedupe + sorted footprint SET (no clock/order dependence).
+    expect(first).toEqual(["jq", "web_fetch", "web_search"]);
+    // byte-equal across calls.
+    expect(JSON.stringify(first)).toBe(JSON.stringify(second));
+  });
+
+  it("PROCEDURE_REFLECT_PROMPT is defined and emits NO machine-readable requiredTools/paramsSchema JSON envelope key (INV-4 scoped no-envelope)", () => {
+    // The prompt must EXIST (RED until the const is added) and author only readable guidance —
+    // it carries NO JSON envelope key `"requiredTools":` / `"paramsSchema":` (a SCOPED guard on
+    // THIS const; the sibling prompts legitimately mention those tokens in backticked prose).
+    expect(PROCEDURE_REFLECT_PROMPT).toBeDefined();
+    expect(typeof PROCEDURE_REFLECT_PROMPT).toBe("string");
+    expect(PROCEDURE_REFLECT_PROMPT).not.toMatch(/"(requiredTools|paramsSchema)"\s*:/);
+  });
+});
+
+// ===========================================================================
+// PROC-05 — the PROCEDURE path rides the SHIPPED anti-poison gate VERBATIM.
+//
+// The procedure reflection is a 4th kind:'skill' reflectKinds pass grouped by the
+// content-free descriptor KEY (populateProcedureMetadata:true) — see 231-04. This suite
+// is the REUSE PROOF: the procedure groupKey flows THROUGH the exact same
+// distinctSenderCardinality >= 2 gate + BOTH trust axes as skill/profile/topic. A GREEN
+// here PROVES the reuse (no new admission path — R3); a RED would mean the procedure path
+// BYPASSED the gate = a real bug to fix at the AUTHORITATIVE seam (distinctSenderCardinality
+// / the trust SELECT), never a parallel guard (CLAUDE.md Root-Cause).
+//
+// The demote half (a verified failure/correction stales the admitted procedure doc) rides
+// the name-keyed demote seam and is proven in setup-learning-skill-transitions.test.ts.
+// ===========================================================================
+describe("runReflection — anti-poison gate reuse through the PROCEDURE path (PROC-05)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  // The procedure groupKey: the content-free descriptor KEY (231-03/04) — a DEFINED custom
+  // groupKey, so `useSignatureMerge` is FALSE (the Jaccard merge is bypassed) and only
+  // byte-identical descriptor keys collide. Same shape the daemon wires
+  // (setup-channels-memory-crons-wire.ts: `groupKey: (t) => t.procedureDescriptor?.key ?? ""`).
+  const procGroupKey = (t: ReflectionSourceTrajectory): string => t.procedureDescriptor?.key ?? "";
+  function procTraj(over: Partial<ReflectionSourceTrajectory>, sequence: readonly string[]): ReflectionSourceTrajectory {
+    return { ...traj(over), procedureDescriptor: { key: sequence.join(">"), sequence } };
+  }
+  // web_search → jq → jq : ordered with a repeat (order + counts ride the groupKey + reflect
+  // input; required_tools collapses to the dedupe+sorted SET ["jq","web_search"]).
+  const SEQ = ["web_search", "jq", "jq"] as const;
+  const PROC = { kind: "skill", groupKey: procGroupKey, populateProcedureMetadata: true } as Partial<RunReflectionDeps>;
+
+  it("(a) TWO independent-sender procedure runs of one task shape ADMIT a kind:'skill' doc (distinctSenderCardinality 2 >= 2)", async () => {
+    const mocks: Partial<Mocks> = {};
+    // SAME descriptor key, DISTINCT (sessionId, sender) → the shipped ≥2 corroboration gate admits.
+    const deps = makeDeps(
+      [
+        procTraj({ trajectoryId: "a", sessionId: "s1", sender: "u1" }, SEQ),
+        procTraj({ trajectoryId: "b", sessionId: "s2", sender: "u2" }, SEQ),
+      ],
+      PROC,
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    // The procedure groupKey rode the SAME cardinality gate → 2 distinct (session,sender) → admit.
+    expect(res.value.maxTopicCardinality).toBe(2);
+    expect(res.value.admitted).toBe(1);
+    expect(res.value.admissionOutcome).toBe("admitted");
+    const admitArg = (mocks.admit as Mock).mock.calls[0][0];
+    // Admitted as kind:'skill' (surfaces through the shipped skill path) with the DETERMINISTIC
+    // dedupe+sorted required_tools bound from the AUDITED descriptor — never LLM-authored (INV-4).
+    expect(admitArg.kind).toBe("skill");
+    expect(admitArg.requiredTools).toEqual(["jq", "web_search"]);
+    expect(admitArg.paramsSchema).toBe("{}");
+    // The anti-domination caps are the SHIPPED ones (proof=1 regardless of cluster size; 0.7 seed).
+    expect(admitArg.proofCount).toBe(1);
+    expect(admitArg.confidence).toBe(0.7);
+  });
+
+  it("(b) ONE sender's N replays of a procedure do NOT admit (distinctSenderCardinality 1 < 2 — the anti-domination belt)", async () => {
+    const mocks: Partial<Mocks> = {};
+    // 5 procedure successes, SAME descriptor key, SAME (session,sender) — an attacker repeating
+    // one successful run N times must NOT corroborate a procedure doc.
+    const trajectories = Array.from({ length: 5 }, (_, i) =>
+      procTraj({ trajectoryId: `rep-${i}`, sessionId: "sess-A", sender: "u1" }, SEQ),
+    );
+    const deps = makeDeps(trajectories, PROC, mocks);
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.selected).toBe(5);
+    expect(res.value.maxTopicCardinality).toBe(1); // distinct (session,sender) = 1
+    expect(res.value.admitted).toBe(0);
+    expect(res.value.admissionOutcome).toBe("uncorroborated");
+    expect(mocks.admit).not.toHaveBeenCalled();
+  });
+
+  it("(d1) an UNTRUSTED-origin procedure success seeds NOTHING (axis 1 — the session-origin belt), even with 2 distinct senders", async () => {
+    const mocks: Partial<Mocks> = {};
+    // Two procedure successes that WOULD corroborate (2 distinct (session,sender), same key) BUT
+    // both are untrusted-origin → dropped at SELECT. The descriptor never bypasses the trust belt.
+    const deps = makeDeps(
+      [
+        procTraj({ trajectoryId: "a", sessionId: "s1", sender: "u1", trustedOrigin: false }, SEQ),
+        procTraj({ trajectoryId: "b", sessionId: "s2", sender: "u2", trustedOrigin: false }, SEQ),
+      ],
+      PROC,
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.selected).toBe(0);
+    expect(res.value.admitted).toBe(0);
+    expect(res.value.untrustedDrops).toBe(2);
+    expect(res.value.admissionOutcome).toBe("untrusted_origin");
+    expect(mocks.admit).not.toHaveBeenCalled();
+    expect(mocks.reflect).not.toHaveBeenCalled();
+  });
+
+  it("(d2) an EXTERNAL-trust procedure success riding a TRUSTED session seeds NOTHING (axis 2 — both belts compose)", async () => {
+    const mocks: Partial<Mocks> = {};
+    // BOTH ride a trustedOrigin:true session (axis 1 passes) BUT carry the per-memory external
+    // source-trust marker (axis 2 fails-closed). A planted external memory riding a trusted
+    // session seeds nothing — the descriptor does not weaken either belt.
+    const deps = makeDeps(
+      [
+        procTraj({ trajectoryId: "a", sessionId: "s1", sender: "u1", trustedOrigin: true, sourceTrustExternal: true }, SEQ),
+        procTraj({ trajectoryId: "b", sessionId: "s2", sender: "u2", trustedOrigin: true, sourceTrustExternal: true }, SEQ),
+      ],
+      PROC,
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.selected).toBe(0); // axis 2 excludes the external-trust sources at SELECT
+    expect(res.value.admitted).toBe(0);
+    expect(mocks.admit).not.toHaveBeenCalled();
+    expect(mocks.reflect).not.toHaveBeenCalled();
+  });
+});
+
+// ===========================================================================
+// PROC-05 seam-integrity (SCOPED, not a whole-file diff — plans 03/04 legitimately edit
+// OTHER regions of reflection-job.ts, so a `git diff --stat` is false by wave 5). Assert
+// the anti-poison seam TOKENS are byte-intact verbatim in the SAME-package source: the
+// cardinality fn + the <2 gate. The store's promote proof-bar / demote step seams live in
+// @comis/memory (a different package) and are grepped verbatim in the plan's shell
+// verification (`proof_count + 1 >= ?`, `WHEN state = 'active' THEN 'stale'`).
+// ===========================================================================
+describe("PROC-05 seam-integrity — the anti-poison tokens are byte-intact (scoped verbatim greps)", () => {
+  it("reflection-job.ts still contains distinctSenderCardinality + the `if (cardinality < 2) continue;` <2 gate verbatim", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const url = await import("node:url");
+    const here = path.dirname(url.fileURLToPath(import.meta.url));
+    const src = fs.readFileSync(path.resolve(here, "reflection-job.ts"), "utf-8");
+    // The cardinality metric (N replays of one (session,sender) = 1) — REUSE-verbatim (:296/:314).
+    expect(src).toContain("function distinctSenderCardinality(");
+    // The anti-domination <2 gate — the exact seam text, unchanged (:558/:601).
+    expect(src).toContain("if (cardinality < 2) continue;");
+  });
+});
+
+// ===========================================================================
+// PROC-05 / OQ-3 — the CRON self-corroboration cardinality unit oracle (macOS, no VPS).
+//
+// A self-triggered (cron/heartbeat) pipeline rides ONE constant (sessionId, sender) per
+// agent: agent-heartbeat-source.ts derives `userId:"heartbeat"` + `channelId:
+// "heartbeat-<agentId>"` (constant per agent) and `senderId:"system"` — proven in
+// agent-heartbeat-source.test.ts, and at the daemon READ path in
+// setup-channels-skill-synthesis-deps.test.ts. Fed to the SAME distinctSenderCardinality
+// + <2 gate, N such runs collapse to cardinality 1 → the pipeline can NEVER self-corroborate.
+// That is a DEAD-END (safe), NOT a poison hole — so NO cron-origin exclusion is needed
+// (the empirical OQ-3 verdict: constant sessionId ⇒ dead-end). This is proven against the
+// real gate even when the cron identity is (hypothetically) TRUSTED — the cardinality cap
+// alone stops self-corroboration, independent of the (also-holding) trust belt.
+// ===========================================================================
+describe("runReflection — cron self-corroboration is a cardinality-1 dead-end (OQ-3)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const procGroupKey = (t: ReflectionSourceTrajectory): string => t.procedureDescriptor?.key ?? "";
+
+  /**
+   * A cron-shaped source: the heartbeat identity — a CONSTANT sessionId
+   * (`heartbeat-<agentId>`) + sender `"system"`. `trustedOrigin:true` is the WORST case
+   * (even a trusted cron cannot self-corroborate); in production the unmapped
+   * `"heartbeat"`/`"system"` sender is ALSO deny-on-unknown untrusted (a second belt).
+   */
+  function cronTraj(trajectoryId: string, sequence: readonly string[]): ReflectionSourceTrajectory {
+    return {
+      ...traj({ trajectoryId, sessionId: "heartbeat-agent1", sender: "system", trustedOrigin: true }),
+      procedureDescriptor: { key: sequence.join(">"), sequence },
+    };
+  }
+
+  it("N cron-shaped runs of one procedure (constant (sessionId,sender)) never reach >=2 corroboration → NO admit (dead-end, safe)", async () => {
+    const mocks: Partial<Mocks> = {};
+    const SEQ = ["web_search", "jq"] as const;
+    // 6 trusted cron successes of the SAME procedure, all on the ONE heartbeat identity.
+    const trajectories = Array.from({ length: 6 }, (_, i) => cronTraj(`cron-${i}`, SEQ));
+    const deps = makeDeps(
+      trajectories,
+      { kind: "skill", groupKey: procGroupKey, populateProcedureMetadata: true } as Partial<RunReflectionDeps>,
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    // All 6 SELECT-survive (trusted), group into ONE descriptor topic, but the constant
+    // (sessionId,sender) caps distinctSenderCardinality at 1 → the <2 gate blocks → no admit.
+    expect(res.value.selected).toBe(6);
+    expect(res.value.distinctTopicKeys).toBe(1);
+    expect(res.value.maxTopicCardinality).toBe(1);
+    expect(res.value.admitted).toBe(0);
+    expect(res.value.admissionOutcome).toBe("uncorroborated");
+    expect(mocks.admit).not.toHaveBeenCalled();
+  });
+
+  it("distinctSenderCardinality of a cron-shaped member set is 1 regardless of N (the metric the gate reads)", async () => {
+    // A white-box corollary: the dead-end is a property of the SHARED cardinality metric —
+    // the same `${sessionId} ${sender}` set the <2 gate reads collapses N cron members to 1.
+    const mocks: Partial<Mocks> = {};
+    const SEQ = ["a_tool", "b_tool"] as const;
+    for (const n of [2, 5, 50]) {
+      (mocks.admit as ReturnType<typeof vi.fn> | undefined)?.mockClear?.();
+      const deps = makeDeps(
+        Array.from({ length: n }, (_, i) => cronTraj(`c-${n}-${i}`, SEQ)),
+        { kind: "skill", groupKey: procGroupKey, populateProcedureMetadata: true } as Partial<RunReflectionDeps>,
+        mocks,
+      );
+      const res = await runReflection(deps);
+      expect(res.ok).toBe(true);
+      if (!res.ok) throw new Error("expected ok");
+      expect(res.value.selected).toBe(n);
+      expect(res.value.maxTopicCardinality).toBe(1); // 1 for ANY N — never self-corroborates
+      expect(res.value.admitted).toBe(0);
+    }
   });
 });

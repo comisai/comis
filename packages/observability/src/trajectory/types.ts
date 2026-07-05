@@ -188,6 +188,16 @@ export const TRAJECTORY_EVENT_TYPES = [
   // `explain` can name a reaper-killed autonomous drive.
   "terminal.session_evicted",
 
+  // A completed `orchestrate` run's content-free per-run summary — the reserved
+  // trajectory type for the orchestrate:run_summary event. Emitted from the
+  // orchestrate TOOL (packages/skills, which the trajectory-event arch test does
+  // NOT scan — the terminal.drive_promoted precedent), so the bridge mapping is
+  // what records it. Content-free: ids + the closed failureClass enum + counts +
+  // token ESTIMATES ONLY — never the stderr tail, script body, or tool params.
+  // The `orchestrate` IncidentReport section + the fleet efficiency finding read
+  // this record.
+  "orchestrate.run_summary",
+
   // Delivery queue lifecycle.
   "delivery.queued",
   "delivery.dispatched",

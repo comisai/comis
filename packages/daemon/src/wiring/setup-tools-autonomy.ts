@@ -28,13 +28,16 @@ import {
   degradeAutonomy,
   systemNowMs,
   formatSessionKey,
+  type ApprovalGate,
   type ComisLogger,
   type PerAgentConfig,
   type SessionKey,
+  type TypedEventBus,
 } from "@comis/core";
 import type { PlatformToolProvider } from "@comis/skills";
-import type { SandboxProvider } from "@comis/skills/tools";
+import type { OrchestrateDurableRuns, SandboxProvider } from "@comis/skills/tools";
 import { createOrchestrateTool, createResultRefStore } from "@comis/skills/tools";
+import type { CapabilityClass, OrchestrateRepairSeam } from "@comis/agent";
 
 /** The daemon tool-assembly array element type (an `AgentTool`), derived via skills
  *  (mirrors setup-context-tools.ts / setup-terminal-tools.ts) so this file does not
@@ -87,6 +90,48 @@ export interface AutonomyToolInputs {
   readonly logger: ComisLogger;
   /** The filtered inherited env the runner scrubs; the lease vars ride placeholders. */
   readonly baseEnv: Record<string, string | undefined> | undefined;
+  /**
+   * The assembly event bus. Threaded into the orchestrate runner so each run
+   * emits a content-free `orchestrate:run_summary` from the TOOL (where this bus
+   * reaches the live per-session trajectory bridge — NOT a daemon graph handler).
+   * Absent ⇒ the runner does not emit (no regression to the older wiring).
+   */
+  readonly eventBus?: TypedEventBus;
+  /**
+   * The approval gate, threaded into the orchestrate runner's static pre-flight:
+   * when present, a run fires ONE approval on its whole capability footprint before
+   * spawn. Present ONLY when `config.approvals.enabled` (the daemon threads it from the
+   * same `deps.approvalGate` exec uses) — so seam-presence IS "approvals configured".
+   * Absent ⇒ no approval fire (no regression to older wiring).
+   */
+  readonly approvalGate?: ApprovalGate;
+  /**
+   * The resolved effective capability class (operator override → provider-family →
+   * the `small` fail-safe), threaded from setup-tools. The orchestrate runner's
+   * one-shot auto-repair is class-gated off it — ON for weaker models (small/nano),
+   * OFF for stronger (frontier/mid). No config toggle: the class is the sole control.
+   * Absent ⇒ the runner treats it as the fail-safe class where consumed.
+   */
+  readonly capabilityClass?: CapabilityClass;
+  /**
+   * The daemon-minted one-shot repair closure, resolved per agent by
+   * `buildOrchestrateRepairResolver` ONLY when the class is repair-eligible AND a
+   * utility model resolves. Threaded into the orchestrate runner (like {@link mintRunLease})
+   * so a recoverable failed script gets ONE utility-model re-prompt + one re-run.
+   * Absent ⇒ no repair (frontier/mid, or no resolvable utility model).
+   */
+  readonly repairSeam?: OrchestrateRepairSeam;
+  /**
+   * The durable-run store port. The composition root threads it whenever the
+   * durable-resume subsystem is constructed (i.e. durability is enabled for some
+   * agent); this wiring forwards it into the orchestrate runner ONLY when THIS
+   * agent's `autonomy.durability.orchestrateResume` is on (the surface gate,
+   * resolved below off the same config path as the capability-endpoint's
+   * `orchestrateResumeEnabled` predicate). Forwarded ⇒ the runner registers a
+   * resumable row + honors `resumeRunId` + skips cleanupRun on a timeout. Off /
+   * absent ⇒ no durable row, normal cleanup (byte-identical to a non-resumable run).
+   */
+  readonly durableRuns?: OrchestrateDurableRuns;
 }
 
 /** The wiring {@link buildAutonomyToolWiring} returns: the minted env + the orchestrate tool. */
@@ -123,6 +168,14 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
   const resolved = degradeAutonomy(resolveAutonomy(input.agentConfig?.autonomy), {
     namespacePreflightOk: input.namespacePreflightOk ?? true,
   }).resolved;
+  // The resume surface gate (default-OFF, deny-by-absence): the durable-run store
+  // is forwarded into the runner ONLY when THIS agent has opted into resumable
+  // orchestrate runs. Reads the SAME config path as the capability endpoint's
+  // orchestrateResumeEnabled predicate (`=== true` so an absent/typo'd durability
+  // block resolves OFF) — so a store the composition root always threads under a
+  // durability-enabled boot goes live in the runner only for an opted-in agent.
+  const orchestrateResumeOn =
+    input.agentConfig?.autonomy?.durability?.orchestrateResume === true;
   const handle = input.capEndpointHandle;
   // Tree-stable rootRunId: INHERIT the caller's
   // id when this assembly is a sub-agent (so the whole tree shares one id the
@@ -131,6 +184,12 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
   // caller id (the tree root). Uses systemNowMs (the sanctioned-root time helper).
   const rootRunId =
     input.callerRootRunId ?? `root-${input.agentId}-${systemNowMs().toString(36)}`;
+  // Extract the budget/session refs ONCE so the assembly capMint AND the per-run
+  // child-lease seam mint against the SAME accounting refs — a child that drifted
+  // onto a different budgetRef/sessionKey would mis-attribute spend and break the
+  // audience-bound sessionKey correlation. budgetRef is a per-assembly id.
+  const budgetRef = `run-${input.agentId}-${systemNowMs().toString(36)}`;
+  const sessionKey = input.sessionKey ? formatSessionKey(input.sessionKey) : input.agentId;
   const capMint: CapabilityMintDeps | undefined =
     handle && resolved.enabled
       ? {
@@ -138,9 +197,8 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
           outputGuard: handle.outputGuard,
           capSocketPath: handle.capSocketPath,
           resolvedCaps: resolved.capabilities,
-          // budgetRef is the budget-accounting seam; a per-assembly id.
-          budgetRef: `run-${input.agentId}-${systemNowMs().toString(36)}`,
-          sessionKey: input.sessionKey ? formatSessionKey(input.sessionKey) : input.agentId,
+          budgetRef,
+          sessionKey,
           rootRunId,
           // Anchor the tree root in the bounded-autonomy service right after the
           // mint (the per-root budget wall-clock + the rootRunId↔leaseId index).
@@ -150,6 +208,51 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
       : undefined;
   const brokerSpawnEnv = buildBrokerSpawnEnv(input.brokerContext, input.agentId, capMint);
 
+  // The per-run child-lease mint seam (D5, EXPLAIN-01) — the correlation
+  // keystone. A closure the runner calls ONCE per orchestrate run to mint a
+  // short-TTL CHILD lease off the assembly lease: same caps + SAME rootRunId
+  // (tree accounting untouched — registerRoot is NOT called, so the per-root
+  // budget/semaphore/kill stays keyed on the single registered assembly lease,
+  // INV-7), parentLeaseId = the assembly leaseId, and a TTL the RUNNER sizes and
+  // passes in (ttlMs === maxTtlMs === the runner-passed ttlMs): the run timeout,
+  // or the run timeout + the one-shot-repair budget when auto-repair is enabled,
+  // so the single lease outlives the repair-completion await into the repaired
+  // re-run. The child bearer is registered in OutputGuard at mint
+  // (Pitfall 1 — never logged) BEFORE it leaves the closure. revokeByRootRun still
+  // reaches the child (it scans by the inherited rootRunId), so kill is preserved.
+  // Built ONLY when an assembly lease exists (brokerSpawnEnv.leaseId present);
+  // otherwise undefined → the runner falls back to the assembly bearer (the
+  // older/non-autonomy path — never an unauthenticated run). A plain closure so
+  // @comis/skills never imports the LeaseManager: the mint is daemon-side, the
+  // runner only receives the bearer.
+  const assemblyLeaseId = brokerSpawnEnv?.leaseId;
+  const mintRunLease:
+    | ((runId: string, ttlMs: number) => { leaseId: string; bearer: string })
+    | undefined =
+    handle && resolved.enabled && assemblyLeaseId !== undefined
+      ? (runId, ttlMs) => {
+          // runId is the runner's correlator; the child lease minted here is
+          // correlated by its OWN fresh leaseId + the inherited rootRunId.
+          const issued = handle.leaseManager.mintLease({
+            agentId: input.agentId,
+            caps: resolved.capabilities,
+            budgetRef,
+            sessionKey,
+            rootRunId,
+            parentLeaseId: assemblyLeaseId,
+            ttlMs,
+            maxTtlMs: ttlMs,
+          });
+          // Register the child bearer BEFORE it leaves the closure (Pitfall 1 —
+          // a NEW bearer that is not registered can leak via a log/model echo).
+          handle.outputGuard.registerSecret(issued.bearer);
+          // Intentionally NO boundedAutonomy.registerRoot for the child (D5) —
+          // the child inherits the assembly's rootRunId, so tree accounting is
+          // untouched (INV-7); revokeByRootRun still reaches it.
+          return { leaseId: issued.leaseId, bearer: issued.bearer };
+        }
+      : undefined;
+
   const orchestrateTool: AgentTool | undefined =
     handle && resolved.enabled && input.sandboxProvider
       ? (createOrchestrateTool({
@@ -158,8 +261,39 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
           capSocketPath: handle.capSocketPath,
           sandbox: input.sandboxProvider,
           brokerSpawnEnv, // the SAME minted COMIS_CAP_LEASE/COMIS_ORCH_SOCKET
+          mintRunLease, // per-run child bearer overrides the assembly bearer (D5)
           store: createResultRefStore({ logger: input.logger }),
           baseEnv: input.baseEnv ?? {},
+          // The static pre-flight's held-cap set: the SAME resolved.capabilities the
+          // assembly/child leases are minted with — the advisory pre-spawn cap
+          // fail-fast keys on it (the cap-socket endpoint stays the authoritative
+          // gate). No drift by construction.
+          allowedCaps: resolved.capabilities,
+          // The approval gate — threaded ONLY when the daemon wired one
+          // (config.approvals.enabled), mirroring the eventBus conditional-spread.
+          // Absent ⇒ the runner fires no approval.
+          ...(input.approvalGate !== undefined ? { approvalGate: input.approvalGate } : {}),
+          // The run_summary emit channel + the self-attribution keys (the
+          // daemon-shared bus fans out to every session bridge — the payload
+          // carries rootRunId + sessionKey so it lands on the right report).
+          ...(input.eventBus !== undefined ? { eventBus: input.eventBus } : {}),
+          // The one-shot auto-repair class-gate + the daemon-minted repair closure
+          // — conditional-spread like eventBus. capabilityClass gates the runner's
+          // repair branch (a pure class-gate off the model profile; no config
+          // toggle); repairSeam is the injected one-attempt completion. Both absent
+          // for a stronger model / an unresolvable utility model ⇒ the runner does
+          // not repair (no regression to older wiring).
+          ...(input.capabilityClass !== undefined ? { capabilityClass: input.capabilityClass } : {}),
+          ...(input.repairSeam !== undefined ? { repairSeam: input.repairSeam } : {}),
+          // The durable-run store — forwarded ONLY when the resume surface is on
+          // for this agent (orchestrateResumeOn gates the store the composition
+          // root always threads), making the runner resumable. Off ⇒ omitted → the
+          // runner writes no durable row + cleans normally (default-off byte-identity).
+          ...(input.durableRuns !== undefined && orchestrateResumeOn
+            ? { durableRuns: input.durableRuns }
+            : {}),
+          rootRunId,
+          sessionKey,
         }) as unknown as AgentTool)
       : undefined;
 

@@ -62,6 +62,32 @@ const SECURITY_FOR: Readonly<Record<CapabilityClass, SecurityLevel>> = {
   nano: "locked",
 } as const;
 
+/**
+ * Auto-repair policy per capability class: ON for the weaker models
+ * (small/nano), OFF for the stronger ones (frontier/mid). A weak model that
+ * emits a broken orchestration script benefits from ONE corrective utility-model
+ * re-prompt; a strong model rarely needs it and the re-prompt would only burn
+ * tokens. The `Record<CapabilityClass, boolean>` typing is exhaustive by
+ * construction — a new class member fails the build until it is classified here
+ * (the no-silent-default guard, matching SCAFFOLD_FOR/SECURITY_FOR).
+ */
+const AUTOREPAIR_FOR: Readonly<Record<CapabilityClass, boolean>> = {
+  frontier: false,
+  mid: false,
+  small: true,
+  nano: true,
+} as const;
+
+/**
+ * Whether one-shot auto-repair is enabled for a capability class (the pure
+ * policy the orchestrate runner consults before firing the repair seam). The
+ * runner passes `deps.capabilityClass ?? "small"` so an unresolved class
+ * fail-safes to repair-ON, matching the platform's fail-closed direction.
+ */
+export function autoRepairForClass(cls: CapabilityClass): boolean {
+  return AUTOREPAIR_FOR[cls];
+}
+
 // ---------------------------------------------------------------------------
 // Fail-closed constant (unknown/unresolved model → most-locked profile)
 // ---------------------------------------------------------------------------

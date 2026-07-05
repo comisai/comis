@@ -72,6 +72,13 @@ import { createSubagentHandlers } from "./subagent-handlers.js";
 // in the handler). They drive the LeaseManager revoke fan-outs + the runner's
 // killByRootRun.
 import { createAutonomyHandlers } from "./autonomy-handlers.js";
+// orchestrate.replay — the operator deterministic-replay RPC.
+// scopes:["admin"] → ADMIN_METHODS → deny-by-origin is automatic via the
+// chokepoint below (no manual _agentId check in the handler). The thin RPC slice
+// delegates to wiring/setup-orchestrate-replay.ts (the SEPARATE replay socket +
+// pinned-byte re-spawn, never a mode of the production endpoint — INV-1). Gated
+// on the composition root wiring the replay cluster + a durable store.
+import { createOrchestrateReplayHandlers } from "./orchestrate-replay-handlers.js";
 // capabilities.introspect — the read-only,
 // agent-reachable `comis whoami` surface. scopes:["rpc"] + "ungated" (NO
 // requireCapability, NOT in ADMIN_METHODS), self-scoped to the caller's
@@ -265,6 +272,30 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
           // emits nothing → the revoke/kill counts are silently zero.
           eventBus: deps.container.eventBus,
           now: systemNowMs,
+        })
+      : {}),
+    // orchestrate.replay — the operator deterministic-replay RPC. Gated on the
+    // composition root wiring the replay cluster (the daemon-wide OutputGuard +
+    // the sandbox-backed pinned-byte re-spawn seam) AND a durable store (the
+    // runId → real orchestrate row validation). scopes:["admin"] → the
+    // deny-by-origin chokepoint below rejects any agent origin (INV-3); the
+    // handler starts a SEPARATE replay socket + points COMIS_ORCH_SOCKET at it
+    // (never the production endpoint — INV-1). Absent wiring ⇒ not registered
+    // (a stray call hits the dispatcher's unknown-method path).
+    ...(deps.orchestrateReplay && deps.durableRuns
+      ? createOrchestrateReplayHandlers({
+          durableRuns: deps.durableRuns,
+          // The run's jailed workspace (the replay socket reads its
+          // results/replay.jsonl). Single-agent default resolver; the
+          // run→workspace mapping refines at the composition root for the
+          // multi-agent drive.
+          resolveWorkspace: () => deps.defaultWorkspaceDir,
+          outputGuard: deps.orchestrateReplay.outputGuard,
+          respawn: deps.orchestrateReplay.respawn,
+          ...(deps.orchestrateReplay.createReplaySocket
+            ? { createReplaySocket: deps.orchestrateReplay.createReplaySocket }
+            : {}),
+          logger: deps.logger,
         })
       : {}),
     // capabilities.introspect (the `comis whoami` read). The remaining-budget

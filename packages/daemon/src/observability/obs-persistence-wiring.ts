@@ -632,6 +632,44 @@ export function pipelineAuthoredEventToRow(
   };
 }
 
+/**
+ * Map an `orchestrate:run_summary` event to a `health_signal`
+ * diagnostic row. A new `signal:"orchestrate_efficiency"` label rides the
+ * EXISTING `health_signal` category (NO schema migration) — the fleet lens's
+ * daemon-wide, content-free measured-savings number. `details` is counts + token
+ * ESTIMATES + the closed `failureClass` enum ONLY (estSavedTokens / savedRatio /
+ * resultRefCount / failureClass) — NEVER the runId, the raw stdout, the
+ * resultRefBytes body, or the stderr tail (§2.7; the tail stays on the bounded
+ * tool-error surface). `sessionKey` rides the ROW as the correlation key (the
+ * event payload carries it even though the trajectory translator strips it from
+ * the trajectory `data`); the payload has no agentId so the row omits it.
+ *
+ * severity is ALWAYS info: a completed run — success OR a classified failure — is
+ * standing efficiency signal, not a fleet degrade, so it does not inflate the
+ * degrade count (the BENIGN_DAG_DEGRADED_REASONS discipline). The dedicated fleet
+ * finding rolls the run count + the summed estimate; the failureClass is surfaced
+ * only as a degraded-run count.
+ */
+export function orchestrateRunSummaryEventToRow(
+  payload: EventMap["orchestrate:run_summary"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "info",
+    sessionKey: payload.sessionKey,
+    message: "orchestrate:run_summary",
+    details: JSON.stringify({
+      signal: "orchestrate_efficiency",
+      failureClass: payload.failureClass,
+      estSavedTokens: payload.estSavedTokens,
+      savedRatio: payload.savedRatio,
+      resultRefCount: payload.resultRefCount,
+    }),
+    traceId: undefined,
+  };
+}
+
 // The three sub-agent-lifecycle
 // row-builders (sandbox-downgrade refusal / dead-lettered delivery / per-node budget
 // breach → content-free health_signal rows) are imported from obs-orchestration-rows.ts
@@ -882,6 +920,14 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   // the fleet lens rolls the small-tier invalid rate into a dedicated finding.
   eventBus.on("pipeline:authored", (payload) => {
     diagnosticBuffer.push(pipelineAuthoredEventToRow(payload));
+  });
+  // The orchestrate run-summary efficiency signal → health_signal row
+  // (same diagnosticBuffer, NO migration). Fires once per completed orchestrate
+  // run; the fleet lens rolls the run count + the summed measured token-savings
+  // estimate into a dedicated finding. Content-free (counts + estimates + the
+  // closed failureClass only — never the runId, the stdout, or the stderr tail).
+  eventBus.on("orchestrate:run_summary", (payload) => {
+    diagnosticBuffer.push(orchestrateRunSummaryEventToRow(payload));
   });
   // The three daemon-side
   // orchestration signals → health_signal rows (same diagnosticBuffer, NO migration).

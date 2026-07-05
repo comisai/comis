@@ -82,10 +82,15 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
       "durability": {
         "enabled": false,
         "keepAliveMs": 30000,
+        "orchestrateResume": false,
         "recoveryBudgetMs": 30000,
         "staleHeartbeatMs": 120000
       },
       "evictOnPolicyUnreachable": true,
+      "mcp": {
+        "allow": {},
+        "enabled": false
+      },
       "message": {
         "channels": [
           "origin"
@@ -182,6 +187,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "default": {
       "enabled": false,
       "keepAliveMs": 30000,
+      "orchestrateResume": false,
       "recoveryBudgetMs": 30000,
       "staleHeartbeatMs": 120000
     },
@@ -200,6 +206,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.autonomy.durability.keepAliveMs",
     "type": "integer"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "agents.autonomy.durability.orchestrateResume",
+    "type": "boolean"
   },
   {
     "default": 30000,
@@ -243,6 +255,27 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.autonomy.maxSelfSpawnRatePerMin",
     "type": "integer"
+  },
+  {
+    "default": {
+      "allow": {},
+      "enabled": false
+    },
+    "immutable": true,
+    "path": "agents.autonomy.mcp",
+    "type": "object"
+  },
+  {
+    "default": {},
+    "immutable": true,
+    "path": "agents.autonomy.mcp.allow",
+    "type": "object"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "agents.autonomy.mcp.enabled",
+    "type": "boolean"
   },
   {
     "default": {
@@ -1252,6 +1285,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
       },
       "reflect": {
         "maxDocsPerRun": 100,
+        "maxProcedureDocsSurfaced": 10,
         "minConfidence": 0.6,
         "promoteAtProofCount": 3,
         "schedule": "0 */3 * * *"
@@ -1298,6 +1332,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   {
     "default": {
       "maxDocsPerRun": 100,
+      "maxProcedureDocsSurfaced": 10,
       "minConfidence": 0.6,
       "promoteAtProofCount": 3,
       "schedule": "0 */3 * * *"
@@ -1310,6 +1345,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "default": 100,
     "immutable": true,
     "path": "agents.learning.reflect.maxDocsPerRun",
+    "type": "integer"
+  },
+  {
+    "default": 10,
+    "immutable": true,
+    "path": "agents.learning.reflect.maxProcedureDocsSurfaced",
     "type": "integer"
   },
   {
@@ -8401,10 +8442,15 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "durability": {
             "enabled": false,
             "keepAliveMs": 30000,
+            "orchestrateResume": false,
             "recoveryBudgetMs": 30000,
             "staleHeartbeatMs": 120000
           },
           "evictOnPolicyUnreachable": true,
+          "mcp": {
+            "allow": {},
+            "enabled": false
+          },
           "message": {
             "channels": [
               "origin"
@@ -8489,6 +8535,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           },
           "reflect": {
             "maxDocsPerRun": 100,
+            "maxProcedureDocsSurfaced": 10,
             "minConfidence": 0.6,
             "promoteAtProofCount": 3,
             "schedule": "0 */3 * * *"
@@ -16067,10 +16114,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "durability": {
           "enabled": false,
           "keepAliveMs": 30000,
+          "orchestrateResume": false,
           "recoveryBudgetMs": 30000,
           "staleHeartbeatMs": 120000
         },
         "evictOnPolicyUnreachable": true,
+        "mcp": {
+          "allow": {},
+          "enabled": false
+        },
         "message": {
           "channels": [
             "origin"
@@ -16151,7 +16203,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
               "orch:web",
               "orch:analyze",
               "orch:write",
-              "orch:browse"
+              "orch:browse",
+              "orch:mcp"
             ],
             "type": "string"
           },
@@ -16176,6 +16229,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "default": {
             "enabled": false,
             "keepAliveMs": 30000,
+            "orchestrateResume": false,
             "recoveryBudgetMs": 30000,
             "staleHeartbeatMs": 120000
           },
@@ -16189,6 +16243,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
               "exclusiveMinimum": 0,
               "maximum": 9007199254740991,
               "type": "integer"
+            },
+            "orchestrateResume": {
+              "default": false,
+              "type": "boolean"
             },
             "recoveryBudgetMs": {
               "default": 30000,
@@ -16207,7 +16265,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "enabled",
             "staleHeartbeatMs",
             "keepAliveMs",
-            "recoveryBudgetMs"
+            "recoveryBudgetMs",
+            "orchestrateResume"
           ],
           "type": "object"
         },
@@ -16238,6 +16297,54 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991,
           "type": "integer"
+        },
+        "mcp": {
+          "additionalProperties": false,
+          "default": {
+            "allow": {},
+            "enabled": false
+          },
+          "properties": {
+            "allow": {
+              "additionalProperties": {
+                "additionalProperties": false,
+                "properties": {
+                  "classification": {
+                    "enum": [
+                      "safe",
+                      "permission-gated"
+                    ],
+                    "type": "string"
+                  },
+                  "tools": {
+                    "default": [],
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "tools"
+                ],
+                "type": "object"
+              },
+              "default": {},
+              "propertyNames": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "enabled": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "enabled",
+            "allow"
+          ],
+          "type": "object"
         },
         "message": {
           "additionalProperties": false,
@@ -16418,7 +16525,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "rate",
         "spawn",
         "outward",
-        "durability"
+        "durability",
+        "mcp"
       ],
       "type": "object"
     },
@@ -17525,6 +17633,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         },
         "reflect": {
           "maxDocsPerRun": 100,
+          "maxProcedureDocsSurfaced": 10,
           "minConfidence": 0.6,
           "promoteAtProofCount": 3,
           "schedule": "0 */3 * * *"
@@ -17573,6 +17682,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "additionalProperties": false,
           "default": {
             "maxDocsPerRun": 100,
+            "maxProcedureDocsSurfaced": 10,
             "minConfidence": 0.6,
             "promoteAtProofCount": 3,
             "schedule": "0 */3 * * *"
@@ -17580,6 +17690,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "properties": {
             "maxDocsPerRun": {
               "default": 100,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "maxProcedureDocsSurfaced": {
+              "default": 10,
               "exclusiveMinimum": 0,
               "maximum": 9007199254740991,
               "type": "integer"
@@ -17605,7 +17721,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "schedule",
             "minConfidence",
             "promoteAtProofCount",
-            "maxDocsPerRun"
+            "maxDocsPerRun",
+            "maxProcedureDocsSurfaced"
           ],
           "type": "object"
         }
@@ -27161,10 +27278,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "durability": {
                 "enabled": false,
                 "keepAliveMs": 30000,
+                "orchestrateResume": false,
                 "recoveryBudgetMs": 30000,
                 "staleHeartbeatMs": 120000
               },
               "evictOnPolicyUnreachable": true,
+              "mcp": {
+                "allow": {},
+                "enabled": false
+              },
               "message": {
                 "channels": [
                   "origin"
@@ -27245,7 +27367,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                     "orch:web",
                     "orch:analyze",
                     "orch:write",
-                    "orch:browse"
+                    "orch:browse",
+                    "orch:mcp"
                   ],
                   "type": "string"
                 },
@@ -27270,6 +27393,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "default": {
                   "enabled": false,
                   "keepAliveMs": 30000,
+                  "orchestrateResume": false,
                   "recoveryBudgetMs": 30000,
                   "staleHeartbeatMs": 120000
                 },
@@ -27283,6 +27407,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991,
                     "type": "integer"
+                  },
+                  "orchestrateResume": {
+                    "default": false,
+                    "type": "boolean"
                   },
                   "recoveryBudgetMs": {
                     "default": 30000,
@@ -27301,7 +27429,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "enabled",
                   "staleHeartbeatMs",
                   "keepAliveMs",
-                  "recoveryBudgetMs"
+                  "recoveryBudgetMs",
+                  "orchestrateResume"
                 ],
                 "type": "object"
               },
@@ -27332,6 +27461,54 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "exclusiveMinimum": 0,
                 "maximum": 9007199254740991,
                 "type": "integer"
+              },
+              "mcp": {
+                "additionalProperties": false,
+                "default": {
+                  "allow": {},
+                  "enabled": false
+                },
+                "properties": {
+                  "allow": {
+                    "additionalProperties": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "classification": {
+                          "enum": [
+                            "safe",
+                            "permission-gated"
+                          ],
+                          "type": "string"
+                        },
+                        "tools": {
+                          "default": [],
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "tools"
+                      ],
+                      "type": "object"
+                    },
+                    "default": {},
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "enabled": {
+                    "default": false,
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "enabled",
+                  "allow"
+                ],
+                "type": "object"
               },
               "message": {
                 "additionalProperties": false,
@@ -27512,7 +27689,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "rate",
               "spawn",
               "outward",
-              "durability"
+              "durability",
+              "mcp"
             ],
             "type": "object"
           },
@@ -28619,6 +28797,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               },
               "reflect": {
                 "maxDocsPerRun": 100,
+                "maxProcedureDocsSurfaced": 10,
                 "minConfidence": 0.6,
                 "promoteAtProofCount": 3,
                 "schedule": "0 */3 * * *"
@@ -28667,6 +28846,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "additionalProperties": false,
                 "default": {
                   "maxDocsPerRun": 100,
+                  "maxProcedureDocsSurfaced": 10,
                   "minConfidence": 0.6,
                   "promoteAtProofCount": 3,
                   "schedule": "0 */3 * * *"
@@ -28674,6 +28854,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "properties": {
                   "maxDocsPerRun": {
                     "default": 100,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "maxProcedureDocsSurfaced": {
+                    "default": 10,
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991,
                     "type": "integer"
@@ -28699,7 +28885,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "schedule",
                   "minConfidence",
                   "promoteAtProofCount",
-                  "maxDocsPerRun"
+                  "maxDocsPerRun",
+                  "maxProcedureDocsSurfaced"
                 ],
                 "type": "object"
               }
@@ -31473,10 +31660,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "durability": {
               "enabled": false,
               "keepAliveMs": 30000,
+              "orchestrateResume": false,
               "recoveryBudgetMs": 30000,
               "staleHeartbeatMs": 120000
             },
             "evictOnPolicyUnreachable": true,
+            "mcp": {
+              "allow": {},
+              "enabled": false
+            },
             "message": {
               "channels": [
                 "origin"
@@ -31561,6 +31753,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             },
             "reflect": {
               "maxDocsPerRun": 100,
+              "maxProcedureDocsSurfaced": 10,
               "minConfidence": 0.6,
               "promoteAtProofCount": 3,
               "schedule": "0 */3 * * *"

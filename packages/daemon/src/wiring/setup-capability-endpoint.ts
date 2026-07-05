@@ -36,7 +36,8 @@
  */
 
 import net from "node:net";
-import { chmodSync, unlinkSync } from "node:fs";
+import { chmodSync, unlinkSync, appendFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import {
   SUB_AGENT_TOOL_DENYLIST,
   stripInternalFields,
@@ -45,9 +46,11 @@ import {
   HANDLER_CAPABILITY_MAP,
   requireCapability,
   CapabilityDeniedError,
+  safePath,
   type ResolvedAutonomy,
   type DurableRunPort,
 } from "@comis/core";
+import { stableStringify } from "@comis/observability";
 import type { LeaseManager, LeaseInfo, ComisLogger } from "@comis/infra";
 import type { RpcCall } from "@comis/skills/platform-tools";
 import type { ExecuteToolInvoke } from "./setup-tool-invoke-executor.js";
@@ -176,6 +179,16 @@ export const DENYLISTED_RPC_METHODS: Readonly<Record<string, string>> = {
   "heartbeat.states": "heartbeat_manage",
   "heartbeat.trigger": "heartbeat_manage",
   "heartbeat.update": "heartbeat_manage",
+  // mcp_manage (connect/disconnect/reconnect -> MCP server config persistence -> SIGUSR2)
+  // + mcp_login (oauth_login -> control-plane credential flow). DEFENSE-IN-DEPTH: the
+  // control plane is already unreachable BY ABSENCE from TOOL_CAPABILITY_MAP + the lease
+  // audience (the authoritative gate, arch-test-pinned); this pre-check denies the
+  // methods BEFORE validate as belt-and-suspenders so a future cap-map edit can never
+  // accidentally expose mcp.connect / mcp.oauth_login.
+  "mcp.connect": "mcp_manage",
+  "mcp.disconnect": "mcp_manage",
+  "mcp.reconnect": "mcp_manage",
+  "mcp.oauth_login": "mcp_login",
 };
 
 // Soundness: every mapped tool name must be a member of the shipped denylist,
@@ -258,6 +271,16 @@ export interface CapabilityEndpointDeps {
    *  outward-send wrap reads distinct `(rootRunId, stepIndex)` per send. Optional; absent ⇒
    *  no index injected → the wrap is a pass-through (no exactly-once ledger). */
   durableRuns?: DurableRunPort;
+  /**
+   * The content-free replay recorder (REPLAY-01). After a SUCCESSFUL dispatch the
+   * chokepoint hands it `(lease, method, wireParams, result)` → it appends ONE
+   * `{seq, method, paramsDigest} → pointer` line to the run's `results/replay.jsonl`
+   * (digests + pointers ONLY — INV-5). Optional + default-OFF: absent ⇒ NOTHING is
+   * recorded (the deny-matrix tests + every run without orchestrateResume are
+   * byte-identical to today); the recorder is ALSO gated per-run. Never alters the
+   * dispatch it observes.
+   */
+  replayRecorder?: ReplayRecorder;
 }
 
 /** The minimal wire payload the jailed SDK sends over the cap socket. */
@@ -282,6 +305,160 @@ export interface CapabilityEndpoint {
   startSocket(socketPath: string): Promise<void>;
   /** Stop the socket server and unlink the socket file. Idempotent. */
   stopSocket(): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
+// REPLAY-01 — the content-free replay recorder (records what a re-run replays).
+// ---------------------------------------------------------------------------
+
+/** The fixed subdir + basename of the run's content-free replay log (under the
+ *  jailed workspace's `results/`, mirroring the ResultRef store). */
+const REPLAY_RESULTS_DIR = "results";
+const REPLAY_LOG_NAME = "replay.jsonl";
+
+/**
+ * The content-free params digest BOTH the recorder and the separate replay socket
+ * key on: the platform sha256 (never hand-rolled — V6) over the CANONICAL
+ * (sorted-key) serialization of the params. Exported so `orchestrate-replay-socket.ts`
+ * digests the re-spawned script's params IDENTICALLY — the in-order match is only
+ * sound if both sides hash the same bytes. Keyed on the ORIGINAL wire params (what
+ * the jailed script sent), never the stripped/injected ones.
+ */
+export function replayParamsDigest(params: Record<string, unknown>): string {
+  return createHash("sha256").update(stableStringify(params)).digest("hex");
+}
+
+/** One content-free line per successful call: `seq` = per-root dispatch order;
+ *  `paramsDigest` = sha256(canonical(params)); `result` = a `ResultRef.ref` POINTER
+ *  — digests + pointers ONLY, NEVER raw params or the body (INV-5). */
+interface ReplayLine {
+  seq: number;
+  method: string;
+  paramsDigest: string;
+  result: string;
+}
+
+/**
+ * The minimal materialize seam the recorder writes each result through — a
+ * structural subset of `ResultRefStore.materialize` bound to a fixed tool name.
+ * Returns the pointer (`ResultRef.ref`), a content-free `{error}` on over-cap refuse,
+ * or `undefined` on a failed write. The boot layer binds it to the real result-ref
+ * store, so recorded bytes live in the jailed `results/` under the same caps/TTL/GC.
+ */
+export type ReplayResultMaterialize = (
+  payload: string,
+  ctx: { workspacePath: string; runId: string; nowMs: number; ttlMs?: number },
+) => Promise<{ ref: string } | { error: string } | undefined>;
+
+/** Deps for {@link createReplayRecorder}. */
+export interface ReplayRecorderDeps {
+  /** Default-OFF per-run gate: record ONLY when `autonomy.durability.orchestrateResume`
+   *  is on for the lease's agent (the plan-02 predicate). Absent/false ⇒ a full no-op. */
+  isEnabled: (agentId: string) => boolean;
+  /** Resolve the agent's jailed workspace — where `results/replay.jsonl` + the pointer
+   *  files live (the SAME resolver the tool-invoke executor + checkpoint use). */
+  resolveWorkspace: (agentId: string) => string;
+  /** Materialize each recorded result to a workspace-confined pointer (the ResultRef
+   *  contained-write) — never inline the body, even for small results (A3). */
+  materialize: ReplayResultMaterialize;
+  /** Injected wall clock (§2.8) — no ambient-clock read. */
+  nowMs: () => number;
+  /** TTL (ms) for the recorded-result pointer files; absent ⇒ the store default. The
+   *  boot layer passes a checkpoint-length TTL so a resumable run stays replayable. */
+  ttlMs?: number;
+  /** Boundary logger — a materialize/append failure WARNs with the canonical fields. */
+  logger?: ComisLogger;
+}
+
+/** Records each side-effecting cap-socket call to a content-free `replay.jsonl`. */
+export interface ReplayRecorder {
+  /** Append ONE content-free `{seq, method, paramsDigest} → pointer` line for a
+   *  SUCCESSFUL dispatch. A no-op when recording is off for the run. Best-effort: a
+   *  materialize refuse / append failure WARNs and returns — recording MUST NEVER
+   *  break the live dispatch it observes. */
+  record(
+    lease: LeaseInfo,
+    method: string,
+    params: Record<string, unknown>,
+    result: unknown,
+  ): Promise<void>;
+}
+
+/** Build the content-free replay recorder over the injected gate + workspace resolver
+ *  + materialize seam. Keeps a monotonic per-`rootRunId` seq (dispatch order — the
+ *  recorded order the separate replay socket serves back). */
+export function createReplayRecorder(deps: ReplayRecorderDeps): ReplayRecorder {
+  const log = deps.logger?.child({ submodule: "replay-recorder" });
+  const seqByRoot = new Map<string, number>();
+
+  function nextSeq(rootRunId: string): number {
+    const n = seqByRoot.get(rootRunId) ?? 0;
+    seqByRoot.set(rootRunId, n + 1);
+    return n;
+  }
+
+  async function record(
+    lease: LeaseInfo,
+    method: string,
+    params: Record<string, unknown>,
+    result: unknown,
+  ): Promise<void> {
+    if (!deps.isEnabled(lease.agentId)) return; // default-off — inert unless on for the run.
+
+    // Materialize EVERY result (even a small inline one) to an on-disk pointer so
+    // byte-identical replay works while the log stays content-free (A3) — never inline.
+    const payload = JSON.stringify(result ?? null) ?? "null";
+    const workspacePath = deps.resolveWorkspace(lease.agentId);
+    const materialized = await deps.materialize(payload, {
+      workspacePath,
+      runId: lease.rootRunId,
+      nowMs: deps.nowMs(),
+      ...(deps.ttlMs !== undefined ? { ttlMs: deps.ttlMs } : {}),
+    });
+    if (materialized === undefined || !("ref" in materialized)) {
+      // Over-cap refuse / failed write — do NOT append a line pointing at a blob
+      // that isn't there (that would be a replay divergence). Honest-degrade.
+      log?.warn(
+        {
+          submodule: "replay-recorder",
+          method,
+          errorKind: "resource" as const,
+          hint: "replay result could not be materialized (over-cap or write failure) — this call is not recorded; a later replay would diverge here",
+        },
+        "Replay recorder: result not materialized (skipping the line)",
+      );
+      return;
+    }
+
+    // The content-free line: the platform-sha256 params digest + the pointer.
+    const line: ReplayLine = {
+      seq: nextSeq(lease.rootRunId),
+      method,
+      paramsDigest: replayParamsDigest(params),
+      result: materialized.ref,
+    };
+
+    // Append it to <workspace>/results/replay.jsonl (safePath-confined). A path
+    // escape (safePath throws) or an I/O failure (appendFileSync throws) both
+    // honest-degrade content-free — never break the dispatch this observes.
+    try {
+      const logPath = safePath(workspacePath, REPLAY_RESULTS_DIR, REPLAY_LOG_NAME);
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- safePath-confined to the agent's workspace results/ dir; the basename is a fixed literal
+      appendFileSync(logPath, JSON.stringify(line) + "\n", "utf8");
+    } catch (e) {
+      log?.warn(
+        {
+          submodule: "replay-recorder",
+          err: e,
+          errorKind: "internal" as const,
+          hint: "writing the content-free replay line failed (path escape or I/O) — a later replay of this run may be incomplete",
+        },
+        "Replay recorder: failed to write the replay line",
+      );
+    }
+  }
+
+  return { record };
 }
 
 /**
@@ -474,6 +651,22 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
     }
   }
 
+  /**
+   * Record a SUCCESSFUL cap-socket call to the content-free `replay.jsonl`
+   * (REPLAY-01). A no-op when no recorder is wired (default) OR recording is off for
+   * the run. `method`/`params` are the ORIGINAL wire values (pre-strip) so the digest
+   * keys on exactly what the re-spawned script re-sends. Best-effort — never throws.
+   */
+  async function recordReplay(
+    lease: LeaseInfo,
+    method: string,
+    params: Record<string, unknown>,
+    result: unknown,
+  ): Promise<void> {
+    if (!deps.replayRecorder) return;
+    await deps.replayRecorder.record(lease, method, params, result);
+  }
+
   async function handleCapCall(
     bearer: string,
     method: string,
@@ -529,7 +722,11 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
       // Rate-limit AFTER the lease validate (so an unauthenticated call
       // is denied first) — bounds the per-root + per-socket call rate.
       consultRateLimit(toolLease, socketId);
-      return handleToolInvoke(toolLease, tool, cap, innerArgs);
+      const toolInvokeResult = await handleToolInvoke(toolLease, tool, cap, innerArgs);
+      // Record the SUCCESSFUL call under the WIRE method (tool.invoke) with the
+      // ORIGINAL wire params ({tool, args}) — a deny threw above (REPLAY-01).
+      await recordReplay(toolLease, method, params, toolInvokeResult);
+      return toolInvokeResult;
     }
 
     // Validate the bearer against the lease (timing-safe + not-expired +
@@ -582,7 +779,7 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
         throw new CapabilityDeniedError("orch:cron");
       }
       // Via dispatchAudited so the socket cron mutation emits the per-cap audit.
-      return dispatchAudited(
+      const cronResult = await dispatchAudited(
         method,
         {
           ...stripInternalFields(params),
@@ -593,6 +790,8 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
         },
         lease,
       );
+      await recordReplay(lease, method, params, cronResult); // REPLAY-01 (original wire params)
+      return cronResult;
     }
 
     // At the socket boundary the wire `params` are FULLY
@@ -628,7 +827,7 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
     // server-resolves THIS leg's mode from deps.agents[agentOrigin].autonomy
     // (absent ⇒ server resolve ⇒ fail-closed "default"), kept in lockstep with the
     // in-process leg's INJECTED mode there — NOT by widening the Lease schema (wrong layer).
-    return dispatchAudited(
+    const directResult = await dispatchAudited(
       method,
       {
         ...stripInternalFields(params),
@@ -638,6 +837,8 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
       },
       lease,
     );
+    await recordReplay(lease, method, params, directResult); // REPLAY-01 (original wire params)
+    return directResult;
   }
 
   /** Allocate the monotonic outward-send index for an OUTWARD message method,

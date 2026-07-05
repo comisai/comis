@@ -13,8 +13,9 @@
  *   - subagent-handlers.ts    ( 3 methods — subagent.*)
  *   - autonomy-handlers.ts    ( 3 methods — lease.revoke + run.kill +
  *                               autonomy.evict)
+ *   - replay-handlers.ts      ( 1 method  — orchestrate.replay)
  *
- * Total: 30 contracts. The bidirectional 1:1 architecture test treats the
+ * Total: 31 contracts. The bidirectional 1:1 architecture test treats the
  * spread order as documentation only (unordered set).
  *
  * @module
@@ -24,6 +25,7 @@ import { GRAPH_HANDLERS_CONTRACTS } from "./graph-handlers.js";
 import { HEARTBEAT_HANDLERS_CONTRACTS } from "./heartbeat-handlers.js";
 import { SUBAGENT_HANDLERS_CONTRACTS } from "./subagent-handlers.js";
 import { AUTONOMY_HANDLERS_CONTRACTS } from "./autonomy-handlers.js";
+import { REPLAY_HANDLERS_CONTRACTS } from "./replay-handlers.js";
 
 // Each contract must remain individually exported (per-domain *.test.ts files
 // import them by name); use `export *` to preserve the entire surface.
@@ -32,6 +34,7 @@ export * from "./graph-handlers.js";
 export * from "./heartbeat-handlers.js";
 export * from "./subagent-handlers.js";
 export * from "./autonomy-handlers.js";
+export * from "./replay-handlers.js";
 
 export const ORCHESTRATOR_CONTRACTS = [
   ...CRON_HANDLERS_CONTRACTS,
@@ -39,4 +42,5 @@ export const ORCHESTRATOR_CONTRACTS = [
   ...HEARTBEAT_HANDLERS_CONTRACTS,
   ...SUBAGENT_HANDLERS_CONTRACTS,
   ...AUTONOMY_HANDLERS_CONTRACTS,
+  ...REPLAY_HANDLERS_CONTRACTS,
 ] as const;

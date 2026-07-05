@@ -44,8 +44,17 @@
  * @module
  */
 
-import { validateUrl, shouldMaterialize, systemNowMs, type ResultRef } from "@comis/core";
-import { fetchPinned, extractReadableContent } from "@comis/skills/tools";
+import {
+  validateUrl,
+  shouldMaterialize,
+  systemNowMs,
+  wrapExternalContent,
+  type ResultRef,
+  type DurableRunPort,
+  type DurableRunRecord,
+} from "@comis/core";
+import { fetchPinned, extractReadableContent, sanitizeMcpToolResult } from "@comis/skills/tools";
+import { qualifyToolName, type McpClientManager } from "@comis/skills";
 import type { ComisLogger } from "@comis/infra";
 
 /** The validated lease projection the dispatch hands the executor (no secret). */
@@ -124,6 +133,8 @@ export interface ToolInvokeExecutorDeps {
     sql: FileExecutor;
     /** JSONPath via DuckDB json_extract over a ResultRef (no eval lib). */
     jsonpath: FileExecutor;
+    /** Run-scoped, run-ephemeral write confined to results/writes (safePath; surface-gated, the first mutating builtin). */
+    write: FileExecutor;
   };
   /** The injected daemon-side web-search core. */
   webSearch: WebSearchExecutor;
@@ -133,6 +144,69 @@ export interface ToolInvokeExecutorDeps {
   materialize?: MaterializeWriter;
   /** Web-fetch timeout in ms (default 30s). */
   webTimeoutMs?: number;
+  /**
+   * The daemon-wide MCP client manager — `case "mcp"` dispatches through
+   * `callTool(qualifyToolName(server,tool))` on the DAEMON's network (the jail
+   * stays `--unshare-net`, exactly like web_fetch). OPTIONAL: absent ⇒ `executeMcp`
+   * honest-degrades to an "MCP not available" error-result (an un-wired daemon is
+   * safe, never crashy — defense-in-depth beside the boot-required
+   * `CapabilityLayerDeps.mcpClientManager`).
+   */
+  mcpClientManager?: McpClientManager;
+  /**
+   * The per-agent inbound MCP allowlist — the layer-2 default-deny gate consulted
+   * BEFORE any dispatch (232-02 `permitsMcpTool`, resolved per-agent at boot from
+   * that agent's `autonomy.mcp.allow`). OPTIONAL: absent ⇒ every mcp call denies
+   * (deny-by-absence). A deny is an audited error-result — `callTool` is never reached.
+   */
+  mcpAllowlist?: { permits(agentId: string, server: string, tool: string): boolean };
+  /**
+   * The per-agent WRITE-SURFACE gate — the default-OFF surface toggle consulted
+   * BEFORE the `write` dispatch. `orch:write` is a FLOOR cap (held by every
+   * standard/unattended/max agent), but the TYPED write surface must be an
+   * explicit opt-in (`autonomy.write`), so a default agent that HOLDS orch:write
+   * still cannot reach the write tool. Resolved per-agent at boot from that
+   * agent's `autonomy.write === true`. OPTIONAL: absent ⇒ the write surface is
+   * OFF (deny-by-absence, fail-closed — mirrors {@link mcpAllowlist}). A deny is a
+   * content-free error-result; `executeFileBuiltin("write", …)` is never reached.
+   */
+  writeSurfaceEnabled?: (agentId: string) => boolean;
+  /**
+   * The per-agent RESUME-SURFACE gate — the default-OFF durability toggle
+   * (`autonomy.durability.orchestrateResume`) consulted BEFORE any checkpoint/resume
+   * dispatch. checkpoint→orch:write and resume→orch:read reuse the FLOOR caps, so
+   * the cap the lease holds is NOT enough — this surface is the AUTHORITATIVE gate
+   * (deny-by-absence, fail-closed — mirrors {@link writeSurfaceEnabled}). Resolved
+   * per-agentId at boot from that agent's `autonomy.durability.orchestrateResume ===
+   * true`. OPTIONAL: absent/false ⇒ BOTH arms deny with a content-free error-result
+   * (no materialize, no durable read/write) — even though the lease holds the floor cap.
+   */
+  orchestrateResumeEnabled?: (agentId: string) => boolean;
+  /**
+   * The durable-run store (RESUME-01). checkpoint persists the checkpoint
+   * ResultRef id onto the run's row (`upsertCheckpoint`, COALESCE-preserve so ONLY
+   * checkpointRef is set — NEVER `outward_step`); resume reads the last
+   * checkpointRef back (`getByRootRun`). Only these two methods are used. OPTIONAL:
+   * absent ⇒ checkpoint honest-degrades to an error-result / resume to null.
+   */
+  durableRuns?: Pick<DurableRunPort, "upsertCheckpoint" | "getByRootRun">;
+  /**
+   * Materialize a checkpoint state blob as a distinguished, LONGER-TTL kind:"json"
+   * ResultRef keyed on `lease.rootRunId` (DISTINCT from {@link materialize}: a
+   * longer TTL that outlives a full run + a resume window, and a rootRunId-scoped
+   * on-disk run so resume finds it after a restart). Returns the ref, or `undefined`
+   * when the store REFUSED (over the per-file cap) or the write failed — the
+   * executor then refuses the checkpoint content-free (T-WS4-02). OPTIONAL: absent ⇒
+   * checkpoint honest-degrades.
+   */
+  materializeCheckpoint?: (stateJson: string, lease: ToolInvokeLease) => Promise<ResultRef | undefined>;
+  /**
+   * Load a previously-materialized checkpoint blob back by its `ResultRef.ref`
+   * (workspace-confined read). `undefined` when the ref/file is absent (expired /
+   * GC'd / never written) — resume then returns null. OPTIONAL: absent ⇒ resume
+   * degrades to null.
+   */
+  loadCheckpoint?: (ref: string, lease: ToolInvokeLease) => Promise<string | undefined>;
   /** Daemon logger for boundary observability (AGENTS.md §2.7). */
   logger?: ComisLogger;
 }
@@ -262,9 +336,123 @@ export function createToolInvokeExecutor(
     return { url, text, ...(title !== undefined ? { title } : {}), status: res.status };
   }
 
-  /** A file builtin (read/grep/find/ls/jq/sql/jsonpath) run under the agent's workspace dir. */
+  /**
+   * The daemon-side MCP dispatch (MCP-01/02/03). The whole path is `web_fetch`
+   * with a different daemon-side callee: gate on the per-agent inbound allowlist →
+   * `callTool(qualifyToolName(server,tool))` on the DAEMON's network (the jail
+   * stays `--unshare-net`) → sanitize + `wrapExternalContent(source:"mcp_tool")`
+   * (INV-5, data-not-control) → `shouldMaterialize("mcp")` ResultRef offload.
+   *
+   * NEVER throws for a tool failure — a transport error (`!res.ok`) or a tool-level
+   * `isError` honest-degrades to an error-SHAPED result (the module-doc contract).
+   * The `{server,tool}` ride INSIDE `args` and are COMPOSED into the qualified name;
+   * they are NEVER treated as an RPC method (no path to `mcp.connect`/`mcp.oauth_login`).
+   * The allowlist deny is a content-free audited error-result (the log carries the
+   * tool-NAME `"mcp"` + the decision, NEVER the `{server,tool,args}` — INV-5/V7).
+   */
+  async function executeMcp(
+    args: Record<string, unknown>,
+    lease: ToolInvokeLease,
+  ): Promise<unknown> {
+    const started = systemNowMs();
+    const server = typeof args.server === "string" ? args.server : "";
+    const tool = typeof args.tool === "string" ? args.tool : "";
+    const inner =
+      args.args !== null && typeof args.args === "object"
+        ? (args.args as Record<string, unknown>)
+        : {};
+    if (server === "" || tool === "") {
+      log?.warn(
+        { errorKind: "validation" as const, hint: "mcp called without string `server`/`tool`", toolName: "mcp" },
+        "tool.invoke mcp missing server/tool",
+      );
+      return errorResult("mcp requires string `server` and `tool`");
+    }
+
+    // (a) INBOUND GATE — the layer-2 per-agent allowlist (deny by absence, 232-02
+    // permitsMcpTool). A deny short-circuits BEFORE any dispatch — callTool is NEVER
+    // reached — and emits a content-free audited deny (NO {server,tool,args} — INV-5/V7).
+    if (!deps.mcpAllowlist?.permits(lease.agentId, server, tool)) {
+      log?.warn(
+        { errorKind: "auth" as const, toolName: "mcp", decision: "deny", hint: "MCP tool not on the agent's inbound allowlist" },
+        "tool.invoke mcp denied (allowlist)",
+      );
+      return errorResult("MCP tool not permitted for this agent");
+    }
+    // Guard the manager present — an un-wired daemon honest-degrades (never crashes).
+    if (!deps.mcpClientManager) {
+      log?.warn(
+        { errorKind: "config" as const, toolName: "mcp", hint: "no MCP client manager wired into the tool.invoke executor" },
+        "tool.invoke mcp unavailable",
+      );
+      return errorResult("MCP not available");
+    }
+
+    // (b) DAEMON net call — COMPOSE the qualified name "mcp:{server}/{tool}" (never
+    // an RPC method). callTool owns the connection lifecycle / breaker / timeouts.
+    log?.debug({ step: "mcp-dispatch", toolName: "mcp" }, "tool.invoke mcp dispatching (daemon-side)");
+    const res = await deps.mcpClientManager.callTool(qualifyToolName(server, tool), inner);
+    if (!res.ok) {
+      log?.warn(
+        { err: res.error, errorKind: "network" as const, toolName: "mcp", hint: "MCP callTool failed (transport/timeout)" },
+        "tool.invoke mcp call failed",
+      );
+      return errorResult(`MCP tool error: ${res.error.message}`); // honest-degrade, NOT a throw
+    }
+    if (res.value.isError) {
+      log?.warn(
+        { errorKind: "dependency" as const, toolName: "mcp", hint: "the MCP server returned a tool-level error result" },
+        "tool.invoke mcp tool-level error",
+      );
+      return errorResult("MCP tool reported an error");
+    }
+
+    // (c) sanitize (NFKC + invisible strip) + wrap as UNTRUSTED external content
+    // (INV-5) — the return is DATA the jailed script reads; only its stdout ever
+    // re-enters model context. Replicated from mcp-tool-bridge (the daemon executor
+    // is a FRESH call site — the wrap is NOT shared).
+    let text = res.value.content
+      .filter((c) => c.type === "text" && c.text)
+      .map((c) => c.text ?? "")
+      .join("\n");
+    // Fallback for an ALL-non-text result (image/data/embedded-resource only):
+    // this path is text-only (like the in-process bridge), so without a marker the
+    // jailed script would receive an opaque wrapper around empty — no signal that
+    // content was present but dropped. Mirror mcp-tool-bridge's fallback so the
+    // result stays legible (a diagnosability fix, not a content change).
+    if (text === "") {
+      text = "MCP tool returned no text content";
+    }
+    text = sanitizeMcpToolResult(text);
+    text = wrapExternalContent(text, { source: "mcp_tool" });
+
+    // (d) over-threshold → offload to a ResultRef (only the handle re-enters
+    // context; the in-jail jq/read slices it) — identical to web_fetch's tail.
+    const bytes = Buffer.byteLength(text, "utf8");
+    if (deps.materialize && shouldMaterialize("mcp", bytes)) {
+      log?.debug(
+        { step: "materialize", toolName: "mcp", bytes },
+        "tool.invoke mcp over threshold — materializing to ResultRef",
+      );
+      const ref = await deps.materialize(text, "mcp", lease);
+      if (ref) {
+        log?.info(
+          { toolName: "mcp", durationMs: systemNowMs() - started, bytes, materialized: true },
+          "tool.invoke mcp complete (ResultRef)",
+        );
+        return ref;
+      }
+    }
+    log?.info(
+      { toolName: "mcp", durationMs: systemNowMs() - started, bytes, materialized: false },
+      "tool.invoke mcp complete (inline)",
+    );
+    return { text };
+  }
+
+  /** A file builtin (read/grep/find/ls/jq/sql/jsonpath/write) run under the agent's workspace dir. */
   async function executeFileBuiltin(
-    tool: "read" | "grep" | "find" | "ls" | "jq" | "sql" | "jsonpath",
+    tool: "read" | "grep" | "find" | "ls" | "jq" | "sql" | "jsonpath" | "write",
     args: Record<string, unknown>,
     lease: ToolInvokeLease,
   ): Promise<unknown> {
@@ -276,6 +464,111 @@ export function createToolInvokeExecutor(
     return result;
   }
 
+  /**
+   * The RESUME surface gate (deny-by-absence, fail-closed) shared by checkpoint +
+   * resume. checkpoint→orch:write / resume→orch:read are FLOOR caps, so the cap the
+   * lease holds is NOT the gate — the default-OFF `orchestrateResumeEnabled`
+   * predicate is (mirrors the write surface). Absent predicate ⇒ deny (T-233-04).
+   * Returns a content-free error-result on deny, `undefined` on allow.
+   */
+  function resumeSurfaceDeny(tool: "checkpoint" | "resume", lease: ToolInvokeLease): { error: string } | undefined {
+    if (!deps.orchestrateResumeEnabled?.(lease.agentId)) {
+      log?.warn(
+        { errorKind: "auth" as const, toolName: tool, decision: "deny", hint: "the orchestrate resume/checkpoint surface is not enabled for this agent (set autonomy.durability.orchestrateResume:true to opt in)" },
+        `tool.invoke ${tool} denied (resume surface off)`,
+      );
+      return errorResult("orchestrate resume surface not enabled for this agent");
+    }
+    return undefined;
+  }
+
+  /**
+   * checkpoint(stateJson) — the durable SPECIALIZED writing core (RESUME-01/05).
+   * Serializes the script-authored state, materializes it as a distinguished,
+   * longer-TTL kind:"json" ResultRef (capped like any ResultRef — T-WS4-02), and
+   * stamps ONLY the ref onto the run's durable row (COALESCE-preserve; NEVER
+   * `outward_step`, so the exactly-once outward ledger is untouched). Surface-gated
+   * fail-closed. Honest-degrades to a content-free error on refuse/failure.
+   */
+  async function executeCheckpoint(args: Record<string, unknown>, lease: ToolInvokeLease): Promise<unknown> {
+    const denied = resumeSurfaceDeny("checkpoint", lease);
+    if (denied) return denied;
+    const rootRunId = lease.rootRunId;
+    if (rootRunId === undefined) return errorResult("checkpoint requires a durable run identity");
+    if (!deps.materializeCheckpoint || !deps.durableRuns) {
+      return errorResult("checkpoint is unavailable (durable store not wired)");
+    }
+    // The state is the script-authored args, serialized to a JSON blob (kind:json).
+    const stateJson = JSON.stringify(args ?? {});
+    const ref = await deps.materializeCheckpoint(stateJson, lease);
+    if (ref === undefined) {
+      // Over the per-file cap OR a failed write — refuse content-free, write no row.
+      log?.warn(
+        { errorKind: "resource" as const, toolName: "checkpoint", rootRunId, hint: "checkpoint state exceeded the per-file cap or the contained write failed — the checkpoint was NOT persisted" },
+        "tool.invoke checkpoint refused",
+      );
+      return errorResult("checkpoint refused (over the per-file cap or the write failed)");
+    }
+    // Persist ONLY checkpointRef on the run's durable row (keyed on rootRunId,
+    // status running). The plan-01 COALESCE-preserve upsert keeps a scriptRef the
+    // runner sets, and the store's upsertCheckpoint NEVER writes outward_step — so
+    // stepIndex stays the -1 'never-sent' sentinel and the outward ledger is safe.
+    const record: DurableRunRecord = {
+      rootRunId,
+      spawnTree: [], // a FLAT orchestrate row (not a DAG spawn tree)
+      caps: [],
+      leaseIds: [],
+      budgetConsumed: 0,
+      cronOrigin: null,
+      stepIndex: -1,
+      status: "running",
+      lastHeartbeatAt: systemNowMs(),
+      checkpointRef: ref.ref,
+    };
+    const upserted = await deps.durableRuns.upsertCheckpoint(record);
+    if (!upserted.ok) {
+      log?.warn(
+        { err: upserted.error, errorKind: "internal" as const, toolName: "checkpoint", rootRunId, hint: "the checkpoint blob was materialized but the durable-row upsert failed — resume may not find it" },
+        "tool.invoke checkpoint failed to persist the ref",
+      );
+      return errorResult("checkpoint failed to persist");
+    }
+    log?.info({ toolName: "checkpoint", rootRunId, ref: ref.ref }, "tool.invoke checkpoint persisted");
+    return { ok: true };
+  }
+
+  /**
+   * resume(): stateJson | null — reads the run's last checkpointRef off the durable
+   * row, loads the blob, and returns it WRAPPED as UNTRUSTED external content
+   * (T-WS4-01, data-not-control): the checkpoint was script-authored, so on resume
+   * it re-enters the NEXT run as DATA the script reads, NEVER as control (it is
+   * never eval'd/executed — exactly like the MCP core wraps a tool return). null
+   * when there is no prior checkpoint (or the ref's blob is gone). Surface-gated
+   * fail-closed.
+   */
+  async function executeResume(lease: ToolInvokeLease): Promise<unknown> {
+    const denied = resumeSurfaceDeny("resume", lease);
+    if (denied) return denied;
+    const rootRunId = lease.rootRunId;
+    if (rootRunId === undefined) return errorResult("resume requires a durable run identity");
+    if (!deps.durableRuns || !deps.loadCheckpoint) return null; // no store wired ⇒ no checkpoint
+    const row = await deps.durableRuns.getByRootRun(rootRunId);
+    if (!row.ok) {
+      log?.warn(
+        { err: row.error, errorKind: "internal" as const, toolName: "resume", rootRunId, hint: "reading the durable run row failed" },
+        "tool.invoke resume failed to read the durable run",
+      );
+      return errorResult("resume failed to read the durable run");
+    }
+    const checkpointRef = row.value?.checkpointRef;
+    if (checkpointRef === undefined || checkpointRef === null) return null; // no prior checkpoint
+    const state = await deps.loadCheckpoint(checkpointRef, lease);
+    if (state === undefined) return null; // ref recorded but the blob is gone (expired/GC'd)
+    // T-WS4-01: wrap-on-read — script-authored state re-enters as DATA, never control.
+    log?.info({ toolName: "resume", rootRunId, ref: checkpointRef }, "tool.invoke resume returned the last checkpoint (wrapped)");
+    return wrapExternalContent(state, { source: "orchestrate_checkpoint" });
+  }
+
   return async function executeToolInvoke(
     tool: string,
     args: Record<string, unknown>,
@@ -284,6 +577,10 @@ export function createToolInvokeExecutor(
     switch (tool) {
       case "web_fetch":
         return executeWebFetch(args, lease);
+      case "mcp":
+        // Daemon-side MCP dispatch (net-needing → runs on the daemon like
+        // web_fetch; the jail stays --unshare-net). Gate → callTool → wrap → offload.
+        return executeMcp(args, lease);
       case "web_search": {
         const started = systemNowMs();
         // The daemon-side search core is injected and pinned the same way as
@@ -331,6 +628,34 @@ export function createToolInvokeExecutor(
       case "sql":
       case "jsonpath":
         return executeFileBuiltin(tool, args, lease);
+      case "write": {
+        // `write` is the first MUTATING builtin. The TYPED write surface is
+        // default-OFF (NG2): orch:write is a FLOOR cap (the endpoint already
+        // required it before dispatch), but the surface itself requires an explicit
+        // per-agent opt-in (autonomy.write → writeSurfaceEnabled). So a default
+        // standard agent HOLDS orch:write yet cannot reach the write tool without
+        // the surface toggle. Deny-by-absence (fail-closed): an absent predicate
+        // denies, exactly like the MCP allowlist. The deny is a content-free
+        // error-result (never a throw) and the core is NEVER reached — a run cannot
+        // mutate even the ephemeral workspace unless the surface is opted in.
+        if (!deps.writeSurfaceEnabled?.(lease.agentId)) {
+          log?.warn(
+            { errorKind: "auth" as const, toolName: "write", decision: "deny", hint: "the write surface is not enabled for this agent (set autonomy.write:true to opt in)" },
+            "tool.invoke write denied (surface off)",
+          );
+          return errorResult("write surface not enabled for this agent");
+        }
+        // The injected core is safePath-confined to the run-scoped results/writes
+        // root (run-ephemeral). No ResultRef threshold: a write returns a small ack.
+        return executeFileBuiltin(tool, args, lease);
+      }
+      case "checkpoint":
+        // The durable SPECIALIZED writing core — a longer-TTL kind:json ResultRef
+        // stamped as checkpointRef on the run's durable row. Surface-gated fail-closed.
+        return executeCheckpoint(args, lease);
+      case "resume":
+        // Reads the last checkpoint back WRAPPED (data-not-control, T-WS4-01) or null.
+        return executeResume(lease);
       default:
         // Defensive default-deny: the dispatch allow-list (cap-map) already
         // rejects any tool absent from TOOL_CAPABILITY_MAP, and only the 7

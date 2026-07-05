@@ -122,3 +122,85 @@ describe("applySkillOutcomeTransitions — promote/demote", () => {
     );
   });
 });
+
+// ===========================================================================
+// PROC-05 — a PROCEDURE doc rides the SHIPPED name-keyed correction→demote seam VERBATIM.
+//
+// A procedure is admitted as a kind:'skill' Mental Model named `skill-<descriptorKey>`
+// (231-04), so it surfaces + promotes + demotes through the UNCHANGED learned-skill
+// lifecycle. The correction→demote path (setup-learning.ts:651 re-resolves the corrected
+// trajectory's credited skills and feeds THIS loop a `corrected`/source:"correction"
+// verdict) stales it — but `correction` is NON-deterministic (not in
+// DETERMINISTIC_FUSION_SOURCES), so a SINGLE correction never flaps a well-reused
+// procedure (the anti-flap belt: needs ≥2 distinct sessions), and only the 2nd corroborated
+// correction on a WEAKENING trend demotes. GREEN proves the procedure doc reuses the demote
+// gate — no new demote path (R3).
+// ===========================================================================
+describe("applySkillOutcomeTransitions — a PROCEDURE doc rides the correction→demote seam (PROC-05)", () => {
+  // The procedure doc name the reuse surface credits (kind:'skill', name skill-<descriptorKey>;
+  // the descriptor key is `sequence.join(">")`, so a short procedure name is under the doc-name cap).
+  const PROC_DOC = "skill-web_search>jq>jq";
+
+  // The EXACT verdict the correction listener feeds the loop (setup-learning.ts:679-685):
+  // outcome:"corrected", sources:["correction"] (NON-deterministic → needs ≥2 distinct sessions).
+  function correctionVerdict(usedSkillIds: string[]) {
+    return { outcome: "corrected", confidence: 0.9, sources: ["correction" as const], recalledIds: [], usedSkillIds };
+  }
+
+  it("a SINGLE correction of a weakening procedure does NOT demote it (the anti-flap belt — correction is non-deterministic, corroboration < 2)", async () => {
+    const emit = vi.fn();
+    const demoteByName = vi.fn(async () => ({ ok: true as const, value: { changed: true } }));
+    const skillTrend = createSkillTrendTracker();
+    // Prime the procedure doc's gaugeKey (`t a skill-web_search>jq>jq`) to WEAKENING.
+    skillTrend.updateSkillTrend(`t a ${PROC_DOC}`, "failure", 1000);
+    skillTrend.updateSkillTrend(`t a ${PROC_DOC}`, "failure", 1000);
+    await applySkillOutcomeTransitions(
+      { eventBus: { emit } as never, clock, logger: noopLogger },
+      { tenantId: "t", agentId: "a", sessionId: "s1", trajectoryId: "traj-1" } as never,
+      correctionVerdict([PROC_DOC]) as never,
+      { skillStore: { promoteByName: vi.fn(), demoteByName } as never, threshold: 3, skillFailureCorroborationTally: new Map(), skillTrend },
+    );
+    // One correction (session s1) → corroboration size 1 < 2 → NO demote: a well-reused procedure
+    // survives a single correction (the anti-flap belt it inherits from the shipped gate).
+    expect(demoteByName).not.toHaveBeenCalled();
+    expect(emit).not.toHaveBeenCalledWith("learning:skill_demoted", expect.anything());
+  });
+
+  it("the 2nd distinct-session correction of a weakening procedure DEMOTES it to stale via demoteByName + emits skill_demoted with the procedure NAME", async () => {
+    const emit = vi.fn();
+    const demoteByName = vi.fn(async () => ({ ok: true as const, value: { changed: true } }));
+    const skillTrend = createSkillTrendTracker();
+    skillTrend.updateSkillTrend(`t a ${PROC_DOC}`, "failure", 1000);
+    skillTrend.updateSkillTrend(`t a ${PROC_DOC}`, "failure", 1000);
+    // ONE shared corroboration tally across the two corrections (mirrors the daemon-lifetime
+    // skillFailureCorroborationTally) so the 2nd DISTINCT session reaches the ≥2 gate.
+    const tally = new Map<string, Set<string>>();
+    const skillDeps = {
+      skillStore: { promoteByName: vi.fn(), demoteByName } as never,
+      threshold: 3,
+      skillFailureCorroborationTally: tally,
+      skillTrend,
+    };
+    // 1st correction (session s1) — corroboration 1, no demote yet.
+    await applySkillOutcomeTransitions(
+      { eventBus: { emit } as never, clock, logger: noopLogger },
+      { tenantId: "t", agentId: "a", sessionId: "s1", trajectoryId: "traj-1" } as never,
+      correctionVerdict([PROC_DOC]) as never,
+      skillDeps,
+    );
+    expect(demoteByName).not.toHaveBeenCalled();
+    // 2nd correction (DISTINCT session s2) — corroboration reaches 2 → the WEAKENING trend demotes.
+    await applySkillOutcomeTransitions(
+      { eventBus: { emit } as never, clock, logger: noopLogger },
+      { tenantId: "t", agentId: "a", sessionId: "s2", trajectoryId: "traj-2" } as never,
+      correctionVerdict([PROC_DOC]) as never,
+      skillDeps,
+    );
+    // The procedure doc rides the SAME name-keyed demote → active/candidate → 'stale'.
+    expect(demoteByName).toHaveBeenCalledWith(PROC_DOC, expect.objectContaining({ tenantId: "t", agentId: "a" }));
+    expect(emit).toHaveBeenCalledWith(
+      "learning:skill_demoted",
+      expect.objectContaining({ count: 1, demotedSkillNames: [PROC_DOC], triggerTrajectoryId: "traj-2" }),
+    );
+  });
+});

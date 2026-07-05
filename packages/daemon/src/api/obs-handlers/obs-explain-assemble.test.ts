@@ -32,6 +32,7 @@
 
 import { describe, it, expect } from "vitest";
 import type { IncidentFailure, IncidentSignals } from "@comis/core";
+import { IncidentReportSchema } from "@comis/core";
 import { assembleIncidentReport } from "./obs-explain-assemble.js";
 import { boundIncidentReport } from "./obs-explain-bound.js";
 // The cacheBreaks? fold rides toIncidentSignals;
@@ -192,6 +193,92 @@ describe("assembleIncidentReport — spawnTree", () => {
   it("OMITS spawnTree when the signal field is absent (the common no-spawn case)", () => {
     const report = assembleIncidentReport(makeSignals(), makeMetadata(), null, SESSION_KEY, READ_COUNT);
     expect(report.spawnTree).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The orchestrate? section — one entry per run, folded from
+// orchestrate.run_summary records with per-run toolCalls joined by the child
+// leaseId (EXPLAIN-04) and the labeled savings estimate (SAVE-02). Content-free +
+// presence-conditional (absent when no run occurred) — the spawnTree mold.
+// ---------------------------------------------------------------------------
+
+/** An `orchestrate.run_summary` trajectory record envelope (post-translate shape). */
+function runSummaryRecord(data: Record<string, unknown>, seq: number): Record<string, unknown> {
+  return { traceSchema: "comis-trajectory", type: "orchestrate.run_summary", seq, data };
+}
+
+/** A `capability.audited` trajectory record scoped to a run's child leaseId. */
+function capAuditRecord(data: Record<string, unknown>, seq: number): Record<string, unknown> {
+  return { traceSchema: "comis-trajectory", type: "capability.audited", seq, agentId: "default", data };
+}
+
+describe("assembleIncidentReport — orchestrate section", () => {
+  it("surfaces report.orchestrate for a forced non-zero-exit run with failureClass + joined toolCalls + savings", () => {
+    const signals = toIncidentSignals([
+      runSummaryRecord(
+        {
+          runId: "orch-1",
+          leaseId: "lease-child-1",
+          rootRunId: "root-x",
+          language: "ts",
+          durationMs: 4200,
+          exitCode: 1,
+          failureClass: "nonzero_exit",
+          stdoutBytesRaw: 480,
+          stdoutCharsReentered: 480,
+          resultRefCount: 3,
+          resultRefBytes: 120_000,
+          estSavedTokens: 29_500,
+          savedRatio: 0.98,
+        },
+        1,
+      ),
+      // a denied orch:web call + two allowed orch:read calls in THAT run (same leaseId)
+      capAuditRecord({ leaseId: "lease-child-1", rootRunId: "root-x", tool: "web_fetch", capability: "orch:read", decision: "allow" }, 2),
+      capAuditRecord({ leaseId: "lease-child-1", rootRunId: "root-x", tool: "web_fetch", capability: "orch:read", decision: "allow" }, 3),
+      capAuditRecord({ leaseId: "lease-child-1", rootRunId: "root-x", tool: "web_browse", capability: "orch:web", decision: "deny" }, 4),
+    ]);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 4);
+    expect(report.orchestrate).toHaveLength(1);
+    const run = report.orchestrate![0]!;
+    expect(run).toMatchObject({ runId: "orch-1", outcome: "failure", exitCode: 1, failureClass: "nonzero_exit" });
+    // SAVE-02: savings rides the section.
+    expect(run.savings).toEqual({ estSavedTokens: 29_500, savedRatio: 0.98 });
+    expect(run.resultRefs).toEqual({ count: 3, bytes: 120_000 });
+    // EXPLAIN-04: the deny is attributed to THIS run; the allows are counted.
+    expect(run.toolCalls).toContainEqual({ tool: "web_browse", capability: "orch:web", decision: "deny", count: 1 });
+    expect(run.toolCalls).toContainEqual({ tool: "web_fetch", capability: "orch:read", decision: "allow", count: 2 });
+    expect(report.schemaVersion).toBe(1);
+    expect(() => IncidentReportSchema.parse(report)).not.toThrow();
+  });
+
+  it("OMITS report.orchestrate when the session ran no orchestrate script (undefined, not [])", () => {
+    const report = assembleIncidentReport(toIncidentSignals([]), makeMetadata(), null, SESSION_KEY, 0);
+    expect(report.orchestrate).toBeUndefined();
+  });
+
+  it("a clean exit-0 run surfaces outcome:success, no failureClass, empty toolCalls", () => {
+    const signals = toIncidentSignals([
+      runSummaryRecord({ runId: "orch-ok", leaseId: "L2", exitCode: 0, durationMs: 12, resultRefCount: 0, resultRefBytes: 0 }, 1),
+    ]);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 1);
+    expect(report.orchestrate![0]).toMatchObject({ runId: "orch-ok", outcome: "success" });
+    expect(report.orchestrate![0]!.failureClass).toBeUndefined();
+    expect(report.orchestrate![0]!.toolCalls).toEqual([]);
+  });
+
+  it("is content-free — never carries a script/stderr body even when the record smuggles one", () => {
+    const signals = toIncidentSignals([
+      runSummaryRecord(
+        { runId: "orch-x", leaseId: "L3", exitCode: 1, durationMs: 3, failureClass: "nonzero_exit", resultRefCount: 0, resultRefBytes: 0, stderrTail: "secret-tail", script: "rm -rf /" },
+        1,
+      ),
+    ]);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 1);
+    const serialized = JSON.stringify(report.orchestrate);
+    expect(serialized).not.toContain("secret-tail");
+    expect(serialized).not.toContain("rm -rf");
   });
 });
 

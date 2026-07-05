@@ -46,11 +46,14 @@ import { SUB_AGENT_TOOL_DENYLIST } from "../domain/sub-agent-tool-denylist.js";
  * keeps the literal cap strings exact at the type level (the no-typo'd-cap
  * invariant) while typing the whole table.
  *
- * SCOPE: the read/web surface only — `orch:read` (RPC-backed reads +
- * in-process workspace builtins) and `orch:web` (daemon-side, DNS-pinned).
- * Admin/management tools (`mcp_manage`, `gateway`, `agents_create`, …) are
- * NEVER mapped: they stay unreachable via this curated surface, and the
- * deny-by-origin chokepoint covers the control plane.
+ * SCOPE: the read/web + inbound-MCP + workspace-write surface — `orch:read`
+ * (RPC-backed reads + in-process workspace builtins), `orch:web` (daemon-side,
+ * DNS-pinned), `orch:mcp` (the fixed-literal connected-MCP-server call), and
+ * `orch:write` (the run-scoped, run-ephemeral `results/writes` write core, whose
+ * typed SURFACE is default-off behind the `autonomy.write` opt-in). Admin/
+ * management tools (`mcp_manage`, `gateway`, `agents_create`, …) are NEVER
+ * mapped: they stay unreachable via this curated surface, and the deny-by-origin
+ * chokepoint covers the control plane.
  */
 export const TOOL_CAPABILITY_MAP = {
   // orch:read — RPC-backed reads (route → an existing registered handler)
@@ -82,6 +85,37 @@ export const TOOL_CAPABILITY_MAP = {
   // orch:web — daemon-side, DNS-pinned (the jail stays --unshare-net)
   web_search: "orch:web",
   web_fetch: "orch:web",
+  // orch:mcp — daemon-side connected-MCP-server call (the jail stays
+  // --unshare-net; the net call runs daemon-side like web_fetch). The wire tool
+  // name is the fixed literal "mcp"; the dynamic {server,tool} ride inside args
+  // (validated at the executor allowlist), so ONE entry governs the whole
+  // runtime-dynamic namespace — MCP tools are never enumerated into this map.
+  mcp: "orch:mcp",
+  // orch:write — daemon-side workspace mutation, the FIRST mutating builtin. A
+  // MINIMAL, run-EPHEMERAL write confined to a RUN-SCOPED subdir
+  // (<workspace>/results/writes) via safePath: results/ is reaped wholesale by
+  // ResultRefStore.cleanupRun on run end, so the write is genuinely ephemeral AND
+  // isolated from the workspace-root discovery/config subtrees (skills/,
+  // .learned-skills/, memory, config) — NOT the persistent workspace root, NOT an
+  // arbitrary/absolute path. Gated by requireCapability(orch:write) at the
+  // endpoint AND — because orch:write is a FLOOR cap in standard+ — the typed
+  // write SURFACE is default-OFF behind an explicit per-agent opt-in
+  // (autonomy.write), enforced in the executor's writeSurfaceEnabled gate. So a
+  // default standard agent HOLDS orch:write yet cannot reach the write tool.
+  write: "orch:write",
+  // orch:write / orch:read — the durable specialized checkpoint/resume pair
+  // (RESUME-01). checkpoint persists a distinguished, longer-TTL kind:"json"
+  // ResultRef (the run's last state) and stamps its id onto the durable row;
+  // resume reads that state back WRAPPED (data-not-control). They REUSE the FLOOR
+  // caps (checkpoint→orch:write, resume→orch:read) rather than a new
+  // orch:checkpoint cap — the authoritative gate is NOT the cap (both are floor
+  // caps held in standard+) but the daemon-side `orchestrateResumeEnabled` surface
+  // predicate (default-off `autonomy.durability.orchestrateResume`), mirroring how
+  // `write` sits behind `autonomy.write`. Reusing floor caps avoids the 5-consumer
+  // AGENT_CAPABILITIES fan-out + capability-scope-disjoint churn a bespoke cap
+  // would force, and keeps the durability toggle the single authoritative gate.
+  checkpoint: "orch:write",
+  resume: "orch:read",
 } as const satisfies Record<string, AgentCapability>;
 
 /** The tool-name keys of {@link TOOL_CAPABILITY_MAP} (mirrors `GatedMethodName`). */
@@ -118,6 +152,13 @@ export const TOOL_ROUTE_MAP = {
   jsonpath: { kind: "executor" },
   web_search: { kind: "executor" },
   web_fetch: { kind: "executor" },
+  mcp: { kind: "executor" },
+  write: { kind: "executor" }, // workspace-confined write core (mirrors the file builtins)
+  // The durable checkpoint/resume pair runs DAEMON-side (longer-TTL materialize +
+  // durable-row checkpointRef read/write, wrap-on-read) — an in-process executor
+  // arm, NOT an RPC method. Same route kind as write / the file builtins.
+  checkpoint: { kind: "executor" },
+  resume: { kind: "executor" },
 } as const satisfies Record<ToolName, ToolRoute>;
 
 // ---------------------------------------------------------------------------

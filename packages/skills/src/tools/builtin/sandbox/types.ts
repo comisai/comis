@@ -117,6 +117,19 @@ export type JailNodeResolution =
   | { mode: "unavailable"; hint: string };
 
 /**
+ * The two-mode result of resolveJailPython(). Unlike JailNodeResolution there
+ * is NO bind mode: the daemon is Node, so there is no daemon-python binary to
+ * RO-bind as a fallback. "path" therefore carries the absolute `pythonBin` to
+ * invoke (a bare `python3` name is not safe to mirror node's `{mode:"path"}` —
+ * it could resolve off the child PATH to an unintended interpreter or exit
+ * 127). "unavailable" is the honest degrade: a missing interpreter is ALWAYS a
+ * LOUD unavailable with an operator hint — never a silent unjailed run.
+ */
+export type JailPythonResolution =
+  | { mode: "path"; pythonBin: string }
+  | { mode: "unavailable"; hint: string };
+
+/**
  * The two-mode result of resolveJailAgentCli(). "bind" only when the
  * comis-agent binary EXISTS and its sha256 matches the committed manifest pin;
  * "unavailable" (with a content-free operator hint) when the binary is MISSING

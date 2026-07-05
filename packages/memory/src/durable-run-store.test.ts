@@ -110,6 +110,156 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
   });
 
   // -----------------------------------------------------------------------
+  // Resumable-orchestrate columns: {scriptRef, checkpointRef}. Additive,
+  // nullable, content-free (a workspace-relative script path + a ResultRef id;
+  // NO script bytes / checkpoint body / bearer — INV-5). They ride the same
+  // durable_runs store the boot sweep scans so orchestrate becomes the first
+  // RE-RUNNABLE durable kind. outward_step stays owned solely by
+  // allocateOutwardStep — a checkpoint upsert must never touch it.
+  // -----------------------------------------------------------------------
+
+  describe("{scriptRef, checkpointRef} resumable columns", () => {
+    it("round-trips a checkpoint carrying scriptRef + checkpointRef (both read back intact)", async () => {
+      const rec = makeRecord({
+        rootRunId: "r-refs",
+        scriptRef: "orch-abc123.py",
+        checkpointRef: "cp-9f3a2b",
+      });
+      const up = await store.upsertCheckpoint(rec);
+      expect(up.ok).toBe(true);
+
+      const got = await store.getByRootRun("r-refs");
+      expect(got.ok).toBe(true);
+      if (!got.ok || !got.value) return;
+      expect(got.value.scriptRef).toBe("orch-abc123.py");
+      expect(got.value.checkpointRef).toBe("cp-9f3a2b");
+      // The round-tripped record is a valid domain record (new fields optional).
+      expect(parseDurableRunRecord(got.value).ok).toBe(true);
+    });
+
+    it("a checkpoint written with NEITHER ref reads back both undefined and still parses (legacy row)", async () => {
+      await store.upsertCheckpoint(makeRecord({ rootRunId: "r-no-refs", status: "running" }));
+      const got = await store.getByRootRun("r-no-refs");
+      expect(got.ok).toBe(true);
+      if (!got.ok || !got.value) return;
+      // NULL columns map to undefined at the domain boundary (?? undefined).
+      expect(got.value.scriptRef).toBeUndefined();
+      expect(got.value.checkpointRef).toBeUndefined();
+      // Every pre-existing (neither-column) row must still parse — the new fields
+      // are optional/nullable so the closed-union resume gate is unweakened.
+      expect(parseDurableRunRecord(got.value).ok).toBe(true);
+    });
+
+    it("adds both columns to a PRE-EXISTING (old-DDL) durable_runs via a guarded ALTER, idempotently", () => {
+      const legacyDb = new Database(":memory:");
+      // Seed the OLD DDL — durable_runs as a PRIOR build created it, WITHOUT
+      // script_ref/checkpoint_ref. `CREATE TABLE IF NOT EXISTS` in
+      // ensureDurableRunTable is a no-op on this existing table, so ONLY the
+      // guarded PRAGMA-checked ALTER can add the columns (the silent-regression
+      // path: a fresh CREATE would hide it).
+      legacyDb.exec(`
+        CREATE TABLE durable_runs (
+          root_run_id        TEXT PRIMARY KEY,
+          spawn_tree         TEXT NOT NULL,
+          caps               TEXT NOT NULL,
+          lease_ids          TEXT NOT NULL,
+          budget_consumed    REAL NOT NULL DEFAULT 0,
+          cron_origin        TEXT,
+          outward_step       INTEGER NOT NULL DEFAULT -1,
+          status             TEXT NOT NULL CHECK(status IN ('running','orphaned','completed','revoked')),
+          orphan_reason      TEXT,
+          last_heartbeat_at  INTEGER NOT NULL,
+          created_at_ms      INTEGER NOT NULL,
+          updated_at_ms      INTEGER NOT NULL
+        )
+      `);
+      // A row written under the OLD schema (neither new column).
+      legacyDb
+        .prepare(
+          `INSERT INTO durable_runs (root_run_id, spawn_tree, caps, lease_ids, budget_consumed,
+             cron_origin, outward_step, status, last_heartbeat_at, created_at_ms, updated_at_ms)
+           VALUES ('r-legacy', '["n"]', '["orch:read"]', '["lz"]', 0, NULL, 5, 'running',
+             1700000000000, 1700000000000, 1700000000000)`,
+        )
+        .run();
+
+      const colNames = (): Set<string> =>
+        new Set(
+          (legacyDb.prepare("PRAGMA table_info(durable_runs)").all() as Array<{ name: string }>).map(
+            (r) => r.name,
+          ),
+        );
+      const before = colNames();
+      expect(before.has("script_ref")).toBe(false);
+      expect(before.has("checkpoint_ref")).toBe(false);
+
+      // The migration under test.
+      ensureDurableRunTable(legacyDb);
+      const after = colNames();
+      expect(after.has("script_ref")).toBe(true);
+      expect(after.has("checkpoint_ref")).toBe(true);
+
+      // Idempotent: a SECOND (and third) run is a no-op — a duplicate ADD COLUMN
+      // would throw. This is the re-run-safe boot path.
+      expect(() => ensureDurableRunTable(legacyDb)).not.toThrow();
+      expect(() => ensureDurableRunTable(legacyDb)).not.toThrow();
+
+      // The pre-existing row survived; its new columns read back NULL and its
+      // outward_step counter is untouched by the migration.
+      const legacy = legacyDb
+        .prepare(
+          "SELECT script_ref, checkpoint_ref, outward_step FROM durable_runs WHERE root_run_id = 'r-legacy'",
+        )
+        .get() as { script_ref: string | null; checkpoint_ref: string | null; outward_step: number };
+      expect(legacy.script_ref).toBeNull();
+      expect(legacy.checkpoint_ref).toBeNull();
+      expect(legacy.outward_step).toBe(5);
+
+      legacyDb.close();
+    });
+
+    it("upsert with only ONE ref set preserves the other (COALESCE) and NEVER mutates outward_step", async () => {
+      // 1. Seed a running run with an initial checkpointRef, no scriptRef.
+      await store.upsertCheckpoint(
+        makeRecord({ rootRunId: "r-coalesce", status: "running", checkpointRef: "cp-1" }),
+      );
+      // Allocate an outward step so outward_step = 0 (proves later checkpoint
+      // upserts do NOT reset the exactly-once counter).
+      const a = await store.allocateOutwardStep("r-coalesce");
+      expect(a.ok).toBe(true);
+      if (a.ok) expect(a.value).toBe(0);
+
+      // 2. Upsert with ONLY scriptRef → the runner (plan 03) sets scriptRef
+      //    without clobbering the checkpoint core's (plan 02) checkpointRef.
+      await store.upsertCheckpoint(
+        makeRecord({ rootRunId: "r-coalesce", status: "running", scriptRef: "orch-x.py" }),
+      );
+      let got = await store.getByRootRun("r-coalesce");
+      expect(got.ok).toBe(true);
+      if (!got.ok || !got.value) return;
+      expect(got.value.scriptRef).toBe("orch-x.py");
+      expect(got.value.checkpointRef).toBe("cp-1"); // COALESCE-preserved
+      expect(got.value.stepIndex).toBe(0); // outward_step untouched
+
+      // 3. Vice-versa: upsert with ONLY checkpointRef → scriptRef preserved.
+      await store.upsertCheckpoint(
+        makeRecord({ rootRunId: "r-coalesce", status: "running", checkpointRef: "cp-2" }),
+      );
+      got = await store.getByRootRun("r-coalesce");
+      expect(got.ok).toBe(true);
+      if (!got.ok || !got.value) return;
+      expect(got.value.scriptRef).toBe("orch-x.py"); // COALESCE-preserved
+      expect(got.value.checkpointRef).toBe("cp-2");
+      expect(got.value.stepIndex).toBe(0); // still untouched
+
+      // 4. The counter was never reset by the two checkpoint upserts.
+      const next = await store.allocateOutwardStep("r-coalesce");
+      expect(next.ok).toBe(true);
+      if (next.ok) expect(next.value).toBe(1);
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // Idempotent upsert on the PK
   // -----------------------------------------------------------------------
 
@@ -170,6 +320,63 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
       const res = await store.listResumable();
       expect(res.ok).toBe(true);
       if (res.ok) expect(res.value.map((r) => r.rootRunId)).not.toContain("r-revoke");
+    });
+
+    it("a subsequent upsertCheckpoint(status:'running') does NOT resurrect a revoked row", async () => {
+      // A timeout markResumable or a raced jailed checkpoint() upserts status:'running'.
+      // Landing after a revoke it must NOT clobber the terminal 'revoked' back to
+      // 'running' — else the boot sweep re-surfaces + re-anchors a run the operator
+      // explicitly revoked, defeating invalidateForRevoke.
+      await store.upsertCheckpoint(makeRecord({ rootRunId: "r-race", status: "running" }));
+      await store.invalidateForRevoke("r-race");
+
+      // The clobber vector: a running upsert (markResumable / checkpoint) after revoke.
+      const up = await store.upsertCheckpoint(
+        makeRecord({ rootRunId: "r-race", status: "running", scriptRef: "orch-x.ts" }),
+      );
+      expect(up.ok).toBe(true);
+
+      const got = await store.getByRootRun("r-race");
+      expect(got.ok).toBe(true);
+      if (got.ok && got.value) expect(got.value.status).toBe("revoked");
+      // And it stays out of the resume set.
+      const res = await store.listResumable();
+      if (res.ok) expect(res.value.map((r) => r.rootRunId)).not.toContain("r-race");
+    });
+
+    it("a subsequent upsertCheckpoint(status:'running') does NOT resurrect a completed or orphaned row", async () => {
+      // The same terminal-preserve holds for completed/orphaned — a late checkpoint
+      // upsert must not flip a finished run back to a resumable 'running'.
+      await store.upsertCheckpoint(makeRecord({ rootRunId: "r-comp", status: "running" }));
+      await store.markCompleted("r-comp");
+      await store.upsertCheckpoint(makeRecord({ rootRunId: "r-comp", status: "running" }));
+      const comp = await store.getByRootRun("r-comp");
+      if (comp.ok && comp.value) expect(comp.value.status).toBe("completed");
+
+      await store.upsertCheckpoint(makeRecord({ rootRunId: "r-orph2", status: "running" }));
+      await store.markOrphaned("r-orph2", "no live lease on boot");
+      await store.upsertCheckpoint(makeRecord({ rootRunId: "r-orph2", status: "running" }));
+      const orph = await store.getByRootRun("r-orph2");
+      if (orph.ok && orph.value) expect(orph.value.status).toBe("orphaned");
+    });
+
+    it("still COALESCE-preserves the scriptRef/checkpointRef columns on a post-revoke upsert (terminal-preserve does not drop the pointers)", async () => {
+      // Preserving the terminal status must not regress the existing ref COALESCE:
+      // a post-revoke checkpoint upsert still merges its ref onto the row.
+      await store.upsertCheckpoint(
+        makeRecord({ rootRunId: "r-ref", status: "running", scriptRef: "orch-y.ts" }),
+      );
+      await store.invalidateForRevoke("r-ref");
+      await store.upsertCheckpoint(
+        makeRecord({ rootRunId: "r-ref", status: "running", checkpointRef: "cp-9" }),
+      );
+      const got = await store.getByRootRun("r-ref");
+      expect(got.ok).toBe(true);
+      if (got.ok && got.value) {
+        expect(got.value.status).toBe("revoked"); // terminal preserved
+        expect(got.value.scriptRef).toBe("orch-y.ts"); // COALESCE-preserved
+        expect(got.value.checkpointRef).toBe("cp-9"); // merged
+      }
     });
   });
 

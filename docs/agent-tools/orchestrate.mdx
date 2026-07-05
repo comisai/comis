@@ -18,8 +18,8 @@ A non-autonomy agent, or a host with no sandbox provider, does not get the tool.
 
 | Parameter | Type | Notes |
 |-----------|------|-------|
-| `script` | string | The script body. It may `import { comis_tools } from "./comis_tools.js"` and chain tools; only its stdout re-enters context. |
-| `language` | `"ts"` \| `"js"` | The script language. |
+| `script` | string | The script body. A TypeScript/JavaScript script may `import { comis_tools } from "./comis_tools.js"`; a Python script (`language: "py"`) uses the module form `import comis_tools`. Either way it chains tools and only its stdout re-enters context. |
+| `language` | `"ts"` \| `"js"` \| `"py"` | The script language. |
 | `timeoutMs` | number (optional) | Hard wall-clock timeout for the jailed run. Default 60000. |
 | `captureStdout` | boolean (optional) | Reserved — stdout is always the (only) captured channel. |
 
@@ -133,6 +133,144 @@ console.log(summaries.join("\n---\n"));
 The three searches and three fetches — and all their intermediate payloads — happen inside the
 jail in **one** turn. The model's context only ever sees the final `console.log`.
 
+## Connected MCP tools (`comis_tools.mcp`)
+
+When the operator connects one or more MCP servers and **explicitly allowlists** their tools for
+an agent (see [Autonomy → Connected MCP tools](/agents/autonomy#connected-mcp-tools)), those tools
+surface in the jailed SDK under a dynamic namespace:
+
+```typescript
+// Call an allowlisted tool on a connected MCP server. The server/tool set is
+// operator-configured; comis_tools.mcp.<server>.<tool>(args) resolves at runtime.
+const result = await comis_tools.mcp.myserver.mytool({ query: "hello" });
+console.log(JSON.stringify(result));
+```
+
+Because a server's tool set is discovered per connection, `comis_tools.mcp` is a **runtime
+namespace**, not a fixed list — `comis_tools.mcp.<server>.<tool>(args)` resolves each `<server>`
+and `<tool>` on the fly to a single cap-socket call. It runs under the `orch:mcp` capability, which
+is **off in every default profile** — the one genuinely new default-off *capability* of this surface
+(the write/message *capabilities* are already on in `standard`, though the `write` surface itself is
+a separate opt-in — see below).
+
+The call runs exactly like `web_fetch`: **daemon-side**, on the daemon's network, so the jail
+stays `--unshare-net`. The jailed script's call crosses the `0600` capability socket to the
+daemon, which invokes the connected MCP client and returns the tool's result as **data**:
+
+- **Wrapped, never control.** The return is sanitized and wrapped as untrusted external content
+  (the same treatment as `web_fetch`) — the script reads it as data; it can never be interpreted
+  as instructions to the model.
+- **High-volume returns offload to a ResultRef.** A large MCP result is materialized to the
+  workspace's `results/` directory and returns a `ResultRef` handle, sliced in-jail with
+  `.jq`/`.grep`/`.read`/`.sql` — identical to `web_fetch`. Only the slice you log re-enters context.
+- **Allowlisted or denied — nothing in between.** A `{server, tool}` pair the operator has not
+  allowlisted is denied at the socket (a content-free capability denial); the jailed call surfaces
+  the deny as a thrown error in the same turn.
+
+The MCP **control plane** — connecting, disconnecting, or authenticating a server
+(`mcp_manage`/`mcp_login`) — is **never** on this surface. The proxy can only ever name a connected
+server's *tool*; it has no path to a management method.
+
+Python is identical, in the synchronous idiom:
+
+```python
+result = comis_tools.mcp.myserver.mytool({"query": "hello"})
+print(result)
+```
+
+## The typed mutation surface (`write` and `message`)
+
+Beyond reading and fetching, an autonomy-bearing agent can **write to its workspace** and **send
+outward** from inside the same jailed turn — so a `fetch → transform → send` chain that would
+otherwise take several round-trips runs in one script:
+
+```typescript
+// orch:write — write a file into the jailed run workspace (path-confined, run-ephemeral).
+await comis_tools.write({ path: "summary.md", content: "# Findings" });
+
+// orch:message — send outward to the agent's own origin channel.
+await comis_tools.message_send({ channel_type: "telegram", channel_id: "chat123", text: "Done." });
+```
+
+The outward triplet is `message_send`, `message_reply`, and `message_react` — the
+genuinely-outward send subset (dispatching [`message.send`/`reply`/`react`](/reference/json-rpc#message-send)).
+
+<Warning>
+**The capabilities are floor capabilities — but the `write` surface is opt-in.** `orch:write` and
+`orch:message` are **floor capabilities**: held by default in `standard` and up (only the
+`assistant` profile withholds them). What ships new is the **typed `comis_tools` methods** (`write`,
+`message_send`/`reply`/`react`) that reach those capabilities directly in one turn. The `message_*`
+methods are reachable by default; the **`write` method is gated by a separate, default-OFF surface
+toggle** — even though a `standard` agent *holds* `orch:write`, the typed write surface stays dark
+until you set `write: true` under the agent's `autonomy` block, so the orchestrate surface is
+**read-only by default**. The methods are inert for an agent that does not hold the underlying
+capability (an `assistant`-profile agent, or one you set `write: false`, cannot call `write`). Only
+`orch:mcp` above is a genuinely new default-off *capability*.
+</Warning>
+
+`write` is **run-scoped, run-ephemeral, and isolated from the discovery/config subtrees**: every
+path resolves under a per-run `results/writes` area inside the agent's jailed workspace (a `../`,
+absolute, or `../…/skills/…` path is refused), and that area is **reaped when the run ends** — a
+file written this run is gone the next run. It is **not** a persistent store, and it **cannot** reach
+the workspace-root skill-discovery or config subtrees (`skills/`, `.learned-skills/`, memory,
+config), so a jailed turn can never plant a cross-run skill. Enable the surface per agent with
+`autonomy.write: true`. `message_send`/`reply`/`react` target the agent's **own origin channel** by
+default — a send to a new channel escalates for approval (see [Autonomy](/agents/autonomy#what-standard-turns-on))
+— and the [`message.*`](/reference/json-rpc#message-send) edit/delete/fetch subset stays admin-only,
+not part of `orch:message`.
+
+### Worked example — fetch, transform, send in one turn
+
+```typescript
+import { comis_tools } from "./comis_tools.js";
+
+// 1. Fetch (daemon-side, DNS-pinned) → a ResultRef, not a wall of text in context.
+const report = await comis_tools.web_fetch({ url: "https://example.com/report.json" });
+// 2. Transform in-jail — slice just the field we need out of the handle.
+const total = (await report.jq(".summary.total")) as number;
+// 3. Persist a working note into the run workspace (orch:write).
+await comis_tools.write({ path: "note.md", content: `Report total: ${total}` });
+// 4. Send the one-line result outward to the origin channel (orch:message).
+await comis_tools.message_send({ channel_type: "telegram", channel_id: "chat123", text: `Report total: ${total}` });
+// 5. Only this final line re-enters the conversation.
+console.log(`sent total=${total}`);
+```
+
+The fetch, the transform, the write, and the send all happen inside the jail in **one** turn; the
+large fetched payload never enters context. The outward send rides an **exactly-once** guarantee
+when [durability](/agents/autonomy#durability--resume) is enabled — otherwise it is a best-effort
+pass-through: the send still goes, it is just not deduped across a crash.
+
+## Python (`language: "py"`)
+
+Set `language: "py"` to write the script in Python instead of TypeScript/JavaScript. It runs in
+the **identical** jail — `--unshare-net`, workspace-confined, reachable only through the same
+`0600` capability socket — and reaches tools through a generated, self-contained `comis_tools`
+module that speaks the **same** `{ bearer, method, params }` cap-socket wire as the TypeScript
+SDK (no `pip install`: the jail has no network). Only the language idiom differs — import the
+module rather than a named export, and the calls are **synchronous** (no `await`):
+
+```python
+import comis_tools
+
+# Each call dials the same cap-socket wire as the TypeScript SDK; only the idiom
+# differs (synchronous, module-level). web_fetch runs daemon-side, DNS-pinned.
+page = comis_tools.web_fetch({"url": "https://example.com/big"})  # a ResultRef, not a wall of text
+hits = page.grep("error")     # slice the materialized file in-jail
+head = page.read(0, 40)       # read a 40-line/byte slice
+
+print(head)                   # only this slice re-enters the conversation
+```
+
+A high-volume return is a `ResultRef` here too, carrying the same in-jail slicing methods —
+`.read(offset, limit)` / `.grep(pattern)` / `.jq(expr)` / `.sql(query)` / `.jsonpath(expr)` — so
+only the rows/lines you extract re-enter context, never the full payload. As with the TypeScript
+path, the jail stays `--unshare-net` and only what the script prints to stdout re-enters the
+conversation.
+
+The interpreter is the host's own `python3`, available read-only inside the jail. A host with no
+`python3` **refuses the run with a clear error** — never a silent, unjailed fallback.
+
 ## The containment contract
 
 The jailed child is deliberately constrained — this is what makes letting the model write and
@@ -153,6 +291,113 @@ run arbitrary code safe:
   and the socket path ([`COMIS_ORCH_SOCKET`](/reference/environment-variables#comis_orch_socket)),
   which the SDK authenticates with; the lease is registered with the OutputGuard at mint so it is
   never logged.
+
+## Pre-flight cap check
+
+Before the jailed child is spawned, the runner statically scans the script for the set of
+capabilities its `comis_tools` calls require. If the script calls a tool needing a capability
+the agent does **not** hold, the run is rejected **pre-spawn** with a capability-named error
+(for example, naming the missing `orch:web`) — so a model that reaches for a capability it
+lacks gets a precise, actionable message in the same turn rather than a mid-run failure after
+a jail has already been built. When the [approval workflow](/security/approvals#orchestrate-pre-flight)
+is enabled, the same pre-flight fires **one** approval on the script's whole capability
+footprint before the spawn.
+
+<Note>
+This pre-flight is **advisory** — a fail-fast and approval-UX aid, not the containment
+boundary. The `--unshare-net` jail and its capability socket remain the sole authoritative
+gate: a script that dodges the static scan (say, via a dynamically-computed method name)
+proceeds past the pre-flight and is still denied at the socket by default-deny-by-absence.
+</Note>
+
+## One-shot repair
+
+When a script exits non-zero on a **recoverable** error — a bad import, a misused
+`comis_tools` call, or a `TypeError` — the runner does **one** utility-model re-prompt
+that regenerates the script and re-runs it **exactly once**. A small model's near-miss
+becomes a working run in the same turn, without bouncing the failure back to the model
+that wrote it.
+
+It is **class-gated off the agent's model capability class** — **on** for `small`/`nano`
+models (which benefit most), **off** for `mid`/`frontier` — with **no config toggle**
+(the model tier is the sole control). See
+[Autonomy → One-shot auto-repair](/agents/autonomy#one-shot-auto-repair) for the class
+table and the no-toggle rationale.
+
+The repair is bounded to a **single** attempt: a repaired-then-failed run surfaces the
+**original** error, never a loop. The regenerated script re-runs in the **identical**
+jail, capability, and lease envelope as the original — the same `--unshare-net` jail and
+the same per-run lease, so a repaired script has the same blast radius and gains no new
+privilege. The repair completion rides normal spend/budget accounting.
+
+## Per-run observability
+
+Every run is minted its **own per-run capability lease** — an attenuation of the agent's
+assembly lease, scoped to that single script execution. Because the already-emitted
+`capability:audited` audit stream is keyed on that per-run leaseId, a run's in-jail
+`tool.invoke` calls (and any **deny**) attribute to **the run** — not to the shared assembly
+lease that spans many runs. A denied `orch:web` groups under the run that attempted it, so a
+post-mortem can pin a denial to one script.
+
+`comis explain <sessionKey>` (the [`obs.explain`](/reference/json-rpc#obs-explain) report)
+renders a bounded, content-free **`orchestrate`** section — one entry per run in the session:
+
+```json
+{
+  "runId": "r-9f2c1e", "leaseId": "l-a17b23",
+  "outcome": "failure", "durationMs": 8140, "exitCode": 1,
+  "failureClass": "nonzero_exit",
+  "toolCalls": [{ "tool": "web_fetch", "capability": "orch:web", "decision": "allow", "count": 3 }],
+  "resultRefs": { "count": 3, "bytes": 122880 },
+  "savings": { "estSavedTokens": 30208, "savedRatio": 0.98 }
+}
+```
+
+`outcome` derives from `exitCode` (`0` → `success`). `failureClass` is present only on a failed
+run and is a **closed enum**: `timeout` (the wall-clock ceiling fired), `stdout_cap` (the stdout
+hard cap tripped), `nonzero_exit` (the script exited non-zero), `spawn_fail` (the jail never
+started), or `lease_absent` (the run reached the jail with no capability lease). `toolCalls` is
+the per-run tally attributed by the run's leaseId, `resultRefs` the materialized `{ count, bytes }`,
+and `savings` the measured token-savings **estimate** (below), carried only when the run
+materialized ResultRefs.
+
+A run that exited non-zero — or that recorded a `decision: "deny"` on any tool call —
+root-causes to a deterministic **`orchestrate_failed`** `likelyRootCause`: the same signals
+always produce the same verdict, so a failed run is a one-call `comis explain` diagnosis rather
+than a log grep. Across the whole daemon, [`comis fleet`](/reference/json-rpc#obs-fleet-health)
+rolls the per-run savings into an **`orchestrate_efficiency`** finding (run count + summed
+estimated tokens saved — counts only, safe to paste into a review).
+
+<Note>
+**What the audit stream does and does not cover.** `capability:audited` records the
+**authorization decision** for each `tool.invoke` — whether the run's lease *allowed* the call.
+It does **not** record whether an *allowed* call's tool **result** then failed. That half is
+covered at the run level instead: a script that reacts to a failed-but-allowed result by exiting
+non-zero surfaces as the run's `failureClass` + `exitCode`, and the failing tool's own bounded
+stderr tail rides the tool-error result — never the content-free audit fold.
+</Note>
+
+## Proven procedures become advisory docs
+
+When a script solves a task and that approach **proves out across verified successes**, the
+[learning engine](/agents/memory-config#the-one-learning-reflection-engine) distils it into an
+**advisory procedure doc** — a learned `kind: skill` doc that additionally records the run's
+**deterministic tool footprint** (the audited tool names). It surfaces into the agent's
+`<available_skills>` listing like any other learned skill.
+
+The doc is **advisory guidance, not a stored or replayed template**. On a matching later task the
+model **re-authors** a fresh script from the guidance and runs it under the **same** jail and
+per-run capability lease as any other `orchestrate` call — there is **no new execution path**, no
+saved script, and no capability the agent did not already hold. The tool footprint is metadata
+that helps the model reconstruct the approach; it never executes on its own.
+
+To keep a burst of procedure docs from bloating every prompt, the surfaced procedure-doc subset is
+capped per agent by
+[`learning.reflect.maxProcedureDocsSurfaced`](/agents/memory-config#the-one-learning-reflection-engine)
+(default `10`): when the cap is exceeded the **most-corroborated** procedure docs (ranked by
+proof count) keep their slot, surfaced in a stable listing order. User-intent
+skill docs and topic docs keep a separate, uncapped path. A procedure doc is outcome-gated and
+**demotes on sustained failing reuse** like every learned doc.
 
 ## Related
 

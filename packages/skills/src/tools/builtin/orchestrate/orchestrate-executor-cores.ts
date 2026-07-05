@@ -14,13 +14,25 @@
  * than reaching into the file-tools / web-search internals it must not depend on.
  *
  * Two core classes:
- *   - FILE builtins (`read`/`grep`/`find`/`ls`): adapt the SHIPPED
- *     `createComis{Read,Grep,Find,Ls}Tool` AgentTools — constructed per call under
- *     the lease's resolved `workspaceDir` (the executor passes it in `ctx`), then
- *     `.execute()`d. Read-only by construction (no `edit`/`write` core surfaced).
- *     The `AgentToolResult` it returns is the value the jailed SDK receives over
- *     the cap socket; high-volume returns are offloaded to a `ResultRef` by the
- *     executor's `materialize` seam, not here.
+ *   - FILE builtins (`read`/`grep`/`find`/`ls` + `write`): adapt the SHIPPED
+ *     `createComis{Read,Grep,Find,Ls,Write}Tool` AgentTools — constructed per call
+ *     under the lease's resolved `workspaceDir` (the executor passes it in `ctx`),
+ *     then `.execute()`d. `read`/`grep`/`find`/`ls` are read-only; `write` is the
+ *     FIRST general writing core on this surface — confined to a RUN-SCOPED,
+ *     EPHEMERAL root (`<workspace>/results/writes`, NOT the persistent workspace
+ *     root): every path resolves under that root via `safePath` (a `..`/absolute/
+ *     `../…/skills/…` escape is refused BEFORE any write), and it is genuinely
+ *     run-EPHEMERAL because `results/` is reaped wholesale by
+ *     `ResultRefStore.cleanupRun` on run end — so a written file is GONE after the
+ *     run, and the write can never reach the workspace-root discovery/config
+ *     subtrees (`skills/`, `.learned-skills/`, memory, config). The TYPED write
+ *     SURFACE is default-OFF (opt-in via `autonomy.write`; the executor gates the
+ *     dispatch on `writeSurfaceEnabled` even though `orch:write` is a floor cap) —
+ *     see `setup-tool-invoke-executor.ts`. A path escape / write guard that would
+ *     throw honest-degrades to an `{ error }` (never a throw), like the
+ *     jq/sql/jsonpath slicers below. The `AgentToolResult` it returns is the value
+ *     the jailed SDK receives over the cap socket; high-volume returns are
+ *     offloaded to a `ResultRef` by the executor's `materialize` seam, not here.
  *   - `jq`/`sql`/`jsonpath`: the in-jail ResultRef
  *     query engine. The jailed script's `wrapResultRef(...).jq(expr)` /
  *     `.sql(query)` / `.jsonpath(expr)` sends `tool.invoke("jq"|"sql"|"jsonpath",
@@ -62,6 +74,7 @@ import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { execFile } from "node:child_process";
 import { safePath, systemNowMs, type ComisLogger } from "@comis/core";
 import { createComisReadTool } from "../file-tools/read-tool.js";
+import { createComisWriteTool } from "../file-tools/write-tool.js";
 import { createComisGrepTool } from "../file-tools/grep-tool.js";
 import { createComisFindTool } from "../file-tools/find-tool.js";
 import { createComisLsTool } from "../file-tools/ls-tool.js";
@@ -81,9 +94,10 @@ export type OrchestrateFileCore = (
 ) => Promise<unknown>;
 
 /**
- * The seven `{kind:"executor"}` file cores: the four read builtins
- * (read/grep/find/ls), and the three ResultRef slicers (jq, plus the QRY query
- * engine `sql`/`jsonpath`). All run DAEMON-side over the run-scoped workspace.
+ * The eight `{kind:"executor"}` file cores: the four read builtins
+ * (read/grep/find/ls), the three ResultRef slicers (jq, plus the QRY query
+ * engine `sql`/`jsonpath`), and the one mutating builtin (`write`). All run
+ * DAEMON-side over the run-scoped workspace, path-confined by `safePath`.
  */
 export interface OrchestrateFileCores {
   read: OrchestrateFileCore;
@@ -95,6 +109,8 @@ export interface OrchestrateFileCores {
   sql: OrchestrateFileCore;
   /** Precise JSON extraction via DuckDB `json_extract` (NO eval lib). */
   jsonpath: OrchestrateFileCore;
+  /** Run-scoped, run-ephemeral write confined to results/writes (safePath; the first mutating core). */
+  write: OrchestrateFileCore;
 }
 
 /** A daemon-side web-search core: `(args, ctx) => result` (the jail can't fetch). */
@@ -154,6 +170,19 @@ const JQ_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
 const DEFAULT_SQL_TIMEOUT_MS = 10_000;
 /** Bound the captured duckdb stdout so a huge slice cannot blow the daemon's heap. */
 const SQL_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
+
+/**
+ * The RUN-SCOPED, EPHEMERAL write root (relative to the lease workspace) the
+ * `write` core confines to — a subdir UNDER `results/`, which
+ * `ResultRefStore.cleanupRun` reaps WHOLESALE on run end. Confining here (NOT the
+ * persistent per-agent workspace root) makes the write genuinely run-ephemeral
+ * (a file written this run is gone after the run's cleanupRun) AND isolates it
+ * from the workspace-root discovery/config subtrees (`skills/`,
+ * `.learned-skills/`, memory, config): a `../`/absolute/`../../skills/…` path that
+ * escapes this root is refused by `safePath` BEFORE any write, so a run can never
+ * persist a cross-run skill into the top-priority skill-discovery path.
+ */
+const WRITE_SUBDIR = "results/writes";
 
 /**
  * Build the DuckDB hardening prelude prepended before the (untrusted) model
@@ -586,6 +615,91 @@ export function createOrchestrateExecutorCores(
     return await runDuckDb(query, ctx.workspaceDir, "jsonpath", started);
   };
 
+  /**
+   * The `write` core: the FIRST general writing core on this surface. Adapts the
+   * shipped `createComisWriteTool` under `ctx.workspaceDir` — a MINIMAL,
+   * run-EPHEMERAL write to the run's workspace root (the SAME root the read cores
+   * read). Path-confined FIRST via `safePath` (a `..`/absolute escape is refused
+   * BEFORE any write, mirroring the jq/sql/jsonpath cores), and the write tool
+   * re-confines via its own `resolveWritePath`/`safePath` (defense in depth). Any
+   * path escape or write guard (device/protected/…) that would throw is
+   * honest-degraded to a content-free `{ error }` (never a throw), so a jailed
+   * write can never crash the executor or write outside the run workspace. NOT a
+   * persistent store, NOT an arbitrary/absolute path.
+   */
+  const write: OrchestrateFileCore = async (args, ctx) => {
+    const started = systemNowMs();
+    const rawPath = typeof args.path === "string" ? args.path : "";
+    if (rawPath === "") {
+      log.warn(
+        { errorKind: "validation" as const, hint: "write called without a string `path`", toolName: "write" },
+        "orchestrate write missing path",
+      );
+      return errorResult("write requires a string `path`");
+    }
+    // Resolve the RUN-SCOPED, EPHEMERAL write root (<workspace>/results/writes) —
+    // NOT the persistent workspace root. results/ is reaped wholesale by
+    // ResultRefStore.cleanupRun on run end, so a write here is genuinely
+    // run-ephemeral and isolated from the workspace-root discovery/config
+    // subtrees (skills/, .learned-skills/, memory, config).
+    let writeRoot: string;
+    try {
+      writeRoot = safePath(ctx.workspaceDir, WRITE_SUBDIR);
+    } catch (err: unknown) {
+      log.warn(
+        { err, errorKind: "validation" as const, hint: "the run-scoped write root escaped the workspace — refusing", toolName: "write" },
+        "orchestrate write root unresolvable",
+      );
+      return errorResult("write refused: the run workspace is unavailable");
+    }
+    // Confine the target under the run-scoped write root BEFORE any write (the same
+    // safePath confinement the jq/sql/jsonpath cores use). A `..`/absolute escape —
+    // or a `../…/skills/…` traversal back into the workspace-root discovery path —
+    // is refused here; the write lands under results/writes only.
+    try {
+      safePath(writeRoot, rawPath);
+    } catch (err: unknown) {
+      log.warn(
+        { err, errorKind: "validation" as const, hint: "write path escaped the run workspace — refusing", toolName: "write" },
+        "orchestrate write path traversal blocked",
+      );
+      return errorResult("write path escapes the run workspace");
+    }
+    // Run the shipped write tool under the confined run-scoped root — it re-confines
+    // via its own safePath. Any remaining write guard that throws honest-degrades
+    // to a content-free { error } (the daemon-side host path never crosses the jail).
+    try {
+      const tool = createComisWriteTool(writeRoot);
+      const result: AgentToolResult<unknown> = await tool.execute("tool.invoke", args as never);
+      log.debug(
+        { step: "write-core", toolName: "write", durationMs: systemNowMs() - started },
+        "orchestrate write core executed",
+      );
+      return result;
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      // The shipped write tool throws PREFIXED errors ([stale_file],
+      // [write_secret_blocked], [file_too_large], [invalid_config], [protected_file],
+      // [dir_create_failed], [write_error], [device_file], [jupyter_rejected],
+      // [missing_path]). Preserve the DISTINCT failure CLASS (the bracketed kind) so
+      // a jailed script can tell a secret-blocked / stale-file / protected-file
+      // refusal apart and recover — collapsing them all to "not writable" was
+      // misleading. We surface ONLY the [kind] token (a fixed lower_snake enum),
+      // never the interpolated tail, which can echo an absolute host path
+      // (device_file / dir_create_failed name a path) — the jail must not see it.
+      const kind = /^\[([a-z_]+)\]/.exec(message)?.[1];
+      log.warn(
+        { err, errorKind: "validation" as const, hint: "write refused by a workspace write guard", toolName: "write", writeErrorKind: kind ?? "unknown" },
+        "orchestrate write failed",
+      );
+      return errorResult(
+        kind !== undefined
+          ? `write refused (${kind})`
+          : "write refused: the path is not writable in the run workspace",
+      );
+    }
+  };
+
   const fileExecutors: OrchestrateFileCores = {
     read: fileCore((w) => createComisReadTool(w) as unknown as AgentTool<never>, "read"),
     grep: fileCore((w) => createComisGrepTool(w) as unknown as AgentTool<never>, "grep"),
@@ -594,6 +708,7 @@ export function createOrchestrateExecutorCores(
     jq,
     sql,
     jsonpath,
+    write,
   };
 
   const webSearch: OrchestrateWebSearchCore = async (args, _ctx) => {

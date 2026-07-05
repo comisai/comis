@@ -82,6 +82,18 @@ export interface MentalModel {
    * throw). The shape mirrors `MemoryEntry["history"]`.
    */
   history?: ReadonlyArray<{ previousContent: string; changedAt: number }> | undefined;
+  /**
+   * The deterministic tool-NAME footprint of a learned PROCEDURE doc (advisory) —
+   * the read-side mirror of the write-side `required_tools` bind. `undefined` for a
+   * user-intent skill / profile / topic (the `required_tools` column is NULL), or
+   * when the column holds corrupt JSON (degrade-to-absent, never a throw). It is
+   * the SURFACE DISCRIMINATOR: the learned-skill surface caps the procedure-doc
+   * subset (`requiredTools` populated) at a per-agent budget, leaving user-intent
+   * skills + topic docs on a separate, uncapped path. Content-free (tool NAMES
+   * only); advisory — the model re-authors the run under its already-permissioned
+   * tools, this is not an executable surface.
+   */
+  requiredTools?: ReadonlyArray<string>;
   /** Injected epoch ms the row was admitted. */
   createdAt: number;
 }
@@ -115,6 +127,20 @@ export interface AdmitMentalModelInput {
   kind?: "skill" | "profile" | "topic";
   /** The topic key for a 'topic' doc — omitted ⇒ `''`. */
   topicKey?: string;
+  /**
+   * DETERMINISTIC required-tools footprint (content-free tool NAMES) bound to the
+   * `required_tools` column — the procedure run derives it from the AUDITED
+   * descriptor (NEVER LLM-authored; INV-4). Omitted ⇒ the column is written NULL
+   * (the user-intent skill path). Advisory only: the model re-authors the run under
+   * its already-permissioned tools; this is metadata, not an executable surface.
+   */
+  requiredTools?: ReadonlyArray<string>;
+  /**
+   * The advisory params schema bound to the `params_schema` column — a fixed
+   * content-free value (`"{}"`) for a procedure doc (advisory docs have no replay
+   * parameters). Omitted ⇒ NULL.
+   */
+  paramsSchema?: string;
   /** Initial proof count at admission (capped LOW regardless of cluster size — anti-domination). */
   proofCount: number;
   /** Confidence in [0, 1]. */

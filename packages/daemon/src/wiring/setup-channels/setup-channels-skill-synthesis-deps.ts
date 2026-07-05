@@ -201,10 +201,17 @@ async function buildSkillSources(
   };
 
   const out: ReflectionSourceTrajectory[] = [];
-  for (const { trajectoryId, sessionId } of idsRes.value) {
+  for (const { trajectoryId, sessionId, procedureDescriptor: descriptor } of idsRes.value) {
     const texts = sessionTexts(sessionId);
     if (texts === undefined) continue; // no transcript for this turn's session → skip
     const sender = senderBySession.get(sessionId) ?? "";
+    // The content-free procedure descriptor read back from listTrajectoryIds (the ordered
+    // tool-NAME sequence + counts). The KEY is the ordered sequence JOINED — order + repeats
+    // preserved, NOT sorted/deduped (the sequence + counts contract). It is self-sufficient
+    // because a custom procedure groupKey BYPASSES the Jaccard signature-merge (only
+    // byte-identical keys collide). The tool method names never contain `>`, so the separator
+    // is injective. Absent (empty) ⇒ omit — the turn ran no cap-mapped tool call sites.
+    const sequence = descriptor ?? [];
     out.push({
       trajectoryId,
       sessionId,
@@ -218,6 +225,7 @@ async function buildSkillSources(
       // false for kind:skill — a skill source is an OUTCOME trajectory (a finished
       // session), NOT a source memory carrying a per-memory trustLevel.
       sourceTrustExternal: false,
+      ...(sequence.length > 0 ? { procedureDescriptor: { key: sequence.join(">"), sequence } } : {}),
     });
   }
   return out;

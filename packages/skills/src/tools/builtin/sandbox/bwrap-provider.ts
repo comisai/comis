@@ -21,6 +21,7 @@ import { safePath, validateBindMount } from "@comis/core";
 import type {
   JailAgentCliResolution,
   JailNodeResolution,
+  JailPythonResolution,
   SandboxOptions,
   SandboxProvider,
 } from "./types.js";
@@ -70,6 +71,59 @@ export function resolveJailNode(opts: {
       "UNAVAILABLE (surface 1 still works). Install node or ensure the daemon node " +
       "binary is bindable. There is NEVER a bundled Node and NEVER a silent " +
       "unjailed fallback.",
+  };
+}
+
+/**
+ * Python-runtime honesty. The orchestrate `"py"` surface needs a `python3`
+ * interpreter INSIDE the jail; the interpreter comes from the RO-bound host
+ * `/usr`/`/bin` (nothing installs Python). Resolve in two honest modes:
+ *   1. PATH — the FIRST absolute candidate in `interpreterPaths` that `exists`
+ *      → `{ mode: "path", pythonBin }`. The runner invokes that ABSOLUTE path
+ *      (a bare `python3` could resolve off the child PATH to an unintended
+ *      interpreter, or exit 127).
+ *   2. UNAVAILABLE — none exist → `{ mode: "unavailable", hint }`. There is NO
+ *      bind fallback (unlike resolveJailNode's `process.execPath` net — the
+ *      daemon is Node, there is no daemon-python to bind), so a missing
+ *      interpreter is ALWAYS a LOUD unavailable. The caller must fail CLOSED:
+ *      refuse the run, NEVER fall through to a silent unjailed execution. The
+ *      hint NEVER claims a bundled Python (that would spoof containment that
+ *      does not exist).
+ *
+ * CRITICAL: probe ABSOLUTE interpreter paths (e.g. `/usr/bin/python3`), NOT
+ * directory roots. resolveJailNode is called with the SYSTEM_RO_PATHS roots
+ * (`/usr`, `/bin`) and joins `dir + "/node"`; it survives the `/usr/node` miss
+ * only because BIND(execPath) is its safety net. Python has no such net, so
+ * probing roots would falsely report `unavailable` on a host that HAS
+ * `/usr/bin/python3`. Callers pass absolute candidate paths; this resolver does
+ * NO join over its inputs.
+ *
+ * PURE: the only I/O is the injected `exists` predicate (defaults to
+ * `existsSync`), so the resolver is macOS-unit-testable with a fake filesystem.
+ */
+export function resolveJailPython(opts: {
+  /** ABSOLUTE candidate interpreter paths (e.g. /usr/bin/python3), NOT roots. */
+  readonly interpreterPaths: readonly string[];
+  /** Existence predicate (defaults to fs.existsSync) — injected for unit tests. */
+  readonly exists?: (p: string) => boolean;
+}): JailPythonResolution {
+  const exists = opts.exists ?? existsSync;
+
+  // PROBE each absolute candidate path; the first that exists is the interpreter.
+  for (const p of opts.interpreterPaths) {
+    if (exists(p)) {
+      return { mode: "path", pythonBin: p };
+    }
+  }
+
+  // UNAVAILABLE — honest, fail-closed degrade. NEVER a bundled-Python claim.
+  return {
+    mode: "unavailable",
+    hint:
+      "The orchestrate 'py' surface needs a python3 interpreter inside the jail; " +
+      "none found under /usr/bin, /bin, or /usr/local/bin (the RO-bound host " +
+      "paths). Install python3 on the host. There is NEVER a bundled Python and " +
+      "NEVER a silent unjailed run.",
   };
 }
 

@@ -143,6 +143,20 @@ hard to reverse: `orch:browse` (a real browser) and messaging a **new** channel
 (beyond the agent's own). Opt into the browser explicitly with `browse: true`;
 even then it always escalates for approval -- it is never auto-decided.
 
+### Learned procedures stay advisory
+
+When an agent solves a task with an [`orchestrate`](/agent-tools/orchestrate) run and that
+approach proves out across verified successes, the learning layer distils it into an **advisory
+procedure doc** -- a learned skill that records the run's tool footprint. It surfaces into the
+agent's `<available_skills>` listing like any other learned skill, bounded by a **per-agent
+budget** ([`learning.reflect.maxProcedureDocsSurfaced`](/agents/memory-config#the-one-learning-reflection-engine),
+default `10`) that, when exceeded, keeps the **most-corroborated** procedure docs in a stable
+listing order, so a burst of procedures can never bloat every prompt. Crucially, surfacing a
+procedure doc grants **no new capability and no new execution path**: it is guidance the model
+**re-authors** into a fresh `orchestrate` script, run under the **same** capability gate and jail
+as any other run. A learned procedure can never widen the agent's autonomy posture -- the profile
+and its guard rails still bound every tool the re-authored script may touch.
+
 ## Overriding Individual Knobs (Progressive Disclosure)
 
 Most operators set only `profile:` (or nothing). When you need a single
@@ -185,6 +199,92 @@ defaulting safe so a runaway agent is bounded out of the box:
 
 See the full field list in the [config reference](/reference/config-yaml#autonomy-agents-autonomy).
 
+## Connected MCP Tools
+
+By default an agent cannot reach any connected MCP server's tools from a jailed
+[`orchestrate`](/agent-tools/orchestrate) script -- the surface is **off**, and
+the [`orch:mcp`](/security/capability-model#connected-mcp-tools-orch-mcp)
+capability is in no default profile. To turn it on for one agent, set the nested
+`autonomy.mcp` block: flip `enabled: true` (which grants `orch:mcp`) **and**
+allowlist the exact `{server -> tools}` the agent may call.
+
+```yaml title="~/.comis/config.yaml -- expose two allowlisted MCP tools to one agent"
+agents:
+  research:
+    autonomy:
+      profile: standard
+      mcp:
+        enabled: true                    # grants orch:mcp (off by default)
+        allow:
+          weather-server:
+            tools: [forecast, current]   # explicit tool names -- no wildcard
+            classification: safe         # inbound tier: safe | permission-gated
+```
+
+`autonomy.mcp` defaults to `{ enabled: false, allow: {} }` -- a fresh agent's MCP
+surface is dark at **both** layers: it holds no `orch:mcp` capability, and its
+allowlist is empty. Both must be set for a tool to be reachable:
+
+- **`enabled`** is the surface gate. `true` grants the agent the `orch:mcp`
+  capability; `false` (the default) means the capability is never granted and the
+  whole surface stays off -- no `allow` entry can override that. (There is no
+  separate boolean `mcp:` toggle beside `web`/`analyze`/`write`/`browse`; the
+  nested block's own `enabled` field is the grant signal, mirroring
+  `durability.enabled`.)
+- **`allow`** is the per-server inbound allowlist. Each key is a connected
+  server's name; its `tools` is the **explicit** list of tool names reachable on
+  that server (there is no `*` wildcard -- you name each tool), and
+  `classification` is the inbound tier.
+
+The `classification` is a **three-tier inbound gate**:
+
+| Tier | Meaning |
+|------|---------|
+| `safe` | The allowlisted tool is reachable directly. |
+| `permission-gated` | The tool is reachable, but each call fires the [approval workflow](/security/approvals) first. |
+| *absent* | **Unreachable.** A server with no `classification` is denied -- the default-deny safety net. |
+
+Reachability is thus **unlisted ⇒ unreachable** at every step: an unlisted
+server, an unlisted tool on a listed server, or a listed server with no inbound
+classification are all denied. Enforcement is the daemon's, at the capability
+socket -- the config only ever *widens* from the dark default, and never past
+what the operator explicitly names. The connected MCP tool runs **daemon-side**
+so the jail stays `--unshare-net`, and the management plane (connecting or
+authenticating a server) is never reachable from a jailed script. This inbound
+allowlist is a **separate** control from the outbound `/mcp/v1` export policy
+that governs which of *this* daemon's tools are exposed to external MCP clients;
+turning one on never affects the other.
+
+## One-shot auto-repair
+
+When an [`orchestrate`](/agent-tools/orchestrate) script fails on a **recoverable**
+error -- a bad import, a misused `comis_tools` call, or a `TypeError` -- the runner
+does **one** utility-model re-prompt that regenerates the script and re-runs it
+**once**. It turns a small model's near-miss into a working run in the same turn,
+without bouncing the failure back to the main model for another inference turn.
+
+This is **class-gated off the model's capability class** -- it is not a profile knob
+and there is no config toggle:
+
+| Capability class | Auto-repair |
+|------------------|-------------|
+| `small`, `nano` | **On** -- the weaker models it helps most |
+| `mid`, `frontier` | **Off** -- a stronger model rarely needs it |
+
+The class is resolved from the agent's model (an operator capability-class override on
+the provider, otherwise the provider family). There is **no `autonomy.autorepair`
+field** to set: the model tier is the whole control, so there is no dead toggle to
+drift out of sync. When the class is absent or unresolved it defaults to the
+repair-eligible side (`small`), so an unknown-tier or keyless local deployment still
+self-repairs rather than silently not.
+
+The repair is bounded to **exactly one attempt** -- a repaired script that fails again
+surfaces the original error, never a retry loop. It runs on a cheap utility model (the
+same keyless-safe path other utility passes use) and **rides normal spend/budget
+accounting**, so the agent's budget bounds it like any other call. The regenerated
+script re-runs in the **identical** jail, capability, and lease envelope as the
+original -- it gains no new privilege.
+
 ## Durability & Resume
 
 By default an in-flight autonomy run lives only in the daemon's memory: kill the
@@ -223,7 +323,13 @@ agents:
   the direct [`message.send`/`reply`/`react`](/reference/json-rpc#message-send)
   path **and** the sub-agent completion-announcement path -- the announcement
   dead-letter queue consults the same ledger on restart, so a recovered
-  announcement is never delivered twice.
+  announcement is never delivered twice. The typed
+  [`comis_tools.message_send`/`reply`/`react`](/agent-tools/orchestrate#the-typed-mutation-surface-write-and-message)
+  outward methods dispatch that same `message.*` path, so they ride the same
+  ledger. **This dedup is active only under durability.** With durability off
+  (the default), an outward send is a best-effort pass-through -- still delivered,
+  just not deduped across a crash; the exactly-once guarantee attaches only once
+  `autonomy.durability.enabled` is on.
 - **A resumed run never broadens its authority.** On resume the lease is
   re-minted from the run's **persisted, already-attenuated** capabilities -- never
   re-attenuated from a live parent (which could be broader), and never a superset

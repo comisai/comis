@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Codegen entry point: produces the committed `comis_tools` SDK
- * (`packages/skills/src/tools/builtin/orchestrate/comis_tools.{d.ts,js}`)
+ * (`packages/skills/src/tools/builtin/orchestrate/comis_tools.{d.ts,js,py}`)
  * DETERMINISTICALLY from the single source of truth `TOOL_CAPABILITY_MAP`
  * (+ `TOOL_ROUTE_MAP` / `RESULT_REF_THRESHOLDS`) in `@comis/core`.
  *
@@ -26,8 +26,13 @@
  *   3. Emit the thin `.js` runtime (each method delegates to the stable
  *      `./orchestrate-sdk-runtime.js` shim; `describe()`
  *      returns the static discovery list).
- *   4. `writeFileSync` both into `outDir`, AND return the two strings so the
- *      drift test can compare in-memory == disk without re-reading.
+ *   4. Emit the single self-contained `.py` binding: the cap-socket wire
+ *      inlined as a stdlib-only preamble (a Python module cannot import the
+ *      hyphenated `orchestrate-sdk-runtime` shim, so the wire is inlined here
+ *      and the drift gate byte-locks it too) plus one module-level function per
+ *      cap-mapped tool. Parity by construction — the SAME sorted cap-map.
+ *   5. `writeFileSync` all three into `outDir`, AND return the three strings so
+ *      the drift test can compare in-memory == disk without re-reading.
  *
  * Determinism rules (mirrors generate-web-artifact.ts:23-27):
  *   - No ambient-clock read, no constructed Date, no UUID, no randomness.
@@ -75,10 +80,12 @@ const COMMITTED_DIR = resolve(
 
 export const OUT_DTS = resolve(COMMITTED_DIR, "comis_tools.d.ts");
 export const OUT_JS = resolve(COMMITTED_DIR, "comis_tools.js");
+export const OUT_PY = resolve(COMMITTED_DIR, "comis_tools.py");
 
 /** Artifact filenames (constant across output dirs; tests redirect via `outDir`). */
 const ARTIFACT_DTS = "comis_tools.d.ts";
 const ARTIFACT_JS = "comis_tools.js";
+const ARTIFACT_PY = "comis_tools.py";
 
 // ---------------------------------------------------------------------------
 // Codegen result — returned by runCodegen so the drift test compares the
@@ -90,6 +97,8 @@ export interface SdkCodegenResult {
   readonly dts: string;
   /** The thin `.js` runtime source written to comis_tools.js. */
   readonly js: string;
+  /** The single self-contained `.py` binding written to comis_tools.py. */
+  readonly py: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,7 +125,89 @@ const TOOL_SUMMARIES: Record<string, string> = {
   jsonpath: "Extract a precise value from a JSON ResultRef via JSONPath (no eval).",
   web_search: "Search the web (daemon-side, DNS-pinned).",
   web_fetch: "Fetch a URL's readable content (daemon-side, DNS-pinned).",
+  mcp: "Call an allowlisted connected MCP server's tool: comis_tools.mcp.<server>.<tool>(args). The server/tool set is operator-configured.",
+  write: "Write a file into the jailed run workspace (path-confined, run-ephemeral).",
+  checkpoint: "Persist this run's state so it survives a restart: comis_tools.checkpoint(state). Durable (longer TTL), capped like any result; requires the resume surface.",
+  resume: "Return this run's last checkpoint state (wrapped as data, never executed) or null if none: comis_tools.resume(). Requires the resume surface.",
 };
+
+// ---------------------------------------------------------------------------
+// One worked example per capability GROUP (a distinct value in
+// TOOL_CAPABILITY_MAP). Keyed by capability so every tool in a group shares the
+// same calling-pattern demo — a small model sees how to CHAIN the tools (a
+// ResultRef sliced in-jail), not just each method's signature. A capability
+// absent here falls back to a generic line, so adding a cap never breaks the
+// build. String-only values keep the emitted JSON a valid Python literal too.
+//
+// The example is emitted PER LANGUAGE: the `.d.ts`/`.js` SDK is the async,
+// named-export TS surface (`const x = await comis_tools.foo({...})`), while the
+// `.py` SDK is the SYNCHRONOUS, module-level binding (`x = comis_tools.foo({...})`
+// — dict literals with quoted keys, no `const`/`await`). Emitting the TS form
+// into the `.py` describe() would hand a py author invalid Python (an instant
+// SyntaxError), so each artifact renders its own language's example. The drift
+// gate still byte-locks each artifact to its own generated form; example-parity
+// is semantic-per-language, which is what the discovery surface needs.
+// ---------------------------------------------------------------------------
+
+const CAPABILITY_GROUP_EXAMPLES: Record<string, string> = {
+  "orch:read":
+    "const ref = await comis_tools.grep({ path: 'logs/app.jsonl', pattern: 'ERROR' }); const rows = await ref.jq('.[0:20]'); const head = await ref.read(0, 40);",
+  "orch:web":
+    "const hits = await comis_tools.web_search({ query: 'site reliability' }); const top3 = await hits.jq('.[0:3]'); const page = await comis_tools.web_fetch({ url: top3[0].url }); const text = await page.read(0, 200);",
+  "orch:mcp":
+    "const result = await comis_tools.mcp.myserver.mytool({ query: 'hello' });",
+  "orch:write":
+    "await comis_tools.write({ path: 'summary.md', content: '# Findings' });",
+};
+
+/**
+ * The Python analogue of {@link CAPABILITY_GROUP_EXAMPLES}: the SAME tool chain,
+ * expressed for the synchronous, module-level `comis_tools.py` SDK — module form
+ * (`comis_tools.grep(...)`), dict literals with quoted keys, ResultRef methods,
+ * no `const`/`await`. Mirrors the documented `language: "py"` idiom
+ * (docs/agent-tools/orchestrate.mdx) so a py author copying it gets valid syntax.
+ */
+const CAPABILITY_GROUP_EXAMPLES_PY: Record<string, string> = {
+  "orch:read":
+    'ref = comis_tools.grep({"path": "logs/app.jsonl", "pattern": "ERROR"}); rows = ref.jq(".[0:20]"); head = ref.read(0, 40)',
+  "orch:web":
+    'hits = comis_tools.web_search({"query": "site reliability"}); top3 = hits.jq(".[0:3]"); page = comis_tools.web_fetch({"url": top3[0]["url"]}); text = page.read(0, 200)',
+  "orch:mcp":
+    'result = comis_tools.mcp.myserver.mytool({"query": "hello"})',
+  "orch:write":
+    'comis_tools.write({"path": "summary.md", "content": "# Findings"})',
+};
+
+// ---------------------------------------------------------------------------
+// The curated DIRECT-METHOD set — the outward `orch:message` triplet
+// (send/reply/react). These are NOT `tool.invoke` tools (they are absent from
+// TOOL_CAPABILITY_MAP); they are DIRECT RPC methods (HANDLER_CAPABILITY_MAP →
+// orch:message). So the SDK renders them via `callCapSocket(method, args)` (the
+// arbitrary-method wire), NEVER `invoke(...)` (the tool.invoke wire). This render
+// choice is load-bearing: the exactly-once outward-step ledger
+// (`allocateOutwardStepIfNeeded`) fires ONLY in the endpoint's direct-method
+// branch of `handleCapCall`, so a `tool.invoke` route would silently bypass it
+// (and — since `message.*` is absent from the cap-map — be default-denied anyway).
+// Emitted in a FIXED order (deterministic) ALONGSIDE the sorted tool loop, so a
+// fetch→transform→send chain runs in one typed turn.
+// ---------------------------------------------------------------------------
+
+interface DirectMethod {
+  /** The SDK method name (the property on `comis_tools`). */
+  readonly name: string;
+  /** The wire RPC method it dispatches via `callCapSocket`. */
+  readonly method: string;
+  /** The capability the method requires (the handler-cap-map classification). */
+  readonly capability: string;
+  /** A one-line summary for the typed-surface JSDoc. */
+  readonly summary: string;
+}
+
+const DIRECT_METHODS: readonly DirectMethod[] = [
+  { name: "message_send", method: "message.send", capability: "orch:message", summary: "Send a message to a channel (outward)." },
+  { name: "message_reply", method: "message.reply", capability: "orch:message", summary: "Reply to a message in a channel (outward)." },
+  { name: "message_react", method: "message.react", capability: "orch:message", summary: "React to a message with an emoji (outward)." },
+];
 
 // ---------------------------------------------------------------------------
 // Pure emitters.
@@ -130,6 +221,20 @@ function returnsResultRef(tool: string): boolean {
 /** The one-line summary for the discovery surface (bespoke or capability-derived). */
 function summaryFor(tool: string, capability: string): string {
   return TOOL_SUMMARIES[tool] ?? `A ${capability} tool.`;
+}
+
+/**
+ * The worked calling-pattern example for the discovery surface, keyed by
+ * capability group AND rendered for the target SDK language: `"ts"` for the
+ * async `.d.ts`/`.js` surface, `"py"` for the synchronous `comis_tools.py` binding
+ * (so a py author never sees TypeScript). An unmapped capability falls back to a
+ * language-valid pointer line (a `.py` fallback is a `#` comment — valid Python).
+ */
+function exampleFor(capability: string, lang: "ts" | "py"): string {
+  if (lang === "py") {
+    return CAPABILITY_GROUP_EXAMPLES_PY[capability] ?? `# see comis_tools.describe() for a ${capability} tool`;
+  }
+  return CAPABILITY_GROUP_EXAMPLES[capability] ?? `See describe() for a ${capability} tool.`;
 }
 
 /** The shared SPDX + AUTOGENERATED + eslint-disable header (mirrors the web artifact). */
@@ -189,6 +294,8 @@ export interface ToolDescriptor {
   readonly capability: string;
   /** A one-line human summary of what the tool does. */
   readonly summary: string;
+  /** A worked calling-pattern example for the tool's capability group. */
+  readonly example: string;
 }
 `;
 
@@ -198,10 +305,29 @@ export interface ToolDescriptor {
   const methodLines: string[] = [];
   for (const tool of sortedTools) {
     const capability = TOOL_CAPABILITY_MAP[tool as keyof typeof TOOL_CAPABILITY_MAP];
-    const ret = returnsResultRef(tool) ? "Promise<ResultRef>" : "Promise<unknown>";
     const summary = summaryFor(tool, capability);
-    methodLines.push(`  /** ${summary} (capability: ${capability}) */`);
+    if (tool === "mcp") {
+      // The connected MCP server/tool set is dynamic per connection, so `mcp` is a
+      // runtime proxy NAMESPACE, not a single method: the type is an index-signature
+      // shape so a model sees comis_tools.mcp.<server>.<tool>(args) (honest: dynamic).
+      methodLines.push(`  /** ${summary} (capability: ${capability}) Example: ${exampleFor(capability, "ts")} */`);
+      methodLines.push(
+        `  mcp: Record<string, Record<string, (args?: Record<string, unknown>) => Promise<unknown>>>;`,
+      );
+      continue;
+    }
+    const ret = returnsResultRef(tool) ? "Promise<ResultRef>" : "Promise<unknown>";
+    methodLines.push(`  /** ${summary} (capability: ${capability}) Example: ${exampleFor(capability, "ts")} */`);
     methodLines.push(`  ${tool}(args?: Record<string, unknown>): ${ret};`);
+  }
+
+  // The curated DIRECT-METHOD triplet (orch:message outward send/reply/react):
+  // typed methods appended after the sorted tool methods, in the fixed
+  // DIRECT_METHODS order. They dispatch via callCapSocket (not tool.invoke), so a
+  // ResultRef is never returned — a plain Promise<unknown> ack.
+  for (const dm of DIRECT_METHODS) {
+    methodLines.push(`  /** ${dm.summary} (capability: ${dm.capability}) */`);
+    methodLines.push(`  ${dm.name}(args?: Record<string, unknown>): Promise<unknown>;`);
   }
 
   const iface = `
@@ -230,23 +356,75 @@ export default comis_tools;
 }
 
 /**
+ * The `mcp` runtime proxy block emitted into the `.js` SDK — a SPECIAL-CASE, not a
+ * per-tool render. The connected MCP server/tool set is dynamic per connection, so
+ * it cannot be a static method: a two-level `Proxy` resolves
+ * `comis_tools.mcp.<server>.<tool>(args)` to ONE `callCapSocket("tool.invoke", …)`
+ * with the fixed wire literal `"mcp"` — the `{server,tool}` ride inside `args`.
+ * Composes only the shim's exported `callCapSocket` (no import beyond the header).
+ *
+ * NOT thenable: the `get` trap on BOTH levels returns `undefined` for
+ * symbol keys and the promise-protocol / inspection names (`then`/`catch`/
+ * `finally`/`toJSON`), so a common model mistake — `await comis_tools.mcp.server`
+ * (awaiting a partial namespace instead of calling a tool) — is a clean no-op
+ * rather than a `.then` access that resolves to a callable and fires a spurious
+ * (allowlist-denied) `tool:"then"` cap dispatch. A shared `isNonToolKey`
+ * predicate (an IIFE-scoped local) keeps the guard DRY across the two levels.
+ */
+const MCP_PROXY_JS = `  mcp: (() => {
+    const isNonToolKey = (k) =>
+      typeof k === "symbol" ||
+      k === "then" ||
+      k === "catch" ||
+      k === "finally" ||
+      k === "toJSON";
+    return new Proxy(
+      {},
+      {
+        get(_serverTarget, server) {
+          if (isNonToolKey(server)) return undefined;
+          return new Proxy(
+            {},
+            {
+              get(_toolTarget, tool) {
+                if (isNonToolKey(tool)) return undefined;
+                return (args) =>
+                  callCapSocket("tool.invoke", {
+                    tool: "mcp",
+                    args: { server, tool, args },
+                  });
+              },
+            },
+          );
+        },
+      },
+    );
+  })(),`;
+
+/**
  * Emit the thin `.js` runtime. Each method delegates to the stable
  * `./orchestrate-sdk-runtime.js` shim; high-volume returns are
  * wrapped so the ResultRef carries its `.grep/.jq/.read`. `describe()` returns
- * the static discovery list emitted from the cap-map.
+ * the static discovery list emitted from the cap-map. The `mcp` tool is the one
+ * special-case: a runtime proxy namespace (see {@link MCP_PROXY_JS}) instead of a
+ * flat method, because its server/tool set is dynamic per connection.
  */
 function emitSdkJs(sortedTools: readonly string[]): string {
-  const importLine = `import { invoke, wrapResultRef } from "./orchestrate-sdk-runtime.js";\n`;
+  const importLine = `import { invoke, wrapResultRef, callCapSocket } from "./orchestrate-sdk-runtime.js";\n`;
 
   // The static discovery list (cap + summary per tool) — 2-space indented JSON.
   const descriptors = sortedTools.map((tool) => {
     const capability = TOOL_CAPABILITY_MAP[tool as keyof typeof TOOL_CAPABILITY_MAP];
-    return { name: tool, capability, summary: summaryFor(tool, capability) };
+    return { name: tool, capability, summary: summaryFor(tool, capability), example: exampleFor(capability, "ts") };
   });
   const descriptorsJson = JSON.stringify(descriptors, null, 2);
 
   const methodLines: string[] = [];
   for (const tool of sortedTools) {
+    if (tool === "mcp") {
+      methodLines.push(MCP_PROXY_JS);
+      continue;
+    }
     if (returnsResultRef(tool)) {
       methodLines.push(
         `  async ${tool}(args) {\n` +
@@ -260,6 +438,17 @@ function emitSdkJs(sortedTools: readonly string[]): string {
           `  },`,
       );
     }
+  }
+
+  // The curated DIRECT-METHOD triplet — rendered via callCapSocket (the direct-
+  // method wire), NEVER invoke (the tool.invoke wire), so the endpoint's outward-
+  // step ledger (allocateOutwardStepIfNeeded) is preserved (see DIRECT_METHODS).
+  for (const dm of DIRECT_METHODS) {
+    methodLines.push(
+      `  async ${dm.name}(args) {\n` +
+        `    return callCapSocket(${JSON.stringify(dm.method)}, args);\n` +
+        `  },`,
+    );
   }
 
   const body = `
@@ -283,6 +472,231 @@ export default comis_tools;
 `;
 
   return header() + importLine + body;
+}
+
+// ---------------------------------------------------------------------------
+// Python emitter. The `.py` is a SINGLE self-contained file: a Python module
+// cannot import the hyphenated `orchestrate-sdk-runtime` shim the JS SDK
+// delegates to, so the invariant cap-socket wire is inlined here as a fixed
+// stdlib-only preamble (which means the drift gate byte-locks the wire too),
+// with one module-level function per cap-mapped tool. Blocking stdlib `socket`
+// is correct for a one-shot jailed script (no event loop), so the API is sync.
+// ---------------------------------------------------------------------------
+
+/** The `#`-leader SPDX + AUTOGENERATED header (the Python analog of `header()`). */
+function pyHeader(): string {
+  return `# SPDX-License-Identifier: Apache-2.0
+# AUTOGENERATED — do not edit. Run \`pnpm sdk:generate\`.
+`;
+}
+
+/**
+ * The inlined cap-socket wire — a byte-faithful port of
+ * `orchestrate-sdk-runtime.ts` (`callCapSocket` + `invoke`). Stdlib
+ * `json`/`os`/`socket` only (the jailed interpreter has no site-packages
+ * beyond the RO-bound host stdlib). Newline-delimited JSON, NOT length-prefixed
+ * (a framed client would hang the endpoint); `json.dumps(separators=(",",":"))`
+ * mirrors `JSON.stringify`; the absent-env error and the malformed/closed-line
+ * faults match the JS honesty (a containment fault is never a silent success).
+ */
+const PY_WIRE_PREAMBLE = `
+import json
+import os
+import socket
+
+_ENV_SOCK = "COMIS_ORCH_SOCKET"
+_ENV_LEASE = "COMIS_CAP_LEASE"
+
+
+def _call_cap_socket(method, params):
+    sock_path = os.environ.get(_ENV_SOCK)
+    bearer = os.environ.get(_ENV_LEASE)
+    if not sock_path or not bearer:
+        raise RuntimeError(
+            "comis-agent / orchestrate runtime requires "
+            "COMIS_ORCH_SOCKET/COMIS_CAP_LEASE — only valid inside an orchestrate jail"
+        )
+    payload = (
+        json.dumps(
+            {"bearer": bearer, "method": method, "params": params},
+            separators=(",", ":"),
+        )
+        + "\\n"
+    )
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        sock.connect(sock_path)
+        sock.sendall(payload.encode("utf-8"))
+        buf = b""
+        while b"\\n" not in buf:
+            chunk = sock.recv(65536)
+            if not chunk:
+                raise RuntimeError("cap socket closed before a complete response line")
+            buf += chunk
+    finally:
+        sock.close()
+    reply = json.loads(buf.split(b"\\n", 1)[0].decode("utf-8"))
+    if reply.get("error") is not None:
+        err = reply["error"]
+        raise RuntimeError(err if isinstance(err, str) else "capability call failed")
+    return reply.get("result")
+
+
+def _invoke(tool, args=None):
+    return _call_cap_socket("tool.invoke", {"tool": tool, "args": args or {}})
+`;
+
+/**
+ * The `ResultRef` class — a port of `wrapResultRef`. The five extraction
+ * methods route back over the same wire via `_invoke`, so a big (untrusted)
+ * payload stays materialized on disk and only the requested slice re-enters
+ * context. `read` omits `offset`/`limit` when `None` (mirrors the JS
+ * undefined-drop). `_wrap_result_ref(ref)` returns `ResultRef(ref)`.
+ */
+const PY_RESULTREF_CLASS = `
+
+class ResultRef:
+    """A handle to a high-volume tool return materialized on the jailed workspace.
+
+    The big (untrusted) payload stays on disk as data; only this handle
+    re-enters context. Slice it in-jail via grep/jq/sql/jsonpath/read so only
+    the requested rows/lines re-enter -- the full payload never does.
+    """
+
+    def __init__(self, ref):
+        raw = ref if isinstance(ref, dict) else {}
+        self.ref = raw.get("ref")
+        self.kind = raw.get("kind")
+        self.bytes = raw.get("bytes")
+        self.rows = raw.get("rows")
+        self.schema = raw.get("schema")
+        self.preview = raw.get("preview")
+        self.expires_at = raw.get("expiresAt")
+
+    def grep(self, pattern):
+        return _invoke("grep", {"path": self.ref, "pattern": pattern})
+
+    def jq(self, expr):
+        return _invoke("jq", {"path": self.ref, "expr": expr})
+
+    def sql(self, query):
+        return _invoke("sql", {"path": self.ref, "query": query})
+
+    def jsonpath(self, expr):
+        return _invoke("jsonpath", {"path": self.ref, "expr": expr})
+
+    def read(self, offset=None, limit=None):
+        params = {"path": self.ref}
+        if offset is not None:
+            params["offset"] = offset
+        if limit is not None:
+            params["limit"] = limit
+        return _invoke("read", params)
+
+
+def _wrap_result_ref(ref):
+    return ResultRef(ref)
+`;
+
+/**
+ * The `_McpNamespace` runtime proxy — the Python analogue of the JS `mcp` `Proxy`.
+ * `comis_tools.mcp.<server>.<tool>(args)` resolves via a two-level `__getattr__`
+ * to ONE `_call_cap_socket("tool.invoke", …)` with the fixed wire literal `"mcp"`
+ * (the `{server,tool}` ride inside `args`). The server/tool set is dynamic per
+ * connection, so it cannot be a static per-tool binding; attribute access builds
+ * the `{server, tool}` pair. Stdlib-only — no import beyond the wire preamble's.
+ * `self.__dict__.get("_server")` reads the field directly so `__getattr__` never
+ * recurses on it.
+ */
+const PY_MCP_NAMESPACE_CLASS = `
+
+class _McpNamespace:
+    """Runtime proxy for the operator-configured connected-MCP-server tools.
+
+    comis_tools.mcp.<server>.<tool>(args) resolves to a single tool.invoke over the
+    cap socket -- the fixed wire tool is "mcp" and the {server, tool} ride inside
+    args. The server/tool set is dynamic per connection, so it cannot be a static
+    per-tool binding; attribute access builds the {server, tool} pair.
+    """
+
+    def __init__(self, server=None):
+        self._server = server
+
+    def __getattr__(self, name):
+        # Dunder / special-attribute probes (introspection, copy, pickle, the
+        # format/await protocols) must NOT build a fresh namespace or a bound
+        # call -- raise the normal AttributeError so a partial-namespace probe is
+        # a clean miss (mirrors the JS proxy dropping then/catch/finally).
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)
+        server = self.__dict__.get("_server")
+        if server is None:
+            return _McpNamespace(name)
+
+        def _call(args=None):
+            return _call_cap_socket(
+                "tool.invoke",
+                {"tool": "mcp", "args": {"server": server, "tool": name, "args": args or {}}},
+            )
+
+        return _call
+`;
+
+/**
+ * Emit the single self-contained `.py` binding. Reuses the SAME sorted tool
+ * list, `returnsResultRef`, `summaryFor`, and `TOOL_SUMMARIES` as the JS/dts
+ * emitters (parity by construction). `describe()` renders the SAME
+ * `{name,capability,summary}` fields via the SAME `JSON.stringify(..., 2)`; the
+ * `example` field alone is language-specific — the PY idiom here (sync,
+ * module-level, quoted dict keys) rather than the TS form the `.js`/`.d.ts` carry,
+ * so a py author never copies TypeScript. All values are strings, so the emitted
+ * JSON is still a valid Python literal.
+ */
+function emitSdkPy(sortedTools: readonly string[]): string {
+  // The static discovery list (cap + summary per tool) — the identical shape +
+  // 2-space JSON the JS SDK emits; string-only values make it a Python literal.
+  // The `example` renders in the PY idiom here (sync, module-level, quoted dict
+  // keys) so a py author never copies TypeScript out of describe().
+  const descriptors = sortedTools.map((tool) => {
+    const capability = TOOL_CAPABILITY_MAP[tool as keyof typeof TOOL_CAPABILITY_MAP];
+    return { name: tool, capability, summary: summaryFor(tool, capability), example: exampleFor(capability, "py") };
+  });
+  const descriptorsJson = JSON.stringify(descriptors, null, 2);
+
+  // One module-level function per tool; the high-volume set wraps its return in
+  // a ResultRef exactly like the JS SDK's wrapResultRef branch.
+  const methods: string[] = [];
+  for (const tool of sortedTools) {
+    if (tool === "mcp") {
+      // The dynamic MCP surface is a runtime proxy namespace (see _McpNamespace),
+      // not a per-tool function — bind it once at module level.
+      methods.push("mcp = _McpNamespace()");
+      continue;
+    }
+    const call = returnsResultRef(tool)
+      ? `_wrap_result_ref(_invoke(${JSON.stringify(tool)}, args))`
+      : `_invoke(${JSON.stringify(tool)}, args)`;
+    methods.push(`def ${tool}(args=None):\n    return ${call}`);
+  }
+
+  // The curated DIRECT-METHOD triplet — module-level functions dispatching via
+  // _call_cap_socket (the direct-method wire), NEVER _invoke (the tool.invoke wire),
+  // so the endpoint's outward-step ledger is preserved (see DIRECT_METHODS).
+  for (const dm of DIRECT_METHODS) {
+    methods.push(`def ${dm.name}(args=None):\n    return _call_cap_socket(${JSON.stringify(dm.method)}, args or {})`);
+  }
+
+  return (
+    pyHeader() +
+    PY_WIRE_PREAMBLE +
+    PY_RESULTREF_CLASS +
+    PY_MCP_NAMESPACE_CLASS +
+    "\nDESCRIPTORS = " +
+    descriptorsJson +
+    "\n\ndef describe():\n    return DESCRIPTORS\n\n" +
+    methods.join("\n\n") +
+    "\n"
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -314,19 +728,22 @@ export function runCodegen(outDir: string = COMMITTED_DIR): SdkCodegenResult {
     }
   }
 
-  // 2-3. Emit both artifacts (POSIX trailing newline already in the templates).
+  // 2-4. Emit all three artifacts (POSIX trailing newline already in the templates).
   const dts = emitSdkDts(sortedTools);
   const js = emitSdkJs(sortedTools);
+  const py = emitSdkPy(sortedTools);
 
-  // 4. Write both into outDir. The path is build-tool-internal, not
+  // 5. Write all three into outDir. The path is build-tool-internal, not
   //    attacker-controlled — same sanctioned dynamic-fs pattern the web codegen
   //    uses (generate-web-artifact.ts:146,150).
   const outDts = resolve(outDir, ARTIFACT_DTS);
   const outJs = resolve(outDir, ARTIFACT_JS);
+  const outPy = resolve(outDir, ARTIFACT_PY);
   writeFileSync(outDts, dts); // eslint-disable-line security/detect-non-literal-fs-filename
   writeFileSync(outJs, js); // eslint-disable-line security/detect-non-literal-fs-filename
+  writeFileSync(outPy, py); // eslint-disable-line security/detect-non-literal-fs-filename
 
-  return { dts, js };
+  return { dts, js, py };
 }
 
 /**
@@ -336,7 +753,7 @@ function main(): void {
   runCodegen();
   const n = Object.keys(TOOL_CAPABILITY_MAP).length;
   console.log(
-    `Generated comis_tools SDK: ${n} cap-mapped tools → ${ARTIFACT_DTS} + ${ARTIFACT_JS}`,
+    `Generated comis_tools SDK: ${n} cap-mapped tools → ${ARTIFACT_DTS} + ${ARTIFACT_JS} + ${ARTIFACT_PY}`,
   );
 }
 

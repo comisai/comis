@@ -65,10 +65,10 @@ describe("attenuateCaps (mint attenuation = pure parent ∩ requested)", () => {
     expect(result).toEqual(["orch:web", "orch:read"]);
   });
 
-  it("is the identity on full ∩ full — all 10 caps survive", () => {
+  it("is the identity on full ∩ full — every cap survives", () => {
     const result = attenuateCaps([...AGENT_CAPABILITIES], [...AGENT_CAPABILITIES]);
     expect([...result].sort()).toEqual([...AGENT_CAPABILITIES].sort());
-    expect(result.length).toBe(10);
+    expect(result.length).toBe(AGENT_CAPABILITIES.length);
   });
 
   // ── The load-bearing property: >=1000 seeded iterations, subset-of-parent ──

@@ -299,6 +299,11 @@ vi.mock("@comis/agent", () => ({
   // mock returns a minimal profile so the dag-gated wiring path runs; the depth
   // value itself is asserted in setup-context-tools.test.ts against the real resolver.
   resolveModelProfile: () => ({ capabilityClass: "small" }),
+  // The orchestrate wiring resolves an effective capability class via
+  // capabilityClassFromProvider (the one-shot auto-repair class-gate). A minimal
+  // stub keeps tool assembly running; the resolver behavior itself is covered in
+  // setup-tools-orchestrate-repair.test.ts.
+  capabilityClassFromProvider: () => "small",
 }));
 
 // ---------------------------------------------------------------------------

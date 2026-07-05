@@ -76,6 +76,13 @@ export interface OutcomeObservation {
   recalledIds?: string[];
   /** Opaque used-skill ids attributed to this trajectory — ids only, never bodies; absent when no skill use was attributed. */
   usedSkillIds?: string[];
+  /**
+   * Content-free procedure descriptor for this trajectory — the run's bounded tool-NAME
+   * set (the pre-flight footprint); NAMES only, never args/bodies/secrets. Absent when no
+   * cap-mapped tool call sites were declared. Persisted JSON-encoded to `procedure_descriptor`;
+   * NOT part of any key/index (the sha256 id tuple is untouched).
+   */
+  procedureDescriptor?: ReadonlyArray<string>;
   /** Injected epoch ms the observation was made (part of the idempotency tuple). */
   observedAt: number;
 }
@@ -150,8 +157,15 @@ export interface OutcomeSignalPort {
    * (treat absent / `err` as "no source trajectories") rather than fall back to a
    * non-resolvable identity. Scoped + fail-closed on an unresolved scope, exactly
    * like {@link resolve}.
+   *
+   * Each entry also carries the turn's content-free `procedureDescriptor` when one was
+   * recorded — the ordered tool-NAME sequence + counts read back from the ledger (NAMES
+   * only, never args/bodies). Absent when the turn ran no cap-mapped tool call sites (or
+   * the stored value was corrupt — it degrades to absent, never throws). The reflection
+   * source attaches it onto each `ReflectionSourceTrajectory` so procedure information
+   * reaches the reflection engine (whose string transcript drops tool_use/tool_result blocks).
    */
   listTrajectoryIds?(
     scope: LearningScope,
-  ): Promise<Result<Array<{ trajectoryId: string; sessionId: string }>, Error>>;
+  ): Promise<Result<Array<{ trajectoryId: string; sessionId: string; procedureDescriptor?: ReadonlyArray<string> }>, Error>>;
 }

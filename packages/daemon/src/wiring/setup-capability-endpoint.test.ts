@@ -42,7 +42,16 @@ import {
 import { resolveAutonomy } from "@comis/core";
 import { assertNotAgentOrigin } from "../api/shared/assert-not-agent-origin.js";
 import type { RpcCall } from "@comis/skills/platform-tools";
-import { createCapabilityEndpoint } from "./setup-capability-endpoint.js";
+import { createResultRefStore } from "@comis/skills/tools";
+import { mkdtempSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  createCapabilityEndpoint,
+  createReplayRecorder,
+  replayParamsDigest,
+  type ReplayRecorder,
+} from "./setup-capability-endpoint.js";
 import type { BoundedAutonomy } from "../autonomy/bounded-autonomy.js";
 
 // ---------------------------------------------------------------------------
@@ -916,6 +925,15 @@ describe("createCapabilityEndpoint rate-limit + cron self-ownership", () => {
   // The jail leg allocates a monotonic
   // _outwardStepIndex for an OUTWARD message method (orch:message) and strips a
   // forged inbound value before re-injecting the trusted allocated one.
+  //
+  // DURABILITY-POSTURE DEPENDENCY (documented): the exactly-once outward dedup is
+  // ACTIVE only under `autonomy.durability.enabled` — that flag is what wires
+  // `deps.durableRuns`, the sole source of the allocated index. Otherwise the send
+  // is a best-effort, un-ledgered pass-through (still delivered). Durable resumable
+  // runs are a separate, not-yet-wired capability. So the exactly-once proof below
+  // REQUIRES a durableRuns stub (Pitfall 2 — a distinctness assertion that passed
+  // without the stub would be vacuous); the companion pass-through test proves the
+  // honest degradation when the store is absent.
   // -------------------------------------------------------------------------
 
   /** A durableRuns stub whose allocateOutwardStep returns a monotonic 0,1,… per root. */
@@ -945,6 +963,41 @@ describe("createCapabilityEndpoint rate-limit + cron self-ownership", () => {
     expect(rpcCall).toHaveBeenCalledTimes(2); // both deliver — neither dropped
     expect((rpcCall.mock.calls[0][1] as Record<string, unknown>)._outwardStepIndex).toBe(0);
     expect((rpcCall.mock.calls[1][1] as Record<string, unknown>)._outwardStepIndex).toBe(1);
+  });
+
+  // MUT-02 (the typed SDK method rides the shipped ledger): comis_tools.message_send(...)
+  // dispatches callCapSocket("message.send", args) → the endpoint's DIRECT-method
+  // branch of handleCapCall (NOT tool.invoke), so allocateOutwardStepIfNeeded fires.
+  // Two IDENTICAL message.send in ONE run (the duplicate-send / retry shape — a
+  // double-effect risk) therefore get DISTINCT indices 0 then 1, so a duplicated
+  // outward step dedupes exactly-once. This exercises the SAME wire path the typed
+  // method takes, against the REAL allocateOutwardStepIfNeeded (a durableRuns stub,
+  // NOT a mock of the allocator). No new dedup code — MUT-02 rides the shipped ledger.
+  it("two identical message.send in one run get distinct _outwardStepIndex 0 then 1 (duplicate-send exactly-once)", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:message"], "agent-dup");
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const durableRuns = makeAllocStore();
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall, durableRuns });
+
+    // The SAME outward method twice in one run (mintValidLease pins rootRunId "run-1").
+    await endpoint.handleCapCall(bearer, "message.send", { channelId: "c", text: "first" });
+    await endpoint.handleCapCall(bearer, "message.send", { channelId: "c", text: "retry" });
+
+    expect(rpcCall).toHaveBeenCalledTimes(2); // both deliver — neither dropped
+    expect((rpcCall.mock.calls[0][1] as Record<string, unknown>)._outwardStepIndex).toBe(0);
+    expect((rpcCall.mock.calls[1][1] as Record<string, unknown>)._outwardStepIndex).toBe(1);
+    // Pitfall-2 (self-documenting): the distinctness above REQUIRES the stub — the
+    // real allocateOutwardStep(rootRunId) is what produced 0 then 1, keyed on the
+    // tree-stable rootRunId. The companion pass-through test below (no durableRuns)
+    // asserts the index is undefined, so a distinctness proof that passed WITHOUT the
+    // stub would be exposed as vacuous rather than exercising the ledger.
+    const alloc = (durableRuns as unknown as { allocateOutwardStep: ReturnType<typeof vi.fn> })
+      .allocateOutwardStep;
+    expect(alloc).toHaveBeenCalledTimes(2);
+    expect(alloc).toHaveBeenNthCalledWith(1, "run-1");
+    expect(alloc).toHaveBeenNthCalledWith(2, "run-1");
   });
 
   it("a forged inbound _outwardStepIndex is stripped, then the trusted allocated index is injected", async () => {
@@ -989,5 +1042,192 @@ describe("createCapabilityEndpoint rate-limit + cron self-ownership", () => {
 
     const forwarded = rpcCall.mock.calls[0][1] as Record<string, unknown>;
     expect(forwarded._outwardStepIndex).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// REPLAY-01 — the content-free replay recorder at the handleCapCall chokepoint.
+// After a SUCCESSFUL cap-socket call on a run with orchestrateResume ON, ONE
+// content-free `{seq, method, paramsDigest} → pointer` line is appended to
+// <workspace>/results/replay.jsonl — digests + ResultRef pointers ONLY (INV-5 /
+// T-WS1-01), never raw params/body/bearer, even for a small inline result (A3).
+// Nothing is written when the run's replay recording is off (default posture).
+// ---------------------------------------------------------------------------
+
+/** A silent ComisLogger for the real ResultRef store the recorder writes through. */
+function makeSilentLogger(): Parameters<typeof createResultRefStore>[0]["logger"] {
+  const l = { debug() {}, info() {}, warn() {}, error() {}, child: () => l };
+  return l as unknown as Parameters<typeof createResultRefStore>[0]["logger"];
+}
+
+/** Build a REAL recorder over a REAL ResultRef store + a REAL temp workspace — the
+ *  recorded pointer is a real file on disk (ground truth, never a mock). */
+function makeRecorder(
+  workspacePath: string,
+  clock: { now(): number },
+  enabled = true,
+): ReplayRecorder {
+  const store = createResultRefStore({ logger: makeSilentLogger() });
+  return createReplayRecorder({
+    isEnabled: () => enabled,
+    resolveWorkspace: () => workspacePath,
+    materialize: (payload, ctx) => store.materialize(payload, "orchestrate_replay", ctx),
+    nowMs: () => clock.now(),
+  });
+}
+
+describe("createCapabilityEndpoint replay recorder (REPLAY-01, content-free)", () => {
+  it("appends exactly one content-free {seq,method,paramsDigest}→pointer line with no params/body/bearer", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:cron"], "agent-rec");
+    // The dispatch result carries a distinctive body substring; the params carry a
+    // distinctive substring — NEITHER may appear in the content-free log.
+    const rpcCall = vi.fn(async () => ({ token: "SECRET_BODY_MARKER", ok: true }));
+    const dir = mkdtempSync(join(tmpdir(), "replay-rec-"));
+    const endpoint = createCapabilityEndpoint({
+      leaseManager,
+      rpcCall,
+      replayRecorder: makeRecorder(dir, clock),
+    });
+
+    await endpoint.handleCapCall(bearer, "cron.add", { schedule: "SENSITIVE_PARAM_MARKER" });
+
+    const logPath = join(dir, "results", "replay.jsonl");
+    const raw = readFileSync(logPath, "utf8");
+    const lines = raw.trim().split("\n");
+    expect(lines).toHaveLength(1);
+
+    const entry = JSON.parse(lines[0]) as {
+      seq: number;
+      method: string;
+      paramsDigest: string;
+      result: string;
+    };
+    expect(entry.seq).toBe(0);
+    expect(entry.method).toBe("cron.add");
+    // The digest is sha256(canonical(params)) — the platform hash, keyed on the
+    // ORIGINAL wire params (what the re-spawned script re-sends), never the raw params.
+    expect(entry.paramsDigest).toBe(replayParamsDigest({ schedule: "SENSITIVE_PARAM_MARKER" }));
+    expect(entry.paramsDigest).toMatch(/^[0-9a-f]{64}$/);
+    // The result is a POINTER into results/, never the body.
+    expect(entry.result).toMatch(/^results\//);
+
+    // INV-5 / T-WS1-01: the serialized line leaks NO raw params, NO result body, NO bearer.
+    expect(raw).not.toContain("SENSITIVE_PARAM_MARKER");
+    expect(raw).not.toContain("SECRET_BODY_MARKER");
+    expect(raw).not.toContain(bearer);
+
+    // The pointer file exists on disk and holds the materialized body (byte-identical
+    // replay is possible) — the log stayed content-free, the bytes live in results/.
+    const pointerPath = join(dir, entry.result);
+    expect(existsSync(pointerPath)).toBe(true);
+    expect(readFileSync(pointerPath, "utf8")).toContain("SECRET_BODY_MARKER");
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("materializes even a small inline result to an on-disk pointer (A3)", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:cron"], "agent-small");
+    // A tiny result that would ordinarily be inlined — it MUST still be materialized.
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const dir = mkdtempSync(join(tmpdir(), "replay-small-"));
+    const endpoint = createCapabilityEndpoint({
+      leaseManager,
+      rpcCall,
+      replayRecorder: makeRecorder(dir, clock),
+    });
+
+    await endpoint.handleCapCall(bearer, "cron.add", { schedule: "x" });
+
+    const entry = JSON.parse(
+      readFileSync(join(dir, "results", "replay.jsonl"), "utf8").trim(),
+    ) as { result: string };
+    expect(entry.result).toMatch(/^results\//);
+    const pointerPath = join(dir, entry.result);
+    expect(existsSync(pointerPath)).toBe(true);
+    expect(JSON.parse(readFileSync(pointerPath, "utf8"))).toEqual({ ok: true });
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("writes nothing when replay recording is off for the run (default posture)", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:cron"], "agent-off");
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const dir = mkdtempSync(join(tmpdir(), "replay-off-"));
+    const endpoint = createCapabilityEndpoint({
+      leaseManager,
+      rpcCall,
+      replayRecorder: makeRecorder(dir, clock, false), // gate OFF
+    });
+
+    await endpoint.handleCapCall(bearer, "cron.add", { schedule: "x" });
+
+    // No results/ dir, no replay.jsonl — the recorder was a complete no-op.
+    expect(existsSync(join(dir, "results", "replay.jsonl"))).toBe(false);
+    // The dispatch itself still happened (recording is orthogonal to dispatch).
+    expect(rpcCall).toHaveBeenCalledTimes(1);
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("increments seq in dispatch order across calls in the same run (keyed on rootRunId)", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    // mintValidLease pins rootRunId "run-1" — both calls share the same run.
+    const bearer = mintValidLease(leaseManager, ["orch:cron"], "agent-seq");
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const dir = mkdtempSync(join(tmpdir(), "replay-seq-"));
+    const endpoint = createCapabilityEndpoint({
+      leaseManager,
+      rpcCall,
+      replayRecorder: makeRecorder(dir, clock),
+    });
+
+    await endpoint.handleCapCall(bearer, "cron.add", { schedule: "one" });
+    await endpoint.handleCapCall(bearer, "cron.run", { jobId: "j1" });
+
+    const lines = readFileSync(join(dir, "results", "replay.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l) as { seq: number; method: string });
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatchObject({ seq: 0, method: "cron.add" });
+    expect(lines[1]).toMatchObject({ seq: 1, method: "cron.run" });
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("records a tool.invoke call under method 'tool.invoke' with the {tool,args} digest", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:read"], "agent-tinv");
+    const rpcCall = vi.fn(async () => ({ hits: [] }));
+    const dir = mkdtempSync(join(tmpdir(), "replay-tinv-"));
+    const endpoint = createCapabilityEndpoint({
+      leaseManager,
+      rpcCall,
+      replayRecorder: makeRecorder(dir, clock),
+    });
+
+    // memory_search is an rpc-route orch:read tool — the wire method is tool.invoke.
+    await endpoint.handleCapCall(bearer, "tool.invoke", {
+      tool: "memory_search",
+      args: { q: "x" },
+    });
+
+    const entry = JSON.parse(
+      readFileSync(join(dir, "results", "replay.jsonl"), "utf8").trim(),
+    ) as { method: string; paramsDigest: string };
+    // The recorded method is the WIRE method (tool.invoke), and the digest is over
+    // the ORIGINAL wire params {tool, args} the re-spawned script re-sends.
+    expect(entry.method).toBe("tool.invoke");
+    expect(entry.paramsDigest).toBe(replayParamsDigest({ tool: "memory_search", args: { q: "x" } }));
+
+    rmSync(dir, { recursive: true, force: true });
   });
 });

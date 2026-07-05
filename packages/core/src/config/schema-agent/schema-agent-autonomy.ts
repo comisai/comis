@@ -57,6 +57,8 @@ import {
 // AutonomyConfigSchema below. Sibling leaf to keep this file under the
 // schema-agent file-size cap; re-exported via the schema-agent barrel.
 import { DurabilityConfigSchema } from "./schema-agent-autonomy-durability.js";
+// The inbound MCP allowlist leaf (default-off) — nested below; docs in the leaf.
+import { AutonomyMcpConfigSchema } from "./schema-agent-autonomy-mcp.js";
 // The autonomy MODE vocabulary + the fail-closed `resolveEffectiveMode`
 // primitive + the two `unattended`/`max` posture notices live in a sibling leaf
 // (file-size cap), exported to `@comis/core` via the schema-agent barrel.
@@ -215,6 +217,8 @@ export const AutonomyConfigSchema = z.strictObject({
   // budget/rate/spawn/outward blocks above; a bare `.default({})` does not
   // typecheck because every nested field is itself `.default()`-ed).
   durability: DurabilityConfigSchema.default(() => DurabilityConfigSchema.parse({})),
+  // MCP inbound-allowlist sub-block (default-off): the orch:mcp grant + allowlist.
+  mcp: AutonomyMcpConfigSchema.default(() => AutonomyMcpConfigSchema.parse({})),
   // ── per-surface ergonomic toggles → matching orch:* cap ("one cap model") ──
   /** orch:web — untrusted external content (Rule-of-Two leg A). */
   web: z.boolean().optional(),
@@ -243,6 +247,8 @@ const SURFACE_TOGGLE_TO_CAP = {
   analyze: "orch:analyze",
   write: "orch:write",
   browse: "orch:browse",
+  // orch:mcp — MCP tools in the jailed SDK; grant gated on autonomy.mcp.enabled.
+  mcp: "orch:mcp",
 } as const satisfies Record<string, AgentCapability>;
 
 // ── The resolved profile table ──────────────────────────────────────────────
@@ -429,6 +435,7 @@ export function resolveAutonomy(cfg?: AutonomyConfig): ResolvedAutonomy {
     [cfg?.analyze, SURFACE_TOGGLE_TO_CAP.analyze],
     [cfg?.write, SURFACE_TOGGLE_TO_CAP.write],
     [cfg?.browse, SURFACE_TOGGLE_TO_CAP.browse],
+    [cfg?.mcp?.enabled, SURFACE_TOGGLE_TO_CAP.mcp], // orch:mcp gated on autonomy.mcp.enabled
   ];
   for (const [enabled, cap] of surfaceToggles) {
     if (enabled === true) capSet.add(cap);

@@ -38,6 +38,7 @@ vi.mock("@comis/agent", async (importOriginal) => ({
   REFLECT_PROMPT: "MOCK_SKILL_REFLECT_PROMPT",
   PROFILE_REFLECT_PROMPT: "MOCK_PROFILE_REFLECT_PROMPT",
   TOPIC_REFLECT_PROMPT: "MOCK_TOPIC_REFLECT_PROMPT",
+  PROCEDURE_REFLECT_PROMPT: "MOCK_PROCEDURE_REFLECT_PROMPT",
   // The other named imports the module pulls (consolidation/reasoning/userrep/tuning)
   // are not on this leaf's code path, but the wholesale mock must satisfy the import list of
   // any transitively-imported module — keep them present as no-op spies. (The social-modeling
@@ -147,7 +148,7 @@ describe("handleWireMemoryCronSentinel", () => {
     expect(onComplete).toHaveBeenCalledWith({ status: "ok" });
   });
 
-  it("__REFLECT__ enabled → reflects ALL 3 kinds (one engine, looped) injecting the per-kind prompt/source, re-emits the SUMMED learning:skill_* counts", async () => {
+  it("__REFLECT__ enabled → runs ALL 4 reflect passes (skill, profile, topic, procedure) injecting the per-kind prompt/source, re-emits the SUMMED counts", async () => {
     const bundle = makeReflectionBundle();
     const ctx = makeCtx({
       // The collapsed learning block — reflect.minConfidence (0.6) + reflect.maxDocsPerRun (25).
@@ -158,30 +159,47 @@ describe("handleWireMemoryCronSentinel", () => {
     const onComplete = vi.fn();
     const handled = await handleWireMemoryCronSentinel("__REFLECT__", { agentId: "agent-1", onComplete }, ctx);
     expect(handled).toBe(true);
-    // ONE engine, LOOPED over the 3 kinds (skill, profile, topic) — NOT three engines.
-    expect(mockRunReflection).toHaveBeenCalledTimes(3);
-    // Each kind is reflected: the threaded `kind` covers skill/profile/topic exactly once.
+    // ONE engine, LOOPED over the 4 passes — skill + profile + topic + the procedure pass (a 4th
+    // kind:"skill" entry keyed on the descriptor). NOT four engines.
+    expect(mockRunReflection).toHaveBeenCalledTimes(4);
+    // The threaded `kind` covers skill twice (user-intent + procedure), plus profile + topic.
     const kinds = mockRunReflection.mock.calls.map((c) => (c[0] as { kind: string }).kind).sort();
-    expect(kinds).toEqual(["profile", "skill", "topic"]);
-    // The profile run carries a group-by-user groupKey (⇒ topicKey === userId); skill/topic do not.
+    expect(kinds).toEqual(["profile", "skill", "skill", "topic"]);
+    // The profile run carries a group-by-user groupKey (⇒ topicKey === userId).
     const profileArg = mockRunReflection.mock.calls.find((c) => (c[0] as { kind: string }).kind === "profile")![0] as Record<string, unknown>;
-    const skillArg = mockRunReflection.mock.calls.find((c) => (c[0] as { kind: string }).kind === "skill")![0] as Record<string, unknown>;
+    // The USER-INTENT skill run: kind:"skill", NO groupKey, NO populateProcedureMetadata (byte-identical).
+    const skillArg = mockRunReflection.mock.calls.find(
+      (c) => (c[0] as { kind: string; populateProcedureMetadata?: boolean }).kind === "skill" && !(c[0] as { populateProcedureMetadata?: boolean }).populateProcedureMetadata,
+    )![0] as Record<string, unknown>;
+    // The PROCEDURE run: kind:"skill", a DEFINED descriptor groupKey, populateProcedureMetadata:true.
+    const procArg = mockRunReflection.mock.calls.find(
+      (c) => (c[0] as { populateProcedureMetadata?: boolean }).populateProcedureMetadata === true,
+    )?.[0] as Record<string, unknown> | undefined;
+    expect(procArg).toBeDefined();
+    expect(procArg!.kind).toBe("skill");
+    expect(typeof procArg!.groupKey).toBe("function");
+    // The procedure groupKey reads the descriptor key; an absent descriptor ⇒ "" (ungroupable, skipped).
+    expect((procArg!.groupKey as (t: { procedureDescriptor?: { key: string } }) => string)({ procedureDescriptor: { key: "web_search>jq" } })).toBe("web_search>jq");
+    expect((procArg!.groupKey as (t: { procedureDescriptor?: { key: string } }) => string)({})).toBe("");
     expect(typeof profileArg.groupKey).toBe("function");
     expect((profileArg.groupKey as (t: { sender: string }) => string)({ sender: "u1" })).toBe("u1");
     expect(skillArg.groupKey).toBeUndefined();
+    expect(skillArg.populateProcedureMetadata).toBeUndefined();
     // The injected closed-graph adapters (the daemon is the SOLE composition root); the SAME store
-    // (with supersede) + outcome gate feed every kind.
+    // (with supersede) + outcome gate feed every pass.
     expect(skillArg.mentalModelStore).toBe(bundle!.learnedSkillStore);
     expect(skillArg.outcomeSignal).toBe(bundle!.outcomeSignal);
     expect(skillArg.reflectionAdapter).toBeDefined();
-    // The per-kind adapter is built 3× (one per kind), each with the per-kind systemPrompt + source.
-    expect(mockCreateLlmReflectionAdapter).toHaveBeenCalledTimes(3);
+    // The per-pass adapter is built 4× (one per pass), each with the per-kind systemPrompt + source.
+    expect(mockCreateLlmReflectionAdapter).toHaveBeenCalledTimes(4);
     const adapterPrompts = mockCreateLlmReflectionAdapter.mock.calls.map((c) => (c[0] as { systemPrompt: string; source: string }));
     expect(adapterPrompts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ systemPrompt: "MOCK_SKILL_REFLECT_PROMPT", source: "learned_skill_reflection" }),
         expect.objectContaining({ systemPrompt: "MOCK_PROFILE_REFLECT_PROMPT", source: "learned_profile_reflection" }),
         expect.objectContaining({ systemPrompt: "MOCK_TOPIC_REFLECT_PROMPT", source: "learned_topic_reflection" }),
+        // The procedure pass wraps its transcript under a DISTINCT source label + prompt.
+        expect.objectContaining({ systemPrompt: "MOCK_PROCEDURE_REFLECT_PROMPT", source: "learned_procedure_reflection" }),
       ]),
     );
     // No validation adapter / approval gate on the reflect path (the synthesis-only belt is gone).
@@ -191,29 +209,29 @@ describe("handleWireMemoryCronSentinel", () => {
     // the collapsed learning.reflect block (maxDocsPerRun is config-driven, 25 here).
     expect((skillArg.config as { maxDocsPerRun: number }).maxDocsPerRun).toBe(25);
     expect((skillArg.config as { minConfidence: number }).minConfidence).toBe(0.6);
-    // The PER-KIND source build (skill outcomes / profile+topic memories) — called once per kind.
-    expect(bundle!.buildSourceTrajectories).toHaveBeenCalledTimes(3);
+    // The PER-KIND source build — called once per pass. The procedure pass reads the SAME
+    // (descriptor-carrying) skill sources (kind:"skill"), so buildSourceTrajectories("skill") fires twice.
+    expect(bundle!.buildSourceTrajectories).toHaveBeenCalledTimes(4);
     const builtKinds = (bundle!.buildSourceTrajectories as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]).sort();
-    expect(builtKinds).toEqual(["profile", "skill", "topic"]);
+    expect(builtKinds).toEqual(["profile", "skill", "skill", "topic"]);
     expect(Array.isArray(skillArg.sourceTrajectories)).toBe(true);
     // The daemon RE-EMITS the SUMMED counts DAEMON-SIDE after the loop (reflect:* names).
-    // With the default all-admit mock returning {selected:2, admitted:1}
-    // per kind → sum admitted = 3.
+    // With the default all-admit mock returning {selected:2, admitted:1} per pass → sum admitted = 4.
     const emitCalls = (ctx.container.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
     const emitted = emitCalls.map((c) => c[0]);
     expect(emitted).toContain("reflect:admitted");
     expect(emitted).toContain("reflect:funnel");
-    // ONE summed emit (not per-kind) — the reflect:admitted.count is the SUMMED admitted (3 = 3 kinds × 1).
+    // ONE summed emit (not per-pass) — the reflect:admitted.count is the SUMMED admitted (4 = 4 passes × 1).
     expect(emitted.filter((e) => e === "reflect:admitted")).toHaveLength(1);
     const synthEmit = emitCalls.find((c) => c[0] === "reflect:admitted");
-    expect((synthEmit?.[1] as { count: number }).count).toBe(3);
-    // The funnel carries the SUMMED reflect mapping: synthesized = sum selected (6 = 3×2),
-    // admitted = 3, maxClusterCardinality = max across kinds (2), the admissionOutcome verdict.
+    expect((synthEmit?.[1] as { count: number }).count).toBe(4);
+    // The funnel carries the SUMMED reflect mapping: synthesized = sum selected (8 = 4×2),
+    // admitted = 4, maxClusterCardinality = max across passes (2), the admissionOutcome verdict.
     const funnelEmit = emitCalls.find((c) => c[0] === "reflect:funnel");
     const funnel = funnelEmit?.[1] as { maxClusterCardinality: number; admitted: number; admissionOutcome: string; synthesized: number };
     expect(funnel.maxClusterCardinality).toBe(2);
-    expect(funnel.admitted).toBe(3);
-    expect(funnel.synthesized).toBe(6); // = sum selected (trusted-origin successes entering reflection)
+    expect(funnel.admitted).toBe(4);
+    expect(funnel.synthesized).toBe(8); // = sum selected (trusted-origin successes entering reflection)
     expect(funnel.admissionOutcome).toBe("admitted");
     // The vestigial learning:skill_validated is GONE (no validation event on the reflect path).
     expect(emitted).not.toContain("learning:skill_validated");
@@ -250,6 +268,9 @@ describe("handleWireMemoryCronSentinel", () => {
     mockRunReflection
       .mockResolvedValueOnce({ ok: true as const, value: { admissionOutcome: "uncorroborated" as const, selected: 2, admitted: 0, maxTopicCardinality: 1, distinctTopicKeys: 2, skipped: 0, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } })
       .mockResolvedValueOnce({ ok: true as const, value: { admissionOutcome: "no_successes" as const, selected: 0, admitted: 0, maxTopicCardinality: 0, distinctTopicKeys: 0, skipped: 0, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } })
+      .mockResolvedValueOnce({ ok: true as const, value: { admissionOutcome: "no_successes" as const, selected: 0, admitted: 0, maxTopicCardinality: 0, distinctTopicKeys: 0, skipped: 0, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } })
+      // The 4th (procedure) pass — also no successes, so the SUMMED verdict stays the meaningful
+      // skill-kind `uncorroborated` (selected:2, card:1), never the last pass's no_successes.
       .mockResolvedValueOnce({ ok: true as const, value: { admissionOutcome: "no_successes" as const, selected: 0, admitted: 0, maxTopicCardinality: 0, distinctTopicKeys: 0, skipped: 0, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } });
     const ctx = makeCtx({
       agents: { "agent-1": { name: "Agent 1", provider: "anthropic", learning: { enabled: true, reflect: { minConfidence: 0.6 } } } },
