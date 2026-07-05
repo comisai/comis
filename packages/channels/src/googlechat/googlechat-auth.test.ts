@@ -127,6 +127,33 @@ function assertNoSecretsLogged(
   }
 }
 
+describe("createGoogleChatTokenProvider — credentialError (single-parse reuse)", () => {
+  it("returns undefined for a well-formed service-account key", async () => {
+    const { deps } = await makeDeps();
+    const provider = createGoogleChatTokenProvider(deps);
+    expect(provider.credentialError()).toBeUndefined();
+  });
+
+  it("surfaces a secret-free hint for a malformed key, cached across calls (no re-parse)", async () => {
+    const { deps } = await makeDeps({ serviceAccountKey: "{not json" });
+    const provider = createGoogleChatTokenProvider(deps);
+    const first = provider.credentialError();
+    const second = provider.credentialError();
+    expect(first?.hint).toBeTruthy();
+    expect(first).toEqual(second); // same cached parse result, not re-parsed
+    expect(first?.hint.toLowerCase()).toContain("service-account key");
+  });
+
+  it("surfaces a missing-field hint naming the absent field", async () => {
+    const noEmail = JSON.stringify({
+      private_key: "-----BEGIN PRIVATE KEY-----\nx\n-----END PRIVATE KEY-----",
+    });
+    const { deps } = await makeDeps({ serviceAccountKey: noEmail });
+    const provider = createGoogleChatTokenProvider(deps);
+    expect(provider.credentialError()?.hint).toContain("client_email");
+  });
+});
+
 describe("createGoogleChatTokenProvider — SA-JWT-bearer mint", () => {
   it("mints an RS256 SA-JWT assertion and POSTs the jwt-bearer grant to the token endpoint", async () => {
     const { deps, spy, sa } = await makeDeps();

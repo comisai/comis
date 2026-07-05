@@ -57,7 +57,6 @@ import {
   mapGoogleChatEventToNormalized,
   type GoogleChatEvent,
 } from "./message-mapper.js";
-import { validateGoogleChatCredentials } from "./credential-validator.js";
 
 /** Dependencies for the Google Chat adapter. */
 export interface GoogleChatAdapterDeps {
@@ -246,24 +245,29 @@ export function createGoogleChatAdapter(
       // call), which would double-pull the subscription and leak the old loop.
       if (_connected) return ok(undefined);
 
-      const v = validateGoogleChatCredentials({
-        serviceAccountKey: deps.serviceAccountKey,
-        subscriptionName: deps.subscriptionName,
-        allowFrom: deps.allowFrom,
-        logger: deps.logger,
-      });
-      if (!v.ok) {
+      // The token provider already parsed the service-account key once at
+      // construction; reuse that result rather than re-parsing here. The
+      // subscription is the only additional precondition (it is not a parse).
+      const credErr = tokens.credentialError();
+      const subMissing =
+        !deps.subscriptionName || deps.subscriptionName.trim() === "";
+      if (credErr || subMissing) {
+        const startErr = new Error(
+          credErr
+            ? `Google Chat credentials invalid: ${credErr.hint}`
+            : "Google Chat credentials invalid: subscriptionName must not be empty",
+        );
         deps.logger.error(
           {
             channelType: "googlechat" as const,
-            err: v.error,
-            hint: "Set channels.googlechat.serviceAccountKey (SecretRef) or GOOGLECHAT_SA_KEY, and subscriptionName",
+            err: startErr,
+            hint: "Set channels.googlechat.serviceAccountKey (SecretRef) or GOOGLECHAT_SA_KEY, and channels.googlechat.subscriptionName",
             errorKind: "auth" as const,
           },
           "Adapter start failed",
         );
-        _lastError = v.error.message;
-        return err(v.error);
+        _lastError = startErr.message;
+        return err(startErr);
       }
 
       if (deps.mode && deps.mode !== "pubsub") {

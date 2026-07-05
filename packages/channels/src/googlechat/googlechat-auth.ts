@@ -86,6 +86,12 @@ export interface GoogleChatTokenProvider {
    * The chat.bot and pubsub scopes cache independently.
    */
   getToken(scope: GoogleChatScope): Promise<Result<string, Error>>;
+  /**
+   * A secret-free credential-parse failure hint, or undefined when the
+   * service-account key parsed cleanly. Reuses the SINGLE parse done at
+   * construction, so a start()-time precondition check need not re-parse the key.
+   */
+  credentialError(): { hint: string } | undefined;
 }
 
 /** The service-account fields the assertion mint needs. */
@@ -156,6 +162,10 @@ export function createGoogleChatTokenProvider(
   const cache = new Map<string, { token: string; expiresAtMs: number }>();
 
   return {
+    credentialError(): { hint: string } | undefined {
+      return keyParse.ok ? undefined : keyParse.error;
+    },
+
     async getToken(scope: GoogleChatScope): Promise<Result<string, Error>> {
       // Cache hit for this scope while still comfortably before expiry.
       const hit = cache.get(scope);
