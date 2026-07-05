@@ -433,7 +433,7 @@ describe("channelsStep", () => {
     expect(result.channels![0].allowFrom).toBeUndefined();
   });
 
-  it("multiselect offers all 7 supported channels", async () => {
+  it("multiselect offers all 8 supported channels", async () => {
     const prompter = createMockPrompter();
     vi.mocked(prompter.multiselect).mockResolvedValueOnce([]);
 
@@ -450,7 +450,7 @@ describe("channelsStep", () => {
     ).mock.calls[0][0] as {
       options: Array<{ value: string }>;
     };
-    expect(multiselectCall.options).toHaveLength(7);
+    expect(multiselectCall.options).toHaveLength(8);
 
     const values = multiselectCall.options.map(
       (o: { value: string }) => o.value,
@@ -462,5 +462,6 @@ describe("channelsStep", () => {
     expect(values).toContain("signal");
     expect(values).toContain("irc");
     expect(values).toContain("line");
+    expect(values).toContain("msteams");
   });
 });

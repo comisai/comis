@@ -1,0 +1,465 @@
+---
+title: "Microsoft Teams"
+description: "Connect Comis to Microsoft Teams with step-by-step setup"
+icon: "microsoft"
+---
+
+import Prereqs from '/snippets/prereqs.mdx';
+import SecretWarning from '/snippets/secret-warning.mdx';
+import NonTechnicalNote from '/snippets/non-technical-note.mdx';
+
+Connect your Comis agent to Microsoft Teams -- 1:1 chats, group chats, and team
+channels, with threaded replies, Adaptive Cards, inbound reactions, and
+edit/delete. Teams is the one channel that **must** receive messages on a
+public HTTPS endpoint: the Bot Framework Connector service pushes every activity
+to a URL you register, so your Comis gateway has to be reachable from the
+internet. This page walks you through registering the bot, exposing the
+endpoint safely, and configuring the three authentication modes.
+
+<NonTechnicalNote />
+
+## Prerequisites
+
+<Prereqs />
+
+- A Microsoft Entra ID (Azure AD) tenant where you can register an application
+- Permission to sideload (upload) a custom app in your Teams tenant, or a Teams
+  administrator who can do it for you
+- A public HTTPS URL that reaches your Comis gateway (see
+  [Public endpoint](#public-endpoint) below)
+
+## Public endpoint
+
+<Warning>
+Microsoft Teams delivers messages by **pushing** them to your bot. There is no
+socket, long-poll, or pull option -- the Bot Framework Connector service sends
+each activity as an authenticated HTTPS POST to the messaging endpoint you
+register. Your Comis gateway must therefore be reachable from the internet at
+`https://your-host/channels/msteams/api/messages`.
+</Warning>
+
+The messaging endpoint rides your gateway's existing host, port, and TLS surface
+(`gateway.host` / `gateway.port`) -- no separate port is opened. The route is
+mounted **only** when `channels.msteams.enabled` is `true`; while the channel is
+disabled (the default) no inbound route exists at all. Every inbound request is
+validated against the Bot Framework signing keys before it reaches your agent, so
+an unauthenticated POST to the endpoint is rejected regardless of how you expose
+it.
+
+You have several ways to make the gateway publicly reachable. They are listed
+most-hardened first; **all** of them see the same inbound token validation, so
+the choice is about network exposure, not authentication.
+
+<Steps>
+  <Step title="Reverse proxy with HTTPS (production)">
+    Terminate TLS at a reverse proxy (Nginx, Caddy) in front of the gateway and
+    forward `/channels/msteams/api/messages` to it. This gives you full control
+    over certificates, headers, and rate limiting. See
+    [Reverse proxy](/operations/reverse-proxy) for a worked Nginx and Caddy
+    configuration.
+  </Step>
+
+  <Step title="Tailscale Funnel (production, no open port)">
+    [Tailscale Funnel](https://tailscale.com/kb/1223/funnel) publishes a local
+    port to the public internet over HTTPS with an auto-provisioned certificate
+    and a stable `*.ts.net` hostname -- without forwarding a port on your router
+    or firewall.
+
+    Enable Funnel for the node in your tailnet's ACLs, then expose the gateway
+    port:
+
+    ```bash
+    tailscale funnel 4766
+    ```
+
+    Your messaging endpoint becomes
+    `https://your-machine.your-tailnet.ts.net/channels/msteams/api/messages`.
+    Funnel handles the certificate; Comis still validates every inbound request.
+  </Step>
+
+  <Step title="Dev tunnel (testing only)">
+    For local testing, a tunnel such as [ngrok](https://ngrok.com) or Azure Dev
+    Tunnels gives you a temporary public HTTPS URL that forwards to your gateway
+    port. Use the tunnel URL as the messaging endpoint while you iterate; move to
+    a reverse proxy or Funnel before you run in production.
+  </Step>
+</Steps>
+
+## Setup
+
+Teams needs an application registration (which supplies the bot's app ID and
+credentials) and a Teams app package (the manifest that sideloads the bot into
+Teams). You can do this from the command line with the Teams Toolkit, or by
+hand in the Azure portal.
+
+<Steps>
+  <Step title="Register the bot and set the messaging endpoint">
+    <Tabs>
+      <Tab title="Teams Toolkit CLI">
+        The [Teams Toolkit CLI](https://learn.microsoft.com/microsoftteams/platform/toolkit/teams-toolkit-cli)
+        provisions the app registration, the bot, and a starter manifest without
+        clicking through the Azure portal.
+
+        1. Sign in to your tenant with the CLI
+        2. Provision a bot registration -- the CLI creates the Entra application
+           and returns its **application (client) ID** and a generated
+           **client secret**
+        3. Set the bot's **messaging endpoint** to
+           `https://your-host/channels/msteams/api/messages`
+        4. Note the **directory (tenant) ID** of the tenant you signed in to
+
+        Keep the client ID, client secret, and tenant ID -- they map to `appId`,
+        `appPassword`, and `tenantId` in your Comis config.
+      </Tab>
+
+      <Tab title="Azure Portal (manual)">
+        1. In the [Azure portal](https://portal.azure.com), create an **Azure
+           Bot** resource. Choose a **single-tenant** app type so only your
+           organization's users can reach the bot.
+        2. On the bot's **Configuration** page, set the **Messaging endpoint** to
+           `https://your-host/channels/msteams/api/messages`.
+        3. Open the linked app registration. Copy the **Application (client) ID**
+           (this is `appId`) and the **Directory (tenant) ID** (this is
+           `tenantId`).
+        4. Under **Certificates & secrets**, create a **client secret** and copy
+           its value immediately -- this is `appPassword`.
+        5. On the bot's **Channels** page, add the **Microsoft Teams** channel.
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Build and sideload the Teams app manifest">
+    A bot registration is not visible in Teams until a Teams app package points
+    at it. The package is a zip containing `manifest.json` (referencing your
+    `appId` as the bot ID) plus a color and outline icon.
+
+    Upload the package to Teams -- either **Upload a custom app** from the Teams
+    client, or through the Teams admin center for tenant-wide availability. Once
+    installed, add the bot to a chat, group, or team channel.
+  </Step>
+
+  <Step title="Grant channel read access (RSC)">
+    To let the bot read channel messages **without** being @mentioned every time,
+    declare Resource-Specific Consent (RSC) permissions in the manifest (for
+    example `ChannelMessage.Read.Group`). A team owner consents once when the app
+    is added to the team; the bot then receives channel activities directly. Skip
+    this if you only need 1:1 and group chats or are happy to require an @mention
+    in channels.
+  </Step>
+
+  <Step title="Configure Comis">
+    Add the Teams channel to your Comis configuration file
+    (`~/.comis/config.yaml`):
+
+    ```yaml
+    channels:
+      msteams:
+        enabled: true
+        authMode: "secret"
+        appId: "<bot-app-id>"
+        appPassword: "${MSTEAMS_APP_PASSWORD}"
+        tenantId: "<directory-tenant-id>"
+    ```
+
+    Set the secret in your `~/.comis/.env` file:
+
+    ```bash
+    MSTEAMS_APP_PASSWORD=your-client-secret
+    ```
+
+    <SecretWarning />
+  </Step>
+
+  <Step title="Restart and verify">
+    Restart the Comis daemon to pick up the new configuration:
+
+    ```bash
+    comis daemon stop && comis daemon start
+    ```
+
+    Check that the Teams probes pass:
+
+    ```bash
+    comis doctor
+    ```
+
+    Then message the bot from Teams (a 1:1 chat is the quickest check) and
+    confirm it replies.
+  </Step>
+</Steps>
+
+## Authentication
+
+Teams supports three credential modes, selected with `authMode`. All three
+identify the same single-tenant bot application (`appId` + `tenantId`); they
+differ only in how the bot proves its identity when it calls back out to send,
+edit, delete, and fetch media.
+
+<Tabs>
+  <Tab title="secret (default)">
+    A client secret. Simplest to set up; the secret must be rotated before it
+    expires.
+
+    ```yaml
+    channels:
+      msteams:
+        enabled: true
+        authMode: "secret"
+        appId: "<bot-app-id>"
+        appPassword: "${MSTEAMS_APP_PASSWORD}"
+        tenantId: "<directory-tenant-id>"
+    ```
+  </Tab>
+
+  <Tab title="certificate">
+    A client certificate instead of a shared secret. Point `certPath` at the
+    certificate file; there is no password to rotate or leak.
+
+    ```yaml
+    channels:
+      msteams:
+        enabled: true
+        authMode: "certificate"
+        appId: "<bot-app-id>"
+        tenantId: "<directory-tenant-id>"
+        certPath: "/etc/comis/msteams-client.pem"
+    ```
+  </Tab>
+
+  <Tab title="managedIdentity">
+    An Azure managed identity -- no credential lives on disk at all. Use this
+    when Comis runs on Azure infrastructure that has an assigned identity.
+
+    ```yaml
+    channels:
+      msteams:
+        enabled: true
+        authMode: "managedIdentity"
+        appId: "<bot-app-id>"
+        tenantId: "<directory-tenant-id>"
+        managedIdentityClientId: "<managed-identity-client-id>"
+    ```
+  </Tab>
+</Tabs>
+
+Only `appPassword` is a secret -- keep it in `~/.comis/.env` as
+`MSTEAMS_APP_PASSWORD` (or a `SecretRef`). `appId`, `tenantId`, `certPath`, and
+`managedIdentityClientId` are plain configuration values.
+
+## Configuration
+
+The full option table -- all fields, types, and defaults -- lives in the
+[Configuration reference](/reference/config-yaml#channels). The environment
+variable is documented in
+[Environment variables](/reference/environment-variables#microsoft-teams). This
+section covers the one option that carries a security consequence worth
+spelling out.
+
+### Sender allowlist and the conversation-scoped caveat
+
+`allowFrom` restricts who can talk to the bot. When it is non-empty (and
+`allowMode` is the default `allowlist`), only listed senders reach the agent.
+Each entry is **either** an `aadObjectId` (one specific user) **or** a
+`conversation.id` (a whole conversation).
+
+<Warning>
+Allowlisting a **conversation id** grants access to *every current and future
+member* of that conversation -- including the right to click **Approve** on the
+bot's approval cards. Approval authority is derived from the verified sender of
+the click, so a conversation-scoped entry effectively hands approval rights to
+the whole room. Prefer per-user `aadObjectId` entries where you need tight
+control, and scope any conversation-id entry deliberately.
+</Warning>
+
+## Media
+
+Inbound attachments (images, voice notes, video, documents) are downloaded
+through a DNS-pinned, SSRF-guarded fetcher. The bot's token is attached only for
+recognized Bot Framework Connector attachment hosts and is dropped on any
+cross-host redirect; the initial host must be a known Teams, SharePoint, or
+Graph attachment host, and the downloaded bytes are MIME-sniffed before the
+media pipeline (transcription, vision, document extraction) sees them.
+
+Outbound, the agent sends **inline images** (delivered as a base64 data URI that
+Teams renders in place). A non-image attachment is delivered *by reference* as a
+plain text link rather than inlined -- Bot Framework only renders inline data
+URIs for images, and inlining a multi-megabyte file would blow past that limit.
+
+<Note>
+Uploading files and videos into Teams (the FileConsent / SharePoint flow) is a
+later addition; today the agent sends inline images and text links.
+</Note>
+
+## Liveness
+
+A webhook channel is exempt from the health monitor's stale-reap: because Teams
+never opens an outbound connection Comis can watch, a mis-wired or silently
+broken public endpoint would otherwise report healthy forever, and the only
+symptom would be a bot that quietly stops receiving messages. Two guards close
+that gap:
+
+- **`comis doctor`** runs four Teams probes -- credentials parse and resolve,
+  the messaging endpoint is reachable, an inbound activity has arrived recently,
+  and a tenant ID is configured. The endpoint and recent-inbound probes skip
+  (rather than fail) when the daemon or gateway is down.
+- A dedicated **missed-inbound alert** compares the time since the last inbound
+  activity to `missedInboundThresholdMs` (default **6 hours**). On breach it
+  emits a `channel:inbound_silent` event and a WARN that surfaces as a
+  `comis fleet` health signal. Lower the threshold for a busy bot where a few
+  hours of silence is itself a red flag.
+
+## Live-smoke checklist
+
+The build gates cover the adapter, mapper, renderer, auth, and gateway route.
+The end-to-end sign-off needs a real Azure Bot registration and a Teams tenant,
+so run this operator checklist once against a live account:
+
+- [ ] Text round-trips in a 1:1 chat, a group chat, and a team channel
+- [ ] An inbound reaction registers; the bot can edit and delete its own
+      messages; a proactive (bot-initiated) message from a cron job or heartbeat
+      delivers
+- [ ] An Adaptive Card renders, and clicking **Approve** on an approval card is
+      authorized to the clicking user -- a non-allowlisted user cannot approve
+- [ ] An inbound image, voice note, and document each resolve; an outbound inline
+      image renders
+- [ ] `certificate` and `managedIdentity` auth modes each start cleanly;
+      `comis doctor` shows the Teams probes green; the missed-inbound alert fires
+      after the configured silence window
+
+## Local emulator (self-drive testing)
+
+The live-smoke checklist above needs a real Azure Bot registration. For an
+offline, no-Azure round trip -- and for the self-driving live-test rig -- an
+in-tree emulator plays the Bot Framework side (a fake Connector + AAD token
+endpoint + a JWKS signer). It lives at `test/live/emulators/msteams/` and is
+driven from `test/live/self-driving/`.
+
+Teams is the inverse of the poll-based channels (Telegram/Signal): inbound is a
+signed webhook the daemon *exposes*, and outbound goes to the Connector. So two
+loopback bridges are needed, and both are **off-by-default environment variables
+set only on the test daemon** -- never in production:
+
+| Env var | Bridges |
+|---------|---------|
+| [`COMIS_MSTEAMS_TEST_JWKS`](/reference/environment-variables#comis_msteams_test_jwks) | The ingress verifies inbound tokens against the emulator's local JWKS (a full signature/issuer/audience verify -- not a bypass) instead of the remote Bot Framework keys. |
+| [`COMIS_MSTEAMS_TEST_CONNECTOR`](/reference/environment-variables#comis_msteams_test_connector) | The adapter's outbound Connector + token calls are redirected to the loopback emulator. `isSafeServiceUrl` is unchanged -- it still allowlists the real `smba.trafficmanager.net` host first; only the transport is redirected. |
+
+<Warning>
+With both variables unset, the daemon behaves identically to a normal Teams
+deployment. Setting them on a production daemon would point inbound trust and
+outbound delivery at a local process -- they are strictly for the live-test rig.
+</Warning>
+
+Wiring (as the operator, on the test box):
+
+```bash
+# 1. Start the emulator (prints /tmp/comis-msteams-emu.json with the exact daemonEnv to set).
+tsx test/live/bin/vps-emu-msteams.ts
+
+# 2. Enable channels.msteams in config.yaml (appId/tenantId matching the emulator; allowMode: open),
+#    then boot the daemon with the two seams from the emulator's printed `daemonEnv`:
+COMIS_MSTEAMS_TEST_JWKS=/tmp/comis-msteams-jwks.json \
+COMIS_MSTEAMS_TEST_CONNECTOR=http://127.0.0.1:<emuPort> \
+  node packages/daemon/dist/daemon.js
+
+# 3. Drive an inbound turn (signs a Bearer via the emulator, POSTs to the ingress,
+#    polls the Connector oracle for the agent reply):
+node test/live/self-driving/scripts/msteams-drive.mjs "a:dm-1" "hello teams"
+```
+
+The whole wire stack is also proven offline (no daemon) by the round-trip
+scenario at `test/live/scenarios/channels/msteams-emulator.test.ts`, which pushes
+a signed activity through the real ingress + adapter + connector into the
+emulator's oracle.
+
+## What your agent can do
+
+Once connected to Teams, your agent can:
+
+- Send, edit, and delete messages in 1:1 chats, group chats, and team channels
+- Reply in a channel or group thread (threaded on the original activity)
+- Receive reactions (like, heart, laugh, surprised, sad, angry) as inbound
+  signals
+- Send inline images
+- Show a typing indicator while it works
+- Send Adaptive Cards with interactive buttons, including default-deny approval
+  cards for privileged actions
+- Deliver proactive (bot-initiated) messages from cron jobs and heartbeats
+- Mention users with `@mentions` and detect when it is mentioned
+
+Teams does **not** support the agent *sending* reactions (Teams exposes no
+bot-reaction API, so reactions are inbound only), fetching message history,
+uploading files or videos (FileConsent / SharePoint is a later addition), native
+token-by-token DM streaming, or voice/TTS replies.
+
+## Platform limits
+
+| Limit | Value | What Comis does about it |
+|---|---|---|
+| Message length | 28,000 characters | Automatically splits long responses into multiple messages at paragraph boundaries |
+| Outbound attachments | Inline images | Non-image attachments are delivered as a text link |
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Bot can send messages but never receives any">
+    **What happened:** The public messaging endpoint is not reachable, the route
+    is not mounted, or the channel is disabled.
+
+    **How to fix it:** Confirm `channels.msteams.enabled` is `true` (the route is
+    mounted only when enabled). Verify the messaging endpoint on the Azure Bot
+    matches `https://your-host/channels/msteams/api/messages` exactly, and that
+    your reverse proxy, Funnel, or tunnel is forwarding to the gateway port. Run
+    `comis doctor` -- the endpoint and recent-inbound probes tell you which half
+    is broken.
+  </Accordion>
+
+  <Accordion title="Inbound requests are rejected with an authentication error">
+    **What happened:** Bot Framework token validation failed -- usually an
+    `appId` / `tenantId` mismatch or the wrong single-tenant directory.
+
+    **How to fix it:** Check that `appId` matches the application (client) ID of
+    the registered bot and that `tenantId` is the directory (tenant) ID the app
+    is registered in. For `secret` mode, confirm `MSTEAMS_APP_PASSWORD` holds a
+    current (non-expired) client secret.
+  </Accordion>
+
+  <Accordion title="Teams shows an error even though the endpoint is reachable">
+    **What happened:** The messaging endpoint URL, its TLS certificate, or the
+    manifest's bot ID does not line up.
+
+    **How to fix it:** Verify the endpoint URL ends in
+    `/channels/msteams/api/messages`, that the certificate presented publicly is
+    valid, and that the bot ID in the Teams manifest equals your `appId`.
+  </Accordion>
+</AccordionGroup>
+
+## Later additions
+
+The v1 Teams channel focuses on chat, cards, reactions, edit/delete, media, and
+proactive delivery. These are documented as not-yet-shipped so you can plan
+around them:
+
+- Native token-by-token DM streaming (the agent sends chunked message blocks
+  today)
+- Uploading files and videos via the FileConsent / SharePoint flow
+- A Microsoft Graph change-notification event source
+- Sovereign and national clouds (the channel targets the public cloud)
+
+<CardGroup cols={2}>
+  <Card title="Delivery Infrastructure" icon="truck-fast" href="/channels/delivery">
+    How streaming, typing indicators, and retry logic work under the hood.
+  </Card>
+  <Card title="Multiple users & teams" icon="users" href="/channels/multi-user">
+    Run one install for a whole team - private per person, isolated per agent.
+  </Card>
+  <Card title="All Channels" icon="message-dots" href="/channels">
+    Compare all 10 supported platforms side by side.
+  </Card>
+  <Card title="Agent Configuration" icon="robot" href="/agents">
+    Set up your agent's personality, tools, and behavior.
+  </Card>
+  <Card title="Secret Management" icon="key" href="/security/secrets">
+    Learn how to manage API keys and tokens securely.
+  </Card>
+</CardGroup>

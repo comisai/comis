@@ -82,6 +82,10 @@ export type NonInteractiveOptions = {
   slackAppToken?: string;
   lineToken?: string;
   lineSecret?: string;
+  msteamsAppId?: string;
+  msteamsAppPassword?: string;
+  msteamsTenantId?: string;
+  msteamsAuthMode?: "secret" | "certificate" | "managedIdentity";
   // Media generation
   imageProvider?: string;
   imageApiKey?: string;
@@ -273,6 +277,23 @@ export function validateNonInteractiveOptions(
     }
   }
 
+  // --msteams-auth-mode, when provided, must be one of the closed Bot Framework
+  // auth vocabulary. Like the media-provider enums above (and the --storage
+  // enum) this is a fixed config enum — a typo would be written verbatim into
+  // config.yaml and only rejected by the daemon's MsTeamsChannelEntrySchema at
+  // boot (a FATAL, or a crash loop under --start-daemon). Reject early with a
+  // clear hint. This also restores parity with the interactive path, which
+  // bounds authMode to exactly these three values via a select prompt.
+  if (
+    opts.msteamsAuthMode !== undefined &&
+    !["secret", "certificate", "managedIdentity"].includes(opts.msteamsAuthMode)
+  ) {
+    throw new NonInteractiveError(
+      "--msteams-auth-mode must be one of: secret, certificate, managedIdentity",
+      "msteamsAuthMode",
+    );
+  }
+
   // Validate channel credentials
   if (opts.channels && opts.channels.length > 0) {
     for (const channel of opts.channels) {
@@ -318,6 +339,26 @@ export function validateNonInteractiveOptions(
             throw new NonInteractiveError(
               "--line-secret is required when line channel is enabled",
               "lineSecret",
+            );
+          }
+          break;
+        case "msteams":
+          if (!opts.msteamsAppId) {
+            throw new NonInteractiveError(
+              "--msteams-app-id is required when msteams channel is enabled",
+              "msteamsAppId",
+            );
+          }
+          if (!opts.msteamsAppPassword) {
+            throw new NonInteractiveError(
+              "--msteams-app-password is required when msteams channel is enabled",
+              "msteamsAppPassword",
+            );
+          }
+          if (!opts.msteamsTenantId) {
+            throw new NonInteractiveError(
+              "--msteams-tenant-id is required when msteams channel is enabled",
+              "msteamsTenantId",
             );
           }
           break;
@@ -391,6 +432,16 @@ export function buildNonInteractiveState(
             type: "line",
             botToken: opts.lineToken,
             channelSecret: opts.lineSecret,
+            validated: false,
+          });
+          break;
+        case "msteams":
+          channels.push({
+            type: "msteams",
+            appId: opts.msteamsAppId,
+            appPassword: opts.msteamsAppPassword,
+            tenantId: opts.msteamsTenantId,
+            authMode: opts.msteamsAuthMode,
             validated: false,
           });
           break;

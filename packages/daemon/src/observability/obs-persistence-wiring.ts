@@ -322,6 +322,63 @@ export function healthBudgetExceededEventToRow(
 }
 
 /**
+ * Map a `channel:inbound_silent` event (a webhook channel that has received no
+ * inbound activity past its configured threshold) to a flat DiagnosticRow under
+ * `category:"health_signal"`, `severity:"warning"`. The `details.signal`
+ * label `"channel_ingress_silent"` is what the generic `health_signal:<label>`
+ * fleet-findings rollup groups on, so this row surfaces automatically as a
+ * `comis fleet` finding with no extractor change. Content-free: the `details`
+ * carry only the channelType + the silent/threshold counts — never a message
+ * body, and (being a daemon-global signal) no agentId/sessionKey.
+ */
+export function channelInboundSilentEventToRow(
+  payload: EventMap["channel:inbound_silent"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "warning",
+    message: "channel:inbound_silent",
+    details: JSON.stringify({
+      signal: "channel_ingress_silent",
+      channelType: payload.channelType,
+      silentForMs: payload.silentForMs,
+      thresholdMs: payload.thresholdMs,
+    }),
+    traceId: undefined,
+  };
+}
+
+/**
+ * Map a `channel:ingress_auth_rejected` event (an inbound activity rejected at
+ * a channel gateway ingress auth gate) to a flat DiagnosticRow under
+ * `category:"health_signal"`, `severity:"warning"`. The `details.signal` label
+ * `"channel_ingress_auth_rejected"` is what the generic `health_signal:<label>`
+ * fleet-findings rollup groups on, so a forged/expired/wrong-audience/missing-
+ * token FLOOD surfaces automatically as a COUNTED `comis fleet` finding with no
+ * extractor change — symmetric with the `channel_ingress_silent` path. Content-
+ * free: the `details` carry only the channel label + the closed rejection
+ * `reason` class — never the token, the Authorization header, or the request
+ * body — and (being a daemon-global signal) no agentId/sessionKey.
+ */
+export function channelIngressAuthRejectedEventToRow(
+  payload: EventMap["channel:ingress_auth_rejected"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "warning",
+    message: "channel:ingress_auth_rejected",
+    details: JSON.stringify({
+      signal: "channel_ingress_auth_rejected",
+      channelType: payload.channelType,
+      reason: payload.reason,
+    }),
+    traceId: undefined,
+  };
+}
+
+/**
  * Map a `reflect:funnel` event → a flat DiagnosticRow under
  * `category:"learning_health"`, so the fleet lens surfaces the daemon-wide reflection posture
  * (is learning admitting? why-0-admitted?) as a queryable finding instead of a daemon.log grep. Severity
@@ -769,6 +826,20 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   });
   eventBus.on("health:budget_exceeded", (payload) => {
     diagnosticBuffer.push(healthBudgetExceededEventToRow(payload));
+  });
+  // A silently-dead webhook ingress (past its missed-inbound threshold) → a
+  // health_signal row, so the fleet lens surfaces it (health_signal:channel_ingress_silent)
+  // the moment the liveness timer fires. Content-free (channelType + counts only).
+  eventBus.on("channel:inbound_silent", (payload) => {
+    diagnosticBuffer.push(channelInboundSilentEventToRow(payload));
+  });
+  // A rejected ingress auth attempt (missing bearer / invalid token) → a
+  // health_signal row, so a forged/expired/wrong-audience/missing-token flood
+  // is COUNTED by the fleet lens (health_signal:channel_ingress_auth_rejected)
+  // instead of living only in a raw WARN. Content-free (channel label + closed
+  // reason class only) — symmetric with channel:inbound_silent above.
+  eventBus.on("channel:ingress_auth_rejected", (payload) => {
+    diagnosticBuffer.push(channelIngressAuthRejectedEventToRow(payload));
   });
   eventBus.on("mcp:server:reconnect_failed", (payload) => {
     diagnosticBuffer.push(mcpReconnectFailedEventToRow(payload));

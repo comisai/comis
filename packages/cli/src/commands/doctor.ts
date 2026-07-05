@@ -22,6 +22,7 @@ import { configHealthCheck } from "../doctor/checks/config-health.js";
 import { daemonHealthCheck } from "../doctor/checks/daemon-health.js";
 import { gatewayHealthCheck } from "../doctor/checks/gateway-health.js";
 import { channelHealthCheck } from "../doctor/checks/channel-health.js";
+import { msteamsHealthCheck } from "../doctor/checks/msteams-health.js";
 import { workspaceHealthCheck } from "../doctor/checks/workspace-health.js";
 import { oauthHealthCheck } from "../doctor/checks/oauth-health.js";
 import { lcdHealthCheck } from "../doctor/checks/lcd-health.js";
@@ -52,7 +53,7 @@ function readCliVersion(): string | undefined {
   }
 }
 
-/** All doctor checks in execution order (9 categories). */
+/** All doctor checks in execution order (10 checks). */
 const ALL_CHECKS = [
   configHealthCheck,
   daemonHealthCheck,
@@ -62,6 +63,10 @@ const ALL_CHECKS = [
   // schema failures (stale global `comis` incident).
   versionSkewHealthCheck,
   channelHealthCheck,
+  // Teams is a webhook channel (stale-reap-exempt), so its liveness cannot ride
+  // the health monitor — this check probes creds, the mounted ingress endpoint,
+  // recent INBOUND-ONLY activity, and tenant presence directly.
+  msteamsHealthCheck,
   workspaceHealthCheck,
   oauthHealthCheck,
   secretsAuditHealthCheck,

@@ -26,9 +26,9 @@
 import { validateUrl, validateLocalServerUrl } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
 import type { Result } from "@comis/shared";
-import { fromPromise, suppressError } from "@comis/shared";
-import { fetch } from "undici";
-import { createPinnedAgent } from "../integrations/pinned-fetch.js";
+import { fromPromise, suppressError, tryCatch } from "@comis/shared";
+import { fetch, type Response } from "undici";
+import { createPinnedAgent, fetchPinned } from "../integrations/pinned-fetch.js";
 
 /**
  * Downloaded media from an SSRF-validated fetch.
@@ -45,11 +45,41 @@ export interface FetchedMedia {
 }
 
 /**
+ * Opt-in options that turn the single-shot guarded fetch into an authenticated,
+ * redirect-following fetch. Passing NO options preserves the exact single-shot
+ * behavior (redirect blocked, no auth header) so existing callers are unaffected.
+ */
+export interface SsrfFetchOptions {
+  /**
+   * The Authorization header value to attach — but ONLY on a hop whose validated
+   * host matches {@link authAllowHosts}. It is dropped the instant a redirect
+   * crosses to an off-allowlist host, so a minted bearer cannot leak to an
+   * attacker-influenced redirect target.
+   */
+  readonly authHeader?: string;
+  /**
+   * Hosts the {@link authHeader} may be transmitted to. An entry beginning with
+   * `.` matches that domain and any subdomain of it (anchored on the leading dot);
+   * any other entry is an exact, case-insensitive host match.
+   */
+  readonly authAllowHosts?: readonly string[];
+  /** Maximum redirect hops to follow before rejecting (default 5). */
+  readonly maxHops?: number;
+}
+
+/**
  * SSRF-safe HTTP fetch interface.
  */
 export interface SsrfGuardedFetcher {
-  /** Validate URL, fetch with DNS pinning, enforce size limit. */
-  fetch(url: string): Promise<Result<FetchedMedia, Error>>;
+  /**
+   * Validate URL, fetch with DNS pinning, enforce size limit.
+   *
+   * With no `opts`, redirects are blocked and no auth header is sent (the
+   * single-shot path). With `opts`, an authenticated redirect-following path is
+   * used: the auth header rides only an allowlisted host, is dropped on a
+   * cross-host redirect, and every hop is re-validated through the SSRF firewall.
+   */
+  fetch(url: string, opts?: SsrfFetchOptions): Promise<Result<FetchedMedia, Error>>;
 }
 
 /**
@@ -143,6 +173,192 @@ function classifyFetchError(error: unknown): ClassifiedError {
 // ---------------------------------------------------------------------------
 
 /**
+ * Case-insensitive host match against an allowlist. An entry beginning with `.`
+ * matches that domain and any subdomain of it — anchored on the leading dot, so a
+ * look-alike host (e.g. `evilexample.com`) never matches `.example.com`; any other
+ * entry is an exact host match. Mirrors the host-suffix allowlist semantics used
+ * for service-host checks elsewhere.
+ */
+function matchesSuffix(host: string, list: readonly string[]): boolean {
+  const h = host.toLowerCase();
+  return list.some((entry) => {
+    const e = entry.toLowerCase();
+    return e.startsWith(".") ? h === e.slice(1) || h.endsWith(e) : h === e;
+  });
+}
+
+/**
+ * Read a response body into a Buffer, enforcing `maxBytes` against BOTH the
+ * declared Content-Length (pre-stream) and the actual streamed size (a server
+ * may under-declare). Shared by the single-shot and redirect-following paths.
+ */
+async function collectCappedBody(response: Response, maxBytes: number): Promise<Buffer> {
+  // Content-Length pre-check — abort before streaming if declared size exceeds limit
+  const contentLength = response.headers.get("content-length");
+  if (contentLength) {
+    const declared = parseInt(contentLength, 10);
+    if (!isNaN(declared) && declared > maxBytes) {
+      // Consume and discard body to avoid socket leak
+      await response.body?.cancel();
+      throw new Error(`Content-Length ${declared} exceeds limit of ${maxBytes} bytes`);
+    }
+  }
+
+  // Stream body with size enforcement (server may lie about Content-Length)
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("No response body");
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel();
+        throw new Error(`Response body exceeded limit of ${maxBytes} bytes (read ${totalBytes})`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return Buffer.concat(chunks);
+}
+
+// ---------------------------------------------------------------------------
+// Opt-in authenticated + redirect-revalidating fetch path
+// ---------------------------------------------------------------------------
+
+/**
+ * The authenticated, redirect-following fetch used when `opts` is supplied.
+ *
+ * Every hop (the initial URL and each redirect target) is re-validated through
+ * `validateUrl` — a DNS-resolve + IP-range/cloud-metadata classification — and the
+ * socket is pinned to the validated IP, so a DNS-rebind or a redirect to an
+ * internal/metadata address is rejected before a connection is opened. The auth
+ * header is recomputed per hop and attached ONLY when the validated host is on
+ * `authAllowHosts`, so it is dropped the moment a redirect crosses to an
+ * off-allowlist host. The chain is bounded by `maxHops`. The auth header and the
+ * raw URL/Location are never written to a log field.
+ */
+async function runAuthenticatedFetch(
+  config: SsrfFetcherConfig,
+  logger: FetcherLogger,
+  url: string,
+  opts: SsrfFetchOptions,
+): Promise<Result<FetchedMedia, Error>> {
+  const maxHops = opts.maxHops ?? 5;
+  const allowHosts = opts.authAllowHosts ?? [];
+
+  return fromPromise(
+    (async (): Promise<FetchedMedia> => {
+      let current = url;
+
+      for (let hop = 0; hop <= maxHops; hop++) {
+        // Per-hop SSRF firewall: DNS-resolve + IP-range/metadata classification.
+        const validated = await validateUrl(current);
+        if (!validated.ok) {
+          logger.error(
+            {
+              hop,
+              err: validated.error,
+              errorKind: "validation" as const,
+              hint: "A fetch hop resolved to a blocked or internal address and was stopped before connecting — the redirect target failed SSRF validation",
+            },
+            "SSRF-guarded auth fetch failed — hop rejected by SSRF validation",
+          );
+          throw validated.error;
+        }
+
+        const { hostname, ip } = validated.value;
+        const authAttached = opts.authHeader !== undefined && matchesSuffix(hostname, allowHosts);
+        const headers: Record<string, string> = authAttached
+          ? { authorization: opts.authHeader! }
+          : {};
+
+        logger.debug(
+          { hop, resolvedIp: ip, authAttached, step: "ssrf-auth-hop" },
+          "SSRF-guarded auth fetch — hop validated",
+        );
+
+        // Socket pinned to the validated IP (rebinding TOCTOU closed); redirects
+        // returned to us so the NEXT hop re-enters the firewall above.
+        let response: Response;
+        try {
+          response = await fetchPinned(current, ip, {
+            headers,
+            redirect: "manual",
+            signal: AbortSignal.timeout(30_000),
+          });
+        } catch (error) {
+          const classified = classifyFetchError(error);
+          logger.warn(
+            { hop, err: error, errorKind: classified.errorKind, hint: classified.hint },
+            "SSRF-guarded auth fetch failed — network error",
+          );
+          throw error;
+        }
+
+        // A 3xx is followed manually; the bearer is recomputed (and dropped) on the next hop.
+        if (response.status >= 300 && response.status < 400) {
+          const location = response.headers.get("location");
+          await response.body?.cancel();
+          if (!location) {
+            throw new Error("Redirect response missing a Location header");
+          }
+          // Parse the redirect target under the per-hop failure contract: a
+          // malformed Location must carry the same classified hint+errorKind as
+          // every other failure branch (§2.7), not a bare TypeError that reaches
+          // the caller stripped of which hop failed and why.
+          const next = tryCatch(() => new URL(location, current).toString());
+          if (!next.ok) {
+            logger.warn(
+              {
+                hop,
+                errorKind: "validation" as const,
+                hint: "Redirect Location was not a parseable URL — the hop was stopped before re-validation",
+              },
+              "SSRF-guarded auth fetch failed — malformed redirect target",
+            );
+            throw next.error;
+          }
+          current = next.value;
+          continue;
+        }
+
+        if (!response.ok) {
+          logger.error(
+            {
+              hop,
+              status: response.status,
+              errorKind: "network" as const,
+              hint: "The remote host returned an HTTP error — check that the media URL is reachable and the auth header is accepted",
+            },
+            "SSRF-guarded auth fetch failed — HTTP error response",
+          );
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const buffer = await collectCappedBody(response, config.maxBytes);
+        const mimeType = response.headers.get("content-type") ?? "application/octet-stream";
+
+        logger.debug(
+          { hop, resolvedIp: ip, sizeBytes: buffer.length, step: "ssrf-auth-complete" },
+          "SSRF-guarded auth fetch complete",
+        );
+
+        return { buffer, mimeType, sizeBytes: buffer.length, resolvedIp: ip };
+      }
+
+      throw new Error(`Redirect hop limit (${maxHops}) exceeded`);
+    })(),
+  );
+}
+
+/**
  * Create an SSRF-guarded HTTP fetch utility.
  *
  * Every request is validated through validateUrl() (DNS pinning, IP range
@@ -159,7 +375,17 @@ export function createSsrfGuardedFetcher(
   logger: FetcherLogger,
 ): SsrfGuardedFetcher {
   return {
-    async fetch(url: string): Promise<Result<FetchedMedia, Error>> {
+    async fetch(
+      url: string,
+      opts?: SsrfFetchOptions,
+    ): Promise<Result<FetchedMedia, Error>> {
+      // Opt-in authenticated + redirect-revalidating path. When no opts are
+      // supplied the single-shot path below runs unchanged (redirect blocked,
+      // no auth header) so existing callers are byte-for-byte unaffected.
+      if (opts !== undefined) {
+        return runAuthenticatedFetch(config, logger, url, opts);
+      }
+
       return fromPromise(
         (async (): Promise<FetchedMedia> => {
           // 1. Validate URL via SSRF guard (DNS resolution + IP range check + DNS pinning).
@@ -224,43 +450,8 @@ export function createSsrfGuardedFetcher(
               throw new Error(`HTTP ${response.status} fetching ${url}`);
             }
 
-            // 3. Content-Length pre-check — abort before streaming if declared size exceeds limit
-            const contentLength = response.headers.get("content-length");
-            if (contentLength) {
-              const declared = parseInt(contentLength, 10);
-              if (!isNaN(declared) && declared > config.maxBytes) {
-                // Consume and discard body to avoid socket leak
-                await response.body?.cancel();
-                throw new Error(
-                  `Content-Length ${declared} exceeds limit of ${config.maxBytes} bytes`,
-                );
-              }
-            }
-
-            // 4. Stream body with size enforcement (server may lie about Content-Length)
-            const chunks: Uint8Array[] = [];
-            let totalBytes = 0;
-            const reader = response.body?.getReader();
-            if (!reader) throw new Error("No response body");
-
-            try {
-              while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                totalBytes += value.byteLength;
-                if (totalBytes > config.maxBytes) {
-                  await reader.cancel();
-                  throw new Error(
-                    `Response body exceeded limit of ${config.maxBytes} bytes (read ${totalBytes})`,
-                  );
-                }
-                chunks.push(value);
-              }
-            } finally {
-              reader.releaseLock();
-            }
-
-            const buffer = Buffer.concat(chunks);
+            // 3. Content-Length pre-check + streamed-byte cap (shared with the auth path).
+            const buffer = await collectCappedBody(response, config.maxBytes);
             const mimeType =
               response.headers.get("content-type") ?? "application/octet-stream";
 

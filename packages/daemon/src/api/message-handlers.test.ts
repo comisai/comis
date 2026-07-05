@@ -485,6 +485,123 @@ describe("capability guard", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Microsoft Teams capability gate (INV-2).
+//
+// Teams declares reactions:true as an INBOUND-only capability — it exposes no
+// bot-reaction SEND API, so the adapter omits reactToMessage. An agent
+// message.react therefore passes assertCapability (reactions:true) but must be
+// stopped at requireMethod, which throws naming the missing method — a supported
+// inbound flag never fabricates a send path. edit/delete are truthfully
+// supported (editMessages/deleteMessages:true + the adapter implements them from
+// the flipped caps), so they pass the gate and reach the adapter.
+// ---------------------------------------------------------------------------
+
+/** A msteams adapter that OMITS reactToMessage (no bot-reaction send API) while
+ *  implementing editMessage/deleteMessage — the honest adapter surface. */
+function createMsTeamsMockAdapter(): ChannelPort {
+  return {
+    channelId: "msteams",
+    channelType: "msteams",
+    start: vi.fn(async () => ok(undefined)),
+    stop: vi.fn(async () => ok(undefined)),
+    sendMessage: vi.fn(async () => ok("msg-1")),
+    editMessage: vi.fn(async () => ok(undefined)),
+    deleteMessage: vi.fn(async () => ok(undefined)),
+    platformAction: vi.fn(async () => ok({})),
+    onMessage: vi.fn(),
+    // reactToMessage is intentionally absent (Teams has no bot-reaction send API).
+  } as ChannelPort;
+}
+
+/** A msteams plugin with the real capability matrix: reactions:true (inbound
+ *  only), editMessages/deleteMessages:true, buttons:"none". */
+function createMsTeamsMockPlugin(): ChannelPluginPort {
+  return {
+    id: "channel-msteams",
+    name: "Microsoft Teams Channel Plugin",
+    version: "1.0.0",
+    channelType: "msteams",
+    capabilities: {
+      features: {
+        reactions: true,
+        editMessages: true,
+        deleteMessages: true,
+        fetchHistory: false,
+        attachments: false,
+        typing: true,
+        threads: true,
+        buttons: "none",
+      },
+      limits: { maxMessageChars: 28_000 },
+      replyToMetaKey: "teamsActivityId",
+    } as ChannelCapability,
+    adapter: createMsTeamsMockAdapter(),
+    start: vi.fn(async () => ok(undefined)),
+    stop: vi.fn(async () => ok(undefined)),
+  };
+}
+
+describe("capability guard — Microsoft Teams (INV-2)", () => {
+  let workspaceDir: string;
+
+  beforeEach(() => {
+    workspaceDir = mkdtempSync(join(tmpdir(), "comis-test-msteams-cap-"));
+  });
+
+  afterEach(() => {
+    rmSync(workspaceDir, { recursive: true, force: true });
+  });
+
+  function makeMsTeamsDeps(): MessageHandlerDeps {
+    const deps = createMockDeps(workspaceDir);
+    deps.adaptersByType = new Map([["msteams", createMsTeamsMockAdapter()]]);
+    deps.channelPlugins = new Map([["msteams", createMsTeamsMockPlugin()]]);
+    return deps;
+  }
+
+  it("rejects a msteams message.react at requireMethod because reactToMessage is omitted", async () => {
+    // reactions:true clears assertCapability, but the adapter has no reactToMessage
+    // (Teams exposes no bot-reaction send API), so requireMethod throws naming the
+    // missing method — the honest INV-2 outcome (inbound flag ≠ send path).
+    const deps = makeMsTeamsDeps();
+    const handlers = createMessageHandlers(deps);
+
+    await expect(
+      handlers["message.react"]({ channel_type: "msteams", channel_id: "19:conv", message_id: "m1", emoji: "👍" }),
+    ).rejects.toThrow(/does not implement adapter\.reactToMessage/);
+  });
+
+  it("permits a msteams message.edit through the gate and reaches the adapter editMessage", async () => {
+    // editMessages:true (a truthful capability from the flipped caps) + the adapter
+    // implements editMessage → assertCapability + requireMethod both pass.
+    const deps = makeMsTeamsDeps();
+    const adapter = deps.adaptersByType.get("msteams")!;
+    const handlers = createMessageHandlers(deps);
+
+    const result = await handlers["message.edit"]({
+      channel_type: "msteams", channel_id: "19:conv", message_id: "m1", text: "edited",
+    });
+
+    expect(result).toEqual({ edited: true, channelId: "19:conv", messageId: "m1" });
+    expect(adapter.editMessage).toHaveBeenCalledWith("19:conv", "m1", expect.any(String));
+  });
+
+  it("permits a msteams message.delete through the gate and reaches the adapter deleteMessage", async () => {
+    // deleteMessages:true + the adapter implements deleteMessage → the gate passes.
+    const deps = makeMsTeamsDeps();
+    const adapter = deps.adaptersByType.get("msteams")!;
+    const handlers = createMessageHandlers(deps);
+
+    const result = await handlers["message.delete"]({
+      channel_type: "msteams", channel_id: "19:conv", message_id: "m1",
+    });
+
+    expect(result).toEqual({ deleted: true, channelId: "19:conv", messageId: "m1" });
+    expect(adapter.deleteMessage).toHaveBeenCalledWith("19:conv", "m1");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Cross-channel authorization confinement.
 //
 // Security regression: the per-method channel

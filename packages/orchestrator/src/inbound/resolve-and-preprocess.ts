@@ -91,11 +91,16 @@ export async function resolveAndPreprocess(
   // 3. senderId is used directly (no cross-platform identity resolution)
   const effectiveMsg = msg;
 
-  // 4. Build scoped session key (defaults to per-channel-peer DM scope)
+  // 4. Build scoped session key (defaults to per-channel-peer DM scope).
+  //    threadId is sourced from a channel-specific metadata key
+  //    (`msteamsThreadId`) rather than the generic thread extractor, so only
+  //    that channel's threads split into separate sessions — every other
+  //    channel stays at threadId:undefined and keeps a thread-less key.
   const sessionKey = buildScopedSessionKey({
     msg: effectiveMsg,
     agentId,
     adapterChannelId: adapter.channelId,
+    threadId: effectiveMsg.metadata.msteamsThreadId as string | undefined,
   });
 
   // 5. Emit message:received with the scoped session key

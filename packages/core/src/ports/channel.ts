@@ -30,6 +30,13 @@ export interface ChannelStatus {
   readonly uptime?: number;
   /** Timestamp of the last message processed */
   readonly lastMessageAt?: number;
+  /**
+   * Timestamp of the last INBOUND activity processed — distinct from
+   * lastMessageAt, which an outbound send also bumps. A send-only bot leaves
+   * this untouched, so liveness/health probes key on it to detect a dead
+   * ingress that a fresh outbound timestamp would otherwise mask.
+   */
+  readonly lastInboundAt?: number;
   /** Error description if the adapter is in a failed state */
   readonly error?: string;
   /** Connection mode used by this adapter (for health check stale-exemption logic) */

@@ -124,10 +124,35 @@ describe("buildActivityRenderers", () => {
     expect(typeof renderer.finalize).toBe("function");
   });
 
+  it("constructs an EditPlace renderer factory for Microsoft Teams and marks it live in the map", () => {
+    // Teams declares editMessages:true, so selectStrategy routes it to EditPlace.
+    // The factory-map slot is what makes that routing LIVE: a factory is set only
+    // on a map hit, so PRESENCE in the returned map == live:true. Without the slot
+    // an EditPlace-routed channel is silently absent (the live:false gap the cap
+    // flip would otherwise leave). Plain text today; the rich-card variant is a
+    // later capability.
+    const adapters = new Map<string, ChannelPort>([["msteams", makeStubAdapter("msteams")]]);
+    const plugins = new Map<string, ChannelPluginPort>([
+      ["msteams", makeStubPlugin("msteams", makeCaps({ editMessages: true }))],
+    ]);
+
+    const { timer, clock } = makeTime();
+    const renderers = buildActivityRenderers(adapters, plugins, makeLogger(), { timer, clock });
+
+    // Present in the map == live:true (setFromFactoryMap only sets on a factory hit).
+    const factory = renderers.get("msteams");
+    expect(factory).toBeDefined();
+    expect(renderers.size).toBe(1);
+    const renderer = factory!("19:convo@thread.tacv2");
+    expect(renderer.strategy).toBe("EditPlace");
+    expect(typeof renderer.apply).toBe("function");
+    expect(typeof renderer.finalize).toBe("function");
+  });
+
   it("dispatches each edit-capable channelType to its own EditPlace factory", () => {
-    // Closed dispatch on channelType: telegram/discord/slack/whatsapp each map
-    // to their own create<Ch>ActivityRenderer.
-    const editChannels = ["telegram", "discord", "slack", "whatsapp"] as const;
+    // Closed dispatch on channelType: telegram/discord/slack/whatsapp/msteams each
+    // map to their own create<Ch>ActivityRenderer.
+    const editChannels = ["telegram", "discord", "slack", "whatsapp", "msteams"] as const;
     const adapters = new Map<string, ChannelPort>(editChannels.map((c) => [c, makeStubAdapter(c)]));
     const plugins = new Map<string, ChannelPluginPort>(
       editChannels.map((c) => [c, makeStubPlugin(c, makeCaps({ editMessages: true }))]),
@@ -136,7 +161,7 @@ describe("buildActivityRenderers", () => {
     const { timer, clock } = makeTime();
     const renderers = buildActivityRenderers(adapters, plugins, makeLogger(), { timer, clock });
 
-    expect(renderers.size).toBe(4);
+    expect(renderers.size).toBe(5);
     for (const c of editChannels) {
       const factory = renderers.get(c);
       expect(factory, `factory for ${c}`).toBeDefined();

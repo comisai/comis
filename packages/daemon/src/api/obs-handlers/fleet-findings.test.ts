@@ -1212,6 +1212,53 @@ describe("buildFindings — memory_lifecycle (forget sweep rollup)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// channel_ingress_auth_rejected surfaces via the GENERIC health_signal rollup
+// (no dedicated extractor / DEDICATED_SCRIPT_SIGNALS entry) — a rejected-ingress
+// auth flood becomes a counted `comis fleet` finding, symmetric with the
+// channel_ingress_silent path.
+// ---------------------------------------------------------------------------
+describe("buildFindings — channel_ingress_auth_rejected generic rollup", () => {
+  function authRejectedRow(ts: number, reason: string): DiagnosticRow {
+    return {
+      timestamp: ts,
+      category: "health_signal",
+      severity: "warning",
+      message: "channel:ingress_auth_rejected",
+      details: JSON.stringify({
+        signal: "channel_ingress_auth_rejected",
+        channelType: "msteams",
+        reason,
+      }),
+    };
+  }
+
+  it("rolls a rejected-ingress flood up into ONE counted generic finding", () => {
+    const findings = buildFindings(
+      [
+        authRejectedRow(1_000, "invalid_token"),
+        authRejectedRow(2_000, "invalid_token"),
+        authRejectedRow(3_000, "missing_bearer"),
+      ],
+      [],
+      [],
+    );
+
+    const f = findings.filter((x) => x.code === "health_signal:channel_ingress_auth_rejected");
+    expect(f).toHaveLength(1);
+    // Both reason classes fold into the one signal label — the flood is COUNTED.
+    expect(f[0]!.count).toBe(3);
+  });
+
+  it("carries no token/header body in the generic finding text (content-free)", () => {
+    const findings = buildFindings([authRejectedRow(1_000, "invalid_token")], [], []);
+    const f = findings.find((x) => x.code === "health_signal:channel_ingress_auth_rejected");
+    expect(f).toBeDefined();
+    expect(JSON.stringify(f)).not.toContain("Bearer");
+    expect(JSON.stringify(f)).not.toContain("authorization");
+  });
+});
+
 describe("buildFindings — cron_wake_gate_efficiency (wake-gate rollup)", () => {
   function gateRow(fields: { agentId: string; wake: boolean; toolCalls?: number; estTurnsSaved?: number }): DiagnosticRow {
     return {

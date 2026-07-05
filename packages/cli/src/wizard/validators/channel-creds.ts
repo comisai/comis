@@ -24,6 +24,7 @@ const CHANNEL_CREDENTIAL_TYPES: Record<string, readonly string[]> = {
   discord:   ["botToken"],
   slack:     ["botToken", "appToken"],
   line:      ["channelToken", "channelSecret"],
+  msteams:   ["appId", "appPassword", "tenantId"],
   whatsapp:  [],
   signal:    [],
   irc:       [],
@@ -136,6 +137,57 @@ function validateLine(
   return undefined;
 }
 
+// ---------- Microsoft Teams ----------
+
+// App (client) IDs and directory (tenant) IDs are GUIDs (8-4-4-4-12 hex).
+const MSTEAMS_GUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// App password (client secret) values are long -- an Azure-generated bot
+// client secret is ~40 chars. Floor at 32 (matching the LINE channel-secret
+// length, and in line with the sibling floors: Telegram 30, Discord 50, LINE
+// token 100) to catch obviously-truncated pastes at wizard time; 32 stays
+// safely below a real secret's length so a valid value is never rejected. This
+// is a format-only typo-catcher, not a security control -- the daemon surfaces
+// the real auth error at first use.
+const MSTEAMS_APP_PASSWORD_MIN_LENGTH = 32;
+
+function validateMsTeams(
+  credentialType: string,
+  value: string,
+): ValidationResult | undefined {
+  if (credentialType === "appId") {
+    if (!MSTEAMS_GUID_PATTERN.test(value)) {
+      return {
+        message: "Invalid Microsoft Teams app ID.",
+        hint: "The bot application (client) ID is a GUID (8-4-4-4-12).",
+        field: "msteamsAppId",
+      };
+    }
+  }
+
+  if (credentialType === "tenantId") {
+    if (!MSTEAMS_GUID_PATTERN.test(value)) {
+      return {
+        message: "Invalid Microsoft Teams tenant ID.",
+        hint: "The directory (tenant) ID is a GUID (8-4-4-4-12).",
+        field: "msteamsTenantId",
+      };
+    }
+  }
+
+  if (credentialType === "appPassword") {
+    if (value.length < MSTEAMS_APP_PASSWORD_MIN_LENGTH) {
+      return {
+        message: "Invalid Microsoft Teams app password.",
+        hint: "The app password (client secret) from the bot registration.",
+        field: "msteamsAppPassword",
+      };
+    }
+  }
+
+  return undefined;
+}
+
 // ---------- Public API ----------
 
 /**
@@ -174,6 +226,8 @@ export function validateChannelCredential(
       return validateSlack(credentialType, trimmed);
     case "line":
       return validateLine(credentialType, trimmed);
+    case "msteams":
+      return validateMsTeams(credentialType, trimmed);
     case "whatsapp":
     case "signal":
     case "irc":

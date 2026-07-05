@@ -7,6 +7,8 @@ import {
   sessionSummaryEventToRow,
   dagDegradedEventToRow,
   healthBudgetExceededEventToRow,
+  channelInboundSilentEventToRow,
+  channelIngressAuthRejectedEventToRow,
   reflectFunnelEventToRow,
   lifecycleSweptEventToRow,
   wakeGateEventToRow,
@@ -585,6 +587,102 @@ describe("healthBudgetExceededEventToRow", () => {
 
     const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
     expect(details).toEqual({ signal: "alert_budget", kind: "dependency", count: 5, windowMs: 60_000 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// channelInboundSilentEventToRow (dead webhook ingress → health_signal)
+// ---------------------------------------------------------------------------
+
+describe("channelInboundSilentEventToRow", () => {
+  it("maps a channel:inbound_silent payload to a warning health_signal row (labels/counts only)", () => {
+    const row = channelInboundSilentEventToRow({
+      channelType: "msteams",
+      lastInboundAt: null,
+      silentForMs: 25_200_000,
+      thresholdMs: 21_600_000,
+      timestamp: 3000,
+    });
+
+    expect(row.timestamp).toBe(3000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.message).toBe("channel:inbound_silent");
+    // Daemon-global signal — no agentId/sessionKey/traceId.
+    expect(row.agentId).toBeUndefined();
+    expect(row.sessionKey).toBeUndefined();
+    expect(row.traceId).toBeUndefined();
+
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    // The label the generic health_signal:<label> fleet rollup groups on, plus
+    // channelType + counts only — no message bodies.
+    expect(details).toEqual({
+      signal: "channel_ingress_silent",
+      channelType: "msteams",
+      silentForMs: 25_200_000,
+      thresholdMs: 21_600_000,
+    });
+  });
+
+  it("preserves a numeric lastInboundAt via the counts-only details (no bodies leak)", () => {
+    const row = channelInboundSilentEventToRow({
+      channelType: "msteams",
+      lastInboundAt: 1000,
+      silentForMs: 30_000,
+      thresholdMs: 21_600_000,
+      timestamp: 4000,
+    });
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details.signal).toBe("channel_ingress_silent");
+    expect(details.silentForMs).toBe(30_000);
+    // lastInboundAt is a timestamp, not a body — kept out of details (counts only).
+    expect(details.lastInboundAt).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// channelIngressAuthRejectedEventToRow (rejected ingress auth → health_signal)
+// ---------------------------------------------------------------------------
+
+describe("channelIngressAuthRejectedEventToRow", () => {
+  it("maps a channel:ingress_auth_rejected payload to a warning health_signal row (labels only)", () => {
+    const row = channelIngressAuthRejectedEventToRow({
+      channelType: "msteams",
+      reason: "invalid_token",
+      timestamp: 5000,
+    });
+
+    expect(row.timestamp).toBe(5000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.message).toBe("channel:ingress_auth_rejected");
+    // Daemon-global signal — no agentId/sessionKey/traceId.
+    expect(row.agentId).toBeUndefined();
+    expect(row.sessionKey).toBeUndefined();
+    expect(row.traceId).toBeUndefined();
+
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    // The label the generic health_signal:<label> fleet rollup groups on, plus
+    // the channel label + the closed reason class only — no token, header, or body.
+    expect(details).toEqual({
+      signal: "channel_ingress_auth_rejected",
+      channelType: "msteams",
+      reason: "invalid_token",
+    });
+  });
+
+  it("carries the missing_bearer reason class content-free (no token material can leak)", () => {
+    const row = channelIngressAuthRejectedEventToRow({
+      channelType: "msteams",
+      reason: "missing_bearer",
+      timestamp: 6000,
+    });
+    const serialized = JSON.stringify(row);
+    expect(serialized).not.toContain("Bearer");
+    expect(serialized).not.toContain("authorization");
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details.signal).toBe("channel_ingress_auth_rejected");
+    expect(details.reason).toBe("missing_bearer");
   });
 });
 

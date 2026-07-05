@@ -4,7 +4,7 @@
  * `typing` / `threads` / `buttons` capability flags EXPLICITLY.
  *
  * The `ChannelFeaturesSchema` defaults these three fields (`false`/`false`/
- * `"none"`) as a safety net for *future* plugins. For the 10 in-tree
+ * `"none"`) as a safety net for *future* plugins. For the 11 in-tree
  * plugins, that default is a trap: `selectStrategy(caps)` routes each
  * channel from these flags, so a plugin that silently inherits a default
  * (e.g. Slack defaulting `threads:false`, or Telegram defaulting
@@ -44,7 +44,13 @@ interface ExpectedCaps {
   readonly dir: string;
   readonly typing: boolean;
   readonly threads: boolean;
-  readonly buttons: "inline" | "components" | "blockkit" | "quickreply" | "none";
+  readonly buttons:
+    | "inline"
+    | "components"
+    | "blockkit"
+    | "quickreply"
+    | "none"
+    | "adaptivecard";
 }
 
 const EXPECTED: readonly ExpectedCaps[] = [
@@ -58,6 +64,7 @@ const EXPECTED: readonly ExpectedCaps[] = [
   { dir: "line", typing: true, threads: false, buttons: "quickreply" },
   { dir: "irc", typing: false, threads: false, buttons: "none" },
   { dir: "email", typing: false, threads: false, buttons: "none" },
+  { dir: "msteams", typing: true, threads: true, buttons: "adaptivecard" },
 ];
 
 /** The three fields that MUST be declared (not defaulted) per plugin. */
@@ -127,9 +134,9 @@ function readDeclaredFeatures(dir: string): Record<string, boolean | string | nu
 }
 
 describe("every in-tree channel plugin declares typing/threads/buttons explicitly", () => {
-  it("walks all 10 plugins and finds typing/threads/buttons as own-properties (not schema defaults)", () => {
-    // Sanity: the matrix walks exactly the 10 in-tree plugins.
-    expect(EXPECTED).toHaveLength(10);
+  it("walks all 11 plugins and finds typing/threads/buttons as own-properties (not schema defaults)", () => {
+    // Sanity: the matrix walks exactly the 11 in-tree plugins.
+    expect(EXPECTED).toHaveLength(11);
 
     const missing: string[] = [];
     for (const { dir } of EXPECTED) {

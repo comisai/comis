@@ -579,6 +579,25 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "RichMenuInput",
       "createLineResolver",
       "LineResolverDeps",
+      // Microsoft Teams adapter building blocks — exported for API parity with
+      // the other channel adapters. Consumed within the package (the plugin
+      // wraps the adapter; the adapter drives the mapper, Connector-token
+      // provider and error classifier) with no cross-package importer; the
+      // daemon consumes the plugin factory, validators and handle/activity
+      // types instead. The 3-mode token factory (secret/certificate/managed-
+      // identity) + its deps/mode/provider types are the same class: the adapter
+      // constructs the provider from them internally, and MsTeamsAdapterDeps
+      // (above) surfaces the auth mode — no cross-package importer names them.
+      "createMsTeamsAdapter",
+      "MsTeamsAdapterDeps",
+      "mapMsTeamsActivityToNormalized",
+      "createActivityJwtValidator",
+      "createConnectorTokenProvider",
+      "createConnectorTokenProviderFor",
+      "ConnectorAuthMode",
+      "ConnectorTokenDeps",
+      "ConnectorTokenProvider",
+      "classifyMsTeamsError",
       "createIMessageAdapter",
       "IMessageAdapterDeps",
       "mapImsgToNormalized",
@@ -931,6 +950,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "parseReaction",
       "NormalizedReaction",
       "ReactionHandler",
+      // ── conversation-reference contracts ──
+      // The ConversationReference domain schema value + its parser are exported
+      // ahead of a production consumer. The tampering control that is actually
+      // engaged is the memory store's read-side row mapper
+      // (MsTeamsConversationRowSchema, a z.strictObject): the inbound capture builds
+      // a fixed-shape object literal directly and the proactive read re-validates
+      // through that row schema, so neither invokes parseConversationReference. The
+      // ConversationReference / MsTeamsConversationStorePort TYPES already have a
+      // cross-package consumer (the memory store), so only the schema value + parser
+      // orphan here. Shrink each entry as its real in-repo consumer lands.
+      "ConversationReferenceSchema",
+      "parseConversationReference",
       "TrustLevelSchema",
       "MemorySourceSchema",
       "MemoryEntrySchema",
@@ -2498,6 +2529,11 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "validateCertificates",
       "extractClientCN",
       "CertPaths",
+      // Microsoft Teams inbound ingress. createMsTeamsIngress is consumed by the
+      // daemon composition root (setup-channels-adapters.ts builds the ingress);
+      // MsTeamsIngressDeps is the factory's deps shape, which the daemon
+      // constructs inline (like ApprovalTokenDeps) — tracked here for parity.
+      "MsTeamsIngressDeps",
     ])],
     // @comis/infra: baseline orphans + transient orphans.
     // createSystemClock/createSystemEnv/createSystemTimers are Node-backed
@@ -2565,6 +2601,15 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // shrink-only).
       "createSqliteOutwardSendLedger",
       "ensureOutwardLedgerTable",
+      // Conversation-reference store. The SQLite
+      // MsTeamsConversationStorePort adapter `createSqliteMsTeamsConversationStore`
+      // and the idempotent DDL `ensureMsTeamsConversationTable` are surfaced ahead
+      // of their consumer: the channel adapter's conversation-store injection + the
+      // daemon composition root wire them in later waves. Interface-first planned
+      // orphans that SHRINK OUT once that wiring lands (mirror the
+      // outward-send-ledger entries above; allowlist-shrink enforces shrink-only).
+      "createSqliteMsTeamsConversationStore",
+      "ensureMsTeamsConversationTable",
       // NOTE: createContextStore (the DAG
       // context-store factory) was deleted here along with context-store.ts +
       // its barrel re-export — no longer an orphaned export to track.

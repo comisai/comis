@@ -485,6 +485,38 @@ export interface ChannelEvents {
     timestamp: number;
   };
 
+  /**
+   * A webhook channel has received no inbound activity for longer than its
+   * configured missed-inbound threshold. Raised by the daemon liveness timer
+   * (independent of the stale-reap-exempt health monitor). Content-free —
+   * labels, counts, and timestamps only, never message bodies.
+   */
+  "channel:inbound_silent": {
+    channelType: string;
+    lastInboundAt: number | null;
+    silentForMs: number;
+    thresholdMs: number;
+    timestamp: number;
+  };
+
+  /**
+   * An inbound activity was REJECTED at a channel gateway ingress auth gate
+   * (a missing bearer pre-gate, or a signed-token validation failure) before
+   * any body parse or adapter dispatch. Raised by the ingress through an
+   * injected content-free hook so a forged / expired / wrong-audience /
+   * missing-token FLOOD against the public messaging endpoint is COUNTABLE by
+   * the fleet lens instead of living only in a raw WARN. Content-free by
+   * construction: the closed `reason` class + the channel label ONLY — never
+   * the bearer token, the Authorization header, or the request body (§2.7 and
+   * the opaque-401 contract: the forged material is counted without being
+   * echoed). Daemon-global — no agentId/sessionKey.
+   */
+  "channel:ingress_auth_rejected": {
+    channelType: string;
+    reason: "missing_bearer" | "invalid_token";
+    timestamp: number;
+  };
+
   // -------------------------------------------------------------------------
   // Delivery hook events
   // -------------------------------------------------------------------------

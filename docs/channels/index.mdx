@@ -1,6 +1,6 @@
 ---
 title: "Channels"
-description: "Connect Comis to Discord, Telegram, Slack, WhatsApp, Signal, iMessage, LINE, IRC, and Email"
+description: "Connect Comis to Discord, Telegram, Slack, WhatsApp, Signal, iMessage, LINE, IRC, Email, and Microsoft Teams"
 icon: "message-dots"
 ---
 
@@ -24,6 +24,7 @@ Not sure which channel to connect first? Here's a quick comparison to help you c
 | LINE | Yes | Yes | Yes | No | None | No | No | Flex Messages |
 | IRC | Yes | No | No | No | None | No | No | IRC control codes (bold, color) |
 | Email | Yes | Yes (attachment) | Yes | No | Reply chain | No | No | HTML |
+| Microsoft Teams | Yes | Via attachment | Yes | Inbound only | Channel threads | Yes | Yes | Adaptive Cards |
 
 <Tip>
 Discord and Telegram have the broadest feature support -- they're great choices if you're just getting started.
@@ -70,6 +71,7 @@ for your use case, or to understand the differences when connecting multiple pla
 | [LINE](/channels/line) | DM, group | None | No | No | No / No | No | Flex Messages |
 | [IRC](/channels/irc) | DM, channel | None | No | No | No / No | No | IRC control codes |
 | [Email](/channels/email) | DM | None | Reply chain (RFC 5322) | No | No / No | No | HTML |
+| [Microsoft Teams](/channels/msteams) | DM, group, channel, thread | Edit | Channel threads | Inbound | Yes / Yes | Yes | Adaptive Cards |
 
 ### Limits
 
@@ -84,6 +86,7 @@ for your use case, or to understand the differences when connecting multiple pla
 | [LINE](/channels/line) | 5,000 characters | 200 MB |
 | [IRC](/channels/irc) | 512 characters | N/A |
 | [Email](/channels/email) | 100,000 characters | N/A |
+| [Microsoft Teams](/channels/msteams) | 28,000 characters | Inline images |
 
 <Tip>
 **Reading the table:** "Edit / Delete" shows whether Comis can edit its own messages
@@ -156,6 +159,11 @@ Not sure which channel to start with? Here are some common scenarios:
   responses do not need to be instant, or for integrating with systems that
   communicate via email.
 
+- **Microsoft 365 workplace** -- Use [Microsoft Teams](/channels/msteams). Your
+  agent works in 1:1 chats, group chats, and team channels with Adaptive Cards
+  and approval workflows. Teams requires a public messaging endpoint -- the
+  setup guide covers exposing it safely.
+
 You can always add more channels later. Your agent's memory and personality carry
 across all connected platforms.
 
@@ -194,6 +202,9 @@ If you have not installed Comis yet, start with the [Quickstart](/get-started/qu
   </Card>
   <Card title="Email" icon="envelope" href="/channels/email">
     IMAP/SMTP email integration with OAuth2, threading, and sender filtering.
+  </Card>
+  <Card title="Microsoft Teams" icon="microsoft" href="/channels/msteams">
+    1:1, group, and channel chats with Adaptive Cards, threads, and edit/delete.
   </Card>
   <Card title="Delivery Infrastructure" icon="truck-fast" href="/channels/delivery">
     How streaming, typing indicators, retry logic, and message pacing work.

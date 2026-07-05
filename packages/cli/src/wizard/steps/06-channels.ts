@@ -2,7 +2,7 @@
 /**
  * Channel setup step -- step 06 of the init wizard.
  *
- * Presents a multiselect of all 7 supported channels with credential hints,
+ * Presents a multiselect of all 8 supported channels with credential hints,
  * collects per-channel credentials inline with format pre-checks and live
  * API validation, shows deferred guidance for WhatsApp/Signal, silently
  * adds IRC, and stores ChannelConfig[] on wizard state.
@@ -448,6 +448,71 @@ async function handleLine(
 }
 
 /**
+ * Collect Microsoft Teams bot credentials.
+ *
+ * Teams authenticates via an Azure bot app registration: a GUID app (client)
+ * ID, an app password (client secret), a GUID directory (tenant) ID, and an
+ * auth mode. There is no lightweight live-validation endpoint (verifying the
+ * credentials requires a full client-credentials token exchange), so the
+ * values are format-checked only and returned validated:false — the daemon
+ * surfaces an honest auth error at first use if they are wrong.
+ */
+async function handleMsTeams(
+  prompter: WizardPrompter,
+): Promise<ChannelConfig | null> {
+  prompter.note(sectionSeparator("Microsoft Teams Setup"));
+  prompter.note(
+    info("Register a bot app (Azure portal or Teams Toolkit), then copy its app ID, client secret, and tenant ID."),
+  );
+
+  const appId = await prompter.text({
+    message: "Microsoft Teams app (client) ID",
+    validate: (v: string) => {
+      if (typeof v !== "string") return undefined;
+      const result = validateChannelCredential("msteams", "appId", v);
+      return result?.message;
+    },
+  });
+
+  const appPassword = await prompter.password({
+    message: "Microsoft Teams app password (client secret)",
+    validate: (v: string) => {
+      if (typeof v !== "string") return undefined;
+      const result = validateChannelCredential("msteams", "appPassword", v);
+      return result?.message;
+    },
+  });
+
+  const tenantId = await prompter.text({
+    message: "Microsoft Teams directory (tenant) ID",
+    validate: (v: string) => {
+      if (typeof v !== "string") return undefined;
+      const result = validateChannelCredential("msteams", "tenantId", v);
+      return result?.message;
+    },
+  });
+
+  const authMode = await prompter.select<"secret" | "certificate" | "managedIdentity">({
+    message: "Authentication mode",
+    options: [
+      { value: "secret", label: "Client secret", hint: "App password (recommended)" },
+      { value: "certificate", label: "Certificate" },
+      { value: "managedIdentity", label: "Managed identity" },
+    ],
+    initialValue: "secret",
+  });
+
+  return {
+    type: "msteams",
+    appId,
+    appPassword,
+    tenantId,
+    authMode,
+    validated: false,
+  };
+}
+
+/**
  * WhatsApp: deferred configuration guidance.
  */
 function handleWhatsApp(prompter: WizardPrompter): ChannelConfig {
@@ -562,6 +627,8 @@ async function handleChannel(
       return { config: await handleSlack(prompter) };
     case "line":
       return { config: await handleLine(prompter) };
+    case "msteams":
+      return { config: await handleMsTeams(prompter) };
     case "whatsapp":
       return { config: handleWhatsApp(prompter) };
     case "signal":

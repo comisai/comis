@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Per-platform channel adapter bootstrap: credential validation and plugin
- * creation for 8 platforms (Telegram, Discord, Slack, WhatsApp, Signal, LINE,
- * iMessage, IRC).
+ * creation for 10 platforms (Telegram, Discord, Slack, WhatsApp, Signal, LINE,
+ * iMessage, IRC, Email, Microsoft Teams).
  * Extracted from setup-channels.ts to isolate the per-platform bootstrap block
- * (~170 lines) into a single-concern module.
+ * into a single-concern module.
  * @module
  */
 
-import type { AppContainer, ChannelPort, ChannelPluginPort } from "@comis/core";
+import type { AppContainer, ChannelPort, ChannelPluginPort, EnvPort, MsTeamsConversationStorePort, TimerPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import {
   createTelegramPlugin,
@@ -20,6 +20,7 @@ import {
   createIMessagePlugin,
   createIrcPlugin,
   createEmailPlugin,
+  createMsTeamsPlugin,
   validateBotToken,
   validateDiscordToken,
   validateSlackCredentials,
@@ -29,12 +30,21 @@ import {
   validateIMessageConnection,
   validateIrcConnection,
   validateEmailCredentials,
+  validateMsTeamsCredentials,
   type TelegramPluginHandle,
   type LinePluginHandle,
   type EmailAdapterDeps,
+  type MsTeamsAdapterHandle,
+  type MsTeamsPluginHandle,
+  type TeamsActivity,
 } from "@comis/channels";
+import { createMsTeamsIngress } from "@comis/gateway";
+import {
+  resolveTestActivityValidator,
+  resolveTestConnectorFetch,
+} from "./msteams-test-seams.js";
 import os from "node:os";
-import { safePath } from "@comis/core";
+import { safePath, systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -51,6 +61,16 @@ export interface AdapterBootstrapResult {
   /** Full plugin objects keyed by channel type for capabilities RPC and
    *  per-channel capability lookups (features.reactions, replyToMetaKey). */
   channelPlugins: Map<string, ChannelPluginPort>;
+  /** Microsoft Teams inbound ingress sub-app — built here when the channel is
+   *  enabled with valid credentials, from the real adapter's inbound driver +
+   *  the bound activity-token validator. The composition root threads it to the
+   *  gateway so the `/channels/msteams` route mounts only when a caller-backed
+   *  ingress exists. Undefined when the channel is disabled. */
+  msTeamsIngress?: import("hono").Hono;
+  /** Microsoft Teams plugin handle (needed by the media pipeline for resolver
+   *  creation — mirrors tgPlugin/linePlugin). Undefined when the channel is
+   *  disabled or its credentials are invalid. */
+  msTeamsPlugin?: MsTeamsPluginHandle;
 }
 
 // ---------------------------------------------------------------------------
@@ -67,14 +87,29 @@ export interface AdapterBootstrapResult {
 export async function bootstrapAdapters(deps: {
   container: AppContainer;
   channelsLogger: ComisLogger;
+  /** Persisted conversation-reference store (built once on the shared memory.db),
+   *  injected into the Teams plugin so every inbound captures the routing tuple
+   *  and a proactive send recovers it. Optional: absent → the adapter skips
+   *  capture and a proactive send errs (never a wrong-host default). */
+  msTeamsConversationStore?: MsTeamsConversationStorePort;
+  /** Daemon TimerPort, injected into the Teams plugin for its typing keepalive.
+   *  Optional: absent → the keepalive degrades to a no-op (never a raw setTimeout). */
+  timer?: TimerPort;
+  /** Live composition-root EnvPort, threaded into the Teams plugin for the
+   *  managed-identity App-Service endpoint + rotating header (read live per mint).
+   *  Optional: absent → managed-identity mint falls to IMDS (VM/AKS), which needs
+   *  no env. */
+  env?: EnvPort;
 }): Promise<AdapterBootstrapResult> {
-  const { container, channelsLogger } = deps;
+  const { container, channelsLogger, msTeamsConversationStore, timer, env } = deps;
   const channelConfig = container.config.channels;
 
   const adaptersByType = new Map<string, ChannelPort>();
   const channelPlugins = new Map<string, ChannelPluginPort>();
   let tgPlugin: TelegramPluginHandle | undefined;
   let linePlugin: LinePluginHandle | undefined;
+  let msTeamsIngress: import("hono").Hono | undefined;
+  let msTeamsPlugin: MsTeamsPluginHandle | undefined;
 
   // Helper: attempt to get a secret, return undefined if not found
   const getSecret = (name: string): string | undefined => {
@@ -365,6 +400,104 @@ export async function bootstrapAdapters(deps: {
     }
   }
 
+  // Microsoft Teams — a route-driven channel whose inbound arrives over the
+  // net-new gateway ingress. This block is the production CALLER that builds
+  // that ingress: on valid credentials it registers the adapter/plugin, then
+  // wires the REAL adapter's handleWebhookEvents + the bound activity-token
+  // validator into createMsTeamsIngress and exposes the sub-app for the gateway
+  // phase to mount at /channels/msteams. A mounted route MUST reach the real
+  // adapter — there is no factory without a caller.
+  if (channelConfig.msteams.enabled) {
+    const authMode = channelConfig.msteams.authMode ?? "secret";
+    const appPassword = (channelConfig.msteams.appPassword as string | undefined) || getSecret("MSTEAMS_APP_PASSWORD");
+    const appId = channelConfig.msteams.appId;
+    const tenantId = channelConfig.msteams.tenantId;
+    const certPath = channelConfig.msteams.certPath;
+    const managedIdentityClientId = channelConfig.msteams.managedIdentityClientId;
+    const validation = validateMsTeamsCredentials({ authMode, appId, appPassword, tenantId, certPath, managedIdentityClientId });
+    // Per-mode credential precondition: secret needs the resolved appPassword,
+    // certificate needs certPath, managed-identity needs managedIdentityClientId
+    // (all still need appId + tenantId + a passing validation). A cert/MI config
+    // carries no appPassword, so the old appPassword-only gate silently dropped it.
+    const perModeCredentialPresent =
+      authMode === "certificate"
+        ? Boolean(certPath)
+        : authMode === "managedIdentity"
+          ? Boolean(managedIdentityClientId)
+          : Boolean(appPassword);
+    if (validation.ok && appId && tenantId && perModeCredentialPresent) {
+      // OFF-BY-DEFAULT live-test seams (see msteams-test-seams.ts): with the
+      // COMIS_MSTEAMS_TEST_* env vars unset — the production case — getEnv returns
+      // undefined, so testConnectorFetch is undefined (adapter keeps the global
+      // fetch) and the ingress validator is the live remote-JWKS one. Neither seam
+      // relaxes a security control; they only let a loopback emulator round-trip.
+      // Reads via the injected EnvPort (the sanctioned env boundary — never direct
+      // process.env); the live daemon EnvPort wraps process.env, so the operator's
+      // COMIS_MSTEAMS_TEST_* vars are seen. Absent env → the seams stay off.
+      const getEnv = (name: string): string | undefined => env?.get(name);
+      const testConnectorFetch = resolveTestConnectorFetch(getEnv);
+      const plugin = createMsTeamsPlugin({
+        authMode,
+        appId,
+        // Secret mode sends the resolved password; cert/MI carry none (empty placeholder).
+        appPassword: appPassword ?? "",
+        tenantId,
+        ...(certPath ? { certPath } : {}),
+        ...(managedIdentityClientId ? { managedIdentityClientId } : {}),
+        cloud: channelConfig.msteams.cloud,
+        allowFrom: channelConfig.msteams.allowFrom,
+        allowMode: channelConfig.msteams.allowMode,
+        logger: channelsLogger,
+        // Inject the shared conversation-reference store + the daemon TimerPort
+        // as the @comis/core port types (never a raw db into @comis/channels):
+        // capture on every inbound + proactive-send recovery + the typing keepalive.
+        // The live EnvPort feeds the managed-identity App-Service endpoint/header
+        // (read live per mint); absent → managed-identity falls to IMDS.
+        ...(msTeamsConversationStore ? { conversationStore: msTeamsConversationStore } : {}),
+        ...(timer ? { timer } : {}),
+        ...(env ? { env } : {}),
+        // Test-only outbound redirect (undefined in production → global fetch).
+        ...(testConnectorFetch ? { fetchImpl: testConnectorFetch } : {}),
+      });
+      adaptersByType.set("msteams", plugin.adapter);
+      channelPlugins.set("msteams", plugin);
+      // Capture the handle so the media pipeline can build the msteams-file
+      // resolver over its Connector-token getter (mirrors tgPlugin/linePlugin).
+      msTeamsPlugin = plugin as MsTeamsPluginHandle;
+      const teamsAdapter = plugin.adapter as MsTeamsAdapterHandle;
+      msTeamsIngress = createMsTeamsIngress({
+        // Default: the live remote-JWKS validator bound to appId. With the
+        // off-by-default COMIS_MSTEAMS_TEST_JWKS seam set, a local-JWKS validator
+        // instead — a full verify against the emulator's key, not a bypass.
+        validateActivityJwt: resolveTestActivityValidator(appId, getEnv, {
+          logger: channelsLogger,
+        }),
+        handleWebhookEvents: (activities) => teamsAdapter.handleWebhookEvents(activities as TeamsActivity[]),
+        // Bridge the ingress auth-gate rejections onto the daemon eventBus as a
+        // content-free health_signal, so a forged/expired/wrong-audience/missing-
+        // token flood is COUNTED by `comis fleet` instead of raw-log-only. Carries
+        // the channel label + closed reason class only — never the token/header/body.
+        onAuthRejected: (reason) =>
+          container.eventBus.emit("channel:ingress_auth_rejected", {
+            channelType: "msteams",
+            reason,
+            timestamp: systemNowMs(),
+          }),
+        logger: channelsLogger,
+      });
+      channelsLogger.info({ channelType: "msteams", authMode, tenantId }, "Channel adapter initialized");
+    } else {
+      // Mode-specific hint: name the exact credential the configured authMode needs.
+      const credHint =
+        authMode === "certificate"
+          ? "Set msteams.certPath (certificate mode) and msteams.appId/tenantId"
+          : authMode === "managedIdentity"
+            ? "Set msteams.managedIdentityClientId (managed-identity mode) and msteams.appId/tenantId"
+            : "Verify msteams.appId/tenantId and MSTEAMS_APP_PASSWORD";
+      channelsLogger.warn({ hint: credHint, errorKind: "auth" as const }, "Teams credential validation failed");
+    }
+  }
+
   if (adaptersByType.size > 0) {
     channelsLogger.info({ channels: Array.from(adaptersByType.keys()), count: adaptersByType.size }, "Channel adapters initialized");
   } else {
@@ -372,5 +505,5 @@ export async function bootstrapAdapters(deps: {
   }
   } // end if (channelConfig)
 
-  return { adaptersByType, tgPlugin, linePlugin, channelPlugins };
+  return { adaptersByType, tgPlugin, linePlugin, channelPlugins, msTeamsIngress, msTeamsPlugin };
 }

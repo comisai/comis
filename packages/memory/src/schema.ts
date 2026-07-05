@@ -14,6 +14,7 @@ import { ensurePinnedColumn } from "./schema-pinned.js";
 import { ensureVideoJobTable } from "./schema-video-jobs.js";
 import { ensureDurableRunTable } from "./schema-durable-runs.js";
 import { ensureOutwardLedgerTable } from "./schema-outward-ledger.js";
+import { ensureMsTeamsConversationTable } from "./schema-msteams-conversation.js";
 import { ensureOutcomeEventsTable } from "./schema-outcome-events.js";
 import { ensureMentalModelsTable } from "./schema-mental-models.js";
 import { ensureUsefulnessFailureColumn } from "./schema-usefulness.js";
@@ -506,6 +507,7 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   ensureVideoJobTable(db); // durable async video-job store
   ensureDurableRunTable(db); // durable run checkpoint store
   ensureOutwardLedgerTable(db); // exactly-once outward send ledger
+  ensureMsTeamsConversationTable(db); // conversation-id → routing-tuple map (proactive send)
   ensureOutcomeEventsTable(db); // outcome_events ledger — no FK, (tenant,agent)-scoped
   ensureMentalModelsTable(db, embeddingDimensions, localVecAvailable); // mental_models doc store + FTS/vec/trigram twins (generalized from the learned_skills store) — trust CHECK IN ('learned'), (tenant,agent)-scoped; copies a pre-existing learned_skills table forward as kind='skill'
 

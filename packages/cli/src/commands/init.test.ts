@@ -59,7 +59,7 @@ describe("registerInitCommand", () => {
     expect(optionLongs).toContain("--gateway-bind");
     expect(optionLongs).toContain("--gateway-token");
 
-    // Channels (7)
+    // Channels (11)
     expect(optionLongs).toContain("--channels");
     expect(optionLongs).toContain("--telegram-token");
     expect(optionLongs).toContain("--discord-token");
@@ -67,6 +67,10 @@ describe("registerInitCommand", () => {
     expect(optionLongs).toContain("--slack-app-token");
     expect(optionLongs).toContain("--line-token");
     expect(optionLongs).toContain("--line-secret");
+    expect(optionLongs).toContain("--msteams-app-id");
+    expect(optionLongs).toContain("--msteams-app-password");
+    expect(optionLongs).toContain("--msteams-tenant-id");
+    expect(optionLongs).toContain("--msteams-auth-mode");
 
     // Media generation + processing (8)
     expect(optionLongs).toContain("--image-provider");
@@ -95,11 +99,11 @@ describe("registerInitCommand", () => {
     expect(optionLongs).toContain("--reset-scope");
   });
 
-  it("has exactly 34 options", () => {
+  it("has exactly 38 options", () => {
     const program = new Command();
     registerInitCommand(program);
     const initCmd = program.commands.find((c) => c.name() === "init")!;
-    expect(initCmd.options).toHaveLength(34);
+    expect(initCmd.options).toHaveLength(38);
   });
 
   it("parses --channels as comma-separated list", () => {
