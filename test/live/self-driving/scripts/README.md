@@ -33,21 +33,29 @@ rest ARE the standard install.sh layout:
 bash test/live/self-driving/scripts/install-vps.sh        # SKIP_BUILD=1 to reuse the local dist
 
 # 1. Push the WHOLE kit + the rig env to the box (re-run every session — the box drifts from the kit):
-bash test/live/self-driving/scripts/deploy-scripts.sh
+bash test/live/self-driving/scripts/deploy-scripts.sh     # auto-fetches GWTOKEN from the box if unset
 
 # 2. ONCE per box — emulator runtime (tsx) + chown leftovers + layout sanity:
 ssh root@<vps> 'bash /root/setup-vps.sh'
 
+# 2b. FRESH box only (install ran --no-init → no config): render a rig-ready config.yaml + token + master key:
+ssh root@<vps> 'PROVIDER=anthropic MODEL=claude-sonnet-4-6 node /root/init-config.mjs'
+# then give it provider creds:  ssh root@<vps> "su - comis -c 'comis secrets set ANTHROPIC_API_KEY'"
+
 # 3. Emulator: deploy + (re)launch + WIRE the daemon to it (config backup kept) + restart:
 WIRE=1 bash test/live/self-driving/scripts/deploy-emu.sh
 
-# 4. Iterate: after each local `pnpm build`, overlay the dist + restart (seconds):
+# 4. Confirm the rig is coherent + serving this build BEFORE driving (both read-only, both name their fix):
+bash test/live/self-driving/scripts/rig-doctor.sh
+bash test/live/self-driving/scripts/verify-build.sh       # + <symbol> [pkg] to grep your diff in the deployed dist
+
+# 5. Iterate: after each local `pnpm build`, overlay the dist + restart (seconds):
 bash test/live/self-driving/scripts/deploy-dist.sh && ssh root@<vps> 'bash /root/restart-daemon.sh'
 
-# 5. Clean-slate between reproductions (wipe test state; keeps config/secrets):
+# 6. Clean-slate between reproductions (wipe test state; keeps config/secrets):
 ssh root@<vps> 'WIPE_CRONS=1 bash /root/clean-restart.sh'
 
-# 6. Drive + oracles (the .mjs helpers self-serve env from /root/comis-rig.env):
+# 7. Drive + oracles (the .mjs helpers self-serve env from /root/comis-rig.env):
 ssh root@<vps> 'node /root/drive.mjs 678314278 "reply with PONG42"'
 ssh root@<vps> 'node /root/revoke.mjs capabilities.introspect'
 ssh root@<vps> 'MODELS="claude-sonnet-4-6 claude-opus-4-8" PRIMARY=claude-sonnet-4-6 nohup bash /root/models-sweep.sh >/root/sweep.out 2>&1 &'
@@ -55,6 +63,9 @@ ssh root@<vps> 'MODELS="claude-sonnet-4-6 claude-opus-4-8" PRIMARY=claude-sonnet
 
 | Script | Runs on | As | Purpose |
 |---|---|---|---|
+| `init-config.mjs` | VPS | root | **fresh-box config bootstrap** — the last step from bare `install-vps.sh --no-init` to a green Phase 0. Renders `/root/config.example.yaml` into `$DATA/config.yaml` with a freshly GENERATED ≥32-char gateway token, this rig's `CHATID` in `allowFrom`+`senderTrustMap`, `channels.telegram` DISABLED (wire-emu.mjs enables it with the live port), runs `comis secrets init` if there's no master key yet, and updates `/root/comis-rig.env`'s token. Refuses on a non-fresh box unless `--force` (keeps `config.yaml.pre-init`). `PROVIDER`/`MODEL` env override the agent; `SKIP_SECRETS_INIT=1`/`RIG_ENV=` for scratch renders. |
+| `rig-doctor.sh` | local checkout | you | **read-only local↔box COHERENCE gate** (the complement to phase0-check: "is MY rig pointed at the box correctly?"). One ssh round-trip: ssh reachable · service active · unit exec under `$PKG` · daemon dist present · kit + rig-env deployed · config present · gateway listening · **local vs box token length agree** · **`capabilities.introspect` actually answers** (catches a rotated/wrong token before it 401s mid-run) · **config apiRoot == the RUNNING emulator's port** (catches the stale-wire drift every kernel-allocated-port relaunch causes). Exit 0 = coherent; each FAIL names its fix. |
+| `verify-build.sh` | local checkout | you | **prove the box serves THIS checkout** (01-SETUP §2 as one command). provenance (`/root/comis-deployed-build` SHA == local HEAD) · process (daemon started AFTER that deploy — catches a deploy-without-restart) · optional `verify-build.sh <symbol> [pkg]` HEAD-only symbol grep in the deployed dist (definitive + timezone-immune; the only reliable check when the tree is dirty). |
 | `install-vps.sh` | local checkout | you | **(re)install the CURRENT checkout as the production installation via the real installer** (`pnpm build` → `pnpm pack --config.node-linker=hoisted` → scp tarball + `website/public/install.sh` → `install.sh --tarball --no-init`). Fresh box = full bootstrap (system deps, `comis` user, systemd unit, enable+start); existing = in-place upgrade (config/data untouched). Then **restarts the service + boot-verifies** (an installer upgrade does NOT restart a running daemon — live-proven) and records the SHA at `/root/comis-deployed-build`. Use whenever third-party deps changed (a dist overlay can't ship `node_modules`). |
 | `deploy-dist.sh` | local checkout | you | **the fast fix-verify overlay** — maps each local `packages/<dir>/dist` onto the INSTALLED layout (`$PKG/node_modules/@comis/<name>/dist`; the umbrella's own dist → `$PKG/dist`), ships ONE tar stream, restores `comis` ownership. **Includes the DEP-DRIFT guard**: an overlay ships code, NOT `node_modules`, so a HEAD that bumped a third-party dep crashes the daemon on boot (`ERR_PACKAGE_PATH_NOT_EXPORTED`) AFTER a clean deploy+restart — the guard compares `@earendil-works/pi-ai`/`pi-agent-core` local-vs-box and points to `install-vps.sh` on mismatch. Restart after: `ssh $VPS 'bash /root/restart-daemon.sh'`. |
 | `deploy-scripts.sh` | local checkout | you | **push the WHOLE scripts/ kit to `/root/` AND render `/root/comis-rig.env` (0600) from `.live-env`** — the box-side scripts source it; the `.mjs` helpers read it via `_rig.mjs`. Re-run per session (the box drifts from the kit) and after every `.live-env` change. |
@@ -87,7 +98,8 @@ ssh root@<vps> 'MODELS="claude-sonnet-4-6 claude-opus-4-8" PRIMARY=claude-sonnet
 | `models-sweep.sh` | VPS | root | sweep a model list: swap config → clean-slate systemd restart → PONG → check actual `modelId` in the structured logs (per-model log wipe so model N's ground truth can't hide behind N-1's) |
 | `run-linux-tests.sh` | local checkout | you | **run this checkout's `.linux` tests (the real-bwrap containment gate) ON the VPS**. `.linux.test.ts` files SKIP on macOS (so the local `pnpm validate` floor never runs them). The production install has no source tree, so this maintains a SELF-CONTAINED scratch checkout at `$LINUX_TEST_DIR` (default `/root/comis-linux-tests`): rsyncs `packages/` src+dist + the root manifests/configs, `pnpm install --frozen-lockfile` on first run / lockfile change (corepack), then `pnpm vitest` there — never touches the installed daemon. `run-linux-tests.sh` (no args = the wake-gate + orchestrate jail gate) · `run-linux-tests.sh <file…>` · `run-linux-tests.sh '**/*.linux.test.ts'`. Run `pnpm build` first (src and dist must be the same HEAD). |
 | `setup-trading-system.sh` | local checkout | you | **one-command stand-up of the autonomous multi-signal trading system** on the emulator rig — sends the §Setup-prompt (real `yfinance` MCP install + `portfolio.json` ledger + strategy-in-memory + `trading-cycle` cron) then VERIFIES the 4 setup oracles in ground truth (mcp.list / ledger file / strategy memory / cron.list) and prints GREEN/RED. `--bootstrap` also runs CYCLE 1. Recipe + prompts + prerequisites + per-cycle oracles: `../targets/EXAMPLE-autonomous-trading-system.md`. For a real (non-emulator) Comis, paste the doc's §Setup-prompt as an admin sender instead. |
-| `config.example.yaml` | — | — | reference config (gateway token, nested budget, emulator apiRoot) |
+| `rig-token.mjs` | VPS | root/comis | print the gateway token LITERAL from `$DATA/config.yaml` (empty for an unresolved `${REF}`). The config-literal half of `deploy-scripts.sh`'s GWTOKEN auto-fetch (the secrets-store half is `comis secrets get`). |
+| `config.example.yaml` | — | — | reference config (gateway token, nested budget, emulator apiRoot); `init-config.mjs` renders it for a fresh box |
 
 ## Gotchas (don't re-discover)
 - **`db.mjs count vec_memories` / `vec_learned_skills` fails `no such module: vec0`** — `db.mjs`'s plain better-sqlite3 handle doesn't load the sqlite-vec extension, so the `vec0` virtual tables are unreadable. To check the **vector+FTS reconcile** on a forget/delete (REC-3), count the plain **shadow** table `vec_memories_rowids` (and `memory_fts`) instead — they drop in lockstep with `memories`. (A kit improvement would be to load the vec extension in `db.mjs`, or add a `veccount <t>` that reads the `_rowids` shadow.)

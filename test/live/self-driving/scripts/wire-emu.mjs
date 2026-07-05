@@ -19,6 +19,11 @@ if (!emu.apiRoot || !emu.botToken) throw new Error(`bad emulator wiring at ${rig
 
 const cfgPath = `${rig.dataDir}/config.yaml`;
 const backup = `${rig.dataDir}/config.pre-emu.yaml`;
+if (!existsSync(cfgPath)) {
+  console.error(`no ${cfgPath} — a fresh box has no config (install-vps.sh runs --no-init).`);
+  console.error("Bootstrap one first:  node /root/init-config.mjs   (renders the rig template + token)");
+  process.exit(2);
+}
 const cfg = YAML.parse(readFileSync(cfgPath, "utf8")) ?? {};
 if (!existsSync(backup)) copyFileSync(cfgPath, backup); // first wire only — keep the REAL-telegram original
 

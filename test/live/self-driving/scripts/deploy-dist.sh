@@ -37,9 +37,15 @@ done
 [ "$shipped" -gt 0 ] || { echo "nothing staged — run pnpm build first"; exit 1; }
 
 echo "Overlaying $shipped package dists  →  $VPS:$PKG …"
+SHA="$(cd "$REPO" && git rev-parse --short HEAD)"
+DIRTY="$(cd "$REPO" && git diff --quiet && git diff --cached --quiet && echo clean || echo dirty)"
 # (macOS tar emits harmless 'Ignoring unknown extended header keyword LIBARCHIVE.xattr…' lines.)
+# The provenance record moves WITH the code — a dist overlay that left the install-time record in
+# place made /root/comis-deployed-build lie about the running build (the stale-provenance trap).
 (cd "$STAGE" && tar czf - . 2>/dev/null) \
-  | ssh -o ConnectTimeout=20 "$VPS" "tar xzf - -C '$PKG' 2>/dev/null && chown -R $COMIS_USER:$COMIS_USER '$PKG' && echo extracted"
+  | ssh -o ConnectTimeout=20 "$VPS" "tar xzf - -C '$PKG' 2>/dev/null && chown -R $COMIS_USER:$COMIS_USER '$PKG' \
+      && echo '$SHA $DIRTY  dist-overlay '\$(date -u +%Y-%m-%dT%H:%M:%SZ) > /root/comis-deployed-build \
+      && echo extracted"
 
 echo "Verify (recursive — top-level globs miss dist subdirs):"
 ssh -o ConnectTimeout=15 "$VPS" "

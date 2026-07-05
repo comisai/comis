@@ -46,11 +46,23 @@ Two paths, both env-driven from `scripts/.live-env`:
 checkout's `website/public/install.sh` to the box, and runs `install.sh --tarball … --no-init`:
 - **Fresh box** → full bootstrap: system deps (node/ffmpeg/bubblewrap/tmux/build tools), the `comis`
   user, the systemd unit, enable+start. This is THE fresh-VPS path — always installer-first, so the rig
-  tests the layout users actually get.
+  tests the layout users actually get. The installer runs `--no-init` (no interactive wizard over ssh),
+  so a fresh box has **no `config.yaml`** — bootstrap one with **`node /root/init-config.mjs`** (after
+  `deploy-scripts.sh`): it renders `config.example.yaml` with a generated ≥32-char gateway token, this
+  rig's `CHATID` in `allowFrom`+`senderTrustMap`, `channels.telegram` disabled (wire-emu enables it),
+  runs `comis secrets init` for the master key, and updates `/root/comis-rig.env`. Then add provider
+  creds (`comis secrets set …` / `comis oauth login …`) and wire the emulator.
 - **Existing install** → in-place reinstall/upgrade from the local codebase (config/secrets/data
   untouched). The script then **restarts the service and boot-verifies** — an installer upgrade does
   NOT restart a running daemon by itself (live-proven: the old code kept serving).
 - Use it whenever third-party deps changed (a dist overlay can't ship `node_modules`).
+
+**Before driving, gate on two read-only local checks (each names its own fix):** `scripts/rig-doctor.sh`
+(local↔box coherence — service/unit/kit/config present, the box token actually opens an RPC, and the
+config `apiRoot` matches the RUNNING emulator — catches the stale-wire drift every kernel-allocated-port
+relaunch causes) and `scripts/verify-build.sh [symbol] [pkg]` (the box serves THIS checkout — provenance
+SHA, daemon-started-after-deploy, and the definitive HEAD-only symbol grep). Together they retire the
+"healthy daemon looks broken / wrong build looks right" cycle-burners.
 
 **(b) Fast fix-verify overlay — `scripts/deploy-dist.sh`** (after `pnpm build`). Maps each local
 `packages/<dir>/dist` onto the installed layout (`$PKG/node_modules/@comis/<name>/dist`; the umbrella's
