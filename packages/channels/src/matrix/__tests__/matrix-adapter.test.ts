@@ -59,6 +59,36 @@ function fakeEvent(
   } as unknown as MatrixEvent;
 }
 
+/**
+ * A decrypt-FAILED encrypted event, modelled on matrix-js-sdk: on a failure the
+ * SDK sets a `m.room.message` clear event (so it passes the watermark type-gate),
+ * whose body is the "** Unable to decrypt **" placeholder — the fail-closed
+ * branch drops it and hands the raw signal to the adapter's degrade decider.
+ */
+function fakeEncryptedFailEvent(
+  overrides: { reason?: string; ts?: number; sender?: string; id?: string } = {},
+): MatrixEvent {
+  const {
+    reason = "MEGOLM_UNKNOWN_INBOUND_SESSION_ID",
+    ts = 200,
+    sender = "@someone:hs",
+    id = "$enc1",
+  } = overrides;
+  return {
+    getType: () => "m.room.message",
+    getId: () => id,
+    getSender: () => sender,
+    getTs: () => ts,
+    getContent: () => ({ msgtype: "m.bad.encrypted", body: `** Unable to decrypt: ${reason} **` }),
+    getClearContent: () => null,
+    isEncrypted: () => true,
+    isBeingDecrypted: () => false,
+    getDecryptionPromise: () => null,
+    isDecryptionFailure: () => true,
+    decryptionFailureReason: reason,
+  } as unknown as MatrixEvent;
+}
+
 /** A minimal room whose id is the routing channelId. */
 function fakeRoom(roomId: string): Room {
   return {
@@ -99,6 +129,8 @@ class FakeMatrixClient {
   readonly appliedAccessTokens: string[] = [];
   /** The `m.direct` account-data content the client reports (other MXID → room ids). */
   directContent?: Record<string, string[]>;
+  /** The handle getCrypto() reports; undefined = crypto backend absent. */
+  cryptoHandle?: object;
   private token: string | null = null;
   private readonly userId: string;
   readonly store: { getSyncToken(): string | null; setSyncToken(token: string): void };
@@ -147,6 +179,11 @@ class FakeMatrixClient {
 
   getUserId(): string | null {
     return this.userId;
+  }
+
+  /** The crypto backend the fail-closed decrypt branch probes for cryptoAvailable. */
+  getCrypto(): object | undefined {
+    return this.cryptoHandle;
   }
 
   /** The m.direct account-data lookup the adapter's DM classifier reads. */
@@ -201,6 +238,7 @@ interface HarnessOverrides {
   password?: string;
   userId?: string;
   emitHealth?: (signal: { errorKind: string; hint: string }) => void;
+  emitDecryptHealth?: (signal: { roomId: string; reason: string }) => void;
   fake?: FakeMatrixClient;
 }
 
@@ -233,6 +271,7 @@ function makeAdapter(over: HarnessOverrides = {}): {
     ...(accessToken !== undefined ? { accessToken } : {}),
     ...(over.password !== undefined ? { password: over.password } : {}),
     ...(over.emitHealth !== undefined ? { emitHealth: over.emitHealth } : {}),
+    ...(over.emitDecryptHealth !== undefined ? { emitDecryptHealth: over.emitDecryptHealth } : {}),
   };
 
   const adapter = createMatrixAdapter(deps);
@@ -537,5 +576,110 @@ describe("createMatrixAdapter", () => {
     expect(vi.mocked(logger.error)).toHaveBeenCalled();
     expect(fake.stopCalls).toBe(0);
     expect(adapter.getStatus?.().connected).toBe(true);
+  });
+});
+
+describe("createMatrixAdapter — decrypt degrade note (E2EE-03)", () => {
+  it("synthesizes one cause-correct degrade note and fans it out past the speaker gate", async () => {
+    // A non-empty allowlist that admits no real speaker (and not the system note's
+    // sender) — the note must still arrive, proving it bypasses isAllowedSpeaker.
+    const { adapter, fake, received } = makeAdapter({
+      allowFrom: ["@nobody:hs"],
+      allowMode: "allowlist",
+    });
+    fake.cryptoHandle = {}; // getCrypto() truthy → cryptoAvailable in the signal
+    await adapter.start();
+
+    await deliver(
+      fake,
+      fakeEncryptedFailEvent({ reason: "MEGOLM_UNKNOWN_INBOUND_SESSION_ID", ts: 201 }),
+    );
+
+    expect(received).toHaveLength(1);
+    expect(received[0]?.channelId).toBe("!room:hs");
+    // The missing_session hint, not the raw ciphertext placeholder.
+    expect(received[0]?.text).toContain("re-invite");
+    expect(received[0]?.text).not.toContain("Unable to decrypt");
+  });
+
+  it("fires the degrade note once per room per cause, re-firing only when the cause class changes", async () => {
+    const { adapter, fake, received } = makeAdapter({ allowFrom: [], allowMode: "allowlist" });
+    fake.cryptoHandle = {};
+    await adapter.start();
+    await fake.emit(ClientEvent.Sync, SyncState.Prepared, null);
+
+    // First failure (missing_session) → fires.
+    await fake.emit(
+      RoomEvent.Timeline,
+      fakeEncryptedFailEvent({ reason: "MEGOLM_UNKNOWN_INBOUND_SESSION_ID", ts: 201 }),
+      fakeRoom("!room:hs"),
+      false,
+    );
+    // Same room, same cause → suppressed (increasing ts clears the watermark gate).
+    await fake.emit(
+      RoomEvent.Timeline,
+      fakeEncryptedFailEvent({ reason: "MEGOLM_UNKNOWN_INBOUND_SESSION_ID", ts: 202 }),
+      fakeRoom("!room:hs"),
+      false,
+    );
+    expect(received).toHaveLength(1);
+
+    // Same room, DIFFERENT cause class (unverified_device) → re-fires.
+    await fake.emit(
+      RoomEvent.Timeline,
+      fakeEncryptedFailEvent({ reason: "MEGOLM_KEY_WITHHELD_FOR_UNVERIFIED_DEVICE", ts: 203 }),
+      fakeRoom("!room:hs"),
+      false,
+    );
+    expect(received).toHaveLength(2);
+  });
+
+  it("emits a content-free decrypt-health signal once per fired note", async () => {
+    const decryptHealth: Array<{ roomId: string; reason: string }> = [];
+    const { adapter, fake } = makeAdapter({
+      allowFrom: [],
+      emitDecryptHealth: (s) => decryptHealth.push(s),
+    });
+    fake.cryptoHandle = {};
+    await adapter.start();
+    await fake.emit(ClientEvent.Sync, SyncState.Prepared, null);
+
+    await fake.emit(
+      RoomEvent.Timeline,
+      fakeEncryptedFailEvent({ reason: "MEGOLM_UNKNOWN_INBOUND_SESSION_ID", ts: 201 }),
+      fakeRoom("!room:hs"),
+      false,
+    );
+    // Same cause repeat → suppressed, so no second obs signal.
+    await fake.emit(
+      RoomEvent.Timeline,
+      fakeEncryptedFailEvent({ reason: "MEGOLM_UNKNOWN_INBOUND_SESSION_ID", ts: 202 }),
+      fakeRoom("!room:hs"),
+      false,
+    );
+
+    expect(decryptHealth).toHaveLength(1);
+    expect(decryptHealth[0]).toEqual({ roomId: "!room:hs", reason: "missing_session" });
+    // Content-free: only the closed kind + room id — never the raw SDK code or ciphertext.
+    const dump = JSON.stringify(decryptHealth);
+    expect(dump).not.toContain("MEGOLM_UNKNOWN_INBOUND_SESSION_ID");
+    expect(dump).not.toContain("Unable to decrypt");
+  });
+
+  it("never tells the operator to enable e2ee when crypto is live (wrong-knob guard end-to-end)", async () => {
+    const { adapter, fake, received } = makeAdapter({ allowFrom: [] });
+    fake.cryptoHandle = {}; // crypto live → on-but-failed, not e2ee-off
+    await adapter.start();
+
+    await deliver(
+      fake,
+      fakeEncryptedFailEvent({ reason: "MEGOLM_KEY_WITHHELD_FOR_UNVERIFIED_DEVICE", ts: 201 }),
+    );
+
+    expect(received).toHaveLength(1);
+    expect(received[0]?.text).not.toContain("e2ee: true");
+    expect(received[0]?.text).not.toContain("channels.matrix.e2ee");
+    // It carries the verification hint instead.
+    expect(received[0]?.text).toContain("recoveryKey");
   });
 });
