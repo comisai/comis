@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * E2EE-03 table oracle for the pure decrypt-degrade decider.
+ * Table oracle for the pure decrypt-degrade decider.
  *
  * One row per `DecryptionFailureCode` member (imported from the SDK so a new
  * member added upstream fails this test rather than silently defaulting), plus
  * the crypto-unavailable case, the null/unmapped fallback, and — the whole point
- * (INV-3) — the WRONG-KNOB guard: no on-but-failed code may ever emit the "set
+ * — the WRONG-KNOB guard: no on-but-failed code may ever emit the "set
  * e2ee: true" hint. Pure input → verdict; no I/O, no client, no homeserver.
  */
 import { describe, it, expect } from "vitest";
@@ -74,7 +74,7 @@ const E2EE_ON_KNOB_SUBSTRINGS = ["e2ee: true", "channels.matrix.e2ee"];
 
 const allCodes = Object.values(DecryptionFailureCode) as DecryptionFailureCode[];
 
-describe("classifyDecryptDegrade — E2EE-03 cause-branch table", () => {
+describe("classifyDecryptDegrade — cause-branch table", () => {
   for (const code of allCodes) {
     const expected = ORACLE[code];
     it(`maps ${code} → ${expected.kind} with a cause-correct hint`, () => {
@@ -136,7 +136,7 @@ describe("classifyDecryptDegrade — E2EE-03 cause-branch table", () => {
     expect(verdict.kind).toBe("e2ee_off");
   });
 
-  it("NEVER emits the e2ee-on knob for any on-but-failed code (INV-3 wrong-knob guard)", () => {
+  it("NEVER emits the e2ee-on knob for any on-but-failed code (wrong-knob guard)", () => {
     for (const code of allCodes) {
       const verdict = classifyDecryptDegrade({
         e2eeConfigured: true,

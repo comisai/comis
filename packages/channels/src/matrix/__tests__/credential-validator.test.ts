@@ -93,7 +93,7 @@ describe("validateHomeserverUrl", () => {
   });
 
   it("ALWAYS blocks a cloud-metadata homeserver even when allowPrivateHomeserver is enabled", async () => {
-    // OQ-1: allowPrivateHomeserver relaxes ONLY the private/loopback range —
+    // allowPrivateHomeserver relaxes ONLY the private/loopback range —
     // 169.254.169.254 (cloud metadata) must stay blocked, or a self-hosted
     // opt-in becomes an SSRF hole into the instance metadata service.
     const logger = makeLogger();

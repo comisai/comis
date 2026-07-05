@@ -19,7 +19,7 @@
  *    the existing durable state so a prior sync token / watermark is preserved;
  *    a blind overwrite would reset the watermark and replay the backlog.
  *
- * Secret safety (T-4): the access token and password are never logged and never
+ * Secret safety: the access token and password are never logged and never
  * embedded in a returned error. Failure branches attach only the secret-safe
  * `errorKind` + `hint` from the shared classifier; the underlying error (which
  * may echo a credential) is classified, not rendered.

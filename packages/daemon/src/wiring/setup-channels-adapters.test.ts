@@ -769,7 +769,7 @@ describe("bootstrapAdapters", () => {
     expect(validateMatrixCredentials).toHaveBeenCalledWith(
       expect.objectContaining({ homeserverUrl: "https://matrix.example.com", userId: "@bot:example.com", accessToken: "syt-token" }),
     );
-    // The SSRF homeserver guard runs BEFORE construction (T-3): (url, opt-in flag, logger).
+    // The SSRF homeserver guard runs BEFORE construction: (url, opt-in flag, logger).
     expect(validateHomeserverUrl).toHaveBeenCalledWith("https://matrix.example.com", false, channelsLogger);
     expect(createMatrixPlugin).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -832,7 +832,7 @@ describe("bootstrapAdapters", () => {
   });
 
   it("does not register Matrix when the homeserver URL is blocked by the SSRF guard", async () => {
-    // T-3: a blocked homeserver → the plugin is never constructed (WARN, no register).
+    // A blocked homeserver → the plugin is never constructed (WARN, no register).
     vi.mocked(validateHomeserverUrl).mockResolvedValueOnce({ ok: false, error: new Error("blocked: private range") } as any);
     const container = makeContainer({
       matrix: { enabled: true, homeserverUrl: "http://169.254.169.254", accessToken: "syt-token" },

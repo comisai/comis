@@ -65,7 +65,7 @@ export function mapMatrixEventToNormalized(
     metadata.matrixEventId = eventId;
   }
   // Any formatted_body carried into the normalized message is sanitized to a
-  // safe subset first — inbound HTML is attacker-controllable (T-6).
+  // safe subset first — inbound HTML is attacker-controllable.
   const formattedBody = content.formatted_body;
   if (typeof formattedBody === "string" && formattedBody.length > 0) {
     metadata.matrixFormattedBody = sanitizeInboundHtml(formattedBody);

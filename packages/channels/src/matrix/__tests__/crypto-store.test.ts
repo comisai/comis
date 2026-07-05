@@ -240,7 +240,7 @@ function fakeClient(initRustCrypto: (args?: unknown) => Promise<void>): {
 
 /** A real (pure-JS) fake-indexeddb import; safe in the unit tier. */
 const realIdbImport = (): Promise<unknown> => import("fake-indexeddb");
-/** A crypto-wasm stand-in — the unit tier must NOT instantiate the real WASM (Pitfall 5). */
+/** A crypto-wasm stand-in — the unit tier must NOT instantiate the real WASM. */
 const stubWasmImport = (): Promise<unknown> => Promise.resolve({});
 
 describe("initMatrixCrypto: lazy-import boundary + init order", () => {

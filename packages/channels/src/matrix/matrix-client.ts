@@ -13,7 +13,7 @@
  * Correctness posture:
  *  - Timeline delivery runs the watermark's three gates BEFORE mapping or
  *    delivering, so the initial-sync backlog of every joined room, paginated
- *    backfill, and any hostile re-feed of old events are all dropped (T-1).
+ *    backfill, and any hostile re-feed of old events are all dropped.
  *  - After a delivered event the watermark is advanced to the event timestamp
  *    and persisted; a strictly-greater comparison means it is never reprocessed.
  *  - `/sync` resumes from the persisted sync token: matrix-js-sdk's default
@@ -63,10 +63,10 @@ const ROOM_MESSAGE_TYPE = "m.room.message";
  * The Matrix WIRE event type of an encrypted message. Its clear type only becomes
  * `m.room.message` AFTER local decryption, so the server-side `/sync` filter must
  * request this wire type explicitly on the e2ee path — otherwise the homeserver
- * never returns encrypted events for the crypto engine to decrypt (E2EE-01).
+ * never returns encrypted events for the crypto engine to decrypt.
  */
 const ROOM_ENCRYPTED_TYPE = "m.room.encrypted";
-/** Default `limit=` on the initial sync — bounds what is FETCHED (T-9). */
+/** Default `limit=` on the initial sync — bounds what is FETCHED. */
 const DEFAULT_INITIAL_SYNC_LIMIT = 10;
 /** Default per-room timeline event cap in the sync filter. */
 const DEFAULT_TIMELINE_LIMIT = 20;
@@ -94,7 +94,7 @@ export interface MatrixHealthSignal {
  * The raw, pre-classification signal the transport hands the adapter when an
  * inbound encrypted event fails to decrypt. The adapter's degrade decider turns
  * it into a one-per-room operator note; this carries only ids + the SDK failure
- * enum — NEVER ciphertext, a sender display name, or any key material (T-4).
+ * enum — NEVER ciphertext, a sender display name, or any key material.
  */
 export interface DecryptFailureSignal {
   /** The room the undecryptable event arrived in (an id — safe to carry). */
@@ -138,7 +138,7 @@ export interface MatrixClientDeps {
   emitHealth?: (signal: MatrixHealthSignal) => void;
   /**
    * Wall-clock source (ms). A newly-joined room's watermark is seeded to `now()`
-   * so its pre-join backlog is excluded (T-1). Defaults to the system clock;
+   * so its pre-join backlog is excluded. Defaults to the system clock;
    * injected in tests for a deterministic join moment.
    */
   now?: () => number;
@@ -157,13 +157,13 @@ export interface MatrixClientDeps {
   stateDir?: string;
   /**
    * Recovery-key SecretRef (resolved string). Forwarded to the crypto bootstrap
-   * for cross-signing; NEVER logged (mirror the accessToken discipline, T-4).
+   * for cross-signing; NEVER logged (mirror the accessToken discipline).
    */
   recoveryKey?: string;
   /**
    * Fail-closed decrypt seam: invoked with a raw signal when an inbound encrypted
    * event cannot be decrypted, so the adapter can degrade honestly (one note per
-   * room). The event itself is always DROPPED regardless (T-5).
+   * room). The event itself is always DROPPED regardless.
    */
   onDecryptFailure?: (signal: DecryptFailureSignal) => void;
   /** Test seam for the crypto bootstrap; defaults to the real `initMatrixCrypto`. */
@@ -259,7 +259,7 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
   let reauthInFlight = false;
   // The E2EE snapshot handle, retained so stop() can flush a final snapshot.
   // Undefined on the plaintext path or when the crypto bootstrap failed (the
-  // channel then runs as an UNVERIFIED device rather than going dark, D3).
+  // channel then runs as an UNVERIFIED device rather than going dark).
   let cryptoHandle: MatrixCryptoHandle | undefined;
 
   /** Persist the current state; a write failure is loud but non-fatal. */
@@ -523,7 +523,7 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
     // Seed the newly-joined room's watermark to the join moment so its pre-join
     // backlog — which /sync delivers live (syncReady, !toStartOfTimeline) right
     // after the join — is excluded. Without this seed the room defaults to 0 and
-    // the bot would act on stale, pre-allowlist history (T-1).
+    // the bot would act on stale, pre-allowlist history.
     await bumpRoomWatermark(room.roomId, now(), "watermark-seed");
 
     logger.info(
@@ -690,13 +690,13 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
         client.store.setSyncToken(persistedState.syncToken);
       }
 
-      // E2EE (E2EE-01): bootstrap the crypto store BEFORE startClient so the rust
+      // E2EE: bootstrap the crypto store BEFORE startClient so the rust
       // engine is initialised and inbound events from the very first sync batch
-      // can decrypt. A bootstrap failure is NON-FATAL (D3): log loud, run as an
+      // can decrypt. A bootstrap failure is NON-FATAL: log loud, run as an
       // UNVERIFIED device, and STILL start /sync — never brick the channel. The
       // handle is retained so stop() flushes a final snapshot. On the non-e2ee
       // path this branch is skipped entirely, so the lazy crypto import boundary
-      // is never crossed and no WASM is loaded (D1).
+      // is never crossed and no WASM is loaded.
       if (deps.e2ee === true && deps.stateDir !== undefined) {
         const cryptoStartedAt = systemNowMs();
         const initCrypto = deps.initCryptoImpl ?? initMatrixCrypto;
@@ -717,7 +717,7 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
           );
         } else {
           // Loud + actionable, but content-free (no error object → no chance of
-          // leaking the recoveryKey or key material into the log line, T-4).
+          // leaking the recoveryKey or key material into the log line).
           logger.warn(
             {
               channelType: "matrix",

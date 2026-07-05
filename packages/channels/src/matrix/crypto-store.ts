@@ -616,7 +616,7 @@ export function initMatrixCrypto(
       // 1. Cross the lazy boundary: install the FULL fake-indexeddb global shim.
       //    These two dynamic `import()`s are the ONLY references to the crypto
       //    deps in the module — a plaintext-only install (which never calls
-      //    initMatrixCrypto) never loads them (E2EE-01 / D1). The seams default
+      //    initMatrixCrypto) never loads them. The seams default
       //    to the real dynamic import; tests inject spies to prove the boundary.
       const idbModule = importFakeIndexedDb ? await importFakeIndexedDb() : await import("fake-indexeddb");
       installIndexedDbShim(idbModule);

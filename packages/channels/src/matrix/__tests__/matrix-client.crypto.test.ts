@@ -207,7 +207,7 @@ function makeCryptoHarness(over: CryptoHarnessOverrides = {}): {
   return { fake, saves, logger, received, controller, callLog, initCryptoImpl };
 }
 
-describe("createMatrixClient — E2EE crypto bootstrap before startClient (E2EE-01)", () => {
+describe("createMatrixClient — E2EE crypto bootstrap before startClient", () => {
   it("runs initMatrixCrypto BEFORE startClient on the e2ee path and forwards stateDir + recoveryKey", async () => {
     const h = makeCryptoHarness({ e2ee: true, stateDir: "/data/matrix", recoveryKey: "recov-key" });
 
@@ -244,7 +244,7 @@ describe("createMatrixClient — E2EE crypto bootstrap before startClient (E2EE-
     expect(h.callLog).toEqual(["startClient"]);
   });
 
-  it("runs unverified with a loud warning when crypto bootstrap fails — never bricks /sync (D3)", async () => {
+  it("runs unverified with a loud warning when crypto bootstrap fails — never bricks /sync", async () => {
     const h = makeCryptoHarness({
       e2ee: true,
       stateDir: "/data/matrix",
@@ -265,7 +265,7 @@ describe("createMatrixClient — E2EE crypto bootstrap before startClient (E2EE-
     expect((warn?.[0] as { hint?: string }).hint).toMatch(/recoveryKey|verify|unverified/i);
   });
 
-  it("never writes the recoveryKey to any log line (T-4)", async () => {
+  it("never writes the recoveryKey to any log line", async () => {
     const h = makeCryptoHarness({
       e2ee: true,
       stateDir: "/data/matrix",
@@ -478,7 +478,7 @@ describe("createMatrixClient — fail-closed decrypt in onTimeline", () => {
 });
 
 // ---------------------------------------------------------------------------
-// /sync filter widens to encrypted wire events on the e2ee path (E2EE-01)
+// /sync filter widens to encrypted wire events on the e2ee path
 // ---------------------------------------------------------------------------
 
 /** Read the timeline `types` of the filter passed to the first startClient call. */
@@ -490,7 +490,7 @@ function startFilterTypes(fake: FakeCryptoClient): string[] {
   return def?.room?.timeline?.types ?? [];
 }
 
-describe("createMatrixClient — /sync filter includes encrypted wire events on the e2ee path (E2EE-01)", () => {
+describe("createMatrixClient — /sync filter includes encrypted wire events on the e2ee path", () => {
   it("adds m.room.encrypted to the sync filter when e2ee is on, so encrypted wire events are delivered to the timeline handler", async () => {
     // The server-side filter keys on the WIRE type; an encrypted message arrives as
     // an m.room.encrypted wire event (its clear type only becomes m.room.message
@@ -516,7 +516,7 @@ describe("createMatrixClient — /sync filter includes encrypted wire events on 
 });
 
 // ---------------------------------------------------------------------------
-// Verification posture surfaced from the controller (E2EE-04 / OBS-01)
+// Verification posture surfaced from the controller
 // ---------------------------------------------------------------------------
 
 describe("createMatrixClient — verification posture surface", () => {

@@ -6,7 +6,7 @@
  * pieces into the port surface the daemon wires and the emulator drives:
  *
  *  - `start()` runs two preconditions BEFORE any connection is opened — the
- *    credential presence check and the homeserver SSRF guard (T-3). A blocked
+ *    credential presence check and the homeserver SSRF guard. A blocked
  *    or malformed homeserver errs without ever building a client. It then
  *    authenticates (token or password, validated by whoami) and starts the
  *    `/sync` transport, whose three-gate watermark and default-CLOSED invite
@@ -102,7 +102,7 @@ export interface MatrixAdapterDeps {
   allowMode: "allowlist" | "open";
   /** Master invite auto-join switch (still inviter-gated by allowMode/allowFrom). */
   autoJoinOnInvite: boolean;
-  /** SEC-01 opt-in: relax the private/loopback SSRF range block (metadata still denied). */
+  /** Opt-in: relax the private/loopback SSRF range block (metadata still denied). */
   allowPrivateHomeserver: boolean;
   /** Logger; failure branches emit only secret-safe `errorKind` + `hint`. */
   logger: ComisLogger;
@@ -113,7 +113,7 @@ export interface MatrixAdapterDeps {
   /** Injected clock in ms, defaulting to systemNowMs; makes timing deterministic. */
   now?: () => number;
   /**
-   * Sink for the dark-access-token health signal (CORE-02): when a mid-run token
+   * Sink for the dark-access-token health signal: when a mid-run token
    * expiry cannot auto-recover (no password), the `/sync` controller emits a
    * loud, secret-free signal naming `channels.matrix.accessToken`. The daemon
    * wires this to the event bus so `comis fleet`/doctor surface it; absent, the
@@ -162,7 +162,7 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
   // last degrade kind that fired for it. A repeat of the same cause class is
   // suppressed (a busy undecryptable room emits one note per cause, not per event);
   // a changed cause class re-fires, since it is a meaningfully different operator
-  // action (OQ-5: once per room per cause).
+  // action (once per room per cause).
   const degradeFiredByRoom = new Map<string, DecryptDegradeKind>();
 
   let connected = false;
@@ -170,7 +170,7 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
   let lastError: string | undefined;
   let client: MatrixClient | undefined;
   let controller: MatrixSyncController | undefined;
-  // Last-known device verification posture (E2EE-04 / OBS-01), surfaced on the
+  // Last-known device verification posture, surfaced on the
   // channel status. Refreshed after start and (best-effort) on each status read;
   // undefined until first read, on the plaintext path, or when crypto is absent.
   let lastVerification: MatrixVerificationStatus | undefined;
@@ -268,13 +268,13 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
 
   /**
    * Turn a raw, fail-closed decrypt signal into an HONEST, cause-branched operator
-   * note (INV-3, E2EE-03). Runs the pure decider, fires at most one note per room
+   * note. Runs the pure decider, fires at most one note per room
    * per cause class, synthesizes a system note, and delivers it via `fanOut`
    * DIRECTLY — bypassing the speaker gate, since a synthesized system note is not a
    * room speaker — so it re-enters the inbound path and reaches a session (the
    * per-session `comis explain` "why didn't the bot reply here?" answer). Also
    * mirrors a content-free health signal to the obs seam. Carries NO ciphertext,
-   * raw failure code, sender display name, or key material (T-4).
+   * raw failure code, sender display name, or key material.
    */
   function onDecryptFailure(signal: DecryptFailureSignal): void {
     const verdict = classifyDecryptDegrade(signal);
@@ -334,7 +334,7 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
         return err(creds.error);
       }
 
-      // Precondition 2: SSRF-validate the homeserver BEFORE any connect (T-3).
+      // Precondition 2: SSRF-validate the homeserver BEFORE any connect.
       const hs = await validateHomeserverUrl(
         deps.homeserverUrl,
         deps.allowPrivateHomeserver,
@@ -377,7 +377,7 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
       // `isDirectRoom` reads the client's `m.direct` account data so a 1:1 room
       // maps to `chatType: "dm"` (a room absent from it is a group).
       //
-      // CORE-02 recovery seams: wire `reauthenticate` ONLY when a password is
+      // Recovery seams: wire `reauthenticate` ONLY when a password is
       // configured — a mid-run `M_UNKNOWN_TOKEN` then re-logins (fresh token, same
       // device, resumed sync); without a password the controller emits the loud
       // health signal (naming `channels.matrix.accessToken`) instead of going
@@ -412,7 +412,7 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
       }
 
       // Seed the verification posture so the first status read already reflects the
-      // startup cross-signing / device-verified state (E2EE-04 / OBS-01).
+      // startup cross-signing / device-verified state.
       await refreshVerification();
 
       connected = true;

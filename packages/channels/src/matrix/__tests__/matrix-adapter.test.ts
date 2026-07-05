@@ -56,7 +56,7 @@ function fakeEvent(
     getSender: () => sender,
     getTs: () => ts,
     getContent: () => ({ body }),
-    // Plaintext: the decrypt branch (T-5) is skipped for a non-encrypted event.
+    // Plaintext: the fail-closed decrypt branch is skipped for a non-encrypted event.
     isEncrypted: () => false,
   } as unknown as MatrixEvent;
 }
@@ -358,7 +358,7 @@ describe("createMatrixAdapter", () => {
     expect(status?.connectionMode).toBe("polling");
   });
 
-  it("refuses to start against a private homeserver when allowPrivateHomeserver is false (SEC-01)", async () => {
+  it("refuses to start against a private homeserver when allowPrivateHomeserver is false", async () => {
     const { adapter, fake } = makeAdapter({
       homeserverUrl: "http://10.0.0.1:8008",
       allowPrivateHomeserver: false,
@@ -570,7 +570,7 @@ describe("createMatrixAdapter", () => {
   });
 
   it("re-logins, persists the fresh token+deviceId, and resumes with the new token on a mid-run token expiry when a password is configured", async () => {
-    // CORE-02: the adapter must WIRE the reauthenticate seam into the /sync
+    // The adapter must WIRE the reauthenticate seam into the /sync
     // controller. On a mid-run M_UNKNOWN_TOKEN it re-logins with the password,
     // applies the fresh token to the LIVE client, persists it, and resumes — not
     // just a raw log. Fails on pre-fix code (the adapter passes no seam).
@@ -601,7 +601,7 @@ describe("createMatrixAdapter", () => {
   });
 
   it("emits a loud health event naming channels.matrix.accessToken and does not go silently dark when no password is configured", async () => {
-    // CORE-02: with no password there is no re-login, so the adapter must WIRE the
+    // With no password there is no re-login, so the adapter must WIRE the
     // emitHealth seam and surface a loud, secret-free health event (+ ERROR) that
     // names the exact knob — never a silent stop. Fails on pre-fix code (the
     // adapter passes no emitHealth, so the health event is a no-op).
@@ -631,7 +631,7 @@ describe("createMatrixAdapter", () => {
   });
 
   it("surfaces the device verification posture on getStatus for an e2ee channel", async () => {
-    // E2EE-04 / OBS-01: the crypto handle's cross-signing / device-verified posture
+    // The crypto handle's cross-signing / device-verified posture
     // must reach the channel status so a doctor / fleet probe can read it.
     const { adapter } = makeAdapter({
       e2ee: true,
@@ -656,7 +656,7 @@ describe("createMatrixAdapter", () => {
   });
 });
 
-describe("createMatrixAdapter — decrypt degrade note (E2EE-03)", () => {
+describe("createMatrixAdapter — decrypt degrade note", () => {
   it("synthesizes one cause-correct degrade note and fans it out past the speaker gate", async () => {
     // A non-empty allowlist that admits no real speaker (and not the system note's
     // sender) — the note must still arrive, proving it bypasses isAllowedSpeaker.

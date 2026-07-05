@@ -4,7 +4,7 @@
  * per-adapter `stateDir`, holding the `/sync` token, the device id, the
  * password-login access token, and the initial-sync watermark.
  *
- * Security posture (T-4, credential-at-rest):
+ * Security posture (credential-at-rest):
  *  - The directory is created 0700 and both the state file and its write-temp
  *    0600 — no group/other bits — because the file holds the access token and
  *    device identity. The modes are set EXPLICITLY and re-`chmod`'d on every
@@ -28,7 +28,7 @@
  *    is safe because the AUTHORITATIVE boot-backlog guard is the sync-ready gate
  *    (an initial sync started without a token never delivers the backlog to the
  *    handler), not the watermark: a lost watermark degrades to a guarded fresh
- *    sync, not a replay (T-1). A genuine read I/O error (e.g. a permission
+ *    sync, not a replay. A genuine read I/O error (e.g. a permission
  *    problem) remains a hard error — that is operator misconfiguration, not the
  *    self-inflicted corruption path.
  *
@@ -157,7 +157,7 @@ export function createMatrixStateStore(stateDir: string, logger?: ComisLogger): 
         // A corrupt/partial file (e.g. a pre-atomic-write crash, bit-rot, or a
         // hand-edit) recovers to defaults rather than bricking the channel. The
         // sync-ready gate — not the watermark — is the authoritative boot-backlog
-        // guard, so a lost watermark degrades to a guarded fresh sync (T-1).
+        // guard, so a lost watermark degrades to a guarded fresh sync.
         logger?.warn(
           {
             channelType: "matrix" as const,

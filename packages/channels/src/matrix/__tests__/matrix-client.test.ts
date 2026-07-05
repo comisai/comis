@@ -67,7 +67,7 @@ function fakeEvent(
     getSender: () => sender,
     getTs: () => ts,
     getContent: () => ({ body }),
-    // Plaintext: the decrypt branch (T-5) is skipped for a non-encrypted event.
+    // Plaintext: the fail-closed decrypt branch is skipped for a non-encrypted event.
     isEncrypted: () => false,
   } as unknown as MatrixEvent;
 }
@@ -784,7 +784,7 @@ describe("createMatrixClient — per-room watermark (cross-room + mid-run-join)"
     // After an allowlisted invite the bot joins and the next /sync returns the
     // joined room's recent timeline — live (syncReady, !toStartOfTimeline). With
     // a single global watermark those pre-join events pass the `>` gate and the
-    // bot acts on stale, pre-allowlist history (T-1). A newly-joined room's
+    // bot acts on stale, pre-allowlist history. A newly-joined room's
     // watermark must be seeded to the join moment so its backlog is excluded.
     const h = makeHarness({ allowMode: "allowlist", allowFrom: ["@alice:hs"] });
     await h.controller.start();

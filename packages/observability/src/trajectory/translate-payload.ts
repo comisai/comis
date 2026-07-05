@@ -646,7 +646,7 @@ export function translatePayload(
       // like channelId elsewhere) + the CLOSED reason kind ONLY. NEVER the
       // ciphertext, the message body, the sender display name, a device/session
       // key, or the raw SDK failure code — the never-forward-senderId invariant
-      // extended to the crypto boundary (T-4). timestamp is envelope-only.
+      // extended to the crypto boundary. timestamp is envelope-only.
       return {
         channelType: payload.channelType,
         roomId: payload.roomId,
