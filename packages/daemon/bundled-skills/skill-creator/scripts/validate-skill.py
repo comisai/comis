@@ -23,17 +23,31 @@ NAME_REGEX = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 NAME_MAX = 64
 DESC_MAX = 1024
 BODY_MAX = 20_000
+COMPATIBILITY_MAX = 500
 
-# `mcpServers` is the optional bundled MCP servers declaration. This validator
-# does NOT type-check the inner shape (the Zod SkillManifestSchema chain owns
-# that); it only acknowledges the key as a recognized top-level entry so a
-# manifest carrying an mcpServers block does not surface as an unknown
-# top-level key here.
+# The authored on-disk frontmatter carries EXACTLY these six top-level fields.
+# Every platform extension rides under one metadata.comis JSON string, and the
+# version under metadata.version. This validator mirrors that shipped rule, so a
+# manifest it accepts is a manifest the platform accepts.
 VALID_TOP_FIELDS = {
-    "name", "description", "type", "version", "license",
-    "userInvocable", "disableModelInvocation", "allowedTools",
-    "argumentHint", "permissions", "inputSchema", "metadata", "comis",
-    "mcpServers",
+    "name", "description", "license", "compatibility", "metadata", "allowed-tools",
+}
+
+# Extension keys whose authored home moved under metadata.comis (the version
+# under metadata.version). Present at the top level, they still load -- read with
+# a deprecation warning naming the new home -- and are never rewritten. The value
+# is the clause completing "Top-level '<key>' is read with a deprecation warning; ".
+PRE_MIGRATION_HOMES = {
+    "type": "it is no longer an authored field (skills are prompt-only)",
+    "version": "author it under metadata.version",
+    "allowedTools": "author it as the allowed-tools space-separated string",
+    "userInvocable": "author it under metadata.comis",
+    "disableModelInvocation": "author it under metadata.comis",
+    "argumentHint": "author it under metadata.comis",
+    "permissions": "author it under metadata.comis",
+    "inputSchema": "author it under metadata.comis",
+    "comis": "author it under metadata.comis",
+    "mcpServers": "author it under metadata.comis",
 }
 
 VALID_COMIS_FIELDS = {
@@ -130,6 +144,61 @@ def parse_frontmatter(content):
     return fm, body, None
 
 
+def check_extension_fields(fields, errors, warnings):
+    """Validate the platform extension fields wherever they are carried: at the
+    top level (pre-migration form) or inside the parsed metadata.comis bag. Known
+    extension keys are accepted; only unknown sub-keys draw a warning."""
+    for field in ("userInvocable", "disableModelInvocation"):
+        if field in fields and not isinstance(fields[field], bool):
+            errors.append(f"{field} must be boolean, got {type(fields[field]).__name__}")
+
+    if "permissions" in fields:
+        perms = fields["permissions"]
+        if isinstance(perms, dict):
+            for key in perms:
+                if key not in VALID_PERMISSIONS_FIELDS:
+                    warnings.append(f"Unknown permissions field: '{key}'")
+        else:
+            errors.append("permissions must be an object")
+
+    if "comis" in fields and fields["comis"] is not None:
+        comis = fields["comis"]
+        if isinstance(comis, dict):
+            for key in comis:
+                if key not in VALID_COMIS_FIELDS:
+                    warnings.append(f"Unknown comis field: '{key}'")
+            if "requires" in comis and isinstance(comis["requires"], dict):
+                for rk in comis["requires"]:
+                    if rk not in ("bins", "env"):
+                        warnings.append(f"Unknown comis.requires field: '{rk}'")
+        else:
+            errors.append("comis must be an object (or omitted)")
+
+
+def check_metadata_comis(meta, errors, warnings):
+    """Validate the metadata.comis JSON-string carrier: it parses to an object
+    and carries the platform extension fields. Mirrors the platform's honest
+    failure, naming the key -- no eval, no reviver."""
+    if "comis" not in meta:
+        return
+    raw = meta["comis"]
+    if not isinstance(raw, str):
+        errors.append("metadata.comis must be a JSON string carrying the platform extension fields")
+        return
+    try:
+        bag = json.loads(raw)
+    except (ValueError, TypeError) as e:
+        errors.append(f"metadata.comis is not valid JSON: {e}")
+        return
+    if not isinstance(bag, dict):
+        errors.append("metadata.comis must be a JSON object carrying the platform extension fields")
+        return
+    if any(k in ("__proto__", "constructor", "prototype") for k in bag):
+        errors.append("metadata.comis carries a prototype-polluting key (__proto__, constructor, or prototype) and was refused")
+        return
+    check_extension_fields(bag, errors, warnings)
+
+
 def validate(path):
     """Validate a skill directory or SKILL.md file. Returns (errors, warnings)."""
     errors = []
@@ -181,48 +250,47 @@ def validate(path):
         if len(desc) < 1:
             errors.append("description is empty")
 
-    # Unknown top-level fields
+    # Top-level field set. The authored frontmatter carries exactly the six spec
+    # fields; every platform extension rides under metadata.comis. A pre-migration
+    # top-level extension key still loads (read with a deprecation warning naming
+    # its authored home); a genuinely unknown key is rejected by strict validation.
     for key in fm:
-        if key not in VALID_TOP_FIELDS:
-            warnings.append(f"Unknown top-level field: '{key}' (will cause strict parse failure)")
+        if key in VALID_TOP_FIELDS:
+            continue
+        clause = PRE_MIGRATION_HOMES.get(key)
+        if clause is not None:
+            warnings.append(f"Top-level '{key}' is read with a deprecation warning; {clause}.")
+        else:
+            warnings.append(f"Unknown top-level field: '{key}' (rejected by strict validation)")
 
-    # Type field
+    # A pre-migration top-level 'type' still loads, but must be 'prompt' if present.
     if "type" in fm and fm["type"] != "prompt":
         errors.append(f"type must be 'prompt', got '{fm['type']}'")
 
-    # Boolean fields
-    for field in ("userInvocable", "disableModelInvocation"):
-        if field in fm and not isinstance(fm[field], bool):
-            errors.append(f"{field} must be boolean, got {type(fm[field]).__name__}")
+    # allowed-tools is a space-separated string (the authored form).
+    if "allowed-tools" in fm and not isinstance(fm["allowed-tools"], str):
+        errors.append("allowed-tools must be a space-separated string")
 
-    # allowedTools
-    if "allowedTools" in fm:
-        if not isinstance(fm["allowedTools"], list):
-            errors.append("allowedTools must be an array")
+    # compatibility is free prose; a long note draws an advisory warning only.
+    if "compatibility" in fm:
+        compat = fm["compatibility"]
+        if not isinstance(compat, str):
+            errors.append("compatibility must be a string")
+        elif len(compat) > COMPATIBILITY_MAX:
+            warnings.append(f"compatibility is {len(compat)} chars (recommended max: {COMPATIBILITY_MAX})")
 
-    # Permissions
-    if "permissions" in fm:
-        perms = fm["permissions"]
-        if isinstance(perms, dict):
-            for key in perms:
-                if key not in VALID_PERMISSIONS_FIELDS:
-                    warnings.append(f"Unknown permissions field: '{key}'")
+    # metadata is a string map carrying the version and the metadata.comis bag.
+    if "metadata" in fm and fm["metadata"] is not None:
+        meta = fm["metadata"]
+        if isinstance(meta, dict):
+            check_metadata_comis(meta, errors, warnings)
         else:
-            errors.append("permissions must be an object")
+            errors.append("metadata must be an object (or omitted)")
 
-    # Comis namespace
-    if "comis" in fm and fm["comis"] is not None:
-        comis = fm["comis"]
-        if isinstance(comis, dict):
-            for key in comis:
-                if key not in VALID_COMIS_FIELDS:
-                    warnings.append(f"Unknown comis: field: '{key}'")
-            if "requires" in comis and isinstance(comis["requires"], dict):
-                for rk in comis["requires"]:
-                    if rk not in ("bins", "env"):
-                        warnings.append(f"Unknown comis.requires field: '{rk}'")
-        else:
-            errors.append("comis: must be an object (or omitted)")
+    # Platform extension fields are validated wherever they are carried: inside
+    # the parsed metadata.comis bag (spec-pure form) and, read-compat, at the top
+    # level (pre-migration form).
+    check_extension_fields(fm, errors, warnings)
 
     # Body checks
     if len(body) > BODY_MAX:
