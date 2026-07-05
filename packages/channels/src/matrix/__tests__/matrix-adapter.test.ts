@@ -65,6 +65,14 @@ function fakeRoom(roomId: string): Room {
   } as unknown as Room;
 }
 
+/** Build an Error carrying Matrix `errcode`/`httpStatus`, like the SDK's MatrixError. */
+function matrixError(errcode: string, httpStatus: number, message: string): Error {
+  const e = new Error(message) as Error & { errcode: string; httpStatus: number };
+  e.errcode = errcode;
+  e.httpStatus = httpStatus;
+  return e;
+}
+
 /**
  * A single fake matrix-js-sdk client that satisfies BOTH the auth lifecycle
  * (whoami/login) AND the /sync controller (on/startClient/stopClient/getUserId/
@@ -82,6 +90,11 @@ class FakeMatrixClient {
   sendError?: unknown;
   startError?: unknown;
   whoamiError?: unknown;
+  /** Password-login recorder + a counter so each login mints a DISTINCT token. */
+  readonly loginCalls: Array<{ type: string; data: Record<string, unknown> }> = [];
+  loginCount = 0;
+  /** Tokens applied to the live client via setAccessToken (token-recovery). */
+  readonly appliedAccessTokens: string[] = [];
   /** The `m.direct` account-data content the client reports (other MXID → room ids). */
   directContent?: Record<string, string[]>;
   private token: string | null = null;
@@ -157,6 +170,21 @@ class FakeMatrixClient {
     return Promise.resolve({ event_id: "$sent1" });
   }
 
+  async login(
+    type: string,
+    data: Record<string, unknown>,
+  ): Promise<{ access_token: string; device_id: string; user_id: string }> {
+    this.loginCalls.push({ type, data });
+    this.loginCount += 1;
+    // A DISTINCT token per login so a test can tell a fresh re-login token
+    // (srv-token-2) from the initial one (srv-token-1). Device id stays stable.
+    return { access_token: `srv-token-${this.loginCount}`, device_id: "DEV1", user_id: this.userId };
+  }
+
+  setAccessToken(token: string): void {
+    this.appliedAccessTokens.push(token);
+  }
+
   asClient(): MatrixClient {
     return this as unknown as MatrixClient;
   }
@@ -168,7 +196,9 @@ interface HarnessOverrides {
   allowFrom?: string[];
   allowMode?: "allowlist" | "open";
   accessToken?: string;
+  password?: string;
   userId?: string;
+  emitHealth?: (signal: { errorKind: string; hint: string }) => void;
   fake?: FakeMatrixClient;
 }
 
@@ -177,30 +207,37 @@ function makeAdapter(over: HarnessOverrides = {}): {
   fake: FakeMatrixClient;
   logger: ComisLogger;
   received: NormalizedMessage[];
+  stateDir: string;
 } {
   const fake = over.fake ?? new FakeMatrixClient();
   const logger = makeLogger();
   const received: NormalizedMessage[] = [];
   const createClientImpl = (_opts: ICreateClientOpts): MatrixClient => fake.asClient();
+  const stateDir = tempDir();
+  // With a password set the adapter takes the password path (no configured token);
+  // otherwise default to a token so the existing token-path tests are unchanged.
+  const accessToken = over.accessToken ?? (over.password !== undefined ? undefined : "token-abc");
 
   const deps: MatrixAdapterDeps = {
     homeserverUrl: over.homeserverUrl ?? "http://127.0.0.1:8008",
     userId: over.userId ?? "@bot:hs",
-    accessToken: over.accessToken ?? "token-abc",
-    stateDir: tempDir(),
+    stateDir,
     allowFrom: over.allowFrom ?? [],
     allowMode: over.allowMode ?? "allowlist",
     autoJoinOnInvite: true,
     allowPrivateHomeserver: over.allowPrivateHomeserver ?? true,
     logger,
     createClientImpl: createClientImpl as unknown as typeof sdk.createClient,
+    ...(accessToken !== undefined ? { accessToken } : {}),
+    ...(over.password !== undefined ? { password: over.password } : {}),
+    ...(over.emitHealth !== undefined ? { emitHealth: over.emitHealth } : {}),
   };
 
   const adapter = createMatrixAdapter(deps);
   adapter.onMessage((m) => {
     received.push(m);
   });
-  return { adapter, fake, logger, received };
+  return { adapter, fake, logger, received, stateDir };
 }
 
 /** Bring an adapter up and push one inbound timeline event through it. */
@@ -437,5 +474,66 @@ describe("createMatrixAdapter", () => {
 
     expect(received).toHaveLength(1);
     expect(vi.mocked(logger.error)).toHaveBeenCalled();
+  });
+
+  it("re-logins, persists the fresh token+deviceId, and resumes with the new token on a mid-run token expiry when a password is configured", async () => {
+    // CORE-02: the adapter must WIRE the reauthenticate seam into the /sync
+    // controller. On a mid-run M_UNKNOWN_TOKEN it re-logins with the password,
+    // applies the fresh token to the LIVE client, persists it, and resumes — not
+    // just a raw log. Fails on pre-fix code (the adapter passes no seam).
+    const fake = new FakeMatrixClient();
+    const { adapter, stateDir } = makeAdapter({ fake, password: "pw-secret", allowFrom: [] });
+    const started = await adapter.start();
+    expect(started.ok).toBe(true);
+    // Initial password login happened once; the adapter is syncing.
+    expect(fake.loginCalls).toHaveLength(1);
+    const startsBefore = fake.startCalls;
+
+    // A mid-run token expiry arrives on the sync stream.
+    await fake.emit(ClientEvent.Sync, SyncState.Error, SyncState.Syncing, {
+      error: matrixError("M_UNKNOWN_TOKEN", 401, "token expired mid-run"),
+    });
+
+    // The reauthenticate seam ran a FRESH password login ...
+    expect(fake.loginCalls).toHaveLength(2);
+    // ... applied the new token to the live client and resumed syncing ...
+    expect(fake.appliedAccessTokens).toContain("srv-token-2");
+    expect(fake.startCalls).toBeGreaterThan(startsBefore);
+    // ... and persisted the fresh token + device id for the next boot.
+    const persisted = JSON.parse(
+      fs.readFileSync(path.join(stateDir, "sync-state.json"), "utf-8"),
+    ) as { accessToken?: string; deviceId?: string };
+    expect(persisted.accessToken).toBe("srv-token-2");
+    expect(persisted.deviceId).toBe("DEV1");
+  });
+
+  it("emits a loud health event naming channels.matrix.accessToken and does not go silently dark when no password is configured", async () => {
+    // CORE-02: with no password there is no re-login, so the adapter must WIRE the
+    // emitHealth seam and surface a loud, secret-free health event (+ ERROR) that
+    // names the exact knob — never a silent stop. Fails on pre-fix code (the
+    // adapter passes no emitHealth, so the health event is a no-op).
+    const healthSignals: Array<{ errorKind: string; hint: string }> = [];
+    const fake = new FakeMatrixClient();
+    const { adapter, logger } = makeAdapter({
+      fake,
+      accessToken: "token-abc", // token-only, NO password
+      emitHealth: (signal) => healthSignals.push(signal),
+    });
+    await adapter.start();
+
+    await fake.emit(ClientEvent.Sync, SyncState.Error, SyncState.Syncing, {
+      error: matrixError("M_UNKNOWN_TOKEN", 401, "token revoked"),
+    });
+
+    // No re-login was attempted (no password) ...
+    expect(fake.loginCalls).toHaveLength(0);
+    // ... a loud health event fired, naming the exact operator knob ...
+    expect(healthSignals).toHaveLength(1);
+    expect(healthSignals[0]?.errorKind).toBe("auth");
+    expect(healthSignals[0]?.hint).toContain("channels.matrix.accessToken");
+    // ... a loud ERROR was logged, and the channel is NOT silently torn down.
+    expect(vi.mocked(logger.error)).toHaveBeenCalled();
+    expect(fake.stopCalls).toBe(0);
+    expect(adapter.getStatus?.().connected).toBe(true);
   });
 });

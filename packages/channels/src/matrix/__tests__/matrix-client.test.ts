@@ -94,6 +94,8 @@ class FakeMatrixClient {
   readonly startCalls: Array<{ initialSyncLimit?: number; filter?: unknown }> = [];
   readonly setTokenCalls: Array<string | null> = [];
   readonly joinCalls: string[] = [];
+  /** Access tokens applied to the LIVE client via setAccessToken (token-recovery). */
+  readonly appliedAccessTokens: string[] = [];
   stopCalls = 0;
   private token: string | null;
   private readonly userId: string | null;
@@ -145,6 +147,10 @@ class FakeMatrixClient {
 
   stopClient(): void {
     this.stopCalls += 1;
+  }
+
+  setAccessToken(token: string): void {
+    this.appliedAccessTokens.push(token);
   }
 
   getUserId(): string | null {
@@ -569,6 +575,30 @@ describe("createMatrixClient — token-expiry recovery + stale-since re-entry", 
     // The fresh token is persisted to disk but never written to a log line.
     expect(JSON.stringify(vi.mocked(h.logger.info).mock.calls)).not.toContain("fresh-token");
     expect(JSON.stringify(vi.mocked(h.logger.error).mock.calls)).not.toContain("fresh-token");
+  });
+
+  it("applies the fresh token to the live client and restarts it after a successful re-login", async () => {
+    // The secondary defect: a re-login yields a fresh token, but restarting the
+    // SAME already-started client without applying that token leaves the running
+    // SyncApi using the dead one (matrix-js-sdk no-ops a second startClient on a
+    // running client). The live client must have the fresh token APPLIED and be
+    // restarted so /sync resumes authenticated, not silently stuck on the old token.
+    const reauthenticate = vi
+      .fn()
+      .mockResolvedValue({ ok: true, value: { accessToken: "fresh-token", deviceId: "DEV2" } });
+    const h = makeHarness({ seed: { syncToken: "s0", watermarks: {} }, reauthenticate });
+    await h.controller.start();
+    const startsBefore = h.fake.startCalls.length;
+
+    await h.fake.emit(ClientEvent.Sync, SyncState.Error, SyncState.Syncing, {
+      error: matrixError("M_UNKNOWN_TOKEN", 401, "token expired mid-run"),
+    });
+
+    // The fresh token was applied to the LIVE client (not merely persisted) ...
+    expect(h.fake.appliedAccessTokens).toContain("fresh-token");
+    // ... the client was stopped and restarted so the running SyncApi picks it up.
+    expect(h.fake.stopCalls).toBeGreaterThanOrEqual(1);
+    expect(h.fake.startCalls.length).toBeGreaterThan(startsBefore);
   });
 
   it("emits a loud health signal naming channels.matrix.accessToken and never silently stops when no re-login is available", async () => {
