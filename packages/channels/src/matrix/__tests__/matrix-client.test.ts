@@ -456,7 +456,7 @@ describe("createMatrixClient — /sync lifecycle, watermark guard, invite gate",
     const h = makeHarness();
     await h.controller.start();
 
-    h.controller.stop();
+    await h.controller.stop();
 
     expect(h.fake.stopCalls).toBe(1);
   });

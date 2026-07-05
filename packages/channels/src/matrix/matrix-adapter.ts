@@ -426,7 +426,11 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
     },
 
     async stop(): Promise<Result<void, Error>> {
-      controller?.stop();
+      // Await the controller's stop so the final crypto snapshot flush (device
+      // identity + Megolm keys) completes before this adapter reports stopped —
+      // the daemon does `await adapter.stop()`, so this is what guarantees the
+      // keys are persisted before teardown/exit.
+      await controller?.stop();
       controller = undefined;
       client = undefined;
       connected = false;

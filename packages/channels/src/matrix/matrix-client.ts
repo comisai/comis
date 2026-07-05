@@ -182,8 +182,12 @@ export interface MatrixVerificationStatus {
 export interface MatrixSyncController {
   /** Load persisted state, wire subscriptions, and start `/sync`. */
   start(): Promise<Result<void, Error>>;
-  /** Stop the `/sync` long-poll. */
-  stop(): void;
+  /**
+   * Stop the `/sync` long-poll and AWAIT a final crypto snapshot flush. Awaitable
+   * so the daemon's `await adapter.stop()` blocks until the device identity +
+   * Megolm keys are persisted — otherwise a restart mints a fresh device id.
+   */
+  stop(): Promise<void>;
   /**
    * The bot device's verification posture for the operator health surface, or
    * `undefined` when there is no crypto backend (a plaintext channel, or the
@@ -750,12 +754,16 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
       return ok(undefined);
     },
 
-    stop(): void {
-      // Flush a final crypto snapshot (best-effort) before tearing down /sync so
-      // the device identity + Megolm keys survive the restart. The handle logs
-      // its own failure; a plaintext channel has no handle to flush.
-      void cryptoHandle?.stop();
+    async stop(): Promise<void> {
+      // Stop the /sync long-poll FIRST so no further crypto state accrues, then
+      // AWAIT a final crypto snapshot flush so the device identity + Megolm keys
+      // accumulated since the last debounce tick are on disk before this resolves.
+      // The daemon does `await adapter.stop()`; awaiting the flush here is what
+      // makes that block on the key write — a fire-and-forget flush would race the
+      // process teardown and a restart could then mint a fresh device id and orphan
+      // the keys. The handle logs its own failure; a plaintext channel has no handle.
       client.stopClient();
+      await cryptoHandle?.stop();
       logger.info({ channelType: "matrix", step: "sync-stop" }, "Matrix sync stopped");
     },
 
