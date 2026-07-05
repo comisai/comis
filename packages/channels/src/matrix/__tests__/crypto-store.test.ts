@@ -17,6 +17,7 @@ import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MatrixClient } from "matrix-js-sdk";
+import { encodeRecoveryKey } from "matrix-js-sdk/lib/crypto-api/recovery-key.js";
 import type { ComisLogger } from "@comis/core";
 import {
   serializeCryptoStore,
@@ -371,5 +372,157 @@ describe("MatrixCryptoHandle: 0600 snapshot + OOM prune on the tick", () => {
 
     expect(statSync(join(stateDir, SNAPSHOT_FILE)).isFile()).toBe(true);
     expect(off).toHaveBeenCalledWith("sync", expect.any(Function));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// initMatrixCrypto — cross-signing bootstrap + readable verification status
+// ---------------------------------------------------------------------------
+
+/** A valid, decodable recovery key (any 32-byte seed) — treated as a secret in the assertions below. */
+const VALID_RECOVERY_KEY = encodeRecoveryKey(new Uint8Array(32).fill(7)) as string;
+
+/** A controllable stand-in for the SDK CryptoApi verification surface. */
+function makeFakeCrypto(opts: {
+  crossSigningReady?: boolean;
+  deviceVerified?: boolean;
+  bootstrap?: () => Promise<void>;
+}): { crypto: unknown; bootstrapCrossSigning: ReturnType<typeof vi.fn> } {
+  const bootstrapCrossSigning = vi.fn(opts.bootstrap ?? (async (): Promise<void> => undefined));
+  const crypto = {
+    bootstrapCrossSigning,
+    isCrossSigningReady: vi.fn(async () => opts.crossSigningReady ?? false),
+    getDeviceVerificationStatus: vi.fn(async () =>
+      opts.deviceVerified === undefined ? null : { isVerified: () => opts.deviceVerified },
+    ),
+  };
+  return { crypto, bootstrapCrossSigning };
+}
+
+/** A fake client wired for the verification path: crypto handle + identity + a mutable cryptoCallbacks. */
+function fakeE2eeClient(crypto: unknown): {
+  client: MatrixClient;
+  cryptoCallbacks: Record<string, unknown>;
+} {
+  const cryptoCallbacks: Record<string, unknown> = {};
+  const client = {
+    initRustCrypto: vi.fn(async (): Promise<void> => undefined),
+    on: vi.fn(),
+    off: vi.fn(),
+    getCrypto: () => crypto,
+    getUserId: () => "@bot:hs",
+    getDeviceId: () => "DEVBOT",
+    cryptoCallbacks,
+  } as unknown as MatrixClient;
+  return { client, cryptoCallbacks };
+}
+
+describe("initMatrixCrypto: cross-signing bootstrap + readable verification status", () => {
+  it("bootstraps cross-signing from a recovery key and reports the device verified", async () => {
+    const stateDir = tempStateDir();
+    const { crypto, bootstrapCrossSigning } = makeFakeCrypto({ crossSigningReady: true, deviceVerified: true });
+    const { client, cryptoCallbacks } = fakeE2eeClient(crypto);
+
+    const res = await initMatrixCrypto(client, {
+      stateDir,
+      recoveryKey: VALID_RECOVERY_KEY,
+      logger: mkLogger(),
+      importCryptoWasm: vi.fn(stubWasmImport),
+      importFakeIndexedDb: vi.fn(realIdbImport),
+    });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(bootstrapCrossSigning).toHaveBeenCalledTimes(1);
+    // The 4S-unlock callback the SDK invokes during bootstrap was installed.
+    expect(typeof cryptoCallbacks.getSecretStorageKey).toBe("function");
+    await expect(res.value.getVerificationStatus()).resolves.toEqual({
+      crossSigningReady: true,
+      deviceVerified: true,
+    });
+    await res.value.stop();
+  });
+
+  it("runs unverified with a loud, actionable startup log when no recovery key is configured", async () => {
+    const stateDir = tempStateDir();
+    const { crypto, bootstrapCrossSigning } = makeFakeCrypto({ crossSigningReady: false, deviceVerified: false });
+    const { client } = fakeE2eeClient(crypto);
+    const logger = mkLogger();
+
+    const res = await initMatrixCrypto(client, {
+      stateDir,
+      // No recovery key configured.
+      logger,
+      importCryptoWasm: vi.fn(stubWasmImport),
+      importFakeIndexedDb: vi.fn(realIdbImport),
+    });
+
+    // The bot runs UNVERIFIED but NOT dark — init still returns ok.
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(bootstrapCrossSigning).not.toHaveBeenCalled();
+    // A loud WARN names the missing verification + the config key that fixes it.
+    const warn = vi.mocked(logger.warn);
+    expect(warn).toHaveBeenCalled();
+    const warnBlob = JSON.stringify(warn.mock.calls);
+    expect(warnBlob).toContain("channels.matrix.recoveryKey");
+    expect(warnBlob.toLowerCase()).toContain("unverified");
+    await expect(res.value.getVerificationStatus()).resolves.toEqual({
+      crossSigningReady: false,
+      deviceVerified: false,
+    });
+    await res.value.stop();
+  });
+
+  it("keeps init non-fatal when the cross-signing bootstrap rejects — runs unverified, still ok", async () => {
+    const stateDir = tempStateDir();
+    const { crypto, bootstrapCrossSigning } = makeFakeCrypto({
+      crossSigningReady: false,
+      deviceVerified: false,
+      bootstrap: async (): Promise<void> => {
+        throw new Error("bootstrap backend unavailable");
+      },
+    });
+    const { client } = fakeE2eeClient(crypto);
+    const logger = mkLogger();
+
+    const res = await initMatrixCrypto(client, {
+      stateDir,
+      recoveryKey: VALID_RECOVERY_KEY,
+      logger,
+      importCryptoWasm: vi.fn(stubWasmImport),
+      importFakeIndexedDb: vi.fn(realIdbImport),
+    });
+
+    // A verification failure NEVER bricks the channel — it degrades to unverified.
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(bootstrapCrossSigning).toHaveBeenCalledTimes(1); // it was attempted
+    expect(vi.mocked(logger.warn)).toHaveBeenCalled(); // loud on the failure
+    await res.value.stop();
+  });
+
+  it("never logs the recovery key or decoded key material in any field", async () => {
+    const stateDir = tempStateDir();
+    const { crypto } = makeFakeCrypto({ crossSigningReady: true, deviceVerified: true });
+    const { client } = fakeE2eeClient(crypto);
+    const logger = mkLogger();
+
+    const res = await initMatrixCrypto(client, {
+      stateDir,
+      recoveryKey: VALID_RECOVERY_KEY,
+      logger,
+      importCryptoWasm: vi.fn(stubWasmImport),
+      importFakeIndexedDb: vi.fn(realIdbImport),
+    });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    await res.value.getVerificationStatus(); // exercise the status read too
+    for (const method of ["info", "warn", "error", "debug"] as const) {
+      const blob = JSON.stringify(vi.mocked(logger[method]).mock.calls);
+      expect(blob).not.toContain(VALID_RECOVERY_KEY);
+    }
+    await res.value.stop();
   });
 });
