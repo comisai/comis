@@ -97,6 +97,49 @@ function makeChatFetch(
   return { fetchImpl: spy as unknown as typeof fetch, spy };
 }
 
+/** Drain the microtask queue so an awaited async send can make progress. */
+async function flushMicrotasks(n = 40): Promise<void> {
+  for (let i = 0; i < n; i += 1) await Promise.resolve();
+}
+
+/**
+ * A deterministic timer seam. It CAPTURES each scheduled delay and parks the
+ * callback (never firing on real time); `fireNext()` resolves the parked wait so
+ * an awaited pace-wait or retry backoff advances without any real wait. `cleared`
+ * records the handles passed to the canceller so a stop()-cancels-pace-wait
+ * assertion can read them. Mirrors the fake-timers `unrefRecord` intent.
+ */
+function makeFakeTimers() {
+  const delays: number[] = [];
+  const cleared: unknown[] = [];
+  let pending: Array<{ id: number; cb: () => void }> = [];
+  let seq = 0;
+  const setTimeoutImpl = ((cb: () => void, ms: number) => {
+    const id = (seq += 1);
+    delays.push(ms);
+    pending.push({ id, cb });
+    return id;
+  }) as unknown as GoogleChatAdapterDeps["setTimeoutImpl"];
+  const clearTimeoutImpl = ((handle: unknown) => {
+    cleared.push(handle);
+    pending = pending.filter((p) => p.id !== handle);
+  }) as unknown as GoogleChatAdapterDeps["clearTimeoutImpl"];
+  async function fireNext(): Promise<void> {
+    const next = pending.shift();
+    if (!next) throw new Error("no pending timer to fire");
+    next.cb();
+    await flushMicrotasks();
+  }
+  return {
+    setTimeoutImpl,
+    clearTimeoutImpl,
+    delays,
+    cleared,
+    fireNext,
+    pendingCount: () => pending.length,
+  };
+}
+
 /** A fake pull-loop source recording start/stop so lifecycle is testable loop-free. */
 function makeFakeSource(over: Partial<PubSubSource> = {}) {
   const start = vi.fn();
@@ -600,5 +643,67 @@ describe("createGoogleChatAdapter — sendMessage (messages.create)", () => {
 
     expect(adapter.getStatus?.().lastInboundAt).toBeUndefined();
     expect(adapter.getStatus?.().lastMessageAt).toBe(NOW);
+  });
+});
+
+describe("createGoogleChatAdapter — per-space send pacing", () => {
+  it("paces two sends to the SAME space by the remaining interval, while a DIFFERENT space is unblocked", async () => {
+    const timers = makeFakeTimers();
+    let clock = NOW;
+    const { fetchImpl } = makeChatFetch();
+    const { deps } = await makeDeps({
+      fetchImpl,
+      now: () => clock,
+      setTimeoutImpl: timers.setTimeoutImpl,
+      clearTimeoutImpl: timers.clearTimeoutImpl,
+    });
+    const adapter = createGoogleChatAdapter(deps);
+
+    // First send to spaces/AAAA: no prior write to that space → zero pace-wait,
+    // so no timer is scheduled.
+    await adapter.sendMessage("spaces/AAAA", "one");
+    expect(timers.delays).toHaveLength(0);
+
+    // 300ms later a second send to the SAME space must wait the remaining ~700ms
+    // of the 1s interval — asserted via the captured timer delay, never a real wait.
+    clock = NOW + 300;
+    const second = adapter.sendMessage("spaces/AAAA", "two");
+    await flushMicrotasks();
+    expect(timers.delays).toContain(700);
+    await timers.fireNext(); // release the pace-wait so the POST proceeds
+    await second;
+
+    // A send to a DIFFERENT space is independent: it schedules no pace-wait.
+    const delaysBefore = timers.delays.length;
+    await adapter.sendMessage("spaces/BBBB", "b");
+    expect(timers.delays.length).toBe(delaysBefore);
+  });
+
+  it("stop() cancels a pending pace-wait: the scheduled timer is cleared on shutdown (no hang)", async () => {
+    const timers = makeFakeTimers();
+    let clock = NOW;
+    const { fetchImpl } = makeChatFetch();
+    const { deps } = await makeDeps({
+      fetchImpl,
+      now: () => clock,
+      setTimeoutImpl: timers.setTimeoutImpl,
+      clearTimeoutImpl: timers.clearTimeoutImpl,
+    });
+    const adapter = createGoogleChatAdapter(deps);
+
+    // Prime the space so a second same-space send incurs a pace-wait.
+    await adapter.sendMessage("spaces/AAAA", "one");
+    clock = NOW + 100;
+    const pending = adapter.sendMessage("spaces/AAAA", "two");
+    await flushMicrotasks();
+    expect(timers.pendingCount()).toBe(1); // a pace-wait is parked
+    expect(timers.cleared).toHaveLength(0);
+
+    // Shutdown must cancel the pending pace-wait (abort the pacer's signal).
+    await adapter.stop();
+    await flushMicrotasks();
+    expect(timers.cleared.length).toBeGreaterThan(0);
+
+    await pending; // the send resolves after the abandoned wait
   });
 });
