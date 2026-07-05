@@ -51,6 +51,7 @@ function stubResponse(opts: {
   status?: number;
   contentLength?: string | null;
   chunks?: readonly Uint8Array[];
+  noBody?: boolean;
 }): ArchiveHttpResponse {
   const headers = new Map<string, string>();
   if (opts.contentLength != null) headers.set("content-length", opts.contentLength);
@@ -58,7 +59,7 @@ function stubResponse(opts: {
     ok: opts.ok ?? true,
     status: opts.status ?? 200,
     headers: { get: (name) => headers.get(name.toLowerCase()) ?? null },
-    body: streamOf(opts.chunks ?? []),
+    body: opts.noBody === true ? null : streamOf(opts.chunks ?? []),
   };
 }
 
@@ -128,6 +129,31 @@ describe("acquire — archiveUrl SSRF + byte-cap", () => {
 
   it("rejects an HTTP error status from the archiveUrl host", async () => {
     const fetchImpl = vi.fn(async () => stubResponse({ ok: false, status: 404 }));
+    const result = await acquire(
+      { kind: "archiveUrl", url: "https://example.invalid/skill.zip" },
+      { caps: { maxArchiveBytes: 1000 }, validate: okValidator, fetchImpl },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("network");
+  });
+
+  it("rejects with a network error when the pinned fetch itself throws", async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error("ECONNREFUSED");
+    });
+    const result = await acquire(
+      { kind: "archiveUrl", url: "https://example.invalid/skill.zip" },
+      { caps: { maxArchiveBytes: 1000 }, validate: okValidator, fetchImpl },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("network");
+    expect(result.error.message).toContain("ECONNREFUSED");
+  });
+
+  it("rejects an archiveUrl response that carries no body", async () => {
+    const fetchImpl = vi.fn(async () => stubResponse({ noBody: true }));
     const result = await acquire(
       { kind: "archiveUrl", url: "https://example.invalid/skill.zip" },
       { caps: { maxArchiveBytes: 1000 }, validate: okValidator, fetchImpl },

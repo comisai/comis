@@ -186,10 +186,9 @@ async function acquireArchiveUrl(url: string, deps: AcquireDeps): Promise<Result
     );
   }
 
-  // Default adapts the real IP-pinned fetch to the narrow seam shape.
-  const fetchImpl: PinnedArchiveFetch =
-    deps.fetchImpl ??
-    ((u, ip, init) => fetchPinned(u, ip, init) as unknown as Promise<ArchiveHttpResponse>);
+  // The cast adapts the real IP-pinned fetch (an undici Response) to the narrow
+  // seam shape used here; tests inject a conforming stub.
+  const fetchImpl: PinnedArchiveFetch = deps.fetchImpl ?? (fetchPinned as unknown as PinnedArchiveFetch);
 
   let response: ArchiveHttpResponse;
   try {
@@ -229,12 +228,10 @@ function acquireArchiveBytes(base64: string, deps: AcquireDeps): Result<Acquired
   if (estimated > deps.caps.maxArchiveBytes) {
     return err(overCapError(deps.caps.maxArchiveBytes));
   }
-  const bytes = Buffer.from(base64, "base64");
-  // Defensive exact check (whitespace/padding make the estimate a loose bound).
-  if (bytes.length > deps.caps.maxArchiveBytes) {
-    return err(overCapError(deps.caps.maxArchiveBytes));
-  }
-  return ok({ kind: "archive", bytes });
+  // The estimate is a true upper bound on the decoded size (padding and ignored
+  // whitespace only reduce it), so a payload that clears the pre-decode check is
+  // within the cap once decoded.
+  return ok({ kind: "archive", bytes: Buffer.from(base64, "base64") });
 }
 
 // ---------------------------------------------------------------------------
