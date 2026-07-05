@@ -590,7 +590,7 @@ export function createGoogleChatAdapter(
       _channelId: string,
       messageId: string,
       text: string,
-      _options?: SendMessageOptions,
+      options?: SendMessageOptions,
     ): Promise<Result<void, Error>> {
       // Guard the caller-supplied resource name before it ever reaches the token
       // mint or the REST path — an unsafe name mints no bearer and fires no fetch.
@@ -609,16 +609,25 @@ export function createGoogleChatAdapter(
       if (!tok.ok) return err(tok.error); // auth already logged a secret-free WARN
       const chatBase = deps.chatBaseUrl ?? "https://chat.googleapis.com/v1";
       const doFetch = deps.fetchImpl ?? fetch;
-      // updateMask is pinned to `text`: a `*` mask would clear every unspecified
-      // field on the message rather than editing only its text.
-      const url = `${chatBase}/${messageId}?updateMask=text`;
+      // updateMask is pinned to a literal field list — never `*`, which would
+      // clear every unspecified field. A supplied card re-renders the message in
+      // place through the `text,cardsV2` mask; the resolved card the caller hands
+      // in carries no buttons, so patching it retires the original interactive
+      // widgets. With no card the text-only path is unchanged (mask `text`).
+      const hasCards = (options?.cards?.length ?? 0) > 0;
+      const url = hasCards
+        ? `${chatBase}/${messageId}?updateMask=text,cardsV2`
+        : `${chatBase}/${messageId}?updateMask=text`;
+      const body = hasCards
+        ? { text, cardsV2: renderGoogleChatCards(options?.cards ?? []) }
+        : { text };
       const init: RequestInit = {
         method: "PATCH",
         headers: {
           authorization: `Bearer ${tok.value}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify(body),
       };
       const responded = await fromPromise(doFetch(url, init));
       if (!responded.ok) {
