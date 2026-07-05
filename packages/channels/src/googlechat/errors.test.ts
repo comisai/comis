@@ -39,7 +39,19 @@ describe("classifyGoogleChatError", () => {
     }
   });
 
-  it("classifies an unexpected 4xx status as an internal error", () => {
+  it("classifies 404/400 as a config error naming the subscription knob (not internal)", () => {
+    // A 404 (subscription not found) or 400 (malformed subscription request) is
+    // an operator config error, not our own internal defect — the hint must name
+    // the exact knob so it is actionable at a glance.
+    for (const status of [400, 404]) {
+      const classified = classifyGoogleChatError(status);
+      expect(classified.errorKind).toBe("config");
+      expect(classified.status).toBe(status);
+      expect(classified.hint).toContain("channels.googlechat.subscriptionName");
+    }
+  });
+
+  it("classifies a genuinely unexpected 4xx status as an internal error", () => {
     for (const status of [405, 409]) {
       const classified = classifyGoogleChatError(status);
       expect(classified.errorKind).toBe("internal");

@@ -18,6 +18,7 @@ export type GoogleChatErrorKind =
   | "platform"
   | "network"
   | "precondition"
+  | "config"
   | "internal";
 
 /** A classified platform failure: kind, status, and hint. */
@@ -39,8 +40,11 @@ export interface ClassifiedGoogleChatError {
  * - `429` → `platform` — rate limited; back off then retry.
  * - `>= 500` → `platform` — transient upstream error.
  * - `undefined` → `network` — no response reached us (transport fault).
- * - any other status (e.g. an unexpected 4xx) → `internal` — a malformed
- *   request is our own defect, not a transient condition.
+ * - `400` / `404` → `config` — a missing/malformed subscription is an operator
+ *   config error (wrong `subscriptionName`), not our own defect; the hint names
+ *   the knob.
+ * - any other status → `internal` — a genuinely unexpected response is our own
+ *   defect, not a transient condition.
  *
  * @param status - The HTTP status of the response, or undefined for a
  *   transport-level failure where no response was received.
@@ -79,6 +83,13 @@ export function classifyGoogleChatError(
       errorKind: "platform",
       status,
       hint: "Upstream Google service error — retry with backoff",
+    };
+  }
+  if (status === 404 || status === 400) {
+    return {
+      errorKind: "config",
+      status,
+      hint: "Verify channels.googlechat.subscriptionName (projects/{project}/subscriptions/{sub}) exists and the service account holds roles/pubsub.subscriber on it",
     };
   }
   return {
