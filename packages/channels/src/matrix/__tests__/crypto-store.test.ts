@@ -11,7 +11,7 @@
  * the WASM engine.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { IDBFactory as FakeIDBFactory } from "fake-indexeddb";
+import { IDBFactory as FakeIDBFactory, IDBDatabase as FakeIDBDatabase } from "fake-indexeddb";
 import { deserialize } from "node:v8";
 import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -132,6 +132,29 @@ describe("serializeCryptoStore / restoreCryptoStore", () => {
     expect(deviceKey).toBeInstanceOf(Uint8Array);
     expect(Array.from(deviceKey as Uint8Array)).toEqual([9, 8, 7]);
     db.close();
+  });
+
+  it("reads every object store within a SINGLE readonly transaction (a consistent cross-store view)", async () => {
+    // A snapshot taken with a separate transaction per store has no single
+    // point-in-time view: a concurrent engine write (e.g. an inbound to-device
+    // key) landing between two stores' transactions yields store A post-write and
+    // store B pre-write — an internally inconsistent crypto blob. One transaction
+    // spanning all stores reads them at a single consistent point.
+    const source = mkFactory();
+    await seed(source); // creates two stores: "identities" and "core"
+
+    const txSpy = vi.spyOn(FakeIDBDatabase.prototype, "transaction");
+    try {
+      await serializeCryptoStore(source);
+
+      // Exactly one transaction is opened, and its scope spans EVERY store.
+      expect(txSpy).toHaveBeenCalledTimes(1);
+      const [scope, mode] = txSpy.mock.calls[0] ?? [];
+      expect(Array.from(scope as string[]).sort()).toEqual(["core", "identities"]);
+      expect(mode).toBe("readonly");
+    } finally {
+      txSpy.mockRestore();
+    }
   });
 });
 
