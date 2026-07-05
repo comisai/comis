@@ -517,6 +517,33 @@ export interface ChannelEvents {
     timestamp: number;
   };
 
+  /**
+   * An inbound encrypted-room message could NOT be decrypted. Raised by a
+   * polling channel's decrypt-health seam so "why didn't the bot reply in that
+   * encrypted room?" is COUNTABLE by the fleet lens and reconstructable via
+   * `comis explain` instead of living only in a raw WARN. Content-free by
+   * construction: the channel label + the room id + a CLOSED `reason` class
+   * ONLY — never the ciphertext, the message body, the sender display name, a
+   * device/session key, or the raw SDK failure code. Daemon-global — no
+   * agentId/sessionKey. The `reason` mirrors the channel adapter's decrypt
+   * degrade kinds as an INLINE literal union (core cannot import from a channel
+   * package); a new kind must be added here in lockstep.
+   */
+  "channel:decrypt_failed": {
+    channelType: string;
+    roomId: string;
+    reason:
+      | "e2ee_off"
+      | "missing_session"
+      | "key_withheld"
+      | "unverified_device"
+      | "ratchet_gap"
+      | "historical"
+      | "identity_changed"
+      | "unknown";
+    timestamp: number;
+  };
+
   // -------------------------------------------------------------------------
   // Delivery hook events
   // -------------------------------------------------------------------------
