@@ -129,6 +129,8 @@ export type {
   PersistImportedBundle,
   PersistImportedBundleArgs,
 } from "./skills/import-commit.js";
+export { sweepOrphanedImports, defaultSweepDeps } from "./skills/import-boot-sweep.js";
+export type { SweepDeps, SweepResult } from "./skills/import-boot-sweep.js";
 export { setupSkillBundles, buildSkillRegistriesForBundles } from "./wiring/setup-skill-bundles.js";
 export type { SetupSkillBundlesDeps } from "./wiring/setup-skill-bundles.js";
 

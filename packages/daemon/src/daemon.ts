@@ -122,6 +122,7 @@ import {
 // directly (not via the wiring barrel) to avoid widening the barrel surface.
 import { resolveAgentMainProvider } from "./wiring/setup-agents/setup-agents-tooling.js";
 import { seedBundledSkills, defaultSeedBundledSkillsDeps } from "./wiring/seed-bundled-skills.js";
+import { sweepOrphanedImports, defaultSweepDeps } from "./skills/import-boot-sweep.js";
 // createModelCatalog + resolveWorkspaceDir live in @comis/core.
 import { createModelCatalog, resolveWorkspaceDir } from "@comis/core";
 import { createFileStateTracker, detectSandboxProvider } from "@comis/skills";
@@ -1477,6 +1478,11 @@ async function bootFoundation(
         socketPath: container.config.executor.broker.socketPath ?? safePath(dataDir, "broker.sock"),
       })
     : undefined;
+
+  // 6.5.8. Reconcile any skill-import staging dirs left behind by a crash between
+  // the staged→live move and the staging cleanup. Runs BEFORE the seed so a
+  // half-committed import is rolled back / restored before bundled skills seed.
+  sweepOrphanedImports(defaultSweepDeps(dataDir, agentLogger));
 
   // 6.5.9. Seed ALL bundled skills into the user data dir (version-aware, AUTO-SCANNED).
   // Every `bundled-skills/<name>/` (skill-creator, claude-code, codex, …) is seeded into
