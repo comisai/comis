@@ -121,6 +121,62 @@ describe("skills_manage tool", () => {
       );
     });
 
+    it("import action threads source + archiveUrl + confirm to skills.import and passes NO force", async () => {
+      (mockApprovalGate.requestApproval as ReturnType<typeof vi.fn>).mockResolvedValue({
+        approved: true,
+        approvedBy: "operator",
+      });
+      mockRpcCall.mockResolvedValue({ ok: true });
+
+      const tool = createSkillsManageTool(mockRpcCall, mockApprovalGate);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-arch", {
+          action: "import",
+          source: "archive",
+          archiveUrl: "https://example.com/skill.zip",
+          scope: "shared",
+          confirm: true,
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith(
+        "skills.import",
+        expect.objectContaining({
+          source: "archive",
+          archiveUrl: "https://example.com/skill.zip",
+          scope: "shared",
+          confirm: true,
+        }),
+      );
+      // The legacy force bypass is gone from the RPC — the tool must not thread it.
+      const params = mockRpcCall.mock.calls.find((c) => c[0] === "skills.import")?.[1] as Record<string, unknown>;
+      expect(params).not.toHaveProperty("force");
+    });
+
+    it("import remains an approval-gated action under admin trust with the new params", async () => {
+      (mockApprovalGate.requestApproval as ReturnType<typeof vi.fn>).mockResolvedValue({
+        approved: true,
+        approvedBy: "operator",
+      });
+      mockRpcCall.mockResolvedValue({ ok: true });
+
+      const tool = createSkillsManageTool(mockRpcCall, mockApprovalGate);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-gate", {
+          action: "import",
+          source: "archive",
+          archiveUrl: "https://example.com/skill.zip",
+        } as never),
+      );
+
+      // The approval gate still fires for import (the new params do not weaken it).
+      expect(mockApprovalGate.requestApproval).toHaveBeenCalledWith(
+        expect.objectContaining({ toolName: "skills_manage", action: "skills.import" }),
+      );
+    });
+
     it("import action defaults scope to 'local' when not provided", async () => {
       (mockApprovalGate.requestApproval as ReturnType<typeof vi.fn>).mockResolvedValue({
         approved: true,
