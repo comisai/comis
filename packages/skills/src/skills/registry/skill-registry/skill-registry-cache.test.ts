@@ -17,6 +17,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { SkillsConfig, TypedEventBus } from "@comis/core";
 import { createSkillRegistry } from "./index.js";
+import { resolveEffectiveDynamicContext } from "./skill-registry-cache.js";
 import type { SdkSkill } from "./skill-registry-types.js";
 
 function mockBus(): TypedEventBus {
@@ -99,5 +100,46 @@ describe("discovery enrichment — source:imported", () => {
     expect(bySource.get("le")).toBe("learned");
     expect(bySource.get("im")).toBe("imported");
     expect(bySource.get("w")).toBe("workspace");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveEffectiveDynamicContext — imported-tier force-off.
+//
+// An imported skill's SKILL.md body is remote-authored + untrusted, so its
+// dynamic-context (shell-in-body) expansion must be forced OFF regardless of the
+// global promptSkills.enableDynamicContext toggle. This is the authoritative
+// per-skill resolution point: any future consumer reads the EFFECTIVE value from
+// here (never the raw global config), so the imported-tier force-off cannot be
+// bypassed. Asserted against the real resolved value — not a mock.
+// ---------------------------------------------------------------------------
+
+describe("resolveEffectiveDynamicContext — imported-tier force-off", () => {
+  function cfg(enableDynamicContext: boolean): SkillsConfig {
+    return {
+      discoveryPaths: [],
+      promptSkills: { maxBodyLength: 20_000, enableDynamicContext, maxAutoInject: 3 },
+    } as unknown as SkillsConfig;
+  }
+
+  it("resolves false for an imported-source skill even when the global config enables it", () => {
+    // Global config ON, imported source ⇒ the resolved value is OFF.
+    expect(resolveEffectiveDynamicContext("imported", cfg(true))).toBe(false);
+    // And still OFF when the global config is off.
+    expect(resolveEffectiveDynamicContext("imported", cfg(false))).toBe(false);
+  });
+
+  it("keeps the global config value for every non-imported source", () => {
+    const on = cfg(true);
+    for (const source of ["bundled", "workspace", "local", "learned"] as const) {
+      expect(resolveEffectiveDynamicContext(source, on)).toBe(true);
+    }
+    // An unset source also defers to the global config value.
+    expect(resolveEffectiveDynamicContext(undefined, on)).toBe(true);
+
+    const off = cfg(false);
+    for (const source of ["bundled", "workspace", "local", "learned"] as const) {
+      expect(resolveEffectiveDynamicContext(source, off)).toBe(false);
+    }
   });
 });
