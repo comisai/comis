@@ -522,6 +522,223 @@ Body.
 });
 
 // ---------------------------------------------------------------------------
+// Spec-pure carrier: both authored forms parse to the same internal manifest
+// ---------------------------------------------------------------------------
+
+function captureLogger(): {
+  logger: { warn: (payload: Record<string, unknown>, message: string) => void };
+  calls: Array<{ payload: Record<string, unknown>; message: string }>;
+} {
+  const calls: Array<{ payload: Record<string, unknown>; message: string }> = [];
+  return {
+    logger: {
+      warn: (payload: Record<string, unknown>, message: string): void => {
+        calls.push({ payload, message });
+      },
+    },
+    calls,
+  };
+}
+
+describe("parseSkillManifest spec-pure carrier", () => {
+  it("parses the spec-pure and pre-migration forms to an identical manifest with a spare metadata key", () => {
+    const extensionBag = JSON.stringify({
+      userInvocable: false,
+      permissions: { net: ["api.example.com"] },
+      comis: { requires: { bins: ["node"] } },
+      mcpServers: [{ name: "foo", transport: "stdio", command: "npx" }],
+    });
+    const specPure = `---
+name: round-trip
+description: A round-trip manifest
+allowed-tools: read write
+metadata:
+  version: "2.0.0"
+  author: example
+  comis: '${extensionBag}'
+---
+
+# round-trip
+
+Body.
+`;
+    const preMigration = `---
+name: round-trip
+description: A round-trip manifest
+version: "2.0.0"
+userInvocable: false
+permissions:
+  net:
+    - api.example.com
+comis:
+  requires:
+    bins:
+      - node
+mcpServers:
+  - name: foo
+    transport: stdio
+    command: npx
+allowedTools:
+  - read
+  - write
+metadata:
+  author: example
+---
+
+# round-trip
+
+Body.
+`;
+    const specPureResult = parseSkillManifest(specPure);
+    const preMigrationResult = parseSkillManifest(preMigration);
+    expect(specPureResult.ok).toBe(true);
+    expect(preMigrationResult.ok).toBe(true);
+    if (!specPureResult.ok || !preMigrationResult.ok) return;
+    expect(specPureResult.value).toEqual(preMigrationResult.value);
+    expect(specPureResult.value.metadata).toEqual({ author: "example" });
+    expect(specPureResult.value.allowedTools).toEqual(["read", "write"]);
+    expect(specPureResult.value.comis?.requires?.bins).toEqual(["node"]);
+  });
+
+  it("parses the only-version-and-comis form identically in both carriers with metadata undefined", () => {
+    const specPure = `---
+name: common-case
+description: The frequent manifest with no spare metadata
+metadata:
+  version: "3.0.0"
+  comis: '${JSON.stringify({ comis: { requires: { bins: ["node"] } } })}'
+---
+
+# common-case
+
+Body.
+`;
+    const preMigration = `---
+name: common-case
+description: The frequent manifest with no spare metadata
+version: "3.0.0"
+comis:
+  requires:
+    bins:
+      - node
+---
+
+# common-case
+
+Body.
+`;
+    const specPureResult = parseSkillManifest(specPure);
+    const preMigrationResult = parseSkillManifest(preMigration);
+    expect(specPureResult.ok).toBe(true);
+    expect(preMigrationResult.ok).toBe(true);
+    if (!specPureResult.ok || !preMigrationResult.ok) return;
+    expect(specPureResult.value.metadata).toBeUndefined();
+    expect(specPureResult.value).toEqual(preMigrationResult.value);
+  });
+
+  it("fails with an error naming metadata.comis when its JSON string is malformed", () => {
+    const content = `---
+name: broken
+description: A skill with malformed extension JSON
+metadata:
+  comis: '{not valid json'
+---
+
+# broken
+
+Body.
+`;
+    const result = parseSkillManifest(content);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toContain("metadata.comis");
+  });
+
+  it("reads the pre-migration top-level form and emits one deprecation warning", () => {
+    const { logger, calls } = captureLogger();
+    const content = `---
+name: legacy-form
+description: A skill authored in the pre-migration top-level form
+version: "1.0.0"
+userInvocable: false
+comis:
+  requires:
+    bins:
+      - node
+---
+
+# legacy-form
+
+Body.
+`;
+    const result = parseSkillManifest(content, { logger, skillName: "legacy-form" });
+    expect(result.ok).toBe(true);
+    expect(calls.length).toBe(1);
+    const moved = calls[0]?.payload["movedKeys"] as Array<{ from: string; to: string }>;
+    expect(moved.map((m) => m.from)).toEqual(expect.arrayContaining(["version", "userInvocable", "comis"]));
+  });
+
+  it("parses the minimal spec example of name and description alone", () => {
+    const content = `---
+name: minimal-spec
+description: The minimal spec example
+---
+
+# minimal-spec
+
+Body.
+`;
+    const result = parseSkillManifest(content);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.name).toBe("minimal-spec");
+    expect(result.value.metadata).toBeUndefined();
+  });
+
+  it("parses the optional-fields spec example with license, compatibility, allowed-tools and metadata", () => {
+    const content = `---
+name: optional-spec
+description: The optional-fields spec example
+license: MIT
+compatibility: Requires Node.js 22 and network access
+allowed-tools: read write
+metadata:
+  author: example
+---
+
+# optional-spec
+
+Body.
+`;
+    const result = parseSkillManifest(content);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.license).toBe("MIT");
+    expect(result.value.compatibility).toBe("Requires Node.js 22 and network access");
+    expect(result.value.allowedTools).toEqual(["read", "write"]);
+    expect(result.value.metadata).toEqual({ author: "example" });
+  });
+
+  it("rejects a metadata.comis payload that smuggles a prototype key without polluting Object.prototype", () => {
+    const content = `---
+name: proto-skill
+description: A skill smuggling a prototype key inside the extension bag
+metadata:
+  comis: '{"comis":{"__proto__":{"polluted":true},"primary-env":"discord"}}'
+---
+
+# proto-skill
+
+Body.
+`;
+    const result = parseSkillManifest(content);
+    expect(result.ok).toBe(false);
+    expect(({} as Record<string, unknown>)["polluted"]).toBeUndefined();
+    expect(Object.prototype).not.toHaveProperty("polluted");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // parseFrontmatter tests
 // ---------------------------------------------------------------------------
 
