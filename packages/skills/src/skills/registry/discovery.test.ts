@@ -568,6 +568,35 @@ comis:
     const migrationWarns = warns.filter((w) => Array.isArray(w.obj.movedKeys));
     expect(migrationWarns).toHaveLength(0);
   });
+
+  it("names the metadata.comis carrier when skipping a skill with a malformed extension bag", () => {
+    const dir = createTempDir();
+    // The surrounding YAML frontmatter is valid; only the metadata.comis JSON
+    // string is malformed. The skip hint must point at that carrier, not the
+    // (valid) surrounding YAML the generic hint blames.
+    const content = `---
+name: "broken-carrier"
+description: "Valid YAML but a malformed metadata.comis JSON string"
+metadata:
+  comis: '{not valid json'
+---
+# Skill body
+`;
+    fs.writeFileSync(path.join(dir, "broken-carrier.md"), content, "utf-8");
+
+    const warns: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+    const logger = {
+      warn(obj: Record<string, unknown>, msg: string) {
+        warns.push({ obj, msg });
+      },
+    };
+
+    const result = discoverSkills([dir], logger);
+    expect(result.skills).toHaveLength(0);
+    const skip = warns.find((w) => w.msg === "Skipping malformed skill file");
+    expect(skip).toBeDefined();
+    expect(String(skip?.obj["hint"])).toContain("metadata.comis");
+  });
 });
 
 // ---------------------------------------------------------------------------
