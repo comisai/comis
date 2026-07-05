@@ -13,7 +13,6 @@ import { systemNowMs, systemSetInterval, systemClearInterval, setSsrfBlockHook, 
 import type { ObservabilityStore, TokenUsageRow, DeliveryRow, DiagnosticRow, ChannelSnapshotRow, AuditEventRow } from "@comis/memory";
 import { cacheBreakEventToRow } from "@comis/memory";
 import type { ComisLogger } from "@comis/infra";
-import type { DiagnosticEvent } from "./diagnostic-collector.js";
 // The durable security-audit sink (row-builders + subscribers),
 // extracted to keep this file under the 800-line cap.
 import { wireAuditSink } from "./obs-audit-sink.js";
