@@ -1,26 +1,32 @@
 #!/usr/bin/env bash
-# VPS — ONCE per box, run as ROOT. Makes the rig comis-runnable and installs the VPS-side helpers.
-# Prereq: scp this scripts/ folder to the VPS first, e.g.  scp -r scripts root@<vps>:/root/lt-scripts
-# Then:  ssh root@<vps> 'bash /root/lt-scripts/setup-vps.sh'
+# VPS — ONCE per box, run as ROOT, AFTER install-vps.sh put the production installation in place.
+# Preps the box for the rig: emulator runtime (tsx) + data-dir ownership + a layout sanity print.
+# Prereq: deploy-scripts.sh pushed the kit (incl. /root/comis-rig.env) to the box, e.g.
+#   bash deploy-scripts.sh   &&   ssh $VPS 'bash /root/setup-vps.sh'
 set -euo pipefail
-SRC="${SRC:-/root/comis-src}"
-DATA="${DATA:-/home/comis/.comis}"
-HERE="$(cd "$(dirname "$0")" && pwd)"
+[ -f /root/comis-rig.env ] && . /root/comis-rig.env
+COMIS_USER="${COMIS_USER:-comis}"
+COMIS_HOME="${COMIS_HOME:-/home/$COMIS_USER}"
+DATA="${DATA:-$COMIS_HOME/.comis}"
+PKG="${PKG:-$COMIS_HOME/.npm-global/lib/node_modules/comisai}"
+SERVICE="${SERVICE:-comis}"
 
-echo "1) Open $SRC for comis read/traverse (the daemon runs as comis but the code is root-owned)…"
-chmod o+x /root
-chmod -R o+rX "$SRC"
+echo "1) Emulator runtime — tsx (vps-emu.ts is TypeScript; restart-emu.sh execs \`tsx\`)…"
+command -v tsx >/dev/null 2>&1 || npm install -g tsx >/dev/null
+echo "   tsx: $(command -v tsx || echo MISSING)"
 
-echo "2) Chown $DATA back to comis (clear root-owned leftovers from any prior root daemon)…"
-chown -R comis:comis "$DATA"
+echo "2) Chown $DATA back to $COMIS_USER (clear root-owned leftovers from any root-run helper)…"
+chown -R "$COMIS_USER:$COMIS_USER" "$DATA"
 
-echo "3) Install VPS-side helpers…"
-install -o comis -g comis -m 0755 "$HERE/restart-m1.sh" /home/comis/restart-m1.sh
-cp "$HERE/drive.mjs"  /root/drive.mjs
-cp "$HERE/revoke.mjs" /root/revoke.mjs
+echo "3) Layout sanity (the production installation this rig targets)…"
+echo -n "   service      : "; systemctl is-active "$SERVICE" 2>/dev/null || echo "not-active"
+echo -n "   daemon dist  : "; ls "$PKG/node_modules/@comis/daemon/dist/daemon.js" 2>/dev/null || echo "MISSING — run install-vps.sh first"
+echo -n "   cli          : "; su - "$COMIS_USER" -c 'command -v comis' 2>/dev/null || echo "MISSING from $COMIS_USER PATH"
+echo -n "   rpc client   : "; ls "$PKG/node_modules/@comis/cli/dist/client/rpc-client.js" 2>/dev/null || echo "MISSING"
+echo -n "   jail deps    : "; for b in bwrap tmux ffmpeg; do printf '%s:%s ' "$b" "$(command -v $b >/dev/null && echo ok || echo MISSING)"; done; echo
 
 echo "Done."
-echo "  daemon launcher : su - comis -c 'bash /home/comis/restart-m1.sh'   (or use clean-restart.sh)"
-echo "  driver          : node /root/drive.mjs <chatId> \"<text>\""
-echo "  rpc             : COMIS_CONFIG_PATHS=$DATA/config.yaml COMIS_GATEWAY_TOKEN=<tok> node /root/revoke.mjs <method> [k] [v]"
-echo "Reminder: config.yaml needs a LITERAL gateway token + the emulator apiRoot from /tmp/comis-emu.json."
+echo "  daemon restart : bash /root/restart-daemon.sh        (systemd; boot-verified)"
+echo "  clean slate    : bash /root/clean-restart.sh         (wipe test state + restart)"
+echo "  driver         : node /root/drive.mjs <chatId> \"<text>\""
+echo "  rpc            : node /root/revoke.mjs <method> [k] [v]   (env defaults via /root/comis-rig.env)"

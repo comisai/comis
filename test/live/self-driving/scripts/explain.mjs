@@ -12,27 +12,16 @@
 //   node explain.mjs <sessionKey> [summary|full] [--json | --learning | --failures | --budget]
 //   default (no flag) prints the curated diagnostic set: coverage, outcome, cost, likelyRootCause,
 //   perRootBudget?, failures[] (with classifiedFailureBy + matchedRule + transportOk), and the learning block.
-import { createRequire } from 'node:module';
-
 // Operator-oracle robustness: skip the DEV-only response.parse (IS_DEV gate) so explain ALWAYS returns the
 // assembled report for diagnosis instead of throwing on a strict-validation edge. (The report is the
 // diagnosis; a schema nit is a separate test concern — IncidentReportSchema.parse runs in the unit tests.)
 process.env.NODE_ENV = process.env.NODE_ENV || 'production';
 
-const SRC = process.env.COMIS_SRC || '/root/comis-src';
-const require = createRequire(SRC + '/packages/daemon/package.json');
-
-// ROOT-HOME GUARD (mirrors db.mjs): the daemon runs as `comis` (data dir /home/comis/.comis). Invoked as
-// root (HOME=/root) WITHOUT an explicit override, the reader would read /root/.comis → 0 records. Resolve
-// to the comis data dir + warn.
-const runningAsRoot = typeof process.getuid === 'function' && process.getuid() === 0;
-const dataDir =
-  process.env.COMIS_DATA_DIR || (runningAsRoot ? '/home/comis/.comis' : (process.env.HOME || '/home/comis') + '/.comis');
-if (runningAsRoot && !process.env.COMIS_DATA_DIR) {
-  console.error(
-    "[explain.mjs] running as root → using /home/comis/.comis (NOT /root/.comis — that reads 0 records, a false 'explain blind'); set COMIS_DATA_DIR to override",
-  );
-}
+// Code root (daemon dist) + data dir via _rig.mjs. rig.dataDir derives from the SERVICE USER's home
+// (never process HOME), which retires the old root-HOME trap: an `ssh root@vps 'node explain.mjs …'`
+// used to read /root/.comis → 0 records → a false "explain blind".
+import { rig, comisDist } from './_rig.mjs';
+const dataDir = rig.dataDir;
 
 const [sessionKey, ...rest] = process.argv.slice(2);
 if (!sessionKey) {
@@ -43,7 +32,10 @@ const depth = rest.find((x) => x === 'summary' || x === 'full') || 'full';
 const flags = new Set(rest.filter((x) => x.startsWith('--')));
 const narrowed = flags.has('--learning') || flags.has('--failures') || flags.has('--budget');
 
-const { assembleIncidentReportFromSources, makeRealReader } = require(SRC + '/packages/daemon/dist/index.js');
+// dynamic import() loads the CJS dist under both layouts; the default-spread covers CJS exports
+// the ESM named-export lexer misses.
+const daemonDist = await import(comisDist('daemon', 'dist/index.js'));
+const { assembleIncidentReportFromSources, makeRealReader } = { ...daemonDist.default, ...daemonDist };
 
 assembleIncidentReportFromSources(makeRealReader(dataDir), dataDir, { sessionKey, depth })
   .then((r) => {

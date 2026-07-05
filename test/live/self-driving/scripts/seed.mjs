@@ -26,23 +26,19 @@
 // Flags: --proof=<n> (memories.proof_count, eviction-exemption axis), --pinned (memories.pinned=1),
 //        --tenant=<t> (default "default"), --agent=<a> (default "default").
 // Echoes the written row. NEVER seeds a `scripts` column (none exists — advisory docs only, INV-3).
-import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
-// COMIS_SRC overrides the better-sqlite3 resolution root (VPS default /root/comis-src; set to a local
-// checkout for a LOCAL daemon run). COMIS_DB_PATH / COMIS_DATA_DIR target a non-default data dir; VPS
-// default stays ~/.comis/memory.db.
-const SRC = process.env.COMIS_SRC || "/root/comis-src";
-const require = createRequire(SRC + "/packages/daemon/package.json");
-const Database = require("better-sqlite3");
+// Code root (better-sqlite3 + the production tokenizer) + data dir via _rig.mjs — installed comisai
+// package OR source checkout; COMIS_SRC / COMIS_DATA_DIR / COMIS_DB_PATH overrides honored.
+import { rig, requireCodeRoot, comisDist } from "./_rig.mjs";
+const Database = requireCodeRoot("better-sqlite3");
 // The PRODUCTION reuse tokenizer (topic-key.ts) — used to compute a seeded skill's
 // structured_body.topicTokens from a canonical signature, EXACTLY as the reflection job does
 // (commonCoreTokens → openingRequestTokens). Without these tokens a seeded skill SURFACES but is
 // NEVER reuse-credited (topic-key.ts:246 skips a doc with no topicTokens), so the reuse→promote
 // AND the memory:skill_used obs oracles silently can't fire — the helper's "is reusable" contract
 // (line 12) was a lie until this.
-const { openingRequestTokens } = await import(SRC + "/packages/agent/dist/memory/topic-key.js");
-const dbpath = process.env.COMIS_DB_PATH
-  || (process.env.COMIS_DATA_DIR ? process.env.COMIS_DATA_DIR + "/memory.db" : (process.env.HOME || "/home/comis") + "/.comis/memory.db");
+const { openingRequestTokens } = await import(comisDist("agent", "dist/memory/topic-key.js"));
+const dbpath = process.env.COMIS_DB_PATH || rig.dataDir + "/memory.db";
 
 const argv = process.argv.slice(2);
 const cmd = argv[0];

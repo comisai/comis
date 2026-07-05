@@ -18,9 +18,10 @@
 // media that survives the daemon's ffmpeg/decode pipeline — a synthetic/silent blob fails-honestly
 // ("transcription failed; send as text") which is a coverage-gap, NOT a Comis bug. (`05-CATALOG.md`.)
 import { readFileSync, existsSync, statSync } from "node:fs";
+import { rig } from "./_rig.mjs";
 
 const [, , chatIdArg, fileOrB64, kindArg, captionArg, maxMsArg] = process.argv;
-const chatId = chatIdArg || "678314278";
+const chatId = chatIdArg || rig.chatId;
 const kind = kindArg || "photo";
 const caption = captionArg || "";
 const maxMs = Number(maxMsArg || 180000);
@@ -39,7 +40,7 @@ if (existsSync(fileOrB64) && statSync(fileOrB64).isFile()) {
   process.stderr.write(`treating arg as inline base64 (${fileBase64.length} chars)\n`);
 }
 
-const emu = JSON.parse(readFileSync("/tmp/comis-emu.json", "utf8"));
+const emu = JSON.parse(readFileSync(rig.emuWiringPath, "utf8"));
 const base = emu.apiRoot;
 const getOutbound = async (after, waitMs) =>
   (await fetch(`${base}/control/chats/${chatId}/outbound?afterMessageId=${after}&waitMs=${waitMs}`)).json();

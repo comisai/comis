@@ -36,9 +36,10 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { rig } from "./_rig.mjs";
 import { setTimeout as sleep } from "node:timers/promises";
 
-const DATA = process.env.DATA || "/home/comis/.comis";
+const DATA = rig.dataDir;
 const COMIS_USER = process.env.COMIS_USER || "comis";
 const args = process.argv.slice(2);
 const mode = (args[0] && !args[0].startsWith("--")) ? args[0] : "all";

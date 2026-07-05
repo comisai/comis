@@ -12,10 +12,11 @@
 #      the channel closes despite nohup/setsid. tmux fully detaches and persists.
 #
 # Usage (re-run after editing test/live/emulators or to recover a dead emu):
-#   ssh root@<vps> 'bash /root/restart-emu.sh'        # uses /root/comis-emu
-# Then re-patch the daemon: the port CHANGES (kernel-allocated) → patch
-# channels.telegram.apiRoot to the printed port + restart the daemon.
+#   ssh root@<vps> 'bash /root/restart-emu.sh'        # EMU_DIR from /root/comis-rig.env (default /root/comis-emu)
+# Then re-wire the daemon: the port CHANGES (kernel-allocated) →
+#   node /root/wire-emu.mjs && bash /root/restart-daemon.sh
 set -uo pipefail
+[ -f /root/comis-rig.env ] && . /root/comis-rig.env
 EMU_DIR="${EMU_DIR:-/root/comis-emu}"
 
 # (1) Kill the old emulator with an ANCHORED pattern (never matches this shell).
@@ -32,7 +33,7 @@ sleep 8
 if grep -aq EMU_UP /root/emu.log; then
   echo "EMU UP:"; grep -a EMU_UP /root/emu.log | tail -1
   PORT=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("/tmp/comis-emu.json")).port)' 2>/dev/null)
-  echo "NEXT: patch channels.telegram.apiRoot → http://127.0.0.1:${PORT} then restart the daemon"
+  echo "NEXT: node /root/wire-emu.mjs && bash /root/restart-daemon.sh   # wires apiRoot → http://127.0.0.1:${PORT}"
 else
   echo "EMU FAILED to start — tail /root/emu.log:"; tail -15 /root/emu.log
   exit 1
