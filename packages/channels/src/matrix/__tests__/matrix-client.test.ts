@@ -98,7 +98,8 @@ class FakeMatrixClient {
   private token: string | null;
   private readonly userId: string | null;
   private readonly joinError?: unknown;
-  private readonly startError?: unknown;
+  /** Mutable so a test can fail a later (resume) startClient but not the first. */
+  startError?: unknown;
   readonly store: { getSyncToken(): string | null; setSyncToken(token: string): void };
 
   constructor(opts: FakeClientOptions = {}) {
@@ -600,5 +601,66 @@ describe("createMatrixClient — token-expiry recovery + stale-since re-entry", 
     ]);
     expect(logDump).not.toContain("super-secret-leak-xyz");
     expect(JSON.stringify(h.healthSignals)).not.toContain("super-secret-leak-xyz");
+  });
+
+  it("re-logins and resumes even when the re-login yields no device id", async () => {
+    const reauthenticate = vi
+      .fn()
+      .mockResolvedValue({ ok: true, value: { accessToken: "fresh-token" } });
+    const h = makeHarness({ seed: { syncToken: "s0", watermark: 5 }, reauthenticate });
+    await h.controller.start();
+
+    await h.fake.emit(ClientEvent.Sync, SyncState.Error, SyncState.Syncing, {
+      error: matrixError("M_UNKNOWN_TOKEN", 401, "expired"),
+    });
+
+    expect(reauthenticate).toHaveBeenCalledTimes(1);
+    expect(h.saves.some((s) => s.accessToken === "fresh-token")).toBe(true);
+    expect(h.healthSignals).toHaveLength(0);
+  });
+
+  it("signals loudly when the re-login itself fails", async () => {
+    const reauthenticate = vi.fn().mockResolvedValue({ ok: false, error: new Error("login refused") });
+    const h = makeHarness({ seed: { syncToken: "s0", watermark: 5 }, reauthenticate });
+    await h.controller.start();
+
+    await h.fake.emit(ClientEvent.Sync, SyncState.Error, SyncState.Syncing, {
+      error: matrixError("M_UNKNOWN_TOKEN", 401, "expired"),
+    });
+
+    // The re-login failed → fall through to the loud dark-token signal.
+    expect(h.healthSignals).toHaveLength(1);
+    expect(h.healthSignals[0]?.hint).toContain("channels.matrix.accessToken");
+  });
+
+  it("logs an error when sync fails to resume after a successful token refresh", async () => {
+    const reauthenticate = vi
+      .fn()
+      .mockResolvedValue({ ok: true, value: { accessToken: "fresh-token", deviceId: "DEV2" } });
+    const h = makeHarness({ seed: { syncToken: "s0", watermark: 5 }, reauthenticate });
+    await h.controller.start();
+    // The resume startClient rejects (the first start() already succeeded).
+    h.fake.startError = matrixError("M_UNKNOWN", 500, "resume failed");
+
+    await h.fake.emit(ClientEvent.Sync, SyncState.Error, SyncState.Syncing, {
+      error: matrixError("M_UNKNOWN_TOKEN", 401, "expired"),
+    });
+
+    expect(reauthenticate).toHaveBeenCalledTimes(1);
+    expect(h.saves.some((s) => s.accessToken === "fresh-token")).toBe(true);
+    expect(vi.mocked(h.logger.error)).toHaveBeenCalled();
+  });
+
+  it("logs a warning for an unclassified sync error without stopping or signalling", async () => {
+    const h = makeHarness({ seed: { syncToken: "s0", watermark: 5 } });
+    await h.controller.start();
+
+    await h.fake.emit(ClientEvent.Sync, SyncState.Error, SyncState.Syncing, {
+      error: matrixError("M_LIMIT_EXCEEDED", 429, "slow down"),
+    });
+
+    expect(vi.mocked(h.logger.warn)).toHaveBeenCalled();
+    expect(h.healthSignals).toHaveLength(0);
+    expect(h.fake.stopCalls).toBe(0);
   });
 });
