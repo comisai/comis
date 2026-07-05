@@ -176,6 +176,30 @@ export type {
 export { validateMsTeamsCredentials } from "./msteams/credential-validator.js";
 export { classifyMsTeamsError } from "./msteams/errors.js";
 
+// Google Chat adapter (Pub/Sub pull, text round-trip)
+export { createGoogleChatAdapter } from "./googlechat/googlechat-adapter.js";
+export type {
+  GoogleChatAdapterDeps,
+  GoogleChatAdapterHandle,
+} from "./googlechat/googlechat-adapter.js";
+export { createGoogleChatPlugin } from "./googlechat/googlechat-plugin.js";
+
+// Google Chat utilities
+export { mapGoogleChatEventToNormalized } from "./googlechat/message-mapper.js";
+export type { GoogleChatEvent } from "./googlechat/message-mapper.js";
+export {
+  createGoogleChatTokenProvider,
+  CHAT_SCOPE,
+  PUBSUB_SCOPE,
+} from "./googlechat/googlechat-auth.js";
+export type {
+  GoogleChatTokenDeps,
+  GoogleChatTokenProvider,
+  GoogleChatScope,
+} from "./googlechat/googlechat-auth.js";
+export { validateGoogleChatCredentials } from "./googlechat/credential-validator.js";
+export { classifyGoogleChatError } from "./googlechat/errors.js";
+
 // Echo adapter (testing)
 export { EchoChannelAdapter } from "./echo/echo-adapter.js";
 export type { EchoAdapterOptions } from "./echo/echo-adapter.js";
