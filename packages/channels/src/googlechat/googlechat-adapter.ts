@@ -164,7 +164,7 @@ export function createGoogleChatAdapter(
   });
 
   const handlers: MessageHandler[] = [];
-  const _channelId = "googlechat";
+  const CHANNEL_ID = "googlechat";
 
   // Per-space write pacer: Google Chat caps message creation at one write per
   // second per space, so a chunked reply that fans several sends into one space
@@ -312,7 +312,7 @@ export function createGoogleChatAdapter(
   }
 
   const adapter: GoogleChatAdapterHandle = {
-    channelId: _channelId,
+    channelId: CHANNEL_ID,
     channelType: "googlechat",
 
     onMessage(handler: MessageHandler): void {
@@ -685,7 +685,7 @@ export function createGoogleChatAdapter(
     getStatus(): ChannelStatus {
       return {
         connected: _connected,
-        channelId: _channelId,
+        channelId: CHANNEL_ID,
         channelType: "googlechat",
         uptime:
           _connected && _startedAt !== undefined
