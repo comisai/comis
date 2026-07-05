@@ -3042,6 +3042,48 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
+      "maxArchiveBytes": 8388608,
+      "maxFileBytes": 4194304,
+      "maxFileCount": 200,
+      "maxPathDepth": 10,
+      "maxTotalUncompressedBytes": 67108864
+    },
+    "immutable": true,
+    "path": "agents.skills.import",
+    "type": "object"
+  },
+  {
+    "default": 8388608,
+    "immutable": true,
+    "path": "agents.skills.import.maxArchiveBytes",
+    "type": "integer"
+  },
+  {
+    "default": 4194304,
+    "immutable": true,
+    "path": "agents.skills.import.maxFileBytes",
+    "type": "integer"
+  },
+  {
+    "default": 200,
+    "immutable": true,
+    "path": "agents.skills.import.maxFileCount",
+    "type": "integer"
+  },
+  {
+    "default": 10,
+    "immutable": true,
+    "path": "agents.skills.import.maxPathDepth",
+    "type": "integer"
+  },
+  {
+    "default": 67108864,
+    "immutable": true,
+    "path": "agents.skills.import.maxTotalUncompressedBytes",
+    "type": "integer"
+  },
+  {
+    "default": {
       "allowedSkills": [],
       "deniedSkills": [],
       "enableDynamicContext": false,
@@ -19632,6 +19674,56 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           ],
           "type": "object"
         },
+        "import": {
+          "additionalProperties": false,
+          "default": {
+            "maxArchiveBytes": 8388608,
+            "maxFileBytes": 4194304,
+            "maxFileCount": 200,
+            "maxPathDepth": 10,
+            "maxTotalUncompressedBytes": 67108864
+          },
+          "properties": {
+            "maxArchiveBytes": {
+              "default": 8388608,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "maxFileBytes": {
+              "default": 4194304,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "maxFileCount": {
+              "default": 200,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "maxPathDepth": {
+              "default": 10,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "maxTotalUncompressedBytes": {
+              "default": 67108864,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "maxArchiveBytes",
+            "maxTotalUncompressedBytes",
+            "maxFileCount",
+            "maxFileBytes",
+            "maxPathDepth"
+          ],
+          "type": "object"
+        },
         "promptSkills": {
           "additionalProperties": false,
           "default": {
@@ -20157,6 +20249,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "promptSkills",
         "runtimeEligibility",
         "contentScanning",
+        "import",
         "execSandbox",
         "toolDiscovery",
         "watchEnabled",
@@ -30796,6 +30889,56 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 ],
                 "type": "object"
               },
+              "import": {
+                "additionalProperties": false,
+                "default": {
+                  "maxArchiveBytes": 8388608,
+                  "maxFileBytes": 4194304,
+                  "maxFileCount": 200,
+                  "maxPathDepth": 10,
+                  "maxTotalUncompressedBytes": 67108864
+                },
+                "properties": {
+                  "maxArchiveBytes": {
+                    "default": 8388608,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "maxFileBytes": {
+                    "default": 4194304,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "maxFileCount": {
+                    "default": 200,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "maxPathDepth": {
+                    "default": 10,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "maxTotalUncompressedBytes": {
+                    "default": 67108864,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "maxArchiveBytes",
+                  "maxTotalUncompressedBytes",
+                  "maxFileCount",
+                  "maxFileBytes",
+                  "maxPathDepth"
+                ],
+                "type": "object"
+              },
               "promptSkills": {
                 "additionalProperties": false,
                 "default": {
@@ -31321,6 +31464,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "promptSkills",
               "runtimeEligibility",
               "contentScanning",
+              "import",
               "execSandbox",
               "toolDiscovery",
               "watchEnabled",

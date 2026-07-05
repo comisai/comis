@@ -75,6 +75,26 @@ const ContentScanningSchema = z.strictObject({
 });
 
 /**
+ * Bounded-unpack caps for the staged skill-import pipeline. Every field is
+ * fully defaulted (consumers read a resolved config, never `?? fallback`) and
+ * the object is closed — an unknown or typo'd cap key rejects at config load.
+ * The defaults are deliberately conservative; there is intentionally NO
+ * auto-connect knob (imported-tier MCP entries persist disabled by construction).
+ */
+const SkillsImportConfigSchema = z.strictObject({
+  /** Max compressed archive size accepted for fetch/decode (default: 8 MiB). */
+  maxArchiveBytes: z.number().int().positive().default(8_388_608),
+  /** Max total uncompressed bytes, stream-counted mid-inflate (default: 64 MiB). */
+  maxTotalUncompressedBytes: z.number().int().positive().default(67_108_864),
+  /** Max number of entries unpacked from one archive (default: 200). */
+  maxFileCount: z.number().int().positive().default(200),
+  /** Max size of any single unpacked file (default: 4 MiB). */
+  maxFileBytes: z.number().int().positive().default(4_194_304),
+  /** Max path depth of any unpacked entry (default: 10). */
+  maxPathDepth: z.number().int().positive().default(10),
+});
+
+/**
  * Exec tool OS-level sandbox configuration.
  *
  * Controls whether child processes spawned by the exec tool are wrapped
@@ -339,6 +359,9 @@ export const SkillsConfigSchema = z.strictObject({
     /** Content scanning: detect dangerous patterns in skill bodies at load time */
     contentScanning: ContentScanningSchema.default(() => ContentScanningSchema.parse({})),
 
+    /** Bounded-unpack caps for the staged skill-import pipeline (shared-scope reads the default agent's block) */
+    import: SkillsImportConfigSchema.default(() => SkillsImportConfigSchema.parse({})),
+
     /** Exec tool OS-level sandbox configuration */
     execSandbox: ExecSandboxSchema.default(() => ExecSandboxSchema.parse({})),
 
@@ -367,6 +390,9 @@ export type SkillsConfig = z.infer<typeof SkillsConfigSchema>;
 
 /** Inferred prompt skills configuration type. */
 export type PromptSkillsConfig = z.infer<typeof PromptSkillsConfigSchema>;
+
+/** Inferred staged-import unpack-caps configuration type. */
+export type SkillsImportConfig = z.infer<typeof SkillsImportConfigSchema>;
 
 /** Inferred tool discovery configuration type. */
 export type ToolDiscoveryConfig = z.infer<typeof ToolDiscoverySchema>;

@@ -202,6 +202,7 @@ export type {
   AgentToAgentConfig,
   CredentialStorageMode,
   SkillsConfig,
+  SkillsImportConfig,
   TerminalAllowEntry,
   TerminalDriverConfig,
   DaemonConfig,

@@ -60,7 +60,7 @@ export type {
   ActionConfirmationConfig,
   AgentToAgentConfig,
 } from "./schema-security.js";
-export type { SkillsConfig, PromptSkillsConfig } from "./schema-skills.js";
+export type { SkillsConfig, PromptSkillsConfig, SkillsImportConfig } from "./schema-skills.js";
 export type { DaemonConfig, LoggingConfig, TracingDefaults, ConfigWebhook } from "./schema-daemon.js";
 export type { HeartbeatConfig, SchedulerConfig } from "./schema-scheduler.js";
 export type {

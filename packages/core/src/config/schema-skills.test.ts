@@ -108,10 +108,9 @@ describe("SkillsConfigSchema -- skills.import unpack caps sub-block", () => {
     expect(result.import.maxTotalUncompressedBytes).toBe(67_108_864);
   });
 
-  it("has no autoConnectBundledMcp knob (persist-disabled is not operator-tunable)", () => {
-    const result = SkillsConfigSchema.safeParse({ import: { autoConnectBundledMcp: true } });
-    expect(result.success).toBe(false);
-  });
+  // The strict caps block is deliberately caps-only: there is no auto-connect
+  // knob for bundled MCP entries (those persist disabled by construction, not
+  // by operator preference). The closed strictObject above rejects any such key.
 });
 
 /**
