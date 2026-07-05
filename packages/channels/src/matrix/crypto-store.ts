@@ -134,9 +134,15 @@ export async function serializeCryptoStore(factory: IDBFactory): Promise<Buffer>
   for (const info of infos) {
     if (!info.name) continue;
     const db = await promisify<IDBDatabase>(factory.open(info.name, info.version));
+    const storeNames = Array.from(db.objectStoreNames);
     const stores: StoreSnapshot[] = [];
-    for (const storeName of Array.from(db.objectStoreNames)) {
-      const os = db.transaction(storeName, "readonly").objectStore(storeName);
+    // Read EVERY store within ONE readonly transaction so the snapshot is a single
+    // consistent point-in-time view: a per-store transaction can straddle a
+    // concurrent engine write and capture store A post-write with store B
+    // pre-write. `transaction([])` is invalid, so a store-less db skips the read.
+    const tx = storeNames.length > 0 ? db.transaction(storeNames, "readonly") : undefined;
+    for (const storeName of storeNames) {
+      const os = tx!.objectStore(storeName);
       const indices: IndexSnapshot[] = Array.from(os.indexNames).map((n) => {
         const ix = os.index(n);
         return { name: ix.name, keyPath: ix.keyPath, unique: ix.unique, multiEntry: ix.multiEntry };
