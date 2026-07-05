@@ -44,6 +44,32 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
+import {
+  writeProvenanceRecord,
+  provenanceKey,
+  readProvenanceStore,
+  type ProvenanceRecord,
+} from "@comis/skills";
+
+/** Seed a local-scope provenance record for wiring tests. */
+async function seedProvenance(dataDir: string, name: string, overrides: Partial<ProvenanceRecord> = {}): Promise<void> {
+  const record: ProvenanceRecord = {
+    name,
+    scope: "local",
+    agentId: "agent-a",
+    source: "archive",
+    identifier: "https://example.com/s.zip",
+    contentHash: "origHash",
+    scanVerdict: { clean: true, findingCount: 0 },
+    files: ["SKILL.md"],
+    importedAt: "2020-01-01T00:00:00.000Z",
+    updatedAt: "2020-01-01T00:00:00.000Z",
+    importedBy: "agent-a",
+    ...overrides,
+  };
+  const wr = await writeProvenanceRecord(dataDir, record);
+  expect(wr.ok).toBe(true);
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -825,6 +851,36 @@ describe("skills.delete handler", () => {
     expect(fs.existsSync(skillPath)).toBe(false);
     expect(reg.init).toHaveBeenCalled();
   });
+
+  it("removes the provenance record on a successful delete of a provenanced skill (PROV-05 wiring)", async () => {
+    const wsDir = join(tmpRoot, "ws");
+    const skillPath = join(wsDir, "skills", "imp-skill");
+    fs.mkdirSync(skillPath, { recursive: true });
+    fs.writeFileSync(join(skillPath, "SKILL.md"), "x", "utf-8");
+    const dataDir = join(tmpRoot, "data");
+    fs.mkdirSync(dataDir, { recursive: true });
+    await seedProvenance(dataDir, "imp-skill");
+    const container = makeContainer();
+    (container as { config: { dataDir: string } }).config = { dataDir };
+    const reg = makeRegistry([{ name: "imp-skill", location: skillPath }]);
+    const handlers = createSkillHandlers(
+      makeDeps({
+        container,
+        workspaceDirs: new Map([["agent-a", wsDir]]),
+        skillRegistries: new Map([["agent-a", reg]]),
+      }),
+    );
+
+    const result = await handlers["skills.delete"]!({
+      name: "imp-skill",
+      scope: "local",
+      _agentId: "agent-a",
+    });
+
+    expect(result.ok).toBe(true);
+    // The delete handler unwinds the provenance record (PROV-05).
+    expect(readProvenanceStore(dataDir)[provenanceKey("local", "agent-a", "imp-skill")]).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1176,6 +1232,39 @@ describe("skills.update handler", () => {
     const skillFile = join(skillDir, "SKILL.md");
     // The legacy 0o644 file is replaced; the new file is 0o600.
     expect(fs.statSync(skillFile).mode & 0o777).toBe(0o600);
+  });
+
+  it("re-pins the provenance record with locallyModified on a successful update of a provenanced skill (PROV-04 wiring)", async () => {
+    const wsDir = join(tmpRoot, "ws");
+    const skillDir = join(wsDir, "skills", "edit-me");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(join(skillDir, "SKILL.md"), "OLD", "utf-8");
+    const dataDir = join(tmpRoot, "data");
+    fs.mkdirSync(dataDir, { recursive: true });
+    await seedProvenance(dataDir, "edit-me");
+    const container = makeContainer();
+    (container as { config: { dataDir: string } }).config = { dataDir };
+    const reg = makeRegistry([{ name: "edit-me", location: skillDir }]);
+    const handlers = createSkillHandlers(
+      makeDeps({
+        container,
+        workspaceDirs: new Map([["agent-a", wsDir]]),
+        skillRegistries: new Map([["agent-a", reg]]),
+      }),
+    );
+
+    await handlers["skills.update"]!({
+      name: "edit-me",
+      content: "---\nname: edit-me\ndescription: edited\n---\nNEW BODY",
+      _agentId: "agent-a",
+    });
+
+    const rec = readProvenanceStore(dataDir)[provenanceKey("local", "agent-a", "edit-me")];
+    expect(rec).toBeDefined();
+    // The local-edit path marks the authorized divergence + re-pins the hash.
+    expect(rec!.locallyModified).toBe(true);
+    expect(rec!.contentHash).not.toBe("origHash");
+    expect(rec!.updatedAt).not.toBe("2020-01-01T00:00:00.000Z");
   });
 });
 
