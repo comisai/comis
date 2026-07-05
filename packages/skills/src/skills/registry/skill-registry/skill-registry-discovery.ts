@@ -25,6 +25,7 @@ import { ok, err } from "@comis/shared";
 import * as fs from "node:fs";
 import { emitSkillAudit } from "../../audit/skill-audit.js";
 import { parseComisCapabilityDefensively } from "../../manifest/capability-parser.js";
+import { liftAuthoredFrontmatter } from "../../manifest/lift.js";
 import { parseFrontmatter } from "../../manifest/parser.js";
 import { SkillManifestSchema } from "../../manifest/schema.js";
 import { sanitizeSkillBody } from "../../prompt/sanitizer.js";
@@ -153,7 +154,18 @@ export async function loadPromptSkillImpl(params: {
     return err(new Error(`Prompt skill "${name}" has no body content`));
   }
 
-  const frontmatter = fmResult.value.frontmatter;
+  // Normalize the authored carrier into the internal manifest shape BEFORE the
+  // capability strip and the strict schema. Both the spec-pure form (extensions
+  // under metadata.comis) and the pre-migration top-level form converge here.
+  // This site carries the real logger, so a pre-migration skill draws its single
+  // deprecation warning here; the discovery/cache passes lift normalize-only. A
+  // malformed metadata.comis fails the lift with an error naming the key.
+  const rawFrontmatter = fmResult.value.frontmatter;
+  const lifted = liftAuthoredFrontmatter(rawFrontmatter, { logger, skillName: name });
+  if (!lifted.ok) {
+    return err(lifted.error);
+  }
+  const frontmatter = lifted.value;
   const ns =
     typeof frontmatter["comis"] === "object" &&
     frontmatter["comis"] !== null &&
