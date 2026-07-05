@@ -261,11 +261,11 @@ function liftPreMigration(
         skillName: ctx.skillName,
         movedKeys,
         hint:
-          "Author skill frontmatter with the metadata.comis carrier: move version under metadata.version " +
+          "Author skill frontmatter with the metadata carrier: put version under metadata.version " +
           "and userInvocable/disableModelInvocation/argumentHint/permissions/inputSchema/comis/mcpServers " +
-          "into the metadata.comis JSON string. The top-level form is read with a deprecation warning.",
+          "in the metadata.comis JSON string. The top-level form is read with a deprecation warning.",
       },
-      "Skill frontmatter uses pre-migration top-level fields; read-compatibility applied.",
+      "Skill frontmatter authors platform extension fields at the top level; author them under the metadata carrier instead.",
     );
   }
 
