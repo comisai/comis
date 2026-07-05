@@ -30,7 +30,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { runWithContext, systemNowMs } from "@comis/core";
+import { runWithContext, systemNowMs, systemSetTimeout } from "@comis/core";
 import type {
   ChannelPort,
   ChannelStatus,
@@ -48,6 +48,7 @@ import {
   type GoogleChatTokenProvider,
 } from "./googlechat-auth.js";
 import { classifyGoogleChatError } from "./errors.js";
+import { createSendPacer } from "./send-pacer.js";
 import {
   createPubSubSource,
   type PubSubSource,
@@ -122,6 +123,19 @@ export function createGoogleChatAdapter(
 
   const handlers: MessageHandler[] = [];
   const _channelId = "googlechat";
+
+  // Per-space write pacer: Google Chat caps message creation at one write per
+  // second per space, so a chunked reply that fans several sends into one space
+  // must space its writes or trip a 429. Built once on the adapter's injected
+  // clock+timer; different spaces stay independent.
+  const pacer = createSendPacer({
+    now,
+    setTimeout: deps.setTimeoutImpl ?? systemSetTimeout,
+    ...(deps.clearTimeoutImpl && { clearTimeout: deps.clearTimeoutImpl }),
+  });
+  // Aborted on stop() so a send parked in a pending pace-wait cancels its wait
+  // promptly rather than holding shutdown; abort is terminal for this instance.
+  const sendAbort = new AbortController();
 
   let _connected = false;
   let _startedAt: number | undefined;
@@ -306,6 +320,8 @@ export function createGoogleChatAdapter(
     },
 
     async stop(): Promise<Result<void, Error>> {
+      // Cancel any pending pace-wait so a parked send does not hold shutdown.
+      sendAbort.abort();
       await source?.stop();
       _connected = false;
       deps.logger.info(
@@ -337,6 +353,9 @@ export function createGoogleChatAdapter(
         ? `${chatBase}/${channelId}/messages?messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD`
         : `${chatBase}/${channelId}/messages`;
       const body = threadName ? { text, thread: { name: threadName } } : { text };
+      // Pace the write against the per-space 1/s ceiling before the POST. A
+      // pending wait cancels promptly on stop() through the shared abort signal.
+      await pacer.acquire(channelId, sendAbort.signal);
       const responded = await fromPromise(
         doFetch(url, {
           method: "POST",
