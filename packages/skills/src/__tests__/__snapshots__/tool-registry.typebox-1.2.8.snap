@@ -2991,6 +2991,14 @@
           ],
           "description": "Skill management action. Valid values: list (show installed skills), import (install from GitHub URL), delete (remove skill by name), create (create new skill from content), update (modify existing skill content)"
         },
+        "archiveUrl": {
+          "description": "Archive URL to import from (import action, source=archive). Fetched size-capped over the SSRF guard, then safely unpacked.",
+          "type": "string"
+        },
+        "confirm": {
+          "description": "Import action: confirm a re-import that diverges from the pinned content hash of a previously-imported skill of the same source. Does NOT override a name collision on an unprovenanced or foreign-source skill (delete it first).",
+          "type": "boolean"
+        },
         "content": {
           "description": "Full SKILL.md content including frontmatter. Required for create and update actions. The agent should generate complete SKILL.md content with --- frontmatter --- and body.",
           "type": "string"
@@ -3017,8 +3025,21 @@
           "default": "local",
           "description": "Skill scope (default: local). Valid values: local (calling agent's workspace), shared (global skills visible to all agents)."
         },
+        "source": {
+          "anyOf": [
+            {
+              "const": "github",
+              "type": "string"
+            },
+            {
+              "const": "archive",
+              "type": "string"
+            }
+          ],
+          "description": "Import acquisition channel (import action). 'github' fetches a directory URL; 'archive' fetches a .skill/zip/tar archive URL. Defaults to github when a url is given."
+        },
         "url": {
-          "description": "GitHub directory URL to import skills from. Required for import action.",
+          "description": "GitHub directory URL to import from (import action, source=github). One of url or archiveUrl is required for import.",
           "type": "string"
         }
       },
