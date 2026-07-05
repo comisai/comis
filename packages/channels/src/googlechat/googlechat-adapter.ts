@@ -63,6 +63,11 @@ import {
   mapGoogleChatEventToNormalized,
   type GoogleChatEvent,
 } from "./message-mapper.js";
+import {
+  renderGoogleChatCards,
+  renderGoogleChatButtons,
+} from "./googlechat-rich-renderer.js";
+import { formatGoogleChatText } from "./format-googlechat.js";
 
 // ---------------------------------------------------------------------------
 // Send-safety knobs for the 429-only bounded resend
@@ -450,7 +455,33 @@ export function createGoogleChatAdapter(
       const url = threadName
         ? `${chatBase}/${channelId}/messages?messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD`
         : `${chatBase}/${channelId}/messages`;
-      const body = threadName ? { text, thread: { name: threadName } } : { text };
+      // Format the message text through the conservative escape boundary — a
+      // markup-free string is returned byte-identical, so a plain send is
+      // unchanged. Attach a cardsV2 body ONLY when the caller supplies cards or
+      // button rows; otherwise the body stays the bare { text } (optionally with
+      // a thread) shape rather than carrying an empty cardsV2 key.
+      const body: Record<string, unknown> = threadName
+        ? { text: formatGoogleChatText(text), thread: { name: threadName } }
+        : { text: formatGoogleChatText(text) };
+      const hasButtons = (options?.buttons?.length ?? 0) > 0;
+      const hasCards = (options?.cards?.length ?? 0) > 0;
+      if (hasButtons || hasCards) {
+        // Each supplied card renders to its own cardsV2 entry; top-level button
+        // rows ride a trailing single-section card so the interactive widgets are
+        // never dropped when no card body accompanies them.
+        const cardsV2 = renderGoogleChatCards(options?.cards ?? []);
+        if (hasButtons) {
+          cardsV2.push({
+            cardId: randomUUID(),
+            card: {
+              sections: [
+                { widgets: [renderGoogleChatButtons(options?.buttons ?? [])] },
+              ],
+            },
+          });
+        }
+        body.cardsV2 = cardsV2;
+      }
       const init: RequestInit = {
         method: "POST",
         headers: {
