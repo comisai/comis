@@ -118,21 +118,22 @@ describe("createGoogleChatPlugin — identity + adapter wrap", () => {
   });
 });
 
-describe("createGoogleChatPlugin — honest text-only interim CAPABILITIES", () => {
-  it("declares the exact text-only feature matrix (deep-equal)", async () => {
+describe("createGoogleChatPlugin — honest app-auth CAPABILITIES", () => {
+  it("declares the exact app-auth feature matrix (deep-equal)", async () => {
     const { deps } = await makeDeps();
     const plugin = createGoogleChatPlugin(deps);
 
-    // Deep-equal on the DECLARED literal (not a schema-parsed shape): every
-    // optional feature is off and there is no button surface.
+    // Deep-equal on the DECLARED literal (not a schema-parsed shape): edit,
+    // delete, and threaded replies are on; reactions, history, attachments, and
+    // typing are off and there is no button surface.
     expect(plugin.capabilities.features).toEqual({
       reactions: false,
-      editMessages: false,
-      deleteMessages: false,
+      editMessages: true,
+      deleteMessages: true,
       fetchHistory: false,
       attachments: false,
       typing: false,
-      threads: false,
+      threads: true,
       buttons: "none",
     });
   });
@@ -146,19 +147,15 @@ describe("createGoogleChatPlugin — honest text-only interim CAPABILITIES", () 
   });
 });
 
-describe("createGoogleChatPlugin — capability parity (every false flag omits its method)", () => {
+describe("createGoogleChatPlugin — capability parity (advertised flags match the adapter surface)", () => {
   it("OMITS the adapter method behind every false/none capability flag", async () => {
     const { deps } = await makeDeps();
     const plugin = createGoogleChatPlugin(deps);
     const adapter = plugin.adapter as Record<string, unknown>;
 
-    // For a text-only app the reaction, history, and attachment capabilities are
-    // advertised false AND their adapter methods are omitted, so the daemon
-    // capability gate (requireMethod) blocks the call rather than reaching an
-    // unimplemented path. editMessage/deleteMessage now ship as functions with
-    // their flags still false: method-present/flag-false is gate-safe
-    // (assertCapability blocks the false-flag RPC before requireMethod is reached),
-    // so they are not listed here.
+    // The reaction, history, and attachment capabilities are advertised false AND
+    // their adapter methods are omitted, so the daemon capability gate
+    // (requireMethod) blocks the call rather than reaching an unimplemented path.
     const omittedForFalseFlag: Record<string, string> = {
       reactToMessage: "reactions:false",
       removeReaction: "reactions:false",
@@ -169,6 +166,21 @@ describe("createGoogleChatPlugin — capability parity (every false flag omits i
     for (const method of Object.keys(omittedForFalseFlag)) {
       expect(typeof adapter[method]).toBe("undefined");
     }
+  });
+
+  it("BACKS every advertised-true flag with a present adapter method", async () => {
+    const { deps } = await makeDeps();
+    const plugin = createGoogleChatPlugin(deps);
+    const adapter = plugin.adapter as Record<string, unknown>;
+
+    // The inverse of the omit check: editMessages/deleteMessages are advertised
+    // true, so their methods MUST be present — otherwise the daemon capability
+    // gate (requireMethod) throws when the advertised RPC is dispatched. The flag
+    // and the method move together.
+    expect(plugin.capabilities.features.editMessages).toBe(true);
+    expect(plugin.capabilities.features.deleteMessages).toBe(true);
+    expect(typeof adapter.editMessage).toBe("function");
+    expect(typeof adapter.deleteMessage).toBe("function");
   });
 });
 
