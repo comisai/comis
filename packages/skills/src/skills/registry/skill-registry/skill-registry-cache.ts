@@ -28,6 +28,7 @@ import type { Result } from "@comis/shared";
 import * as fs from "node:fs";
 import { systemNowMs } from "@comis/core";
 import { parseComisCapabilityDefensively } from "../../manifest/capability-parser.js";
+import { liftAuthoredFrontmatter } from "../../manifest/lift.js";
 import { parseFrontmatter } from "../../manifest/parser.js";
 import {
   formatAvailableSkillsXml,
@@ -332,7 +333,13 @@ export function createSkillRegistry(
           const content = fs.readFileSync(sdkSkill.filePath, "utf-8");
           const fmResult = parseFrontmatter<Record<string, unknown>>(content);
           if (fmResult.ok) {
-            const obj = fmResult.value.frontmatter;
+            // Normalize the authored carrier into the internal top-level shape
+            // so the hand-reads below resolve for spec-pure skills too. No
+            // logger: the load path owns the deprecation warning. A malformed
+            // metadata.comis fails the lift; skip enrichment (SDK-provided fields
+            // stand), matching the existing parse-failure path.
+            const liftResult = liftAuthoredFrontmatter(fmResult.value.frontmatter, {});
+            const obj: Record<string, unknown> = liftResult.ok ? liftResult.value : {};
             const ns =
               typeof obj["comis"] === "object" &&
               obj["comis"] !== null &&

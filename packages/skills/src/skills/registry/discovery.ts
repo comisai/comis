@@ -24,6 +24,7 @@ import * as path from "node:path";
 import ignore from "ignore";
 import { safePath, type ToolCapabilityMetadata } from "@comis/core";
 import { parseFrontmatter } from "../manifest/parser.js";
+import { liftAuthoredFrontmatter } from "../manifest/lift.js";
 import { parseComisCapabilityDefensively } from "../manifest/capability-parser.js";
 import type { ResourceDiagnostic, ResourceCollision } from "./diagnostics.js";
 
@@ -223,7 +224,19 @@ function extractMetadataFromSkillMd(
     return null;
   }
 
-  const obj = fmResult.value.frontmatter;
+  // Normalize the authored carrier into the internal top-level shape so the
+  // hand-reads below resolve for spec-pure skills too (extensions ride
+  // metadata.comis). No logger: the load path owns the deprecation warning; a
+  // second one here is noise. A malformed metadata.comis fails the lift; skip
+  // the file, matching the existing parse-failure -> null behavior.
+  const rawFrontmatter = fmResult.value.frontmatter;
+  const lifted = liftAuthoredFrontmatter(rawFrontmatter, {
+    skillName: typeof rawFrontmatter["name"] === "string" ? rawFrontmatter["name"] : undefined,
+  });
+  if (!lifted.ok) {
+    return null;
+  }
+  const obj = lifted.value;
   if (typeof obj["name"] !== "string" || typeof obj["description"] !== "string") {
     return null;
   }
