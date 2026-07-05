@@ -26,7 +26,7 @@
 // Code root (the yaml lib) + data dir resolve via _rig.mjs — installed package or source checkout.
 import { readFileSync, writeFileSync, copyFileSync, existsSync } from 'node:fs';
 import { execSync } from 'node:child_process';
-import { rig, requireCodeRoot } from './_rig.mjs';
+import { rig, requireCodeRoot, comisDist } from './_rig.mjs';
 const YAML = requireCodeRoot('yaml');
 const path = rig.dataDir + '/config.yaml';
 // argv[2] is inline JSON, OR a path to a JSON file, ELSE fall back to /tmp/patch.json. The
@@ -48,8 +48,41 @@ function merge(t, s) {
     } else { t[k] = s[k]; }
   }
 }
-copyFileSync(path, path + '.bak-patch');
+// Fail-fast schema guard: validate the MERGED config against the SAME AppConfigSchema
+// (z.strictObject) the daemon parses at boot, BEFORE writing. A mis-scoped patch (e.g. a
+// top-level `autonomy:` key — autonomy is agent-scoped under agents.<id>.autonomy) otherwise
+// writes silently and only surfaces as `FATAL: Bootstrap failed: Unrecognized key` in a systemd
+// crash-loop on the next restart. We block ONLY when the patch broke a previously-VALID config
+// (pre-passed → post-fails), so a config with pre-existing issues (or env/include expansion the
+// raw parse can't see) never blocks; if the schema can't be loaded, we degrade to a warning.
+// @comis/core is ESM, so it must be dynamic-import()ed (CJS require() throws ERR_REQUIRE_ESM) — mirror
+// _rig's importCli() pattern. If it can't load (source/layout drift), validation degrades to a warning.
+let AppConfigSchema;
+try { ({ AppConfigSchema } = await import(comisDist('core', 'dist/index.js'))); } catch { /* validation unavailable — proceed */ }
+const validate = (obj) => {
+  if (typeof AppConfigSchema?.safeParse !== 'function') return { unavailable: true, issues: [] };
+  const r = AppConfigSchema.safeParse(obj);
+  return r.success ? { ok: true, issues: [] } : { ok: false, issues: r.error.issues ?? [] };
+};
+const keyOf = (i) => `${i.path.join('.')}|${i.message}`;
+const pre = validate(structuredClone(cfg));
 merge(cfg, patch);
+const post = validate(cfg);
+if (post.ok === false) {
+  // Isolate the PATCH's effect: block ONLY on issues the patch INTRODUCED (present in post,
+  // absent in pre), diffing by (path, message). A pre-existing failure the raw parse can't
+  // resolve — e.g. a gateway-token placeholder the daemon fills from COMIS_GATEWAY_TOKEN at
+  // runtime — is present in BOTH, so it never blocks an otherwise-valid patch.
+  const preKeys = new Set(pre.issues.map(keyOf));
+  const introduced = post.issues.filter((i) => !preKeys.has(keyOf(i)));
+  if (introduced.length > 0) {
+    console.error('cfg-patch REFUSED — the patch introduces config-validation errors (config.yaml NOT modified):');
+    for (const i of introduced) console.error(`  • ${i.path.join('.') || '<root>'}: ${i.message}`);
+    console.error('  hint: autonomy.* is AGENT-scoped — nest under agents.<id>.autonomy, NOT top-level.');
+    process.exit(1);
+  }
+}
+copyFileSync(path, path + '.bak-patch');
 writeFileSync(path, YAML.stringify(cfg));
 try {
   // A root-run patch must not leave root-owned files in the service user's data dir.
