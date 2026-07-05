@@ -27,6 +27,8 @@
  */
 
 import type { NormalizedMessage } from "@comis/core";
+import { systemNowMs } from "@comis/core";
+import { randomUUID } from "node:crypto";
 
 /**
  * The action-method name the approval card renders on its buttons. Shared by the
@@ -97,5 +99,79 @@ export interface GoogleChatCardClickEvent {
   common?: {
     invokedFunction?: string;
     parameters?: Record<string, string>;
+  };
+}
+
+/**
+ * Read a named parameter value from the classic `action.parameters` list.
+ *
+ * The list is `{key,value}` entries; returns the `value` of the first entry
+ * whose `key` matches, or `undefined` when absent. The value is treated as an
+ * opaque wire string — never parsed for identity.
+ */
+function readParam(
+  parameters: ReadonlyArray<{ key?: string; value?: string }> | undefined,
+  key: string,
+): string | undefined {
+  return parameters?.find((p) => p.key === key)?.value;
+}
+
+/**
+ * Normalize a verified CARD_CLICKED event into a button-callback message.
+ *
+ * Returns `{ message }` on success, or `{ message: null, reason }` when the
+ * event is not a card click (`ignored`), the invoked function is not in
+ * {@link RENDERED_FUNCTIONS} (`unrendered-method`), the opaque callback is
+ * missing (`missing-callback`), or the verified `user.name` is absent
+ * (`missing-clicker`). The reason lets the caller log the security-relevant
+ * rejects while this function stays a pure mapper.
+ *
+ * @param event - A verified Google Chat interaction event
+ * @returns A button-callback message, or a drop carrying its reason
+ */
+export function normalizeGoogleChatCardAction(
+  event: GoogleChatCardClickEvent,
+): CardActionResult {
+  if (event?.type !== "CARD_CLICKED") {
+    return { message: null, reason: "ignored" };
+  }
+
+  // The invoked function must be one the bot rendered; both the classic and the
+  // newer field carry it. An unknown or absent method never becomes a message.
+  const fn = event.action?.actionMethodName ?? event.common?.invokedFunction;
+  if (fn === undefined || !RENDERED_FUNCTIONS.includes(fn)) {
+    return { message: null, reason: "unrendered-method" };
+  }
+
+  // The opaque callback wire string, passed through unparsed — verified
+  // downstream. Read from either payload location.
+  const cb =
+    readParam(event.action?.parameters, "cb") ?? event.common?.parameters?.cb;
+  if (typeof cb !== "string" || cb.length === 0) {
+    return { message: null, reason: "missing-callback" };
+  }
+
+  // The clicker id is the verified envelope id — never anything under
+  // `action.parameters` / `common.parameters` (client-controllable).
+  const senderId = event.user?.name;
+  if (senderId === undefined || senderId.length === 0) {
+    return { message: null, reason: "missing-clicker" };
+  }
+
+  return {
+    message: {
+      id: randomUUID(),
+      channelType: "googlechat",
+      channelId: event.space?.name ?? "spaces/unknown",
+      senderId,
+      text: cb,
+      timestamp: systemNowMs(),
+      attachments: [],
+      metadata: {
+        isButtonCallback: true,
+        callbackData: cb,
+        ...(event.message?.name ? { googlechatMessageName: event.message.name } : {}),
+      },
+    },
   };
 }
