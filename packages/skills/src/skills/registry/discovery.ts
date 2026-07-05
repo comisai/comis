@@ -202,6 +202,20 @@ interface ExtractedMetadata {
 }
 
 /**
+ * Outcome of a discovery-time metadata extraction: the fields, or a skip with
+ * the operator hint for the WARN. A malformed `metadata.comis` carries the
+ * lift's own error so the hint names the carrier, not the (valid) surrounding
+ * YAML the generic hint blames.
+ */
+type ExtractOutcome =
+  | { readonly ok: true; readonly metadata: ExtractedMetadata }
+  | { readonly ok: false; readonly hint: string };
+
+/** The hint for a file whose surrounding YAML frontmatter is the problem. */
+const MALFORMED_FRONTMATTER_HINT =
+  "Check skill file has valid YAML frontmatter with name and description fields";
+
+/**
  * Try to extract metadata from a skill file's YAML frontmatter.
  * Returns null if the file cannot be read or the frontmatter is invalid.
  *
@@ -211,17 +225,17 @@ interface ExtractedMetadata {
 function extractMetadataFromSkillMd(
   skillMdPath: string,
   logger?: DiscoveryLogger,
-): ExtractedMetadata | null {
+): ExtractOutcome {
   let content: string;
   try {
     content = fs.readFileSync(skillMdPath, "utf-8");
   } catch {
-    return null;
+    return { ok: false, hint: MALFORMED_FRONTMATTER_HINT };
   }
 
   const fmResult = parseFrontmatter<Record<string, unknown>>(content);
   if (!fmResult.ok) {
-    return null;
+    return { ok: false, hint: MALFORMED_FRONTMATTER_HINT };
   }
 
   // Normalize the authored carrier into the internal top-level shape so the
@@ -234,11 +248,13 @@ function extractMetadataFromSkillMd(
     skillName: typeof rawFrontmatter["name"] === "string" ? rawFrontmatter["name"] : undefined,
   });
   if (!lifted.ok) {
-    return null;
+    // Surface the lift's own message (it names metadata.comis) so the skip WARN
+    // points at the carrier rather than the surrounding YAML.
+    return { ok: false, hint: lifted.error.message };
   }
   const obj = lifted.value;
   if (typeof obj["name"] !== "string" || typeof obj["description"] !== "string") {
-    return null;
+    return { ok: false, hint: MALFORMED_FRONTMATTER_HINT };
   }
 
   // All skills are type "prompt"
@@ -293,7 +309,10 @@ function extractMetadataFromSkillMd(
   // downstream).
   const capability = parseComisCapabilityDefensively(ns?.["capability"], obj["name"], logger);
 
-  return { name: obj["name"], description: obj["description"], type, userInvocable, disableModelInvocation, argumentHint, os, requires, skillKey, primaryEnv, commandDispatch, capability };
+  return {
+    ok: true,
+    metadata: { name: obj["name"], description: obj["description"], type, userInvocable, disableModelInvocation, argumentHint, os, requires, skillKey, primaryEnv, commandDispatch, capability },
+  };
 }
 
 /**
@@ -383,14 +402,15 @@ function discoverSkillsFromDir(
     // Silent skip if same real file already loaded (same file via different symlink)
     if (realPathSet.has(realPath)) continue;
 
-    const metadata = extractMetadataFromSkillMd(fullPath, logger);
-    if (metadata === null) {
+    const outcome = extractMetadataFromSkillMd(fullPath, logger);
+    if (!outcome.ok) {
       logger?.warn(
-        { skillPath: fullPath, hint: "Check skill file has valid YAML frontmatter with name and description fields", errorKind: "validation" as const },
+        { skillPath: fullPath, hint: outcome.hint, errorKind: "validation" as const },
         "Skipping malformed skill file",
       );
       continue;
     }
+    const metadata = outcome.metadata;
 
     // Determine the skill directory:
     // For root .md files: the directory containing the file
