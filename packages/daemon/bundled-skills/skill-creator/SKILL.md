@@ -1,7 +1,8 @@
 ---
 name: skill-creator
-version: "1.1.1"
 description: Create new Comis skills, modify and improve existing skills, and validate them against the platform's manifest schema. Use this skill whenever the user wants to create a skill from scratch, turn a workflow into a reusable skill, update or fix an existing skill, understand the skill format, or asks about how skills work in Comis -- even if they don't use the word "skill" explicitly.
+metadata:
+  version: "1.1.1"
 ---
 
 # Skill Creator
@@ -141,7 +142,7 @@ description: What this skill does and when to use it. Be specific and slightly p
 Bad: `"Dashboard builder."`
 Good: `"Build data visualization dashboards with charts, tables, and filters. Use whenever the user mentions dashboards, data visualization, metrics display, or chart creation -- even if they don't explicitly ask for a 'dashboard'."`
 
-Only two fields are required: `name` and `description`. For advanced fields (comis namespace, permissions, allowedTools, inputSchema), read `references/schema.md` in this skill's directory.
+Only two fields are required: `name` and `description`. Advanced fields (the comis namespace, permissions, allowed-tools, input schema) are carried under one `metadata.comis` key; read `references/schema.md` in this skill's directory.
 
 #### Body structure
 
@@ -305,7 +306,7 @@ Files used in the output the agent produces (templates, images, fonts, boilerpla
 
 ## Platform Features
 
-For advanced frontmatter fields (comis namespace, permissions, allowedTools, model visibility), read `references/schema.md`. Not needed for simple skills using only `name` and `description`.
+For advanced frontmatter fields carried under `metadata.comis` (the comis namespace, permissions, allowed-tools, model visibility), read `references/schema.md`. Not needed for simple skills using only `name` and `description`.
 
 ## Checklist
 

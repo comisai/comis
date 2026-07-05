@@ -1,8 +1,8 @@
 ---
 name: claude-code
-type: prompt
-version: "1.1.5"
 description: Drive the Claude Code CLI interactively in a terminal session to build, fix, or extend software — launch it in a NAMED project folder, give it the task, handle its interactive prompts via keystrokes, detect completion, and verify the result. Use whenever the user wants to write, build, debug, refactor, or test code or work on a software project, or asks to "use Claude" / "Claude Code" — even if they don't name the tool. This is for INTERACTIVE sessions only; never the headless one-shot mode.
+metadata:
+  version: "1.1.5"
 ---
 
 # Driving Claude Code (interactive)
