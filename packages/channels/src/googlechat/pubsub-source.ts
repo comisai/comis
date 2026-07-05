@@ -380,12 +380,13 @@ export function createPubSubSource(deps: PubSubSourceDeps): PubSubSource {
     const setT = deps.setTimeoutImpl ?? systemSetTimeout;
     const clearT = deps.clearTimeoutImpl ?? systemClearTimeout;
     await new Promise<void>((resolve) => {
-      let timer: ReturnType<typeof setT>;
+      // onAbort closes over `timer`; it only runs on the abort event, by which
+      // point `timer` is assigned — so the forward reference is safe.
       const onAbort = (): void => {
         clearT(timer);
         resolve();
       };
-      timer = setT(() => {
+      const timer = setT(() => {
         // Normal completion: drop the abort listener so it does not accumulate
         // on the shared signal across every backoff cycle (the persistent-
         // failure path is exactly where this would otherwise leak).
