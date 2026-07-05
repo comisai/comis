@@ -53,6 +53,9 @@ importers:
       '@line/bot-sdk':
         specifier: 10.8.0
         version: 10.8.0
+      '@matrix-org/matrix-sdk-crypto-wasm':
+        specifier: 18.3.1
+        version: 18.3.1
       '@mdx-js/mdx':
         specifier: 3.1.1
         version: 3.1.1
@@ -83,6 +86,9 @@ importers:
       eslint-plugin-security:
         specifier: 4.0.1
         version: 4.0.1
+      fake-indexeddb:
+        specifier: 6.2.5
+        version: 6.2.5
       globals:
         specifier: 17.6.0
         version: 17.6.0
@@ -231,6 +237,9 @@ importers:
       '@line/bot-sdk':
         specifier: 10.8.0
         version: 10.8.0
+      '@matrix-org/matrix-sdk-crypto-wasm':
+        specifier: 18.3.1
+        version: 18.3.1
       '@slack/bolt':
         specifier: 4.7.3
         version: 4.7.3(@types/express@5.0.6)
@@ -243,6 +252,9 @@ importers:
       discord.js:
         specifier: 14.26.4
         version: 14.26.4
+      fake-indexeddb:
+        specifier: 6.2.5
+        version: 6.2.5
       file-type:
         specifier: 21.3.4
         version: 21.3.4
@@ -449,6 +461,9 @@ importers:
       '@line/bot-sdk':
         specifier: 10.8.0
         version: 10.8.0
+      '@matrix-org/matrix-sdk-crypto-wasm':
+        specifier: 18.3.1
+        version: 18.3.1
       '@modelcontextprotocol/sdk':
         specifier: 1.29.0
         version: 1.29.0(zod@4.4.3)
@@ -563,6 +578,9 @@ importers:
       edge-tts-universal:
         specifier: 1.4.0
         version: 1.4.0
+      fake-indexeddb:
+        specifier: 6.2.5
+        version: 6.2.5
       file-type:
         specifier: 21.3.4
         version: 21.3.4
@@ -3713,6 +3731,10 @@ packages:
 
   extend@3.0.2:
     resolution: {integrity: sha512-fjquC59cD7CyW6urNXK0FBufkZcoiGG80wTuPujX590cB5Ttln20E2UB4S/WARVqhXffZl2LNgS+gQdPIIim/g==}
+
+  fake-indexeddb@6.2.5:
+    resolution: {integrity: sha512-CGnyrvbhPlWYMngksqrSSUT1BAVP49dZocrHuK0SvtR0D5TMs5wP0o3j7jexDJW01KSadjBp1M/71o/KR3nD1w==}
+    engines: {node: '>=18'}
 
   fast-copy@4.0.3:
     resolution: {integrity: sha512-58apWr0GUiDFM8+3afrO6eYwJBn9ZAhDOzG3L+/9llab/haCARS2UIfffmOurYLwbgDRs8n0rfr6qAAPEAuAQw==}
@@ -8734,6 +8756,8 @@ snapshots:
       - supports-color
 
   extend@3.0.2: {}
+
+  fake-indexeddb@6.2.5: {}
 
   fast-copy@4.0.3: {}
 
