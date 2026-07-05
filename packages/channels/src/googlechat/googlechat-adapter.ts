@@ -195,7 +195,10 @@ export function createGoogleChatAdapter(
             },
             "Inbound message handler error",
           );
-          // Rethrow so the pull loop skips the ack and the message redelivers.
+          // @allow-throw: handleChatEvent is the pull loop's onEvent boundary — a
+          // rejected promise IS the skip-ack (redeliver) signal, which the loop
+          // catches and translates. Rethrow so the failed enqueue redelivers
+          // rather than being acked-and-dropped.
           throw failed.reason instanceof Error
             ? failed.reason
             : new Error(String(failed.reason));
