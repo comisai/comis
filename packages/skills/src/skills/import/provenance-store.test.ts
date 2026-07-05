@@ -218,7 +218,7 @@ describe("computeInstalledSetHash — deterministic, order-independent", () => {
     expect(computeInstalledSetHash(files)).toBe(computeInstalledSetHash(reversed));
   });
 
-  it("changes when a file's bytes change", () => {
+  it("returns a different hash when a file's bytes change", () => {
     const base = [{ relPath: "SKILL.md", bytes: Buffer.from("body") }];
     const changed = [{ relPath: "SKILL.md", bytes: Buffer.from("BODY") }];
     expect(computeInstalledSetHash(base)).not.toBe(computeInstalledSetHash(changed));
