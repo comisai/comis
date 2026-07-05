@@ -24,6 +24,9 @@
     "license": {
       "type": "string"
     },
+    "compatibility": {
+      "type": "string"
+    },
     "userInvocable": {
       "default": true,
       "type": "boolean"

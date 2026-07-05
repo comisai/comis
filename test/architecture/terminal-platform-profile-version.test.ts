@@ -21,6 +21,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, it, expect } from "vitest";
+import { parse as parseYaml } from "yaml";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PLATFORMS_DIR = resolve(
@@ -39,11 +40,32 @@ function parseProfileId(ts: string): string | undefined {
   return ts.match(/\bid:\s*["']([^"']+)["']/)?.[1];
 }
 
-/** Extract the `version:` from a SKILL.md YAML frontmatter block. */
+/**
+ * Extract the manifest version from a SKILL.md YAML frontmatter block:
+ * `metadata.version` (its authored home), falling back to a top-level
+ * `version`. Parses the WHOLE frontmatter block with the YAML parser — the
+ * SAME field the boot seeder reads — so a version nested under `metadata:`
+ * (indented, and possibly following a long `description`) is found. Returns
+ * undefined on no frontmatter block, no version, or a block that is not valid YAML.
+ */
 function parseSkillVersion(md: string): string | undefined {
-  const fm = md.match(/^---\n([\s\S]*?)\n---/);
+  const fm = md.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (fm === null) return undefined;
-  return fm[1].match(/^version:\s*["']?([^"'\n]+)["']?\s*$/m)?.[1]?.trim();
+  try {
+    const parsed = parseYaml(fm[1]) as Record<string, unknown> | null | undefined;
+    if (parsed === null || typeof parsed !== "object") return undefined;
+    const meta = parsed["metadata"];
+    const nested =
+      meta !== null && typeof meta === "object"
+        ? (meta as Record<string, unknown>)["version"]
+        : undefined;
+    const raw = nested ?? parsed["version"];
+    if (raw === undefined || raw === null) return undefined;
+    const value = String(raw).trim();
+    return value.length > 0 ? value : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Every `platforms/<id>/profile.ts` (auto-discovered) → its directory id + source. */
@@ -79,15 +101,15 @@ describe("terminal platform-profile ↔ SKILL.md version parity (build-time drif
 
       expect(
         profileVersion,
-        `platform "${dir}": profile.platformVersion (${profileVersion}) must equal SKILL.md version (${skillVersion}) — bump them together (D2)`,
+        `platform "${dir}": profile.platformVersion (${profileVersion}) must equal SKILL.md version (${skillVersion}) — bump them together`,
       ).toBe(skillVersion);
     });
   }
 });
 
 describe("the version parsers are non-vacuous (the drift guard genuinely fires)", () => {
-  it("parses a quoted frontmatter version and detects a deliberate mismatch", () => {
-    const md = '---\nname: x\ntype: prompt\nversion: "1.1.3"\n---\n# body\n';
+  it("reads metadata.version from frontmatter and detects a deliberate mismatch", () => {
+    const md = '---\nname: x\ndescription: d\nmetadata:\n  version: "1.1.3"\n---\n# body\n';
     expect(parseSkillVersion(md)).toBe("1.1.3");
     const profileTs = 'export const p = { id: "x", platformVersion: "1.1.4" };';
     // A mismatched pair MUST be unequal — proving the parity assertion above is not vacuous.
