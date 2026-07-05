@@ -468,6 +468,34 @@ describe("createDurableResumeEngine resume-or-orphan and bounded recovery", () =
     expect(notify).toHaveBeenCalled();
   });
 
+  it("F-WS4-B: caps no-progress re-anchors — a stale run whose heartbeat never advances is orphaned after MAX_REANCHOR_ATTEMPTS, then never re-anchored again", async () => {
+    // A surface-only re-anchor never advances the heartbeat, so a dead run (process gone,
+    // never explicitly resumed) would loop forever. The engine must re-anchor a bounded
+    // number of times, then orphan it. MAX_REANCHOR_ATTEMPTS = 3 → passes 1..3 resume, pass 4 orphans.
+    const record = durableRecord({ rootRunId: "root-stuck", lastHeartbeatAt: 500_000 });
+    const durableRuns = makeDurableRuns({ resumable: [record] });
+    const resumeRun = vi.fn(async () => ok(undefined));
+    const engine = createDurableResumeEngine(makeEngineDeps({ durableRuns, resumeRun }));
+    for (let i = 0; i < 4; i++) await engine.resumeAll(); // ONE engine instance — the ledger persists across passes
+    expect(resumeRun).toHaveBeenCalledTimes(3); // re-anchored 3×, then stopped (not re-anchored on pass 4)
+    const orphans = durableRuns.calls.filter((c) => c.method === "markOrphaned" && c.args[0] === "root-stuck");
+    expect(orphans).toHaveLength(1); // orphaned exactly once, on the 4th (over-cap) pass
+    expect(String(orphans[0]!.args[1])).toMatch(/no-progress re-anchor/); // reason names the cap
+  });
+
+  it("F-WS4-B: a heartbeat advance (progress) resets the re-anchor counter — a live run is never false-orphaned", async () => {
+    const record = durableRecord({ rootRunId: "root-live", lastHeartbeatAt: 500_000 });
+    const durableRuns = makeDurableRuns({ resumable: [record] });
+    const engine = createDurableResumeEngine(makeEngineDeps({ durableRuns }));
+    // Drive many more passes than the cap, advancing the heartbeat each pass (a live run that
+    // checkpoints). The counter must reset on each advance ⇒ it never reaches the cap.
+    for (let i = 0; i < 10; i++) {
+      record.lastHeartbeatAt = 500_000 + (i + 1) * 1000; // progress every pass
+      await engine.resumeAll();
+    }
+    expect(durableRuns.calls.filter((c) => c.method === "markOrphaned")).toHaveLength(0);
+  });
+
   it("never-sent-run-resumes-not-orphaned: a status='running' record with stepIndex=-1 RESUMES (remintLease + resumeRun), NOT orphaned", async () => {
     const neverSent = durableRecord({ rootRunId: "root-neversent", stepIndex: -1 });
     const remintLease = vi.fn(() => ({ leaseId: "lease-ns", bearer: "b" }));
