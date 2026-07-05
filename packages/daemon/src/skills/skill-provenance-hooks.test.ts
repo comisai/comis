@@ -188,6 +188,47 @@ describe("unwindImportedSkillOnDelete — delete unwind", () => {
     expect(mockPersistMcpServers.mock.calls.length).toBe(0);
     expect(disconnectSpy.mock.calls.length).toBe(0);
   });
+
+  it("a disconnect that throws is tolerated: the entry is still removed and the unwind succeeds", async () => {
+    recordBundleEntries(dataDir, "resilient", [entry("boom")]);
+    const disconnectSpy = vi.fn(async () => {
+      throw new Error("transport already gone");
+    });
+    const deps = {
+      mcpClientManager: {
+        getConnection: () => ({ name: "boom" }),
+        disconnect: disconnectSpy,
+      },
+      logger: createMockLogger(),
+      persistDeps: { configPaths: ["/tmp/c.yaml"], defaultConfigPaths: ["/tmp/d.yaml"], logger: createMockLogger() },
+      container: { config: { dataDir, integrations: { mcp: { servers: [entry("boom")] } } } },
+    } as unknown as WorkspaceApiDeps;
+
+    const result = await unwindImportedSkillOnDelete(deps, { scope: "local", agentId: "agent-a", name: "resilient", ctx: undefined });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.ownedServers).toEqual(["boom"]);
+      // The throw is swallowed, so the server is NOT reported disconnected...
+      expect(result.value.disconnected).toEqual([]);
+    }
+    // ...but the persisted entry is still dropped.
+    expect((mockPersistMcpServers.mock.calls[0]![1] as McpServerEntry[]).map((s) => s.name)).toEqual([]);
+  });
+
+  it("a config write that only lands in-memory (runtime_only) still forgets the ledger + removes the record", async () => {
+    recordBundleEntries(dataDir, "half", [entry("srv")]);
+    await seedRecord("half", ["SKILL.md"]);
+    mockPersistMcpServers.mockResolvedValueOnce({ persistence: "runtime_only" as const, warning: "disk write failed" });
+    const { deps } = makeDeps({ servers: [entry("srv")] });
+
+    const result = await unwindImportedSkillOnDelete(deps, { scope: "local", agentId: "agent-a", name: "half", ctx: undefined });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.provenanceRemoved).toBe(true);
+    // The record is still removed even when the config write degraded.
+    expect(readProvenanceStore(dataDir)[provenanceKey("local", "agent-a", "half")]).toBeUndefined();
+  });
 });
 
 describe("repinLocallyModifiedSkill — local-edit re-pin", () => {
@@ -221,6 +262,21 @@ describe("repinLocallyModifiedSkill — local-edit re-pin", () => {
     const expectedHash = computeInstalledSetHash([{ relPath: "SKILL.md", bytes: Buffer.from(newBody, "utf-8") }]);
     expect(updated!.contentHash).toBe(expectedHash);
     expect(updated!.contentHash).not.toBe(original.contentHash);
+  });
+
+  it("errors when a recorded install file is missing on disk (the pin cannot be recomputed)", async () => {
+    await seedRecord("gappy", ["SKILL.md", "reference.md"]);
+    const skillDir = join(tmpRoot, "skills", "gappy");
+    mkdirSync(skillDir, { recursive: true });
+    // Only SKILL.md exists; reference.md is missing.
+    writeFileSync(join(skillDir, "SKILL.md"), "body", "utf-8");
+    const { deps } = makeDeps();
+
+    const result = await repinLocallyModifiedSkill(deps, { scope: "local", agentId: "agent-a", name: "gappy", location: skillDir });
+
+    expect(result.ok).toBe(false);
+    // The pin is left untouched when it cannot be recomputed.
+    expect(readProvenanceStore(dataDir)[provenanceKey("local", "agent-a", "gappy")]?.locallyModified).toBeUndefined();
   });
 
   it("no provenance record (a hand-created skill): a no-op re-pin", async () => {
