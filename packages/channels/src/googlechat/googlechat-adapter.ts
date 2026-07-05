@@ -30,7 +30,12 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { runWithContext, systemNowMs, systemSetTimeout } from "@comis/core";
+import {
+  runWithContext,
+  systemNowMs,
+  systemSetTimeout,
+  systemClearTimeout,
+} from "@comis/core";
 import type {
   ChannelPort,
   ChannelStatus,
@@ -170,9 +175,35 @@ export function createGoogleChatAdapter(
     setTimeout: deps.setTimeoutImpl ?? systemSetTimeout,
     ...(deps.clearTimeoutImpl && { clearTimeout: deps.clearTimeoutImpl }),
   });
-  // Aborted on stop() so a send parked in a pending pace-wait cancels its wait
-  // promptly rather than holding shutdown; abort is terminal for this instance.
+  // Aborted on stop() so a send parked in a pending pace-wait OR a 429 retry
+  // backoff cancels its wait promptly rather than holding shutdown; abort is
+  // terminal for a given controller instance.
   const sendAbort = new AbortController();
+
+  // Resolve after `ms`, or promptly if `signal` aborts — the same abort-aware
+  // shape the pacer's pace-wait uses. The timer handle is unref'd so a pending
+  // wait never holds the event loop open at shutdown, and the abort listener is
+  // dropped on normal completion so it cannot accumulate across a retry loop
+  // that shares one signal.
+  function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return Promise.resolve();
+    const setT = deps.setTimeoutImpl ?? systemSetTimeout;
+    const clearT = deps.clearTimeoutImpl ?? systemClearTimeout;
+    return new Promise<void>((resolve) => {
+      // onAbort closes over `handle`; it only runs on the abort event, by which
+      // point `handle` is assigned — so the forward reference is safe.
+      const onAbort = (): void => {
+        clearT(handle);
+        resolve();
+      };
+      const handle = setT(() => {
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
+      handle.unref?.();
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+  }
 
   let _connected = false;
   let _startedAt: number | undefined;
@@ -392,7 +423,6 @@ export function createGoogleChatAdapter(
       if (!tok.ok) return err(tok.error); // auth already logged a secret-free WARN
       const chatBase = deps.chatBaseUrl ?? "https://chat.googleapis.com/v1";
       const doFetch = deps.fetchImpl ?? fetch;
-      const timer = deps.setTimeoutImpl ?? systemSetTimeout;
       // A reply to a threaded inbound rides its thread. The thread resource name
       // is a BODY value (never interpolated into the URL path); the reply option
       // is a query param. REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD makes the platform
@@ -464,10 +494,16 @@ export function createGoogleChatAdapter(
               },
               "Google Chat send retry scheduled after rate limiting",
             );
-            await new Promise<void>((resolve) => {
-              const handle = timer(() => resolve(), delayMs);
-              handle.unref?.();
-            });
+            // The retry wait observes sendAbort so stop() cancels a parked
+            // resend — a non-idempotent create must not fire a POST after the
+            // adapter has been stopped. Bail on abort rather than continue.
+            if (sendAbort.signal.aborted) {
+              return err(new Error("send aborted during retry backoff"));
+            }
+            await abortableSleep(delayMs, sendAbort.signal);
+            if (sendAbort.signal.aborted) {
+              return err(new Error("send aborted during retry backoff"));
+            }
             continue;
           }
           const c = classifyGoogleChatError(res.status);
