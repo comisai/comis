@@ -714,7 +714,7 @@ describe("createGoogleChatAdapter — sendMessage (messages.create)", () => {
     expect(loggerSpy.serialized()).not.toContain(MINTED_TOKEN);
   });
 
-  it("returns err classified network when the send transport rejects", async () => {
+  it("returns err classified network when the send transport rejects, attaching the underlying err (never the token)", async () => {
     const { fetchImpl } = makeChatFetch({ sendThrows: true });
     const { deps, loggerSpy } = await makeDeps({ fetchImpl });
     const adapter = createGoogleChatAdapter(deps);
@@ -722,7 +722,12 @@ describe("createGoogleChatAdapter — sendMessage (messages.create)", () => {
     const result = await adapter.sendMessage("spaces/AAAA", "hi");
 
     expect(result.ok).toBe(false);
-    expect(findByErrorKind(loggerSpy.error, "network")).toBeDefined();
+    const errRec = findByErrorKind(loggerSpy.error, "network");
+    expect(errRec).toBeDefined();
+    // The transport cause is attached so an operator can tell ECONNREFUSED from
+    // a DNS/TLS failure; the token lives only in init.headers, never in err.
+    expect(errRec?.err).toBeInstanceOf(Error);
+    expect(loggerSpy.serialized()).not.toContain(MINTED_TOKEN);
   });
 
   it("does NOT bump lastInboundAt on an outbound send (bumps lastMessageAt only)", async () => {
@@ -890,6 +895,24 @@ describe("createGoogleChatAdapter — editMessage (messages.patch)", () => {
     expect(result?.ok).toBe(true);
   });
 
+  it("attaches the underlying err on an edit transport fault (diagnosable) while never logging the token", async () => {
+    const { fetchImpl } = makeChatFetch({ sendThrows: true });
+    const { deps, loggerSpy } = await makeDeps({ fetchImpl });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const result = await adapter.editMessage?.(
+      "spaces/AAAA",
+      "spaces/AAAA/messages/CCC",
+      "hi",
+    );
+
+    expect(result?.ok).toBe(false);
+    const errRec = findByErrorKind(loggerSpy.error, "network");
+    expect(errRec).toBeDefined();
+    expect(errRec?.err).toBeInstanceOf(Error);
+    expect(loggerSpy.serialized()).not.toContain(MINTED_TOKEN);
+  });
+
   it("exposes editMessage as a function on the adapter handle", async () => {
     const { deps } = await makeDeps();
     const adapter = createGoogleChatAdapter(deps);
@@ -972,6 +995,23 @@ describe("createGoogleChatAdapter — deleteMessage (messages.delete)", () => {
       // The shared allowlist guard short-circuits before token+fetch.
       expect(spy).not.toHaveBeenCalled();
     }
+  });
+
+  it("attaches the underlying err on a delete transport fault (diagnosable) while never logging the token", async () => {
+    const { fetchImpl } = makeChatFetch({ sendThrows: true });
+    const { deps, loggerSpy } = await makeDeps({ fetchImpl });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const result = await adapter.deleteMessage?.(
+      "spaces/AAAA",
+      "spaces/AAAA/messages/CCC",
+    );
+
+    expect(result?.ok).toBe(false);
+    const errRec = findByErrorKind(loggerSpy.error, "network");
+    expect(errRec).toBeDefined();
+    expect(errRec?.err).toBeInstanceOf(Error);
+    expect(loggerSpy.serialized()).not.toContain(MINTED_TOKEN);
   });
 
   it("exposes deleteMessage as a function on the adapter handle", async () => {
