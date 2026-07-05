@@ -415,7 +415,11 @@ export function createPubSubSource(deps: PubSubSourceDeps): PubSubSource {
 
       if (out.pullFailed) {
         consecutiveFailures += 1;
-        if (consecutiveFailures >= threshold) {
+        // Log the loud ERROR once, on the edge that crosses the threshold — not
+        // on every subsequent failing cycle, which would flood one ERROR per
+        // backoff cap (30s) for a dead loop. `lastError` (set every cycle in
+        // pollOnce) carries the ongoing failure for status degradation.
+        if (consecutiveFailures === threshold) {
           deps.logger.error(
             {
               channelType: "googlechat" as const,

@@ -629,6 +629,29 @@ describe("createPubSubSource — bounded jittered backoff + AbortController stop
     await source.stop();
   });
 
+  it("logs the loud ERROR once on the threshold crossing, not on every failing cycle past it", async () => {
+    const timers = makeFakeTimers();
+    const { deps, loggerSpy } = makeDeps({
+      fetchImpl: failingFetch(),
+      setTimeoutImpl: timers.setTimeoutImpl,
+      clearTimeoutImpl: timers.clearTimeoutImpl,
+      rng: () => 0.5,
+      errorLogThreshold: 3,
+    });
+    const source = createPubSubSource(deps);
+
+    source.start();
+    await flushMicrotasks(); // failure #1
+    for (let i = 0; i < 5; i += 1) await timers.fireNext(); // failures #2..#6
+    await source.stop();
+
+    // The threshold is crossed once (at #3); #4/#5/#6 must NOT re-emit the loud
+    // ERROR — otherwise a dead loop floods one ERROR per 30s cap indefinitely.
+    // lastError still reflects the ongoing failure for status degradation.
+    expect(loggerSpy.error).toHaveBeenCalledTimes(1);
+    expect(typeof source.lastError).toBe("string");
+  });
+
   it("resets the consecutive-failure count after a good pull so the loud ERROR does not re-fire", async () => {
     let call = 0;
     const impl = vi.fn(async () => {
