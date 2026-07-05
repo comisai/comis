@@ -27,9 +27,10 @@
  * @module
  */
 
-import type { NormalizedMessage } from "@comis/core";
+import type { Attachment, NormalizedMessage } from "@comis/core";
 import { systemNowMs } from "@comis/core";
 import { randomUUID } from "node:crypto";
+import { mimeToAttachmentType } from "../shared/media-utils.js";
 
 /**
  * Minimal classic Chat interaction-event shape — only the fields the inbound
@@ -60,7 +61,72 @@ export interface GoogleChatEvent {
     annotations?: Array<{ type?: string }>;
     /** Per-message space; takes precedence over the top-level `space`. */
     space?: { name?: string; type?: string; spaceType?: string };
+    /**
+     * Inbound file/media attachments — the repeated Chat Message resource field
+     * is named `attachment` (SINGULAR), NOT `attachments`; reading the plural
+     * would always be empty. Only an attachment whose `attachmentDataRef` carries
+     * a resource name is downloadable by an app (over media.download); a
+     * `driveDataRef`-only share (source "DRIVE_FILE" from the Drive picker) has no
+     * downloadable resource name. The wire also carries browser-facing
+     * `downloadUri`/`thumbnailUri` links that reject an app bearer — they are
+     * deliberately NOT modeled here so they can never be surfaced as a fetch URL.
+     */
+    attachment?: Array<{
+      name?: string;
+      contentName?: string;
+      contentType?: string;
+      /** Upload-origin marker; classification keys on resource-name presence, not this. */
+      source?: string;
+      /** Present with a resource name → the attachment is downloadable via media.download. */
+      attachmentDataRef?: { resourceName?: string };
+      /** A Drive-only reference → not downloadable by an app. */
+      driveDataRef?: { driveFileId?: string };
+    }>;
   };
+}
+
+/**
+ * Extract inbound attachments from a Chat message, keying the resolve/skip
+ * decision on the PRESENCE of a downloadable resource name — never on the upload
+ * source. An attachment carrying `attachmentDataRef.resourceName` is surfaced as a
+ * `googlechat-attachment://` ref the media resolver can fetch (with a coarse
+ * `type` + `mimeType` + `fileName` so the standard pipeline routes it); a share
+ * that carries no resource name is surfaced separately under `skipped` for the
+ * caller to log. The ref URL is only ever the resource-name scheme — a
+ * browser-facing download link is never read.
+ *
+ * Pure: no I/O, no logging. The caller (the adapter) logs the `skipped` half so
+ * the mapper stays transport- and logger-free.
+ *
+ * @param message - The decoded Chat message payload (may be undefined)
+ * @returns `{ attachments, skipped }` — resolvable refs and resource-name-less shares
+ */
+export function extractGoogleChatAttachments(
+  message: GoogleChatEvent["message"],
+): { attachments: Attachment[]; skipped: Array<{ source?: string; contentName?: string }> } {
+  const attachments: Attachment[] = [];
+  const skipped: Array<{ source?: string; contentName?: string }> = [];
+  for (const a of message?.attachment ?? []) {
+    // Untrusted inbound JSON: a decoded array element can be the literal null or a
+    // non-object scalar. Guard before any dereference so a hostile element is
+    // dropped rather than crashing the mapper.
+    if (a === null || typeof a !== "object") continue;
+    const resourceName = a.attachmentDataRef?.resourceName;
+    if (typeof resourceName === "string" && resourceName.length > 0) {
+      // encodeURIComponent guarantees no bare "://" inside the payload, so the
+      // resolver's scheme split sees exactly `googlechat-attachment` and the
+      // decode is its exact inverse.
+      attachments.push({
+        type: mimeToAttachmentType(a.contentType),
+        url: `googlechat-attachment://${encodeURIComponent(resourceName)}`,
+        ...(a.contentType != null && { mimeType: a.contentType }),
+        ...(a.contentName != null && { fileName: a.contentName }),
+      });
+    } else {
+      skipped.push({ source: a.source, contentName: a.contentName });
+    }
+  }
+  return { attachments, skipped };
 }
 
 /** The non-empty sentinel space name. */
@@ -118,8 +184,10 @@ export function mapGoogleChatEventToNormalized(
     // text is the faithful command without hand-stripping.
     text: message.argumentText ?? message.text ?? "",
     timestamp: systemNowMs(),
-    // Inbound media is resolved downstream; the mapper emits no attachments.
-    attachments: [],
+    // Attachments carrying a downloadable resource name are surfaced as
+    // googlechat-attachment:// refs the resolver fetches; a share without one is
+    // separated into `skipped` for the caller to log, so the mapper stays pure.
+    attachments: extractGoogleChatAttachments(message).attachments,
     chatType: isDm ? "dm" : "group",
     metadata,
   };
