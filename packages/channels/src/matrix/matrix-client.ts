@@ -450,6 +450,14 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
             ...(re.value.deviceId !== undefined ? { deviceId: re.value.deviceId } : {}),
           };
           await persistState("accessToken");
+          // Apply the fresh token to the LIVE client and force a clean restart so
+          // /sync resumes authenticated with it. matrix-js-sdk no-ops a second
+          // startClient on an already-started client and never picks up a new
+          // token on its own — so stop, swap the credential in place, then
+          // restart. Restarting without applying the token would silently resume
+          // on the DEAD one (the secondary half of the recovery bug).
+          client.stopClient();
+          client.setAccessToken(re.value.accessToken);
           const resumed = await fromPromise(
             client.startClient({ initialSyncLimit, filter: buildSyncFilter(client.getUserId()) }),
           );

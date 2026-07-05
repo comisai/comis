@@ -50,7 +50,11 @@ import {
   validateMatrixCredentials,
 } from "./credential-validator.js";
 import { createMatrixAuth } from "./matrix-auth.js";
-import { createMatrixClient, type MatrixSyncController } from "./matrix-client.js";
+import {
+  createMatrixClient,
+  type MatrixHealthSignal,
+  type MatrixSyncController,
+} from "./matrix-client.js";
 import { createMatrixStateStore } from "./matrix-state.js";
 import { buildTextMessageContent } from "./matrix-adapter-outbound.js";
 
@@ -86,6 +90,14 @@ export interface MatrixAdapterDeps {
   createClientImpl?: typeof sdk.createClient;
   /** Injected clock in ms, defaulting to systemNowMs; makes timing deterministic. */
   now?: () => number;
+  /**
+   * Sink for the dark-access-token health signal (CORE-02): when a mid-run token
+   * expiry cannot auto-recover (no password), the `/sync` controller emits a
+   * loud, secret-free signal naming `channels.matrix.accessToken`. The daemon
+   * wires this to the event bus so `comis fleet`/doctor surface it; absent, the
+   * loud ERROR log still fires. Never carries a token or message body.
+   */
+  emitHealth?: (signal: MatrixHealthSignal) => void;
 }
 
 /**
@@ -277,6 +289,13 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
       // Wire and start the `/sync` transport; speakers are gated on the way out.
       // `isDirectRoom` reads the client's `m.direct` account data so a 1:1 room
       // maps to `chatType: "dm"` (a room absent from it is a group).
+      //
+      // CORE-02 recovery seams: wire `reauthenticate` ONLY when a password is
+      // configured — a mid-run `M_UNKNOWN_TOKEN` then re-logins (fresh token, same
+      // device, resumed sync); without a password the controller emits the loud
+      // health signal (naming `channels.matrix.accessToken`) instead of going
+      // silently dark. `emitHealth` bridges that signal to the injected sink.
+      const canReauthenticate = deps.password !== undefined && deps.password.length > 0;
       controller = createMatrixClient({
         client: authedClient,
         stateStore,
@@ -286,6 +305,8 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
         onMessage: onSyncMessage,
         isDirectRoom: (room) => isRoomDirect(authedClient, room),
         logger: deps.logger,
+        ...(canReauthenticate ? { reauthenticate: () => auth.reauthenticate() } : {}),
+        ...(deps.emitHealth !== undefined ? { emitHealth: deps.emitHealth } : {}),
       });
       const started = await controller.start();
       if (!started.ok) {

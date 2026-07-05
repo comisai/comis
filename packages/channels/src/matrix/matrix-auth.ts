@@ -78,10 +78,24 @@ export interface MatrixAuthResult {
   accessToken?: string;
 }
 
+/** Fresh credentials a password re-login yields for the token-expiry seam. */
+export interface MatrixReauthCredentials {
+  /** The freshly minted access token — applied to the live client + persisted. */
+  accessToken: string;
+  /** The device id the re-login resolved (reused so the identity is preserved). */
+  deviceId?: string;
+}
+
 /** The auth lifecycle handle. */
 export interface MatrixAuth {
   /** Authenticate via the configured token or password; validate with whoami. */
   authenticate(): Promise<Result<MatrixAuthResult, Error>>;
+  /**
+   * Re-run the password login to mint a fresh token (pinning the same device
+   * id), for the mid-run token-expiry recovery seam. Errs when no password is
+   * configured — the caller then keeps the loud-health path instead.
+   */
+  reauthenticate(): Promise<Result<MatrixReauthCredentials, Error>>;
 }
 
 /** Extract the classifier's normalized fields from a thrown SDK error. */
@@ -249,6 +263,28 @@ export function createMatrixAuth(deps: MatrixAuthDeps): MatrixAuth {
       }
 
       return err(new Error("Matrix authentication requires an access token or a password"));
+    },
+
+    async reauthenticate(): Promise<Result<MatrixReauthCredentials, Error>> {
+      // Only a password can mint a fresh token mid-run; a token-only deployment
+      // has nothing to re-login with (the caller keeps the loud-health path).
+      if (deps.password === undefined || deps.password.length === 0) {
+        return err(new Error("Matrix re-authentication requires a configured password"));
+      }
+      const persisted = await deps.stateStore.load();
+      const persistedState = persisted.ok ? persisted.value : undefined;
+      // Reuse the same device id so the E2EE identity is preserved across the
+      // re-login (the whole point of persisting it in the first place).
+      const deviceId = deps.deviceId ?? persistedState?.deviceId;
+      const relogin = await runPasswordLogin(deps.password, deviceId, persistedState);
+      if (!relogin.ok) return err(relogin.error);
+      const { accessToken, deviceId: reloginDeviceId } = relogin.value;
+      if (accessToken === undefined) {
+        return err(new Error("Matrix re-login did not return an access token"));
+      }
+      const creds: MatrixReauthCredentials = { accessToken };
+      if (reloginDeviceId !== undefined) creds.deviceId = reloginDeviceId;
+      return ok(creds);
     },
   };
 }
