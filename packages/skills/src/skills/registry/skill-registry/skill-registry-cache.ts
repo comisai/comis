@@ -59,6 +59,35 @@ import type {
 } from "./skill-registry-types.js";
 
 /**
+ * Resolve the EFFECTIVE `enableDynamicContext` for a single skill — the
+ * authoritative per-skill resolution point.
+ *
+ * An imported skill's SKILL.md body is remote-authored and untrusted, so its
+ * dynamic-context (shell-in-body) expansion is forced OFF regardless of the
+ * global `promptSkills.enableDynamicContext` toggle: the imported trust tier
+ * never runs body-expansion. Every other source defers to the global config
+ * value.
+ *
+ * Any consumer that acts on dynamic-context expansion MUST read the effective
+ * value from here rather than the raw global config, so the imported-tier
+ * force-off cannot be bypassed by a caller that reads the global toggle
+ * directly. Co-located with the `imported` source stamping (the same trust-tier
+ * discriminator) so the two stay in lock-step.
+ *
+ * @param skillSource - The skill's resolved trust-tier source (the value
+ *   `getPromptSkillDescriptions` stamps — `imported` for a provenance match).
+ * @param config - The skills config carrying the global `promptSkills` toggle.
+ * @returns `false` for an imported skill; otherwise the global config value.
+ */
+export function resolveEffectiveDynamicContext(
+  skillSource: SkillSource | undefined,
+  config: SkillsConfig,
+): boolean {
+  if (skillSource === "imported") return false;
+  return config.promptSkills.enableDynamicContext;
+}
+
+/**
  * Create a skill registry with progressive disclosure.
  *
  * @param config - Skills configuration (discovery paths)
