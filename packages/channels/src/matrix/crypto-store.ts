@@ -52,6 +52,7 @@ import { decodeRecoveryKey } from "matrix-js-sdk/lib/crypto-api/recovery-key.js"
 import type { Result } from "@comis/shared";
 import { fromPromise } from "@comis/shared";
 import type { ComisLogger } from "@comis/core";
+import { systemNowMs, systemSetTimeout, systemClearTimeout } from "@comis/core";
 import { matrixStateFilePath } from "./matrix-state.js";
 
 /** The durable crypto-store snapshot: a 0600 sibling of sync-state.json under stateDir. */
@@ -331,6 +332,9 @@ async function readCryptoSnapshot(stateDir: string): Promise<Buffer | undefined>
     return await readFile(file);
   } catch (error) {
     if ((error as { code?: string } | null)?.code === "ENOENT") return undefined;
+    // @allow-throw: re-raise an unexpected (non-ENOENT) snapshot-read error to the
+    // initMatrixCrypto fromPromise boundary, which converts it to Result.err — a
+    // fresh stateDir (ENOENT) is handled above as "no snapshot yet".
     throw error;
   }
 }
@@ -392,7 +396,7 @@ function createHandle(
   // guarantees at least one snapshot+prune per window.
   const scheduleSnapshot = (): void => {
     if (stopped || timer !== undefined) return;
-    timer = setTimeout(() => {
+    timer = systemSetTimeout(() => {
       timer = undefined;
       void snapshotNow().then((r) => {
         if (!r.ok) {
@@ -412,7 +416,7 @@ function createHandle(
   const stop = async (): Promise<void> => {
     stopped = true;
     if (timer !== undefined) {
-      clearTimeout(timer);
+      systemClearTimeout(timer);
       timer = undefined;
     }
     try {
@@ -539,7 +543,7 @@ export function initMatrixCrypto(
     importCryptoWasm,
     importFakeIndexedDb,
     snapshotDebounceMs = DEFAULT_SNAPSHOT_DEBOUNCE_MS,
-    now = (): number => Date.now(),
+    now = systemNowMs,
   } = deps;
 
   return fromPromise(
