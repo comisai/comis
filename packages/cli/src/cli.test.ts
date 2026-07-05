@@ -96,14 +96,16 @@ describe("CLI entry point", () => {
       "cache",
       // MCP server management surface.
       "mcp",
+      // Skill import surface (`comis skills import`).
+      "skills",
       // Cost-attribution exports/reports (`comis cost export`).
       "cost",
       // Operator-only deterministic replay of a recorded run (`comis orchestrate replay`).
       "orchestrate",
     ] as const;
 
-    it("registers exactly 29 commands", () => {
-      expect(program.commands).toHaveLength(29);
+    it("registers exactly 30 commands", () => {
+      expect(program.commands).toHaveLength(30);
     });
 
     it.each(expectedCommands)("registers the '%s' command", (name) => {
