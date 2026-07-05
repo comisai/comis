@@ -4,15 +4,16 @@
  * ChannelPluginPort with an honest, app-auth capability matrix.
  *
  * The adapter sends and receives text over Pub/Sub pull, edits and deletes its
- * own messages, and posts threaded replies, so `editMessages`, `deleteMessages`,
- * and `threads` are advertised `true` and their methods are present. Reactions,
- * history fetch, outbound attachments, and typing indicators are not reachable
- * for a service-account app, so those flags stay `false` and `buttons` stays
- * `"none"`. That honesty is load-bearing: the daemon capability gate
+ * own messages, posts threaded replies, and renders and routes Cards v2
+ * interactive buttons, so `editMessages`, `deleteMessages`, `threads`, and the
+ * `"cardsv2"` button surface are advertised with their supporting paths in place.
+ * Reactions, history fetch, outbound attachments, and typing indicators are not
+ * reachable for a service-account app, so those flags stay `false`. That honesty
+ * is load-bearing: the daemon capability gate
  * (requireMethod) throws if a capability is advertised whose adapter method is
  * omitted, and blocks a false-flag call before it reaches an unimplemented path.
- * Every advertised-true flag has its method present; every false/none flag has
- * its method deliberately OMITTED — the honest-capability contract.
+ * Every advertised-true flag has its method present; every false flag has its
+ * method deliberately OMITTED — the honest-capability contract.
  *
  * activate() delegates to adapter.start() (which opens the pull loop) and
  * deactivate() to adapter.stop(). The plugin returns a plain ChannelPluginPort:
@@ -42,7 +43,7 @@ const CAPABILITIES: ChannelCapability = {
     attachments: false, // outbound upload is user-auth-only
     typing: false, // no typing API
     threads: true, // threaded replies route through the send path
-    buttons: "none", // no card-button surface
+    buttons: "cardsv2", // Cards v2 interactive widget buttons, rendered and routed
   },
   limits: { maxMessageChars: 4000 },
   replyToMetaKey: "googlechatMessageName",
