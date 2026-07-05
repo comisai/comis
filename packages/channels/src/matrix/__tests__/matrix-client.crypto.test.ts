@@ -558,3 +558,47 @@ describe("createMatrixClient — verification posture surface", () => {
     expect(await h.controller.getVerificationStatus()).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Shutdown: stop() must AWAIT the final crypto snapshot flush before returning
+// ---------------------------------------------------------------------------
+
+describe("createMatrixClient — stop() awaits the final crypto snapshot flush", () => {
+  it("does not resolve stop() until the crypto handle has flushed its final snapshot", async () => {
+    // The daemon tears the channel down with `await adapter.stop()` → `await
+    // controller.stop()`. The final snapshot persists the device identity + the
+    // Megolm keys accumulated since the last debounce tick. If stop() fires the
+    // flush and returns without awaiting it, the daemon proceeds to exit while the
+    // fs write is still in flight — a restart then mints a FRESH device id and
+    // orphans the keys. So stop() must not resolve until the flush completes.
+    let flushCompleted = false;
+    const handle: MatrixCryptoHandle = {
+      scheduleSnapshot: vi.fn(),
+      snapshotNow: vi.fn().mockResolvedValue(ok(undefined)),
+      // Model the async final flush: it resolves only after a real timer tick, so a
+      // fire-and-forget caller observably returns before `flushCompleted` is set.
+      stop: vi.fn(async () => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+        flushCompleted = true;
+      }),
+      getVerificationStatus: vi
+        .fn()
+        .mockResolvedValue({ crossSigningReady: false, deviceVerified: false }),
+    };
+    const h = makeCryptoHarness({
+      e2ee: true,
+      stateDir: "/data/matrix",
+      crypto: true,
+      cryptoResult: ok(handle),
+    });
+    await h.controller.start();
+
+    await h.controller.stop();
+
+    // The awaited stop() must have blocked on the key flush.
+    expect(flushCompleted).toBe(true);
+    expect(handle.stop).toHaveBeenCalledTimes(1);
+    // The /sync long-poll is also torn down.
+    expect(h.fake.stopCalls).toBe(1);
+  });
+});
