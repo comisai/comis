@@ -86,7 +86,7 @@ describe("extractVersion — reads metadata.version from the whole frontmatter b
   // version out of range and reports the skill as unversioned — which makes the
   // seeder re-copy it on every boot, overwriting the installed copy.
   const longDescription =
-    "Drive a capable coding agent interactively in a terminal session to build, fix, or extend software: " +
+    "Drive a capable coding agent interactively in a terminal session to build, fix, or extend software — " +
     "launch it in a named project folder, hand it the task, answer its interactive prompts through keystrokes, " +
     "watch closely for completion, and verify the result before reporting a concise summary back to the operator. " +
     "Use this whenever the request is to write, build, debug, refactor, or test code or work on a software " +

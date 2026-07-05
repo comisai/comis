@@ -23,6 +23,7 @@ import {
   cpSync as nodeCpSync,
 } from "node:fs";
 import { safePath } from "@comis/core";
+import { parse as parseYaml } from "yaml";
 
 /** Injected seams for {@link seedBundledSkills} (defaulted to real fs by {@link defaultSeedBundledSkillsDeps}). */
 export interface SeedBundledSkillsDeps {
@@ -69,12 +70,28 @@ export function seedBundledSkills(deps: SeedBundledSkillsDeps): { seeded: string
   return { seeded, skipped };
 }
 
-/** Extract `version:` from the first 512 bytes of a SKILL.md (mirrors the old daemon IIFE regex). */
+/**
+ * Read the manifest version from a SKILL.md frontmatter block: `metadata.version`
+ * (the spec-pure home), or a top-level `version` as a fallback. Parses the FULL
+ * leading frontmatter block — a version that follows a long `description` is
+ * still found. Returns undefined when there is no frontmatter block, no version,
+ * or the block is not valid YAML (the yaml parser can throw on malformed input).
+ */
 export function extractVersion(path: string, readFile: (p: string) => string): string | undefined {
   try {
-    const head = readFile(path).slice(0, 512);
-    const match = head.match(/^version:\s*["']?([^"'\n]+)/m);
-    return match?.[1]?.trim();
+    const block = readFile(path).match(/^---\r?\n([\s\S]*?)\r?\n---/);
+    if (!block) return undefined;
+    const parsed = parseYaml(block[1]) as Record<string, unknown> | null | undefined;
+    if (parsed === null || typeof parsed !== "object") return undefined;
+    const meta = parsed["metadata"];
+    const nested =
+      meta !== null && typeof meta === "object"
+        ? (meta as Record<string, unknown>)["version"]
+        : undefined;
+    const raw = nested ?? parsed["version"];
+    if (raw === undefined || raw === null) return undefined;
+    const value = String(raw).trim();
+    return value.length > 0 ? value : undefined;
   } catch {
     return undefined;
   }
