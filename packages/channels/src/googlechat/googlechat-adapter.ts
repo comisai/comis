@@ -62,6 +62,7 @@ import {
 } from "./pubsub-source.js";
 import {
   mapGoogleChatEventToNormalized,
+  extractGoogleChatAttachments,
   type GoogleChatEvent,
 } from "./message-mapper.js";
 import {
@@ -435,6 +436,29 @@ export function createGoogleChatAdapter(
         "Inbound from non-allowlisted sender dropped",
       );
       return; // drop BEFORE any processing → ack (resolve)
+    }
+
+    // Surface an honest degrade for every share that carries no downloadable
+    // resource name. The mapper already used the extractor's `attachments` half
+    // to populate the message; calling the pure extractor again here for the
+    // `skipped` half keeps ONE source of truth for the extraction while the
+    // mapper stays logger-free (the skip half is never threaded through the
+    // NormalizedMessage). Placed AFTER the allowlist gate so media in a dropped
+    // message is never announced; the WARN carries no resource name, body, or
+    // token — only the content-free diagnostic fields an operator acts on.
+    const { skipped } = extractGoogleChatAttachments(
+      (event as GoogleChatEvent).message,
+    );
+    for (const s of skipped) {
+      deps.logger.warn(
+        {
+          channelType: "googlechat" as const,
+          source: s.source,
+          errorKind: "precondition" as const,
+          hint: "Google Drive shared files need user-OAuth mode with a Drive scope; a service-account app can only download uploaded (drag-drop / paste) content",
+        },
+        "Inbound Drive-file attachment skipped: no downloadable resource name",
+      );
     }
 
     await fanOutMessage(normalized);
