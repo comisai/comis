@@ -51,6 +51,18 @@ const DEFAULT_MAX_MESSAGES = 10;
 /** Upper bound on the dedup seen-set before oldest-first eviction. */
 const DEFAULT_SEEN_SET_MAX = 1000;
 
+/** Backoff floor after the first pull failure, in ms. */
+const DEFAULT_BACKOFF_FLOOR_MS = 1000;
+
+/** Backoff ceiling the exponential doubling saturates at, in ms. */
+const DEFAULT_BACKOFF_CAP_MS = 30_000;
+
+/** Consecutive pull failures before the loop logs a loud ERROR. */
+const DEFAULT_ERROR_LOG_THRESHOLD = 3;
+
+/** Upper bound on the additive backoff jitter, in ms. */
+const JITTER_MS = 500;
+
 /** Dependencies for the Pub/Sub pull-loop source. */
 export interface PubSubSourceDeps {
   /** The subscription resource: `projects/{project}/subscriptions/{sub}`. */
@@ -165,6 +177,11 @@ export function createPubSubSource(deps: PubSubSourceDeps): PubSubSource {
 
   let lastError: string | undefined;
   let running = false;
+  // Consecutive `pullFailed` cycles; drives the loud-ERROR threshold and resets
+  // to 0 after any good pull.
+  let consecutiveFailures = 0;
+  // The in-flight backoff timer handle, so `stop()` can cancel a pending sleep.
+  let pendingBackoff: ReturnType<typeof systemSetTimeout> | undefined;
   // Recreated in `start()`; passed to both the pull fetch and the ack fetch so a
   // `stop()` aborts an in-flight long-poll immediately.
   let controller = new AbortController();
@@ -355,19 +372,85 @@ export function createPubSubSource(deps: PubSubSourceDeps): PubSubSource {
     };
   }
 
+  // Sleep for `ms`, resolving early if the controller aborts. The same signal
+  // drives both the pull fetch and this sleep, so `stop()` cancels an in-flight
+  // long-poll AND a pending backoff at once.
+  async function abortableSleep(ms: number): Promise<void> {
+    if (controller.signal.aborted) return;
+    const setT = deps.setTimeoutImpl ?? systemSetTimeout;
+    const clearT = deps.clearTimeoutImpl ?? systemClearTimeout;
+    await new Promise<void>((resolve) => {
+      const timer = setT(resolve, ms);
+      pendingBackoff = timer;
+      controller.signal.addEventListener(
+        "abort",
+        () => {
+          clearT(timer);
+          resolve();
+        },
+        { once: true },
+      );
+    });
+    pendingBackoff = undefined;
+  }
+
+  // The self-rescheduling pull loop: poll, and on failure back off with a
+  // bounded jittered exponential delay (reset after a good pull); on persistent
+  // failure log loudly so an operator sees a truly-dead loop.
+  async function runLoop(): Promise<void> {
+    const floorMs = deps.backoffFloorMs ?? DEFAULT_BACKOFF_FLOOR_MS;
+    const capMs = deps.backoffCapMs ?? DEFAULT_BACKOFF_CAP_MS;
+    const threshold = deps.errorLogThreshold ?? DEFAULT_ERROR_LOG_THRESHOLD;
+    const rng = deps.rng ?? Math.random;
+    let backoff = floorMs;
+
+    while (running && !controller.signal.aborted) {
+      const out = await pollOnce();
+      // A stop() during the poll must not schedule another backoff.
+      if (!running || controller.signal.aborted) break;
+
+      if (out.pullFailed) {
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= threshold) {
+          deps.logger.error(
+            {
+              channelType: "googlechat" as const,
+              hint: "Pub/Sub pull is persistently failing; verify the service account has roles/pubsub.subscriber and the subscription exists",
+              errorKind: "network" as const,
+              consecutiveFailures,
+            },
+            "Pub/Sub pull loop persistently failing",
+          );
+        }
+        const jitter = Math.floor(rng() * JITTER_MS);
+        await abortableSleep(Math.min(backoff, capMs) + jitter);
+        backoff = Math.min(backoff * 2, capMs);
+      } else {
+        consecutiveFailures = 0;
+        backoff = floorMs;
+      }
+    }
+  }
+
   function start(): void {
     if (running) return;
     running = true;
     controller = new AbortController();
+    consecutiveFailures = 0;
     deps.logger.debug(
       { step: "googlechat-pubsub-start", channelType: "googlechat" as const },
       "Pub/Sub pull loop starting",
     );
+    void runLoop();
   }
 
   async function stop(): Promise<void> {
     running = false;
     controller.abort();
+    if (pendingBackoff !== undefined) {
+      (deps.clearTimeoutImpl ?? systemClearTimeout)(pendingBackoff);
+      pendingBackoff = undefined;
+    }
     deps.logger.info(
       { channelType: "googlechat" as const },
       "Pub/Sub source stopped",
