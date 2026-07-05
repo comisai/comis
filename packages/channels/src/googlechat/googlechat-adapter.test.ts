@@ -573,7 +573,6 @@ describe("createGoogleChatAdapter — reconcile + platformAction + capability ho
     const { deps } = await makeDeps();
     const adapter = createGoogleChatAdapter(deps) as Record<string, unknown>;
     for (const method of [
-      "editMessage",
       "deleteMessage",
       "onReaction",
       "reactToMessage",
@@ -694,6 +693,92 @@ describe("createGoogleChatAdapter — sendMessage (messages.create)", () => {
 
     expect(adapter.getStatus?.().lastInboundAt).toBeUndefined();
     expect(adapter.getStatus?.().lastMessageAt).toBe(NOW);
+  });
+});
+
+describe("createGoogleChatAdapter — editMessage (messages.patch)", () => {
+  it("mints a chat.bot bearer and PATCHes {text} with updateMask=text to the message resource, returning ok(undefined)", async () => {
+    const { fetchImpl, spy } = makeChatFetch();
+    const { deps } = await makeDeps({ fetchImpl });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const result = await adapter.editMessage?.(
+      "spaces/AAAA",
+      "spaces/AAAA/messages/CCC",
+      "new text",
+    );
+
+    expect(result?.ok).toBe(true);
+    if (result?.ok) expect(result.value).toBeUndefined();
+
+    const patchCall = spy.mock.calls.find(([u]) =>
+      String(u).includes("/messages"),
+    ) as [string, RequestInit] | undefined;
+    expect(patchCall).toBeDefined();
+    const [url, init] = patchCall as [string, RequestInit];
+    // updateMask is pinned to `text` — never `*`, which would wipe unspecified
+    // fields — and the resource name is the full spaces/{space}/messages/{id}.
+    expect(url).toBe(
+      "https://chat.googleapis.com/v1/spaces/AAAA/messages/CCC?updateMask=text",
+    );
+    expect(init.method).toBe("PATCH");
+    const headers = init.headers as Record<string, string>;
+    expect(headers.authorization).toBe(`Bearer ${MINTED_TOKEN}`);
+    expect(headers["content-type"]).toBe("application/json");
+    expect(JSON.parse(String(init.body))).toEqual({ text: "new text" });
+  });
+
+  it("returns err on a non-2xx PATCH, logs an ERROR with errorKind+hint, and never logs the token", async () => {
+    const { fetchImpl } = makeChatFetch({ sendStatus: 403 });
+    const { deps, loggerSpy } = await makeDeps({ fetchImpl });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const result = await adapter.editMessage?.(
+      "spaces/AAAA",
+      "spaces/AAAA/messages/CCC",
+      "denied",
+    );
+
+    expect(result?.ok).toBe(false);
+    const errRec = findByErrorKind(loggerSpy.error, "auth");
+    expect(errRec).toBeDefined();
+    expect(String(errRec?.hint).length).toBeGreaterThan(0);
+    expect(loggerSpy.serialized()).not.toContain(MINTED_TOKEN);
+  });
+
+  it("rejects an unsafe messageId (empty, .. traversal, or control char) BEFORE any token mint or fetch", async () => {
+    for (const bad of ["", "spaces/../secret", "spaces/AAAA/messages/\u0007"]) {
+      const { fetchImpl, spy } = makeChatFetch();
+      const { deps } = await makeDeps({ fetchImpl });
+      const adapter = createGoogleChatAdapter(deps);
+
+      const result = await adapter.editMessage?.("spaces/AAAA", bad, "x");
+
+      expect(result?.ok).toBe(false);
+      // The guard short-circuits before the token mint and the fetch — zero
+      // network calls of any kind fired for the rejected resource name.
+      expect(spy).not.toHaveBeenCalled();
+    }
+  });
+
+  it("does NOT reject a legitimate resource name that contains '/'", async () => {
+    const { fetchImpl } = makeChatFetch();
+    const { deps } = await makeDeps({ fetchImpl });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const result = await adapter.editMessage?.(
+      "spaces/AAAA",
+      "spaces/AAAA/messages/CCC",
+      "ok",
+    );
+
+    expect(result?.ok).toBe(true);
+  });
+
+  it("exposes editMessage as a function on the adapter handle", async () => {
+    const { deps } = await makeDeps();
+    const adapter = createGoogleChatAdapter(deps);
+    expect(typeof adapter.editMessage).toBe("function");
   });
 });
 
