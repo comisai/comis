@@ -55,6 +55,13 @@ import { initMatrixCrypto, type MatrixCryptoHandle } from "./crypto-store.js";
 
 /** The Matrix event type that carries a chat message. */
 const ROOM_MESSAGE_TYPE = "m.room.message";
+/**
+ * The Matrix WIRE event type of an encrypted message. Its clear type only becomes
+ * `m.room.message` AFTER local decryption, so the server-side `/sync` filter must
+ * request this wire type explicitly on the e2ee path — otherwise the homeserver
+ * never returns encrypted events for the crypto engine to decrypt (E2EE-01).
+ */
+const ROOM_ENCRYPTED_TYPE = "m.room.encrypted";
 /** Default `limit=` on the initial sync — bounds what is FETCHED (T-9). */
 const DEFAULT_INITIAL_SYNC_LIMIT = 10;
 /** Default per-room timeline event cap in the sync filter. */
@@ -184,15 +191,19 @@ function errcodeOf(cause: unknown): string | undefined {
 
 /**
  * Build the `/sync` filter: lazy-loaded members + a timeline scoped to message
- * events. `initialSyncLimit` bounds the fetch; this filter trims each batch.
- * The watermark remains the correctness backstop if the filter is imperfect.
+ * events. On the e2ee path (`includeEncrypted`) the `m.room.encrypted` wire type
+ * is added so the homeserver actually returns encrypted events — without it the
+ * server-side filter (which keys on the wire type) excludes them and the crypto
+ * engine + fail-closed branch would see nothing in a real encrypted room.
+ * `initialSyncLimit` bounds the fetch; this filter trims each batch. The
+ * watermark remains the correctness backstop if the filter is imperfect.
  */
-function buildSyncFilter(userId: string | null): Filter {
+function buildSyncFilter(userId: string | null, includeEncrypted: boolean): Filter {
   const filter = new Filter(userId);
   filter.setDefinition({
     room: {
       timeline: {
-        types: [ROOM_MESSAGE_TYPE],
+        types: includeEncrypted ? [ROOM_MESSAGE_TYPE, ROOM_ENCRYPTED_TYPE] : [ROOM_MESSAGE_TYPE],
         limit: DEFAULT_TIMELINE_LIMIT,
         lazy_load_members: true,
       },
@@ -496,7 +507,7 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
       (client.store as { setSyncToken(token: string | null): void }).setSyncToken(null);
       client.stopClient();
       const resumed = await fromPromise(
-        client.startClient({ initialSyncLimit, filter: buildSyncFilter(client.getUserId()) }),
+        client.startClient({ initialSyncLimit, filter: buildSyncFilter(client.getUserId(), deps.e2ee === true) }),
       );
       if (!resumed.ok) {
         const reclassified = classifyMatrixError(toMatrixErrorInput(resumed.error));
@@ -557,7 +568,7 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
           client.stopClient();
           client.setAccessToken(re.value.accessToken);
           const resumed = await fromPromise(
-            client.startClient({ initialSyncLimit, filter: buildSyncFilter(client.getUserId()) }),
+            client.startClient({ initialSyncLimit, filter: buildSyncFilter(client.getUserId(), deps.e2ee === true) }),
           );
           if (resumed.ok) {
             logger.info(
@@ -664,7 +675,7 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
       }
 
       const startedAt = systemNowMs();
-      const filter = buildSyncFilter(client.getUserId());
+      const filter = buildSyncFilter(client.getUserId(), deps.e2ee === true);
       const started = await fromPromise(client.startClient({ initialSyncLimit, filter }));
       if (!started.ok) {
         const classified = classifyMatrixError(toMatrixErrorInput(started.error));
