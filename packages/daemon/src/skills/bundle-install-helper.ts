@@ -34,6 +34,7 @@
  */
 
 import { readFileSync } from "node:fs";
+import { ok, err, type Result } from "@comis/shared";
 import { safePath } from "@comis/core";
 import { parseSkillManifest } from "@comis/skills";
 import type { McpServerEntry } from "@comis/core";
@@ -399,6 +400,89 @@ export async function applyBundleInstall(
     connectResults,
     ...(persistOutcome.warning !== undefined && { warning: persistOutcome.warning }),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Imported-tier Phase-B persist (the injected persist seam's real body)
+// ---------------------------------------------------------------------------
+
+/**
+ * Arguments for the imported-tier persist path. Structurally matches the seam
+ * the serialized commit injects (`skillId` + the full next servers array + the
+ * skill's own bundle entries), so the commit wires this as
+ * `persistImportedBundle: (args) => applyImportedBundleInstall(deps, dataDir, args, ctx)`.
+ */
+export interface ImportedBundleInstallArgs {
+  /** The installed skill's name (ledger key + audit entityId). */
+  readonly skillId: string;
+  /** The full next servers array to persist (bundle entries are forced disabled here). */
+  readonly nextServers: readonly McpServerEntry[];
+  /** The skill's own bundle entries (recorded in the ownership ledger). */
+  readonly bundleEntries: readonly McpServerEntry[];
+}
+
+/**
+ * Imported-tier Phase-B persist — the disabled-by-default install path.
+ *
+ * Unlike {@link applyBundleInstall} (the trusted create/upload path, which
+ * persists `enabled: true` and auto-connects), an IMPORTED skill's bundled MCP
+ * entries persist DISABLED and are NEVER connected at install. The operator opts
+ * in per server later, and each later connect re-runs the malware/plaintext-
+ * secret checks at the connect site. This disabled-by-default posture is
+ * inseparable from the imported trust tier — there is deliberately no config
+ * toggle that flips it (an auto-connect knob would erode the boundary; the R3
+ * architecture test pins its absence).
+ *
+ * Steps:
+ *   1. Force `enabled: false` on every bundle entry. The commit already disables
+ *      them before the hand-off; re-forcing here keeps the invariant LOCAL to
+ *      the single persist site so it cannot be bypassed by a mis-wired caller.
+ *   2. persistMcpServers ONCE (the sanctioned single-writer). A non-"persisted"
+ *      outcome fails closed — the caller unwinds the move (the config write is
+ *      durable state the import depends on).
+ *   3. recordBundleEntries in the ownership ledger so a later skills.delete can
+ *      disconnect + remove exactly these entries (the delete unwind keys on this
+ *      ledger). NO manager.connect.
+ *
+ * @returns `ok` when the config write persisted AND the ledger was recorded;
+ *   `err` (with an operator-facing message) otherwise. Never throws, never
+ *   connects.
+ */
+export async function applyImportedBundleInstall(
+  deps: WorkspaceApiDeps,
+  dataDir: string,
+  args: ImportedBundleInstallArgs,
+  ctx: { userId?: string; traceId?: string } | undefined,
+): Promise<Result<void, { message: string }>> {
+  const bundleNames = new Set(args.bundleEntries.map((e) => e.name));
+  // Imported trust tier: bundled MCP entries persist DISABLED. Non-bundle
+  // entries in the array (pre-existing user/other-skill servers) are untouched.
+  const nextServers = args.nextServers.map((e) =>
+    bundleNames.has(e.name) ? { ...e, enabled: false } : e,
+  ) as McpServerEntry[];
+
+  const persistOutcome = await persistMcpServers(
+    deps,
+    nextServers,
+    "skills.bundle.install",
+    args.skillId,
+    ctx,
+  );
+  if (persistOutcome.persistence !== "persisted") {
+    return err({
+      message: `imported bundle config write did not persist (${persistOutcome.persistence}${persistOutcome.warning !== undefined ? `: ${persistOutcome.warning}` : ""})`,
+    });
+  }
+
+  // Record the ownership ledger so skills.delete unwinds exactly these entries.
+  const recorded = recordBundleEntries(dataDir, args.skillId, [...args.bundleEntries]);
+  if (!recorded.ok) {
+    return err({
+      message: `imported bundle ownership ledger write failed: ${recorded.error.message}`,
+    });
+  }
+  // No manager.connect — imported entries stay offline until the operator opts in.
+  return ok(undefined);
 }
 
 // ---------------------------------------------------------------------------
