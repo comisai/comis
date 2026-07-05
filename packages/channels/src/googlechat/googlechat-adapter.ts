@@ -47,7 +47,7 @@ import {
   PUBSUB_SCOPE,
   type GoogleChatTokenProvider,
 } from "./googlechat-auth.js";
-import { classifyGoogleChatError } from "./errors.js";
+import { classifyGoogleChatError, parseRetryAfterSeconds } from "./errors.js";
 import { createSendPacer } from "./send-pacer.js";
 import {
   createPubSubSource,
@@ -58,6 +58,23 @@ import {
   mapGoogleChatEventToNormalized,
   type GoogleChatEvent,
 } from "./message-mapper.js";
+
+// ---------------------------------------------------------------------------
+// Send-safety knobs for the 429-only bounded resend
+// ---------------------------------------------------------------------------
+
+/** Resends the send makes on top of the first attempt before surfacing the failure. */
+const MAX_RETRIES = 4;
+/** Exponential-backoff base + ceiling used when a 429 carries no Retry-After. */
+const RETRY_BACKOFF_BASE_MS = 500;
+const RETRY_BACKOFF_CAP_MS = 8_000;
+/**
+ * Ceiling on a server-supplied Retry-After. The value is operator-untrusted, so a
+ * large or hostile Retry-After is clamped rather than awaited verbatim — otherwise
+ * the outbound send would park pending for hours, and could repeat up to
+ * {@link MAX_RETRIES} times.
+ */
+const RETRY_AFTER_CAP_MS = 60_000;
 
 /** Dependencies for the Google Chat adapter. */
 export interface GoogleChatAdapterDeps {
@@ -340,6 +357,7 @@ export function createGoogleChatAdapter(
       if (!tok.ok) return err(tok.error); // auth already logged a secret-free WARN
       const chatBase = deps.chatBaseUrl ?? "https://chat.googleapis.com/v1";
       const doFetch = deps.fetchImpl ?? fetch;
+      const timer = deps.setTimeoutImpl ?? systemSetTimeout;
       // A reply to a threaded inbound rides its thread. The thread resource name
       // is a BODY value (never interpolated into the URL path); the reply option
       // is a query param. REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD makes the platform
@@ -353,61 +371,101 @@ export function createGoogleChatAdapter(
         ? `${chatBase}/${channelId}/messages?messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD`
         : `${chatBase}/${channelId}/messages`;
       const body = threadName ? { text, thread: { name: threadName } } : { text };
-      // Pace the write against the per-space 1/s ceiling before the POST. A
+      const init: RequestInit = {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${tok.value}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(body),
+      };
+
+      // Pace the write against the per-space 1/s ceiling ONCE before the send. A
       // pending wait cancels promptly on stop() through the shared abort signal.
       await pacer.acquire(channelId, sendAbort.signal);
-      const responded = await fromPromise(
-        doFetch(url, {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${tok.value}`,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify(body),
-        }),
-      );
-      if (!responded.ok) {
-        const c = classifyGoogleChatError(undefined, responded.error);
-        deps.logger.error(
-          {
-            channelType: "googlechat" as const,
-            hint: c.hint,
-            errorKind: c.errorKind,
-          },
-          "Google Chat send failed: no response",
+
+      // Bounded resend loop. ONLY a 429 is safe to auto-resend: rate limiting
+      // rejects the request BEFORE the message lands, so it definitively created
+      // nothing. A status-less transport fault OR a 5xx may already have created
+      // the message, and messages.create is non-idempotent (no client message id),
+      // so resending either would duplicate — both surface on the first attempt.
+      // The send-safety axis is deliberately narrower than the classifier's
+      // transience axis, which still marks 5xx/network retryable.
+      for (let attempt = 0; ; attempt++) {
+        const responded = await fromPromise(doFetch(url, init));
+        if (!responded.ok) {
+          const c = classifyGoogleChatError(undefined, responded.error);
+          deps.logger.error(
+            {
+              channelType: "googlechat" as const,
+              hint: c.hint,
+              errorKind: c.errorKind,
+            },
+            "Google Chat send failed: no response",
+          );
+          return err(responded.error);
+        }
+        const res = responded.value;
+        if (!res.ok) {
+          if (res.status === 429 && attempt < MAX_RETRIES) {
+            const retryAfter = parseRetryAfterSeconds(res, now());
+            const delayMs =
+              retryAfter !== undefined
+                ? Math.min(retryAfter * 1000, RETRY_AFTER_CAP_MS)
+                : Math.min(
+                    RETRY_BACKOFF_BASE_MS * 2 ** attempt,
+                    RETRY_BACKOFF_CAP_MS,
+                  );
+            const c = classifyGoogleChatError(res.status);
+            deps.logger.debug(
+              {
+                step: "channels-outbound",
+                channelType: "googlechat" as const,
+                status: res.status,
+                attempt: attempt + 1,
+                durationMs: delayMs,
+                hint: c.hint,
+                errorKind: c.errorKind,
+              },
+              "Google Chat send retry scheduled after rate limiting",
+            );
+            await new Promise<void>((resolve) => {
+              const handle = timer(() => resolve(), delayMs);
+              handle.unref?.();
+            });
+            continue;
+          }
+          const c = classifyGoogleChatError(res.status);
+          deps.logger.error(
+            {
+              channelType: "googlechat" as const,
+              status: res.status,
+              hint: c.hint,
+              errorKind: c.errorKind,
+            },
+            "Google Chat send failed: error status",
+          );
+          return err(
+            new Error(`chat messages.create returned status ${res.status}`),
+          );
+        }
+        const parsed = await fromPromise(
+          res.json() as Promise<{ name?: string }>,
         );
-        return err(responded.error);
+        if (!parsed.ok || !parsed.value.name) {
+          deps.logger.error(
+            {
+              channelType: "googlechat" as const,
+              hint: "messages.create returned no message name",
+              errorKind: "platform" as const,
+            },
+            "Google Chat send failed: unreadable response",
+          );
+          return err(new Error("messages.create returned no name"));
+        }
+        _lastMessageAt = now();
+        return ok(parsed.value.name);
       }
-      const res = responded.value;
-      if (!res.ok) {
-        const c = classifyGoogleChatError(res.status);
-        deps.logger.error(
-          {
-            channelType: "googlechat" as const,
-            status: res.status,
-            hint: c.hint,
-            errorKind: c.errorKind,
-          },
-          "Google Chat send failed: error status",
-        );
-        return err(new Error(`chat messages.create returned status ${res.status}`));
-      }
-      const parsed = await fromPromise(
-        res.json() as Promise<{ name?: string }>,
-      );
-      if (!parsed.ok || !parsed.value.name) {
-        deps.logger.error(
-          {
-            channelType: "googlechat" as const,
-            hint: "messages.create returned no message name",
-            errorKind: "platform" as const,
-          },
-          "Google Chat send failed: unreadable response",
-        );
-        return err(new Error("messages.create returned no name"));
-      }
-      _lastMessageAt = now();
-      return ok(parsed.value.name);
     },
 
     getStatus(): ChannelStatus {

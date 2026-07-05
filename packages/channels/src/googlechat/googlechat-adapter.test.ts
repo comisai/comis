@@ -158,6 +158,39 @@ function makeFakeTimers() {
   };
 }
 
+/** Yield to the REAL event loop (a macrotask) so genuinely-async work — e.g. the
+ * JWT crypto in the token mint — can advance; microtask flushing alone cannot. */
+function realTick(): Promise<void> {
+  return new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
+
+/**
+ * Await a send while draining parked timers deterministically: tick the real event
+ * loop (so the token-mint crypto and fetch stubs settle), fire any pending backoff,
+ * and repeat until the send resolves. The adapter's own timer is the injected fake,
+ * so the retry backoff itself never waits real time — only the harness ticks do,
+ * and each is ~0ms.
+ */
+async function settleWithTimers<T>(
+  p: Promise<T>,
+  timers: ReturnType<typeof makeFakeTimers>,
+): Promise<T> {
+  let settled = false;
+  void p.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+  for (let i = 0; i < 500 && !settled; i += 1) {
+    await realTick();
+    if (!settled && timers.pendingCount() > 0) await timers.fireNext();
+  }
+  return p;
+}
+
 /** A fake pull-loop source recording start/stop so lifecycle is testable loop-free. */
 function makeFakeSource(over: Partial<PubSubSource> = {}) {
   const start = vi.fn();
@@ -740,12 +773,12 @@ describe("createGoogleChatAdapter — 429 auto-resend (send-safety)", () => {
     });
     const adapter = createGoogleChatAdapter(deps);
 
-    const p = adapter.sendMessage("spaces/AAAA", "hi");
-    await flushMicrotasks();
-    // GREEN: a retry backoff of Retry-After*1000 (=1000ms, under the 60s cap) is
-    // parked after the first 429. RED: the send already returned err, nothing parked.
-    if (timers.pendingCount() > 0) await timers.fireNext();
-    const result = await p;
+    // A retry backoff of Retry-After*1000 (=1000ms, under the 60s cap) is parked
+    // after the first 429; draining fires it so the second attempt (200) proceeds.
+    const result = await settleWithTimers(
+      adapter.sendMessage("spaces/AAAA", "hi"),
+      timers,
+    );
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value).toBe("spaces/AAAA/messages/CCC");
@@ -766,10 +799,10 @@ describe("createGoogleChatAdapter — 429 auto-resend (send-safety)", () => {
     });
     const adapter = createGoogleChatAdapter(deps);
 
-    const p = adapter.sendMessage("spaces/AAAA", "hi");
-    await flushMicrotasks();
-    if (timers.pendingCount() > 0) await timers.fireNext();
-    const result = await p;
+    const result = await settleWithTimers(
+      adapter.sendMessage("spaces/AAAA", "hi"),
+      timers,
+    );
 
     expect(result.ok).toBe(true);
     // Attempt 0 backoff: RETRY_BACKOFF_BASE_MS * 2**0 = 500ms.
@@ -789,10 +822,10 @@ describe("createGoogleChatAdapter — 429 auto-resend (send-safety)", () => {
     });
     const adapter = createGoogleChatAdapter(deps);
 
-    const p = adapter.sendMessage("spaces/AAAA", "hi");
-    await flushMicrotasks();
-    if (timers.pendingCount() > 0) await timers.fireNext();
-    const result = await p;
+    const result = await settleWithTimers(
+      adapter.sendMessage("spaces/AAAA", "hi"),
+      timers,
+    );
 
     expect(result.ok).toBe(true);
     // RETRY_AFTER_CAP_MS is 60_000 — a 86400s header is clamped, not awaited raw.
@@ -813,14 +846,12 @@ describe("createGoogleChatAdapter — 429 auto-resend (send-safety)", () => {
     });
     const adapter = createGoogleChatAdapter(deps);
 
-    const p = adapter.sendMessage("spaces/AAAA", "hi");
-    // Drive each parked retry backoff; MAX_RETRIES is 4 retries on top of the first attempt.
-    for (let i = 0; i < 4; i += 1) {
-      await flushMicrotasks();
-      if (timers.pendingCount() > 0) await timers.fireNext();
-    }
-    await flushMicrotasks();
-    const result = await p;
+    // MAX_RETRIES is 4 retries on top of the first attempt; draining fires each
+    // parked backoff until the send gives up rather than looping forever.
+    const result = await settleWithTimers(
+      adapter.sendMessage("spaces/AAAA", "hi"),
+      timers,
+    );
 
     expect(result.ok).toBe(false);
     const posts = spy.mock.calls.filter(([u]) => String(u).includes("/messages"));
