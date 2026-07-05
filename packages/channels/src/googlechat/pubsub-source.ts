@@ -380,16 +380,20 @@ export function createPubSubSource(deps: PubSubSourceDeps): PubSubSource {
     const setT = deps.setTimeoutImpl ?? systemSetTimeout;
     const clearT = deps.clearTimeoutImpl ?? systemClearTimeout;
     await new Promise<void>((resolve) => {
-      const timer = setT(resolve, ms);
+      let timer: ReturnType<typeof setT>;
+      const onAbort = (): void => {
+        clearT(timer);
+        resolve();
+      };
+      timer = setT(() => {
+        // Normal completion: drop the abort listener so it does not accumulate
+        // on the shared signal across every backoff cycle (the persistent-
+        // failure path is exactly where this would otherwise leak).
+        controller.signal.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
       pendingBackoff = timer;
-      controller.signal.addEventListener(
-        "abort",
-        () => {
-          clearT(timer);
-          resolve();
-        },
-        { once: true },
-      );
+      controller.signal.addEventListener("abort", onAbort, { once: true });
     });
     pendingBackoff = undefined;
   }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
+import { getEventListeners } from "node:events";
 import type { ComisLogger } from "@comis/core";
 import { ok, err } from "@comis/shared";
 import {
@@ -429,6 +430,16 @@ function failingFetch() {
   })) as unknown as typeof fetch;
 }
 
+/** A failing fetch that captures the abort signal passed on each pull init. */
+function capturingFailingFetch() {
+  let signal: AbortSignal | undefined;
+  const impl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+    signal = init?.signal ?? undefined;
+    return { ok: false, status: 503, json: async () => ({}) } as unknown as Response;
+  });
+  return { impl: impl as unknown as typeof fetch, getSignal: () => signal };
+}
+
 describe("createPubSubSource — bounded jittered backoff + AbortController stop + loud failure", () => {
   it("backs off within [floor, floor+500] after the first pull failure (jitter bounded)", async () => {
     const timers = makeFakeTimers();
@@ -588,6 +599,34 @@ describe("createPubSubSource — bounded jittered backoff + AbortController stop
       );
     expect(errCall).toBeDefined();
     expect(typeof source.lastError).toBe("string");
+  });
+
+  it("does not accumulate an abort listener per backoff cycle on the shared signal", async () => {
+    const timers = makeFakeTimers();
+    const fetchCap = capturingFailingFetch();
+    const { deps } = makeDeps({
+      fetchImpl: fetchCap.impl,
+      setTimeoutImpl: timers.setTimeoutImpl,
+      clearTimeoutImpl: timers.clearTimeoutImpl,
+      rng: () => 0.5,
+    });
+    const source = createPubSubSource(deps);
+
+    source.start();
+    await flushMicrotasks(); // fail #1 → parked in a backoff sleep
+    for (let i = 0; i < 5; i += 1) await timers.fireNext(); // 5 more fail→park cycles
+
+    const signal = fetchCap.getSignal();
+    expect(signal).toBeInstanceOf(AbortSignal);
+    // A normal timer completion must remove its abort listener, so only the
+    // currently-parked sleep's single listener remains on the shared signal.
+    // Pre-fix, one leaked per cycle (6 here) and accumulates toward Node's
+    // MaxListenersExceededWarning over a long-lived failing loop.
+    expect(
+      getEventListeners(signal as AbortSignal, "abort").length,
+    ).toBeLessThanOrEqual(1);
+
+    await source.stop();
   });
 
   it("resets the consecutive-failure count after a good pull so the loud ERROR does not re-fire", async () => {
