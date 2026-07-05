@@ -224,6 +224,7 @@
     "linkedom": "0.18.12",
     "lru-cache": "11.5.1",
     "mailparser": "3.9.11",
+    "matrix-js-sdk": "41.8.0",
     "music-metadata": "11.12.3",
     "node-llama-cpp": "3.18.1",
     "nodemailer": "9.0.1",
