@@ -311,7 +311,6 @@ export type {
   AgentToAgentConfig,
   SkillsConfig,
   PromptSkillsConfig,
-  SkillsImportConfig,
   DaemonConfig,
   LoggingConfig,
   TracingDefaults,
