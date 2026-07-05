@@ -60,7 +60,7 @@ export interface AgentEvents {
   "skill:failed": {
     skillName: string;
     error: string;
-    phase: "create" | "update" | "load" | "scan";
+    phase: "create" | "update" | "load" | "scan" | "import";
     agentId?: string;
     timestamp: number;
   };

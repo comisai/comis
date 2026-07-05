@@ -10,7 +10,8 @@ export type SkillAuditAction =
   | "skill.prompt.invoke"
   | "skill.validation.coercion"
   | "skill.scan"
-  | "skill.scan.reject";
+  | "skill.scan.reject"
+  | "skill.import";
 
 /**
  * Options for emitting a skill audit event.

@@ -39,6 +39,7 @@ const ACTION_REGISTRY = new Map<string, ActionClassification>([
   ["skill.load", "read"],
   ["skill.scan", "read"],
   ["skill.scan.reject", "read"],
+  ["skill.validation.coercion", "read"],
   ["session.get", "read"],
   ["log.read", "read"],
 
@@ -80,6 +81,7 @@ const ACTION_REGISTRY = new Map<string, ActionClassification>([
   ["message.send", "mutate"],
   ["session.create", "mutate"],
   ["skill.install", "mutate"],
+  ["skill.import", "mutate"],
   ["skill.execute", "mutate"],
 
   // -------------------------------------------------------------------------
