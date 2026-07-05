@@ -9,6 +9,7 @@ import {
   IrcChannelEntrySchema,
   EmailChannelEntrySchema,
   MsTeamsChannelEntrySchema,
+  MatrixChannelEntrySchema,
 } from "./schema-channel.js";
 
 describe("ChannelEntrySchema", () => {
@@ -471,6 +472,74 @@ describe("MsTeamsChannelEntrySchema", () => {
   });
 });
 
+describe("MatrixChannelEntrySchema", () => {
+  it("produces plaintext-safe defaults with the channel disabled and the allowlist closed", () => {
+    const result = MatrixChannelEntrySchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.enabled).toBe(false);
+      expect(result.data.e2ee).toBe(true);
+      expect(result.data.allowMode).toBe("allowlist");
+      expect(result.data.autoJoinOnInvite).toBe(true);
+      expect(result.data.allowPrivateHomeserver).toBe(false);
+      expect(result.data.allowFrom).toEqual([]);
+    }
+  });
+
+  it("parses a full block with homeserver, user, token and an allowlisted inviter", () => {
+    const result = MatrixChannelEntrySchema.safeParse({
+      enabled: true,
+      homeserverUrl: "https://matrix.org",
+      userId: "@bot:matrix.org",
+      accessToken: "syt-access-token",
+      deviceId: "DEVICEID",
+      allowFrom: ["@owner:matrix.org"],
+      allowMode: "open",
+      autoJoinOnInvite: false,
+      allowPrivateHomeserver: true,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.enabled).toBe(true);
+      expect(result.data.homeserverUrl).toBe("https://matrix.org");
+      expect(result.data.userId).toBe("@bot:matrix.org");
+      expect(result.data.accessToken).toBe("syt-access-token");
+      expect(result.data.deviceId).toBe("DEVICEID");
+      expect(result.data.allowFrom).toEqual(["@owner:matrix.org"]);
+      expect(result.data.allowMode).toBe("open");
+      expect(result.data.autoJoinOnInvite).toBe(false);
+      expect(result.data.allowPrivateHomeserver).toBe(true);
+    }
+  });
+
+  it("accepts a SecretRef for the accessToken, password and recoveryKey credential fields", () => {
+    const result = MatrixChannelEntrySchema.safeParse({
+      enabled: true,
+      homeserverUrl: "https://matrix.org",
+      accessToken: { source: "env", provider: "matrix", id: "MATRIX_ACCESS_TOKEN" },
+      password: { source: "env", provider: "matrix", id: "MATRIX_PASSWORD" },
+      recoveryKey: { source: "env", provider: "matrix", id: "MATRIX_RECOVERY_KEY" },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.accessToken).toEqual({
+        source: "env",
+        provider: "matrix",
+        id: "MATRIX_ACCESS_TOKEN",
+      });
+    }
+  });
+
+  it("rejects an unknown key inside the entry (strict object)", () => {
+    expect(() => MatrixChannelEntrySchema.parse({ bogusKey: 1 })).toThrow();
+  });
+
+  it("rejects an allowMode outside allowlist and open", () => {
+    const result = MatrixChannelEntrySchema.safeParse({ enabled: true, allowMode: "denylist" });
+    expect(result.success).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Top-level channel config
 // ---------------------------------------------------------------------------
@@ -581,5 +650,34 @@ describe("ChannelConfigSchema", () => {
 
   it("rejects an unknown key inside the nested msteams block", () => {
     expect(() => ChannelConfigSchema.parse({ msteams: { enabled: true, bogusKey: 1 } })).toThrow();
+  });
+
+  it("defaults the matrix entry to disabled with a closed allowlist and e2ee enabled", () => {
+    const parsed = ChannelConfigSchema.parse({});
+    expect(parsed.matrix.enabled).toBe(false);
+    expect(parsed.matrix.e2ee).toBe(true);
+    expect(parsed.matrix.allowMode).toBe("allowlist");
+    expect(parsed.matrix.autoJoinOnInvite).toBe(true);
+    expect(parsed.matrix.allowPrivateHomeserver).toBe(false);
+    expect(parsed.matrix.allowFrom).toEqual([]);
+  });
+
+  it("parses a full matrix block supplied under the channels config", () => {
+    const parsed = ChannelConfigSchema.parse({
+      matrix: {
+        enabled: true,
+        homeserverUrl: "https://matrix.org",
+        userId: "@bot:matrix.org",
+        allowFrom: ["@owner:matrix.org"],
+      },
+    });
+    expect(parsed.matrix.enabled).toBe(true);
+    expect(parsed.matrix.homeserverUrl).toBe("https://matrix.org");
+    expect(parsed.matrix.userId).toBe("@bot:matrix.org");
+    expect(parsed.matrix.allowFrom).toEqual(["@owner:matrix.org"]);
+  });
+
+  it("rejects an unknown key inside the nested matrix block", () => {
+    expect(() => ChannelConfigSchema.parse({ matrix: { enabled: true, bogusKey: 1 } })).toThrow();
   });
 });
