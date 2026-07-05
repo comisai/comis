@@ -40,6 +40,12 @@ const mockMsTeamsPlugin = {
 // caller-backed wiring can be asserted by identity.
 const mockMsTeamsIngress = { __msteamsIngress: true };
 
+// Google Chat is a pull-driven channel: the adapter opens the Pub/Sub pull loop
+// on start(), so there is no gateway ingress to wire (unlike Teams). The plugin
+// carries only the base send surface + lifecycle.
+const mockGoogleChatAdapter = { sendMessage: vi.fn(), start: vi.fn(), stop: vi.fn() };
+const mockGoogleChatPlugin = { adapter: mockGoogleChatAdapter, channelType: "googlechat" };
+
 vi.mock("@comis/channels", () => ({
   createTelegramPlugin: vi.fn(() => mockTelegramPlugin),
   createDiscordPlugin: vi.fn(() => mockDiscordPlugin),
@@ -64,6 +70,9 @@ vi.mock("@comis/channels", () => ({
   validateMsTeamsCredentials: vi.fn(() => ({ ok: true, value: undefined })),
   // The bound inbound activity-token validator (authHeader, appId) => Result.
   validateActivityJwt: vi.fn(async () => ({ ok: true, value: undefined })),
+  createGoogleChatPlugin: vi.fn(() => mockGoogleChatPlugin),
+  // Synchronous, transport-free credential guard — returns a Result directly.
+  validateGoogleChatCredentials: vi.fn(() => ({ ok: true, value: undefined })),
 }));
 
 // The Teams ingress sub-app is built in @comis/gateway; the registration block
@@ -95,6 +104,8 @@ import {
   validateEmailCredentials,
   createMsTeamsPlugin,
   validateMsTeamsCredentials,
+  createGoogleChatPlugin,
+  validateGoogleChatCredentials,
 } from "@comis/channels";
 import { createMsTeamsIngress } from "@comis/gateway";
 
@@ -114,6 +125,7 @@ function makeChannelConfig(overrides: Record<string, any> = {}) {
     irc: { enabled: false, host: undefined, port: 6667, nick: undefined, tls: false, channels: [], nickservPassword: undefined, ...overrides.irc },
     email: { enabled: false, address: undefined, imapHost: undefined, imapPort: 993, smtpHost: undefined, smtpPort: 587, secure: true, authType: "password", allowFrom: [], allowMode: "allowlist", pollingIntervalMs: 60_000, ...overrides.email },
     msteams: { enabled: false, authMode: "secret", appId: undefined, appPassword: undefined, tenantId: undefined, certPath: undefined, managedIdentityClientId: undefined, cloud: "public", allowFrom: [], allowMode: "allowlist", ...overrides.msteams },
+    googlechat: { enabled: false, mode: "pubsub", serviceAccountKey: undefined, subscriptionName: undefined, audienceType: "project-number", audience: undefined, allowFrom: [], allowMode: "allowlist", missedInboundThresholdMs: 21_600_000, ...overrides.googlechat },
   };
 }
 
@@ -719,5 +731,94 @@ describe("bootstrapAdapters", () => {
       expect.objectContaining({ errorKind: "auth" }),
       expect.stringContaining("Teams credential validation failed"),
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // Google Chat — a pull-driven channel. The registration block resolves the
+  // service-account key as config-SecretRef-or-GOOGLECHAT_SA_KEY, validates it
+  // with the subscription, and registers the adapter/plugin. There is no
+  // gateway ingress this transport (the adapter opens the Pub/Sub pull loop).
+  // The credential-fail WARN carries only errorKind + hint — never the key.
+  // -------------------------------------------------------------------------
+
+  it("creates the googlechat adapter on happy path with the config service-account key", async () => {
+    const saKey = '{"private_key":"pk","client_email":"bot@proj.iam.gserviceaccount.com"}';
+    const container = makeContainer({
+      googlechat: { enabled: true, serviceAccountKey: saKey, subscriptionName: "projects/p/subscriptions/s" },
+    });
+    const result = await bootstrapAdapters({ container, channelsLogger });
+
+    expect(validateGoogleChatCredentials).toHaveBeenCalledWith(
+      expect.objectContaining({ serviceAccountKey: saKey, subscriptionName: "projects/p/subscriptions/s" }),
+    );
+    expect(createGoogleChatPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serviceAccountKey: saKey,
+        subscriptionName: "projects/p/subscriptions/s",
+        allowMode: "allowlist",
+        logger: channelsLogger,
+      }),
+    );
+    expect(result.adaptersByType.get("googlechat")).toBe(mockGoogleChatAdapter);
+    expect(result.channelPlugins.get("googlechat")).toBe(mockGoogleChatPlugin);
+    expect(channelsLogger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ channelType: "googlechat" }),
+      "Channel adapter initialized",
+    );
+  });
+
+  it("resolves the key from GOOGLECHAT_SA_KEY when config serviceAccountKey is absent", async () => {
+    const container = makeContainer(
+      { googlechat: { enabled: true, subscriptionName: "projects/p/subscriptions/s" } },
+      { GOOGLECHAT_SA_KEY: "ENV_SA_KEY" },
+    );
+    const result = await bootstrapAdapters({ container, channelsLogger });
+
+    expect(container.secretManager.get).toHaveBeenCalledWith("GOOGLECHAT_SA_KEY");
+    expect(createGoogleChatPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({ serviceAccountKey: "ENV_SA_KEY" }),
+    );
+    expect(result.adaptersByType.get("googlechat")).toBe(mockGoogleChatAdapter);
+  });
+
+  it("skips registration and WARNs (secret-free) when subscriptionName is missing", async () => {
+    // A blank subscription fails validation; the block must not register the
+    // adapter and the WARN must name the config knobs without leaking the key.
+    vi.mocked(validateGoogleChatCredentials).mockReturnValueOnce({
+      ok: false,
+      error: new Error("subscriptionName must not be empty (pubsub mode)"),
+    } as any);
+    const container = makeContainer(
+      { googlechat: { enabled: true } }, // no subscriptionName
+      { GOOGLECHAT_SA_KEY: "ENV_SA_KEY" },
+    );
+    const result = await bootstrapAdapters({ container, channelsLogger });
+
+    expect(result.adaptersByType.has("googlechat")).toBe(false);
+    expect(createGoogleChatPlugin).not.toHaveBeenCalled();
+    expect(channelsLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "auth",
+        hint: expect.stringContaining("GOOGLECHAT_SA_KEY"),
+      }),
+      expect.stringContaining("Google Chat credential validation failed"),
+    );
+
+    // Secret-free guarantee: the resolved key never appears in the WARN payload.
+    const warnCall = vi.mocked(channelsLogger.warn).mock.calls.find(
+      (c) => typeof c[1] === "string" && c[1].includes("Google Chat credential validation failed"),
+    );
+    const warnPayload = (warnCall?.[0] ?? {}) as Record<string, unknown>;
+    expect(warnPayload).not.toHaveProperty("serviceAccountKey");
+    expect(warnPayload).not.toHaveProperty("key");
+    expect(JSON.stringify(warnPayload)).not.toContain("ENV_SA_KEY");
+  });
+
+  it("does not register the googlechat adapter when the channel is disabled", async () => {
+    const container = makeContainer({ googlechat: { enabled: false } });
+    const result = await bootstrapAdapters({ container, channelsLogger });
+
+    expect(result.adaptersByType.has("googlechat")).toBe(false);
+    expect(createGoogleChatPlugin).not.toHaveBeenCalled();
   });
 });
