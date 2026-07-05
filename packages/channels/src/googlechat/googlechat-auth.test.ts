@@ -180,9 +180,12 @@ describe("createGoogleChatTokenProvider — SA-JWT-bearer mint", () => {
     const [, init] = spy.mock.calls[0] as unknown as [string, RequestInit];
     const assertion =
       new URLSearchParams(String(init.body)).get("assertion") ?? "";
+    // The assertion is signed off the injected clock (now() = 1_000_000 ms =
+    // epoch second 1000), so verify its time-based claims against that instant.
     const verified = await jwtVerify(assertion, sa.publicKey, {
       issuer: SA_EMAIL,
       audience: TOKEN_URL,
+      currentDate: new Date(1_000_000),
     });
     expect((verified.payload as { scope?: string }).scope).toBe(CHAT_SCOPE);
   });
