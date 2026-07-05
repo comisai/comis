@@ -85,6 +85,7 @@ interface FakeClientOptions {
   userId?: string | null;
   initialToken?: string | null;
   joinError?: unknown;
+  startError?: unknown;
 }
 
 /** An EventEmitter-like fake matrix-js-sdk client that records the SUT's calls. */
@@ -97,12 +98,15 @@ class FakeMatrixClient {
   private token: string | null;
   private readonly userId: string | null;
   private readonly joinError?: unknown;
+  private readonly startError?: unknown;
   readonly store: { getSyncToken(): string | null; setSyncToken(token: string): void };
 
   constructor(opts: FakeClientOptions = {}) {
-    this.userId = opts.userId ?? "@bot:hs";
+    // Distinguish "not provided" (default MXID) from an explicit null user id.
+    this.userId = opts.userId === undefined ? "@bot:hs" : opts.userId;
     this.token = opts.initialToken ?? null;
     this.joinError = opts.joinError;
+    this.startError = opts.startError;
     const self = this;
     this.store = {
       getSyncToken: () => self.token,
@@ -134,6 +138,7 @@ class FakeMatrixClient {
 
   startClient(opts?: { initialSyncLimit?: number; filter?: unknown }): Promise<void> {
     this.startCalls.push(opts ?? {});
+    if (this.startError !== undefined) return Promise.reject(this.startError);
     return Promise.resolve();
   }
 
@@ -405,6 +410,72 @@ describe("createMatrixClient — /sync lifecycle, watermark guard, invite gate",
     h.controller.stop();
 
     expect(h.fake.stopCalls).toBe(1);
+  });
+
+  it("logs an error but does not throw when auto-join fails for a permitted invite", async () => {
+    const h = makeHarness({
+      autoJoinOnInvite: true,
+      allowMode: "open",
+      clientOpts: { joinError: matrixError("M_FORBIDDEN", 403, "not permitted") },
+    });
+    await h.controller.start();
+
+    await h.fake.emit(
+      RoomEvent.MyMembership,
+      fakeRoom("!invited:hs", { inviter: "@alice:hs" }),
+      KnownMembership.Invite,
+      KnownMembership.Leave,
+    );
+
+    expect(h.fake.joinCalls).toContain("!invited:hs");
+    expect(vi.mocked(h.logger.error)).toHaveBeenCalled();
+  });
+
+  it("does not deliver a message event that has no verifiable sender", async () => {
+    const h = makeHarness({ seed: { watermark: 5 } });
+    await h.controller.start();
+    await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null, undefined);
+
+    // Passes the watermark gate (m.room.message, ts>watermark) but the mapper
+    // rejects it for having no sender → never delivered, watermark not advanced.
+    const noSender = {
+      getType: () => "m.room.message",
+      getId: () => "$x",
+      getSender: () => null,
+      getTs: () => 100,
+      getContent: () => ({ body: "x" }),
+    } as unknown as MatrixEvent;
+    await h.fake.emit(RoomEvent.Timeline, noSender, fakeRoom("!r:hs"), false);
+
+    expect(h.received).toHaveLength(0);
+    expect(h.saves.some((s) => s.watermark === 100)).toBe(false);
+  });
+
+  it("ignores an invite when the bot's own user id is unknown", async () => {
+    const h = makeHarness({
+      autoJoinOnInvite: true,
+      allowMode: "open",
+      clientOpts: { userId: null },
+    });
+    await h.controller.start();
+
+    await h.fake.emit(
+      RoomEvent.MyMembership,
+      fakeRoom("!invited:hs", { inviter: "@alice:hs" }),
+      KnownMembership.Invite,
+      KnownMembership.Leave,
+    );
+
+    expect(h.fake.joinCalls).toHaveLength(0);
+  });
+
+  it("returns an error and never starts sync when startClient rejects", async () => {
+    const h = makeHarness({ clientOpts: { startError: matrixError("M_UNKNOWN", 500, "boom") } });
+
+    const started = await h.controller.start();
+
+    expect(started.ok).toBe(false);
+    expect(vi.mocked(h.logger.error)).toHaveBeenCalled();
   });
 
   it("returns an error when the persisted state cannot be loaded", async () => {
