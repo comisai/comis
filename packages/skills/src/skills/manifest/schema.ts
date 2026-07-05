@@ -176,6 +176,8 @@ export const SkillManifestSchema = z.strictObject({
     version: z.string().optional(),
     /** SPDX license identifier */
     license: z.string().optional(),
+    /** Free-prose environment/runtime compatibility note; validated but carries no platform semantics. */
+    compatibility: z.string().optional(),
     /** Whether users can invoke this skill via /skill:name (default true) */
     userInvocable: z.boolean().default(true),
     /** When true, skill is hidden from model's available skills listing (default false) */

@@ -41,6 +41,9 @@ export type { SkillRegistry, SkillWatcherHandle } from "./registry/skill-registr
 // WITHOUT reaching into `@comis/skills/src/skills/manifest/...` deep-paths.
 export { SkillManifestSchema, type SkillManifestParsed } from "./manifest/schema.js";
 export { parseSkillManifest } from "./manifest/parser.js";
+// The spec-pure allowed-set rule — one shared source consumed by the manifest
+// lift, the bundled-corpus gate, and the import mapper.
+export { isSpecPureFrontmatter, SPEC_PURE_TOP_LEVEL_FIELDS } from "./manifest/spec-purity.js";
 
 // Eligibility
 export { createRuntimeEligibilityContext } from "./registry/eligibility.js";
