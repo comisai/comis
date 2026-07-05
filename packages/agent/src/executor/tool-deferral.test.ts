@@ -3137,6 +3137,61 @@ describe("enforceToolBudgetFit — window-aware tool-budget fit-enforcement", ()
     return Math.ceil(toolDefOverheadChars(tools) / CHARS_PER_TOKEN_RATIO);
   }
 
+  it("F-LCD-A: honors neverDefer — keeps a neverDefer-pinned tool active over cold tools under budget pressure", () => {
+    // A tight window forces the fit pass to drop most heavy tools. The neverDefer-pinned
+    // tool (placed FIRST, so on pre-patch code its rank-0 tie would drop it first) must be
+    // kept — it ranks just below CORE/discover_tools — while cold tools are dropped instead.
+    const logger = createMockLogger();
+    const pinned = makeTool("ctx_search", 2_000, 100); // operator-pinned via neverDefer
+    const cold = Array.from({ length: 5 }, (_, i) => makeTool(`cold_${i}`, 2_000, 100));
+    const discover = makeTool("discover_tools", 80, 60);
+    const result = enforceToolBudgetFit({
+      activeTools: [pinned, ...cold, discover], // pinned FIRST — pre-patch would drop it first
+      deferredEntries: [],
+      systemPromptText: "x".repeat(41_000), // big prompt ⇒ tiny residual tool budget ⇒ forced drops
+      contextWindow: 16_000,
+      outputHeadroom: 768,
+      messageFloorTokens: 2_048,
+      coreToolNames: new Set<string>(),
+      recentlyUsedToolNames: new Set<string>(),
+      neverDeferToolNames: new Set(["ctx_search"]),
+      discoverToolName: "discover_tools",
+      logger,
+    });
+    expect(result.changed).toBe(true); // the budget forced drops
+    expect(result.newlyDeferred.length).toBeGreaterThan(0); // cold tools were dropped
+    // The pinned tool SURVIVED (pre-patch it was dropped first as a rank-0 cold tool).
+    expect(result.activeTools.map((t) => t.name)).toContain("ctx_search");
+    expect(result.newlyDeferred).not.toContain("ctx_search");
+  });
+
+  it("F-LCD-A: WARNs when the window is too small to keep even a neverDefer-pinned tool", () => {
+    // Window so tiny that even the pinned tool + discover_tools cannot fit: the pass must
+    // still drop the pinned tool (fit is the hard guarantee) but WARN so the override is
+    // never SILENTLY overridden.
+    const logger = createMockLogger();
+    const pinned = makeTool("ctx_search", 4_000, 200);
+    const discover = makeTool("discover_tools", 80, 60);
+    const result = enforceToolBudgetFit({
+      activeTools: [pinned, discover],
+      deferredEntries: [],
+      systemPromptText: "x".repeat(52_000), // residual tool budget ≈ 0 ⇒ even the pin cannot fit
+      contextWindow: 16_000,
+      outputHeadroom: 768,
+      messageFloorTokens: 2_048,
+      coreToolNames: new Set<string>(),
+      recentlyUsedToolNames: new Set<string>(),
+      neverDeferToolNames: new Set(["ctx_search"]),
+      discoverToolName: "discover_tools",
+      logger,
+    });
+    expect(result.newlyDeferred).toContain("ctx_search"); // dropped as an absolute last resort
+    const warned = (logger.warn as ReturnType<typeof vi.fn>).mock.calls.some(
+      (c) => JSON.stringify(c).includes("neverDefer-pinned"),
+    );
+    expect(warned).toBe(true);
+  });
+
   it("defers low-priority active tools until system+activeTools+headroom+floor fits a 16K window", () => {
     // 10 big non-core tools (~700 chars overhead each ≈ 200 tokens each → ~2000
     // tokens of tools) on a 16K window with a ~10K system prompt. The fit budget
