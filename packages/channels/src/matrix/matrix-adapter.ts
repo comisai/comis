@@ -58,6 +58,15 @@ import {
 } from "./matrix-client.js";
 import { createMatrixStateStore } from "./matrix-state.js";
 import { buildTextMessageContent } from "./matrix-adapter-outbound.js";
+import { classifyDecryptDegrade, type DecryptDegradeKind } from "./decrypt-degrade.js";
+
+/**
+ * The senderId a synthesized decrypt-degrade note carries. Deliberately NOT a
+ * user MXID (no leading `@`) so it can never be mistaken for — or spoof — a real
+ * room member, and the full-MXID speaker allowlist could never accidentally admit
+ * it. The note bypasses the speaker gate anyway (it is delivered via fanOut).
+ */
+const DEGRADE_NOTE_SENDER = "system";
 
 /**
  * Dependencies for the Matrix adapter. Secrets are resolved to plain strings by
@@ -108,11 +117,13 @@ export interface MatrixAdapterDeps {
    */
   emitHealth?: (signal: MatrixHealthSignal) => void;
   /**
-   * Fail-closed decrypt seam: the `/sync` transport hands a raw, content-free
-   * signal here when an inbound encrypted event cannot be decrypted (T-5 drops
-   * the event regardless). The per-room degrade decider wires here.
+   * Content-free decrypt-health obs seam. The adapter classifies each fail-closed
+   * decrypt signal into a closed degrade `kind` (never a raw failure code, never
+   * ciphertext or key material) and calls this once per fired per-room note, so
+   * the daemon can bridge it to the fleet lens. Absent, the degrade note still
+   * fires; only the obs mirror is skipped.
    */
-  onDecryptFailure?: (signal: DecryptFailureSignal) => void;
+  emitDecryptHealth?: (signal: { roomId: string; reason: DecryptDegradeKind }) => void;
 }
 
 /**
@@ -143,6 +154,12 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
   // Stable adapter identity; the per-message room id rides on each
   // NormalizedMessage.channelId, so the adapter reports a constant channelId.
   const channelId = "matrix";
+  // Fire-once-per-room-per-cause gate for the decrypt-degrade note: roomId → the
+  // last degrade kind that fired for it. A repeat of the same cause class is
+  // suppressed (a busy undecryptable room emits one note per cause, not per event);
+  // a changed cause class re-fires, since it is a meaningfully different operator
+  // action (OQ-5: once per room per cause).
+  const degradeFiredByRoom = new Map<string, DecryptDegradeKind>();
 
   let connected = false;
   let startedAt: number | undefined;
@@ -227,6 +244,41 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
       return;
     }
     fanOut(message);
+  }
+
+  /**
+   * Turn a raw, fail-closed decrypt signal into an HONEST, cause-branched operator
+   * note (INV-3, E2EE-03). Runs the pure decider, fires at most one note per room
+   * per cause class, synthesizes a system note, and delivers it via `fanOut`
+   * DIRECTLY — bypassing the speaker gate, since a synthesized system note is not a
+   * room speaker — so it re-enters the inbound path and reaches a session (the
+   * per-session `comis explain` "why didn't the bot reply here?" answer). Also
+   * mirrors a content-free health signal to the obs seam. Carries NO ciphertext,
+   * raw failure code, sender display name, or key material (T-4).
+   */
+  function onDecryptFailure(signal: DecryptFailureSignal): void {
+    const verdict = classifyDecryptDegrade(signal);
+    // Once per room per cause: suppress a repeat of the same cause class.
+    if (degradeFiredByRoom.get(signal.roomId) === verdict.kind) return;
+    degradeFiredByRoom.set(signal.roomId, verdict.kind);
+
+    const note: NormalizedMessage = {
+      id: randomUUID(),
+      channelId: signal.roomId,
+      channelType: "matrix",
+      senderId: DEGRADE_NOTE_SENDER,
+      // The decider's fixed, secret-free operator hint — never the failure text.
+      text: verdict.hint,
+      timestamp: now(),
+      attachments: [],
+      chatType: "group",
+      metadata: { matrixSystemNote: true, decryptDegradeReason: verdict.kind },
+    };
+    // fanOut, NOT onSyncMessage: bypass the speaker gate (a system note is not a
+    // speaker) so the note re-enters the inbound path and reaches a session/agent.
+    fanOut(note);
+    // Content-free obs mirror: the closed kind + room id only (feeds the fleet lens).
+    deps.emitDecryptHealth?.({ roomId: signal.roomId, reason: verdict.kind });
   }
 
   const adapter: ChannelPort = {
@@ -321,14 +373,14 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
         isDirectRoom: (room) => isRoomDirect(authedClient, room),
         logger: deps.logger,
         // E2EE threading: the crypto store bootstraps before /sync starts on the
-        // e2ee path; recoveryKey + onDecryptFailure ride the same conditional-
-        // spread convention as reauthenticate/emitHealth.
+        // e2ee path; recoveryKey rides the conditional-spread convention, and every
+        // fail-closed decrypt signal is wired to the adapter's degrade decider.
         e2ee: deps.e2ee === true,
         stateDir: deps.stateDir,
+        onDecryptFailure,
         ...(canReauthenticate ? { reauthenticate: () => auth.reauthenticate() } : {}),
         ...(deps.emitHealth !== undefined ? { emitHealth: deps.emitHealth } : {}),
         ...(deps.recoveryKey !== undefined ? { recoveryKey: deps.recoveryKey } : {}),
-        ...(deps.onDecryptFailure !== undefined ? { onDecryptFailure: deps.onDecryptFailure } : {}),
       });
       const started = await controller.start();
       if (!started.ok) {
