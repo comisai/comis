@@ -92,6 +92,10 @@ export function mapGoogleChatEventToNormalized(
   const wasMentioned = (message.annotations ?? []).some((a) => a.type === "USER_MENTION");
 
   const metadata: Record<string, unknown> = { isGroup: !isDm, wasMentioned };
+  // The message resource name is the platform reply target the plugin advertises
+  // as replyToMetaKey "googlechatMessageName" — write it so the inbound-message-id
+  // resolver records the native id and the reply-to path can quote this message.
+  if (message.name) metadata.googlechatMessageName = message.name;
   // Capture the thread resource name for routing; replying into the thread is
   // handled elsewhere on the send path.
   if (message.thread?.name) metadata.googlechatThreadId = message.thread.name;

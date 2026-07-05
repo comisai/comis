@@ -46,6 +46,30 @@ describe("createInboundMessageIdResolver", () => {
     expect(resolver.resolve("u-2")?.nativeId).toBe("1714500000.000100");
   });
 
+  it("records a Google Chat inbound under its advertised replyToMetaKey (googlechatMessageName)", () => {
+    // Reconciles the layers: the mapper writes metadata.googlechatMessageName =
+    // message.name, the plugin advertises replyToMetaKey "googlechatMessageName",
+    // and the resolver keys on that same metaKey — so the native id is recorded
+    // rather than silently dropped.
+    const resolver = createInboundMessageIdResolver({
+      metaKeyByChannel: new Map([["googlechat", "googlechatMessageName"]]),
+    });
+    resolver.record(
+      makeMsg({
+        id: "gc-1",
+        channelType: "googlechat",
+        channelId: "spaces/AAAA",
+        metadata: { googlechatMessageName: "spaces/AAAA/messages/MMMM" },
+      }),
+      "googlechat",
+    );
+    expect(resolver.resolve("gc-1")).toEqual({
+      channelType: "googlechat",
+      channelId: "spaces/AAAA",
+      nativeId: "spaces/AAAA/messages/MMMM",
+    });
+  });
+
   it("returns undefined for unknown UUIDs", () => {
     const resolver = createInboundMessageIdResolver({
       metaKeyByChannel: new Map([["telegram", "telegramMessageId"]]),

@@ -175,6 +175,30 @@ describe("mapGoogleChatEventToNormalized", () => {
     expect(result?.metadata.wasMentioned).toBe(false);
   });
 
+  it("populates the advertised replyToMetaKey (metadata.googlechatMessageName) from message.name", () => {
+    const result = mapGoogleChatEventToNormalized(
+      makeChatEvent({
+        message: {
+          name: "spaces/AAAA/messages/MMMM",
+          sender: { name: "users/1" },
+          text: "hi",
+        },
+      }),
+    );
+    // The plugin advertises replyToMetaKey "googlechatMessageName"; the mapper
+    // must write it so the inbound-message-id resolver can record the native id.
+    expect(result?.metadata.googlechatMessageName).toBe("spaces/AAAA/messages/MMMM");
+  });
+
+  it("omits googlechatMessageName when the MESSAGE event carries no message.name", () => {
+    const result = mapGoogleChatEventToNormalized(
+      makeChatEvent({
+        message: { sender: { name: "users/1" }, text: "hi" },
+      }),
+    );
+    expect(result?.metadata.googlechatMessageName).toBeUndefined();
+  });
+
   it("captures the thread resource name under a googlechat metadata key", () => {
     const result = mapGoogleChatEventToNormalized(
       makeChatEvent({
