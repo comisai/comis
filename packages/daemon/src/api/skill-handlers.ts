@@ -61,6 +61,7 @@ import { createLogger } from "@comis/infra";
 import { rmSync, existsSync } from "node:fs";
 import type { RpcHandler } from "./types.js";
 import { runBundleInstallHook } from "../skills/bundle-install-helper.js";
+import { unwindImportedSkillOnDelete, repinLocallyModifiedSkill } from "../skills/skill-provenance-hooks.js";
 
 const logger = createLogger({ name: "skill-handlers" });
 
@@ -558,6 +559,14 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         deps.skillRegistries.get(callingAgentId)?.init();
       }
 
+      // Unwind bundle-owned MCP entries (disconnect + drop the persisted
+      // entries, keyed on the ownership ledger so a legacy bundle-owning skill
+      // unwinds too) + remove the provenance record. The skill is already
+      // deleted, so a failure WARNs rather than failing the call.
+      const ctx = rawParams._context as { userId?: string; traceId?: string } | undefined;
+      const unwind = await unwindImportedSkillOnDelete(deps, { scope, agentId: callingAgentId, name: params.name, ctx });
+      if (!unwind.ok) logger.warn({ skillName: params.name, agentId: callingAgentId, err: unwind.error.message, hint: "the skill was deleted but its bundled MCP entries or provenance record may linger; inspect config.yaml + the provenance store", errorKind: "internal" as const }, "Skill delete: bundle/provenance unwind failed");
+
       const result = { ok: true as const };
       if (IS_DEV) SkillsDeleteContract.response.parse(result);
       return result;
@@ -770,6 +779,12 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         deps.skillRegistries.get(callingAgentId)?.init();
       }
       await runBundleInstallHook(deps, params.name, skill.location, rawParams);
+
+      // Local-edit re-pin: refresh the provenance content hash over the edited
+      // install set + mark it locally modified (an authorized, visible
+      // divergence). A no-op for a skill with no provenance record.
+      const repin = await repinLocallyModifiedSkill(deps, { scope, agentId: callingAgentId, name: params.name, location: skill.location });
+      if (!repin.ok) logger.warn({ skillName: params.name, agentId: callingAgentId, err: repin.error.message, hint: "the skill content was updated but its provenance pin was not refreshed; a later re-import may not detect the local edit", errorKind: "internal" as const }, "Skill update: provenance re-pin failed");
 
       const result = { ok: true as const, name: params.name };
       if (IS_DEV) SkillsUpdateContract.response.parse(result);
