@@ -247,6 +247,20 @@ export async function handleSilentRetryDefault(
   retryState.promptSucceeded = retryResult.succeeded;
   retryState.promptError = retryResult.error;
 
+  // Announce the re-drive so `explain` can show the session re-entered the
+  // model on a silent failure (previously log-only — the budget incident's
+  // re-drive was findable only by a debug-log grep). `succeeded` reflects the
+  // post-retry visible-text recovery re-checked just below.
+  const silentRecovered =
+    retryState.promptSucceeded && (session.getLastAssistantText?.() ?? "") !== "";
+  deps.eventBus.emit("execution:recovery_attempted", {
+    agentId: params.agentId ?? "default",
+    sessionKey: formatSessionKey(params.sessionKey),
+    reason: "silent_retry",
+    succeeded: silentRecovered,
+    timestamp: deps.clock.now(),
+  });
+
   // Re-check for empty response after retry
   if (retryState.promptSucceeded) {
     const retryText = session.getLastAssistantText?.() ?? "";
@@ -385,6 +399,15 @@ async function attemptLkwFallback(
     );
 
     const lkwText = getVisibleAssistantText(session);
+    // Announce the model-swap re-drive (previously log-only) so `explain`
+    // shows the fallback attempt + whether it recovered.
+    deps.eventBus.emit("execution:recovery_attempted", {
+      agentId: agentId ?? "default",
+      sessionKey: formatSessionKey(params.sessionKey),
+      reason: "lkw_fallback",
+      succeeded: lkwText !== "",
+      timestamp: deps.clock.now(),
+    });
     if (lkwText !== "") {
       retryState.promptSucceeded = true;
       retryState.promptError = undefined;

@@ -21,6 +21,7 @@ import {
   durableOrphanedEventToRow,
   durableResumedEventToRow,
   autonomyRevokedEventToRow,
+  autonomyBudgetWarningEventToRow,
   autonomyKilledEventToRow,
   autonomyDenialBreakerEventToRow,
   setupObsPersistence,
@@ -1186,6 +1187,32 @@ describe("durableResumedEventToRow", () => {
   });
 });
 
+describe("autonomyBudgetWarningEventToRow", () => {
+  it("maps autonomy:budget_warning to a health_signal row (severity warning) with limb + counts only", () => {
+    // The pre-trip budget warning: a session at 80% of an autonomy.budget limb
+    // must surface on the fleet lens BEFORE the abort wedges it (observed
+    // live: the wedge arrived with zero warning). Counts + closed labels only.
+    const row = autonomyBudgetWarningEventToRow({
+      rootRunId: "root-session-default:u1:c1",
+      limb: "aggregateUsd",
+      spent: 1.7,
+      cap: 2,
+      unit: "usd",
+      fraction: 0.85,
+      timestamp: 5_000,
+    });
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    const details = JSON.parse(row.details) as Record<string, unknown>;
+    expect(details.signal).toBe("autonomy_budget_warning");
+    expect(details.limb).toBe("aggregateUsd");
+    expect(details.spent).toBe(1.7);
+    expect(details.cap).toBe(2);
+    expect(details.unit).toBe("usd");
+    expect(details.rootRunId).toBe("root-session-default:u1:c1");
+  });
+});
+
 describe("autonomyRevokedEventToRow", () => {
   it("maps an autonomy:revoked payload to a warning health_signal row (revoked count + rootRunId, no bearer/body)", () => {
     const row = autonomyRevokedEventToRow({
@@ -1882,6 +1909,32 @@ describe("auditEventToRow (the content-free audit row-builder)", () => {
       undefined,
     );
     expect(row.kind).toBe(expectedKind);
+  });
+
+  it("a routine secret READ (successful get / expected-absent probe) persists severity info — denials stay warning", () => {
+    // Observed live: every daemon boot probes ~10 optional provider keys
+    // (outcome not_found) and the canary reads its env seed on every inbound
+    // message — all stamped severity "warning" on a perfectly healthy install,
+    // inflating every severity-filtered audit sweep. A routine read resolution
+    // is the audit TRAIL, not an alert; only denials/errors (and mutations,
+    // pinned below) belong at warning.
+    const probeNotFound = auditEventToRow(
+      { timestamp: 1, agentId: "a", tenantId: "t", actionType: "ANTHROPIC_API_KEY", kind: "secret_access", classification: "read", outcome: "not_found" } as EventMap["audit:event"],
+      "t", "a", undefined,
+    );
+    expect(probeNotFound.severity).toBe("info");
+
+    const readOk = auditEventToRow(
+      { timestamp: 1, agentId: "a", tenantId: "t", actionType: "secrets.get", kind: "secret_access", classification: "read", outcome: "success" } as EventMap["audit:event"],
+      "t", "a", undefined,
+    );
+    expect(readOk.severity).toBe("info");
+
+    const denied = auditEventToRow(
+      { timestamp: 1, agentId: "a", tenantId: "t", actionType: "secrets.get", kind: "secret_access", classification: "read", outcome: "denied" } as EventMap["audit:event"],
+      "t", "a", undefined,
+    );
+    expect(denied.severity).toBe("warning");
   });
 
   it("a secrets.delete persists as a security-signal kind (severity warning), not generic info", () => {

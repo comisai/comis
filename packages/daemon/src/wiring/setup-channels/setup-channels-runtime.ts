@@ -200,8 +200,7 @@ export async function buildAndStartChannelManager(
   // coordinatorFactory can close over it (markers from the default agent activity.theme).
   const activityMarkers = themeForName(agents[defaultAgentId]?.activity?.theme ?? "default").markers;
   const activityRenderers = buildActivityRenderers(adaptersByType, channelPlugins, channelsLogger, { timer: deps.timers, clock: deps.clock, signCallbackData: deps.signCallbackData, mintApprovalLink: deps.mintApprovalLink, markers: activityMarkers });
-  // The SOLE renderer-injection point is the per-turn `deps.activityRendererFactory?.(ctx.channelType)`
-  // fallback in the coordinatorFactory below — fires for any channelType the live map does not serve (test-only seam).
+  // The SOLE renderer-injection point is the per-turn `deps.activityRendererFactory?.(ctx.channelType)` fallback in the coordinatorFactory below — fires for any channelType the live map does not serve (test-only seam).
   // The per-turn coordinatorFactory the inbound pipeline gate (execution-pipeline.ts:395) needs — over
   // renderers + redacted ActivityStream + breaker + live kill-switch. Built ONLY when stream is injected (absent → gate
   // false, fail-closed §22.2). Closure lives in the daemon (root importing @comis/orchestrator + observability).
@@ -233,6 +232,7 @@ export async function buildAndStartChannelManager(
           killSwitch: () => resolveActivityKillSwitchSlice(agents, ctx.agentId),
           breaker: deps.activityBreaker, // process-singleton (shared across coordinators)
           planStream, // shared SEP plan-stream (built ONCE outside the closure)
+          eventBus: container.eventBus, // the activity:turn_finalized user-surface emit
         });
       }
     : undefined;

@@ -254,8 +254,13 @@ export async function executeLlm(
     accumulated = sanitizeAssistantResponse(accumulated);
   }
 
-  // Resource aborts with recovered response
-  const RESOURCE_ABORT_REASONS = new Set(["budget_exceeded", "max_steps", "context_exhausted", "circuit_breaker"]);
+  // Resource aborts with recovered response. spend_exceeded (the priced
+  // observability.spend / per-root autonomy.budget kill) belongs here: the
+  // abort path substitutes the "[Stopped: spend_exceeded]" notice as the
+  // response, and delivering it through the still-aborted signal made the
+  // block pacer hard-skip every block — the user got permanent silence for a
+  // budget stop while the delivery log read success.
+  const RESOURCE_ABORT_REASONS = new Set(["budget_exceeded", "spend_exceeded", "max_steps", "context_exhausted", "circuit_breaker"]);
   const resourceAborted = deliveryAbortController.signal.aborted && deliveryAbortReason != null && RESOURCE_ABORT_REASONS.has(deliveryAbortReason);
   const recoveryAbortController = resourceAborted ? new AbortController() : undefined;
   const deliverySignal = recoveryAbortController?.signal ?? deliveryAbortController.signal;

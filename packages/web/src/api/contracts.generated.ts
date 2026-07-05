@@ -8611,6 +8611,74 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           ],
           "additionalProperties": false
         },
+        "activityFinalize": {
+          "type": "object",
+          "properties": {
+            "strategy": {
+              "type": "string"
+            },
+            "outcome": {
+              "type": "string"
+            },
+            "errorKind": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "reclassified": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "strategy",
+            "outcome",
+            "reclassified"
+          ],
+          "additionalProperties": false
+        },
+        "recoveries": {
+          "type": "object",
+          "properties": {
+            "total": {
+              "type": "number"
+            },
+            "succeeded": {
+              "type": "number"
+            },
+            "byReason": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "number"
+              }
+            }
+          },
+          "required": [
+            "total",
+            "succeeded",
+            "byReason"
+          ],
+          "additionalProperties": false
+        },
+        "deliverySkipped": {
+          "type": "object",
+          "properties": {
+            "events": {
+              "type": "number"
+            },
+            "chunksNotSent": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "events",
+            "chunksNotSent"
+          ],
+          "additionalProperties": false
+        },
         "turnCount": {
           "type": "number"
         },

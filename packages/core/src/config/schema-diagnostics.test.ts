@@ -16,7 +16,7 @@ describe("DiagnosticsConfigSchema — parse semantics", () => {
       expect(result.data.cacheTrace.enabled).toBe(true);
       expect(result.data.cacheTrace.includeMessages).toBe(false);
       expect(result.data.cacheTrace.includePrompt).toBe(true);
-      expect(result.data.cacheTrace.includeSystem).toBe(true);
+      expect(result.data.cacheTrace.includeSystem).toBe(false); // PII-safe default: only systemDigest is recorded
       // configAudit defaults.
       expect(result.data.configAudit.enabled).toBe(true);
       expect(result.data.configAudit.rotateAtBytes).toBe(10 * 1024 * 1024);
@@ -34,7 +34,7 @@ describe("DiagnosticsConfigSchema — parse semantics", () => {
       expect(result.data.cacheTrace.enabled).toBe(true);
       expect(result.data.cacheTrace.includeMessages).toBe(false);
       expect(result.data.cacheTrace.includePrompt).toBe(true);
-      expect(result.data.cacheTrace.includeSystem).toBe(true);
+      expect(result.data.cacheTrace.includeSystem).toBe(false); // PII-safe default: only systemDigest is recorded
       // configAudit defaults.
       expect(result.data.configAudit.enabled).toBe(true);
       expect(result.data.configAudit.rotateAtBytes).toBe(10 * 1024 * 1024);
@@ -224,14 +224,14 @@ describe("DiagnosticsConfigSchema.configAudit — fields and defaults", () => {
 // ---------------------------------------------------------------------------
 
 describe("DiagnosticsConfigSchema.cacheTrace — fields and defaults", () => {
-  it("cacheTrace defaults populate the full shape (on by default; includeMessages off; prompt + system on)", () => {
+  it("cacheTrace defaults populate the full shape (on by default; includeMessages + includeSystem off; prompt on)", () => {
     const result = DiagnosticsConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.cacheTrace.enabled).toBe(true);
       expect(result.data.cacheTrace.includeMessages).toBe(false);
       expect(result.data.cacheTrace.includePrompt).toBe(true);
-      expect(result.data.cacheTrace.includeSystem).toBe(true);
+      expect(result.data.cacheTrace.includeSystem).toBe(false); // PII-safe default: only systemDigest is recorded
       expect(result.data.cacheTrace.filePath).toBeUndefined();
     }
   });
@@ -247,7 +247,7 @@ describe("DiagnosticsConfigSchema.cacheTrace — fields and defaults", () => {
       expect(result.data.cacheTrace.includeMessages).toBe(true);
       // Untouched fields keep their defaults.
       expect(result.data.cacheTrace.includePrompt).toBe(true);
-      expect(result.data.cacheTrace.includeSystem).toBe(true);
+      expect(result.data.cacheTrace.includeSystem).toBe(false); // PII-safe default: only systemDigest is recorded
     }
   });
 

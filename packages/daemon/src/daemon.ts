@@ -1811,7 +1811,7 @@ async function bootAgents(
     // from the SAME object the execution pipeline publishes into.
     executionPlanPorts, oauthManagers, authStorages, // oauthManagers: DEFAULT agent's → buildImageGenBundle (Codex OAuth bearer); authStorages: dialectic OAuth resolver
   } = await setupAgents({
-    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, learnedSkillStore, learnedSkillSurfaceRegistry, summarizerSpendBreaker, spendAccumulator,
+    container, memoryAdapter, sessionStore, agentLogger, daemonVersion: boot.daemonVersion, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, learnedSkillStore, learnedSkillSurfaceRegistry, summarizerSpendBreaker, spendAccumulator,
     boundedAutonomyBudget: boundedAutonomyBudgetHolder, resolveRootRunId, // per-root budget holder + rootRunId resolver → each bridge
     outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe

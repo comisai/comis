@@ -168,7 +168,12 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
         logFn(
           {
             method: name,
-            err,
+            // An expected classified refusal (non-internal → warn) logs its
+            // MESSAGE only: the Error object serializes with its full stack,
+            // and a routine operator flow (the CLI probing an admin-gated obs
+            // method before its offline fallback) then reads as a fault.
+            // Stack traces are DEBUG-only; internal errors keep the full err.
+            err: classified.errorKind === "internal" ? err : (err instanceof Error ? err.message : String(err)),
             durationMs,
             clientId: context.clientId,
             hint: classified.hint,

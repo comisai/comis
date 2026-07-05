@@ -390,6 +390,31 @@ describe("createRpcDispatch", () => {
     await expect(dispatch("cron.add", {})).rejects.toThrow("Scheduler not available");
   });
 
+  it("logs a typed refusal (AuthorizationError) at WARN with the message only — no stack rides an expected operator flow", async () => {
+    // Observed live: every operator `comis explain` run probes the
+    // admin-gated obs.explain RPC before falling back offline (by design), and
+    // the dispatch wrote a full AuthorizationError stack to the daemon log
+    // each time — an expected refusal dressed as a fault. Stack traces are
+    // DEBUG-only; a typed refusal logs its message.
+    const { createCronHandlers } = await import("./cron-handlers.js");
+    (createCronHandlers as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+      "cron.add": vi.fn(async () => {
+        const e = new Error("Admin access required for obs.explain (admin-trust only)");
+        e.name = "AuthorizationError";
+        throw e;
+      }),
+    });
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    const dispatch = createRpcDispatch(mockDeps);
+
+    await expect(dispatch("cron.add", {})).rejects.toThrow(/Admin access required/);
+    expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+    const payload = mockLogger.warn.mock.calls[0]![0] as { err: unknown; errorKind: string };
+    expect(payload.errorKind).toBe("auth");
+    expect(typeof payload.err, "expected refusals log the message, not the Error object (whose serializer emits the stack)").toBe("string");
+    expect(String(payload.err)).not.toMatch(/\n\s+at /);
+  });
+
   it("logs unmatched handler errors through Pino at ERROR level", async () => {
     const { createCronHandlers } = await import("./cron-handlers.js");
     (createCronHandlers as ReturnType<typeof vi.fn>).mockReturnValueOnce({

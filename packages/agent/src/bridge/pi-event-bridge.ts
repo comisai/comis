@@ -268,7 +268,11 @@ export interface TtlSplitEstimate {
 export interface BoundedAutonomyBudgetPort {
   /** Reserve one LLM call's spend against the tree root: wall-clock + token limbs
    *  enforce REGARDLESS of pricing (they bite a zero-price loop), then the 3-state
-   *  $-limb. An `exceeded` outcome means a limb breached → the bridge aborts. */
+   *  $-limb. An `exceeded` outcome means a limb breached → the bridge aborts.
+   *  `estUsd` is whatever the meter should ACCRUE for this call — the bridge
+   *  passes the actual corrected per-call cost (this reserve runs post-record,
+   *  where the billed amount is known, and the per-root accumulator has no
+   *  separate actual-adder to settle an estimate against). */
   reserveBudget(
     rootRunId: string,
     provider: string,
@@ -525,7 +529,7 @@ export interface PiEventBridgeResult {
   /** Event listener to subscribe to AgentSession events. */
   listener: (event: AgentSessionEvent) => void;
   /** Returns accumulated execution stats (includes last known context usage and duration breakdown). */
-  getResult: () => Partial<ExecutionResult> & { contextUsage?: ContextUsageData; textEmitted?: boolean; cumulativeLlmDurationMs?: number; cumulativeToolDurationMs?: number; cumulativeToolWallclockMs?: number; toolCallHistory?: string[]; lastActiveToolName?: string; lastLlmErrorMessage?: string; failedToolCalls?: number; failedTools?: string[]; toolExecResults?: Array<{ toolName: string; success: boolean; durationMs: number; errorText?: string; errorKind?: ErrorKind }>; breakerTripCount?: number; turnCount?: number; lastStopReason?: string; cacheWrite5mTokens?: number; cacheWrite1hTokens?: number; sessionCostUsd?: number; sessionCacheSavedUsd?: number; thinkingTokens?: number; budgetWarningEmitted?: boolean };
+  getResult: () => Partial<ExecutionResult> & { contextUsage?: ContextUsageData; textEmitted?: boolean; cumulativeLlmDurationMs?: number; cumulativeToolDurationMs?: number; cumulativeToolWallclockMs?: number; toolCallHistory?: string[]; lastActiveToolName?: string; lastLlmErrorMessage?: string; failedToolCalls?: number; failedTools?: string[]; toolExecResults?: Array<{ toolName: string; success: boolean; durationMs: number; errorText?: string; errorKind?: ErrorKind }>; breakerTripCount?: number; turnCount?: number; lastStopReason?: string; cacheWrite5mTokens?: number; cacheWrite1hTokens?: number; executionCostUsd?: number; executionCacheSavedUsd?: number; thinkingTokens?: number; budgetWarningEmitted?: boolean };
   /** Accumulate estimated cost from a timed-out API request. */
   addGhostCost: (estimated: GhostCostEstimate) => void;
   /** ReadonlyMap views of the per-responseId hash store and canonical-snapshot
@@ -1296,6 +1300,17 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             sessionKey: formatSessionKey(deps.sessionKey),
             traceId: tryGetContext()?.traceId ?? deps.executionId,
             ...(executedRedactedParams !== undefined && { params: executedRedactedParams }),
+            // On FAILURE, carry the bounded+redacted argument shape so the
+            // trajectory tool.result record — and `comis explain`'s failures[] —
+            // can answer "what did the failed call attempt?" without a raw
+            // conversation-store dive. redactValue (executedRedactedParams)
+            // masks secrets/PII/paths; sanitizeToolArgs then caps each value
+            // (large values → "[N chars]"). Success omits it — the input is
+            // only diagnostically load-bearing on a failure, and gating keeps
+            // the trajectory lean.
+            ...(!toolSuccess && executedRedactedParams !== undefined && {
+              argsPreview: sanitizeToolArgs(executedRedactedParams),
+            }),
             ...(toolErrorKind !== undefined && { errorKind: toolErrorKind }),
             ...(errorText && { errorMessage: sanitizeLogString(errorText).slice(0, 1500) }),
             ...(!toolSuccess && mcpServer !== undefined && { mcpServer, mcpErrorType: classifyMcpErrorType(errorText) }),
@@ -1889,8 +1904,8 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             }
 
             // Accumulate session-cumulative costs alongside per-turn values
-            m.sessionCumulativeCostUsd += cost.total;
-            m.sessionCumulativeCacheSavedUsd += savedVsUncached;
+            m.executionCostUsd += cost.total;
+            m.executionCacheSavedUsd += savedVsUncached;
 
             // Track thinking tokens from SDK usage object.
             // The pi-ai SDK Usage type does not have a dedicated thinking/reasoning field,
@@ -2175,10 +2190,17 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               }
               // The SAME real per-call locals the sibling ceiling consumes: the live
               // model (a manual /model switch updates getCurrentModel), the provider,
-              // the conservative perTurnMax est $ (0 when spend is unconfigured — the
-              // token/wall-clock limbs still gate), and the turn's true totalTokens.
+              // and the turn's true totalTokens. The $ figure is the ACTUAL corrected
+              // cost of THIS call (`cost.total`), NOT the perTurnMax admission
+              // estimate: the sibling ceiling releases its estimate at the billing
+              // point (`reconcile` to $0, actuals recorded by the daemon-wide
+              // token_usage subscriber), but the per-root accumulator has NO separate
+              // actual-adder — whatever is reserved here IS its accrual. Reserving
+              // the estimate made the $-limb a calls-counter (perTurnMax × N), which
+              // consumed a $2 cap in 4 calls and wedged live sessions at pennies of
+              // real spend. This reserve runs post-record, so the actual is known.
               const perRootModel = deps.getCurrentModel?.() ?? deps.model;
-              const perRootEstUsd = deps.spendConfig?.perTurnMax ?? 0;
+              const perRootEstUsd = cost.total;
               const rootGate = perRoot.reserveBudget(
                 rootRunId,
                 deps.provider,

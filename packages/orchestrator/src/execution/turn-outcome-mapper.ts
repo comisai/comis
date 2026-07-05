@@ -7,8 +7,8 @@
  * as a bare "❌ platform". Both are mislabels: no platform error occurred, the
  * run hit a resource limit. This mapper produces a TRUTHFUL
  * kind:"failure" {errorKind:"resource"} carrying a fixed one-line human reason
- * for the resource-abort finish reasons (max_steps / loop_detected), and
- * returns undefined for every other case so the normal
+ * for the resource-abort finish reasons (max_steps / loop_detected /
+ * spend_exceeded), and returns undefined for every other case so the normal
  * success / silent / delivery-failure branches in the pipeline are untouched.
  *
  * Pure: no I/O, no logger, no clock. The reason strings are named constants and
@@ -23,6 +23,13 @@ const STEP_LIMIT_REASON = "stopped — hit step limit" as const;
 /** One-line human reason for a repeating-tool loop abort. */
 const LOOP_DETECTED_REASON = "stopped — repeating-tool loop" as const;
 
+/** One-line human reason for a spend/budget kill (observability.spend ceiling
+ *  or per-root autonomy.budget limb). Without this mapping a spend-aborted turn
+ *  finalized via the success branch and the coordinator's failed-event
+ *  reclassify stamped the status pill with a TRANSIENT recovered tool
+ *  errorKind — a budget stop rendered as "❌ validation". */
+const SPEND_EXCEEDED_REASON = "stopped — spend limit reached" as const;
+
 /** ErrorKind for any resource abort (step limit / budget / loop). */
 const RESOURCE_ERROR_KIND = "resource" as const;
 
@@ -30,6 +37,7 @@ const RESOURCE_ERROR_KIND = "resource" as const;
 const RESOURCE_ABORT_REASONS: Record<string, string> = {
   max_steps: STEP_LIMIT_REASON,
   loop_detected: LOOP_DETECTED_REASON,
+  spend_exceeded: SPEND_EXCEEDED_REASON,
 };
 
 export interface AbortSignalInput {
@@ -45,9 +53,10 @@ export interface AbortSignalInput {
  * Map a resource abort to a truthful kind:"failure" TurnOutcome.
  *
  * Returns a failure with errorKind "resource" + a fixed one-line reason for a
- * max_steps / loop_detected abort. Returns `undefined` for any non-resource
- * abort (so the caller's normal branches run): when `resourceAborted` is false,
- * or when the finish reason is not a recognized resource-abort reason.
+ * max_steps / loop_detected / spend_exceeded abort. Returns `undefined` for any
+ * non-resource abort (so the caller's normal branches run): when
+ * `resourceAborted` is false, or when the finish reason is not a recognized
+ * resource-abort reason.
  */
 export function mapAbortToTurnOutcome(input: AbortSignalInput): TurnOutcome | undefined {
   if (!input.resourceAborted) return undefined;

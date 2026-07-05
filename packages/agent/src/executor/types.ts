@@ -23,7 +23,16 @@ import type { TimeoutSource } from "../model/operation-model-resolver.js";
 export interface ExecutionResult {
   response: string;
   sessionKey: SessionKey;
+  /** PER-EXECUTION token totals (the bridge's accumulation for THIS execute()
+   *  call) — scope-consistent with `cost`. For the session-cumulative total
+   *  (across every execution on the persisted session) read `sessionTokensUsed`. */
   tokensUsed: { input: number; output: number; total: number; cacheRead?: number; cacheWrite?: number };
+  /** SDK CUMULATIVE session token totals (all executions on the persisted
+   *  session) — the `/status` / session-inspect view. Absent when the SDK
+   *  reported no stats (e.g. an abort before any LLM call). Distinct from the
+   *  per-execution `tokensUsed` so a per-execution log line / obs row never
+   *  reports a session-cumulative token count beside a per-execution cost. */
+  sessionTokensUsed?: { input: number; output: number; total: number; cacheRead?: number; cacheWrite?: number };
   cost: {
     total: number;
     cacheSaved?: number;
@@ -32,9 +41,9 @@ export interface ExecutionResult {
     /** Number of API requests that timed out. */
     timedOutRequests?: number;
     /** Session-cumulative total cost across all turns (USD). */
-    sessionCostUsd?: number;
+    executionCostUsd?: number;
     /** Session-cumulative cache savings across all turns (USD). */
-    sessionCacheSavedUsd?: number;
+    executionCacheSavedUsd?: number;
   };
   stepsExecuted: number;
   llmCalls: number;

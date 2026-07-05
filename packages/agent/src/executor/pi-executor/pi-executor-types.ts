@@ -72,6 +72,10 @@ export interface PiExecutorDeps {
   resolveRootRunId?: (sessionKey: import("@comis/core").SessionKey) => string;
   eventBus: TypedEventBus;
   logger: ComisLogger;
+  /** The daemon package.json version, stamped into trace.metadata's
+   *  harness.version so a session trajectory records which build produced it.
+   *  Absent (tests / non-daemon embedders) ⇒ harness.version "unknown". */
+  appVersion?: string;
   /** Optional ExecutionPlanPort holder. When provided, session-bootstrap publishes
    *  the per-turn SEP ref into it (SEP-on) / clears it (SEP-off) so the gateway/ACP
    *  plan bridge reads the live plan via the shared port. Absent in non-ACP runtimes. */

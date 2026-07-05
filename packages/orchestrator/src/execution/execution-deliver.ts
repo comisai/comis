@@ -279,14 +279,50 @@ export async function deliverExecutionResponse(
   // deliveredAtMs on the success receipt and failedAtMs on the failure receipt.
   const settledAtMs = deps.clock ? deps.clock.now() : systemNowMs();
 
+  // Blocks the pacer never attempted because the external signal aborted
+  // mid-delivery (its hard-stop skips the remainder WITHOUT sending). Counting
+  // only FAILED chunks read a fully-skipped delivery as success — observed
+  // live: a spend-aborted turn logged success:true while the user received
+  // nothing. The skip is not a platform failure (nothing was attempted), so
+  // the receipt shape is unchanged; the LOGS must carry the truth.
+  const skippedChunks = deliverySignal.aborted
+    ? Math.max(0, coalescedGroups.length - (deliveredChunks + failedChunks))
+    : 0;
   const deliveryCtx = tryGetContext();
+  if (skippedChunks > 0) {
+    deps.logger.warn({
+      traceId: deliveryCtx?.traceId,
+      channelType: effectiveMsg.channelType ?? "unknown",
+      chatId: effectiveMsg.channelId,
+      skippedChunks,
+      totalChunks: coalescedGroups.length,
+      hint: "Execution abort cut delivery short — the remaining blocks were never sent and the user did not receive them; check the execution:aborted reason for this turn",
+      errorKind: "precondition" as const,
+    }, "Block delivery skipped by aborted execution");
+    // The pacer's hard stop never reaches deliverToChannel, so none of the
+    // delivery events fire — the trajectory records NOTHING for a turn whose
+    // reply was never sent. Announce the skip on the existing
+    // delivery:aborted event (chunksDelivered counts what DID go out before
+    // the signal fired) so `explain` shows the undelivered turn.
+    deps.eventBus.emit("delivery:aborted", {
+      channelId: effectiveMsg.channelId,
+      channelType: effectiveMsg.channelType ?? "unknown",
+      reason: typeof deliverySignal.reason === "string" ? deliverySignal.reason : "aborted",
+      chunksDelivered: deliveredChunks,
+      totalChunks: coalescedGroups.length,
+      durationMs: Math.round(performance.now() - deliveryStartMs),
+      origin: "agent",
+      timestamp: systemNowMs(),
+    });
+  }
   deps.logger.debug({
     traceId: deliveryCtx?.traceId,
     step: "block-delivery",
     rawBlocks: blocks.length,
     coalescedGroups: coalescedGroups.length,
     chatId: effectiveMsg.channelId,
-    success: failedChunks === 0,
+    success: failedChunks === 0 && skippedChunks === 0,
+    ...(skippedChunks > 0 ? { skippedChunks } : {}),
   }, "Block delivery complete");
 
   // Delivery complete INFO bookend

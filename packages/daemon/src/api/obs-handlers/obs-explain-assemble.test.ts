@@ -1006,6 +1006,211 @@ function cacheBreakRecord(
   };
 }
 
+describe("assembleIncidentReport — failed tool-call argsPreview", () => {
+  // The failing tool's INPUT is what an operator needs ("what did the edit try
+  // to change?"). Previously recoverable only from a raw memory.db dive; now
+  // the bounded+redacted argsPreview rides the tool.result record onto the
+  // failure so `comis explain` answers it in one call.
+  it("surfaces the bounded argsPreview of a failed tool call on failures[]", () => {
+    const signals = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "tool.result",
+        seq: 1,
+        sessionKey: SESSION_KEY,
+        data: {
+          toolName: "edit",
+          toolCallId: "tc-e",
+          success: false,
+          errorKind: "validation",
+          errorMessage: "[text_not_found] Could not find edits[1] in IDENTITY.md.",
+          argsPreview: { path: "IDENTITY.md", edits: "[244 chars]" },
+        },
+      },
+    ]);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 1);
+    const f = report.failures.find((x) => x.toolName === "edit");
+    expect(f).toBeDefined();
+    expect(f!.argsPreview).toEqual({ path: "IDENTITY.md", edits: "[244 chars]" });
+  });
+
+  it("omits argsPreview when the failure record carries none (backward-safe)", () => {
+    const signals = toIncidentSignals([
+      { traceSchema: "comis-trajectory", type: "tool.result", seq: 1, sessionKey: SESSION_KEY, data: { toolName: "web_fetch", success: false, errorKind: "dependency" } },
+    ]);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 1);
+    expect(report.failures.find((x) => x.toolName === "web_fetch")!.argsPreview).toBeUndefined();
+  });
+});
+
+describe("assembleIncidentReport — recovery attempts", () => {
+  // The strip-and-re-enter / LKW-fallback / continuation-nudge recovery paths
+  // mutate a run (re-prompt, model swap) and were log-only — explain couldn't
+  // say a session re-entered the model. Fold the execution.recovery_attempted
+  // records into a recoveries section (counts by reason + succeeded tally).
+  it("folds recovery attempts by reason with a succeeded count", () => {
+    const signals = toIncidentSignals([
+      { traceSchema: "comis-trajectory", type: "execution.recovery_attempted", seq: 1, sessionKey: SESSION_KEY, data: { reason: "silent_retry", succeeded: false } },
+      { traceSchema: "comis-trajectory", type: "execution.recovery_attempted", seq: 2, sessionKey: SESSION_KEY, data: { reason: "silent_retry", succeeded: true } },
+      { traceSchema: "comis-trajectory", type: "execution.recovery_attempted", seq: 3, sessionKey: SESSION_KEY, data: { reason: "lkw_fallback", succeeded: true } },
+    ]);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 3);
+    expect(report.recoveries).toEqual({
+      total: 3,
+      succeeded: 2,
+      byReason: { silent_retry: 2, lkw_fallback: 1 },
+    });
+  });
+
+  it("omits recoveries when the trajectory carries none", () => {
+    const report = assembleIncidentReport(toIncidentSignals([]), makeMetadata(), null, SESSION_KEY, 0);
+    expect(report.recoveries).toBeUndefined();
+  });
+});
+
+describe("assembleIncidentReport — user surface (activity finalize + skipped delivery)", () => {
+  // "What did the user actually see this turn?" — the terminal pill state and
+  // any never-sent blocks. Observed live: explain claimed 2 dispatched
+  // deliveries while the user's chat showed a stale ❌ pill and two turns of
+  // silence; only a screenshot could establish the surface.
+  it("surfaces the finalize outcome and skipped-delivery counts from the trajectory records", () => {
+    const signals = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "delivery.aborted",
+        seq: 1,
+        sessionKey: SESSION_KEY,
+        data: { reason: "spend_exceeded", chunksDelivered: 0, totalChunks: 2, channelType: "telegram" },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "activity.turn_finalized",
+        seq: 2,
+        sessionKey: SESSION_KEY,
+        data: { strategy: "EditPlace", outcome: "failure", errorKind: "resource", reason: "stopped — spend limit reached", reclassified: false, failedEventCount: 1 },
+      },
+    ]);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 2);
+    expect(report.activityFinalize).toEqual({
+      strategy: "EditPlace",
+      outcome: "failure",
+      errorKind: "resource",
+      reason: "stopped — spend limit reached",
+      reclassified: false,
+    });
+    expect(report.deliverySkipped).toEqual({ events: 1, chunksNotSent: 2 });
+  });
+
+  it("omits both sections when the trajectory carries no such records (undefined, never empty objects)", () => {
+    const signals = toIncidentSignals([]);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 0);
+    expect(report.activityFinalize).toBeUndefined();
+    expect(report.deliverySkipped).toBeUndefined();
+  });
+});
+
+describe("assembleIncidentReport — trajectory-derived cost/cache ledger", () => {
+  // A session's sessionEnd rollup is overwritten by EVERY execution, so its
+  // costUsd is the LAST execution's cost only — observed live as a ~$0.50
+  // session explained at $0.03. The trajectory carries the honest ledger: one
+  // session.summary record per execution (costUsd each) and one
+  // model.completed record per LLM call (token + cache fields). The assembler
+  // must prefer those sums; the rollup stays the fallback for log-only sessions.
+
+  const modelCompletedRecord = (
+    data: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens?: number },
+    seq: number,
+  ): Record<string, unknown> => ({
+    traceSchema: "comis-trajectory",
+    type: "model.completed",
+    seq,
+    sessionKey: SESSION_KEY,
+    data: { cacheCreationTokens: 0, ...data },
+  });
+
+  const sessionSummaryRecord = (costUsd: number, seq: number): Record<string, unknown> => ({
+    traceSchema: "comis-trajectory",
+    type: "session.summary",
+    seq,
+    sessionKey: SESSION_KEY,
+    data: { degraded: false, turnCount: 1, costUsd, toolStats: {}, breakerTripCount: 0 },
+  });
+
+  it("sums the per-execution session.summary costs instead of trusting the last-write rollup costUsd", () => {
+    const signals = toIncidentSignals([
+      sessionSummaryRecord(0.13086, 1),
+      sessionSummaryRecord(0.071879, 2),
+      sessionSummaryRecord(0.265657, 3),
+      sessionSummaryRecord(0.02994, 4),
+    ]);
+    const report = assembleIncidentReport(
+      signals,
+      // The rollup carries only the FINAL execution's cost (the live shape).
+      makeMetadata({ sessionEnd: { endReason: "spend_exceeded", costUsd: 0.02994, totalTokens: 296_675 } }),
+      null,
+      SESSION_KEY,
+      4,
+    );
+    expect(report.cost.costUsd).toBeCloseTo(0.498336, 4);
+  });
+
+  it("derives cacheReadRatio and totalTokens from the model.completed token ledger (the rollup never carries cacheReadRatio)", () => {
+    const signals = toIncidentSignals([
+      modelCompletedRecord({ inputTokens: 25_926, outputTokens: 41, cacheReadTokens: 0 }, 1),
+      modelCompletedRecord({ inputTokens: 893, outputTokens: 120, cacheReadTokens: 25_600 }, 2),
+      modelCompletedRecord({ inputTokens: 1_344, outputTokens: 75, cacheReadTokens: 27_136 }, 3),
+    ]);
+    const report = assembleIncidentReport(
+      signals,
+      makeMetadata({ sessionEnd: { endReason: "success", costUsd: 0.1, totalTokens: 1 } }),
+      null,
+      SESSION_KEY,
+      3,
+    );
+    // cacheRead / (input + cacheRead) across the session's completions.
+    const input = 25_926 + 893 + 1_344;
+    const cacheRead = 25_600 + 27_136;
+    expect(report.cost.cacheReadRatio).toBeCloseTo(cacheRead / (input + cacheRead), 4);
+    // totalTokens = input + output + cacheRead + cacheCreation (the ledger sum),
+    // preferred over the rollup's stale value.
+    expect(report.cost.totalTokens).toBe(input + (41 + 120 + 75) + cacheRead);
+  });
+
+  it("sums timing.turnCount from the per-execution session.summary ledger (not the last-write rollup)", () => {
+    // The sessionEnd rollup's turnCount is overwritten per execution, so a
+    // multi-execution session reported the LAST execution's turn count — the
+    // incident's 11-turn session showed timing.turnCount:1. Sum the ledger.
+    const signals = toIncidentSignals([
+      { traceSchema: "comis-trajectory", type: "session.summary", seq: 1, sessionKey: SESSION_KEY, data: { degraded: false, turnCount: 1, costUsd: 0.1, toolStats: {}, breakerTripCount: 0 } },
+      { traceSchema: "comis-trajectory", type: "session.summary", seq: 2, sessionKey: SESSION_KEY, data: { degraded: false, turnCount: 3, costUsd: 0.1, toolStats: {}, breakerTripCount: 0 } },
+      { traceSchema: "comis-trajectory", type: "session.summary", seq: 3, sessionKey: SESSION_KEY, data: { degraded: true, turnCount: 6, costUsd: 0.1, toolStats: {}, breakerTripCount: 0 } },
+      { traceSchema: "comis-trajectory", type: "session.summary", seq: 4, sessionKey: SESSION_KEY, data: { degraded: true, turnCount: 1, costUsd: 0.1, toolStats: {}, breakerTripCount: 0 } },
+    ]);
+    const report = assembleIncidentReport(
+      signals,
+      // The rollup carries only the final execution's turnCount (last write).
+      makeMetadata({ sessionEnd: { endReason: "spend_exceeded", costUsd: 0.1, totalTokens: 1, turnCount: 1 } }),
+      null,
+      SESSION_KEY,
+      4,
+    );
+    expect(report.timing.turnCount).toBe(11);
+  });
+
+  it("keeps the rollup fallback for log-only sessions (no trajectory records)", () => {
+    const report = assembleIncidentReport(
+      makeSignals(),
+      makeMetadata({ sessionEnd: { endReason: "success", costUsd: 0.25, totalTokens: 42_000 } }),
+      null,
+      SESSION_KEY,
+      0,
+    );
+    expect(report.cost.costUsd).toBeCloseTo(0.25, 4);
+    expect(report.cost.totalTokens).toBe(42_000);
+    expect(report.cost.cacheReadRatio).toBe(0);
+  });
+});
+
 describe("assembleIncidentReport — cacheBreaks?", () => {
   it("surfaces cacheBreaks folded per-reason from cache.break trajectory records", () => {
     const signals = toIncidentSignals([
