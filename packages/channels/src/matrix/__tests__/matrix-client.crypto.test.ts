@@ -119,6 +119,22 @@ class FakeCryptoClient {
     return this.cryptoPresent ? {} : undefined;
   }
 
+  /**
+   * Model matrix-js-sdk's `decryptEventIfNeeded`: a decryption is attempted ONLY
+   * when a crypto backend is present, it is asynchronous, and it sets the clear
+   * data BEFORE it resolves. A realistic still-encrypted event exposes
+   * `__applyDecryption` (the crypto backend's effect); a pre-resolved event omits
+   * it and this resolves at once. With no crypto backend the event is left
+   * m.room.encrypted — exactly the SDK's behaviour.
+   */
+  decryptEventIfNeeded(event: unknown): Promise<void> {
+    const evt = event as { __applyDecryption?: () => void };
+    if (this.cryptoPresent && typeof evt.__applyDecryption === "function") {
+      return Promise.resolve().then(() => evt.__applyDecryption?.());
+    }
+    return Promise.resolve();
+  }
+
   joinRoom(roomId: string): Promise<unknown> {
     return Promise.resolve({ roomId });
   }
@@ -261,53 +277,90 @@ describe("createMatrixClient — E2EE crypto bootstrap before startClient (E2EE-
 });
 
 // ---------------------------------------------------------------------------
-// Task 2: fail-closed decrypt in onTimeline (T-5)
+// Fail-closed decrypt in onTimeline
 // ---------------------------------------------------------------------------
 
+/** The Matrix WIRE event type an encrypted message carries at timeline-fire time. */
+const ENCRYPTED_WIRE_TYPE = "m.room.encrypted";
+
 /**
- * A decrypt-FAILED encrypted event, modelled faithfully on matrix-js-sdk: on a
- * decryption failure the SDK sets a `m.room.message` clear event whose body is
- * the "** Unable to decrypt **" placeholder — so a failed event PASSES the
- * watermark gate (its clear type is `m.room.message`) and WOULD surface that
- * garbage as message text if the fail-closed branch did not drop it first.
+ * An encrypted event as it ACTUALLY arrives at `RoomEvent.Timeline` time: its type
+ * is the `m.room.encrypted` WIRE type. matrix-js-sdk kicks off decryption
+ * fire-and-forget and emits the timeline event synchronously BEFORE decryption
+ * completes, so `getType()` returns the wire type — NOT the clear `m.room.message`
+ * type — at the moment the transport's gate reads it. Decryption is driven by the
+ * client (the fake client's `decryptEventIfNeeded` invokes `__applyDecryption`),
+ * and only once it runs does `getType()` flip to the clear type — mirroring the
+ * SDK, which sets the clear data before the decryption promise resolves. This is
+ * the faithful shape the old fakes lacked (they hardcoded the POST-decryption
+ * `m.room.message` type, hiding that the gate dropped every encrypted event).
+ *
+ * `outcome: "ok"` → decrypts to a message with a clear body.
+ * `outcome: "fail"` → decrypts to the `m.bad.encrypted` placeholder (a
+ *   `m.room.message` clear type) with `decryptionFailureReason` set.
+ * With no crypto backend the client never applies decryption, so the event stays
+ * `m.room.encrypted` — the "e2ee on but crypto unavailable" state.
  */
-function encryptedFailedEvent(over: { ts?: number; reason?: string } = {}): MatrixEvent {
-  const { ts = 100, reason = "MEGOLM_UNKNOWN_INBOUND_SESSION_ID" } = over;
+function encryptedTimelineEvent(
+  over: { ts?: number; outcome?: "ok" | "fail"; body?: string; reason?: string } = {},
+): MatrixEvent {
+  const {
+    ts = 100,
+    outcome = "ok",
+    body = "decrypted hello",
+    reason = "MEGOLM_UNKNOWN_INBOUND_SESSION_ID",
+  } = over;
+  let clearType: string | null = null; // clearEvent.type, set once decrypted
+  let failureReason: string | null = null;
+  let clearBody: string | undefined;
   return {
-    getType: () => "m.room.message",
-    getId: () => "$enc-fail",
+    getType: () => clearType ?? ENCRYPTED_WIRE_TYPE, // wire type until decrypted
+    getId: () => "$enc",
     getSender: () => "@alice:hs",
     getTs: () => ts,
-    // the SDK's synthesized placeholder — this ciphertext-garbage must NEVER surface
-    getContent: () => ({ msgtype: "m.bad.encrypted", body: `** Unable to decrypt: ${reason} **` }),
-    getClearContent: () => null,
-    isEncrypted: () => true,
+    getContent: () =>
+      clearBody !== undefined
+        ? { body: clearBody }
+        : { msgtype: "m.bad.encrypted", body: "** Unable to decrypt **" },
+    getClearContent: () => (clearBody !== undefined ? { body: clearBody } : null),
+    isEncrypted: () => true, // keyed on the WIRE type — true even after decryption
     isBeingDecrypted: () => false,
     getDecryptionPromise: () => null,
-    isDecryptionFailure: () => true,
-    decryptionFailureReason: reason,
+    isDecryptionFailure: () => failureReason !== null,
+    decryptionFailureReason: failureReason,
+    // The crypto backend's decryption effect, invoked by the fake client only when
+    // a backend is present; sets the clear data BEFORE resolving, like the SDK's
+    // decryptionLoop (success → clear body; failure → placeholder + reason).
+    __applyDecryption: (): void => {
+      clearType = "m.room.message";
+      if (outcome === "ok") clearBody = body;
+      else failureReason = reason;
+    },
   } as unknown as MatrixEvent;
 }
 
-/** A decrypt-OK encrypted event: getContent returns the CLEAR body once decrypted. */
-function encryptedOkEvent(over: { ts?: number; body?: string } = {}): MatrixEvent {
-  const { ts = 100, body = "decrypted hello" } = over;
-  return {
-    getType: () => "m.room.message",
-    getId: () => "$enc-ok",
-    getSender: () => "@alice:hs",
-    getTs: () => ts,
-    getContent: () => ({ body }),
-    getClearContent: () => ({ body }),
-    isEncrypted: () => true,
-    isBeingDecrypted: () => false,
-    getDecryptionPromise: () => null,
-    isDecryptionFailure: () => false,
-    decryptionFailureReason: null,
-  } as unknown as MatrixEvent;
-}
+describe("createMatrixClient — fail-closed decrypt in onTimeline", () => {
+  it("delivers an event that is still m.room.encrypted at timeline time, once decryption resolves it to a message", async () => {
+    // The archetypal receive path: the event fires on the timeline STILL encrypted
+    // (its clear type is unknown until decryption completes). The transport must
+    // decrypt it before the type gate reads its type, or it is dropped unread.
+    const h = makeCryptoHarness({ e2ee: true, stateDir: "/data/matrix", crypto: true, seed: { watermarks: {} } });
+    await h.controller.start();
+    await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null, undefined);
 
-describe("createMatrixClient — fail-closed decrypt in onTimeline (T-5)", () => {
+    await h.fake.emit(
+      RoomEvent.Timeline,
+      encryptedTimelineEvent({ ts: 100, outcome: "ok", body: "decrypted secret hello" }),
+      fakeRoom("!enc:hs"),
+      false,
+    );
+
+    // The decrypted plaintext surfaced through the SAME mapper as a cleartext event.
+    expect(h.received).toHaveLength(1);
+    expect(h.received[0]?.text).toBe("decrypted secret hello");
+    expect(h.received[0]?.channelId).toBe("!enc:hs");
+  });
+
   it("drops an undecryptable encrypted event: never delivered, reported via onDecryptFailure, watermark advanced", async () => {
     const signals: DecryptFailureRecord[] = [];
     const h = makeCryptoHarness({
@@ -320,7 +373,12 @@ describe("createMatrixClient — fail-closed decrypt in onTimeline (T-5)", () =>
     await h.controller.start();
     await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null, undefined);
 
-    await h.fake.emit(RoomEvent.Timeline, encryptedFailedEvent({ ts: 100 }), fakeRoom("!enc:hs"), false);
+    await h.fake.emit(
+      RoomEvent.Timeline,
+      encryptedTimelineEvent({ ts: 100, outcome: "fail" }),
+      fakeRoom("!enc:hs"),
+      false,
+    );
 
     // FAIL CLOSED: the mapper is never reached, onMessage never fires.
     expect(h.received).toHaveLength(0);
@@ -341,59 +399,17 @@ describe("createMatrixClient — fail-closed decrypt in onTimeline (T-5)", () =>
     await h.controller.start();
     await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null, undefined);
 
-    await h.fake.emit(RoomEvent.Timeline, encryptedFailedEvent({ ts: 100 }), fakeRoom("!enc:hs"), false);
+    await h.fake.emit(
+      RoomEvent.Timeline,
+      encryptedTimelineEvent({ ts: 100, outcome: "fail" }),
+      fakeRoom("!enc:hs"),
+      false,
+    );
 
     const dump = JSON.stringify(h.received);
     expect(h.received).toHaveLength(0);
     expect(dump).not.toContain("Unable to decrypt");
     expect(dump).not.toContain("m.bad.encrypted");
-  });
-
-  it("maps a successfully-decrypted encrypted event transparently through to onMessage", async () => {
-    const h = makeCryptoHarness({ e2ee: true, stateDir: "/data/matrix", crypto: true, seed: { watermarks: {} } });
-    await h.controller.start();
-    await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null, undefined);
-
-    await h.fake.emit(
-      RoomEvent.Timeline,
-      encryptedOkEvent({ ts: 100, body: "decrypted secret hello" }),
-      fakeRoom("!enc:hs"),
-      false,
-    );
-
-    expect(h.received).toHaveLength(1);
-    expect(h.received[0]?.text).toBe("decrypted secret hello");
-    expect(h.received[0]?.channelId).toBe("!enc:hs");
-  });
-
-  it("awaits an in-flight decryption before branching (isBeingDecrypted → getDecryptionPromise)", async () => {
-    let resolved = false;
-    const pending = Promise.resolve().then(() => {
-      resolved = true;
-    });
-    const event = {
-      getType: () => "m.room.message",
-      getId: () => "$pending",
-      getSender: () => "@alice:hs",
-      getTs: () => 100,
-      getContent: () => ({ body: "late-decrypt" }),
-      getClearContent: () => ({ body: "late-decrypt" }),
-      isEncrypted: () => true,
-      isBeingDecrypted: () => true,
-      getDecryptionPromise: () => pending,
-      isDecryptionFailure: () => false,
-      decryptionFailureReason: null,
-    } as unknown as MatrixEvent;
-    const h = makeCryptoHarness({ e2ee: true, stateDir: "/data/matrix", crypto: true, seed: { watermarks: {} } });
-    await h.controller.start();
-    await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null, undefined);
-
-    await h.fake.emit(RoomEvent.Timeline, event, fakeRoom("!enc:hs"), false);
-
-    // The decryption promise was awaited (Pitfall 4) before the message was mapped.
-    expect(resolved).toBe(true);
-    expect(h.received).toHaveLength(1);
-    expect(h.received[0]?.text).toBe("late-decrypt");
   });
 
   it("logs the decrypt failure with failureReason + roomId only — no ciphertext/body/sender-name", async () => {
@@ -403,7 +419,7 @@ describe("createMatrixClient — fail-closed decrypt in onTimeline (T-5)", () =>
 
     await h.fake.emit(
       RoomEvent.Timeline,
-      encryptedFailedEvent({ ts: 100, reason: "MEGOLM_KEY_WITHHELD" }),
+      encryptedTimelineEvent({ ts: 100, outcome: "fail", reason: "MEGOLM_KEY_WITHHELD" }),
       fakeRoom("!enc:hs"),
       false,
     );
@@ -420,24 +436,32 @@ describe("createMatrixClient — fail-closed decrypt in onTimeline (T-5)", () =>
     expect(dump).not.toContain("m.bad.encrypted");
   });
 
-  it("reports cryptoAvailable:false when e2ee is on but the crypto backend is absent", async () => {
+  it("fail-closes and reports cryptoAvailable:false when e2ee is on but the crypto backend is absent", async () => {
+    // e2ee:true but crypto init failed → getCrypto() is undefined, so the event is
+    // never decrypted and stays m.room.encrypted. It must still fail-closed (drop +
+    // report), NOT be silently swallowed by the type gate.
     const signals: DecryptFailureRecord[] = [];
     const h = makeCryptoHarness({
       e2ee: true,
       stateDir: "/data/matrix",
-      crypto: false, // getCrypto() === undefined
+      crypto: false, // getCrypto() === undefined — the crypto backend is absent
       onDecryptFailure: (s) => signals.push(s as DecryptFailureRecord),
       seed: { watermarks: {} },
     });
     await h.controller.start();
     await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null, undefined);
 
-    await h.fake.emit(RoomEvent.Timeline, encryptedFailedEvent({ ts: 100 }), fakeRoom("!enc:hs"), false);
+    await h.fake.emit(
+      RoomEvent.Timeline,
+      encryptedTimelineEvent({ ts: 100, outcome: "ok" }),
+      fakeRoom("!enc:hs"),
+      false,
+    );
 
+    expect(h.received).toHaveLength(0);
     expect(signals).toHaveLength(1);
     expect(signals[0]?.cryptoAvailable).toBe(false);
     expect(signals[0]?.e2eeConfigured).toBe(true);
-    expect(h.received).toHaveLength(0);
   });
 });
 
