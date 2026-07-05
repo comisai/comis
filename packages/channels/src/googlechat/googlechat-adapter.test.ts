@@ -1054,6 +1054,79 @@ describe("createGoogleChatAdapter — editMessage (messages.patch)", () => {
   });
 });
 
+describe("createGoogleChatAdapter — editMessage cardsV2 patch", () => {
+  it("patches text,cardsV2 with a button-less resolved card when options.cards is present (buttons retired)", async () => {
+    const { fetchImpl, spy } = makeChatFetch();
+    const { deps } = await makeDeps({ fetchImpl });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const result = await adapter.editMessage?.(
+      "spaces/AAAA",
+      "spaces/AAAA/messages/CCC",
+      "Approved",
+      { cards: [{ description: "Approved" }] },
+    );
+
+    expect(result?.ok).toBe(true);
+    const [url, init] = sendCallOf(spy);
+    // The field-mask is pinned to text,cardsV2 — never `*`, which would clear
+    // every unspecified field on the message.
+    expect(url).toBe(
+      "https://chat.googleapis.com/v1/spaces/AAAA/messages/CCC?updateMask=text,cardsV2",
+    );
+    expect(url).not.toContain("updateMask=*");
+    expect(init.method).toBe("PATCH");
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+    expect(body.text).toBe("Approved");
+    expect(Array.isArray(body.cardsV2)).toBe(true);
+    // The resolved card the caller supplied carries no buttons, so the patched
+    // card has no buttonList widget — the original buttons are retired.
+    expect(
+      cardsV2Widgets(body).some((w) => (w as { buttonList?: unknown }).buttonList),
+    ).toBe(false);
+  });
+
+  it("keeps the text-only edit path byte-identical (updateMask=text, body { text }) when no cards are supplied", async () => {
+    const { fetchImpl, spy } = makeChatFetch();
+    const { deps } = await makeDeps({ fetchImpl });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const result = await adapter.editMessage?.(
+      "spaces/AAAA",
+      "spaces/AAAA/messages/CCC",
+      "typing…",
+    );
+
+    expect(result?.ok).toBe(true);
+    const [url, init] = sendCallOf(spy);
+    expect(url).toBe(
+      "https://chat.googleapis.com/v1/spaces/AAAA/messages/CCC?updateMask=text",
+    );
+    expect(JSON.parse(String(init.body))).toEqual({ text: "typing…" });
+  });
+
+  it("rejects an unsafe messageId on the cardsV2 patch path BEFORE any token mint or fetch (spy never called)", async () => {
+    for (const bad of [
+      "spaces/../secret",
+      "spaces/AAAA/messages/CCC?updateMask=*",
+      "spaces/AAAA/messages/ CCC",
+    ]) {
+      const { fetchImpl, spy } = makeChatFetch();
+      const { deps } = await makeDeps({ fetchImpl });
+      const adapter = createGoogleChatAdapter(deps);
+
+      const result = await adapter.editMessage?.("spaces/AAAA", bad, "x", {
+        cards: [{ description: "d" }],
+      });
+
+      expect(result?.ok).toBe(false);
+      // The reused isSafeMessageName guard short-circuits before the token mint
+      // and the fetch on the cardsV2 patch path too — no bearer, no PATCH.
+      expect(spy).not.toHaveBeenCalled();
+    }
+  });
+});
+
 describe("createGoogleChatAdapter — deleteMessage (messages.delete)", () => {
   it("mints a chat.bot bearer and DELETEs the message resource with no body, returning ok(undefined)", async () => {
     const { fetchImpl, spy } = makeChatFetch();
