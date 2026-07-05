@@ -52,7 +52,8 @@ const CAPABILITIES: ChannelCapability = {
  * Create a Google Chat channel plugin wrapping the Google Chat adapter.
  *
  * activate() delegates to adapter.start() and deactivate() to adapter.stop(),
- * while the plugin declares its honest text-only capability matrix.
+ * while the plugin declares its honest app-auth capability matrix (threaded
+ * replies, edit/delete; reactions, uploads, and history are omitted).
  */
 export function createGoogleChatPlugin(
   deps: GoogleChatAdapterDeps,
