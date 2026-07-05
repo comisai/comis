@@ -624,6 +624,19 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "MatrixAdapterDeps",
       "mapMatrixEventToNormalized",
       "classifyMatrixError",
+      // Matrix E2EE crypto-store surface. initMatrixCrypto is the crypto
+      // bootstrap the encrypted round-trip integration test imports from the
+      // barrel (a real-crypto restart-decrypt proof in the integration tier);
+      // InitMatrixCryptoDeps / MatrixCryptoHandle are its deps + returned handle,
+      // and serializeCryptoStore / restoreCryptoStore / pruneFinishedTransactions
+      // are the durable-snapshot + OOM-prune primitives that same surface exposes.
+      // The adapter/client consume them within the package via relative imports.
+      "initMatrixCrypto",
+      "serializeCryptoStore",
+      "restoreCryptoStore",
+      "pruneFinishedTransactions",
+      "InitMatrixCryptoDeps",
+      "MatrixCryptoHandle",
       "createIMessageAdapter",
       "IMessageAdapterDeps",
       "mapImsgToNormalized",
