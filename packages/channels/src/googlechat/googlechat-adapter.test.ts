@@ -735,6 +735,40 @@ describe("createGoogleChatAdapter — sendMessage (messages.create)", () => {
     expect(adapter.getStatus?.().lastInboundAt).toBeUndefined();
     expect(adapter.getStatus?.().lastMessageAt).toBe(NOW);
   });
+
+  it("rejects an agent-supplied channelId with a .. traversal or query/path metacharacter BEFORE any token mint or fetch", async () => {
+    // channelId is interpolated into `${chatBase}/${channelId}/messages` and is
+    // agent-controlled (message.send's channel_id), so it gets the same allowlist
+    // guard the edit/delete resource names get — a traversal like
+    // spaces/A/../../v1beta1/spaces/B would otherwise normalise to a different
+    // Chat API path under the bot's bearer. Rejected before the bearer is minted.
+    for (const bad of [
+      "spaces/A/../../v1beta1/spaces/B",
+      "spaces/AAAA?foo=bar",
+      "spaces/AAAA&x=1",
+      "spaces/AAAA messages",
+    ]) {
+      const { fetchImpl, spy } = makeChatFetch();
+      const { deps } = await makeDeps({ fetchImpl });
+      const adapter = createGoogleChatAdapter(deps);
+
+      const result = await adapter.sendMessage(bad, "hi");
+
+      expect(result.ok).toBe(false);
+      // No bearer minted, no POST fired for the unsafe space name.
+      expect(spy).not.toHaveBeenCalled();
+    }
+  });
+
+  it("does NOT reject a legitimate space channelId", async () => {
+    const { fetchImpl } = makeChatFetch();
+    const { deps } = await makeDeps({ fetchImpl });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const result = await adapter.sendMessage("spaces/AAAA", "hi");
+
+    expect(result.ok).toBe(true);
+  });
 });
 
 describe("createGoogleChatAdapter — editMessage (messages.patch)", () => {
