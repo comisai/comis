@@ -351,12 +351,12 @@ export const SKILL_IMPORT_COMMIT_LOCK = "skill-import:commit";
  */
 export async function withSkillImportLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const prior = importLocks.get(key) ?? Promise.resolve();
-  // Run fn after the prior tail settles, regardless of its outcome.
-  const result = prior.then(
-    () => fn(),
-    () => fn(),
-  );
-  // The stored tail swallows the outcome so a later waiter only observes "prior done".
+  // `prior` is always a resolving promise (a settled-swallowing tail or the seed
+  // resolve), so a single onFulfilled arm suffices — fn runs once the prior
+  // holder has finished, whatever its outcome.
+  const result = prior.then(() => fn());
+  // The stored tail swallows the outcome so a later same-key waiter only observes
+  // "prior done" — a rejected fn never poisons the chain.
   const tail = result.then(
     () => undefined,
     () => undefined,

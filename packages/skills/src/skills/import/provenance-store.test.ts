@@ -12,7 +12,7 @@
  * unlocked path loses a record; the locked path converges to both.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, statSync, existsSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -68,6 +68,25 @@ describe("readProvenanceStore — fail-safe (never blocks boot)", () => {
   it("returns an empty store on a corrupt / non-JSON file", () => {
     writeFileSync(join(tmpDir, STORE_FILE), "}{ not json at all", "utf-8");
     expect(readProvenanceStore(tmpDir)).toEqual({});
+  });
+
+  it("returns an empty store when the file holds valid JSON that is not an object", () => {
+    writeFileSync(join(tmpDir, STORE_FILE), "[1, 2, 3]", "utf-8");
+    expect(readProvenanceStore(tmpDir)).toEqual({});
+  });
+
+  it("never copies a __proto__ store key onto the returned store", () => {
+    const rec = makeRecord({ name: "ok", scope: "local", agentId: "alice" });
+    const key = provenanceKey("local", "alice", "ok");
+    writeFileSync(
+      join(tmpDir, STORE_FILE),
+      `{"__proto__":{"polluted":true},"${key}":${JSON.stringify(rec)}}`,
+      "utf-8",
+    );
+    const store = readProvenanceStore(tmpDir);
+    expect(store[key]).toBeDefined();
+    expect(Object.prototype.hasOwnProperty.call(store, "__proto__")).toBe(false);
+    expect(({} as Record<string, unknown>)["polluted"]).toBeUndefined();
   });
 
   it("skips a malformed record but keeps the valid ones (advisory downward)", async () => {
@@ -127,6 +146,32 @@ describe("writeProvenanceRecord — validated, contained, 0o600 round-trip", () 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected a validation reject");
     expect(result.error.errorKind).toBe("validation");
+  });
+
+  it("rejects a URL-encoded traversal name (safePath backstop) with errorKind 'validation'", async () => {
+    const result = await writeProvenanceRecord(tmpDir, makeRecord({ name: "%2e%2e%2fsecrets" }));
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a validation reject");
+    expect(result.error.errorKind).toBe("validation");
+  });
+
+  it("returns errorKind 'resource' when the data dir cannot be ensured", async () => {
+    // A data dir nested under a regular file cannot be created (ENOTDIR).
+    writeFileSync(join(tmpDir, "afile"), "x", "utf-8");
+    const badDataDir = join(tmpDir, "afile", "nested");
+    const result = await writeProvenanceRecord(badDataDir, makeRecord({ name: "alpha" }));
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a resource reject");
+    expect(result.error.errorKind).toBe("resource");
+  });
+
+  it("returns errorKind 'resource' when the store path is not writable", async () => {
+    // A directory occupying the store path makes the symlink-safe file write fail.
+    mkdirSync(join(tmpDir, STORE_FILE));
+    const result = await writeProvenanceRecord(tmpDir, makeRecord({ name: "alpha" }));
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a resource reject");
+    expect(result.error.errorKind).toBe("resource");
   });
 });
 
@@ -220,6 +265,21 @@ describe("withSkillImportLock — the module-singleton keyed mutex", () => {
     await Promise.all([slow, fast]);
     // B cannot start until A ends — proving both calls share ONE lock instance.
     expect(order).toEqual(["A:start", "A:end", "B:start", "B:end"]);
+  });
+
+  it("does not poison the chain when a prior holder rejects — the next same-key waiter still runs", async () => {
+    const order: string[] = [];
+    const failing = withSkillImportLock("k", async () => {
+      order.push("A:threw");
+      throw new Error("boom");
+    });
+    await expect(failing).rejects.toThrow("boom");
+    const next = await withSkillImportLock("k", async () => {
+      order.push("B:ran");
+      return "ok";
+    });
+    expect(next).toBe("ok");
+    expect(order).toEqual(["A:threw", "B:ran"]);
   });
 
   it("lets different keys run concurrently (does not over-serialize)", async () => {
