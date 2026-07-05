@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
-import type { ComisLogger, PluginRegistryApi } from "@comis/core";
+import type { Attachment, ComisLogger, PluginRegistryApi } from "@comis/core";
+import { ok } from "@comis/shared";
 import { generateKeyPair, exportPKCS8 } from "jose";
 import { createGoogleChatPlugin } from "./googlechat-plugin.js";
-import type { GoogleChatAdapterDeps } from "./googlechat-adapter.js";
+import type {
+  GoogleChatAdapterDeps,
+  GoogleChatAdapterHandle,
+} from "./googlechat-adapter.js";
+import { CHAT_SCOPE } from "./googlechat-auth.js";
 import type { PubSubSource } from "./pubsub-source.js";
 
 const SA_EMAIL = "comis-bot@my-project.iam.gserviceaccount.com";
@@ -204,5 +209,82 @@ describe("createGoogleChatPlugin — lifecycle delegation", () => {
 
     expect(result.ok).toBe(true);
     expect(fake.stop).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("createGoogleChatPlugin — inbound media resolver handle", () => {
+  /** The resolver's structural logger — debug/warn only. */
+  function makeResolverLogger() {
+    return { debug: vi.fn(), warn: vi.fn() };
+  }
+
+  it("exposes createResolver returning a googlechat-attachment MediaResolverPort", async () => {
+    const { deps } = await makeDeps();
+    const plugin = createGoogleChatPlugin(deps);
+
+    expect(typeof plugin.createResolver).toBe("function");
+
+    const resolver = plugin.createResolver({
+      ssrfFetcher: { fetch: vi.fn() },
+      maxBytes: 10_000_000,
+      logger: makeResolverLogger(),
+    });
+
+    expect(resolver.schemes).toContain("googlechat-attachment");
+  });
+
+  it("builds a resolver that mints over the SHARED chat.bot provider (getToken(CHAT_SCOPE))", async () => {
+    const { deps } = await makeDeps();
+    const plugin = createGoogleChatPlugin(deps);
+
+    // Stub the adapter's SHARED per-scope token provider so getToken is a spy —
+    // proving createResolver closes over adapter.getPubSubTokenProvider().getToken(
+    // CHAT_SCOPE), the one provider minted for the pull loop and the send path, and
+    // never a freshly-built second provider (which would re-parse the SA key).
+    const adapterHandle = plugin.adapter as unknown as GoogleChatAdapterHandle;
+    const getToken = vi.fn(async () => ok(MINTED_TOKEN));
+    vi.spyOn(adapterHandle, "getPubSubTokenProvider").mockReturnValue({
+      getToken,
+      credentialError: () => undefined,
+    } as unknown as ReturnType<GoogleChatAdapterHandle["getPubSubTokenProvider"]>);
+
+    // The injected fetcher returns bytes so resolve reaches the mint + fetch.
+    const fetch = vi.fn(async () =>
+      ok({ buffer: Buffer.from("img"), mimeType: "image/png", sizeBytes: 3 }),
+    );
+    const resolver = plugin.createResolver({
+      ssrfFetcher: { fetch },
+      maxBytes: 10_000_000,
+      logger: makeResolverLogger(),
+    });
+
+    const resourceName = "spaces/AAA/messages/BBB/attachments/CCC";
+    const result = await resolver.resolve({
+      url: `googlechat-attachment://${encodeURIComponent(resourceName)}`,
+      type: "image",
+    } as Attachment);
+
+    expect(result.ok).toBe(true);
+    // The mint rode the SHARED provider at the chat.bot scope.
+    expect(getToken).toHaveBeenCalledWith(CHAT_SCOPE);
+    // And that Bearer rode the single pinned media host — no host escape hatch.
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("https://chat.googleapis.com/v1/media/"),
+      {
+        authHeader: `Bearer ${MINTED_TOKEN}`,
+        authAllowHosts: ["chat.googleapis.com"],
+      },
+    );
+  });
+
+  it("leaves attachments:false — the inbound resolver is orthogonal to the outbound flag", async () => {
+    const { deps } = await makeDeps();
+    const plugin = createGoogleChatPlugin(deps);
+
+    // createResolver adds an INBOUND resolution path; the OUTBOUND upload capability
+    // stays honestly false (user-auth-only), so the daemon capability gate still
+    // blocks sendAttachment. The two are orthogonal — the flag does not flip.
+    expect(plugin.capabilities.features.attachments).toBe(false);
+    expect(typeof plugin.createResolver).toBe("function");
   });
 });
