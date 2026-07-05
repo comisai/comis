@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Per-platform channel adapter bootstrap: credential validation and plugin
- * creation for 10 platforms (Telegram, Discord, Slack, WhatsApp, Signal, LINE,
- * iMessage, IRC, Email, Microsoft Teams).
+ * creation for 11 platforms (Telegram, Discord, Slack, WhatsApp, Signal, LINE,
+ * iMessage, IRC, Email, Microsoft Teams, Matrix).
  * Extracted from setup-channels.ts to isolate the per-platform bootstrap block
  * into a single-concern module.
  * @module
@@ -21,6 +21,7 @@ import {
   createIrcPlugin,
   createEmailPlugin,
   createMsTeamsPlugin,
+  createMatrixPlugin,
   validateBotToken,
   validateDiscordToken,
   validateSlackCredentials,
@@ -31,6 +32,8 @@ import {
   validateIrcConnection,
   validateEmailCredentials,
   validateMsTeamsCredentials,
+  validateMatrixCredentials,
+  validateHomeserverUrl,
   type TelegramPluginHandle,
   type LinePluginHandle,
   type EmailAdapterDeps,
@@ -495,6 +498,44 @@ export async function bootstrapAdapters(deps: {
             ? "Set msteams.managedIdentityClientId (managed-identity mode) and msteams.appId/tenantId"
             : "Verify msteams.appId/tenantId and MSTEAMS_APP_PASSWORD";
       channelsLogger.warn({ hint: credHint, errorKind: "auth" as const }, "Teams credential validation failed");
+    }
+  }
+
+  // Matrix — a pull channel whose native transport is the Client-Server /sync
+  // long-poll. Like Telegram it is polling (connectionMode "polling", stale-
+  // exempt): there is no gateway ingress, no liveness monitor, and no daemon
+  // boot handle. The block resolves the access token, runs the field-presence
+  // precondition and the homeserver SSRF guard BEFORE any construction, then
+  // registers the plugin under "matrix" in both maps. A blocked homeserver or a
+  // missing credential leaves the channel unregistered with an actionable WARN —
+  // never a crash, never a silent skip. `allowFrom` needs no wiring here: the
+  // generic central per-sender filter reads config.channels.matrix.allowFrom.
+  if (channelConfig.matrix.enabled) {
+    const { homeserverUrl, userId, deviceId, allowFrom, allowMode, autoJoinOnInvite, allowPrivateHomeserver } = channelConfig.matrix;
+    const accessToken = (channelConfig.matrix.accessToken as string | undefined) || getSecret("MATRIX_ACCESS_TOKEN");
+    const password = channelConfig.matrix.password as string | undefined;
+    const stateDir = channelConfig.matrix.stateDir ?? safePath(os.homedir(), ".comis", "matrix-state");
+    const credCheck = validateMatrixCredentials({ homeserverUrl, userId, accessToken, password });
+    const hsCheck = await validateHomeserverUrl(homeserverUrl ?? "", allowPrivateHomeserver, channelsLogger);
+    if (homeserverUrl && credCheck.ok && hsCheck.ok) {
+      const plugin = createMatrixPlugin({
+        homeserverUrl,
+        userId,
+        accessToken,
+        password,
+        deviceId,
+        stateDir,
+        allowFrom,
+        allowMode,
+        autoJoinOnInvite,
+        allowPrivateHomeserver,
+        logger: channelsLogger,
+      });
+      adaptersByType.set("matrix", plugin.adapter);
+      channelPlugins.set("matrix", plugin);
+      channelsLogger.info({ channelType: "matrix", userId }, "Channel adapter initialized");
+    } else {
+      channelsLogger.warn({ hint: "Set channels.matrix.homeserverUrl + accessToken/password (or MATRIX_ACCESS_TOKEN)", errorKind: "config" as const }, "Matrix enabled but not configured");
     }
   }
 
