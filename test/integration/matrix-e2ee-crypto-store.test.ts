@@ -18,7 +18,7 @@
  *     decrypts the same event.
  *
  * Runs in the integration tier (imports `@comis/channels` from dist and
- * instantiates the WASM engine, which the unit tier does not — Pitfall 5).
+ * instantiates the WASM crypto engine, which the unit tier does not).
  *
  * @module
  */
