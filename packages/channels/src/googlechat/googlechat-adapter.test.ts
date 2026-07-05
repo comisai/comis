@@ -802,6 +802,46 @@ describe("createGoogleChatAdapter — editMessage (messages.patch)", () => {
     }
   });
 
+  it("rejects a messageId carrying query/path metacharacters (?, &, #, space) BEFORE any token mint or fetch", async () => {
+    for (const bad of [
+      "spaces/AAAA/messages/CCC?updateMask=*",
+      "spaces/AAAA/messages/CCC&x=1",
+      "spaces/AAAA/messages/CCC#frag",
+      "spaces/AAAA/messages/ CCC",
+    ]) {
+      const { fetchImpl, spy } = makeChatFetch();
+      const { deps } = await makeDeps({ fetchImpl });
+      const adapter = createGoogleChatAdapter(deps);
+
+      const result = await adapter.editMessage?.("spaces/AAAA", bad, "x");
+
+      expect(result?.ok).toBe(false);
+      // Rejected before the token mint and the fetch — zero network calls fired.
+      expect(spy).not.toHaveBeenCalled();
+    }
+  });
+
+  it("rejects a messageId carrying its own query string BEFORE any token mint or fetch — the pinned updateMask=text cannot be swallowed", async () => {
+    // The name is interpolated ahead of the pinned `?updateMask=text`, so a name
+    // carrying its own query (`…/CCC?updateMask=*&x=1`) would push the pin into
+    // `x`'s value and leave `updateMask=*` as the sole effective mask — wiping
+    // every unspecified field. The allowlist guard must reject it up front.
+    const { fetchImpl, spy } = makeChatFetch();
+    const { deps } = await makeDeps({ fetchImpl });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const result = await adapter.editMessage?.(
+      "spaces/AAAA",
+      "spaces/AAAA/messages/CCC?updateMask=*&x=1",
+      "pwned",
+    );
+
+    expect(result?.ok).toBe(false);
+    // Rejected before the token mint and the fetch — the injected updateMask
+    // never reached the PATCH URL.
+    expect(spy).not.toHaveBeenCalled();
+  });
+
   it("does NOT reject a legitimate resource name that contains '/'", async () => {
     const { fetchImpl } = makeChatFetch();
     const { deps } = await makeDeps({ fetchImpl });
@@ -877,6 +917,25 @@ describe("createGoogleChatAdapter — deleteMessage (messages.delete)", () => {
 
       expect(result?.ok).toBe(false);
       // The reused isSafeMessageName guard short-circuits before token+fetch.
+      expect(spy).not.toHaveBeenCalled();
+    }
+  });
+
+  it("rejects a messageId carrying query/path metacharacters (?, &, #, space) BEFORE any token mint or fetch", async () => {
+    for (const bad of [
+      "spaces/AAAA/messages/CCC?foo=bar",
+      "spaces/AAAA/messages/CCC&x=1",
+      "spaces/AAAA/messages/CCC#frag",
+      "spaces/AAAA/messages/ CCC",
+    ]) {
+      const { fetchImpl, spy } = makeChatFetch();
+      const { deps } = await makeDeps({ fetchImpl });
+      const adapter = createGoogleChatAdapter(deps);
+
+      const result = await adapter.deleteMessage?.("spaces/AAAA", bad);
+
+      expect(result?.ok).toBe(false);
+      // The shared allowlist guard short-circuits before token+fetch.
       expect(spy).not.toHaveBeenCalled();
     }
   });
