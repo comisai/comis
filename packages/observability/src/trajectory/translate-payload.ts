@@ -641,6 +641,18 @@ export function translatePayload(
         ...(payload.error !== null ? { error: payload.error } : {}),
       };
 
+    case "channel:decrypt_failed":
+      // Content-free whitelist-forward: the channel label + the room id (an id,
+      // like channelId elsewhere) + the CLOSED reason kind ONLY. NEVER the
+      // ciphertext, the message body, the sender display name, a device/session
+      // key, or the raw SDK failure code — the never-forward-senderId invariant
+      // extended to the crypto boundary (T-4). timestamp is envelope-only.
+      return {
+        channelType: payload.channelType,
+        roomId: payload.roomId,
+        reason: payload.reason,
+      };
+
     case "channel:registered":
       // capabilities is omitted (metadata with no diagnostic value for trajectory).
       // Synthetic `event` field distinguishes this from channel:deregistered (both

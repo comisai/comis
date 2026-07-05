@@ -332,6 +332,11 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "channel:health_changed": "channel.health_changed",
   "channel:registered": "channel.lifecycle",
   "channel:deregistered": "channel.lifecycle",
+  // Decrypt-health signal from a polling channel's decrypt seam (emitter
+  // packages/daemon + packages/channels — not arch-scanned, so no
+  // EVENTS_NOT_TRAJECTORY_MAPPED entry). Content-free translator forwards
+  // channelType + roomId + the closed reason kind ONLY.
+  "channel:decrypt_failed": "channel.decrypt_failed",
 
   // Security (non-scanned emitters — packages/daemon + packages/core/security)
   // SECURITY INVARIANT: patterns[] (verbatim taint strings) and message (may reference

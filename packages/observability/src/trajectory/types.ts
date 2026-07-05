@@ -253,6 +253,9 @@ export const TRAJECTORY_EVENT_TYPES = [
   // (dual-mapping; translator adds synthetic event discriminator).
   "channel.health_changed",
   "channel.lifecycle",
+  // Content-free decrypt-health record: channelType + roomId + closed reason
+  // kind only (never ciphertext / key material / raw failure code).
+  "channel.decrypt_failed",
 
   // Security rest
   "security.memory_tainted",
