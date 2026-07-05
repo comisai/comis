@@ -98,6 +98,33 @@ describe("classifyDecryptDegrade — E2EE-03 cause-branch table", () => {
     expect(verdict.hint).toContain("channels.matrix.e2ee");
   });
 
+  it("does NOT tell the operator to enable e2ee when it is already on but the crypto backend failed to initialize", () => {
+    // e2ee IS configured but the backend never came up (WASM load / initRustCrypto
+    // failed). "Set channels.matrix.e2ee: true" would be the wrong knob — it is
+    // already true. The hint must instead point at the real cause (the crypto
+    // backend / recovery key), never at the e2ee switch.
+    const verdict = classifyDecryptDegrade({
+      e2eeConfigured: true,
+      cryptoAvailable: false,
+      failureReason: null,
+    });
+    for (const knob of E2EE_ON_KNOB_SUBSTRINGS) {
+      expect(verdict.hint).not.toContain(knob);
+    }
+    expect(verdict.hint).not.toContain("e2ee: true");
+    // It names the actual remedy: the crypto backend / recovery key.
+    expect(verdict.hint).toContain("channels.matrix.recoveryKey");
+  });
+
+  it("still tells the operator to enable e2ee when it is genuinely off (crypto unavailable AND unconfigured)", () => {
+    const verdict = classifyDecryptDegrade({
+      e2eeConfigured: false,
+      cryptoAvailable: false,
+      failureReason: null,
+    });
+    expect(verdict.hint).toContain("channels.matrix.e2ee");
+  });
+
   it("returns e2ee_off whenever crypto is unavailable, even with a failureReason present (guard is structural)", () => {
     // e2ee configured but the backend never came up: the room still cannot be
     // decrypted, so the verdict is e2ee_off regardless of the reason string.
