@@ -459,7 +459,7 @@ function createHandle(
  *    log naming `channels.matrix.recoveryKey`.
  *
  * The recovery key, the decoded secret-storage key, and any 4S material live only
- * inside this function's closures and are NEVER logged, returned, or exposed (T-4).
+ * inside this function's closures and are NEVER logged, returned, or exposed.
  */
 async function bootstrapDeviceVerification(
   client: MatrixClient,
