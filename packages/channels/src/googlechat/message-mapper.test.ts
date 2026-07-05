@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
 import { parseMessage } from "@comis/core";
-import { mapGoogleChatEventToNormalized, type GoogleChatEvent } from "./message-mapper.js";
+import {
+  mapGoogleChatEventToNormalized,
+  extractGoogleChatAttachments,
+  type GoogleChatEvent,
+} from "./message-mapper.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -273,5 +277,205 @@ describe("mapGoogleChatEventToNormalized — untrusted-input boundary", () => {
         mapGoogleChatEventToNormalized(payload as unknown as GoogleChatEvent),
       ).toBeNull();
     }
+  });
+});
+
+describe("extractGoogleChatAttachments", () => {
+  /**
+   * Build a message carrying the given raw attachment objects. The wire carries
+   * more fields than the mapper reads (a browser-facing download link among
+   * them), so the array is loosely typed on purpose — the extractor must ignore
+   * everything but the downloadable resource name.
+   */
+  function messageWith(attachment: unknown[]): GoogleChatEvent["message"] {
+    return {
+      name: "spaces/AAAA/messages/1",
+      sender: { name: "users/1" },
+      text: "see attached",
+      attachment,
+    } as unknown as GoogleChatEvent["message"];
+  }
+
+  it("surfaces an attachment carrying attachmentDataRef.resourceName as a googlechat-attachment:// ref", () => {
+    const resourceName = "spaces/A/attachments/C";
+    const { attachments, skipped } = extractGoogleChatAttachments(
+      messageWith([
+        {
+          contentType: "image/png",
+          contentName: "pic.png",
+          attachmentDataRef: { resourceName },
+        },
+      ]),
+    );
+    expect(attachments).toHaveLength(1);
+    expect(attachments[0].url).toBe(
+      `googlechat-attachment://${encodeURIComponent(resourceName)}`,
+    );
+    expect(attachments[0].type).toBe("image");
+    expect(attachments[0].mimeType).toBe("image/png");
+    expect(attachments[0].fileName).toBe("pic.png");
+    expect(skipped).toEqual([]);
+  });
+
+  it("skips a share carrying no resource name (Drive-picker) and records it under skipped, not attachments", () => {
+    const { attachments, skipped } = extractGoogleChatAttachments(
+      messageWith([
+        { source: "DRIVE_FILE", contentName: "doc", driveDataRef: { driveFileId: "x" } },
+      ]),
+    );
+    expect(attachments).toEqual([]);
+    expect(skipped).toEqual([{ source: "DRIVE_FILE", contentName: "doc" }]);
+  });
+
+  it("RESOLVES a drag-drop share that DOES carry a resource name — the branch is on resource-name presence, never the source enum", () => {
+    const resourceName = "spaces/A/attachments/D";
+    const { attachments, skipped } = extractGoogleChatAttachments(
+      messageWith([{ source: "DRIVE_FILE", attachmentDataRef: { resourceName } }]),
+    );
+    expect(attachments).toHaveLength(1);
+    expect(attachments[0].url).toBe(
+      `googlechat-attachment://${encodeURIComponent(resourceName)}`,
+    );
+    expect(skipped).toEqual([]);
+  });
+
+  it("splits a mixed list: the resolvable ref into attachments, the resource-name-less share into skipped", () => {
+    const { attachments, skipped } = extractGoogleChatAttachments(
+      messageWith([
+        {
+          contentType: "image/png",
+          attachmentDataRef: { resourceName: "spaces/A/attachments/C" },
+        },
+        { source: "DRIVE_FILE", contentName: "shared.pdf", driveDataRef: { driveFileId: "y" } },
+      ]),
+    );
+    expect(attachments).toHaveLength(1);
+    expect(attachments[0].url).toBe(
+      `googlechat-attachment://${encodeURIComponent("spaces/A/attachments/C")}`,
+    );
+    expect(skipped).toEqual([{ source: "DRIVE_FILE", contentName: "shared.pdf" }]);
+  });
+
+  it("guards a null / non-object array element without throwing (neither surfaced nor skipped)", () => {
+    let out: ReturnType<typeof extractGoogleChatAttachments> | undefined;
+    expect(() => {
+      out = extractGoogleChatAttachments(
+        messageWith([
+          null,
+          42,
+          "str",
+          { attachmentDataRef: { resourceName: "spaces/A/attachments/C" } },
+        ]),
+      );
+    }).not.toThrow();
+    expect(out?.attachments).toHaveLength(1);
+    expect(out?.skipped).toEqual([]);
+  });
+
+  it("never surfaces a browser-facing download link into att.url — only the resource-name scheme", () => {
+    const resourceName = "spaces/A/attachments/C";
+    const { attachments } = extractGoogleChatAttachments(
+      messageWith([
+        {
+          contentType: "image/png",
+          attachmentDataRef: { resourceName },
+          downloadUri: "https://chat.example.test/download/browser-only",
+          thumbnailUri: "https://chat.example.test/thumb/browser-only",
+        },
+      ]),
+    );
+    expect(attachments).toHaveLength(1);
+    expect(attachments[0].url).toBe(
+      `googlechat-attachment://${encodeURIComponent(resourceName)}`,
+    );
+    expect(attachments[0].url).not.toContain("chat.example.test");
+  });
+
+  it("classifies the coarse type from the MIME so the pipeline routes: audio/* → audio, application/pdf → file", () => {
+    const { attachments } = extractGoogleChatAttachments(
+      messageWith([
+        { contentType: "audio/ogg", attachmentDataRef: { resourceName: "spaces/A/attachments/AUD" } },
+        { contentType: "application/pdf", attachmentDataRef: { resourceName: "spaces/A/attachments/PDF" } },
+      ]),
+    );
+    expect(attachments).toHaveLength(2);
+    expect(attachments[0].type).toBe("audio");
+    expect(attachments[1].type).toBe("file");
+  });
+
+  it("omits mimeType and fileName when the attachment carries neither contentType nor contentName", () => {
+    const { attachments } = extractGoogleChatAttachments(
+      messageWith([{ attachmentDataRef: { resourceName: "spaces/A/attachments/BARE" } }]),
+    );
+    expect(attachments).toHaveLength(1);
+    expect(attachments[0].type).toBe("file");
+    expect(attachments[0].mimeType).toBeUndefined();
+    expect(attachments[0].fileName).toBeUndefined();
+  });
+
+  it("returns empty attachments and skipped for an undefined message", () => {
+    const { attachments, skipped } = extractGoogleChatAttachments(undefined);
+    expect(attachments).toEqual([]);
+    expect(skipped).toEqual([]);
+  });
+});
+
+describe("mapGoogleChatEventToNormalized — inbound attachments", () => {
+  it("populates NormalizedMessage.attachments from a resolvable message.attachment ref (was always [])", () => {
+    const result = mapGoogleChatEventToNormalized(
+      makeChatEvent({
+        message: {
+          name: "spaces/AAAA/messages/1",
+          sender: { name: "users/1" },
+          text: "see attached",
+          attachment: [
+            {
+              contentType: "image/png",
+              contentName: "pic.png",
+              attachmentDataRef: { resourceName: "spaces/AAAA/attachments/C" },
+            },
+          ],
+        },
+      }),
+    );
+    expect(result?.attachments).toHaveLength(1);
+    expect(result?.attachments[0].type).toBe("image");
+    expect(result?.attachments[0].url).toBe(
+      `googlechat-attachment://${encodeURIComponent("spaces/AAAA/attachments/C")}`,
+    );
+  });
+
+  it("keeps attachments [] for a MESSAGE event carrying only a resource-name-less share", () => {
+    const result = mapGoogleChatEventToNormalized(
+      makeChatEvent({
+        message: {
+          name: "spaces/AAAA/messages/1",
+          sender: { name: "users/1" },
+          text: "hi",
+          attachment: [{ source: "DRIVE_FILE", driveDataRef: { driveFileId: "z" } }],
+        },
+      }),
+    );
+    expect(result?.attachments).toEqual([]);
+  });
+
+  it("round-trips through parseMessage with a resolvable attachment present", () => {
+    const result = mapGoogleChatEventToNormalized(
+      makeChatEvent({
+        message: {
+          name: "spaces/AAAA/messages/1",
+          sender: { name: "users/1" },
+          text: "see attached",
+          attachment: [
+            {
+              contentType: "image/png",
+              attachmentDataRef: { resourceName: "spaces/AAAA/attachments/C" },
+            },
+          ],
+        },
+      }),
+    );
+    const parsed = parseMessage(result);
+    expect(parsed.ok).toBe(true);
   });
 });
