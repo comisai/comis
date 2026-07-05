@@ -6,6 +6,7 @@ import {
   createGoogleChatAdapter,
   type GoogleChatAdapterDeps,
 } from "./googlechat-adapter.js";
+import { GOOGLECHAT_APPROVAL_FUNCTION } from "./googlechat-actions.js";
 import type {
   PubSubSource,
   PubSubSourceDeps,
@@ -773,6 +774,139 @@ describe("createGoogleChatAdapter — sendMessage (messages.create)", () => {
     const result = await adapter.sendMessage("spaces/AAAA", "hi");
 
     expect(result.ok).toBe(true);
+  });
+});
+
+/** Find the single /messages REST call captured by the fetch spy (asserts it fired). */
+function sendCallOf(spy: ReturnType<typeof vi.fn>): [string, RequestInit] {
+  const call = spy.mock.calls.find(([u]) => String(u).includes("/messages")) as
+    | [string, RequestInit]
+    | undefined;
+  expect(call).toBeDefined();
+  return call as [string, RequestInit];
+}
+
+/** Flatten every widget across all cardsV2 entries' sections of a request body. */
+function cardsV2Widgets(body: unknown): Array<Record<string, unknown>> {
+  const cardsV2 = (body as { cardsV2?: unknown }).cardsV2;
+  if (!Array.isArray(cardsV2)) return [];
+  const widgets: Array<Record<string, unknown>> = [];
+  for (const entry of cardsV2) {
+    const sections = (entry as { card?: { sections?: unknown } }).card?.sections;
+    if (!Array.isArray(sections)) continue;
+    for (const section of sections) {
+      const ws = (section as { widgets?: unknown }).widgets;
+      if (Array.isArray(ws)) widgets.push(...(ws as Array<Record<string, unknown>>));
+    }
+  }
+  return widgets;
+}
+
+describe("createGoogleChatAdapter — sendMessage cardsV2 (cards/buttons)", () => {
+  const SIGNED_CB = "v1.approve.abc123.deadbeefcafe";
+
+  it("attaches a cardsV2 buttonList carrying the interactive button when options.buttons is present", async () => {
+    const { fetchImpl, spy } = makeChatFetch();
+    const { deps } = await makeDeps({ fetchImpl });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const result = await adapter.sendMessage("spaces/AAAA", "hi", {
+      buttons: [[{ text: "Approve", callback_data: SIGNED_CB }]],
+    });
+
+    expect(result.ok).toBe(true);
+    const [, init] = sendCallOf(spy);
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+    const cardsV2 = body.cardsV2 as Array<{ cardId?: unknown }> | undefined;
+    expect(Array.isArray(cardsV2)).toBe(true);
+    // Each cardsV2 entry carries a non-empty cardId.
+    for (const entry of cardsV2 ?? []) {
+      expect(typeof entry.cardId).toBe("string");
+      expect(String(entry.cardId).length).toBeGreaterThan(0);
+    }
+    // The widget tree contains a buttonList carrying the interactive button, and
+    // the button stamps the shared rendered function + rides the opaque callback.
+    const buttonList = cardsV2Widgets(body).find(
+      (w) => (w as { buttonList?: unknown }).buttonList,
+    ) as { buttonList: { buttons: Array<Record<string, unknown>> } } | undefined;
+    expect(buttonList).toBeDefined();
+    const btn = buttonList?.buttonList.buttons[0] as {
+      text?: string;
+      onClick?: {
+        action?: { function?: string; parameters?: Array<{ key?: string; value?: string }> };
+      };
+    };
+    expect(btn?.text).toBe("Approve");
+    expect(btn?.onClick?.action?.function).toBe(GOOGLECHAT_APPROVAL_FUNCTION);
+    expect(
+      btn?.onClick?.action?.parameters?.find((p) => p.key === "cb")?.value,
+    ).toBe(SIGNED_CB);
+  });
+
+  it("attaches a cardsV2 card with title/description text-paragraph widgets when options.cards is present", async () => {
+    const { fetchImpl, spy } = makeChatFetch();
+    const { deps } = await makeDeps({ fetchImpl });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const result = await adapter.sendMessage("spaces/AAAA", "hi", {
+      cards: [{ title: "T", description: "D" }],
+    });
+
+    expect(result.ok).toBe(true);
+    const [, init] = sendCallOf(spy);
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+    expect(Array.isArray(body.cardsV2)).toBe(true);
+    const paragraphs = cardsV2Widgets(body)
+      .map((w) => (w as { textParagraph?: { text?: string } }).textParagraph?.text)
+      .filter((t): t is string => typeof t === "string");
+    expect(paragraphs).toContain("<b>T</b>");
+    expect(paragraphs).toContain("D");
+  });
+
+  it("a plain send (no cards/buttons) stays the bare { text } body — no cardsV2 key", async () => {
+    const { fetchImpl, spy } = makeChatFetch();
+    const { deps } = await makeDeps({ fetchImpl });
+    const adapter = createGoogleChatAdapter(deps);
+
+    await adapter.sendMessage("spaces/AAAA", "hello");
+
+    const [, init] = sendCallOf(spy);
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+    expect(body).toEqual({ text: "hello" });
+    expect("cardsV2" in body).toBe(false);
+  });
+
+  it("routes the message text through formatGoogleChatText (a stray angle bracket is escaped)", async () => {
+    const { fetchImpl, spy } = makeChatFetch();
+    const { deps } = await makeDeps({ fetchImpl });
+    const adapter = createGoogleChatAdapter(deps);
+
+    await adapter.sendMessage("spaces/AAAA", "1 < 2 & 3");
+
+    const [, init] = sendCallOf(spy);
+    const body = JSON.parse(String(init.body)) as { text?: string };
+    expect(body.text).toBe("1 &lt; 2 &amp; 3");
+  });
+
+  it("threads a card send: thread{name} + reply query alongside cardsV2 when threadId and buttons are both set", async () => {
+    const { fetchImpl, spy } = makeChatFetch();
+    const { deps } = await makeDeps({ fetchImpl });
+    const adapter = createGoogleChatAdapter(deps);
+
+    await adapter.sendMessage("spaces/AAAA", "hi", {
+      threadId: "spaces/AAAA/threads/TTTT",
+      buttons: [[{ text: "Approve", callback_data: SIGNED_CB }]],
+    });
+
+    const [url, init] = sendCallOf(spy);
+    // The thread name stays a BODY value and the reply option a QUERY param —
+    // the cardsV2 payload rides the same POST alongside them.
+    expect(url).toBe(
+      "https://chat.googleapis.com/v1/spaces/AAAA/messages?messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD",
+    );
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+    expect(body.thread).toEqual({ name: "spaces/AAAA/threads/TTTT" });
+    expect(Array.isArray(body.cardsV2)).toBe(true);
   });
 });
 
