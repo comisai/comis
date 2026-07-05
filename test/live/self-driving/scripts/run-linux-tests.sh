@@ -29,6 +29,9 @@ TESTS=("$@")
 [ "${#TESTS[@]}" -eq 0 ] && TESTS=("${DEFAULT_TESTS[@]}")
 
 echo "Rsync src+dist+manifests → $VPS:$TESTS_DIR (excl node_modules/.git) …"
+# rsync creates the LAST path component but not missing PARENTS — pre-create the nested targets on a
+# first-ever run (the scratch tree doesn't exist yet), else it dies "mkdir …/packages: No such file".
+ssh -o ConnectTimeout=15 "$VPS" "mkdir -p '$TESTS_DIR/packages' '$TESTS_DIR/test' '$TESTS_DIR/website/public'"
 rsync -az -e "ssh -o ConnectTimeout=20" \
   --exclude=node_modules --exclude='*.tsbuildinfo' --exclude=.git \
   "$REPO/packages/" "$VPS:$TESTS_DIR/packages/"

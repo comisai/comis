@@ -78,9 +78,19 @@ fi
 
 # 4) webhook route mounted + HMAC active — UNSIGNED POST must be 401 (mounted+auth), NOT 404 (route
 #    absent → webhooks off / wrong path) and NOT a refused connection (gateway down). Needs no secret.
+#    GATED like the msteams probe (4b): a 404 is only a FAIL when webhooks are actually EXPECTED —
+#    the config declares a `webhooks:`/`hooks:` block, or the caller opts in with WH_EXPECT=1 (a
+#    webhook→claude drive). On a Telegram-driven rig with no webhooks, a 404 is expected → WARN-skip,
+#    so phase0 doesn't red-flag a healthy rig (the exact false-blocker this probe used to raise).
 # NOTE: the env vars MUST precede `node` — after `node -e 'script'` they become argv, not env
 # (process.env.P would be undefined → port NaN → a bogus ECONNREFUSED). Caught live: gateway-port
 # PASSed but this probe "ECONNREFUSED"'d the SAME port.
+wh_expected=0
+[ "${WH_EXPECT:-0}" = "1" ] && wh_expected=1
+if [ "$wh_expected" = 0 ] && [ -f "$CONFIG" ] && sudo -u "$COMIS_USER" test -r "$CONFIG" 2>/dev/null \
+   && sudo -u "$COMIS_USER" grep -qE '^\s*(webhooks|hooks):\s*$' "$CONFIG" 2>/dev/null; then
+  wh_expected=1
+fi
 status=$(H="$GW_HOST" P="$GW_PORT" PP="$WH_BASE/$WH_PATH" node -e '
   const http=require("http");
   const body=Buffer.from("{}");
@@ -92,7 +102,11 @@ status=$(H="$GW_HOST" P="$GW_PORT" PP="$WH_BASE/$WH_PATH" node -e '
 ' 2>/dev/null)
 case "$status" in
   401) pass "webhook-mounted" "unsigned POST → 401 (route mounted, HMAC active — auth-before-turn holds)";;
-  404) fail "webhook-mounted" "unsigned POST → 404 (route ABSENT — webhooks disabled or wrong path '$WH_PATH')";;
+  404) if [ "$wh_expected" = 1 ]; then
+         fail "webhook-mounted" "unsigned POST → 404 (route ABSENT — webhooks expected but disabled or wrong path '$WH_PATH')"
+       else
+         warn "webhook-mounted" "unsigned POST → 404 (no webhook route configured — not a webhook drive; WH_EXPECT=1 to require it)"
+       fi;;
   2*)  fail "webhook-mounted" "unsigned POST → $status (route mounted but HMAC NOT enforced — a security regression!)";;
   ERR:*) fail "webhook-mounted" "probe failed ($status) — gateway not reachable";;
   *)   warn "webhook-mounted" "unsigned POST → ${status:-<none>} (unexpected — inspect manually)";;

@@ -39,7 +39,19 @@ do). The box-side `.mjs` helpers read `/root/comis-rig.env` via `_rig.mjs`, so t
 
 ## 2. Deploy the build under test
 
-Two paths, both env-driven from `scripts/.live-env`:
+**First reconcile WHICH build is the build under test** — when the target names a specific branch/SHA,
+verify that premise at HEAD before deploying (it drifts). Two traps, both hit live:
+- **A squash-merge breaks commit ancestry**, so `git rev-list --count main...<feature>` reports a huge
+  "ahead" (the feature's individual commits aren't main's ancestors) even when the *content* landed on
+  main as one squashed commit. Don't trust the count — diff the actual product tree
+  (`git diff --stat main <ref> -- packages/`) and grep for the specific deliverables/symbols. A "179
+  ahead" branch turned out to be 0-product-delta-ahead-of-main once the squash was accounted for.
+- **A concurrent process may merge/rename branches under you** ([[concurrent-identity-commit-process]]):
+  a named fix branch can already be *on main* (via a squash PR) and *behind* main on later fixups. The
+  correct build under test is the commit whose **content** you want (usually current `main` once the
+  feature merged), not the stale branch name. Confirm with `verify-build.sh` after deploy.
+
+Two deploy paths, both env-driven from `scripts/.live-env`:
 
 **(a) Full (re)install through the REAL installer — `scripts/install-vps.sh`.** Builds this checkout,
 `pnpm pack`s the umbrella `comisai` tarball (prepack bundles every `@comis/*`), ships it + this
