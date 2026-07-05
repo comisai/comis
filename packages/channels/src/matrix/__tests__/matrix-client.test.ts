@@ -92,7 +92,7 @@ interface FakeClientOptions {
 class FakeMatrixClient {
   readonly handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
   readonly startCalls: Array<{ initialSyncLimit?: number; filter?: unknown }> = [];
-  readonly setTokenCalls: string[] = [];
+  readonly setTokenCalls: Array<string | null> = [];
   readonly joinCalls: string[] = [];
   stopCalls = 0;
   private token: string | null;
@@ -100,7 +100,7 @@ class FakeMatrixClient {
   private readonly joinError?: unknown;
   /** Mutable so a test can fail a later (resume) startClient but not the first. */
   startError?: unknown;
-  readonly store: { getSyncToken(): string | null; setSyncToken(token: string): void };
+  readonly store: { getSyncToken(): string | null; setSyncToken(token: string | null): void };
 
   constructor(opts: FakeClientOptions = {}) {
     // Distinguish "not provided" (default MXID) from an explicit null user id.
@@ -111,7 +111,7 @@ class FakeMatrixClient {
     const self = this;
     this.store = {
       getSyncToken: () => self.token,
-      setSyncToken: (t: string) => {
+      setSyncToken: (t: string | null) => {
         self.token = t;
         self.setTokenCalls.push(t);
       },
@@ -607,6 +607,29 @@ describe("createMatrixClient — token-expiry recovery + stale-since re-entry", 
       (s) => s.syncToken === undefined && s.watermarks["!keep:hs"] === 42,
     );
     expect(clearSave).toBeDefined();
+  });
+
+  it("resets the live client and re-enters initial sync in-process when the homeserver rejects a stale since", async () => {
+    // Clearing only the persisted token leaves the live SyncApi retrying the
+    // rejected `since` (it was seeded into client.store at start). The running
+    // process must genuinely re-enter initial sync: clear the live store token
+    // and restart the client — the retained watermarks keep that re-entry
+    // guarded against the room backlog.
+    const h = makeHarness({ seed: { syncToken: "stale-tok", watermarks: { "!keep:hs": 42 } } });
+    await h.controller.start();
+    const startsBefore = h.fake.startCalls.length;
+
+    await h.fake.emit(ClientEvent.Sync, SyncState.Error, SyncState.Syncing, {
+      error: matrixError("M_UNKNOWN", 400, "unrecognised since token"),
+    });
+
+    // The live store token is cleared to null so the SDK stops replaying the
+    // rejected since, and the client is restarted to re-enter initial sync.
+    expect(h.fake.setTokenCalls).toContain(null);
+    expect(h.fake.stopCalls).toBe(1);
+    expect(h.fake.startCalls.length).toBe(startsBefore + 1);
+    // The watermarks survive the reset, so the forced re-sync stays guarded.
+    expect(h.saves.some((s) => s.watermarks["!keep:hs"] === 42)).toBe(true);
   });
 
   it("never leaks a secret from the sync error into the health signal or logs", async () => {
