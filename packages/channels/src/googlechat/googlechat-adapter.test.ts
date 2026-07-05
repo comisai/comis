@@ -7,6 +7,7 @@ import {
   type GoogleChatAdapterDeps,
 } from "./googlechat-adapter.js";
 import { GOOGLECHAT_APPROVAL_FUNCTION } from "./googlechat-actions.js";
+import { classifyGoogleChatRenderError } from "./googlechat-activity.js";
 import type {
   PubSubSource,
   PubSubSourceDeps,
@@ -1094,6 +1095,56 @@ describe("createGoogleChatAdapter — editMessage (messages.patch)", () => {
     const { deps } = await makeDeps();
     const adapter = createGoogleChatAdapter(deps);
     expect(typeof adapter.editMessage).toBe("function");
+  });
+
+  it("a 429 PATCH returns an Error carrying structural .status + .retryAfter so the render classifier yields rate_limited (not internal)", async () => {
+    // Drive a REAL 429 (with a Retry-After) through the REAL adapter — no
+    // injected `.status`. The returned error must carry the numeric HTTP status
+    // and the parsed Retry-After seconds as STRUCTURAL fields; the render-error
+    // classifier reads those, never the message string. Without them the whole
+    // edit-path 429 retry buffer is dead in production.
+    const { fetchImpl } = makeChatFetch({ sendStatus: 429, retryAfter: "3" });
+    const { deps } = await makeDeps({ fetchImpl });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const result = await adapter.editMessage?.(
+      "spaces/AAAA",
+      "spaces/AAAA/messages/CCC",
+      "retry me",
+    );
+
+    expect(result?.ok).toBe(false);
+    if (result && !result.ok) {
+      expect((result.error as { status?: number }).status).toBe(429);
+      expect((result.error as { retryAfter?: number }).retryAfter).toBe(3);
+      // The REAL classifier, fed the REAL adapter error, must pick rate_limited.
+      expect(classifyGoogleChatRenderError(result.error)).toEqual({
+        kind: "rate_limited",
+        retryAfterMs: 3000,
+      });
+    }
+  });
+
+  it("a 404 PATCH (message gone) returns an Error carrying .status so the classifier yields not_supported:edit (drop further edits)", async () => {
+    const { fetchImpl } = makeChatFetch({ sendStatus: 404 });
+    const { deps } = await makeDeps({ fetchImpl });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const result = await adapter.editMessage?.(
+      "spaces/AAAA",
+      "spaces/AAAA/messages/CCC",
+      "gone",
+    );
+
+    expect(result?.ok).toBe(false);
+    if (result && !result.ok) {
+      expect((result.error as { status?: number }).status).toBe(404);
+      // 404 → the render classifier drops all further edits in place.
+      expect(classifyGoogleChatRenderError(result.error)).toEqual({
+        kind: "not_supported",
+        capability: "edit",
+      });
+    }
   });
 });
 

@@ -110,6 +110,37 @@ function isSafeMessageName(id: string): boolean {
   return id.length > 0 && !id.includes("..") && /^[A-Za-z0-9._/-]+$/.test(id);
 }
 
+// ---------------------------------------------------------------------------
+// Structural REST error (the edit-in-place render classifier reads it)
+// ---------------------------------------------------------------------------
+
+/**
+ * A Chat REST failure carrying the numeric HTTP `status` — and, on a 429, the
+ * parsed `Retry-After` seconds — as STRUCTURAL fields. The EditPlace render
+ * classifier (`classifyGoogleChatRenderError`) picks its variant off these
+ * (429 → back off and retry the latest text, 404 → drop further edits, 401/403
+ * → permission); a bare `Error(message)` with the status only in the string
+ * classifies as `internal`, so neither the rate-limit retry buffer nor the
+ * message-gone drop would ever engage. Mirrors the MS Teams connector's
+ * structural REST error.
+ */
+interface GoogleChatRestError extends Error {
+  status: number;
+  retryAfter?: number;
+}
+
+/** Build a {@link GoogleChatRestError} carrying the status (+ Retry-After seconds on a 429). */
+function googleChatRestError(
+  message: string,
+  status: number,
+  retryAfter?: number,
+): GoogleChatRestError {
+  const error = new Error(message) as GoogleChatRestError;
+  error.status = status;
+  if (retryAfter !== undefined) error.retryAfter = retryAfter;
+  return error;
+}
+
 /** Dependencies for the Google Chat adapter. */
 export interface GoogleChatAdapterDeps {
   /** The resolved service-account key JSON string (a SecretRef resolved upstream); never logged. */
@@ -655,8 +686,17 @@ export function createGoogleChatAdapter(
             },
             "Google Chat send failed: error status",
           );
+          // Attach the structural status (+ Retry-After on a 429) so a send that
+          // exhausts its bounded 429 resends surfaces as rate_limited to the
+          // activity renderer rather than a status-less internal fault.
+          const retryAfter =
+            res.status === 429 ? parseRetryAfterSeconds(res, now()) : undefined;
           return err(
-            new Error(`chat messages.create returned status ${res.status}`),
+            googleChatRestError(
+              `chat messages.create returned status ${res.status}`,
+              res.status,
+              retryAfter,
+            ),
           );
         }
         const parsed = await fromPromise(
@@ -747,8 +787,17 @@ export function createGoogleChatAdapter(
           },
           "Google Chat edit failed: error status",
         );
+        // Attach the structural status (+ Retry-After on a 429) so the render
+        // classifier picks the variant: 429 → rate_limited (retry the latest
+        // text), 404 → not_supported (drop further edits), 401/403 → permission.
+        const retryAfter =
+          res.status === 429 ? parseRetryAfterSeconds(res, now()) : undefined;
         return err(
-          new Error(`chat messages.patch returned status ${res.status}`),
+          googleChatRestError(
+            `chat messages.patch returned status ${res.status}`,
+            res.status,
+            retryAfter,
+          ),
         );
       }
       return ok(undefined);
@@ -807,8 +856,17 @@ export function createGoogleChatAdapter(
           },
           "Google Chat delete failed: error status",
         );
+        // The delete failure is consumed by the same render classifier as edit;
+        // attach the structural status (+ Retry-After on a 429) so it is
+        // classified rather than collapsed to a status-less internal fault.
+        const retryAfter =
+          res.status === 429 ? parseRetryAfterSeconds(res, now()) : undefined;
         return err(
-          new Error(`chat messages.delete returned status ${res.status}`),
+          googleChatRestError(
+            `chat messages.delete returned status ${res.status}`,
+            res.status,
+            retryAfter,
+          ),
         );
       }
       return ok(undefined);
