@@ -12,7 +12,7 @@ function makeStateStore(seed: Partial<MatrixState> = {}): {
   saves: MatrixState[];
 } {
   const saves: MatrixState[] = [];
-  const current: MatrixState = { watermark: 0, ...seed };
+  const current: MatrixState = { watermarks: {}, ...seed };
   const store: MatrixStateStore = {
     load: async () => ok({ ...current }),
     save: async (state: MatrixState) => {
@@ -157,8 +157,8 @@ describe("createMatrixAuth", () => {
     }
   });
 
-  it("preserves an existing sync token and watermark when persisting a password login", async () => {
-    // A blind overwrite would reset the watermark to 0 and drop the sync token,
+  it("preserves an existing sync token and watermarks when persisting a password login", async () => {
+    // A blind overwrite would reset the watermarks and drop the sync token,
     // forcing a full re-sync and replaying the backlog past the guard.
     const rec = newRecord();
     const createClientImpl = makeCreateClientImpl(
@@ -168,7 +168,7 @@ describe("createMatrixAuth", () => {
       },
       rec,
     );
-    const { store, saves } = makeStateStore({ syncToken: "prev-since", watermark: 99 });
+    const { store, saves } = makeStateStore({ syncToken: "prev-since", watermarks: { "!r:hs": 99 } });
 
     const auth = createMatrixAuth({
       homeserverUrl: "https://hs.example",
@@ -183,7 +183,7 @@ describe("createMatrixAuth", () => {
 
     expect(saves).toHaveLength(1);
     expect(saves[0]?.syncToken).toBe("prev-since");
-    expect(saves[0]?.watermark).toBe(99);
+    expect(saves[0]?.watermarks?.["!r:hs"]).toBe(99);
     expect(saves[0]?.accessToken).toBe("srv-token-xyz");
     expect(saves[0]?.deviceId).toBe("SRVDEV");
   });

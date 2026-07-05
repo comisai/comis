@@ -48,8 +48,13 @@ export interface MatrixState {
   deviceId?: string;
   /** The access token minted by a password login, persisted across restarts. */
   accessToken?: string;
-  /** Highest processed `origin_server_ts`; the backlog-replay guard. */
-  watermark: number;
+  /**
+   * Highest processed `origin_server_ts` PER ROOM (`roomId -> ts`); the
+   * backlog-replay guard. Per-room because Matrix gives no cross-room timestamp
+   * monotonicity — a single scalar drops live messages in a quiet room after a
+   * busier room advances, and fails to exclude a mid-run-joined room's backlog.
+   */
+  watermarks: Record<string, number>;
 }
 
 /** Load/save the durable Matrix session state. */
@@ -61,7 +66,7 @@ export interface MatrixStateStore {
 }
 
 /** The state of a stateDir that has never been written. */
-const DEFAULT_STATE: MatrixState = { watermark: 0 };
+const DEFAULT_STATE: MatrixState = { watermarks: {} };
 
 /**
  * Build a stateDir-relative file path through the traversal guard.
@@ -90,14 +95,25 @@ function isNotFound(error: unknown): boolean {
  */
 function toState(raw: unknown): MatrixState {
   const obj = raw !== null && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-  const state: MatrixState = {
-    watermark:
-      typeof obj.watermark === "number" && Number.isFinite(obj.watermark) ? obj.watermark : 0,
-  };
+  const state: MatrixState = { watermarks: toWatermarks(obj.watermarks) };
   if (typeof obj.syncToken === "string") state.syncToken = obj.syncToken;
   if (typeof obj.deviceId === "string") state.deviceId = obj.deviceId;
   if (typeof obj.accessToken === "string") state.accessToken = obj.accessToken;
   return state;
+}
+
+/**
+ * Coerce a parsed value into the per-room watermark map, keeping only
+ * finite-number entries. A missing or malformed map yields an empty map (every
+ * room then defaults to 0 — still guarded by the sync-ready gate on a boot).
+ */
+function toWatermarks(raw: unknown): Record<string, number> {
+  const watermarks: Record<string, number> = {};
+  if (raw === null || typeof raw !== "object") return watermarks;
+  for (const [roomId, ts] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof ts === "number" && Number.isFinite(ts)) watermarks[roomId] = ts;
+  }
+  return watermarks;
 }
 
 /**

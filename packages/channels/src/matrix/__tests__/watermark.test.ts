@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
-import { shouldDeliverTimelineEvent } from "../watermark.js";
+import { shouldDeliverTimelineEvent, resolveRoomWatermark } from "../watermark.js";
 
 describe("shouldDeliverTimelineEvent", () => {
   it("drops a timeline event that arrives before the client is sync-ready", () => {
@@ -107,5 +107,28 @@ describe("shouldDeliverTimelineEvent", () => {
         watermark,
       }),
     ).toBe(true);
+  });
+});
+
+describe("resolveRoomWatermark", () => {
+  it("returns a seen room's own watermark, independent of other rooms", () => {
+    const watermarks = { "!busy:hs": 1000, "!quiet:hs": 200 };
+    expect(resolveRoomWatermark(watermarks, "!busy:hs")).toBe(1000);
+    // A busier room's higher watermark does not leak into a quieter room.
+    expect(resolveRoomWatermark(watermarks, "!quiet:hs")).toBe(200);
+  });
+
+  it("defaults an unseen room to 0 so its first live event passes", () => {
+    expect(resolveRoomWatermark({ "!other:hs": 999 }, "!new:hs")).toBe(0);
+    expect(resolveRoomWatermark({}, "!new:hs")).toBe(0);
+  });
+
+  it("defaults a non-finite or non-number entry to 0", () => {
+    const watermarks = { "!nan:hs": Number.NaN, "!str:hs": "5" } as unknown as Record<
+      string,
+      number
+    >;
+    expect(resolveRoomWatermark(watermarks, "!nan:hs")).toBe(0);
+    expect(resolveRoomWatermark(watermarks, "!str:hs")).toBe(0);
   });
 });

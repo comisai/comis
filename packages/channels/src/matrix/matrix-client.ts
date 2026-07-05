@@ -46,7 +46,7 @@ import { systemNowMs } from "@comis/core";
 import type { NormalizedMessage, ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err, fromPromise } from "@comis/shared";
-import { shouldDeliverTimelineEvent } from "./watermark.js";
+import { shouldDeliverTimelineEvent, resolveRoomWatermark } from "./watermark.js";
 import { decideInvite, type InviteAllowMode } from "./invite-policy.js";
 import { mapMatrixEventToNormalized } from "./message-mapper.js";
 import { classifyMatrixError, type MatrixErrorInput, type MatrixErrorKind } from "./errors.js";
@@ -82,7 +82,7 @@ export interface MatrixHealthSignal {
 export interface MatrixClientDeps {
   /** The authenticated matrix-js-sdk client (from the auth lifecycle). */
   client: MatrixClient;
-  /** Durable store for the `{ syncToken, watermark }` resume/persist state. */
+  /** Durable store for the `{ syncToken, watermarks }` resume/persist state. */
   stateStore: MatrixStateStore;
   /** Invite gate: master auto-join switch. */
   autoJoinOnInvite: boolean;
@@ -107,6 +107,12 @@ export interface MatrixClientDeps {
   reauthenticate?: () => Promise<Result<MatrixReauthResult, Error>>;
   /** Health-signal seam for the dark-token branch (never carries a secret). */
   emitHealth?: (signal: MatrixHealthSignal) => void;
+  /**
+   * Wall-clock source (ms). A newly-joined room's watermark is seeded to `now()`
+   * so its pre-join backlog is excluded (T-1). Defaults to the system clock;
+   * injected in tests for a deterministic join moment.
+   */
+  now?: () => number;
 }
 
 /** The `/sync` lifecycle handle the adapter drives. */
@@ -162,12 +168,12 @@ function buildSyncFilter(userId: string | null): Filter {
 export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController {
   const { client, stateStore, logger } = deps;
   const initialSyncLimit = deps.initialSyncLimit ?? DEFAULT_INITIAL_SYNC_LIMIT;
+  const now = deps.now ?? systemNowMs;
 
   // In-memory mirror of the persisted state; every save writes the whole object
   // so a prior deviceId / accessToken is never dropped (that would orphan E2EE
-  // keys or reset the watermark → backlog replay).
-  let persistedState: MatrixState = { watermark: 0 };
-  let watermark = 0;
+  // keys or reset the watermarks → backlog replay). `watermarks` is per room.
+  let persistedState: MatrixState = { watermarks: {} };
   let syncReady = false;
   // Guards against parallel re-logins while one recovery is in flight — a
   // homeserver re-emits the sync error until the token is actually replaced.
@@ -187,6 +193,20 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
         "Failed to persist Matrix sync state",
       );
     }
+  }
+
+  /**
+   * Advance a single room's watermark to `ts` and persist, but only when it
+   * moves the room's own watermark forward (a strictly-greater bump). Keyed per
+   * room so a busy room never advances a quiet room's guard.
+   */
+  async function bumpRoomWatermark(roomId: string, ts: number, persistField: string): Promise<void> {
+    if (ts <= resolveRoomWatermark(persistedState.watermarks, roomId)) return;
+    persistedState = {
+      ...persistedState,
+      watermarks: { ...persistedState.watermarks, [roomId]: ts },
+    };
+    await persistState(persistField);
   }
 
   /** Resolve the inviter's full MXID: the sender of the bot's own invite event. */
@@ -244,7 +264,7 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
       toStartOfTimeline: toStartOfTimeline === true,
       eventType: event.getType(),
       eventTs: event.getTs(),
-      watermark,
+      watermark: resolveRoomWatermark(persistedState.watermarks, room.roomId),
     });
     if (!deliver) {
       logger.debug(
@@ -281,16 +301,11 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
       );
     }
 
-    // Advance + persist the watermark to this event's timestamp. Guard against a
-    // regression if a later event's handler resolved first (events are ordered,
-    // but delivery is async). Persist even on handler failure — the event was
-    // handed off, so reprocessing it on the next sync would loop indefinitely.
-    const ts = event.getTs();
-    if (ts > watermark) {
-      watermark = ts;
-      persistedState = { ...persistedState, watermark: ts };
-      await persistState("watermark");
-    }
+    // Advance + persist THIS ROOM's watermark to the event's timestamp. Guard
+    // against a regression if a later event's handler resolved first (events are
+    // ordered, but delivery is async). Persist even on handler failure — the
+    // event was handed off, so reprocessing it on the next sync would loop.
+    await bumpRoomWatermark(room.roomId, event.getTs(), "watermark");
   }
 
   /** RoomEvent.MyMembership: gate an invite on the inviter MXID, then join. */
@@ -340,6 +355,12 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
       );
       return;
     }
+    // Seed the newly-joined room's watermark to the join moment so its pre-join
+    // backlog — which /sync delivers live (syncReady, !toStartOfTimeline) right
+    // after the join — is excluded. Without this seed the room defaults to 0 and
+    // the bot would act on stale, pre-allowlist history (T-1).
+    await bumpRoomWatermark(room.roomId, now(), "watermark-seed");
+
     logger.info(
       { channelType: "matrix", step: "invite-join" },
       "Matrix auto-joined room on a permitted invite",
@@ -458,7 +479,6 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
         return err(loaded.error);
       }
       persistedState = loaded.value;
-      watermark = loaded.value.watermark;
 
       // Subscribe before starting so no batch is missed.
       client.on(ClientEvent.Sync, onSyncState);

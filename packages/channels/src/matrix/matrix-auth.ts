@@ -161,7 +161,7 @@ export function createMatrixAuth(deps: MatrixAuthDeps): MatrixAuth {
         // a restart. Merge onto existing state so a prior sync token / watermark
         // is preserved — a blind overwrite would reset the watermark → replay.
         const existing = await deps.stateStore.load();
-        const base: MatrixState = existing.ok ? existing.value : { watermark: 0 };
+        const base: MatrixState = existing.ok ? existing.value : { watermarks: {} };
         const saved = await deps.stateStore.save({
           ...base,
           accessToken: access_token,

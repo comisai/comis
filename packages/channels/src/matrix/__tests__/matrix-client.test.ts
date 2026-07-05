@@ -21,7 +21,7 @@ function makeStateStore(seed: Partial<MatrixState> = {}): {
   failSave?: boolean;
 } {
   const saves: MatrixState[] = [];
-  const current: MatrixState = { watermark: 0, ...seed };
+  const current: MatrixState = { watermarks: {}, ...seed };
   const holder = { failSave: false };
   const store: MatrixStateStore = {
     load: async () => ok({ ...current }),
@@ -178,6 +178,7 @@ interface HarnessOverrides {
   reauthenticate?: () => Promise<
     { ok: true; value: { accessToken: string; deviceId?: string } } | { ok: false; error: Error }
   >;
+  now?: () => number;
 }
 
 function makeHarness(over: HarnessOverrides = {}): {
@@ -215,6 +216,7 @@ function makeHarness(over: HarnessOverrides = {}): {
       healthSignals.push(signal);
     },
     ...(over.reauthenticate !== undefined ? { reauthenticate: over.reauthenticate } : {}),
+    ...(over.now !== undefined ? { now: over.now } : {}),
   });
   return {
     fake,
@@ -229,7 +231,7 @@ function makeHarness(over: HarnessOverrides = {}): {
 
 describe("createMatrixClient — /sync lifecycle, watermark guard, invite gate", () => {
   it("resumes /sync from the persisted sync token and starts with an enabled filter", async () => {
-    const h = makeHarness({ seed: { syncToken: "since-persisted", watermark: 5 } });
+    const h = makeHarness({ seed: { syncToken: "since-persisted", watermarks: {} } });
 
     const started = await h.controller.start();
 
@@ -249,7 +251,7 @@ describe("createMatrixClient — /sync lifecycle, watermark guard, invite gate",
   });
 
   it("does not deliver a timeline event received before the client reaches a ready sync state", async () => {
-    const h = makeHarness({ seed: { watermark: 5 } });
+    const h = makeHarness({ seed: { watermarks: {} } });
     await h.controller.start();
 
     // No PREPARED/SYNCING emitted → syncReady stays false → the boot backlog is dropped.
@@ -279,7 +281,7 @@ describe("createMatrixClient — /sync lifecycle, watermark guard, invite gate",
   });
 
   it("does not deliver a backlog event delivered toStartOfTimeline even after PREPARED", async () => {
-    const h = makeHarness({ seed: { watermark: 5 } });
+    const h = makeHarness({ seed: { watermarks: {} } });
     await h.controller.start();
     await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null, undefined);
 
@@ -290,7 +292,7 @@ describe("createMatrixClient — /sync lifecycle, watermark guard, invite gate",
   });
 
   it("does not deliver an event at or before the persisted watermark", async () => {
-    const h = makeHarness({ seed: { watermark: 100 } });
+    const h = makeHarness({ seed: { watermarks: { "!r:hs": 100 } } });
     await h.controller.start();
     await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null, undefined);
 
@@ -300,7 +302,7 @@ describe("createMatrixClient — /sync lifecycle, watermark guard, invite gate",
   });
 
   it("does not deliver a non-message timeline event", async () => {
-    const h = makeHarness({ seed: { watermark: 5 } });
+    const h = makeHarness({ seed: { watermarks: {} } });
     await h.controller.start();
     await h.fake.emit(ClientEvent.Sync, SyncState.Syncing, SyncState.Prepared, undefined);
 
@@ -315,7 +317,7 @@ describe("createMatrixClient — /sync lifecycle, watermark guard, invite gate",
   });
 
   it("delivers a live post-watermark message and advances + persists the watermark", async () => {
-    const h = makeHarness({ seed: { watermark: 5, syncToken: "s0" } });
+    const h = makeHarness({ seed: { watermarks: {}, syncToken: "s0" } });
     await h.controller.start();
     const savesBefore = h.saves.length;
     await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null, undefined);
@@ -331,13 +333,15 @@ describe("createMatrixClient — /sync lifecycle, watermark guard, invite gate",
     expect(h.received[0]?.text).toBe("hello there");
     expect(h.received[0]?.channelId).toBe("!room:hs");
     expect(h.received[0]?.senderId).toBe("@alice:hs");
-    // The watermark advanced to the event ts and was persisted.
-    const watermarkSaves = h.saves.slice(savesBefore).filter((s) => s.watermark === 100);
+    // The room's own watermark advanced to the event ts and was persisted.
+    const watermarkSaves = h.saves
+      .slice(savesBefore)
+      .filter((s) => s.watermarks["!room:hs"] === 100);
     expect(watermarkSaves.length).toBeGreaterThanOrEqual(1);
   });
 
   it("persists the advanced sync token when the client reports a new batch token", async () => {
-    const h = makeHarness({ seed: { syncToken: "s0", watermark: 5 } });
+    const h = makeHarness({ seed: { syncToken: "s0", watermarks: {} } });
     await h.controller.start();
 
     // The SDK advanced its sync token after a batch; the ready-state event persists it.
@@ -415,7 +419,7 @@ describe("createMatrixClient — /sync lifecycle, watermark guard, invite gate",
 
   it("advances the watermark and logs an error when the message handler rejects", async () => {
     const onMessage = vi.fn().mockRejectedValue(new Error("pipeline down"));
-    const h = makeHarness({ seed: { watermark: 5 }, onMessage });
+    const h = makeHarness({ seed: { watermarks: {} }, onMessage });
     await h.controller.start();
     await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null, undefined);
 
@@ -424,12 +428,12 @@ describe("createMatrixClient — /sync lifecycle, watermark guard, invite gate",
     expect(onMessage).toHaveBeenCalledTimes(1);
     // The event was delivered to the inbound path; the watermark still advances so
     // a downstream failure never causes infinite reprocessing on the next sync.
-    expect(h.saves.some((s) => s.watermark === 100)).toBe(true);
+    expect(h.saves.some((s) => s.watermarks["!r:hs"] === 100)).toBe(true);
     expect(vi.mocked(h.logger.error)).toHaveBeenCalled();
   });
 
   it("logs a warning when persisting the watermark fails", async () => {
-    const h = makeHarness({ seed: { watermark: 5 } });
+    const h = makeHarness({ seed: { watermarks: {} } });
     await h.controller.start();
     await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null, undefined);
     h.storeHandle.failSave = true;
@@ -469,7 +473,7 @@ describe("createMatrixClient — /sync lifecycle, watermark guard, invite gate",
   });
 
   it("does not deliver a message event that has no verifiable sender", async () => {
-    const h = makeHarness({ seed: { watermark: 5 } });
+    const h = makeHarness({ seed: { watermarks: {} } });
     await h.controller.start();
     await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null, undefined);
 
@@ -485,7 +489,7 @@ describe("createMatrixClient — /sync lifecycle, watermark guard, invite gate",
     await h.fake.emit(RoomEvent.Timeline, noSender, fakeRoom("!r:hs"), false);
 
     expect(h.received).toHaveLength(0);
-    expect(h.saves.some((s) => s.watermark === 100)).toBe(false);
+    expect(h.saves.some((s) => s.watermarks["!r:hs"] === 100)).toBe(false);
   });
 
   it("ignores an invite when the bot's own user id is unknown", async () => {
@@ -544,7 +548,7 @@ describe("createMatrixClient — token-expiry recovery + stale-since re-entry", 
     const reauthenticate = vi
       .fn()
       .mockResolvedValue({ ok: true, value: { accessToken: "fresh-token", deviceId: "DEV2" } });
-    const h = makeHarness({ seed: { syncToken: "s0", watermark: 5 }, reauthenticate });
+    const h = makeHarness({ seed: { syncToken: "s0", watermarks: {} }, reauthenticate });
     await h.controller.start();
     const startsBefore = h.fake.startCalls.length;
 
@@ -568,7 +572,7 @@ describe("createMatrixClient — token-expiry recovery + stale-since re-entry", 
   });
 
   it("emits a loud health signal naming channels.matrix.accessToken and never silently stops when no re-login is available", async () => {
-    const h = makeHarness({ seed: { syncToken: "s0", watermark: 5 } });
+    const h = makeHarness({ seed: { syncToken: "s0", watermarks: {} } });
     await h.controller.start();
 
     await h.fake.emit(
@@ -587,7 +591,7 @@ describe("createMatrixClient — token-expiry recovery + stale-since re-entry", 
   });
 
   it("clears the persisted sync token but retains the watermark when the homeserver rejects a stale since", async () => {
-    const h = makeHarness({ seed: { syncToken: "stale-tok", watermark: 42 } });
+    const h = makeHarness({ seed: { syncToken: "stale-tok", watermarks: { "!keep:hs": 42 } } });
     await h.controller.start();
 
     await h.fake.emit(
@@ -598,13 +602,15 @@ describe("createMatrixClient — token-expiry recovery + stale-since re-entry", 
     );
 
     // The token is cleared (so a restart re-enters initial sync) but the
-    // watermark is retained (so that re-entry stays guarded against the backlog).
-    const clearSave = h.saves.find((s) => s.syncToken === undefined && s.watermark === 42);
+    // watermarks are retained (so that re-entry stays guarded against the backlog).
+    const clearSave = h.saves.find(
+      (s) => s.syncToken === undefined && s.watermarks["!keep:hs"] === 42,
+    );
     expect(clearSave).toBeDefined();
   });
 
   it("never leaks a secret from the sync error into the health signal or logs", async () => {
-    const h = makeHarness({ seed: { syncToken: "s0", watermark: 5 } });
+    const h = makeHarness({ seed: { syncToken: "s0", watermarks: {} } });
     await h.controller.start();
 
     await h.fake.emit(
@@ -627,7 +633,7 @@ describe("createMatrixClient — token-expiry recovery + stale-since re-entry", 
     const reauthenticate = vi
       .fn()
       .mockResolvedValue({ ok: true, value: { accessToken: "fresh-token" } });
-    const h = makeHarness({ seed: { syncToken: "s0", watermark: 5 }, reauthenticate });
+    const h = makeHarness({ seed: { syncToken: "s0", watermarks: {} }, reauthenticate });
     await h.controller.start();
 
     await h.fake.emit(ClientEvent.Sync, SyncState.Error, SyncState.Syncing, {
@@ -641,7 +647,7 @@ describe("createMatrixClient — token-expiry recovery + stale-since re-entry", 
 
   it("signals loudly when the re-login itself fails", async () => {
     const reauthenticate = vi.fn().mockResolvedValue({ ok: false, error: new Error("login refused") });
-    const h = makeHarness({ seed: { syncToken: "s0", watermark: 5 }, reauthenticate });
+    const h = makeHarness({ seed: { syncToken: "s0", watermarks: {} }, reauthenticate });
     await h.controller.start();
 
     await h.fake.emit(ClientEvent.Sync, SyncState.Error, SyncState.Syncing, {
@@ -657,7 +663,7 @@ describe("createMatrixClient — token-expiry recovery + stale-since re-entry", 
     const reauthenticate = vi
       .fn()
       .mockResolvedValue({ ok: true, value: { accessToken: "fresh-token", deviceId: "DEV2" } });
-    const h = makeHarness({ seed: { syncToken: "s0", watermark: 5 }, reauthenticate });
+    const h = makeHarness({ seed: { syncToken: "s0", watermarks: {} }, reauthenticate });
     await h.controller.start();
     // The resume startClient rejects (the first start() already succeeded).
     h.fake.startError = matrixError("M_UNKNOWN", 500, "resume failed");
@@ -672,7 +678,7 @@ describe("createMatrixClient — token-expiry recovery + stale-since re-entry", 
   });
 
   it("logs a warning for an unclassified sync error without stopping or signalling", async () => {
-    const h = makeHarness({ seed: { syncToken: "s0", watermark: 5 } });
+    const h = makeHarness({ seed: { syncToken: "s0", watermarks: {} } });
     await h.controller.start();
 
     await h.fake.emit(ClientEvent.Sync, SyncState.Error, SyncState.Syncing, {
@@ -745,5 +751,48 @@ describe("createMatrixClient — per-room watermark (cross-room + mid-run-join)"
     );
 
     expect(h.received.find((m) => m.text === "pre-join stale instruction")).toBeUndefined();
+  });
+
+  it("seeds a mid-run-joined room to the join moment: pre-join backlog excluded, post-join delivered", async () => {
+    // Deterministic join moment via an injected clock. The seed excludes the
+    // room's pre-join history (ts < join) yet a genuinely-live message after the
+    // join (ts > join) is delivered — the room is guarded, not deaf.
+    let clock = 5000;
+    const h = makeHarness({
+      allowMode: "allowlist",
+      allowFrom: ["@alice:hs"],
+      now: () => clock,
+    });
+    await h.controller.start();
+    await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null, undefined);
+
+    await h.fake.emit(
+      RoomEvent.MyMembership,
+      fakeRoom("!b:hs", { inviter: "@alice:hs" }),
+      KnownMembership.Invite,
+      KnownMembership.Leave,
+    );
+    expect(h.fake.joinCalls).toContain("!b:hs");
+    // The room's watermark was seeded to the join moment (5000) and persisted.
+    expect(h.saves.some((s) => s.watermarks["!b:hs"] === 5000)).toBe(true);
+
+    // Pre-join backlog (ts 4000 < 5000) is excluded even though live + syncReady.
+    await h.fake.emit(
+      RoomEvent.Timeline,
+      fakeEvent({ ts: 4000, body: "pre-join stale", sender: "@stranger:hs" }),
+      fakeRoom("!b:hs"),
+      false,
+    );
+    expect(h.received.find((m) => m.text === "pre-join stale")).toBeUndefined();
+
+    // A live message after the join (ts 6000 > 5000) IS delivered.
+    clock = 7000;
+    await h.fake.emit(
+      RoomEvent.Timeline,
+      fakeEvent({ ts: 6000, body: "live after join", sender: "@alice:hs" }),
+      fakeRoom("!b:hs"),
+      false,
+    );
+    expect(h.received.find((m) => m.text === "live after join")).toBeDefined();
   });
 });

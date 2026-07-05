@@ -33,7 +33,7 @@ describe("createMatrixStateStore", () => {
       syncToken: "s_since_token",
       deviceId: "AAAADEVICE",
       accessToken: "not-a-real-token",
-      watermark: 1_720_000_000_000,
+      watermarks: { "!room-a:hs": 1_720_000_000_000, "!room-b:hs": 1_720_000_000_500 },
     };
 
     const saved = await store.save(state);
@@ -53,7 +53,7 @@ describe("createMatrixStateStore", () => {
 
     expect(loaded.ok).toBe(true);
     if (loaded.ok) {
-      expect(loaded.value.watermark).toBe(0);
+      expect(loaded.value.watermarks).toEqual({});
       expect(loaded.value.syncToken).toBeUndefined();
       expect(loaded.value.deviceId).toBeUndefined();
       expect(loaded.value.accessToken).toBeUndefined();
@@ -64,7 +64,7 @@ describe("createMatrixStateStore", () => {
     const stateDir = path.join(tempDir(), "state");
     const store = createMatrixStateStore(stateDir);
 
-    await store.save({ watermark: 0 });
+    await store.save({ watermarks: {} });
 
     expect(fs.statSync(stateDir).mode & 0o077).toBe(0);
   });
@@ -73,7 +73,11 @@ describe("createMatrixStateStore", () => {
     const stateDir = path.join(tempDir(), "state");
     const store = createMatrixStateStore(stateDir);
 
-    await store.save({ accessToken: "not-a-real-token", deviceId: "AAAADEVICE", watermark: 5 });
+    await store.save({
+      accessToken: "not-a-real-token",
+      deviceId: "AAAADEVICE",
+      watermarks: { "!r:hs": 5 },
+    });
 
     const files = fs.readdirSync(stateDir);
     expect(files.length).toBeGreaterThan(0);
@@ -88,14 +92,14 @@ describe("createMatrixStateStore", () => {
     const stateDir = path.join(tempDir(), "state");
     const store = createMatrixStateStore(stateDir);
 
-    await store.save({ watermark: 1 });
-    await store.save({ watermark: 2 });
+    await store.save({ watermarks: { "!r:hs": 1 } });
+    await store.save({ watermarks: { "!r:hs": 2 } });
 
     for (const name of fs.readdirSync(stateDir)) {
       expect(fs.statSync(matrixStateFilePath(stateDir, name)).mode & 0o077).toBe(0);
     }
     const loaded = await store.load();
-    expect(loaded.ok && loaded.value.watermark).toBe(2);
+    expect(loaded.ok && loaded.value.watermarks["!r:hs"]).toBe(2);
   });
 
   it("rejects a traversal segment when building a state file path", () => {
@@ -108,7 +112,7 @@ describe("createMatrixStateStore", () => {
     // replay the entire room backlog past the initial-sync guard.
     const stateDir = path.join(tempDir(), "state");
     const store = createMatrixStateStore(stateDir);
-    await store.save({ watermark: 42 });
+    await store.save({ watermarks: { "!r:hs": 42 } });
 
     for (const name of fs.readdirSync(stateDir)) {
       fs.writeFileSync(matrixStateFilePath(stateDir, name), "{ not: valid json ");
