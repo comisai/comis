@@ -76,6 +76,7 @@ const CRC_TABLE: Uint32Array = (() => {
     for (let k = 0; k < 8; k++) {
       c = (c & 1) !== 0 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
     }
+    // eslint-disable-next-line security/detect-object-injection -- numeric loop index into a local table
     table[n] = c >>> 0;
   }
   return table;
@@ -84,6 +85,7 @@ const CRC_TABLE: Uint32Array = (() => {
 function crc32(buf: Buffer): number {
   let c = 0xffffffff;
   for (let i = 0; i < buf.length; i++) {
+    // eslint-disable-next-line security/detect-object-injection -- numeric byte index + table lookup
     c = (CRC_TABLE[(c ^ buf[i]!) & 0xff]! ^ (c >>> 8)) >>> 0;
   }
   return (c ^ 0xffffffff) >>> 0;
@@ -209,6 +211,7 @@ function tarHeaderBlock(fields: {
   header.write("ustar\0", 257, "latin1");
   header.write("00", 263, "latin1");
   let sum = 0;
+  // eslint-disable-next-line security/detect-object-injection -- numeric loop index over a fixed block
   for (let i = 0; i < TAR_BLOCK; i++) sum += header[i]!;
   header.write(sum.toString(8).padStart(6, "0"), 148, "latin1");
   header[154] = 0; // NUL
