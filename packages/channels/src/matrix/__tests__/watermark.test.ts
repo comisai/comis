@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
-import { shouldDeliverTimelineEvent, resolveRoomWatermark } from "../watermark.js";
+import {
+  shouldDeliverTimelineEvent,
+  isLiveDeliverableEvent,
+  resolveRoomWatermark,
+} from "../watermark.js";
 
 describe("shouldDeliverTimelineEvent", () => {
   it("drops a timeline event that arrives before the client is sync-ready", () => {
@@ -107,6 +111,61 @@ describe("shouldDeliverTimelineEvent", () => {
         watermark,
       }),
     ).toBe(true);
+  });
+});
+
+describe("isLiveDeliverableEvent", () => {
+  it("passes a live, past-watermark event regardless of type — so an encrypted event survives to be decrypted", () => {
+    // The liveness gate ignores the event type: an event that is still the
+    // m.room.encrypted WIRE type must pass here so the transport can decrypt it
+    // before the type gate reads the CLEAR type. Dropping on type before
+    // decryption is exactly the receive-path bug this split prevents.
+    expect(
+      isLiveDeliverableEvent({
+        syncReady: true,
+        toStartOfTimeline: false,
+        eventTs: 100,
+        watermark: 50,
+      }),
+    ).toBe(true);
+  });
+
+  it("drops the initial-sync backlog, backfill, and at-or-behind-watermark events before decryption", () => {
+    // Not sync-ready (initial-sync backlog).
+    expect(
+      isLiveDeliverableEvent({ syncReady: false, toStartOfTimeline: false, eventTs: 100, watermark: 0 }),
+    ).toBe(false);
+    // Backfilled (toStartOfTimeline) — an encrypted room's history is not decrypted.
+    expect(
+      isLiveDeliverableEvent({ syncReady: true, toStartOfTimeline: true, eventTs: 100, watermark: 0 }),
+    ).toBe(false);
+    // At the watermark (already processed).
+    expect(
+      isLiveDeliverableEvent({ syncReady: true, toStartOfTimeline: false, eventTs: 50, watermark: 50 }),
+    ).toBe(false);
+    // Behind the watermark (replayed on a re-sync).
+    expect(
+      isLiveDeliverableEvent({ syncReady: true, toStartOfTimeline: false, eventTs: 40, watermark: 50 }),
+    ).toBe(false);
+  });
+
+  it("agrees with shouldDeliverTimelineEvent on every liveness condition for a message type", () => {
+    // shouldDeliverTimelineEvent is defined as isLiveDeliverableEvent + the message
+    // type gate, so for a m.room.message the two must never disagree on liveness.
+    for (const syncReady of [true, false]) {
+      for (const toStartOfTimeline of [true, false]) {
+        for (const [eventTs, watermark] of [
+          [100, 50],
+          [50, 50],
+          [40, 50],
+        ] as const) {
+          const base = { syncReady, toStartOfTimeline, eventTs, watermark };
+          expect(shouldDeliverTimelineEvent({ ...base, eventType: "m.room.message" })).toBe(
+            isLiveDeliverableEvent(base),
+          );
+        }
+      }
+    }
   });
 });
 

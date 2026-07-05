@@ -60,10 +60,12 @@ function fakeEvent(
 }
 
 /**
- * A decrypt-FAILED encrypted event, modelled on matrix-js-sdk: on a failure the
- * SDK sets a `m.room.message` clear event (so it passes the watermark type-gate),
- * whose body is the "** Unable to decrypt **" placeholder — the fail-closed
- * branch drops it and hands the raw signal to the adapter's degrade decider.
+ * A decrypt-FAILED encrypted event as it ACTUALLY arrives on the timeline: still
+ * the `m.room.encrypted` WIRE type. Decryption is driven by the client (its
+ * `decryptEventIfNeeded` invokes `__applyDecryption`) and, mirroring matrix-js-sdk,
+ * resolves to a `m.room.message` clear type carrying the "** Unable to decrypt **"
+ * placeholder with `decryptionFailureReason` set — the fail-closed branch drops it
+ * and hands the raw signal to the adapter's degrade decider.
  */
 function fakeEncryptedFailEvent(
   overrides: { reason?: string; ts?: number; sender?: string; id?: string } = {},
@@ -74,18 +76,28 @@ function fakeEncryptedFailEvent(
     sender = "@someone:hs",
     id = "$enc1",
   } = overrides;
+  let clearType: string | null = null;
+  let failureReason: string | null = null;
   return {
-    getType: () => "m.room.message",
+    getType: () => clearType ?? "m.room.encrypted", // wire type until decrypted
     getId: () => id,
     getSender: () => sender,
     getTs: () => ts,
-    getContent: () => ({ msgtype: "m.bad.encrypted", body: `** Unable to decrypt: ${reason} **` }),
+    getContent: () => ({ msgtype: "m.bad.encrypted", body: "** Unable to decrypt **" }),
     getClearContent: () => null,
     isEncrypted: () => true,
     isBeingDecrypted: () => false,
     getDecryptionPromise: () => null,
-    isDecryptionFailure: () => true,
-    decryptionFailureReason: reason,
+    isDecryptionFailure: () => failureReason !== null,
+    // A getter (as in the SDK) so it reflects the post-decryption state.
+    get decryptionFailureReason() {
+      return failureReason;
+    },
+    // The crypto backend's decryption effect: sets the clear data before resolving.
+    __applyDecryption: (): void => {
+      clearType = "m.room.message";
+      failureReason = reason;
+    },
   } as unknown as MatrixEvent;
 }
 
@@ -184,6 +196,20 @@ class FakeMatrixClient {
   /** The crypto backend the fail-closed decrypt branch probes for cryptoAvailable. */
   getCrypto(): object | undefined {
     return this.cryptoHandle;
+  }
+
+  /**
+   * Model matrix-js-sdk's `decryptEventIfNeeded`: decryption is attempted only when
+   * a crypto backend is present, is async, and sets the clear data before it
+   * resolves (via the event's `__applyDecryption` hook). With no backend the event
+   * is left `m.room.encrypted`.
+   */
+  decryptEventIfNeeded(event: unknown): Promise<void> {
+    const evt = event as { __applyDecryption?: () => void };
+    if (this.cryptoHandle !== undefined && typeof evt.__applyDecryption === "function") {
+      return Promise.resolve().then(() => evt.__applyDecryption?.());
+    }
+    return Promise.resolve();
   }
 
   /** The m.direct account-data lookup the adapter's DM classifier reads. */

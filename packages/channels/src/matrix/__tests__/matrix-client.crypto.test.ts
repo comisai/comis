@@ -327,7 +327,11 @@ function encryptedTimelineEvent(
     isBeingDecrypted: () => false,
     getDecryptionPromise: () => null,
     isDecryptionFailure: () => failureReason !== null,
-    decryptionFailureReason: failureReason,
+    // A getter (as in the SDK) so it reflects the post-decryption state, not the
+    // null captured at object-literal time.
+    get decryptionFailureReason() {
+      return failureReason;
+    },
     // The crypto backend's decryption effect, invoked by the fake client only when
     // a backend is present; sets the clear data BEFORE resolving, like the SDK's
     // decryptionLoop (success → clear body; failure → placeholder + reason).

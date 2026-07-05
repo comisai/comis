@@ -46,7 +46,11 @@ import { systemNowMs } from "@comis/core";
 import type { NormalizedMessage, ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err, fromPromise } from "@comis/shared";
-import { shouldDeliverTimelineEvent, resolveRoomWatermark } from "./watermark.js";
+import {
+  shouldDeliverTimelineEvent,
+  isLiveDeliverableEvent,
+  resolveRoomWatermark,
+} from "./watermark.js";
 import { decideInvite, type InviteAllowMode } from "./invite-policy.js";
 import { mapMatrixEventToNormalized } from "./message-mapper.js";
 import { classifyMatrixError, type MatrixErrorInput, type MatrixErrorKind } from "./errors.js";
@@ -318,14 +322,20 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
     // local-echo that, and loop until the stack overflows. Drop on the full MXID.
     if (event.getSender() === client.getUserId()) return;
 
-    const deliver = shouldDeliverTimelineEvent({
-      syncReady,
-      toStartOfTimeline: toStartOfTimeline === true,
-      eventType: event.getType(),
-      eventTs: event.getTs(),
-      watermark: resolveRoomWatermark(persistedState.watermarks, room.roomId),
-    });
-    if (!deliver) {
+    // Liveness pre-gate BEFORE decryption: drop the initial-sync backlog, paginated
+    // backfill, and any at-or-behind-watermark event WITHOUT decrypting it. An
+    // encrypted room's restart backlog must never be decrypted here — that would
+    // fire a spurious degrade note for old, already-seen messages. The event TYPE
+    // is deferred to the authoritative gate below, because an encrypted event's
+    // clear type is unknown until it is decrypted.
+    if (
+      !isLiveDeliverableEvent({
+        syncReady,
+        toStartOfTimeline: toStartOfTimeline === true,
+        eventTs: event.getTs(),
+        watermark: resolveRoomWatermark(persistedState.watermarks, room.roomId),
+      })
+    ) {
       logger.debug(
         { channelType: "matrix", step: "timeline-gate" },
         "Matrix timeline event gated before delivery",
@@ -333,20 +343,25 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
       return;
     }
 
-    // Fail-closed decrypt (T-5): an encrypted inbound event must be decrypted
-    // BEFORE it can be mapped. Await any in-flight decryption first (the SDK can
-    // fire the timeline event while decryption is still running — reading the
-    // clear content too early would look like a failure, Pitfall 4), then if it
-    // FAILED, DROP the event. We never map the ciphertext or the SDK's synthesized
-    // "** Unable to decrypt **" placeholder — surfacing either is the plaintext-
-    // garbage leak T-5 forbids; there is deliberately no fallback to the raw wire
-    // content. A decrypted-OK event falls through to the SAME mapper below, whose
-    // sanitizer already handles formatted_body (the SDK yields the CLEAR content
-    // through the mapper once the event is decrypted).
+    // Fail-closed decrypt: an encrypted inbound event must be resolved to its CLEAR
+    // type BEFORE the type gate reads it. matrix-js-sdk kicks off decryption
+    // fire-and-forget and emits the timeline event synchronously while the event is
+    // still `m.room.encrypted`, so the gate would drop every encrypted event unread
+    // if it ran first. `decryptEventIfNeeded` is idempotent — it starts decryption
+    // if it has not begun, returns the in-flight promise if it has, and resolves at
+    // once if the event is already decrypted or there is no crypto backend — so
+    // awaiting it covers every case with a single call. A decrypt FAILURE (crypto
+    // present, decryption failed) OR an event STILL encrypted after the await (no
+    // crypto backend — e2ee on but init failed) is DROPPED: we never map the
+    // ciphertext or the SDK's synthesized "** Unable to decrypt **" placeholder —
+    // surfacing either is the plaintext-garbage leak this branch forbids, and there
+    // is deliberately no fallback to the raw wire content. A decrypted-OK event
+    // falls through to the SAME mapper below, whose sanitizer already handles the
+    // CLEAR content the SDK yields once the event is decrypted.
     if (event.isEncrypted()) {
       const decryptStartedAt = systemNowMs();
-      if (event.isBeingDecrypted()) await event.getDecryptionPromise();
-      if (event.isDecryptionFailure()) {
+      await client.decryptEventIfNeeded(event);
+      if (event.isDecryptionFailure() || event.getType() === ROOM_ENCRYPTED_TYPE) {
         const signal: DecryptFailureSignal = {
           roomId: room.roomId,
           e2eeConfigured: deps.e2ee === true,
@@ -381,6 +396,27 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
         },
         "Matrix event decrypted",
       );
+    }
+
+    // Authoritative delivery gate on the (now-decrypted) CLEAR type: deliver only a
+    // live, past-watermark `m.room.message`. Liveness was checked above; re-running
+    // the full gate here also enforces the message-type requirement on the clear
+    // type and re-reads the watermark, which a concurrent event may have advanced
+    // during the awaited decryption.
+    if (
+      !shouldDeliverTimelineEvent({
+        syncReady,
+        toStartOfTimeline: toStartOfTimeline === true,
+        eventType: event.getType(),
+        eventTs: event.getTs(),
+        watermark: resolveRoomWatermark(persistedState.watermarks, room.roomId),
+      })
+    ) {
+      logger.debug(
+        { channelType: "matrix", step: "timeline-gate" },
+        "Matrix timeline event gated before delivery",
+      );
+      return;
     }
 
     const isDirect = deps.isDirectRoom?.(room) ?? false;

@@ -85,17 +85,33 @@ export function resolveRoomWatermark(
 }
 
 /**
+ * Decide whether an event is LIVE and past this room's watermark — the two gates
+ * that are independent of the event's clear type. Split out so an encrypted event
+ * can be tested for liveness BEFORE it is decrypted: the initial-sync backlog,
+ * paginated backfill, and any at-or-behind-watermark event are dropped without
+ * being decrypted (so an encrypted room's restart backlog never decrypts and
+ * never emits a degrade note), while the type gate is deferred until after
+ * decryption resolves the clear type.
+ *
+ * @param input - Sync-ready state, liveness, timestamp, watermark (type ignored).
+ * @returns `true` only when the event is live, not backfill, and past the watermark.
+ */
+export function isLiveDeliverableEvent(input: Omit<TimelineEventGateInput, "eventType">): boolean {
+  const { syncReady, toStartOfTimeline, eventTs, watermark } = input;
+  return syncReady && !toStartOfTimeline && eventTs > watermark;
+}
+
+/**
  * Decide whether a timeline event should be delivered to the message handler.
+ * The authoritative delivery gate: an event is delivered only when it is live and
+ * past the watermark ({@link isLiveDeliverableEvent}) AND is a message event. For
+ * an encrypted event the caller passes the CLEAR type (post-decryption); the wire
+ * `m.room.encrypted` type never satisfies the message-type gate, which is the
+ * whole reason decryption must precede this check.
  *
  * @param input - Sync-ready state, liveness, event type, timestamp, watermark.
- * @returns `true` only when all three gates pass, otherwise `false`.
+ * @returns `true` only when all gates pass, otherwise `false`.
  */
 export function shouldDeliverTimelineEvent(input: TimelineEventGateInput): boolean {
-  const { syncReady, toStartOfTimeline, eventType, eventTs, watermark } = input;
-  return (
-    syncReady &&
-    !toStartOfTimeline &&
-    eventType === "m.room.message" &&
-    eventTs > watermark
-  );
+  return isLiveDeliverableEvent(input) && input.eventType === "m.room.message";
 }
