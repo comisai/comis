@@ -573,7 +573,6 @@ describe("createGoogleChatAdapter — reconcile + platformAction + capability ho
     const { deps } = await makeDeps();
     const adapter = createGoogleChatAdapter(deps) as Record<string, unknown>;
     for (const method of [
-      "deleteMessage",
       "onReaction",
       "reactToMessage",
       "removeReaction",
@@ -779,6 +778,71 @@ describe("createGoogleChatAdapter — editMessage (messages.patch)", () => {
     const { deps } = await makeDeps();
     const adapter = createGoogleChatAdapter(deps);
     expect(typeof adapter.editMessage).toBe("function");
+  });
+});
+
+describe("createGoogleChatAdapter — deleteMessage (messages.delete)", () => {
+  it("mints a chat.bot bearer and DELETEs the message resource with no body, returning ok(undefined)", async () => {
+    const { fetchImpl, spy } = makeChatFetch();
+    const { deps } = await makeDeps({ fetchImpl });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const result = await adapter.deleteMessage?.(
+      "spaces/AAAA",
+      "spaces/AAAA/messages/CCC",
+    );
+
+    expect(result?.ok).toBe(true);
+    if (result?.ok) expect(result.value).toBeUndefined();
+
+    const deleteCall = spy.mock.calls.find(([u]) =>
+      String(u).includes("/messages"),
+    ) as [string, RequestInit] | undefined;
+    expect(deleteCall).toBeDefined();
+    const [url, init] = deleteCall as [string, RequestInit];
+    expect(url).toBe("https://chat.googleapis.com/v1/spaces/AAAA/messages/CCC");
+    expect(init.method).toBe("DELETE");
+    const headers = init.headers as Record<string, string>;
+    expect(headers.authorization).toBe(`Bearer ${MINTED_TOKEN}`);
+    // A delete carries no request body.
+    expect(init.body).toBeUndefined();
+  });
+
+  it("returns err on a non-2xx DELETE, logs an ERROR with errorKind+hint, and never logs the token", async () => {
+    const { fetchImpl } = makeChatFetch({ sendStatus: 403 });
+    const { deps, loggerSpy } = await makeDeps({ fetchImpl });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const result = await adapter.deleteMessage?.(
+      "spaces/AAAA",
+      "spaces/AAAA/messages/CCC",
+    );
+
+    expect(result?.ok).toBe(false);
+    const errRec = findByErrorKind(loggerSpy.error, "auth");
+    expect(errRec).toBeDefined();
+    expect(String(errRec?.hint).length).toBeGreaterThan(0);
+    expect(loggerSpy.serialized()).not.toContain(MINTED_TOKEN);
+  });
+
+  it("rejects an unsafe messageId (empty, .. traversal, or control char) BEFORE any token mint or fetch", async () => {
+    for (const bad of ["", "spaces/../secret", "spaces/AAAA/messages/\u0007"]) {
+      const { fetchImpl, spy } = makeChatFetch();
+      const { deps } = await makeDeps({ fetchImpl });
+      const adapter = createGoogleChatAdapter(deps);
+
+      const result = await adapter.deleteMessage?.("spaces/AAAA", bad);
+
+      expect(result?.ok).toBe(false);
+      // The reused isSafeMessageName guard short-circuits before token+fetch.
+      expect(spy).not.toHaveBeenCalled();
+    }
+  });
+
+  it("exposes deleteMessage as a function on the adapter handle", async () => {
+    const { deps } = await makeDeps();
+    const adapter = createGoogleChatAdapter(deps);
+    expect(typeof adapter.deleteMessage).toBe("function");
   });
 });
 
