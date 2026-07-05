@@ -12,11 +12,17 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { IDBFactory as FakeIDBFactory } from "fake-indexeddb";
-import { serialize, deserialize } from "node:v8";
+import { deserialize } from "node:v8";
+import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { MatrixClient } from "matrix-js-sdk";
+import type { ComisLogger } from "@comis/core";
 import {
   serializeCryptoStore,
   restoreCryptoStore,
   pruneFinishedTransactions,
+  initMatrixCrypto,
 } from "../crypto-store.js";
 
 /** The full IndexedDB global constructor set the shim installs; cleared between tests. */
@@ -172,5 +178,198 @@ describe("the serializer needs no crypto engine", () => {
 
     expect(cryptoImport).not.toHaveBeenCalled();
     expect((globalThis as { indexedDB?: unknown }).indexedDB).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// initMatrixCrypto — the lazy-import boundary + snapshot lifecycle orchestration
+// ---------------------------------------------------------------------------
+
+const stateDirs: string[] = [];
+afterEach(() => {
+  for (const dir of stateDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+function tempStateDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), "crypto-store-"));
+  stateDirs.push(dir);
+  return dir;
+}
+
+function mkLogger(): ComisLogger {
+  return { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), child: vi.fn() } as unknown as ComisLogger;
+}
+
+/** The durable snapshot artifact name — a 0600 sibling of sync-state.json. */
+const SNAPSHOT_FILE = "crypto-snapshot.json";
+
+/** A minimal MatrixClient stand-in; `initRustCrypto` is the seam under test. */
+function fakeClient(initRustCrypto: (args?: unknown) => Promise<void>): {
+  client: MatrixClient;
+  on: ReturnType<typeof vi.fn>;
+  off: ReturnType<typeof vi.fn>;
+} {
+  const on = vi.fn();
+  const off = vi.fn();
+  const client = { initRustCrypto: vi.fn(initRustCrypto), on, off } as unknown as MatrixClient;
+  return { client, on, off };
+}
+
+/** A real (pure-JS) fake-indexeddb import; safe in the unit tier. */
+const realIdbImport = (): Promise<unknown> => import("fake-indexeddb");
+/** A crypto-wasm stand-in — the unit tier must NOT instantiate the real WASM (Pitfall 5). */
+const stubWasmImport = (): Promise<unknown> => Promise.resolve({});
+
+describe("initMatrixCrypto: lazy-import boundary + init order", () => {
+  it("imports both deps once, installs the shim, and calls initRustCrypto with the indexeddb store options", async () => {
+    const stateDir = tempStateDir();
+    const spyWasm = vi.fn(stubWasmImport);
+    const spyIdb = vi.fn(realIdbImport);
+    const { client, on } = fakeClient(async () => undefined);
+
+    const res = await initMatrixCrypto(client, {
+      stateDir,
+      logger: mkLogger(),
+      importCryptoWasm: spyWasm,
+      importFakeIndexedDb: spyIdb,
+    });
+
+    expect(res.ok).toBe(true);
+    expect(spyWasm).toHaveBeenCalledTimes(1);
+    expect(spyIdb).toHaveBeenCalledTimes(1);
+    expect((globalThis as { indexedDB?: unknown }).indexedDB).toBeDefined();
+    expect(client.initRustCrypto).toHaveBeenCalledTimes(1);
+    expect(client.initRustCrypto).toHaveBeenCalledWith(
+      expect.objectContaining({ useIndexedDB: true, cryptoDatabasePrefix: expect.any(String) }),
+    );
+    // The snapshot cadence is driven off the /sync batch.
+    expect(on).toHaveBeenCalledWith("sync", expect.any(Function));
+    if (res.ok) await res.value.stop();
+  });
+
+  it("restores the on-disk snapshot into the shim BEFORE initRustCrypto opens the store", async () => {
+    const stateDir = tempStateDir();
+    // Seed a marker db and write it to the exact file the restore reads.
+    const seedFactory = mkFactory();
+    const open = seedFactory.open("comis-matrix::matrix-sdk-crypto", 3);
+    open.onupgradeneeded = (): void => {
+      open.result.createObjectStore("core");
+    };
+    const sdb = await promisify<IDBDatabase>(open);
+    const stx = sdb.transaction("core", "readwrite");
+    stx.objectStore("core").put(new Uint8Array([1, 2]), "marker");
+    await txDone(stx);
+    sdb.close();
+    writeFileSync(join(stateDir, SNAPSHOT_FILE), await serializeCryptoStore(seedFactory), { mode: 0o600 });
+
+    // Capture what the store looked like AT the moment initRustCrypto ran.
+    let dbsAtInit: string[] = [];
+    const { client } = fakeClient(async () => {
+      const dbs = await (globalThis.indexedDB as IDBFactory).databases();
+      dbsAtInit = dbs.map((d) => d.name).filter((n): n is string => Boolean(n));
+    });
+
+    const res = await initMatrixCrypto(client, {
+      stateDir,
+      logger: mkLogger(),
+      importCryptoWasm: vi.fn(stubWasmImport),
+      importFakeIndexedDb: vi.fn(realIdbImport),
+    });
+
+    expect(res.ok).toBe(true);
+    // The restored db was already present when initRustCrypto ran → restore precedes init.
+    expect(dbsAtInit).toContain("comis-matrix::matrix-sdk-crypto");
+    if (res.ok) await res.value.stop();
+  });
+
+  it("leaves the import boundary uncrossed and the shim uninstalled on the non-e2ee path (initMatrixCrypto never called)", async () => {
+    const spyWasm = vi.fn(stubWasmImport);
+    const spyIdb = vi.fn(realIdbImport);
+    // The non-e2ee path simply never calls initMatrixCrypto; the boundary lives inside it.
+    expect(spyWasm).not.toHaveBeenCalled();
+    expect(spyIdb).not.toHaveBeenCalled();
+    expect((globalThis as { indexedDB?: unknown }).indexedDB).toBeUndefined();
+  });
+
+  it("returns err (never throws) when initRustCrypto rejects, so the caller can run unverified", async () => {
+    const stateDir = tempStateDir();
+    const { client } = fakeClient(async () => {
+      throw new Error("crypto backend unavailable");
+    });
+
+    const res = await initMatrixCrypto(client, {
+      stateDir,
+      logger: mkLogger(),
+      importCryptoWasm: vi.fn(stubWasmImport),
+      importFakeIndexedDb: vi.fn(realIdbImport),
+    });
+
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toBeInstanceOf(Error);
+  });
+});
+
+describe("MatrixCryptoHandle: 0600 snapshot + OOM prune on the tick", () => {
+  it("snapshotNow writes a 0600 snapshot file and prunes the transaction array", async () => {
+    const stateDir = tempStateDir();
+    // Populate the shim store with churn so there is state to persist and txns to prune.
+    const { client } = fakeClient(async () => {
+      const idb = globalThis.indexedDB as IDBFactory;
+      const open = idb.open("comis-matrix::matrix-sdk-crypto", 1);
+      open.onupgradeneeded = (): void => {
+        open.result.createObjectStore("core");
+      };
+      const db = await promisify<IDBDatabase>(open);
+      for (let i = 0; i < 60; i++) {
+        const tx = db.transaction("core", "readwrite");
+        tx.objectStore("core").put({ i }, `k${i}`);
+        await txDone(tx);
+      }
+      db.close();
+    });
+
+    const res = await initMatrixCrypto(client, {
+      stateDir,
+      logger: mkLogger(),
+      importCryptoWasm: vi.fn(stubWasmImport),
+      importFakeIndexedDb: vi.fn(realIdbImport),
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+
+    const rawDb = (globalThis.indexedDB as unknown as { _databases: Map<string, { transactions: unknown[] }> })._databases.get(
+      "comis-matrix::matrix-sdk-crypto",
+    );
+    const leaked = rawDb?.transactions.length ?? 0;
+    expect(leaked).toBeGreaterThan(50); // the un-pruned leak
+
+    const snap = await res.value.snapshotNow();
+    expect(snap.ok).toBe(true);
+
+    const st = statSync(join(stateDir, SNAPSHOT_FILE));
+    expect(st.mode & 0o777).toBe(0o600); // key material at rest is owner-only
+    expect(rawDb?.transactions.length ?? 0).toBeLessThan(leaked); // prune coupled to the tick
+
+    await res.value.stop();
+  });
+
+  it("stop() flushes a final snapshot and removes the sync listener", async () => {
+    const stateDir = tempStateDir();
+    const { client, off } = fakeClient(async () => undefined);
+
+    const res = await initMatrixCrypto(client, {
+      stateDir,
+      logger: mkLogger(),
+      importCryptoWasm: vi.fn(stubWasmImport),
+      importFakeIndexedDb: vi.fn(realIdbImport),
+      snapshotDebounceMs: 5_000,
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+
+    res.value.scheduleSnapshot(); // arm the debounce
+    await res.value.stop(); // must flush + clear the timer + detach the listener
+
+    expect(statSync(join(stateDir, SNAPSHOT_FILE)).isFile()).toBe(true);
+    expect(off).toHaveBeenCalledWith("sync", expect.any(Function));
   });
 });
