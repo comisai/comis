@@ -160,7 +160,14 @@ export function createMatrixAuth(deps: MatrixAuthDeps): MatrixAuth {
     const who = await validateWithWhoami(client, "Matrix token validation failed");
     if (!who.ok) return err(who.error);
 
-    const resolvedUserId = who.value.user_id.length > 0 ? who.value.user_id : deps.userId;
+    // A malformed homeserver can answer whoami 200 with no `user_id`; read it
+    // through a type guard so an undefined value falls back to the configured
+    // userId (or a classified err) instead of throwing a `.length` TypeError out
+    // of authenticate() — the never-throw-across-the-port contract.
+    const resolvedUserId =
+      typeof who.value.user_id === "string" && who.value.user_id.length > 0
+        ? who.value.user_id
+        : deps.userId;
     if (resolvedUserId === undefined || resolvedUserId.length === 0) {
       return err(new Error("Matrix token login could not resolve a user id from whoami"));
     }
