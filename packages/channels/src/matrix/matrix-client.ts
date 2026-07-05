@@ -388,14 +388,39 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
         persistedState = rest;
         await persistState("syncToken");
       }
+      // Reset the LIVE client, not just the persisted copy. The rejected `since`
+      // was seeded into client.store at start, so the running SyncApi keeps
+      // retrying it until the store token is cleared. Clear it and restart so the
+      // process genuinely re-enters initial sync in-process; the retained
+      // per-room watermarks keep that re-entry guarded against the room backlog.
+      // (getSyncToken() is typed `string | null`; only the setter's type is too
+      // narrow to accept the null clear.)
+      (client.store as { setSyncToken(token: string | null): void }).setSyncToken(null);
+      client.stopClient();
+      const resumed = await fromPromise(
+        client.startClient({ initialSyncLimit, filter: buildSyncFilter(client.getUserId()) }),
+      );
+      if (!resumed.ok) {
+        const reclassified = classifyMatrixError(toMatrixErrorInput(resumed.error));
+        logger.error(
+          {
+            channelType: "matrix",
+            step: "sync-recover",
+            errorKind: reclassified.errorKind,
+            hint: reclassified.hint,
+          },
+          "Matrix failed to re-enter initial sync after a rejected sync position",
+        );
+        return;
+      }
       logger.warn(
         {
           channelType: "matrix",
           step: "sync-recover",
           errorKind: classified.errorKind,
-          hint: "The homeserver rejected the stored sync position; re-entering initial sync (the persisted watermark keeps this guarded)",
+          hint: "The homeserver rejected the stored sync position; re-entered initial sync (the persisted watermarks keep this guarded)",
         },
-        "Matrix sync token rejected: re-entering initial sync",
+        "Matrix sync token rejected: re-entered initial sync",
       );
       return;
     }
