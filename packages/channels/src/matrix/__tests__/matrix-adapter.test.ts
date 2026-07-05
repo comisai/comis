@@ -302,7 +302,10 @@ describe("createMatrixAdapter", () => {
   });
 
   it("maps a room absent from m.direct account data to chatType group", async () => {
-    const { adapter, fake, received } = makeAdapter({ allowFrom: [] });
+    const fake = new FakeMatrixClient();
+    // m.direct lists a DIFFERENT room — the delivered room is not a DM.
+    fake.directContent = { "@carol:hs": ["!elsewhere:hs"] };
+    const { adapter, received } = makeAdapter({ fake, allowFrom: [] });
     await adapter.start();
 
     await deliver(fake, fakeEvent({ sender: "@alice:hs", body: "room hi" }), fakeRoom("!room:hs"));
