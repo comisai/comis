@@ -2,8 +2,13 @@
 /**
  * Cross-language schema drift detection test.
  *
- * Validates that the Python validator constants in validate-skill.py stay
- * in sync with the TypeScript Zod schemas (source of truth).
+ * Validates that the Python validator constants in validate-skill.py stay in
+ * sync with their shipped source of truth. The authored top-level field set
+ * tracks the six-field spec-pure allowed-set rule (SPEC_PURE_TOP_LEVEL_FIELDS);
+ * name/description bounds, the comis namespace keys, and the content-scan
+ * categories track the TypeScript Zod schemas and scanner rules. The authored
+ * on-disk shape and the internal manifest shape are intentionally distinct —
+ * the carrier moves under metadata.comis, the internal semantics do not.
  *
  * Any drift between the two will cause test failure, catching issues
  * before they reach production.
@@ -24,11 +29,14 @@ const packagesDir = resolve(__dirname, "../../packages");
 // Dynamic imports from dist to work with integration test alias resolution.
 // Source tree is regrouped under `src/skills/`, so dist paths are
 // `skills/dist/skills/{manifest,prompt}/`.
-const { SkillManifestSchema, SkillNameSchema, ComisNamespaceSchema } = await import(
+const { SkillNameSchema, ComisNamespaceSchema } = await import(
   resolve(packagesDir, "skills/dist/skills/manifest/schema.js")
 );
 const { CONTENT_SCAN_RULES } = await import(
   resolve(packagesDir, "skills/dist/skills/prompt/content-scanner.js")
+);
+const { SPEC_PURE_TOP_LEVEL_FIELDS } = await import(
+  resolve(packagesDir, "skills/dist/skills/manifest/spec-purity.js")
 );
 
 // Read and parse the bundled Python validator. The validator is shipped with
@@ -95,12 +103,14 @@ describe("skill-schema-drift", () => {
     expect(pyMax).toBe(1024);
   });
 
-  it("Python VALID_TOP_FIELDS matches SkillManifestSchema top-level keys", () => {
+  it("Python VALID_TOP_FIELDS matches the spec-pure authored top-level field set", () => {
     const pyFields = extractPythonSet("VALID_TOP_FIELDS");
-    // Extract Zod schema keys from SkillManifestSchema shape
-    const tsKeys = new Set(Object.keys(SkillManifestSchema.shape));
-    // Python set should match TypeScript schema keys exactly
-    expect(pyFields).toEqual(tsKeys);
+    // The authored on-disk frontmatter carries exactly the six spec fields; the
+    // internal SkillManifestSchema keeps its extension keys (carrier moves,
+    // semantics don't), so the Python authored set tracks the shipped six-field
+    // rule, not the internal schema shape.
+    const specFields = new Set<string>(SPEC_PURE_TOP_LEVEL_FIELDS);
+    expect(pyFields).toEqual(specFields);
   });
 
   it("Python VALID_COMIS_FIELDS matches ComisNamespaceSchema keys", () => {
