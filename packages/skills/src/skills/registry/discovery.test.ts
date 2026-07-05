@@ -505,6 +505,72 @@ comis:
 });
 
 // ---------------------------------------------------------------------------
+// Spec-pure carrier preservation (discovery)
+// ---------------------------------------------------------------------------
+
+describe("spec-pure carrier preservation (discovery)", () => {
+  it("preserves userInvocable and comis.requires from the metadata.comis carrier", () => {
+    const dir = createTempDir();
+    // Spec-pure carrier: extensions ride the metadata.comis JSON string, not the
+    // top level. Pre-lift, discovery reads only top-level fields, so these are
+    // dropped (userInvocable defaults true, requires undefined).
+    const extensionBag = JSON.stringify({
+      userInvocable: false,
+      comis: { requires: { bins: ["node"] } },
+    });
+    const content = `---
+name: "spec-pure-discovery"
+description: "A spec-pure skill discovered from the metadata.comis carrier"
+metadata:
+  comis: '${extensionBag}'
+---
+# Skill body
+`;
+    fs.writeFileSync(path.join(dir, "spec-pure-discovery.md"), content, "utf-8");
+
+    const result = discoverSkills([dir]);
+    expect(result.skills).toHaveLength(1);
+    const skill = result.skills[0];
+    expect(skill.userInvocable).toBe(false);
+    expect(skill.requires?.bins).toEqual(["node"]);
+  });
+
+  it("discovers a pre-migration top-level skill unchanged and without a deprecation warning", () => {
+    const dir = createTempDir();
+    const content = `---
+name: "pre-migration-discovery"
+description: "A pre-migration top-level skill"
+version: "1.0.0"
+userInvocable: false
+comis:
+  requires:
+    bins:
+      - node
+---
+# Skill body
+`;
+    fs.writeFileSync(path.join(dir, "pre-migration-discovery.md"), content, "utf-8");
+
+    const warns: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+    const logger = {
+      warn(obj: Record<string, unknown>, msg: string) {
+        warns.push({ obj, msg });
+      },
+    };
+
+    const result = discoverSkills([dir], logger);
+    // The pre-migration skill is discovered unchanged (no regression).
+    expect(result.skills).toHaveLength(1);
+    expect(result.skills[0].userInvocable).toBe(false);
+    expect(result.skills[0].requires?.bins).toEqual(["node"]);
+    // Discovery lifts normalize-only (no logger), so it emits NO deprecation
+    // warning — the load path is the single warning carrier.
+    const migrationWarns = warns.filter((w) => Array.isArray(w.obj.movedKeys));
+    expect(migrationWarns).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // SkillSource union
 // ---------------------------------------------------------------------------
 //

@@ -1812,6 +1812,45 @@ Enriched skill body.
     expect(invocable.has("enriched")).toBe(true);
   });
 
+  it("preserves spec-pure metadata.comis extensions through cache enrichment", () => {
+    const skillsDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(skillsDir, { recursive: true });
+
+    // Spec-pure carrier: extensions ride metadata.comis, not the top level.
+    // Pre-lift, cache enrichment reads only top-level fields, so these are
+    // dropped (userInvocable stays the SDK default true, requires undefined).
+    const extensionBag = JSON.stringify({
+      userInvocable: false,
+      comis: { requires: { bins: ["node"] } },
+    });
+    const content = `---
+name: spec-pure-cache
+description: "A spec-pure skill enriched from the metadata.comis carrier"
+metadata:
+  comis: '${extensionBag}'
+---
+
+Spec-pure body content.
+`;
+    fs.writeFileSync(path.join(skillsDir, "spec-pure-cache.md"), content, "utf-8");
+
+    const eventBus = createMockEventBus();
+    const config = {
+      discoveryPaths: [skillsDir],
+      promptSkills: { maxAutoInject: 5 },
+    } as any;
+    const registry = createSkillRegistry(config, eventBus, auditCtx);
+
+    registry.initFromSdkSkills([
+      { name: "spec-pure-cache", description: "A spec-pure skill enriched from the metadata.comis carrier", filePath: path.join(skillsDir, "spec-pure-cache.md"), baseDir: skillsDir, source: "bundled", disableModelInvocation: false },
+    ]);
+
+    const meta = registry.getAllMetadata().find((m) => m.name === "spec-pure-cache");
+    expect(meta).toBeDefined();
+    expect(meta!.userInvocable).toBe(false);
+    expect(meta!.requires?.bins).toEqual(["node"]);
+  });
+
   it("filters by allowedSkills/deniedSkills", () => {
     const skillsDir = path.join(tmpDir, "skills");
     fs.mkdirSync(skillsDir, { recursive: true });
