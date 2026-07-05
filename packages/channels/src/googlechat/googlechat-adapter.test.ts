@@ -522,6 +522,50 @@ describe("createGoogleChatAdapter — sendMessage (messages.create)", () => {
     expect(JSON.parse(String(init.body))).toEqual({ text: "hello" });
   });
 
+  it("threads the send: {text, thread:{name}} body + messageReplyOption query when options.threadId is set", async () => {
+    const { fetchImpl, spy } = makeChatFetch();
+    const { deps } = await makeDeps({ fetchImpl });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const result = await adapter.sendMessage("spaces/AAAA", "hi", {
+      threadId: "spaces/AAAA/threads/TTTT",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toBe("spaces/AAAA/messages/CCC");
+
+    const sendCall = spy.mock.calls.find(([u]) =>
+      String(u).includes("/messages"),
+    ) as [string, RequestInit] | undefined;
+    expect(sendCall).toBeDefined();
+    const [url, init] = sendCall as [string, RequestInit];
+    // The thread name is a BODY value and the reply option is a QUERY param —
+    // the untrusted thread resource name is never interpolated into the URL path.
+    expect(url).toBe(
+      "https://chat.googleapis.com/v1/spaces/AAAA/messages?messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD",
+    );
+    expect(JSON.parse(String(init.body))).toEqual({
+      text: "hi",
+      thread: { name: "spaces/AAAA/threads/TTTT" },
+    });
+  });
+
+  it("does not thread the send when options carries no threadId (plain {text}, un-parameterised URL)", async () => {
+    const { fetchImpl, spy } = makeChatFetch();
+    const { deps } = await makeDeps({ fetchImpl });
+    const adapter = createGoogleChatAdapter(deps);
+
+    await adapter.sendMessage("spaces/AAAA", "hi", { replyTo: "spaces/AAAA/messages/ZZ" });
+
+    const sendCall = spy.mock.calls.find(([u]) =>
+      String(u).includes("/messages"),
+    ) as [string, RequestInit] | undefined;
+    expect(sendCall).toBeDefined();
+    const [url, init] = sendCall as [string, RequestInit];
+    expect(url).toBe("https://chat.googleapis.com/v1/spaces/AAAA/messages");
+    expect(JSON.parse(String(init.body))).toEqual({ text: "hi" });
+  });
+
   it("returns err on a non-ok status, logs an ERROR with errorKind+hint, and never logs the token", async () => {
     const { fetchImpl } = makeChatFetch({ sendStatus: 403 });
     const { deps, loggerSpy } = await makeDeps({ fetchImpl });
