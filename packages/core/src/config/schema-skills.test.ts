@@ -76,6 +76,45 @@ describe("SkillsConfigSchema -- toolDiscovery.minBm25Score bounded to [0, 1]", (
 });
 
 /**
+ * The strict per-agent `skills.import` unpack-caps sub-block. Mirrors
+ * `contentScanning`: fully defaulted (consumers never write `?? fallback`),
+ * a closed `z.strictObject`, conservative bounds. Shared-scope reads the
+ * default agent's block.
+ */
+describe("SkillsConfigSchema -- skills.import unpack caps sub-block", () => {
+  it("ships the conservative unpack-cap defaults on an empty config", () => {
+    const result = SkillsConfigSchema.parse({});
+    expect(result.import.maxArchiveBytes).toBe(8_388_608);
+    expect(result.import.maxTotalUncompressedBytes).toBe(67_108_864);
+    expect(result.import.maxFileCount).toBe(200);
+    expect(result.import.maxFileBytes).toBe(4_194_304);
+    expect(result.import.maxPathDepth).toBe(10);
+  });
+
+  it("is a closed strictObject inside skills (an unknown import cap key rejects)", () => {
+    const result = SkillsConfigSchema.safeParse({ import: { bogusCapKey: 1 } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a non-positive cap (each cap is a positive integer)", () => {
+    expect(SkillsConfigSchema.safeParse({ import: { maxFileCount: 0 } }).success).toBe(false);
+    expect(SkillsConfigSchema.safeParse({ import: { maxArchiveBytes: -1 } }).success).toBe(false);
+    expect(SkillsConfigSchema.safeParse({ import: { maxPathDepth: 2.5 } }).success).toBe(false);
+  });
+
+  it("an operator override of a single cap keeps the others at their defaults", () => {
+    const result = SkillsConfigSchema.parse({ import: { maxFileCount: 50 } });
+    expect(result.import.maxFileCount).toBe(50);
+    expect(result.import.maxTotalUncompressedBytes).toBe(67_108_864);
+  });
+
+  it("has no autoConnectBundledMcp knob (persist-disabled is not operator-tunable)", () => {
+    const result = SkillsConfigSchema.safeParse({ import: { autoConnectBundledMcp: true } });
+    expect(result.success).toBe(false);
+  });
+});
+
+/**
  * The closed `TerminalDriverConfig` schema. A `z.strictObject` at every
  * level rejects unknown keys by construction (a typo'd or injected key
  * throws at config load rather than being silently dropped — a restriction the
