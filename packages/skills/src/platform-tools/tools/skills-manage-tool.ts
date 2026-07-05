@@ -15,7 +15,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import type { ApprovalGate } from "@comis/core";
 import { registerActivityLabelSpec } from "@comis/core";
-import { readStringParam } from "../tool-helpers.js";
+import { readStringParam, readBooleanParam } from "../tool-helpers.js";
 import { createAdminManageTool } from "../admin-manage-factory.js";
 import type { RpcCall } from "./cron-tool.js";
 
@@ -50,7 +50,22 @@ const SkillsManageToolParams = Type.Object({
   ),
   url: Type.Optional(
     Type.String({
-      description: "GitHub directory URL to import skills from. Required for import action.",
+      description: "GitHub directory URL to import from (import action, source=github). One of url or archiveUrl is required for import.",
+    }),
+  ),
+  source: Type.Optional(
+    Type.Union([Type.Literal("github"), Type.Literal("archive")], {
+      description: "Import acquisition channel (import action). 'github' fetches a directory URL; 'archive' fetches a .skill/zip/tar archive URL. Defaults to github when a url is given.",
+    }),
+  ),
+  archiveUrl: Type.Optional(
+    Type.String({
+      description: "Archive URL to import from (import action, source=archive). Fetched size-capped over the SSRF guard, then safely unpacked.",
+    }),
+  ),
+  confirm: Type.Optional(
+    Type.Boolean({
+      description: "Import action: confirm a re-import that diverges from the pinned content hash of a previously-imported skill of the same source. Does NOT override a name collision on an unprovenanced or foreign-source skill (delete it first).",
     }),
   ),
   name: Type.Optional(
@@ -120,9 +135,22 @@ export function createSkillsManageTool(
           return rpcCall("skills.list", { _trustLevel: ctx.trustLevel });
         },
         async import(p, rpcCall, ctx) {
-          const url = readStringParam(p, "url");
+          // Archive imports carry no url, so every field is optional here; the
+          // handler validates that a usable source (url | archiveUrl) is present.
+          // No `force` is threaded — the collision override runs only via confirm.
+          const url = readStringParam(p, "url", false);
+          const source = readStringParam(p, "source", false);
+          const archiveUrl = readStringParam(p, "archiveUrl", false);
           const scope = readStringParam(p, "scope", false) ?? "local";
-          return rpcCall("skills.import", { url, scope, _trustLevel: ctx.trustLevel });
+          const confirm = readBooleanParam(p, "confirm", false);
+          return rpcCall("skills.import", {
+            ...(url !== undefined && { url }),
+            ...(source !== undefined && { source }),
+            ...(archiveUrl !== undefined && { archiveUrl }),
+            scope,
+            ...(confirm !== undefined && { confirm }),
+            _trustLevel: ctx.trustLevel,
+          });
         },
         async delete(p, rpcCall, ctx) {
           const name = readStringParam(p, "name");
