@@ -1140,6 +1140,23 @@ Teams authenticates with an app registration rather than a single bot token. Inb
 | `mediaProcessing` | `MediaProcessing` | _(all true)_ | Per-channel media processing overrides |
 | `ackReaction` | `AckReaction` | _(disabled)_ | Ack reaction sent when the agent starts processing |
 
+**Google Chat (channels.googlechat)**
+
+Google Chat authenticates with a service-account key (no bot token). The default `pubsub` transport pulls inbound events from a Pub/Sub subscription — no public IP or gateway required (`mode: webhook` support arrives in a later release).
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Whether this channel is active (opt-in) |
+| `mode` | `enum` | `"pubsub"` | Inbound transport: `pubsub` (default, no public IP) or `webhook` (not yet available) |
+| `serviceAccountKey` | `string \| SecretRef` | _(unset)_ | Service-account key JSON for the Chat app. A secret — supply a `SecretRef` or set the `GOOGLECHAT_SA_KEY` environment variable |
+| `subscriptionName` | `string` | _(unset)_ | Pub/Sub pull subscription `projects/{project}/subscriptions/{sub}`; required in `pubsub` mode |
+| `audienceType` | `enum` | `"project-number"` | Webhook-mode Bearer-JWT audience type (webhook mode not yet available) |
+| `audience` | `string` | _(unset)_ | Webhook-mode audience value (webhook mode not yet available) |
+| `allowFrom` | `string[]` | `[]` | Allowed sender IDs — each a `users/{id}` or `spaces/{id}`; prefer the immutable `users/{id}` over a mutable email display id |
+| `allowMode` | `enum` | `"allowlist"` | Sender gate: `allowlist` (default, blocks all unless listed) or `open` |
+| `missedInboundThresholdMs` | `number` | `21600000` (6h) | Webhook-mode liveness window before a missed-inbound alert (webhook mode not yet available). Must be a positive integer |
+| `mediaProcessing` | `MediaProcessing` | _(all true)_ | Per-channel media processing overrides |
+
 ```yaml
 channels:
   telegram:
@@ -1163,6 +1180,11 @@ channels:
     appPassword: "${MSTEAMS_APP_PASSWORD}"
     tenantId: "00000000-0000-0000-0000-000000000000"
     allowFrom: ["29:1abcAADObjectId"]
+  googlechat:
+    enabled: true
+    serviceAccountKey: "${GOOGLECHAT_SA_KEY}"
+    subscriptionName: "projects/my-project/subscriptions/comis-chat"
+    allowFrom: ["users/1234567890"]
 ```
 
 <Info>See the [Channels](/channels/index) section for platform-specific setup guides.</Info>
