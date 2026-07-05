@@ -2647,6 +2647,19 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "max_history_turns": {
           "type": "number"
+        },
+        "wake_gate_script": {
+          "type": "string"
+        },
+        "wake_gate_language": {
+          "type": "string"
+        },
+        "wakeGate": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
         }
       },
       "required": [
@@ -2922,6 +2935,19 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               "type": "null"
             }
           ]
+        },
+        "wake_gate_script": {
+          "type": "string"
+        },
+        "wake_gate_language": {
+          "type": "string"
+        },
+        "wakeGate": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
         }
       },
       "additionalProperties": false
@@ -8156,6 +8182,34 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           ],
           "additionalProperties": false
         },
+        "cronWakeGate": {
+          "type": "object",
+          "properties": {
+            "jobId": {
+              "type": "string"
+            },
+            "wake": {
+              "type": "boolean"
+            },
+            "durationMs": {
+              "type": "number"
+            },
+            "toolCalls": {
+              "type": "number"
+            },
+            "estTurnsSaved": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "jobId",
+            "wake",
+            "durationMs",
+            "toolCalls",
+            "estTurnsSaved"
+          ],
+          "additionalProperties": false
+        },
         "contextBudgetHistory": {
           "type": "array",
           "items": {
@@ -9205,6 +9259,95 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             "denialBreakerTrips",
             "budgetBreaches",
             "costUsd"
+          ],
+          "additionalProperties": false
+        },
+        "cronWakeGate": {
+          "type": "object",
+          "properties": {
+            "fires": {
+              "type": "object",
+              "properties": {
+                "total": {
+                  "type": "number"
+                },
+                "skipped": {
+                  "type": "number"
+                },
+                "skipRate": {
+                  "type": "number"
+                },
+                "failedOpen": {
+                  "type": "number"
+                },
+                "failOpenRate": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "total",
+                "skipped",
+                "skipRate",
+                "failedOpen",
+                "failOpenRate"
+              ],
+              "additionalProperties": false
+            },
+            "turnsSaved": {
+              "type": "number"
+            },
+            "toolCalls": {
+              "type": "number"
+            },
+            "perAgent": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "agentId": {
+                    "type": "string"
+                  },
+                  "fires": {
+                    "type": "number"
+                  },
+                  "skipped": {
+                    "type": "number"
+                  },
+                  "skipRate": {
+                    "type": "number"
+                  },
+                  "failedOpen": {
+                    "type": "number"
+                  },
+                  "failOpenRate": {
+                    "type": "number"
+                  },
+                  "turnsSaved": {
+                    "type": "number"
+                  },
+                  "toolCalls": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "agentId",
+                  "fires",
+                  "skipped",
+                  "skipRate",
+                  "failedOpen",
+                  "failOpenRate",
+                  "turnsSaved",
+                  "toolCalls"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "fires",
+            "turnsSaved",
+            "toolCalls",
+            "perAgent"
           ],
           "additionalProperties": false
         }

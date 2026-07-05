@@ -19,8 +19,8 @@
  * @module
  */
 
-import { IncidentContextBudgetSchema, IncidentPromptTimeoutSchema } from "@comis/core";
-import type { IncidentSignals, IncidentContextBudget, IncidentPromptTimeout } from "@comis/core";
+import { IncidentContextBudgetSchema, IncidentCronWakeGateSchema, IncidentPromptTimeoutSchema } from "@comis/core";
+import type { IncidentSignals, IncidentContextBudget, IncidentCronWakeGate, IncidentPromptTimeout } from "@comis/core";
 // The content-free readers live in the sibling fields helper (one source of truth);
 // imported here so the GBNF fold reuses them rather than re-deriving (no cycle —
 // the fields helper does not import this module).
@@ -485,5 +485,21 @@ export function parsePromptTimeoutRecord(
   data: Record<string, unknown>,
 ): IncidentPromptTimeout | undefined {
   const parsed = IncidentPromptTimeoutSchema.safeParse(data);
+  return parsed.success ? parsed.data : undefined;
+}
+
+/**
+ * Validate one `scheduler.wake_gate` record (a woke fire's content-free wake-gate
+ * fact) wholesale; return the parsed value or `undefined` (a malformed/partial
+ * record is ignored — the context.budget discipline). The caller keeps the LAST
+ * successful parse (the terminal fire explains the session). Only a fire the gate
+ * WOKE writes this record — a skip opens no session, so this fold never runs for a
+ * skip. Any off-vocabulary key (the record carries `agentId`; a caller could smuggle
+ * a finding) is stripped by the bounded schema — no gate body crosses into the report.
+ */
+export function parseWakeGateRecord(
+  data: Record<string, unknown>,
+): IncidentCronWakeGate | undefined {
+  const parsed = IncidentCronWakeGateSchema.safeParse(data);
   return parsed.success ? parsed.data : undefined;
 }

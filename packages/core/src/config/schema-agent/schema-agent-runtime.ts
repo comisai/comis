@@ -274,6 +274,15 @@ export const PerAgentCronConfigSchema = z.strictObject({
     maxJobs: z.number().int().nonnegative().default(100),
     /** Maximum consecutive errors before auto-suspending a cron job (0 = never suspend). Per-agent override. */
     maxConsecutiveErrors: z.number().int().nonnegative().default(5),
+    /**
+     * Per-agent override for the scheduler-initiated wake-gate toggle. Tri-state
+     * via `.optional()` (mirrors the global `scheduler.cron.wakeGate`): `true` →
+     * on; `false` → off (a gated job runs as it would with no gate); absent →
+     * follow the agent's `autonomy.script` surface. Because a per-agent cron
+     * override replaces the whole global cron block, this must exist here too, or
+     * setting any per-agent cron field would silently drop the operator's toggle.
+     */
+    wakeGate: z.boolean().optional(),
   });
 
 /** Per-agent heartbeat delivery target (which channel to send heartbeat notifications to). */

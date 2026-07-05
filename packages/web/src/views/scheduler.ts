@@ -52,6 +52,10 @@ interface SchedulerCronJob {
     tenantId: string;
     channelType?: string;
   };
+  wakeGate?: {
+    script: string;
+    language?: "js" | "ts";
+  };
 }
 
 interface ExecutionRecord {
@@ -169,6 +173,7 @@ function jobToCronInput(job: SchedulerCronJob): CronJobInput {
     maxConcurrent: 1,
     sessionTarget: (job.sessionTarget ?? "main") as "main" | "isolated",
     deliveryTarget: job.deliveryTarget,
+    wakeGate: job.wakeGate,
   };
 }
 
@@ -955,6 +960,7 @@ export class IcSchedulerView extends LitElement {
           sessionTarget: jobData.sessionTarget,
           enabled: jobData.enabled,
           deliveryTarget: jobData.deliveryTarget,
+          wakeGate: jobData.wakeGate,
         };
         const updated = [...this._jobs];
         updated[idx] = updatedJob;
@@ -987,6 +993,7 @@ export class IcSchedulerView extends LitElement {
         consecutiveErrors: 0,
         createdAtMs: systemNowMs(),
         deliveryTarget: jobData.deliveryTarget,
+        wakeGate: jobData.wakeGate,
       };
       this._jobs = [...this._jobs, tempJob];
       try {

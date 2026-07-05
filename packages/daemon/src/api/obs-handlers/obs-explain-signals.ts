@@ -32,7 +32,7 @@ import {
   accumulateLearningRecord, accumulateSkillInvokedRecord, accumulateSkillUsedRecord, accumulateSkillSurfacedRecord, accumulateReflectFunnelRecord, accumulateSkillTransitionRecord, accumulateMemoryFailureRecord,
   accumulateToolSchemaRecord, buildLearningSignal, emptyLearningFold,
   accumulateSpendExceeded, accumulateCapabilityAuditedRecord, accumulateGraphNodeSpawnedRecord,
-  parseContextBudgetRecord, parsePromptTimeoutRecord,
+  parseContextBudgetRecord, parsePromptTimeoutRecord, parseWakeGateRecord,
 } from "./obs-explain-signal-folds.js";
 import type { Acc } from "./obs-explain-signals-acc.js";
 
@@ -305,6 +305,14 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
     case "execution.prompt_timeout": {
       const t = parsePromptTimeoutRecord(data);
       if (t !== undefined) acc.promptTimeout = t;
+      return;
+    }
+    // A woke fire's content-free wake-gate fact (only a fire the gate WOKE runs the
+    // model in a session, so only it writes this record). LAST wins — the terminal
+    // fire explains the session. Malformed/partial → unchanged (fwd-compat).
+    case "scheduler.wake_gate": {
+      const w = parseWakeGateRecord(data);
+      if (w !== undefined) acc.cronWakeGate = w;
       return;
     }
     case "tool.result_offloaded": {
@@ -629,6 +637,9 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     // Surface the cascade ONLY when ≥2 distinct budget states occurred (a single state adds
     // nothing over `contextBudget`; the dedup already collapsed a stable session to ≤1).
     ...(acc.contextBudgetHistory.length >= 2 ? { contextBudgetHistory: acc.contextBudgetHistory } : {}),
+    // A woke fire's wake-gate fact (absent when the trajectory carries no
+    // scheduler.wake_gate record — a non-gate session or a skip, which opens none).
+    ...(acc.cronWakeGate !== undefined ? { cronWakeGate: acc.cronWakeGate } : {}),
     ...(acc.promptTimeout !== undefined ? { promptTimeout: acc.promptTimeout } : {}),
     ...(acc.toolSchemaUnsupported !== undefined
       ? { toolSchemaUnsupported: acc.toolSchemaUnsupported }

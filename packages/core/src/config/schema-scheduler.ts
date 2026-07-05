@@ -25,7 +25,37 @@ const CronConfigSchema = z.strictObject({
     maxJobs: z.number().int().nonnegative().default(100),
     /** Maximum consecutive errors before auto-suspending a cron job (0 = never suspend) */
     maxConsecutiveErrors: z.number().int().nonnegative().default(5),
+    /**
+     * Operator toggle for scheduler-initiated wake gates. Tri-state via
+     * `.optional()` — NOT a boolean `.default()`, because the absent state is
+     * load-bearing and a default would erase it:
+     *   - `true`  → run the gate for gated jobs;
+     *   - `false` → never run a scheduler-initiated gate (a gated job runs
+     *               exactly as it would with no gate);
+     *   - absent  → follow the agent's `autonomy.script` surface.
+     * Grants NO capability: an enabled gate still runs under the agent's
+     * resolved autonomy caps at the cap socket — this only enables/disables the
+     * scheduler-initiated gate, a distinct trust context (no human/model in the
+     * loop at fire time) from a model-initiated orchestrate script.
+     */
+    wakeGate: z.boolean().optional(),
   });
+
+/**
+ * Resolve whether a scheduler-initiated wake gate should run for a job, from the
+ * operator `scheduler.cron.wakeGate` toggle and the agent's `autonomy.script`
+ * surface. Pure — no env/clock/fs reads:
+ *   - `toggle === true`  → on;
+ *   - `toggle === false` → off (explicit off wins even if the script surface is on);
+ *   - `toggle` undefined → follow the script surface (on iff it is explicitly true).
+ */
+export function resolveCronWakeGateEnabled(
+  toggle: boolean | undefined,
+  scriptSurfaceOn: boolean | undefined,
+): boolean {
+  if (toggle !== undefined) return toggle;
+  return scriptSurfaceOn === true;
+}
 
 export const HeartbeatConfigSchema = z.strictObject({
     /** Enable periodic heartbeat checks */

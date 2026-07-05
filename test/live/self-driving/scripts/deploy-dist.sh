@@ -21,4 +21,28 @@ ssh -o ConnectTimeout=15 "$VPS" "
   echo -n '  orchestrate dist: '; find '$SRC/packages' -path '*/dist/*' -name 'orchestrate-tool.js' | head -1
   echo -n '  REVOKE wiring   : '; grep -lq 'capEndpointHandle?.leaseManager' '$SRC/packages/daemon/dist/daemon.js' && echo present || echo 'ABSENT (pre-b7b5b48c)'
 "
+
+# DEP-DRIFT GUARD. A dist overlay ships code, NOT node_modules — so a build whose HEAD
+# BUMPED a third-party dep (a new export subpath, a moved file) crashes the daemon on
+# boot with ERR_PACKAGE_PATH_NOT_EXPORTED / ERR_MODULE_NOT_FOUND, AFTER a clean deploy+
+# restart (a cycle-costing false "the daemon is broken"). Compare the volatile,
+# load-bearing deps local-vs-box; a mismatch means the box needs `pnpm install`.
+echo "Dep-drift guard (dist overlay does NOT sync node_modules):"
+drift=0
+for dep in @earendil-works/pi-ai @earendil-works/pi-agent-core; do
+  loc="$(node -p "try{require('$REPO/node_modules/$dep/package.json').version}catch{'?'}" 2>/dev/null)"
+  box="$(ssh -o ConnectTimeout=15 "$VPS" "node -p \"try{require('$SRC/node_modules/$dep/package.json').version}catch{'?'}\"" 2>/dev/null)"
+  if [ "$loc" = "$box" ]; then
+    echo "  ok  $dep  $loc"
+  else
+    echo "  ⚠  $dep  local=$loc  box=$box  — DRIFT"
+    drift=1
+  fi
+done
+if [ "$drift" = 1 ]; then
+  echo "  ⚠ node_modules on the box is STALE for the deployed dist — the daemon will likely FATAL on boot"
+  echo "    (ERR_PACKAGE_PATH_NOT_EXPORTED). Sync the manifests + lockfile and install on the box BEFORE restart:"
+  echo "      ( cd '$REPO' && tar czf - pnpm-lock.yaml package.json packages/*/package.json ) | ssh $VPS \"tar xzf - -C '$SRC'\""
+  echo "      ssh $VPS \"cd '$SRC' && pnpm install --frozen-lockfile\""
+fi
 echo "Done. Next:  ssh $VPS 'WIPE_CRONS=1 bash /root/clean-restart.sh'   # deploy-scripts.sh installs it to /root/, not /root/lt-scripts"

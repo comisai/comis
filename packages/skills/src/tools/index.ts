@@ -307,6 +307,9 @@ export type { VideoGenRateLimiter } from "./integrations/video-gen/index.js";
 // imports it by a relative in-jail path, never through this barrel.
 export {
   createOrchestrateTool,
+  // The shared cap-socket jailed-run core the orchestrate tool delegates to,
+  // reusable by other jailed-run callers so they drive the SAME jail.
+  runJailedScript,
   scrubSecretEnv,
   createResultRefStore,
   // The daemon-side executor cores (read/grep/find/ls/jq + web_search) the
@@ -321,8 +324,10 @@ export {
   sweepOrphans,
 } from "./builtin/orchestrate/index.js";
 export type {
-  OrchestrateToolDeps,
-  OrchestrateResultStore,
+  JailedScriptRunnerDeps,
+  JailedScriptResultStore,
+  JailedScriptSpawnFn,
+  JailedScriptSpawnedChild,
   ResultRefStore,
   ResultRefStoreDeps,
   MaterializeContext,

@@ -1211,3 +1211,61 @@ describe("buildFindings — memory_lifecycle (forget sweep rollup)", () => {
     expect(JSON.stringify(ml)).not.toContain("deadbeef");
   });
 });
+
+describe("buildFindings — cron_wake_gate_efficiency (wake-gate rollup)", () => {
+  function gateRow(fields: { agentId: string; wake: boolean; toolCalls?: number; estTurnsSaved?: number }): DiagnosticRow {
+    return {
+      timestamp: 1_000,
+      category: "cron_wake_gate",
+      severity: "info",
+      agentId: fields.agentId,
+      message: "scheduler:wake_gate",
+      details: JSON.stringify({
+        signal: "cron_wake_gate",
+        wake: fields.wake,
+        durationMs: 5,
+        toolCalls: fields.toolCalls ?? 0,
+        estTurnsSaved: fields.estTurnsSaved ?? (fields.wake ? 0 : 1),
+      }),
+    };
+  }
+
+  it("emits a cron_wake_gate_efficiency finding: fire count + summed skipped/turnsSaved/toolCalls", () => {
+    const rows: DiagnosticRow[] = [
+      gateRow({ agentId: "a", wake: false, estTurnsSaved: 1 }),
+      gateRow({ agentId: "a", wake: false, estTurnsSaved: 1 }),
+      gateRow({ agentId: "a", wake: true, toolCalls: 2, estTurnsSaved: 0 }),
+    ];
+    const findings = buildFindings([], [], [], [], [], rows);
+    const f = findings.filter((x) => x.code === "cron_wake_gate_efficiency");
+    expect(f).toHaveLength(1);
+    expect(f[0]!.count).toBe(3); // 3 gated fires in the window
+    expect(f[0]!.detail).toContain("skipped=2");
+    expect(f[0]!.detail).toContain("turnsSaved=2");
+    expect(f[0]!.detail).toContain("toolCalls=2");
+  });
+
+  it("carries a BENIGN hint (a high skip-rate is the gate WORKING, not a fault) pointing at cron.runs", () => {
+    const findings = buildFindings([], [], [], [], [], [gateRow({ agentId: "a", wake: false })]);
+    const f = findings.find((x) => x.code === "cron_wake_gate_efficiency");
+    expect(f).toBeDefined();
+    // The hint names cron.runs for the per-fire decisions + says a skip is savings,
+    // and calls out the two signals to inspect (100% skip / toolCalls > turnsSaved).
+    expect(f!.hint).toContain("cron.runs");
+    expect(f!.hint.toLowerCase()).toMatch(/working|savings/);
+  });
+
+  it("no cron_wake_gate_efficiency finding when there are no gate rows (callers omitting the argument are unchanged)", () => {
+    expect(buildFindings([], [], [], [], []).some((f) => f.code === "cron_wake_gate_efficiency")).toBe(false);
+  });
+
+  it("never echoes a gate script/payload even if smuggled into details (content-free)", () => {
+    const row: DiagnosticRow = {
+      timestamp: 1, category: "cron_wake_gate", severity: "info", agentId: "a", message: "scheduler:wake_gate",
+      details: JSON.stringify({ signal: "cron_wake_gate", wake: false, estTurnsSaved: 1, toolCalls: 0, script: "gather the inbox rm -rf /" }),
+    };
+    const f = buildFindings([], [], [], [], [], [row]).filter((x) => x.code === "cron_wake_gate_efficiency");
+    expect(JSON.stringify(f)).not.toContain("rm -rf");
+    expect(JSON.stringify(f)).not.toContain("gather the inbox");
+  });
+});

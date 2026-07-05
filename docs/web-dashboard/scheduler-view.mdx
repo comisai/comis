@@ -108,6 +108,19 @@ Look for red failure indicators to spot jobs that are not running correctly. If 
 **Consecutive errors:** If a job fails multiple times in a row, the error count appears next to the job's status indicator in the Cron Jobs list. This helps you quickly identify jobs that need attention -- whether they need to be reconfigured, or temporarily disabled while you investigate the issue.
 </Info>
 
+## Wake-Gated Jobs
+
+A cron job can carry a [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters) -- a small pre-run script that decides, on each fire, whether the model runs at all. A gate that finds nothing to do **skips** the fire: no model turn, no cost. This keeps a frequent poller cheap, but it changes how you read the job's activity.
+
+<Info>
+**A skipped fire is not a failure.** When a wake-gate skips a fire, no model turn runs, so the fire does not appear as a failed execution and does not raise the consecutive-error count. A gate can also deliver a routine ✓ status straight to the channel with no model turn -- that lands like any ordinary successful delivery. A wake-gated job that is quietly skipping most of its fires is working as designed, not stalling.
+</Info>
+
+Because a skip runs no session, the per-fire gate decision and the job's efficiency are read from the observability lenses rather than the Recent Executions list:
+
+- **Per-fire decision** -- the [`cron.runs`](/reference/json-rpc#cron-runs) run history records each gated fire, including the ones the gate skipped, with the tool-call and avoided-turn counts.
+- **Per-job efficiency** -- the [`comis fleet`](/reference/cli#comis-fleet) health report rolls up the skip-rate, the model turns saved, and the gate's own tool-call cost per agent (counts only, never the gate's gathered findings). A gate stuck at a 100% skip-rate on a monitor you expect to fire is the signal to inspect.
+
 <CardGroup cols={2}>
   <Card title="Scheduling Tools" icon="clock" href="/agent-tools/scheduling">
     Learn how to configure automated tasks and cron expressions.
