@@ -906,6 +906,22 @@ A pre-delivery critic that checks the terminal response against the GoalAnchor c
 | `enabled` | `enum` | `"always"` | OS-level sandbox for exec commands: `"always"` (sandbox active, graceful fallback if binary unavailable) or `"never"` (sandbox disabled) |
 | `readOnlyAllowPaths` | `string[]` | `[]` | Additional filesystem paths exposed read-only inside the sandbox (e.g., `/opt/data`) |
 
+**Staged Import (agents.*.skills.import)**
+
+Bounded-unpack caps for the staged [skill-import pipeline](/skills/importing). They bound what an untrusted archive can expand to before any file is written. The defaults are deliberately conservative; raise them only if you knowingly import large skills. Every key is required-with-a-default and the block is closed -- a typo'd cap key rejects at config load. Shared-scope imports read the default agent's block.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `maxArchiveBytes` | `number` | `8388608` (8 MiB) | Max compressed archive size accepted for fetch/decode |
+| `maxTotalUncompressedBytes` | `number` | `67108864` (64 MiB) | Max total uncompressed bytes, stream-counted mid-inflate |
+| `maxFileCount` | `number` | `200` | Max number of entries unpacked from one archive |
+| `maxFileBytes` | `number` | `4194304` (4 MiB) | Max size of any single unpacked file |
+| `maxPathDepth` | `number` | `10` | Max path depth of any unpacked entry |
+
+<Note>
+There is intentionally **no** auto-connect knob here. An imported skill's bundled MCP servers persist disabled by construction -- you opt in per server. See [Importing Skills](/skills/importing#the-imported-trust-tier).
+</Note>
+
 #### Secrets (agents.*.secrets)
 
 | Key | Type | Default | Description |
@@ -2816,7 +2832,7 @@ Documentation links injected into the system prompt so the agent can reference t
 | `publicDocsUrl` | `string` | `""` | Public documentation URL |
 | `sourceUrl` | `string` | `""` | Source code repository URL |
 | `communityUrl` | `string` | `""` | Community or support URL |
-| `skillsMarketplaceUrl` | `string` | `""` | Skills marketplace URL |
+| `skillsMarketplaceUrl` | `string` | `""` | A skills-marketplace URL injected into the system prompt as a reference hint only. It is **not** an import allowlist or control -- it does not gate, restrict, or authorize what [`skills.import`](/skills/importing) will fetch. Import safety comes from the pipeline (SSRF-guarded fetch, bounded unpack, fail-closed scan, imported tier), not this link. |
 | `mcpRegistryUrl` | `string` | `""` | MCP server registry URL |
 | `customLinks` | `DocumentationLink[]` | `[]` | Additional custom links (label + url) |
 

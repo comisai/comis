@@ -53,6 +53,8 @@ data directory.
 ├── background-tasks/        # background task state files
 ├── skills/                  # seeded skill library — bundled claude-code/codex/skill-creator skills (re-seeded on version change) + any added skills
 │   └── <name>/SKILL.md      # one dir per skill (the agent auto-discovers these by description)
+├── skill-provenance.json    # import provenance store — file mode 0o600, daemon-private (one record per imported skill)
+├── tmp/                     # scratch for staged skill imports — one skill-import-<id>/ per in-flight import (swept at boot)
 ├── identity/
 │   └── device.json          # Ed25519 device identity (auto-generated)
 └── devices/                 # paired device records (if pairing is used)
@@ -74,6 +76,8 @@ Some entries only appear under specific conditions.
 - `terminal-drive/` — the per-agent **durable** terminal drive-state journals. A durable drive is the **default** (`drive.durable: true`), so this appears whenever an agent runs a terminal drive; absent only for an explicit `drive.durable: false` (non-durable) drive or on a tmux-less host.
 - `models/whisper/` — created only after the **first** voice transcription that uses the keyless in-process local STT engine (when `integrations.media.transcription.provider` resolves to `local` without a `local.baseUrl` server). Absent on a fresh install and whenever local STT never runs.
 - `models/tts/` — created only after the **first** voice reply that uses the keyless in-process offline TTS engine (when `integrations.media.tts.provider` resolves to `local`/`piper`). A separate subdir from `models/whisper/`. Absent on a fresh install and whenever local TTS never runs.
+- `skill-provenance.json` — created on the **first** successful skill [import](/skills/importing). Absent on a fresh install and whenever no skill has ever been imported.
+- `tmp/` — scratch for in-flight skill imports; each import stages under a `skill-import-<id>/` subdirectory that is moved live (or discarded) at the end of the import. Any debris left by a crash mid-import is reconciled and cleaned by a boot-time sweep, so a stray `skill-import-*` directory here is safe to ignore.
 </Note>
 
 ## File-by-file reference
@@ -355,6 +359,26 @@ Persisted state for long-running background tasks promoted out of the LLM execut
 
 **Written by:** the daemon when background tasks are created or updated.
 **Safe to delete?** Yes, when no tasks are running. The daemon will lose track of any in-progress background work.
+
+---
+
+### `skill-provenance.json`
+
+The durable, daemon-private record of every [imported](/skills/importing) skill. Because imported skills share the same `skills/` directory that bundled (platform-trusted) skills seed into, this store is the **only** durable discriminator between an imported skill and a seeded one. Each record is keyed `<scope>:<agentId|shared>:<name>` and holds the acquisition source, a content hash over the installed files, the scan verdict, relative file paths, and timestamps.
+
+It is **content-free** by construction — ids, hashes, counts, and relative paths only, never a skill body — and stored with mode `0o600`. The read is fail-safe: a missing or corrupt file never throws and never blocks boot. A record is **advisory downward only**: its presence marks a skill `imported`, but its absence never elevates a skill's trust tier.
+
+**Written by:** the daemon on each successful import, and updated when an imported skill is deleted (record removed) or edited (hash re-pinned).
+**Safe to delete?** Deleting it strips the `imported` stamp from every previously imported skill — they revert to a path-derived source and lose their provenance summary. The skill files themselves remain. Provenance is forward-only, so there is no backfill; to restore the stamp, delete and re-import the affected skills. Do not delete while the daemon is running.
+
+---
+
+### `tmp/`
+
+Scratch space for the staged skill-import pipeline. Each in-flight import unpacks, maps, and scans under a `tmp/skill-import-<id>/` subdirectory; only after the fail-closed scan passes are the kept text files moved into the live `skills/` directory. Nothing untrusted is ever written directly into `skills/`. A `commit.json` intent marker inside the staging directory records the pending move so a crash mid-import can be reconciled.
+
+**Written by:** the daemon during a skill import.
+**Safe to delete?** Yes, when no import is in progress. A boot-time sweep reconciles and removes crash debris automatically (a half-committed import is either completed or rolled back, never left orphaned). Deleting the directory of an import that is actively running would break that import.
 
 ---
 

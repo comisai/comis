@@ -1418,6 +1418,41 @@ comis signal-setup
 
 ---
 
+### `comis skills`
+
+Manage prompt skills. Today the group has one subcommand: `import`.
+
+`comis skills import <ref>` installs a skill from a GitHub directory URL or a packaged archive through the daemon's staged pipeline. The import is scanned and MCP-checked **before** anything is written, and a successful import is stamped the `imported` trust tier and pinned in the provenance store. See [Importing Skills](/skills/importing) for the full model.
+
+Accepts `--token <token>` to override `COMIS_GATEWAY_TOKEN`; the token is resolved before the socket opens, so a missing token surfaces a friendly error naming the env var rather than a generic handshake failure.
+
+| Subcommand | Description |
+|------------|-------------|
+| `skills import <ref>` | Import a skill. `<ref>` is a GitHub directory URL (default) or an archive URL (with `--source archive`). |
+
+| Flag | Values | Description |
+|------|--------|-------------|
+| `--source <source>` | `github` \| `archive` | Acquisition channel. `github` (default) treats `<ref>` as a directory URL; `archive` treats it as a `.skill`/`.zip`/`.tar` URL. |
+| `--scope <scope>` | `local` \| `shared` | `local` (default) installs into this agent's workspace; `shared` installs into the global directory (default agent only). |
+| `--confirm` | flag | Confirm a re-import whose content diverges from the pinned hash of a prior import of the **same** source. Never overrides a name collision on an unprovenanced or foreign-source skill -- delete that skill first. There is no `force` flag. |
+| `--format <format>` | `table` \| `json` | Output format (default `table`). |
+| `--token <token>` | string | Gateway token, overriding `COMIS_GATEWAY_TOKEN`. Prefer the env var or `~/.comis/.env` -- a token on the command line is visible via `ps`/`proc` and shell history. |
+
+```bash
+# Import from a GitHub directory (source defaults to github)
+comis skills import https://github.com/owner/repo/tree/main/skills/my-skill
+
+# Import a packaged archive into the shared directory
+comis skills import https://example.com/my-skill.skill --source archive --scope shared
+
+# Re-import the same source after its content changed
+comis skills import https://example.com/my-skill.skill --source archive --confirm
+```
+
+On success the command reports the installed name, path, kept-file count, the `imported` source, and the resolved agent id.
+
+---
+
 ### `comis trace`
 
 Search, tail, and export agent execution traces. Traces capture the inbound message pipeline and are stored in the durable trace store. Backed by `ObsTraceSearchContract`, `ObsTraceTailContract`, and `ObsTraceExportContract`.

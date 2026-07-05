@@ -112,6 +112,18 @@ The scanner classifies each finding by severity:
 Even if a skill passes content scanning, it still goes through the full sanitization pipeline. Scanning catches known dangerous patterns, while sanitization removes entire classes of hidden content. Together, they provide layered protection.
 </Info>
 
+## Import-Time Scanning
+
+The scan described above runs when a skill **loads**. A skill you [import](/skills/importing) from a GitHub directory or an archive is scanned at a second, earlier, and stricter moment: **before anything is written to disk.**
+
+Import-time scanning differs from load-time scanning in three ways:
+
+- **It scans every staged text file, not just the SKILL.md body.** The same six-category scanner runs across the SKILL.md body **and** every text file kept from the import, so a dangerous pattern hidden in a reference file is caught too.
+- **It is fail-closed and pre-write.** A single CRITICAL finding rejects the whole import atomically -- the staging area is discarded and **zero** files reach your live skills directory. There is no window in which flagged content exists on disk and is scanned afterward.
+- **It is unconditional.** Import-time scanning does **not** consult the load-time `contentScanning.enabled` / `contentScanning.blockOnCritical` settings below. Those toggles govern load-time behavior only; you cannot disable the import scan, and it always blocks on CRITICAL findings.
+
+This closes the gap where content would be written first and only scanned when it later loaded. Every import path -- GitHub, archive, or operator upload -- funnels through this same pre-write gate. See [Importing Skills](/skills/importing#the-staged-pipeline) for the full pipeline.
+
 ## Configuration
 
 Content scanning is enabled by default. You can adjust its behavior in your configuration file:
@@ -125,6 +137,8 @@ skills:
 
 <Warning>
 Disabling content scanning or setting `blockOnCritical` to `false` removes an important security layer. Only do this if you fully trust every skill that Comis will load, and you understand the risks.
+
+These two settings govern **load-time** scanning only. They do **not** relax [import-time scanning](#import-time-scanning), which is unconditional and always blocks CRITICAL findings before a skill is written.
 </Warning>
 
 ## How Scanning Fits into the Security Stack

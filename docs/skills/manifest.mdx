@@ -209,6 +209,30 @@ The pre-migration top-level form -- extension fields authored directly at the to
 
 It is read for compatibility only and is never written back. Author new skills in the spec-pure six-field form above.
 
+## Foreign-Frontmatter Mapping
+
+When you [import](/skills/importing) a skill authored for **another ecosystem** -- or in the legacy Comis form above -- its frontmatter is first converged onto the spec-pure shape, then validated. The internal manifest schema is closed, so an unmapped foreign key would otherwise reject the whole skill outright.
+
+The mapper never silently reinterprets a field. It assigns only a fixed set of known keys and **drops everything else with a warning that names the exact key** -- so an operator can see precisely what was carried across and what was left behind.
+
+| Foreign / legacy field | Maps to | Notes |
+|------------------------|---------|-------|
+| `name`, `description`, `license`, `compatibility`, `allowed-tools`, `metadata` | The same spec-pure field | `name` is normalized to a valid slug if needed (warned); an `allowed-tools` list is joined into a space-separated string; a `compatibility` note over 500 characters draws an advisory warning |
+| `metadata.openclaw` (a sibling extension namespace some other-ecosystem skills carry) | Folds into `metadata.comis` | `skillKey` -> `skill-key`, `primaryEnv` -> `primary-env`, `os` -> `os`, `requires` -> `requires.bins` / `requires.env`. Every other key (binary-installer specs, homepage, emoji, and the like) is dropped with a warning |
+| Top-level `platforms` | `metadata.comis` -> `comis.os` | A string or a list of OS strings |
+| Top-level `version` | `metadata.version` | |
+| Top-level `author` | `metadata.author` | |
+| Top-level `prerequisites` | `comis.requires` | `commands` -> `requires.bins`, `env_vars` -> `requires.env` |
+| Legacy top-level Comis fields (`userInvocable`, `disableModelInvocation`, `argumentHint`, `permissions`, `inputSchema`, `comis`, `mcpServers`, `allowedTools`) | Passed through to the compatibility lift above | The lift converts them to their `metadata.comis` home and emits its own deprecation warning |
+| A non-`prompt` `type` declaration | Dropped (warned) | Skills import prompt-only; a script/exec type is not carried |
+| Executable entrypoints (`entrypoint`, `main`, `exec`, `run`, `scripts`, `command`, `bin`, `binary`, `executable`) | Dropped (warned) | Import never maps an execution vector -- only the prompt body and metadata are imported |
+| `__proto__` | Refused | A prototype-pollution vector; never copied onto the manifest |
+| Any other field | Dropped (warned) | No internal home means the field is dropped, never reinterpreted |
+
+<Info>
+Mapping is a **format-compatibility** step, not a trust decision. A mapped skill still runs through the fail-closed [import scan](/skills/security-scanning#import-time-scanning) and installs at the `imported` [trust tier](/skills/importing#the-imported-trust-tier) like any other import.
+</Info>
+
 ## Template Substitution
 
 Prompt skill bodies support placeholder syntax for dynamic content:
