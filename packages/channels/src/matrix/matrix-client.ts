@@ -322,6 +322,56 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
       return;
     }
 
+    // Fail-closed decrypt (T-5): an encrypted inbound event must be decrypted
+    // BEFORE it can be mapped. Await any in-flight decryption first (the SDK can
+    // fire the timeline event while decryption is still running — reading the
+    // clear content too early would look like a failure, Pitfall 4), then if it
+    // FAILED, DROP the event. We never map the ciphertext or the SDK's synthesized
+    // "** Unable to decrypt **" placeholder — surfacing either is the plaintext-
+    // garbage leak T-5 forbids; there is deliberately no fallback to the raw wire
+    // content. A decrypted-OK event falls through to the SAME mapper below, whose
+    // sanitizer already handles formatted_body (the SDK yields the CLEAR content
+    // through the mapper once the event is decrypted).
+    if (event.isEncrypted()) {
+      const decryptStartedAt = systemNowMs();
+      if (event.isBeingDecrypted()) await event.getDecryptionPromise();
+      if (event.isDecryptionFailure()) {
+        const signal: DecryptFailureSignal = {
+          roomId: room.roomId,
+          e2eeConfigured: deps.e2ee === true,
+          cryptoAvailable: client.getCrypto() !== undefined,
+          failureReason: event.decryptionFailureReason ?? null,
+        };
+        deps.onDecryptFailure?.(signal);
+        // Content-free: the SDK failure enum + the room id (an id) ONLY — never
+        // ciphertext, the placeholder body, a sender display name, or key material.
+        logger.warn(
+          {
+            channelType: "matrix",
+            step: "decrypt",
+            errorKind: "internal" as const,
+            roomId: room.roomId,
+            failureReason: signal.failureReason,
+            hint: "Encrypted event could not be decrypted — dropped (fail-closed); the per-room degrade note carries the operator hint",
+          },
+          "Matrix decrypt failed — event dropped",
+        );
+        // Advance the watermark so the undecryptable event is not reprocessed on
+        // the next sync (it would fail identically). FAIL CLOSED — never map.
+        await bumpRoomWatermark(room.roomId, event.getTs(), "watermark");
+        return;
+      }
+      logger.info(
+        {
+          channelType: "matrix",
+          step: "decrypt",
+          roomId: room.roomId,
+          durationMs: systemNowMs() - decryptStartedAt,
+        },
+        "Matrix event decrypted",
+      );
+    }
+
     const isDirect = deps.isDirectRoom?.(room) ?? false;
     const message = mapMatrixEventToNormalized(event, room, { isDirect });
     if (message === null) return;

@@ -67,6 +67,8 @@ function fakeEvent(
     getSender: () => sender,
     getTs: () => ts,
     getContent: () => ({ body }),
+    // Plaintext: the decrypt branch (T-5) is skipped for a non-encrypted event.
+    isEncrypted: () => false,
   } as unknown as MatrixEvent;
 }
 
@@ -491,6 +493,7 @@ describe("createMatrixClient — /sync lifecycle, watermark guard, invite gate",
       getSender: () => null,
       getTs: () => 100,
       getContent: () => ({ body: "x" }),
+      isEncrypted: () => false,
     } as unknown as MatrixEvent;
     await h.fake.emit(RoomEvent.Timeline, noSender, fakeRoom("!r:hs"), false);
 

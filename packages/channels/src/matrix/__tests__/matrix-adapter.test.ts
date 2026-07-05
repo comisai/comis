@@ -54,6 +54,8 @@ function fakeEvent(
     getSender: () => sender,
     getTs: () => ts,
     getContent: () => ({ body }),
+    // Plaintext: the decrypt branch (T-5) is skipped for a non-encrypted event.
+    isEncrypted: () => false,
   } as unknown as MatrixEvent;
 }
 
