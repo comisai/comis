@@ -164,6 +164,24 @@ export function createGoogleChatAdapter(
       return; // drop BEFORE any processing → ack (resolve)
     }
 
+    if (handlers.length === 0) {
+      // A pull channel drains the backlog immediately on start(); a message that
+      // arrives before onMessage() has wired a handler must redeliver, not be
+      // acked-and-dropped. No liveness bump — a never-wired ingress must look
+      // stale to the health monitor rather than falsely healthy.
+      deps.logger.warn(
+        {
+          channelType: "googlechat" as const,
+          hint: "No inbound handler registered yet; ack skipped so Pub/Sub redelivers once onMessage() has wired a handler",
+          errorKind: "internal" as const,
+        },
+        "Inbound arrived before a handler was registered; skipping ack",
+      );
+      // Skip-ack via the same pull-loop boundary as a handler failure (the file
+      // carries the @allow-throw annotation) so the message redelivers.
+      throw new Error("no inbound handler registered");
+    }
+
     _lastMessageAt = now();
     _lastInboundAt = now();
 
@@ -222,6 +240,12 @@ export function createGoogleChatAdapter(
     },
 
     async start(): Promise<Result<void, Error>> {
+      // Idempotency: a second start() without an intervening stop() must not
+      // build and boot a fresh source that orphans the first (the source's own
+      // `if (running) return` guard is bypassed by creating a new source each
+      // call), which would double-pull the subscription and leak the old loop.
+      if (_connected) return ok(undefined);
+
       const v = validateGoogleChatCredentials({
         serviceAccountKey: deps.serviceAccountKey,
         subscriptionName: deps.subscriptionName,

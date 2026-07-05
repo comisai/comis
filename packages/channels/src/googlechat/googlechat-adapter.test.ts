@@ -301,6 +301,27 @@ describe("createGoogleChatAdapter — inbound gate + dispatch", () => {
     await expect(adapter.handleChatEvent(null)).resolves.toBeUndefined();
     expect(handler).not.toHaveBeenCalled();
   });
+
+  it("skip-acks (rejects) an admitted inbound when no handler is registered yet, so it redelivers", async () => {
+    const { deps } = await makeDeps({ allowMode: "open" });
+    const adapter = createGoogleChatAdapter(deps);
+
+    // A pull channel drains the subscription backlog immediately on start(); a
+    // message that arrives before onMessage() must redeliver, not be acked-and-
+    // dropped. No liveness bump — a never-wired ingress must look stale.
+    await expect(adapter.handleChatEvent(makeEvent())).rejects.toThrow();
+    expect(adapter.getStatus?.().lastInboundAt).toBeUndefined();
+  });
+
+  it("processes the redelivery once a handler is registered", async () => {
+    const { deps } = await makeDeps({ allowMode: "open" });
+    const adapter = createGoogleChatAdapter(deps);
+    const handler = vi.fn();
+    adapter.onMessage(handler);
+
+    await expect(adapter.handleChatEvent(makeEvent())).resolves.toBeUndefined();
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("createGoogleChatAdapter — status + lastInboundAt semantics", () => {
@@ -381,6 +402,40 @@ describe("createGoogleChatAdapter — lifecycle", () => {
     expect(warn).toBeDefined();
     expect(String(warn?.hint)).toContain("channels.googlechat.mode");
     expect(String(warn?.hint).toLowerCase()).toContain("pubsub");
+  });
+
+  it("start() is idempotent: a second start() without an intervening stop() does not create/boot a second source", async () => {
+    let created = 0;
+    const starts: number[] = [];
+    const createSource = (): PubSubSource => {
+      created += 1;
+      return {
+        start: () => {
+          starts.push(1);
+        },
+        stop: async () => {},
+        pollOnce: async () => ({
+          receivedCount: 0,
+          ackedCount: 0,
+          skippedCount: 0,
+          pullFailed: false,
+        }),
+        lastError: undefined,
+        running: false,
+      } as PubSubSource;
+    };
+    const { deps } = await makeDeps({ createSource });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const r1 = await adapter.start();
+    const r2 = await adapter.start();
+
+    expect(r1.ok).toBe(true);
+    expect(r2.ok).toBe(true);
+    // Exactly one source — a second start() must not orphan the first (which
+    // would keep polling forever: double-pull + leak).
+    expect(created).toBe(1);
+    expect(starts.length).toBe(1);
   });
 
   it("stop() stops the source and marks disconnected", async () => {
