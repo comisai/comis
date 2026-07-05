@@ -41,6 +41,7 @@ describe("ChannelCapability feature flags", () => {
       "quickreply",
       "none",
       "adaptivecard",
+      "cardsv2",
     ] as const) {
       const cap = ChannelCapabilitySchema.parse({
         features: { buttons },
@@ -48,6 +49,14 @@ describe("ChannelCapability feature flags", () => {
       });
       expect(cap.features.buttons).toBe(buttons);
     }
+  });
+
+  it("accepts the cardsv2 buttons flavour", () => {
+    const cap = ChannelCapabilitySchema.parse({
+      features: { buttons: "cardsv2" },
+      limits: { maxMessageChars: 4096 },
+    });
+    expect(cap.features.buttons).toBe("cardsv2");
   });
 
   it("rejects an unknown buttons value", () => {
