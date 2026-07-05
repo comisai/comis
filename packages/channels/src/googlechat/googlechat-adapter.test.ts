@@ -69,6 +69,34 @@ function makeTokenFetch(token = MINTED_TOKEN) {
   return spy as unknown as typeof fetch;
 }
 
+/**
+ * A fetch stub that answers the token exchange with a bearer, then the Chat
+ * `messages` endpoint with a created message resource — routed by URL so one
+ * spy captures both the mint and the send.
+ */
+function makeChatFetch(
+  opts: { sendStatus?: number; sendName?: string; sendThrows?: boolean } = {},
+) {
+  const sendStatus = opts.sendStatus ?? 200;
+  const sendName = opts.sendName ?? "spaces/AAAA/messages/CCC";
+  const spy = vi.fn(async (url: string, _init?: RequestInit) => {
+    if (String(url).includes("/messages")) {
+      if (opts.sendThrows) throw new Error("connect ECONNREFUSED");
+      return {
+        ok: sendStatus >= 200 && sendStatus < 300,
+        status: sendStatus,
+        json: async () => ({ name: sendName }),
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ access_token: MINTED_TOKEN, expires_in: 3600 }),
+    };
+  });
+  return { fetchImpl: spy as unknown as typeof fetch, spy };
+}
+
 /** A fake pull-loop source recording start/stop so lifecycle is testable loop-free. */
 function makeFakeSource(over: Partial<PubSubSource> = {}) {
   const start = vi.fn();
@@ -383,5 +411,66 @@ describe("createGoogleChatAdapter — reconcile + platformAction + capability ho
     const { deps } = await makeDeps();
     const adapter = createGoogleChatAdapter(deps);
     expect(typeof adapter.getPubSubTokenProvider().getToken).toBe("function");
+  });
+});
+
+describe("createGoogleChatAdapter — sendMessage (messages.create)", () => {
+  it("mints a chat.bot bearer and POSTs {text} to the space messages endpoint, returning the message name", async () => {
+    const { fetchImpl, spy } = makeChatFetch();
+    const { deps } = await makeDeps({ fetchImpl });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const result = await adapter.sendMessage("spaces/AAAA", "hello");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toBe("spaces/AAAA/messages/CCC");
+
+    const sendCall = spy.mock.calls.find(([u]) =>
+      String(u).includes("/messages"),
+    ) as [string, RequestInit] | undefined;
+    expect(sendCall).toBeDefined();
+    const [url, init] = sendCall as [string, RequestInit];
+    expect(url).toBe("https://chat.googleapis.com/v1/spaces/AAAA/messages");
+    expect(init.method).toBe("POST");
+    const headers = init.headers as Record<string, string>;
+    expect(headers.authorization).toBe(`Bearer ${MINTED_TOKEN}`);
+    expect(headers["content-type"]).toBe("application/json");
+    expect(JSON.parse(String(init.body))).toEqual({ text: "hello" });
+  });
+
+  it("returns err on a non-ok status, logs an ERROR with errorKind+hint, and never logs the token", async () => {
+    const { fetchImpl } = makeChatFetch({ sendStatus: 403 });
+    const { deps, loggerSpy } = await makeDeps({ fetchImpl });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const result = await adapter.sendMessage("spaces/AAAA", "denied");
+
+    expect(result.ok).toBe(false);
+    const errRec = findByErrorKind(loggerSpy.error, "auth");
+    expect(errRec).toBeDefined();
+    expect(String(errRec?.hint).length).toBeGreaterThan(0);
+    expect(loggerSpy.serialized()).not.toContain(MINTED_TOKEN);
+  });
+
+  it("returns err classified network when the send transport rejects", async () => {
+    const { fetchImpl } = makeChatFetch({ sendThrows: true });
+    const { deps, loggerSpy } = await makeDeps({ fetchImpl });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const result = await adapter.sendMessage("spaces/AAAA", "hi");
+
+    expect(result.ok).toBe(false);
+    expect(findByErrorKind(loggerSpy.error, "network")).toBeDefined();
+  });
+
+  it("does NOT bump lastInboundAt on an outbound send (bumps lastMessageAt only)", async () => {
+    const { fetchImpl } = makeChatFetch();
+    const { deps } = await makeDeps({ fetchImpl });
+    const adapter = createGoogleChatAdapter(deps);
+
+    await adapter.sendMessage("spaces/AAAA", "hello");
+
+    expect(adapter.getStatus?.().lastInboundAt).toBeUndefined();
+    expect(adapter.getStatus?.().lastMessageAt).toBe(NOW);
   });
 });
