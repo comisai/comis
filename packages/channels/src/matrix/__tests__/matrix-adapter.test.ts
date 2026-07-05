@@ -14,7 +14,9 @@ import {
   type Room,
 } from "matrix-js-sdk";
 import * as sdk from "matrix-js-sdk";
+import { ok } from "@comis/shared";
 import { createMatrixAdapter, type MatrixAdapterDeps } from "../matrix-adapter.js";
+import type { MatrixCryptoHandle } from "../crypto-store.js";
 
 // ---------------------------------------------------------------------------
 // Temp stateDir (real fs, per-test, cleaned up) — mirrors matrix-state.test.ts.
@@ -107,6 +109,26 @@ function fakeRoom(roomId: string): Room {
     roomId,
     getMember: () => null,
   } as unknown as Room;
+}
+
+/**
+ * An injected crypto bootstrap that resolves to a handle reporting a fixed
+ * verification posture — lets the adapter test drive the e2ee status surface
+ * without loading the real crypto WASM.
+ */
+function fakeInitCrypto(verification: {
+  crossSigningReady: boolean;
+  deviceVerified: boolean;
+}): MatrixAdapterDeps["initCryptoImpl"] {
+  const handle: MatrixCryptoHandle = {
+    scheduleSnapshot: vi.fn(),
+    snapshotNow: vi.fn().mockResolvedValue(ok(undefined)),
+    stop: vi.fn().mockResolvedValue(undefined),
+    getVerificationStatus: vi.fn().mockResolvedValue(verification),
+  };
+  return vi
+    .fn()
+    .mockResolvedValue(ok(handle)) as unknown as MatrixAdapterDeps["initCryptoImpl"];
 }
 
 /** Build an Error carrying Matrix `errcode`/`httpStatus`, like the SDK's MatrixError. */
@@ -266,6 +288,8 @@ interface HarnessOverrides {
   emitHealth?: (signal: { errorKind: string; hint: string }) => void;
   emitDecryptHealth?: (signal: { roomId: string; reason: string }) => void;
   fake?: FakeMatrixClient;
+  e2ee?: boolean;
+  initCryptoImpl?: MatrixAdapterDeps["initCryptoImpl"];
 }
 
 function makeAdapter(over: HarnessOverrides = {}): {
@@ -298,6 +322,8 @@ function makeAdapter(over: HarnessOverrides = {}): {
     ...(over.password !== undefined ? { password: over.password } : {}),
     ...(over.emitHealth !== undefined ? { emitHealth: over.emitHealth } : {}),
     ...(over.emitDecryptHealth !== undefined ? { emitDecryptHealth: over.emitDecryptHealth } : {}),
+    ...(over.e2ee !== undefined ? { e2ee: over.e2ee } : {}),
+    ...(over.initCryptoImpl !== undefined ? { initCryptoImpl: over.initCryptoImpl } : {}),
   };
 
   const adapter = createMatrixAdapter(deps);
@@ -602,6 +628,31 @@ describe("createMatrixAdapter", () => {
     expect(vi.mocked(logger.error)).toHaveBeenCalled();
     expect(fake.stopCalls).toBe(0);
     expect(adapter.getStatus?.().connected).toBe(true);
+  });
+
+  it("surfaces the device verification posture on getStatus for an e2ee channel", async () => {
+    // E2EE-04 / OBS-01: the crypto handle's cross-signing / device-verified posture
+    // must reach the channel status so a doctor / fleet probe can read it.
+    const { adapter } = makeAdapter({
+      e2ee: true,
+      initCryptoImpl: fakeInitCrypto({ crossSigningReady: true, deviceVerified: false }),
+      allowFrom: [],
+    });
+
+    await adapter.start();
+
+    expect(adapter.getStatus?.().verification).toEqual({
+      crossSigningReady: true,
+      deviceVerified: false,
+    });
+  });
+
+  it("omits the verification field on the plaintext (non-e2ee) path", async () => {
+    const { adapter } = makeAdapter({ allowFrom: [] }); // e2ee omitted
+
+    await adapter.start();
+
+    expect(adapter.getStatus?.().verification).toBeUndefined();
   });
 });
 

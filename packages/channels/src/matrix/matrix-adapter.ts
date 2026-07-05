@@ -53,8 +53,10 @@ import { createMatrixAuth } from "./matrix-auth.js";
 import {
   createMatrixClient,
   type DecryptFailureSignal,
+  type MatrixClientDeps,
   type MatrixHealthSignal,
   type MatrixSyncController,
+  type MatrixVerificationStatus,
 } from "./matrix-client.js";
 import { createMatrixStateStore } from "./matrix-state.js";
 import { buildTextMessageContent } from "./matrix-adapter-outbound.js";
@@ -106,6 +108,8 @@ export interface MatrixAdapterDeps {
   logger: ComisLogger;
   /** Test seam: defaults to `sdk.createClient` in production. */
   createClientImpl?: typeof sdk.createClient;
+  /** Test seam for the crypto bootstrap; forwarded to the `/sync` controller. */
+  initCryptoImpl?: MatrixClientDeps["initCryptoImpl"];
   /** Injected clock in ms, defaulting to systemNowMs; makes timing deterministic. */
   now?: () => number;
   /**
@@ -166,6 +170,22 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
   let lastError: string | undefined;
   let client: MatrixClient | undefined;
   let controller: MatrixSyncController | undefined;
+  // Last-known device verification posture (E2EE-04 / OBS-01), surfaced on the
+  // channel status. Refreshed after start and (best-effort) on each status read;
+  // undefined until first read, on the plaintext path, or when crypto is absent.
+  let lastVerification: MatrixVerificationStatus | undefined;
+
+  /**
+   * Refresh the cached verification posture from the `/sync` controller. Best-
+   * effort: a read failure leaves the last-known value untouched rather than
+   * flapping the status. Sets undefined only when the controller reports no crypto
+   * surface (plaintext, or the crypto bootstrap failed).
+   */
+  async function refreshVerification(): Promise<void> {
+    if (controller === undefined) return;
+    const status = await controller.getVerificationStatus();
+    lastVerification = status;
+  }
 
   /**
    * Speaker-trust gate keyed on the FULL MXID. Default-OPEN when `allowFrom` is
@@ -381,6 +401,7 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
         ...(canReauthenticate ? { reauthenticate: () => auth.reauthenticate() } : {}),
         ...(deps.emitHealth !== undefined ? { emitHealth: deps.emitHealth } : {}),
         ...(deps.recoveryKey !== undefined ? { recoveryKey: deps.recoveryKey } : {}),
+        ...(deps.initCryptoImpl !== undefined ? { initCryptoImpl: deps.initCryptoImpl } : {}),
       });
       const started = await controller.start();
       if (!started.ok) {
@@ -389,6 +410,10 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
         lastError = started.error.message;
         return err(started.error);
       }
+
+      // Seed the verification posture so the first status read already reflects the
+      // startup cross-signing / device-verified state (E2EE-04 / OBS-01).
+      await refreshVerification();
 
       connected = true;
       startedAt = startAt;
@@ -405,6 +430,8 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
       controller = undefined;
       client = undefined;
       connected = false;
+      // The posture is meaningless once the channel is down; a fresh start reseeds it.
+      lastVerification = undefined;
       deps.logger.info({ channelType: "matrix" as const }, "Matrix adapter stopped");
       return ok(undefined);
     },
@@ -460,6 +487,9 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
     },
 
     getStatus(): ChannelStatus {
+      // Best-effort refresh for the NEXT read so the posture tracks a mid-run
+      // device verification without blocking this (synchronous) status call.
+      if (connected) void refreshVerification();
       return {
         connected,
         channelId,
@@ -468,6 +498,8 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
         error: lastError,
         // Long-poll `/sync`, like Telegram — stale-exempt in the health check.
         connectionMode: "polling",
+        // Verification posture for e2ee channels; absent on the plaintext path.
+        ...(lastVerification !== undefined ? { verification: lastVerification } : {}),
       };
     },
 

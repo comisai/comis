@@ -41,6 +41,19 @@ export interface ChannelStatus {
   readonly error?: string;
   /** Connection mode used by this adapter (for health check stale-exemption logic) */
   readonly connectionMode?: "socket" | "polling" | "webhook";
+  /**
+   * End-to-end encryption verification posture, for e2ee-capable channels only.
+   * Present when the channel has an active crypto backend; absent on plaintext
+   * channels (and on an e2ee channel whose crypto backend failed to initialize).
+   * Lets a doctor / fleet probe read whether the bot device is verified without
+   * touching any key material.
+   */
+  readonly verification?: {
+    /** Whether cross-signing is set up and this device trusts the cross-signing identity. */
+    readonly crossSigningReady: boolean;
+    /** Whether this device itself reads as verified. */
+    readonly deviceVerified: boolean;
+  };
 }
 
 /**

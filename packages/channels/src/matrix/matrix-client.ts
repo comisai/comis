@@ -170,12 +170,28 @@ export interface MatrixClientDeps {
   initCryptoImpl?: typeof initMatrixCrypto;
 }
 
+/** The device's cross-signing / verification posture; never carries key material. */
+export interface MatrixVerificationStatus {
+  /** Whether cross-signing is set up and this device trusts the cross-signing identity. */
+  crossSigningReady: boolean;
+  /** Whether this device itself reads as verified. */
+  deviceVerified: boolean;
+}
+
 /** The `/sync` lifecycle handle the adapter drives. */
 export interface MatrixSyncController {
   /** Load persisted state, wire subscriptions, and start `/sync`. */
   start(): Promise<Result<void, Error>>;
   /** Stop the `/sync` long-poll. */
   stop(): void;
+  /**
+   * The bot device's verification posture for the operator health surface, or
+   * `undefined` when there is no crypto backend (a plaintext channel, or the
+   * crypto bootstrap failed). Delegates to the crypto handle; carries no key
+   * material. The adapter puts this on its channel status so a doctor / fleet
+   * probe can read whether the device is verified.
+   */
+  getVerificationStatus(): Promise<MatrixVerificationStatus | undefined>;
 }
 
 /** Extract the classifier's normalized fields from a thrown/reported SDK error. */
@@ -741,6 +757,13 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
       void cryptoHandle?.stop();
       client.stopClient();
       logger.info({ channelType: "matrix", step: "sync-stop" }, "Matrix sync stopped");
+    },
+
+    async getVerificationStatus(): Promise<MatrixVerificationStatus | undefined> {
+      // No crypto handle → no verification surface (plaintext channel, or the
+      // crypto bootstrap failed and the channel runs unverified). Otherwise read
+      // the live posture from the handle, which delegates to the SDK's crypto API.
+      return cryptoHandle !== undefined ? cryptoHandle.getVerificationStatus() : undefined;
     },
   };
 }
