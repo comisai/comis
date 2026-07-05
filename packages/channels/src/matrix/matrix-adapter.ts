@@ -32,7 +32,7 @@
  * @module
  */
 
-import { EventType, type MatrixClient, type TimelineEvents } from "matrix-js-sdk";
+import { EventType, type MatrixClient, type Room, type TimelineEvents } from "matrix-js-sdk";
 import * as sdk from "matrix-js-sdk";
 import type {
   ChannelPort,
@@ -86,6 +86,21 @@ export interface MatrixAdapterDeps {
   createClientImpl?: typeof sdk.createClient;
   /** Injected clock in ms, defaulting to systemNowMs; makes timing deterministic. */
   now?: () => number;
+}
+
+/**
+ * Whether a room is a direct (1:1) conversation, read from the client's
+ * `m.direct` account data (each other-party MXID maps to the direct room ids
+ * shared with them). Drives the mapper's `chatType: "dm"` classification; a room
+ * absent from `m.direct` is a group. Pure over the client's account-data store.
+ */
+function isRoomDirect(client: MatrixClient, room: Room): boolean {
+  const direct = client.getAccountData(EventType.Direct);
+  if (!direct) return false;
+  const content = direct.getContent() as Record<string, unknown>;
+  return Object.values(content).some(
+    (rooms) => Array.isArray(rooms) && (rooms as unknown[]).includes(room.roomId),
+  );
 }
 
 /**
@@ -256,16 +271,20 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
         lastError = authed.error.message;
         return err(authed.error);
       }
-      client = authed.value.client;
+      const authedClient = authed.value.client;
+      client = authedClient;
 
       // Wire and start the `/sync` transport; speakers are gated on the way out.
+      // `isDirectRoom` reads the client's `m.direct` account data so a 1:1 room
+      // maps to `chatType: "dm"` (a room absent from it is a group).
       controller = createMatrixClient({
-        client,
+        client: authedClient,
         stateStore,
         autoJoinOnInvite: deps.autoJoinOnInvite,
         allowMode: deps.allowMode,
         allowFrom: deps.allowFrom,
         onMessage: onSyncMessage,
+        isDirectRoom: (room) => isRoomDirect(authedClient, room),
         logger: deps.logger,
       });
       const started = await controller.start();

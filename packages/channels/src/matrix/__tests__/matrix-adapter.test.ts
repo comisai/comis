@@ -82,6 +82,8 @@ class FakeMatrixClient {
   sendError?: unknown;
   startError?: unknown;
   whoamiError?: unknown;
+  /** The `m.direct` account-data content the client reports (other MXID → room ids). */
+  directContent?: Record<string, string[]>;
   private token: string | null = null;
   private readonly userId: string;
   readonly store: { getSyncToken(): string | null; setSyncToken(token: string): void };
@@ -130,6 +132,15 @@ class FakeMatrixClient {
 
   getUserId(): string | null {
     return this.userId;
+  }
+
+  /** The m.direct account-data lookup the adapter's DM classifier reads. */
+  getAccountData(type: string): { getContent: () => Record<string, unknown> } | undefined {
+    if (type === "m.direct" && this.directContent !== undefined) {
+      const content = this.directContent;
+      return { getContent: () => content };
+    }
+    return undefined;
   }
 
   joinRoom(roomIdOrAlias: string): Promise<unknown> {
@@ -275,6 +286,29 @@ describe("createMatrixAdapter", () => {
 
     expect(received).toHaveLength(1);
     expect(received[0]?.senderId).toBe("@a:hs");
+  });
+
+  it("maps a room listed in m.direct account data to chatType dm", async () => {
+    const fake = new FakeMatrixClient();
+    // The homeserver marks !dm:hs a direct (1:1) room with @alice:hs.
+    fake.directContent = { "@alice:hs": ["!dm:hs"] };
+    const { adapter, received } = makeAdapter({ fake, allowFrom: [] });
+    await adapter.start();
+
+    await deliver(fake, fakeEvent({ sender: "@alice:hs", body: "dm hi" }), fakeRoom("!dm:hs"));
+
+    expect(received).toHaveLength(1);
+    expect(received[0]?.chatType).toBe("dm");
+  });
+
+  it("maps a room absent from m.direct account data to chatType group", async () => {
+    const { adapter, fake, received } = makeAdapter({ allowFrom: [] });
+    await adapter.start();
+
+    await deliver(fake, fakeEvent({ sender: "@alice:hs", body: "room hi" }), fakeRoom("!room:hs"));
+
+    expect(received).toHaveLength(1);
+    expect(received[0]?.chatType).toBe("group");
   });
 
   it("drops an inbound message from a non-allowlisted MXID when allowFrom is populated", async () => {
