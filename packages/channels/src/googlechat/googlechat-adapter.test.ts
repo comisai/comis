@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
-import type { ComisLogger } from "@comis/core";
+import type { ComisLogger, NormalizedMessage } from "@comis/core";
 import { generateKeyPair, exportPKCS8 } from "jose";
 import {
   createGoogleChatAdapter,
@@ -257,6 +257,45 @@ function makeEvent(
       sender: { name: over.senderName ?? "users/123" },
       text: over.text ?? "hello there",
       space,
+    },
+  };
+}
+
+/**
+ * Build a CARD_CLICKED interaction event: a verified clicker (`user.name`), a
+ * rendered action method, and an opaque `cb` parameter. `cb: null` omits the
+ * callback param (a malformed click); `omitClicker` drops the verified user
+ * envelope; `forgedUserId` plants a client-controllable id under
+ * `action.parameters` (which the normalizer must ignore).
+ */
+function makeCardClickEvent(
+  over: {
+    clickerName?: string;
+    method?: string;
+    cb?: string | null;
+    spaceName?: string;
+    messageName?: string;
+    forgedUserId?: string;
+    omitClicker?: boolean;
+  } = {},
+): unknown {
+  const parameters: Array<{ key: string; value: string }> = [];
+  if (over.cb !== null) {
+    parameters.push({ key: "cb", value: over.cb ?? "v1.allow.shortid.hmac" });
+  }
+  if (over.forgedUserId !== undefined) {
+    parameters.push({ key: "userId", value: over.forgedUserId });
+  }
+  return {
+    type: "CARD_CLICKED",
+    ...(over.omitClicker
+      ? {}
+      : { user: { name: over.clickerName ?? "users/123" } }),
+    space: { name: over.spaceName ?? "spaces/AAAA" },
+    message: { name: over.messageName ?? "spaces/AAAA/messages/CCC" },
+    action: {
+      actionMethodName: over.method ?? GOOGLECHAT_APPROVAL_FUNCTION,
+      parameters,
     },
   };
 }
@@ -1502,5 +1541,205 @@ describe("createGoogleChatAdapter — 429 auto-resend (send-safety)", () => {
       String(u).includes("/messages"),
     ).length;
     expect(finalPosts).toBe(2); // no third POST — the resend was cancelled by stop()
+  });
+});
+
+describe("createGoogleChatAdapter — CARD_CLICKED routing + default-deny", () => {
+  const CB = "v1.allow.shortid.hmachmac";
+
+  it("routes an allowlisted clicker's rendered card click into onMessage as a button callback and bumps liveness", async () => {
+    const { deps } = await makeDeps({ allowFrom: ["users/123"] });
+    const adapter = createGoogleChatAdapter(deps);
+    const handler = vi.fn();
+    adapter.onMessage(handler);
+
+    await expect(
+      adapter.handleChatEvent(
+        makeCardClickEvent({ clickerName: "users/123", cb: CB }),
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    const msg = handler.mock.calls[0][0] as NormalizedMessage;
+    // Routed through the normalizer into the button-callback message shape the
+    // inbound approval path consumes — BEFORE the message mapper (which is null).
+    expect(msg.channelType).toBe("googlechat");
+    expect(msg.channelId).toBe("spaces/AAAA");
+    expect(msg.senderId).toBe("users/123");
+    expect(msg.metadata.isButtonCallback).toBe(true);
+    expect(msg.metadata.callbackData).toBe(CB);
+    expect(typeof msg.metadata.traceId).toBe("string");
+    // An admitted card click bumps inbound liveness, exactly like a message.
+    expect(adapter.getStatus?.().lastInboundAt).toBe(NOW);
+  });
+
+  it("DENIES a well-formed card click from a non-allowFrom clicker via the one reused gate, never calling the handler, and RESOLVES (ack — no redelivery)", async () => {
+    const { deps, loggerSpy } = await makeDeps({ allowFrom: ["users/good"] });
+    const adapter = createGoogleChatAdapter(deps);
+    const handler = vi.fn();
+    adapter.onMessage(handler);
+
+    await expect(
+      adapter.handleChatEvent(
+        makeCardClickEvent({ clickerName: "users/evil", cb: CB }),
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(handler).not.toHaveBeenCalled();
+    const warn = findByErrorKind(loggerSpy.warn, "precondition");
+    expect(warn).toBeDefined();
+    expect(String(warn?.hint)).toContain("channels.googlechat.allowFrom");
+    // A default-deny drop must never bump inbound liveness.
+    expect(adapter.getStatus?.().lastInboundAt).toBeUndefined();
+  });
+
+  it("keys the default-deny gate on the VERIFIED user.name, ignoring a forged users/... id planted in action.parameters (drop side)", async () => {
+    // The verified clicker is users/evil; the payload forges the allowlisted
+    // users/good under action.parameters. The gate reads the envelope id only,
+    // so the click is still denied.
+    const { deps } = await makeDeps({ allowFrom: ["users/good"] });
+    const adapter = createGoogleChatAdapter(deps);
+    const handler = vi.fn();
+    adapter.onMessage(handler);
+
+    await adapter.handleChatEvent(
+      makeCardClickEvent({
+        clickerName: "users/evil",
+        forgedUserId: "users/good",
+        cb: CB,
+      }),
+    );
+
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("admits on the VERIFIED user.name even when a forged id rides action.parameters, and the fanned senderId is the envelope id (admit side)", async () => {
+    const { deps } = await makeDeps({ allowFrom: ["users/good"] });
+    const adapter = createGoogleChatAdapter(deps);
+    const handler = vi.fn();
+    adapter.onMessage(handler);
+
+    await adapter.handleChatEvent(
+      makeCardClickEvent({
+        clickerName: "users/good",
+        forgedUserId: "users/attacker",
+        cb: CB,
+      }),
+    );
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    const msg = handler.mock.calls[0][0] as NormalizedMessage;
+    // The verified envelope id, never the forged action.parameters value.
+    expect(msg.senderId).toBe("users/good");
+    expect(msg.metadata.isButtonCallback).toBe(true);
+    expect(msg.metadata.callbackData).toBe(CB);
+  });
+
+  it("drops a card click naming an unrendered method with a validation WARN and RESOLVES (ack — no redelivery); the callback never rides the log", async () => {
+    const { deps, loggerSpy } = await makeDeps({ allowFrom: ["users/123"] });
+    const adapter = createGoogleChatAdapter(deps);
+    const handler = vi.fn();
+    adapter.onMessage(handler);
+
+    await expect(
+      adapter.handleChatEvent(
+        makeCardClickEvent({
+          clickerName: "users/123",
+          method: "attacker.arbitrary.method",
+          cb: CB,
+        }),
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(findByErrorKind(loggerSpy.warn, "validation")).toBeDefined();
+    // The opaque signed callback must never be logged on a security drop.
+    expect(loggerSpy.serialized()).not.toContain(CB);
+  });
+
+  it("drops a card click carrying no opaque callback with a validation WARN and RESOLVES", async () => {
+    const { deps, loggerSpy } = await makeDeps({ allowFrom: ["users/123"] });
+    const adapter = createGoogleChatAdapter(deps);
+    const handler = vi.fn();
+    adapter.onMessage(handler);
+
+    await expect(
+      adapter.handleChatEvent(
+        makeCardClickEvent({ clickerName: "users/123", cb: null }),
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(findByErrorKind(loggerSpy.warn, "validation")).toBeDefined();
+  });
+
+  it("drops a card click with no verified clicker id with a precondition WARN and RESOLVES", async () => {
+    const { deps, loggerSpy } = await makeDeps({ allowFrom: ["users/123"] });
+    const adapter = createGoogleChatAdapter(deps);
+    const handler = vi.fn();
+    adapter.onMessage(handler);
+
+    await expect(
+      adapter.handleChatEvent(makeCardClickEvent({ omitClicker: true, cb: CB })),
+    ).resolves.toBeUndefined();
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(findByErrorKind(loggerSpy.warn, "precondition")).toBeDefined();
+  });
+
+  it("never throws (ack — no redelivery amplification) on ANY security drop", async () => {
+    // Only a genuine handler rejection skip-acks; every rejected click resolves.
+    const { deps } = await makeDeps({ allowFrom: ["users/good"] });
+    const adapter = createGoogleChatAdapter(deps);
+    adapter.onMessage(vi.fn());
+
+    await expect(
+      adapter.handleChatEvent(
+        makeCardClickEvent({ clickerName: "users/evil", cb: CB }),
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      adapter.handleChatEvent(
+        makeCardClickEvent({ clickerName: "users/good", method: "x.y", cb: CB }),
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      adapter.handleChatEvent(
+        makeCardClickEvent({ clickerName: "users/good", cb: null }),
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      adapter.handleChatEvent(makeCardClickEvent({ omitClicker: true, cb: CB })),
+    ).resolves.toBeUndefined();
+  });
+
+  it("skip-acks (rejects → redelivers) a rendered card click that arrives before a handler is wired, and does not bump liveness", async () => {
+    const { deps } = await makeDeps({ allowFrom: ["users/123"] });
+    const adapter = createGoogleChatAdapter(deps);
+    // No onMessage handler registered yet — a click must redeliver, not drop.
+
+    await expect(
+      adapter.handleChatEvent(
+        makeCardClickEvent({ clickerName: "users/123", cb: CB }),
+      ),
+    ).rejects.toThrow();
+    expect(adapter.getStatus?.().lastInboundAt).toBeUndefined();
+  });
+
+  it("lets a benign non-card event fall through to the message path unchanged", async () => {
+    const { deps } = await makeDeps({ allowFrom: ["users/123"] });
+    const adapter = createGoogleChatAdapter(deps);
+    const handler = vi.fn();
+    adapter.onMessage(handler);
+
+    // A normal MESSAGE is not a CARD_CLICKED; it flows through the mapper + gate.
+    await adapter.handleChatEvent(
+      makeEvent({ senderName: "users/123", text: "hi there" }),
+    );
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    const msg = handler.mock.calls[0][0] as NormalizedMessage;
+    expect(msg.text).toBe("hi there");
+    expect(msg.metadata.isButtonCallback).toBeUndefined();
   });
 });
