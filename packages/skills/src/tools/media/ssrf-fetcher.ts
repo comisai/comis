@@ -259,7 +259,25 @@ async function runAuthenticatedFetch(
 
       for (let hop = 0; hop <= maxHops; hop++) {
         // Per-hop SSRF firewall: DNS-resolve + IP-range/metadata classification.
-        const validated = await validateUrl(current);
+        // A hop whose ORIGIN exactly matches a configured trusted origin (a
+        // self-hosted homeserver / the test emulator on loopback) is validated
+        // leniently via validateLocalServerUrl (loopback permitted) — mirroring the
+        // single-shot path — so an authed download from a private/loopback media
+        // host is reachable; EVERY other hop stays on strict validateUrl. This
+        // allowance is INDEPENDENT of the token-drop below: the bearer still rides
+        // only an authAllowHosts hop, so a trusted-but-off-allowlist redirect target
+        // (a CDN on another host) is reached WITHOUT the token.
+        let hopOrigin: string | undefined;
+        try {
+          hopOrigin = new URL(current).origin;
+        } catch {
+          /* malformed URL → hopOrigin stays undefined → strict validateUrl rejects it below */
+        }
+        const isTrustedOrigin =
+          hopOrigin !== undefined && (config.trustedFetchOrigins ?? []).includes(hopOrigin);
+        const validated = isTrustedOrigin
+          ? await validateLocalServerUrl(current, [new URL(current).hostname])
+          : await validateUrl(current);
         if (!validated.ok) {
           logger.error(
             {
