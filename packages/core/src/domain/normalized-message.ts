@@ -33,6 +33,15 @@ export const AttachmentSchema = z.strictObject({
     voiceMeta: VoiceMetaSchema.optional(),
     /** Transcription text (filled by STT pipeline) */
     transcription: z.string().optional(),
+    /**
+     * The bytes at `url` are end-to-end encrypted and require a per-attachment key
+     * to decrypt. Set by adapters for E2EE channels when the inbound event indicated
+     * encryption. A resolver that cannot obtain the key MUST fail closed (return an
+     * error) rather than hand back the undecryptable ciphertext as if it were the
+     * media — the key side-channel is best-effort (bounded/evictable), so a missing
+     * key for an attachment marked here is a decryption failure, not a plaintext blob.
+     */
+    encrypted: z.boolean().optional(),
   });
 
 export type Attachment = z.infer<typeof AttachmentSchema>;

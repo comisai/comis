@@ -402,6 +402,57 @@ describe("mapMatrixEventToNormalized — inbound media", () => {
     expect(parseMessage(result).ok).toBe(true);
   });
 
+  it("marks an encrypted media attachment so the resolver can fail closed if its key is unavailable", () => {
+    const file = encryptedFileRecord("mxc://hs/enc");
+    const result = mapMatrixEventToNormalized(
+      makeEvent({
+        content: { msgtype: "m.image", body: "secret.png", file, info: { mimetype: "image/png" } },
+      }),
+      makeRoom(),
+      { isDirect: false },
+    );
+    // The attachment is flagged encrypted — the durable signal the resolver needs so a
+    // later cache miss (eviction under load) fails closed instead of serving ciphertext.
+    expect(result?.attachments[0]?.encrypted).toBe(true);
+    expect(parseMessage(result).ok).toBe(true);
+  });
+
+  it("does not mark a plaintext media attachment as encrypted", () => {
+    const result = mapMatrixEventToNormalized(
+      makeEvent({
+        content: { msgtype: "m.image", body: "cat.png", url: "mxc://hs/abc", info: { mimetype: "image/png" } },
+      }),
+      makeRoom(),
+      { isDirect: false },
+    );
+    // A genuine plaintext room carries no content.file → no encryption indicator.
+    expect(result?.attachments[0]?.encrypted).toBeUndefined();
+  });
+
+  it("marks the attachment encrypted (fail-closed) when a content.file structure is present but its key material is incomplete", () => {
+    // The event carried a content.file (encryption was intended) but it is missing key
+    // material, AND a top-level content.url is present. Without the marker the resolver
+    // would serve the content.url bytes as plaintext; with it, the resolver fails closed
+    // because no key was cached for this attachment.
+    const cacheEncryptedFile = vi.fn();
+    const result = mapMatrixEventToNormalized(
+      makeEvent({
+        content: {
+          msgtype: "m.image",
+          body: "secret.png",
+          file: { url: "mxc://hs/enc", v: "v2" }, // structurally incomplete (no key/iv/hashes)
+          url: "mxc://hs/plain",
+        },
+      }),
+      makeRoom(),
+      { isDirect: false, cacheEncryptedFile },
+    );
+    expect(result?.attachments[0]?.encrypted).toBe(true);
+    // No usable key was extracted, so nothing is written to the key side-channel.
+    expect(cacheEncryptedFile).not.toHaveBeenCalled();
+    expect(parseMessage(result).ok).toBe(true);
+  });
+
   it("does not emit an attachment or invoke the callback for a plain text message", () => {
     const cacheEncryptedFile = vi.fn();
     const result = mapMatrixEventToNormalized(makeEvent(), makeRoom(), { isDirect: false, cacheEncryptedFile });

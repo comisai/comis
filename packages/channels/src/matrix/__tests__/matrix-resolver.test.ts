@@ -199,6 +199,53 @@ describe("matrix-resolver / createMatrixResolver", () => {
     CRYPTO_TIMEOUT_MS,
   );
 
+  it("fails closed when an attachment marked encrypted has no cached key, never returning the ciphertext as plaintext", async () => {
+    // The inbound event indicated E2EE (content.file present) so the attachment is
+    // marked encrypted, but the key record is absent (getEncryptedFile → undefined):
+    // evicted from the bounded cache under a media flood, or a structurally-incomplete
+    // record. The resolver must NOT fall into the plaintext branch and hand back the
+    // undecryptable ciphertext as if it were the media.
+    const ciphertext = Buffer.from("random-ciphertext-bytes-that-are-not-media-0123456789");
+    const media = makeMediaClient();
+    const deps = baseDeps(media, {
+      getEncryptedFile: () => undefined, // MISS for an attachment that WAS encrypted
+      ssrfFetcher: {
+        fetch: vi.fn().mockResolvedValue(
+          ok({
+            buffer: ciphertext,
+            mimeType: "application/octet-stream",
+            sizeBytes: ciphertext.length,
+            resolvedIp: "1.2.3.4",
+          }),
+        ),
+      },
+    });
+    const resolver = createMatrixResolver(deps);
+
+    const encryptedAttachment: Attachment = { type: "image", url: MXC, encrypted: true };
+    const result = await resolver.resolve(encryptedAttachment);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/key unavailable|encrypted/i);
+      // The ciphertext is never returned as if it were resolved media.
+      expect(result.error.message).not.toContain(ciphertext.toString());
+    }
+  });
+
+  it("resolves a plaintext attachment (not marked encrypted) on a cache miss as before", async () => {
+    // Contrast with the fail-closed case: a genuinely-plaintext attachment carries no
+    // encryption indicator, so a cache miss is the normal plaintext path, not a failure.
+    const media = makeMediaClient();
+    const deps = baseDeps(media, { getEncryptedFile: () => undefined });
+    const resolver = createMatrixResolver(deps);
+
+    const result = await resolver.resolve({ type: "image", url: MXC }); // no `encrypted`
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.buffer.equals(PNG_1X1)).toBe(true);
+  });
+
   it("rejects a resolved body that exceeds the configured byte cap", async () => {
     const oversized = Buffer.alloc(32);
     const media = makeMediaClient();
