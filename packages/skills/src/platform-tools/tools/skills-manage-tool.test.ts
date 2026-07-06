@@ -107,6 +107,19 @@ describe("skills_manage tool", () => {
       );
       expect(sourceSchema).toContain("clawhub");
     });
+
+    it("confirm description enumerates both warnable classes and never a flat refusal", () => {
+      const tool = createSkillsManageTool(mockRpcCall);
+      const confirm = (tool.parameters as { properties: { confirm: { description?: string } } }).properties
+        .confirm;
+      const desc = (confirm.description ?? "").toLowerCase();
+      // Both warnable classes the wire contract documents must be named: the
+      // pin/hash divergence AND the non-official publisher.
+      expect(desc).toMatch(/hash|pin/);
+      expect(desc).toContain("official");
+      // Still makes clear confirm never overrides a flat collision refusal.
+      expect(desc).toContain("collision");
+    });
   });
 
   // -----------------------------------------------------------------------
