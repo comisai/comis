@@ -95,6 +95,8 @@ export const ProvenanceRecordSchema = z.strictObject({
   officialPublisher: z.boolean().optional(),
   /** Whether a local edit has diverged from the imported pin. */
   locallyModified: z.boolean().optional(),
+  /** Normalized registry origin, or the clawhub token; absent for archive/github/upload. */
+  registry: z.string().optional(),
 });
 
 /** A validated provenance record. */
