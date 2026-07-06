@@ -432,6 +432,29 @@ describe("validateNonInteractiveOptions", () => {
     }
   });
 
+  it("rejects an unknown --googlechat-audience-type (closed audience-shape vocabulary)", () => {
+    const opts = validOpts({
+      googlechatAudienceType:
+        "numeric" as NonInteractiveOptions["googlechatAudienceType"],
+    });
+    expect(() => validateNonInteractiveOptions(opts)).toThrow(NonInteractiveError);
+    try {
+      validateNonInteractiveOptions(opts);
+    } catch (e) {
+      expect((e as NonInteractiveError).field).toBe("googlechatAudienceType");
+      expect((e as NonInteractiveError).message).toContain("project-number");
+      expect((e as NonInteractiveError).message).toContain("app-url");
+    }
+  });
+
+  it("accepts each valid --googlechat-audience-type value", () => {
+    for (const audienceType of ["project-number", "app-url"] as const) {
+      expect(() =>
+        validateNonInteractiveOptions(validOpts({ googlechatAudienceType: audienceType })),
+      ).not.toThrow();
+    }
+  });
+
   it("throws NonInteractiveError for missing googlechat sa key", () => {
     const opts = validOpts({ channels: ["googlechat"] });
     expect(() => validateNonInteractiveOptions(opts)).toThrow(NonInteractiveError);
@@ -704,6 +727,27 @@ describe("buildNonInteractiveState", () => {
     expect(gc.mode).toBe("webhook");
     expect(gc.audience).toBe("123456789012");
     expect(gc.validated).toBe(false);
+  });
+
+  it("threads --googlechat-audience-type into a webhook channel so the app-url shape is recorded", () => {
+    // The non-interactive parity for the interactive audience-type prompt: a CI
+    // webhook config whose audience is the endpoint URL must record
+    // audienceType: "app-url", or the config keeps the schema default
+    // ("project-number") and the inbound verifier silently rejects every request.
+    const state = buildNonInteractiveState(
+      validOpts({
+        channels: ["googlechat"],
+        googlechatSaKey: '{"client_email":"bot@x.iam.gserviceaccount.com","private_key":"pk"}',
+        googlechatAudience: "https://chat.example.com/hook",
+        googlechatAudienceType: "app-url",
+        googlechatMode: "webhook",
+      }),
+    );
+    const gc = state.channels![0];
+    expect(gc.type).toBe("googlechat");
+    expect(gc.mode).toBe("webhook");
+    expect(gc.audience).toBe("https://chat.example.com/hook");
+    expect(gc.audienceType).toBe("app-url");
   });
 
   it("resolves a --googlechat-sa-key file PATH to the key contents, not the path string", () => {

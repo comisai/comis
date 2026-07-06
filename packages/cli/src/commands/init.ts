@@ -131,6 +131,14 @@ function buildNonInteractiveOptionsFromCommander(
     // as --msteams-auth-mode / --storage above).
     googlechatMode: options.googlechatMode as "pubsub" | "webhook" | undefined,
     googlechatAudience: options.googlechatAudience as string | undefined,
+    // Commander yields an arbitrary string; this assertion to the closed union is
+    // made sound by validateNonInteractiveOptions, which runs before any consumer
+    // and rejects a value outside project-number|app-url (same cast-then-validate
+    // contract as --googlechat-mode above).
+    googlechatAudienceType: options.googlechatAudienceType as
+      | "project-number"
+      | "app-url"
+      | undefined,
     imageProvider: options.imageProvider as string | undefined,
     imageApiKey: options.imageApiKey as string | undefined,
     videoProvider: options.videoProvider as string | undefined,
@@ -213,6 +221,7 @@ export function registerInitCommand(program: Command): void {
     .option("--googlechat-subscription <name>", "Google Chat Pub/Sub subscription (pubsub mode): projects/P/subscriptions/S")
     .option("--googlechat-mode <mode>", "Google Chat inbound mode: pubsub|webhook")
     .option("--googlechat-audience <aud>", "Google Chat inbound JWT audience (webhook mode)")
+    .option("--googlechat-audience-type <type>", "Google Chat webhook audience type: project-number|app-url (default: project-number)")
     // Media generation
     .option("--image-provider <id>", "Image generation provider: auto|fal|openai|openai-codex|google|openrouter")
     .option("--image-api-key <key>", "Image provider API key (e.g. FAL_KEY; reuses --api-key for a matching main provider)")

@@ -75,6 +75,7 @@ describe("registerInitCommand", () => {
     expect(optionLongs).toContain("--googlechat-subscription");
     expect(optionLongs).toContain("--googlechat-mode");
     expect(optionLongs).toContain("--googlechat-audience");
+    expect(optionLongs).toContain("--googlechat-audience-type");
 
     // Media generation + processing (8)
     expect(optionLongs).toContain("--image-provider");
@@ -103,11 +104,11 @@ describe("registerInitCommand", () => {
     expect(optionLongs).toContain("--reset-scope");
   });
 
-  it("has exactly 42 options", () => {
+  it("has exactly 43 options", () => {
     const program = new Command();
     registerInitCommand(program);
     const initCmd = program.commands.find((c) => c.name() === "init")!;
-    expect(initCmd.options).toHaveLength(42);
+    expect(initCmd.options).toHaveLength(43);
   });
 
   it("parses --channels as comma-separated list", () => {

@@ -91,6 +91,7 @@ export type NonInteractiveOptions = {
   googlechatSubscription?: string;
   googlechatMode?: "pubsub" | "webhook";
   googlechatAudience?: string;
+  googlechatAudienceType?: "project-number" | "app-url";
   // Media generation
   imageProvider?: string;
   imageApiKey?: string;
@@ -313,6 +314,21 @@ export function validateNonInteractiveOptions(
     );
   }
 
+  // --googlechat-audience-type, when provided, must be one of the closed
+  // audience-shape vocabulary. The webhook inbound verifier binds to a different
+  // key set and claim shape per value, so a typo written verbatim into config.yaml
+  // would silently reject every inbound request. Reject early, mirroring the
+  // interactive select prompt.
+  if (
+    opts.googlechatAudienceType !== undefined &&
+    !["project-number", "app-url"].includes(opts.googlechatAudienceType)
+  ) {
+    throw new NonInteractiveError(
+      "--googlechat-audience-type must be one of: project-number, app-url",
+      "googlechatAudienceType",
+    );
+  }
+
   // Validate channel credentials
   if (opts.channels && opts.channels.length > 0) {
     for (const channel of opts.channels) {
@@ -505,6 +521,11 @@ export function buildNonInteractiveState(
                 : undefined,
             subscriptionName: opts.googlechatSubscription,
             audience: opts.googlechatAudience,
+            // Audience type is only meaningful in webhook mode; thread it through
+            // when supplied so write-config records it (pubsub omits it — the
+            // schema default is correct there). An absent flag leaves it unset, so
+            // the schema default (project-number) applies.
+            audienceType: opts.googlechatAudienceType,
             mode: opts.googlechatMode,
             validated: false,
           });
