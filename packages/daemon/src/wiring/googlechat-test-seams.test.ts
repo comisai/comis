@@ -9,15 +9,27 @@
  * swaps in a LOCAL-JWKS verifier that STILL fully verifies (signature + issuer +
  * audience, plus the app-url sender-binding email claim) — it only changes the
  * key source, never relaxes a control, so it is never an auth bypass. Env is read
- * through the injected getter (never `process.env`); the file is read through an
- * injected `readFileImpl`.
+ * through the injected getter (never the ambient process environment); the file
+ * is read through an injected `readFileImpl`.
  *
  * @module
  */
 
+import { generateKeyPairSync, createSign } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type { ComisLogger } from "@comis/core";
 import { resolveTestGoogleChatVerifier } from "./googlechat-test-seams.js";
+
+/** The issuer of a project-number Chat-system event token. */
+const CHAT_SYSTEM_ISSUER = "chat@system.gserviceaccount.com";
+/** Google's OIDC issuer for an app-url ID token. */
+const GOOGLE_OIDC_ISSUER = "https://accounts.google.com";
+/** The sender-binding email an app-url token must carry to prove the Chat system. */
+const CHAT_SYSTEM_EMAIL = "chat@system.gserviceaccount.com";
+
+function b64url(input: string | Buffer): string {
+  return Buffer.from(input).toString("base64url");
+}
 
 /** A ComisLogger whose warn spy records every argument for content-free asserts. */
 function makeLoggerSpy(): {
@@ -40,6 +52,40 @@ function makeLoggerSpy(): {
   } as unknown as ComisLogger;
   const serialized = (): string => JSON.stringify(warn.mock.calls);
   return { logger, warn, serialized };
+}
+
+/**
+ * Generate an RS256 keypair with node:crypto (no jose dep in the daemon package),
+ * serialize its public JWKS, and return a minter that signs an arbitrary claim
+ * set. The token is exactly what jose's jwtVerify (RS256) accepts, so the
+ * @comis/channels local-JWKS verifier verifies it offline.
+ */
+function makeJwks(): {
+  jwksJson: string;
+  jwkModulus: string;
+  mint: (claims: Record<string, unknown>) => string;
+} {
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+  });
+  const jwk = publicKey.export({ format: "jwk" }) as Record<string, unknown>;
+  jwk.kid = "gc-seam-1";
+  jwk.alg = "RS256";
+  jwk.use = "sig";
+  const jwksJson = JSON.stringify({ keys: [jwk] });
+  const mint = (claims: Record<string, unknown>): string => {
+    const now = Math.floor(Date.now() / 1000);
+    const header = b64url(
+      JSON.stringify({ alg: "RS256", typ: "JWT", kid: "gc-seam-1" }),
+    );
+    const payload = b64url(
+      JSON.stringify({ iat: now, exp: now + 300, ...claims }),
+    );
+    const signingInput = `${header}.${payload}`;
+    const sig = createSign("RSA-SHA256").update(signingInput).sign(privateKey);
+    return `${signingInput}.${b64url(sig)}`;
+  };
+  return { jwksJson, jwkModulus: String(jwk.n), mint };
 }
 
 describe("resolveTestGoogleChatVerifier — default (production remote-JWKS) path", () => {
@@ -90,5 +136,122 @@ describe("resolveTestGoogleChatVerifier — default (production remote-JWKS) pat
       getEnv,
     );
     expect((await verify(undefined)).ok).toBe(false);
+  });
+});
+
+describe("resolveTestGoogleChatVerifier — local-JWKS seam path (COMIS_GOOGLECHAT_TEST_JWKS set)", () => {
+  it("app-url: FULL offline verify — valid token ok, wrong-audience err (not a bypass) + content-free WARN", async () => {
+    const { jwksJson, jwkModulus, mint } = makeJwks();
+    const readFileImpl = vi.fn((_p: string): string => jwksJson);
+    const { logger, warn, serialized } = makeLoggerSpy();
+    const getEnv = (k: string): string | undefined =>
+      k === "COMIS_GOOGLECHAT_TEST_JWKS" ? "/seam/app-url.jwks.json" : undefined;
+
+    const verify = resolveTestGoogleChatVerifier(
+      { audienceType: "app-url", audience: "https://example.com/app/" },
+      getEnv,
+      { readFileImpl, logger },
+    );
+
+    // Seam activation is synchronous at resolve time, before any verify — a
+    // deterministic, network-free assertion. On the default path neither fires.
+    expect(readFileImpl).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    // A correctly-bound token (right key, issuer, audience, sender email) is
+    // ACCEPTED — the local key set verifies offline.
+    const good = mint({
+      iss: GOOGLE_OIDC_ISSUER,
+      aud: "https://example.com/app/",
+      email: CHAT_SYSTEM_EMAIL,
+      email_verified: true,
+    });
+    expect((await verify(`Bearer ${good}`)).ok).toBe(true);
+
+    // A wrong-audience token is REJECTED — a real verify, never accept-all.
+    const wrongAudience = mint({
+      iss: GOOGLE_OIDC_ISSUER,
+      aud: "https://attacker.example/app/",
+      email: CHAT_SYSTEM_EMAIL,
+      email_verified: true,
+    });
+    expect((await verify(`Bearer ${wrongAudience}`)).ok).toBe(false);
+
+    // The local verifier carries no logger, so the activation WARN is the only
+    // one — rejections stay opaque at this layer.
+    expect(warn).toHaveBeenCalledTimes(1);
+    const warnArg = warn.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(warnArg).toMatchObject({
+      channelType: "googlechat",
+      errorKind: "config",
+    });
+    expect(String(warnArg.hint)).toContain("COMIS_GOOGLECHAT_TEST_JWKS");
+    // Content-free: neither a token nor any JWKS key material reaches the WARN.
+    const dump = serialized();
+    expect(dump).not.toContain(good);
+    expect(dump).not.toContain(jwkModulus);
+  });
+
+  it("project-number: FULL offline verify — valid token ok, wrong-audience err", async () => {
+    const { jwksJson, mint } = makeJwks();
+    const readFileImpl = vi.fn((_p: string): string => jwksJson);
+    const { logger, warn } = makeLoggerSpy();
+    const getEnv = (k: string): string | undefined =>
+      k === "COMIS_GOOGLECHAT_TEST_JWKS" ? "/seam/pn.jwks.json" : undefined;
+
+    const verify = resolveTestGoogleChatVerifier(
+      { audienceType: "project-number", audience: "1234567890" },
+      getEnv,
+      { readFileImpl, logger },
+    );
+
+    expect(readFileImpl).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    const good = mint({ iss: CHAT_SYSTEM_ISSUER, aud: "1234567890" });
+    expect((await verify(`Bearer ${good}`)).ok).toBe(true);
+
+    const wrongAudience = mint({ iss: CHAT_SYSTEM_ISSUER, aud: "9999999999" });
+    expect((await verify(`Bearer ${wrongAudience}`)).ok).toBe(false);
+  });
+
+  it("threads COMIS_GOOGLECHAT_TEST_ISSUER into the local verifier (synthetic app-url issuer)", async () => {
+    const { jwksJson, mint } = makeJwks();
+    const readFileImpl = vi.fn((_p: string): string => jwksJson);
+    const { logger } = makeLoggerSpy();
+    const emulatorIssuer = "https://emulator.test/oidc";
+    const getEnv = (k: string): string | undefined =>
+      k === "COMIS_GOOGLECHAT_TEST_JWKS"
+        ? "/seam/iss.jwks.json"
+        : k === "COMIS_GOOGLECHAT_TEST_ISSUER"
+          ? emulatorIssuer
+          : undefined;
+
+    const verify = resolveTestGoogleChatVerifier(
+      { audienceType: "app-url", audience: "https://example.com/app/" },
+      getEnv,
+      { readFileImpl, logger },
+    );
+
+    expect(readFileImpl).toHaveBeenCalledTimes(1);
+
+    // A token from the synthetic emulator issuer verifies under the override...
+    const emulatorToken = mint({
+      iss: emulatorIssuer,
+      aud: "https://example.com/app/",
+      email: CHAT_SYSTEM_EMAIL,
+      email_verified: true,
+    });
+    expect((await verify(`Bearer ${emulatorToken}`)).ok).toBe(true);
+
+    // ...while a token from the default Google issuer is now REJECTED — the
+    // override replaced the expected issuer, proving it was threaded through.
+    const googleToken = mint({
+      iss: GOOGLE_OIDC_ISSUER,
+      aud: "https://example.com/app/",
+      email: CHAT_SYSTEM_EMAIL,
+      email_verified: true,
+    });
+    expect((await verify(`Bearer ${googleToken}`)).ok).toBe(false);
   });
 });
