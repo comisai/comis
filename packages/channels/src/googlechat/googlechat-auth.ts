@@ -1,10 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Google Chat outbound auth: a service-account JWT-bearer access-token provider
- * with a PER-SCOPE expiry+skew cache.
+ * Google Chat auth — the two security-critical, transport-agnostic halves.
  *
- * Every Chat API and Pub/Sub REST call rides a `Bearer` token minted here. On a
- * cache miss the provider loads the service-account private key with `jose`
+ *  1. Inbound event JWT verification (webhook mode): a cheap Bearer-presence
+ *     pre-gate that short-circuits the no-token case with no network, then
+ *     library-backed (jose) signature + issuer + audience + expiry verification
+ *     against Google's signing keys — dual-audience by config (`project-number`
+ *     verifies against the Chat-system JWK set; `app-url` against Google's OIDC
+ *     certs). Never hand-rolled crypto.
+ *  2. Outbound service-account token mint: a per-scope expiry+skew-cached
+ *     JWT-bearer access token.
+ *
+ * Every Chat API and Pub/Sub REST call rides a `Bearer` token minted by half (2).
+ * On a cache miss the provider loads the service-account private key with `jose`
  * (`importPKCS8`, RS256), signs a short-lived assertion (`iss` = `sub` = the SA
  * client email, `aud` = the token endpoint, `scope` = the requested grant,
  * `exp - iat <= 1h`), and exchanges it at the OAuth2 token endpoint for an access
@@ -17,10 +25,10 @@
  * service-account assertion) and the per-scope cache differ. `jose` is the crypto
  * layer — the JWT is never hand-assembled.
  *
- * Secret discipline: the private key, the signed assertion, and the minted access
- * token are only ever handed to `jose` or the request body. They are NEVER placed
- * in a log field — failure branches log only `errorKind` + `hint` (+ `status` /
- * `durationMs`).
+ * Secret discipline: the private key, the signed assertion, the minted access
+ * token, and every inbound token are only ever handed to `jose` or the request
+ * body. They are NEVER placed in a log field — failure branches log only
+ * `errorKind` + `hint` (+ `status` / `durationMs`).
  *
  * Framework-agnostic on purpose: no HTTP-framework import lives here, and the
  * logger is injected (this package must not import the infra logger).
@@ -31,7 +39,12 @@
 import { systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import { ok, err, fromPromise, type Result } from "@comis/shared";
-import { importPKCS8, SignJWT } from "jose";
+import {
+  importPKCS8,
+  SignJWT,
+  createRemoteJWKSet,
+  jwtVerify,
+} from "jose";
 import { classifyGoogleChatError } from "./errors.js";
 
 /** The Google OAuth2 endpoint that exchanges an SA assertion for an access token. */
@@ -316,5 +329,136 @@ export function createGoogleChatTokenProvider(
       );
       return ok(accessToken);
     },
+  };
+}
+
+// --- Inbound event JWT verification (the webhook-mode trust anchor) ---
+
+/**
+ * The issuer of a project-number-audience Chat event token: Google's Chat system
+ * service account. The same string appears as the `email` claim on an app-url
+ * OIDC token — a distinct claim on a distinct token shape; the two are never
+ * conflated, and an app-url token's issuer is Google's OIDC issuer, not this.
+ */
+const CHAT_SYSTEM_ISSUER = "chat@system.gserviceaccount.com";
+
+/**
+ * Accepted issuers for an app-url OIDC ID token — Google's OIDC issuer in both
+ * the scheme-qualified and bare forms (jose's `issuer` option accepts an array).
+ */
+const GOOGLE_OIDC_ISSUERS = [
+  "https://accounts.google.com",
+  "accounts.google.com",
+];
+
+/**
+ * The Chat-system JWK set — verifies a project-number-audience token's signature.
+ * A remote key set with jose's built-in caching and `kid` rotation; the accepted
+ * signature algorithm is pinned separately as an explicit `algorithms` allowlist
+ * on the verify call. Constructed once at module scope. The JWK endpoint (not the
+ * x509/PEM one) is used because jose consumes a JWKS.
+ */
+const CHAT_SYSTEM_JWKS = createRemoteJWKSet(
+  new URL(
+    "https://www.googleapis.com/service_accounts/v1/jwk/chat@system.gserviceaccount.com",
+  ),
+);
+
+/**
+ * Google's OIDC certificate JWK set — verifies an app-url OIDC token's signature.
+ * Constructed once at module scope; the JWK endpoint (`/oauth2/v3/certs`), not the
+ * x509/PEM one, so jose can consume it.
+ */
+const GOOGLE_OIDC_JWKS = createRemoteJWKSet(
+  new URL("https://www.googleapis.com/oauth2/v3/certs"),
+);
+
+/** Options for building an inbound Chat-event JWT verifier. */
+export interface GoogleChatInboundVerifierOpts {
+  /**
+   * Which audience shape the configured endpoint expects:
+   *  - `project-number` → a self-signed Chat-system JWT (`aud` = the Cloud
+   *    project number, `iss` = the Chat system SA), verified against the
+   *    Chat-system JWK set.
+   *  - `app-url` → a Google OIDC ID token (`aud` = the endpoint URL, `iss` =
+   *    Google's OIDC issuer), verified against Google's OIDC certs.
+   */
+  audienceType: "project-number" | "app-url";
+  /**
+   * The expected `aud` claim — the project number or the endpoint URL. A blank
+   * audience fails closed BEFORE any key-set access (jose treats an empty
+   * `audience` as "no audience constraint", which would accept a token minted for
+   * any project/endpoint).
+   */
+  audience: string;
+  /**
+   * Key set used to verify the signature. Defaults to the audienceType's remote
+   * Google JWK set; injected with a local key set in tests so verification runs
+   * offline.
+   */
+  jwks?: Parameters<typeof jwtVerify>[1];
+  /** Expected issuer override. Defaults to the audienceType's Google issuer. */
+  issuer?: string;
+  /**
+   * Optional logger for a rejection WARN carrying only `channelType` / `hint` /
+   * `errorKind`. The token is never logged.
+   */
+  logger?: ComisLogger;
+}
+
+/**
+ * Build an inbound Chat-event JWT verifier. The returned closure takes the raw
+ * `Authorization` header and resolves to `ok(undefined)` for a token verified
+ * against the configured audience shape, `err(...)` otherwise — the expected
+ * audience is closed over at construction.
+ *
+ * A missing or non-Bearer header is rejected by a cheap pre-gate with no key-set
+ * access (no network). A blank expected audience fails closed before any key-set
+ * access. A present token is verified by jose against the issuer, the audience,
+ * the signature, the expiry, and an `["RS256"]` algorithm allowlist. The verify
+ * error stays here (the caller surfaces an opaque rejection); the token is never
+ * logged.
+ */
+export function createGoogleChatInboundVerifier(
+  opts: GoogleChatInboundVerifierOpts,
+): (authHeader: string | undefined) => Promise<Result<void, Error>> {
+  const isProjectNumber = opts.audienceType === "project-number";
+  const keySet =
+    opts.jwks ?? (isProjectNumber ? CHAT_SYSTEM_JWKS : GOOGLE_OIDC_JWKS);
+  const issuer =
+    opts.issuer ?? (isProjectNumber ? CHAT_SYSTEM_ISSUER : GOOGLE_OIDC_ISSUERS);
+  const logger = opts.logger;
+
+  return async (authHeader) => {
+    // Fail closed on a blank expected audience before any key-set access: jose
+    // treats an empty `audience` as "no audience constraint", which would accept
+    // a token minted for any other project/endpoint.
+    if (!opts.audience) {
+      return err(new Error("missing expected audience"));
+    }
+    // Cheap pre-gate: no Bearer token → reject before any key-set access.
+    if (!authHeader?.startsWith("Bearer ")) {
+      return err(new Error("missing bearer token"));
+    }
+    const token = authHeader.slice("Bearer ".length);
+    const verified = await fromPromise(
+      jwtVerify(token, keySet, {
+        issuer,
+        audience: opts.audience,
+        algorithms: ["RS256"],
+      }),
+    );
+    if (!verified.ok) {
+      logger?.warn(
+        {
+          channelType: "googlechat" as const,
+          hint: "Reject the unverified inbound event; confirm the caller is Google Chat",
+          errorKind: "auth" as const,
+        },
+        "Inbound event rejected: token verification failed",
+      );
+      return err(verified.error);
+    }
+    return ok(undefined);
   };
 }
