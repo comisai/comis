@@ -104,6 +104,7 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
     tgPlugin,
     linePlugin,
     msTeamsPlugin,
+    matrixPlugin,
     ssrfFetcher,
     linkRunner,
     transcriber,
@@ -245,6 +246,21 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
         maxBytes: maxMediaBytes,
         logger: channelsLogger,
         mediaAuthAllowHosts: channelConfig?.msteams?.mediaAuthAllowHosts ?? [],
+      }),
+    );
+  }
+
+  // Matrix: resolver created from the plugin handle (closes over the started
+  // media client + the encrypted-file cache). The SAME injected auth-capable
+  // ssrfFetcher. Matrix has no media-auth config key, so an empty allowlist is
+  // passed and the resolver scopes the token to the homeserver host internally.
+  if (matrixPlugin) {
+    platformResolvers.push(
+      matrixPlugin.createResolver({
+        ssrfFetcher,
+        maxBytes: maxMediaBytes,
+        logger: channelsLogger,
+        mediaAuthAllowHosts: [],
       }),
     );
   }

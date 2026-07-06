@@ -39,6 +39,7 @@ import {
   type EmailAdapterDeps,
   type MsTeamsAdapterHandle,
   type MsTeamsPluginHandle,
+  type MatrixPluginHandle,
   type TeamsActivity,
 } from "@comis/channels";
 import { createMsTeamsIngress } from "@comis/gateway";
@@ -74,6 +75,10 @@ export interface AdapterBootstrapResult {
    *  creation — mirrors tgPlugin/linePlugin). Undefined when the channel is
    *  disabled or its credentials are invalid. */
   msTeamsPlugin?: MsTeamsPluginHandle;
+  /** Matrix plugin handle (needed by the media pipeline for the mxc resolver —
+   *  mirrors tgPlugin/linePlugin/msTeamsPlugin). Undefined when the channel is
+   *  disabled or its credentials/homeserver are invalid. */
+  matrixPlugin?: MatrixPluginHandle;
 }
 
 // ---------------------------------------------------------------------------
@@ -113,6 +118,7 @@ export async function bootstrapAdapters(deps: {
   let linePlugin: LinePluginHandle | undefined;
   let msTeamsIngress: import("hono").Hono | undefined;
   let msTeamsPlugin: MsTeamsPluginHandle | undefined;
+  let matrixPlugin: MatrixPluginHandle | undefined;
 
   // Helper: attempt to get a secret, return undefined if not found
   const getSecret = (name: string): string | undefined => {
@@ -563,6 +569,9 @@ export async function bootstrapAdapters(deps: {
       });
       adaptersByType.set("matrix", plugin.adapter);
       channelPlugins.set("matrix", plugin);
+      // Capture the handle so the media pipeline can build the mxc resolver over
+      // its started media-client + encrypted-file getters (mirrors msTeamsPlugin).
+      matrixPlugin = plugin;
       channelsLogger.info({ channelType: "matrix", userId }, "Channel adapter initialized");
     } else {
       channelsLogger.warn({ hint: "Set channels.matrix.homeserverUrl + accessToken/password (or MATRIX_ACCESS_TOKEN)", errorKind: "config" as const }, "Matrix enabled but not configured");
@@ -576,5 +585,5 @@ export async function bootstrapAdapters(deps: {
   }
   } // end if (channelConfig)
 
-  return { adaptersByType, tgPlugin, linePlugin, channelPlugins, msTeamsIngress, msTeamsPlugin };
+  return { adaptersByType, tgPlugin, linePlugin, channelPlugins, msTeamsIngress, msTeamsPlugin, matrixPlugin };
 }
