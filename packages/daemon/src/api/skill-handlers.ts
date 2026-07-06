@@ -65,6 +65,7 @@ import { unwindImportedSkillOnDelete, repinLocallyModifiedSkill } from "../skill
 import {
   importThroughPipeline,
   resolveWellKnownFileSet,
+  resolveClawHubFileSet,
   uploadFileSetIdentifier,
   archiveBytesIdentifier,
   formatImportReject,
@@ -303,6 +304,11 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       let identifier: string;
       // Set ONLY for a registry source — threaded into provenance below.
       let registryOrigin: string | undefined;
+      // Set ONLY for a clawhub source — the resolver-derived publisher signal +
+      // the caps agent's requireOfficialPublisher policy, threaded into the
+      // two-warnable-classes commit collector below.
+      let officialPublisher: boolean | undefined;
+      let requireOfficialPublisher: boolean | undefined;
       const isArchive =
         params.source === "archive" ||
         params.archiveUrl !== undefined ||
@@ -342,6 +348,29 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         identifier = resolved.value.identifier;
         registryOrigin = resolved.value.registryOrigin;
         acqSource = "wellknown";
+      } else if (params.source === "clawhub") {
+        // ClawHub install-resolver: the runner's allowlist gate (fail-closed, before
+        // any fetch) + the SSRF-pinned resolver fetch the install decision + verdict
+        // BEFORE downloading the release zip; the archive bytes then enter the SAME
+        // staged pipeline as every other source (never a parallel path).
+        const registryName = (params.name ?? "").trim();
+        if (!registryName) {
+          throw new Error("A ClawHub import requires 'name' as @owner/slug (e.g. @acme/pdf-extractor).");
+        }
+        const resolved = await resolveClawHubFileSet(deps, {
+          name: registryName,
+          scope,
+          agentId: callingAgentId,
+        });
+        if (!resolved.ok) throw new Error(formatImportReject(resolved.error));
+        acquireInput = { kind: "archiveBytes", base64: resolved.value.archiveBytes };
+        identifier = resolved.value.identifier; // "@owner/slug" (stable → PROV-04)
+        // The daemon INFERS the registry token for a clawhub source (the operator
+        // passes no registry); the literal matches the runner gate's token.
+        registryOrigin = "clawhub";
+        acqSource = "clawhub";
+        officialPublisher = resolved.value.officialPublisher;
+        requireOfficialPublisher = resolved.value.requireOfficialPublisher;
       } else {
         const url = (params.url ?? "").trim();
         if (!url) {
@@ -391,6 +420,8 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         skillsDir: importBaseDir,
         ...(params.confirm !== undefined && { confirm: params.confirm }),
         ...(registryOrigin !== undefined && { registry: registryOrigin }),
+        ...(officialPublisher !== undefined && { officialPublisher }),
+        ...(requireOfficialPublisher !== undefined && { requireOfficialPublisher }),
         ctx: importCtx,
       });
       if (!imported.ok) throw new Error(formatImportReject(imported.error));
@@ -402,6 +433,10 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         fileCount: imported.value.fileCount,
         source: imported.value.commit.source,
         resolvedAgentId: callingAgentId,
+        ...(imported.value.commit.acknowledgedWarnings !== undefined &&
+          imported.value.commit.acknowledgedWarnings.length > 0 && {
+            warnings: imported.value.commit.acknowledgedWarnings,
+          }),
       };
       if (IS_DEV) SkillsImportContract.response.parse(result);
       return result;
