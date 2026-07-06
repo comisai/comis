@@ -2117,7 +2117,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // pass accessor closures for sessionTracker / inboundMessageIdResolver
   // (const `{current?:T}` container pattern; populated after setupChannels
   // returns by mutating the .current field).
-  const { adaptersByType, channelManager, resolveAttachment, lifecycleReactors, channelPlugins, msTeamsIngress, commandQueue, deliveryService } = await setupChannels(
+  const { adaptersByType, channelManager, resolveAttachment, lifecycleReactors, channelPlugins, msTeamsIngress, googlechatIngress, commandQueue, deliveryService } = await setupChannels(
     buildChannelManagerDeps({
       agents: handle, msTeamsConversationStore,
       assembleToolsForAgent,
@@ -2332,6 +2332,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   Object.assign(boot, {
     adaptersByType, channelManager, resolveAttachment, lifecycleReactors, channelPlugins,
     msTeamsIngress,
+    googlechatIngress,
     commandQueue, deliveryService,
     inboundMessageIdResolver, channelHealthMonitor, stopChannelHealthMonitor, stopChannelLivenessMonitor,
     notificationContext, bgCompletionRunnerContext, terminalWakeContext,
@@ -2393,6 +2394,7 @@ async function bootGateway(
     suspendedAgents, gatewaySendRef,
     interactiveCallbackWiring,
     msTeamsIngress,
+    googlechatIngress,
     obsStore, // backs the obs_explain assembler closure (diagnostics rollup)
     dataDir: bootDataDir, // absolute fallback data dir (always abs; ~/.comis or $COMIS_DATA_DIR)
   } = channels;
@@ -2476,6 +2478,7 @@ async function bootGateway(
     instanceId, startupStartMs,
     interactiveCallbackWiring,
     msTeamsIngress,
+    googlechatIngress,
     obsExplainForMcpClient,
     obsFleetHealthForMcpClient,
   });

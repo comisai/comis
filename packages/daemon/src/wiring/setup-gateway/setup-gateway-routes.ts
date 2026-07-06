@@ -205,6 +205,11 @@ export interface GatewayDeps {
    *  `mountGatewayRoutes` so the `/channels/msteams` route mounts only when
    *  present; absent ⇒ no route. */
   msTeamsIngress?: import("hono").Hono;
+  /** Google Chat inbound ingress sub-app, built by the channel bootstrap in
+   *  webhook mode with valid credentials. Passed through to
+   *  `mountGatewayRoutes` so the `/channels/googlechat` route mounts only when
+   *  present; absent ⇒ no route. */
+  googlechatIngress?: import("hono").Hono;
 }
 
 /** All services produced by the gateway setup. */
@@ -422,6 +427,7 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
     defaultWorkspaceDir: workspaceDirs.get(defaultAgentId),
     interactiveCallbackWiring: deps.interactiveCallbackWiring,
     msTeamsIngress: deps.msTeamsIngress,
+    googlechatIngress: deps.googlechatIngress,
   });
 
   await gatewayHandle.start();

@@ -584,6 +584,10 @@ export interface BootContext {
    *  `/channels/msteams` route mounts when the channel is enabled. Optional:
    *  undefined when the channel is disabled (no route). */
   msTeamsIngress?: Awaited<ReturnType<typeof setupChannels>>["msTeamsIngress"];
+  /** Google Chat inbound ingress sub-app — threaded to bootGateway so the
+   *  `/channels/googlechat` route mounts when the channel is enabled in webhook
+   *  mode. Optional: undefined otherwise (no route). */
+  googlechatIngress?: Awaited<ReturnType<typeof setupChannels>>["googlechatIngress"];
   commandQueue?: Awaited<ReturnType<typeof setupChannels>>["commandQueue"];
   deliveryService?: Awaited<ReturnType<typeof setupChannels>>["deliveryService"];
   inboundMessageIdResolver?: InboundMessageIdResolver;
