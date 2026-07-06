@@ -525,10 +525,20 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
       const threadRootId = resolveThreadRootId(options);
       const relation: MatrixThreadRelation | undefined =
         threadRootId !== undefined ? buildThreadRelation(threadRootId) : undefined;
-      const reserveBytes =
+      const relationReserveBytes =
         relation !== undefined
           ? Buffer.byteLength(JSON.stringify({ "m.relates_to": relation }))
           : 0;
+      // The `m.mentions` list rides the FIRST chunk only, also merged AFTER
+      // chunking — so its serialized bytes must be reserved too, or a mention-heavy
+      // first event overflows the cap. Reserving on every chunk (the second chunk
+      // onward carries no mentions) at worst adds one extra boundary; it is always
+      // within budget, which is the invariant that matters.
+      const mentionReserveBytes =
+        mentionUserIds.length > 0
+          ? Buffer.byteLength(JSON.stringify({ "m.mentions": { user_ids: mentionUserIds } }))
+          : 0;
+      const reserveBytes = relationReserveBytes + mentionReserveBytes;
 
       // Split by SERIALIZED bytes (not chars): the HTML formatted_body roughly
       // doubles the plaintext, so a char-bounded split overflows the cap on
