@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { DiagnosticRow } from "@comis/memory";
 import { buildFindings, pipelineAuthoringAggregateFromRows } from "./fleet-findings.js";
-import { orchestrateEfficiencyFromRow, pricingGapFromRow } from "./fleet-findings-extractors.js";
+import { importedNonAllowlistedFromRow, orchestrateEfficiencyFromRow, pricingGapFromRow } from "./fleet-findings-extractors.js";
 
 // ---------------------------------------------------------------------------
 // The dedicated multilingual fleet advisory (standing state).
@@ -1099,6 +1099,98 @@ describe("buildFindings — config_posture:pricing_gap finding (standing state, 
     expect(idxChimera).toBeGreaterThanOrEqual(0);
     // count 9 (pricing_gap) sorts before count 1 (chimeric_model) under count-desc.
     expect(idxGap).toBeLessThan(idxChimera);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The config_posture:imported_skills fleet finding.
+//
+// Registry-import posture: how many imported skills carry a recorded registry that
+// is NO LONGER in `skills.import.registries` (allowlist drift after the fact — the
+// only way a live import points at a non-allowlisted registry, since the import-time
+// gate hard-refuses). The drift count is produced at boot into the config_posture
+// row's `details` JSON; buildFindings reads it defensively (the chimericModelFromRow
+// mold) and emits ONE counts+hint-only finding beside `config_posture:chimeric_model`.
+// STANDING STATE (latest row only), content-free (a count + a generic remediation
+// hint, never a registry origin or an agent id).
+// ---------------------------------------------------------------------------
+
+const IMPORTED_SKILLS_CODE = "config_posture:imported_skills";
+
+describe("importedNonAllowlistedFromRow — defensive importedNonAllowlistedRegistryCount extractor (chimericModelFromRow clone)", () => {
+  it("reads a valid positive count from the row's details JSON", () => {
+    expect(importedNonAllowlistedFromRow(configPostureRow(1_000, { importedNonAllowlistedRegistryCount: 2 }))).toBe(2);
+  });
+
+  it("folds a missing details field to 0", () => {
+    const row: DiagnosticRow = { timestamp: 1, category: "config_posture", severity: "info", message: "config_posture" };
+    expect(importedNonAllowlistedFromRow(row)).toBe(0);
+  });
+
+  it("folds malformed details JSON to 0 (caught, never throws)", () => {
+    const malformed: DiagnosticRow = { timestamp: 1, category: "config_posture", severity: "warning", message: "x", details: "not json {" };
+    expect(importedNonAllowlistedFromRow(malformed)).toBe(0);
+  });
+
+  it("folds a non-positive / non-finite / non-number count to 0", () => {
+    expect(importedNonAllowlistedFromRow(configPostureRow(1_000, { importedNonAllowlistedRegistryCount: 0 }))).toBe(0);
+    expect(importedNonAllowlistedFromRow(configPostureRow(1_000, { importedNonAllowlistedRegistryCount: -1 }))).toBe(0);
+    expect(importedNonAllowlistedFromRow(configPostureRow(1_000, { importedNonAllowlistedRegistryCount: Number.NaN }))).toBe(0);
+    expect(importedNonAllowlistedFromRow(configPostureRow(1_000, { importedNonAllowlistedRegistryCount: "3" }))).toBe(0);
+    expect(importedNonAllowlistedFromRow(configPostureRow(1_000, {}))).toBe(0);
+  });
+});
+
+describe("buildFindings — config_posture:imported_skills finding (standing state, content-free)", () => {
+  it("emits the imported_skills finding with the drift count from the latest posture row when drift > 0", () => {
+    const findings = buildFindings([], [], [configPostureRow(1_000, { importedNonAllowlistedRegistryCount: 2 })]);
+    const finding = findings.find((f) => f.code === IMPORTED_SKILLS_CODE);
+    expect(finding).toBeDefined();
+    expect(finding?.count).toBe(2);
+    expect(finding?.detail).toMatch(/allowlist drift|no longer|skills\.import\.registries/i);
+    // The hint NAMES the exact config key + the drill-down command (the friction was
+    // grepping daemon.log to learn which knob drifted).
+    expect(finding?.hint).toMatch(/skills\.import\.registries/);
+    expect(finding?.hint).toMatch(/comis explain/);
+  });
+
+  it("does NOT emit the finding when drift is 0", () => {
+    const findings = buildFindings([], [], [configPostureRow(1_000, { importedNonAllowlistedRegistryCount: 0 })]);
+    expect(findings.some((f) => f.code === IMPORTED_SKILLS_CODE)).toBe(false);
+  });
+
+  it("does NOT emit the finding when there is no config_posture row", () => {
+    const findings = buildFindings([], [], []);
+    expect(findings.some((f) => f.code === IMPORTED_SKILLS_CODE)).toBe(false);
+  });
+
+  it("reads the LATEST row only (standing state — a newer 0 suppresses an older 3)", () => {
+    const findings = buildFindings(
+      [],
+      [],
+      [
+        configPostureRow(1_000, { importedNonAllowlistedRegistryCount: 3 }),
+        configPostureRow(2_000, { importedNonAllowlistedRegistryCount: 0 }),
+      ],
+    );
+    expect(findings.some((f) => f.code === IMPORTED_SKILLS_CODE)).toBe(false);
+  });
+
+  it("is content-free — the detail/hint never echo a registry origin or agent id (only a count + remediation)", () => {
+    const findings = buildFindings(
+      [],
+      [],
+      [
+        configPostureRow(1_000, {
+          importedNonAllowlistedRegistryCount: 2,
+          leakedOrigin: "https://evil.example",
+          leakedAgent: "secret-agent",
+        }),
+      ],
+    );
+    const finding = findings.find((f) => f.code === IMPORTED_SKILLS_CODE);
+    expect(finding).toBeDefined();
+    expect(`${finding?.detail} ${finding?.hint}`).not.toMatch(/https?:\/\/|evil\.example|secret-agent/);
   });
 });
 
