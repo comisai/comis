@@ -451,6 +451,28 @@ describe("validateNonInteractiveOptions", () => {
     }
   });
 
+  it("rejects a non-boolean --matrix-e2ee value", () => {
+    // Commander hands the flag through as a raw string; a value that is neither
+    // "true" nor "false" is a typo that would otherwise be written to config.
+    const opts = validOpts({ matrixE2ee: "maybe" });
+    expect(() => validateNonInteractiveOptions(opts)).toThrow(NonInteractiveError);
+    try {
+      validateNonInteractiveOptions(opts);
+    } catch (e) {
+      expect((e as NonInteractiveError).field).toBe("matrixE2ee");
+      expect((e as NonInteractiveError).message).toContain("true");
+      expect((e as NonInteractiveError).message).toContain("false");
+    }
+  });
+
+  it("accepts true and false for --matrix-e2ee", () => {
+    for (const value of ["true", "false"] as const) {
+      expect(() =>
+        validateNonInteractiveOptions(validOpts({ matrixE2ee: value })),
+      ).not.toThrow();
+    }
+  });
+
   it("rejects an unknown --stt-provider / --tts-provider", () => {
     expect(() =>
       validateNonInteractiveOptions(validOpts({ sttProvider: "assemblyai" })),
@@ -657,6 +679,32 @@ describe("buildNonInteractiveState", () => {
       e2ee: true,
       validated: false,
     });
+  });
+
+  it("builds a matrix channel with e2ee disabled from --matrix-e2ee false", () => {
+    const state = buildNonInteractiveState(
+      validOpts({
+        channels: ["matrix"],
+        matrixHomeserver: "https://matrix.example.org",
+        matrixUserId: "@bot:example.org",
+        matrixAccessToken: "syt-matrix-access-token-value",
+        matrixE2ee: "false",
+      }),
+    );
+    expect(state.channels![0]).toMatchObject({ type: "matrix", e2ee: false });
+  });
+
+  it("builds a matrix channel with e2ee enabled from --matrix-e2ee true", () => {
+    const state = buildNonInteractiveState(
+      validOpts({
+        channels: ["matrix"],
+        matrixHomeserver: "https://matrix.example.org",
+        matrixUserId: "@bot:example.org",
+        matrixAccessToken: "syt-matrix-access-token-value",
+        matrixE2ee: "true",
+      }),
+    );
+    expect(state.channels![0]).toMatchObject({ type: "matrix", e2ee: true });
   });
 
   it("builds tokenless channels (whatsapp, signal, irc) correctly", () => {

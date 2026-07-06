@@ -126,7 +126,9 @@ function buildNonInteractiveOptionsFromCommander(
     matrixHomeserver: options.matrixHomeserver as string | undefined,
     matrixUserId: options.matrixUserId as string | undefined,
     matrixAccessToken: options.matrixAccessToken as string | undefined,
-    matrixE2ee: options.matrixE2ee as boolean | undefined,
+    // Commander yields the raw string here; validateNonInteractiveOptions rejects
+    // anything but true/false before any consumer coerces it (cast-then-validate).
+    matrixE2ee: options.matrixE2ee as string | undefined,
     imageProvider: options.imageProvider as string | undefined,
     imageApiKey: options.imageApiKey as string | undefined,
     videoProvider: options.videoProvider as string | undefined,
@@ -208,7 +210,7 @@ export function registerInitCommand(program: Command): void {
     .option("--matrix-homeserver <url>", "Matrix homeserver base URL")
     .option("--matrix-user-id <id>", "Matrix bot user ID (MXID, @bot:host)")
     .option("--matrix-access-token <tok>", "Matrix bot access token")
-    .option("--matrix-e2ee", "Enable Matrix end-to-end encryption")
+    .option("--matrix-e2ee <value>", "Enable Matrix end-to-end encryption: true or false (defaults to true)")
     // Media generation
     .option("--image-provider <id>", "Image generation provider: auto|fal|openai|openai-codex|google|openrouter")
     .option("--image-api-key <key>", "Image provider API key (e.g. FAL_KEY; reuses --api-key for a matching main provider)")

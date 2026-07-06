@@ -89,7 +89,12 @@ export type NonInteractiveOptions = {
   matrixHomeserver?: string;
   matrixUserId?: string;
   matrixAccessToken?: string;
-  matrixE2ee?: boolean;
+  /**
+   * `--matrix-e2ee <value>` accepts `true` or `false` so a headless operator can
+   * DISABLE the default-on encryption; Commander yields the raw string, coerced
+   * and validated below. Omitting the flag leaves it undefined (daemon default).
+   */
+  matrixE2ee?: boolean | string;
   // Media generation
   imageProvider?: string;
   imageApiKey?: string;
@@ -136,6 +141,20 @@ export class NonInteractiveError extends Error {
 }
 
 // ---------- Validation ----------
+
+/**
+ * Coerce an optional boolean-valued CLI flag. A boolean passes through; the
+ * strings "true"/"false" map to their boolean; an omitted flag stays undefined
+ * (leave the downstream default). Any other string is invalid and returns
+ * undefined — the validator turns a defined-but-uncoercible value into a clear
+ * error before any consumer reads it.
+ */
+function parseOptionalBoolean(raw: boolean | string | undefined): boolean | undefined {
+  if (raw === undefined || typeof raw === "boolean") return raw;
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return undefined;
+}
 
 /**
  * Validate non-interactive options before building state.
@@ -296,6 +315,14 @@ export function validateNonInteractiveOptions(
       "--msteams-auth-mode must be one of: secret, certificate, managedIdentity",
       "msteamsAuthMode",
     );
+  }
+
+  // --matrix-e2ee, when provided, must be a boolean. Commander hands it through as
+  // a raw string, so a value that is neither "true" nor "false" is a typo that
+  // would otherwise be written to config.yaml verbatim. Reject early with a clear
+  // hint; an omitted flag leaves e2ee undefined so the daemon default applies.
+  if (opts.matrixE2ee !== undefined && parseOptionalBoolean(opts.matrixE2ee) === undefined) {
+    throw new NonInteractiveError("--matrix-e2ee must be true or false", "matrixE2ee");
   }
 
   // Validate channel credentials
@@ -475,7 +502,7 @@ export function buildNonInteractiveState(
             homeserverUrl: opts.matrixHomeserver,
             userId: opts.matrixUserId,
             accessToken: opts.matrixAccessToken,
-            e2ee: opts.matrixE2ee,
+            e2ee: parseOptionalBoolean(opts.matrixE2ee),
             validated: false,
           });
           break;
