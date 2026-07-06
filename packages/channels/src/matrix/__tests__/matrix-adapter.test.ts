@@ -188,6 +188,23 @@ function fakeInitCrypto(verification: {
     .mockResolvedValue(ok(handle)) as unknown as MatrixAdapterDeps["initCryptoImpl"];
 }
 
+/**
+ * An injected crypto bootstrap whose handle REJECTS every verification read — the
+ * e2ee crypto-store read path that can throw (isCrossSigningReady /
+ * getDeviceVerificationStatus). Drives the best-effort refresh's failure branch.
+ */
+function fakeInitCryptoRejectingVerification(): MatrixAdapterDeps["initCryptoImpl"] {
+  const handle: MatrixCryptoHandle = {
+    scheduleSnapshot: vi.fn(),
+    snapshotNow: vi.fn().mockResolvedValue(ok(undefined)),
+    stop: vi.fn().mockResolvedValue(undefined),
+    getVerificationStatus: vi.fn().mockRejectedValue(new Error("crypto verification read failed")),
+  };
+  return vi
+    .fn()
+    .mockResolvedValue(ok(handle)) as unknown as MatrixAdapterDeps["initCryptoImpl"];
+}
+
 /** Build an Error carrying Matrix `errcode`/`httpStatus`, like the SDK's MatrixError. */
 function matrixError(errcode: string, httpStatus: number, message: string): Error {
   const e = new Error(message) as Error & { errcode: string; httpStatus: number };
@@ -952,6 +969,64 @@ describe("createMatrixAdapter", () => {
     await adapter.start();
 
     expect(adapter.getStatus?.().verification).toBeUndefined();
+  });
+
+  it("does not reject start() when the verification read fails, keeping the channel up", async () => {
+    // The verification refresh is best-effort. A crypto read that rejects must NOT
+    // reject start() (that would break the no-throw-escapes-the-port contract);
+    // it degrades to a secret-free debug and leaves the posture unset.
+    const { adapter, logger } = makeAdapter({
+      e2ee: true,
+      initCryptoImpl: fakeInitCryptoRejectingVerification(),
+      allowFrom: [],
+    });
+
+    const result = await adapter.start();
+
+    expect(result.ok).toBe(true);
+    expect(adapter.getStatus?.().connected).toBe(true);
+    // No posture surfaced (the read failed) — best-effort, not a hard failure.
+    expect(adapter.getStatus?.().verification).toBeUndefined();
+    // The failure degraded to a secret-free debug, not an escape.
+    const refreshDebug = vi
+      .mocked(logger.debug)
+      .mock.calls.find(([fields]) => (fields as { step?: string }).step === "verification-refresh");
+    expect(refreshDebug).toBeDefined();
+  });
+
+  it("keeps the last-known verification posture when a later refresh read fails", async () => {
+    // First (seeding) read succeeds → posture cached. A later best-effort read
+    // rejects → the cached posture is RETAINED (untouched) and no throw escapes.
+    const handle: MatrixCryptoHandle = {
+      scheduleSnapshot: vi.fn(),
+      snapshotNow: vi.fn().mockResolvedValue(ok(undefined)),
+      stop: vi.fn().mockResolvedValue(undefined),
+      getVerificationStatus: vi
+        .fn()
+        .mockResolvedValueOnce({ crossSigningReady: true, deviceVerified: true })
+        .mockRejectedValue(new Error("crypto verification read failed")),
+    };
+    const initCryptoImpl = vi
+      .fn()
+      .mockResolvedValue(ok(handle)) as unknown as MatrixAdapterDeps["initCryptoImpl"];
+    const { adapter } = makeAdapter({ e2ee: true, initCryptoImpl, allowFrom: [] });
+
+    await adapter.start();
+    expect(adapter.getStatus?.().verification).toEqual({
+      crossSigningReady: true,
+      deviceVerified: true,
+    });
+
+    // getStatus() kicks off a best-effort refresh that now rejects; let it settle.
+    adapter.getStatus?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // The cached posture survives the failed refresh (best-effort, untouched).
+    expect(adapter.getStatus?.().verification).toEqual({
+      crossSigningReady: true,
+      deviceVerified: true,
+    });
   });
 });
 
