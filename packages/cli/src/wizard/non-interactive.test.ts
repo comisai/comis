@@ -12,9 +12,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { dirname, resolve, join } from "node:path";
 
 // Stub the two @comis/core entry points the wizard's non-interactive path
 // touches: safePath (filesystem composition) + createModelCatalog (model
@@ -45,7 +46,12 @@ vi.mock("@comis/core", () => ({
     getProviders: vi.fn(),
   })),
 }));
-vi.mock("node:os", () => ({ homedir: vi.fn(() => "/home/test") }));
+// Override only homedir; keep the real tmpdir so the SA-key-path test can write
+// a temp key file (node:fs is unmocked here).
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:os")>();
+  return { ...actual, homedir: vi.fn(() => "/home/test") };
+});
 vi.mock("node:crypto", () => ({
   randomBytes: vi.fn(() => ({ toString: () => "ab".repeat(24) })),
 }));
@@ -698,6 +704,57 @@ describe("buildNonInteractiveState", () => {
     expect(gc.mode).toBe("webhook");
     expect(gc.audience).toBe("123456789012");
     expect(gc.validated).toBe(false);
+  });
+
+  it("resolves a --googlechat-sa-key file PATH to the key contents, not the path string", () => {
+    // The flag help advertises "or a path to the key file". A CI user who
+    // follows it and passes a path must get the KEY read from that file
+    // persisted -- not the literal path string, which would JSON.parse-fail at
+    // daemon boot. This mirrors the interactive step's path resolution.
+    const dir = mkdtempSync(join(tmpdir(), "gc-sakey-"));
+    const keyPath = join(dir, "key.json");
+    const keyObject = {
+      type: "service_account",
+      private_key: "-----BEGIN PRIVATE KEY-----\nMIIexample\n-----END PRIVATE KEY-----\n",
+      client_email: "bot@example-project.iam.gserviceaccount.com",
+    };
+    // Pretty-printed, multi-line -- exactly a downloaded key file.
+    writeFileSync(keyPath, JSON.stringify(keyObject, null, 2), "utf-8");
+    try {
+      const state = buildNonInteractiveState(
+        validOpts({
+          channels: ["googlechat"],
+          googlechatSaKey: keyPath,
+          googlechatSubscription: "projects/p/subscriptions/s",
+          googlechatMode: "pubsub",
+        }),
+      );
+      const gc = state.channels![0];
+      expect(gc.serviceAccountKey).not.toBe(keyPath);
+      const parsed = JSON.parse(gc.serviceAccountKey as string) as {
+        client_email?: string;
+        private_key?: string;
+      };
+      expect(parsed.client_email).toBe(keyObject.client_email);
+      expect(parsed.private_key).toBe(keyObject.private_key);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("stores an inline --googlechat-sa-key JSON blob verbatim (not treated as a path)", () => {
+    // The counterpart to the path case: a value that is not an existing file is
+    // the JSON content itself and must pass through untouched.
+    const inline = '{"client_email":"bot@x.iam.gserviceaccount.com","private_key":"pk"}';
+    const state = buildNonInteractiveState(
+      validOpts({
+        channels: ["googlechat"],
+        googlechatSaKey: inline,
+        googlechatSubscription: "projects/p/subscriptions/s",
+        googlechatMode: "pubsub",
+      }),
+    );
+    expect(state.channels![0].serviceAccountKey).toBe(inline);
   });
 
   it("builds tokenless channels (whatsapp, signal, irc) correctly", () => {
