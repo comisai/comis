@@ -196,6 +196,34 @@ export async function withRateLimitRetry<T>(
 }
 
 /**
+ * Build the failure a chunked send returns. A chunked send is NON-ATOMIC: when a
+ * later chunk fails after earlier ones already landed, the raw error alone leads a
+ * caller to blind-full-resend and duplicate the delivered chunks. So once
+ * `chunksSent > 0`, wrap the error to name how many chunks landed and the last
+ * delivered event id, and swap the hint to "resend only the remainder". With
+ * nothing delivered yet, the raw error and the generic send hint pass through.
+ */
+export function chunkedSendFailure(
+  rawError: Error,
+  chunksSent: number,
+  chunkTotal: number,
+  lastEventId: string,
+): { error: Error; hint: string } {
+  if (chunksSent <= 0) {
+    return {
+      error: rawError,
+      hint: "Verify the room id and that the bot has permission to send in it",
+    };
+  }
+  return {
+    error: new Error(
+      `${rawError.message} (${chunksSent} of ${chunkTotal} chunks already delivered; last delivered event ${lastEventId})`,
+    ),
+    hint: "Resend only the undelivered remainder; the earlier chunks already landed (a full resend duplicates them)",
+  };
+}
+
+/**
  * Send one already-built `m.room.message` content object through the shared
  * rate-limit retry policy ({@link withRateLimitRetry}). A thin, type-pinning
  * wrapper the chunked-send loop calls.

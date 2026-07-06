@@ -83,6 +83,7 @@ import {
   DEGRADE_NOTE_SENDER,
   MAX_TRACKED_REACTIONS,
   MATRIX_TYPING_TIMEOUT_MS,
+  chunkedSendFailure,
   fanOutToHandlers,
   reactionKey,
   resolveThreadRootId,
@@ -548,18 +549,18 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
 
       // Send each chunk sequentially through the rate-limit taxonomy. A chunked
       // send yields N events; the returned id is the LAST chunk's (a single-chunk
-      // message returns that one id). A mid-sequence failure stops and returns err.
-      // The `m.mentions` list rides the FIRST chunk only (a chunked send still
-      // pings each named user exactly once).
+      // message returns that one id). The `m.mentions` list rides the FIRST chunk
+      // only (a chunked send still pings each named user exactly once). A mid-
+      // sequence failure stops and — since the send is non-atomic — surfaces how
+      // many chunks already landed so the caller resends only the remainder.
       let lastEventId = "";
-      let isFirstChunk = true;
+      let chunksSent = 0;
       for (const chunk of chunks) {
         let content: Record<string, unknown> =
           relation !== undefined ? { ...chunk, "m.relates_to": relation } : { ...chunk };
-        if (isFirstChunk && mentionUserIds.length > 0) {
+        if (chunksSent === 0 && mentionUserIds.length > 0) {
           content = { ...content, "m.mentions": { user_ids: mentionUserIds } };
         }
-        isFirstChunk = false;
         // The SDK types `m.room.message` content as a broad XOR union; the builder
         // emits the exact m.text (+ optional relation / mentions) shape, so cast at
         // this single boundary.
@@ -570,18 +571,22 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
           { timer: deps.timer, logger: deps.logger },
         );
         if (!sent.ok) {
-          lastError = sent.error.message;
+          const failed = chunkedSendFailure(sent.error, chunksSent, chunks.length, lastEventId);
+          lastError = failed.error.message;
           deps.logger.warn(
             {
               channelType: "matrix" as const,
-              hint: "Verify the room id and that the bot has permission to send in it",
+              chunksSent,
+              chunkTotal: chunks.length,
+              hint: failed.hint,
               errorKind: "platform" as const,
             },
             "Matrix message send failed",
           );
-          return err(sent.error);
+          return err(failed.error);
         }
         lastEventId = sent.value.event_id;
+        chunksSent += 1;
       }
 
       lastError = undefined;
