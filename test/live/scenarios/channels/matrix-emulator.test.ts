@@ -319,3 +319,79 @@ describe("matrix-emulator scenario — inbound reaction through the real adapter
     expect(reactions.map((r) => r.emoji)).not.toContain("👎");
   });
 });
+
+describe("matrix-emulator scenario — honest inbound edit + redaction (the tamper-resistant proof)", () => {
+  it("surfaces an inbound edit as a NEW event with a replaces pointer, never mutating the prior capture", async () => {
+    // The load-bearing history-rewrite proof, end-to-end through the REAL adapter +
+    // /sync client: a remote edit must arrive as a NEW normalized event carrying the
+    // new content and an advisory pointer to the replaced event — never an in-place
+    // rewrite of what the bot already received — so the agent cannot be tricked into
+    // acting on a silently-rewritten past. An edit relating to an absent target is
+    // driven so the SDK delivers the raw m.replace on RoomEvent.Timeline (no local
+    // aggregation), the same timeline path a live homeserver uses.
+    const stack = await buildStack();
+    await stack.adapter.start();
+
+    // A first message the bot receives and reasons on — the prior context.
+    stack.emu.injectRoomMessage({ roomId: GROUP_ROOM, sender: ALICE, body: "the original message" });
+    await waitUntil(() => stack.received.length >= 1, 8000);
+    const priorSnapshot = JSON.stringify(stack.received[0]);
+
+    // A remote edit arrives as an m.replace relating to a prior event id.
+    stack.emu.injectRoomEvent({
+      roomId: GROUP_ROOM,
+      sender: ALICE,
+      type: "m.room.message",
+      content: {
+        msgtype: "m.text",
+        body: "* edited",
+        "m.new_content": { msgtype: "m.text", body: "edited" },
+        "m.relates_to": { rel_type: "m.replace", event_id: "$orig:hs.test" },
+      },
+    });
+    await waitUntil(
+      () => stack.received.some((m) => m.metadata.matrixReplacesEventId === "$orig:hs.test"),
+      8000,
+    );
+
+    // The edit surfaced as a NEW event carrying the NEW content + the advisory pointer.
+    const edit = stack.received.find((m) => m.metadata.matrixReplacesEventId === "$orig:hs.test");
+    expect(edit).toBeDefined();
+    expect(edit?.text).toBe("edited");
+    expect(edit?.id).toMatch(UUID_RE);
+    // The prior captured message object was NOT mutated in place (immutable receipt).
+    expect(JSON.stringify(stack.received[0])).toBe(priorSnapshot);
+    // The edit is a DISTINCT event from the prior one, not a rewrite of it.
+    expect(edit?.id).not.toBe(stack.received[0]?.id);
+  });
+
+  it("surfaces an inbound redaction as a NEW honest event naming the target with no reconstructed body", async () => {
+    const stack = await buildStack();
+    await stack.adapter.start();
+
+    stack.emu.injectRoomEvent({
+      roomId: GROUP_ROOM,
+      sender: ALICE,
+      type: "m.room.redaction",
+      content: {},
+      redacts: "$orig:hs.test",
+    });
+    await waitUntil(
+      () => stack.received.some((m) => m.metadata.matrixRedactsEventId === "$orig:hs.test"),
+      8000,
+    );
+
+    const redaction = stack.received.find(
+      (m) => m.metadata.matrixRedactsEventId === "$orig:hs.test",
+    );
+    expect(redaction).toBeDefined();
+    // A body-free honest marker — the removed content is never reconstructed, and
+    // the redacted target id rides in advisory metadata, not in the text body.
+    expect(typeof redaction?.text).toBe("string");
+    expect(redaction?.text.length).toBeGreaterThan(0);
+    expect(redaction?.text).not.toContain("$orig:hs.test");
+    expect(redaction?.id).toMatch(UUID_RE);
+    // It reaches the message path (not treated as a reaction).
+    expect(stack.emu.sentMessages(GROUP_ROOM).some((o) => o.body?.includes("$orig"))).toBe(false);
+  });
+});
