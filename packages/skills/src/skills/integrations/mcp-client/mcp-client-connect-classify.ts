@@ -61,6 +61,7 @@ function scrubKnownSecretValues(text: string, config: McpServerConfig): string {
   let out = text;
   for (const v of values) {
     if (typeof v !== "string" || v.length < MIN_KNOWN_SECRET_LEN || v.includes("${")) continue;
+    // eslint-disable-next-line no-restricted-syntax -- known-secret redaction sentinel (not the Pino censor literal)
     if (out.includes(v)) out = out.split(v).join("[REDACTED]");
   }
   return out;

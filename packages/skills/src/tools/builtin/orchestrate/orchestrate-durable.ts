@@ -37,7 +37,7 @@
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 
 import { safePath, type ComisLogger, type DurableRunRecord } from "@comis/core";
-import { ok, err, type Result } from "@comis/shared";
+import { ok, err, suppressError, type Result } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Injected seams.
@@ -117,8 +117,10 @@ export function startDurableKeepAlive(input: {
   if (!touch) return () => {};
   const scheduler = input.scheduler ?? defaultKeepAliveScheduler;
   return scheduler(() => {
-    void touch(rootRunId, now())
-      .then((r) => {
+    // Best-effort: a failed/throwing touch never disrupts the run; the watchdog only
+    // reaps if the lapse persists past the cap. suppressError replaces an empty .catch.
+    suppressError(
+      touch(rootRunId, now()).then((r) => {
         if (!r.ok) {
           logger?.debug(
             {
@@ -130,10 +132,9 @@ export function startDurableKeepAlive(input: {
             "orchestrate durable keep-alive: touch failed",
           );
         }
-      })
-      .catch(() => {
-        /* best-effort: a throwing touch never disrupts the run */
-      });
+      }),
+      "durable keep-alive touch (best-effort)",
+    );
   }, keepAliveMs);
 }
 
