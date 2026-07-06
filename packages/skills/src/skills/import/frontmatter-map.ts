@@ -87,6 +87,16 @@ const LEGACY_PASSTHROUGH_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Author-declared fields the strict schema validates but the prompt tier NEVER
+ * acts on: they are not projected into the runtime prompt-skill descriptor and
+ * no runtime path reads them (only `allowed-tools` restricts an imported skill's
+ * tools). They pass through so the schema still validates their shape, but a
+ * warning names them so an untrusted import cannot imply a runtime grant that
+ * does not exist ("never spread untrusted input" made explicit at this boundary).
+ */
+const INERT_IMPORTED_AUTHOR_FIELDS: ReadonlySet<string> = new Set(["permissions", "inputSchema"]);
+
+/**
  * The single own-key pollution vector at this boundary: `__proto__`. A YAML/JSON
  * parser materializes it as an own data property, and a later bracket-copy would
  * invoke the inherited setter — so it is never copied onto any output object.
@@ -520,6 +530,14 @@ export function mapForeignFrontmatter(rawFrontmatter: Record<string, unknown>): 
         } else if (LEGACY_PASSTHROUGH_KEYS.has(key)) {
           // Pre-migration Comis field: pass through so the shipped lift converts it.
           specPure[key] = value;
+          if (INERT_IMPORTED_AUTHOR_FIELDS.has(key)) {
+            warn(
+              warnings,
+              key,
+              `'${key}' is accepted but not authoritative for an imported skill and grants nothing at runtime.`,
+              `An imported prompt skill's '${key}' is validated but never acted on — it is not projected into the runtime skill and no runtime path reads it (only 'allowed-tools' restricts an imported skill's tools). Remove it to avoid implying a runtime effect.`,
+            );
+          }
         } else {
           warn(
             warnings,

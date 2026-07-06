@@ -337,6 +337,24 @@ describe("the full disposition table — every branch, named", () => {
     expect(specPure["mcpServers"]).toEqual([{ name: "srv", transport: "stdio" }]);
   });
 
+  it("warns that an imported skill's permissions and inputSchema are accepted but not authoritative", () => {
+    // permissions/inputSchema are validated by the strict schema but NEVER
+    // projected into the runtime prompt-skill descriptor and read by no runtime
+    // path — they are inert for the imported tier. They still pass through (the
+    // lift converts them), but the operator must be warned they grant nothing,
+    // so an untrusted author cannot imply a runtime effect that does not exist.
+    const { specPure, warnings } = mapForeignFrontmatter({
+      name: "n",
+      description: "d",
+      permissions: { network: ["example.com"] },
+      inputSchema: { type: "object" },
+    });
+    expect(specPure["permissions"]).toEqual({ network: ["example.com"] });
+    expect(specPure["inputSchema"]).toEqual({ type: "object" });
+    expect(warnsFor(warnings, "permissions")).toBe(true);
+    expect(warnsFor(warnings, "inputSchema")).toBe(true);
+  });
+
   it("drops an unknown top-level field with a key-naming warning", () => {
     const { specPure, warnings } = mapForeignFrontmatter({ name: "n", weirdField: 1 });
     expect(specPure).not.toHaveProperty("weirdField");
