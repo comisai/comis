@@ -56,7 +56,8 @@ export interface ChannelCaps {
     | "line"
     | "irc"
     | "email"
-    | "msteams";
+    | "msteams"
+    | "googlechat";
   /** What the channel can deliver INTO the agent (inbound surface). */
   inbound: {
     text: boolean;
