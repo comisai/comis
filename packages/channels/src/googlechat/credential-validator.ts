@@ -97,7 +97,7 @@ export function validateGoogleChatCredentials(
   // ingress (no pull loop), so it needs no subscription; it instead needs the
   // audience the inbound Bearer-JWT verifier binds to. Failing fast here means an
   // unset audience is a boot config error, never a per-request auth-reject flood
-  // at the ingress. An absent mode is treated as pubsub (backward compatible).
+  // at the ingress. An absent mode is treated as pubsub.
   if (opts.mode === "webhook") {
     if (isBlank(opts.audience)) {
       return err(
