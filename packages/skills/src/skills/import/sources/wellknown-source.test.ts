@@ -222,6 +222,53 @@ describe("resolveWellKnown — index resolution + SSRF + shape validation", () =
 });
 
 // ---------------------------------------------------------------------------
+// Index shape robustness — `description` is unused after parse, so a sibling
+// entry that omits it must NOT deny the whole registry; `name`/`files` stay
+// strict so genuine drift still fails loud naming the registry.
+// ---------------------------------------------------------------------------
+
+describe("resolveWellKnown — index shape robustness (optional description, strict name)", () => {
+  it("resolves the requested skill even when a SIBLING entry omits description", async () => {
+    const idx = {
+      skills: [
+        { name: "sibling-no-desc", files: ["SKILL.md"] }, // no `description`
+        { name: "pdf-extractor", description: "d", files: ["SKILL.md"] },
+      ],
+    };
+    const fetchImpl = servingFetch({
+      [INDEX_URL]: JSON.stringify(idx),
+      [fileUrl("pdf-extractor", "SKILL.md")]: F.FIXTURE_VALID_FILES["pdf-extractor/SKILL.md"]!,
+    });
+    const result = await resolveWellKnown(
+      { registry: REGISTRY, name: "pdf-extractor" },
+      { caps: CAPS, validate: okValidate, fetchImpl },
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.files.some((f) => f.path === "SKILL.md")).toBe(true);
+  });
+
+  it("still fails loud when a SIBLING entry is missing the required name, naming the registry", async () => {
+    // Boundary guard: making description optional must NOT weaken `name`.
+    const idx = {
+      skills: [
+        { description: "d", files: ["SKILL.md"] }, // no `name`
+        { name: "pdf-extractor", description: "d", files: ["SKILL.md"] },
+      ],
+    };
+    const fetchImpl = servingFetch({ [INDEX_URL]: JSON.stringify(idx) });
+    const result = await resolveWellKnown(
+      { registry: REGISTRY, name: "pdf-extractor" },
+      { caps: CAPS, validate: okValidate, fetchImpl },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("validation");
+    expect(result.error.message + result.error.hint).toContain(REGISTRY);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Index cache seam: hit short-circuits the index fetch; miss stores names+paths
 // ---------------------------------------------------------------------------
 
