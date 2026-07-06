@@ -154,6 +154,36 @@ describe("skills_manage tool", () => {
       expect(params).not.toHaveProperty("force");
     });
 
+    it("import action forwards source: 'wellknown' + registry + name to skills.import", async () => {
+      (mockApprovalGate.requestApproval as ReturnType<typeof vi.fn>).mockResolvedValue({
+        approved: true,
+        approvedBy: "operator",
+      });
+      mockRpcCall.mockResolvedValue({ ok: true });
+
+      const tool = createSkillsManageTool(mockRpcCall, mockApprovalGate);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-wk", {
+          action: "import",
+          source: "wellknown",
+          registry: "https://reg.example",
+          name: "my-skill",
+          scope: "shared",
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith(
+        "skills.import",
+        expect.objectContaining({
+          source: "wellknown",
+          registry: "https://reg.example",
+          name: "my-skill",
+          scope: "shared",
+        }),
+      );
+    });
+
     it("import remains an approval-gated action under admin trust with the new params", async () => {
       (mockApprovalGate.requestApproval as ReturnType<typeof vi.fn>).mockResolvedValue({
         approved: true,

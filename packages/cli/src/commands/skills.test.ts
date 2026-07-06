@@ -104,6 +104,35 @@ describe("comis skills import", () => {
     expect(output).toContain("my-skill");
   });
 
+  it("routes <ref> to name (not url) and carries --registry for --source wellknown", async () => {
+    const { client, calls } = captureClient();
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerSkillsCommand(program);
+    await program.parseAsync([
+      "node", "test", "skills", "import",
+      "my-skill",
+      "--source", "wellknown",
+      "--registry", "https://reg.example",
+      "--token", "test-token",
+    ]);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe(SkillsImportContract.method);
+    // --source wellknown routes <ref> to the registry lookup name (never url),
+    // and --registry carries the origin.
+    expect(calls[0]?.params).toMatchObject({
+      name: "my-skill",
+      source: "wellknown",
+      registry: "https://reg.example",
+    });
+    expect(calls[0]?.params).not.toHaveProperty("url");
+
+    const output = getSpyOutput(consoleSpy.log);
+    expect(output).toContain("agent-a"); // resolvedAgentId reported
+  });
+
   it("emits the raw JSON result under --format json", async () => {
     const { client } = captureClient();
     vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
