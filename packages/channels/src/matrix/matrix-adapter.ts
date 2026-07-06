@@ -40,6 +40,8 @@ import type {
   ComisLogger,
   MessageHandler,
   NormalizedMessage,
+  NormalizedReaction,
+  ReactionHandler,
   SendMessageOptions,
 } from "@comis/core";
 import { runWithContext, systemNowMs } from "@comis/core";
@@ -155,6 +157,7 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
   const now = deps.now ?? systemNowMs;
   const stateStore = createMatrixStateStore(deps.stateDir, deps.logger);
   const handlers: MessageHandler[] = [];
+  const reactionHandlers: ReactionHandler[] = [];
   // Stable adapter identity; the per-message room id rides on each
   // NormalizedMessage.channelId, so the adapter reports a constant channelId.
   const channelId = "matrix";
@@ -264,6 +267,74 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
       return;
     }
     fanOut(message);
+  }
+
+  /**
+   * Fan a delivered, mapped, speaker-gated reaction out to the registered reaction
+   * handlers under a fresh request context — the reaction sibling of {@link fanOut},
+   * minting its own traceId at the channel ingress boundary. A throwing or rejecting
+   * handler is logged and never aborts its siblings. The emoji body is never logged.
+   */
+  function fanOutReactions(reaction: NormalizedReaction): void {
+    const traceId = randomUUID();
+    void runWithContext(
+      {
+        traceId,
+        startedAt: now(),
+        channelType: "matrix",
+        tenantId: "default",
+        trustLevel: "admin",
+      },
+      () => {
+        for (const handler of reactionHandlers) {
+          try {
+            Promise.resolve(handler(reaction)).catch((handlerErr) => {
+              deps.logger.error(
+                {
+                  channelType: "matrix" as const,
+                  err: handlerErr,
+                  hint: "Check the Matrix inbound reaction handler",
+                  errorKind: "internal" as const,
+                },
+                "Inbound Matrix reaction handler error",
+              );
+            });
+          } catch (handlerErr) {
+            deps.logger.error(
+              {
+                channelType: "matrix" as const,
+                err: handlerErr,
+                hint: "Check the Matrix inbound reaction handler",
+                errorKind: "internal" as const,
+              },
+              "Inbound Matrix reaction handler error",
+            );
+          }
+        }
+      },
+    );
+  }
+
+  /**
+   * The handler the `/sync` controller invokes for every delivered, mapped,
+   * post-watermark reaction: apply the SAME MXID speaker gate the message path
+   * uses (keyed on the reactor MXID), then fan out. A dropped reactor is a
+   * security-relevant WARN that never carries the emoji body.
+   */
+  function onSyncReaction(reaction: NormalizedReaction): void {
+    if (!isAllowedSpeaker(reaction.reactorId)) {
+      deps.logger.warn(
+        {
+          channelType: "matrix" as const,
+          step: "speaker-gate",
+          hint: "Add the reactor MXID to channels.matrix.allowFrom, or set channels.matrix.allowMode 'open', to admit this reactor",
+          errorKind: "precondition" as const,
+        },
+        "Inbound Matrix reaction from non-allowlisted reactor dropped",
+      );
+      return;
+    }
+    fanOutReactions(reaction);
   }
 
   /**
@@ -390,6 +461,7 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
         allowMode: deps.allowMode,
         allowFrom: deps.allowFrom,
         onMessage: onSyncMessage,
+        onReaction: onSyncReaction,
         isDirectRoom: (room) => isRoomDirect(authedClient, room),
         logger: deps.logger,
         // E2EE threading: the crypto store bootstraps before /sync starts on the
@@ -488,6 +560,10 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
 
     onMessage(handler: MessageHandler): void {
       handlers.push(handler);
+    },
+
+    onReaction(handler: ReactionHandler): void {
+      reactionHandlers.push(handler);
     },
 
     getStatus(): ChannelStatus {

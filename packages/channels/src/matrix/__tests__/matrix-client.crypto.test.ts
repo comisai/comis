@@ -505,13 +505,17 @@ describe("createMatrixClient — /sync filter includes encrypted wire events on 
     expect(types).toContain("m.room.message");
   });
 
-  it("keeps the plaintext sync filter scoped to m.room.message only", async () => {
+  it("keeps the plaintext sync filter free of encrypted wire events (messages and reactions only)", async () => {
     const h = makeCryptoHarness({ stateDir: "/data/matrix" }); // e2ee omitted
 
     await h.controller.start();
 
-    // The plaintext path is unchanged — no encrypted wire events requested.
-    expect(startFilterTypes(h.fake)).toEqual(["m.room.message"]);
+    // The plaintext path requests chat messages and reaction annotations, but
+    // never encrypted wire events — there is no crypto engine to decrypt them.
+    const types = startFilterTypes(h.fake);
+    expect(types).toContain("m.room.message");
+    expect(types).toContain("m.reaction");
+    expect(types).not.toContain("m.room.encrypted");
   });
 });
 

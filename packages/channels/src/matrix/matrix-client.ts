@@ -43,7 +43,7 @@ import {
   type SyncStateData,
 } from "matrix-js-sdk";
 import { systemNowMs } from "@comis/core";
-import type { NormalizedMessage, ComisLogger } from "@comis/core";
+import type { NormalizedMessage, NormalizedReaction, ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err, fromPromise } from "@comis/shared";
 import {
@@ -53,6 +53,7 @@ import {
 } from "./watermark.js";
 import { decideInvite, type InviteAllowMode } from "./invite-policy.js";
 import { mapMatrixEventToNormalized } from "./message-mapper.js";
+import { mapMatrixReaction } from "./matrix-reaction-binder.js";
 import { classifyMatrixError, type MatrixErrorInput, type MatrixErrorKind } from "./errors.js";
 import type { MatrixState, MatrixStateStore } from "./matrix-state.js";
 import { initMatrixCrypto, type MatrixCryptoHandle } from "./crypto-store.js";
@@ -66,6 +67,13 @@ const ROOM_MESSAGE_TYPE = "m.room.message";
  * never returns encrypted events for the crypto engine to decrypt.
  */
 const ROOM_ENCRYPTED_TYPE = "m.room.encrypted";
+/**
+ * The Matrix event type of a reaction annotation. It rides the room timeline as
+ * its own event, so the server-side `/sync` filter must request it explicitly —
+ * without it the homeserver never returns reactions and no inbound reaction ever
+ * reaches a handler.
+ */
+const ROOM_REACTION_TYPE = "m.reaction";
 /** Default `limit=` on the initial sync — bounds what is FETCHED. */
 const DEFAULT_INITIAL_SYNC_LIMIT = 10;
 /** Default per-room timeline event cap in the sync filter. */
@@ -121,6 +129,12 @@ export interface MatrixClientDeps {
   allowFrom: string[];
   /** Invoked for each delivered, mapped, post-watermark message. */
   onMessage: MatrixMessageHandler;
+  /**
+   * Invoked for each delivered, mapped, post-watermark reaction. Optional: a
+   * channel wired only for messages omits it and inbound reactions are simply
+   * dropped after mapping (never an error).
+   */
+  onReaction?: (reaction: NormalizedReaction) => void;
   /** Logger; failure branches emit only secret-safe `errorKind` + `hint`. */
   logger: ComisLogger;
   /** Resolve whether a room is a direct (1:1) room, for message mapping. */
@@ -214,20 +228,25 @@ function errcodeOf(cause: unknown): string | undefined {
 }
 
 /**
- * Build the `/sync` filter: lazy-loaded members + a timeline scoped to message
- * events. On the e2ee path (`includeEncrypted`) the `m.room.encrypted` wire type
- * is added so the homeserver actually returns encrypted events — without it the
- * server-side filter (which keys on the wire type) excludes them and the crypto
- * engine + fail-closed branch would see nothing in a real encrypted room.
- * `initialSyncLimit` bounds the fetch; this filter trims each batch. The
- * watermark remains the correctness backstop if the filter is imperfect.
+ * Build the `/sync` filter: lazy-loaded members + a timeline scoped to the event
+ * types the adapter routes — chat messages and reaction annotations. The
+ * server-side filter keys on the wire type, so a type absent from this list is
+ * never returned by the homeserver: `m.reaction` MUST be requested or no inbound
+ * reaction ever reaches the timeline handler (reactions ride the timeline as
+ * their own events). On the e2ee path (`includeEncrypted`) the `m.room.encrypted`
+ * wire type is added too so encrypted messages are returned for the crypto engine
+ * + fail-closed branch. `initialSyncLimit` bounds the fetch; this filter trims
+ * each batch. The watermark remains the correctness backstop if the filter is
+ * imperfect.
  */
 function buildSyncFilter(userId: string | null, includeEncrypted: boolean): Filter {
   const filter = new Filter(userId);
   filter.setDefinition({
     room: {
       timeline: {
-        types: includeEncrypted ? [ROOM_MESSAGE_TYPE, ROOM_ENCRYPTED_TYPE] : [ROOM_MESSAGE_TYPE],
+        types: includeEncrypted
+          ? [ROOM_MESSAGE_TYPE, ROOM_ENCRYPTED_TYPE, ROOM_REACTION_TYPE]
+          : [ROOM_MESSAGE_TYPE, ROOM_REACTION_TYPE],
         limit: DEFAULT_TIMELINE_LIMIT,
         lazy_load_members: true,
       },
@@ -416,6 +435,34 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
         },
         "Matrix event decrypted",
       );
+    }
+
+    // Reaction routing on the (now-decrypted) CLEAR type, BEFORE the message-only
+    // gate below — which requires `m.room.message` and would otherwise drop a
+    // reaction unread. A reaction rides the timeline as its own `m.reaction` event.
+    // The own-message drop and the liveness pre-gate above already applied, so the
+    // bot's own reactions and any backlog / pre-watermark reaction never reach here.
+    // The pure binder is the mapping+validation boundary; a reaction it cannot mint
+    // (malformed / unverifiable federated data) is skipped WITHOUT advancing the
+    // watermark, exactly as an unmappable message is below.
+    if (event.getType() === ROOM_REACTION_TYPE) {
+      const reaction = mapMatrixReaction(event, room);
+      if (reaction === null) return;
+      // Content-free acceptance line: channel + id-shaped fields only, never the
+      // emoji body of a (possibly private) room.
+      logger.info(
+        {
+          channelType: "matrix",
+          step: "matrix-inbound-reaction",
+          chatId: room.roomId,
+          messageId: reaction.messageId,
+        },
+        "Inbound Matrix reaction accepted",
+      );
+      deps.onReaction?.(reaction);
+      // Advance THIS ROOM's watermark so the delivered reaction is not reprocessed.
+      await bumpRoomWatermark(room.roomId, event.getTs(), "watermark");
+      return;
     }
 
     // Authoritative delivery gate on the (now-decrypted) CLEAR type: deliver only a
