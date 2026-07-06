@@ -162,6 +162,42 @@ describe("comis skills import", () => {
     expect(output).toContain("agent-a"); // resolvedAgentId reported
   });
 
+  it("surfaces the acknowledged warnings on the default (table) success output", async () => {
+    // A confirmed import that tripped a warnable class returns warnings[]; the
+    // operator must see, in the default output, what the confirm covered.
+    const withWarnings = {
+      ...FAKE_RESULT,
+      warnings: [
+        "imported from a non-official registry publisher",
+        "content diverges from the pinned hash of the prior import",
+      ],
+    };
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const client: RpcClient = {
+      call(method: string, params?: unknown): Promise<unknown> {
+        calls.push({ method, params });
+        return Promise.resolve(withWarnings);
+      },
+      close(): void {},
+      onNotification(): void {},
+    };
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerSkillsCommand(program);
+    await program.parseAsync([
+      "node", "test", "skills", "import",
+      "@acme/pdf-extractor",
+      "--source", "clawhub",
+      "--confirm",
+      "--token", "test-token",
+    ]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    expect(output).toContain("non-official registry publisher");
+    expect(output).toContain("diverges from the pinned hash");
+  });
+
   it("emits the raw JSON result under --format json", async () => {
     const { client } = captureClient();
     vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
