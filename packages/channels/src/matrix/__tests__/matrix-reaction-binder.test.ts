@@ -16,11 +16,14 @@ function fakeReactionEvent(
     relatesTo?: unknown;
   } = {},
 ): MatrixEvent {
-  const {
-    type = "m.reaction",
-    sender = "@alice:hs.test",
-    relatesTo = { rel_type: "m.annotation", event_id: "$target:hs.test", key: "👍" },
-  } = overrides;
+  const type = overrides.type ?? "m.reaction";
+  // Preserve an explicit null/"" sender (a destructuring default would clobber them).
+  const sender = "sender" in overrides ? overrides.sender : "@alice:hs.test";
+  // `relatesTo: undefined` means "no relation envelope"; absent means the default.
+  const relatesTo =
+    "relatesTo" in overrides
+      ? overrides.relatesTo
+      : { rel_type: "m.annotation", event_id: "$target:hs.test", key: "👍" };
   return {
     getType: () => type,
     getSender: () => sender,
