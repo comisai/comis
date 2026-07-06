@@ -53,6 +53,7 @@ import {
 } from "./watermark.js";
 import { decideInvite, type InviteAllowMode } from "./invite-policy.js";
 import { mapMatrixEventToNormalized } from "./message-mapper.js";
+import type { EncryptedFileLike } from "./media-handler.js";
 import { mapMatrixReaction } from "./matrix-reaction-binder.js";
 import { classifyMatrixError, type MatrixErrorInput, type MatrixErrorKind } from "./errors.js";
 import type { MatrixState, MatrixStateStore } from "./matrix-state.js";
@@ -162,6 +163,15 @@ export interface MatrixClientDeps {
    * means the mention check is skipped (never a false positive).
    */
   botUserId?: string;
+  /**
+   * Write seam for the encrypted-media key side-channel, forwarded to the mapper.
+   * On each inbound encrypted media event the mapper invokes it with the mxc and
+   * the encrypted-file record; the adapter's bounded cache holds them so the
+   * resolver can decrypt later (the strict attachment schema cannot carry the
+   * key material). NEVER logged. Absent on a plaintext-only channel — encrypted
+   * media then surfaces its attachment url but no keys are cached.
+   */
+  cacheEncryptedFile?: (mxc: string, file: EncryptedFileLike) => void;
   /** Override the initial-sync `limit=`. */
   initialSyncLimit?: number;
   /**
@@ -588,6 +598,7 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
     const message = mapMatrixEventToNormalized(event, room, {
       isDirect,
       ...(deps.botUserId !== undefined ? { botUserId: deps.botUserId } : {}),
+      ...(deps.cacheEncryptedFile !== undefined ? { cacheEncryptedFile: deps.cacheEncryptedFile } : {}),
     });
     if (message === null) return;
 

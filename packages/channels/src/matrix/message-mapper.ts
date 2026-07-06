@@ -33,12 +33,13 @@
  * @module
  */
 
-import type { NormalizedMessage } from "@comis/core";
+import type { Attachment, NormalizedMessage } from "@comis/core";
 import { systemNowMs } from "@comis/core";
 import { randomUUID } from "node:crypto";
 import type { MatrixEvent, Room } from "matrix-js-sdk";
 import { sanitizeInboundHtml } from "./format-matrix.js";
 import { detectBotMention } from "./mentions.js";
+import type { EncryptedFileLike } from "./media-handler.js";
 
 /** The Matrix event type that carries a chat message. */
 const ROOM_MESSAGE_TYPE = "m.room.message";
@@ -52,6 +53,87 @@ const REPLACE_REL_TYPE = "m.replace";
  * content; the redacted target id rides in advisory metadata, never in this text.
  */
 const REDACTION_MARKER_TEXT = "A previous message in this room was deleted.";
+
+/**
+ * The media message subtypes that carry an attachment, each mapped to the
+ * normalized attachment type. A message with any other `msgtype` (e.g. `m.text`,
+ * `m.notice`) carries no attachment and falls through to the text path. A `Map`
+ * (not a plain object) so the untrusted `msgtype` lookup is prototype-safe — a
+ * hostile `msgtype` like `constructor`/`__proto__` yields a clean miss, never an
+ * inherited property.
+ */
+const MEDIA_MSGTYPE_TO_TYPE = new Map<string, Attachment["type"]>([
+  ["m.image", "image"],
+  ["m.audio", "audio"],
+  ["m.video", "video"],
+  ["m.file", "file"],
+]);
+
+/**
+ * Read a possibly-present `content.file` as an encrypted-file record. Returns the
+ * record ONLY when it is an object structurally shaped like a decryptable
+ * encrypted file — a non-empty string `url` (the mxc the cache keys on), a `key`
+ * object, a non-empty `iv`, a `hashes` object, and a non-empty version tag.
+ * Anything else (absent, a non-object, or a partial record missing key material)
+ * returns undefined so nothing unresolvable is cached. Untrusted, possibly-federated
+ * content — every field is typeof-guarded.
+ */
+function readEncryptedFile(file: unknown): EncryptedFileLike | undefined {
+  if (typeof file !== "object" || file === null) return undefined;
+  const f = file as { url?: unknown; key?: unknown; iv?: unknown; hashes?: unknown; v?: unknown };
+  if (typeof f.url !== "string" || f.url.length === 0) return undefined;
+  if (typeof f.key !== "object" || f.key === null) return undefined;
+  if (typeof f.iv !== "string" || f.iv.length === 0) return undefined;
+  if (typeof f.hashes !== "object" || f.hashes === null) return undefined;
+  if (typeof f.v !== "string" || f.v.length === 0) return undefined;
+  return file as EncryptedFileLike;
+}
+
+/**
+ * Detect an inbound media attachment on a message event's content.
+ *
+ * Returns undefined for a non-media message (it falls through to the text path).
+ * For a media message it returns the normalized {@link Attachment} carrying the
+ * `mxc://` url — from `content.url` in a plaintext room, or from the encrypted-file
+ * record's url in an encrypted room — and, when the event carries an encrypted-file
+ * record, that record so the caller can write it to the key side-channel. The strict
+ * attachment schema cannot hold the JWK key/iv/hashes, so they never ride the
+ * attachment. A media event with neither a plaintext url nor a valid encrypted-file
+ * url yields undefined (nothing resolvable). The declared `mimetype`/`size`/`body`
+ * are provisional metadata; the resolver's byte sniff is authoritative.
+ *
+ * Untrusted, possibly-federated content — every `content.*` read is typeof-guarded.
+ */
+function detectMediaAttachment(
+  content: Record<string, unknown>,
+): { attachment: Attachment; encrypted?: EncryptedFileLike } | undefined {
+  const msgtype = content.msgtype;
+  if (typeof msgtype !== "string") return undefined;
+  const type = MEDIA_MSGTYPE_TO_TYPE.get(msgtype);
+  if (type === undefined) return undefined;
+
+  // The mxc rides on the encrypted-file record (encrypted room) or content.url
+  // (plaintext room). No resolvable mxc → not a resolvable attachment.
+  const encrypted = readEncryptedFile(content.file);
+  const plaintextUrl =
+    typeof content.url === "string" && content.url.length > 0 ? content.url : undefined;
+  const mxc = encrypted?.url ?? plaintextUrl;
+  if (mxc === undefined) return undefined;
+
+  const attachment: Attachment = { type, url: mxc };
+  const info = content.info;
+  if (typeof info === "object" && info !== null) {
+    const i = info as { mimetype?: unknown; size?: unknown };
+    if (typeof i.mimetype === "string" && i.mimetype.length > 0) attachment.mimeType = i.mimetype;
+    if (typeof i.size === "number" && Number.isInteger(i.size) && i.size >= 0) {
+      attachment.sizeBytes = i.size;
+    }
+  }
+  const body = content.body;
+  if (typeof body === "string" && body.length > 0) attachment.fileName = body;
+
+  return encrypted !== undefined ? { attachment, encrypted } : { attachment };
+}
 
 /**
  * The replaced event id of an `m.replace` relation, or undefined when the relation
@@ -75,6 +157,15 @@ export interface MatrixMapOptions {
    * skipped (never a false positive).
    */
   botUserId?: string;
+  /**
+   * Write seam for the encrypted-media key side-channel. Invoked ONLY for an
+   * encrypted media event, with the `mxc://` url and the event's encrypted-file
+   * record. The strict normalized attachment schema cannot carry the JWK
+   * key/iv/hashes (they are the decryption secret), so the resolver reads them
+   * back from the adapter cache this callback writes. A plaintext media event
+   * never invokes it. NEVER log the record (key material).
+   */
+  cacheEncryptedFile?: (mxc: string, file: EncryptedFileLike) => void;
 }
 
 /**
@@ -178,6 +269,16 @@ export function mapMatrixEventToNormalized(
   // (never a display name) against the untrusted mentions list / pill.
   metadata.isBotMentioned = detectBotMention(content, opts.botUserId ?? "");
 
+  // A media message surfaces an attachment carrying the `mxc://` url the resolver
+  // resolves later. For an encrypted media event the encrypted-file record cannot
+  // ride the strict attachment schema, so it is written to the key side-channel
+  // keyed by that mxc — the resolver reads it back to decrypt. A non-media message
+  // yields no attachment and never touches the side-channel.
+  const media = detectMediaAttachment(content);
+  if (media?.encrypted !== undefined) {
+    opts.cacheEncryptedFile?.(media.attachment.url, media.encrypted);
+  }
+
   return {
     id: randomUUID(),
     channelId: room.roomId,
@@ -185,7 +286,7 @@ export function mapMatrixEventToNormalized(
     senderId,
     text,
     timestamp: systemNowMs(),
-    attachments: [],
+    attachments: media !== undefined ? [media.attachment] : [],
     chatType: isThread ? "thread" : opts.isDirect ? "dm" : "group",
     metadata,
   };
