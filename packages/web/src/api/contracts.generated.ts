@@ -11417,9 +11417,6 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "type": "string",
           "minLength": 1
         },
-        "name": {
-          "type": "string"
-        },
         "scope": {
           "type": "string",
           "enum": [

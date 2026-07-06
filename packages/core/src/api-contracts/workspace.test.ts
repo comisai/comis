@@ -436,6 +436,26 @@ describe("workspace-umbrella domain contracts", () => {
   });
 
   // -------------------------------------------------------------------------
+  // skills.import request — the installed name is the manifest name
+  // -------------------------------------------------------------------------
+
+  describe("skills.import request (the manifest name is authoritative)", () => {
+    it("carries no installed-name override — a client-supplied name is stripped", () => {
+      // The handler installs under the mapped manifest name; there is no request
+      // field to override it, so a supplied `name` must not survive parsing.
+      const parsed = SkillsImportContract.request.parse({
+        url: "https://example.com/owner/repo",
+        name: "override",
+      } as Record<string, unknown>);
+      expect("name" in parsed).toBe(false);
+    });
+
+    it("accepts a minimal github-url request", () => {
+      expect(() => SkillsImportContract.request.parse({ url: "https://example.com/owner/repo" })).not.toThrow();
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // skills.list source enum — the trust tiers the model SEES
   // -------------------------------------------------------------------------
 

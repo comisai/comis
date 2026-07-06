@@ -142,9 +142,10 @@ export const SkillsUploadContract = defineContract({
  * a rejecting import leaves zero live files. A successful import is stamped the
  * `imported` trust tier and pinned in the provenance store.
  *
- * Request: `{ url? | archiveUrl? | archiveBytes?, source?, name?, scope?,
- * agentId?, confirm? }`. `source` selects the acquisition channel (defaults to
- * `github` when a `url` is present). `confirm` overrides ONLY a pin-divergence
+ * Request: `{ url? | archiveUrl? | archiveBytes?, source?, scope?, agentId?,
+ * confirm? }`. `source` selects the acquisition channel (defaults to `github`
+ * when a `url` is present). The installed name is always the mapped manifest
+ * name — there is no request override. `confirm` overrides ONLY a pin-divergence
  * on a provenance-matched re-import — never a collision on an unprovenanced /
  * foreign-source name (there is intentionally NO force override).
  *
@@ -158,7 +159,6 @@ export const SkillsImportContract = defineContract({
     source: z.enum(["github", "archive"]).optional(),
     archiveUrl: z.string().min(1).optional(),
     archiveBytes: z.string().min(1).optional(),
-    name: z.string().optional(),
     scope: SkillScopeSchema.optional(),
     agentId: z.string().optional(),
     confirm: z.boolean().optional(),

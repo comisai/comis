@@ -11295,9 +11295,6 @@
           "type": "string",
           "minLength": 1
         },
-        "name": {
-          "type": "string"
-        },
         "scope": {
           "type": "string",
           "enum": [
