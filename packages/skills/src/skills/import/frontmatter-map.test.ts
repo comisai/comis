@@ -15,6 +15,7 @@ import { describe, it, expect } from "vitest";
 import { stringify as stringifyYaml } from "yaml";
 import type { SkillManifestParsed } from "../manifest/schema.js";
 import { parseFrontmatter, parseSkillManifest } from "../manifest/parser.js";
+import { isSpecPureFrontmatter } from "../manifest/spec-purity.js";
 import { mapForeignFrontmatter, type MapWarning } from "./frontmatter-map.js";
 import { FOREIGN_FIXTURES } from "./test-fixtures/foreign-frontmatter.js";
 import {
@@ -54,6 +55,22 @@ function warnsFor(warnings: readonly MapWarning[], key: string): boolean {
   return warnings.some(
     (w) => w.key === key || w.hint.includes(key) || w.message.includes(key),
   );
+}
+
+/** A spy logger capturing every `warn` payload — mirrors the lift's logger shape. */
+function captureLogger(): {
+  logger: { warn: (payload: Record<string, unknown>, message: string) => void };
+  calls: Array<{ payload: Record<string, unknown>; message: string }>;
+} {
+  const calls: Array<{ payload: Record<string, unknown>; message: string }> = [];
+  return {
+    logger: {
+      warn: (payload: Record<string, unknown>, message: string): void => {
+        calls.push({ payload, message });
+      },
+    },
+    calls,
+  };
 }
 
 describe("the strict schema rejects every foreign fixture raw (the mapper is mandatory)", () => {
@@ -325,32 +342,51 @@ describe("the full disposition table — every branch, named", () => {
     }
   });
 
-  it("passes legacy pre-migration Comis top-level fields through untouched", () => {
+  it("rewrites legacy pre-migration Comis top-level fields onto the spec-pure carrier (never re-emits the legacy form)", () => {
     const { specPure } = mapForeignFrontmatter({
       name: "n",
       userInvocable: false,
       allowedTools: ["Read"],
       mcpServers: [{ name: "srv", transport: "stdio" }],
     });
-    expect(specPure["userInvocable"]).toBe(false);
-    expect(specPure["allowedTools"]).toEqual(["Read"]);
-    expect(specPure["mcpServers"]).toEqual([{ name: "srv", transport: "stdio" }]);
+    // The mapper is a writer: it never leaves a legacy extension key at the top
+    // level (which would re-trigger the read-compat deprecation WARN on load).
+    expect(isSpecPureFrontmatter(specPure)).toBe(true);
+    expect(specPure).not.toHaveProperty("userInvocable");
+    expect(specPure).not.toHaveProperty("allowedTools");
+    expect(specPure).not.toHaveProperty("mcpServers");
+    // The camelCase tool restriction canonicalizes to the spec `allowed-tools`.
+    expect(specPure["allowed-tools"]).toBe("Read");
+    // The extension keys ride inside the single metadata.comis JSON string.
+    const bag = JSON.parse(
+      (specPure["metadata"] as Record<string, string>)["comis"],
+    ) as Record<string, unknown>;
+    expect(bag["userInvocable"]).toBe(false);
+    expect(bag["mcpServers"]).toEqual([{ name: "srv", transport: "stdio" }]);
   });
 
   it("warns that an imported skill's permissions and inputSchema are accepted but not authoritative", () => {
     // permissions/inputSchema are validated by the strict schema but NEVER
     // projected into the runtime prompt-skill descriptor and read by no runtime
-    // path — they are inert for the imported tier. They still pass through (the
-    // lift converts them), but the operator must be warned they grant nothing,
-    // so an untrusted author cannot imply a runtime effect that does not exist.
+    // path — they are inert for the imported tier. They ride under the spec-pure
+    // metadata.comis carrier (the lift merges them), but the operator must be
+    // warned they grant nothing, so an untrusted author cannot imply a runtime
+    // effect that does not exist.
     const { specPure, warnings } = mapForeignFrontmatter({
       name: "n",
       description: "d",
-      permissions: { network: ["example.com"] },
+      permissions: { net: ["example.com"] },
       inputSchema: { type: "object" },
     });
-    expect(specPure["permissions"]).toEqual({ network: ["example.com"] });
-    expect(specPure["inputSchema"]).toEqual({ type: "object" });
+    // Relocated onto the carrier, never left at the top level.
+    expect(isSpecPureFrontmatter(specPure)).toBe(true);
+    expect(specPure).not.toHaveProperty("permissions");
+    expect(specPure).not.toHaveProperty("inputSchema");
+    const bag = JSON.parse(
+      (specPure["metadata"] as Record<string, string>)["comis"],
+    ) as Record<string, unknown>;
+    expect(bag["permissions"]).toEqual({ net: ["example.com"] });
+    expect(bag["inputSchema"]).toEqual({ type: "object" });
     expect(warnsFor(warnings, "permissions")).toBe(true);
     expect(warnsFor(warnings, "inputSchema")).toBe(true);
   });
@@ -421,5 +457,79 @@ describe("the full disposition table — every branch, named", () => {
     };
     expect(carrier.comis.requires.bins).toEqual([]);
     expect(carrier.comis.requires.env).toEqual(["TOKEN"]);
+  });
+});
+
+describe("the legacy Comis top-level form is rewritten to the spec-pure carrier (never re-emitted)", () => {
+  // A pre-migration Comis SKILL.md: extension fields authored at the top level,
+  // with no metadata carrier. The mapper is a WRITER (SPEC-04), so it must
+  // relocate them onto the spec-pure carrier rather than pass the legacy
+  // top-level form through — otherwise the installed SKILL.md re-triggers the
+  // read-compat deprecation WARN (SPEC-03/D8: the legacy form is "never written
+  // by any writer") on every subsequent load.
+  const LEGACY_RAW: Record<string, unknown> = {
+    name: "legacy-comis-skill",
+    description: "A skill authored in the pre-migration top-level Comis form",
+    version: "1.2.0",
+    type: "prompt",
+    userInvocable: false,
+    disableModelInvocation: true,
+    argumentHint: "[path]",
+    allowedTools: ["Read", "Write"],
+    comis: { requires: { bins: ["node"] }, "primary-env": "discord" },
+    mcpServers: [{ name: "srv", transport: "stdio", command: "npx" }],
+  };
+
+  it("emits a fully spec-pure carrier: version -> metadata.version, extensions -> metadata.comis, allowed-tools canonical, no legacy top-level keys", () => {
+    const { specPure } = mapForeignFrontmatter(LEGACY_RAW);
+
+    // The installed frontmatter carries ONLY the six spec-pure top-level fields.
+    expect(isSpecPureFrontmatter(specPure)).toBe(true);
+    for (const legacyKey of [
+      "version",
+      "type",
+      "userInvocable",
+      "disableModelInvocation",
+      "argumentHint",
+      "allowedTools",
+      "comis",
+      "mcpServers",
+    ]) {
+      expect(Object.prototype.hasOwnProperty.call(specPure, legacyKey)).toBe(false);
+    }
+
+    // version rides under metadata.version; the camelCase allowedTools becomes
+    // the spec `allowed-tools` string.
+    const metadata = specPure["metadata"] as Record<string, unknown>;
+    expect(metadata["version"]).toBe("1.2.0");
+    expect(specPure["allowed-tools"]).toBe("Read Write");
+
+    // Every extension key rides inside the single metadata.comis JSON string.
+    const bag = JSON.parse(metadata["comis"] as string) as Record<string, unknown>;
+    expect(bag["userInvocable"]).toBe(false);
+    expect(bag["disableModelInvocation"]).toBe(true);
+    expect(bag["argumentHint"]).toBe("[path]");
+    expect(bag["mcpServers"]).toEqual([{ name: "srv", transport: "stdio", command: "npx" }]);
+    expect(bag["comis"]).toEqual({ requires: { bins: ["node"] }, "primary-env": "discord" });
+  });
+
+  it("the installed SKILL.md loads WITHOUT a deprecation warning and yields the same manifest as the legacy form", () => {
+    const { logger, calls } = captureLogger();
+
+    const mappedMd = toSkillMd(mapForeignFrontmatter(LEGACY_RAW).specPure);
+    const fromMapped = parseSkillManifest(mappedMd, { logger, skillName: "legacy-comis-skill" });
+    expect(fromMapped.ok).toBe(true);
+
+    // SPEC-04: the writer emitted spec-pure frontmatter, so loading it runs the
+    // spec-pure lift path and emits NO per-key deprecation WARN (movedKeys).
+    const deprecationWarns = calls.filter((c) => "movedKeys" in c.payload);
+    expect(deprecationWarns.length).toBe(0);
+
+    // Internal-manifest equivalence: the rewritten carrier lifts to the SAME
+    // internal manifest the legacy top-level form does (no semantic loss).
+    const fromLegacy = parseSkillManifest(toSkillMd(LEGACY_RAW));
+    expect(fromLegacy.ok).toBe(true);
+    if (!fromMapped.ok || !fromLegacy.ok) return;
+    expect(fromMapped.value).toEqual(fromLegacy.value);
   });
 });
