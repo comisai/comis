@@ -22,7 +22,7 @@
 import { SkillsImportContract } from "@comis/core";
 import type { Command } from "commander";
 import { withClient, callTyped } from "../client/rpc-client.js";
-import { success, error, info, json } from "../output/format.js";
+import { success, error, info, warn, json } from "../output/format.js";
 import { ensureGatewayToken } from "./mcp-token.js";
 
 interface ImportOptions {
@@ -110,6 +110,12 @@ export function registerSkillsCommand(program: Command): void {
         info(`Path: ${result.path}`);
         info(`Files: ${result.fileCount}`);
         info(`Agent: ${result.resolvedAgentId}`);
+        // Surface the warnable classes a --confirm acknowledged (non-official
+        // publisher and/or a pin-divergent re-import) so the operator sees, in
+        // the default output, what they just installed.
+        if (Array.isArray(result.warnings) && result.warnings.length > 0) {
+          for (const w of result.warnings) warn(`Acknowledged: ${w}`);
+        }
       } catch (err) {
         error(`Failed to import skill: ${err instanceof Error ? err.message : String(err)}`);
         process.exit(1);
