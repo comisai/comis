@@ -93,14 +93,18 @@ export interface WellKnownResolveError {
 // ---------------------------------------------------------------------------
 
 // The observed convention carries no integrity/version metadata, so the shape
-// is validated with a NON-strict object: the required `skills` array and each
-// entry's `name`/`description` are enforced, while unknown additive fields (a
-// published index may grow them) are tolerated rather than failing loud.
+// is validated with a NON-strict object: `name` (the lookup key) is required
+// and `files` is validated when present, while `description` is optional and
+// unknown additive fields (a published index may grow them) are tolerated
+// rather than failing loud. `description` is not read after parse, so requiring
+// it would let one sibling entry that omits it deny EVERY lookup from the
+// registry — a registry-wide denial for a field with no bearing here. Genuine
+// drift on `name`/`files` still fails loud, naming the registry.
 const WellKnownIndexSchema = z.object({
   skills: z.array(
     z.object({
       name: z.string().min(1),
-      description: z.string(),
+      description: z.string().optional(),
       files: z.array(z.string()).optional(),
     }),
   ),
