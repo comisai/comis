@@ -537,6 +537,11 @@ export async function bootstrapAdapters(deps: {
     const validation = validateGoogleChatCredentials({
       serviceAccountKey: key,
       subscriptionName,
+      // Thread the mode + audience so the validator enforces the per-mode inbound
+      // precondition: pubsub needs subscriptionName, webhook needs audience. Absent
+      // this, a documented webhook config (no subscriptionName) would be rejected.
+      mode: channelConfig.googlechat.mode,
+      audience: channelConfig.googlechat.audience,
       allowFrom: channelConfig.googlechat.allowFrom,
       logger: channelsLogger,
     });
@@ -599,7 +604,19 @@ export async function bootstrapAdapters(deps: {
       }
       channelsLogger.info({ channelType: "googlechat", mode: channelConfig.googlechat.mode }, "Channel adapter initialized");
     } else {
-      channelsLogger.warn({ hint: "Set channels.googlechat.serviceAccountKey (SecretRef) or GOOGLECHAT_SA_KEY, and channels.googlechat.subscriptionName", errorKind: "auth" as const }, "Google Chat credential validation failed");
+      // Mode-aware failure hint. In webhook mode a blank audience is the common
+      // misconfiguration: name that exact knob with a config errorKind so the
+      // fleet lens reads it as an operator config gap, not the per-request
+      // invalid_token flood that signals a forged-webhook attack. Every other
+      // failure (missing/malformed key, or a pubsub config with no subscription)
+      // stays an auth-class WARN naming the credential knobs.
+      const gc = channelConfig.googlechat;
+      const audienceBlank = !gc.audience || gc.audience.trim() === "";
+      if (gc.mode === "webhook" && audienceBlank) {
+        channelsLogger.warn({ hint: "Set channels.googlechat.audience — required in webhook mode (the project number for audienceType project-number, or the endpoint URL for app-url); an unset audience rejects every inbound request", errorKind: "config" as const }, "Google Chat credential validation failed");
+      } else {
+        channelsLogger.warn({ hint: "Set channels.googlechat.serviceAccountKey (SecretRef) or GOOGLECHAT_SA_KEY, and channels.googlechat.subscriptionName (pubsub mode) or channels.googlechat.audience (webhook mode)", errorKind: "auth" as const }, "Google Chat credential validation failed");
+      }
     }
   }
 

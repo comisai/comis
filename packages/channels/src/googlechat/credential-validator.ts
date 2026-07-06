@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Google Chat Credential Validator: a fail-fast guard that the service-account
- * key and Pub/Sub subscription required to register the adapter are present and
- * well-formed.
+ * key and the per-mode inbound precondition required to register the adapter are
+ * present and well-formed.
  *
- * Synchronous, transport-free, and secret-safe. It confirms the subscription is
- * set and the key parses into a service-account key JSON carrying the two fields
- * the outbound JWT mint needs (`private_key` and `client_email`), naming any
- * missing field in the error — never the secret value, and never the raw key
- * text on a parse failure. Minting a live token and reaching the subscription
- * are separate operational probes and are intentionally out of scope here; this
- * is parse-only.
+ * Synchronous, transport-free, and secret-safe. It confirms the per-mode inbound
+ * precondition — pubsub mode needs the Pub/Sub subscription; webhook mode needs
+ * the inbound-JWT audience, receiving inbound over the gateway ingress rather
+ * than a pull loop — and that the key parses into a service-account key JSON
+ * carrying the two fields the outbound JWT mint needs (`private_key` and
+ * `client_email`), naming any missing field in the error — never the secret
+ * value, and never the raw key text on a parse failure. Minting a live token and
+ * reaching the subscription are separate operational probes and are
+ * intentionally out of scope here; this is parse-only.
  *
  * It also lints the sender allowlist: an email display id is mutable and
  * spoofable, so an email-shaped `allowFrom` entry surfaces an advisory WARN
@@ -33,6 +35,17 @@ export interface GoogleChatValidateOpts {
   serviceAccountKey?: string;
   /** The Pub/Sub pull subscription resource name (required in pubsub mode). */
   subscriptionName?: string;
+  /**
+   * Inbound transport mode. Selects the per-mode precondition: `pubsub` (the
+   * default when absent) requires {@link subscriptionName}; `webhook` requires
+   * {@link audience} and needs no subscription.
+   */
+  mode?: "pubsub" | "webhook";
+  /**
+   * The inbound Bearer-JWT audience the webhook verifier binds to (the project
+   * number or the endpoint URL). Required in webhook mode; ignored in pubsub mode.
+   */
+  audience?: string;
   /** The configured sender allowlist, linted for mutable email-shaped ids. */
   allowFrom?: string[];
   /**
@@ -58,15 +71,19 @@ function isEmailShaped(entry: string): boolean {
 }
 
 /**
- * Verify the Google Chat service-account key and subscription required to
- * register the adapter are present and well-formed, parse-only.
+ * Verify the Google Chat service-account key and the per-mode inbound
+ * precondition required to register the adapter are present and well-formed,
+ * parse-only.
  *
  * @param opts.serviceAccountKey - The service-account key JSON string
- * @param opts.subscriptionName - The Pub/Sub pull subscription resource name
+ * @param opts.subscriptionName - The Pub/Sub pull subscription resource name (pubsub mode)
+ * @param opts.mode - Inbound transport mode; absent is treated as pubsub
+ * @param opts.audience - The inbound Bearer-JWT audience (webhook mode)
  * @param opts.allowFrom - The sender allowlist (linted, never gated here)
  * @param opts.logger - Optional logger for the advisory allowlist lint
- * @returns ok when the key parses with the required fields and the subscription
- *   is set; err naming the first missing or malformed field, never its value
+ * @returns ok when the key parses with the required fields and the per-mode
+ *   precondition is met (pubsub → subscriptionName, webhook → audience); err
+ *   naming the first missing or malformed field, never its value
  */
 export function validateGoogleChatCredentials(
   opts: GoogleChatValidateOpts,
@@ -76,7 +93,20 @@ export function validateGoogleChatCredentials(
       new Error("Google Chat credentials invalid: serviceAccountKey must not be empty"),
     );
   }
-  if (isBlank(opts.subscriptionName)) {
+  // Per-mode inbound precondition. Webhook mode receives inbound over the gateway
+  // ingress (no pull loop), so it needs no subscription; it instead needs the
+  // audience the inbound Bearer-JWT verifier binds to. Failing fast here means an
+  // unset audience is a boot config error, never a per-request auth-reject flood
+  // at the ingress. An absent mode is treated as pubsub (backward compatible).
+  if (opts.mode === "webhook") {
+    if (isBlank(opts.audience)) {
+      return err(
+        new Error(
+          "Google Chat credentials invalid: audience must not be empty (webhook mode)",
+        ),
+      );
+    }
+  } else if (isBlank(opts.subscriptionName)) {
     return err(
       new Error(
         "Google Chat credentials invalid: subscriptionName must not be empty (pubsub mode)",
