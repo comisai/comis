@@ -70,6 +70,20 @@ async function loadCodec(): Promise<CryptoWasmModule> {
 }
 
 /**
+ * Parse the codec's serialized media-encryption info into the url-less wire shape.
+ * Guards the parse: an empty/absent value from the codec raises a meaningful error
+ * rather than the opaque `SyntaxError` a bare `JSON.parse(undefined)` would throw.
+ */
+export function parseMediaEncryptionInfo(
+  raw: string | null | undefined,
+): Omit<EncryptedFileLike, "url"> {
+  if (raw === null || raw === undefined || raw.length === 0) {
+    throw new Error("encryptAttachment: codec returned no media-encryption info");
+  }
+  return JSON.parse(raw) as Omit<EncryptedFileLike, "url">;
+}
+
+/**
  * Encrypt attachment bytes with the WASM codec. Returns the ciphertext and the
  * media-encryption info; the info is already url-less (the codec emits it that
  * way — the caller stitches the mxc `url` on after upload).
@@ -77,7 +91,7 @@ async function loadCodec(): Promise<CryptoWasmModule> {
 export async function encryptAttachment(bytes: Buffer | Uint8Array): Promise<EncryptedAttachmentParts> {
   const { Attachment } = await loadCodec();
   const enc = Attachment.encrypt(new Uint8Array(bytes));
-  const info = JSON.parse(enc.mediaEncryptionInfo!) as Omit<EncryptedFileLike, "url">;
+  const info = parseMediaEncryptionInfo(enc.mediaEncryptionInfo);
   return { ciphertext: Buffer.from(enc.encryptedData), info };
 }
 
