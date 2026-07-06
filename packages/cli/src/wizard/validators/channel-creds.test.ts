@@ -216,6 +216,90 @@ describe("validateChannelCredential", () => {
     });
   });
 
+  describe("matrix", () => {
+    // A Matrix user ID (MXID) is "@localpart:homeserver"; the homeserver is a
+    // full https:// URL (http:// only for a loopback / local homeserver). These
+    // are format-only typo-catchers -- the adapter's whoami is the real auth.
+    const validMxid = "@bot:example.org";
+    const validHomeserver = "https://matrix.example.org";
+
+    it("accepts a well-formed MXID", () => {
+      const result = validateChannelCredential("matrix", "userId", validMxid);
+      expect(result).toBeUndefined();
+    });
+
+    it("rejects a bare localpart that is not a full MXID", () => {
+      const result = validateChannelCredential("matrix", "userId", "bot");
+      expect(result).toBeDefined();
+      expect(result!.message).toContain("Invalid Matrix user ID");
+    });
+
+    it("rejects an MXID missing the homeserver part", () => {
+      const result = validateChannelCredential("matrix", "userId", "@bot");
+      expect(result).toBeDefined();
+      expect(result!.message).toContain("Invalid Matrix user ID");
+    });
+
+    it("accepts an https homeserver URL", () => {
+      const result = validateChannelCredential(
+        "matrix",
+        "homeserverUrl",
+        validHomeserver,
+      );
+      expect(result).toBeUndefined();
+    });
+
+    it("accepts an http homeserver URL for a loopback host", () => {
+      const result = validateChannelCredential(
+        "matrix",
+        "homeserverUrl",
+        "http://localhost:8008",
+      );
+      expect(result).toBeUndefined();
+    });
+
+    it("rejects a non-http(s) homeserver scheme", () => {
+      const result = validateChannelCredential(
+        "matrix",
+        "homeserverUrl",
+        "ftp://matrix.example.org",
+      );
+      expect(result).toBeDefined();
+      expect(result!.message).toContain("Invalid Matrix homeserver");
+    });
+
+    it("rejects a plaintext http homeserver for a non-loopback host", () => {
+      const result = validateChannelCredential(
+        "matrix",
+        "homeserverUrl",
+        "http://matrix.example.org",
+      );
+      expect(result).toBeDefined();
+      expect(result!.message).toContain("Invalid Matrix homeserver");
+    });
+
+    it("rejects an empty homeserver URL", () => {
+      const result = validateChannelCredential("matrix", "homeserverUrl", "");
+      expect(result).toBeDefined();
+      expect(result!.message).toContain("required");
+    });
+
+    it("accepts a non-blank access token", () => {
+      const result = validateChannelCredential(
+        "matrix",
+        "accessToken",
+        "syt_dG9rZW4_abc123",
+      );
+      expect(result).toBeUndefined();
+    });
+
+    it("rejects a blank access token", () => {
+      const result = validateChannelCredential("matrix", "accessToken", "   ");
+      expect(result).toBeDefined();
+      expect(result!.message).toContain("required");
+    });
+  });
+
   describe("channels with no credentials", () => {
     it("returns undefined for whatsapp", () => {
       expect(
@@ -274,6 +358,14 @@ describe("getChannelCredentialTypes", () => {
       "appId",
       "appPassword",
       "tenantId",
+    ]);
+  });
+
+  it("returns ['homeserverUrl', 'userId', 'accessToken'] for matrix", () => {
+    expect(getChannelCredentialTypes("matrix")).toEqual([
+      "homeserverUrl",
+      "userId",
+      "accessToken",
     ]);
   });
 
