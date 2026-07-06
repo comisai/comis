@@ -1940,6 +1940,40 @@ describe("createMatrixAdapter — media surface", () => {
     expect(file?.v).toBeDefined();
   });
 
+  it("encrypted room: uploads the ciphertext as application/octet-stream with no filename, so the media repo never learns the real MIME or name", async () => {
+    // The /_matrix/media upload is NOT end-to-end encrypted, and the homeserver is
+    // adversarial under the E2EE threat model. Passing the real {type, name} to the
+    // upload would disclose (e.g.) "application/pdf" / "Q3-finance.pdf" to the media
+    // repo even though the bytes are ciphertext. The real MIME + filename must ride
+    // ONLY inside the encrypted event content; the upload metadata is scrubbed.
+    const bytes = Buffer.from("PLAINTEXT-ATTACHMENT-BYTES-0123456789");
+    const fake = new FakeMatrixClient();
+    fake.cryptoHandle = { isEncryptionEnabledInRoom: async () => true };
+    const { adapter } = makeAdapter({ fake, readFileImpl: async () => bytes });
+    await adapter.start();
+
+    const result = await adapter.sendAttachment?.("!room:hs", {
+      type: "file",
+      url: "/tmp/Q3-finance.pdf",
+      mimeType: "application/pdf",
+      fileName: "Q3-finance.pdf",
+    });
+
+    expect(result?.ok).toBe(true);
+    expect(fake.uploads).toHaveLength(1);
+    // The homeserver media repo sees a generic octet-stream with no name.
+    expect(fake.uploads[0]?.type).toBe("application/octet-stream");
+    expect(fake.uploads[0]?.name).toBeUndefined();
+
+    // The recipient still reconstructs the real filename + MIME — they ride the
+    // ENCRYPTED event content (content.body / content.info.mimetype), not the upload.
+    const media = fake.sentEvents.find((e) => e.content.msgtype === "m.file");
+    expect(media?.content.body).toBe("Q3-finance.pdf");
+    expect((media?.content.info as { mimetype?: string } | undefined)?.mimetype).toBe(
+      "application/pdf",
+    );
+  });
+
   it("maps the MIME family to the media msgtype (audio → m.audio, document → m.file)", async () => {
     const { adapter, fake } = makeAdapter({ readFileImpl: async () => Buffer.from("x") });
     await adapter.start();
