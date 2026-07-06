@@ -26,6 +26,7 @@ import {
   createMatrixAdapter,
   MAX_TRACKED_REACTIONS,
   type MatrixAdapterDeps,
+  type MatrixAdapterHandle,
 } from "../matrix-adapter.js";
 import { MATRIX_EVENT_BYTE_BUDGET } from "../matrix-adapter-outbound.js";
 import type { MatrixCryptoHandle } from "../crypto-store.js";
@@ -114,6 +115,41 @@ function fakeReactionEvent(
     getTs: () => ts,
     getContent: () => ({ "m.relates_to": { rel_type: "m.annotation", event_id: targetId, key } }),
     // Reactions ride in the clear; the fail-closed decrypt branch is skipped.
+    isEncrypted: () => false,
+  } as unknown as MatrixEvent;
+}
+
+/**
+ * A minimal inbound media `m.room.message` event. In an encrypted room the media
+ * rides `content.file` (the encrypted-file record); in a plaintext room it rides
+ * `content.url`. The mapper reads `content.file` regardless of the wire encryption
+ * flag, so this drives the adapter's cache-write path.
+ */
+function fakeMediaEvent(
+  overrides: {
+    id?: string;
+    sender?: string;
+    ts?: number;
+    msgtype?: string;
+    mxc?: string;
+    encrypted?: Record<string, unknown>;
+  } = {},
+): MatrixEvent {
+  const { id = "$media1", sender = "@alice:hs", ts = 400, msgtype = "m.image", mxc = "mxc://hs/img" } =
+    overrides;
+  const content: Record<string, unknown> = {
+    msgtype,
+    body: "file.png",
+    info: { mimetype: "image/png", size: 10 },
+  };
+  if (overrides.encrypted !== undefined) content.file = overrides.encrypted;
+  else content.url = mxc;
+  return {
+    getType: () => "m.room.message",
+    getId: () => id,
+    getSender: () => sender,
+    getTs: () => ts,
+    getContent: () => content,
     isEncrypted: () => false,
   } as unknown as MatrixEvent;
 }
@@ -294,6 +330,28 @@ class FakeMatrixClient {
     return this.cryptoHandle;
   }
 
+  /** Uploaded attachment payloads (bytes + declared type/name) + the mxc returned. */
+  readonly uploads: Array<{ bytes: Uint8Array; type?: string; name?: string }> = [];
+  uploadContent(
+    bytes: Uint8Array,
+    opts?: { type?: string; name?: string },
+  ): Promise<{ content_uri: string }> {
+    this.uploads.push({ bytes, type: opts?.type, name: opts?.name });
+    return Promise.resolve({ content_uri: "mxc://hs/up" });
+  }
+
+  /** The access token the media client getter exposes to the resolver. */
+  getAccessToken(): string | null {
+    return "token-abc";
+  }
+
+  /** The authed mxc→http URL builder the media client getter binds; records each call. */
+  readonly mxcCalls: unknown[][] = [];
+  mxcUrlToHttp(...args: unknown[]): string | null {
+    this.mxcCalls.push(args);
+    return `https://hs/_matrix/client/v1/media/download/${String(args[0])}`;
+  }
+
   /**
    * Model matrix-js-sdk's `decryptEventIfNeeded`: decryption is attempted only when
    * a crypto backend is present, is async, and sets the clear data before it
@@ -462,6 +520,7 @@ interface HarnessOverrides {
   e2ee?: boolean;
   initCryptoImpl?: MatrixAdapterDeps["initCryptoImpl"];
   timer?: TimerPort;
+  readFileImpl?: (path: string) => Promise<Buffer>;
 }
 
 function makeAdapter(over: HarnessOverrides = {}): {
@@ -498,12 +557,13 @@ function makeAdapter(over: HarnessOverrides = {}): {
     ...(over.initCryptoImpl !== undefined ? { initCryptoImpl: over.initCryptoImpl } : {}),
   };
 
-  // The timer seam rides a supertype cast so this harness compiles whether or not
-  // the deps type carries the (optional) timer field yet.
+  // The timer + readFileImpl seams ride a supertype cast so this harness compiles
+  // whether or not the deps type carries those (optional) fields yet.
+  const extra: Record<string, unknown> = {};
+  if (over.timer !== undefined) extra.timer = over.timer;
+  if (over.readFileImpl !== undefined) extra.readFileImpl = over.readFileImpl;
   const adapter = createMatrixAdapter(
-    over.timer !== undefined
-      ? ({ ...deps, timer: over.timer } as MatrixAdapterDeps)
-      : deps,
+    Object.keys(extra).length > 0 ? ({ ...deps, ...extra } as MatrixAdapterDeps) : deps,
   );
   adapter.onMessage((m) => {
     received.push(m);
@@ -1778,5 +1838,140 @@ describe("createMatrixAdapter — uniform rate-limit retry across outbound actio
 
     expect(result?.ok).toBe(true);
     expect(fake.redactAttempts).toBe(2);
+  });
+});
+
+describe("createMatrixAdapter — media surface", () => {
+  /** A stand-in encrypted-file record (url + JWK key + iv + hashes + version). */
+  const ENC_RECORD: Record<string, unknown> = {
+    url: "mxc://hs/enc",
+    key: { alg: "A256CTR", key_ops: ["encrypt", "decrypt"], kty: "oct", k: "kkk", ext: true },
+    iv: "aviv",
+    hashes: { sha256: "abc" },
+    v: "v2",
+  };
+
+  it("exposes a media client (mxc→http, access token, homeserver host) only after start", async () => {
+    const { adapter } = makeAdapter({ homeserverUrl: "http://127.0.0.1:8008" });
+    const handle = adapter as MatrixAdapterHandle;
+
+    // Before start the client is not built yet — the media getter is undefined so a
+    // resolver called at wiring time errs cleanly rather than crashing.
+    expect(handle.getMediaClient()).toBeUndefined();
+
+    await adapter.start();
+
+    const media = handle.getMediaClient();
+    expect(media).toBeDefined();
+    expect(typeof media?.mxcUrlToHttp).toBe("function");
+    expect(media?.getAccessToken()).toBe("token-abc");
+    // The homeserver host is the hostname of the configured homeserver url.
+    expect(media?.homeserverHost).toBe("127.0.0.1");
+  });
+
+  it("returns undefined for an unknown mxc and the cached record after an inbound encrypted media event", async () => {
+    const { adapter, fake } = makeAdapter({ allowFrom: [] });
+    const handle = adapter as MatrixAdapterHandle;
+    await adapter.start();
+
+    expect(handle.getEncryptedFile("mxc://hs/enc")).toBeUndefined();
+
+    // An inbound encrypted media event flows through the mapper, which fires the
+    // wired cache-write callback keyed by the mxc.
+    await deliver(fake, fakeMediaEvent({ msgtype: "m.image", encrypted: ENC_RECORD }));
+
+    expect(handle.getEncryptedFile("mxc://hs/enc")).toEqual(ENC_RECORD);
+  });
+
+  it("plaintext room: sendAttachment uploads the bytes and sends an m.image with a top-level url", async () => {
+    const bytes = Buffer.from("PNGBYTES");
+    const { adapter, fake } = makeAdapter({ readFileImpl: async () => bytes });
+    await adapter.start(); // no crypto handle → the room is plaintext
+
+    const result = await adapter.sendAttachment?.("!room:hs", {
+      type: "image",
+      url: "/tmp/x.png",
+      mimeType: "image/png",
+      fileName: "x.png",
+    });
+
+    expect(result?.ok).toBe(true);
+    // The exact bytes were uploaded (no encryption on the plaintext path).
+    expect(fake.uploads).toHaveLength(1);
+    expect(Buffer.from(fake.uploads[0]?.bytes ?? new Uint8Array()).equals(bytes)).toBe(true);
+    // The sent event is an m.image carrying the uploaded mxc on content.url, no file.
+    const media = fake.sentEvents.find((e) => e.content.msgtype === "m.image");
+    expect(media).toBeDefined();
+    expect(media?.content.url).toBe("mxc://hs/up");
+    expect(media?.content.file).toBeUndefined();
+    if (result?.ok) expect(result.value).toBe("$sent1");
+  });
+
+  it("encrypted room: sendAttachment uploads ciphertext and sends content.file with no top-level url", async () => {
+    const bytes = Buffer.from("PLAINTEXT-ATTACHMENT-BYTES-0123456789");
+    const fake = new FakeMatrixClient();
+    // The rust-crypto authoritative check reports the room encrypted.
+    fake.cryptoHandle = { isEncryptionEnabledInRoom: async () => true };
+    const { adapter } = makeAdapter({ fake, readFileImpl: async () => bytes });
+    await adapter.start();
+
+    const result = await adapter.sendAttachment?.("!room:hs", {
+      type: "image",
+      url: "/tmp/s.png",
+      mimeType: "image/png",
+      fileName: "s.png",
+    });
+
+    expect(result?.ok).toBe(true);
+    // The uploaded payload is CIPHERTEXT — never the plaintext bytes.
+    expect(fake.uploads).toHaveLength(1);
+    const uploaded = Buffer.from(fake.uploads[0]?.bytes ?? new Uint8Array());
+    expect(uploaded.equals(bytes)).toBe(false);
+    // The event carries content.file (the record + the uploaded mxc) and NO plaintext url.
+    const media = fake.sentEvents.find((e) => e.content.msgtype === "m.image");
+    expect(media?.content.url).toBeUndefined();
+    const file = media?.content.file as
+      | { url?: string; key?: unknown; iv?: unknown; hashes?: unknown; v?: unknown }
+      | undefined;
+    expect(file?.url).toBe("mxc://hs/up");
+    expect(file?.key).toBeDefined();
+    expect(file?.iv).toBeDefined();
+    expect(file?.hashes).toBeDefined();
+    expect(file?.v).toBeDefined();
+  });
+
+  it("maps the MIME family to the media msgtype (audio → m.audio, document → m.file)", async () => {
+    const { adapter, fake } = makeAdapter({ readFileImpl: async () => Buffer.from("x") });
+    await adapter.start();
+
+    await adapter.sendAttachment?.("!room:hs", {
+      type: "audio",
+      url: "/tmp/a.ogg",
+      mimeType: "audio/ogg",
+      fileName: "a.ogg",
+    });
+    await adapter.sendAttachment?.("!room:hs", {
+      type: "file",
+      url: "/tmp/d.pdf",
+      mimeType: "application/pdf",
+      fileName: "d.pdf",
+    });
+
+    const msgtypes = fake.sentEvents.map((e) => e.content.msgtype);
+    expect(msgtypes).toContain("m.audio");
+    expect(msgtypes).toContain("m.file");
+  });
+
+  it("errs on sendAttachment before start rather than dereferencing an absent client", async () => {
+    const { adapter } = makeAdapter({ readFileImpl: async () => Buffer.from("x") });
+
+    const result = await adapter.sendAttachment?.("!room:hs", {
+      type: "image",
+      url: "/tmp/x.png",
+      mimeType: "image/png",
+      fileName: "x.png",
+    });
+
+    expect(result?.ok).toBe(false);
   });
 });
