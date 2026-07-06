@@ -6,6 +6,7 @@ import * as path from "node:path";
 import type { ComisLogger, NormalizedMessage, NormalizedReaction } from "@comis/core";
 import {
   ClientEvent,
+  Direction,
   RoomEvent,
   SyncState,
   type ICreateClientOpts,
@@ -289,6 +290,28 @@ class FakeMatrixClient {
     if (this.redactError !== undefined) return Promise.reject(this.redactError);
     this.redactedEvents.push({ roomId, eventId });
     return Promise.resolve({ event_id: "$redact1" });
+  }
+
+  /** History pagination: the injected `/messages` chunk + a call recorder. */
+  messagesChunk: Array<{
+    event_id: string;
+    sender: string;
+    origin_server_ts: number;
+    type: string;
+    content: { body?: string };
+  }> = [];
+  messagesError?: unknown;
+  lastMessagesRequest?: { roomId: string; from: string | null; limit: number | undefined; dir: string };
+
+  createMessagesRequest(
+    roomId: string,
+    from: string | null,
+    limit: number | undefined,
+    dir: string,
+  ): Promise<{ chunk: unknown[]; start?: string; end?: string }> {
+    this.lastMessagesRequest = { roomId, from, limit, dir };
+    if (this.messagesError !== undefined) return Promise.reject(this.messagesError);
+    return Promise.resolve({ chunk: this.messagesChunk, end: "t-next" });
   }
 
   async login(
@@ -974,5 +997,85 @@ describe("createMatrixAdapter — outbound reactions", () => {
     );
     expect(newest?.ok).toBe(true);
     expect(fake.redactedEvents).toHaveLength(1);
+  });
+});
+
+describe("createMatrixAdapter — history fetch", () => {
+  it("pages /messages backward and maps the chunk to FetchedMessage[] in order", async () => {
+    const fake = new FakeMatrixClient();
+    fake.messagesChunk = [
+      { event_id: "$m1", sender: "@a:hs", origin_server_ts: 100, type: "m.room.message", content: { body: "first" } },
+      { event_id: "$m2", sender: "@b:hs", origin_server_ts: 200, type: "m.room.message", content: { body: "second" } },
+    ];
+    const { adapter } = makeAdapter({ fake });
+    await adapter.start();
+
+    const result = await adapter.fetchMessages?.("!room:hs", { limit: 2 });
+
+    expect(result?.ok).toBe(true);
+    if (result?.ok) {
+      expect(result.value).toEqual([
+        { id: "$m1", senderId: "@a:hs", text: "first", timestamp: 100 },
+        { id: "$m2", senderId: "@b:hs", text: "second", timestamp: 200 },
+      ]);
+    }
+    // Paged backward from the most-recent end (a null `from` token), honoring the limit.
+    expect(fake.lastMessagesRequest?.roomId).toBe("!room:hs");
+    expect(fake.lastMessagesRequest?.from).toBeNull();
+    expect(fake.lastMessagesRequest?.limit).toBe(2);
+    expect(fake.lastMessagesRequest?.dir).toBe(Direction.Backward);
+  });
+
+  it("defaults to a bounded page size when no limit option is given", async () => {
+    const fake = new FakeMatrixClient();
+    fake.messagesChunk = [];
+    const { adapter } = makeAdapter({ fake });
+    await adapter.start();
+
+    const result = await adapter.fetchMessages?.("!room:hs");
+
+    expect(result?.ok).toBe(true);
+    if (result?.ok) expect(result.value).toEqual([]);
+    expect(fake.lastMessagesRequest?.limit).toBe(20);
+  });
+
+  it("maps a missing body to an empty string rather than dropping the entry", async () => {
+    const fake = new FakeMatrixClient();
+    fake.messagesChunk = [
+      { event_id: "$m1", sender: "@a:hs", origin_server_ts: 100, type: "m.room.message", content: {} },
+    ];
+    const { adapter } = makeAdapter({ fake });
+    await adapter.start();
+
+    const result = await adapter.fetchMessages?.("!room:hs");
+
+    expect(result?.ok).toBe(true);
+    if (result?.ok) {
+      expect(result.value).toEqual([{ id: "$m1", senderId: "@a:hs", text: "", timestamp: 100 }]);
+    }
+  });
+
+  it("errs on fetchMessages before start rather than dereferencing an absent client", async () => {
+    const { adapter } = makeAdapter();
+
+    const result = await adapter.fetchMessages?.("!room:hs");
+
+    expect(result?.ok).toBe(false);
+  });
+
+  it("propagates a fetch failure as err with a classified errorKind hint", async () => {
+    const fake = new FakeMatrixClient();
+    fake.messagesError = matrixError("M_FORBIDDEN", 403, "not in room");
+    const { adapter, logger } = makeAdapter({ fake });
+    await adapter.start();
+
+    const result = await adapter.fetchMessages?.("!room:hs");
+
+    expect(result?.ok).toBe(false);
+    const warn = vi.mocked(logger.warn);
+    const authWarn = warn.mock.calls.find(
+      ([fields]) => (fields as { errorKind?: string }).errorKind === "auth",
+    );
+    expect(authWarn).toBeDefined();
   });
 });
