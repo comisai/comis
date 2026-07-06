@@ -579,14 +579,8 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
               rootRunId: lease.rootRunId,
             });
           })();
-    // The cap chokepoint authorized the capability AND the route resolved — but a
-    // daemon-side SURFACE gate (the MCP inbound allowlist / the write surface / the
-    // resume surface) can still DENY an authorized `orch:*` call AFTER the cap check.
-    // The executor marks such a deny on its error-result (a non-enumerable Symbol
-    // that never crosses to the jail); audit the FINAL authorization decision so an
-    // in-jail surface-gate denial shows as `decision:"deny"` in explain.orchestrate +
-    // the durable audit (`capability_denied`) — not just the executor's WARN log.
-    // Content-free: tool NAME + cap + ids ONLY, never args (the gate name rides the log).
+    // A daemon-side SURFACE gate (MCP allowlist / write / resume) can DENY an authorized orch:* call
+    // AFTER the cap check; audit the FINAL decision so an in-jail deny shows decision:"deny" (no args).
     if (deps.container !== undefined) {
       const surfaceDeny = capabilityDenyReason(result);
       emitCapabilityAudit({ container: deps.container }, {

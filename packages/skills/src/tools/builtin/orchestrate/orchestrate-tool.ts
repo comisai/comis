@@ -786,19 +786,13 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         // mintRunLease). A run with none is degraded — flagged lease_absent below.
         const leasePresent = childEnv.COMIS_CAP_LEASE !== undefined;
 
-        // 5c. Register a resumable durable row (scriptRef set) BEFORE the run so a
-        //     mid-pipeline restart's boot sweep finds it (after the honest-degrade
-        //     refusals so a refused run writes no row). Best-effort; COALESCE-safe.
+        // 5c. Register a resumable durable row (scriptRef set) BEFORE the run so a mid-pipeline
+        //     restart's boot sweep finds it (after the honest-degrade refusals). Best-effort; COALESCE-safe.
         if (deps.durableRuns !== undefined) {
           await registerDurableRun(deps.durableRuns, {
             rootRunId: durableKey,
             scriptRef: scriptName,
-            // On a resume, carry the resumed run's checkpointRef onto THIS run's
-            // durable row so the replayed script's `resume()` returns that checkpoint (skip
-            // completed work) instead of an empty new-root checkpoint. `undefined` for a fresh
-            // run ⇒ omitted by buildResumableRow (no-op). The blob is workspace-scoped (same
-            // agent), so the ref resolves in this run.
-            ...(resumedCheckpointRef !== undefined ? { checkpointRef: resumedCheckpointRef } : {}),
+            ...(resumedCheckpointRef !== undefined ? { checkpointRef: resumedCheckpointRef } : {}), // resume: carry resumed checkpointRef so the replayed resume() returns it (undefined ⇒ omitted)
             nowMs: now(),
           });
         }
