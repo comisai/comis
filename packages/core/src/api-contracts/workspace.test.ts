@@ -436,18 +436,30 @@ describe("workspace-umbrella domain contracts", () => {
   });
 
   // -------------------------------------------------------------------------
-  // skills.import request — the installed name is the manifest name
+  // skills.import request — registry-import params (source:"wellknown")
   // -------------------------------------------------------------------------
 
-  describe("skills.import request (the manifest name is authoritative)", () => {
-    it("carries no installed-name override — a client-supplied name is stripped", () => {
-      // The handler installs under the mapped manifest name; there is no request
-      // field to override it, so a supplied `name` must not survive parsing.
+  describe("skills.import request (registry-import params)", () => {
+    it("accepts source \"wellknown\" and retains the registry origin plus the name lookup key", () => {
+      // `name` is the registry index-lookup key (which advertised skill to fetch),
+      // NOT an installed-name override — the installed name stays the manifest name.
       const parsed = SkillsImportContract.request.parse({
-        url: "https://example.com/owner/repo",
-        name: "override",
-      } as Record<string, unknown>);
-      expect("name" in parsed).toBe(false);
+        source: "wellknown",
+        registry: "https://example.com",
+        name: "pdf-extractor",
+      });
+      expect(parsed.source).toBe("wellknown");
+      expect(parsed.registry).toBe("https://example.com");
+      expect(parsed.name).toBe("pdf-extractor");
+    });
+
+    it("still accepts the github and archive sources (no source-enum regression)", () => {
+      expect(() =>
+        SkillsImportContract.request.parse({ source: "github", url: "https://example.com/owner/repo" }),
+      ).not.toThrow();
+      expect(() =>
+        SkillsImportContract.request.parse({ source: "archive", archiveUrl: "https://example.com/skill.zip" }),
+      ).not.toThrow();
     });
 
     it("accepts a minimal github-url request", () => {
