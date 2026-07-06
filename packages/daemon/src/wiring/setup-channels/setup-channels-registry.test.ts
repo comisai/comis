@@ -47,6 +47,7 @@ vi.mock("@comis/channels", () => ({
   createSlackActivityRenderer: vi.fn(() => ({ strategy: "EditPlace", apply: vi.fn(), finalize: vi.fn() })),
   createWhatsAppActivityRenderer: vi.fn(() => ({ strategy: "EditPlace", apply: vi.fn(), finalize: vi.fn() })),
   createMSTeamsActivityRenderer: vi.fn(() => ({ strategy: "EditPlace", apply: vi.fn(), finalize: vi.fn() })),
+  createGoogleChatActivityRenderer: vi.fn(() => ({ strategy: "EditPlace", apply: vi.fn(), finalize: vi.fn() })),
   createSignalActivityRenderer: vi.fn(() => ({ strategy: "DeleteAndRepost", apply: vi.fn(), finalize: vi.fn() })),
   createIMessageActivityRenderer: vi.fn(() => ({ strategy: "AppendOnly", apply: vi.fn(), finalize: vi.fn() })),
   createLineActivityRenderer: vi.fn(() => ({ strategy: "AppendOnly", apply: vi.fn(), finalize: vi.fn() })),
