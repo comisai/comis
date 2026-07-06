@@ -865,7 +865,8 @@ describe("writeConfigStep", () => {
             : {
                 type: "googlechat",
                 serviceAccountKey: SA_KEY_BLOB,
-                audience: "123456789012",
+                audience: "https://chat.example.com/hook",
+                audienceType: "app-url",
                 mode: "webhook",
                 validated: false,
               },
@@ -913,13 +914,17 @@ describe("writeConfigStep", () => {
       expect(parsed.success).toBe(true);
     });
 
-    it("emits a googlechat (webhook) block with audience inline that validates against the schema", async () => {
+    it("emits a googlechat (webhook) block with audience + audienceType inline that validates against the schema", async () => {
       const prompter = createMockPrompter();
       await writeConfigStep.execute(googlechatState("webhook"), prompter);
 
       const gc = writtenChannels().googlechat as Record<string, unknown>;
       expect(gc.mode).toBe("webhook");
-      expect(gc.audience).toBe("123456789012");
+      expect(gc.audience).toBe("https://chat.example.com/hook");
+      // audienceType must reach config.yaml so the inbound verifier binds to the
+      // right key set/claim shape — a captured app-url type that is dropped here
+      // would fall back to the schema default and silently reject every request.
+      expect(gc.audienceType).toBe("app-url");
       expect(gc.serviceAccountKey).toBe("${GOOGLECHAT_SA_KEY}");
       const parsed = ChannelConfigSchema.safeParse({ googlechat: gc });
       expect(parsed.success).toBe(true);
