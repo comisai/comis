@@ -692,6 +692,14 @@ The bot app id (`channels.msteams.appId`) and directory/tenant id (`channels.mst
 | `EMAIL_OAUTH_CLIENT_SECRET` | OAuth2 client secret |
 | `EMAIL_REFRESH_TOKEN` | OAuth2 refresh token |
 
+### Matrix
+
+| Variable | Purpose |
+|----------|---------|
+| `MATRIX_ACCESS_TOKEN` | Bot access token — the fallback source for `channels.matrix.accessToken` (also settable inline in config or as a SecretRef) |
+
+The homeserver URL (`channels.matrix.homeserverUrl`) and the bot MXID (`channels.matrix.userId`) are plain configuration values, not secrets, and are set in `config.yaml` rather than as environment variables.
+
 WhatsApp, Signal, and iMessage use file-based credentials in their respective auth directories rather than environment variables. See [Channels](/channels) for setup.
 
 ## Quick Setup with `comis configure`

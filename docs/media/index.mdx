@@ -125,6 +125,7 @@ channel can actually receive and send.
 | IRC | No | No | No | No | No | No |
 | Email | Yes (inline/attachment) | Yes (audio attachment) | Yes (audio attachment) | Yes (attachment) | Yes (full MIME) | No |
 | Microsoft Teams | Yes | Yes | No | Yes | Yes | No |
+| Matrix | Yes | Yes | Yes | Yes | Yes | No |
 
 The "voice out" column reflects whether the channel adapter can deliver an
 audio reply when [auto-TTS](/media/voice#auto-reply-modes) is enabled. The
@@ -156,8 +157,8 @@ agent gets consistent results no matter where the message originated.
 Some media features are only available on certain platforms. For example,
 rich messages with buttons currently render on Discord, Telegram, Slack, and
 Microsoft Teams (as Adaptive Cards); LINE and WhatsApp button rendering is not
-yet wired through `sendMessage`, and Signal, iMessage, IRC, and Email do not
-support buttons. See each
+yet wired through `sendMessage`, and Signal, iMessage, IRC, Email, and Matrix do
+not support buttons. See each
 capability page for platform-specific details.
 </Note>
 

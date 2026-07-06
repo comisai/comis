@@ -51,6 +51,8 @@ data directory.
 │   └── whisper/             # local STT whisper model (downloaded once on first use, reused)
 ├── agents/                  # per-agent RPC state (subagent results, etc.)
 ├── background-tasks/        # background task state files
+├── matrix-state/            # Matrix E2EE crypto store + /sync state (when channels.matrix enabled)
+├── whatsapp-auth/           # WhatsApp pairing credentials (when channels.whatsapp paired)
 ├── skills/                  # seeded skill library — bundled claude-code/codex/skill-creator skills (re-seeded on version change) + any added skills
 │   └── <name>/SKILL.md      # one dir per skill (the agent auto-discovers these by description)
 ├── identity/
@@ -74,6 +76,8 @@ Some entries only appear under specific conditions.
 - `terminal-drive/` — the per-agent **durable** terminal drive-state journals. A durable drive is the **default** (`drive.durable: true`), so this appears whenever an agent runs a terminal drive; absent only for an explicit `drive.durable: false` (non-durable) drive or on a tmux-less host.
 - `models/whisper/` — created only after the **first** voice transcription that uses the keyless in-process local STT engine (when `integrations.media.transcription.provider` resolves to `local` without a `local.baseUrl` server). Absent on a fresh install and whenever local STT never runs.
 - `models/tts/` — created only after the **first** voice reply that uses the keyless in-process offline TTS engine (when `integrations.media.tts.provider` resolves to `local`/`piper`). A separate subdir from `models/whisper/`. Absent on a fresh install and whenever local TTS never runs.
+- `matrix-state/` — the Matrix channel's durable state directory (default `~/.comis/matrix-state`, override with `channels.matrix.stateDir`). Present only when `channels.matrix` is enabled. Created `0700` with `0600` files — it holds the access token, the end-to-end-encryption crypto store, and the `/sync` position.
+- `whatsapp-auth/` — the WhatsApp channel's pairing credentials (default `~/.comis/whatsapp-auth`, override with `channels.whatsapp.authDir`). Present only after `channels.whatsapp` is enabled and the bot has paired with a WhatsApp account.
 </Note>
 
 ## File-by-file reference
@@ -355,6 +359,24 @@ Persisted state for long-running background tasks promoted out of the LLM execut
 
 **Written by:** the daemon when background tasks are created or updated.
 **Safe to delete?** Yes, when no tasks are running. The daemon will lose track of any in-progress background work.
+
+---
+
+### `matrix-state/`
+
+The Matrix channel's durable state directory. Holds the `/sync` position (resume token), the persisted device id, the per-room watermark, and the end-to-end-encryption crypto store — an encrypted snapshot of the device and room keys plus its storage key. Defaults to `~/.comis/matrix-state`; override with `channels.matrix.stateDir`.
+
+**Written by:** the Matrix channel adapter while running. The directory is created `0700` and every file inside is `0600` — it contains the access token and the E2EE keys.
+**Safe to delete?** Only with the channel stopped, and with consequences. Deleting it drops the saved device identity and encryption keys, so the bot registers a new device on next start and cannot read history encrypted to the old device until re-verified. The `/sync` token is rebuilt automatically.
+
+---
+
+### `whatsapp-auth/`
+
+The WhatsApp channel's pairing credentials — the multi-file auth state written when you link the bot to a WhatsApp account by scanning the QR code. Defaults to `~/.comis/whatsapp-auth`; override with `channels.whatsapp.authDir`.
+
+**Written by:** the WhatsApp channel adapter during pairing and on every credential refresh.
+**Safe to delete?** Yes, but you will have to re-pair — deleting it unlinks the session, and the next start prints a fresh QR code to scan.
 
 ---
 

@@ -1165,6 +1165,38 @@ channels:
     allowFrom: ["29:1abcAADObjectId"]
 ```
 
+**Matrix (channels.matrix)**
+
+Matrix connects to a homeserver over the Client-Server API using either an access token or a password login, with a persisted device identity. End-to-end encryption is on by default. Trust is keyed on the full sender MXID: `allowFrom` gates both auto-join on invite and which senders the agent responds to, while `allowMode` decides how an empty allowlist behaves. `allowPrivateHomeserver` relaxes the SSRF private-range block for a self-hosted homeserver — cloud-metadata endpoints stay blocked regardless.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Whether this channel is active (opt-in) |
+| `homeserverUrl` | `string` | _(unset)_ | Homeserver base URL (Client-Server API); SSRF-validated before use |
+| `userId` | `string` | _(unset)_ | Full bot MXID, e.g. `@bot:example.org` |
+| `accessToken` | `string \| SecretRef` | _(unset)_ | Access token for token login. A secret — supply a `SecretRef` or set it via the `MATRIX_ACCESS_TOKEN` environment variable |
+| `password` | `string \| SecretRef` | _(unset)_ | Password for password login (alternative to `accessToken`). A secret |
+| `recoveryKey` | `string \| SecretRef` | _(unset)_ | Secure-backup recovery key for restoring an encrypted session. A secret |
+| `deviceId` | `string` | _(unset)_ | Device ID persisted with the access token for a stable identity across restarts |
+| `e2ee` | `boolean` | `true` | Enable end-to-end encryption for Matrix rooms |
+| `stateDir` | `string` | `~/.comis/matrix-state` | Directory for durable channel state (sync token, device id, watermark, encrypted crypto store) |
+| `allowFrom` | `string[]` | `[]` | Allowed sender MXIDs; gates invite auto-join and per-sender trust (empty honors `allowMode`) |
+| `allowMode` | `enum` | `"allowlist"` | Sender gate: `allowlist` (default, blocks all unless listed) or `open` |
+| `autoJoinOnInvite` | `boolean` | `true` | Whether to auto-join a room when invited by an allowlisted MXID |
+| `allowPrivateHomeserver` | `boolean` | `false` | Allow a private-range homeserver URL (cloud-metadata endpoints remain blocked) |
+| `mediaProcessing` | `MediaProcessing` | _(all true)_ | Per-channel media processing overrides |
+
+```yaml
+channels:
+  matrix:
+    enabled: true
+    homeserverUrl: "https://matrix.example.org"
+    userId: "@bot:example.org"
+    accessToken: "${MATRIX_ACCESS_TOKEN}"
+    e2ee: true
+    allowFrom: ["@alice:example.org"]
+```
+
 <Info>See the [Channels](/channels/index) section for platform-specific setup guides.</Info>
 
 </Accordion>
