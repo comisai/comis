@@ -19,6 +19,7 @@ import {
   encryptAttachment,
   decryptAttachment,
   createEncryptedFileCache,
+  parseMediaEncryptionInfo,
   type EncryptedFileLike,
 } from "../media-handler.js";
 
@@ -87,6 +88,28 @@ describe("encrypted-attachment codec", () => {
     },
     CRYPTO_TIMEOUT_MS,
   );
+});
+
+describe("parseMediaEncryptionInfo", () => {
+  it("throws a meaningful error when the codec returns no media-encryption info", () => {
+    // A defensive guard: JSON.parse(undefined) would otherwise throw an opaque
+    // SyntaxError; the operator should see WHY (the codec emitted nothing) instead.
+    expect(() => parseMediaEncryptionInfo(undefined)).toThrow(/no media-encryption info/i);
+    expect(() => parseMediaEncryptionInfo(null)).toThrow(/no media-encryption info/i);
+    expect(() => parseMediaEncryptionInfo("")).toThrow(/no media-encryption info/i);
+  });
+
+  it("parses a valid media-encryption info JSON string", () => {
+    const raw = JSON.stringify({
+      v: "v2",
+      iv: "iv",
+      hashes: { sha256: "h" },
+      key: { alg: "A256CTR", key_ops: ["encrypt"], kty: "oct", k: "k", ext: true },
+    });
+    const info = parseMediaEncryptionInfo(raw);
+    expect(info.v).toBe("v2");
+    expect(info.key.alg).toBe("A256CTR");
+  });
 });
 
 describe("bounded encrypted-file cache", () => {
