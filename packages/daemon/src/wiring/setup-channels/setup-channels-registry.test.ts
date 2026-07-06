@@ -1251,4 +1251,28 @@ describe("setupChannels", () => {
       expect(cmDeps.interactiveCallbackRouter).toBeUndefined();
     });
   });
+
+  // -- googlechat webhook ingress thread-out --
+  //
+  // The gateway phase mounts /channels/googlechat only when bootstrapAdapters
+  // built a caller-backed ingress (webhook mode). setupChannels must FORWARD that
+  // ingress in its result so the composition root can thread it into the gateway
+  // deps — mirroring msTeamsIngress. A missing thread silently severs the mount.
+  describe("googlechat webhook ingress thread-out", () => {
+    it("forwards the googlechat ingress built by bootstrapAdapters into the setupChannels result", async () => {
+      const googlechatIngress = { __googlechatIngress: true };
+      vi.mocked(bootstrapAdapters).mockResolvedValueOnce({
+        adaptersByType: mockAdaptersByType,
+        tgPlugin: undefined,
+        linePlugin: undefined,
+        channelPlugins: new Map(),
+        googlechatIngress,
+      } as any);
+      const { container } = makeContainer();
+      const deps = makeDeps({ container });
+      const result = await setupChannels(deps);
+
+      expect(result.googlechatIngress).toBe(googlechatIngress);
+    });
+  });
 });
