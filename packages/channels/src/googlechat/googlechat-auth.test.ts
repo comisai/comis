@@ -658,3 +658,199 @@ describe("createGoogleChatInboundVerifier — project-number audience", () => {
     expect(loggerSpy.serialized()).not.toContain(token);
   });
 });
+
+const APP_URL = "https://chat.example.com/hooks/googlechat";
+const GOOGLE_OIDC_ISS = "https://accounts.google.com";
+const CHAT_SYSTEM_EMAIL = "chat@system.gserviceaccount.com";
+
+/**
+ * Mint an app-url-audience token (a Google OIDC ID token shape). The default
+ * payload carries the Chat-system sender-binding claims; a test overrides the
+ * payload to drop/alter `email` / `email_verified`.
+ */
+function mintAppUrlToken(
+  privateKey: CryptoKey,
+  payload: Record<string, unknown> = {
+    email: CHAT_SYSTEM_EMAIL,
+    email_verified: true,
+  },
+  opts: { iss?: string; aud?: string; exp?: number | string } = {},
+): Promise<string> {
+  return new SignJWT(payload)
+    .setProtectedHeader({ alg: "RS256", kid: "k1" })
+    .setIssuer(opts.iss ?? GOOGLE_OIDC_ISS)
+    .setAudience(opts.aud ?? APP_URL)
+    .setExpirationTime(opts.exp ?? "5m")
+    .sign(privateKey);
+}
+
+describe("createGoogleChatInboundVerifier — app-url audience (sender-binding)", () => {
+  it("verifies a Google OIDC token bound to the Chat system (email + email_verified)", async () => {
+    const { privateKey, jwks } = await makeInboundKeyContext();
+    const verify = gcAuth.createGoogleChatInboundVerifier({
+      audienceType: "app-url",
+      audience: APP_URL,
+      jwks,
+    });
+    const token = await mintAppUrlToken(privateKey);
+    expect((await verify(`Bearer ${token}`)).ok).toBe(true);
+  });
+
+  it("REJECTS a right-audience OIDC token whose email is NOT the Chat system (the auth-bypass hole)", async () => {
+    const { privateKey, jwks } = await makeInboundKeyContext();
+    const verify = gcAuth.createGoogleChatInboundVerifier({
+      audienceType: "app-url",
+      audience: APP_URL,
+      jwks,
+    });
+    // A perfectly valid Google-signed OIDC token for the SAME audience but minted
+    // for a DIFFERENT principal — without the email binding this would pass.
+    const token = await mintAppUrlToken(privateKey, {
+      email: "attacker@evil.example",
+      email_verified: true,
+    });
+    expect((await verify(`Bearer ${token}`)).ok).toBe(false);
+  });
+
+  it("rejects a token missing the email claim entirely", async () => {
+    const { privateKey, jwks } = await makeInboundKeyContext();
+    const verify = gcAuth.createGoogleChatInboundVerifier({
+      audienceType: "app-url",
+      audience: APP_URL,
+      jwks,
+    });
+    const token = await mintAppUrlToken(privateKey, { email_verified: true });
+    expect((await verify(`Bearer ${token}`)).ok).toBe(false);
+  });
+
+  it("rejects a token whose email_verified is false or absent", async () => {
+    const { privateKey, jwks } = await makeInboundKeyContext();
+    const verify = gcAuth.createGoogleChatInboundVerifier({
+      audienceType: "app-url",
+      audience: APP_URL,
+      jwks,
+    });
+    const falseVerified = await mintAppUrlToken(privateKey, {
+      email: CHAT_SYSTEM_EMAIL,
+      email_verified: false,
+    });
+    expect((await verify(`Bearer ${falseVerified}`)).ok).toBe(false);
+    const absentVerified = await mintAppUrlToken(privateKey, {
+      email: CHAT_SYSTEM_EMAIL,
+    });
+    expect((await verify(`Bearer ${absentVerified}`)).ok).toBe(false);
+  });
+
+  it("rejects a project-number-issuer token presented to an app-url verifier", async () => {
+    const { privateKey, jwks } = await makeInboundKeyContext();
+    const verify = gcAuth.createGoogleChatInboundVerifier({
+      audienceType: "app-url",
+      audience: APP_URL,
+      jwks,
+    });
+    // Right email + audience, but the WRONG issuer for the OIDC shape.
+    const token = await mintAppUrlToken(
+      privateKey,
+      { email: CHAT_SYSTEM_EMAIL, email_verified: true },
+      { iss: CHAT_SYSTEM_ISS },
+    );
+    expect((await verify(`Bearer ${token}`)).ok).toBe(false);
+  });
+
+  it("accepts the bare-form Google OIDC issuer (accounts.google.com, no scheme)", async () => {
+    const { privateKey, jwks } = await makeInboundKeyContext();
+    const verify = gcAuth.createGoogleChatInboundVerifier({
+      audienceType: "app-url",
+      audience: APP_URL,
+      jwks,
+    });
+    const token = await mintAppUrlToken(
+      privateKey,
+      { email: CHAT_SYSTEM_EMAIL, email_verified: true },
+      { iss: "accounts.google.com" },
+    );
+    expect((await verify(`Bearer ${token}`)).ok).toBe(true);
+  });
+
+  it("rejects wrong-audience / expired / wrong-key on the app-url branch", async () => {
+    const { privateKey, jwks } = await makeInboundKeyContext();
+    const verify = gcAuth.createGoogleChatInboundVerifier({
+      audienceType: "app-url",
+      audience: APP_URL,
+      jwks,
+    });
+    const wrongAud = await mintAppUrlToken(privateKey, undefined, {
+      aud: "https://evil.example/hook",
+    });
+    expect((await verify(`Bearer ${wrongAud}`)).ok).toBe(false);
+    const expired = await mintAppUrlToken(privateKey, undefined, { exp: 2 });
+    expect((await verify(`Bearer ${expired}`)).ok).toBe(false);
+    const foreign = await generateKeyPair("RS256");
+    const wrongKey = await mintAppUrlToken(foreign.privateKey as CryptoKey);
+    expect((await verify(`Bearer ${wrongKey}`)).ok).toBe(false);
+  });
+
+  it("never records the token on the sender-binding rejection", async () => {
+    const { privateKey, jwks } = await makeInboundKeyContext();
+    const loggerSpy = makeLoggerSpy();
+    const verify = gcAuth.createGoogleChatInboundVerifier({
+      audienceType: "app-url",
+      audience: APP_URL,
+      jwks,
+      logger: loggerSpy.logger,
+    });
+    const token = await mintAppUrlToken(privateKey, {
+      email: "attacker@evil.example",
+      email_verified: true,
+    });
+    expect((await verify(`Bearer ${token}`)).ok).toBe(false);
+    expect(loggerSpy.serialized()).not.toContain(token);
+  });
+});
+
+describe("createLocalGoogleChatInboundVerifier — offline full verify (test seam)", () => {
+  it("verifies a project-number token OFFLINE against an injected raw JWKS", async () => {
+    const { privateKey, jwk } = await makeInboundKeyContext();
+    const verify = gcAuth.createLocalGoogleChatInboundVerifier(
+      { keys: [jwk] },
+      { audienceType: "project-number", audience: PROJECT_NUMBER },
+    );
+    const token = await mintProjectToken(privateKey);
+    expect((await verify(`Bearer ${token}`)).ok).toBe(true);
+    // A wrong-key token is still rejected — a FULL verify, never a bypass.
+    const foreign = await generateKeyPair("RS256");
+    const bad = await mintProjectToken(foreign.privateKey as CryptoKey);
+    expect((await verify(`Bearer ${bad}`)).ok).toBe(false);
+  });
+
+  it("verifies an app-url token OFFLINE and STILL enforces the email sender-binding", async () => {
+    const { privateKey, jwk } = await makeInboundKeyContext();
+    const verify = gcAuth.createLocalGoogleChatInboundVerifier(
+      { keys: [jwk] },
+      { audienceType: "app-url", audience: APP_URL },
+    );
+    const good = await mintAppUrlToken(privateKey);
+    expect((await verify(`Bearer ${good}`)).ok).toBe(true);
+    const wrongEmail = await mintAppUrlToken(privateKey, {
+      email: "attacker@evil.example",
+      email_verified: true,
+    });
+    expect((await verify(`Bearer ${wrongEmail}`)).ok).toBe(false);
+  });
+
+  it("honors an issuer override for a fully-synthetic emulator issuer", async () => {
+    const { privateKey, jwk } = await makeInboundKeyContext();
+    const verify = gcAuth.createLocalGoogleChatInboundVerifier(
+      { keys: [jwk] },
+      {
+        audienceType: "project-number",
+        audience: PROJECT_NUMBER,
+        issuer: "https://emulator.test",
+      },
+    );
+    const token = await mintProjectToken(privateKey, {
+      iss: "https://emulator.test",
+    });
+    expect((await verify(`Bearer ${token}`)).ok).toBe(true);
+  });
+});
