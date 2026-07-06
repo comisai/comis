@@ -62,6 +62,7 @@ import {
   makeSyncResponse,
   makeVersionsResponse,
   makeWhoamiResponse,
+  makeWireEvent,
   MATRIX_TEST_BOT_MXID,
   MATRIX_TEST_DEVICE_ID,
   type MatrixJoinedRoom,
@@ -103,6 +104,29 @@ export interface InjectMatrixMessageOpts {
 }
 
 /**
+ * Addressing for {@link MatrixEmulator.injectRoomEvent} — a type-agnostic live
+ * inbound event. Carries the caller-supplied `type` + `content` (and the optional
+ * top-level `redacts` a redaction event needs), so reactions, redactions, and
+ * edits can all be driven through the real adapter without a per-type verb.
+ */
+export interface InjectMatrixEventOpts {
+  /** The room the event belongs to (the routing channelId). */
+  readonly roomId: string;
+  /** The sender's full MXID. */
+  readonly sender: string;
+  /** The event type (`m.reaction`, `m.room.redaction`, …). */
+  readonly type: string;
+  /** The event content (shape depends on `type`). */
+  readonly content: Record<string, unknown>;
+  /** An explicit `origin_server_ts` (ms). Defaults to a monotonic value. */
+  readonly ts?: number;
+  /** An explicit event id. Defaults to a monotonic `$evt_N`. */
+  readonly eventId?: string;
+  /** The redacted event id — set only for an `m.room.redaction` event. */
+  readonly redacts?: string;
+}
+
+/**
  * `MatrixEmulator` — `ChannelEmulator` + the Matrix-specific inject/read verbs the
  * scenario drives. `start()`/`stop()` delegate to the http-backend base.
  *
@@ -122,6 +146,13 @@ export interface MatrixEmulator extends ChannelEmulator {
    * marks the room a DM (via `m.direct`). Returns the minted event id.
    */
   injectRoomMessage(opts: InjectMatrixMessageOpts): string;
+  /**
+   * Queue a LIVE inbound event of an ARBITRARY type (reaction / redaction / edit):
+   * delivered on the NEXT incremental `/sync` (post-PREPARED), so the adapter's
+   * watermark guard admits it. The type-agnostic sibling of {@link injectRoomMessage}
+   * that the reaction/edit/redaction paths drive. Returns the minted event id.
+   */
+  injectRoomEvent(opts: InjectMatrixEventOpts): string;
   /**
    * Add a BACKLOG inbound message to the INITIAL `/sync` batch (delivered
    * pre-PREPARED), so the adapter's watermark guard DROPS it — the backlog-not-
@@ -259,6 +290,18 @@ export function createMatrixEmulator(opts: CreateMatrixEmulatorOptions = {}): Ma
       eventId: o.eventId ?? nextEventId(),
       ts: o.ts ?? nextTs(),
       ...(o.formattedBody !== undefined ? { formattedBody: o.formattedBody } : {}),
+    });
+  }
+
+  /** Build a live inbound event of an arbitrary type from caller-supplied content. */
+  function buildGenericEvent(o: InjectMatrixEventOpts): MatrixWireEvent {
+    return makeWireEvent({
+      type: o.type,
+      sender: o.sender,
+      content: o.content,
+      eventId: o.eventId ?? nextEventId(),
+      ts: o.ts ?? nextTs(),
+      ...(o.redacts !== undefined ? { redacts: o.redacts } : {}),
     });
   }
 
@@ -414,6 +457,12 @@ export function createMatrixEmulator(opts: CreateMatrixEmulatorOptions = {}): Ma
     injectRoomMessage(o) {
       const event = buildEvent(o);
       if (o.direct === true) markDirect(o.roomId, o.sender);
+      liveQueue.push({ roomId: o.roomId, event });
+      return event.event_id;
+    },
+
+    injectRoomEvent(o) {
+      const event = buildGenericEvent(o);
       liveQueue.push({ roomId: o.roomId, event });
       return event.event_id;
     },

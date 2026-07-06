@@ -64,6 +64,8 @@ export interface MatrixWireEvent {
   origin_server_ts: number;
   /** The state key (present on state events; `""` for room-scoped state). */
   state_key?: string;
+  /** The redacted event id (present only on an `m.room.redaction` event). */
+  redacts?: string;
   /** Server-added unsigned data (age, etc.). */
   unsigned?: Record<string, unknown>;
 }
@@ -136,6 +138,41 @@ export function makeRoomMessageEvent(opts: MakeRoomMessageOpts): MatrixWireEvent
     event_id: opts.eventId,
     origin_server_ts: opts.ts,
     unsigned: { age: 0 },
+  };
+}
+
+/** Options for {@link makeWireEvent}. */
+export interface MakeWireEventOpts {
+  /** The event type (`m.reaction`, `m.room.redaction`, `m.room.message`, …). */
+  type: string;
+  /** The full MXID of the sender. */
+  sender: string;
+  /** The event content (shape depends on `type`). */
+  content: Record<string, unknown>;
+  /** The homeserver-assigned event id. */
+  eventId: string;
+  /** The origin server timestamp (ms). */
+  ts: number;
+  /** The redacted event id — set only for an `m.room.redaction` event. */
+  redacts?: string;
+}
+
+/**
+ * Build a timeline event of an ARBITRARY type with caller-supplied content — the
+ * type-agnostic sibling of {@link makeRoomMessageEvent}. Reactions, redactions,
+ * and edits all ride the timeline as ordinary events with a relation-bearing
+ * content, so a single builder covers them; `redacts` is threaded to the top
+ * level for the redaction case.
+ */
+export function makeWireEvent(opts: MakeWireEventOpts): MatrixWireEvent {
+  return {
+    type: opts.type,
+    sender: opts.sender,
+    content: opts.content,
+    event_id: opts.eventId,
+    origin_server_ts: opts.ts,
+    unsigned: { age: 0 },
+    ...(opts.redacts !== undefined ? { redacts: opts.redacts } : {}),
   };
 }
 

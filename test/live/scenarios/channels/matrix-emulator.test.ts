@@ -34,7 +34,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createMatrixPlugin } from "@comis/channels";
-import type { ChannelPort, ComisLogger, NormalizedMessage } from "@comis/core";
+import type {
+  ChannelPort,
+  ComisLogger,
+  NormalizedMessage,
+  NormalizedReaction,
+} from "@comis/core";
 import { createMockLogger } from "../../../support/mock-logger.js";
 import { createMatrixEmulator, type MatrixEmulator } from "../../emulators/matrix/matrix-emulator.js";
 
@@ -239,5 +244,78 @@ describe("matrix-emulator scenario — watermark guard + speaker gate (the real 
     expect(stack.received.some((m) => m.senderId === BOB)).toBe(false);
     expect(out.some((o) => o.body === "echo: i am allowed")).toBe(true);
     expect(out.some((o) => o.body === "echo: let me in")).toBe(false);
+  });
+});
+
+describe("matrix-emulator scenario — inbound reaction through the real adapter (the inbound proof)", () => {
+  it("fires onReaction with the reactor's full MXID when a live m.reaction arrives on /sync", async () => {
+    // The load-bearing proof: a REAL m.reaction is driven through the loopback
+    // homeserver's /sync into the REAL adapter + /sync client. The homeserver's
+    // server-side timeline filter must admit m.reaction (the widening) AND the
+    // onTimeline reaction branch must route it before the message-only gate, or
+    // this stays silent — an outbound-only test would be green while inbound is
+    // dead. The SDK parses the wire event and fires RoomEvent.Timeline for it.
+    const stack = await buildStack();
+    const reactions: NormalizedReaction[] = [];
+    stack.adapter.onReaction?.((reaction) => {
+      reactions.push(reaction);
+    });
+    await stack.adapter.start();
+
+    const reactionEventId = stack.emu.injectRoomEvent({
+      roomId: GROUP_ROOM,
+      sender: ALICE,
+      type: "m.reaction",
+      content: {
+        "m.relates_to": { rel_type: "m.annotation", event_id: "$target:hs.test", key: "👍" },
+      },
+    });
+    expect(reactionEventId).toMatch(/^\$/); // a real minted event id
+
+    await waitUntil(() => reactions.length >= 1, 8000);
+
+    // onReaction fired with the fully-mapped NormalizedReaction.
+    expect(reactions).toHaveLength(1);
+    expect(reactions[0]).toEqual({
+      messageId: "$target:hs.test",
+      reactorId: ALICE, // the FULL MXID, never a display name
+      emoji: "👍",
+      channelType: "matrix",
+      channelId: GROUP_ROOM,
+    });
+    // A reaction is not a message: the message handler never saw it (no echo).
+    expect(stack.received).toHaveLength(0);
+    expect(stack.emu.sentMessages(GROUP_ROOM)).toHaveLength(0);
+  });
+
+  it("drops a reaction from a non-allowlisted reactor while admitting an allowlisted one", async () => {
+    const stack = await buildStack({ allowMode: "allowlist", allowFrom: [ALICE] });
+    const reactions: NormalizedReaction[] = [];
+    stack.adapter.onReaction?.((reaction) => {
+      reactions.push(reaction);
+    });
+    await stack.adapter.start();
+
+    // A non-allowlisted reactor → gated out (never reaches the handler).
+    stack.emu.injectRoomEvent({
+      roomId: GROUP_ROOM,
+      sender: BOB,
+      type: "m.reaction",
+      content: { "m.relates_to": { rel_type: "m.annotation", event_id: "$t1:hs.test", key: "👎" } },
+    });
+    // An allowlisted reactor → admitted.
+    stack.emu.injectRoomEvent({
+      roomId: GROUP_ROOM,
+      sender: ALICE,
+      type: "m.reaction",
+      content: { "m.relates_to": { rel_type: "m.annotation", event_id: "$t2:hs.test", key: "🎉" } },
+    });
+
+    await waitUntil(() => reactions.some((r) => r.reactorId === ALICE), 8000);
+
+    expect(reactions.every((r) => r.reactorId === ALICE)).toBe(true);
+    expect(reactions.some((r) => r.reactorId === BOB)).toBe(false);
+    expect(reactions.map((r) => r.emoji)).toContain("🎉");
+    expect(reactions.map((r) => r.emoji)).not.toContain("👎");
   });
 });
