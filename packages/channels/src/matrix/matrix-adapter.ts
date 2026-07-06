@@ -73,7 +73,6 @@ import {
   type MatrixThreadRelation,
 } from "./matrix-adapter-outbound.js";
 import { classifyDecryptDegrade, type DecryptDegradeKind } from "./decrypt-degrade.js";
-import { classifyMatrixError } from "./errors.js";
 import { extractMentions } from "./mentions.js";
 import { decodeMatrixAction } from "./matrix-actions.js";
 
@@ -84,10 +83,11 @@ import {
   MAX_TRACKED_REACTIONS,
   MATRIX_TYPING_TIMEOUT_MS,
   chunkedSendFailure,
+  classifiedSendWarn,
   fanOutToHandlers,
+  notStartedFailure,
   reactionKey,
   resolveThreadRootId,
-  toMatrixErrorInput,
   isRoomDirect,
   sendEventWithRetry,
   withRateLimitRetry,
@@ -501,16 +501,8 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
       options?: SendMessageOptions,
     ): Promise<Result<string, Error>> {
       if (client === undefined) {
-        const notReady = new Error("Matrix adapter cannot send before start()");
+        const notReady = notStartedFailure("send", "sendMessage", "send", deps.logger);
         lastError = notReady.message;
-        deps.logger.warn(
-          {
-            channelType: "matrix" as const,
-            hint: "Call start() (which authenticates the client) before sendMessage()",
-            errorKind: "precondition" as const,
-          },
-          "Matrix send blocked: adapter not started",
-        );
         return err(notReady);
       }
       const activeClient = client;
@@ -599,16 +591,8 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
       emoji: string,
     ): Promise<Result<void, Error>> {
       if (client === undefined) {
-        const notReady = new Error("Matrix adapter cannot react before start()");
+        const notReady = notStartedFailure("react", "reactToMessage", "reaction", deps.logger);
         lastError = notReady.message;
-        deps.logger.warn(
-          {
-            channelType: "matrix" as const,
-            hint: "Call start() (which authenticates the client) before reactToMessage()",
-            errorKind: "precondition" as const,
-          },
-          "Matrix reaction blocked: adapter not started",
-        );
         return err(notReady);
       }
 
@@ -629,15 +613,7 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
       );
       if (!sent.ok) {
         lastError = sent.error.message;
-        const classified = classifyMatrixError(toMatrixErrorInput(sent.error));
-        deps.logger.warn(
-          {
-            channelType: "matrix" as const,
-            hint: classified.hint,
-            errorKind: classified.errorKind,
-          },
-          "Matrix reaction send failed",
-        );
+        classifiedSendWarn(sent.error, "Matrix reaction send failed", deps.logger);
         return err(sent.error);
       }
 
@@ -658,16 +634,13 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
       emoji: string,
     ): Promise<Result<void, Error>> {
       if (client === undefined) {
-        const notReady = new Error("Matrix adapter cannot remove a reaction before start()");
-        lastError = notReady.message;
-        deps.logger.warn(
-          {
-            channelType: "matrix" as const,
-            hint: "Call start() (which authenticates the client) before removeReaction()",
-            errorKind: "precondition" as const,
-          },
-          "Matrix reaction removal blocked: adapter not started",
+        const notReady = notStartedFailure(
+          "remove a reaction",
+          "removeReaction",
+          "reaction removal",
+          deps.logger,
         );
+        lastError = notReady.message;
         return err(notReady);
       }
 
@@ -687,15 +660,7 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
       );
       if (!redacted.ok) {
         lastError = redacted.error.message;
-        const classified = classifyMatrixError(toMatrixErrorInput(redacted.error));
-        deps.logger.warn(
-          {
-            channelType: "matrix" as const,
-            hint: classified.hint,
-            errorKind: classified.errorKind,
-          },
-          "Matrix reaction removal failed",
-        );
+        classifiedSendWarn(redacted.error, "Matrix reaction removal failed", deps.logger);
         return err(redacted.error);
       }
       // Drop the retained id so a later re-react tracks a fresh annotation.
@@ -709,16 +674,13 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
       options?: FetchMessagesOptions,
     ): Promise<Result<FetchedMessage[], Error>> {
       if (client === undefined) {
-        const notReady = new Error("Matrix adapter cannot fetch messages before start()");
-        lastError = notReady.message;
-        deps.logger.warn(
-          {
-            channelType: "matrix" as const,
-            hint: "Call start() (which authenticates the client) before fetchMessages()",
-            errorKind: "precondition" as const,
-          },
-          "Matrix history fetch blocked: adapter not started",
+        const notReady = notStartedFailure(
+          "fetch messages",
+          "fetchMessages",
+          "history fetch",
+          deps.logger,
         );
+        lastError = notReady.message;
         return err(notReady);
       }
 
@@ -750,15 +712,7 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
       );
       if (!page.ok) {
         lastError = page.error.message;
-        const classified = classifyMatrixError(toMatrixErrorInput(page.error));
-        deps.logger.warn(
-          {
-            channelType: "matrix" as const,
-            hint: classified.hint,
-            errorKind: classified.errorKind,
-          },
-          "Matrix history fetch failed",
-        );
+        classifiedSendWarn(page.error, "Matrix history fetch failed", deps.logger);
         return err(page.error);
       }
 
@@ -778,16 +732,8 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
       text: string,
     ): Promise<Result<void, Error>> {
       if (client === undefined) {
-        const notReady = new Error("Matrix adapter cannot edit a message before start()");
+        const notReady = notStartedFailure("edit a message", "editMessage", "edit", deps.logger);
         lastError = notReady.message;
-        deps.logger.warn(
-          {
-            channelType: "matrix" as const,
-            hint: "Call start() (which authenticates the client) before editMessage()",
-            errorKind: "precondition" as const,
-          },
-          "Matrix edit blocked: adapter not started",
-        );
         return err(notReady);
       }
 
@@ -809,15 +755,7 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
       );
       if (!sent.ok) {
         lastError = sent.error.message;
-        const classified = classifyMatrixError(toMatrixErrorInput(sent.error));
-        deps.logger.warn(
-          {
-            channelType: "matrix" as const,
-            hint: classified.hint,
-            errorKind: classified.errorKind,
-          },
-          "Matrix message edit failed",
-        );
+        classifiedSendWarn(sent.error, "Matrix message edit failed", deps.logger);
         return err(sent.error);
       }
       // The port returns void: the replacement's own event id is discarded.
@@ -827,16 +765,13 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
 
     async deleteMessage(roomId: string, messageId: string): Promise<Result<void, Error>> {
       if (client === undefined) {
-        const notReady = new Error("Matrix adapter cannot delete a message before start()");
-        lastError = notReady.message;
-        deps.logger.warn(
-          {
-            channelType: "matrix" as const,
-            hint: "Call start() (which authenticates the client) before deleteMessage()",
-            errorKind: "precondition" as const,
-          },
-          "Matrix delete blocked: adapter not started",
+        const notReady = notStartedFailure(
+          "delete a message",
+          "deleteMessage",
+          "delete",
+          deps.logger,
         );
+        lastError = notReady.message;
         return err(notReady);
       }
 
@@ -849,15 +784,7 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
       );
       if (!redacted.ok) {
         lastError = redacted.error.message;
-        const classified = classifyMatrixError(toMatrixErrorInput(redacted.error));
-        deps.logger.warn(
-          {
-            channelType: "matrix" as const,
-            hint: classified.hint,
-            errorKind: classified.errorKind,
-          },
-          "Matrix message delete failed",
-        );
+        classifiedSendWarn(redacted.error, "Matrix message delete failed", deps.logger);
         return err(redacted.error);
       }
       lastError = undefined;
@@ -912,16 +839,13 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
 
       // A supported action still needs an authenticated client.
       if (client === undefined) {
-        const notReady = new Error("Matrix adapter cannot run a platform action before start()");
-        lastError = notReady.message;
-        deps.logger.warn(
-          {
-            channelType: "matrix" as const,
-            hint: "Call start() (which authenticates the client) before platformAction()",
-            errorKind: "precondition" as const,
-          },
-          "Matrix platform action blocked: adapter not started",
+        const notReady = notStartedFailure(
+          "run a platform action",
+          "platformAction",
+          "platform action",
+          deps.logger,
         );
+        lastError = notReady.message;
         return err(notReady);
       }
       const activeClient = client;
@@ -929,15 +853,7 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
       /** Classify + WARN a failed SDK action, record lastError, and err. */
       const actionFailed = (cause: Error): Result<never, Error> => {
         lastError = cause.message;
-        const classified = classifyMatrixError(toMatrixErrorInput(cause));
-        deps.logger.warn(
-          {
-            channelType: "matrix" as const,
-            hint: classified.hint,
-            errorKind: classified.errorKind,
-          },
-          "Matrix platform action failed",
-        );
+        classifiedSendWarn(cause, "Matrix platform action failed", deps.logger);
         return err(cause);
       };
 

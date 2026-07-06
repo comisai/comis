@@ -229,6 +229,52 @@ export function chunkedSendFailure(
 }
 
 /**
+ * Build the "adapter not started" failure for an outbound method invoked before
+ * `start()` has authenticated the client: a secret-free precondition WARN naming the
+ * exact method to call first, plus the Error to return. Shared by every port method's
+ * pre-start guard so they carry one uniform shape.
+ *
+ * @param cannotVerb - The action phrase, e.g. `"send"` / `"edit a message"`.
+ * @param method - The method name to call first, e.g. `"sendMessage"`.
+ * @param blockedNoun - The blocked-operation noun for the log, e.g. `"reaction removal"`.
+ */
+export function notStartedFailure(
+  cannotVerb: string,
+  method: string,
+  blockedNoun: string,
+  logger: ComisLogger,
+): Error {
+  const notReady = new Error(`Matrix adapter cannot ${cannotVerb} before start()`);
+  logger.warn(
+    {
+      channelType: "matrix" as const,
+      hint: `Call start() (which authenticates the client) before ${method}()`,
+      errorKind: "precondition" as const,
+    },
+    `Matrix ${blockedNoun} blocked: adapter not started`,
+  );
+  return notReady;
+}
+
+/**
+ * Classify a failed outbound SDK operation and emit its secret-free WARN (the
+ * classifier's `hint` + `errorKind`, never a body or secret). Shared by the outbound
+ * actions (react, remove, fetch, edit, delete, platform action, attachment) so each
+ * failure branch carries one uniform, classified shape.
+ */
+export function classifiedSendWarn(cause: unknown, message: string, logger: ComisLogger): void {
+  const classified = classifyMatrixError(toMatrixErrorInput(cause));
+  logger.warn(
+    {
+      channelType: "matrix" as const,
+      hint: classified.hint,
+      errorKind: classified.errorKind,
+    },
+    message,
+  );
+}
+
+/**
  * Send one already-built `m.room.message` content object through the shared
  * rate-limit retry policy ({@link withRateLimitRetry}). A thin, type-pinning
  * wrapper the chunked-send loop calls.
