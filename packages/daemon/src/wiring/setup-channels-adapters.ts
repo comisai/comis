@@ -546,6 +546,11 @@ export async function bootstrapAdapters(deps: {
       // this, a documented webhook config (no subscriptionName) would be rejected.
       mode: channelConfig.googlechat.mode,
       audience: channelConfig.googlechat.audience,
+      // Thread audienceType alongside the audience so the validator's content-free
+      // audience-shape lint can fire: in webhook mode an audience whose shape
+      // contradicts audienceType selects the wrong inbound key set and silently
+      // rejects every request. Absent this, that mismatch stays invisible at boot.
+      audienceType: channelConfig.googlechat.audienceType,
       allowFrom: channelConfig.googlechat.allowFrom,
       // The global group-activation mode. Google Chat delivers a space message
       // only when the app is mentioned, so an "always" mode is inert here — the

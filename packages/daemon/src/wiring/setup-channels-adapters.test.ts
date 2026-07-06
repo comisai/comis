@@ -817,6 +817,31 @@ describe("bootstrapAdapters", () => {
     );
   });
 
+  it("threads audienceType into the boot-time validator so the audience-shape-mismatch WARN can fire", async () => {
+    const saKey = '{"private_key":"pk","client_email":"bot@proj.iam.gserviceaccount.com"}';
+    // A webhook config whose audience is an endpoint URL but whose audienceType is
+    // the schema default (project-number): the validator owns the content-free
+    // mismatch WARN, but only if the daemon hands it audienceType alongside the
+    // audience. Without threading, the mismatch stays silent at boot.
+    const container = makeContainer({
+      googlechat: {
+        enabled: true,
+        serviceAccountKey: saKey,
+        mode: "webhook",
+        audienceType: "project-number",
+        audience: "https://chat.example.com/hook",
+      },
+    });
+    await bootstrapAdapters({ container, channelsLogger });
+
+    expect(validateGoogleChatCredentials).toHaveBeenCalledWith(
+      expect.objectContaining({
+        audienceType: "project-number",
+        audience: "https://chat.example.com/hook",
+      }),
+    );
+  });
+
   it("threads the COMIS_GOOGLECHAT_TEST_API egress redirect into the plugin base URLs (pubsub mode)", async () => {
     const saKey = '{"private_key":"pk","client_email":"bot@proj.iam.gserviceaccount.com"}';
     const env = {
