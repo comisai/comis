@@ -330,6 +330,29 @@ describe("connectServer — stdio failure diagnosability", () => {
     expect(state.connections.get("svc")?.error).toContain("[REDACTED_CONN_STRING]");
   });
 
+  it("redacts a FORMAT-LESS configured secret value leaked in stderr (KEY=value the pattern scrubber can't catch)", async () => {
+    const state = makeState();
+    // The child echoes a plain configured password on the way down. It matches no
+    // credential-FORMAT pattern (not an API key / bearer / conn-string), so the
+    // pattern scrubber alone would leak it — but it IS a known config.env value, so
+    // it must be redacted from every sink the agent/operator sees.
+    connectImpl = () => {
+      state.lastStderr.set("svc", "auth failed for SERVICE_PASSWORD=hunter2plzredact\n");
+      return Promise.reject(new Error("MCP error -32000: Connection closed"));
+    };
+    const { bus } = makeBus();
+    const deps = { logger: makeLogger(), eventBus: bus } as unknown as McpClientManagerDeps;
+    const config: McpServerConfig = { ...STDIO_CONFIG, env: { SERVICE_PASSWORD: "hunter2plzredact" } };
+
+    const result = await connectServer(state, deps, config);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected err");
+    expect(result.error.message).not.toContain("hunter2plzredact");
+    expect(state.connections.get("svc")?.error).not.toContain("hunter2plzredact");
+    expect(result.error.message).toContain("[REDACTED]");
+  });
+
   it("emits mcp:server:connect_failed with reason server_exited on a stdio crash", async () => {
     const state = makeState();
     connectImpl = () => {
