@@ -76,6 +76,13 @@ export type WizardError = {
 // ---------- Configuration Sub-types ----------
 
 /** Per-channel collected credentials. */
+// @optional-field-count: 16 — the flat per-channel collected-credentials bag. Each
+// channel contributes its own optional field group (telegram/discord/slack/whatsapp/
+// signal/irc/line tokens, msteams appId/appPassword/tenantId/authMode, googlechat
+// serviceAccountKey/subscriptionName/mode/audienceType/audience) and only the fields
+// for the selected `type` discriminant are populated. Splitting into a per-channel
+// discriminated union would fragment every wizard step and config-write consumer; the
+// count grows with the channel set, not with under-modeling.
 export type ChannelConfig = {
   type: "telegram" | "discord" | "slack" | "whatsapp" | "signal" | "irc" | "line" | "msteams" | "googlechat";
   botToken?: string;
