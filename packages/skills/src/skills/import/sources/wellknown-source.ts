@@ -32,7 +32,7 @@
  */
 import { createHash } from "node:crypto";
 import type { Result } from "@comis/shared";
-import { ok, err } from "@comis/shared";
+import { ok, err, suppressError } from "@comis/shared";
 import { validateUrl, safePath, systemNowMs, type ErrorKind } from "@comis/core";
 import { fetchPinned } from "../../../tools/integrations/pinned-fetch.js";
 import type {
@@ -152,11 +152,18 @@ function overCapError(maxBytes: number, what: string): WellKnownResolveError {
  * Stream a response body into a Buffer, enforcing `maxBytes` against BOTH the
  * declared Content-Length (pre-stream) and the streamed size (a server may
  * under-declare). The cap key is named in the reject hint.
+ *
+ * The stream read loop is wrapped so a body error AFTER the headers arrive — a
+ * connection reset mid-body, or the per-fetch 30s streaming timeout firing
+ * during `read()` (a slow/stalled registry) — returns a TYPED reject naming the
+ * registry, never an uncaught throw. That keeps the resolver's "never throws"
+ * contract and the §2.7 WARN + hint intact for this realistic failure branch.
  */
 async function readCappedBody(
   response: ArchiveHttpResponse,
   maxBytes: number,
   what: string,
+  registryOrigin: string,
 ): Promise<Result<Buffer, WellKnownResolveError>> {
   const declared = response.headers.get("content-length");
   if (declared !== null) {
@@ -176,16 +183,40 @@ async function readCappedBody(
 
   const chunks: Uint8Array[] = [];
   let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value === undefined) continue;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel();
-      return err(overCapError(maxBytes, what));
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value === undefined) continue;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        return err(overCapError(maxBytes, what));
+      }
+      chunks.push(value);
     }
-    chunks.push(value);
+  } catch (e) {
+    suppressError(reader.cancel(), "cancel body reader after a mid-stream read error");
+    // The only AbortSignal on the pinned fetch is AbortSignal.timeout(30_000),
+    // so a Timeout/Abort raised during read() IS the streaming-timeout branch;
+    // any other rejection is an unresponsive-registry dependency failure.
+    const name = e instanceof Error ? e.name : "";
+    if (name === "TimeoutError" || name === "AbortError") {
+      return err(
+        mkErr(
+          "timeout",
+          `reading ${what} from ${registryOrigin} timed out mid-stream (the 30s per-fetch cap fired while the body was streaming)`,
+          "the registry sent headers then stalled the body; verify it responds fully within 30s",
+        ),
+      );
+    }
+    return err(
+      mkErr(
+        "dependency",
+        `reading ${what} from ${registryOrigin} failed mid-stream: ${e instanceof Error ? e.message : String(e)}`,
+        "verify the registry is reachable and responsive; the fetch is pinned to the SSRF-validated IP and aborts after 30s",
+      ),
+    );
   }
   return ok(Buffer.concat(chunks));
 }
@@ -236,7 +267,7 @@ async function fetchCapped(
     );
   }
 
-  return readCappedBody(response, maxBytes, what);
+  return readCappedBody(response, maxBytes, what, registryOrigin);
 }
 
 // ---------------------------------------------------------------------------
@@ -392,7 +423,21 @@ export async function resolveWellKnown(
   deps: WellKnownResolveDeps,
 ): Promise<Result<WellKnownResolved, WellKnownResolveError>> {
   const startedMs = systemNowMs();
-  const result = await resolveInner(input, deps);
+  let result: Result<WellKnownResolved, WellKnownResolveError>;
+  try {
+    result = await resolveInner(input, deps);
+  } catch (e) {
+    // The contract is "never throws" — a reject is always a typed
+    // WellKnownResolveError. This catch-all guarantees it even for an unforeseen
+    // fault, so the typed-Result seam and the WARN below always hold.
+    result = err(
+      mkErr(
+        "internal",
+        `well-known resolve threw unexpectedly: ${e instanceof Error ? e.message : String(e)}`,
+        "an internal resolver fault; inspect the daemon log for the stack trace",
+      ),
+    );
+  }
   const durationMs = systemNowMs() - startedMs;
   if (result.ok) {
     deps.logger?.info(
