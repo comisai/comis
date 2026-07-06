@@ -2,7 +2,13 @@
 import { describe, it, expect, vi } from "vitest";
 import type { DiagnosticRow, ObservabilityStore } from "@comis/memory";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
-import { buildConfigPostureRecord, countPricingGaps, isLoopbackHost } from "./build-config-posture-record.js";
+import type { ProvenanceStore } from "@comis/skills";
+import {
+  buildConfigPostureRecord,
+  countImportedNonAllowlisted,
+  countPricingGaps,
+  isLoopbackHost,
+} from "./build-config-posture-record.js";
 
 describe("isLoopbackHost (TLS-off is benign on a loopback bind)", () => {
   it("treats 127.0.0.1 / ::1 / localhost / 127.x as loopback (TLS-off suppressed)", () => {
@@ -78,6 +84,8 @@ describe("buildConfigPostureRecord", () => {
       chimericModelCount: 0, // always present (0 default), count-only
       pricingGapCount: 0, // always present (0 default), count-only
       sandboxNoDowngradeDisabled: false, // always present (false default)
+      importedSkillCount: 0, // always present (0 default), count-only
+      importedNonAllowlistedRegistryCount: 0, // always present (0 default), count-only
     });
     // SECURITY: the stranded entry is a {label, count} — no value-bearing key.
     const strandedJson = JSON.stringify(details["stranded"]);
@@ -112,6 +120,8 @@ describe("buildConfigPostureRecord", () => {
       chimericModelCount: 0,
       pricingGapCount: 0,
       sandboxNoDowngradeDisabled: false,
+      importedSkillCount: 0,
+      importedNonAllowlistedRegistryCount: 0,
     });
   });
 
@@ -342,6 +352,90 @@ describe("buildConfigPostureRecord", () => {
     const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
     expect(details["pricingGapCount"]).toBe(0);
   });
+
+  // -------------------------------------------------------------------------
+  // importedSkillCount + importedNonAllowlistedRegistryCount — the imported-skill
+  // posture. `importedSkillCount` is the total provenance-record count;
+  // `importedNonAllowlistedRegistryCount` is how many carry a recorded registry
+  // that is NO LONGER in its applicable allowlist (allowlist drift after the
+  // fact). The DRIFT count alone flips severity to "warning" (the
+  // served-below/chimeric/pricing precedent). COUNTS only — the details JSON
+  // never carries a registry origin or an agent id (the no-free-text contract).
+  // -------------------------------------------------------------------------
+
+  it("flips severity to warning when ONLY the imported drift count is non-zero, and carries both counts in details", () => {
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    const clock = createFakeClock(11_000);
+
+    buildConfigPostureRecord(
+      obsStore,
+      {
+        tlsOff: false,
+        allowInsecureHttp: false,
+        strandedFindings: [],
+        canaryFallbackActive: false,
+        servedBelowConfiguredCount: 0,
+        importedSkillCount: 3,
+        importedNonAllowlistedRegistryCount: 1,
+      },
+      clock,
+    );
+
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    expect(row.severity).toBe("warning");
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details["importedSkillCount"]).toBe(3);
+    expect(details["importedNonAllowlistedRegistryCount"]).toBe(1);
+  });
+
+  it("keeps severity info when imported drift is 0 (a healthy imported fleet is NOT a posture issue), and details carries both counts", () => {
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    const clock = createFakeClock(12_000);
+
+    buildConfigPostureRecord(
+      obsStore,
+      {
+        tlsOff: false,
+        allowInsecureHttp: false,
+        strandedFindings: [],
+        canaryFallbackActive: false,
+        servedBelowConfiguredCount: 0,
+        importedSkillCount: 2,
+        importedNonAllowlistedRegistryCount: 0,
+      },
+      clock,
+    );
+
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    expect(row.severity).toBe("info");
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details["importedSkillCount"]).toBe(2);
+    expect(details["importedNonAllowlistedRegistryCount"]).toBe(0);
+  });
+
+  it("CONTENT-FREE: the serialized details carries no registry origin (http…) even when drift is present (counts only)", () => {
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    const clock = createFakeClock(13_000);
+
+    buildConfigPostureRecord(
+      obsStore,
+      {
+        tlsOff: false,
+        allowInsecureHttp: false,
+        strandedFindings: [],
+        canaryFallbackActive: false,
+        servedBelowConfiguredCount: 0,
+        importedSkillCount: 5,
+        importedNonAllowlistedRegistryCount: 2,
+      },
+      clock,
+    );
+
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    // The whole serialized details must be counts/booleans/closed-labels only —
+    // never a registry origin or agent id.
+    expect(row.details ?? "").not.toMatch(/https?:\/\//i);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -396,5 +490,135 @@ describe("countPricingGaps — boot count of remote-unknown-priced agents (resol
       empty: {},
     };
     expect(countPricingGaps(agents)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// countImportedNonAllowlisted — the boot producer of the imported-skill posture.
+// Iterates the provenance store: `total` = record count; `drift` = records whose
+// recorded registry is NOT in its APPLICABLE allowlist. The allowlist is resolved
+// PER-RECORD (a shared-scope record against the DEFAULT agent's list; a local one
+// against `record.agentId`'s), mirroring the per-agent import-time gate — a
+// union-of-all-agents shortcut would under-count. Both the record's registry and
+// each allowlist entry are normalized via `new URL().origin` (the resolver's rule)
+// so a trailing slash / uppercase host never false-flags; a non-URL token (e.g. the
+// clawhub token) folds to its trimmed value. A record with NO registry
+// (archive/github/upload) never counts as drift. Counts only — never a name.
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a {@link ProvenanceStore} from a terse `{scope, agentId, registry?}` list.
+ * Every other record field is filler — the producer reads only scope/agentId/registry.
+ */
+function makeStore(
+  records: ReadonlyArray<{ scope: "local" | "shared"; agentId: string; registry?: string }>,
+): ProvenanceStore {
+  const store: ProvenanceStore = {};
+  records.forEach((r, i) => {
+    store[`${r.scope}:${r.agentId}:s${i}`] = {
+      name: `s${i}`,
+      scope: r.scope,
+      agentId: r.agentId,
+      source: r.registry !== undefined ? "wellknown" : "archive",
+      identifier: `id${i}`,
+      contentHash: `h${i}`,
+      scanVerdict: { clean: true, findingCount: 0 },
+      files: [],
+      importedAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      importedBy: r.agentId,
+      ...(r.registry !== undefined ? { registry: r.registry } : {}),
+    };
+  });
+  return store;
+}
+
+type AgentsAllow = Readonly<Record<string, { skills?: { import?: { registries?: readonly string[] } } }>>;
+
+describe("countImportedNonAllowlisted — per-record allowlist-drift producer (shared→default / local→record.agentId)", () => {
+  it("total = number of provenance records (regardless of registry)", () => {
+    const store = makeStore([
+      { scope: "local", agentId: "default", registry: "https://reg.example" },
+      { scope: "shared", agentId: "default" },
+      { scope: "local", agentId: "b", registry: "https://b.example" },
+    ]);
+    const agents: AgentsAllow = { default: { skills: { import: { registries: [] } } } };
+    expect(countImportedNonAllowlisted(store, agents, "default").total).toBe(3);
+  });
+
+  it("a SHARED record resolves against the DEFAULT agent's allowlist, NOT its own agentId", () => {
+    // The record is owned by agent "b" but is shared-scope, so its applicable
+    // allowlist is the DEFAULT agent's. "b" allows the registry; "default" does
+    // NOT — a correct shared→default resolution counts this as drift.
+    const store = makeStore([{ scope: "shared", agentId: "b", registry: "https://gone.example" }]);
+    const agents: AgentsAllow = {
+      default: { skills: { import: { registries: ["https://reg.example"] } } },
+      b: { skills: { import: { registries: ["https://gone.example"] } } },
+    };
+    expect(countImportedNonAllowlisted(store, agents, "default").drift).toBe(1);
+  });
+
+  it("a LOCAL record resolves against record.agentId's allowlist, NOT the default agent's", () => {
+    // Owned locally by "b". "default" allows the registry; "b" does NOT — a
+    // correct local→record.agentId resolution counts this as drift.
+    const store = makeStore([{ scope: "local", agentId: "b", registry: "https://gone.example" }]);
+    const agents: AgentsAllow = {
+      default: { skills: { import: { registries: ["https://gone.example"] } } },
+      b: { skills: { import: { registries: ["https://b.example"] } } },
+    };
+    expect(countImportedNonAllowlisted(store, agents, "default").drift).toBe(1);
+  });
+
+  it("a record whose registry IS in its applicable allowlist is NOT drift (single-agent no-false-positive)", () => {
+    const store = makeStore([{ scope: "local", agentId: "default", registry: "https://reg.example" }]);
+    const agents: AgentsAllow = { default: { skills: { import: { registries: ["https://reg.example"] } } } };
+    const out = countImportedNonAllowlisted(store, agents, "default");
+    expect(out.total).toBe(1);
+    expect(out.drift).toBe(0);
+  });
+
+  it("normalizes both sides via new URL().origin — a trailing slash / uppercase host is NOT drift", () => {
+    const store = makeStore([{ scope: "local", agentId: "default", registry: "https://reg.example" }]);
+    const agents: AgentsAllow = {
+      // trailing slash + uppercase host in the config entry; the record's origin is canonical.
+      default: { skills: { import: { registries: ["HTTPS://REG.EXAMPLE/"] } } },
+    };
+    expect(countImportedNonAllowlisted(store, agents, "default").drift).toBe(0);
+  });
+
+  it("a record with NO registry (archive/github/upload) never counts as drift", () => {
+    const store = makeStore([
+      { scope: "local", agentId: "default" },
+      { scope: "shared", agentId: "default" },
+    ]);
+    const agents: AgentsAllow = { default: { skills: { import: { registries: [] } } } };
+    const out = countImportedNonAllowlisted(store, agents, "default");
+    expect(out.total).toBe(2);
+    expect(out.drift).toBe(0);
+  });
+
+  it("counts drift when the applicable agent was removed from config (empty allowlist ⇒ any registry drifts)", () => {
+    const store = makeStore([{ scope: "local", agentId: "ghost", registry: "https://reg.example" }]);
+    const agents: AgentsAllow = { default: { skills: { import: { registries: ["https://reg.example"] } } } };
+    expect(countImportedNonAllowlisted(store, agents, "default").drift).toBe(1);
+  });
+
+  it("folds a non-URL registry token (e.g. the clawhub token) to an exact-value match — not drift when allowlisted", () => {
+    const store = makeStore([{ scope: "local", agentId: "default", registry: "clawhub" }]);
+    const agents: AgentsAllow = { default: { skills: { import: { registries: ["clawhub"] } } } };
+    expect(countImportedNonAllowlisted(store, agents, "default").drift).toBe(0);
+  });
+
+  it("counts only the drifted records in a mixed store (allowlisted + no-registry excluded)", () => {
+    const store = makeStore([
+      { scope: "local", agentId: "default", registry: "https://reg.example" }, // allowed
+      { scope: "local", agentId: "default", registry: "https://gone.example" }, // drift
+      { scope: "shared", agentId: "b", registry: "https://also-gone.example" }, // drift (shared→default)
+      { scope: "local", agentId: "default" }, // no registry — excluded
+    ]);
+    const agents: AgentsAllow = { default: { skills: { import: { registries: ["https://reg.example"] } } } };
+    const out = countImportedNonAllowlisted(store, agents, "default");
+    expect(out.total).toBe(4);
+    expect(out.drift).toBe(2);
   });
 });
