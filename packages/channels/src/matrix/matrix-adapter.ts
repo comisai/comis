@@ -47,7 +47,7 @@ import type {
   SendMessageOptions,
   TimerPort,
 } from "@comis/core";
-import { runWithContext, systemNowMs } from "@comis/core";
+import { systemNowMs } from "@comis/core";
 import { err, fromPromise, ok, type Result } from "@comis/shared";
 import { randomUUID } from "node:crypto";
 import {
@@ -83,6 +83,7 @@ import {
   DEGRADE_NOTE_SENDER,
   MAX_TRACKED_REACTIONS,
   MATRIX_TYPING_TIMEOUT_MS,
+  fanOutToHandlers,
   reactionKey,
   resolveThreadRootId,
   toMatrixErrorInput,
@@ -227,49 +228,17 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
   }
 
   /**
-   * Fan a delivered, mapped, speaker-gated message out to the registered
-   * handlers under a fresh request context. The traceId is minted here — the
-   * channel ingress boundary — so one inbound stitches together across packages.
-   * A throwing or rejecting handler is logged and never aborts its siblings.
+   * Fan a delivered, mapped, speaker-gated message out to the registered handlers
+   * under a fresh request context (traceId minted at the ingress boundary). See
+   * {@link fanOutToHandlers} — a throwing or rejecting handler never aborts its siblings.
    */
   function fanOut(message: NormalizedMessage): void {
-    const traceId = randomUUID();
-    void runWithContext(
-      {
-        traceId,
-        startedAt: now(),
-        channelType: "matrix",
-        tenantId: "default",
-        trustLevel: "admin",
-      },
-      () => {
-        for (const handler of handlers) {
-          try {
-            Promise.resolve(handler(message)).catch((handlerErr) => {
-              deps.logger.error(
-                {
-                  channelType: "matrix" as const,
-                  err: handlerErr,
-                  hint: "Check the Matrix inbound message handler",
-                  errorKind: "internal" as const,
-                },
-                "Inbound Matrix message handler error",
-              );
-            });
-          } catch (handlerErr) {
-            deps.logger.error(
-              {
-                channelType: "matrix" as const,
-                err: handlerErr,
-                hint: "Check the Matrix inbound message handler",
-                errorKind: "internal" as const,
-              },
-              "Inbound Matrix message handler error",
-            );
-          }
-        }
-      },
-    );
+    fanOutToHandlers(message, handlers, {
+      now,
+      logger: deps.logger,
+      hint: "Check the Matrix inbound message handler",
+      errorMessage: "Inbound Matrix message handler error",
+    });
   }
 
   /**
@@ -295,48 +264,16 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
 
   /**
    * Fan a delivered, mapped, speaker-gated reaction out to the registered reaction
-   * handlers under a fresh request context — the reaction sibling of {@link fanOut},
-   * minting its own traceId at the channel ingress boundary. A throwing or rejecting
-   * handler is logged and never aborts its siblings. The emoji body is never logged.
+   * handlers — the reaction sibling of {@link fanOut}, minting its own traceId at the
+   * ingress boundary. See {@link fanOutToHandlers}; the emoji body is never logged.
    */
   function fanOutReactions(reaction: NormalizedReaction): void {
-    const traceId = randomUUID();
-    void runWithContext(
-      {
-        traceId,
-        startedAt: now(),
-        channelType: "matrix",
-        tenantId: "default",
-        trustLevel: "admin",
-      },
-      () => {
-        for (const handler of reactionHandlers) {
-          try {
-            Promise.resolve(handler(reaction)).catch((handlerErr) => {
-              deps.logger.error(
-                {
-                  channelType: "matrix" as const,
-                  err: handlerErr,
-                  hint: "Check the Matrix inbound reaction handler",
-                  errorKind: "internal" as const,
-                },
-                "Inbound Matrix reaction handler error",
-              );
-            });
-          } catch (handlerErr) {
-            deps.logger.error(
-              {
-                channelType: "matrix" as const,
-                err: handlerErr,
-                hint: "Check the Matrix inbound reaction handler",
-                errorKind: "internal" as const,
-              },
-              "Inbound Matrix reaction handler error",
-            );
-          }
-        }
-      },
-    );
+    fanOutToHandlers(reaction, reactionHandlers, {
+      now,
+      logger: deps.logger,
+      hint: "Check the Matrix inbound reaction handler",
+      errorMessage: "Inbound Matrix reaction handler error",
+    });
   }
 
   /**

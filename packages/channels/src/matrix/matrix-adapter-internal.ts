@@ -12,7 +12,9 @@
 
 import { EventType, type MatrixClient, type Room, type TimelineEvents } from "matrix-js-sdk";
 import type { ComisLogger, SendMessageOptions, TimerPort } from "@comis/core";
+import { runWithContext } from "@comis/core";
 import { err, fromPromise, ok, type Result } from "@comis/shared";
+import { randomUUID } from "node:crypto";
 import { classifyMatrixError, type MatrixErrorInput } from "./errors.js";
 
 /**
@@ -35,6 +37,52 @@ export const MAX_TRACKED_REACTIONS = 1000;
 /** The retained-reaction map key: one entry per (room, target message, emoji). */
 export function reactionKey(roomId: string, messageId: string, emoji: string): string {
   return `${roomId}|${messageId}|${emoji}`;
+}
+
+/**
+ * Fan one delivered, gated inbound item (a message or a reaction) out to its
+ * registered handlers under a FRESH request context — the traceId is minted here,
+ * at the channel ingress boundary, so one inbound stitches together across
+ * packages. A throwing OR rejecting handler is logged and never aborts its
+ * siblings. Generic over the item type so the message and reaction paths share one
+ * implementation; the caller supplies the handler list plus the secret-free
+ * `hint` / `errorMessage` for the per-handler failure log (never the item body).
+ */
+export function fanOutToHandlers<T>(
+  item: T,
+  handlers: ReadonlyArray<(item: T) => void | Promise<void>>,
+  deps: { now: () => number; logger: ComisLogger; hint: string; errorMessage: string },
+): void {
+  const traceId = randomUUID();
+  void runWithContext(
+    {
+      traceId,
+      startedAt: deps.now(),
+      channelType: "matrix",
+      tenantId: "default",
+      trustLevel: "admin",
+    },
+    () => {
+      const onHandlerError = (handlerErr: unknown): void => {
+        deps.logger.error(
+          {
+            channelType: "matrix" as const,
+            err: handlerErr,
+            hint: deps.hint,
+            errorKind: "internal" as const,
+          },
+          deps.errorMessage,
+        );
+      };
+      for (const handler of handlers) {
+        try {
+          Promise.resolve(handler(item)).catch(onHandlerError);
+        } catch (handlerErr) {
+          onHandlerError(handlerErr);
+        }
+      }
+    },
+  );
 }
 
 /**
