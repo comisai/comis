@@ -2,7 +2,7 @@
 /**
  * The single source of truth for every counted, benchmarked, and cost fact the
  * website states. Import `FACTS` instead of hardcoding a number in a page or
- * component - so "10 channels", "15 packages", "35 providers", or "~71%" can
+ * component - so "11 channels", "15 packages", "35 providers", or "~71%" can
  * never be stated two different ways across the site.
  *
  * Every value here is copied verbatim from the audited README and is treated
@@ -23,10 +23,11 @@ export const FACTS = {
 
   // Counts.
   // Used by: homepage / Channels / compare pages (channels), Everything-in-the-box (packages).
-  channels: 10,
+  channels: 11,
   channelList: [
     "Telegram", "Discord", "Slack", "WhatsApp", "Signal",
     "iMessage", "LINE", "IRC", "Email", "Microsoft Teams",
+    "Matrix",
   ],
   packages: 15,
   nodeEngines: "22.19+",
