@@ -332,6 +332,36 @@ describe("mountGatewayRoutes", () => {
   });
 
   // -----------------------------------------------------------------------
+  // Google Chat inbound ingress mount (same presence-gated contract). The
+  // route exists ONLY when the composition root threaded a built ingress
+  // sub-app (channel enabled + creds valid); absent otherwise. Presence of
+  // the threaded ingress IS the mount signal — a caller-less dead route can
+  // never ship.
+  // -----------------------------------------------------------------------
+
+  it("mounts /channels/googlechat when the threaded ingress is present (enabled)", () => {
+    const deps = createMockDeps({ googlechatIngress: new Hono() });
+
+    mountGatewayRoutes(deps);
+
+    expect(deps.gatewayHandle.app.route).toHaveBeenCalledWith(
+      "/channels/googlechat",
+      expect.any(Hono),
+    );
+  });
+
+  it("does NOT mount /channels/googlechat when the ingress is absent (disabled)", () => {
+    const deps = createMockDeps();
+
+    mountGatewayRoutes(deps);
+
+    expect(deps.gatewayHandle.app.route).not.toHaveBeenCalledWith(
+      "/channels/googlechat",
+      expect.anything(),
+    );
+  });
+
+  // -----------------------------------------------------------------------
   // OpenAI routes
   // -----------------------------------------------------------------------
 
