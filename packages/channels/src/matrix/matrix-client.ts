@@ -147,6 +147,12 @@ export interface MatrixClientDeps {
   logger: ComisLogger;
   /** Resolve whether a room is a direct (1:1) room, for message mapping. */
   isDirectRoom?: (room: Room) => boolean;
+  /**
+   * The bot's own MXID, forwarded to the mapper so an inbound message that
+   * @-mentions the bot sets the `metadata.isBotMentioned` group @-gate key. Absent
+   * means the mention check is skipped (never a false positive).
+   */
+  botUserId?: string;
   /** Override the initial-sync `limit=`. */
   initialSyncLimit?: number;
   /**
@@ -541,7 +547,10 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
     }
 
     const isDirect = deps.isDirectRoom?.(room) ?? false;
-    const message = mapMatrixEventToNormalized(event, room, { isDirect });
+    const message = mapMatrixEventToNormalized(event, room, {
+      isDirect,
+      ...(deps.botUserId !== undefined ? { botUserId: deps.botUserId } : {}),
+    });
     if (message === null) return;
 
     logger.info(

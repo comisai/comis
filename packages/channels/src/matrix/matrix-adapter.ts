@@ -74,6 +74,7 @@ import {
 } from "./matrix-adapter-outbound.js";
 import { classifyDecryptDegrade, type DecryptDegradeKind } from "./decrypt-degrade.js";
 import { classifyMatrixError, type MatrixErrorInput } from "./errors.js";
+import { extractMentions } from "./mentions.js";
 
 /**
  * The senderId a synthesized decrypt-degrade note carries. Deliberately NOT a
@@ -568,6 +569,10 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
       }
       const authedClient = authed.value.client;
       client = authedClient;
+      // The bot's own MXID (resolved by whoami/login) — the inbound mention check
+      // keys on it to set the `metadata.isBotMentioned` group @-gate key. Empty when
+      // the homeserver returned no user id and none was configured (mention check skipped).
+      const botUserId = authed.value.userId ?? "";
 
       // Wire and start the `/sync` transport; speakers are gated on the way out.
       // `isDirectRoom` reads the client's `m.direct` account data so a 1:1 room
@@ -589,6 +594,9 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
         onReaction: onSyncReaction,
         isDirectRoom: (room) => isRoomDirect(authedClient, room),
         logger: deps.logger,
+        // The bot MXID rides into the mapper so an inbound @-mention of the bot
+        // sets the group @-gate key; conditionally spread so an empty id is omitted.
+        ...(botUserId.length > 0 ? { botUserId } : {}),
         // E2EE threading: the crypto store bootstraps before /sync starts on the
         // e2ee path; recoveryKey rides the conditional-spread convention, and every
         // fail-closed decrypt signal is wired to the adapter's degrade decider.
@@ -657,6 +665,12 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
       }
       const activeClient = client;
 
+      // Outbound mentions: rewrite `@[Name](@mxid)` markup to matrix.to pill links
+      // (rendered by the shared markdown escaper) and collect the referenced MXIDs
+      // to advertise as `m.mentions.user_ids`. Text with no valid mention is
+      // unchanged and collects nothing.
+      const { userIds: mentionUserIds, rewrittenMarkdown } = extractMentions(text);
+
       // A thread reply relates every chunk to the thread root. Reserve the
       // relation's serialized bytes in the chunker so each event stays within the
       // federation cap AFTER the relation is merged in.
@@ -671,18 +685,25 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
       // Split by SERIALIZED bytes (not chars): the HTML formatted_body roughly
       // doubles the plaintext, so a char-bounded split overflows the cap on
       // HTML-heavy content. A fitting message stays a single event.
-      const chunks = chunkBySerializedBytes(text, MATRIX_EVENT_BYTE_BUDGET, reserveBytes);
+      const chunks = chunkBySerializedBytes(rewrittenMarkdown, MATRIX_EVENT_BYTE_BUDGET, reserveBytes);
 
       // Send each chunk sequentially through the rate-limit taxonomy. A chunked
       // send yields N events; the returned id is the LAST chunk's (a single-chunk
       // message returns that one id). A mid-sequence failure stops and returns err.
+      // The `m.mentions` list rides the FIRST chunk only (a chunked send still
+      // pings each named user exactly once).
       let lastEventId = "";
+      let isFirstChunk = true;
       for (const chunk of chunks) {
-        const content =
-          relation !== undefined ? { ...chunk, "m.relates_to": relation } : chunk;
+        let content: Record<string, unknown> =
+          relation !== undefined ? { ...chunk, "m.relates_to": relation } : { ...chunk };
+        if (isFirstChunk && mentionUserIds.length > 0) {
+          content = { ...content, "m.mentions": { user_ids: mentionUserIds } };
+        }
+        isFirstChunk = false;
         // The SDK types `m.room.message` content as a broad XOR union; the builder
-        // emits the exact m.text (+ optional relation) shape, so cast at this
-        // single boundary.
+        // emits the exact m.text (+ optional relation / mentions) shape, so cast at
+        // this single boundary.
         const sent = await sendEventWithRetry(
           activeClient,
           roomId,

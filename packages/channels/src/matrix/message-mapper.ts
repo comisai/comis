@@ -38,6 +38,7 @@ import { systemNowMs } from "@comis/core";
 import { randomUUID } from "node:crypto";
 import type { MatrixEvent, Room } from "matrix-js-sdk";
 import { sanitizeInboundHtml } from "./format-matrix.js";
+import { detectBotMention } from "./mentions.js";
 
 /** The Matrix event type that carries a chat message. */
 const ROOM_MESSAGE_TYPE = "m.room.message";
@@ -68,6 +69,12 @@ function replaceTargetId(relatesTo: unknown): string | undefined {
 export interface MatrixMapOptions {
   /** Whether the room is a direct (1:1) conversation, from the `m.direct` flag. */
   isDirect: boolean;
+  /**
+   * The bot's own MXID, used to decide whether an inbound message addresses the
+   * bot (sets `metadata.isBotMentioned`). Absent/empty means the mention check is
+   * skipped (never a false positive).
+   */
+  botUserId?: string;
 }
 
 /**
@@ -165,6 +172,11 @@ export function mapMatrixEventToNormalized(
   if (isThread) {
     metadata.matrixThreadId = threadRootId;
   }
+
+  // The exact key the shared group @-mention gate reads (`isBotMentioned`) — set
+  // it so the bot answers when addressed in a group. Keyed on the bot's OWN MXID
+  // (never a display name) against the untrusted mentions list / pill.
+  metadata.isBotMentioned = detectBotMention(content, opts.botUserId ?? "");
 
   return {
     id: randomUUID(),
