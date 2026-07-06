@@ -12,9 +12,11 @@
  * at any earlier stage leaves ZERO staged output (a partial write is unwound).
  *
  * The scan is a SEPARATE, UNCONDITIONAL call site: it never consults the
- * load-time content-scanning enable / block-on-critical configuration. It
- * sanitizes + scans the SKILL.md body AND every kept reference/template file;
- * any CRITICAL finding rejects atomically.
+ * load-time content-scanning enable / block-on-critical configuration. It scans
+ * the SKILL.md body SANITIZED (mirroring load-time, which re-sanitizes the body
+ * before the model renders it) AND every kept reference/template file RAW
+ * (references are read un-sanitized at load, so the scan verdict must describe
+ * the exact persisted+hashed bytes); any CRITICAL finding rejects atomically.
  *
  * The bundle check is an INJECTED seam so this layer never imports the
  * daemon-side resolver (which would create a package-reference cycle). The
@@ -480,14 +482,20 @@ export async function stageImport(
     );
   }
 
-  // 7. UNCONDITIONAL scan-all: the SKILL.md body AND every kept text file.
+  // 7. UNCONDITIONAL scan-all: the SKILL.md body AND every kept reference file.
+  // The scan must describe the bytes that reach the model, which is exactly what
+  // `contentHash` pins. The SKILL.md body is scanned SANITIZED because load-time
+  // discovery re-runs `sanitizeSkillBody` before the model renders it. Reference
+  // files are NOT re-sanitized at load (a skill opens them as plain files), so
+  // they are scanned RAW — the exact persisted+hashed bytes. Scanning a sanitized
+  // copy of a reference would let a CRITICAL pattern that sanitization neutralizes
+  // (e.g. one hidden inside an HTML comment) pass the import scan yet reach the
+  // model raw on disk.
   logger.debug({ step: "scan" }, "import: scanning all kept text");
   const findings: ContentScanFinding[] = [...scanSkillContent(sanitized.body).findings];
   for (const kept of filtered.kept) {
     if (kept.relPath === "SKILL.md") continue; // the body was scanned above
-    // Sanitize without truncation so a large reference file cannot hide content past the scan.
-    const cleaned = sanitizeSkillBody(kept.content, Number.MAX_SAFE_INTEGER).body;
-    findings.push(...scanSkillContent(cleaned).findings);
+    findings.push(...scanSkillContent(kept.content).findings);
   }
   const hasCritical = findings.some((f) => f.severity === "CRITICAL");
   const scanVerdict: ScanVerdict = { clean: findings.length === 0, findingCount: findings.length };
