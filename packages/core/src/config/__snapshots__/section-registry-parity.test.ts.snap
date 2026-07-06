@@ -3046,7 +3046,8 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
       "maxFileBytes": 4194304,
       "maxFileCount": 200,
       "maxPathDepth": 10,
-      "maxTotalUncompressedBytes": 67108864
+      "maxTotalUncompressedBytes": 67108864,
+      "registries": []
     },
     "immutable": true,
     "path": "agents.skills.import",
@@ -3081,6 +3082,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.skills.import.maxTotalUncompressedBytes",
     "type": "integer"
+  },
+  {
+    "default": [],
+    "immutable": true,
+    "path": "agents.skills.import.registries",
+    "type": "array"
   },
   {
     "default": {
@@ -19681,7 +19688,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "maxFileBytes": 4194304,
             "maxFileCount": 200,
             "maxPathDepth": 10,
-            "maxTotalUncompressedBytes": 67108864
+            "maxTotalUncompressedBytes": 67108864,
+            "registries": []
           },
           "properties": {
             "maxArchiveBytes": {
@@ -19713,6 +19721,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
               "exclusiveMinimum": 0,
               "maximum": 9007199254740991,
               "type": "integer"
+            },
+            "registries": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
             }
           },
           "required": [
@@ -19720,7 +19735,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "maxTotalUncompressedBytes",
             "maxFileCount",
             "maxFileBytes",
-            "maxPathDepth"
+            "maxPathDepth",
+            "registries"
           ],
           "type": "object"
         },
@@ -30896,7 +30912,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "maxFileBytes": 4194304,
                   "maxFileCount": 200,
                   "maxPathDepth": 10,
-                  "maxTotalUncompressedBytes": 67108864
+                  "maxTotalUncompressedBytes": 67108864,
+                  "registries": []
                 },
                 "properties": {
                   "maxArchiveBytes": {
@@ -30928,6 +30945,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991,
                     "type": "integer"
+                  },
+                  "registries": {
+                    "default": [],
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
                   }
                 },
                 "required": [
@@ -30935,7 +30959,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "maxTotalUncompressedBytes",
                   "maxFileCount",
                   "maxFileBytes",
-                  "maxPathDepth"
+                  "maxPathDepth",
+                  "registries"
                 ],
                 "type": "object"
               },

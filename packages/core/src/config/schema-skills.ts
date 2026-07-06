@@ -92,6 +92,13 @@ const SkillsImportConfigSchema = z.strictObject({
   maxFileBytes: z.number().int().positive().default(4_194_304),
   /** Max path depth of any unpacked entry (default: 10). */
   maxPathDepth: z.number().int().positive().default(10),
+  /**
+   * Registry allowlist for skill imports: normalized origins
+   * (`https://<host>[:port]`) plus the literal `clawhub` token. Default-empty
+   * means no registry imports are permitted (archive/GitHub imports are
+   * unaffected). Matched exactly against the requested registry at import time.
+   */
+  registries: z.array(z.string()).default([]),
 });
 
 /**
