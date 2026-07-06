@@ -55,6 +55,7 @@ const ALICE = "@alice:hs.test";
 const BOB = "@bob:hs.test";
 const GROUP_ROOM = "!group:hs.test";
 const DM_ROOM = "!dm:hs.test";
+const ENC_ROOM = "!encrypted:hs.test";
 
 /** A UUID (the NormalizedMessage `id` shape — `z.guid()`). */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -93,10 +94,19 @@ afterEach(async () => {
  * handler auto-replies "echo: <text>" back to the inbound room. The adapter is
  * NOT started here — the caller starts it (so a backlog inject can precede the
  * initial `/sync`).
+ *
+ * `e2ee: true` flips the real crypto path on (the adapter bootstraps the rust
+ * crypto store before `/sync`), so the emulator must answer the crypto-startup
+ * key endpoints or the client cannot reach sync-ready. `echo: false` makes the
+ * handler capture-only (no auto-reply) — used by the decrypt-degrade edge so an
+ * empty outbound oracle is an honest "the bot sent no garbage" assertion rather
+ * than being masked by an echo of the synthesized system note.
  */
 async function buildStack(opts?: {
   allowMode?: "allowlist" | "open";
   allowFrom?: string[];
+  e2ee?: boolean;
+  echo?: boolean;
 }): Promise<Stack> {
   const emu = createMatrixEmulator();
   const { apiRoot } = await emu.start();
@@ -117,12 +127,17 @@ async function buildStack(opts?: {
     allowMode: opts?.allowMode ?? "allowlist",
     autoJoinOnInvite: true,
     logger,
+    // E2EE needs a stable deviceId — the rust crypto store keys its device
+    // identity on it, and initRustCrypto refuses a client with an unknown device.
+    // A real e2ee bot configures channels.matrix.deviceId for exactly this reason.
+    ...(opts?.e2ee === true ? { e2ee: true, deviceId: "DEVICETEST1" } : {}),
   });
   const adapter = plugin.adapter;
 
+  const echo = opts?.echo ?? true;
   adapter.onMessage(async (msg) => {
     received.push(msg);
-    await adapter.sendMessage(msg.channelId, `echo: ${msg.text}`);
+    if (echo) await adapter.sendMessage(msg.channelId, `echo: ${msg.text}`);
   });
 
   const stack: Stack = { emu, plugin, adapter, received, stateDir, logger, apiRoot };
@@ -408,6 +423,105 @@ describe("matrix-emulator scenario — honest inbound edit + redaction (the tamp
     expect(redaction?.id).toMatch(UUID_RE);
     // It reaches the message path (not treated as a reaction).
     expect(stack.emu.sentMessages(GROUP_ROOM).some((o) => o.body?.includes("$orig"))).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// E2EE-enabled startup + the honest decrypt-degrade edge, end-to-end through the
+// REAL adapter's crypto path against the loopback emulator. Starting with
+// `e2ee: true` bootstraps the rust crypto store BEFORE `/sync`, and the client's
+// crypto layer probes the key endpoints (`/keys/upload`, `/keys/query`, …) as it
+// prepares — so the emulator must answer those with valid (if empty) shapes or
+// the client never reaches sync-ready. This is EDGE coverage of the already-proven
+// crypto seam (the real Megolm round-trip is proven elsewhere with real key
+// exchange), not a full crypto server: the endpoints are minimal loopback stubs.
+//
+// The edge that must be proven honest: an inbound `m.room.encrypted` event the bot
+// has no session for must NEVER surface as garbage (the raw ciphertext or the
+// SDK's "Unable to decrypt" placeholder) and must NEVER be silently dropped — it
+// degrades to a once-per-room system note carrying a secret-free operator hint.
+// ---------------------------------------------------------------------------
+
+/** A well-formed-but-undecryptable Megolm ciphertext — the bot holds no session for it. */
+const UNDECRYPTABLE_CIPHERTEXT = "AwgAEpABz0PLAINTEXTFREEciphertextTHATcannotDECRYPT1234==";
+
+describe("matrix-emulator scenario — e2ee-enabled startup + honest decrypt degrade (edge)", () => {
+  it("starts the real adapter with e2ee enabled against loopback and still round-trips a plaintext message", async () => {
+    const stack = await buildStack({ e2ee: true });
+
+    // Sync-ready must be reached: the crypto bootstrap + startClient probe the key
+    // endpoints, so start() only resolves ok when the emulator answers them.
+    const started = await stack.adapter.start();
+    expect(started.ok).toBe(true);
+
+    // A plaintext event in an e2ee-enabled adapter still round-trips (the crypto
+    // path does not swallow cleartext room messages).
+    stack.emu.injectRoomMessage({
+      roomId: GROUP_ROOM,
+      sender: ALICE,
+      body: "hello over an e2ee-enabled adapter",
+    });
+
+    const out = await waitForOutbound(stack.emu, GROUP_ROOM);
+    expect(stack.received.some((m) => m.text === "hello over an e2ee-enabled adapter")).toBe(true);
+    expect(out.some((o) => o.body === "echo: hello over an e2ee-enabled adapter")).toBe(true);
+
+    // The crypto-startup key endpoints must be ANSWERED by the emulator, not left
+    // to fall through to the catch-all safety net. The real adapter's crypto layer
+    // publishes device + one-time keys via POST /keys/upload and probes devices via
+    // POST /keys/query on startup; if those are unhandled the client cannot complete
+    // its key handshake (it retries an unparseable response indefinitely). Asserting
+    // they never hit the catch-all is the load-bearing proof the emulator serves the
+    // crypto surface with valid shapes.
+    const unhandled = stack.emu.unhandledPaths();
+    expect(unhandled.some((p) => p.includes("/keys/upload"))).toBe(false);
+    expect(unhandled.some((p) => p.includes("/keys/query"))).toBe(false);
+  });
+
+  it("degrades an undecryptable m.room.encrypted event to an honest system note, never garbage and never a silent drop", async () => {
+    // Capture-only (echo off): the bot must send NOTHING for an event it cannot
+    // decrypt, so an empty send oracle is the load-bearing "no garbage out" proof —
+    // an echo would otherwise mask it by replaying the synthesized note.
+    const stack = await buildStack({ e2ee: true, echo: false });
+    const started = await stack.adapter.start();
+    expect(started.ok).toBe(true);
+
+    // A live m.room.encrypted event for a session the bot never received. The real
+    // crypto backend attempts decryption, fails closed, and the adapter synthesizes
+    // the once-per-room degrade note instead of leaking ciphertext.
+    stack.emu.injectRoomEvent({
+      roomId: ENC_ROOM,
+      sender: ALICE,
+      type: "m.room.encrypted",
+      content: {
+        algorithm: "m.megolm.v1.aes-sha2",
+        ciphertext: UNDECRYPTABLE_CIPHERTEXT,
+        sender_key: "CURVEsenderKEYplaceholderNOTaREALdeviceKEY00",
+        session_id: "MEGOLMsessionIDplaceholderUNKNOWNtoTHISbot00",
+        device_id: "ALICEDEVICE1",
+      },
+    });
+
+    // NOT a silent drop: the honest degrade note reached a session.
+    await waitUntil(
+      () => stack.received.some((m) => m.metadata.matrixSystemNote === true),
+      20000,
+    );
+    const note = stack.received.find((m) => m.metadata.matrixSystemNote === true);
+    expect(note).toBeDefined();
+    // The note is a synthesized system note, not a room speaker, and carries a
+    // non-empty, secret-free operator hint — never the ciphertext.
+    expect(note?.senderId).toBe("system");
+    expect(note?.channelId).toBe(ENC_ROOM);
+    expect((note?.text.length ?? 0)).toBeGreaterThan(0);
+    expect(note?.text).not.toContain(UNDECRYPTABLE_CIPHERTEXT);
+
+    // NO garbage: neither the ciphertext nor the SDK's decrypt placeholder ever
+    // surfaces as inbound content…
+    expect(stack.received.every((m) => !m.text.includes(UNDECRYPTABLE_CIPHERTEXT))).toBe(true);
+    expect(stack.received.every((m) => !m.text.includes("Unable to decrypt"))).toBe(true);
+    // …and the bot sent nothing at all for the undecryptable event.
+    expect(stack.emu.sentMessages(ENC_ROOM)).toHaveLength(0);
   });
 });
 
