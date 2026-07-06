@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { MatrixEvent, Room } from "matrix-js-sdk";
 import { parseMessage } from "@comis/core";
 import { mapMatrixEventToNormalized } from "../message-mapper.js";
@@ -300,5 +300,134 @@ describe("mapMatrixEventToNormalized", () => {
     const meta = result?.metadata ?? {};
     expect(Object.prototype.hasOwnProperty.call(meta, "isBotMentioned")).toBe(true);
     expect(Object.prototype.hasOwnProperty.call(meta, "mentionedBot")).toBe(false);
+  });
+});
+
+/** A full encrypted-file record as it rides on `content.file` of an encrypted media event. */
+function encryptedFileRecord(mxc: string): Record<string, unknown> {
+  return {
+    url: mxc,
+    key: { alg: "A256CTR", key_ops: ["encrypt", "decrypt"], kty: "oct", k: "somebase64key", ext: true },
+    iv: "somebase64iv",
+    hashes: { sha256: "somebase64hash" },
+    v: "v2",
+  };
+}
+
+describe("mapMatrixEventToNormalized — inbound media", () => {
+  it("maps a plaintext m.image to an attachment carrying the mxc url, declared mime/size/filename, without invoking the cache callback", () => {
+    const cacheEncryptedFile = vi.fn();
+    const result = mapMatrixEventToNormalized(
+      makeEvent({
+        content: {
+          msgtype: "m.image",
+          body: "cat.png",
+          url: "mxc://hs/abc",
+          info: { mimetype: "image/png", size: 2048 },
+        },
+      }),
+      makeRoom(),
+      { isDirect: false, cacheEncryptedFile },
+    );
+    expect(result?.attachments).toEqual([
+      { type: "image", url: "mxc://hs/abc", mimeType: "image/png", fileName: "cat.png", sizeBytes: 2048 },
+    ]);
+    // A plaintext attachment carries no encrypted-file side-channel.
+    expect(cacheEncryptedFile).not.toHaveBeenCalled();
+    // The strict-object attachment schema accepts the emitted shape.
+    expect(parseMessage(result).ok).toBe(true);
+  });
+
+  it("omits sizeBytes when the declared info carries no size", () => {
+    const result = mapMatrixEventToNormalized(
+      makeEvent({
+        content: { msgtype: "m.image", body: "cat.png", url: "mxc://hs/abc", info: { mimetype: "image/png" } },
+      }),
+      makeRoom(),
+      { isDirect: false },
+    );
+    expect(result?.attachments[0]).toEqual({
+      type: "image",
+      url: "mxc://hs/abc",
+      mimeType: "image/png",
+      fileName: "cat.png",
+    });
+    expect(parseMessage(result).ok).toBe(true);
+  });
+
+  it("maps m.file, m.audio and m.video to file/audio/video attachments with the mxc url from content.url", () => {
+    const cases: Array<{ msgtype: string; type: string }> = [
+      { msgtype: "m.file", type: "file" },
+      { msgtype: "m.audio", type: "audio" },
+      { msgtype: "m.video", type: "video" },
+    ];
+    for (const { msgtype, type } of cases) {
+      const result = mapMatrixEventToNormalized(
+        makeEvent({ content: { msgtype, body: "blob", url: "mxc://hs/xyz" } }),
+        makeRoom(),
+        { isDirect: false },
+      );
+      expect(result?.attachments[0]).toEqual({ type, url: "mxc://hs/xyz", fileName: "blob" });
+      expect(parseMessage(result).ok).toBe(true);
+    }
+  });
+
+  it("maps an encrypted m.image to an attachment whose url is the encrypted-file mxc and hands the record to the cache callback exactly once", () => {
+    const cacheEncryptedFile = vi.fn();
+    const file = encryptedFileRecord("mxc://hs/enc");
+    const result = mapMatrixEventToNormalized(
+      makeEvent({
+        content: {
+          msgtype: "m.image",
+          body: "secret.png",
+          // No content.url in an encrypted room; the mxc rides on content.file.url.
+          file,
+          info: { mimetype: "image/png" },
+        },
+      }),
+      makeRoom(),
+      { isDirect: false, cacheEncryptedFile },
+    );
+    // The attachment url is the encrypted-file mxc (the resolver resolves it later).
+    expect(result?.attachments[0]?.url).toBe("mxc://hs/enc");
+    expect(result?.attachments[0]?.type).toBe("image");
+    // The strict attachment carries NO key material — it rides the side-channel only.
+    expect(result?.attachments[0]).not.toHaveProperty("key");
+    expect(result?.attachments[0]).not.toHaveProperty("iv");
+    expect(result?.attachments[0]).not.toHaveProperty("hashes");
+    // The encrypted-file record is cached keyed by the mxc, exactly once.
+    expect(cacheEncryptedFile).toHaveBeenCalledTimes(1);
+    expect(cacheEncryptedFile).toHaveBeenCalledWith("mxc://hs/enc", file);
+    // The whole object still round-trips through the domain validator.
+    expect(parseMessage(result).ok).toBe(true);
+  });
+
+  it("does not emit an attachment or invoke the callback for a plain text message", () => {
+    const cacheEncryptedFile = vi.fn();
+    const result = mapMatrixEventToNormalized(makeEvent(), makeRoom(), { isDirect: false, cacheEncryptedFile });
+    expect(result?.attachments).toEqual([]);
+    expect(cacheEncryptedFile).not.toHaveBeenCalled();
+  });
+
+  it("does not emit an attachment or invoke the callback for a redaction", () => {
+    const cacheEncryptedFile = vi.fn();
+    const result = mapMatrixEventToNormalized(
+      makeEvent({ type: "m.room.redaction", content: {}, associatedId: "$gone:hs" }),
+      makeRoom(),
+      { isDirect: false, cacheEncryptedFile },
+    );
+    expect(result?.attachments).toEqual([]);
+    expect(cacheEncryptedFile).not.toHaveBeenCalled();
+  });
+
+  it("emits no attachment and no callback for a media event carrying neither a plaintext url nor an encrypted-file url", () => {
+    const cacheEncryptedFile = vi.fn();
+    const result = mapMatrixEventToNormalized(
+      makeEvent({ content: { msgtype: "m.image", body: "orphan.png" } }),
+      makeRoom(),
+      { isDirect: false, cacheEncryptedFile },
+    );
+    expect(result?.attachments).toEqual([]);
+    expect(cacheEncryptedFile).not.toHaveBeenCalled();
   });
 });
