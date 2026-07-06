@@ -37,6 +37,20 @@ const MAX_LIVENESS_CHECK_INTERVAL_MS = 900_000; // 15 minutes
  */
 const DEFAULT_MISSED_INBOUND_MS = 21_600_000; // 6 hours
 
+/**
+ * The channel types that can run in webhook mode. Single source of truth for the
+ * arm decision, the poll cadence, and the per-channel threshold lookup — so a
+ * future third webhook channel is added here once, never hand-synced across
+ * duplicated literal lists plus a `channelType as ...` cast.
+ */
+const WEBHOOK_CHANNEL_TYPES = ["msteams", "googlechat"] as const;
+type WebhookChannelType = (typeof WEBHOOK_CHANNEL_TYPES)[number];
+
+/** Narrow an arbitrary channelType to a known webhook channel (no cast). */
+function isWebhookChannelType(channelType: string): channelType is WebhookChannelType {
+  return (WEBHOOK_CHANNEL_TYPES as readonly string[]).includes(channelType);
+}
+
 /** The handle returned to the composition root; `stop()` cancels the timer. */
 export interface ChannelLivenessMonitor {
   stop(): void;
@@ -57,14 +71,18 @@ export function setupChannelLivenessMonitor(deps: {
   const { adaptersByType, daemonLogger, container, timer } = deps;
   const now = deps.now ?? systemNowMs;
 
+  // Total, typed lookup of a webhook channel's liveness config by channelType.
+  // Returns undefined for any non-webhook (or unknown) type — no cast; a future
+  // third webhook channel is picked up here via WEBHOOK_CHANNEL_TYPES.
+  const webhookChannelConfig = (
+    channelType: string,
+  ): { enabled?: boolean; missedInboundThresholdMs?: number } | undefined =>
+    isWebhookChannelType(channelType) ? container.config.channels?.[channelType] : undefined;
+
   // Arm when ANY webhook-capable channel is enabled. Each such channel carries
   // its own missed-inbound window at the same config path, resolved per adapter
   // below; a disabled channel contributes nothing to watch.
-  const webhookConfigs = {
-    msteams: container.config.channels?.msteams,
-    googlechat: container.config.channels?.googlechat,
-  };
-  if (!Object.values(webhookConfigs).some((c) => c?.enabled)) {
+  if (!WEBHOOK_CHANNEL_TYPES.some((t) => webhookChannelConfig(t)?.enabled)) {
     return { monitor: undefined, stop: undefined };
   }
 
@@ -106,10 +124,10 @@ export function setupChannelLivenessMonitor(deps: {
       if (status?.connectionMode !== "webhook") continue;
 
       // Resolve the window from this adapter's own channel config, so each
-      // webhook channel alerts on its own threshold.
+      // webhook channel alerts on its own threshold (typed, total — no cast).
       const thresholdMs =
-        container.config.channels?.[channelType as "msteams" | "googlechat"]
-          ?.missedInboundThresholdMs ?? DEFAULT_MISSED_INBOUND_MS;
+        webhookChannelConfig(channelType)?.missedInboundThresholdMs ??
+        DEFAULT_MISSED_INBOUND_MS;
 
       const lastInboundAt = status.lastInboundAt ?? null;
       const baselineMs = lastInboundAt ?? daemonStartMs;
@@ -145,9 +163,9 @@ export function setupChannelLivenessMonitor(deps: {
 
   // Poll on the tightest enabled window (so the smallest threshold still
   // detects on time), capped so detection latency stays bounded.
-  const enabledThresholds = Object.values(webhookConfigs)
-    .filter((c) => c?.enabled)
-    .map((c) => c?.missedInboundThresholdMs ?? DEFAULT_MISSED_INBOUND_MS);
+  const enabledThresholds = WEBHOOK_CHANNEL_TYPES.filter(
+    (t) => webhookChannelConfig(t)?.enabled,
+  ).map((t) => webhookChannelConfig(t)?.missedInboundThresholdMs ?? DEFAULT_MISSED_INBOUND_MS);
   const checkIntervalMs = Math.min(...enabledThresholds, MAX_LIVENESS_CHECK_INTERVAL_MS);
   const handle = timer.setInterval(checkOnce, checkIntervalMs);
   handle.unref();
