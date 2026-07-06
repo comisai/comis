@@ -109,6 +109,9 @@ export { MAX_TRACKED_REACTIONS };
  * the composition root before they reach here; the `createClientImpl` seam lets
  * a unit test drive the whole lifecycle from a fake client without a homeserver.
  */
+// @optional-field-count: composition-root deps bag — each optional field is an
+// independent injected seam or config knob (gating, e2ee, media, health, and
+// test-only seams) supplied conditionally at the single adapter construction site.
 export interface MatrixAdapterDeps {
   /** Homeserver base URL — SSRF-validated at `start()` before any connect. */
   homeserverUrl: string;

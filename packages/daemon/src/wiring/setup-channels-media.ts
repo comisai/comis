@@ -60,6 +60,9 @@ export interface MediaPipelineResult {
 // ---------------------------------------------------------------------------
 
 /** Dependencies for media pipeline assembly. */
+// @optional-field-count: composition-root media-pipeline deps — each optional field
+// is an independent per-channel resolver or config seam supplied conditionally at
+// the single media-wiring site.
 export interface MediaPipelineDeps {
   container: AppContainer;
   channelsLogger: ComisLogger;

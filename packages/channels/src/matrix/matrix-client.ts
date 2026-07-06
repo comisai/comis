@@ -134,6 +134,9 @@ export interface DecryptFailureSignal {
 }
 
 /** Inputs the `/sync` transport needs; the client is the injected seam. */
+// @optional-field-count: the /sync transport's injected-seam bag — each optional
+// field is a conditionally-wired capability (reaction/decrypt/reauth/health/crypto
+// seams plus test injectors) passed only when its config or feature is enabled.
 export interface MatrixClientDeps {
   /** The authenticated matrix-js-sdk client (from the auth lifecycle). */
   client: MatrixClient;
