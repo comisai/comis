@@ -125,7 +125,7 @@ import { seedBundledSkills, defaultSeedBundledSkillsDeps } from "./wiring/seed-b
 import { sweepOrphanedImports, defaultSweepDeps } from "./skills/import-boot-sweep.js";
 // createModelCatalog + resolveWorkspaceDir live in @comis/core.
 import { createModelCatalog, resolveWorkspaceDir } from "@comis/core";
-import { createFileStateTracker, detectSandboxProvider } from "@comis/skills";
+import { createFileStateTracker, detectSandboxProvider, readProvenanceStore } from "@comis/skills";
 import { reapNeverTaskedDrives as reapNeverTaskedDrivesInRegistry, createOrchestrateReplayRespawn } from "@comis/skills/tools";
 import { constructCapabilityLayer } from "./wiring/setup-capability-endpoint-boot.js"; // the sandbox/capability endpoint layer
 import { buildOrchestrateRepairResolver } from "./wiring/setup-tools-orchestrate-repair.js"; // the class-gated one-shot orchestrate repair-seam resolver (daemon-minted, injected into setupTools)
@@ -145,7 +145,7 @@ import { createEmptyBootContext } from "./daemon-types.js";
 export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
 import { setupObsPersistence } from "./observability/obs-persistence-wiring.js";
 import { recordModelHealth } from "./observability/record-model-health.js";
-import { buildConfigPostureRecord, countChimericModels, countPricingGaps, isLoopbackHost } from "./observability/build-config-posture-record.js";
+import { buildConfigPostureRecord, countChimericModels, countImportedNonAllowlisted, countPricingGaps, isLoopbackHost } from "./observability/build-config-posture-record.js";
 import { setupDeliveryQueueLogging } from "./observability/delivery-queue-logger.js";
 import { createContextPipelineCollector } from "./observability/context-pipeline-collector.js";
 import { createLogLevelManager, expandTilde } from "./observability/log-infra.js";
@@ -2797,7 +2797,13 @@ async function bootShutdown(
   // Surface the relaxed no-downgrade sandbox default at boot.
   // The typed field defaults to true (schema-security.ts); === false is the relaxation.
   const sandboxNoDowngradeDisabled = container.config.security.agentToAgent.sandboxNoDowngrade === false;
-  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount: countChimericModels(container.config.agents), pricingGapCount: countPricingGaps(container.config.agents), sandboxNoDowngradeDisabled }, boot.clock);
+  // Imported-skill posture: total imported + how many carry a recorded registry no
+  // longer in its applicable allowlist (allowlist drift after the fact). Reads the
+  // SAME boot dataDir the orphan-import sweep reads (readProvenanceStore is fail-safe
+  // — a missing/corrupt store yields {} and never blocks boot). Per-record allowlist
+  // resolution (shared→default agent, local→record.agentId); counts only.
+  const importedPosture = countImportedNonAllowlisted(readProvenanceStore(dataDir), container.config.agents, gateway.defaultAgentId);
+  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount: countChimericModels(container.config.agents), pricingGapCount: countPricingGaps(container.config.agents), importedSkillCount: importedPosture.total, importedNonAllowlistedRegistryCount: importedPosture.drift, sandboxNoDowngradeDisabled }, boot.clock);
 
   // Snapshot current config as last-known-good after successful startup.
   // Honor diagnostics.configAudit.enabled.

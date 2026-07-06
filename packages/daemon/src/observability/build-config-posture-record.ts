@@ -41,6 +41,7 @@
 import type { ClockPort } from "@comis/core";
 import { isProviderModelChimera, resolvePricingState } from "@comis/core";
 import type { ObservabilityStore } from "@comis/memory";
+import type { ProvenanceStore } from "@comis/skills";
 import type { StrandedFinding } from "../wiring/setup-storage-mismatch-warn.js";
 
 /**
@@ -100,6 +101,66 @@ export function countPricingGaps(
   ).length;
 }
 
+/** The minimal agent-config shape the imported-drift producer reads: each agent's
+ *  registry allowlist under `skills.import.registries`. */
+type AgentRegistriesConfig = Readonly<
+  Record<string, { skills?: { import?: { registries?: readonly string[] } } }>
+>;
+
+/**
+ * Normalize a registry to a port-preserving, exact origin — the SAME rule the
+ * import-time resolver applies (`new URL().origin` lowercases the host + scheme,
+ * keeps a non-default port, drops a default one), so a stored origin and a config
+ * allowlist entry compare consistently regardless of a trailing slash or casing.
+ * A value that is not a URL (e.g. a bare registry token) has no origin — it folds
+ * to its trimmed self so it still compares by exact value, never throwing.
+ */
+function normalizeRegistryOrigin(value: string): string {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return value.trim();
+  }
+}
+
+/**
+ * Count the imported-skill posture over a provenance store: `total` is the number
+ * of provenance records; `drift` is how many carry a recorded `registry` that is
+ * NO LONGER in its APPLICABLE allowlist (allowlist drift after the fact — the only
+ * way a live import can point at a non-allowlisted registry, since the import-time
+ * gate hard-refuses).
+ *
+ * The applicable allowlist is resolved PER-RECORD, mirroring the per-agent
+ * import-time gate: a `shared`-scope record checks the DEFAULT agent's
+ * `skills.import.registries`; a `local` record checks `record.agentId`'s. A
+ * union-of-all-agents shortcut would under-count drift. Both the record's registry
+ * and every allowlist entry are normalized ({@link normalizeRegistryOrigin}) before
+ * the membership check. A record with no `registry` (archive/github/upload) never
+ * counts as drift. COUNT only — the caller persists the counts, never registry
+ * origins or agent ids.
+ *
+ * Lives here (not inline in daemon.ts) beside the sibling boot-count helpers to
+ * keep daemon.ts under its 3000-line cap.
+ */
+export function countImportedNonAllowlisted(
+  store: ProvenanceStore,
+  agents: AgentRegistriesConfig,
+  defaultAgentId: string,
+): { total: number; drift: number } {
+  let total = 0;
+  let drift = 0;
+  for (const record of Object.values(store)) {
+    total++;
+    const registry = record.registry;
+    if (typeof registry !== "string" || registry.length === 0) continue; // archive/github/upload — never drift.
+    const capsAgentId = record.scope === "shared" ? defaultAgentId : record.agentId;
+    const allowlist = agents[capsAgentId]?.skills?.import?.registries ?? [];
+    const normalizedAllowed = new Set(allowlist.map(normalizeRegistryOrigin));
+    if (!normalizedAllowed.has(normalizeRegistryOrigin(registry))) drift++;
+  }
+  return { total, drift };
+}
+
 /** The boot-time config-posture inputs (counts/booleans/closed labels only). */
 export interface ConfigPostureInputs {
   /** The gateway is running without TLS (and not explicitly allowing insecure HTTP). */
@@ -141,6 +202,22 @@ export interface ConfigPostureInputs {
    */
   pricingGapCount?: number;
   /**
+   * Total number of imported skills (provenance records) at
+   * boot. A COUNT, never a skill name or registry origin. Computed in daemon.ts
+   * via `countImportedNonAllowlisted` over `readProvenanceStore`. Optional
+   * (defaults to 0 in the record) so existing callers/tests need no change.
+   */
+  importedSkillCount?: number;
+  /**
+   * Number of imported skills whose recorded `registry`
+   * is NO LONGER in its applicable allowlist (`skills.import.registries`, resolved
+   * per-record: shared→default agent, local→record.agentId) — allowlist drift
+   * after the fact. Non-zero flips severity to warning. A COUNT, never a registry
+   * origin or agent id (the no-free-text contract). Computed in daemon.ts via
+   * `countImportedNonAllowlisted`. Optional (defaults to 0).
+   */
+  importedNonAllowlistedRegistryCount?: number;
+  /**
    * `true` when the operator set
    * `security.agentToAgent.sandboxNoDowngrade: false` — a RELAXED security default
    * (a spawned child may run with a weaker sandbox posture than its parent). A
@@ -167,6 +244,8 @@ export function buildConfigPostureRecord(
 ): void {
   const chimericModelCount = inputs.chimericModelCount ?? 0;
   const pricingGapCount = inputs.pricingGapCount ?? 0;
+  const importedSkillCount = inputs.importedSkillCount ?? 0;
+  const importedNonAllowlistedRegistryCount = inputs.importedNonAllowlistedRegistryCount ?? 0;
   const sandboxNoDowngradeDisabled = inputs.sandboxNoDowngradeDisabled ?? false;
   const hasIssue =
     inputs.tlsOff ||
@@ -175,6 +254,7 @@ export function buildConfigPostureRecord(
     inputs.servedBelowConfiguredCount > 0 ||
     chimericModelCount > 0 ||
     pricingGapCount > 0 ||
+    importedNonAllowlistedRegistryCount > 0 ||
     sandboxNoDowngradeDisabled;
 
   obsStore?.insertDiagnostic({
@@ -194,6 +274,11 @@ export function buildConfigPostureRecord(
       // Agents burning tokens on remote-unknown-priced models
       // (resolvePricingState == "unknown"). A COUNT, never agent ids/model names.
       pricingGapCount,
+      // Total imported skills (provenance records) + how many carry a recorded
+      // registry no longer in its applicable allowlist (allowlist drift). COUNTS
+      // only, never a registry origin or agent id (the no-free-text contract).
+      importedSkillCount,
+      importedNonAllowlistedRegistryCount,
       // The no-downgrade sandbox invariant is DISABLED (relaxed
       // default surfaced at boot, not silent). A boolean, never config bodies.
       sandboxNoDowngradeDisabled,
