@@ -53,7 +53,10 @@
 //     --no-auth          (webhook) omit the Authorization header (tests the 401 missing-bearer path)
 //     --bad-token        (webhook) send a garbage Bearer (tests the 401 invalid-token path)
 //
-// Exit code: 0 on a 2xx inbound ack, else 1. A rig error (emulator info missing) exits 2.
+// Exit code: 0 on a 2xx inbound ack, else 1. For the --no-auth / --bad-token SEC
+// probes (webhook) the pass/fail inverts: 0 means the ingress CORRECTLY rejected
+// the forged webhook with an opaque 401, else 1. A rig error (emulator info
+// missing) exits 2.
 
 import { readFileSync, existsSync } from "node:fs";
 
@@ -243,8 +246,26 @@ console.log(`  space=${space} mode=${mode} kind=${kind} from=${fromUser} auth=${
 console.log(`STATUS ${status}`);
 console.log(`ACK ${ackBody.slice(0, 500)}`);
 
+// SEC probe (webhook only): a forged or missing Bearer MUST be rejected with an
+// opaque 401 — the SECURE outcome is the PASS here, the exact inverse of a normal
+// turn. Assert it BEFORE the generic 2xx-ack check below, which would otherwise
+// flag the correct 401 rejection as a failure AND (worse) treat an insecure 2xx
+// accept — a bypassed ingress auth-gate — as success, so the probe could never
+// catch the very regression it exists for. In pubsub mode these flags were
+// ignored above (there is no inbound auth header on the pull path), so this
+// branch is webhook-only.
+if (mode === "webhook" && (opt.noAuth || opt.badToken)) {
+  const pass = status === 401;
+  // An opaque 401 leaks no reason string; the ack body should be empty/short.
+  console.log(
+    pass
+      ? "SEC PASS: ingress rejected the forged webhook with an opaque 401"
+      : `SEC FAIL: expected an opaque 401, got ${status} (auth-gate bypassed?)`,
+  );
+  process.exit(pass ? 0 : 1);
+}
+
 if (status < 200 || status >= 300) {
-  // A 401 here is an HONEST negative for the --no-auth / --bad-token SEC probes.
   process.exit(1);
 }
 
