@@ -32,12 +32,14 @@
  * @module
  */
 
-import { EventType, type MatrixClient, type Room, type TimelineEvents } from "matrix-js-sdk";
+import { Direction, EventType, type MatrixClient, type Room, type TimelineEvents } from "matrix-js-sdk";
 import * as sdk from "matrix-js-sdk";
 import type {
   ChannelPort,
   ChannelStatus,
   ComisLogger,
+  FetchedMessage,
+  FetchMessagesOptions,
   MessageHandler,
   NormalizedMessage,
   NormalizedReaction,
@@ -692,6 +694,56 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
       reactionEventIds.delete(key);
       lastError = undefined;
       return ok(undefined);
+    },
+
+    async fetchMessages(
+      roomId: string,
+      options?: FetchMessagesOptions,
+    ): Promise<Result<FetchedMessage[], Error>> {
+      if (client === undefined) {
+        const notReady = new Error("Matrix adapter cannot fetch messages before start()");
+        lastError = notReady.message;
+        deps.logger.warn(
+          {
+            channelType: "matrix" as const,
+            hint: "Call start() (which authenticates the client) before fetchMessages()",
+            errorKind: "precondition" as const,
+          },
+          "Matrix history fetch blocked: adapter not started",
+        );
+        return err(notReady);
+      }
+
+      const limit = options?.limit ?? 20;
+      // A null `from` token pages from the room's most-recent end, backward. If a
+      // homeserver ever rejects a null token, seed `from` from the room's
+      // live-timeline backward pagination token
+      // (room.getLiveTimeline().getPaginationToken(Direction.Backward)).
+      const page = await fromPromise(
+        client.createMessagesRequest(roomId, null, limit, Direction.Backward),
+      );
+      if (!page.ok) {
+        lastError = page.error.message;
+        const classified = classifyMatrixError(toMatrixErrorInput(page.error));
+        deps.logger.warn(
+          {
+            channelType: "matrix" as const,
+            hint: classified.hint,
+            errorKind: classified.errorKind,
+          },
+          "Matrix history fetch failed",
+        );
+        return err(page.error);
+      }
+
+      const mapped: FetchedMessage[] = page.value.chunk.map((event): FetchedMessage => ({
+        id: event.event_id,
+        senderId: event.sender,
+        text: (event.content as { body?: string }).body ?? "",
+        timestamp: event.origin_server_ts,
+      }));
+      lastError = undefined;
+      return ok(mapped);
     },
 
     onMessage(handler: MessageHandler): void {
