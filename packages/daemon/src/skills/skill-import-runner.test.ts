@@ -78,7 +78,7 @@ describe("enrichWithProvenanceSummary — registry origin on the list summary", 
 });
 
 // ===========================================================================
-// resolveWellKnownFileSet — the fail-closed registry allowlist gate (WK-02).
+// resolveWellKnownFileSet — the fail-closed registry allowlist gate.
 //
 // The gate is the access-control choke point: the requested registry origin must
 // be a member of the caps-owning agent's skills.import.registries (a shared

@@ -173,7 +173,7 @@ export function formatImportReject(reject: ImportReject): string {
 }
 
 // ---------------------------------------------------------------------------
-// Well-known registry resolve behind the fail-closed allowlist gate (WK-02)
+// Well-known registry resolve behind the fail-closed registry allowlist gate
 // ---------------------------------------------------------------------------
 
 /** The reserved non-URL registry token a later ClawHub branch owns; never fetched here. */
@@ -214,7 +214,7 @@ export interface ResolveWellKnownFileSetArgs {
  * Resolve a well-known registry skill to its `{ path → content }` file set, behind
  * the fail-closed allowlist gate.
  *
- * WK-02: the requested registry origin MUST be a member of the caps-owning agent's
+ * The requested registry origin MUST be a member of the caps-owning agent's
  * `skills.import.registries`. The caps-owning agent is the DEFAULT agent for a
  * shared import and the caller for a local one (matches {@link resolveCaps} + the
  * shared-write guard), so a shared import can never inherit a non-default agent's
