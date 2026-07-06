@@ -2625,14 +2625,14 @@ Test connectivity to an MCP server without changing its state. Returns the round
 
 <Accordion title="skills (6 methods)">
 
-Prompt skill management: list, create, upload, import (from a GitHub directory or an archive), update, and delete skills.
+Prompt skill management: list, create, upload, import (from a GitHub directory, an archive, or an allowlisted registry), update, and delete skills.
 
 | Method | Scope | Description |
 |--------|-------|-------------|
 | `skills.list` | `rpc` | List prompt skills for an agent (each carries its `source` and, for imports, a provenance summary) |
 | `skills.create` | `admin` | Create a new skill from SKILL.md content (single-file shortcut) |
 | `skills.upload` | `admin` | Upload a skill folder (files + SKILL.md) |
-| `skills.import` | `admin` | Import a skill from a GitHub directory URL or a packaged archive |
+| `skills.import` | `admin` | Import a skill from a GitHub directory URL, a packaged archive, or an allowlisted registry (well-known index) |
 | `skills.update` | `admin` | Update an existing skill's SKILL.md content |
 | `skills.delete` | `admin` | Delete a skill |
 
@@ -2660,7 +2660,7 @@ Each `SkillDescription` carries an optional `source` -- the trust tier the regis
 }
 ```
 
-The `provenanceSummary.source` is the acquisition **channel** (`github` / `archive` / `upload`) -- distinct from the trust-tier `source` (`imported`). It is populated only for imported skills; bundled, workspace, local, and learned skills omit it. The summary is content-free: an acquisition channel, a hash prefix, and a timestamp -- never a skill body.
+The `provenanceSummary.source` is the acquisition **channel** (`github` / `archive` / `wellknown` / `upload`) -- distinct from the trust-tier `source` (`imported`). A `wellknown` import additionally carries a `registry` field: the origin the skill was resolved from. It is populated only for imported skills; bundled, workspace, local, and learned skills omit it. The summary is content-free: an acquisition channel, an optional registry origin, a hash prefix, and a timestamp -- never a skill body.
 
 ### `skills.upload`
 
@@ -2707,7 +2707,7 @@ The optional `scope` parameter controls where the skill is written. `"local"` (d
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ url?: string, source?: "github" \| "archive", archiveUrl?: string, archiveBytes?: string, name?: string, scope?: "local" \| "shared", agentId?: string, confirm?: boolean }` |
+| **Parameters** | `{ url?: string, source?: "github" \| "archive" \| "wellknown", registry?: string, archiveUrl?: string, archiveBytes?: string, name?: string, scope?: "local" \| "shared", agentId?: string, confirm?: boolean }` |
 | **Returns** | `{ ok: true, path: string, name: string, fileCount: number, source: "imported", resolvedAgentId: string }` |
 
 Every source funnels through one staged pipeline: the content scan and the MCP Phase-A check run **before** anything is written, so a rejected import leaves zero live files. A successful import is stamped the `imported` trust tier and pinned in the provenance store; the response reports `source: "imported"` and the `resolvedAgentId` the import acted on.
@@ -2716,6 +2716,7 @@ Every source funnels through one staged pipeline: the content scan and the MCP P
 
 - `github` -- `url` is a GitHub directory URL in the format `https://github.com/{owner}/{repo}/tree/{branch}/{path}`.
 - `archive` -- supply either `archiveUrl` (a `.skill` / `.zip` / `.tar` / `.tar.gz` URL, fetched through the SSRF guard) or `archiveBytes` (the archive as base64, e.g. an operator upload). The archive is unpacked in-house against the configured size caps.
+- `wellknown` -- resolve a skill **by name** from an allowlisted registry's well-known index. `registry` is the registry origin (`https://<host>[:port]`) and `name` is the index-lookup key (which advertised skill to fetch -- it does **not** override the installed manifest name). The registry must be listed in [`skills.import.registries`](/reference/config-yaml#skills-agents-skills); a non-allowlisted registry refuses flatly and is **not** `confirm`-overridable. The `/.well-known/skills/index.json` and each advertised file are fetched SSRF-pinned and byte-capped, and one unsafe advertised path rejects the whole bundle. The pinned provenance additionally records the registry origin.
 
 The optional `scope` works the same as in `skills.upload` -- `"local"` (default) imports to the agent's workspace, `"shared"` imports to the global directory (default agent only).
 

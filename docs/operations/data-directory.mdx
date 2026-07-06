@@ -54,6 +54,7 @@ data directory.
 ├── skills/                  # seeded skill library — bundled claude-code/codex/skill-creator skills (re-seeded on version change) + any added skills
 │   └── <name>/SKILL.md      # one dir per skill (the agent auto-discovers these by description)
 ├── skill-provenance.json    # import provenance store — file mode 0o600, daemon-private (one record per imported skill)
+├── skill-index-cache/       # bounded 15-min-TTL cache of well-known registry index metadata (names + rel-paths only, never bodies)
 ├── tmp/                     # scratch for staged skill imports — one skill-import-<id>/ per in-flight import (swept at boot)
 ├── identity/
 │   └── device.json          # Ed25519 device identity (auto-generated)
@@ -77,6 +78,7 @@ Some entries only appear under specific conditions.
 - `models/whisper/` — created only after the **first** voice transcription that uses the keyless in-process local STT engine (when `integrations.media.transcription.provider` resolves to `local` without a `local.baseUrl` server). Absent on a fresh install and whenever local STT never runs.
 - `models/tts/` — created only after the **first** voice reply that uses the keyless in-process offline TTS engine (when `integrations.media.tts.provider` resolves to `local`/`piper`). A separate subdir from `models/whisper/`. Absent on a fresh install and whenever local TTS never runs.
 - `skill-provenance.json` — created on the **first** successful skill [import](/skills/importing). Absent on a fresh install and whenever no skill has ever been imported.
+- `skill-index-cache/` — created on the **first** `source: "wellknown"` registry [import](/skills/importing#registry-import-well-known-index). Absent on a fresh install and whenever no registry import has run. Safe to delete — a cold cache just re-fetches the index.
 - `tmp/` — scratch for in-flight skill imports; each import stages under a `skill-import-<id>/` subdirectory that is moved live (or discarded) at the end of the import. Any debris left by a crash mid-import is reconciled and cleaned by a boot-time sweep, so a stray `skill-import-*` directory here is safe to ignore.
 </Note>
 
@@ -370,6 +372,15 @@ It is **content-free** by construction — ids, hashes, counts, and relative pat
 
 **Written by:** the daemon on each successful import, and updated when an imported skill is deleted (record removed) or edited (hash re-pinned).
 **Safe to delete?** Deleting it strips the `imported` stamp from every previously imported skill — they revert to a path-derived source and lose their provenance summary. The skill files themselves remain. Provenance is forward-only, so there is no backfill; to restore the stamp, delete and re-import the affected skills. Do not delete while the daemon is running.
+
+---
+
+### `skill-index-cache/`
+
+A bounded, daemon-private cache of **well-known registry index metadata**, created on the first `source: "wellknown"` [import](/skills/importing#registry-import-well-known-index). One JSON file per registry origin holds only that index's **skill names and their advertised relative paths** — never file bodies. A repeat import within the fixed **15-minute TTL** can skip re-fetching the registry's `index.json`; the advertised files themselves are always re-fetched, re-scanned, and re-hash-pinned, so a cache hit only ever saves the index round-trip and can never substitute content. The cache is bounded by entry count (the oldest origins are evicted past the cap), and an expired, missing, or shape-invalid file is treated as a miss rather than trusted. The directory is mode `0o700` and each file `0o600`.
+
+**Written by:** the daemon on a `source: "wellknown"` registry import.
+**Safe to delete?** Yes. It is a pure performance cache holding no bodies and no secrets; deleting it only makes the next registry import re-fetch the index.
 
 ---
 

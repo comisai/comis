@@ -908,7 +908,7 @@ A pre-delivery critic that checks the terminal response against the GoalAnchor c
 
 **Staged Import (agents.*.skills.import)**
 
-Bounded-unpack caps for the staged [skill-import pipeline](/skills/importing). They bound what an untrusted archive can expand to before any file is written. The defaults are deliberately conservative; raise them only if you knowingly import large skills. Every key is required-with-a-default and the block is closed -- a typo'd cap key rejects at config load. Shared-scope imports read the default agent's block.
+Bounded-unpack caps -- and the registry allowlist -- for the staged [skill-import pipeline](/skills/importing). The caps bound what an untrusted archive can expand to before any file is written; the defaults are deliberately conservative, raise them only if you knowingly import large skills. Every key is required-with-a-default and the block is closed -- a typo'd key rejects at config load. Shared-scope imports read the default agent's block.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -917,6 +917,9 @@ Bounded-unpack caps for the staged [skill-import pipeline](/skills/importing). T
 | `maxFileCount` | `number` | `200` | Max number of entries unpacked from one archive |
 | `maxFileBytes` | `number` | `4194304` (4 MiB) | Max size of any single unpacked file |
 | `maxPathDepth` | `number` | `10` | Max path depth of any unpacked entry |
+| `registries` | `string[]` | `[]` | Allowlist of registry origins a `source: "wellknown"` import may resolve from (below). Default-empty = no registry imports |
+
+**`registries` -- the well-known registry allowlist.** Unlike the size caps above, `registries` is a **security allowlist**, not a bound: it names the registry origins a `source: "wellknown"` import may resolve from. Entries are normalized origins `https://<host>[:port]` (matched exactly against the requested registry's origin) plus the reserved literal `clawhub` token. It is **default-empty**, so no registry imports are permitted until you add one -- archive and GitHub imports are unaffected either way. Changing it is a deliberate **config edit**, kept out-of-band from the import call: a non-allowlisted registry refuses **flatly** and `confirm` never overrides that refusal. See [Registry import](/skills/importing#registry-import-well-known-index).
 
 <Note>
 There is intentionally **no** auto-connect knob here. An imported skill's bundled MCP servers persist disabled by construction -- you opt in per server. See [Importing Skills](/skills/importing#the-imported-trust-tier).
