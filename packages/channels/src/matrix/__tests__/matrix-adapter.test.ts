@@ -15,7 +15,11 @@ import {
 } from "matrix-js-sdk";
 import * as sdk from "matrix-js-sdk";
 import { ok } from "@comis/shared";
-import { createMatrixAdapter, type MatrixAdapterDeps } from "../matrix-adapter.js";
+import {
+  createMatrixAdapter,
+  MAX_TRACKED_REACTIONS,
+  type MatrixAdapterDeps,
+} from "../matrix-adapter.js";
 import type { MatrixCryptoHandle } from "../crypto-store.js";
 
 // ---------------------------------------------------------------------------
@@ -264,6 +268,12 @@ class FakeMatrixClient {
     return Promise.resolve({ roomId: roomIdOrAlias });
   }
 
+  /** Reaction/redaction recorders + injectable failures for the outbound tests. */
+  readonly redactedEvents: Array<{ roomId: string; eventId: string }> = [];
+  redactError?: unknown;
+  /** A distinct id per send so successive reactions retain DIFFERENT annotation ids. */
+  private sendCount = 0;
+
   sendEvent(
     roomId: string,
     eventType: string,
@@ -271,7 +281,14 @@ class FakeMatrixClient {
   ): Promise<{ event_id: string }> {
     if (this.sendError !== undefined) return Promise.reject(this.sendError);
     this.sentEvents.push({ roomId, eventType, content });
-    return Promise.resolve({ event_id: "$sent1" });
+    this.sendCount += 1;
+    return Promise.resolve({ event_id: `$sent${this.sendCount}` });
+  }
+
+  redactEvent(roomId: string, eventId: string): Promise<{ event_id: string }> {
+    if (this.redactError !== undefined) return Promise.reject(this.redactError);
+    this.redactedEvents.push({ roomId, eventId });
+    return Promise.resolve({ event_id: "$redact1" });
   }
 
   async login(
@@ -824,5 +841,138 @@ describe("createMatrixAdapter — inbound reactions", () => {
     expect(dropped).toBeDefined();
     // The drop WARN carries no reaction body (the emoji is never logged).
     expect(JSON.stringify(warn.mock.calls)).not.toContain("👍");
+  });
+});
+
+describe("createMatrixAdapter — outbound reactions", () => {
+  it("reactToMessage sends an m.reaction annotation for the target event and returns ok", async () => {
+    const { adapter, fake } = makeAdapter();
+    await adapter.start();
+
+    const result = await adapter.reactToMessage?.("!room:hs", "$target:hs", "👍");
+
+    expect(result?.ok).toBe(true);
+    const reaction = fake.sentEvents.find((e) => e.eventType === "m.reaction");
+    expect(reaction).toBeDefined();
+    expect(reaction?.roomId).toBe("!room:hs");
+    expect(reaction?.content["m.relates_to"]).toEqual({
+      rel_type: "m.annotation",
+      event_id: "$target:hs",
+      key: "👍",
+    });
+  });
+
+  it("removeReaction redacts the retained annotation id after a prior react (same session)", async () => {
+    const { adapter, fake } = makeAdapter();
+    await adapter.start();
+
+    await adapter.reactToMessage?.("!room:hs", "$target:hs", "👍");
+    const result = await adapter.removeReaction?.("!room:hs", "$target:hs", "👍");
+
+    expect(result?.ok).toBe(true);
+    // The retained annotation id (from the sendEvent response) is redacted.
+    expect(fake.redactedEvents).toHaveLength(1);
+    expect(fake.redactedEvents[0]).toEqual({ roomId: "!room:hs", eventId: "$sent1" });
+  });
+
+  it("removeReaction with no prior react returns ok without redacting (idempotent)", async () => {
+    const { adapter, fake } = makeAdapter();
+    await adapter.start();
+
+    const result = await adapter.removeReaction?.("!room:hs", "$never:hs", "👍");
+
+    expect(result?.ok).toBe(true);
+    expect(fake.redactedEvents).toHaveLength(0);
+  });
+
+  it("keys the retained id on room+message+emoji, so a different emoji has nothing to redact", async () => {
+    const { adapter, fake } = makeAdapter();
+    await adapter.start();
+
+    await adapter.reactToMessage?.("!room:hs", "$target:hs", "👍");
+    // A DIFFERENT emoji on the same target was never reacted → idempotent no-op.
+    const result = await adapter.removeReaction?.("!room:hs", "$target:hs", "🎉");
+
+    expect(result?.ok).toBe(true);
+    expect(fake.redactedEvents).toHaveLength(0);
+  });
+
+  it("errs on reactToMessage before start rather than dereferencing an absent client", async () => {
+    const { adapter } = makeAdapter();
+
+    const result = await adapter.reactToMessage?.("!room:hs", "$t:hs", "👍");
+
+    expect(result?.ok).toBe(false);
+  });
+
+  it("errs on removeReaction before start rather than dereferencing an absent client", async () => {
+    const { adapter } = makeAdapter();
+
+    const result = await adapter.removeReaction?.("!room:hs", "$t:hs", "👍");
+
+    expect(result?.ok).toBe(false);
+  });
+
+  it("propagates a reaction send failure as err with a classified errorKind hint and no emoji body", async () => {
+    const fake = new FakeMatrixClient();
+    fake.sendError = matrixError("M_LIMIT_EXCEEDED", 429, "slow down");
+    const { adapter, logger } = makeAdapter({ fake });
+    await adapter.start();
+
+    const result = await adapter.reactToMessage?.("!room:hs", "$t:hs", "👍");
+
+    expect(result?.ok).toBe(false);
+    const warn = vi.mocked(logger.warn);
+    // The rate-limit errcode classifies to a retryable platform kind.
+    const platformWarn = warn.mock.calls.find(
+      ([fields]) => (fields as { errorKind?: string }).errorKind === "platform",
+    );
+    expect(platformWarn).toBeDefined();
+    // The emoji is never logged (content-free failure branch).
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("👍");
+  });
+
+  it("propagates a reaction redaction failure as err with a classified errorKind hint", async () => {
+    const fake = new FakeMatrixClient();
+    fake.redactError = matrixError("M_FORBIDDEN", 403, "not allowed");
+    const { adapter, logger } = makeAdapter({ fake });
+    await adapter.start();
+
+    await adapter.reactToMessage?.("!room:hs", "$t:hs", "👍");
+    const result = await adapter.removeReaction?.("!room:hs", "$t:hs", "👍");
+
+    expect(result?.ok).toBe(false);
+    const warn = vi.mocked(logger.warn);
+    const authWarn = warn.mock.calls.find(
+      ([fields]) => (fields as { errorKind?: string }).errorKind === "auth",
+    );
+    expect(authWarn).toBeDefined();
+  });
+
+  it("bounds the retained reaction-id map, evicting the oldest tracked reaction", async () => {
+    // Guard against unbounded growth if a caller ever reacts without removing:
+    // the map keeps at most MAX_TRACKED_REACTIONS entries, evicting the oldest.
+    // The evicted entry's removeReaction no-ops idempotently; the newest still redacts.
+    const { adapter, fake } = makeAdapter();
+    await adapter.start();
+
+    // React once past the cap. The very first target is then evicted.
+    for (let i = 0; i <= MAX_TRACKED_REACTIONS; i++) {
+      await adapter.reactToMessage?.("!room:hs", `$m${i}:hs`, "👍");
+    }
+
+    // The oldest ($m0) was evicted → its removal is an idempotent no-op.
+    const evicted = await adapter.removeReaction?.("!room:hs", "$m0:hs", "👍");
+    expect(evicted?.ok).toBe(true);
+    expect(fake.redactedEvents).toHaveLength(0);
+
+    // The newest ($m<cap>) is still tracked → its removal redacts.
+    const newest = await adapter.removeReaction?.(
+      "!room:hs",
+      `$m${MAX_TRACKED_REACTIONS}:hs`,
+      "👍",
+    );
+    expect(newest?.ok).toBe(true);
+    expect(fake.redactedEvents).toHaveLength(1);
   });
 });
