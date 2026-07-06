@@ -24,6 +24,10 @@
  *   - GET  .../sync                        — THE PULL HEART (see below).
  *   - PUT  .../rooms/{roomId}/send/...     — the outbound ORACLE (records sends).
  *   - POST .../join/{roomId}               — records an auto-join.
+ *   - .../keys/{upload,query,claim}, .../sendToDevice/..., .../room_keys/...
+ *                                          — the e2ee bootstrap surface: minimal
+ *     valid shapes so a real crypto client reaches sync-ready (NOT a crypto
+ *     server — no key material is generated or exchanged).
  *   - any other path                       — a `{}`/200 safety net (records the
  *     path) so client-startup probes (pushrules, capabilities, …) never 404.
  *
@@ -486,6 +490,74 @@ export function createMatrixEmulator(opts: CreateMatrixEmulatorOptions = {}): Ma
       }
       return { status: 200, body: media.bytes, contentType: media.contentType };
     },
+  );
+
+  // -------------------------------------------------------------------------
+  // Crypto-startup endpoints — the e2ee bootstrap surface. An adapter started
+  // with encryption on publishes its device + one-time keys and probes device
+  // keys as it prepares `/sync`; these routes answer that handshake with the
+  // minimal valid shapes so the real crypto client reaches sync-ready. This is
+  // NOT a crypto server: no key material is generated, stored, or exchanged and
+  // no Megolm session is ever established (the real encrypted round-trip is
+  // proven elsewhere with the audited WASM codec). They exist only so a real
+  // e2ee client does not error against the emulator's key surface — which,
+  // absent these, falls through to the catch-all `{}` that fails the rust
+  // engine's response deserialization and drives an unbounded upload retry.
+  // -------------------------------------------------------------------------
+
+  // The running server-side tally of one-time keys the bot has published. It is
+  // echoed on EVERY `/keys/upload` — the engine reads the returned count as "the
+  // keys are registered" and stops re-uploading; a static `0`/`{}` would look
+  // like the upload never took, so it would re-upload the same keys forever.
+  let publishedOtkCount = 0;
+
+  // POST .../keys/upload — record + acknowledge published keys. A device-keys-only
+  // upload carries no `one_time_keys`; an OTK upload carries a map whose size is
+  // the batch count. Returns the running total so the engine's OTK target is met.
+  backend.registerPathRoute(
+    (p) => p.includes("/keys/upload"),
+    (ctx: RouteContext): RouteResult => {
+      const body = parseJson(ctx.body);
+      const otks = body["one_time_keys"];
+      if (typeof otks === "object" && otks !== null) {
+        publishedOtkCount += Object.keys(otks as Record<string, unknown>).length;
+      }
+      return {
+        status: 200,
+        body: { one_time_key_counts: { signed_curve25519: publishedOtkCount } },
+      };
+    },
+  );
+
+  // POST .../keys/query — no other devices exist in this loopback room; return the
+  // empty-but-well-formed device map + failures so the engine's device probe
+  // completes instead of choking on a missing field.
+  backend.registerPathRoute(
+    (p) => p.includes("/keys/query"),
+    (): RouteResult => ({ status: 200, body: { device_keys: {}, failures: {} } }),
+  );
+
+  // POST .../keys/claim — there are no one-time keys to claim from a loopback stub;
+  // the empty claim response is the shape the engine expects.
+  backend.registerPathRoute(
+    (p) => p.includes("/keys/claim"),
+    (): RouteResult => ({ status: 200, body: { one_time_keys: {}, failures: {} } }),
+  );
+
+  // PUT .../sendToDevice/{type}/{txnId} — accept to-device traffic (key requests,
+  // verification starts) with the empty acknowledgement a real homeserver returns.
+  backend.registerPathRoute(
+    (p) => p.includes("/sendToDevice/"),
+    (): RouteResult => ({ status: 200, body: {} }),
+  );
+
+  // GET/PUT .../room_keys/... — no server-side key backup exists here. A real
+  // homeserver answers the backup-version probe with `404 M_NOT_FOUND`, which the
+  // engine reads as "no backup" and moves on; a `200 {}` would instead fail to
+  // parse as a backup descriptor (missing algorithm/auth_data/version).
+  backend.registerPathRoute(
+    (p) => p.includes("/room_keys"),
+    (): RouteResult => ({ status: 404, body: { errcode: "M_NOT_FOUND", error: "no key backup" } }),
   );
 
   // Catch-all safety net (registered LAST): client-startup probes (pushrules,
