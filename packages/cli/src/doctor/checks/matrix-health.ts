@@ -143,23 +143,39 @@ async function readMatrixEntry(): Promise<LiveRead> {
 // ---------------------------------------------------------------------------
 
 /**
+ * The Matrix credential config paths that may carry a `${VAR}` SecretRef — an
+ * unresolved ref on any of them is a login-blocking misconfiguration the offline
+ * creds probe names early.
+ */
+const MATRIX_CREDENTIAL_PATHS = [
+  "channels.matrix.accessToken",
+  "channels.matrix.password",
+  "channels.matrix.recoveryKey",
+] as const;
+
+/**
  * Presence + resolution of the login credentials. Mirrors the field-presence
  * preconditions the adapter enforces (homeserver required; a token OR a
  * password; a password login also needs a userId) and additionally flags an
- * UNRESOLVED `${VAR}` access-token reference. The token VALUE is never read —
- * only the `${VAR}` name and the config path appear in the finding.
+ * UNRESOLVED `${VAR}` reference on any credential (accessToken / password /
+ * recoveryKey). The credential VALUE is never read — only the `${VAR}` name and
+ * the config path appear in the finding.
  */
 function credsParseFinding(matrix: MatrixConfigView, context: DoctorContext): DoctorFinding {
   const check = "Matrix credentials";
 
+  // Any of the three Matrix credential fields can carry a ${VAR} SecretRef; an
+  // unresolved ref on ANY of them is an offline failure worth naming early, not
+  // just accessToken (a password-login or recovery-key ref that fails to resolve
+  // would otherwise only surface later at the live reachability probe).
   const unresolved = (context.configResolution?.unresolvedRefs ?? []).find((ref) =>
-    ref.path.startsWith("channels.matrix.accessToken"),
+    MATRIX_CREDENTIAL_PATHS.some((path) => ref.path.startsWith(path)),
   );
   if (unresolved !== undefined) {
     return finding(
       "fail",
       check,
-      `Unresolved access-token reference: \${${unresolved.varName}} at ${unresolved.path}` +
+      `Unresolved credential reference: \${${unresolved.varName}} at ${unresolved.path}` +
         " — not in env, ~/.comis/.env, or the encrypted secret store",
       "Set the variable in the environment or store it via comis secrets set",
     );
