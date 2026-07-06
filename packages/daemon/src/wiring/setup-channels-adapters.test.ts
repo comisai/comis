@@ -140,9 +140,13 @@ function makeChannelConfig(overrides: Record<string, any> = {}) {
   };
 }
 
-function makeContainer(channelOverrides: Record<string, any> = {}, secretMap: Record<string, string> = {}) {
+function makeContainer(
+  channelOverrides: Record<string, any> = {},
+  secretMap: Record<string, string> = {},
+  configExtras: Record<string, any> = {},
+) {
   return {
-    config: { channels: makeChannelConfig(channelOverrides) },
+    config: { channels: makeChannelConfig(channelOverrides), ...configExtras },
     secretManager: {
       get: vi.fn((name: string) => {
         if (name in secretMap) return secretMap[name];
@@ -780,6 +784,36 @@ describe("bootstrapAdapters", () => {
     expect(channelsLogger.info).toHaveBeenCalledWith(
       expect.objectContaining({ channelType: "googlechat" }),
       "Channel adapter initialized",
+    );
+  });
+
+  it("threads autoReplyEngine.groupActivation into the boot-time validator so the inert-'always' WARN can fire", async () => {
+    const saKey = '{"private_key":"pk","client_email":"bot@proj.iam.gserviceaccount.com"}';
+    const container = makeContainer(
+      { googlechat: { enabled: true, serviceAccountKey: saKey, subscriptionName: "projects/p/subscriptions/s" } },
+      {},
+      { autoReplyEngine: { groupActivation: "always" } },
+    );
+    await bootstrapAdapters({ container, channelsLogger });
+
+    // The validator owns the content-free WARN; the daemon's only job is to hand
+    // it the global activation mode so an "always" config surfaces the lint at boot.
+    expect(validateGoogleChatCredentials).toHaveBeenCalledWith(
+      expect.objectContaining({ groupActivation: "always" }),
+    );
+  });
+
+  it("threads the actual groupActivation (not a hardcoded 'always') — 'mention-gated' reaches the validator verbatim", async () => {
+    const saKey = '{"private_key":"pk","client_email":"bot@proj.iam.gserviceaccount.com"}';
+    const container = makeContainer(
+      { googlechat: { enabled: true, serviceAccountKey: saKey, subscriptionName: "projects/p/subscriptions/s" } },
+      {},
+      { autoReplyEngine: { groupActivation: "mention-gated" } },
+    );
+    await bootstrapAdapters({ container, channelsLogger });
+
+    expect(validateGoogleChatCredentials).toHaveBeenCalledWith(
+      expect.objectContaining({ groupActivation: "mention-gated" }),
     );
   });
 
