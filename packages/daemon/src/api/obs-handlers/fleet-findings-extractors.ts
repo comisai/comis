@@ -97,6 +97,21 @@ export function pricingGapFromRow(row: DiagnosticRow): number {
   }
 }
 
+/** importedNonAllowlistedRegistryCount from a config_posture row's details JSON —
+ *  imported skills whose recorded registry is no longer in its applicable allowlist
+ *  (allowlist drift). Defensive parse — malformed/missing folds to 0 (the
+ *  chimericModelFromRow clone; counts only, never a registry origin / agent id). */
+export function importedNonAllowlistedFromRow(row: DiagnosticRow): number {
+  if (row.details === undefined) return 0;
+  try {
+    const parsed = JSON.parse(row.details) as { importedNonAllowlistedRegistryCount?: unknown };
+    const n = parsed.importedNonAllowlistedRegistryCount;
+    return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
 /** The SPECIFIC flagged config keys from a config_posture row — CLOSED labels
  *  only (never raw details / secret values, per the no-body rule), so a fleet finding
  *  NAMES which knob is off instead of "the flagged config keys" (the live friction was

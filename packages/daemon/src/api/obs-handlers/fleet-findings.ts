@@ -26,6 +26,7 @@ import {
   flaggedPostureKeys,
   healthSignalLabel,
   healthSignalReason,
+  importedNonAllowlistedFromRow,
   multilingualFromRow,
   nodeBudgetExceededFromRow,
   orchestrateEfficiencyFromRow,
@@ -541,6 +542,20 @@ export function buildFindings(
         detail: `${pricingGapCount} agent(s) burning tokens on remote-unknown-priced models — spend is under-counted for these (honest $0 only applies to local/free providers)`,
         count: pricingGapCount,
         hint: "set the model id under a priced provider, or use a local/free provider where $0 is correct; run `comis explain` on an unknown-priced session for the pricing_state",
+      });
+    }
+    // Dedicated imported-skill posture finding from the SAME latest posture
+    // row. Imported skills whose recorded registry is NO LONGER in its applicable
+    // allowlist (allowlist drift after the fact — the import-time gate hard-refuses,
+    // so drift is the only way a live import points at a non-allowlisted registry).
+    // Counts + remediation only — never a registry origin or an agent id.
+    const importedDrift = importedNonAllowlistedFromRow(latest);
+    if (importedDrift > 0) {
+      findings.push({
+        code: "config_posture:imported_skills",
+        detail: `${importedDrift} imported skill(s) point at a registry no longer in skills.import.registries (allowlist drift)`,
+        count: importedDrift,
+        hint: "re-add the origin to skills.import.registries or delete the affected imported skills; run `comis explain` on an affected import",
       });
     }
   }
