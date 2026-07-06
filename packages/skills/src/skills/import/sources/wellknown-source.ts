@@ -323,7 +323,19 @@ async function resolveInner(
   // 4. The advertised rel-paths — the manifest is the default when none are listed.
   const advertised = skill.files ?? ["SKILL.md"];
 
-  // 5. Validate EVERY advertised path BEFORE any fetch — one unsafe path refuses
+  // 5. Bound the advertised fan-out BEFORE fetching — a poisoned index cannot fan
+  //    out into unbounded fetches (the pipeline does not bound a file set's count).
+  if (advertised.length > caps.maxFileCount) {
+    return err(
+      mkErr(
+        "validation",
+        `the registry ${registryOrigin} advertises ${advertised.length} files for "${input.name}", over the ${caps.maxFileCount}-file skills.import.maxFileCount cap`,
+        "raise skills.import.maxFileCount or trim the skill's advertised files",
+      ),
+    );
+  }
+
+  // 6. Validate EVERY advertised path BEFORE any fetch — one unsafe path refuses
   //    the whole skill (a traversal attempt never reaches the network).
   const relPaths: string[] = [];
   for (const advertisedPath of advertised) {
@@ -340,7 +352,7 @@ async function resolveInner(
     relPaths.push(normalized);
   }
 
-  // 6. Fetch each advertised file — SSRF-pinned + byte-capped, same as the index.
+  // 7. Fetch each advertised file — SSRF-pinned + byte-capped, same as the index.
   const files: FileSetFile[] = [];
   for (const rel of relPaths) {
     const fileUrl = `${registryOrigin}/.well-known/skills/${input.name}/${rel}`;
@@ -350,7 +362,19 @@ async function resolveInner(
     files.push({ path: rel, content: fileBody.value.toString("utf-8") });
   }
 
-  // 7. Build the stable per-(registry,name) identifier + return the file set. The
+  // 8. Require the SKILL.md manifest — a skill without one is refused loud (the
+  //    convention places the manifest at the skill root).
+  if (!files.some((f) => f.path === "SKILL.md")) {
+    return err(
+      mkErr(
+        "validation",
+        `the skill "${input.name}" at ${registryOrigin} does not include a SKILL.md manifest`,
+        `verify ${registryOrigin}/.well-known/skills/${input.name}/ advertises a SKILL.md`,
+      ),
+    );
+  }
+
+  // 9. Build the stable per-(registry,name) identifier + return the file set. The
   //    contentHash is NOT computed here: the pipeline hashes the INSTALLED set
   //    (post-drop) downstream, so it reflects exactly what lands on disk.
   const identifier = `${registryOrigin}/.well-known/skills/${input.name}/`;
