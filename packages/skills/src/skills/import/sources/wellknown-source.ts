@@ -31,6 +31,7 @@
  * @module
  */
 import { createHash } from "node:crypto";
+import * as path from "node:path";
 import type { Result } from "@comis/shared";
 import { ok, err, suppressError } from "@comis/shared";
 import { validateUrl, safePath, systemNowMs, type ErrorKind } from "@comis/core";
@@ -113,7 +114,8 @@ const NOTIONAL_BASE = "/skill-import-notional-root";
  * Validate one advertised skill-root-relative path against the same rule the
  * import pipeline applies to a file set (POSIX/Windows-absolute, backslash,
  * parent-directory, encoded/null-byte traversal all rejected). Returns the
- * normalized path, or `undefined` when it is unsafe.
+ * validated (decoded) path — the EXACT form `safePath` approved — or
+ * `undefined` when it is unsafe or resolves to the skill root itself.
  */
 function normalizeAdvertisedPath(advertisedPath: string): string | undefined {
   const segs = advertisedPath.split("/").filter((s) => s.length > 0 && s !== ".");
@@ -124,12 +126,19 @@ function normalizeAdvertisedPath(advertisedPath: string): string | undefined {
     segs.length === 0 ||
     segs.some((s) => s === "..");
   if (unsafe) return undefined;
+  let resolved: string;
   try {
-    safePath(NOTIONAL_BASE, ...segs);
+    resolved = safePath(NOTIONAL_BASE, ...segs);
   } catch {
     return undefined;
   }
-  return segs.join("/");
+  // Return the SAME containment-checked form safePath approved. It decodes
+  // percent-encoding before validating, so deriving the rel-path from its
+  // resolved result guarantees the value propagated to the fetch URL and the
+  // on-disk path is exactly the value that was validated — never a still-encoded
+  // string that only survives because a later layer re-decodes and re-checks it.
+  const rel = path.relative(NOTIONAL_BASE, resolved);
+  return rel.length > 0 ? rel.split(path.sep).join("/") : undefined;
 }
 
 // ---------------------------------------------------------------------------
