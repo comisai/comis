@@ -133,6 +133,35 @@ describe("comis skills import", () => {
     expect(output).toContain("agent-a"); // resolvedAgentId reported
   });
 
+  it("routes <ref> to name + registry:'clawhub' for --source clawhub (never url) and reports resolvedAgentId", async () => {
+    const { client, calls } = captureClient();
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerSkillsCommand(program);
+    await program.parseAsync([
+      "node", "test", "skills", "import",
+      "@acme/pdf-extractor",
+      "--source", "clawhub",
+      "--token", "test-token",
+    ]);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe(SkillsImportContract.method);
+    // --source clawhub routes <ref> to the @owner/slug name and infers
+    // registry:"clawhub" (the daemon resolves it from ClawHub via the
+    // install-resolver); the ref is never treated as a url.
+    expect(calls[0]?.params).toMatchObject({
+      name: "@acme/pdf-extractor",
+      source: "clawhub",
+      registry: "clawhub",
+    });
+    expect(calls[0]?.params).not.toHaveProperty("url");
+
+    const output = getSpyOutput(consoleSpy.log);
+    expect(output).toContain("agent-a"); // resolvedAgentId reported
+  });
+
   it("emits the raw JSON result under --format json", async () => {
     const { client } = captureClient();
     vi.mocked(withClient).mockImplementation(async (fn) => fn(client));

@@ -94,6 +94,22 @@ describe("skills_manage tool", () => {
   });
 
   // -----------------------------------------------------------------------
+  // Import source schema
+  // -----------------------------------------------------------------------
+
+  describe("import source schema", () => {
+    it("exposes source:'clawhub' in the import acquisition-channel union", () => {
+      const tool = createSkillsManageTool(mockRpcCall);
+      // The source union is the acquisition-channel enum; clawhub joins
+      // github/archive/wellknown as a fourth channel (@owner/slug from ClawHub).
+      const sourceSchema = JSON.stringify(
+        (tool.parameters as { properties: { source: unknown } }).properties.source,
+      );
+      expect(sourceSchema).toContain("clawhub");
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // Scope parameter forwarding
   // -----------------------------------------------------------------------
 
@@ -182,6 +198,39 @@ describe("skills_manage tool", () => {
           scope: "shared",
         }),
       );
+    });
+
+    it("import action forwards source: 'clawhub' + name (@owner/slug) to skills.import and passes NO force", async () => {
+      (mockApprovalGate.requestApproval as ReturnType<typeof vi.fn>).mockResolvedValue({
+        approved: true,
+        approvedBy: "operator",
+      });
+      mockRpcCall.mockResolvedValue({ ok: true });
+
+      const tool = createSkillsManageTool(mockRpcCall, mockApprovalGate);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-ch", {
+          action: "import",
+          source: "clawhub",
+          name: "@acme/pdf-extractor",
+          scope: "shared",
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith(
+        "skills.import",
+        expect.objectContaining({
+          source: "clawhub",
+          name: "@acme/pdf-extractor",
+          scope: "shared",
+        }),
+      );
+      // The daemon infers registry:"clawhub" from the source; the tool forwards
+      // no registry and — like every other channel — no force. The triple gate
+      // and the pre-download verdict block live behind the RPC, inherited unchanged.
+      const params = mockRpcCall.mock.calls.find((c) => c[0] === "skills.import")?.[1] as Record<string, unknown>;
+      expect(params).not.toHaveProperty("force");
     });
 
     it("import remains an approval-gated action under admin trust with the new params", async () => {
