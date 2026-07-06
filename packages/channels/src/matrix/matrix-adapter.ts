@@ -707,6 +707,24 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
         return err(notReady);
       }
 
+      // Honest pagination: `before` (a message id cursor) is advertised, but
+      // backward-from-cursor paging needs an event-id→from-token resolve that is
+      // not wired yet. Rather than silently return the most-recent page — a wrong
+      // answer to a cursor query — err explicitly and issue no request.
+      if (typeof options?.before === "string" && options.before.length > 0) {
+        const unsupported = new Error("Matrix history fetch does not support a before cursor yet");
+        lastError = unsupported.message;
+        deps.logger.warn(
+          {
+            channelType: "matrix" as const,
+            hint: "Fetch without `before` to page from the most-recent end; backward-from-cursor paging is not yet available",
+            errorKind: "validation" as const,
+          },
+          "Matrix history fetch with a cursor is not supported",
+        );
+        return err(unsupported);
+      }
+
       const limit = options?.limit ?? 20;
       // A null `from` token pages from the room's most-recent end, backward. If a
       // homeserver ever rejects a null token, seed `from` from the room's
