@@ -102,6 +102,32 @@ describe("createMatrixPlugin", () => {
     expect(replyToMetaKey).toBe("matrixEventId");
   });
 
+  it("exposes createResolver — a factory for the mxc media resolver closing over the adapter's media getters", () => {
+    // The handle widens the plugin with a resolver factory; the media pipeline
+    // calls it to route inbound `mxc://` attachments through the authenticated
+    // downloader. Structural probe so the assertion fails cleanly when the factory
+    // is absent rather than failing to compile.
+    const plugin = createMatrixPlugin(makeDeps(new FakeMatrixClient())) as unknown as {
+      createResolver?: (deps: {
+        ssrfFetcher: { fetch: (...a: unknown[]) => unknown };
+        maxBytes: number;
+        logger: { debug: () => void; warn: () => void };
+        mediaAuthAllowHosts: readonly string[];
+      }) => { schemes: readonly string[] };
+    };
+
+    expect(typeof plugin.createResolver).toBe("function");
+
+    const resolver = plugin.createResolver!({
+      ssrfFetcher: { fetch: vi.fn() },
+      maxBytes: 1_000_000,
+      logger: { debug: vi.fn(), warn: vi.fn() },
+      mediaAuthAllowHosts: [],
+    });
+    // The resolver claims the mxc scheme so the composite routes mxc attachments to it.
+    expect(resolver.schemes).toEqual(["mxc"]);
+  });
+
   it("register returns ok without wiring hooks (channel plugins self-manage lifecycle)", () => {
     const plugin = createMatrixPlugin(makeDeps(new FakeMatrixClient()));
     const registered = plugin.register({ registerHook: () => undefined });
