@@ -530,10 +530,16 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
         // consecutive re-anchors at an UNCHANGED heartbeat; once it exceeds the cap, abandon the
         // run → orphan it (never re-anchor again). A heartbeat change (progress) resets the
         // counter, so a genuinely live run that checkpoints is never false-orphaned.
+        //
+        // The cap reaps ONLY a run that has PROGRESSED past the spawn boundary
+        // (stepIndex >= 0 — it allocated at least one outward step) and then stalled. A
+        // NEVER-SENT run (stepIndex === -1) is the canonical fresh-resumable checkpoint —
+        // nothing sent yet — and MUST survive repeated boot-sweep re-anchors, never be
+        // false-orphaned (the durable-resume-e2e "never-sent RESUMES, not orphaned" gate).
         const seen = reanchorLedger.get(rootRunId);
         const attempts = seen !== undefined && seen.heartbeat === record.lastHeartbeatAt ? seen.count + 1 : 1;
         reanchorLedger.set(rootRunId, { heartbeat: record.lastHeartbeatAt, count: attempts });
-        if (attempts > MAX_REANCHOR_ATTEMPTS) {
+        if (record.stepIndex >= 0 && attempts > MAX_REANCHOR_ATTEMPTS) {
           await orphan(
             rootRunId,
             `not resumable: exceeded ${MAX_REANCHOR_ATTEMPTS} no-progress re-anchor attempts`,
