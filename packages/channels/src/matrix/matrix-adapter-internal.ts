@@ -10,11 +10,17 @@
  * @module
  */
 
-import { EventType, type MatrixClient, type Room, type TimelineEvents } from "matrix-js-sdk";
-import type { ComisLogger, SendMessageOptions, TimerPort } from "@comis/core";
+import { Direction, EventType, type MatrixClient, type Room, type TimelineEvents } from "matrix-js-sdk";
+import type {
+  ComisLogger,
+  ReconcileSendOutcome,
+  ReconcileSendQuery,
+  SendMessageOptions,
+  TimerPort,
+} from "@comis/core";
 import { runWithContext } from "@comis/core";
 import { err, fromPromise, ok, type Result } from "@comis/shared";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { classifyMatrixError, type MatrixErrorInput } from "./errors.js";
 import {
@@ -427,4 +433,107 @@ export async function runSendAttachment(
     return err(sent.error);
   }
   return ok(sent.value.event_id);
+}
+
+/**
+ * The authed media view the plugin's resolver factory closes over: the started
+ * client's mxc→http URL builder (bound), its access-token reader, and the
+ * invariant homeserver host. Split out of the controller's `getMediaClient`
+ * accessor so the controller stays within the per-file size cap; the accessor is
+ * a thin `client === undefined ? undefined : buildMediaClientView(...)` guard.
+ */
+export function buildMediaClientView(
+  client: MatrixClient,
+  homeserverHost: string,
+): {
+  mxcUrlToHttp: (...args: unknown[]) => string | null;
+  getAccessToken: () => string | null;
+  homeserverHost: string;
+} {
+  return {
+    mxcUrlToHttp: client.mxcUrlToHttp.bind(client) as (...args: unknown[]) => string | null,
+    getAccessToken: () => client.getAccessToken(),
+    homeserverHost,
+  };
+}
+
+/**
+ * How many recent room events one send-reconcile scans, most-recent first. Wide
+ * enough to cover a crash-recovery window on a busy room in a single page; if the
+ * page does not reach back past the query's lower bound AND more history remains,
+ * the scan reports `unresolved` rather than a false `not_sent`.
+ */
+const RECONCILE_SCAN_LIMIT = 100;
+
+/**
+ * Crash-recovery send oracle: answer "did this interrupted outward send actually
+ * land?" by scanning the room's recent `/messages` history (backward from the live
+ * end) for a BOT-AUTHORED, in-window event whose plaintext body digests to the
+ * outward-ledger digest. Parameterized (client + resolved bot MXID + query +
+ * logger) so it lives outside the controller; the adapter's `reconcileSend` is a
+ * thin delegator over it.
+ *
+ * The verdict contract — the whole point of the oracle: `not_sent` is returned
+ * ONLY on a fully-covered clean scan; EVERY uncertainty — no started client, an
+ * unknown bot id, a history read that throws, or a page that did not reach back
+ * past the window's lower bound while more history remains — is `unresolved`. A
+ * false `not_sent` would drive a double-send; a false `sent` would drop a message.
+ *
+ * Spoof guard: a match counts only when `event.sender` is the bot's OWN resolved
+ * MXID. A federated room member who happens to post the same body (and thus the
+ * same digest) is never counted as our send.
+ *
+ * The digest is `sha256(event.content.body).slice(0,16)` over the PLAINTEXT body —
+ * the raw markdown the send ledger hashed — never the HTML `formatted_body` (which
+ * would never match). Content-free: only channelType/chatId/hint/errorKind are
+ * logged on a failed read, never the body, the digest input, or a pagination token.
+ */
+export async function reconcileSendByHistoryScan(
+  client: MatrixClient | undefined,
+  botUserId: string,
+  query: ReconcileSendQuery,
+  logger: ComisLogger,
+): Promise<Result<ReconcileSendOutcome, Error>> {
+  // Uncertain STAYS uncertain: with no started client or an unresolved bot MXID we
+  // can neither read history nor spoof-guard a match — we cannot tell, so
+  // unresolved (never a guess, never a false not_sent).
+  if (client === undefined || botUserId === "") {
+    return ok({ kind: "unresolved" });
+  }
+
+  // Same backward `/messages` read the history fetch uses; a null `from` token
+  // pages from the room's most-recent end.
+  const page = await fromPromise(
+    client.createMessagesRequest(query.channelId, null, RECONCILE_SCAN_LIMIT, Direction.Backward),
+  );
+  if (!page.ok) {
+    // A failed history read can NEVER prove absence → unresolved, never not_sent.
+    classifiedSendWarn(page.error, "Matrix send reconcile history scan failed", logger);
+    return ok({ kind: "unresolved" });
+  }
+
+  const chunk = page.value.chunk;
+  for (const event of chunk) {
+    // Spoof guard: only the bot's OWN sent events count toward "did we send this".
+    if (event.sender !== botUserId) continue;
+    if (event.origin_server_ts < query.sentAfterMs || event.origin_server_ts > query.sentBeforeMs) {
+      continue;
+    }
+    const body = (event.content as { body?: string }).body ?? "";
+    const digest = createHash("sha256").update(body).digest("hex").slice(0, 16);
+    if (digest === query.contentDigest) {
+      return ok({ kind: "sent", platformMessageId: event.event_id });
+    }
+  }
+
+  // Window-coverage rule: if older history remains AND the oldest event we read is
+  // still newer than the window's lower bound, the send may sit in a page we did
+  // not read — unresolved, never a false not_sent. Otherwise the scan fully covered
+  // the window (or the room has no more history) with no match → not_sent.
+  const oldest = chunk[chunk.length - 1];
+  const moreHistoryRemains = typeof page.value.end === "string" && page.value.end.length > 0;
+  if (moreHistoryRemains && (oldest === undefined || oldest.origin_server_ts > query.sentAfterMs)) {
+    return ok({ kind: "unresolved" });
+  }
+  return ok({ kind: "not_sent" });
 }

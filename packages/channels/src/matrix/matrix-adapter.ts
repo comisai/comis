@@ -83,11 +83,13 @@ import {
   DEGRADE_NOTE_SENDER,
   MAX_TRACKED_REACTIONS,
   MATRIX_TYPING_TIMEOUT_MS,
+  buildMediaClientView,
   chunkedSendFailure,
   classifiedSendWarn,
   fanOutToHandlers,
   notStartedFailure,
   reactionKey,
+  reconcileSendByHistoryScan,
   resolveThreadRootId,
   isRoomDirect,
   runSendAttachment,
@@ -242,6 +244,8 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): MatrixAdapterHandl
   let lastError: string | undefined;
   let client: MatrixClient | undefined;
   let controller: MatrixSyncController | undefined;
+  // The bot's resolved MXID, set by start(); hoisted so reconcileSend can spoof-guard a history match on it.
+  let botUserId = "";
   // Last-known device verification posture, surfaced on the
   // channel status. Refreshed after start and (best-effort) on each status read;
   // undefined until first read, on the plaintext path, or when crypto is absent.
@@ -461,10 +465,9 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): MatrixAdapterHandl
       }
       const authedClient = authed.value.client;
       client = authedClient;
-      // The bot's own MXID (resolved by whoami/login) — the inbound mention check
-      // keys on it to set the `metadata.isBotMentioned` group @-gate key. Empty when
-      // the homeserver returned no user id and none was configured (mention check skipped).
-      const botUserId = authed.value.userId ?? "";
+      // The bot's own MXID (whoami/login): the mention gate + the reconcileSend
+      // spoof-guard key on it. Empty if the homeserver returned no user id.
+      botUserId = authed.value.userId ?? "";
 
       // Wire and start the `/sync` transport; speakers are gated on the way out.
       // `isDirectRoom` reads the client's `m.direct` account data so a 1:1 room
@@ -894,17 +897,13 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): MatrixAdapterHandl
     },
 
     getMediaClient() {
-      // Undefined until start() authenticates the client (mirrors the pre-start
-      // guards); the resolver then reads the authed URL builder, token, and host.
+      // Undefined before start() builds the client, so a wiring-time resolver errs cleanly.
       if (client === undefined) return undefined;
-      const activeClient = client;
-      return {
-        mxcUrlToHttp: activeClient.mxcUrlToHttp.bind(activeClient) as (
-          ...args: unknown[]
-        ) => string | null,
-        getAccessToken: () => activeClient.getAccessToken(),
-        homeserverHost,
-      };
+      return buildMediaClientView(client, homeserverHost);
+    },
+
+    reconcileSend(query) {
+      return reconcileSendByHistoryScan(client, botUserId, query, deps.logger);
     },
 
     async platformAction(
