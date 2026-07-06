@@ -74,6 +74,14 @@ const ROOM_ENCRYPTED_TYPE = "m.room.encrypted";
  * reaches a handler.
  */
 const ROOM_REACTION_TYPE = "m.reaction";
+/**
+ * The Matrix event type of a redaction (a message deletion). Like a reaction, it
+ * rides the room timeline as its own event, so the server-side `/sync` filter must
+ * request it explicitly — without it the homeserver never returns redactions and no
+ * inbound redaction ever surfaces (prior context could then be silently rewritten
+ * on a client that aggregates redactions without an honest event).
+ */
+const ROOM_REDACTION_TYPE = "m.room.redaction";
 /** Default `limit=` on the initial sync — bounds what is FETCHED. */
 const DEFAULT_INITIAL_SYNC_LIMIT = 10;
 /** Default per-room timeline event cap in the sync filter. */
@@ -229,15 +237,15 @@ function errcodeOf(cause: unknown): string | undefined {
 
 /**
  * Build the `/sync` filter: lazy-loaded members + a timeline scoped to the event
- * types the adapter routes — chat messages and reaction annotations. The
- * server-side filter keys on the wire type, so a type absent from this list is
- * never returned by the homeserver: `m.reaction` MUST be requested or no inbound
- * reaction ever reaches the timeline handler (reactions ride the timeline as
- * their own events). On the e2ee path (`includeEncrypted`) the `m.room.encrypted`
- * wire type is added too so encrypted messages are returned for the crypto engine
- * + fail-closed branch. `initialSyncLimit` bounds the fetch; this filter trims
- * each batch. The watermark remains the correctness backstop if the filter is
- * imperfect.
+ * types the adapter routes — chat messages, reaction annotations, and redactions.
+ * The server-side filter keys on the wire type, so a type absent from this list is
+ * never returned by the homeserver: `m.reaction` and `m.room.redaction` MUST both
+ * be requested or no inbound reaction / redaction ever reaches the timeline handler
+ * (they ride the timeline as their own events). On the e2ee path
+ * (`includeEncrypted`) the `m.room.encrypted` wire type is added too so encrypted
+ * messages are returned for the crypto engine + fail-closed branch.
+ * `initialSyncLimit` bounds the fetch; this filter trims each batch. The watermark
+ * remains the correctness backstop if the filter is imperfect.
  */
 function buildSyncFilter(userId: string | null, includeEncrypted: boolean): Filter {
   const filter = new Filter(userId);
@@ -245,8 +253,8 @@ function buildSyncFilter(userId: string | null, includeEncrypted: boolean): Filt
     room: {
       timeline: {
         types: includeEncrypted
-          ? [ROOM_MESSAGE_TYPE, ROOM_ENCRYPTED_TYPE, ROOM_REACTION_TYPE]
-          : [ROOM_MESSAGE_TYPE, ROOM_REACTION_TYPE],
+          ? [ROOM_MESSAGE_TYPE, ROOM_ENCRYPTED_TYPE, ROOM_REACTION_TYPE, ROOM_REDACTION_TYPE]
+          : [ROOM_MESSAGE_TYPE, ROOM_REACTION_TYPE, ROOM_REDACTION_TYPE],
         limit: DEFAULT_TIMELINE_LIMIT,
         lazy_load_members: true,
       },
@@ -461,6 +469,52 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
       );
       deps.onReaction?.(reaction);
       // Advance THIS ROOM's watermark so the delivered reaction is not reprocessed.
+      await bumpRoomWatermark(room.roomId, event.getTs(), "watermark");
+      return;
+    }
+
+    // Redaction routing on the (now-decrypted) CLEAR type, BEFORE the message-only
+    // gate below — which requires `m.room.message` and would otherwise drop a
+    // redaction unread. A redaction rides the timeline as its own m.room.redaction
+    // event; matrix-js-sdk still fires RoomEvent.Timeline for it after applying it
+    // to any local target. (A live homeserver may ALSO surface a redaction via
+    // RoomEvent.Redaction; a second subscription would be needed to catch one that
+    // only arrives that way — the timeline path is the one the /sync batch drives.)
+    // It surfaces as a NEW honest event: the mapper names the redacted target and
+    // reconstructs no removed content, so prior context the bot already reasoned on
+    // is never silently rewritten. The own-message drop and the liveness pre-gate
+    // above already applied, so the bot's own redactions and any backlog /
+    // pre-watermark redaction never reach here.
+    if (event.getType() === ROOM_REDACTION_TYPE) {
+      const isDirect = deps.isDirectRoom?.(room) ?? false;
+      const honest = mapMatrixEventToNormalized(event, room, { isDirect });
+      // A redaction with no verifiable sender maps to null and is skipped WITHOUT
+      // advancing the watermark, exactly as an unmappable message is below.
+      if (honest === null) return;
+      logger.info(
+        {
+          channelType: "matrix",
+          step: "matrix-inbound-redaction",
+          chatId: room.roomId,
+          messageId: honest.id,
+        },
+        "Inbound Matrix redaction surfaced as a new honest event",
+      );
+      // Flows through onMessage (the honest event is a NormalizedMessage): the
+      // adapter's speaker gate then keys on the redactor MXID, exactly like a
+      // message. A failing handler still advances the watermark (no reprocessing).
+      const delivered = await fromPromise(Promise.resolve(deps.onMessage(honest)));
+      if (!delivered.ok) {
+        logger.error(
+          {
+            channelType: "matrix",
+            errorKind: "internal" as const,
+            hint: "Inspect the inbound message handler; the redaction event was delivered but downstream processing failed",
+          },
+          "Matrix inbound redaction handler failed",
+        );
+      }
+      // Advance THIS ROOM's watermark so the delivered redaction is not reprocessed.
       await bumpRoomWatermark(room.roomId, event.getTs(), "watermark");
       return;
     }
