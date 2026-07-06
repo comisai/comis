@@ -47,6 +47,12 @@ export { getPresetMappings } from "./webhook/webhook-presets.js";
 export { createMsTeamsIngress } from "./channel-ingress/msteams-ingress.js";
 export type { MsTeamsIngressDeps } from "./channel-ingress/msteams-ingress.js";
 
+// Channel ingress -- Google Chat inbound events (mounted per-channel by the
+// daemon; framework-agnostic over injected validator + adapter driver, so the
+// gateway gains no @comis/channels or jose dependency)
+export { createGoogleChatIngress } from "./channel-ingress/googlechat-ingress.js";
+export type { GoogleChatIngressDeps } from "./channel-ingress/googlechat-ingress.js";
+
 // OAuth callback route exports
 export {
   createOAuthCallbackRoute,

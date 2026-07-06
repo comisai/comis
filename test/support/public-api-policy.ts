@@ -636,6 +636,15 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "GoogleChatTokenProvider",
       "GoogleChatScope",
       "classifyGoogleChatError",
+      // Google Chat INBOUND verify closures, surfaced AHEAD of their consumer.
+      // createGoogleChatInboundVerifier (dual-audience remote-JWKS) + its
+      // local-JWKS offline twin createLocalGoogleChatInboundVerifier + the shared
+      // GoogleChatInboundVerifierOpts shape are consumed by the daemon test-seam
+      // that binds the gateway ingress's validateInboundJwt in a later wave.
+      // Shrink each once that cross-package consumer lands.
+      "createGoogleChatInboundVerifier",
+      "createLocalGoogleChatInboundVerifier",
+      "GoogleChatInboundVerifierOpts",
       "createIMessageAdapter",
       "IMessageAdapterDeps",
       "mapImsgToNormalized",
@@ -2609,6 +2618,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // MsTeamsIngressDeps is the factory's deps shape, which the daemon
       // constructs inline (like ApprovalTokenDeps) — tracked here for parity.
       "MsTeamsIngressDeps",
+      // Google Chat inbound ingress, surfaced AHEAD of its consumer. Unlike the
+      // shipped msteams factory, createGoogleChatIngress has no cross-package
+      // importer yet — the daemon composition root (setup-channels-adapters.ts)
+      // builds it in a later wave, so both the factory and its inline-constructed
+      // deps shape are tracked here. Shrink both once that consumer lands.
+      "createGoogleChatIngress",
+      "GoogleChatIngressDeps",
     ])],
     // @comis/infra: baseline orphans + transient orphans.
     // createSystemClock/createSystemEnv/createSystemTimers are Node-backed
