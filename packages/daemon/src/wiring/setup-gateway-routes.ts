@@ -120,6 +120,11 @@ export interface GatewayRouteDeps {
    *  caller-backed ingress), the `/channels/msteams` route is mounted; absent
    *  ⇒ no route exists. Presence is the mount signal. */
   msTeamsIngress?: import("hono").Hono;
+  /** Google Chat inbound ingress sub-app. Present only when the channel is
+   *  enabled in webhook mode with validated credentials (the composition root
+   *  built a caller-backed ingress); the `/channels/googlechat` route is
+   *  mounted only then. Presence is the mount signal. */
+  googlechatIngress?: import("hono").Hono;
   /** Deterministic unattended honest-fail backstop (webhook-claude-cli-tdd-20260701,
    *  `WEBHOOK-CLAUDE-AGENT-DRIVE-RELIABILITY`): after an unattended (webhook) agent turn, reap the
    *  LIVE terminal drives the turn created but NEVER tasked (no `send_text`) — the model
@@ -157,6 +162,7 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
     defaultWorkspaceDir,
     interactiveCallbackWiring,
     msTeamsIngress,
+    googlechatIngress,
     reapNeverTaskedDrives,
   } = deps;
 
@@ -198,6 +204,22 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
     gatewayLogger.debug(
       { submodule: "msteams-ingress" },
       "Microsoft Teams ingress mounted at /channels/msteams/*",
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Google Chat inbound ingress
+  // -------------------------------------------------------------------------
+  // The sibling of the Microsoft Teams ingress: a Hono sub-app that verifies
+  // the inbound Bearer JWT before parsing the body, then fast-acks. Mounted
+  // ONLY when the composition root threaded a built ingress here (the channel
+  // is enabled in webhook mode and its credentials validated) — presence is
+  // the mount signal, so a pubsub-mode or disabled channel produces no route.
+  if (googlechatIngress !== undefined) {
+    gatewayHandle.app.route("/channels/googlechat", googlechatIngress);
+    gatewayLogger.debug(
+      { submodule: "googlechat-ingress" },
+      "Google Chat ingress mounted at /channels/googlechat/*",
     );
   }
 
