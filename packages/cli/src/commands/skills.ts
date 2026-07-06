@@ -46,13 +46,15 @@ export function registerSkillsCommand(program: Command): void {
     .command("import <ref>")
     .description(
       "Import a skill from a GitHub directory URL (source=github), an archive URL (source=archive), " +
-        "or by name from an allowlisted registry (source=wellknown, --registry <origin>). " +
+        "by name from an allowlisted registry (source=wellknown, --registry <origin>), " +
+        "or an @owner/slug from ClawHub (source=clawhub). " +
         "Scanned + Phase-A-checked pre-write; stamped imported.",
     )
     .option(
       "--source <source>",
       "Acquisition channel: github (a directory URL), archive (a .skill/zip/tar URL), " +
-        "or wellknown (resolve <ref> as a skill name from --registry). Defaults to github.",
+        "wellknown (resolve <ref> as a skill name from --registry), " +
+        "or clawhub (resolve <ref> as an @owner/slug from ClawHub). Defaults to github.",
     )
     .option(
       "--registry <registry>",
@@ -79,15 +81,19 @@ export function registerSkillsCommand(program: Command): void {
         const source = options.source;
         const result = await withClient((client) =>
           callTyped(client, SkillsImportContract, {
-            // Route <ref> by source: wellknown ⇒ skill name (the registry
-            // index-lookup key, resolved from --registry); archive ⇒ archive
-            // URL; github/default ⇒ GitHub directory URL.
-            ...(source === "wellknown"
-              ? { name: ref, ...(options.registry !== undefined && { registry: options.registry }) }
-              : source === "archive"
-                ? { archiveUrl: ref }
-                : { url: ref }),
-            ...(source !== undefined && { source: source as "github" | "archive" | "wellknown" }),
+            // Route <ref> by source: clawhub ⇒ @owner/slug name (the registry
+            // is inferred as the clawhub token, so --registry is not needed);
+            // wellknown ⇒ skill name (the registry index-lookup key, resolved
+            // from --registry); archive ⇒ archive URL; github/default ⇒ GitHub
+            // directory URL.
+            ...(source === "clawhub"
+              ? { name: ref, registry: "clawhub" }
+              : source === "wellknown"
+                ? { name: ref, ...(options.registry !== undefined && { registry: options.registry }) }
+                : source === "archive"
+                  ? { archiveUrl: ref }
+                  : { url: ref }),
+            ...(source !== undefined && { source: source as "github" | "archive" | "wellknown" | "clawhub" }),
             ...(options.scope !== undefined && { scope: options.scope as "local" | "shared" }),
             ...(options.confirm === true && { confirm: true }),
           }),

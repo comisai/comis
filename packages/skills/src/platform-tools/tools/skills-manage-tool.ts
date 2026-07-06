@@ -55,9 +55,9 @@ const SkillsManageToolParams = Type.Object({
   ),
   source: Type.Optional(
     Type.Union(
-      [Type.Literal("github"), Type.Literal("archive"), Type.Literal("wellknown")],
+      [Type.Literal("github"), Type.Literal("archive"), Type.Literal("wellknown"), Type.Literal("clawhub")],
       {
-        description: "Import acquisition channel (import action). 'github' fetches a directory URL; 'archive' fetches a .skill/zip/tar archive URL; 'wellknown' resolves a skill by name from an allowlisted registry's well-known index. Defaults to github when a url is given.",
+        description: "Import acquisition channel (import action). 'github' fetches a directory URL; 'archive' fetches a .skill/zip/tar archive URL; 'wellknown' resolves a skill by name from an allowlisted registry's well-known index; 'clawhub' resolves an @owner/slug identifier from ClawHub via the install-resolver — the scan verdict is checked before the release downloads. Defaults to github when a url is given.",
       },
     ),
   ),
@@ -78,7 +78,7 @@ const SkillsManageToolParams = Type.Object({
   ),
   name: Type.Optional(
     Type.String({
-      description: "Skill name. Required for delete, create, and update actions. For import with source=wellknown it is the registry index-lookup key (which advertised skill to fetch) and does not override the installed manifest name.",
+      description: "Skill name. Required for delete, create, and update actions. For import with source=wellknown it is the registry index-lookup key (which advertised skill to fetch) and does not override the installed manifest name. For import with source=clawhub it is the @owner/slug ClawHub identifier.",
     }),
   ),
   content: Type.Optional(
