@@ -94,7 +94,7 @@ describe("createMatrixPlugin", () => {
     expect(features.editMessages).toBe(true);
     expect(features.deleteMessages).toBe(true);
     expect(features.fetchHistory).toBe(true);
-    expect(features.attachments).toBe(false);
+    expect(features.attachments).toBe(true);
     expect(features.typing).toBe(true);
     expect(features.threads).toBe(true);
     expect(features.buttons).toBe("none");

@@ -12,8 +12,8 @@
  * field-by-field. If the adapter ever flips a feature flag or changes
  * `maxMessageChars`, this test fails LOUDLY — the emulator's caps can never
  * silently drift from the real adapter. Reactions, edits, deletes, history fetch,
- * threaded replies, and typing are live (`true`); attachments stays `false`
- * and `buttons` is `"none"`.
+ * threaded replies, typing, and attachments are live (`true`); `buttons` is
+ * `"none"`.
  *
  * `@comis/channels` resolves from `dist/` via the live vitest alias, so this
  * reads the REAL built adapter declaration (run `pnpm build` first if stale).
@@ -66,14 +66,14 @@ describe("matrix-caps — Matrix ChannelCaps descriptor", () => {
     expect(MATRIX_MAX_MESSAGE_CHARS).toBe(32768);
   });
 
-  it("declares the scope: reactions, edits, deletes, threads, and typing true, attachments false, buttons none, inbound text true", () => {
+  it("declares the scope: reactions, edits, deletes, threads, typing, and attachments true, buttons none, inbound text true", () => {
     // Reactions send (m.reaction annotation), edit-in-place (m.replace), delete
-    // (redaction), threaded reply (m.thread relation), and typing (/typing notice)
-    // are live; attachments is not in scope.
+    // (redaction), threaded reply (m.thread relation), typing (/typing notice),
+    // and attachments (inbound mxc resolve + outbound upload) are live.
     expect(matrixCaps.outbound.reactions).toBe(true);
     expect(matrixCaps.outbound.edits).toBe(true);
     expect(matrixCaps.outbound.deletes).toBe(true);
-    expect(matrixCaps.outbound.attachments).toBe(false);
+    expect(matrixCaps.outbound.attachments).toBe(true);
     expect(matrixCaps.outbound.typing).toBe(true);
     expect(matrixCaps.outbound.threads).toBe(true);
     // No button surface here (the adapter declares the "none" flavour).
@@ -92,7 +92,7 @@ describe("matrix-caps — caps↔adapter reconciliation (the drift tripwire)", (
     expect(matrixCaps.outbound.reactions).toBe(f.reactions); // true
     expect(matrixCaps.outbound.edits).toBe(f.editMessages); // true
     expect(matrixCaps.outbound.deletes).toBe(f.deleteMessages); // true
-    expect(matrixCaps.outbound.attachments).toBe(f.attachments); // false
+    expect(matrixCaps.outbound.attachments).toBe(f.attachments); // true
     expect(matrixCaps.outbound.typing).toBe(f.typing); // true
     expect(matrixCaps.outbound.threads).toBe(f.threads); // true
 
@@ -117,7 +117,7 @@ describe("matrix-caps — caps↔adapter reconciliation (the drift tripwire)", (
       editMessages: true,
       deleteMessages: true,
       fetchHistory: true,
-      attachments: false,
+      attachments: true,
       typing: true,
       threads: true,
       buttons: "none",
