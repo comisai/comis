@@ -2619,12 +2619,10 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // MsTeamsIngressDeps is the factory's deps shape, which the daemon
       // constructs inline (like ApprovalTokenDeps) — tracked here for parity.
       "MsTeamsIngressDeps",
-      // Google Chat inbound ingress, surfaced AHEAD of its consumer. Unlike the
-      // shipped msteams factory, createGoogleChatIngress has no cross-package
-      // importer yet — the daemon composition root (setup-channels-adapters.ts)
-      // builds it in a later wave, so both the factory and its inline-constructed
-      // deps shape are tracked here. Shrink both once that consumer lands.
-      "createGoogleChatIngress",
+      // Google Chat inbound ingress. createGoogleChatIngress is consumed by the
+      // daemon composition root (setup-channels-adapters.ts builds the ingress in
+      // webhook mode); GoogleChatIngressDeps is the factory's deps shape, which the
+      // daemon constructs inline (like MsTeamsIngressDeps) — tracked here for parity.
       "GoogleChatIngressDeps",
     ])],
     // @comis/infra: baseline orphans + transient orphans.
