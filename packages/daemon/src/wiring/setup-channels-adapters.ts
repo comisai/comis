@@ -544,6 +544,10 @@ export async function bootstrapAdapters(deps: {
       mode: channelConfig.googlechat.mode,
       audience: channelConfig.googlechat.audience,
       allowFrom: channelConfig.googlechat.allowFrom,
+      // The global group-activation mode. Google Chat delivers a space message
+      // only when the app is mentioned, so an "always" mode is inert here — the
+      // validator emits a content-free advisory WARN when it sees "always".
+      groupActivation: container.config.autoReplyEngine?.groupActivation,
       logger: channelsLogger,
     });
     if (validation.ok && key && (subscriptionName || !needsSubscription)) {
