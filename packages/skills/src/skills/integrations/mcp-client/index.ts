@@ -193,6 +193,7 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
     callQueues: new Map<string, PQueue>(),
     keepaliveQueues: new Map<string, PQueue>(),
     consecutiveErrors: new Map<string, number>(),
+    lastStderr: new Map<string, string>(),
     keepaliveTickers: new Map<string, SystemIntervalHandle>(),
     circuitBreakers: new Map<string, CircuitState>(),
     idleEvictionTimers: new Map<string, SystemTimeoutHandle>(),

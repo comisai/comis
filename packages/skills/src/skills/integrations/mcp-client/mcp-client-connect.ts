@@ -174,18 +174,27 @@ export async function connectServer(
     return err(discoveryError instanceof Error ? discoveryError : new Error(message));
   }
 
+  // Clear stderr captured by any PRIOR attempt so a failure below reflects only
+  // THIS spawn; stamp a start time for the connected-event durationMs.
+  state.lastStderr.delete(config.name);
+  const connectStartedMs = systemNowMs();
+
   try {
     // Create transport (logger threaded for prlimit-skip WARN).
     // For an auth:"oauth" server, effectiveConfig now carries the oauthProvider.
     const transport = createTransport(effectiveConfig, logger);
 
-    // Wire stderr capture for stdio transports
-    wireStderrCapture(deps, effectiveConfig, transport);
+    // Wire stderr capture for stdio transports (writes the running buffer onto
+    // state.lastStderr so the catch below can fold it into a failure).
+    wireStderrCapture(state, deps, effectiveConfig, transport);
 
     // Log transport type at INFO
     if (config.transport === "stdio") {
       logger.info(
-        { serverName: config.name, command: config.command, args: config.args, cwd: config.cwd },
+        // envKeys (names only — values are resolved secrets) so an env-wiring bug
+        // (a credential the child needs but never received) is visible at the
+        // spawn line, not inferred from a downstream "Connection closed".
+        { serverName: config.name, command: config.command, args: config.args, cwd: config.cwd, envKeys: config.env ? Object.keys(config.env) : undefined },
         "Spawning MCP server process",
       );
     } else if (config.transport === "sse") {
@@ -291,9 +300,18 @@ export async function connectServer(
 
     logger.info(`MCP server "${config.name}" connected: ${tools.length} tool(s) discovered`);
 
+    // Initial-connect success → trajectory (symmetric with mcp:server:reconnected).
+    deps.eventBus?.emit("mcp:server:connected", {
+      serverName: config.name,
+      transport: config.transport,
+      toolCount: tools.length,
+      durationMs: systemNowMs() - connectStartedMs,
+      timestamp: systemNowMs(),
+    });
+
     return ok(connection);
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
+    const rawMessage = error instanceof Error ? error.message : String(error);
 
     // The SDK throws UnauthorizedError from client.connect when an auth:"oauth"
     // server has no valid token (or refresh failed). For first-install (no
@@ -309,7 +327,21 @@ export async function connectServer(
       error instanceof UnauthorizedError ||
       (error instanceof StreamableHTTPError && (error as { code?: unknown }).code === 401);
 
-    // Store error state
+    // For a stdio server, fold in the child's captured stderr (the "why it died")
+    // and classify the failure so the operator/agent gets the fault CLASS and the
+    // real cause — not the opaque SDK "Connection closed" + a generic hint. The
+    // isUnauthorized path keeps its dedicated needs_oauth_login handling below.
+    const stderrTail =
+      config.transport === "stdio" ? (state.lastStderr.get(config.name)?.trim() ?? "") : "";
+    const classified = classifyConnectFailure(
+      config,
+      rawMessage,
+      stderrTail,
+      state.options.connectTimeoutMs,
+    );
+
+    // Store error state — the ENRICHED message so mcp.list/status shows the real
+    // cause (folded stderr), not just "Connection closed".
     state.connections.set(config.name, {
       name: config.name,
       client: null as unknown as Client,
@@ -318,7 +350,7 @@ export async function connectServer(
       lastHealthCheck: systemNowMs(),
       reconnectAttempt: 0,
       maxReconnectAttempts: state.options.reconnectOpts.maxAttempts,
-      error: isUnauthorized ? `${NEEDS_OAUTH_LOGIN}: ${message}` : message,
+      error: isUnauthorized ? `${NEEDS_OAUTH_LOGIN}: ${rawMessage}` : classified.message,
       generation: state.generations.get(config.name) ?? 0,
     });
 
@@ -327,12 +359,41 @@ export async function connectServer(
         { serverName: config.name, hint: `OAuth login required — run \`comis mcp login ${config.name}\`; no browser launched (operator-initiated)`, errorKind: "config" as const },
         "MCP server connect requires OAuth login",
       );
+      // Initial-connect failure → obs (health_signal + trajectory), like the
+      // reconnect_failed sibling — so a failed install is diagnosable via
+      // `comis fleet`/`explain`, not only a raw daemon.log grep.
+      deps.eventBus?.emit("mcp:server:connect_failed", {
+        serverName: config.name,
+        transport: config.transport,
+        reason: "auth_required",
+        timestamp: systemNowMs(),
+      });
       return err(tagNeedsOAuthLogin(config.name));
     }
 
-    logger.error({ serverName: config.name, err: message, hint: "Check MCP server configuration and ensure the server process is running", errorKind: "dependency" as const }, "MCP server connection failed");
+    logger.error(
+      {
+        serverName: config.name,
+        err: rawMessage,
+        ...(classified.stderrTail ? { stderr: classified.stderrTail } : {}),
+        reason: classified.reason,
+        hint: classified.hint,
+        errorKind: "dependency" as const,
+      },
+      "MCP server connection failed",
+    );
+    deps.eventBus?.emit("mcp:server:connect_failed", {
+      serverName: config.name,
+      transport: config.transport,
+      reason: classified.reason,
+      timestamp: systemNowMs(),
+    });
 
-    return err(error instanceof Error ? error : new Error(message));
+    // Return the ENRICHED message (with the folded stderr) so the agent/RPC sees
+    // the real cause; preserve the original error as `cause` for stack context.
+    const outErr = new Error(classified.message);
+    if (error instanceof Error) (outErr as Error & { cause?: unknown }).cause = error;
+    return err(outErr);
   }
 }
 
@@ -447,4 +508,87 @@ export async function reconnectServer(
   }
   await disconnectServer(state, deps, name);
   return connectServer(state, deps, storedConfig);
+}
+
+// ---------------------------------------------------------------------------
+// Connect-failure classification
+// ---------------------------------------------------------------------------
+
+interface ClassifiedConnectFailure {
+  /** Closed fault class — rides the mcp:server:connect_failed event + health signal. */
+  readonly reason: "command_not_found" | "server_exited" | "handshake_timeout" | "transport_error";
+  /** Operator-facing next step, branched by class (never the old generic string). */
+  readonly hint: string;
+  /** Enriched message for the caller + the error-state entry (folds in stderr). */
+  readonly message: string;
+  /** Bounded stderr tail for the log `stderr` field (empty when none captured). */
+  readonly stderrTail: string;
+}
+
+const STDERR_TAIL_MAX = 1500;
+
+/**
+ * Turn a raw connect error (+ any captured stdio stderr) into a fault CLASS, an
+ * enriched message, and a class-specific hint. The bare SDK error for a stdio
+ * crash is the opaque "MCP error -32000: Connection closed"; the child's own
+ * stderr ("… is required") is the real cause and belongs in the message the
+ * operator/agent sees — not a separate log line to hand-correlate. PURE.
+ */
+export function classifyConnectFailure(
+  config: McpServerConfig,
+  rawMessage: string,
+  stderrTail: string,
+  connectTimeoutMs: number,
+): ClassifiedConnectFailure {
+  const tail =
+    stderrTail.length > STDERR_TAIL_MAX ? `…${stderrTail.slice(-STDERR_TAIL_MAX)}` : stderrTail;
+  const lower = rawMessage.toLowerCase();
+
+  // A spawn ENOENT — the command (npx/uvx/binary) is missing or not on PATH.
+  if (lower.includes("enoent")) {
+    return {
+      reason: "command_not_found",
+      hint: `command "${config.command ?? "?"}" not found — install it and ensure it is on the daemon's PATH (npx/uvx must be resolvable by the daemon process)`,
+      message: `MCP server "${config.name}" failed to spawn: ${rawMessage}`,
+      stderrTail: tail,
+    };
+  }
+
+  // Handshake / listTools timeout — the process is hung or slow to initialize.
+  if (lower.includes("timed out") || lower.includes("timeout")) {
+    return {
+      reason: "handshake_timeout",
+      hint: `server did not complete the MCP handshake within ${connectTimeoutMs}ms — the process may be hung or slow to start${tail ? " (see stderr)" : ""}`,
+      message: tail
+        ? `MCP server "${config.name}" handshake timed out after ${connectTimeoutMs}ms. Server stderr:\n${tail}`
+        : `MCP server "${config.name}" handshake timed out after ${connectTimeoutMs}ms`,
+      stderrTail: tail,
+    };
+  }
+
+  // A stdio child that exited before the handshake — the "Connection closed" class.
+  if (config.transport === "stdio") {
+    if (tail) {
+      return {
+        reason: "server_exited",
+        hint: "server process exited before the MCP handshake — see its stderr (a missing or invalid required env var is the most common cause; pass credentials via the connect env field as ${VAR} refs)",
+        message: `MCP server "${config.name}" exited before the handshake. Server stderr:\n${tail}`,
+        stderrTail: tail,
+      };
+    }
+    return {
+      reason: "server_exited",
+      hint: "server process exited before the handshake with no stderr — verify command/args and any required env (a missing env var is the most common cause; pass it via the connect env field as ${VAR} refs)",
+      message: `MCP server "${config.name}" exited before the handshake (no stderr captured): ${rawMessage}`,
+      stderrTail: tail,
+    };
+  }
+
+  // Remote transport (sse/http) — reachability / auth.
+  return {
+    reason: "transport_error",
+    hint: "connection failed — verify the URL is reachable and any required auth/headers are set",
+    message: `MCP server "${config.name}" connection failed: ${rawMessage}`,
+    stderrTail: tail,
+  };
 }

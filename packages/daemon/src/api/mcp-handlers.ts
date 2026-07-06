@@ -245,6 +245,16 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         );
         if (sub.ok) {
           resolvedConnectEnv = sub.value as Record<string, string>;
+          // Positive confirmation of the env the child will receive — KEYS only
+          // (values are secrets) + the count of ${VAR} refs resolved. Without it,
+          // an env-wiring bug (the child gets no/literal env) is only inferable
+          // from a downstream "Connection closed" / "Invalid URL".
+          const inputEnv = params.env;
+          const refsResolved = Object.values(inputEnv).filter((v) => /\$\{[^}]+\}/.test(v)).length;
+          deps.logger.info(
+            { method: "mcp.connect", entityId: params.server_name, envKeys: Object.keys(inputEnv), refsResolved },
+            "MCP connect env resolved for the live spawn",
+          );
         } else {
           deps.logger.warn(
             {

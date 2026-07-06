@@ -391,6 +391,7 @@ export function extractServerMetadata(client: Client) {
 // ---------------------------------------------------------------------------
 
 export function wireStderrCapture(
+  state: McpClientManagerState,
   deps: McpClientManagerDeps,
   config: McpServerConfig,
   transport: ReturnType<typeof createTransport>,
@@ -417,6 +418,12 @@ export function wireStderrCapture(
     } else {
       stderrBuffer += text;
     }
+    // Stash the running buffer on state so a connect-time failure (the catch in
+    // connectServer) can fold the child's OWN error text into the returned error
+    // — without this, a stdio failure surfaces only the opaque SDK "Connection
+    // closed" and the "why" (e.g. a missing required env var) is a separate log
+    // line the operator has to hand-correlate.
+    state.lastStderr.set(config.name, stderrBuffer);
     // Log each stderr line at DEBUG level for real-time visibility
     for (const line of text.split("\n").filter(Boolean)) {
       logger.debug?.({ serverName: config.name, stderr: line }, "MCP server stderr");

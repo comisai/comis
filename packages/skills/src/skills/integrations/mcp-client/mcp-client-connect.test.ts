@@ -105,6 +105,7 @@ function makeState(): McpClientManagerState {
     callQueues: new Map<string, PQueue>(),
     keepaliveQueues: new Map<string, PQueue>(),
     consecutiveErrors: new Map<string, number>(),
+    lastStderr: new Map<string, string>(),
     keepaliveTickers: new Map(),
     circuitBreakers: new Map<string, CircuitState>(),
     idleEvictionTimers: new Map(),
@@ -258,5 +259,105 @@ describe("connectServer — OAuth path", () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected err");
     expect(isNeedsOAuthLoginError(result.error)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// connectServer — stdio failure DIAGNOSABILITY. Regression for the credentialed
+// stdio-MCP install investigation: a server that spawns credential-less exits
+// with the opaque SDK "Connection closed"; the child's OWN error text ("… is
+// required") + a class-specific hint + a lifecycle event must reach the caller
+// and the obs layer — not just a separate DEBUG log line to hand-correlate.
+// ---------------------------------------------------------------------------
+describe("connectServer — stdio failure diagnosability", () => {
+  const STDIO_CONFIG: McpServerConfig = {
+    name: "svc",
+    transport: "stdio",
+    command: "npx",
+    args: ["-y", "example-mcp"],
+    enabled: true,
+    osvCheckEnabled: false, // skip the network OSV lookup in unit tests
+  };
+
+  function makeBus(): { bus: { emit: (e: string, p: unknown) => void }; emitted: Array<{ event: string; payload: unknown }> } {
+    const emitted: Array<{ event: string; payload: unknown }> = [];
+    return { bus: { emit: (event, payload) => { emitted.push({ event, payload }); } }, emitted };
+  }
+
+  it("folds the child's captured stderr into the returned error + error-state entry (Fix 1)", async () => {
+    const state = makeState();
+    // Simulate the child writing its OWN error to stderr during the attempt (→
+    // captured on state.lastStderr by wireStderrCapture in production) and THEN
+    // the transport closing — the real "Connection closed" sequence.
+    connectImpl = () => {
+      state.lastStderr.set("svc", "Error: SERVICE_USERNAME is a required environment variable\n");
+      return Promise.reject(new Error("MCP error -32000: Connection closed"));
+    };
+    const { bus } = makeBus();
+    const deps = { logger: makeLogger(), eventBus: bus } as unknown as McpClientManagerDeps;
+
+    const result = await connectServer(state, deps, STDIO_CONFIG);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected err");
+    expect(result.error.message).toContain("SERVICE_USERNAME is a required");
+    expect(state.connections.get("svc")?.error).toContain("SERVICE_USERNAME is a required");
+  });
+
+  it("emits mcp:server:connect_failed with reason server_exited on a stdio crash (Fix 2)", async () => {
+    const state = makeState();
+    connectImpl = () => {
+      state.lastStderr.set("svc", "boom");
+      return Promise.reject(new Error("MCP error -32000: Connection closed"));
+    };
+    const { bus, emitted } = makeBus();
+    const deps = { logger: makeLogger(), eventBus: bus } as unknown as McpClientManagerDeps;
+
+    await connectServer(state, deps, STDIO_CONFIG);
+
+    const ev = emitted.find((e) => e.event === "mcp:server:connect_failed");
+    expect(ev).toBeDefined();
+    expect((ev!.payload as { reason: string }).reason).toBe("server_exited");
+    expect((ev!.payload as { serverName: string }).serverName).toBe("svc");
+  });
+
+  it("classifies an ENOENT spawn failure as command_not_found (Fix 4)", async () => {
+    connectImpl = () => Promise.reject(new Error("spawn npx ENOENT"));
+    const state = makeState();
+    const { bus, emitted } = makeBus();
+    const deps = { logger: makeLogger(), eventBus: bus } as unknown as McpClientManagerDeps;
+
+    const result = await connectServer(state, deps, STDIO_CONFIG);
+
+    expect(result.ok).toBe(false);
+    const ev = emitted.find((e) => e.event === "mcp:server:connect_failed");
+    expect((ev!.payload as { reason: string }).reason).toBe("command_not_found");
+  });
+
+  it("on a stdio failure with NO stderr, the failure log names the missing-env class (Fix 4)", async () => {
+    connectImpl = () => Promise.reject(new Error("MCP error -32000: Connection closed"));
+    const state = makeState();
+    const logger = makeLogger();
+    const { bus } = makeBus();
+    const deps = { logger, eventBus: bus } as unknown as McpClientManagerDeps;
+
+    await connectServer(state, deps, STDIO_CONFIG);
+
+    const errCalls = logger.error.mock.calls.map((c: unknown[]) => JSON.stringify(c));
+    expect(errCalls.some((s: string) => /missing.*env|required env|env var/i.test(s))).toBe(true);
+  });
+
+  it("emits mcp:server:connected on a successful connect (Fix 2)", async () => {
+    connectImpl = () => Promise.resolve();
+    const state = makeState();
+    const { bus, emitted } = makeBus();
+    const deps = { logger: makeLogger(), eventBus: bus } as unknown as McpClientManagerDeps;
+
+    const result = await connectServer(state, deps, STDIO_CONFIG);
+
+    expect(result.ok).toBe(true);
+    const ev = emitted.find((e) => e.event === "mcp:server:connected");
+    expect(ev).toBeDefined();
+    expect((ev!.payload as { serverName: string }).serverName).toBe("svc");
   });
 });

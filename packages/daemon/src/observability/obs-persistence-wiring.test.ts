@@ -13,6 +13,7 @@ import {
   lifecycleSweptEventToRow,
   wakeGateEventToRow,
   mcpReconnectFailedEventToRow,
+  mcpConnectFailedEventToRow,
   scriptZeroHitEventToRow,
   summaryLanguageMismatchEventToRow,
   generationQualityEventToRow,
@@ -835,6 +836,40 @@ describe("mcpReconnectFailedEventToRow", () => {
     // Defensive: the body never leaks into the row at all.
     expect(row.details ?? "").not.toContain("boom");
     expect("lastError" in details).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mcpConnectFailedEventToRow (MCP INITIAL-connect/install failure →
+// health_signal). Unlike reconnect_failed there is no error BODY to drop —
+// `reason` is a closed enum, safe to carry so `comis fleet` can group by it.
+// ---------------------------------------------------------------------------
+
+describe("mcpConnectFailedEventToRow", () => {
+  it("maps a mcp:server:connect_failed payload to a warning health_signal row (closed reason enum)", () => {
+    const row = mcpConnectFailedEventToRow({
+      serverName: "svc",
+      transport: "stdio",
+      reason: "server_exited",
+      timestamp: 4000,
+    });
+
+    expect(row.timestamp).toBe(4000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.message).toBe("mcp:server:connect_failed");
+    expect(row.agentId).toBeUndefined();
+    expect(row.sessionKey).toBeUndefined();
+    expect(row.traceId).toBeUndefined();
+
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    // signal label + closed reason/transport enums + serverName — no error body.
+    expect(details).toEqual({
+      signal: "mcp_connect_failed",
+      serverName: "svc",
+      transport: "stdio",
+      reason: "server_exited",
+    });
   });
 });
 

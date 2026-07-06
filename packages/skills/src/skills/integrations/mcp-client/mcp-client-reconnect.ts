@@ -274,7 +274,7 @@ async function reconnectionLoop(
       // in the same daemon process).
       const transport = createTransport(config, logger);
       // Wire stderr capture for stdio re-spawns
-      wireStderrCapture(deps, config, transport);
+      wireStderrCapture(state, deps, config, transport);
       const client = createClient(state, deps, serverName);
 
       await withTimeout(

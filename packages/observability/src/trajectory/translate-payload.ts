@@ -618,6 +618,21 @@ export function translatePayload(
         durationMs: payload.durationMs,
       };
 
+    case "mcp:server:connected":
+      return {
+        serverName: payload.serverName,
+        transport: payload.transport,
+        toolCount: payload.toolCount,
+        durationMs: payload.durationMs,
+      };
+
+    case "mcp:server:connect_failed":
+      return {
+        serverName: payload.serverName,
+        transport: payload.transport,
+        reason: payload.reason,
+      };
+
     case "mcp:server:tools_changed":
       return {
         serverName: payload.serverName,

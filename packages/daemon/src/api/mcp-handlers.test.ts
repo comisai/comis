@@ -266,6 +266,30 @@ describe("MCP RPC Handlers", () => {
       );
     });
 
+    it("Fix 3: logs a positive env-resolution INFO (keys + refsResolved) for the live spawn", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("svc-mcp", [])));
+      const secretManager = {
+        get: (k: string) =>
+          k === "SERVICE_PASSWORD" ? "s3cret-val" : k === "SERVICE_BASE_URL" ? "https://api.example.com/v2" : undefined,
+      } as any;
+      const logger = makeLogger();
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger, secretManager });
+      await handlers["mcp.connect"]({
+        server_name: "svc-mcp",
+        transport: "stdio",
+        command: "npx",
+        args: ["-y", "example-mcp"],
+        env: { SERVICE_PASSWORD: "${SERVICE_PASSWORD}", SERVICE_BASE_URL: "${SERVICE_BASE_URL}" },
+      } as any);
+      const infoCall = (logger.info as any).mock.calls.find((c: any[]) => /env resolved/i.test(String(c[1])));
+      expect(infoCall).toBeDefined();
+      expect(infoCall[0]).toMatchObject({
+        entityId: "svc-mcp",
+        envKeys: ["SERVICE_PASSWORD", "SERVICE_BASE_URL"],
+        refsResolved: 2,
+      });
+    });
+
     it("passes sse transport directly", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("remote", [])));
 

@@ -455,6 +455,14 @@ export interface McpClientManagerState {
   /** server-name -> consecutive onerror count (absorbed below threshold, triggers reconnect at threshold). */
   readonly consecutiveErrors: Map<string, number>;
   /**
+   * server-name -> last-captured stdio stderr buffer (bounded). Written by
+   * `wireStderrCapture` as the child emits stderr; read by the connect catch so a
+   * stdio "Connection closed" failure surfaces the child's OWN error text (the
+   * "why it died") in the returned error + error-state entry, instead of the
+   * opaque SDK message alone. Cleared at the start of each connect attempt.
+   */
+  readonly lastStderr: Map<string, string>;
+  /**
    * server-name -> systemSetInterval handle for the keepalive ticker (started
    * on connect, stopped on disconnect).
    *
