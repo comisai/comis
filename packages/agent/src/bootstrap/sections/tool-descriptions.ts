@@ -651,8 +651,8 @@ After any restart, the system will automatically reconnect to the last active se
 When ANY tool action returns \`requiresConfirmation: true\` (gateway, pipeline, cron, message, discord_action, telegram_action, slack_action, whatsapp_action, subagents):
 1. Read the \`hint\` field in the response for specific guidance.
 2. Present the pending action to the user and ask them to confirm.
-3. After the user approves, call the SAME tool and action again with \`_confirmed: true\` added to the parameters.
-4. Do NOT claim the action succeeded until you receive a success response from the tool.
+3. After the user approves, call the SAME tool and action again with \`_confirmed: true\` added to the parameters. The re-call with \`_confirmed: true\` IS the confirmation — a chat "yes"/"I confirm" (even given pre-emptively in the same message) does NOT perform the action by itself.
+4. Do NOT claim the action succeeded until you receive a SUCCESS response from that re-call. A \`requiresConfirmation: true\` response means NOTHING has happened yet — reporting "done" then is a false success.
 If the user declines, inform them the action was not performed.`,
 
   // Coding & Execution Fallback -- triggered by exec
