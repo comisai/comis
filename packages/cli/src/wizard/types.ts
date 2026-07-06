@@ -77,7 +77,7 @@ export type WizardError = {
 
 /** Per-channel collected credentials. */
 export type ChannelConfig = {
-  type: "telegram" | "discord" | "slack" | "whatsapp" | "signal" | "irc" | "line" | "msteams";
+  type: "telegram" | "discord" | "slack" | "whatsapp" | "signal" | "irc" | "line" | "msteams" | "matrix";
   botToken?: string;
   apiKey?: string;
   appToken?: string;
@@ -91,6 +91,14 @@ export type ChannelConfig = {
   appPassword?: string;
   tenantId?: string;
   authMode?: "secret" | "certificate" | "managedIdentity";
+  // Matrix: homeserverUrl and userId are non-secret config; accessToken is the
+  // secret (persisted as a ${VAR} ref). e2ee toggles encrypted-room support;
+  // allowMode selects the sender allow/deny policy.
+  homeserverUrl?: string;
+  userId?: string;
+  accessToken?: string;
+  e2ee?: boolean;
+  allowMode?: string;
 };
 
 /** Per-tool-provider collected credentials. */
@@ -294,6 +302,7 @@ export const SUPPORTED_CHANNELS: readonly SupportedChannel[] = [
   { type: "irc", label: "IRC", credentialHint: "No credentials needed" },
   { type: "line", label: "LINE", credentialHint: "Channel token + secret required" },
   { type: "msteams", label: "Microsoft Teams", credentialHint: "App ID + password + tenant ID" },
+  { type: "matrix", label: "Matrix", credentialHint: "Homeserver URL + user ID + access token" },
 ] as const;
 
 // ---------- Environment Key Maps ----------
@@ -532,4 +541,5 @@ export const CHANNEL_ENV_KEYS: Record<string, string[]> = {
   whatsapp: ["WHATSAPP_ACCESS_TOKEN", "WHATSAPP_VERIFY_TOKEN"],
   line: ["LINE_CHANNEL_ACCESS_TOKEN", "LINE_CHANNEL_SECRET"],
   msteams: ["MSTEAMS_APP_PASSWORD"],
+  matrix: ["MATRIX_ACCESS_TOKEN"],
 };

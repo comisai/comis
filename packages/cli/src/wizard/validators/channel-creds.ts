@@ -25,6 +25,7 @@ const CHANNEL_CREDENTIAL_TYPES: Record<string, readonly string[]> = {
   slack:     ["botToken", "appToken"],
   line:      ["channelToken", "channelSecret"],
   msteams:   ["appId", "appPassword", "tenantId"],
+  matrix:    ["homeserverUrl", "userId", "accessToken"],
   whatsapp:  [],
   signal:    [],
   irc:       [],
@@ -188,6 +189,64 @@ function validateMsTeams(
   return undefined;
 }
 
+// ---------- Matrix ----------
+
+// A Matrix user ID (MXID) is "@localpart:homeserver" -- an "@", a localpart
+// with no ":" or whitespace, a ":", then the homeserver. This catches a bare
+// localpart or a missing homeserver at wizard time; the adapter's whoami is the
+// real identity check.
+const MATRIX_MXID_PATTERN = /^@[^:\s]+:[^\s]+$/;
+
+/**
+ * Accept an https homeserver URL, or http only for a loopback host (a local
+ * homeserver / emulator). Any other scheme, or plaintext http to a remote host,
+ * is rejected -- an unencrypted homeserver connection would expose the access
+ * token in transit.
+ */
+function isValidMatrixHomeserver(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.protocol === "https:") return true;
+  if (url.protocol === "http:") {
+    const host = url.hostname.toLowerCase();
+    return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
+  }
+  return false;
+}
+
+function validateMatrix(
+  credentialType: string,
+  value: string,
+): ValidationResult | undefined {
+  if (credentialType === "userId") {
+    if (!MATRIX_MXID_PATTERN.test(value)) {
+      return {
+        message: "Invalid Matrix user ID.",
+        hint: "Expected an MXID like @user:host.",
+        field: "matrixUserId",
+      };
+    }
+  }
+
+  if (credentialType === "homeserverUrl") {
+    if (!isValidMatrixHomeserver(value)) {
+      return {
+        message: "Invalid Matrix homeserver URL.",
+        hint: "The homeserver URL must start with https:// (http:// only for a loopback host).",
+        field: "matrixHomeserverUrl",
+      };
+    }
+  }
+
+  // accessToken: non-blank is enforced by the shared empty-value guard in
+  // validateChannelCredential; there is no meaningful format beyond presence.
+  return undefined;
+}
+
 // ---------- Public API ----------
 
 /**
@@ -228,6 +287,8 @@ export function validateChannelCredential(
       return validateLine(credentialType, trimmed);
     case "msteams":
       return validateMsTeams(credentialType, trimmed);
+    case "matrix":
+      return validateMatrix(credentialType, trimmed);
     case "whatsapp":
     case "signal":
     case "irc":
