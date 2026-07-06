@@ -416,7 +416,32 @@ export function mapForeignFrontmatter(rawFrontmatter: Record<string, unknown>): 
         if (typeof value === "string") {
           specPure["allowed-tools"] = value;
         } else if (Array.isArray(value)) {
-          specPure["allowed-tools"] = value.filter((v): v is string => typeof v === "string").join(" ");
+          const tools = value.filter((v): v is string => typeof v === "string");
+          if (tools.length === 0) {
+            // A list with NO string members would join to "" — and an empty
+            // internal allowedTools means "no restriction", so emitting "" would
+            // fail OPEN on the tool-restriction boundary and defeat the manifest
+            // lift's fail-closed guard. Preserve the original value so the lift
+            // rejects a non-string allowed-tools instead of silently unrestricting.
+            specPure["allowed-tools"] = value;
+            warn(
+              warnings,
+              "allowed-tools",
+              `'allowed-tools' was a list with no string entries and was left unnormalized for the manifest to reject.`,
+              `Author 'allowed-tools' as a space-separated string (or a list of tool-name strings); an empty tool restriction is refused, never treated as 'no restriction'.`,
+            );
+          } else {
+            specPure["allowed-tools"] = tools.join(" ");
+            if (tools.length !== value.length) {
+              const dropped = value.length - tools.length;
+              warn(
+                warnings,
+                "allowed-tools",
+                `'allowed-tools' had ${dropped} non-string entr${dropped === 1 ? "y" : "ies"} dropped during normalization.`,
+                `Author every 'allowed-tools' entry as a tool-name string; non-string entries are not carried onto the manifest.`,
+              );
+            }
+          }
         } else {
           warn(
             warnings,

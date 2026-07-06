@@ -200,6 +200,29 @@ describe("the full disposition table — every branch, named", () => {
     expect(warnsFor(warnings, "allowed-tools")).toBe(true);
   });
 
+  it("refuses an all-non-string allowed-tools list rather than coercing it to a no-restriction empty string", () => {
+    // An empty internal allowedTools means "no restriction"; coercing a list
+    // with no string members to "" would fail OPEN on the tool-restriction
+    // boundary and defeat the manifest lift's fail-closed guard. The mapper must
+    // preserve the type signal so the lift rejects it.
+    const md = toSkillMd(
+      mapForeignFrontmatter({ name: "n", description: "d", "allowed-tools": [1, 2, 3] }).specPure,
+    );
+    expect(parseSkillManifest(md).ok).toBe(false);
+  });
+
+  it("warns and does not emit an empty allowed-tools string for a no-string list", () => {
+    const { specPure, warnings } = mapForeignFrontmatter({ name: "n", "allowed-tools": [1, 2] });
+    expect(specPure["allowed-tools"]).not.toBe("");
+    expect(warnsFor(warnings, "allowed-tools")).toBe(true);
+  });
+
+  it("warns when non-string entries are dropped from a mixed allowed-tools list", () => {
+    const { specPure, warnings } = mapForeignFrontmatter({ name: "n", "allowed-tools": ["Read", 5, "Write"] });
+    expect(specPure["allowed-tools"]).toBe("Read Write");
+    expect(warnsFor(warnings, "allowed-tools")).toBe(true);
+  });
+
   it("warns when the compatibility prose is over the advisory length", () => {
     const { warnings } = mapForeignFrontmatter({ name: "n", compatibility: "x".repeat(501) });
     expect(warnsFor(warnings, "compatibility")).toBe(true);
