@@ -23,6 +23,9 @@ comis skills import https://example.com/my-skill.skill --source archive
 
 # Import a skill by name from an allowlisted registry's well-known index
 comis skills import my-skill --source wellknown --registry https://registry.example
+
+# Import an @owner/slug skill from ClawHub (allowlist the `clawhub` token first)
+comis skills import @acme/pdf-extractor --source clawhub
 ```
 
 **From an agent** with the `skills_manage` tool: the `import` action takes the same parameters. It stays behind the tool's admin-trust + approval + `orch:skill` triple gate -- importing is never a silent, unattended action.
@@ -34,12 +37,9 @@ comis skills import my-skill --source wellknown --registry https://registry.exam
 | `github` (default) | A GitHub directory URL, e.g. `https://github.com/{owner}/{repo}/tree/{branch}/{path}` | Fetched file-by-file from the GitHub Contents API (fixed host, bounded depth + file count) |
 | `archive` | A URL to a `.skill` / `.zip` / `.tar` / `.tar.gz` archive | Fetched through the SSRF guard (DNS-pinned, metadata-blocked), then unpacked in-house against strict size caps |
 | `wellknown` | A **skill name** (not a URL), resolved from the `--registry` origin's well-known index | The registry's `/.well-known/skills/index.json` is fetched (SSRF-pinned, byte-capped), then each advertised file for that name — see [Registry import](#registry-import-well-known-index) |
+| `clawhub` | An **`@owner/slug`** identifier (not a URL), resolved from ClawHub | The install decision and the scan **verdict** are fetched and evaluated first; only a non-blocked release is then downloaded (SSRF-pinned, byte-capped) — see [ClawHub import](#clawhub-import) |
 
 An archive may also be supplied as base64 bytes (`archiveBytes`) rather than a URL -- this is how an uploaded file reaches the pipeline. Whichever way the bytes arrive, they funnel into the **same** acquire -> unpack -> map -> scan -> install pipeline.
-
-<Info>
-A community skill hub is a **reserved** future acquisition channel -- the `clawhub` allowlist token names it, but there is no hub import flow yet. When it lands it will enter the pipeline at the same staging step every other source uses.
-</Info>
 
 ### Registry import (well-known index)
 
@@ -50,6 +50,18 @@ A community skill hub is a **reserved** future acquisition channel -- the `clawh
 Every fetch -- the index and each advertised file -- goes through the same SSRF guard (DNS-pinned, metadata-blocked) and byte caps as an archive import. Each advertised path is validated, and a **single** unsafe path (absolute, `..` traversal, or otherwise escaping) rejects the **whole** bundle rather than skipping the one file. The resolved files then enter the same acquire -> map -> scan -> install pipeline every source shares, so a well-known skill lands **prompt-only at the `imported` trust tier** with the same honest exec caveat -- importing it adds instructions the agent may read, never the authority to run anything. The provenance record additionally pins the **registry origin** the skill came from, and a listed well-known skill reports `source: "wellknown"` plus that registry in its provenance summary.
 
 Re-importing the same `(registry, name)` follows the same re-import rule as any source: identical content is a no-op, and **changed** remote bytes refuse unless you pass `--confirm`, which swaps in the new content and re-pins the hash.
+
+### ClawHub import
+
+`source: "clawhub"` installs a skill from **ClawHub** by its `@owner/slug` identifier. `<ref>` is the `@owner/slug` -- not a URL -- and the registry is inferred, so you do not pass `--registry`. As with a well-known import, it only proceeds if the `clawhub` token is in the agent's [`skills.import.registries`](/reference/config-yaml#skills-agents-skills) allowlist; a non-allowlisted `clawhub` refuses **flatly**, and that refusal is **not** overridable by `--confirm`.
+
+**The verdict is checked before the release downloads.** ClawHub resolution is an install-resolver flow: Comis fetches the install decision and the skill's scan **verdict**, evaluates the verdict, and only then downloads the release archive. A release whose verdict is **`malicious`**, **`blockedFromDownload`**, **`quarantined`**, or **`revoked`** (or is otherwise reason-flagged as blocked) is refused **before a single artifact byte is fetched** -- the download never happens. This is a hard security stop, not a warnable class: `--confirm` never overrides it.
+
+**Non-official publishers must be acknowledged.** By default ([`requireOfficialPublisher`](/reference/config-yaml#skills-agents-skills) is `true`), a skill from a **non-official** publisher records `officialPublisher: false` and requires `--confirm` to install -- pulling an unofficial `@owner/slug` is a deliberate, acknowledged act, on a fresh install as much as on an update. Unlike a blocking verdict, this is a **warnable** class: acknowledged, not forbidden. When one import trips **both** warnable classes at once -- a non-official publisher **and** a changed-content re-import (a pin divergence) -- a single `--confirm` acknowledges **both**, and the response enumerates each acknowledged class in its `warnings`.
+
+**Integrity.** When ClawHub sends a release content hash (`X-ClawHub-Artifact-Sha256`), Comis verifies the downloaded bytes against it and rejects a mismatch -- the header is checked **when present** and is never required. The always-present integrity floor is Comis's own content hash, computed over the installed file set and pinned in provenance (the release is fetched over TLS from `clawhub.ai`), independent of any server-sent hash.
+
+The resolved release then enters the **same** acquire -> unpack -> map -> scan -> install pipeline every source shares, so a ClawHub skill lands **prompt-only at the `imported` trust tier** -- bundled MCP servers persist disabled, dynamic context forced off, text-only -- with `clawhub` recorded as its registry and `officialPublisher` in its provenance summary. The same honest limit applies as for every import: it adds instructions the agent may read, never the authority to run anything, and the import scan is a strong deterministic net, not a proof of safety.
 
 ## What Actually Lands: Text-Only Import
 

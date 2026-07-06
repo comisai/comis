@@ -2660,7 +2660,7 @@ Each `SkillDescription` carries an optional `source` -- the trust tier the regis
 }
 ```
 
-The `provenanceSummary.source` is the acquisition **channel** (`github` / `archive` / `wellknown` / `upload`) -- distinct from the trust-tier `source` (`imported`). A `wellknown` import additionally carries a `registry` field: the origin the skill was resolved from. It is populated only for imported skills; bundled, workspace, local, and learned skills omit it. The summary is content-free: an acquisition channel, an optional registry origin, a hash prefix, and a timestamp -- never a skill body.
+The `provenanceSummary.source` is the acquisition **channel** (`github` / `archive` / `wellknown` / `clawhub` / `upload`) -- distinct from the trust-tier `source` (`imported`). A `wellknown` or `clawhub` import additionally carries a `registry` field (the origin, or the literal `clawhub` token, the skill was resolved from), and a `clawhub` import carries an `officialPublisher` boolean (whether ClawHub reported the publisher as official). These are populated only for imported skills; bundled, workspace, local, and learned skills omit them. The summary is content-free: an acquisition channel, an optional registry origin, an optional official-publisher flag, a hash prefix, and a timestamp -- never a skill body.
 
 ### `skills.upload`
 
@@ -2707,8 +2707,8 @@ The optional `scope` parameter controls where the skill is written. `"local"` (d
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ url?: string, source?: "github" \| "archive" \| "wellknown", registry?: string, archiveUrl?: string, archiveBytes?: string, name?: string, scope?: "local" \| "shared", agentId?: string, confirm?: boolean }` |
-| **Returns** | `{ ok: true, path: string, name: string, fileCount: number, source: "imported", resolvedAgentId: string }` |
+| **Parameters** | `{ url?: string, source?: "github" \| "archive" \| "wellknown" \| "clawhub", registry?: string, archiveUrl?: string, archiveBytes?: string, name?: string, scope?: "local" \| "shared", agentId?: string, confirm?: boolean }` |
+| **Returns** | `{ ok: true, path: string, name: string, fileCount: number, source: "imported", resolvedAgentId: string, warnings?: string[] }` |
 
 Every source funnels through one staged pipeline: the content scan and the MCP Phase-A check run **before** anything is written, so a rejected import leaves zero live files. A successful import is stamped the `imported` trust tier and pinned in the provenance store; the response reports `source: "imported"` and the `resolvedAgentId` the import acted on.
 
@@ -2717,10 +2717,13 @@ Every source funnels through one staged pipeline: the content scan and the MCP P
 - `github` -- `url` is a GitHub directory URL in the format `https://github.com/{owner}/{repo}/tree/{branch}/{path}`.
 - `archive` -- supply either `archiveUrl` (a `.skill` / `.zip` / `.tar` / `.tar.gz` URL, fetched through the SSRF guard) or `archiveBytes` (the archive as base64, e.g. an operator upload). The archive is unpacked in-house against the configured size caps.
 - `wellknown` -- resolve a skill **by name** from an allowlisted registry's well-known index. `registry` is the registry origin (`https://<host>[:port]`) and `name` is the index-lookup key (which advertised skill to fetch -- it does **not** override the installed manifest name). The registry must be listed in [`skills.import.registries`](/reference/config-yaml#skills-agents-skills); a non-allowlisted registry refuses flatly and is **not** `confirm`-overridable. The `/.well-known/skills/index.json` and each advertised file are fetched SSRF-pinned and byte-capped, and one unsafe advertised path rejects the whole bundle. The pinned provenance additionally records the registry origin.
+- `clawhub` -- resolve a skill from **ClawHub** by its `@owner/slug` identifier. `name` is the `@owner/slug`; the registry is **inferred** as the literal `clawhub` token (you do **not** pass `registry`), which must be listed in [`skills.import.registries`](/reference/config-yaml#skills-agents-skills) or the import refuses flatly (not `confirm`-overridable). Resolution is an install-resolver flow: the install decision and the scan **verdict** are fetched and evaluated **before** the release downloads, so a `malicious` / `blockedFromDownload` / `quarantined` / `revoked` verdict refuses before any artifact byte is fetched -- a hard stop `confirm` cannot override. A server-sent release hash (`X-ClawHub-Artifact-Sha256`) is verified when present; the pinned self-computed content hash is the always-present floor. The pinned provenance records the `clawhub` registry and the resolved `officialPublisher` flag. See [ClawHub import](/skills/importing#clawhub-import).
 
 The optional `scope` works the same as in `skills.upload` -- `"local"` (default) imports to the agent's workspace, `"shared"` imports to the global directory (default agent only).
 
 `confirm` overrides **only** a content divergence on a re-import of the same provenance-matched source (it swaps in the new content and re-pins the hash). It does **not** override a name collision on an unprovenanced or foreign-source skill -- that refuses regardless, and you must delete the existing skill first. There is intentionally **no** `force` parameter.
+
+For a ClawHub import, `confirm` additionally acknowledges a **non-official publisher** (`officialPublisher: false` while `requireOfficialPublisher` is `true`). These are the two **warnable** classes -- a non-official publisher and a re-import pin divergence -- and a single `confirm` covers both: when one import trips both at once, one `confirm` acknowledges each and the response's `warnings[]` enumerates the acknowledged classes. A blocking scan **verdict** is never a warnable class -- `confirm` cannot override it, and the release is refused before it downloads.
 
 <Info>
 An imported skill is prompt-only and installs at a cautious trust tier: bundled MCP servers persist disabled (per-server opt-in), dynamic context is forced off, and only UTF-8 text files are kept. See [Importing Skills](/skills/importing) for the trust model and the honest limits of the import scan.
