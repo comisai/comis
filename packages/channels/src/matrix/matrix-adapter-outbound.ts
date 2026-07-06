@@ -12,6 +12,7 @@
  */
 
 import { renderMarkdownToMatrixHtml } from "./format-matrix.js";
+import type { EncryptedFileLike } from "./media-handler.js";
 
 /**
  * The `m.room.message` content object for an `m.text` send: the plaintext
@@ -179,6 +180,80 @@ export function buildThreadRelation(threadRootId: string): MatrixThreadRelation 
     is_falling_back: true,
     "m.in_reply_to": { event_id: threadRootId },
   };
+}
+
+/** The message subtype a media event carries, chosen from the MIME family. */
+export type MatrixMediaMsgtype = "m.image" | "m.audio" | "m.video" | "m.file";
+
+/** The declared media info block (provisional mimetype + byte size) on a media event. */
+export interface MatrixMediaInfo {
+  /** Declared MIME type (the caller's; a receiver sniffs the authoritative one). */
+  mimetype: string;
+  /** Declared byte size of the (encrypted, when encrypted) payload. */
+  size: number;
+}
+
+/**
+ * The `m.room.message` content for a media send. Exactly one of `url` (plaintext
+ * room) or `file` (encrypted room) is present: a plaintext room carries the mxc as
+ * `content.url`; an encrypted room carries the encrypted-file record (the JWK key,
+ * iv, hashes, version) plus the uploaded mxc as `content.file`, and NO plaintext
+ * `content.url`. Snake-cased to match the Matrix event content wire shape.
+ */
+export interface MatrixAttachmentContent {
+  /** `m.image` / `m.audio` / `m.video` / `m.file`, from the MIME family. */
+  msgtype: MatrixMediaMsgtype;
+  /** Plaintext fallback label — the file name. */
+  body: string;
+  /** Declared mimetype + size for a client preview. */
+  info: MatrixMediaInfo;
+  /** Plaintext room only: the uploaded mxc. Absent in an encrypted room. */
+  url?: string;
+  /** Encrypted room only: the encrypted-file record + the uploaded mxc. Absent in a plaintext room. */
+  file?: EncryptedFileLike;
+}
+
+/** Map a MIME type to the Matrix media msgtype; anything non-a/v/image is a file. */
+function msgtypeFromMime(mime: string): MatrixMediaMsgtype {
+  if (mime.startsWith("image/")) return "m.image";
+  if (mime.startsWith("audio/")) return "m.audio";
+  if (mime.startsWith("video/")) return "m.video";
+  return "m.file";
+}
+
+/**
+ * Build the `m.room.message` content for a media send. The msgtype is derived from
+ * the MIME family. When `encryptedInfo` is present (an encrypted room) the content
+ * carries `file` — the url-less encrypted-file record stitched to the uploaded mxc
+ * — and no plaintext `url`; otherwise it carries the plaintext `url`. Pure and
+ * SDK-free: the caller uploads the bytes (or ciphertext) and sends the result.
+ *
+ * @param args.mime - The (declared) MIME type.
+ * @param args.fileName - The display file name (the plaintext body fallback).
+ * @param args.sizeBytes - The uploaded payload byte size for the info block.
+ * @param args.contentUri - The mxc returned by the upload.
+ * @param args.encryptedInfo - The url-less encrypted-file record for an encrypted
+ *   room; omit for a plaintext room.
+ * @returns The media content object (plaintext `url` XOR encrypted `file`).
+ */
+export function buildAttachmentContent(args: {
+  mime: string;
+  fileName: string;
+  sizeBytes: number;
+  contentUri: string;
+  encryptedInfo?: Omit<EncryptedFileLike, "url">;
+}): MatrixAttachmentContent {
+  const base = {
+    msgtype: msgtypeFromMime(args.mime),
+    body: args.fileName,
+    info: { mimetype: args.mime, size: args.sizeBytes },
+  };
+  if (args.encryptedInfo !== undefined) {
+    // Encrypted room: the record rides content.file (its url is the uploaded mxc);
+    // no plaintext content.url so nothing readable leaks alongside the ciphertext.
+    return { ...base, file: { ...args.encryptedInfo, url: args.contentUri } };
+  }
+  return { ...base, url: args.contentUri };
 }
 
 /**

@@ -16,6 +16,11 @@ import { runWithContext } from "@comis/core";
 import { err, fromPromise, ok, type Result } from "@comis/shared";
 import { randomUUID } from "node:crypto";
 import { classifyMatrixError, type MatrixErrorInput } from "./errors.js";
+import {
+  buildAttachmentContent,
+  type MatrixAttachmentContent,
+} from "./matrix-adapter-outbound.js";
+import type { EncryptedAttachmentParts } from "./media-handler.js";
 
 /**
  * The senderId a synthesized decrypt-degrade note carries. Deliberately NOT a
@@ -236,6 +241,78 @@ export async function sendEventWithRetry(
 ): Promise<Result<{ event_id: string }, Error>> {
   return withRateLimitRetry(
     () => activeClient.sendEvent(roomId, EventType.RoomMessage, content),
+    deps,
+  );
+}
+
+/**
+ * Upload attachment bytes and send the typed media event, encrypting first in an
+ * encrypted room. The room-encryption decision is the rust-crypto authoritative
+ * `getCrypto()?.isEncryptionEnabledInRoom(roomId)` — undefined crypto (a
+ * plaintext-only install) is treated as not encrypted. In an encrypted room the
+ * bytes are encrypted through the injected `encryptAttachment` and the CIPHERTEXT
+ * is uploaded, so a plaintext `content.url` is never sent in an encrypted room; the
+ * encrypted-file record rides `content.file`. In a plaintext room the bytes are
+ * uploaded as-is and the mxc rides `content.url`. The upload/crypto step runs inside
+ * a Result wrapper so a codec or upload rejection surfaces as an `err` rather than a
+ * throw, and the send itself rides the shared 429/5xx retry policy.
+ *
+ * Parameterized (client + already-read bytes + the crypto seam) so it lives outside
+ * the adapter controller — the adapter method is a thin delegator that reads the temp
+ * file and maps this Result.
+ */
+export async function buildAndSendAttachment(
+  client: MatrixClient,
+  roomId: string,
+  bytes: Buffer,
+  mime: string,
+  fileName: string,
+  deps: {
+    encryptAttachment: (bytes: Buffer) => Promise<EncryptedAttachmentParts>;
+    timer?: TimerPort;
+    logger: ComisLogger;
+  },
+): Promise<Result<{ event_id: string }, Error>> {
+  // The SDK's uploadContent file param is a broad body-init union; a Node Buffer
+  // rides it at runtime but needs a boundary cast (the union's variance rejects it).
+  type UploadFile = Parameters<MatrixClient["uploadContent"]>[0];
+  const prepared = await fromPromise(
+    (async (): Promise<MatrixAttachmentContent> => {
+      const encrypted =
+        (await client.getCrypto()?.isEncryptionEnabledInRoom(roomId)) === true;
+      if (encrypted) {
+        const enc = await deps.encryptAttachment(bytes);
+        const uploaded = await client.uploadContent(enc.ciphertext as unknown as UploadFile, {
+          type: mime,
+          name: fileName,
+        });
+        return buildAttachmentContent({
+          mime,
+          fileName,
+          sizeBytes: bytes.length,
+          contentUri: uploaded.content_uri,
+          encryptedInfo: enc.info,
+        });
+      }
+      const uploaded = await client.uploadContent(bytes as unknown as UploadFile, {
+        type: mime,
+        name: fileName,
+      });
+      return buildAttachmentContent({
+        mime,
+        fileName,
+        sizeBytes: bytes.length,
+        contentUri: uploaded.content_uri,
+      });
+    })(),
+  );
+  if (!prepared.ok) return err(prepared.error);
+  // The SDK types m.room.message content as a broad XOR union; the builder emits the
+  // exact media shape, so cast at this single sendEvent boundary (as sendMessage does).
+  return sendEventWithRetry(
+    client,
+    roomId,
+    prepared.value as unknown as TimelineEvents[EventType.RoomMessage],
     deps,
   );
 }
