@@ -67,6 +67,7 @@ import {
   createIrcActivityRenderer,
   createEmailActivityRenderer,
   createMSTeamsActivityRenderer,
+  createMatrixActivityRenderer,
 } from "@comis/channels";
 import type { SignCallbackData, MintApprovalLink } from "@comis/channels";
 import type { ComisLogger } from "@comis/infra";
@@ -127,7 +128,7 @@ type RendererFactoryMap<K extends string> = Readonly<Record<K, RendererFactory>>
 /** Channel-type key unions, one per strategy — the closed sets `selectStrategy`
  *  can route to each strategy. Adding a channelType to a strategy is a one-line
  *  edit here that `tsc` then forces into the matching map literal. */
-type EditPlaceChannel = "telegram" | "discord" | "slack" | "whatsapp" | "msteams";
+type EditPlaceChannel = "telegram" | "discord" | "slack" | "whatsapp" | "msteams" | "matrix";
 type DeleteAndRepostChannel = "signal";
 type AppendOnlyChannel = "imessage" | "line";
 type LinePerEventChannel = "irc";
@@ -145,6 +146,7 @@ const EDIT_PLACE_RENDERER_FACTORIES: RendererFactoryMap<EditPlaceChannel> = {
   slack: createSlackActivityRenderer,
   whatsapp: createWhatsAppActivityRenderer,
   msteams: createMSTeamsActivityRenderer,
+  matrix: createMatrixActivityRenderer,
 };
 
 /** DeleteAndRepost → Signal (deleteMessages, no edit). Uses {timer, clock}. */
