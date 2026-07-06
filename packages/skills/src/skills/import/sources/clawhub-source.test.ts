@@ -285,6 +285,8 @@ describe("resolveClawHub — instrumentation", () => {
 describe("evaluateVerdict — a clean verdict is not blocked", () => {
   it("returns { blocked: false } for a clean, approved, not-blocked verdict", () => {
     const trust: ClawHubTrust = {
+      ok: true,
+      decision: "pass",
       scanStatus: "clean",
       moderationState: "approved",
       blockedFromDownload: false,
@@ -455,7 +457,15 @@ describe("resolveClawHub — server sha256 when present", () => {
 // ---------------------------------------------------------------------------
 
 describe("evaluateVerdict — the pure blocking predicate", () => {
-  const base = { blockedFromDownload: false, reasons: [] as readonly string[] };
+  const base = { ok: true, decision: "pass", blockedFromDownload: false, reasons: [] as readonly string[] };
+
+  it("blocks a not-ok top-level verdict even with no granular security signal", () => {
+    expect(evaluateVerdict({ ...base, ok: false, decision: "fail" }).blocked).toBe(true);
+  });
+
+  it("blocks a non-pass decision even when ok is true", () => {
+    expect(evaluateVerdict({ ...base, decision: "needs_review" }).blocked).toBe(true);
+  });
 
   it("blocks a malicious scan status", () => {
     expect(evaluateVerdict({ ...base, scanStatus: "malicious" }).blocked).toBe(true);

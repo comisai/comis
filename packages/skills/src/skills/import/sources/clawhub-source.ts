@@ -85,6 +85,10 @@ export interface ClawHubResolveError {
 
 /** The derived trust signal the blocking predicate is evaluated over. */
 export interface ClawHubTrust {
+  /** The authoritative top-level pass/fail flag from the verify verdict. */
+  readonly ok: boolean;
+  /** The authoritative top-level decision token from the verify verdict. */
+  readonly decision: string;
   readonly scanStatus?: string | undefined;
   readonly moderationState?: string | undefined;
   readonly blockedFromDownload: boolean;
@@ -319,15 +323,35 @@ async function fetchCapped(
 const BLOCKING_MODERATION_STATES = new Set(["blocked", "quarantined", "revoked"]);
 
 /**
+ * Top-level verify decisions that let a release proceed. The verdict is
+ * fail-closed: only an explicit `ok:true` carrying one of these decisions passes
+ * the top-level gate — any other decision (or `ok:false`) blocks, even absent a
+ * granular security token, so an unrecognized decision is treated conservatively.
+ */
+const PASS_DECISIONS = new Set(["pass", "passed", "ok", "approved", "allow", "allowed", "clean"]);
+
+/**
  * The pure blocking predicate over the derived trust signal. A release is
- * blocked when ANY of: it is flagged blocked-from-download, the artifact scan
- * status is malicious, the moderation state is a blocking one, or a verdict
- * reason matches a malicious / malware / `*_blocked` / `*.blocked` / `blocked`
- * pattern. A clean / pending / not-run verdict with no flags is NOT blocked. The
- * returned reasons are human-readable and drive the refusal hint.
+ * blocked when ANY of: the authoritative top-level verdict is not-ok or its
+ * decision falls outside the recognized pass set, it is flagged
+ * blocked-from-download, the artifact scan status is malicious, the moderation
+ * state is a blocking one, or a verdict reason carries a malicious / malware /
+ * `*_blocked` / `*.blocked` / `blocked` token. A clean, explicitly-passed
+ * verdict with no flags is NOT blocked. The returned reasons are human-readable
+ * and drive the refusal hint.
  */
 export function evaluateVerdict(trust: ClawHubTrust): { blocked: boolean; reasons: readonly string[] } {
   const reasons: string[] = [];
+  // The authoritative top-level verdict is a fail-closed signal in its own
+  // right: a registry that marks the release not-ok, or renders a decision
+  // outside the pass set, blocks here even when no granular security detail is
+  // present — the top-level ok/decision are honored, not just the security block.
+  if (trust.ok !== true) {
+    reasons.push("the registry verdict is not ok");
+  }
+  if (!PASS_DECISIONS.has(trust.decision.trim().toLowerCase())) {
+    reasons.push(`the verify decision is '${trust.decision}' (not a pass)`);
+  }
   if (trust.blockedFromDownload === true) {
     reasons.push("the release is blocked from download");
   }
@@ -494,6 +518,8 @@ async function resolveInner(
   const verify = verifyParsed.data;
   const security = verify.security;
   const trust: ClawHubTrust = {
+    ok: verify.ok,
+    decision: verify.decision,
     scanStatus: security?.scanStatus ?? security?.status,
     moderationState: security?.moderationState,
     blockedFromDownload: security?.blockedFromDownload ?? false,
