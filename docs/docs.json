@@ -46,7 +46,7 @@
         "tab": "Channels",
         "groups": [
           { "group": "Overview", "pages": ["channels/index", "channels/multi-user"] },
-          { "group": "Adapters", "pages": ["channels/discord", "channels/telegram", "channels/slack", "channels/whatsapp", "channels/signal", "channels/imessage", "channels/line", "channels/irc", "channels/email"] },
+          { "group": "Adapters", "pages": ["channels/discord", "channels/telegram", "channels/slack", "channels/whatsapp", "channels/signal", "channels/imessage", "channels/line", "channels/irc", "channels/email", "channels/msteams", "channels/matrix"] },
           { "group": "Infrastructure", "pages": ["channels/delivery"] }
         ]
       },
