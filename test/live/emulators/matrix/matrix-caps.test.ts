@@ -11,9 +11,9 @@
  * module-local `CAPABILITIES`) and asserts the overlapping fields reconcile
  * field-by-field. If the adapter ever flips a feature flag or changes
  * `maxMessageChars`, this test fails LOUDLY — the emulator's caps can never
- * silently drift from the real adapter. Reactions, history fetch, and threaded
- * replies are live (`true`); edits/deletes/attachments/typing stay `false` and
- * `buttons` is `"none"`.
+ * silently drift from the real adapter. Reactions, history fetch, threaded
+ * replies, and typing are live (`true`); edits/deletes/attachments stay `false`
+ * and `buttons` is `"none"`.
  *
  * `@comis/channels` resolves from `dist/` via the live vitest alias, so this
  * reads the REAL built adapter declaration (run `pnpm build` first if stale).
@@ -66,14 +66,14 @@ describe("matrix-caps — Matrix ChannelCaps descriptor", () => {
     expect(MATRIX_MAX_MESSAGE_CHARS).toBe(32768);
   });
 
-  it("declares the scope: reactions and threads true, the other outbound rich flags false, buttons none, inbound text true", () => {
-    // Reactions send (m.reaction annotation) and threaded reply (m.thread relation)
-    // are live; edits/deletes/attachments/typing sends are not in this scope.
+  it("declares the scope: reactions, threads, and typing true, the other outbound rich flags false, buttons none, inbound text true", () => {
+    // Reactions send (m.reaction annotation), threaded reply (m.thread relation),
+    // and typing (/typing notice) are live; edits/deletes/attachments are not in scope.
     expect(matrixCaps.outbound.reactions).toBe(true);
     expect(matrixCaps.outbound.edits).toBe(false);
     expect(matrixCaps.outbound.deletes).toBe(false);
     expect(matrixCaps.outbound.attachments).toBe(false);
-    expect(matrixCaps.outbound.typing).toBe(false);
+    expect(matrixCaps.outbound.typing).toBe(true);
     expect(matrixCaps.outbound.threads).toBe(true);
     // No button surface here (the adapter declares the "none" flavour).
     expect(matrixCaps.outbound.buttons).toBe(false);
@@ -92,7 +92,7 @@ describe("matrix-caps — caps↔adapter reconciliation (the drift tripwire)", (
     expect(matrixCaps.outbound.edits).toBe(f.editMessages); // false
     expect(matrixCaps.outbound.deletes).toBe(f.deleteMessages); // false
     expect(matrixCaps.outbound.attachments).toBe(f.attachments); // false
-    expect(matrixCaps.outbound.typing).toBe(f.typing); // false
+    expect(matrixCaps.outbound.typing).toBe(f.typing); // true
     expect(matrixCaps.outbound.threads).toBe(f.threads); // true
 
     // emulator buttons:false means the adapter declares the "none" flavour.
@@ -117,7 +117,7 @@ describe("matrix-caps — caps↔adapter reconciliation (the drift tripwire)", (
       deleteMessages: false,
       fetchHistory: true,
       attachments: false,
-      typing: false,
+      typing: true,
       threads: true,
       buttons: "none",
     });

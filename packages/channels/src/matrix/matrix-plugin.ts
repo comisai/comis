@@ -4,15 +4,16 @@
  *
  * Every capability flag here is honest — a flag is true only when the behavior
  * ships AND its rendering path is wired. Reactions (send an `m.reaction`
- * annotation, redact to remove), history fetch (paginate `/messages`), and
- * threaded replies (an `m.thread` relation, with over-budget content split into
- * byte-bounded sequential events) are real and declared true. Edits (send an
- * `m.replace`), deletes (redact the target), and honest inbound edit/redaction
- * surfacing are implemented too, but `editMessages`/`deleteMessages` stay false for
- * now: flipping `editMessages` routes rendering to the edit-in-place strategy,
- * which needs the activity renderer wired in lockstep, so until then the capability
- * gate simply does not admit these calls (a safe under-declaration — a false flag
- * never advertises a missing behavior). Attachments and typing are not yet
+ * annotation, redact to remove), history fetch (paginate `/messages`), threaded
+ * replies (an `m.thread` relation, with over-budget content split into
+ * byte-bounded sequential events), and typing (a `/typing` notice via
+ * `platformAction`, refreshed before its timeout) are real and declared true.
+ * Edits (send an `m.replace`), deletes (redact the target), and honest inbound
+ * edit/redaction surfacing are implemented too, but `editMessages`/`deleteMessages`
+ * stay false for now: flipping `editMessages` routes rendering to the edit-in-place
+ * strategy, which needs the activity renderer wired in lockstep, so until then the
+ * capability gate simply does not admit these calls (a safe under-declaration — a
+ * false flag never advertises a missing behavior). Attachments are not yet
  * implemented and stay false; Matrix exposes no button surface (`buttons: "none"`).
  * `selectStrategy(caps)` routes rendering from these flags, so flipping one on
  * advertises a behavior the adapter genuinely performs.
@@ -35,7 +36,7 @@ const CAPABILITIES: ChannelCapability = {
     deleteMessages: false,
     fetchHistory: true,
     attachments: false,
-    typing: false,
+    typing: true,
     threads: true,
     buttons: "none",
   },
