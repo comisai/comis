@@ -387,6 +387,22 @@ describe("the full disposition table — every branch, named", () => {
     expect(warnsFor(scalar.warnings, "metadata.openclaw")).toBe(true);
   });
 
+  it("keeps the sibling-namespace WARN prose generic — the operator message names no reference project", () => {
+    // The `key` field stays the real interop identifier for assertions/audit,
+    // but the operator-facing message/hint prose (which the pipeline surfaces in
+    // StagedImport.warnings) must state the mechanism generically.
+    const notObject = mapForeignFrontmatter({ name: "n", metadata: { openclaw: 5 } });
+    const nsWarn = notObject.warnings.find((w) => w.key === "metadata.openclaw");
+    expect(nsWarn).toBeDefined();
+    expect(nsWarn!.message).not.toContain("openclaw");
+    expect(nsWarn!.hint).not.toContain("openclaw");
+
+    const unmapped = mapForeignFrontmatter({ name: "n", metadata: { openclaw: { emoji: "MAG" } } });
+    const keyWarn = unmapped.warnings.find((w) => w.key === "metadata.openclaw.emoji");
+    expect(keyWarn).toBeDefined();
+    expect(keyWarn!.message).not.toContain("openclaw");
+  });
+
   it("drops a sibling-namespace requires that is not an object", () => {
     const { warnings } = mapForeignFrontmatter({
       name: "n",

@@ -220,8 +220,8 @@ function foldSiblingNamespace(
     warn(
       warnings,
       "metadata.openclaw",
-      `The metadata.openclaw namespace was not an object and was dropped.`,
-      `Author metadata.openclaw as an object (or a JSON string) carrying skillKey/primaryEnv/os/requires.`,
+      `The sibling platform-extension namespace was not an object and was dropped.`,
+      `Author the sibling platform-extension namespace as an object (or a JSON string) carrying skillKey/primaryEnv/os/requires.`,
     );
     return;
   }
@@ -251,7 +251,7 @@ function foldSiblingNamespace(
         warn(
           warnings,
           `metadata.openclaw.${key}`,
-          `'metadata.openclaw.${key}' has no internal manifest home and was dropped.`,
+          `The sibling platform-extension key '${key}' has no internal manifest home and was dropped.`,
           `Comis maps skillKey/primaryEnv/os/requires; it does not install or consume '${key}'.`,
         );
     }
