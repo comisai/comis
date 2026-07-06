@@ -23,6 +23,7 @@ import {
   readProvenanceStore,
   provenanceKey,
   resolveWellKnown,
+  resolveClawHub,
   createSkillIndexCache,
   type AcquireInput,
   type AcquisitionSource,
@@ -31,6 +32,8 @@ import {
   type ImportReject,
   type WellKnownResolved,
   type WellKnownResolveDeps,
+  type ClawHubResolved,
+  type ClawHubResolveDeps,
 } from "@comis/skills";
 import { runSkillImport, type SkillImportDeps, type CommitResult } from "./import-commit.js";
 import { readBundleInstallState } from "./bundle-install-state.js";
@@ -140,6 +143,10 @@ export async function importThroughPipeline(
     confirm?: boolean;
     /** Normalized registry origin — recorded in provenance (wellknown/clawhub only). */
     registry?: string;
+    /** Resolver-derived publisher signal (clawhub only) — feeds the commit's warnable classes. */
+    officialPublisher?: boolean;
+    /** From `skills.import.requireOfficialPublisher` (clawhub only) — the non-official-publisher gate. */
+    requireOfficialPublisher?: boolean;
     ctx: ImportCtx;
   },
 ): Promise<Result<RetrofitImportResult, ImportReject>> {
@@ -158,6 +165,8 @@ export async function importThroughPipeline(
       agentId: args.agentId,
       ...(args.confirm !== undefined && { confirm: args.confirm }),
       ...(args.registry !== undefined && { registry: args.registry }),
+      ...(args.officialPublisher !== undefined && { officialPublisher: args.officialPublisher }),
+      ...(args.requireOfficialPublisher !== undefined && { requireOfficialPublisher: args.requireOfficialPublisher }),
     },
     importDeps,
   );
@@ -277,6 +286,107 @@ export async function resolveWellKnownFileSet(
   return resolved;
 }
 
+// ---------------------------------------------------------------------------
+// ClawHub install-resolver behind the SAME fail-closed registry allowlist gate
+// ---------------------------------------------------------------------------
+
+/** Arguments for {@link resolveClawHubFileSet}. */
+export interface ResolveClawHubFileSetArgs {
+  /** The scoped skill reference: `@owner/slug`. */
+  readonly name: string;
+  readonly scope: SkillScope;
+  readonly agentId: string;
+  /**
+   * Test-only overrides forwarded verbatim to {@link resolveClawHub}. Production
+   * omits — the real SSRF validate/fetch primitives run.
+   */
+  readonly overrides?: Pick<ClawHubResolveDeps, "validate" | "fetchImpl">;
+}
+
+/**
+ * Resolve a clawhub `@owner/slug` skill to its release archive bytes, behind the
+ * SAME fail-closed allowlist gate as {@link resolveWellKnownFileSet}.
+ *
+ * The reserved `clawhub` token MUST be a member of the caps-owning agent's
+ * `skills.import.registries` — the DEFAULT agent for a shared import, the caller
+ * for a local one (matches {@link resolveCaps} + the shared-write guard). A
+ * non-member refuses FLATLY — a config edit, NEVER `confirm`-overridable (the gate
+ * has no confirm parameter) — BEFORE the resolver opens any connection, so a
+ * default-empty allowlist blocks every clawhub import while leaving archive /
+ * GitHub / well-known imports untouched.
+ *
+ * On pass, the resolver runs with the agent's byte caps + the injected (or real)
+ * SSRF seams; the install decision + verify verdict are evaluated BEFORE the
+ * artifact download (a blocked release never downloads). The release bytes + the
+ * derived `officialPublisher` are returned alongside the caps-owning agent's
+ * `requireOfficialPublisher` policy (read at this single site), so the dispatch
+ * threads BOTH into the two-warnable-classes commit collector. A typed resolver
+ * reject is mapped to the runner's {@link ImportReject} (hint + errorKind preserved).
+ */
+export async function resolveClawHubFileSet(
+  deps: WorkspaceApiDeps,
+  args: ResolveClawHubFileSetArgs,
+): Promise<
+  Result<
+    {
+      readonly archiveBytes: string;
+      readonly identifier: string;
+      readonly officialPublisher: boolean;
+      readonly requireOfficialPublisher: boolean;
+    },
+    ImportReject
+  >
+> {
+  const capsAgent = args.scope === "shared" ? deps.defaultAgentId : args.agentId;
+  const registries = deps.agents[capsAgent]?.skills?.import?.registries ?? [];
+
+  const allowed = registries.some((entry) => normalizeRegistryOrigin(entry) === CLAWHUB_REGISTRY_TOKEN);
+  if (!allowed) {
+    // Fail closed BEFORE any fetch. The allowlist is a config decision; confirm is
+    // never consulted here, so a missing clawhub token can never be overridden at import time.
+    deps.logger.warn(
+      {
+        submodule: "clawhub-gate",
+        errorKind: "precondition" as const,
+        hint: "add 'clawhub' to skills.import.registries",
+        registryOrigin: CLAWHUB_REGISTRY_TOKEN,
+      },
+      "skill import: clawhub not in the skills.import.registries allowlist — refused",
+    );
+    return err({
+      stage: "acquire",
+      message: "ClawHub imports are not enabled — 'clawhub' is not in the skills.import.registries allowlist",
+      hint: "add 'clawhub' to skills.import.registries to permit the import — this is a config edit; confirm does not override it",
+      errorKind: "precondition",
+    });
+  }
+
+  // The single config-read site for the clawhub path (same shared→default rule as caps).
+  const requireOfficialPublisher =
+    deps.agents[capsAgent]?.skills?.import?.requireOfficialPublisher ?? true;
+  const caps = resolveCaps(deps, capsAgent);
+
+  const resolveDeps: ClawHubResolveDeps = {
+    caps: { maxResponseBytes: caps.maxFileBytes, maxArchiveBytes: caps.maxArchiveBytes },
+    logger: deps.logger,
+    ...(args.overrides?.validate !== undefined && { validate: args.overrides.validate }),
+    ...(args.overrides?.fetchImpl !== undefined && { fetchImpl: args.overrides.fetchImpl }),
+  };
+
+  const resolved = await resolveClawHub({ name: args.name }, resolveDeps);
+  if (!resolved.ok) {
+    const e = resolved.error;
+    return err({ stage: "acquire", message: e.message, hint: e.hint, errorKind: e.errorKind });
+  }
+  const value: ClawHubResolved = resolved.value;
+  return ok({
+    archiveBytes: value.archiveBytes,
+    identifier: value.identifier,
+    officialPublisher: value.officialPublisher,
+    requireOfficialPublisher,
+  });
+}
+
 /**
  * Attach a content-free provenance summary to each listed skill from the durable
  * provenance store. Advisory downward only — a skill with no import record is
@@ -289,7 +399,13 @@ export function enrichWithProvenanceSummary<T extends { name: string }>(
   agentId: string,
 ): Array<
   T & {
-    provenanceSummary?: { source: AcquisitionSource; registry?: string; hashPrefix: string; importedAt: string };
+    provenanceSummary?: {
+      source: AcquisitionSource;
+      registry?: string;
+      officialPublisher?: boolean;
+      hashPrefix: string;
+      importedAt: string;
+    };
   }
 > {
   if (!dataDir || dataDir.length === 0) return [...descriptions];
@@ -304,6 +420,7 @@ export function enrichWithProvenanceSummary<T extends { name: string }>(
       provenanceSummary: {
         source: rec.source,
         ...(rec.registry !== undefined && { registry: rec.registry }),
+        ...(rec.officialPublisher !== undefined && { officialPublisher: rec.officialPublisher }),
         hashPrefix: rec.contentHash.slice(0, 12),
         importedAt: rec.importedAt,
       },

@@ -121,6 +121,16 @@ export type {
 export { resolveWellKnown } from "./import/sources/wellknown-source.js";
 export type { WellKnownResolved, WellKnownResolveDeps } from "./import/sources/wellknown-source.js";
 export { createSkillIndexCache } from "./import/skill-index-cache.js";
+// The clawhub install-resolver + its return/deps types. Barrel-exported HERE,
+// landing together with their first cross-package consumer (the daemon import
+// runner's clawhub allowlist gate) so the dead-export gate stays green.
+// resolveClawHub resolves an @owner/slug release through the community hub's
+// install-resolver (install decision → verify verdict → verdict gate → artifact
+// download, all SSRF-pinned), returning the release archive bytes + the derived
+// officialPublisher signal. Only the three symbols the daemon names are exported;
+// the internal verdict/caps/error types stay module-private.
+export { resolveClawHub } from "./import/sources/clawhub-source.js";
+export type { ClawHubResolved, ClawHubResolveDeps } from "./import/sources/clawhub-source.js";
 
 // Integrations -- MCP client manager
 export { createMcpClientManager, qualifyToolName, parseQualifiedName } from "./integrations/mcp-client/index.js";
