@@ -38,6 +38,7 @@ import {
   type EmailAdapterDeps,
   type MsTeamsAdapterHandle,
   type MsTeamsPluginHandle,
+  type GoogleChatPluginHandle,
   type TeamsActivity,
 } from "@comis/channels";
 import { createMsTeamsIngress } from "@comis/gateway";
@@ -73,6 +74,10 @@ export interface AdapterBootstrapResult {
    *  creation — mirrors tgPlugin/linePlugin). Undefined when the channel is
    *  disabled or its credentials are invalid. */
   msTeamsPlugin?: MsTeamsPluginHandle;
+  /** Google Chat plugin handle (needed by the media pipeline to build the
+   *  inbound resolver over the service-account chat.bot token provider).
+   *  Undefined when the channel is disabled or its credentials are invalid. */
+  googlechatPlugin?: GoogleChatPluginHandle;
 }
 
 // ---------------------------------------------------------------------------
@@ -112,6 +117,7 @@ export async function bootstrapAdapters(deps: {
   let linePlugin: LinePluginHandle | undefined;
   let msTeamsIngress: import("hono").Hono | undefined;
   let msTeamsPlugin: MsTeamsPluginHandle | undefined;
+  let googlechatPlugin: GoogleChatPluginHandle | undefined;
 
   // Helper: attempt to get a secret, return undefined if not found
   const getSecret = (name: string): string | undefined => {
@@ -526,6 +532,11 @@ export async function bootstrapAdapters(deps: {
       });
       adaptersByType.set("googlechat", plugin.adapter);
       channelPlugins.set("googlechat", plugin);
+      // Capture the handle so the media pipeline can build the inbound resolver
+      // over the shared service-account chat.bot token provider (mirrors the
+      // tgPlugin/msTeamsPlugin capture). Kept as a GoogleChatPluginHandle — a
+      // down-cast to ChannelPluginPort would lose createResolver.
+      googlechatPlugin = plugin as GoogleChatPluginHandle;
       channelsLogger.info({ channelType: "googlechat", mode: channelConfig.googlechat.mode }, "Channel adapter initialized");
     } else {
       channelsLogger.warn({ hint: "Set channels.googlechat.serviceAccountKey (SecretRef) or GOOGLECHAT_SA_KEY, and channels.googlechat.subscriptionName", errorKind: "auth" as const }, "Google Chat credential validation failed");
@@ -539,5 +550,5 @@ export async function bootstrapAdapters(deps: {
   }
   } // end if (channelConfig)
 
-  return { adaptersByType, tgPlugin, linePlugin, channelPlugins, msTeamsIngress, msTeamsPlugin };
+  return { adaptersByType, tgPlugin, linePlugin, channelPlugins, msTeamsIngress, msTeamsPlugin, googlechatPlugin };
 }
