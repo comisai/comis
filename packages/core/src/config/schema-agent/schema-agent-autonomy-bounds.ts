@@ -42,11 +42,11 @@ import { z } from "zod";
  */
 export const AutonomyBudgetConfigSchema = z.strictObject({
   /** Priced per-root $ ceiling (the flat `aggregateBudgetUsd` is its alias). */
-  aggregateUsd: z.number().positive().default(100),
+  aggregateUsd: z.number().positive().default(200),
   /** Per-root token ceiling — bites even on an unknown-priced ($0) model. */
-  tokens: z.number().int().positive().default(100_000_000),
-  /** Per-root wall-clock ceiling in ms — backstop on a stuck/looping tree (24 h). */
-  wallClockMs: z.number().int().positive().default(86_400_000),
+  tokens: z.number().int().positive().default(200_000_000),
+  /** Per-root wall-clock ceiling in ms — backstop on a stuck/looping tree (48 h). */
+  wallClockMs: z.number().int().positive().default(172_800_000),
 });
 
 /**

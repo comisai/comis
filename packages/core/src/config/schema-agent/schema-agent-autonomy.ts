@@ -287,7 +287,7 @@ interface ProfileEntry {
  * limb is a one-edit change in the schema above.
  */
 const STANDARD_GUARDS = {
-  aggregateBudgetUsd: 100,
+  aggregateBudgetUsd: 200,
   maxConcurrentSelfAgents: 4,
   maxSelfSpawnRatePerMin: 30,
   cronSelfMax: 8,
