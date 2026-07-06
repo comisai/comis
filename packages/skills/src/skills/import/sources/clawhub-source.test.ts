@@ -213,6 +213,23 @@ describe("resolveClawHub — Zod fail-loud on shape drift", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Slug encoding — the @owner/slug is percent-encoded into the request path so a
+// slug carrying an encodable char cannot inject a query string mid-path.
+// ---------------------------------------------------------------------------
+
+describe("resolveClawHub — the slug is percent-encoded into the request path", () => {
+  it("encodes an encodable char in the slug rather than injecting it raw into the path", async () => {
+    const fetchImpl = flowFetch({});
+    // `@acme/foo?x=1` — the regex permits `?` in the slug; interpolated raw it
+    // would start a query string mid-path and drop the ownerHandle parameter.
+    await resolveClawHub({ name: "@acme/foo?x=1" }, { caps: CAPS, validate: okValidate, fetchImpl });
+    const firstUrl = fetchImpl.mock.calls[0]![0] as string;
+    expect(firstUrl).toContain("/skills/foo%3Fx%3D1/install");
+    expect(firstUrl).not.toContain("/skills/foo?x=1/install");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Input + SSRF + never-throws
 // ---------------------------------------------------------------------------
 
