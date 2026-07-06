@@ -523,20 +523,63 @@ describe("createGoogleChatAdapter — lifecycle", () => {
     expect(typeof holder.sourceDeps?.getPubSubToken).toBe("function");
   });
 
-  it("WARNs (errorKind 'config', knob-naming hint) but still boots the pull loop when mode is 'webhook'", async () => {
-    // The webhook transport is not wired; mode:"webhook" must not silently pass.
-    // Emit a clear config WARN naming the knob, then run the Pub/Sub pull loop.
-    const { deps, loggerSpy, fake } = await makeDeps({ mode: "webhook" });
+  it("start() in webhook mode with valid creds and NO subscriptionName returns ok, marks connected, and never opens the pull loop", async () => {
+    // Webhook mode has no Pub/Sub subscription — inbound arrives through the
+    // gateway ingress driving handleChatEvent — so start() must skip the pull
+    // loop entirely and must NOT require a subscriptionName.
+    const createSource = vi.fn((): PubSubSource => makeFakeSource().source);
+    const { deps } = await makeDeps({
+      mode: "webhook",
+      subscriptionName: "",
+      createSource,
+    });
     const adapter = createGoogleChatAdapter(deps);
 
     const result = await adapter.start();
 
     expect(result.ok).toBe(true);
-    expect(fake.start).toHaveBeenCalledTimes(1);
-    const warn = findByErrorKind(loggerSpy.warn, "config");
-    expect(warn).toBeDefined();
-    expect(String(warn?.hint)).toContain("channels.googlechat.mode");
-    expect(String(warn?.hint).toLowerCase()).toContain("pubsub");
+    expect(createSource).not.toHaveBeenCalled();
+    expect(adapter.getStatus?.().connected).toBe(true);
+  });
+
+  it("start() in webhook mode skips the pull loop even when a subscriptionName is present (the transport is the only mode difference)", async () => {
+    const createSource = vi.fn((): PubSubSource => makeFakeSource().source);
+    const { deps } = await makeDeps({ mode: "webhook", createSource });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const result = await adapter.start();
+
+    expect(result.ok).toBe(true);
+    // Even with a subscription configured, webhook mode never opens the loop.
+    expect(createSource).not.toHaveBeenCalled();
+  });
+
+  it("start() in webhook mode with a blank service-account key returns err and never opens the pull loop (webhook still sends replies, so it needs the key)", async () => {
+    const createSource = vi.fn((): PubSubSource => makeFakeSource().source);
+    const { deps, loggerSpy } = await makeDeps({
+      mode: "webhook",
+      serviceAccountKey: "",
+      createSource,
+    });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const result = await adapter.start();
+
+    expect(result.ok).toBe(false);
+    expect(createSource).not.toHaveBeenCalled();
+    expect(adapter.getStatus?.().connected).toBe(false);
+    expect(loggerSpy.error).toHaveBeenCalled();
+  });
+
+  it("start() in pubsub mode with a blank subscriptionName still returns err (the pull subscription precondition is unchanged)", async () => {
+    const createSource = vi.fn((): PubSubSource => makeFakeSource().source);
+    const { deps } = await makeDeps({ subscriptionName: "", createSource });
+    const adapter = createGoogleChatAdapter(deps);
+
+    const result = await adapter.start();
+
+    expect(result.ok).toBe(false);
+    expect(createSource).not.toHaveBeenCalled();
   });
 
   it("start() is idempotent: a second start() without an intervening stop() does not create/boot a second source", async () => {
