@@ -96,10 +96,19 @@ export interface RunSkillImportOpts {
   readonly scope: SkillScope;
   /** Owning / acting agent id. */
   readonly agentId: string;
-  /** Overrides ONLY the pin-divergence warning on a provenance-matched update. */
+  /**
+   * Overrides BOTH warnable classes at commit: a non-official registry publisher
+   * (`officialPublisher:false` while `requireOfficialPublisher:true`) AND a
+   * pin-divergence on a provenance-matched update. NEVER overrides a flat
+   * collision (unprovenanced / foreign source-identifier).
+   */
   readonly confirm?: boolean;
   /** Normalized registry origin, or the clawhub token; absent for archive/github/upload. */
   readonly registry?: string;
+  /** Resolver-derived: the publisher is official (channel:"official" / isOfficial). */
+  readonly officialPublisher?: boolean;
+  /** From config `skills.import.requireOfficialPublisher` (threaded by the dispatch). */
+  readonly requireOfficialPublisher?: boolean;
 }
 
 /** Arguments handed to the injected imported-tier MCP persist seam. */
@@ -177,6 +186,12 @@ export interface CommitResult {
   /** Which routing branch ran. */
   readonly mode: "fresh" | "update" | "noop";
   readonly provenanceSummary: ProvenanceSummary;
+  /**
+   * The warnable classes a confirmed import acknowledged (non-official publisher
+   * and/or pin-divergence re-import), for the RPC response to enumerate. Absent
+   * for a warning-free import or an idempotent no-op.
+   */
+  readonly acknowledgedWarnings?: readonly string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -188,7 +203,7 @@ function mkReject(
   message: string,
   hint: string,
   errorKind: ErrorKind,
-  extra?: { bundleKind?: string; needsConfirm?: boolean },
+  extra?: { bundleKind?: string; needsConfirm?: boolean; warnings?: readonly string[] },
 ): ImportReject {
   return {
     stage,
@@ -197,6 +212,7 @@ function mkReject(
     errorKind,
     ...(extra?.bundleKind !== undefined && { bundleKind: extra.bundleKind }),
     ...(extra?.needsConfirm !== undefined && { needsConfirm: extra.needsConfirm }),
+    ...(extra?.warnings !== undefined && { warnings: extra.warnings }),
   };
 }
 
@@ -350,6 +366,7 @@ export async function commitStagedImport(
 
     let mode: "fresh" | "update";
     let importedAt = nowIso();
+    let pinDivergence = false;
 
     if (existing !== undefined) {
       const sameProvenance = existing.source === opts.source && existing.identifier === opts.identifier;
@@ -370,17 +387,10 @@ export async function commitStagedImport(
         deps.logger.info({ step: "complete", skillName: name, mode: "noop", contentHash: staged.contentHash.slice(0, 12) }, "skill import commit: idempotent no-op");
         return ok({ name, path: liveDir, source: "imported", mode: "noop", provenanceSummary: toSummary(existing) });
       }
-      if (opts.confirm !== true) {
-        return rejectAndClean(
-          mkReject(
-            "commit",
-            `re-import of '${name}' diverges from the pinned content hash`,
-            "re-run with confirm to swap the installed skill and re-pin its provenance",
-            "precondition",
-            { needsConfirm: true },
-          ),
-        );
-      }
+      // Warnable class #1 (pin-divergence, update-only): capture as a flag so the
+      // single confirm decision below can fold it together with the non-official
+      // publisher class — one `confirm` acknowledges BOTH.
+      pinDivergence = true;
       mode = liveExists ? "update" : "fresh";
       importedAt = existing.importedAt;
     } else {
@@ -398,6 +408,34 @@ export async function commitStagedImport(
       mode = "fresh";
     }
 
+    // Two-warnable-classes single-confirm: collect every warnable class, then
+    // decide ONCE. `confirm` overrides BOTH the non-official-publisher class
+    // (fires on a fresh install too — there is no prior record to acknowledge it)
+    // and the pin-divergence class (update-only). The flat collision refuses
+    // above return BEFORE this point, so `confirm` can never override them; the
+    // idempotent no-op likewise returns first, so it never re-fires class #2.
+    const warnings: string[] = [];
+    if (opts.officialPublisher === false && opts.requireOfficialPublisher === true) {
+      warnings.push(
+        "the registry publisher is not official — set skills.import.requireOfficialPublisher:false to allow non-official publishers, or confirm to acknowledge this import",
+      );
+    }
+    if (pinDivergence) {
+      warnings.push(`re-import of '${name}' diverges from the pinned content hash`);
+    }
+    if (warnings.length > 0 && opts.confirm !== true) {
+      return rejectAndClean(
+        mkReject(
+          "commit",
+          `import of '${name}' requires confirm: ${warnings.join("; ")}`,
+          "re-run with confirm to acknowledge the listed warnings",
+          "precondition",
+          { needsConfirm: true, warnings },
+        ),
+      );
+    }
+    const acknowledgedWarnings = warnings;
+
     const record: ProvenanceRecord = {
       name,
       scope: opts.scope,
@@ -411,6 +449,7 @@ export async function commitStagedImport(
       updatedAt: nowIso(),
       importedBy: opts.agentId,
       ...(opts.registry !== undefined && { registry: opts.registry }),
+      ...(opts.officialPublisher !== undefined && { officialPublisher: opts.officialPublisher }),
     };
 
     // ---- STEP 2: commit.json + same-device assert + move --------------------
@@ -544,7 +583,14 @@ export async function commitStagedImport(
       },
       "skill import commit: installed",
     );
-    return ok({ name, path: liveDir, source: "imported", mode, provenanceSummary: toSummary(record) });
+    return ok({
+      name,
+      path: liveDir,
+      source: "imported",
+      mode,
+      provenanceSummary: toSummary(record),
+      ...(acknowledgedWarnings.length > 0 && { acknowledgedWarnings }),
+    });
   });
 }
 

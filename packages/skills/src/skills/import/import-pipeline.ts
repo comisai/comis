@@ -167,12 +167,19 @@ export interface ImportReject {
   /** Bundle-check stage: the seam's reject class. */
   readonly bundleKind?: string;
   /**
-   * Commit stage: a provenance-matched re-import diverged from the pinned hash
-   * and requires an explicit `confirm` to swap + re-pin. Distinct from a flat
-   * refuse (unprovenanced / foreign source-identifier), which is NEVER
-   * confirm-able and leaves this unset.
+   * Commit stage: the import tripped one or more warnable classes (a
+   * non-official registry publisher and/or a provenance-matched re-import that
+   * diverged from the pinned hash) and requires an explicit `confirm` to
+   * proceed. Distinct from a flat refuse (unprovenanced / foreign
+   * source-identifier), which is NEVER confirm-able and leaves this unset.
    */
   readonly needsConfirm?: boolean;
+  /**
+   * Commit stage: the warnable classes this reject covers, one human-readable
+   * message each (a single `confirm` acknowledges all of them). Set alongside
+   * {@link needsConfirm}; unset for a flat refuse.
+   */
+  readonly warnings?: readonly string[];
 }
 
 /** Dependencies for {@link stageImport}. */
