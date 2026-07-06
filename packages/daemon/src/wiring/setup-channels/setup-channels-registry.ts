@@ -63,6 +63,12 @@ export interface ChannelsResult {
    *  threads it into the gateway deps so `/channels/msteams` mounts only when a
    *  caller-backed ingress exists. Undefined when the channel is disabled. */
   msTeamsIngress?: import("hono").Hono;
+  /** Google Chat inbound ingress sub-app, built by the adapter bootstrap when
+   *  the channel is enabled in webhook mode with valid credentials. The
+   *  composition root threads it into the gateway deps so `/channels/googlechat`
+   *  mounts only when a caller-backed ingress exists. Undefined in pubsub mode
+   *  (the pull loop opens the transport) or when the channel is disabled. */
+  googlechatIngress?: import("hono").Hono;
   /** The command queue instance for parent session TTL extension during graph execution. */
   commandQueue?: CommandQueue;
   /** DeliveryService constructed once at the daemon composition root. Threaded
@@ -373,7 +379,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
   // + the daemon TimerPort are injected into createMsTeamsPlugin here (both are
   // optional @comis/core-port seams on the adapter): capture + proactive recovery
   // + the typing keepalive.
-  const { adaptersByType, tgPlugin, linePlugin, channelPlugins, msTeamsIngress, msTeamsPlugin, googlechatPlugin } = await bootstrapAdapters({
+  const { adaptersByType, tgPlugin, linePlugin, channelPlugins, msTeamsIngress, msTeamsPlugin, googlechatPlugin, googlechatIngress } = await bootstrapAdapters({
     container,
     channelsLogger,
     msTeamsConversationStore: deps.msTeamsConversationStore,
@@ -504,6 +510,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     lifecycleReactors,
     channelPlugins,
     msTeamsIngress,
+    googlechatIngress,
     commandQueue,
     deliveryService,
   };
