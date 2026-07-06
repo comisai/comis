@@ -1,6 +1,6 @@
 {
-  "totalMinified": 136213,
-  "totalGzipped": 13942,
+  "totalMinified": 136295,
+  "totalGzipped": 13941,
   "budget": {
     "minified": 138000,
     "gzipped": 38912
@@ -194,7 +194,7 @@
     "session.status": 605,
     "skills.create": 573,
     "skills.delete": 430,
-    "skills.import": 800,
+    "skills.import": 894,
     "skills.list": 925,
     "skills.update": 514,
     "skills.upload": 648,

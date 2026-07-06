@@ -136,18 +136,21 @@ export const SkillsUploadContract = defineContract({
 });
 
 /**
- * `skills.import` — import a skill from a GitHub directory URL or an archive
- * ({@link AcquisitionSourceSchema}). Every source funnels through the single
- * staged pipeline: the content scan + the MCP Phase-A check run PRE-write, and
- * a rejecting import leaves zero live files. A successful import is stamped the
- * `imported` trust tier and pinned in the provenance store.
+ * `skills.import` — import a skill from a GitHub directory URL, an archive, or a
+ * registry index ({@link AcquisitionSourceSchema}). Every source funnels through
+ * the single staged pipeline: the content scan + the MCP Phase-A check run
+ * PRE-write, and a rejecting import leaves zero live files. A successful import
+ * is stamped the `imported` trust tier and pinned in the provenance store.
  *
- * Request: `{ url? | archiveUrl? | archiveBytes?, source?, scope?, agentId?,
- * confirm? }`. `source` selects the acquisition channel (defaults to `github`
- * when a `url` is present). The installed name is always the mapped manifest
- * name — there is no request override. `confirm` overrides ONLY a pin-divergence
- * on a provenance-matched re-import — never a collision on an unprovenanced /
- * foreign-source name (there is intentionally NO force override).
+ * Request: `{ url? | archiveUrl? | archiveBytes?, source?, registry?, name?,
+ * scope?, agentId?, confirm? }`. `source` selects the acquisition channel
+ * (defaults to `github` when a `url` is present); `source:"wellknown"` reads a
+ * registry index, with `registry` naming the origin and `name` the index-lookup
+ * key (which advertised skill to fetch). The installed name is always the mapped
+ * manifest name — `name` selects the registry entry, it does NOT override the
+ * install name. `confirm` overrides ONLY a pin-divergence on a provenance-matched
+ * re-import — never a collision on an unprovenanced / foreign-source name (there
+ * is intentionally NO force override).
  *
  * Response: `{ ok: true, path, name, fileCount, source: "imported",
  * resolvedAgentId }`. `resolvedAgentId` is the agent the import acted on.
@@ -156,7 +159,13 @@ export const SkillsImportContract = defineContract({
   method: "skills.import",
   request: z.object({
     url: z.string().min(1).optional(),
-    source: z.enum(["github", "archive"]).optional(),
+    source: z.enum(["github", "archive", "wellknown"]).optional(),
+    // Registry origin (normalized `https://<host>[:port]`) or the `clawhub`
+    // token — read for `source:"wellknown"`.
+    registry: z.string().min(1).optional(),
+    // Registry index-lookup key: which advertised skill to fetch. Selects the
+    // registry entry; it does NOT override the installed (manifest) name.
+    name: z.string().min(1).optional(),
     archiveUrl: z.string().min(1).optional(),
     archiveBytes: z.string().min(1).optional(),
     scope: SkillScopeSchema.optional(),

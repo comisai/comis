@@ -11406,8 +11406,17 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "type": "string",
           "enum": [
             "github",
-            "archive"
+            "archive",
+            "wellknown"
           ]
+        },
+        "registry": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
         },
         "archiveUrl": {
           "type": "string",
