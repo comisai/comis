@@ -37,11 +37,6 @@ const MENTION_MARKUP_RE = /@\[([^\]]+)\]\(([^)]+)\)/g;
 /** The `matrix.to` base a user pill links through. */
 const MATRIX_TO_BASE = "https://matrix.to/#/";
 
-/** Escape a string for literal use inside a RegExp. */
-function escapeRegExp(literal: string): string {
-  return literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 /** The outbound-mention extraction result: the collected MXIDs + the rewritten text. */
 export interface ExtractedMentions {
   /** The deduped MXIDs to advertise in the event's `m.mentions.user_ids`. */
@@ -105,11 +100,12 @@ export function detectBotMention(content: Record<string, unknown> | undefined, b
 
   // Fallback: a matrix.to pill in the formatted body links to the bot MXID. The
   // link must be a real anchor href (a rendered pill), not a bare substring — a
-  // plain-text matrix.to URL in the body must never trigger the bot.
+  // plain-text matrix.to URL in the body must never trigger the bot. Match the URL
+  // as an href attribute value under either quote style.
   const formatted = content.formatted_body;
   if (typeof formatted === "string") {
-    const pillHref = new RegExp(`href=["']${escapeRegExp(`${MATRIX_TO_BASE}${botUserId}`)}`);
-    if (pillHref.test(formatted)) return true;
+    const pill = `${MATRIX_TO_BASE}${botUserId}`;
+    if (formatted.includes(`href="${pill}`) || formatted.includes(`href='${pill}`)) return true;
   }
 
   return false;
