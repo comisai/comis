@@ -244,6 +244,53 @@ describe("validateNonInteractiveOptions", () => {
     expect(() => validateNonInteractiveOptions(opts)).not.toThrow();
   });
 
+  it("throws NonInteractiveError for missing matrix homeserver", () => {
+    const opts = validOpts({ channels: ["matrix"] });
+    expect(() => validateNonInteractiveOptions(opts)).toThrow(NonInteractiveError);
+    try {
+      validateNonInteractiveOptions(opts);
+    } catch (e) {
+      expect((e as NonInteractiveError).field).toBe("matrixHomeserver");
+    }
+  });
+
+  it("throws NonInteractiveError for missing matrix user id when homeserver present", () => {
+    const opts = validOpts({
+      channels: ["matrix"],
+      matrixHomeserver: "https://matrix.example.org",
+    });
+    expect(() => validateNonInteractiveOptions(opts)).toThrow(NonInteractiveError);
+    try {
+      validateNonInteractiveOptions(opts);
+    } catch (e) {
+      expect((e as NonInteractiveError).field).toBe("matrixUserId");
+    }
+  });
+
+  it("throws NonInteractiveError for missing matrix access token when homeserver + user id present", () => {
+    const opts = validOpts({
+      channels: ["matrix"],
+      matrixHomeserver: "https://matrix.example.org",
+      matrixUserId: "@bot:example.org",
+    });
+    expect(() => validateNonInteractiveOptions(opts)).toThrow(NonInteractiveError);
+    try {
+      validateNonInteractiveOptions(opts);
+    } catch (e) {
+      expect((e as NonInteractiveError).field).toBe("matrixAccessToken");
+    }
+  });
+
+  it("does NOT throw when all required matrix flags are present", () => {
+    const opts = validOpts({
+      channels: ["matrix"],
+      matrixHomeserver: "https://matrix.example.org",
+      matrixUserId: "@bot:example.org",
+      matrixAccessToken: "syt-matrix-access-token-value",
+    });
+    expect(() => validateNonInteractiveOptions(opts)).not.toThrow();
+  });
+
   it("does NOT throw for whatsapp, signal, or irc channels (no tokens needed)", () => {
     const opts = validOpts({ channels: ["whatsapp", "signal", "irc"] });
     expect(() => validateNonInteractiveOptions(opts)).not.toThrow();
@@ -587,6 +634,27 @@ describe("buildNonInteractiveState", () => {
       appPassword: "teams-client-secret-value-xyz",
       tenantId: "22222222-2222-2222-2222-222222222222",
       authMode: "secret",
+      validated: false,
+    });
+  });
+
+  it("builds matrix channel from the --matrix-* opts", () => {
+    const state = buildNonInteractiveState(
+      validOpts({
+        channels: ["matrix"],
+        matrixHomeserver: "https://matrix.example.org",
+        matrixUserId: "@bot:example.org",
+        matrixAccessToken: "syt-matrix-access-token-value",
+        matrixE2ee: true,
+      }),
+    );
+    expect(state.channels).toHaveLength(1);
+    expect(state.channels![0]).toEqual({
+      type: "matrix",
+      homeserverUrl: "https://matrix.example.org",
+      userId: "@bot:example.org",
+      accessToken: "syt-matrix-access-token-value",
+      e2ee: true,
       validated: false,
     });
   });

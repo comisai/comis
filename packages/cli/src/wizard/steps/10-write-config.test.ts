@@ -829,4 +829,74 @@ describe("writeConfigStep", () => {
       );
     });
   });
+
+  // ---------- Matrix: ${VAR} reference + managed-secret join ----------
+
+  describe("matrix channel write", () => {
+    // Matrix's homeserverUrl/userId are non-secret config written inline, e2ee
+    // is an inline toggle, and accessToken (the bot's credential) is the ONLY
+    // value that must flow to a ${VAR} reference + the managed-secret store — a
+    // plaintext token in config.yaml would be a secret-at-rest exposure.
+    function matrixState(): WizardState {
+      return {
+        ...populatedState(),
+        channels: [
+          {
+            type: "matrix",
+            homeserverUrl: "https://matrix.example.org",
+            userId: "@bot:example.org",
+            accessToken: "syt-matrix-access-token-value",
+            e2ee: true,
+            validated: false,
+          },
+        ],
+      };
+    }
+
+    it("writes channels.matrix.accessToken as a ${MATRIX_ACCESS_TOKEN} reference (never plaintext) with homeserverUrl/userId/e2ee inline", async () => {
+      const prompter = createMockPrompter();
+
+      await writeConfigStep.execute(matrixState(), prompter);
+
+      const writeCalls = vi.mocked(writeFileSync).mock.calls;
+      const configWriteCall = writeCalls.find(
+        ([path]) => typeof path === "string" && path.includes(".tmp"),
+      );
+      expect(configWriteCall).toBeDefined();
+
+      const rawConfig = configWriteCall![1] as string;
+      const configContent = JSON.parse(rawConfig);
+      // The secret is emitted ONLY as a ${VAR} reference — never plaintext.
+      expect(configContent.channels.matrix.accessToken).toBe(
+        "${MATRIX_ACCESS_TOKEN}",
+      );
+      // Non-secret credentials are written inline.
+      expect(configContent.channels.matrix.homeserverUrl).toBe(
+        "https://matrix.example.org",
+      );
+      expect(configContent.channels.matrix.userId).toBe("@bot:example.org");
+      expect(configContent.channels.matrix.e2ee).toBe(true);
+      // The raw access token must never appear in config.yaml.
+      expect(rawConfig).not.toContain("syt-matrix-access-token-value");
+    });
+
+    it("registers the raw MATRIX_ACCESS_TOKEN via collectManagedSecrets so the config reference is not dangling", async () => {
+      const prompter = createMockPrompter();
+
+      await writeConfigStep.execute(matrixState(), prompter);
+
+      const writeCalls = vi.mocked(writeFileSync).mock.calls;
+      const envWriteCall = writeCalls.find(
+        ([path]) => typeof path === "string" && path.includes(".env"),
+      );
+      expect(envWriteCall).toBeDefined();
+
+      // The managed-secret branch persists the raw value, so the
+      // ${MATRIX_ACCESS_TOKEN} written into config.yaml always resolves at boot.
+      const envContent = envWriteCall![1] as string;
+      expect(envContent).toContain(
+        "MATRIX_ACCESS_TOKEN=syt-matrix-access-token-value",
+      );
+    });
+  });
 });

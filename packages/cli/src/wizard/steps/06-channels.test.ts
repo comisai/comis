@@ -465,4 +465,38 @@ describe("channelsStep", () => {
     expect(values).toContain("msteams");
     expect(values).toContain("matrix");
   });
+
+  it("adds matrix with homeserver, user ID, and access token to state.channels", async () => {
+    const homeserverUrl = "https://matrix.example.org";
+    const userId = "@bot:example.org";
+    const accessToken = "syt-matrix-access-token-value";
+
+    const prompter = createMockPrompter();
+    vi.mocked(prompter.multiselect).mockResolvedValueOnce(["matrix"]);
+    // handleMatrix prompts: homeserver URL, user ID (text), then access token
+    // (password), then the e2ee toggle (select).
+    vi.mocked(prompter.text)
+      .mockResolvedValueOnce(homeserverUrl)
+      .mockResolvedValueOnce(userId);
+    vi.mocked(prompter.password).mockResolvedValueOnce(accessToken);
+    vi.mocked(prompter.select).mockResolvedValueOnce(true); // e2ee enabled
+    // Decline the sender-trust prompt so the test isolates channel collection.
+    vi.mocked(prompter.confirm).mockResolvedValueOnce(false);
+
+    const state: WizardState = {
+      ...INITIAL_STATE,
+      flow: "advanced",
+    };
+
+    const result = await channelsStep.execute(state, prompter);
+
+    expect(result.channels).toHaveLength(1);
+    const ch = result.channels![0];
+    expect(ch.type).toBe("matrix");
+    expect(ch.homeserverUrl).toBe(homeserverUrl);
+    expect(ch.userId).toBe(userId);
+    expect(ch.accessToken).toBe(accessToken);
+    expect(ch.e2ee).toBe(true);
+    expect(ch.validated).toBe(false);
+  });
 });
