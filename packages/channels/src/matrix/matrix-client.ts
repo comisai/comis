@@ -86,6 +86,15 @@ const ROOM_REDACTION_TYPE = "m.room.redaction";
 const DEFAULT_INITIAL_SYNC_LIMIT = 10;
 /** Default per-room timeline event cap in the sync filter. */
 const DEFAULT_TIMELINE_LIMIT = 20;
+/**
+ * Upper bound on the per-session set that de-duplicates delivered reaction and
+ * redaction events. These NON-message events must not advance the message
+ * watermark (that gates a later, lower-timestamp message under federated clock
+ * skew), so a bounded id-set is their idempotency across a forced re-sync
+ * instead. Oldest-first eviction keeps it bounded; an evicted id can at worst
+ * re-deliver once on a re-sync — a duplicate reaction, never a dropped message.
+ */
+const MAX_TRACKED_NON_MESSAGE_EVENTS = 2_000;
 
 /** A callback the transport invokes for each delivered (post-guard) message. */
 export type MatrixMessageHandler = (message: NormalizedMessage) => void | Promise<void>;
@@ -294,6 +303,11 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
   // Undefined on the plaintext path or when the crypto bootstrap failed (the
   // channel then runs as an UNVERIFIED device rather than going dark).
   let cryptoHandle: MatrixCryptoHandle | undefined;
+  // Bounded, per-session de-dup of delivered reaction/redaction event ids. They
+  // are NOT allowed to advance the message watermark (see
+  // MAX_TRACKED_NON_MESSAGE_EVENTS), so this set is what stops a re-sync from
+  // re-delivering one. Insertion-ordered → overflow evicts the oldest id.
+  const deliveredNonMessageEvents = new Set<string>();
 
   /** Persist the current state; a write failure is loud but non-fatal. */
   async function persistState(persistField: string): Promise<void> {
@@ -323,6 +337,24 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
       watermarks: { ...persistedState.watermarks, [roomId]: ts },
     };
     await persistState(persistField);
+  }
+
+  /**
+   * Whether a reaction/redaction event has already been delivered this session;
+   * records it (bounded, oldest-first eviction) when it has not. Returns `true`
+   * for an already-seen id so the caller skips a re-delivery. An event with no id
+   * is never suppressed (treated as fresh) rather than collapsing all id-less
+   * events onto one another.
+   */
+  function isDuplicateNonMessageEvent(eventId: string | undefined): boolean {
+    if (eventId === undefined) return false;
+    if (deliveredNonMessageEvents.has(eventId)) return true;
+    if (deliveredNonMessageEvents.size >= MAX_TRACKED_NON_MESSAGE_EVENTS) {
+      const oldest = deliveredNonMessageEvents.values().next().value;
+      if (oldest !== undefined) deliveredNonMessageEvents.delete(oldest);
+    }
+    deliveredNonMessageEvents.add(eventId);
+    return false;
   }
 
   /** Resolve the inviter's full MXID: the sender of the bot's own invite event. */
@@ -462,6 +494,11 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
     if (event.getType() === ROOM_REACTION_TYPE) {
       const reaction = mapMatrixReaction(event, room);
       if (reaction === null) return;
+      // De-dup on the reaction's own id, NOT the message watermark: a reaction
+      // often holds the highest ts in a burst, and advancing the message gate to
+      // it would drop a later, lower-ts message under federated clock skew. A
+      // re-delivered (already-seen) reaction is simply skipped.
+      if (isDuplicateNonMessageEvent(event.getId())) return;
       // Content-free acceptance line: channel + id-shaped fields only, never the
       // emoji body of a (possibly private) room.
       logger.info(
@@ -474,8 +511,6 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
         "Inbound Matrix reaction accepted",
       );
       deps.onReaction?.(reaction);
-      // Advance THIS ROOM's watermark so the delivered reaction is not reprocessed.
-      await bumpRoomWatermark(room.roomId, event.getTs(), "watermark");
       return;
     }
 
@@ -495,8 +530,12 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
       const isDirect = deps.isDirectRoom?.(room) ?? false;
       const honest = mapMatrixEventToNormalized(event, room, { isDirect });
       // A redaction with no verifiable sender maps to null and is skipped WITHOUT
-      // advancing the watermark, exactly as an unmappable message is below.
+      // being recorded, exactly as an unmappable message is below.
       if (honest === null) return;
+      // De-dup on the redaction's own id, NOT the message watermark — a redaction
+      // is a non-message event and must never gate a later, lower-ts message
+      // (the reaction rationale above). A re-delivered redaction is skipped.
+      if (isDuplicateNonMessageEvent(event.getId())) return;
       logger.info(
         {
           channelType: "matrix",
@@ -508,7 +547,8 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
       );
       // Flows through onMessage (the honest event is a NormalizedMessage): the
       // adapter's speaker gate then keys on the redactor MXID, exactly like a
-      // message. A failing handler still advances the watermark (no reprocessing).
+      // message. A failing handler is logged; the id-set already recorded it so a
+      // re-sync does not re-deliver it.
       const delivered = await fromPromise(Promise.resolve(deps.onMessage(honest)));
       if (!delivered.ok) {
         logger.error(
@@ -520,8 +560,6 @@ export function createMatrixClient(deps: MatrixClientDeps): MatrixSyncController
           "Matrix inbound redaction handler failed",
         );
       }
-      // Advance THIS ROOM's watermark so the delivered redaction is not reprocessed.
-      await bumpRoomWatermark(room.roomId, event.getTs(), "watermark");
       return;
     }
 

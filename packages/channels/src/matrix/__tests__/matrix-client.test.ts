@@ -979,6 +979,23 @@ describe("createMatrixClient — inbound reaction routing", () => {
 
     expect(h.reactions).toHaveLength(0);
   });
+
+  it("de-dups a re-delivered reaction by its id, not the message watermark", async () => {
+    // Reactions no longer advance the message watermark, so their idempotency is
+    // the per-session id-set: the same reaction event delivered twice (a forced
+    // re-sync re-feeds the recent timeline) reaches onReaction exactly once.
+    const h = makeHarness({ seed: { watermarks: {} } });
+    await h.controller.start();
+    await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null, undefined);
+
+    const react = fakeReactionEvent({ id: "$dup:hs", sender: "@alice:hs", ts: 300 });
+    await h.fake.emit(RoomEvent.Timeline, react, fakeRoom("!room:hs"), false);
+    await h.fake.emit(RoomEvent.Timeline, react, fakeRoom("!room:hs"), false);
+
+    expect(h.reactions).toHaveLength(1);
+    // A non-message event never wrote a message watermark for the room.
+    expect(h.saves.some((s) => s.watermarks["!room:hs"] === 300)).toBe(false);
+  });
 });
 
 describe("createMatrixClient — inbound redaction routing", () => {
@@ -1017,8 +1034,18 @@ describe("createMatrixClient — inbound redaction routing", () => {
     expect(h.received[0]?.metadata.matrixRedactsEventId).toBe("$gone:hs");
     // A redaction is not a reaction.
     expect(h.reactions).toHaveLength(0);
-    // The room's own watermark advanced to the redaction ts (no reprocessing).
-    expect(h.saves.some((s) => s.watermarks["!room:hs"] === 300)).toBe(true);
+    // A redaction is a NON-message event: it must NOT advance the message
+    // watermark (that would gate a later, lower-ts message). No-reprocessing is
+    // instead enforced by the per-session id-set — a re-delivered redaction with
+    // the same id is skipped rather than surfaced a second time.
+    expect(h.saves.some((s) => s.watermarks["!room:hs"] === 300)).toBe(false);
+    await h.fake.emit(
+      RoomEvent.Timeline,
+      fakeRedactionEvent({ sender: "@alice:hs", ts: 300, redacts: "$gone:hs" }),
+      fakeRoom("!room:hs"),
+      false,
+    );
+    expect(h.received).toHaveLength(1);
   });
 
   it("does not route a redaction the bot itself sent (no self-redaction loop)", async () => {
