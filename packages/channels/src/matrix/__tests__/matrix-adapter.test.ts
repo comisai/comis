@@ -1715,6 +1715,38 @@ describe("createMatrixAdapter — reconcileSend history-scan oracle", () => {
     // The guard short-circuits BEFORE any /messages read.
     expect(fake.lastMessagesRequest).toBeUndefined();
   });
+
+  it("returns unresolved in an encrypted room where a raw history read has no plaintext body to digest", async () => {
+    // The flagship default is e2ee ON. A raw /messages read of an encrypted room
+    // yields m.room.encrypted events with NO plaintext body, so a body digest can
+    // never match the ledger digest. Even a fully-covered scan of a low-traffic DM
+    // must therefore be unresolved: a false not_sent would drive the resume engine
+    // to replay a message that DID land, duplicating it in the encrypted room.
+    const fake = new FakeMatrixClient();
+    fake.cryptoHandle = { isEncryptionEnabledInRoom: async () => true };
+    fake.messagesEnd = undefined; // low-traffic DM: one page, no older history
+    fake.messagesChunk = [
+      {
+        event_id: "$enc:hs",
+        sender: "@bot:hs",
+        origin_server_ts: 1_500,
+        type: "m.room.encrypted",
+        content: {}, // encrypted envelope — no plaintext body to read
+      },
+    ];
+    const { adapter } = makeAdapter({ fake });
+    await adapter.start();
+
+    const result = await adapter.reconcileSend?.({
+      channelId: "!enc:hs",
+      contentDigest: ledgerDigest("the reply that actually landed in the encrypted room"),
+      ...WINDOW,
+    });
+
+    expect(result?.ok).toBe(true);
+    if (!result?.ok) throw new Error("expected an ok result");
+    expect(result.value).toEqual({ kind: "unresolved" });
+  });
 });
 
 describe("createMatrixAdapter — threaded + chunked send", () => {
