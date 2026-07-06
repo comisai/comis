@@ -354,4 +354,25 @@ describe("matrix-resolver / createMatrixResolver", () => {
     expect(allLogArgs).not.toContain(AUTHED_URL);
     expect(allLogArgs).not.toContain(TOKEN);
   });
+
+  it("redacts a resolved internal IP (v4 or v6) from the returned error so homeserver-side topology never leaks", async () => {
+    // A homeserver redirect to an internal host makes the SSRF-guarded fetcher report
+    // the blocked resolved IP in its error. That internal address must not surface in
+    // the error handed across the port to the agent (a topology disclosure otherwise).
+    const media = makeMediaClient();
+    for (const { msg, ip } of [
+      { msg: "Blocked: resolved IP 10.1.2.3 is in private range", ip: "10.1.2.3" },
+      { msg: "Blocked: resolved IP fe80::dead:beef is in linkLocal range", ip: "fe80::dead:beef" },
+    ]) {
+      const deps = baseDeps(media, {
+        ssrfFetcher: { fetch: vi.fn().mockResolvedValue(err(new Error(msg))) },
+      });
+      const resolver = createMatrixResolver(deps);
+
+      const result = await resolver.resolve(makeAttachment());
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).not.toContain(ip);
+    }
+  });
 });
