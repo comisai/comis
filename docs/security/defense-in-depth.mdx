@@ -117,6 +117,33 @@ the input checkpoint.
     [Microsoft Teams setup guide](/channels/msteams) for the full exposure and
     liveness walkthrough.
   </Accordion>
+
+  <Accordion title="Google Chat Public Endpoint" icon="google">
+    **What it does:** Google Chat runs a no-public-IP Cloud Pub/Sub pull
+    transport by default (`mode: pubsub`). In the opt-in `mode: webhook`, Google
+    instead POSTs events to `/channels/googlechat` on your gateway. That route
+    mounts **only** when the channel is enabled in webhook mode
+    (`channels.googlechat.enabled: true` with `mode: webhook`; off by default),
+    rides the gateway's existing TLS surface, and every inbound request is
+    Bearer-JWT-verified against Google's signing keys (per the configured
+    `audienceType`) **before** it reaches your agent.
+
+    **Why it matters:** A public endpoint is an exposed surface. Keeping webhook
+    mode opt-in, verifying every inbound request before processing, and
+    terminating TLS at the gateway (or a reverse proxy / Tailscale Funnel in
+    front of it) keeps that surface closed by default and authenticated when
+    open. A webhook channel is also exempt from the health monitor's automatic
+    stale-reap, so a silently broken ingress would otherwise report healthy
+    forever -- a bot that quietly stops receiving messages with no error.
+
+    **Do I need to configure it?** Only if you choose webhook mode. Expose the
+    gateway over HTTPS (a reverse proxy or Tailscale Funnel is recommended),
+    keep `channels.googlechat.enabled` off until the endpoint is wired, and rely
+    on the missed-inbound alert (`missedInboundThresholdMs`, default 6 hours) to
+    catch a dead ingress -- it surfaces as a `comis fleet` health signal. See the
+    [configuration reference](/reference/config-yaml) for the
+    `channels.googlechat` keys.
+  </Accordion>
 </AccordionGroup>
 
 ### When a Message Arrives
