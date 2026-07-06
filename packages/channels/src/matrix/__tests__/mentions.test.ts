@@ -59,6 +59,19 @@ describe("detectBotMention (inbound)", () => {
     expect(detectBotMention(content, BOT)).toBe(true);
   });
 
+  it("is false when the bot's matrix.to URL appears as plain text, not an anchor href", () => {
+    // Spoofing control: a member can paste the bot's matrix.to URL as plain text
+    // to force a reply. The pill fallback must require a real anchor href, not a
+    // bare substring — only m.mentions or a rendered pill counts.
+    const content = { formatted_body: `check https://matrix.to/#/${BOT} for details` };
+    expect(detectBotMention(content, BOT)).toBe(false);
+  });
+
+  it("is true for a matrix.to pill written with single-quoted href", () => {
+    const content = { formatted_body: `<a href='https://matrix.to/#/${BOT}'>bot</a>` };
+    expect(detectBotMention(content, BOT)).toBe(true);
+  });
+
   it("is false when neither the mentions list nor a pill names the bot", () => {
     expect(detectBotMention({ "m.mentions": { user_ids: ["@someone:hs"] } }, BOT)).toBe(false);
   });
