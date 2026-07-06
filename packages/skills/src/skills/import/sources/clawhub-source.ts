@@ -548,6 +548,13 @@ async function resolveInner(
 
   // 5. Derive the publisher signal (feeds the commit-time acknowledgement, not a
   //    refuse here — a non-official publisher is a warnable class, not a block).
+  //    This flag is SERVER-ASSERTED and advisory: it is whatever the registry
+  //    claims via isOfficial / channel, so a compromised or malicious registry
+  //    could set it to dodge the requireOfficialPublisher acknowledgement. It is
+  //    NOT an integrity guarantee — the real defenses are the content scan, the
+  //    verify verdict (evaluated above), TLS to the fixed host, and the pipeline's
+  //    self-computed content-hash pin over the INSTALLED set. Treat it as a
+  //    provenance hint, never proof.
   const officialPublisher =
     install.isOfficial === true ||
     install.channel === "official" ||

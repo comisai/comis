@@ -105,6 +105,12 @@ const SkillsImportConfigSchema = z.strictObject({
    * `officialPublisher:false` and requires an explicit `confirm` (never applies
    * to archive/github/wellknown). Default `true` (fail-closed) — an operator
    * opts out per agent by setting it `false`.
+   *
+   * The official/non-official signal is SERVER-ASSERTED by the registry (its
+   * self-claimed isOfficial / channel), so this gate is a publisher-provenance
+   * signal, not a cryptographic guarantee — a compromised registry could claim
+   * official. The integrity floor is the self-computed content-hash pin over the
+   * installed set plus TLS, independent of this flag.
    */
   requireOfficialPublisher: z.boolean().default(true),
 });
