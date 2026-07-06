@@ -29,14 +29,17 @@ vi.mock("../skills/bundle-install-helper.js", async (importOriginal) => ({
   runBundleInstallHook: mockRunBundleInstallHook,
 }));
 
-// Partial mock: override ONLY resolveWellKnownFileSet (the allowlist-gated registry
-// resolve) so the source:"wellknown" dispatch is driven off-network with a fixture
-// file set / a gate refuse, while the REAL importThroughPipeline +
+// Partial mock: override ONLY the allowlist-gated registry resolvers
+// (resolveWellKnownFileSet + resolveClawHubFileSet) so the source:"wellknown" /
+// source:"clawhub" dispatches are driven off-network with a fixture file set /
+// archive bytes / a gate refuse, while the REAL importThroughPipeline +
 // uploadFileSetIdentifier the other install tests depend on stay intact.
 const mockResolveWellKnownFileSet = vi.hoisted(() => vi.fn());
+const mockResolveClawHubFileSet = vi.hoisted(() => vi.fn());
 vi.mock("../skills/skill-import-runner.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../skills/skill-import-runner.js")>()),
   resolveWellKnownFileSet: mockResolveWellKnownFileSet,
+  resolveClawHubFileSet: mockResolveClawHubFileSet,
 }));
 
 import { createSkillHandlers as createSkillHandlersRaw, type SkillHandlerDeps } from "./skill-handlers.js";
@@ -56,6 +59,7 @@ import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { crc32 } from "node:zlib";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
 import { ok, err } from "@comis/shared";
@@ -148,6 +152,7 @@ beforeEach(() => {
   mockRunBundleInstallHook.mockReset();
   mockRunBundleInstallHook.mockResolvedValue({ persistence: "skipped" as const });
   mockResolveWellKnownFileSet.mockReset();
+  mockResolveClawHubFileSet.mockReset();
 });
 
 afterEach(() => {
@@ -1827,5 +1832,178 @@ describe("skills.import source:\"wellknown\" dispatch", () => {
     expect(result).toMatchObject({ ok: true, source: "imported" });
     // The wellknown gate is orthogonal — never consulted for a GitHub import.
     expect(mockResolveWellKnownFileSet).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// skills.import — source:"clawhub" dispatch. The branch parses @owner/slug,
+// delegates the gate + install-resolver fetch to resolveClawHubFileSet (mocked
+// off-network here), INFERS registry:"clawhub" (the operator passes no registry),
+// and feeds the resolved ARCHIVE BYTES into the SAME staged pipeline with
+// officialPublisher + requireOfficialPublisher threaded into the two-warnable-
+// classes commit collector; the acknowledged warnings surface on the response.
+// ---------------------------------------------------------------------------
+
+/** A standards-valid single-entry STORED zip so the mocked archiveBytes unpack to a real SKILL.md. */
+function makeStoredZip(name: string, content: string): Buffer {
+  const nameBuf = Buffer.from(name, "utf-8");
+  const data = Buffer.from(content, "utf-8");
+  const crc = crc32(data) >>> 0;
+  const size = data.length;
+  const local = Buffer.alloc(30);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(20, 4);
+  local.writeUInt16LE(0, 8); // stored
+  local.writeUInt32LE(crc, 14);
+  local.writeUInt32LE(size, 18);
+  local.writeUInt32LE(size, 22);
+  local.writeUInt16LE(nameBuf.length, 26);
+  const localHeader = Buffer.concat([local, nameBuf, data]);
+  const central = Buffer.alloc(46);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt16LE(20, 4);
+  central.writeUInt16LE(20, 6);
+  central.writeUInt16LE(0, 10); // stored
+  central.writeUInt32LE(crc, 16);
+  central.writeUInt32LE(size, 20);
+  central.writeUInt32LE(size, 24);
+  central.writeUInt16LE(nameBuf.length, 28);
+  central.writeUInt32LE(0, 42);
+  const centralHeader = Buffer.concat([central, nameBuf]);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(1, 8);
+  eocd.writeUInt16LE(1, 10);
+  eocd.writeUInt32LE(centralHeader.length, 12);
+  eocd.writeUInt32LE(localHeader.length, 16);
+  return Buffer.concat([localHeader, centralHeader, eocd]);
+}
+
+describe('skills.import source:"clawhub" dispatch', () => {
+  const CH_NAME = "@acme/pdf-extractor";
+  const CH_SKILL_MD =
+    "---\nname: pdf-extractor\ndescription: Extract text from PDF files.\n---\n\nExtract text.\n";
+  const CH_ARCHIVE_BASE64 = makeStoredZip("SKILL.md", CH_SKILL_MD).toString("base64");
+
+  it("routes a clawhub import through the pipeline, inferring registry:clawhub + pinning officialPublisher", async () => {
+    const wsDir = join(tmpRoot, "ws");
+    fs.mkdirSync(wsDir, { recursive: true });
+    mockResolveClawHubFileSet.mockResolvedValue(
+      ok({
+        archiveBytes: CH_ARCHIVE_BASE64,
+        identifier: CH_NAME,
+        officialPublisher: true,
+        requireOfficialPublisher: true,
+      }),
+    );
+    const deps = makeDeps({
+      defaultAgentId: "agent-a",
+      workspaceDirs: new Map([["agent-a", wsDir]]),
+      skillRegistries: new Map([["agent-a", makeRegistry([])]]),
+    });
+    const dataDir = (deps.container.config as { dataDir: string }).dataDir;
+    const handlers = createSkillHandlers(deps);
+    const result = (await handlers["skills.import"]!({
+      source: "clawhub",
+      name: CH_NAME,
+      scope: "local",
+      _agentId: "agent-a",
+    })) as { ok: boolean; name: string; source: string; resolvedAgentId: string };
+    expect(result).toMatchObject({ ok: true, name: "pdf-extractor", source: "imported", resolvedAgentId: "agent-a" });
+    // The gate/resolver ran with the caller's scope + agent (NO registry arg — the daemon infers it).
+    expect(mockResolveClawHubFileSet).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ name: CH_NAME, scope: "local", agentId: "agent-a" }),
+    );
+    // Ground truth: the real store pins clawhub as the acquisition channel, the
+    // INFERRED clawhub registry token, the stable @owner/slug identifier, and the publisher signal.
+    const rec = readProvenanceStore(dataDir)[provenanceKey("local", "agent-a", "pdf-extractor")];
+    expect(rec?.source).toBe("clawhub");
+    expect(rec?.registry).toBe("clawhub");
+    expect(rec?.officialPublisher).toBe(true);
+    expect(rec?.identifier).toBe(CH_NAME);
+    const installedMd = fs.readFileSync(join(wsDir, "skills", "pdf-extractor", "SKILL.md"), "utf-8");
+    expect(rec?.contentHash).toBe(
+      computeInstalledSetHash([{ relPath: "SKILL.md", bytes: Buffer.from(installedMd, "utf-8") }]),
+    );
+  });
+
+  it("throws a clear @owner/slug error when a clawhub import omits name (resolver not reached)", async () => {
+    const handlers = createSkillHandlers(
+      makeDeps({ defaultAgentId: "agent-a", workspaceDirs: new Map([["agent-a", join(tmpRoot, "ws")]]) }),
+    );
+    await expect(
+      handlers["skills.import"]!({ source: "clawhub", scope: "local", _agentId: "agent-a" }),
+    ).rejects.toThrow(/@owner\/slug/i);
+    expect(mockResolveClawHubFileSet).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the acknowledged non-official warning on the response when installed with confirm", async () => {
+    const wsDir = join(tmpRoot, "ws");
+    fs.mkdirSync(wsDir, { recursive: true });
+    mockResolveClawHubFileSet.mockResolvedValue(
+      ok({
+        archiveBytes: CH_ARCHIVE_BASE64,
+        identifier: CH_NAME,
+        officialPublisher: false,
+        requireOfficialPublisher: true,
+      }),
+    );
+    const handlers = createSkillHandlers(
+      makeDeps({
+        defaultAgentId: "agent-a",
+        workspaceDirs: new Map([["agent-a", wsDir]]),
+        skillRegistries: new Map([["agent-a", makeRegistry([])]]),
+      }),
+    );
+    const result = (await handlers["skills.import"]!({
+      source: "clawhub",
+      name: CH_NAME,
+      scope: "local",
+      confirm: true,
+      _agentId: "agent-a",
+    })) as { ok: boolean; warnings?: string[] };
+    expect(result.ok).toBe(true);
+    expect(result.warnings?.some((w) => /not official/i.test(w))).toBe(true);
+  });
+
+  it("enumerates the non-official warning in the thrown error when confirm is absent (needsConfirm)", async () => {
+    const wsDir = join(tmpRoot, "ws");
+    fs.mkdirSync(wsDir, { recursive: true });
+    mockResolveClawHubFileSet.mockResolvedValue(
+      ok({
+        archiveBytes: CH_ARCHIVE_BASE64,
+        identifier: CH_NAME,
+        officialPublisher: false,
+        requireOfficialPublisher: true,
+      }),
+    );
+    const handlers = createSkillHandlers(
+      makeDeps({
+        defaultAgentId: "agent-a",
+        workspaceDirs: new Map([["agent-a", wsDir]]),
+        skillRegistries: new Map([["agent-a", makeRegistry([])]]),
+      }),
+    );
+    await expect(
+      handlers["skills.import"]!({ source: "clawhub", name: CH_NAME, scope: "local", _agentId: "agent-a" }),
+    ).rejects.toThrow(/not official/i);
+  });
+
+  it("refuses a non-archive (installKind:github) clawhub resolution with the resolver's clear hint", async () => {
+    mockResolveClawHubFileSet.mockResolvedValue(
+      err({
+        stage: "acquire",
+        message: `'${CH_NAME}' resolves to a github install, which this import source does not handle`,
+        hint: "import a GitHub-sourced skill via the github import source instead",
+        errorKind: "precondition",
+      }),
+    );
+    const handlers = createSkillHandlers(
+      makeDeps({ defaultAgentId: "agent-a", workspaceDirs: new Map([["agent-a", join(tmpRoot, "ws")]]) }),
+    );
+    await expect(
+      handlers["skills.import"]!({ source: "clawhub", name: CH_NAME, scope: "local", _agentId: "agent-a" }),
+    ).rejects.toThrow(/github import source/i);
   });
 });
