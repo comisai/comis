@@ -300,8 +300,46 @@ class FakeMatrixClient {
     return undefined;
   }
 
+  /** Rooms explicitly joined (invite auto-join + platformAction("join")). */
+  readonly joinedRooms: string[] = [];
   joinRoom(roomIdOrAlias: string): Promise<unknown> {
+    this.joinedRooms.push(roomIdOrAlias);
     return Promise.resolve({ roomId: roomIdOrAlias });
+  }
+
+  /** Platform-action recorders + injectable failures (Task: typing/join/leave/topic/read). */
+  readonly typingCalls: Array<{ roomId: string; typing: boolean; timeoutMs: number }> = [];
+  typingError?: unknown;
+  sendTyping(roomId: string, typing: boolean, timeoutMs: number): Promise<object> {
+    if (this.typingError !== undefined) return Promise.reject(this.typingError);
+    this.typingCalls.push({ roomId, typing, timeoutMs });
+    return Promise.resolve({});
+  }
+
+  readonly leftRooms: string[] = [];
+  leave(roomId: string): Promise<object> {
+    this.leftRooms.push(roomId);
+    return Promise.resolve({});
+  }
+
+  readonly topicCalls: Array<{ roomId: string; topic: string | undefined; htmlTopic: string | undefined }> =
+    [];
+  setRoomTopic(roomId: string, topic?: string, htmlTopic?: string): Promise<object> {
+    this.topicCalls.push({ roomId, topic, htmlTopic });
+    return Promise.resolve({});
+  }
+
+  readonly readReceipts: unknown[] = [];
+  sendReadReceipt(event: unknown): Promise<object> {
+    this.readReceipts.push(event);
+    return Promise.resolve({});
+  }
+
+  /** eventId → resident event, for the markRead getRoom().findEventById() resolver. */
+  readonly residentEvents = new Map<string, unknown>();
+  getRoom(roomId: string): { roomId: string; findEventById: (id: string) => unknown } | null {
+    const events = this.residentEvents;
+    return { roomId, findEventById: (id: string) => events.get(id) };
   }
 
   /** Reaction/redaction recorders + injectable failures for the outbound tests. */
@@ -703,6 +741,111 @@ describe("createMatrixAdapter", () => {
       ([fields]) => (fields as { errorKind?: string }).errorKind === "validation",
     );
     expect(actionWarn).toBeDefined();
+  });
+
+  it("sendTyping routes to client.sendTyping(roomId, true, 30000) and reports typing on", async () => {
+    const { adapter, fake } = makeAdapter();
+    await adapter.start();
+
+    const result = await adapter.platformAction("sendTyping", { chatId: "!r:hs" });
+
+    expect(result.ok).toBe(true);
+    expect(fake.typingCalls).toEqual([{ roomId: "!r:hs", typing: true, timeoutMs: 30000 }]);
+  });
+
+  it("stopTyping routes to client.sendTyping with typing false", async () => {
+    const { adapter, fake } = makeAdapter();
+    await adapter.start();
+
+    const result = await adapter.platformAction("stopTyping", { chatId: "!r:hs" });
+
+    expect(result.ok).toBe(true);
+    expect(fake.typingCalls[0]?.typing).toBe(false);
+  });
+
+  it("join routes to client.joinRoom", async () => {
+    const { adapter, fake } = makeAdapter();
+    await adapter.start();
+
+    const result = await adapter.platformAction("join", { chatId: "!new:hs" });
+
+    expect(result.ok).toBe(true);
+    expect(fake.joinedRooms).toContain("!new:hs");
+  });
+
+  it("leave routes to client.leave", async () => {
+    const { adapter, fake } = makeAdapter();
+    await adapter.start();
+
+    const result = await adapter.platformAction("leave", { chatId: "!r:hs" });
+
+    expect(result.ok).toBe(true);
+    expect(fake.leftRooms).toContain("!r:hs");
+  });
+
+  it("setTopic routes to client.setRoomTopic", async () => {
+    const { adapter, fake } = makeAdapter();
+    await adapter.start();
+
+    const result = await adapter.platformAction("setTopic", { chatId: "!r:hs", topic: "New topic" });
+
+    expect(result.ok).toBe(true);
+    expect(fake.topicCalls[0]).toMatchObject({ roomId: "!r:hs", topic: "New topic" });
+  });
+
+  it("markRead resolves a resident event and sends a read receipt", async () => {
+    const fake = new FakeMatrixClient();
+    fake.residentEvents.set("$e:hs", { id: "$e:hs" });
+    const { adapter } = makeAdapter({ fake });
+    await adapter.start();
+
+    const result = await adapter.platformAction("markRead", { chatId: "!r:hs", eventId: "$e:hs" });
+
+    expect(result.ok).toBe(true);
+    expect(fake.readReceipts).toHaveLength(1);
+  });
+
+  it("markRead best-efforts ok(marked:false) when the target event is not resident", async () => {
+    const { adapter, fake } = makeAdapter();
+    await adapter.start();
+
+    const result = await adapter.platformAction("markRead", {
+      chatId: "!r:hs",
+      eventId: "$missing:hs",
+    });
+
+    expect(result.ok).toBe(true);
+    expect((result as { value: { marked: boolean } }).value.marked).toBe(false);
+    expect(fake.readReceipts).toHaveLength(0);
+  });
+
+  it("errs a supported action before start with a precondition hint", async () => {
+    const { adapter, logger } = makeAdapter();
+
+    const result = await adapter.platformAction("sendTyping", { chatId: "!r:hs" });
+
+    expect(result.ok).toBe(false);
+    const warn = vi.mocked(logger.warn);
+    const preWarn = warn.mock.calls.find(
+      ([fields]) => (fields as { errorKind?: string }).errorKind === "precondition",
+    );
+    expect(preWarn).toBeDefined();
+  });
+
+  it("surfaces a sendTyping SDK failure as err with a classified hint", async () => {
+    const fake = new FakeMatrixClient();
+    fake.typingError = matrixError("M_FORBIDDEN", 403, "forbidden");
+    const { adapter, logger } = makeAdapter({ fake });
+    await adapter.start();
+
+    const result = await adapter.platformAction("sendTyping", { chatId: "!r:hs" });
+
+    expect(result.ok).toBe(false);
+    const warn = vi.mocked(logger.warn);
+    const failWarn = warn.mock.calls.find(
+      ([fields]) => typeof (fields as { errorKind?: string }).errorKind === "string",
+    );
+    expect(failWarn).toBeDefined();
   });
 
   it("logs a synchronously-throwing and an async-rejecting inbound handler without aborting siblings", async () => {
