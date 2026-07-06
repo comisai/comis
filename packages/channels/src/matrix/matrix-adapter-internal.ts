@@ -530,12 +530,14 @@ export async function reconcileSendByHistoryScan(
   }
 
   const chunk = page.value.chunk;
+  let sawBotAuthoredInWindow = false;
   for (const event of chunk) {
     // Spoof guard: only the bot's OWN sent events count toward "did we send this".
     if (event.sender !== botUserId) continue;
     if (event.origin_server_ts < query.sentAfterMs || event.origin_server_ts > query.sentBeforeMs) {
       continue;
     }
+    sawBotAuthoredInWindow = true;
     const body = (event.content as { body?: string }).body ?? "";
     const digest = createHash("sha256").update(body).digest("hex").slice(0, 16);
     if (digest === query.contentDigest) {
@@ -545,11 +547,22 @@ export async function reconcileSendByHistoryScan(
 
   // Window-coverage rule: if older history remains AND the oldest event we read is
   // still newer than the window's lower bound, the send may sit in a page we did
-  // not read — unresolved, never a false not_sent. Otherwise the scan fully covered
-  // the window (or the room has no more history) with no match → not_sent.
+  // not read — unresolved, never a false not_sent.
   const oldest = chunk[chunk.length - 1];
   const moreHistoryRemains = typeof page.value.end === "string" && page.value.end.length > 0;
   if (moreHistoryRemains && (oldest === undefined || oldest.origin_server_ts > query.sentAfterMs)) {
+    return ok({ kind: "unresolved" });
+  }
+
+  // The scan fully covered the window but no body matched. The digest is over the
+  // agent's raw markdown, whereas the wire body is rendered in-adapter — mention
+  // markup rewritten to pill links, and oversized text split into multiple events.
+  // So a landed send's body may legitimately fail to match. If the bot authored ANY
+  // in-window event, one of them could be that rewritten/chunked send: we cannot
+  // prove absence → unresolved (park+escalate), never a false not_sent → replay →
+  // duplicate. not_sent is reserved for the reliable case — a covered scan with NO
+  // bot-authored in-window event, where the send provably did not land.
+  if (sawBotAuthoredInWindow) {
     return ok({ kind: "unresolved" });
   }
   return ok({ kind: "not_sent" });

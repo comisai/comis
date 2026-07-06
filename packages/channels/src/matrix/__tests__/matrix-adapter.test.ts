@@ -1572,7 +1572,14 @@ describe("createMatrixAdapter — reconcileSend history-scan oracle", () => {
     expect(result.value).toEqual({ kind: "not_sent" });
   });
 
-  it("returns not_sent on a fully-covered clean scan with no bot-authored digest match", async () => {
+  it("returns unresolved when a bot-authored in-window event does not digest-match (it may be a rewritten or chunked form of our send)", async () => {
+    // A covered scan where the bot DID author an in-window event but none matches.
+    // The wire body is rendered in-adapter (mentions rewritten, oversized text
+    // chunked), so this event could be our landed send with a divergent body — we
+    // cannot prove absence, so the honest verdict is unresolved, never a false
+    // not_sent → replay → duplicate. not_sent is reserved for a covered scan with
+    // NO bot-authored in-window event (see the spoof-guard and window-coverage
+    // cases below).
     const fake = new FakeMatrixClient();
     fake.messagesEnd = undefined; // reached the start of the room's history
     fake.messagesChunk = [
@@ -1595,23 +1602,46 @@ describe("createMatrixAdapter — reconcileSend history-scan oracle", () => {
 
     expect(result?.ok).toBe(true);
     if (!result?.ok) throw new Error("expected an ok result");
+    expect(result.value).toEqual({ kind: "unresolved" });
+  });
+
+  it("returns not_sent on a fully-covered scan when the bot authored no in-window event", async () => {
+    // The reliable not_sent case: the bot's only activity predates the window, so a
+    // covered scan proves the send never landed → safe to replay. This is the path
+    // a pre-send crash (nothing was ever sent) reconciles through.
+    const fake = new FakeMatrixClient();
+    fake.messagesEnd = undefined; // reached the start of the room's history
+    fake.messagesChunk = [
+      {
+        event_id: "$old:hs",
+        sender: "@bot:hs",
+        origin_server_ts: 500, // predates the window lower bound (1_000)
+        type: "m.room.message",
+        content: { body: "an older message, well before the send window" },
+      },
+    ];
+    const { adapter } = makeAdapter({ fake });
+    await adapter.start();
+
+    const result = await adapter.reconcileSend?.({
+      channelId: "!room:hs",
+      contentDigest: ledgerDigest("the message we are reconciling"),
+      ...WINDOW,
+    });
+
+    expect(result?.ok).toBe(true);
+    if (!result?.ok) throw new Error("expected an ok result");
     expect(result.value).toEqual({ kind: "not_sent" });
   });
 
   it("returns not_sent when the scan pages back past the window even if more history remains", async () => {
     const fake = new FakeMatrixClient();
     // Older history remains (a continuation token), but the OLDEST event read
-    // already predates the window lower bound — so the whole window is covered and
-    // a no-match scan is a definitive not_sent, never a hedged unresolved.
+    // already predates the window lower bound — so the whole window is covered.
+    // With no bot-authored IN-WINDOW event, a no-match scan is a definitive
+    // not_sent, never a hedged unresolved.
     fake.messagesEnd = "t-older";
     fake.messagesChunk = [
-      {
-        event_id: "$in:hs",
-        sender: "@bot:hs",
-        origin_server_ts: 1_500,
-        type: "m.room.message",
-        content: { body: "in window, no match" },
-      },
       {
         event_id: "$pre:hs",
         sender: "@bot:hs",
