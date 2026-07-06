@@ -113,6 +113,14 @@ export type {
   ProvenanceStore,
   AcquisitionSource,
 } from "./import/provenance-store.js";
+// Well-known registry resolver + its bounded index cache. Barrel-exported HERE,
+// landing together with their first cross-package consumer (the daemon import
+// runner's allowlist gate + wellknown dispatch) so the dead-export gate stays
+// green. resolveWellKnown fetches + validates a registry's advertised skill set;
+// createSkillIndexCache is the injected names+paths-only disk cache it reads.
+export { resolveWellKnown } from "./import/sources/wellknown-source.js";
+export type { WellKnownResolved, WellKnownResolveDeps } from "./import/sources/wellknown-source.js";
+export { createSkillIndexCache } from "./import/skill-index-cache.js";
 
 // Integrations -- MCP client manager
 export { createMcpClientManager, qualifyToolName, parseQualifiedName } from "./integrations/mcp-client/index.js";

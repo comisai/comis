@@ -15,18 +15,22 @@
  */
 
 import { createHash } from "node:crypto";
-import { ok, type Result } from "@comis/shared";
+import { ok, err, type Result } from "@comis/shared";
 import { safePath, systemNowDate, type McpServerEntry } from "@comis/core";
 import {
   DEFAULT_UNPACK_CAPS,
   computeInstalledSetHash,
   readProvenanceStore,
   provenanceKey,
+  resolveWellKnown,
+  createSkillIndexCache,
   type AcquireInput,
   type AcquisitionSource,
   type UnpackCaps,
   type SkillScope,
   type ImportReject,
+  type WellKnownResolved,
+  type WellKnownResolveDeps,
 } from "@comis/skills";
 import { runSkillImport, type SkillImportDeps, type CommitResult } from "./import-commit.js";
 import { readBundleInstallState } from "./bundle-install-state.js";
@@ -163,6 +167,112 @@ export async function importThroughPipeline(
 /** Format an import reject for the RPC-facing thrown Error (message + hint). */
 export function formatImportReject(reject: ImportReject): string {
   return `${reject.message} — ${reject.hint}`;
+}
+
+// ---------------------------------------------------------------------------
+// Well-known registry resolve behind the fail-closed allowlist gate (WK-02)
+// ---------------------------------------------------------------------------
+
+/** The reserved non-URL registry token a later ClawHub branch owns; never fetched here. */
+const CLAWHUB_REGISTRY_TOKEN = "clawhub";
+
+/**
+ * Normalize a registry string to a comparable key: an http(s) URL collapses to
+ * its port-preserving, lowercased-host origin (`new URL().origin`); the reserved
+ * `clawhub` token passes through verbatim; any other non-URL string is returned
+ * trimmed as-is, so it can never match a normalized origin (fail closed).
+ */
+function normalizeRegistryOrigin(registry: string): string {
+  const trimmed = registry.trim();
+  if (trimmed === CLAWHUB_REGISTRY_TOKEN) return CLAWHUB_REGISTRY_TOKEN;
+  try {
+    return new URL(trimmed).origin;
+  } catch {
+    return trimmed;
+  }
+}
+
+/** Arguments for {@link resolveWellKnownFileSet}. */
+export interface ResolveWellKnownFileSetArgs {
+  /** The requested registry: a normalized origin, or the reserved clawhub token. */
+  readonly registry: string;
+  /** The registry index-lookup key — which advertised skill to fetch. */
+  readonly name: string;
+  readonly scope: SkillScope;
+  readonly agentId: string;
+  readonly ctx?: ImportCtx;
+  /**
+   * Test-only overrides forwarded verbatim to {@link resolveWellKnown}. Production
+   * omits — the real SSRF validate/fetch primitives + an on-disk index cache run.
+   */
+  readonly overrides?: Pick<WellKnownResolveDeps, "validate" | "fetchImpl" | "cache">;
+}
+
+/**
+ * Resolve a well-known registry skill to its `{ path → content }` file set, behind
+ * the fail-closed allowlist gate.
+ *
+ * WK-02: the requested registry origin MUST be a member of the caps-owning agent's
+ * `skills.import.registries`. The caps-owning agent is the DEFAULT agent for a
+ * shared import and the caller for a local one (matches {@link resolveCaps} + the
+ * shared-write guard), so a shared import can never inherit a non-default agent's
+ * allowlist. A non-member refuses FLATLY — a config edit, NEVER `confirm`-
+ * overridable (the gate does not branch on confirm) — and the refusal happens
+ * BEFORE the resolver opens any connection. A default-empty allowlist therefore
+ * blocks every registry import while leaving archive / GitHub imports untouched.
+ *
+ * On pass, the resolver runs with the agent's per-file caps + a bounded on-disk
+ * index cache; its typed reject is mapped to the runner's {@link ImportReject}
+ * (hint + errorKind preserved).
+ */
+export async function resolveWellKnownFileSet(
+  deps: WorkspaceApiDeps,
+  args: ResolveWellKnownFileSetArgs,
+): Promise<Result<WellKnownResolved, ImportReject>> {
+  const capsAgent = args.scope === "shared" ? deps.defaultAgentId : args.agentId;
+  const registries = deps.agents[capsAgent]?.skills?.import?.registries ?? [];
+
+  const requestedOrigin = normalizeRegistryOrigin(args.registry);
+  const allowed = registries.some((entry) => normalizeRegistryOrigin(entry) === requestedOrigin);
+  if (!allowed) {
+    // Fail closed BEFORE any fetch. The allowlist is a config decision; confirm is
+    // never consulted here, so a registry miss can never be overridden at import time.
+    deps.logger.warn(
+      {
+        submodule: "wellknown-gate",
+        errorKind: "precondition" as const,
+        hint: "add the registry's normalized origin to skills.import.registries",
+        registryOrigin: requestedOrigin,
+      },
+      "skill import: registry not in the skills.import.registries allowlist — refused",
+    );
+    return err({
+      stage: "acquire",
+      message: `the registry "${args.registry}" is not in the skills.import.registries allowlist`,
+      hint: "add the registry's normalized origin to skills.import.registries to permit the import — this is a config edit; confirm does not override it",
+      errorKind: "precondition",
+    });
+  }
+
+  const caps = resolveCaps(deps, capsAgent);
+  const dataDir = (deps.container.config.dataDir as string | undefined) ?? ".";
+  const cache =
+    args.overrides?.cache ?? createSkillIndexCache({ cacheDir: safePath(dataDir, "skill-index-cache") });
+
+  const resolveDeps: WellKnownResolveDeps = {
+    caps: { maxFileCount: caps.maxFileCount, maxFileBytes: caps.maxFileBytes },
+    cache,
+    logger: deps.logger,
+    ...(args.overrides?.validate !== undefined && { validate: args.overrides.validate }),
+    ...(args.overrides?.fetchImpl !== undefined && { fetchImpl: args.overrides.fetchImpl }),
+  };
+
+  const resolved = await resolveWellKnown({ registry: args.registry, name: args.name }, resolveDeps);
+  if (!resolved.ok) {
+    const e = resolved.error;
+    return err({ stage: "acquire", message: e.message, hint: e.hint, errorKind: e.errorKind });
+  }
+  return resolved;
 }
 
 /**
