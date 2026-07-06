@@ -65,7 +65,7 @@ const EXPECTED: readonly ExpectedCaps[] = [
   { dir: "irc", typing: false, threads: false, buttons: "none" },
   { dir: "email", typing: false, threads: false, buttons: "none" },
   { dir: "msteams", typing: true, threads: true, buttons: "adaptivecard" },
-  { dir: "matrix", typing: false, threads: false, buttons: "none" },
+  { dir: "matrix", typing: false, threads: true, buttons: "none" },
 ];
 
 /** The three fields that MUST be declared (not defaulted) per plugin. */

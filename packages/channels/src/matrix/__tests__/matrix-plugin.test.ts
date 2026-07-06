@@ -96,7 +96,7 @@ describe("createMatrixPlugin", () => {
     expect(features.fetchHistory).toBe(true);
     expect(features.attachments).toBe(false);
     expect(features.typing).toBe(false);
-    expect(features.threads).toBe(false);
+    expect(features.threads).toBe(true);
     expect(features.buttons).toBe("none");
     expect(limits.maxMessageChars).toBe(32768);
     expect(replyToMetaKey).toBe("matrixEventId");
