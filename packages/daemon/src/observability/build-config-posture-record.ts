@@ -232,10 +232,12 @@ export interface ConfigPostureInputs {
  *
  * No-ops when `obsStore` is `undefined` (observability persistence disabled) —
  * the `?.` is mandatory so a disabled-persistence boot cannot crash shutdown.
- * Severity is `"warning"` when ANY posture issue is present
- * (`tlsOff` OR a stranded finding OR `canaryFallbackActive` OR
- * `servedBelowConfiguredCount > 0`), else `"info"`. The timestamp comes from
- * the injected `ClockPort` — never `Date.now()` (globals gate).
+ * Severity is `"warning"` when ANY posture issue is present — `tlsOff`, a
+ * stranded finding, `canaryFallbackActive`, `servedBelowConfiguredCount > 0`,
+ * `chimericModelCount > 0`, `pricingGapCount > 0`,
+ * `importedNonAllowlistedRegistryCount > 0`, or `sandboxNoDowngradeDisabled` —
+ * else `"info"`. The timestamp comes from the injected `ClockPort` — never
+ * `Date.now()` (globals gate).
  */
 export function buildConfigPostureRecord(
   obsStore: ObservabilityStore | undefined,
