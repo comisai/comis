@@ -161,6 +161,59 @@ describe("matrixHealthCheck", () => {
     expect(creds?.suggestion ?? "").not.toBe("");
   });
 
+  it("fails creds naming an unresolved password reference (the password-login path)", async () => {
+    const config = {
+      channels: {
+        matrix: {
+          enabled: true,
+          homeserverUrl: "https://matrix.example.org",
+          userId: "@bot:example.org",
+          password: "${MATRIX_PASSWORD}",
+        },
+      },
+    } as unknown as AppConfig;
+    const findings = await matrixHealthCheck.run({
+      ...baseContext,
+      config,
+      configResolution: {
+        foundPath: "/cfg/config.yaml",
+        config,
+        unresolvedRefs: [{ path: "channels.matrix.password", varName: "MATRIX_PASSWORD" }],
+      },
+    });
+    const creds = find(findings, "Matrix credentials");
+    expect(creds?.status).toBe("fail");
+    expect(creds?.message).toContain("MATRIX_PASSWORD");
+    // The password VALUE is never echoed — only the ${VAR} name and the path.
+    expect(creds?.suggestion ?? "").not.toBe("");
+  });
+
+  it("fails creds naming an unresolved recovery-key reference", async () => {
+    const config = {
+      channels: {
+        matrix: {
+          enabled: true,
+          homeserverUrl: "https://matrix.example.org",
+          userId: "@bot:example.org",
+          accessToken: "syt_resolved_token",
+          recoveryKey: "${MATRIX_RECOVERY_KEY}",
+        },
+      },
+    } as unknown as AppConfig;
+    const findings = await matrixHealthCheck.run({
+      ...baseContext,
+      config,
+      configResolution: {
+        foundPath: "/cfg/config.yaml",
+        config,
+        unresolvedRefs: [{ path: "channels.matrix.recoveryKey", varName: "MATRIX_RECOVERY_KEY" }],
+      },
+    });
+    const creds = find(findings, "Matrix credentials");
+    expect(creds?.status).toBe("fail");
+    expect(creds?.message).toContain("MATRIX_RECOVERY_KEY");
+  });
+
   it("passes creds when the homeserver and token resolve", async () => {
     const findings = await matrixHealthCheck.run(
       contextWith({ enabled: true, ...RESOLVED_CREDS }),
