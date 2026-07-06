@@ -40,11 +40,16 @@ const mockMsTeamsPlugin = {
 // caller-backed wiring can be asserted by identity.
 const mockMsTeamsIngress = { __msteamsIngress: true };
 
-// Google Chat is a pull-driven channel: the adapter opens the Pub/Sub pull loop
-// on start(), so there is no gateway ingress to wire (unlike Teams). The plugin
-// carries only the base send surface + lifecycle.
-const mockGoogleChatAdapter = { sendMessage: vi.fn(), start: vi.fn(), stop: vi.fn() };
+// Google Chat is a dual-transport channel. In pubsub mode the adapter opens the
+// Pub/Sub pull loop on start() (no gateway route); in webhook mode inbound arrives
+// over the gateway ingress, which drives the adapter's ONE normalizer
+// (handleChatEvent). The adapter mock therefore carries handleChatEvent so the
+// injected webhook driver reaches the real adapter.
+const mockGoogleChatAdapter = { sendMessage: vi.fn(), start: vi.fn(), stop: vi.fn(), handleChatEvent: vi.fn(() => Promise.resolve()) };
 const mockGoogleChatPlugin = { adapter: mockGoogleChatAdapter, channelType: "googlechat" };
+// A sentinel the mocked googlechat ingress factory returns, so the webhook-branch
+// wiring can be asserted by identity (mirrors mockMsTeamsIngress).
+const mockGoogleChatIngress = { __googlechatIngress: true };
 
 vi.mock("@comis/channels", () => ({
   createTelegramPlugin: vi.fn(() => mockTelegramPlugin),
@@ -73,6 +78,11 @@ vi.mock("@comis/channels", () => ({
   createGoogleChatPlugin: vi.fn(() => mockGoogleChatPlugin),
   // Synchronous, transport-free credential guard — returns a Result directly.
   validateGoogleChatCredentials: vi.fn(() => ({ ok: true, value: undefined })),
+  // The inbound-verify factories the daemon test-seam resolves at build time
+  // (default path → the remote-JWKS verifier). Each returns a stub verify closure
+  // so the webhook wiring builds without standing up jose/remote key sets.
+  createGoogleChatInboundVerifier: vi.fn(() => vi.fn(async () => ({ ok: true, value: undefined }))),
+  createLocalGoogleChatInboundVerifier: vi.fn(() => vi.fn(async () => ({ ok: true, value: undefined }))),
 }));
 
 // The Teams ingress sub-app is built in @comis/gateway; the registration block
@@ -80,6 +90,7 @@ vi.mock("@comis/channels", () => ({
 // standing up a real Hono app.
 vi.mock("@comis/gateway", () => ({
   createMsTeamsIngress: vi.fn(() => mockMsTeamsIngress),
+  createGoogleChatIngress: vi.fn(() => mockGoogleChatIngress),
 }));
 
 import { bootstrapAdapters } from "./setup-channels-adapters.js";
@@ -107,7 +118,7 @@ import {
   createGoogleChatPlugin,
   validateGoogleChatCredentials,
 } from "@comis/channels";
-import { createMsTeamsIngress } from "@comis/gateway";
+import { createMsTeamsIngress, createGoogleChatIngress } from "@comis/gateway";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -138,6 +149,9 @@ function makeContainer(channelOverrides: Record<string, any> = {}, secretMap: Re
         throw new Error("not found");
       }),
     },
+    // The webhook-branch onAuthRejected bridge emits a content-free fleet signal
+    // onto the eventBus; a spy lets the bridge be asserted by identity.
+    eventBus: { emit: vi.fn() },
   } as unknown as AppContainer;
 }
 
@@ -734,10 +748,12 @@ describe("bootstrapAdapters", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Google Chat — a pull-driven channel. The registration block resolves the
-  // service-account key as config-SecretRef-or-GOOGLECHAT_SA_KEY, validates it
-  // with the subscription, and registers the adapter/plugin. There is no
-  // gateway ingress this transport (the adapter opens the Pub/Sub pull loop).
+  // Google Chat — a dual-transport channel. The registration block resolves the
+  // service-account key as config-SecretRef-or-GOOGLECHAT_SA_KEY, validates it,
+  // and registers the adapter/plugin. In pubsub mode the adapter opens the
+  // Pub/Sub pull loop (no route); in webhook mode this block ALSO builds the
+  // gateway ingress from the real adapter's handleChatEvent driver + the
+  // audience-bound inbound verifier + the content-free auth-reject bridge.
   // The credential-fail WARN carries only errorKind + hint — never the key.
   // -------------------------------------------------------------------------
 
@@ -820,5 +836,85 @@ describe("bootstrapAdapters", () => {
 
     expect(result.adaptersByType.has("googlechat")).toBe(false);
     expect(createGoogleChatPlugin).not.toHaveBeenCalled();
+    // No route is built for a disabled channel.
+    expect(result.googlechatIngress).toBeUndefined();
+    expect(createGoogleChatIngress).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // Google Chat webhook mode — the registration block is ALSO the production
+  // CALLER that builds the mounted ingress from the real adapter's
+  // handleChatEvent driver + the audience-bound inbound verifier + the
+  // content-free auth-reject bridge. Pubsub mode builds no route.
+  // -------------------------------------------------------------------------
+
+  it("builds the googlechat webhook ingress from the real adapter + injected verifier when enabled in webhook mode", async () => {
+    // Webhook mode needs no subscriptionName (inbound arrives over the ingress,
+    // not a pull loop) — a blank subscription must still register + build the ingress.
+    const saKey = '{"private_key":"pk","client_email":"bot@proj.iam.gserviceaccount.com"}';
+    const container = makeContainer({
+      googlechat: { enabled: true, serviceAccountKey: saKey, mode: "webhook", audienceType: "project-number", audience: "123456789" },
+    });
+    const result = await bootstrapAdapters({ container, channelsLogger });
+
+    expect(result.adaptersByType.get("googlechat")).toBe(mockGoogleChatAdapter);
+    // The ingress the gateway phase will mount is the one built here.
+    expect(result.googlechatIngress).toBe(mockGoogleChatIngress);
+    expect(createGoogleChatIngress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        validateInboundJwt: expect.any(Function),
+        handleWebhookEvents: expect.any(Function),
+        onAuthRejected: expect.any(Function),
+        logger: channelsLogger,
+      }),
+    );
+  });
+
+  it("drives the real adapter handleChatEvent from the injected handleWebhookEvents (fire-and-forget)", async () => {
+    const saKey = '{"private_key":"pk","client_email":"bot@proj.iam.gserviceaccount.com"}';
+    const container = makeContainer({
+      googlechat: { enabled: true, serviceAccountKey: saKey, mode: "webhook", audienceType: "project-number", audience: "123456789" },
+    });
+    await bootstrapAdapters({ container, channelsLogger });
+
+    // The injected dispatch closure reaches the REAL adapter's one normalizer, so
+    // a mounted route can drive the inbound pipeline end-to-end.
+    const ingressDeps = vi.mocked(createGoogleChatIngress).mock.calls[0]![0] as unknown as {
+      handleWebhookEvents: (events: unknown[]) => void;
+    };
+    ingressDeps.handleWebhookEvents([{ some: "event" }]);
+    expect(mockGoogleChatAdapter.handleChatEvent).toHaveBeenCalledWith({ some: "event" });
+  });
+
+  it("bridges onAuthRejected onto the content-free channel:ingress_auth_rejected eventBus signal", async () => {
+    const saKey = '{"private_key":"pk","client_email":"bot@proj.iam.gserviceaccount.com"}';
+    const container = makeContainer({
+      googlechat: { enabled: true, serviceAccountKey: saKey, mode: "webhook", audienceType: "app-url", audience: "https://example.com/hook" },
+    });
+    await bootstrapAdapters({ container, channelsLogger });
+
+    const ingressDeps = vi.mocked(createGoogleChatIngress).mock.calls[0]![0] as unknown as {
+      onAuthRejected: (reason: string) => void;
+    };
+    ingressDeps.onAuthRejected("invalid_token");
+    // Content-free by construction: the channel label + closed reason class +
+    // timestamp only — never the token/header/body.
+    expect(container.eventBus.emit).toHaveBeenCalledWith("channel:ingress_auth_rejected", {
+      channelType: "googlechat",
+      reason: "invalid_token",
+      timestamp: expect.any(Number),
+    });
+  });
+
+  it("builds no googlechat ingress in pubsub mode (default) — the pull loop opens the transport, no route", async () => {
+    const saKey = '{"private_key":"pk","client_email":"bot@proj.iam.gserviceaccount.com"}';
+    const container = makeContainer({
+      googlechat: { enabled: true, serviceAccountKey: saKey, subscriptionName: "projects/p/subscriptions/s", mode: "pubsub" },
+    });
+    const result = await bootstrapAdapters({ container, channelsLogger });
+
+    expect(result.adaptersByType.get("googlechat")).toBe(mockGoogleChatAdapter);
+    expect(result.googlechatIngress).toBeUndefined();
+    expect(createGoogleChatIngress).not.toHaveBeenCalled();
   });
 });
