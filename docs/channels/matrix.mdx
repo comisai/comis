@@ -1,0 +1,424 @@
+---
+title: "Matrix"
+description: "Connect Comis to a Matrix homeserver with step-by-step setup"
+icon: "comments"
+---
+
+import Prereqs from '/snippets/prereqs.mdx';
+import SecretWarning from '/snippets/secret-warning.mdx';
+import NonTechnicalNote from '/snippets/non-technical-note.mdx';
+
+Connect your Comis agent to [Matrix](https://matrix.org) -- the open, federated
+messaging protocol -- on any homeserver, whether that is matrix.org or a
+self-hosted Synapse, Dendrite, or Conduit. Your agent works in direct messages
+and group rooms, with threaded replies, reactions, edit and delete, media, and
+**end-to-end-encrypted rooms out of the box**.
+
+Matrix is a **pull** channel. Comis logs in to your homeserver and streams
+events over the Client-Server `/sync` API -- it opens the connection *outbound*,
+so nothing needs to be reachable from the internet. There is no inbound route to
+register, no reverse proxy, and no port to open. This page walks you through
+creating the bot account, configuring the connection, and turning on encryption.
+
+<NonTechnicalNote />
+
+## Prerequisites
+
+<Prereqs />
+
+- A Matrix account for the bot on a homeserver -- you will use its full MXID,
+  for example `@bot:example.org`
+- An **access token** for that account (or its password -- see
+  [Authentication](#authentication))
+- If you self-host: the homeserver's base URL (for example
+  `https://matrix.example.org`)
+
+## How Comis connects
+
+Matrix delivers messages by letting a client pull them. Comis logs in to your
+homeserver and holds an outbound `/sync` long-poll, receiving room events as
+they arrive. Because the daemon initiates the connection, **nothing has to be
+reachable from the internet** -- no inbound route, no reverse proxy, no open
+port. This is the same pull model as [Telegram](/channels/telegram) and
+[Signal](/channels/signal), and the inverse of channels that push activities to
+a bot.
+
+A three-gate watermark on the sync loop ensures the bot processes each event
+once and does not replay the backlog after a restart, so a restart never
+re-answers old messages.
+
+## Setup
+
+<Steps>
+  <Step title="Create a bot account on your homeserver">
+    Register a dedicated account for the bot (for example `@bot:example.org`)
+    through your homeserver's registration flow or admin API. Give it its own
+    account -- do not reuse a human's login, so the bot has a stable, separate
+    identity.
+  </Step>
+
+  <Step title="Get an access token">
+    You need an access token so Comis can authenticate as the bot. Either log in
+    once with any Matrix client and copy the account's access token, or let Comis
+    log in with the account **password** and mint (and persist) a token itself --
+    see [Authentication](#authentication). The token is the only secret Comis
+    stores.
+  </Step>
+
+  <Step title="Configure Comis">
+    Add the Matrix channel to your Comis configuration file
+    (`~/.comis/config.yaml`):
+
+    ```yaml
+    channels:
+      matrix:
+        enabled: true
+        homeserverUrl: "https://matrix.example.org"
+        userId: "@bot:example.org"
+        accessToken: "${MATRIX_ACCESS_TOKEN}"
+        deviceId: "COMIS_BOT"
+        e2ee: true
+        allowFrom:
+          - "@you:example.org"
+    ```
+
+    Set the secret in your `~/.comis/.env` file:
+
+    ```bash
+    MATRIX_ACCESS_TOKEN=your-bot-access-token
+    ```
+
+    <SecretWarning />
+
+    Prefer the command line? `comis init` can write the same block
+    non-interactively:
+
+    ```bash
+    comis init --matrix-homeserver https://matrix.example.org \
+      --matrix-user-id @bot:example.org \
+      --matrix-access-token "$MATRIX_ACCESS_TOKEN"
+    ```
+  </Step>
+
+  <Step title="Restart and verify">
+    Restart the Comis daemon to pick up the new configuration:
+
+    ```bash
+    comis daemon stop && comis daemon start
+    ```
+
+    Check that the Matrix probes pass:
+
+    ```bash
+    comis doctor
+    ```
+
+    Then invite the bot to a room from an allowlisted account (or send it a
+    direct message) and confirm it replies.
+  </Step>
+</Steps>
+
+## Authentication
+
+Comis authenticates as the bot in one of two ways. Either way the identity is
+validated with a `whoami` call before the bot starts syncing, so a bad
+credential fails loudly at startup rather than silently.
+
+<Tabs>
+  <Tab title="Access token (recommended)">
+    Put a long-lived access token in `accessToken`. This is the simplest setup
+    and the token is the only secret.
+
+    ```yaml
+    channels:
+      matrix:
+        enabled: true
+        homeserverUrl: "https://matrix.example.org"
+        userId: "@bot:example.org"
+        accessToken: "${MATRIX_ACCESS_TOKEN}"
+        deviceId: "COMIS_BOT"
+    ```
+
+    Pair the token with a stable `deviceId` so the bot keeps the same device
+    identity -- and therefore its encryption keys -- across restarts.
+  </Tab>
+
+  <Tab title="Password login">
+    Give Comis the account **password** and it runs the login flow itself,
+    pinning `deviceId` so the homeserver reuses the same device. It then
+    persists the returned token and device id, so it does **not** re-log-in on
+    every boot -- a fresh login each time would mint a new device and orphan its
+    encryption keys.
+
+    ```yaml
+    channels:
+      matrix:
+        enabled: true
+        homeserverUrl: "https://matrix.example.org"
+        userId: "@bot:example.org"
+        password: "${MATRIX_PASSWORD}"
+        deviceId: "COMIS_BOT"
+    ```
+
+    If a stored token is later rejected and a password is configured, Comis
+    re-logs in automatically to mint a fresh token for the **same** device.
+  </Tab>
+</Tabs>
+
+Only `accessToken` and `password` are secrets -- keep them in `~/.comis/.env`
+(as `MATRIX_ACCESS_TOKEN` and `MATRIX_PASSWORD`) or as a `SecretRef`.
+`homeserverUrl`, `userId`, and `deviceId` are plain configuration values.
+
+## End-to-end encryption
+
+Encryption is **on by default** (`e2ee: true`). On first start Comis initializes
+a crypto backend and persists it in the state directory (`stateDir`, default
+`~/.comis/matrix-state`), so the bot can send and receive in encrypted rooms.
+Set `e2ee: false` if you want the bot to operate in plaintext rooms only.
+
+**Keep a stable device.** The bot's encryption keys belong to its device, so a
+stable `deviceId` is what lets those keys survive a restart. A password login
+pins and persists the device automatically; with an access token, set `deviceId`
+explicitly.
+
+**Device verification.** An unverified bot device can still participate in
+encrypted rooms, but some senders will withhold room keys from an unverified
+device -- a loud, supported posture: the bot runs, and it tells you when this
+happens rather than failing. To verify the device, provide the account's secure
+backup key in `recoveryKey`; the bot restores cross-signing and the room-key
+backup and verifies itself.
+
+```yaml
+channels:
+  matrix:
+    enabled: true
+    homeserverUrl: "https://matrix.example.org"
+    userId: "@bot:example.org"
+    accessToken: "${MATRIX_ACCESS_TOKEN}"
+    deviceId: "COMIS_BOT"
+    e2ee: true
+    recoveryKey: "${MATRIX_RECOVERY_KEY}"
+```
+
+**Honest degrade.** When the bot receives an encrypted event it cannot decrypt,
+it never silently drops it. It posts a once-per-room system note carrying an
+operator hint that names the exact next step -- verify the device, re-share the
+keys, or (if encryption was turned off) turn it back on -- and it never exposes
+the ciphertext. The `comis doctor` encryption and device-verification probes
+report the same posture (see [Liveness](#liveness)).
+
+## Configuration
+
+The full option table -- every field, type, and default -- lives in the
+[Configuration reference](/reference/config-yaml#channels). The environment
+variable is documented in
+[Environment variables](/reference/environment-variables#matrix). This section
+covers the options that carry a security consequence worth spelling out.
+
+### Which rooms the bot joins, and who it listens to
+
+Three keys decide whether the bot auto-joins a room it is invited to:
+
+| `autoJoinOnInvite` | `allowMode`   | Behavior                                                                       |
+| ------------------ | ------------- | ------------------------------------------------------------------------------ |
+| `false`            | (any)         | Never auto-joins                                                               |
+| `true`             | `"allowlist"` | Joins only when the inviter's MXID is in `allowFrom` (an empty list joins none) |
+| `true`             | `"open"`      | Joins any invite                                                               |
+
+The invite decision keys on the inviter's **full MXID** (`@user:server`), never
+the display name -- which anyone can set to impersonate another user.
+
+<Warning>
+The single `allowFrom` list does **two different jobs**, with **opposite
+defaults**:
+
+- As the **invite gate** it is default-**closed**: an empty `allowFrom` auto-joins
+  no room, so a stranger cannot pull the bot into an arbitrary room.
+- As the **per-message speaker gate** it is default-**open**: once the bot is in a
+  room, an empty `allowFrom` lets *every* current and future member of that room
+  talk to the agent.
+
+So an allowlisted inviter gates the room **join** -- it does **not**, by itself,
+restrict who may **speak**. If you want only specific people to drive the agent,
+list every MXID you trust to speak in `allowFrom` (that same list then also
+governs who may invite the bot). Do not assume "the bot only joined because I
+invited it, so only I can use it." Set `allowMode: "open"` only if you genuinely
+want the bot to answer anyone in any room it has joined.
+</Warning>
+
+### Self-hosted homeservers
+
+`homeserverUrl` is validated against server-side request forgery before any
+connection is opened, which blocks private-range addresses by default. To point
+the bot at a homeserver you run on a private address, set
+`allowPrivateHomeserver: true`. Cloud-metadata endpoints stay blocked regardless.
+
+## Media
+
+**Inbound.** Attachments -- images, audio and voice messages, video, and files --
+arrive as `mxc://` references. Comis downloads them through an authenticated,
+DNS-pinned, SSRF-guarded fetcher scoped to your homeserver host. In an encrypted
+room it decrypts the media **before** the bytes are MIME-sniffed and handed to
+the media pipeline (transcription, vision, document extraction).
+
+**Outbound.** The agent uploads attachments to the homeserver and sends them as
+native Matrix media events (`m.image`, `m.file`, and the like). In an encrypted
+room the uploaded bytes are encrypted before they leave.
+
+Attachment size ceilings are set by your homeserver, not by Comis.
+
+## Liveness
+
+`comis doctor` runs five Matrix probes so a mis-wired or silently broken
+connection cannot report healthy forever:
+
+- **Credentials parse** -- the configured credentials are present and coherent.
+  If a secret reference such as `${MATRIX_ACCESS_TOKEN}` is unresolved, the
+  finding names the *reference*, never the value.
+- **Reachability** -- the live adapter's connection state, read over the
+  daemon's status channel.
+- **Encryption backend** -- when `e2ee` is on, the crypto backend actually
+  loaded; a warning here means encryption init failed.
+- **Device verification** -- a warning (never a failure) when the bot's device is
+  unverified, since unverified operation is a supported posture.
+- **State directory** -- the state directory is writable.
+
+Probes that need the running daemon **skip** -- rather than report OK -- when it
+is down, so a stopped daemon never looks healthy.
+
+## Local emulator (self-drive testing)
+
+For an offline round trip without a real homeserver -- and for the self-driving
+live-test rig -- an in-tree emulator plays the homeserver side (login, `/sync`,
+media, and the encryption key-upload and key-query surface). It lives at
+`test/live/emulators/matrix/` and is launched from `test/live/bin/`.
+
+Because Matrix is pull-based, wiring the emulator is **just configuration**:
+point the channel at it. There are no signing-key or connector seams to set --
+the daemon simply connects outbound to the emulator instead of a real
+homeserver.
+
+```bash
+# 1. Start the emulator (prints the homeserverUrl and the config to set).
+tsx test/live/bin/vps-emu-matrix.ts
+
+# 2. In config.yaml, point channels.matrix at the emulator and opt in to its
+#    loopback address, then boot the daemon:
+#    channels.matrix.homeserverUrl: <the printed emulator URL>
+#    channels.matrix.allowPrivateHomeserver: true
+node packages/daemon/dist/daemon.js
+```
+
+<Warning>
+`allowPrivateHomeserver: true` is required here only because the emulator listens
+on a loopback address, which the SSRF guard blocks by default. Set it for the
+emulator or a homeserver you control -- never to reach an arbitrary private
+address.
+</Warning>
+
+The whole wire stack is also proven offline (no daemon) by the round-trip
+scenario at `test/live/scenarios/channels/matrix-emulator.test.ts`, which drives
+a real adapter against the emulator, including an encrypted-startup and an
+honest decrypt-degrade edge.
+
+## What your agent can do
+
+Once connected to Matrix, your agent can:
+
+- Send, edit, and delete messages in direct messages and group rooms (edits
+  replace the original event; deletes redact it)
+- Reply inside a thread
+- Send and receive reactions (remove one by redacting it)
+- Stream a response by editing a message in place as it is generated
+- Show a typing indicator while it works
+- Send and receive media -- images, audio and voice messages, video, and files --
+  including in encrypted rooms
+- Fetch recent room history for context
+- Participate in end-to-end-encrypted rooms
+- Mention users, and detect when it is mentioned
+- Deliver messages from cron jobs and heartbeats to rooms it has joined
+
+Matrix does **not** support the agent sending **interactive buttons** (Matrix
+exposes no button surface, so approval and action prompts render as text) or
+**voice / TTS replies**.
+
+## Platform limits
+
+| Limit                 | Value                          | What Comis does about it                                            |
+| --------------------- | ------------------------------ | ------------------------------------------------------------------- |
+| Message length        | 32,768 characters              | Automatically splits long responses at paragraph boundaries         |
+| Outbound attachments  | Homeserver-configured size cap | Uploads within the limit your homeserver sets                       |
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="The bot won't join a room I invited it to">
+    **What happened:** The invite gate declined the invite.
+
+    **How to fix it:** Confirm `autoJoinOnInvite` is `true`. In the default
+    `allowlist` mode the inviter's **full MXID** must appear in `allowFrom` --
+    an exact match, so a bare localpart, a display name, or the same localpart on
+    a different homeserver will not match. Add the inviter's MXID, or set
+    `allowMode: "open"` to accept any invite. `comis doctor` confirms the channel
+    is connected.
+  </Accordion>
+
+  <Accordion title="The bot receives messages but can't read encrypted ones">
+    **What happened:** The bot's device cannot decrypt the room -- usually an
+    unverified device, a missing room key, or encryption having been turned off.
+
+    **How to fix it:** The bot posts a once-per-room note that names the exact
+    next step. Set `recoveryKey` to verify the device, or have a room member
+    re-share the keys; if `e2ee` was disabled, set it back to `true`. Make sure
+    `deviceId` is stable so the device (and its keys) survive restarts. The
+    `comis doctor` encryption and device-verification probes report which half is
+    wrong.
+  </Accordion>
+
+  <Accordion title="Authentication fails at startup">
+    **What happened:** The access token was rejected, or the login could not
+    resolve the bot's identity.
+
+    **How to fix it:** Refresh `MATRIX_ACCESS_TOKEN`, or configure a `password`
+    so Comis can re-log-in and mint a fresh token itself. Verify `homeserverUrl`
+    and that `userId` is the full MXID (`@bot:example.org`). The `comis doctor`
+    credentials and reachability probes tell you which check failed.
+  </Accordion>
+
+  <Accordion title="The bot won't connect to my self-hosted homeserver">
+    **What happened:** `homeserverUrl` points at a private-range address, which
+    is blocked by the SSRF guard by default.
+
+    **How to fix it:** Set `allowPrivateHomeserver: true` for a homeserver you
+    control. Cloud-metadata endpoints stay blocked regardless.
+  </Accordion>
+</AccordionGroup>
+
+## Later additions
+
+The Matrix channel covers chat, threads, reactions, edit and delete, media,
+history, mentions, and encrypted rooms. These are documented as not-yet-shipped
+so you can plan around them:
+
+- Paginating room history in the older-than-a-cursor (`before`) direction
+- Following a room upgrade (a tombstoned room to its replacement) automatically
+- Interactive buttons (Matrix exposes no button surface; prompts render as text)
+- Voice / TTS replies
+
+<CardGroup cols={2}>
+  <Card title="Delivery Infrastructure" icon="truck-fast" href="/channels/delivery">
+    How streaming, typing indicators, and retry logic work under the hood.
+  </Card>
+  <Card title="Multiple users & teams" icon="users" href="/channels/multi-user">
+    Run one install for a whole team - private per person, isolated per agent.
+  </Card>
+  <Card title="All Channels" icon="message-dots" href="/channels">
+    Compare all 11 supported platforms side by side.
+  </Card>
+  <Card title="Agent Configuration" icon="robot" href="/agents">
+    Set up your agent's personality, tools, and behavior.
+  </Card>
+  <Card title="Secret Management" icon="key" href="/security/secrets">
+    Learn how to manage API keys and tokens securely.
+  </Card>
+</CardGroup>
