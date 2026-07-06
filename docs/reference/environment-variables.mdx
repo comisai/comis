@@ -308,15 +308,16 @@ export COMIS_MSTEAMS_TEST_CONNECTOR=http://127.0.0.1:53999
 ### Google Chat live-test seams (test-only)
 
 <Warning>
-These variables exist ONLY to point the Google Chat webhook ingress at a local
-loopback emulator for live testing. They are **unset in production** — with them
-unset the daemon verifies inbound events against Google's live signing keys,
-byte-identically to a normal Google Chat webhook deployment. **Never set them on
-a production daemon.** They do not relax a security control: the seam swaps in a
-full local-JWKS signature/issuer/audience verify, never a bypass. Google Chat has
-no outbound connector-redirect seam — its egress base URLs (`tokenUrl`,
-`chatBaseUrl`, `pubsubBaseUrl`) are already injectable via config, so there is no
-`COMIS_GOOGLECHAT_TEST_CONNECTOR`.
+These variables exist ONLY to point the Google Chat daemon at a local loopback
+emulator for live testing (see the [Google Chat setup guide](/channels/googlechat)).
+They are **unset in production** — with them unset the daemon verifies inbound
+events against Google's live signing keys and sends over Google's real Chat,
+Pub/Sub, and token endpoints, byte-identically to a normal Google Chat
+deployment. **Never set them on a production daemon.** They do not relax a
+security control: `COMIS_GOOGLECHAT_TEST_JWKS` swaps in a full local-JWKS
+signature/issuer/audience verify (never a bypass), and `COMIS_GOOGLECHAT_TEST_API`
+only redirects outbound egress to a loopback address. Activating either emits a
+content-free WARN so a stray production setting is loud in the logs.
 </Warning>
 
 #### `COMIS_GOOGLECHAT_TEST_JWKS`
@@ -356,6 +357,26 @@ Source: `packages/daemon/src/wiring/googlechat-test-seams.ts`
 
 ```bash
 export COMIS_GOOGLECHAT_TEST_ISSUER=https://emulator.test/issuer
+```
+
+#### `COMIS_GOOGLECHAT_TEST_API`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Daemon (googlechat outbound egress) |
+| **Format** | Loopback base URL (e.g. `http://127.0.0.1:PORT`) |
+| **Default** | (unset) — Google's real Chat, Pub/Sub, and OAuth token endpoints |
+
+When set, the daemon redirects its Google Chat outbound egress — the Chat REST
+API, the Pub/Sub pull endpoint, and the OAuth token endpoint — to the loopback
+emulator at this base URL, so a live-test rig can observe and answer the bot's
+calls without reaching Google. Off by default and test-only; activating it emits
+a content-free WARN, and it is never a production knob.
+
+Source: `packages/daemon/src/wiring/googlechat-test-seams.ts`
+
+```bash
+export COMIS_GOOGLECHAT_TEST_API=http://127.0.0.1:53998
 ```
 
 ## Secret Variables
@@ -732,9 +753,12 @@ The bot app id (`channels.msteams.appId`) and directory/tenant id (`channels.mst
 
 ### Google Chat
 
-| Variable | Purpose |
-|----------|---------|
-| `GOOGLECHAT_SA_KEY` | Service-account key JSON for the Chat app — the fallback source for `channels.googlechat.serviceAccountKey` (also settable inline in config or as a SecretRef). A secret; never commit it in plaintext config. |
+#### `GOOGLECHAT_SA_KEY`
+
+Service-account key JSON for the Chat app — the fallback source for
+`channels.googlechat.serviceAccountKey` (also settable inline in config or as a
+SecretRef). A secret; never commit it in plaintext config. See the
+[Google Chat setup guide](/channels/googlechat) for how to obtain it.
 
 ### IRC
 
