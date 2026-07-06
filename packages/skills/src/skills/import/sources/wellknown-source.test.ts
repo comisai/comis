@@ -1,0 +1,241 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Boundary suite for the well-known registry resolver. Every fetch (the index
+ * AND each file) must go through the injected SSRF-validate + pinned-fetch
+ * seams; a blocked host rejects before a connection opens. The index shape is
+ * Zod-validated (additive fields tolerated, drift fails loud naming the
+ * registry), the requested skill is looked up, and EVERY advertised path is
+ * validated before any file is fetched — one unsafe path rejects the whole
+ * bundle. The index metadata may be served from an injected cache; every file
+ * is always re-fetched.
+ *
+ * Fixtures only — no live registry is ever contacted. The validate/fetch/cache
+ * seams are injected spies; a non-network reject must leave the fetch spy
+ * untouched.
+ *
+ * @module
+ */
+import { describe, it, expect, vi } from "vitest";
+import { ok, err } from "@comis/shared";
+import { resolveWellKnown } from "./wellknown-source.js";
+import type {
+  ArchiveHttpResponse,
+  ArchiveResponseBody,
+  ArchiveUrlValidator,
+} from "../acquire.js";
+import type { SkillIndexCache } from "../skill-index-cache.js";
+import * as F from "../test-fixtures/wellknown-index.js";
+
+// ---------------------------------------------------------------------------
+// Response + seam stubs (a minimal web-stream body the capped reader consumes)
+// ---------------------------------------------------------------------------
+
+function streamOf(chunks: readonly Uint8Array[]): ArchiveResponseBody {
+  let index = 0;
+  let cancelled = false;
+  return {
+    getReader() {
+      return {
+        async read() {
+          if (cancelled || index >= chunks.length) return { done: true, value: undefined };
+          return { done: false, value: chunks[index++]! };
+        },
+        async cancel() {
+          cancelled = true;
+        },
+      };
+    },
+    async cancel() {
+      cancelled = true;
+    },
+  };
+}
+
+function stubResponse(opts: {
+  ok?: boolean;
+  status?: number;
+  contentLength?: string | null;
+  body?: string;
+  noBody?: boolean;
+}): ArchiveHttpResponse {
+  const headers = new Map<string, string>();
+  if (opts.contentLength != null) headers.set("content-length", opts.contentLength);
+  const chunks = opts.body !== undefined ? [new TextEncoder().encode(opts.body)] : [];
+  return {
+    ok: opts.ok ?? true,
+    status: opts.status ?? 200,
+    headers: { get: (name) => headers.get(name.toLowerCase()) ?? null },
+    body: opts.noBody === true ? null : streamOf(chunks),
+  };
+}
+
+/** A fetch spy that serves a body per URL; an unmapped URL 404s. */
+function servingFetch(byUrl: Record<string, string>) {
+  return vi.fn(async (url: string, _ip: string, _init?: unknown): Promise<ArchiveHttpResponse> => {
+    const body = byUrl[url];
+    if (body === undefined) return stubResponse({ ok: false, status: 404 });
+    return stubResponse({ body });
+  });
+}
+
+const okValidate: ArchiveUrlValidator = vi.fn(async () => ok({ hostname: "reg.example", ip: "203.0.113.10" }));
+
+const REGISTRY = "https://reg.example";
+const INDEX_URL = `${REGISTRY}/.well-known/skills/index.json`;
+const fileUrl = (name: string, rel: string): string => `${REGISTRY}/.well-known/skills/${name}/${rel}`;
+const CAPS = { maxFileCount: 200, maxFileBytes: 4_194_304 };
+
+// ---------------------------------------------------------------------------
+// Index resolution: SSRF pin, shape validation, name lookup, per-path reject
+// ---------------------------------------------------------------------------
+
+describe("resolveWellKnown — index resolution + SSRF + shape validation", () => {
+  it("rejects a blocked index host through the SSRF guard WITHOUT fetching", async () => {
+    const validate: ArchiveUrlValidator = vi.fn(async () => err(new Error("blocked: loopback range")));
+    const fetchImpl = servingFetch({});
+    const result = await resolveWellKnown(
+      { registry: REGISTRY, name: "pdf-extractor" },
+      { caps: CAPS, validate, fetchImpl },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("validation");
+    expect(validate).toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid (non-http) registry naming the registry, without fetching", async () => {
+    const fetchImpl = servingFetch({});
+    const result = await resolveWellKnown(
+      { registry: "not a url", name: "pdf-extractor" },
+      { caps: CAPS, validate: okValidate, fetchImpl },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("validation");
+    expect(result.error.message).toContain("not a url");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("fails loud when the index is missing the skills array, naming the registry", async () => {
+    const fetchImpl = servingFetch({ [INDEX_URL]: JSON.stringify(F.FIXTURE_SHAPE_DRIFT_INDEX) });
+    const result = await resolveWellKnown(
+      { registry: REGISTRY, name: "pdf-extractor" },
+      { caps: CAPS, validate: okValidate, fetchImpl },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("validation");
+    expect(result.error.message + result.error.hint).toContain(REGISTRY);
+  });
+
+  it("fails loud when the index skills field is the wrong type", async () => {
+    const fetchImpl = servingFetch({ [INDEX_URL]: JSON.stringify(F.FIXTURE_SHAPE_DRIFT_WRONG_TYPE_INDEX) });
+    const result = await resolveWellKnown(
+      { registry: REGISTRY, name: "pdf-extractor" },
+      { caps: CAPS, validate: okValidate, fetchImpl },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("validation");
+    expect(result.error.message + result.error.hint).toContain(REGISTRY);
+  });
+
+  it("fails loud when the index is not valid JSON", async () => {
+    const fetchImpl = servingFetch({ [INDEX_URL]: "{ not json" });
+    const result = await resolveWellKnown(
+      { registry: REGISTRY, name: "pdf-extractor" },
+      { caps: CAPS, validate: okValidate, fetchImpl },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("validation");
+    expect(result.error.message + result.error.hint).toContain(REGISTRY);
+  });
+
+  it("tolerates additive unknown fields and resolves successfully", async () => {
+    const fetchImpl = servingFetch({
+      [INDEX_URL]: JSON.stringify(F.FIXTURE_ADDITIVE_FIELD_INDEX),
+      [fileUrl("pdf-extractor", "SKILL.md")]: F.FIXTURE_VALID_FILES["pdf-extractor/SKILL.md"]!,
+    });
+    const result = await resolveWellKnown(
+      { registry: REGISTRY, name: "pdf-extractor" },
+      { caps: CAPS, validate: okValidate, fetchImpl },
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.registryOrigin).toBe(REGISTRY);
+    expect(result.value.files.some((f) => f.path === "SKILL.md")).toBe(true);
+  });
+
+  it("rejects a name the index does not advertise, naming the registry", async () => {
+    const fetchImpl = servingFetch({ [INDEX_URL]: JSON.stringify(F.FIXTURE_VALID_INDEX) });
+    const result = await resolveWellKnown(
+      { registry: REGISTRY, name: "does-not-exist" },
+      { caps: CAPS, validate: okValidate, fetchImpl },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("validation");
+    expect(result.error.message + result.error.hint).toContain(REGISTRY);
+    expect(result.error.message).toContain("does-not-exist");
+  });
+
+  it("rejects the WHOLE bundle on one unsafe advertised path, BEFORE any file fetch", async () => {
+    const fetchImpl = servingFetch({ [INDEX_URL]: JSON.stringify(F.FIXTURE_PATH_ESCAPE_INDEX) });
+    const result = await resolveWellKnown(
+      { registry: REGISTRY, name: "path-escape" },
+      { caps: CAPS, validate: okValidate, fetchImpl },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("validation");
+    expect(result.error.message + result.error.hint).toContain(REGISTRY);
+    // Only the index was fetched; no file URL was ever requested.
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0]![0]).toBe(INDEX_URL);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Index cache seam: hit short-circuits the index fetch; miss stores names+paths
+// ---------------------------------------------------------------------------
+
+describe("resolveWellKnown — index cache seam", () => {
+  it("uses a cache hit and does NOT fetch the index (files are still fetched)", async () => {
+    // Serve ONLY the file — if the resolver tried to fetch the index it would 404.
+    const fetchImpl = servingFetch({
+      [fileUrl("pdf-extractor", "SKILL.md")]: F.FIXTURE_VALID_FILES["pdf-extractor/SKILL.md"]!,
+    });
+    const cache: SkillIndexCache = {
+      get: vi.fn(() => [{ name: "pdf-extractor", files: ["SKILL.md"] }]),
+      put: vi.fn(),
+    };
+    const result = await resolveWellKnown(
+      { registry: REGISTRY, name: "pdf-extractor" },
+      { caps: CAPS, validate: okValidate, fetchImpl, cache },
+    );
+    expect(result.ok).toBe(true);
+    expect(cache.get).toHaveBeenCalled();
+    expect(cache.put).not.toHaveBeenCalled();
+    for (const call of fetchImpl.mock.calls) expect(call[0]).not.toBe(INDEX_URL);
+  });
+
+  it("fetches the index on a cache miss and stores names+paths only", async () => {
+    const fetchImpl = servingFetch({
+      [INDEX_URL]: JSON.stringify(F.FIXTURE_VALID_INDEX),
+      [fileUrl("pdf-extractor", "SKILL.md")]: F.FIXTURE_VALID_FILES["pdf-extractor/SKILL.md"]!,
+      [fileUrl("pdf-extractor", "references/notes.md")]: F.FIXTURE_VALID_FILES["pdf-extractor/references/notes.md"]!,
+    });
+    const cache: SkillIndexCache = { get: vi.fn(() => undefined), put: vi.fn() };
+    const result = await resolveWellKnown(
+      { registry: REGISTRY, name: "pdf-extractor" },
+      { caps: CAPS, validate: okValidate, fetchImpl, cache },
+    );
+    expect(result.ok).toBe(true);
+    expect(cache.get).toHaveBeenCalledTimes(1);
+    expect(cache.put).toHaveBeenCalledTimes(1);
+    const putEntries = (cache.put as ReturnType<typeof vi.fn>).mock.calls[0]![1] as ReadonlyArray<{ name: string }>;
+    expect(putEntries.map((e) => e.name)).toEqual(["pdf-extractor", "csv-summarizer"]);
+  });
+});
