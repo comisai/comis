@@ -69,6 +69,30 @@ function stubResponse(opts: {
   };
 }
 
+/**
+ * A response whose headers arrive `200 OK` but whose body reader REJECTS on the
+ * first `read()` — the mid-stream failure shape (a connection reset while the
+ * body streams, or the per-fetch streaming timeout firing during `read()`).
+ */
+function midStreamErrorResponse(readError: unknown): ArchiveHttpResponse {
+  return {
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    body: {
+      getReader() {
+        return {
+          read(): Promise<{ done: boolean; value?: Uint8Array }> {
+            return Promise.reject(readError);
+          },
+          async cancel() {},
+        };
+      },
+      async cancel() {},
+    },
+  };
+}
+
 /** A fetch spy that serves a body per URL; an unmapped URL 404s. */
 function servingFetch(byUrl: Record<string, string>) {
   return vi.fn(async (url: string, _ip: string, _init?: unknown): Promise<ArchiveHttpResponse> => {
@@ -405,5 +429,71 @@ describe("resolveWellKnown — instrumentation", () => {
     expect(result.ok).toBe(false);
     expect(logger.warn).toHaveBeenCalled();
     expect(logger.warn.mock.calls[0]![0]).toMatchObject({ errorKind: "validation" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Reject contract — a mid-stream body error / streaming timeout / any
+// unforeseen seam throw surfaces as a TYPED reject (never a throw), so the
+// resolver's WARN + hint always fire (a stalled/slow registry must be
+// diagnosable from the log line, not an untyped fault).
+// ---------------------------------------------------------------------------
+
+describe("resolveWellKnown — never-throws reject contract", () => {
+  it("returns a typed dependency reject (never throws) when the body stream errors mid-read, and WARNs", async () => {
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    // The index request returns 200 + headers, then the body read rejects.
+    const fetchImpl = vi.fn(async () => midStreamErrorResponse(new Error("socket hang up")));
+    const result = await resolveWellKnown(
+      { registry: REGISTRY, name: "pdf-extractor" },
+      { caps: CAPS, validate: okValidate, fetchImpl, logger },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("dependency");
+    expect(result.error.hint.length).toBeGreaterThan(0);
+    expect(result.error.message).toContain(REGISTRY);
+    // The typed-Result seam held, so the WARN fired with errorKind + hint + durationMs.
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    const payload = logger.warn.mock.calls[0]![0] as Record<string, unknown>;
+    expect(payload).toMatchObject({ errorKind: "dependency" });
+    expect(payload).toHaveProperty("hint");
+    expect(payload).toHaveProperty("durationMs");
+  });
+
+  it("returns a timeout-kinded reject when the body read is aborted by the streaming timeout, and WARNs", async () => {
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    // AbortSignal.timeout(...) rejects the in-flight read() with a TimeoutError.
+    const timeoutErr = new DOMException("The operation timed out.", "TimeoutError");
+    const fetchImpl = vi.fn(async () => midStreamErrorResponse(timeoutErr));
+    const result = await resolveWellKnown(
+      { registry: REGISTRY, name: "pdf-extractor" },
+      { caps: CAPS, validate: okValidate, fetchImpl, logger },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("timeout");
+    expect(result.error.message).toContain(REGISTRY);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn.mock.calls[0]![0]).toMatchObject({ errorKind: "timeout" });
+  });
+
+  it("honors the never-throws contract when a seam throws unexpectedly (typed internal reject + WARN)", async () => {
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    // The real validateUrl returns a Result; the contract must hold even for an
+    // unforeseen throw out of an injected seam.
+    const validate: ArchiveUrlValidator = vi.fn(async () => {
+      throw new Error("validator blew up");
+    });
+    const fetchImpl = servingFetch({});
+    const result = await resolveWellKnown(
+      { registry: REGISTRY, name: "pdf-extractor" },
+      { caps: CAPS, validate, fetchImpl, logger },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("internal");
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn.mock.calls[0]![0]).toMatchObject({ errorKind: "internal" });
   });
 });
