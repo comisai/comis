@@ -14,11 +14,15 @@
  * reaching the subscription are separate operational probes and are
  * intentionally out of scope here; this is parse-only.
  *
- * It also carries two advisory config lints that never fail validation: an
+ * It also carries three advisory config lints that never fail validation: an
  * email-shaped `allowFrom` entry surfaces a WARN steering the operator toward the
- * immutable resource id (an email display id is mutable and spoofable), and an
+ * immutable resource id (an email display id is mutable and spoofable); an
  * `"always"` group-activation mode surfaces a WARN naming that Google Chat never
- * delivers unmentioned space messages, so `"always"` is inert on this channel.
+ * delivers unmentioned space messages, so `"always"` is inert on this channel;
+ * and, in webhook mode, an `audience` whose SHAPE contradicts `audienceType` (a
+ * URL audience declared `project-number`, or a non-URL audience declared
+ * `app-url`) surfaces a WARN — that mismatch makes the inbound verifier select
+ * the wrong key set and silently reject every request.
  *
  * @module
  */
@@ -47,6 +51,14 @@ export interface GoogleChatValidateOpts {
    * number or the endpoint URL). Required in webhook mode; ignored in pubsub mode.
    */
   audience?: string;
+  /**
+   * Which audience shape the webhook verifier expects: `project-number` (a
+   * self-signed Chat-system token whose `aud` is the Cloud project number) or
+   * `app-url` (a Google OIDC token whose `aud` is the endpoint URL). Linted
+   * against the shape of {@link audience}: a contradiction selects the wrong key
+   * set and silently rejects every inbound request. Advisory only, webhook mode.
+   */
+  audienceType?: "project-number" | "app-url";
   /** The configured sender allowlist, linted for mutable email-shaped ids. */
   allowFrom?: string[];
   /**
@@ -77,6 +89,15 @@ function isBlank(value: string | undefined): boolean {
 function isEmailShaped(entry: string): boolean {
   if (entry.startsWith("users/") || entry.startsWith("spaces/")) return false;
   return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(entry);
+}
+
+/**
+ * True when an audience value looks like an endpoint URL (an `app-url` audience)
+ * rather than a numeric project number (a `project-number` audience). The two
+ * shapes are what the inbound verifier keys its key-set/claim selection on.
+ */
+function isUrlShapedAudience(audience: string): boolean {
+  return /^https?:\/\//i.test(audience.trim());
 }
 
 /**
@@ -176,6 +197,43 @@ export function validateGoogleChatCredentials(
           "Email-shaped allowFrom entry",
         );
       }
+    }
+  }
+
+  // Advisory audience-shape lint (does not fail validation): in webhook mode the
+  // inbound verifier binds to a DIFFERENT key set + claim shape per audienceType —
+  // a self-signed Chat-system token whose `aud` is the project number, or a Google
+  // OIDC token whose `aud` is the endpoint URL. If the configured audience SHAPE
+  // contradicts audienceType the verifier selects the wrong path and silently
+  // rejects EVERY inbound request, so surface the mismatch here. Webhook-only:
+  // audienceType is inert in pubsub mode. Content-free — the WARN names only the
+  // two config keys and the fix, never the audience value. (A blank audience has
+  // already failed validation above in webhook mode, so audience is non-blank here.)
+  if (
+    opts.logger &&
+    opts.mode === "webhook" &&
+    opts.audienceType &&
+    !isBlank(opts.audience)
+  ) {
+    const urlShaped = isUrlShapedAudience(opts.audience as string);
+    if (opts.audienceType === "app-url" && !urlShaped) {
+      opts.logger.warn(
+        {
+          channelType: "googlechat" as const,
+          hint: 'channels.googlechat.audienceType is "app-url" but channels.googlechat.audience is not an endpoint URL — set audience to your https:// endpoint URL, or set audienceType to "project-number" if audience is your numeric Cloud project number',
+          errorKind: "config" as const,
+        },
+        "Google Chat audience shape contradicts audienceType",
+      );
+    } else if (opts.audienceType === "project-number" && urlShaped) {
+      opts.logger.warn(
+        {
+          channelType: "googlechat" as const,
+          hint: 'channels.googlechat.audienceType is "project-number" but channels.googlechat.audience looks like an endpoint URL — set audienceType to "app-url" for a URL audience, or set audience to your numeric Cloud project number',
+          errorKind: "config" as const,
+        },
+        "Google Chat audience shape contradicts audienceType",
+      );
     }
   }
 

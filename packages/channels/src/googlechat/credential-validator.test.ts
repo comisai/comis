@@ -300,4 +300,118 @@ describe("validateGoogleChatCredentials", () => {
     });
     expect(result.ok).toBe(true);
   });
+
+  // -------------------------------------------------------------------------
+  // Advisory audience-shape lint (webhook mode): audienceType vs audience shape
+  // -------------------------------------------------------------------------
+  //
+  // The inbound verifier binds to a different key set + claim shape per
+  // audienceType. A URL audience with audienceType "project-number" (or a
+  // numeric audience with "app-url") selects the wrong path and silently rejects
+  // every inbound request — so a contradiction surfaces a content-free WARN.
+
+  it("WARNs when audienceType is 'project-number' but audience is an endpoint URL (webhook)", () => {
+    const logger = makeLogger();
+    const result = validateGoogleChatCredentials({
+      serviceAccountKey: VALID_SA_KEY,
+      mode: "webhook",
+      audienceType: "project-number",
+      audience: "https://chat.example.com/hook",
+      logger,
+    });
+    // Advisory: the mismatch does NOT fail validation.
+    expect(result.ok).toBe(true);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelType: "googlechat",
+        errorKind: "config",
+        // The hint names BOTH knobs and the fix.
+        hint: expect.stringContaining("audienceType"),
+      }),
+      expect.any(String),
+    );
+    const warnFields = (logger.warn as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+      hint: string;
+    };
+    expect(warnFields.hint).toContain("audience");
+    // Content-free: the SA key material never crosses into the WARN.
+    const warnDump = JSON.stringify(
+      (logger.warn as ReturnType<typeof vi.fn>).mock.calls,
+    );
+    expect(warnDump).not.toContain(PRIVATE_KEY_SENTINEL);
+  });
+
+  it("WARNs when audienceType is 'app-url' but audience is not URL-shaped (webhook)", () => {
+    const logger = makeLogger();
+    const result = validateGoogleChatCredentials({
+      serviceAccountKey: VALID_SA_KEY,
+      mode: "webhook",
+      audienceType: "app-url",
+      audience: "1234567890",
+      logger,
+    });
+    expect(result.ok).toBe(true);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelType: "googlechat",
+        errorKind: "config",
+        hint: expect.stringContaining("audienceType"),
+      }),
+      expect.any(String),
+    );
+  });
+
+  it("does NOT WARN when audienceType 'app-url' matches a URL-shaped audience (webhook)", () => {
+    const logger = makeLogger();
+    const result = validateGoogleChatCredentials({
+      serviceAccountKey: VALID_SA_KEY,
+      mode: "webhook",
+      audienceType: "app-url",
+      audience: "https://chat.example.com/hook",
+      logger,
+    });
+    expect(result.ok).toBe(true);
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("does NOT WARN when audienceType 'project-number' matches a numeric audience (webhook)", () => {
+    const logger = makeLogger();
+    const result = validateGoogleChatCredentials({
+      serviceAccountKey: VALID_SA_KEY,
+      mode: "webhook",
+      audienceType: "project-number",
+      audience: "1234567890",
+      logger,
+    });
+    expect(result.ok).toBe(true);
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("does NOT run the audience-shape lint in pubsub mode (audienceType is inert there)", () => {
+    const logger = makeLogger();
+    const result = validateGoogleChatCredentials({
+      serviceAccountKey: VALID_SA_KEY,
+      mode: "pubsub",
+      subscriptionName: VALID_SUBSCRIPTION,
+      // A URL-shaped audience + project-number would mismatch in webhook mode, but
+      // audienceType/audience are ignored in pubsub mode, so no WARN fires.
+      audienceType: "project-number",
+      audience: "https://chat.example.com/hook",
+      logger,
+    });
+    expect(result.ok).toBe(true);
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("does not throw on an audience/audienceType mismatch when no logger is injected", () => {
+    const result = validateGoogleChatCredentials({
+      serviceAccountKey: VALID_SA_KEY,
+      mode: "webhook",
+      audienceType: "project-number",
+      audience: "https://chat.example.com/hook",
+    });
+    expect(result.ok).toBe(true);
+  });
 });
