@@ -311,6 +311,102 @@ describe("runSkillImport — re-import rule", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Two-warnable-classes single-confirm (non-official publisher + pin-divergence)
+// ---------------------------------------------------------------------------
+
+describe("runSkillImport — two-warnable-classes single-confirm", () => {
+  // A registry import whose resolver reported a NON-official publisher, with the
+  // fail-closed requirement on. Stable "@owner/slug" identifier ⇒ a re-import
+  // matches provenance (routes to the divergence path, not a flat refuse).
+  const nonOfficial = (over: Partial<RunSkillImportOpts> = {}): RunSkillImportOpts =>
+    opts({
+      source: "clawhub",
+      identifier: "@owner/slug",
+      registry: "clawhub",
+      officialPublisher: false,
+      requireOfficialPublisher: true,
+      ...over,
+    });
+
+  it("a non-official FRESH import WITHOUT confirm needs confirm and enumerates the non-official warning", async () => {
+    const o = nonOfficial();
+    const result = await runSkillImport(skillSet("nonofficial-fresh", "Body."), o, makeDeps(dataDir));
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.needsConfirm).toBe(true);
+      expect(result.error.warnings).toHaveLength(1);
+      expect(result.error.warnings?.some((w) => w.includes("requireOfficialPublisher"))).toBe(true);
+    }
+    // Nothing written: no live install, no provenance pin.
+    expect(liveExists(dataDir, "nonofficial-fresh")).toBe(false);
+    expect(recordFor(dataDir, o, "nonofficial-fresh")).toBeUndefined();
+  });
+
+  it("a non-official FRESH import WITH confirm proceeds, records officialPublisher:false, and lists the acknowledged warning", async () => {
+    const o = nonOfficial({ confirm: true });
+    const result = await runSkillImport(skillSet("nonofficial-confirmed", "Body."), o, makeDeps(dataDir));
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.mode).toBe("fresh");
+      expect(result.value.acknowledgedWarnings).toHaveLength(1);
+      expect(result.value.acknowledgedWarnings?.some((w) => w.includes("requireOfficialPublisher"))).toBe(true);
+    }
+    expect(recordFor(dataDir, o, "nonofficial-confirmed")?.officialPublisher).toBe(false);
+  });
+
+  it("an OFFICIAL fresh import proceeds with no confirm, no warnings, and records officialPublisher:true", async () => {
+    const o = nonOfficial({ identifier: "@owner/official", officialPublisher: true });
+    const result = await runSkillImport(skillSet("official-fresh", "Body."), o, makeDeps(dataDir));
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.acknowledgedWarnings).toBeUndefined();
+    expect(recordFor(dataDir, o, "official-fresh")?.officialPublisher).toBe(true);
+  });
+
+  it("a re-import tripping BOTH classes (non-official + pin-divergence) needs ONE confirm listing BOTH", async () => {
+    // Establish the non-official install (confirmed) so a matched record exists.
+    await runSkillImport(skillSet("both", "Original body."), nonOfficial({ confirm: true }), makeDeps(dataDir));
+    // Re-import with CHANGED bytes and no confirm ⇒ both classes trip at once.
+    const result = await runSkillImport(skillSet("both", "Changed body."), nonOfficial(), makeDeps(dataDir));
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.needsConfirm).toBe(true);
+      expect(result.error.warnings).toHaveLength(2);
+      expect(result.error.warnings?.some((w) => w.includes("requireOfficialPublisher"))).toBe(true);
+      expect(result.error.warnings?.some((w) => w.includes("diverges from the pinned content hash"))).toBe(true);
+    }
+    // The original install is untouched.
+    expect(readLiveMd(dataDir, "both")).toContain("Original body.");
+  });
+
+  it("confirming the both-classes re-import proceeds (update) and acknowledges BOTH warnings", async () => {
+    await runSkillImport(skillSet("both2", "Original body."), nonOfficial({ confirm: true }), makeDeps(dataDir));
+    const result = await runSkillImport(skillSet("both2", "Changed body."), nonOfficial({ confirm: true }), makeDeps(dataDir));
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.mode).toBe("update");
+      expect(result.value.acknowledgedWarnings).toHaveLength(2);
+    }
+    expect(readLiveMd(dataDir, "both2")).toContain("Changed body.");
+  });
+
+  it("an idempotent no-op re-import of a non-official skill does NOT re-fire the non-official confirm", async () => {
+    const set = skillSet("noop-nonofficial", "Same body.");
+    await runSkillImport(set, nonOfficial({ confirm: true }), makeDeps(dataDir));
+    // Identical bytes, no confirm ⇒ a no-op (the record already acknowledged the
+    // non-official publisher), NOT a fresh needsConfirm.
+    const result = await runSkillImport(set, nonOfficial(), makeDeps(dataDir));
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.mode).toBe("noop");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Mid-commit unwind
 // ---------------------------------------------------------------------------
 
