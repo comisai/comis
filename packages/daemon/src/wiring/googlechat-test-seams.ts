@@ -19,6 +19,11 @@
  *   - `COMIS_GOOGLECHAT_TEST_ISSUER` = an optional issuer override for a
  *     fully-synthetic emulator key set. Defaults to the audience shape's Google
  *     issuer when unset.
+ *   - `COMIS_GOOGLECHAT_TEST_API` = a loopback base (`http://127.0.0.1:PORT`).
+ *     This redirects the adapter's OUTBOUND egress — the Chat REST API, the
+ *     Pub/Sub pull endpoint, and the OAuth token mint — onto that one base under
+ *     distinct path prefixes, so a single emulator answers all three. With it
+ *     unset the adapter keeps Google's real endpoints (production, unchanged).
  *
  * This is never a production knob: the vars are documented test-only. Env is read
  * through the injected getter, never the ambient process environment.
@@ -41,6 +46,8 @@ export type EnvGetter = (key: string) => string | undefined;
 export const GOOGLECHAT_TEST_JWKS_ENV = "COMIS_GOOGLECHAT_TEST_JWKS";
 /** The env var that overrides the expected issuer for a synthetic local key set. */
 export const GOOGLECHAT_TEST_ISSUER_ENV = "COMIS_GOOGLECHAT_TEST_ISSUER";
+/** The env var that redirects the daemon's Google Chat outbound egress to a loopback emulator (off by default). */
+export const GOOGLECHAT_TEST_API_ENV = "COMIS_GOOGLECHAT_TEST_API";
 
 /**
  * Resolve the inbound-event JWT verifier for the ingress, closed over the
@@ -118,4 +125,59 @@ export function resolveTestGoogleChatVerifier(
     "Google Chat ingress using a LOCAL test JWKS (test-only seam)",
   );
   return verifier;
+}
+
+/**
+ * Resolve the OFF-BY-DEFAULT outbound-egress base-URL overrides for the adapter.
+ *
+ * Default (env unset): `undefined` — the adapter keeps Google's real Chat REST,
+ * Pub/Sub, and OAuth token endpoints (production, byte-identical). When
+ * `COMIS_GOOGLECHAT_TEST_API` names a loopback base, the three outbound legs are
+ * redirected onto that one base under distinct path prefixes — `…/chat/v1` (the
+ * Chat REST API), `…/pubsub/v1` (the Pub/Sub pull endpoint), and `…/token` (the
+ * service-account token mint) — so a single emulator serves all three. Activation
+ * emits one content-free WARN naming the env var (never the loopback value).
+ *
+ * Env is read only through the injected getter, never the ambient process
+ * environment. A malformed base fails closed to production (returns `undefined`)
+ * with a config WARN rather than throwing out of the unwrapped bootstrapAdapters
+ * and failing daemon boot — the seam is off-by-default and test-only, so a bad
+ * value must degrade to production, not crash.
+ */
+export function resolveTestGoogleChatEgress(
+  getEnv: EnvGetter,
+  deps?: { readonly logger?: ComisLogger },
+): { chatBaseUrl: string; pubsubBaseUrl: string; tokenUrl: string } | undefined {
+  const loopback = getEnv(GOOGLECHAT_TEST_API_ENV);
+  if (loopback === undefined || loopback.length === 0) return undefined;
+  let base: string;
+  try {
+    // Validate + normalize the loopback base; strip any trailing slash so the
+    // derived path suffixes join cleanly. A non-URL value throws here and degrades
+    // to production below rather than crashing boot.
+    base = new URL(loopback).href.replace(/\/+$/, "");
+  } catch {
+    deps?.logger?.warn(
+      {
+        channelType: "googlechat" as const,
+        hint: "COMIS_GOOGLECHAT_TEST_API is set but is not a valid URL — ignoring it and using the production Google Chat/Pub-Sub/token endpoints; unset it in production",
+        errorKind: "config" as const,
+      },
+      "Google Chat test egress base URL invalid; using production endpoints",
+    );
+    return undefined;
+  }
+  deps?.logger?.warn(
+    {
+      channelType: "googlechat" as const,
+      hint: "Unset COMIS_GOOGLECHAT_TEST_API in production — the Google Chat outbound Chat, Pub/Sub, and token egress is redirected to a local test endpoint, not Google",
+      errorKind: "config" as const,
+    },
+    "Google Chat outbound egress redirected to a local test endpoint (test-only seam)",
+  );
+  return {
+    chatBaseUrl: `${base}/chat/v1`,
+    pubsubBaseUrl: `${base}/pubsub/v1`,
+    tokenUrl: `${base}/token`,
+  };
 }

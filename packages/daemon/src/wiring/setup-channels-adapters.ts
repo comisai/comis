@@ -47,7 +47,10 @@ import {
   resolveTestActivityValidator,
   resolveTestConnectorFetch,
 } from "./msteams-test-seams.js";
-import { resolveTestGoogleChatVerifier } from "./googlechat-test-seams.js";
+import {
+  resolveTestGoogleChatVerifier,
+  resolveTestGoogleChatEgress,
+} from "./googlechat-test-seams.js";
 import os from "node:os";
 import { safePath, systemNowMs } from "@comis/core";
 import { suppressError } from "@comis/shared";
@@ -551,6 +554,15 @@ export async function bootstrapAdapters(deps: {
       logger: channelsLogger,
     });
     if (validation.ok && key && (subscriptionName || !needsSubscription)) {
+      // OFF-BY-DEFAULT outbound live-test seam (see googlechat-test-seams.ts):
+      // with COMIS_GOOGLECHAT_TEST_API unset — production — this is undefined and
+      // the adapter keeps Google's real Chat/Pub-Sub/token endpoints (byte-identical
+      // to today). Set to a loopback base, it redirects all three outbound legs to
+      // the emulator. Reads via the injected EnvPort (the sanctioned env boundary —
+      // never direct process.env). Runs for BOTH modes: pubsub and webhook sends
+      // both mint a token and call the Chat REST API.
+      const getEnv = (name: string): string | undefined => env?.get(name);
+      const egress = resolveTestGoogleChatEgress(getEnv, { logger: channelsLogger });
       const plugin = createGoogleChatPlugin({
         serviceAccountKey: key,
         // Webhook mode carries no subscription (empty placeholder); its start()
@@ -560,6 +572,9 @@ export async function bootstrapAdapters(deps: {
         allowMode: channelConfig.googlechat.allowMode,
         logger: channelsLogger,
         mode: channelConfig.googlechat.mode,
+        // Off-by-default outbound egress redirect (undefined in production → the
+        // adapter keeps its real Google base URLs).
+        ...(egress ?? {}),
       });
       adaptersByType.set("googlechat", plugin.adapter);
       channelPlugins.set("googlechat", plugin);
@@ -576,8 +591,8 @@ export async function bootstrapAdapters(deps: {
         // the live remote-JWKS one for the configured audience shape; set, it
         // verifies against a local test JWKS (a full verify, never a bypass). Reads
         // via the injected EnvPort (the sanctioned env boundary — never direct
-        // process.env). The audience is closed over here, fail-closed if blank.
-        const getEnv = (name: string): string | undefined => env?.get(name);
+        // process.env; the getEnv accessor is resolved once above). The audience
+        // is closed over here, fail-closed if blank.
         const gcAdapter = plugin.adapter as GoogleChatAdapterHandle;
         googlechatIngress = createGoogleChatIngress({
           validateInboundJwt: resolveTestGoogleChatVerifier(
