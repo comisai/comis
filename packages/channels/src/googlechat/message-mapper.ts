@@ -106,10 +106,15 @@ export function extractGoogleChatAttachments(
 ): { attachments: Attachment[]; skipped: Array<{ source?: string; contentName?: string }> } {
   const attachments: Attachment[] = [];
   const skipped: Array<{ source?: string; contentName?: string }> = [];
-  for (const a of message?.attachment ?? []) {
-    // Untrusted inbound JSON: a decoded array element can be the literal null or a
-    // non-object scalar. Guard before any dereference so a hostile element is
-    // dropped rather than crashing the mapper.
+  // Untrusted inbound JSON: guard the CONTAINER before iterating. `?? []` only
+  // covers null/undefined; a truthy non-iterable (`{}`, a number, a boolean) would
+  // make `for...of` throw TypeError, escape the mapper's "never crash" contract,
+  // and poison-pill the pull loop (skip-ack → infinite redelivery). Degrade a
+  // non-array shape to empty, exactly as the elements below are guarded.
+  const list = Array.isArray(message?.attachment) ? message.attachment : [];
+  for (const a of list) {
+    // A decoded array element can be the literal null or a non-object scalar.
+    // Guard before any dereference so a hostile element is dropped, not crashed on.
     if (a === null || typeof a !== "object") continue;
     const resourceName = a.attachmentDataRef?.resourceName;
     if (typeof resourceName === "string" && resourceName.length > 0) {
@@ -155,7 +160,12 @@ export function mapGoogleChatEventToNormalized(
   // Accept both the current and the legacy DM encoding; anything else is a
   // multi-person space (a "group").
   const isDm = space?.spaceType === "DIRECT_MESSAGE" || space?.type === "DM";
-  const wasMentioned = (message.annotations ?? []).some((a) => a.type === "USER_MENTION");
+  // Same untrusted-container class as message.attachment above: a truthy non-array
+  // `annotations` throws (`.some` is not a function), and a null element throws on
+  // `.type`. Guard the container with Array.isArray and the element with `?.` so a
+  // malformed payload degrades to "not mentioned" rather than crashing the mapper.
+  const annotations = Array.isArray(message.annotations) ? message.annotations : [];
+  const wasMentioned = annotations.some((a) => a?.type === "USER_MENTION");
 
   const metadata: Record<string, unknown> = { isGroup: !isDm, wasMentioned };
   // The message resource name is the platform reply target the plugin advertises

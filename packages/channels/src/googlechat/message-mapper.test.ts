@@ -418,6 +418,27 @@ describe("extractGoogleChatAttachments", () => {
     expect(attachments).toEqual([]);
     expect(skipped).toEqual([]);
   });
+
+  it.each([
+    ["an empty object", {}],
+    ["a number", 42],
+    ["a boolean", true],
+  ])(
+    "degrades to empty (never throws) when message.attachment is a truthy non-array container (%s)",
+    (_label, attachment) => {
+      // `message.attachment` is untrusted decoded JSON. The `?? []` fallback only
+      // covers null/undefined; a truthy NON-ITERABLE container (`{}`, `42`,
+      // `true`) makes `for...of` throw `TypeError: … is not iterable`. Guard the
+      // container as the elements are guarded so a hostile shape degrades to empty.
+      let out: ReturnType<typeof extractGoogleChatAttachments> | undefined;
+      expect(() => {
+        out = extractGoogleChatAttachments(
+          { attachment } as unknown as GoogleChatEvent["message"],
+        );
+      }).not.toThrow();
+      expect(out).toEqual({ attachments: [], skipped: [] });
+    },
+  );
 });
 
 describe("mapGoogleChatEventToNormalized — inbound attachments", () => {
@@ -477,5 +498,60 @@ describe("mapGoogleChatEventToNormalized — inbound attachments", () => {
     );
     const parsed = parseMessage(result);
     expect(parsed.ok).toBe(true);
+  });
+
+  // A non-array `message.attachment`/`message.annotations` in an untrusted decoded
+  // event would make `for...of`/`.some` throw. Because the adapter calls the mapper
+  // UNWRAPPED, that TypeError escapes the mapper's documented "never crash → return
+  // null/valid" contract and lands on the pull loop's skip-ack path — the malformed
+  // message is never ACKed and Pub/Sub redelivers it forever (dedup never engages
+  // because the name is marked seen only on the success path). Each of these must
+  // map to a schema-valid message, never throw.
+  it.each([
+    ["message.attachment = {} (non-iterable object)", { attachment: {} }],
+    ["message.attachment = 42 (non-iterable number)", { attachment: 42 }],
+    ["message.attachment = true (non-iterable boolean)", { attachment: true }],
+    ["message.annotations = 'x' (non-array string — .some is not a function)", { annotations: "x" }],
+    ["message.annotations = 42 (non-array number)", { annotations: 42 }],
+  ])(
+    "maps a MESSAGE event with a non-array container (%s) to a valid NormalizedMessage, never throwing into the redelivery path",
+    (_label, badField) => {
+      let result: ReturnType<typeof mapGoogleChatEventToNormalized> | undefined;
+      expect(() => {
+        result = mapGoogleChatEventToNormalized(
+          makeChatEvent({
+            message: {
+              name: "spaces/AAAA/messages/1",
+              sender: { name: "users/1" },
+              text: "hi",
+              ...badField,
+            } as unknown as GoogleChatEvent["message"],
+          }),
+        );
+      }).not.toThrow();
+      expect(result).not.toBeNull();
+      expect(result?.attachments).toEqual([]);
+      expect(parseMessage(result).ok).toBe(true);
+    },
+  );
+
+  it("guards a null annotation element without throwing, still detecting a real USER_MENTION alongside it", () => {
+    // A decoded annotations array can carry a literal null element; `a.type` on it
+    // throws. Guard the element (a?.type) so the mapper never crashes and still
+    // reads a genuine mention in the same array.
+    let result: ReturnType<typeof mapGoogleChatEventToNormalized> | undefined;
+    expect(() => {
+      result = mapGoogleChatEventToNormalized(
+        makeChatEvent({
+          message: {
+            name: "spaces/AAAA/messages/1",
+            sender: { name: "users/1" },
+            text: "hi",
+            annotations: [null, { type: "USER_MENTION" }],
+          } as unknown as GoogleChatEvent["message"],
+        }),
+      );
+    }).not.toThrow();
+    expect(result?.metadata.wasMentioned).toBe(true);
   });
 });

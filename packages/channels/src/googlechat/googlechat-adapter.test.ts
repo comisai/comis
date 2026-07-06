@@ -1922,3 +1922,49 @@ describe("createGoogleChatAdapter — inbound Drive-picker skip WARN", () => {
     expect(skipWarns(loggerSpy.warn)).toHaveLength(2);
   });
 });
+
+describe("createGoogleChatAdapter — non-array message.attachment (untrusted)", () => {
+  /** A MESSAGE event from an allowlisted sender whose message.attachment field is `raw`. */
+  function messageEventWithRawAttachment(raw: unknown): unknown {
+    const space = { name: "spaces/AAAA", spaceType: "SPACE" };
+    return {
+      type: "MESSAGE",
+      space,
+      message: {
+        name: "spaces/AAAA/messages/CCC",
+        sender: { name: "users/123" },
+        text: "see attached",
+        space,
+        attachment: raw,
+      },
+    };
+  }
+
+  // handleChatEvent calls the mapper UNWRAPPED (mapping the event) and then the
+  // pure extractor AGAIN for the skip WARN — two sites that iterate
+  // `message.attachment`. A truthy non-iterable container would throw at either,
+  // escape handleChatEvent (the pull loop's onEvent boundary), and be counted as
+  // an enqueue failure → skip-ack → infinite redelivery. It must instead degrade
+  // to empty: no throw, and the message still fans out to the handler.
+  it.each([
+    ["an empty object", {}],
+    ["a number", 42],
+    ["a boolean", true],
+  ])(
+    "does not throw and still fans out when message.attachment is a non-array container (%s)",
+    async (_label, raw) => {
+      const { deps } = await makeDeps({ allowFrom: ["users/123"] });
+      const adapter = createGoogleChatAdapter(deps);
+      const handler = vi.fn();
+      adapter.onMessage(handler);
+
+      await expect(
+        adapter.handleChatEvent(messageEventWithRawAttachment(raw)),
+      ).resolves.not.toThrow();
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      const msg = handler.mock.calls[0][0] as NormalizedMessage;
+      expect(msg.attachments).toEqual([]);
+    },
+  );
+});

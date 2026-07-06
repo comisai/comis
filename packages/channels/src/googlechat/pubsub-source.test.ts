@@ -306,6 +306,47 @@ describe("createPubSubSource — pull + ack-on-enqueue + dedup (pollOnce)", () =
     expect(fetch.allAckedIds()).toContain("ack-null");
   });
 
+  it("acks-and-processes a MESSAGE event whose message.attachment is a non-array — never skip-acks it into infinite redelivery", async () => {
+    // A hostile/malformed decoded event whose `message.attachment` is a truthy
+    // non-iterable ({}) makes the mapper's `for...of` throw. Wired to the real
+    // map-then-drop dispatch contract (the adapter's handleChatEvent), that throw
+    // would escape onEvent → the pull loop counts it as an enqueue failure →
+    // SKIPS the ack → Pub/Sub redelivers forever (dedup never engages, name is
+    // marked seen only on the success path). The mapper must instead degrade the
+    // bad shape to empty so this event ACKs and makes progress.
+    const poison = {
+      type: "MESSAGE",
+      eventTime: "2026-07-05T00:00:00Z",
+      user: { name: "users/1" },
+      space: { name: "spaces/AAAA", spaceType: "SPACE" },
+      message: {
+        name: "spaces/AAAA/messages/poison",
+        sender: { name: "users/1" },
+        text: "hi",
+        attachment: {}, // non-array container: `for...of` throws pre-fix
+      },
+    };
+    const fetch = makeFetch([
+      { receivedMessages: [{ ackId: "ack-poison", message: { data: encodeEvent(poison) } }] },
+    ]);
+    // Mirror handleChatEvent's contract: map the untrusted event; only a REAL
+    // enqueue failure rejects. A mapper throw here (pre-fix) is exactly the bug.
+    const onEvent = vi.fn(async (event: unknown) => {
+      const normalized = mapGoogleChatEventToNormalized(
+        event as Parameters<typeof mapGoogleChatEventToNormalized>[0],
+      );
+      if (!normalized) return;
+    });
+    const { deps } = makeDeps({ fetchImpl: fetch.fetchImpl, onEvent });
+    const source = createPubSubSource(deps);
+
+    const out = await source.pollOnce();
+
+    expect(out.skippedCount).toBe(0);
+    expect(out.ackedCount).toBe(1);
+    expect(fetch.allAckedIds()).toContain("ack-poison");
+  });
+
   it("acks and skips an unparseable data payload without dispatching or throwing", async () => {
     const bad = Buffer.from("not json {{{", "utf8").toString("base64");
     const fetch = makeFetch([
