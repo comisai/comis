@@ -62,6 +62,79 @@ export interface OrchestrateDurableRuns {
    * concrete store always provides it, and the runner skips it on a resumable timeout).
    */
   markCompleted?(rootRunId: string): Promise<Result<void, Error>>;
+  /**
+   * Advance the run's `lastHeartbeatAt` while its process is alive — the keep-alive
+   * the durable watchdog's whole premise depends on ("a long-running run stamps its
+   * heartbeat; a crashed process stops"). A structural subset of the daemon's
+   * `DurableRunPort.touchHeartbeat`; optional so a minimal store stub compiles (the
+   * concrete store always provides it). Absent ⇒ no keep-alive (a live no-checkpoint
+   * run degrades to the prior at-risk behavior, never worse).
+   */
+  touchHeartbeat?(rootRunId: string, atMs: number): Promise<Result<void, Error>>;
+}
+
+/**
+ * A scheduler seam for {@link startDurableKeepAlive}: schedule `cb` every `ms` and
+ * return a `stop()` that cancels it. The production default wraps an unref'd
+ * `setInterval`; tests inject a fake that captures the callback.
+ */
+export type KeepAliveScheduler = (cb: () => void, ms: number) => () => void;
+
+/** The production keep-alive scheduler — an unref'd interval so it never pins the event loop. */
+export const defaultKeepAliveScheduler: KeepAliveScheduler = (cb, ms) => {
+  const handle = setInterval(cb, ms);
+  (handle as { unref?: () => void }).unref?.();
+  return () => clearInterval(handle);
+};
+
+/**
+ * Start a best-effort keep-alive that stamps the durable row's `lastHeartbeatAt`
+ * on every tick while the flat orchestrate child is alive, and return a `stop()`
+ * for the caller's `finally`.
+ *
+ * WHY: the flat runner registers a `running` durable row at start but only advances
+ * its heartbeat on an explicit `checkpoint()` or the timeout re-affirm. Every OTHER
+ * long-running durable runner (the sub-agent runner) stamps a periodic keep-alive, so
+ * the watchdog can treat "lapsed heartbeat" as "process gone". Without one here, a
+ * live run that runs longer than a few stale-thresholds without checkpointing looks
+ * dead: the no-progress re-anchor cap orphans it and reclaims its workspace mid-run.
+ * This restores that contract for the flat runner.
+ *
+ * Uses a FRESH `now()` per tick (not the registration timestamp). No-op when the store
+ * can't `touchHeartbeat` (never schedules). Errors are swallowed (best-effort — a failed
+ * touch never disrupts the run; the watchdog reaps only if it persists past the cap).
+ */
+export function startDurableKeepAlive(input: {
+  runs: OrchestrateDurableRuns;
+  rootRunId: string;
+  now: () => number;
+  keepAliveMs: number;
+  scheduler?: KeepAliveScheduler;
+  logger?: ComisLogger;
+}): () => void {
+  const { runs, rootRunId, now, keepAliveMs, logger } = input;
+  const touch = runs.touchHeartbeat?.bind(runs);
+  if (!touch) return () => {};
+  const scheduler = input.scheduler ?? defaultKeepAliveScheduler;
+  return scheduler(() => {
+    void touch(rootRunId, now())
+      .then((r) => {
+        if (!r.ok) {
+          logger?.debug(
+            {
+              rootRunId,
+              err: r.error,
+              errorKind: "internal" as const,
+              hint: "durable keep-alive touch failed; the watchdog may orphan-sweep this run if it persists",
+            },
+            "orchestrate durable keep-alive: touch failed",
+          );
+        }
+      })
+      .catch(() => {
+        /* best-effort: a throwing touch never disrupts the run */
+      });
+  }, keepAliveMs);
 }
 
 /**
