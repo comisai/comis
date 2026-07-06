@@ -399,6 +399,38 @@ describe("resolveWellKnown — stable identifier", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Advertised path is returned in the validated (decoded) form — the value
+// propagated to the fetch URL + on-disk path is EXACTLY the value safePath
+// approved (which decodes percent-encoding before validating containment).
+// ---------------------------------------------------------------------------
+
+describe("resolveWellKnown — advertised path returned in its validated decoded form", () => {
+  it("fetches and returns the DECODED form of an encoded-but-safe advertised path", async () => {
+    // `%72eferences` decodes to `references`; safePath validates the decoded
+    // path, so the resolver must fetch and record the decoded form — not the
+    // still-encoded raw string.
+    const idx = { skills: [{ name: "enc", description: "d", files: ["SKILL.md", "%72eferences/notes.md"] }] };
+    const fetchImpl = servingFetch({
+      [INDEX_URL]: JSON.stringify(idx),
+      [fileUrl("enc", "SKILL.md")]: "# manifest",
+      [fileUrl("enc", "references/notes.md")]: "notes body",
+    });
+    const result = await resolveWellKnown(
+      { registry: REGISTRY, name: "enc" },
+      { caps: CAPS, validate: okValidate, fetchImpl },
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // The recorded path is the decoded, validated form.
+    expect(result.value.files.map((f) => f.path).sort()).toEqual(["SKILL.md", "references/notes.md"]);
+    // And the file was fetched from the decoded URL, never the encoded one.
+    const fetched = fetchImpl.mock.calls.map((c) => c[0]);
+    expect(fetched).toContain(fileUrl("enc", "references/notes.md"));
+    expect(fetched).not.toContain(fileUrl("enc", "%72eferences/notes.md"));
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Instrumentation — an object-first outcome line on both branches
 // ---------------------------------------------------------------------------
 
