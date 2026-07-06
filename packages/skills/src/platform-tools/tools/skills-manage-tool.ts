@@ -73,7 +73,7 @@ const SkillsManageToolParams = Type.Object({
   ),
   confirm: Type.Optional(
     Type.Boolean({
-      description: "Import action: confirm a re-import that diverges from the pinned content hash of a previously-imported skill of the same source. Does NOT override a name collision on an unprovenanced or foreign-source skill (delete it first).",
+      description: "Import action: confirm the warnable classes on an import — a re-import that diverges from the pinned content hash of a prior import of the same source, and/or an import from a non-official registry publisher. A single confirm acknowledges both. Does NOT override a name collision on an unprovenanced or foreign-source skill (delete it first), nor a blocking registry scan verdict.",
     }),
   ),
   name: Type.Optional(

@@ -67,8 +67,10 @@ export function registerSkillsCommand(program: Command): void {
     )
     .option(
       "--confirm",
-      "Confirm a re-import that diverges from the pinned content hash of a prior import of the same source. " +
-        "Never overrides a name collision on an unprovenanced or foreign-source skill (delete it first).",
+      "Confirm the warnable classes on an import: a re-import that diverges from the pinned content hash " +
+        "of a prior import of the same source, and/or an import from a non-official registry publisher. " +
+        "A single confirm acknowledges both. Never overrides a name collision on an unprovenanced or " +
+        "foreign-source skill (delete it first), nor a blocking registry scan verdict.",
     )
     .option("--format <format>", "Output format (table|json)", "table")
     .option(
