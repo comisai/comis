@@ -226,6 +226,38 @@ describe("parseProvenanceRecord — the strict parse helper", () => {
   });
 });
 
+describe("ProvenanceRecordSchema — optional registry origin", () => {
+  it("accepts a record carrying an optional registry origin and round-trips it through parse", () => {
+    const parsed = parseProvenanceRecord(
+      makeRecord({ source: "wellknown", registry: "https://reg.example" }),
+    );
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error("expected the registry-bearing record to parse");
+    expect(parsed.value.registry).toBe("https://reg.example");
+  });
+
+  it("still parses a record that omits registry (optional — the archive/github/upload path)", () => {
+    const parsed = parseProvenanceRecord(makeRecord());
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error("expected the registry-less record to parse");
+    expect(parsed.value.registry).toBeUndefined();
+  });
+
+  it("preserves registry through writeProvenanceRecord + read-back (write-time validation passes)", async () => {
+    const rec = makeRecord({
+      name: "reg-skill",
+      scope: "local",
+      agentId: "alice",
+      source: "wellknown",
+      registry: "https://reg.example",
+    });
+    const result = await writeProvenanceRecord(tmpDir, rec);
+    expect(result.ok).toBe(true);
+    const store = readProvenanceStore(tmpDir);
+    expect(store[provenanceKey("local", "alice", "reg-skill")]?.registry).toBe("https://reg.example");
+  });
+});
+
 describe("computeInstalledSetHash — deterministic, order-independent", () => {
   it("is stable across input ordering", () => {
     const files = [
