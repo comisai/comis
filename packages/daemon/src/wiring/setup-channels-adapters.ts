@@ -50,6 +50,7 @@ import {
 import { resolveTestGoogleChatVerifier } from "./googlechat-test-seams.js";
 import os from "node:os";
 import { safePath, systemNowMs } from "@comis/core";
+import { suppressError } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -584,10 +585,20 @@ export async function bootstrapAdapters(deps: {
             { logger: channelsLogger },
           ),
           // Fire-and-forget: googlechat's one normalizer is async, so the ingress
-          // does not block its fast-ack on it (per-event failure is the adapter's
-          // own concern).
+          // does not block its fast-ack on it. handleChatEvent rejects by design
+          // (its Pub/Sub pull-loop skip-ack signal), which is meaningless in
+          // webhook mode — the ingress already fast-acked and there is no
+          // redelivery. fanOutMessage has already logged the specific failure, so
+          // suppressError contains the rejection at a debug level: no unhandled
+          // rejection, and no second generic internal error double-counting in fleet.
           handleWebhookEvents: (events) => {
-            for (const e of events) void gcAdapter.handleChatEvent(e);
+            for (const e of events) {
+              suppressError(
+                gcAdapter.handleChatEvent(e),
+                "googlechat-webhook-dispatch",
+                (msg) => channelsLogger.debug(msg),
+              );
+            }
           },
           // Bridge the ingress auth-gate rejections onto the daemon eventBus as a
           // content-free health_signal, so a forged/expired/wrong-audience/missing-
