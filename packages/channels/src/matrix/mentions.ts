@@ -37,6 +37,11 @@ const MENTION_MARKUP_RE = /@\[([^\]]+)\]\(([^)]+)\)/g;
 /** The `matrix.to` base a user pill links through. */
 const MATRIX_TO_BASE = "https://matrix.to/#/";
 
+/** Escape a string for literal use inside a RegExp. */
+function escapeRegExp(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /** The outbound-mention extraction result: the collected MXIDs + the rewritten text. */
 export interface ExtractedMentions {
   /** The deduped MXIDs to advertise in the event's `m.mentions.user_ids`. */
@@ -78,9 +83,11 @@ export function extractMentions(markdown: string): ExtractedMentions {
  *
  * True iff `content["m.mentions"].user_ids` includes `botUserId` (the
  * authoritative signal), or `content.formatted_body` carries a `matrix.to` pill
- * linking to `botUserId` (the fallback for a client that pills without the
- * `m.mentions` list). Keys on the bot's OWN MXID — a display name never counts —
- * and returns false when `botUserId` is empty (no identity to key on).
+ * (a real anchor `href`) linking to `botUserId` (the fallback for a client that
+ * pills without the `m.mentions` list). The fallback requires an actual `href` —
+ * NOT a bare substring — so a member cannot paste the bot's matrix.to URL as
+ * plain text to force a reply. Keys on the bot's OWN MXID — a display name never
+ * counts — and returns false when `botUserId` is empty (no identity to key on).
  *
  * @param content - The untrusted inbound event content (or undefined).
  * @param botUserId - The bot's own MXID (`""` when unknown).
@@ -96,10 +103,13 @@ export function detectBotMention(content: Record<string, unknown> | undefined, b
     if (Array.isArray(userIds) && userIds.includes(botUserId)) return true;
   }
 
-  // Fallback: a matrix.to pill in the formatted body links to the bot MXID.
+  // Fallback: a matrix.to pill in the formatted body links to the bot MXID. The
+  // link must be a real anchor href (a rendered pill), not a bare substring — a
+  // plain-text matrix.to URL in the body must never trigger the bot.
   const formatted = content.formatted_body;
-  if (typeof formatted === "string" && formatted.includes(`${MATRIX_TO_BASE}${botUserId}`)) {
-    return true;
+  if (typeof formatted === "string") {
+    const pillHref = new RegExp(`href=["']${escapeRegExp(`${MATRIX_TO_BASE}${botUserId}`)}`);
+    if (pillHref.test(formatted)) return true;
   }
 
   return false;
