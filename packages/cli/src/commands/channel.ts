@@ -152,7 +152,7 @@ function extractChannels(
 
   const channelTypes = [
     "telegram", "discord", "slack", "whatsapp", "signal",
-    "imessage", "line", "irc", "email", "msteams",
+    "imessage", "line", "irc", "email", "msteams", "googlechat",
   ] as const;
 
   for (const type of channelTypes) {

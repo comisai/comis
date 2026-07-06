@@ -25,6 +25,7 @@ const CHANNEL_CREDENTIAL_TYPES: Record<string, readonly string[]> = {
   slack:     ["botToken", "appToken"],
   line:      ["channelToken", "channelSecret"],
   msteams:   ["appId", "appPassword", "tenantId"],
+  googlechat: ["serviceAccountKey", "subscriptionName"],
   whatsapp:  [],
   signal:    [],
   irc:       [],
@@ -188,6 +189,56 @@ function validateMsTeams(
   return undefined;
 }
 
+// ---------- Google Chat ----------
+
+/**
+ * Format-check a Google Chat credential. The service-account key is the only
+ * value with a format worth catching early: it must be a service-account key
+ * JSON carrying the two fields the outbound JWT mint needs (`client_email` and
+ * `private_key`). A parse failure or a missing field is turned into a message
+ * that names the requirement only -- the raw key text is NEVER placed in the
+ * message, so no key material leaks through the failure path. This is a
+ * format-only typo-catcher, not a security control: the daemon surfaces the real
+ * auth error at first use. subscriptionName/audience have no format to check
+ * here beyond the non-empty guard applied by the caller.
+ */
+function validateGoogleChat(
+  credentialType: string,
+  value: string,
+): ValidationResult | undefined {
+  if (credentialType === "serviceAccountKey") {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return {
+        message: "Invalid Google Chat service-account key: not valid JSON.",
+        hint: "Paste the downloaded service-account key JSON, or a path to the key file.",
+        field: "googlechatServiceAccountKey",
+      };
+    }
+    if (typeof parsed !== "object" || parsed === null) {
+      return {
+        message: "Invalid Google Chat service-account key: expected a JSON object.",
+        hint: "The service-account key JSON must be an object with client_email and private_key.",
+        field: "googlechatServiceAccountKey",
+      };
+    }
+    const key = parsed as { client_email?: unknown; private_key?: unknown };
+    const hasClientEmail = typeof key.client_email === "string" && key.client_email.trim() !== "";
+    const hasPrivateKey = typeof key.private_key === "string" && key.private_key.trim() !== "";
+    if (!hasClientEmail || !hasPrivateKey) {
+      return {
+        message: "Invalid Google Chat service-account key: missing client_email or private_key.",
+        hint: "Use the full service-account key JSON downloaded from the Google Cloud console.",
+        field: "googlechatServiceAccountKey",
+      };
+    }
+  }
+
+  return undefined;
+}
+
 // ---------- Public API ----------
 
 /**
@@ -228,6 +279,8 @@ export function validateChannelCredential(
       return validateLine(credentialType, trimmed);
     case "msteams":
       return validateMsTeams(credentialType, trimmed);
+    case "googlechat":
+      return validateGoogleChat(credentialType, trimmed);
     case "whatsapp":
     case "signal":
     case "irc":

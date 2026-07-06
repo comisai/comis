@@ -201,6 +201,10 @@ export function registerInitCommand(program: Command): void {
     .option("--msteams-app-password <pw>", "Microsoft Teams app password (client secret)")
     .option("--msteams-tenant-id <id>", "Microsoft Teams directory (tenant) ID")
     .option("--msteams-auth-mode <mode>", "Microsoft Teams auth mode: secret|certificate|managedIdentity")
+    .option("--googlechat-sa-key <keyOrPath>", "Google Chat service-account key JSON (or a path to the key file)")
+    .option("--googlechat-subscription <name>", "Google Chat Pub/Sub subscription (pubsub mode): projects/P/subscriptions/S")
+    .option("--googlechat-mode <mode>", "Google Chat inbound mode: pubsub|webhook")
+    .option("--googlechat-audience <aud>", "Google Chat inbound JWT audience (webhook mode)")
     // Media generation
     .option("--image-provider <id>", "Image generation provider: auto|fal|openai|openai-codex|google|openrouter")
     .option("--image-api-key <key>", "Image provider API key (e.g. FAL_KEY; reuses --api-key for a matching main provider)")

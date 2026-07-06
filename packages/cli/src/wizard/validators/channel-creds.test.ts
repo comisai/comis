@@ -216,6 +216,68 @@ describe("validateChannelCredential", () => {
     });
   });
 
+  describe("googlechat", () => {
+    // A well-formed service-account key shape carrying only the two fields the
+    // outbound JWT mint needs. Placeholder values only -- never a real key.
+    const validSaKey = JSON.stringify({
+      type: "service_account",
+      client_email: "bot@example-project.iam.gserviceaccount.com",
+      private_key: "-----BEGIN PRIVATE KEY-----\nMIIexampleexample\n-----END PRIVATE KEY-----\n",
+    });
+
+    it("accepts a well-formed service-account key JSON with client_email and private_key", () => {
+      const result = validateChannelCredential("googlechat", "serviceAccountKey", validSaKey);
+      expect(result).toBeUndefined();
+    });
+
+    it("rejects a service-account key that is not valid JSON", () => {
+      const result = validateChannelCredential("googlechat", "serviceAccountKey", "not-json-at-all");
+      expect(result).toBeDefined();
+      expect(result!.message).toContain("not valid JSON");
+    });
+
+    it("rejects a service-account key JSON missing client_email or private_key", () => {
+      const result = validateChannelCredential(
+        "googlechat",
+        "serviceAccountKey",
+        JSON.stringify({ client_email: "bot@example-project.iam.gserviceaccount.com" }),
+      );
+      expect(result).toBeDefined();
+      expect(result!.message).toContain("client_email or private_key");
+    });
+
+    it("never echoes the key material into the validation message (secret-safe)", () => {
+      // A structurally-valid JSON carrying a recognizable secret marker but
+      // missing client_email: the failure message must name the requirement,
+      // never the value -- no key material may leak through the failure path.
+      const secretMarker = "SUPER-SECRET-PRIVATE-KEY-MATERIAL-DO-NOT-LEAK";
+      const result = validateChannelCredential(
+        "googlechat",
+        "serviceAccountKey",
+        JSON.stringify({ private_key: secretMarker }),
+      );
+      expect(result).toBeDefined();
+      expect(result!.message).not.toContain(secretMarker);
+      expect(result!.hint ?? "").not.toContain(secretMarker);
+      expect(result!.field ?? "").not.toContain(secretMarker);
+    });
+
+    it("rejects an empty service-account key", () => {
+      const result = validateChannelCredential("googlechat", "serviceAccountKey", "");
+      expect(result).toBeDefined();
+      expect(result!.message).toContain("required");
+    });
+
+    it("accepts a non-empty subscriptionName (no format check beyond non-empty)", () => {
+      const result = validateChannelCredential(
+        "googlechat",
+        "subscriptionName",
+        "projects/p/subscriptions/s",
+      );
+      expect(result).toBeUndefined();
+    });
+  });
+
   describe("channels with no credentials", () => {
     it("returns undefined for whatsapp", () => {
       expect(
