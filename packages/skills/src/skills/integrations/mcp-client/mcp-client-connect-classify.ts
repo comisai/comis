@@ -40,6 +40,33 @@ interface ClassifiedConnectFailure {
 const STDERR_TAIL_MAX = 1500;
 
 /**
+ * Floor for redacting a KNOWN configured secret VALUE out of the stderr tail. The
+ * pattern scrubber (sanitizeLogString) only catches credential FORMATS; a plain
+ * configured secret (a password echoed as `KEY=value`) matches nothing, so we also
+ * strip the exact env/header values this server was given. The floor keeps trivial
+ * values (`"1"`, `"true"`, a short flag) from nuking legitimate diagnostic text.
+ */
+const MIN_KNOWN_SECRET_LEN = 4;
+
+/**
+ * Redact the server's KNOWN configured secret values (env + header values) out of a
+ * captured stderr tail — literal, substring-exact replacement (no regex, so a value
+ * with regex metacharacters is handled verbatim). Complements sanitizeLogString: this
+ * catches format-less secrets the pattern scrubber cannot. Skips short values and
+ * still-unresolved `${VAR}` placeholders (not secrets).
+ */
+function scrubKnownSecretValues(text: string, config: McpServerConfig): string {
+  if (!text) return text;
+  const values = [...Object.values(config.env ?? {}), ...Object.values(config.headers ?? {})];
+  let out = text;
+  for (const v of values) {
+    if (typeof v !== "string" || v.length < MIN_KNOWN_SECRET_LEN || v.includes("${")) continue;
+    if (out.includes(v)) out = out.split(v).join("[REDACTED]");
+  }
+  return out;
+}
+
+/**
  * Turn a raw connect error (+ any captured stdio stderr) into a fault CLASS, an
  * enriched message, and a class-specific hint. The bare SDK error for a stdio
  * crash is the opaque "MCP error -32000: Connection closed"; the child's own
@@ -60,7 +87,10 @@ export function classifyConnectFailure(
   // cap, then scrub exactly what we expose.
   const rawTail =
     stderrTail.length > STDERR_TAIL_MAX ? `…${stderrTail.slice(-STDERR_TAIL_MAX)}` : stderrTail;
-  const tail = sanitizeLogString(rawTail);
+  // Two-layer scrub: strip this server's KNOWN configured secret values (catches
+  // format-less secrets like a plain KEY=password echo), THEN the pattern scrubber
+  // for anything credential-SHAPED the child emitted that we don't hold verbatim.
+  const tail = sanitizeLogString(scrubKnownSecretValues(rawTail, config));
   const lower = rawMessage.toLowerCase();
 
   // A spawn ENOENT — the command (npx/uvx/binary) is missing or not on PATH.
