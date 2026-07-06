@@ -266,7 +266,7 @@ vi.mock("@comis/core", () => ({
       capabilities: ["orch:spawn", "orch:graph", "orch:cron", "orch:skill", "orch:read", "orch:web", "orch:analyze", "orch:write"],
       resolvedCapabilities: [],
       mode: "accept-reversible",
-      aggregateBudgetUsd: 2.0,
+      aggregateBudgetUsd: 100,
       maxConcurrentSelfAgents: 4,
       maxSelfSpawnRatePerMin: 30,
       cronSelfMax: 8,

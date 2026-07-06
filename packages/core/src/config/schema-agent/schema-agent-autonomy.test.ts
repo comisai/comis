@@ -301,16 +301,19 @@ describe("resolveAutonomy (the nested budget sub-block: $/token/wall-clock limbs
     // The token + wall-clock limbs sit ON TOP of the $
     // limb so an unknown-priced ($0) self-spawn loop still trips a bound.
     const r = resolveAutonomy(undefined);
-    expect(r.budget.aggregateUsd).toBe(2.0); // mirrors the existing flat standard $ default
-    expect(r.budget.tokens).toBeGreaterThan(0);
-    expect(r.budget.wallClockMs).toBeGreaterThan(0);
+    // Operator-friendly defaults: a runaway BACKSTOP (a self-spawning storm
+    // still trips), NOT a normal-use limit — a single legit multi-step task
+    // must run to completion well within them.
+    expect(r.budget.aggregateUsd).toBe(100); // priced $ ceiling per spawn tree
+    expect(r.budget.tokens).toBe(100_000_000); // token ceiling (bites on $0 subscription models)
+    expect(r.budget.wallClockMs).toBe(86_400_000); // 24 h wall-clock backstop
   });
 
   it("an explicit budget.tokens overrides ONLY tokens — the other limbs keep their defaults (per-field merge)", () => {
     const r = resolveAutonomy({ profile: "standard", budget: { tokens: 999 } });
     expect(r.budget.tokens).toBe(999);
-    expect(r.budget.aggregateUsd).toBe(2.0);
-    expect(r.budget.wallClockMs).toBeGreaterThan(0);
+    expect(r.budget.aggregateUsd).toBe(100); // the other limbs keep the standard default
+    expect(r.budget.wallClockMs).toBe(86_400_000);
   });
 
   it("the flat aggregateBudgetUsd alias still feeds budget.aggregateUsd (one resolved source, not a compat shim)", () => {

@@ -300,14 +300,14 @@ behavior.
 | `mode` | `enum` | _(from profile)_ | Autonomy mode: `default`, `accept-reversible`, `unattended`, `max`. Operator-set; the agent cannot self-raise it. |
 | `denialBreakerN` | `number` | `5` | Consecutive floor blocks (capability/outward-quota denials) on a single run that trip the denial breaker -> the run aborts (`execution:aborted` reason `denial_breaker`) and escalates, rather than retry-looping and burning the budget. An allowed step in between resets the count. Positive integer. The never-hang dial for the [`unattended`](/agents/autonomy#the-unattended-profile) profile (applies to every profile). |
 | `evictOnPolicyUnreachable` | `boolean` | `true` | Fail-closed posture: if the run's autonomy mode cannot be resolved, treat it as `default` (the safe profile), never broader. This is the same safe target the operator [`autonomy.evict`](/reference/json-rpc#autonomy-evict) demotion lands on. |
-| `aggregateBudgetUsd` | `number` | `2.0` | Hard $ ceiling across the whole spawn tree, per root run. Alias of `budget.aggregateUsd` (either form resolves to the same bound). |
+| `aggregateBudgetUsd` | `number` | `100` | Hard $ ceiling across the whole spawn tree, per root run. Alias of `budget.aggregateUsd` (either form resolves to the same bound). A generous runaway backstop, not a normal-use limit — lower it per-agent for a tighter guard. |
 | `maxConcurrentSelfAgents` | `number` | `4` | Tree-wide concurrent self-spawned-agent ceiling. Alias of `spawn.maxConcurrentSelfAgents`. |
 | `maxSelfSpawnRatePerMin` | `number` | `30` | Self-spawn rate limit per minute (distinct from the concurrency cap). |
 | `cronSelfMax` | `number` | `8` | Maximum agent-authored cron jobs. |
 | `lease.leaseMaxTtlMin` | `number` | `60` | Capability-lease renewal ceiling, in minutes. A jailed-surface lease renews on a shorter per-renew TTL but never past this maximum, so revoking a lease actually stops its renewal (no unbounded re-lease). Positive integer. |
-| `budget.aggregateUsd` | `number` | `2.0` | Per-root-run priced $ ceiling across the whole spawn tree (the `aggregateBudgetUsd` alias resolves here). Positive. |
-| `budget.tokens` | `number` | `2000000` | Per-root-run token ceiling. Bites even on an unknown-priced (subscription / $0) model that the $ limb counts as free, so a runaway loop is bounded regardless of pricing knowledge. Positive integer. |
-| `budget.wallClockMs` | `number` | `1800000` | Per-root-run wall-clock ceiling in milliseconds (30 min). Backstops a stuck/looping tree that burns neither $ nor tokens fast. Positive integer. |
+| `budget.aggregateUsd` | `number` | `100` | Per-root-run priced $ ceiling across the whole spawn tree (the `aggregateBudgetUsd` alias resolves here). A generous runaway backstop, not a normal-use limit. Positive. |
+| `budget.tokens` | `number` | `100000000` | Per-root-run token ceiling (100M). Bites even on an unknown-priced (subscription / $0) model that the $ limb counts as free, so a runaway loop is bounded regardless of pricing knowledge. Positive integer. |
+| `budget.wallClockMs` | `number` | `86400000` | Per-root-run wall-clock ceiling in milliseconds (24 h). Backstops a stuck/looping tree that burns neither $ nor tokens fast. Positive integer. |
 | `rate.perRootCallsPerSec` | `number` | `20` | Calls/second across the whole spawn tree (per root run). Bounds a `for(;;) spawn()` call storm. Positive integer. |
 | `rate.perSocketCallsPerSec` | `number` | `10` | Calls/second on a single orchestration socket. Positive integer. |
 | `rate.connectionChurnPerMin` | `number` | `60` | New-connection churn per minute (a reconnect-storm cap). Positive integer. |
