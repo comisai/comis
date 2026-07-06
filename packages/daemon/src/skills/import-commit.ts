@@ -98,6 +98,8 @@ export interface RunSkillImportOpts {
   readonly agentId: string;
   /** Overrides ONLY the pin-divergence warning on a provenance-matched update. */
   readonly confirm?: boolean;
+  /** Normalized registry origin, or the clawhub token; absent for archive/github/upload. */
+  readonly registry?: string;
 }
 
 /** Arguments handed to the injected imported-tier MCP persist seam. */
@@ -408,6 +410,7 @@ export async function commitStagedImport(
       importedAt,
       updatedAt: nowIso(),
       importedBy: opts.agentId,
+      ...(opts.registry !== undefined && { registry: opts.registry }),
     };
 
     // ---- STEP 2: commit.json + same-device assert + move --------------------

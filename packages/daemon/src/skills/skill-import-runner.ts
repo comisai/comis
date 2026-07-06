@@ -175,7 +175,11 @@ export function enrichWithProvenanceSummary<T extends { name: string }>(
   descriptions: readonly T[],
   dataDir: string,
   agentId: string,
-): Array<T & { provenanceSummary?: { source: AcquisitionSource; hashPrefix: string; importedAt: string } }> {
+): Array<
+  T & {
+    provenanceSummary?: { source: AcquisitionSource; registry?: string; hashPrefix: string; importedAt: string };
+  }
+> {
   if (!dataDir || dataDir.length === 0) return [...descriptions];
   const store = readProvenanceStore(dataDir);
   return descriptions.map((d) => {
@@ -187,6 +191,7 @@ export function enrichWithProvenanceSummary<T extends { name: string }>(
       ...d,
       provenanceSummary: {
         source: rec.source,
+        ...(rec.registry !== undefined && { registry: rec.registry }),
         hashPrefix: rec.contentHash.slice(0, 12),
         importedAt: rec.importedAt,
       },
