@@ -202,6 +202,36 @@ describe("runSkillImport — fresh install", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Registry threading
+// ---------------------------------------------------------------------------
+
+describe("runSkillImport — registry threading", () => {
+  it("threads a registry opt into the committed provenance record", async () => {
+    const o = opts({
+      source: "wellknown",
+      identifier: "https://reg.example/.well-known/skills/reg-skill/",
+      registry: "https://reg.example",
+    });
+    const result = await runSkillImport(skillSet("reg-skill", "Body."), o, makeDeps(dataDir));
+
+    expect(result.ok).toBe(true);
+    const rec = recordFor(dataDir, o, "reg-skill");
+    expect(rec).toBeDefined();
+    expect(rec?.registry).toBe("https://reg.example");
+  });
+
+  it("writes NO registry for an import that omits the opt (archive/github regression-free)", async () => {
+    const o = opts({ source: "archive", identifier: "https://example.invalid/plain.skill" });
+    const result = await runSkillImport(skillSet("plain-skill", "Body."), o, makeDeps(dataDir));
+
+    expect(result.ok).toBe(true);
+    const rec = recordFor(dataDir, o, "plain-skill");
+    expect(rec).toBeDefined();
+    expect(rec?.registry).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Re-import matrix
 // ---------------------------------------------------------------------------
 
