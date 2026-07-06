@@ -170,15 +170,17 @@ describe("@comis/channels barrel exports", () => {
     expect(typeof channelsBarrel.classifyMsTeamsError).toBe("function");
   });
 
-  it("exports the Matrix surface (plugin, adapter, mapper, credential + homeserver + error helpers)", () => {
+  it("exports the Matrix surface (plugin, adapter, mapper, activity renderer, credential + homeserver + error helpers)", () => {
     // The composition root imports the plugin factory + the two credential/
     // homeserver validators to register the channel and run the SSRF + presence
-    // guards before construction; the adapter/mapper/error helpers round out the
-    // per-channel surface for parity with the other adapters. The barrel is the
-    // only import path the daemon may use.
+    // guards before construction; the daemon activity wiring imports the
+    // edit-in-place renderer factory; the adapter/mapper/error helpers round out
+    // the per-channel surface for parity with the other adapters. The barrel is
+    // the only import path the daemon may use.
     expect(typeof channelsBarrel.createMatrixPlugin).toBe("function");
     expect(typeof channelsBarrel.createMatrixAdapter).toBe("function");
     expect(typeof channelsBarrel.mapMatrixEventToNormalized).toBe("function");
+    expect(typeof channelsBarrel.createMatrixActivityRenderer).toBe("function");
     expect(typeof channelsBarrel.classifyMatrixError).toBe("function");
     expect(typeof channelsBarrel.validateMatrixCredentials).toBe("function");
     expect(typeof channelsBarrel.validateHomeserverUrl).toBe("function");

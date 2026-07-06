@@ -400,6 +400,7 @@ export { createTelegramActivityRenderer, classifyTelegramError } from "./telegra
 export { createDiscordActivityRenderer } from "./discord/discord-activity.js";
 export { createSlackActivityRenderer } from "./slack/slack-activity.js";
 export { createMSTeamsActivityRenderer } from "./msteams/msteams-activity.js";
+export { createMatrixActivityRenderer } from "./matrix/matrix-activity.js";
 export { createWhatsAppActivityRenderer } from "./whatsapp/whatsapp-activity.js";
 export { createEchoActivityRenderer } from "./echo/echo-activity.js";
 // Non-EditPlace strategy factories — wired by
