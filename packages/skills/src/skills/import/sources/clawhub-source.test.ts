@@ -293,3 +293,164 @@ describe("evaluateVerdict — a clean verdict is not blocked", () => {
     expect(evaluateVerdict(trust).blocked).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Verdict-refuse-before-download — a blocking verdict refuses with the artifact
+// download seam UNTOUCHED (install + verify fetched, the download never runs).
+// The verdict is NOT confirm-overridable: resolveClawHub has no confirm param
+// (structural), so the block returns a typed refuse pre-download.
+// ---------------------------------------------------------------------------
+
+describe("resolveClawHub — verdict-refuse-before-download", () => {
+  it("refuses a malicious scan verdict BEFORE downloading the artifact", async () => {
+    const fetchImpl = flowFetch({ verify: stubResponse({ body: JSON.stringify(F.FIXTURE_VERIFY_MALICIOUS) }) });
+    const result = await resolveClawHub({ name: F.FIXTURE_NAME }, { caps: CAPS, validate: okValidate, fetchImpl });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("precondition");
+    expect(result.error.message).toContain("malicious");
+    expect(result.error.message).toContain("clawhub");
+    // install + verify fetched; the artifact download seam is UNTOUCHED.
+    const urls = fetchedUrls(fetchImpl);
+    expect(urls).toContain(INSTALL_URL);
+    expect(urls).toContain(VERIFY_URL);
+    expect(urls).not.toContain(DOWNLOAD_URL);
+    expect(fetchImpl).not.toHaveBeenCalledWith(DOWNLOAD_URL, expect.anything(), expect.anything());
+  });
+
+  it("refuses a blockedFromDownload verdict, artifact untouched", async () => {
+    const fetchImpl = flowFetch({ verify: stubResponse({ body: JSON.stringify(F.FIXTURE_VERIFY_BLOCKED_DOWNLOAD) }) });
+    const result = await resolveClawHub({ name: F.FIXTURE_NAME }, { caps: CAPS, validate: okValidate, fetchImpl });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("precondition");
+    expect(fetchImpl).not.toHaveBeenCalledWith(DOWNLOAD_URL, expect.anything(), expect.anything());
+  });
+
+  it("refuses a quarantined moderation state, artifact untouched", async () => {
+    const fetchImpl = flowFetch({ verify: stubResponse({ body: JSON.stringify(F.FIXTURE_VERIFY_QUARANTINED) }) });
+    const result = await resolveClawHub({ name: F.FIXTURE_NAME }, { caps: CAPS, validate: okValidate, fetchImpl });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("precondition");
+    expect(result.error.message).toContain("quarantined");
+    expect(fetchImpl).not.toHaveBeenCalledWith(DOWNLOAD_URL, expect.anything(), expect.anything());
+  });
+
+  it("refuses a revoked moderation state, artifact untouched", async () => {
+    const fetchImpl = flowFetch({ verify: stubResponse({ body: JSON.stringify(F.FIXTURE_VERIFY_REVOKED) }) });
+    const result = await resolveClawHub({ name: F.FIXTURE_NAME }, { caps: CAPS, validate: okValidate, fetchImpl });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("precondition");
+    expect(result.error.message).toContain("revoked");
+    expect(fetchImpl).not.toHaveBeenCalledWith(DOWNLOAD_URL, expect.anything(), expect.anything());
+  });
+
+  it("refuses a reason-flagged verdict, artifact untouched", async () => {
+    const fetchImpl = flowFetch({ verify: stubResponse({ body: JSON.stringify(F.FIXTURE_VERIFY_REASON_BLOCK) }) });
+    const result = await resolveClawHub({ name: F.FIXTURE_NAME }, { caps: CAPS, validate: okValidate, fetchImpl });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("precondition");
+    expect(fetchImpl).not.toHaveBeenCalledWith(DOWNLOAD_URL, expect.anything(), expect.anything());
+  });
+
+  it("refuses a structured install block (HTTP 403) with verify + artifact untouched", async () => {
+    const fetchImpl = flowFetch({
+      install: stubResponse({ ok: false, status: 403, body: JSON.stringify(F.FIXTURE_INSTALL_STRUCTURED_BLOCK) }),
+    });
+    const result = await resolveClawHub({ name: F.FIXTURE_NAME }, { caps: CAPS, validate: okValidate, fetchImpl });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("precondition");
+    expect(result.error.message + result.error.hint).toContain("clawhub");
+    const urls = fetchedUrls(fetchImpl);
+    expect(urls).toContain(INSTALL_URL);
+    expect(urls).not.toContain(VERIFY_URL);
+    expect(fetchImpl).not.toHaveBeenCalledWith(DOWNLOAD_URL, expect.anything(), expect.anything());
+  });
+
+  it("refuses an installKind:github resolution clearly, verify + artifact untouched", async () => {
+    const fetchImpl = flowFetch({ install: stubResponse({ body: JSON.stringify(F.FIXTURE_INSTALL_GITHUB_KIND) }) });
+    const result = await resolveClawHub({ name: F.FIXTURE_NAME }, { caps: CAPS, validate: okValidate, fetchImpl });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("precondition");
+    expect((result.error.message + result.error.hint).toLowerCase()).toContain("github");
+    const urls = fetchedUrls(fetchImpl);
+    expect(urls).toContain(INSTALL_URL);
+    expect(urls).not.toContain(VERIFY_URL);
+    expect(fetchImpl).not.toHaveBeenCalledWith(DOWNLOAD_URL, expect.anything(), expect.anything());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Server sha256 integrity — verified WHEN PRESENT (a mismatch refuses the
+// tampered artifact; an absent header is fine — the pipeline's self-computed
+// pin is the always-present floor).
+// ---------------------------------------------------------------------------
+
+describe("resolveClawHub — server sha256 when present", () => {
+  it("rejects a present-but-wrong server sha256 and never returns the bytes", async () => {
+    const fetchImpl = flowFetch({
+      artifact: stubResponse({
+        bytes: F.FIXTURE_RELEASE_ZIP_BYTES,
+        headers: { "X-ClawHub-Artifact-Sha256": F.FIXTURE_ARTIFACT_SHA256_WRONG },
+      }),
+    });
+    const result = await resolveClawHub({ name: F.FIXTURE_NAME }, { caps: CAPS, validate: okValidate, fetchImpl });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("validation");
+    expect(result.error.message + result.error.hint).toContain("sha256");
+  });
+
+  it("verifies the fallback header name when present", async () => {
+    const fetchImpl = flowFetch({
+      artifact: stubResponse({
+        bytes: F.FIXTURE_RELEASE_ZIP_BYTES,
+        headers: { "X-ClawHub-ClawPack-Sha256": F.FIXTURE_ARTIFACT_SHA256_WRONG },
+      }),
+    });
+    const result = await resolveClawHub({ name: F.FIXTURE_NAME }, { caps: CAPS, validate: okValidate, fetchImpl });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("validation");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// evaluateVerdict — the pure blocking predicate: each blocking class blocks;
+// clean / pending / not-run verdicts do not.
+// ---------------------------------------------------------------------------
+
+describe("evaluateVerdict — the pure blocking predicate", () => {
+  const base = { blockedFromDownload: false, reasons: [] as readonly string[] };
+
+  it("blocks a malicious scan status", () => {
+    expect(evaluateVerdict({ ...base, scanStatus: "malicious" }).blocked).toBe(true);
+  });
+
+  it("blocks an explicit blockedFromDownload flag", () => {
+    expect(evaluateVerdict({ ...base, blockedFromDownload: true }).blocked).toBe(true);
+  });
+
+  it("blocks each blocking moderation state", () => {
+    for (const state of ["blocked", "quarantined", "revoked"]) {
+      expect(evaluateVerdict({ ...base, moderationState: state }).blocked).toBe(true);
+    }
+  });
+
+  it("blocks a reason matching a malicious / malware / *_blocked / *.blocked / blocked pattern", () => {
+    for (const reason of ["scan:malicious", "static:malware", "policy_blocked", "moderation.blocked", "blocked"]) {
+      expect(evaluateVerdict({ ...base, reasons: [reason] }).blocked).toBe(true);
+    }
+  });
+
+  it("does NOT block a clean / pending / not-run verdict", () => {
+    expect(evaluateVerdict({ ...base, scanStatus: "clean", moderationState: "approved" }).blocked).toBe(false);
+    expect(evaluateVerdict({ ...base, scanStatus: "pending" }).blocked).toBe(false);
+    expect(evaluateVerdict({ ...base, scanStatus: "not-run", reasons: ["note:informational"] }).blocked).toBe(false);
+  });
+});

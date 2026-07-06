@@ -228,3 +228,114 @@ export const FIXTURE_VERIFY_DRIFT = {
   ok: true,
   reasons: [],
 };
+
+// ---------------------------------------------------------------------------
+// Blocking verify verdicts — each isolates ONE blocking signal so the predicate
+// branch under test is unambiguous.
+// ---------------------------------------------------------------------------
+
+/** A malicious artifact scan status (only the scan status blocks). */
+export const FIXTURE_VERIFY_MALICIOUS: ClawHubVerifyFixture = {
+  ok: false,
+  decision: "fail",
+  reasons: [],
+  security: {
+    scanStatus: "malicious",
+    moderationState: "approved",
+    blockedFromDownload: false,
+  },
+};
+
+/** An explicit blocked-from-download flag (only the flag blocks). */
+export const FIXTURE_VERIFY_BLOCKED_DOWNLOAD: ClawHubVerifyFixture = {
+  ok: false,
+  decision: "fail",
+  reasons: [],
+  security: {
+    scanStatus: "clean",
+    moderationState: "approved",
+    blockedFromDownload: true,
+  },
+};
+
+/** A quarantined moderation state (only the moderation state blocks). */
+export const FIXTURE_VERIFY_QUARANTINED: ClawHubVerifyFixture = {
+  ok: false,
+  decision: "fail",
+  reasons: [],
+  security: {
+    scanStatus: "clean",
+    moderationState: "quarantined",
+    blockedFromDownload: false,
+  },
+};
+
+/** A revoked moderation state (only the moderation state blocks). */
+export const FIXTURE_VERIFY_REVOKED: ClawHubVerifyFixture = {
+  ok: false,
+  decision: "fail",
+  reasons: [],
+  security: {
+    scanStatus: "clean",
+    moderationState: "revoked",
+    blockedFromDownload: false,
+  },
+};
+
+/**
+ * A verdict whose scan / moderation fields are otherwise non-blocking, but whose
+ * `reasons` carry a flagged token — only the reason pattern blocks.
+ */
+export const FIXTURE_VERIFY_REASON_BLOCK: ClawHubVerifyFixture = {
+  ok: false,
+  decision: "fail",
+  reasons: ["scan:malicious"],
+  security: {
+    scanStatus: "suspicious",
+    moderationState: "approved",
+    blockedFromDownload: false,
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Install refusals — a structured block + a non-archive install kind.
+// ---------------------------------------------------------------------------
+
+/**
+ * A structured install block — `ok:false` with a reason/message, served at an
+ * HTTP block status (403/409/410/423). The resolver refuses without fetching the
+ * verify verdict or the artifact.
+ */
+export const FIXTURE_INSTALL_STRUCTURED_BLOCK = {
+  ok: false,
+  slug: FIXTURE_SLUG,
+  reason: "policy_violation",
+  message: "This skill has been withdrawn from distribution.",
+  status: 403,
+};
+
+/**
+ * A `github`-kind install resolution (a commit-pinned source). This import
+ * source only handles archive installs, so it refuses clearly.
+ */
+export const FIXTURE_INSTALL_GITHUB_KIND = {
+  ok: true,
+  slug: FIXTURE_SLUG,
+  channel: "official",
+  isOfficial: true,
+  installKind: "github",
+  github: {
+    repo: "acme/pdf-extractor",
+    path: "skills/pdf-extractor",
+    commit: "0f1e2d3c4b5a69788796a5b4c3d2e1f005142536",
+    contentHash: "sha256:9a8b7c6d5e4f30211203040506070809a0b1c2d3e4f5061728394a5b6c7d8e9f",
+    sourceUrl: "https://github.com/acme/pdf-extractor",
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Integrity — a present-but-wrong server artifact sha256.
+// ---------------------------------------------------------------------------
+
+/** A syntactically-valid but WRONG sha256 hex (does not match the release bytes). */
+export const FIXTURE_ARTIFACT_SHA256_WRONG = "0".repeat(64);
