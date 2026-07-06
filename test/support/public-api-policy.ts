@@ -636,14 +636,15 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "GoogleChatTokenProvider",
       "GoogleChatScope",
       "classifyGoogleChatError",
-      // Google Chat INBOUND verify closures, surfaced AHEAD of their consumer.
-      // createGoogleChatInboundVerifier (dual-audience remote-JWKS) + its
-      // local-JWKS offline twin createLocalGoogleChatInboundVerifier + the shared
-      // GoogleChatInboundVerifierOpts shape are consumed by the daemon test-seam
-      // that binds the gateway ingress's validateInboundJwt in a later wave.
-      // Shrink each once that cross-package consumer lands.
-      "createGoogleChatInboundVerifier",
-      "createLocalGoogleChatInboundVerifier",
+      // Google Chat INBOUND verify OPTIONS shape, surfaced AHEAD of a
+      // cross-package consumer. GoogleChatInboundVerifierOpts types the
+      // createGoogleChatInboundVerifier factory argument. The daemon test-seam
+      // (googlechat-test-seams.ts) that binds the gateway ingress's
+      // validateInboundJwt now name-imports the two verifier factories
+      // (createGoogleChatInboundVerifier + createLocalGoogleChatInboundVerifier),
+      // so those have a live consumer and are no longer listed here — but the
+      // seam takes its own cfg shape rather than this opts type. Shrink once a
+      // cross-package consumer names it.
       "GoogleChatInboundVerifierOpts",
       "createIMessageAdapter",
       "IMessageAdapterDeps",

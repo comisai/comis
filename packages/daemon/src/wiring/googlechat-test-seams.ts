@@ -26,7 +26,11 @@
  * @module
  */
 
-import { createGoogleChatInboundVerifier } from "@comis/channels";
+import { readFileSync } from "node:fs";
+import {
+  createGoogleChatInboundVerifier,
+  createLocalGoogleChatInboundVerifier,
+} from "@comis/channels";
 import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 
@@ -66,12 +70,28 @@ export function resolveTestGoogleChatVerifier(
       ...(deps?.logger ? { logger: deps.logger } : {}),
     });
   }
-  // A named JWKS file selects the offline local-JWKS verifier; that branch swaps
-  // only the key source (never the verify) and emits a content-free activation
-  // WARN. Until it is wired the default verifier keeps the resolver total.
-  return createGoogleChatInboundVerifier({
+  // Test-only offline path: verify against a local JWKS the emulator wrote. This
+  // swaps only the key source — a FULL signature + issuer + audience verify (plus
+  // the app-url sender-binding email claim) still runs, so it is never a bypass.
+  const readFileImpl =
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- jwksPath is an operator-set test-only env var, not user input
+    deps?.readFileImpl ?? ((path: string) => readFileSync(path, "utf8"));
+  const jwks = JSON.parse(readFileImpl(jwksPath)) as Parameters<
+    typeof createLocalGoogleChatInboundVerifier
+  >[0];
+  const issuer = getEnv(GOOGLECHAT_TEST_ISSUER_ENV);
+  const verifier = createLocalGoogleChatInboundVerifier(jwks, {
     audienceType: cfg.audienceType,
     audience: cfg.audience,
-    ...(deps?.logger ? { logger: deps.logger } : {}),
+    ...(issuer !== undefined && issuer.length > 0 ? { issuer } : {}),
   });
+  deps?.logger?.warn(
+    {
+      channelType: "googlechat" as const,
+      hint: "Unset COMIS_GOOGLECHAT_TEST_JWKS in production — the Google Chat ingress is verifying inbound tokens against a LOCAL test JWKS, not Google's signing keys",
+      errorKind: "config" as const,
+    },
+    "Google Chat ingress using a LOCAL test JWKS (test-only seam)",
+  );
+  return verifier;
 }
