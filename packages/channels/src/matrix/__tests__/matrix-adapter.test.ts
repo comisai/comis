@@ -1818,6 +1818,62 @@ describe("createMatrixAdapter — reconcileSend history-scan oracle", () => {
     expect(result.value).toEqual({ kind: "unresolved" });
   });
 
+  it("scans normally when crypto is present but the room is not encrypted", async () => {
+    // A crypto-enabled install can still host PLAINTEXT rooms; the encryption probe
+    // returns false, so reconcile proceeds to the history scan and resolves a
+    // plaintext send exactly as on a crypto-free install.
+    const text = "a plaintext reply on a crypto-enabled install";
+    const fake = new FakeMatrixClient();
+    fake.cryptoHandle = { isEncryptionEnabledInRoom: async () => false };
+    fake.messagesEnd = undefined;
+    fake.messagesChunk = [
+      {
+        event_id: "$plain:hs",
+        sender: "@bot:hs",
+        origin_server_ts: 1_500,
+        type: "m.room.message",
+        content: { body: text },
+      },
+    ];
+    const { adapter } = makeAdapter({ fake });
+    await adapter.start();
+
+    const result = await adapter.reconcileSend?.({
+      channelId: "!room:hs",
+      contentDigest: ledgerDigest(text),
+      ...WINDOW,
+    });
+
+    expect(result?.ok).toBe(true);
+    if (!result?.ok) throw new Error("expected an ok result");
+    expect(result.value).toEqual({ kind: "sent", platformMessageId: "$plain:hs" });
+  });
+
+  it("returns unresolved when the room-encryption probe itself throws", async () => {
+    // If we cannot even determine whether the room is encrypted, we certainly
+    // cannot prove a send is absent → unresolved, never a false not_sent.
+    const fake = new FakeMatrixClient();
+    fake.cryptoHandle = {
+      isEncryptionEnabledInRoom: async () => {
+        throw new Error("crypto backend not ready");
+      },
+    };
+    fake.messagesEnd = undefined;
+    fake.messagesChunk = [];
+    const { adapter } = makeAdapter({ fake });
+    await adapter.start();
+
+    const result = await adapter.reconcileSend?.({
+      channelId: "!room:hs",
+      contentDigest: ledgerDigest("anything"),
+      ...WINDOW,
+    });
+
+    expect(result?.ok).toBe(true);
+    if (!result?.ok) throw new Error("expected an ok result");
+    expect(result.value).toEqual({ kind: "unresolved" });
+  });
+
   it("returns unresolved in an encrypted room where a raw history read has no plaintext body to digest", async () => {
     // The flagship default is e2ee ON. A raw /messages read of an encrypted room
     // yields m.room.encrypted events with NO plaintext body, so a body digest can
