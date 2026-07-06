@@ -36,6 +36,7 @@ import type { McpServerConfig } from "@comis/skills";
 import { createMcpClientManager, isNeedsOAuthLoginError } from "@comis/skills";
 import {
   findUnresolvedEnvRefs,
+  substituteEnvVars,
   formatMissingEnvRefError,
   McpListContract,
   McpStatusContract,
@@ -228,6 +229,36 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
 
       const params = McpConnectContract.request.parse(userParams);
 
+      // F-MCP-ENV-RESOLVE: resolve ${VAR} env refs to their live secret values for the IMMEDIATE
+      // spawn — the exact mirror of resolvedConnectHeaders below. Without it a freshly-connected
+      // stdio server receives the literal "${VAR}" (e.g. an invalid base URL / empty credential →
+      // the child fails or returns "Invalid URL") until the next config-load restart resolves it.
+      // The PERSISTED entry keeps the ${VAR} literals (buildPersistedMcpEntry uses params.env), so
+      // secrets never land plaintext in config; only the running child sees resolved values.
+      let resolvedConnectEnv: Record<string, string> | undefined = params.env;
+      if (params.env && deps.secretManager) {
+        const sm = deps.secretManager;
+        const sub = substituteEnvVars(
+          params.env,
+          (key) => sm.get(key),
+          `mcp.connect env (${params.server_name})`,
+        );
+        if (sub.ok) {
+          resolvedConnectEnv = sub.value as Record<string, string>;
+        } else {
+          deps.logger.warn(
+            {
+              method: "mcp.connect",
+              entityId: params.server_name,
+              err: sub.error,
+              errorKind: "config" as const,
+              hint: "an env ${VAR} ref could not be resolved from the secret store — store it via secrets_manage; the child is spawned with the ref unresolved",
+            },
+            "MCP env-ref resolution incomplete for the live connect",
+          );
+        }
+      }
+
       const manager = deps.mcpClientManager;
 
       // Copy operator-extension allowlist + OSV check toggles from the config
@@ -267,7 +298,9 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         command: params.command,
         args: params.args,
         url: params.url,
-        env: params.env,
+        // Resolved ${VAR} secrets for the live spawn (F-MCP-ENV-RESOLVE); the persisted
+        // entry keeps the ${VAR} refs. Mirrors resolvedConnectHeaders below.
+        env: resolvedConnectEnv,
         // Use resolvedConnectHeaders (raw values) for the live connect so the
         // immediate connection uses the actual credential, not the unresolved ${VAR}
         // literal that processHeaderCredentials wrote into params.headers for config

@@ -241,6 +241,31 @@ describe("MCP RPC Handlers", () => {
       expect(result.toolCount).toBe(1);
     });
 
+    it("F-MCP-ENV-RESOLVE: resolves ${VAR} env refs to live secret values for the spawn", async () => {
+      // A credentialed stdio server passes env as ${VAR} refs. The LIVE spawn must receive the
+      // RESOLVED values (else the child sees "${VAR}" literally → invalid URL / empty creds until
+      // a restart). Persistence keeps the ${VAR} refs (asserted elsewhere); only manager.connect
+      // gets resolved values.
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("svc-mcp", [])));
+      const secretManager = {
+        get: (k: string) =>
+          k === "SERVICE_PASSWORD" ? "s3cret-val" : k === "SERVICE_BASE_URL" ? "https://api.example.com/v2" : undefined,
+      } as any;
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger(), secretManager });
+      await handlers["mcp.connect"]({
+        server_name: "svc-mcp",
+        transport: "stdio",
+        command: "npx",
+        args: ["-y", "example-mcp"],
+        env: { SERVICE_PASSWORD: "${SERVICE_PASSWORD}", SERVICE_BASE_URL: "${SERVICE_BASE_URL}" },
+      } as any);
+      expect(manager.connect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          env: { SERVICE_PASSWORD: "s3cret-val", SERVICE_BASE_URL: "https://api.example.com/v2" },
+        }),
+      );
+    });
+
     it("passes sse transport directly", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("remote", [])));
 
@@ -1133,10 +1158,13 @@ describe("MCP RPC Handlers", () => {
         env: { FINNHUB_API_KEY: "${FINNHUB_API_KEY}" },
       }) as any;
 
+      // The LIVE spawn receives the RESOLVED secret (F-MCP-ENV-RESOLVE) — consistent with the
+      // config-load path, which substitutes ${VAR} before the config ever reaches manager.connect.
+      // The ${VAR} ref is preserved only in the PERSISTED entry, so secrets stay out of config.
       expect(manager.connect).toHaveBeenCalledWith(
         expect.objectContaining({
           name: "finnhub",
-          env: { FINNHUB_API_KEY: "${FINNHUB_API_KEY}" },
+          env: { FINNHUB_API_KEY: "abc123" },
         }),
       );
       expect(result.status).toBe("connected");
