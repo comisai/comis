@@ -51,12 +51,12 @@ describe("website channel count is internally consistent", () => {
   const channels = headlineChannelCount(FACTS_SRC);
   const list = channelList(FACTS_SRC);
 
-  it("states 10 channels in the headline count", () => {
-    expect(channels).toBe(10);
+  it("states 11 channels in the headline count", () => {
+    expect(channels).toBe(11);
   });
 
-  it("enumerates exactly 10 channels in channelList", () => {
-    expect(list).toHaveLength(10);
+  it("enumerates exactly 11 channels in channelList", () => {
+    expect(list).toHaveLength(11);
   });
 
   it("reconciles the headline count with the enumerated list", () => {
@@ -65,6 +65,10 @@ describe("website channel count is internally consistent", () => {
 
   it("includes Microsoft Teams in the channel list", () => {
     expect(list).toContain("Microsoft Teams");
+  });
+
+  it("includes Google Chat in the channel list", () => {
+    expect(list).toContain("Google Chat");
   });
 
   it("keeps the doc-comment example number equal to the headline count", () => {
