@@ -75,6 +75,7 @@ import {
 import { classifyDecryptDegrade, type DecryptDegradeKind } from "./decrypt-degrade.js";
 import { classifyMatrixError, type MatrixErrorInput } from "./errors.js";
 import { extractMentions } from "./mentions.js";
+import { decodeMatrixAction } from "./matrix-actions.js";
 
 /**
  * The senderId a synthesized decrypt-degrade note carries. Deliberately NOT a
@@ -97,6 +98,14 @@ export const MAX_TRACKED_REACTIONS = 1000;
 function reactionKey(roomId: string, messageId: string, emoji: string): string {
   return `${roomId}|${messageId}|${emoji}`;
 }
+
+/**
+ * The `/typing` timeout the adapter tells the homeserver a typing notice lasts.
+ * The orchestrator refreshes at a shorter interval so a keepalive re-sends before
+ * this expiry — the notice never lapses mid-turn, and it self-clears if the
+ * process dies (no dangling "typing…" indicator).
+ */
+const MATRIX_TYPING_TIMEOUT_MS = 30_000;
 
 /**
  * Retries a rate-limited chunk send makes on top of the first attempt before
@@ -990,18 +999,100 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
 
     async platformAction(
       action: string,
-      _params: Record<string, unknown>,
+      params: Record<string, unknown>,
     ): Promise<Result<unknown, Error>> {
-      const unsupported = new Error(`Unsupported action: ${action} on matrix`);
-      deps.logger.warn(
-        {
-          channelType: "matrix" as const,
-          hint: `Action '${action}' is not supported by the Matrix adapter`,
-          errorKind: "validation" as const,
-        },
-        "Unsupported platform action",
-      );
-      return err(unsupported);
+      const decoded = decodeMatrixAction(action, params);
+
+      // Unknown/invalid action: err with a validation hint, regardless of whether
+      // the client is up (a malformed request is a client error, not a lifecycle one).
+      if (decoded.kind === "unsupported") {
+        const unsupportedErr = new Error(`Unsupported action: ${action} on matrix`);
+        deps.logger.warn(
+          {
+            channelType: "matrix" as const,
+            hint: `Action '${action}' is not supported by the Matrix adapter`,
+            errorKind: "validation" as const,
+          },
+          "Unsupported platform action",
+        );
+        return err(unsupportedErr);
+      }
+
+      // A supported action still needs an authenticated client.
+      if (client === undefined) {
+        const notReady = new Error("Matrix adapter cannot run a platform action before start()");
+        lastError = notReady.message;
+        deps.logger.warn(
+          {
+            channelType: "matrix" as const,
+            hint: "Call start() (which authenticates the client) before platformAction()",
+            errorKind: "precondition" as const,
+          },
+          "Matrix platform action blocked: adapter not started",
+        );
+        return err(notReady);
+      }
+      const activeClient = client;
+
+      /** Classify + WARN a failed SDK action, record lastError, and err. */
+      const actionFailed = (cause: Error): Result<never, Error> => {
+        lastError = cause.message;
+        const classified = classifyMatrixError(toMatrixErrorInput(cause));
+        deps.logger.warn(
+          {
+            channelType: "matrix" as const,
+            hint: classified.hint,
+            errorKind: classified.errorKind,
+          },
+          "Matrix platform action failed",
+        );
+        return err(cause);
+      };
+
+      switch (decoded.kind) {
+        case "sendTyping": {
+          const sent = await fromPromise(
+            activeClient.sendTyping(decoded.roomId, decoded.typing, MATRIX_TYPING_TIMEOUT_MS),
+          );
+          if (!sent.ok) return actionFailed(sent.error);
+          lastError = undefined;
+          return ok({ typing: decoded.typing });
+        }
+        case "join": {
+          const joined = await fromPromise(activeClient.joinRoom(decoded.roomId));
+          if (!joined.ok) return actionFailed(joined.error);
+          lastError = undefined;
+          return ok({ joined: true });
+        }
+        case "leave": {
+          const left = await fromPromise(activeClient.leave(decoded.roomId));
+          if (!left.ok) return actionFailed(left.error);
+          lastError = undefined;
+          return ok({ left: true });
+        }
+        case "setTopic": {
+          const topicSet = await fromPromise(
+            activeClient.setRoomTopic(decoded.roomId, decoded.topic, decoded.htmlTopic),
+          );
+          if (!topicSet.ok) return actionFailed(topicSet.error);
+          lastError = undefined;
+          return ok({ topicSet: true });
+        }
+        case "markRead": {
+          // A read receipt needs a resident MatrixEvent, not a bare id. When the
+          // target is not in the room's timeline, best-effort ok(marked:false)
+          // rather than err — a missing receipt target is not an operator failure.
+          const event = activeClient.getRoom(decoded.roomId)?.findEventById(decoded.eventId);
+          if (event === undefined || event === null) {
+            lastError = undefined;
+            return ok({ marked: false });
+          }
+          const marked = await fromPromise(activeClient.sendReadReceipt(event));
+          if (!marked.ok) return actionFailed(marked.error);
+          lastError = undefined;
+          return ok({ marked: true });
+        }
+      }
     },
   };
 
