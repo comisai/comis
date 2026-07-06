@@ -99,6 +99,14 @@ const SkillsImportConfigSchema = z.strictObject({
    * unaffected). Matched exactly against the requested registry at import time.
    */
   registries: z.array(z.string()).default([]),
+  /**
+   * Require an official registry publisher (channel:"official" / isOfficial)
+   * for a clawhub import: a non-official publisher records
+   * `officialPublisher:false` and requires an explicit `confirm` (never applies
+   * to archive/github/wellknown). Default `true` (fail-closed) — an operator
+   * opts out per agent by setting it `false`.
+   */
+  requireOfficialPublisher: z.boolean().default(true),
 });
 
 /**

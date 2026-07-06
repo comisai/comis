@@ -38,6 +38,9 @@ const AcquisitionSourceSchema = z.enum([
 const ProvenanceSummarySchema = z.object({
   source: AcquisitionSourceSchema,
   registry: z.string().optional(),
+  // Whether the source registry vouched for an official publisher — populated
+  // for registry imports (clawhub); absent for archive/github/upload.
+  officialPublisher: z.boolean().optional(),
   hashPrefix: z.string().optional(),
   importedAt: z.string().optional(),
 });
@@ -148,23 +151,27 @@ export const SkillsUploadContract = defineContract({
  * registry index, with `registry` naming the origin and `name` the index-lookup
  * key (which advertised skill to fetch). The installed name is always the mapped
  * manifest name — `name` selects the registry entry, it does NOT override the
- * install name. `confirm` overrides ONLY a pin-divergence on a provenance-matched
- * re-import — never a collision on an unprovenanced / foreign-source name (there
- * is intentionally NO force override).
+ * install name. `confirm` overrides BOTH warnable classes — a non-official
+ * registry publisher and a pin-divergence on a provenance-matched re-import —
+ * never a collision on an unprovenanced / foreign-source name (there is
+ * intentionally NO force override).
  *
  * Response: `{ ok: true, path, name, fileCount, source: "imported",
- * resolvedAgentId }`. `resolvedAgentId` is the agent the import acted on.
+ * resolvedAgentId, warnings? }`. `resolvedAgentId` is the agent the import acted
+ * on; `warnings` enumerates the warnable classes a confirmed import
+ * acknowledged (a non-official publisher and/or a pin-divergence re-import).
  */
 export const SkillsImportContract = defineContract({
   method: "skills.import",
   request: z.object({
     url: z.string().min(1).optional(),
-    source: z.enum(["github", "archive", "wellknown"]).optional(),
+    source: z.enum(["github", "archive", "wellknown", "clawhub"]).optional(),
     // Registry origin (normalized `https://<host>[:port]`) or the `clawhub`
-    // token — read for `source:"wellknown"`.
+    // token — read for the registry-resolver sources (wellknown / clawhub).
     registry: z.string().min(1).optional(),
-    // Registry index-lookup key: which advertised skill to fetch. Selects the
-    // registry entry; it does NOT override the installed (manifest) name.
+    // Registry index-lookup key: which advertised skill to fetch (the
+    // `@owner/slug` reference for clawhub). Selects the registry entry; it does
+    // NOT override the installed (manifest) name.
     name: z.string().min(1).optional(),
     archiveUrl: z.string().min(1).optional(),
     archiveBytes: z.string().min(1).optional(),
@@ -179,6 +186,10 @@ export const SkillsImportContract = defineContract({
     fileCount: z.number(),
     source: z.literal("imported"),
     resolvedAgentId: z.string(),
+    // The warnable classes a confirmed import acknowledged (non-official
+    // publisher and/or pin-divergence re-import). Absent for a warning-free
+    // import.
+    warnings: z.array(z.string()).optional(),
   }),
   // orch:skill surface, rpc-scoped (see skills.upload rationale).
   scopes: ["rpc"] as const,

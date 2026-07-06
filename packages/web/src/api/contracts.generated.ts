@@ -11407,7 +11407,8 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "enum": [
             "github",
             "archive",
-            "wellknown"
+            "wellknown",
+            "clawhub"
           ]
         },
         "registry": {
@@ -11465,6 +11466,12 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "resolvedAgentId": {
           "type": "string"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [
@@ -11538,6 +11545,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
                   },
                   "registry": {
                     "type": "string"
+                  },
+                  "officialPublisher": {
+                    "type": "boolean"
                   },
                   "hashPrefix": {
                     "type": "string"

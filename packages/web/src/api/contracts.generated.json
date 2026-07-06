@@ -11285,7 +11285,8 @@
           "enum": [
             "github",
             "archive",
-            "wellknown"
+            "wellknown",
+            "clawhub"
           ]
         },
         "registry": {
@@ -11343,6 +11344,12 @@
         },
         "resolvedAgentId": {
           "type": "string"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [
@@ -11416,6 +11423,9 @@
                   },
                   "registry": {
                     "type": "string"
+                  },
+                  "officialPublisher": {
+                    "type": "boolean"
                   },
                   "hashPrefix": {
                     "type": "string"

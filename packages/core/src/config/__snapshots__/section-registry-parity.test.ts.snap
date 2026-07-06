@@ -3047,7 +3047,8 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
       "maxFileCount": 200,
       "maxPathDepth": 10,
       "maxTotalUncompressedBytes": 67108864,
-      "registries": []
+      "registries": [],
+      "requireOfficialPublisher": true
     },
     "immutable": true,
     "path": "agents.skills.import",
@@ -3088,6 +3089,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.skills.import.registries",
     "type": "array"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "agents.skills.import.requireOfficialPublisher",
+    "type": "boolean"
   },
   {
     "default": {
@@ -19689,7 +19696,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "maxFileCount": 200,
             "maxPathDepth": 10,
             "maxTotalUncompressedBytes": 67108864,
-            "registries": []
+            "registries": [],
+            "requireOfficialPublisher": true
           },
           "properties": {
             "maxArchiveBytes": {
@@ -19728,6 +19736,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
                 "type": "string"
               },
               "type": "array"
+            },
+            "requireOfficialPublisher": {
+              "default": true,
+              "type": "boolean"
             }
           },
           "required": [
@@ -19736,7 +19748,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "maxFileCount",
             "maxFileBytes",
             "maxPathDepth",
-            "registries"
+            "registries",
+            "requireOfficialPublisher"
           ],
           "type": "object"
         },
@@ -30913,7 +30926,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "maxFileCount": 200,
                   "maxPathDepth": 10,
                   "maxTotalUncompressedBytes": 67108864,
-                  "registries": []
+                  "registries": [],
+                  "requireOfficialPublisher": true
                 },
                 "properties": {
                   "maxArchiveBytes": {
@@ -30952,6 +30966,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                       "type": "string"
                     },
                     "type": "array"
+                  },
+                  "requireOfficialPublisher": {
+                    "default": true,
+                    "type": "boolean"
                   }
                 },
                 "required": [
@@ -30960,7 +30978,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "maxFileCount",
                   "maxFileBytes",
                   "maxPathDepth",
-                  "registries"
+                  "registries",
+                  "requireOfficialPublisher"
                 ],
                 "type": "object"
               },
