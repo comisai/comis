@@ -235,8 +235,8 @@ export const GoogleChatChannelEntrySchema = z.strictObject({
   mode: z.enum(["pubsub", "webhook"]).default("pubsub"),
   serviceAccountKey: SecretRefOrStringSchema.optional(),
   subscriptionName: z.string().optional(),                                    // pubsub: projects/X/subscriptions/Y
-  audienceType: z.enum(["project-number", "app-url"]).default("project-number"), // webhook mode (transport not wired yet)
-  audience: z.string().optional(),                                            // webhook mode (transport not wired yet)
+  audienceType: z.enum(["project-number", "app-url"]).default("project-number"), // webhook mode
+  audience: z.string().optional(),                                            // webhook mode
   allowFrom: z.array(z.string()).default([]),                                 // users/{id} or spaces/{id}
   allowMode: z.enum(["allowlist", "open"]).default("allowlist"),
   missedInboundThresholdMs: z.number().int().min(60_000).default(21_600_000), // webhook-mode liveness window; floor 1 min
