@@ -498,9 +498,43 @@ export function createGoogleChatAdapter(
       sendAbort = new AbortController();
 
       // The token provider already parsed the service-account key once at
-      // construction; reuse that result rather than re-parsing here. The
-      // subscription is the only additional precondition (it is not a parse).
+      // construction; reuse that result rather than re-parsing here. Both modes
+      // need a valid key: webhook mode opens no pull loop but still sends replies
+      // via the Chat REST API with the chat.bot bearer.
       const credErr = tokens.credentialError();
+
+      if (deps.mode === "webhook") {
+        // Webhook mode opens no Pub/Sub pull loop — inbound arrives through the
+        // gateway ingress driving handleChatEvent — so it has no subscription
+        // precondition. It still needs the service-account key to send replies,
+        // so a missing or invalid key fails start() exactly as the pull path does.
+        if (credErr) {
+          const startErr = new Error(
+            `Google Chat credentials invalid: ${credErr.hint}`,
+          );
+          deps.logger.error(
+            {
+              channelType: "googlechat" as const,
+              err: startErr,
+              hint: "Set channels.googlechat.serviceAccountKey (SecretRef) or GOOGLECHAT_SA_KEY",
+              errorKind: "auth" as const,
+            },
+            "Adapter start failed",
+          );
+          _lastError = startErr.message;
+          return err(startErr);
+        }
+        _connected = true;
+        _startedAt = now();
+        deps.logger.info(
+          { channelType: "googlechat" as const, mode: "webhook" },
+          "Adapter started",
+        );
+        return ok(undefined);
+      }
+
+      // Pull (Pub/Sub) mode: the subscription is the only additional precondition
+      // (it is not a parse).
       const subMissing =
         !deps.subscriptionName || deps.subscriptionName.trim() === "";
       if (credErr || subMissing) {
@@ -520,19 +554,6 @@ export function createGoogleChatAdapter(
         );
         _lastError = startErr.message;
         return err(startErr);
-      }
-
-      if (deps.mode && deps.mode !== "pubsub") {
-        // The webhook transport is not wired: name the knob, state what is
-        // actually running, and do not silently pretend webhook ingress is live.
-        deps.logger.warn(
-          {
-            channelType: "googlechat" as const,
-            hint: "Webhook ingress is not active; set channels.googlechat.mode to 'pubsub' — the Pub/Sub pull loop is being used instead",
-            errorKind: "config" as const,
-          },
-          "Webhook ingress unavailable; running the Pub/Sub pull loop",
-        );
       }
 
       const make = deps.createSource ?? createPubSubSource;
