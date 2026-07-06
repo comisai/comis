@@ -24,11 +24,13 @@
  * otherwise lose a record), and the MCP-name re-check + persist must serialize
  * so two DIFFERENT-skill imports declaring the SAME server name cannot both
  * install (the second's re-check happens-after the first's persist and refuses).
- * Any failure at 3–5 unwinds the move before the lock releases (fresh: remove
- * the moved-in dir; update: restore the parked previous install), so no
- * installed-but-unprovenanced skill survives and a failed update never loses
- * the prior install. A hard crash mid-commit is reconciled at boot via
- * `commit.json` (see `import-boot-sweep.ts`).
+ * Any failure at 3–5 unwinds the move AND the pin before the lock releases
+ * (fresh: remove the moved-in dir + the just-written record; update: restore the
+ * parked previous install AND re-write its prior provenance record), so no
+ * installed-but-unprovenanced skill survives and a failed update never loses the
+ * prior install — nor its pin, whose loss would silently re-present a
+ * remote-authored skill as the platform-trusted `bundled` tier. A hard crash
+ * mid-commit is reconciled at boot via `commit.json` (see `import-boot-sweep.ts`).
  *
  * @module
  */
@@ -462,6 +464,21 @@ export async function commitStagedImport(
       }
     };
 
+    // Restore the pre-commit provenance pin after a STEP 4/5 failure. STEP 3's
+    // write already OVERWROTE any prior record, so deleting it here would drop
+    // the record entirely — the skill would then re-present as the platform-
+    // trusted `bundled` tier (dynamic-context shell expansion re-enabled). When a
+    // prior record existed (an update, or a re-import whose live dir had been
+    // removed) the unwind re-writes it; a first-time fresh install removes the
+    // just-written record because there was none to keep.
+    const restorePin = async (): Promise<void> => {
+      if (existing !== undefined) {
+        await writeProv(deps.dataDir, existing);
+      } else {
+        await removeProv(deps.dataDir, key);
+      }
+    };
+
     // ---- STEPS 3-5 under the SHARED GLOBAL lock -----------------------------
     const committed = await withSkillImportLock(SKILL_IMPORT_COMMIT_LOCK, async (): Promise<Result<void, ImportReject>> => {
       // STEP 3: provenance write (global-serialized ⇒ no cross-skill lost update).
@@ -473,13 +490,13 @@ export async function commitStagedImport(
       try {
         deps.reinitRegistry();
       } catch (e) {
-        await removeProv(deps.dataDir, key);
+        await restorePin();
         return err(mkReject("commit", `skill registry re-init failed: ${(e as Error).message}`, "the moved skill is reconciled on the next boot sweep", "internal"));
       }
       // STEP 5: MCP-server-name re-check + Phase-B persist (imported tier).
       const rechecked = await resolveBundleForCommit(staged, deps);
       if (!rechecked.ok) {
-        await removeProv(deps.dataDir, key);
+        await restorePin();
         return err(
           mkReject(
             "commit",
@@ -497,7 +514,7 @@ export async function commitStagedImport(
         const disabled = nextServers.map((e) => (bundleNames.has(e.name) ? { ...e, enabled: false } : e));
         const pr = await deps.persistImportedBundle({ skillId: name, nextServers: disabled, bundleEntries });
         if (!pr.ok) {
-          await removeProv(deps.dataDir, key);
+          await restorePin();
           return err(mkReject("commit", `failed to persist the imported MCP bundle: ${pr.error.message}`, "the moved skill is reconciled on the next boot sweep", "resource"));
         }
       }

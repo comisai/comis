@@ -322,6 +322,37 @@ describe("runSkillImport — mid-commit unwind", () => {
     // The original pin is intact.
     expect(recordFor(dataDir, opts(), "unwind-upd")!.contentHash).toBeDefined();
   });
+
+  it("an UPDATE whose post-write step fails RESTORES the previous provenance record (stays imported, not bundled)", async () => {
+    // First import pins the ORIGINAL. The provenance write below succeeds; the
+    // failure is injected AFTER it (STEP 4 registry re-init throws), exactly the
+    // window the STEP-3 failing-write test above cannot reach.
+    await runSkillImport(skillSet("unwind-upd-postwrite", "Original body."), opts(), makeDeps(dataDir));
+    const before = recordFor(dataDir, opts(), "unwind-upd-postwrite")!;
+
+    const result = await runSkillImport(
+      skillSet("unwind-upd-postwrite", "Changed body."),
+      opts({ confirm: true }),
+      makeDeps(dataDir, {
+        reinitRegistry: () => {
+          throw new Error("registry re-init boom");
+        },
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    // The previous install's files are restored.
+    expect(liveExists(dataDir, "unwind-upd-postwrite")).toBe(true);
+    expect(readLiveMd(dataDir, "unwind-upd-postwrite")).toContain("Original body.");
+    // The OLD provenance record SURVIVES: the skill stays source:imported and is
+    // NOT silently escalated to the platform-trusted bundled tier (which would
+    // re-enable dynamic-context shell expansion on a remote-authored body). The
+    // unwind must RESTORE the prior record, not delete the just-overwritten one.
+    const after = recordFor(dataDir, opts(), "unwind-upd-postwrite");
+    expect(after).toBeDefined();
+    expect(after!.contentHash).toBe(before.contentHash);
+    expect(after!.importedAt).toBe(before.importedAt);
+  });
 });
 
 // ---------------------------------------------------------------------------
