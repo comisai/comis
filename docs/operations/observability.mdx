@@ -573,6 +573,10 @@ jq 'select(.event | startswith("observability:spend_"))' ~/.comis/logs/daemon.lo
 
 `comis fleet` surfaces a `config_posture:pricing_gap` finding when one or more agents are burning tokens on **remote, unknown-priced** models — telling an operator their pricing coverage *before* they trust the ceiling. It is a **count plus a remediation hint only** (no model id or token in the body); free/local and priced agents are never counted. A newer healthy boot supersedes an older flag. If you see it, spend is being under-counted for those agents (honest `$0` applies only to local/free providers) — close the gap before relying on `action: abort`.
 
+### Fleet finding — `config_posture:imported_skills`
+
+`comis fleet` surfaces a `config_posture:imported_skills` finding when one or more [imported skills](/skills/importing) carry a recorded registry that is **no longer in** its applicable `skills.import.registries` allowlist — *allowlist drift after the fact*. The import-time gate hard-refuses a non-allowlisted registry, so a live import can only point at one once the allowlist changes underneath it (an origin was removed, or an agent was reconfigured). It is a **count plus a remediation hint only** — never a registry origin, skill name, or agent id in the body. Drift is resolved **per record** (a shared-scope skill against the default agent's allowlist, a local one against its owning agent's), so a multi-agent daemon is counted correctly. A newer boot supersedes an older flag (standing state). If you see it, re-add the origin to `skills.import.registries` or remove the affected imported skills, then run `comis explain` on an affected import.
+
 ---
 
 ## 17. Additional Tracking Surfaces
