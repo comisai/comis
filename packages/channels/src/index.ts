@@ -179,7 +179,7 @@ export { classifyMsTeamsError } from "./msteams/errors.js";
 // Matrix adapter (pull channel — Client-Server /sync long-poll, text round-trip)
 export { createMatrixAdapter } from "./matrix/matrix-adapter.js";
 export type { MatrixAdapterDeps } from "./matrix/matrix-adapter.js";
-export { createMatrixPlugin } from "./matrix/matrix-plugin.js";
+export { createMatrixPlugin, type MatrixPluginHandle } from "./matrix/matrix-plugin.js";
 
 // Matrix E2EE crypto store (lazy-import boundary + durable snapshot lifecycle)
 export {
