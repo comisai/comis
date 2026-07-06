@@ -226,6 +226,38 @@ describe("buildMediaPipeline", () => {
     expect(compositeCall.resolvers).toContainEqual(mockMsResolver);
   });
 
+  it("creates the matrix resolver from the matrixPlugin handle", async () => {
+    const mockMatrixResolver = { resolve: vi.fn(), schemes: ["mxc"] };
+    const matrixPlugin = { createResolver: vi.fn(() => mockMatrixResolver) } as any;
+    const deps = makeDeps({ matrixPlugin });
+    await buildMediaPipeline(deps);
+
+    // The SAME injected auth-capable fetcher reaches createResolver. Matrix has no
+    // media-auth config key, so an empty allowlist is passed (the resolver defaults
+    // its allowlist to the homeserver host).
+    expect(matrixPlugin.createResolver).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ssrfFetcher: deps.ssrfFetcher,
+        maxBytes: 10_000_000,
+        mediaAuthAllowHosts: [],
+      }),
+    );
+    // The mxc resolver is registered in the composite.
+    const compositeCall = vi.mocked(createCompositeResolver).mock.calls[0][0];
+    expect(compositeCall.resolvers).toContainEqual(mockMatrixResolver);
+  });
+
+  it("omits the matrix resolver when matrixPlugin is absent", async () => {
+    const deps = makeDeps(); // no matrixPlugin
+    await buildMediaPipeline(deps);
+
+    const compositeCall = vi.mocked(createCompositeResolver).mock.calls[0][0];
+    const hasMatrix = (compositeCall.resolvers as Array<{ schemes?: string[] }>).some(
+      (r) => r.schemes?.includes("mxc"),
+    );
+    expect(hasMatrix).toBe(false);
+  });
+
   it("passes configured msteams mediaAuthAllowHosts through to createResolver", async () => {
     const mockMsResolver = { resolve: vi.fn(), schemes: ["msteams-file"] };
     const msTeamsPlugin = { createResolver: vi.fn(() => mockMsResolver) } as any;

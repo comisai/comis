@@ -22,6 +22,7 @@ import {
   type TelegramPluginHandle,
   type LinePluginHandle,
   type MsTeamsPluginHandle,
+  type MatrixPluginHandle,
 } from "@comis/channels";
 import {
   createCompositeResolver,
@@ -66,6 +67,7 @@ export interface MediaPipelineDeps {
   tgPlugin?: TelegramPluginHandle;
   linePlugin?: LinePluginHandle;
   msTeamsPlugin?: MsTeamsPluginHandle;
+  matrixPlugin?: MatrixPluginHandle;
   ssrfFetcher: SsrfGuardedFetcher;
   linkRunner: LinkRunner;
   transcriber?: TranscriptionPort;
