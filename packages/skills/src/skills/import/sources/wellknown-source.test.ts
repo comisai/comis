@@ -239,3 +239,171 @@ describe("resolveWellKnown — index cache seam", () => {
     expect(putEntries.map((e) => e.name)).toEqual(["pdf-extractor", "csv-summarizer"]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Bundle fetch: bound the fan-out, cap each file, require the manifest
+// ---------------------------------------------------------------------------
+
+describe("resolveWellKnown — bundle fetch bounds + manifest requirement", () => {
+  it("bounds the advertised file count BEFORE fetching, naming maxFileCount", async () => {
+    const idx = { skills: [{ name: "many", description: "d", files: ["SKILL.md", "a.md", "b.md"] }] };
+    const fetchImpl = servingFetch({
+      [INDEX_URL]: JSON.stringify(idx),
+      [fileUrl("many", "SKILL.md")]: "x",
+      [fileUrl("many", "a.md")]: "x",
+      [fileUrl("many", "b.md")]: "x",
+    });
+    const result = await resolveWellKnown(
+      { registry: REGISTRY, name: "many" },
+      { caps: { maxFileCount: 2, maxFileBytes: CAPS.maxFileBytes }, validate: okValidate, fetchImpl },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("validation");
+    expect(result.error.message + result.error.hint).toContain("maxFileCount");
+    // Bounded before any file fetch: only the index was ever requested.
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0]![0]).toBe(INDEX_URL);
+  });
+
+  it("rejects an over-cap file naming maxFileBytes", async () => {
+    const idx = { skills: [{ name: "big", description: "d", files: ["SKILL.md"] }] };
+    const fetchImpl = servingFetch({
+      [INDEX_URL]: JSON.stringify(idx),
+      [fileUrl("big", "SKILL.md")]: "x".repeat(2000),
+    });
+    const result = await resolveWellKnown(
+      { registry: REGISTRY, name: "big" },
+      { caps: { maxFileCount: 200, maxFileBytes: 1000 }, validate: okValidate, fetchImpl },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("resource");
+    expect(result.error.message + result.error.hint).toContain("maxFileBytes");
+    expect(result.error.message).toContain("SKILL.md");
+  });
+
+  it("requires a SKILL.md manifest, rejecting a set without one, naming the registry", async () => {
+    const idx = { skills: [{ name: "no-manifest", description: "d", files: ["references/notes.md"] }] };
+    const fetchImpl = servingFetch({
+      [INDEX_URL]: JSON.stringify(idx),
+      [fileUrl("no-manifest", "references/notes.md")]: F.FIXTURE_MISSING_SKILLMD_FILES["no-manifest/references/notes.md"]!,
+    });
+    const result = await resolveWellKnown(
+      { registry: REGISTRY, name: "no-manifest" },
+      { caps: CAPS, validate: okValidate, fetchImpl },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("validation");
+    expect(result.error.message + result.error.hint).toContain(REGISTRY);
+    expect(result.error.message + result.error.hint).toContain("SKILL.md");
+  });
+
+  it("resolves the valid fixture to a SKILL.md-bearing skill-root-relative file set", async () => {
+    const fetchImpl = servingFetch({
+      [INDEX_URL]: JSON.stringify(F.FIXTURE_VALID_INDEX),
+      [fileUrl("pdf-extractor", "SKILL.md")]: F.FIXTURE_VALID_FILES["pdf-extractor/SKILL.md"]!,
+      [fileUrl("pdf-extractor", "references/notes.md")]: F.FIXTURE_VALID_FILES["pdf-extractor/references/notes.md"]!,
+    });
+    const result = await resolveWellKnown(
+      { registry: REGISTRY, name: "pdf-extractor" },
+      { caps: CAPS, validate: okValidate, fetchImpl },
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.files.map((f) => f.path).sort()).toEqual(["SKILL.md", "references/notes.md"]);
+    const manifest = result.value.files.find((f) => f.path === "SKILL.md");
+    expect(manifest?.content).toBe(F.FIXTURE_VALID_FILES["pdf-extractor/SKILL.md"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stable per-(registry,name) identifier — routes a changed-bytes re-import to
+// the provenance divergence-confirm, not a foreign flat-refuse.
+// ---------------------------------------------------------------------------
+
+describe("resolveWellKnown — stable identifier", () => {
+  it("pins the identifier to <origin>/.well-known/skills/<name>/", async () => {
+    const fetchImpl = servingFetch({
+      [INDEX_URL]: JSON.stringify(F.FIXTURE_VALID_INDEX),
+      [fileUrl("pdf-extractor", "SKILL.md")]: F.FIXTURE_VALID_FILES["pdf-extractor/SKILL.md"]!,
+      [fileUrl("pdf-extractor", "references/notes.md")]: F.FIXTURE_VALID_FILES["pdf-extractor/references/notes.md"]!,
+    });
+    const result = await resolveWellKnown(
+      { registry: REGISTRY, name: "pdf-extractor" },
+      { caps: CAPS, validate: okValidate, fetchImpl },
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.identifier).toBe("https://reg.example/.well-known/skills/pdf-extractor/");
+  });
+
+  it("keeps the identifier stable when the fetched bytes change", async () => {
+    const first = await resolveWellKnown(
+      { registry: REGISTRY, name: "pdf-extractor" },
+      {
+        caps: CAPS,
+        validate: okValidate,
+        fetchImpl: servingFetch({
+          [INDEX_URL]: JSON.stringify(F.FIXTURE_VALID_INDEX),
+          [fileUrl("pdf-extractor", "SKILL.md")]: F.FIXTURE_VALID_FILES["pdf-extractor/SKILL.md"]!,
+          [fileUrl("pdf-extractor", "references/notes.md")]: F.FIXTURE_VALID_FILES["pdf-extractor/references/notes.md"]!,
+        }),
+      },
+    );
+    const second = await resolveWellKnown(
+      { registry: REGISTRY, name: "pdf-extractor" },
+      {
+        caps: CAPS,
+        validate: okValidate,
+        fetchImpl: servingFetch({
+          [INDEX_URL]: JSON.stringify(F.FIXTURE_VALID_INDEX),
+          [fileUrl("pdf-extractor", "SKILL.md")]: F.FIXTURE_CHANGED_BYTES_FILES["pdf-extractor/SKILL.md"]!,
+          [fileUrl("pdf-extractor", "references/notes.md")]: F.FIXTURE_CHANGED_BYTES_FILES["pdf-extractor/references/notes.md"]!,
+        }),
+      },
+    );
+    expect(first.ok && second.ok).toBe(true);
+    if (!first.ok || !second.ok) return;
+    // Same (registry, name) ⇒ same identifier, even though the bytes differ.
+    expect(second.value.identifier).toBe(first.value.identifier);
+    const firstManifest = first.value.files.find((f) => f.path === "SKILL.md")?.content;
+    const secondManifest = second.value.files.find((f) => f.path === "SKILL.md")?.content;
+    expect(secondManifest).not.toBe(firstManifest);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Instrumentation — an object-first outcome line on both branches
+// ---------------------------------------------------------------------------
+
+describe("resolveWellKnown — instrumentation", () => {
+  it("logs an INFO carrying the origin on success", async () => {
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const fetchImpl = servingFetch({
+      [INDEX_URL]: JSON.stringify(F.FIXTURE_VALID_INDEX),
+      [fileUrl("pdf-extractor", "SKILL.md")]: F.FIXTURE_VALID_FILES["pdf-extractor/SKILL.md"]!,
+      [fileUrl("pdf-extractor", "references/notes.md")]: F.FIXTURE_VALID_FILES["pdf-extractor/references/notes.md"]!,
+    });
+    const result = await resolveWellKnown(
+      { registry: REGISTRY, name: "pdf-extractor" },
+      { caps: CAPS, validate: okValidate, fetchImpl, logger },
+    );
+    expect(result.ok).toBe(true);
+    expect(logger.info).toHaveBeenCalled();
+    expect(logger.info.mock.calls[0]![0]).toMatchObject({ registryOrigin: REGISTRY });
+  });
+
+  it("logs a WARN carrying the errorKind on a reject", async () => {
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const fetchImpl = servingFetch({ [INDEX_URL]: JSON.stringify(F.FIXTURE_VALID_INDEX) });
+    const result = await resolveWellKnown(
+      { registry: REGISTRY, name: "absent" },
+      { caps: CAPS, validate: okValidate, fetchImpl, logger },
+    );
+    expect(result.ok).toBe(false);
+    expect(logger.warn).toHaveBeenCalled();
+    expect(logger.warn.mock.calls[0]![0]).toMatchObject({ errorKind: "validation" });
+  });
+});
