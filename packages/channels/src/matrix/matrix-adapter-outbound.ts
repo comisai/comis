@@ -45,3 +45,40 @@ export function buildTextMessageContent(markdown: string): MatrixTextMessageCont
     formatted_body: formattedBody,
   };
 }
+
+/**
+ * The `m.reaction` event content: an `m.annotation` relation to the target event
+ * carrying the reaction `key`. Snake-cased to match the Matrix event content wire
+ * shape (`m.relates_to` / `rel_type` / `event_id`).
+ */
+export interface MatrixReactionContent {
+  "m.relates_to": {
+    /** Always `m.annotation` for a reaction. */
+    rel_type: "m.annotation";
+    /** The event id the reaction annotates. */
+    event_id: string;
+    /** The reaction key — the emoji itself (Matrix has no closed reaction vocabulary). */
+    key: string;
+  };
+}
+
+/**
+ * Build the `m.reaction` annotation content for reacting to a message.
+ *
+ * The reaction key is the emoji verbatim: Matrix carries no closed reaction
+ * vocabulary, so the emoji passes straight through (mirroring the inbound mapper,
+ * where the `m.annotation` key IS the emoji).
+ *
+ * @param messageId - The target event id the reaction annotates.
+ * @param emoji - The reaction key (a Unicode emoji).
+ * @returns The `m.annotation` content relating the reaction to its target.
+ */
+export function buildReactionContent(messageId: string, emoji: string): MatrixReactionContent {
+  return {
+    "m.relates_to": {
+      rel_type: "m.annotation",
+      event_id: messageId,
+      key: emoji,
+    },
+  };
+}

@@ -61,8 +61,9 @@ import {
   type MatrixVerificationStatus,
 } from "./matrix-client.js";
 import { createMatrixStateStore } from "./matrix-state.js";
-import { buildTextMessageContent } from "./matrix-adapter-outbound.js";
+import { buildReactionContent, buildTextMessageContent } from "./matrix-adapter-outbound.js";
 import { classifyDecryptDegrade, type DecryptDegradeKind } from "./decrypt-degrade.js";
+import { classifyMatrixError, type MatrixErrorInput } from "./errors.js";
 
 /**
  * The senderId a synthesized decrypt-degrade note carries. Deliberately NOT a
@@ -71,6 +72,29 @@ import { classifyDecryptDegrade, type DecryptDegradeKind } from "./decrypt-degra
  * it. The note bypasses the speaker gate anyway (it is delivered via fanOut).
  */
 const DEGRADE_NOTE_SENDER = "system";
+
+/**
+ * Upper bound on the per-session retained-reaction map (see {@link reactionKey}).
+ * The intended caller adds and removes a reaction within one session, so the map
+ * normally stays tiny; this cap guards against unbounded growth if a caller ever
+ * reacts without removing. The oldest entry is evicted on overflow — a redact for
+ * an evicted key then degrades to the idempotent not-found path.
+ */
+export const MAX_TRACKED_REACTIONS = 1000;
+
+/** The retained-reaction map key: one entry per (room, target message, emoji). */
+function reactionKey(roomId: string, messageId: string, emoji: string): string {
+  return `${roomId}|${messageId}|${emoji}`;
+}
+
+/** Extract the classifier's normalized fields from a thrown/reported SDK error. */
+function toMatrixErrorInput(cause: unknown): MatrixErrorInput {
+  const e = cause as { errcode?: unknown; httpStatus?: unknown } | null;
+  const input: MatrixErrorInput = { cause };
+  if (e !== null && typeof e.errcode === "string") input.errcode = e.errcode;
+  if (e !== null && typeof e.httpStatus === "number") input.status = e.httpStatus;
+  return input;
+}
 
 /**
  * Dependencies for the Matrix adapter. Secrets are resolved to plain strings by
@@ -167,6 +191,16 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
   // a changed cause class re-fires, since it is a meaningfully different operator
   // action (once per room per cause).
   const degradeFiredByRoom = new Map<string, DecryptDegradeKind>();
+  // Retained reaction annotation ids so `removeReaction` can redact the bot's own
+  // annotation (Matrix has no emoji-keyed unreact — you redact the annotation event
+  // by id). Keyed `${roomId}|${messageId}|${emoji}` (see reactionKey). This is
+  // PER-SESSION: a restart loses it, so a reaction added before a restart can no
+  // longer be removed by emoji — the intended caller (the lifecycle reactor) adds
+  // and removes within one session. The restart-robust alternative is a
+  // `client.relations(roomId, messageId, "m.annotation", "m.reaction")` lookup of
+  // the bot's own annotation; deferred until a persistent removal is required.
+  // Insertion-ordered so overflow eviction drops the oldest entry.
+  const reactionEventIds = new Map<string, string>();
 
   let connected = false;
   let startedAt: number | undefined;
@@ -556,6 +590,108 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
       }
       lastError = undefined;
       return ok(sent.value.event_id);
+    },
+
+    async reactToMessage(
+      roomId: string,
+      messageId: string,
+      emoji: string,
+    ): Promise<Result<void, Error>> {
+      if (client === undefined) {
+        const notReady = new Error("Matrix adapter cannot react before start()");
+        lastError = notReady.message;
+        deps.logger.warn(
+          {
+            channelType: "matrix" as const,
+            hint: "Call start() (which authenticates the client) before reactToMessage()",
+            errorKind: "precondition" as const,
+          },
+          "Matrix reaction blocked: adapter not started",
+        );
+        return err(notReady);
+      }
+
+      const content = buildReactionContent(messageId, emoji);
+      // The SDK types reaction content as `ReactionEventContent`; the builder emits
+      // the exact `m.annotation` shape, so cast at this single sendEvent boundary.
+      const sent = await fromPromise(
+        client.sendEvent(
+          roomId,
+          EventType.Reaction,
+          content as unknown as TimelineEvents[EventType.Reaction],
+        ),
+      );
+      if (!sent.ok) {
+        lastError = sent.error.message;
+        const classified = classifyMatrixError(toMatrixErrorInput(sent.error));
+        deps.logger.warn(
+          {
+            channelType: "matrix" as const,
+            hint: classified.hint,
+            errorKind: classified.errorKind,
+          },
+          "Matrix reaction send failed",
+        );
+        return err(sent.error);
+      }
+
+      // Retain the annotation id so removeReaction can redact it this session.
+      // Bounded: evict the oldest entry (insertion order) once the cap is reached.
+      if (reactionEventIds.size >= MAX_TRACKED_REACTIONS) {
+        const oldest = reactionEventIds.keys().next().value;
+        if (oldest !== undefined) reactionEventIds.delete(oldest);
+      }
+      reactionEventIds.set(reactionKey(roomId, messageId, emoji), sent.value.event_id);
+      lastError = undefined;
+      return ok(undefined);
+    },
+
+    async removeReaction(
+      roomId: string,
+      messageId: string,
+      emoji: string,
+    ): Promise<Result<void, Error>> {
+      if (client === undefined) {
+        const notReady = new Error("Matrix adapter cannot remove a reaction before start()");
+        lastError = notReady.message;
+        deps.logger.warn(
+          {
+            channelType: "matrix" as const,
+            hint: "Call start() (which authenticates the client) before removeReaction()",
+            errorKind: "precondition" as const,
+          },
+          "Matrix reaction removal blocked: adapter not started",
+        );
+        return err(notReady);
+      }
+
+      const key = reactionKey(roomId, messageId, emoji);
+      const reactionEventId = reactionEventIds.get(key);
+      // Idempotent: with no retained annotation id (never reacted this session, or a
+      // restart cleared the map) there is nothing to redact — report success.
+      if (reactionEventId === undefined) {
+        lastError = undefined;
+        return ok(undefined);
+      }
+
+      const redacted = await fromPromise(client.redactEvent(roomId, reactionEventId));
+      if (!redacted.ok) {
+        lastError = redacted.error.message;
+        const classified = classifyMatrixError(toMatrixErrorInput(redacted.error));
+        deps.logger.warn(
+          {
+            channelType: "matrix" as const,
+            hint: classified.hint,
+            errorKind: classified.errorKind,
+          },
+          "Matrix reaction removal failed",
+        );
+        return err(redacted.error);
+      }
+      // Drop the retained id so a later re-react tracks a fresh annotation.
+      reactionEventIds.delete(key);
+      lastError = undefined;
+      return ok(undefined);
     },
 
     onMessage(handler: MessageHandler): void {
