@@ -208,11 +208,24 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
    * effort: a read failure leaves the last-known value untouched rather than
    * flapping the status. Sets undefined only when the controller reports no crypto
    * surface (plaintext, or the crypto bootstrap failed).
+   *
+   * The read delegates into the crypto store (`isCrossSigningReady` /
+   * `getDeviceVerificationStatus`), which CAN reject. That must never escape: this
+   * runs inside the awaited `start()` seed AND the fire-and-forget `getStatus()`
+   * refresh, so an unguarded reject would reject `start()` (violating the no-throw
+   * -escapes-the-port contract) and spawn an unhandled rejection on every health
+   * read. Swallow it to a secret-free debug and keep the last-known posture.
    */
   async function refreshVerification(): Promise<void> {
     if (controller === undefined) return;
-    const status = await controller.getVerificationStatus();
-    lastVerification = status;
+    try {
+      lastVerification = await controller.getVerificationStatus();
+    } catch (readErr) {
+      deps.logger.debug(
+        { channelType: "matrix" as const, step: "verification-refresh", err: readErr },
+        "Matrix verification status read failed; keeping the last-known posture",
+      );
+    }
   }
 
   /**
