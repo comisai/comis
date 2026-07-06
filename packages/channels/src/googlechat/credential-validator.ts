@@ -14,10 +14,11 @@
  * reaching the subscription are separate operational probes and are
  * intentionally out of scope here; this is parse-only.
  *
- * It also lints the sender allowlist: an email display id is mutable and
- * spoofable, so an email-shaped `allowFrom` entry surfaces an advisory WARN
- * steering the operator toward the immutable resource id. The lint never fails
- * validation.
+ * It also carries two advisory config lints that never fail validation: an
+ * email-shaped `allowFrom` entry surfaces a WARN steering the operator toward the
+ * immutable resource id (an email display id is mutable and spoofable), and an
+ * `"always"` group-activation mode surfaces a WARN naming that Google Chat never
+ * delivers unmentioned space messages, so `"always"` is inert on this channel.
  *
  * @module
  */
@@ -49,8 +50,16 @@ export interface GoogleChatValidateOpts {
   /** The configured sender allowlist, linted for mutable email-shaped ids. */
   allowFrom?: string[];
   /**
-   * Optional logger. When present, an email-shaped `allowFrom` entry emits an
-   * advisory WARN; without it the lint is silent (validation is unaffected).
+   * The global group-activation mode. `"always"` is inert on Google Chat — the
+   * platform delivers a space message only when the app is mentioned or
+   * slash-commanded, so there is no unmentioned traffic for `"always"` to answer.
+   * When it is `"always"` an advisory WARN steers the operator to that reality.
+   */
+  groupActivation?: string;
+  /**
+   * Optional logger. When present, an email-shaped `allowFrom` entry and an inert
+   * `groupActivation` emit advisory WARNs; without it the lints are silent
+   * (validation is unaffected either way).
    */
   logger?: ComisLogger;
 }
@@ -80,7 +89,9 @@ function isEmailShaped(entry: string): boolean {
  * @param opts.mode - Inbound transport mode; absent is treated as pubsub
  * @param opts.audience - The inbound Bearer-JWT audience (webhook mode)
  * @param opts.allowFrom - The sender allowlist (linted, never gated here)
- * @param opts.logger - Optional logger for the advisory allowlist lint
+ * @param opts.groupActivation - The global group-activation mode; `"always"` is
+ *   linted as inert on Google Chat (advisory, never gated here)
+ * @param opts.logger - Optional logger for the advisory allowlist + activation lints
  * @returns ok when the key parses with the required fields and the per-mode
  *   precondition is met (pubsub → subscriptionName, webhook → audience); err
  *   naming the first missing or malformed field, never its value
@@ -166,6 +177,21 @@ export function validateGoogleChatCredentials(
         );
       }
     }
+  }
+
+  // Advisory activation lint (does not fail validation): Google Chat delivers a
+  // space MESSAGE event only when the app is mentioned or slash-commanded, so an
+  // "always" activation mode never sees the unmentioned traffic it is meant to
+  // answer — it is inert here. Content-free: the WARN names only the mode literal.
+  if (opts.logger && opts.groupActivation === "always") {
+    opts.logger.warn(
+      {
+        channelType: "googlechat" as const,
+        hint: 'Google Chat never delivers unmentioned space messages, so groupActivation "always" is inert here — mentions still activate',
+        errorKind: "precondition" as const,
+      },
+      "Inert groupActivation for Google Chat",
+    );
   }
 
   return ok(undefined);
