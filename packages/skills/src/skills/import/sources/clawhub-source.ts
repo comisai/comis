@@ -407,8 +407,11 @@ async function resolveInner(
   const owner = match[1]!;
   const slug = match[2]!;
 
-  // 2. Fetch the install decision (carries the release downloadUrl).
-  const installUrl = `${CLAWHUB_API_BASE}/skills/${slug}/install?ownerHandle=${encodeURIComponent(owner)}`;
+  // 2. Fetch the install decision (carries the release downloadUrl). Both the
+  //    slug and the owner are percent-encoded so a slug carrying an encodable
+  //    char (the scoped-name regex permits ? # % &) cannot inject a query string
+  //    mid-path.
+  const installUrl = `${CLAWHUB_API_BASE}/skills/${encodeURIComponent(slug)}/install?ownerHandle=${encodeURIComponent(owner)}`;
   deps.logger?.debug({ step: "install", slug }, "clawhub resolve: fetching the install decision");
   const installFetch = await fetchCapped(
     installUrl,
@@ -483,8 +486,9 @@ async function resolveInner(
   const version = install.archive.version;
   const downloadUrl = install.archive.downloadUrl;
 
-  // 3. Fetch the verify verdict for the resolved version.
-  const verifyUrl = `${CLAWHUB_API_BASE}/skills/${slug}/verify?version=${encodeURIComponent(version)}`;
+  // 3. Fetch the verify verdict for the resolved version (slug + version
+  //    percent-encoded, consistent with the install URL above).
+  const verifyUrl = `${CLAWHUB_API_BASE}/skills/${encodeURIComponent(slug)}/verify?version=${encodeURIComponent(version)}`;
   deps.logger?.debug({ step: "verify", slug, version }, "clawhub resolve: fetching the verify verdict");
   const verifyFetch = await fetchCapped(
     verifyUrl,
