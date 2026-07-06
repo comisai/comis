@@ -3,6 +3,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import type {
   ComisLogger,
   NormalizedMessage,
@@ -29,6 +30,7 @@ import {
   type MatrixAdapterHandle,
 } from "../matrix-adapter.js";
 import { MATRIX_EVENT_BYTE_BUDGET } from "../matrix-adapter-outbound.js";
+import { reconcileSendByHistoryScan } from "../matrix-adapter-internal.js";
 import type { MatrixCryptoHandle } from "../crypto-store.js";
 
 /**
@@ -473,6 +475,13 @@ class FakeMatrixClient {
     content: { body?: string };
   }> = [];
   messagesError?: unknown;
+  /**
+   * The continuation token `/messages` reports. A present token means older
+   * history remains beyond this page; `undefined` means the scan reached the
+   * start of the room. Default keeps a token so the history-fetch tests (which
+   * ignore it) are unchanged; the reconcile window-coverage tests set it.
+   */
+  messagesEnd: string | undefined = "t-next";
   lastMessagesRequest?: { roomId: string; from: string | null; limit: number | undefined; dir: string };
 
   createMessagesRequest(
@@ -483,7 +492,7 @@ class FakeMatrixClient {
   ): Promise<{ chunk: unknown[]; start?: string; end?: string }> {
     this.lastMessagesRequest = { roomId, from, limit, dir };
     if (this.messagesError !== undefined) return Promise.reject(this.messagesError);
-    return Promise.resolve({ chunk: this.messagesChunk, end: "t-next" });
+    return Promise.resolve({ chunk: this.messagesChunk, end: this.messagesEnd });
   }
 
   async login(
@@ -1491,6 +1500,220 @@ describe("createMatrixAdapter — history fetch", () => {
       ([fields]) => (fields as { errorKind?: string }).errorKind === "auth",
     );
     expect(authWarn).toBeDefined();
+  });
+});
+
+describe("createMatrixAdapter — reconcileSend history-scan oracle", () => {
+  const WINDOW = { sentAfterMs: 1_000, sentBeforeMs: 2_000 } as const;
+
+  /**
+   * The exact digest the outward-send ledger writes for a sent message:
+   * sha256(text) hex, first 16 chars. Reconcile must recompute this identically
+   * over the plaintext event body, so proving a match here proves the two sides
+   * are aligned on one formula and one input.
+   */
+  function ledgerDigest(text: string): string {
+    return createHash("sha256").update(text).digest("hex").slice(0, 16);
+  }
+
+  it("returns sent with the event id when a bot-authored in-window body matches the ledger digest", async () => {
+    const text = "the interrupted reply that actually landed";
+    const fake = new FakeMatrixClient();
+    fake.messagesChunk = [
+      {
+        event_id: "$landed:hs",
+        sender: "@bot:hs",
+        origin_server_ts: 1_500,
+        type: "m.room.message",
+        content: { body: text },
+      },
+    ];
+    const { adapter } = makeAdapter({ fake });
+    await adapter.start();
+
+    const result = await adapter.reconcileSend?.({
+      channelId: "!room:hs",
+      contentDigest: ledgerDigest(text),
+      ...WINDOW,
+    });
+
+    expect(result?.ok).toBe(true);
+    if (!result?.ok) throw new Error("expected an ok result");
+    expect(result.value).toEqual({ kind: "sent", platformMessageId: "$landed:hs" });
+  });
+
+  it("never counts a same-digest event from another sender as the bot's send (spoof guard)", async () => {
+    const text = "please wire the funds to this account";
+    const fake = new FakeMatrixClient();
+    // A federated room member posts the identical body — hence the identical
+    // digest — inside the window. It is NOT the bot's send, so it must be skipped.
+    fake.messagesEnd = undefined; // full room read: no older history remains
+    fake.messagesChunk = [
+      {
+        event_id: "$spoof:hs",
+        sender: "@mallory:hs",
+        origin_server_ts: 1_500,
+        type: "m.room.message",
+        content: { body: text },
+      },
+    ];
+    const { adapter } = makeAdapter({ fake });
+    await adapter.start();
+
+    const result = await adapter.reconcileSend?.({
+      channelId: "!room:hs",
+      contentDigest: ledgerDigest(text),
+      ...WINDOW,
+    });
+
+    expect(result?.ok).toBe(true);
+    if (!result?.ok) throw new Error("expected an ok result");
+    // The spoofed match is skipped; the clean scan then reports genuine absence.
+    expect(result.value).toEqual({ kind: "not_sent" });
+  });
+
+  it("returns not_sent on a fully-covered clean scan with no bot-authored digest match", async () => {
+    const fake = new FakeMatrixClient();
+    fake.messagesEnd = undefined; // reached the start of the room's history
+    fake.messagesChunk = [
+      {
+        event_id: "$other:hs",
+        sender: "@bot:hs",
+        origin_server_ts: 1_500,
+        type: "m.room.message",
+        content: { body: "a different message the bot sent" },
+      },
+    ];
+    const { adapter } = makeAdapter({ fake });
+    await adapter.start();
+
+    const result = await adapter.reconcileSend?.({
+      channelId: "!room:hs",
+      contentDigest: ledgerDigest("the message we are reconciling"),
+      ...WINDOW,
+    });
+
+    expect(result?.ok).toBe(true);
+    if (!result?.ok) throw new Error("expected an ok result");
+    expect(result.value).toEqual({ kind: "not_sent" });
+  });
+
+  it("returns not_sent when the scan pages back past the window even if more history remains", async () => {
+    const fake = new FakeMatrixClient();
+    // Older history remains (a continuation token), but the OLDEST event read
+    // already predates the window lower bound — so the whole window is covered and
+    // a no-match scan is a definitive not_sent, never a hedged unresolved.
+    fake.messagesEnd = "t-older";
+    fake.messagesChunk = [
+      {
+        event_id: "$in:hs",
+        sender: "@bot:hs",
+        origin_server_ts: 1_500,
+        type: "m.room.message",
+        content: { body: "in window, no match" },
+      },
+      {
+        event_id: "$pre:hs",
+        sender: "@bot:hs",
+        origin_server_ts: 500,
+        type: "m.room.message",
+        content: { body: "older than the window" },
+      },
+    ];
+    const { adapter } = makeAdapter({ fake });
+    await adapter.start();
+
+    const result = await adapter.reconcileSend?.({
+      channelId: "!room:hs",
+      contentDigest: ledgerDigest("nowhere in this room"),
+      ...WINDOW,
+    });
+
+    expect(result?.ok).toBe(true);
+    if (!result?.ok) throw new Error("expected an ok result");
+    expect(result.value).toEqual({ kind: "not_sent" });
+  });
+
+  it("returns unresolved when called before start (no client to read history)", async () => {
+    const { adapter } = makeAdapter();
+
+    const result = await adapter.reconcileSend?.({
+      channelId: "!room:hs",
+      contentDigest: ledgerDigest("anything"),
+      ...WINDOW,
+    });
+
+    expect(result?.ok).toBe(true);
+    if (!result?.ok) throw new Error("expected an ok result");
+    // Cannot read history → cannot tell → unresolved, never a false not_sent.
+    expect(result.value).toEqual({ kind: "unresolved" });
+  });
+
+  it("returns unresolved when the history read throws (a failed fetch cannot prove absence)", async () => {
+    const fake = new FakeMatrixClient();
+    fake.messagesError = matrixError("M_FORBIDDEN", 403, "not in room");
+    const { adapter } = makeAdapter({ fake });
+    await adapter.start();
+
+    const result = await adapter.reconcileSend?.({
+      channelId: "!room:hs",
+      contentDigest: ledgerDigest("anything"),
+      ...WINDOW,
+    });
+
+    expect(result?.ok).toBe(true);
+    if (!result?.ok) throw new Error("expected an ok result");
+    expect(result.value).toEqual({ kind: "unresolved" });
+  });
+
+  it("returns unresolved when the window is not fully covered and more history remains", async () => {
+    const fake = new FakeMatrixClient();
+    // The page did NOT reach back past the window lower bound (its oldest event is
+    // still inside the window) AND a continuation token says more history exists —
+    // the send could sit in an unread older page, so the honest verdict is
+    // unresolved, never a false not_sent.
+    fake.messagesEnd = "t-older";
+    fake.messagesChunk = [
+      {
+        event_id: "$recent:hs",
+        sender: "@bot:hs",
+        origin_server_ts: 1_800,
+        type: "m.room.message",
+        content: { body: "recent, no match" },
+      },
+    ];
+    const { adapter } = makeAdapter({ fake });
+    await adapter.start();
+
+    const result = await adapter.reconcileSend?.({
+      channelId: "!room:hs",
+      contentDigest: ledgerDigest("in an older unread page"),
+      ...WINDOW,
+    });
+
+    expect(result?.ok).toBe(true);
+    if (!result?.ok) throw new Error("expected an ok result");
+    expect(result.value).toEqual({ kind: "unresolved" });
+  });
+
+  it("returns unresolved without reading history when the bot id is unknown", async () => {
+    // A defined client but an unresolved bot MXID cannot be spoof-guarded, so the
+    // scan must not run: the verdict is unresolved, never a guess. Auth resolves a
+    // non-empty id on a real start(), so this guards the scan helper directly.
+    const { fake, logger } = makeAdapter();
+
+    const result = await reconcileSendByHistoryScan(
+      fake.asClient(),
+      "",
+      { channelId: "!room:hs", contentDigest: "deadbeefdeadbeef", ...WINDOW },
+      logger,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected an ok result");
+    expect(result.value).toEqual({ kind: "unresolved" });
+    // The guard short-circuits BEFORE any /messages read.
+    expect(fake.lastMessagesRequest).toBeUndefined();
   });
 });
 
