@@ -11,6 +11,8 @@ interface FakeEventShape {
   id: string | undefined;
   sender: string | undefined;
   content: Record<string, unknown>;
+  /** The thread-root id the SDK getter reports; undefined for a non-thread event. */
+  threadRootId: string | undefined;
 }
 
 /** Build a minimal MatrixEvent double exposing only the accessors the mapper reads. */
@@ -20,6 +22,7 @@ function makeEvent(overrides: Partial<FakeEventShape> = {}): MatrixEvent {
     id: "$evt:hs",
     sender: "@real:hs",
     content: { msgtype: "m.text", body: "hello world" },
+    threadRootId: undefined,
     ...overrides,
   };
   return {
@@ -27,6 +30,8 @@ function makeEvent(overrides: Partial<FakeEventShape> = {}): MatrixEvent {
     getId: () => base.id,
     getSender: () => base.sender,
     getContent: () => base.content,
+    // A getter, as in the SDK — undefined for a non-thread event.
+    threadRootId: base.threadRootId,
   } as unknown as MatrixEvent;
 }
 
@@ -105,6 +110,22 @@ describe("mapMatrixEventToNormalized", () => {
   it("derives chatType group for a non-direct room", () => {
     const result = mapMatrixEventToNormalized(makeEvent(), makeRoom(), { isDirect: false });
     expect(result?.chatType).toBe("group");
+  });
+
+  it("maps a thread event to chatType thread carrying the thread-root id in metadata", () => {
+    const result = mapMatrixEventToNormalized(
+      makeEvent({ threadRootId: "$root:hs" }),
+      makeRoom(),
+      { isDirect: false },
+    );
+    expect(result?.chatType).toBe("thread");
+    expect(result?.metadata.matrixThreadId).toBe("$root:hs");
+  });
+
+  it("does not set chatType thread or a thread id for a non-thread event", () => {
+    const result = mapMatrixEventToNormalized(makeEvent(), makeRoom(), { isDirect: false });
+    expect(result?.chatType).toBe("group");
+    expect(result?.metadata.matrixThreadId).toBeUndefined();
   });
 
   it("sanitizes an inbound formatted_body so a script tag never reaches the normalized message", () => {

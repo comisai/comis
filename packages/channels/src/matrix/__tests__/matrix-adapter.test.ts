@@ -3,7 +3,13 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ComisLogger, NormalizedMessage, NormalizedReaction } from "@comis/core";
+import type {
+  ComisLogger,
+  NormalizedMessage,
+  NormalizedReaction,
+  TimerHandle,
+  TimerPort,
+} from "@comis/core";
 import {
   ClientEvent,
   Direction,
@@ -21,7 +27,23 @@ import {
   MAX_TRACKED_REACTIONS,
   type MatrixAdapterDeps,
 } from "../matrix-adapter.js";
+import { MATRIX_EVENT_BYTE_BUDGET } from "../matrix-adapter-outbound.js";
 import type { MatrixCryptoHandle } from "../crypto-store.js";
+
+/**
+ * A TimerPort whose `setTimeout` fires the callback immediately — the retry
+ * backoff runs with no real delay, so a 429-then-success sequence is deterministic.
+ */
+function instantTimer(): TimerPort {
+  const handle: TimerHandle = { cancelled: false, cancel: () => undefined, unref: () => undefined };
+  return {
+    setTimeout: (cb: () => void): TimerHandle => {
+      cb();
+      return handle;
+    },
+    setInterval: (): TimerHandle => handle,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Temp stateDir (real fs, per-test, cleaned up) — mirrors matrix-state.test.ts.
@@ -274,12 +296,20 @@ class FakeMatrixClient {
   redactError?: unknown;
   /** A distinct id per send so successive reactions retain DIFFERENT annotation ids. */
   private sendCount = 0;
+  /** Total sendEvent invocations, INCLUDING attempts that reject — the retry proof. */
+  sendAttempts = 0;
+  /** A FIFO queue of errors to reject successive sends with (models a transient 429). */
+  readonly pendingSendErrors: unknown[] = [];
 
   sendEvent(
     roomId: string,
     eventType: string,
     content: Record<string, unknown>,
   ): Promise<{ event_id: string }> {
+    this.sendAttempts += 1;
+    if (this.pendingSendErrors.length > 0) {
+      return Promise.reject(this.pendingSendErrors.shift());
+    }
     if (this.sendError !== undefined) return Promise.reject(this.sendError);
     this.sentEvents.push({ roomId, eventType, content });
     this.sendCount += 1;
@@ -347,6 +377,7 @@ interface HarnessOverrides {
   fake?: FakeMatrixClient;
   e2ee?: boolean;
   initCryptoImpl?: MatrixAdapterDeps["initCryptoImpl"];
+  timer?: TimerPort;
 }
 
 function makeAdapter(over: HarnessOverrides = {}): {
@@ -383,7 +414,13 @@ function makeAdapter(over: HarnessOverrides = {}): {
     ...(over.initCryptoImpl !== undefined ? { initCryptoImpl: over.initCryptoImpl } : {}),
   };
 
-  const adapter = createMatrixAdapter(deps);
+  // The timer seam rides a supertype cast so this harness compiles whether or not
+  // the deps type carries the (optional) timer field yet.
+  const adapter = createMatrixAdapter(
+    over.timer !== undefined
+      ? ({ ...deps, timer: over.timer } as MatrixAdapterDeps)
+      : deps,
+  );
   adapter.onMessage((m) => {
     received.push(m);
   });
@@ -1077,5 +1114,137 @@ describe("createMatrixAdapter — history fetch", () => {
       ([fields]) => (fields as { errorKind?: string }).errorKind === "auth",
     );
     expect(authWarn).toBeDefined();
+  });
+});
+
+describe("createMatrixAdapter — threaded + chunked send", () => {
+  /** An HTML-heavy message whose serialized content exceeds the byte budget. */
+  function overBudgetMarkdown(units = 480): string {
+    let md = "";
+    for (let i = 0; i < units; i++) {
+      const n = String(i).padStart(4, "0");
+      md += `**bold ${n}** and [link ${n}](https://example.com/path/${n}) `;
+    }
+    return md;
+  }
+
+  it("threads a send by merging an m.thread relation into the sent content", async () => {
+    const { adapter, fake } = makeAdapter();
+    await adapter.start();
+
+    const result = await adapter.sendMessage("!room:hs", "hi", { threadId: "$root:hs" });
+
+    expect(result.ok).toBe(true);
+    expect(fake.sentEvents).toHaveLength(1);
+    const [sent] = fake.sentEvents;
+    expect(sent?.content["m.relates_to"]).toEqual({
+      rel_type: "m.thread",
+      event_id: "$root:hs",
+      is_falling_back: true,
+      "m.in_reply_to": { event_id: "$root:hs" },
+    });
+    // The rendered text still rides alongside the relation.
+    expect(sent?.content.msgtype).toBe("m.text");
+    expect(sent?.content.body).toBe("hi");
+  });
+
+  it("threads a reply under the replied-to event when threadReply is set without an explicit thread id", async () => {
+    const { adapter, fake } = makeAdapter();
+    await adapter.start();
+
+    const result = await adapter.sendMessage("!room:hs", "hi", {
+      threadReply: true,
+      replyTo: "$parent:hs",
+    });
+
+    expect(result.ok).toBe(true);
+    const [sent] = fake.sentEvents;
+    expect((sent?.content["m.relates_to"] as { event_id?: string }).event_id).toBe("$parent:hs");
+  });
+
+  it("sends a plain (non-threaded) short message as a single event with no relation", async () => {
+    const { adapter, fake } = makeAdapter();
+    await adapter.start();
+
+    const result = await adapter.sendMessage("!room:hs", "hello");
+
+    expect(result.ok).toBe(true);
+    expect(fake.sentEvents).toHaveLength(1);
+    expect(fake.sentEvents[0]?.content["m.relates_to"]).toBeUndefined();
+  });
+
+  it("splits an over-budget message into multiple in-budget events sent sequentially", async () => {
+    const { adapter, fake } = makeAdapter();
+    await adapter.start();
+
+    const result = await adapter.sendMessage("!room:hs", overBudgetMarkdown());
+
+    expect(result.ok).toBe(true);
+    // It split into multiple events ...
+    expect(fake.sentEvents.length).toBeGreaterThanOrEqual(2);
+    for (const sent of fake.sentEvents) {
+      // ... each within the federation byte budget ...
+      expect(Buffer.byteLength(JSON.stringify(sent.content))).toBeLessThanOrEqual(
+        MATRIX_EVENT_BYTE_BUDGET,
+      );
+      // ... all to the same room as m.room.message events, in send order.
+      expect(sent.roomId).toBe("!room:hs");
+      expect(sent.eventType).toBe("m.room.message");
+    }
+    // A chunked send yields N events; the returned id is the LAST chunk's.
+    if (result.ok) expect(result.value).toBe(`$sent${fake.sentEvents.length}`);
+  });
+
+  it("keeps every threaded chunk within budget once the relation is merged in", async () => {
+    const { adapter, fake } = makeAdapter();
+    await adapter.start();
+
+    const result = await adapter.sendMessage("!room:hs", overBudgetMarkdown(), {
+      threadId: "$root:hs",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fake.sentEvents.length).toBeGreaterThanOrEqual(2);
+    for (const sent of fake.sentEvents) {
+      // The relation is present on every chunk AND the event stays within budget.
+      expect((sent.content["m.relates_to"] as { rel_type?: string }).rel_type).toBe("m.thread");
+      expect(Buffer.byteLength(JSON.stringify(sent.content))).toBeLessThanOrEqual(
+        MATRIX_EVENT_BYTE_BUDGET,
+      );
+    }
+  });
+
+  it("retries a chunk after a 429 and then succeeds, riding the rate-limit taxonomy", async () => {
+    const fake = new FakeMatrixClient();
+    // The first send is rate-limited; the retry succeeds.
+    fake.pendingSendErrors.push(matrixError("M_LIMIT_EXCEEDED", 429, "slow down"));
+    const { adapter } = makeAdapter({ fake, timer: instantTimer() });
+    await adapter.start();
+
+    const result = await adapter.sendMessage("!room:hs", "hi");
+
+    expect(result.ok).toBe(true);
+    // Two attempts: the 429, then the successful resend.
+    expect(fake.sendAttempts).toBe(2);
+    // Exactly one event actually landed (the resend).
+    expect(fake.sentEvents).toHaveLength(1);
+  });
+
+  it("stops and returns err on a non-retryable send failure without retrying", async () => {
+    const fake = new FakeMatrixClient();
+    fake.pendingSendErrors.push(matrixError("M_FORBIDDEN", 403, "not allowed"));
+    const { adapter, logger } = makeAdapter({ fake, timer: instantTimer() });
+    await adapter.start();
+
+    const result = await adapter.sendMessage("!room:hs", "hi");
+
+    expect(result.ok).toBe(false);
+    // A 403 is non-retryable — a single attempt, no resend.
+    expect(fake.sendAttempts).toBe(1);
+    const warn = vi.mocked(logger.warn);
+    const platformWarn = warn.mock.calls.find(
+      ([fields]) => (fields as { errorKind?: string }).errorKind === "platform",
+    );
+    expect(platformWarn).toBeDefined();
   });
 });
