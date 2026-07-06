@@ -165,8 +165,18 @@ export function createMatrixResolver(deps: MatrixResolverDeps): MediaResolverPor
       const token = media.getAccessToken() ?? undefined;
       const authHeader = token !== undefined ? `Bearer ${token}` : undefined;
 
-      // Every byte rides the injected guarded fetcher. The token is scoped to the homeserver
-      // host only; the fetcher drops it the instant a redirect crosses to another host (a CDN).
+      // Every media byte rides THIS injected, DNS-pinning, SSRF-guarded fetcher: each
+      // hop is re-validated, the socket is pinned to the validated IP (the rebinding
+      // window is closed), and the token is scoped to the homeserver host — dropped the
+      // instant a redirect crosses to another host (a CDN).
+      //
+      // Residual, stated honestly rather than hidden: the matrix client's OWN HTTP
+      // transport — the sync long-poll and content upload — is a SEPARATE,
+      // operator-configured stack. Its homeserver URL is validated once at connect
+      // time, but that connection is NOT DNS-pinned here the way these media bytes
+      // are. Pinning the client transport (a streaming, redirect- and long-poll-aware
+      // fetch) is a client-lifecycle concern outside this media path's scope; the media
+      // download is fully pinned regardless.
       const startMs = systemNowMs();
       const fetched = await deps.ssrfFetcher.fetch(url, {
         authHeader,
