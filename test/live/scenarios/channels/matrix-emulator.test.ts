@@ -33,15 +33,22 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createMatrixPlugin } from "@comis/channels";
+import { createMatrixPlugin, type MatrixPluginHandle } from "@comis/channels";
+import { createSsrfGuardedFetcher } from "@comis/skills";
 import type {
+  Attachment,
   ChannelPort,
   ComisLogger,
   NormalizedMessage,
   NormalizedReaction,
 } from "@comis/core";
 import { createMockLogger } from "../../../support/mock-logger.js";
-import { createMatrixEmulator, type MatrixEmulator } from "../../emulators/matrix/matrix-emulator.js";
+import {
+  createMatrixEmulator,
+  startLoopbackRedirectTarget,
+  type LoopbackRedirectTarget,
+  type MatrixEmulator,
+} from "../../emulators/matrix/matrix-emulator.js";
 
 const BOT = "@bot:hs.test";
 const ALICE = "@alice:hs.test";
@@ -54,13 +61,17 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 interface Stack {
   emu: MatrixEmulator;
+  plugin: MatrixPluginHandle;
   adapter: ChannelPort;
   received: NormalizedMessage[];
   stateDir: string;
   logger: ComisLogger;
+  /** The loopback homeserver origin (`http://127.0.0.1:<port>`) — the trusted fetch origin. */
+  apiRoot: string;
 }
 
 const stacks: Stack[] = [];
+const redirectTargets: LoopbackRedirectTarget[] = [];
 afterEach(async () => {
   // Stop the ADAPTER first (halts the /sync loop) THEN the emulator, so the
   // client is not still polling a closing server; then drop the temp stateDir.
@@ -69,6 +80,10 @@ afterEach(async () => {
     await stack.adapter.stop().catch(() => undefined);
     await stack.emu.stop().catch(() => undefined);
     rmSync(stack.stateDir, { recursive: true, force: true });
+  }
+  // Close any stand-in CDN listeners started for the cross-host redirect proof.
+  while (redirectTargets.length > 0) {
+    await redirectTargets.pop()!.stop().catch(() => undefined);
   }
 });
 
@@ -110,7 +125,7 @@ async function buildStack(opts?: {
     await adapter.sendMessage(msg.channelId, `echo: ${msg.text}`);
   });
 
-  const stack: Stack = { emu, adapter, received, stateDir, logger };
+  const stack: Stack = { emu, plugin, adapter, received, stateDir, logger, apiRoot };
   stacks.push(stack);
   return stack;
 }
@@ -393,5 +408,157 @@ describe("matrix-emulator scenario — honest inbound edit + redaction (the tamp
     expect(redaction?.id).toMatch(UUID_RE);
     // It reaches the message path (not treated as a reaction).
     expect(stack.emu.sentMessages(GROUP_ROOM).some((o) => o.body?.includes("$orig"))).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Inbound media — the whole path composed end-to-end against the emulator:
+// the REAL resolver builds the authenticated download URL from the started
+// client and drives the REAL SSRF-guarded fetcher. The loopback tie is the
+// trusted-fetch-origin allowance (the Matrix analog of Telegram's apiRoot seam,
+// which Matrix lacks): the emulator origin is registered as trusted so the
+// authed loopback download is validated leniently instead of SSRF-blocked,
+// while EVERY other URL stays strictly validated. The bearer is scoped to the
+// homeserver host, so it rides the homeserver hop and is DROPPED on a cross-host
+// redirect. Encrypted media rides the same fetcher, then decrypts through the
+// audited WASM codec before the MIME sniff.
+// ---------------------------------------------------------------------------
+
+/** A real 1×1 PNG (magic bytes recognized by file-type) — the plaintext media fixture. */
+const PNG_1X1 = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+/** Media byte cap for the resolver + fetcher in these proofs (well above the fixtures). */
+const MEDIA_MAX_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Build the REAL media resolver over the REAL SSRF-guarded fetcher, registering
+ * the given loopback origins as trusted fetch origins so the authed loopback
+ * download is not SSRF-blocked. Everything else stays strictly validated; the
+ * homeserver-scoped bearer + cross-host token-drop are the fetcher's own.
+ */
+function buildMediaResolver(stack: Stack, trustedFetchOrigins: string[]) {
+  const ssrfFetcher = createSsrfGuardedFetcher(
+    { maxBytes: MEDIA_MAX_BYTES, trustedFetchOrigins },
+    createMockLogger(),
+  );
+  return stack.plugin.createResolver({
+    ssrfFetcher,
+    maxBytes: MEDIA_MAX_BYTES,
+    logger: createMockLogger(),
+    mediaAuthAllowHosts: [],
+  });
+}
+
+/**
+ * Encrypt a payload with the SAME audited WASM codec the resolver decrypts with,
+ * yielding the ciphertext plus the encrypted-file record (with the mxc `url`
+ * stitched on). Building the fixture through the real codec is what makes the
+ * decrypt genuinely end-to-end rather than a hand-rolled cipher.
+ */
+async function encryptMediaFixture(
+  plaintext: Buffer,
+): Promise<{ ciphertext: Buffer; fileFor: (mxc: string) => Record<string, unknown> }> {
+  const mod = await import("@matrix-org/matrix-sdk-crypto-wasm");
+  if (typeof mod.initAsync === "function") await mod.initAsync();
+  const enc = mod.Attachment.encrypt(new Uint8Array(plaintext));
+  const info = JSON.parse(enc.mediaEncryptionInfo!) as Record<string, unknown>;
+  return {
+    ciphertext: Buffer.from(enc.encryptedData),
+    fileFor: (mxc: string) => ({ url: mxc, ...info }),
+  };
+}
+
+describe("matrix-emulator scenario — inbound media end-to-end (real resolver + real SSRF fetcher)", () => {
+  it("resolves a plaintext attachment through the authenticated download, bearer on the homeserver hop", async () => {
+    const stack = await buildStack();
+    await stack.adapter.start();
+
+    stack.emu.putMedia("plainpng", PNG_1X1, "image/png");
+    const resolver = buildMediaResolver(stack, [stack.apiRoot]);
+    const attachment: Attachment = { type: "image", url: "mxc://hs.test/plainpng" };
+
+    const resolved = await resolver.resolve(attachment);
+
+    expect(resolved.ok).toBe(true);
+    if (resolved.ok) {
+      // MIME is sniffed from the resolved bytes; size is the fixed fixture length.
+      expect(resolved.value.mimeType).toBe("image/png");
+      expect(resolved.value.sizeBytes).toBe(PNG_1X1.length);
+      expect(resolved.value.buffer.equals(PNG_1X1)).toBe(true);
+    }
+    // The homeserver hop IS token-allowed — the bearer reached the authed download.
+    expect(stack.emu.downloadAuthorization("plainpng")).toMatch(/^Bearer /);
+  });
+
+  it("follows a homeserver 307 to a cross-host CDN and DROPS the access token on that hop", async () => {
+    const stack = await buildStack();
+    await stack.adapter.start();
+
+    // The stand-in CDN is a DISTINCT host (localhost) from the homeserver (127.0.0.1);
+    // it serves the bytes and records whether the redirect hop carried a bearer.
+    const cdn = await startLoopbackRedirectTarget({ bytes: PNG_1X1, contentType: "image/png" });
+    redirectTargets.push(cdn);
+    stack.emu.putMediaRedirect("cdnpng", `${cdn.origin}/download/blob`);
+
+    // BOTH loopback origins are trusted so both hops are reachable; the token-drop
+    // is enforced INDEPENDENTLY by the fetcher's host-scoped auth allowance.
+    const resolver = buildMediaResolver(stack, [stack.apiRoot, cdn.origin]);
+    const attachment: Attachment = { type: "image", url: "mxc://hs.test/cdnpng" };
+
+    const resolved = await resolver.resolve(attachment);
+
+    expect(resolved.ok).toBe(true);
+    if (resolved.ok) {
+      expect(resolved.value.mimeType).toBe("image/png");
+      expect(resolved.value.buffer.equals(PNG_1X1)).toBe(true);
+    }
+    // The redirect WAS followed to the CDN (it served the bytes)…
+    expect(cdn.requestCount()).toBe(1);
+    // …and the CDN hop carried NO Authorization (token dropped cross-host), while
+    // the homeserver hop DID carry the bearer.
+    expect(cdn.authorizationSeen()).toBeUndefined();
+    expect(stack.emu.downloadAuthorization("cdnpng")).toMatch(/^Bearer /);
+  });
+
+  it("decrypts an encrypted-room attachment end-to-end to the original plaintext bytes", async () => {
+    const stack = await buildStack();
+    await stack.adapter.start();
+
+    const secret = Buffer.from("the original plaintext attachment bytes", "utf8");
+    const { ciphertext, fileFor } = await encryptMediaFixture(secret);
+    const mxc = "mxc://hs.test/encblob";
+    // The emulator hosts the CIPHERTEXT at the media id; the resolver downloads it,
+    // then decrypts with the encrypted-file record cached off the inbound event below.
+    stack.emu.putMedia("encblob", ciphertext, "application/octet-stream");
+
+    // Drive the mapper's cacheEncryptedFile path: an inbound m.image event whose
+    // content.file is the encrypted-file record. Once the message is RECEIVED the
+    // mapper has already cached the record (it caches during mapping, before
+    // delivery), so the resolver reads it back to decrypt.
+    stack.emu.injectRoomEvent({
+      roomId: GROUP_ROOM,
+      sender: ALICE,
+      type: "m.room.message",
+      content: { msgtype: "m.image", body: "secret.bin", file: fileFor(mxc) },
+    });
+    await waitUntil(
+      () => stack.received.some((m) => m.attachments.some((a) => a.url === mxc)),
+      8000,
+    );
+    expect(stack.received.some((m) => m.attachments.some((a) => a.url === mxc))).toBe(true);
+
+    const resolver = buildMediaResolver(stack, [stack.apiRoot]);
+    const resolved = await resolver.resolve({ type: "image", url: mxc });
+
+    expect(resolved.ok).toBe(true);
+    if (resolved.ok) {
+      // The resolver downloaded ciphertext and decrypted it back to the ORIGINAL bytes.
+      expect(resolved.value.buffer.equals(secret)).toBe(true);
+    }
+    // The encrypted-blob download rode the authed hop (bearer present).
+    expect(stack.emu.downloadAuthorization("encblob")).toMatch(/^Bearer /);
   });
 });

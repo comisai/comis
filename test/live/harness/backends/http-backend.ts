@@ -53,6 +53,13 @@ export interface RouteContext {
   readonly query: string;
   /** The RAW request body as a string (handlers parse it themselves). */
   readonly body: string;
+  /**
+   * The lowercased request headers (Node's `IncomingMessage.headers` shape). A
+   * handler that must assert a header arrived (or did NOT) — e.g. an authenticated
+   * media download proving the `authorization` bearer rides only the allowed hop —
+   * reads it here. Absent handlers ignore it.
+   */
+  readonly headers?: Record<string, string | string[] | undefined>;
 }
 
 /**
@@ -74,6 +81,12 @@ export interface RouteResult {
    * `application/octet-stream` when a Buffer body omits it.
    */
   readonly contentType?: string;
+  /**
+   * Extra response headers to write (e.g. a `location` on a 3xx redirect). Set
+   * before the content-type; used by routes that must drive a client behavior a
+   * status code alone cannot — a media-download `307` to a CDN is the driver.
+   */
+  readonly headers?: Record<string, string>;
 }
 
 /**
@@ -236,8 +249,19 @@ export function createHttpBackend(): HttpBackend {
   // so the file route can return stored bytes byte-for-byte — `JSON.stringify`
   // on a Buffer would corrupt it into `{"type":"Buffer",...}`. A non-Buffer
   // body keeps the `application/json` + `JSON.stringify` path exactly.
-  function send(res: ServerResponse, status: number, body: unknown, contentType?: string): void {
+  function send(
+    res: ServerResponse,
+    status: number,
+    body: unknown,
+    contentType?: string,
+    extraHeaders?: Record<string, string>,
+  ): void {
     res.statusCode = status;
+    // Extra headers first (e.g. a `location` on a 3xx) — the content-type set
+    // below is authoritative, so these never clobber it.
+    if (extraHeaders) {
+      for (const [name, value] of Object.entries(extraHeaders)) res.setHeader(name, value);
+    }
     if (Buffer.isBuffer(body)) {
       res.setHeader("content-type", contentType ?? "application/octet-stream");
       res.end(body);
@@ -259,7 +283,7 @@ export function createHttpBackend(): HttpBackend {
     const path = qIdx >= 0 ? url.slice(0, qIdx) : url;
     const query = qIdx >= 0 ? url.slice(qIdx + 1) : "";
     const body = await readBody(req);
-    const baseCtx: RouteContext = { httpMethod, path, query, body };
+    const baseCtx: RouteContext = { httpMethod, path, query, body, headers: req.headers };
 
     // (a) /control/* — SEPARATE branch from the Bot-API matcher, checked first.
     if (path.startsWith("/control/") || path === "/control") {
@@ -312,7 +336,7 @@ export function createHttpBackend(): HttpBackend {
     for (const route of pathRoutes) {
       if (pathMatches(route.matcher, path)) {
         const result = await route.handler(baseCtx);
-        send(res, result.status, result.body, result.contentType);
+        send(res, result.status, result.body, result.contentType, result.headers);
         return;
       }
     }

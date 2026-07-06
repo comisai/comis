@@ -45,6 +45,9 @@
  * @module
  */
 
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { lookup } from "node:dns/promises";
 import {
   createHttpBackend,
   type HttpBackend,
@@ -160,6 +163,25 @@ export interface MatrixEmulator extends ChannelEmulator {
    * `/sync`). Returns the minted event id.
    */
   injectBacklog(opts: InjectMatrixMessageOpts): string;
+  /**
+   * Register downloadable media bytes for a media id. The authenticated
+   * `GET .../media/download/{server}/{id}` route serves these verbatim (with the
+   * given content-type) and records the `authorization` header the download hop
+   * carried. Overwrites any prior registration for the id.
+   */
+  putMedia(mediaId: string, bytes: Buffer, contentType: string): void;
+  /**
+   * Register a media id whose download responds `307` to `location` (a stand-in
+   * cross-host CDN). The homeserver hop still records its `authorization` header
+   * before redirecting; the redirect target records its own.
+   */
+  putMediaRedirect(mediaId: string, location: string): void;
+  /**
+   * The `authorization` header the download hop for `mediaId` carried — `undefined`
+   * when none arrived or the id was never downloaded. The homeserver hop IS
+   * token-allowed, so a successful authed download records the bearer here.
+   */
+  downloadAuthorization(mediaId: string): string | undefined;
   /** The recorded outbound `m.room.message` contents for a room, in send order (the ORACLE). `[]` for an unseen room. */
   sentMessages(roomId: string): readonly MatrixMessageContent[];
   /** The most recent recorded outbound content for a room, or `undefined`. */
@@ -233,6 +255,14 @@ export function createMatrixEmulator(opts: CreateMatrixEmulatorOptions = {}): Ma
   const sent = new Map<string, MatrixMessageContent[]>();
   const joins: string[] = [];
   const unhandled: string[] = [];
+
+  // Media download surface (the resolver's inbound path).
+  // - `mediaBytes`: media id → the bytes served on an authed download.
+  // - `mediaRedirects`: media id → a cross-host `location` the download 307s to.
+  // - `downloadAuth`: media id → the `authorization` header its download hop carried.
+  const mediaBytes = new Map<string, { bytes: Buffer; contentType: string }>();
+  const mediaRedirects = new Map<string, string>();
+  const downloadAuth = new Map<string, string | undefined>();
 
   // Monotonic sources (deterministic, > 0 so any event clears the initial 0 watermark).
   let eventSeq = 0;
@@ -429,6 +459,35 @@ export function createMatrixEmulator(opts: CreateMatrixEmulatorOptions = {}): Ma
     },
   );
 
+  // GET .../media/download/{server}/{mediaId} — the AUTHENTICATED media download.
+  // matrix-js-sdk builds the `/_matrix/client/v1/media/download/{server}/{id}` path
+  // when `useAuthentication` is set (the resolver passes it), so match any download
+  // path and take the media id as the final segment. Records the `authorization`
+  // header this hop carried (the homeserver hop IS token-allowed — a successful
+  // authed download proves the bearer arrived here), then either 307s to a
+  // cross-host CDN fixture or serves the registered bytes verbatim.
+  backend.registerPathRoute(
+    (p) => p.includes("/media/download/"),
+    (ctx: RouteContext): RouteResult => {
+      const segments = ctx.path.split("/");
+      const mediaId = segments[segments.length - 1] ?? "";
+      const auth = ctx.headers?.authorization;
+      downloadAuth.set(mediaId, typeof auth === "string" ? auth : undefined);
+
+      const redirect = mediaRedirects.get(mediaId);
+      if (redirect !== undefined) {
+        // 307 preserves the request method; the fetcher re-validates the target
+        // host on the next hop and drops the bearer because it is a different host.
+        return { status: 307, body: {}, headers: { location: redirect } };
+      }
+      const media = mediaBytes.get(mediaId);
+      if (media === undefined) {
+        return { status: 404, body: { errcode: "M_NOT_FOUND", error: "unknown media id" } };
+      }
+      return { status: 200, body: media.bytes, contentType: media.contentType };
+    },
+  );
+
   // Catch-all safety net (registered LAST): client-startup probes (pushrules,
   // capabilities, keys, presence, …) get a benign `{}`/200 instead of a 404 that
   // could derail startup. Records the path for diagnostics.
@@ -476,6 +535,18 @@ export function createMatrixEmulator(opts: CreateMatrixEmulatorOptions = {}): Ma
       return event.event_id;
     },
 
+    putMedia(mediaId, bytes, contentType) {
+      mediaBytes.set(mediaId, { bytes, contentType });
+    },
+
+    putMediaRedirect(mediaId, location) {
+      mediaRedirects.set(mediaId, location);
+    },
+
+    downloadAuthorization(mediaId) {
+      return downloadAuth.get(mediaId);
+    },
+
     sentMessages(roomId) {
       return sent.get(roomId) ?? [];
     },
@@ -495,4 +566,63 @@ export function createMatrixEmulator(opts: CreateMatrixEmulatorOptions = {}): Ma
   };
 
   return emulator;
+}
+
+/**
+ * A loopback redirect target — a stand-in CDN on a DISTINCT host from the
+ * homeserver, for the cross-host token-drop proof.
+ *
+ * The homeserver emulator is reached at `127.0.0.1`; this target's origin uses the
+ * `localhost` hostname, which is a DIFFERENT host from the SSRF fetcher's
+ * perspective (its auth allowlist is host-scoped, so the bearer is dropped on the
+ * hop to `localhost`). To stay robust whether `localhost` resolves to `127.0.0.1`
+ * or `::1`, it binds to the SAME address `localhost` resolves to — so the fetcher's
+ * DNS-pin (which resolves `localhost` too) targets an address this server is
+ * actually listening on. It records the `authorization` header the redirect hop
+ * carried (it MUST be absent — the bearer was dropped) and serves fixed bytes.
+ */
+export interface LoopbackRedirectTarget {
+  /** The origin (`http://localhost:<port>`) — a distinct host from the homeserver's `127.0.0.1`. */
+  readonly origin: string;
+  /** The `authorization` header the last hop carried — `undefined` (none) is the expected, secure result. */
+  authorizationSeen(): string | undefined;
+  /** How many requests the target received. */
+  requestCount(): number;
+  /** Close the listener. */
+  stop(): Promise<void>;
+}
+
+/**
+ * Start a {@link LoopbackRedirectTarget} serving `bytes`/`contentType`. Bind to the
+ * address `localhost` resolves to so the fetcher's pinned connection lands here.
+ */
+export async function startLoopbackRedirectTarget(opts: {
+  bytes: Buffer;
+  contentType: string;
+}): Promise<LoopbackRedirectTarget> {
+  const { address } = await lookup("localhost");
+  let authHeader: string | undefined;
+  let count = 0;
+  const server = createServer((req, res) => {
+    count += 1;
+    const auth = req.headers.authorization;
+    authHeader = typeof auth === "string" ? auth : undefined;
+    res.writeHead(200, {
+      "content-type": opts.contentType,
+      "content-length": String(opts.bytes.length),
+    });
+    res.end(opts.bytes);
+  });
+  await new Promise<void>((resolve) => server.listen(0, address, () => resolve()));
+  const port = (server.address() as AddressInfo).port;
+  return {
+    origin: `http://localhost:${port}`,
+    authorizationSeen: () => authHeader,
+    requestCount: () => count,
+    stop: () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections?.();
+        server.close(() => resolve());
+      }),
+  };
 }
