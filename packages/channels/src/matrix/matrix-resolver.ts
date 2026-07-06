@@ -96,6 +96,20 @@ export interface MatrixResolverDeps {
   getEncryptedFile: (mxc: string) => EncryptedFileLike | undefined;
 }
 
+/** IPv4 dotted-quad literal. */
+const IPV4_LITERAL = /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g;
+/**
+ * IPv6 literal — hex groups joined by colons, including the `::` compressed form
+ * (`::1`, `fe80::dead:beef`, `2001:db8::1`). Requires at least two colons so a lone
+ * `word:word` (a non-address) is not matched.
+ */
+const IPV6_LITERAL = /(?:[A-Fa-f0-9]{0,4}:){2,}[A-Fa-f0-9]{0,4}/g;
+
+/** Replace bare IPv4/IPv6 literals with a placeholder (no resolved address leaks out). */
+function redactIpLiterals(message: string): string {
+  return message.replace(IPV4_LITERAL, "[REDACTED_IP]").replace(IPV6_LITERAL, "[REDACTED_IP]");
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -109,11 +123,18 @@ export interface MatrixResolverDeps {
  * MIME type. The download URL and token never surface in a returned error or log field.
  */
 export function createMatrixResolver(deps: MatrixResolverDeps): MediaResolverPort {
-  /** Strip the download URL then the access token from an error message, then sanitize free-text. */
+  /**
+   * Strip the download URL, the access token, then any bare IP literal from an error
+   * message, and sanitize the remaining free-text. The IP redaction covers a
+   * homeserver redirect to an internal host: the SSRF-guarded fetcher reports the
+   * blocked resolved IP (`resolved IP 10.x.x.x …`), which must not surface across the
+   * port as a topology disclosure. Covers IPv4 and IPv6 literals.
+   */
   function sanitizeError(message: string, url: string, token: string | undefined): string {
     let stripped = message;
     if (url.length > 0) stripped = stripped.replaceAll(url, "[REDACTED_URL]");
     if (token && token.length > 0) stripped = stripped.replaceAll(token, "[REDACTED_TOKEN]");
+    stripped = redactIpLiterals(stripped);
     return sanitizeLogString(stripped);
   }
 

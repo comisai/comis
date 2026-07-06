@@ -91,6 +91,7 @@ import {
   resolveThreadRootId,
   isRoomDirect,
   runSendAttachment,
+  safeHostname,
   sendEventWithRetry,
   withRateLimitRetry,
 } from "./matrix-adapter-internal.js";
@@ -231,10 +232,10 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): MatrixAdapterHandl
   // Insertion-ordered so overflow eviction drops the oldest entry.
   const reactionEventIds = new Map<string, string>();
 
-  // The mxc→EncryptedFile key side-channel: the inbound mapper writes each encrypted
-  // media event's record here (via the wired callback) and the resolver reads it back
-  // to decrypt. Bounded; a miss is a clean undefined the resolver fails closed on.
+  // The mxc→EncryptedFile key side-channel: the mapper writes each encrypted media event's
+  // record (wired callback), the resolver reads it back to decrypt. Bounded; an encrypted-miss fails closed.
   const encryptedFileCache = createEncryptedFileCache();
+  const homeserverHost = safeHostname(deps.homeserverUrl); // invariant, parsed once (guarded)
 
   let connected = false;
   let startedAt: number | undefined;
@@ -902,7 +903,7 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): MatrixAdapterHandl
           ...args: unknown[]
         ) => string | null,
         getAccessToken: () => activeClient.getAccessToken(),
-        homeserverHost: new URL(deps.homeserverUrl).hostname,
+        homeserverHost,
       };
     },
 

@@ -51,6 +51,21 @@ export function reactionKey(roomId: string, messageId: string, emoji: string): s
 }
 
 /**
+ * Parse a URL's hostname, guarded: a malformed url yields `""` rather than throwing.
+ * The adapter computes the invariant media-token host ONCE with this (not per resolve)
+ * so a parse slip can never later reject a `resolve()` across the port — `start()`
+ * SSRF-validates the homeserver url before the media client is reachable, so on the
+ * live path this returns the real host and the empty fallback is defense-in-depth.
+ */
+export function safeHostname(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "";
+  }
+}
+
+/**
  * Fan one delivered, gated inbound item (a message or a reaction) out to its
  * registered handlers under a FRESH request context — the traceId is minted here,
  * at the channel ingress boundary, so one inbound stitches together across
