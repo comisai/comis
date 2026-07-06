@@ -86,6 +86,10 @@ export type NonInteractiveOptions = {
   msteamsAppPassword?: string;
   msteamsTenantId?: string;
   msteamsAuthMode?: "secret" | "certificate" | "managedIdentity";
+  googlechatSaKey?: string;
+  googlechatSubscription?: string;
+  googlechatMode?: "pubsub" | "webhook";
+  googlechatAudience?: string;
   // Media generation
   imageProvider?: string;
   imageApiKey?: string;

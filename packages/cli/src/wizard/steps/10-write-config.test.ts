@@ -44,7 +44,7 @@ vi.mock("../../util/offline-secrets-store.js", () => ({
 }));
 
 import { existsSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
-import { loadEnvFile } from "@comis/core";
+import { loadEnvFile, ChannelConfigSchema } from "@comis/core";
 import { offlineSecretSet } from "../../util/offline-secrets-store.js";
 import type { WizardPrompter, WizardState, Spinner } from "../index.js";
 import { writeConfigStep } from "./10-write-config.js";
@@ -827,6 +827,111 @@ describe("writeConfigStep", () => {
       expect(envContent).toContain(
         "MSTEAMS_APP_PASSWORD=teams-client-secret-value-xyz",
       );
+    });
+  });
+
+  // ---------- Google Chat: SecretRef blob + schema-valid block ----------
+
+  describe("google chat channel write", () => {
+    // The service-account key is a JSON blob (the secret) — it must land in the
+    // managed-secret store, and config.yaml must carry only the ${VAR} ref. mode
+    // and the per-mode field (subscriptionName for pubsub / audience for webhook)
+    // are non-secret config written inline. The emitted block must parse under
+    // the shipped GoogleChatChannelEntrySchema (via ChannelConfigSchema).
+    const SA_KEY_BLOB = JSON.stringify({
+      type: "service_account",
+      client_email: "bot@example-project.iam.gserviceaccount.com",
+      private_key: "-----BEGIN PRIVATE KEY-----\nMIIexample\n-----END PRIVATE KEY-----\n",
+    });
+
+    function googlechatState(mode: "pubsub" | "webhook"): WizardState {
+      return {
+        ...populatedState(),
+        channels: [
+          mode === "pubsub"
+            ? {
+                type: "googlechat",
+                serviceAccountKey: SA_KEY_BLOB,
+                subscriptionName: "projects/p/subscriptions/s",
+                mode: "pubsub",
+                validated: false,
+              }
+            : {
+                type: "googlechat",
+                serviceAccountKey: SA_KEY_BLOB,
+                audience: "123456789012",
+                mode: "webhook",
+                validated: false,
+              },
+        ],
+      };
+    }
+
+    function writtenChannels(): Record<string, unknown> {
+      const writeCalls = vi.mocked(writeFileSync).mock.calls;
+      const configWriteCall = writeCalls.find(
+        ([path]) => typeof path === "string" && path.includes(".tmp"),
+      );
+      expect(configWriteCall).toBeDefined();
+      const rawConfig = configWriteCall![1] as string;
+      const configContent = JSON.parse(rawConfig) as {
+        channels: Record<string, unknown>;
+      };
+      return configContent.channels;
+    }
+
+    it("writes channels.googlechat.serviceAccountKey as a ${GOOGLECHAT_SA_KEY} reference (never the raw blob) with mode/subscriptionName inline", async () => {
+      const prompter = createMockPrompter();
+      await writeConfigStep.execute(googlechatState("pubsub"), prompter);
+
+      const channels = writtenChannels();
+      const gc = channels.googlechat as Record<string, unknown>;
+      expect(gc.serviceAccountKey).toBe("${GOOGLECHAT_SA_KEY}");
+      expect(gc.mode).toBe("pubsub");
+      expect(gc.subscriptionName).toBe("projects/p/subscriptions/s");
+      // The raw service-account key JSON must never appear in config.yaml.
+      const writeCalls = vi.mocked(writeFileSync).mock.calls;
+      const rawConfig = writeCalls.find(
+        ([path]) => typeof path === "string" && path.includes(".tmp"),
+      )![1] as string;
+      expect(rawConfig).not.toContain("BEGIN PRIVATE KEY");
+      expect(rawConfig).not.toContain("example-project.iam.gserviceaccount.com");
+    });
+
+    it("emits a googlechat (pubsub) block that validates against the shipped GoogleChatChannelEntrySchema", async () => {
+      const prompter = createMockPrompter();
+      await writeConfigStep.execute(googlechatState("pubsub"), prompter);
+
+      const gc = writtenChannels().googlechat;
+      const parsed = ChannelConfigSchema.safeParse({ googlechat: gc });
+      expect(parsed.success).toBe(true);
+    });
+
+    it("emits a googlechat (webhook) block with audience inline that validates against the schema", async () => {
+      const prompter = createMockPrompter();
+      await writeConfigStep.execute(googlechatState("webhook"), prompter);
+
+      const gc = writtenChannels().googlechat as Record<string, unknown>;
+      expect(gc.mode).toBe("webhook");
+      expect(gc.audience).toBe("123456789012");
+      expect(gc.serviceAccountKey).toBe("${GOOGLECHAT_SA_KEY}");
+      const parsed = ChannelConfigSchema.safeParse({ googlechat: gc });
+      expect(parsed.success).toBe(true);
+    });
+
+    it("registers the raw GOOGLECHAT_SA_KEY via collectManagedSecrets so the config reference is not dangling", async () => {
+      const prompter = createMockPrompter();
+      await writeConfigStep.execute(googlechatState("pubsub"), prompter);
+
+      const writeCalls = vi.mocked(writeFileSync).mock.calls;
+      const envWriteCall = writeCalls.find(
+        ([path]) => typeof path === "string" && path.includes(".env"),
+      );
+      expect(envWriteCall).toBeDefined();
+      const envContent = envWriteCall![1] as string;
+      // The managed-secret branch persists the raw blob, so the
+      // ${GOOGLECHAT_SA_KEY} written into config.yaml always resolves at boot.
+      expect(envContent).toContain(`GOOGLECHAT_SA_KEY=${SA_KEY_BLOB}`);
     });
   });
 });

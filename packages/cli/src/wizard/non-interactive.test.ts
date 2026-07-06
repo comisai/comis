@@ -404,6 +404,78 @@ describe("validateNonInteractiveOptions", () => {
     }
   });
 
+  it("rejects an unknown --googlechat-mode (closed transport vocabulary)", () => {
+    const opts = validOpts({
+      googlechatMode: "grpc" as NonInteractiveOptions["googlechatMode"],
+    });
+    expect(() => validateNonInteractiveOptions(opts)).toThrow(NonInteractiveError);
+    try {
+      validateNonInteractiveOptions(opts);
+    } catch (e) {
+      expect((e as NonInteractiveError).field).toBe("googlechatMode");
+      expect((e as NonInteractiveError).message).toContain("pubsub");
+      expect((e as NonInteractiveError).message).toContain("webhook");
+    }
+  });
+
+  it("accepts each valid --googlechat-mode value", () => {
+    for (const mode of ["pubsub", "webhook"] as const) {
+      expect(() =>
+        validateNonInteractiveOptions(validOpts({ googlechatMode: mode })),
+      ).not.toThrow();
+    }
+  });
+
+  it("throws NonInteractiveError for missing googlechat sa key", () => {
+    const opts = validOpts({ channels: ["googlechat"] });
+    expect(() => validateNonInteractiveOptions(opts)).toThrow(NonInteractiveError);
+    try {
+      validateNonInteractiveOptions(opts);
+    } catch (e) {
+      expect((e as NonInteractiveError).field).toBe("googlechatSaKey");
+    }
+  });
+
+  it("throws NonInteractiveError for missing googlechat subscription in pubsub mode", () => {
+    const opts = validOpts({
+      channels: ["googlechat"],
+      googlechatSaKey: "{}",
+      googlechatMode: "pubsub",
+    });
+    try {
+      validateNonInteractiveOptions(opts);
+      throw new Error("expected throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(NonInteractiveError);
+      expect((e as NonInteractiveError).field).toBe("googlechatSubscription");
+    }
+  });
+
+  it("throws NonInteractiveError for missing googlechat audience in webhook mode", () => {
+    const opts = validOpts({
+      channels: ["googlechat"],
+      googlechatSaKey: "{}",
+      googlechatMode: "webhook",
+    });
+    try {
+      validateNonInteractiveOptions(opts);
+      throw new Error("expected throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(NonInteractiveError);
+      expect((e as NonInteractiveError).field).toBe("googlechatAudience");
+    }
+  });
+
+  it("does NOT throw when all required googlechat pubsub flags are present", () => {
+    const opts = validOpts({
+      channels: ["googlechat"],
+      googlechatSaKey: "{}",
+      googlechatSubscription: "projects/p/subscriptions/s",
+      googlechatMode: "pubsub",
+    });
+    expect(() => validateNonInteractiveOptions(opts)).not.toThrow();
+  });
+
   it("rejects an unknown --stt-provider / --tts-provider", () => {
     expect(() =>
       validateNonInteractiveOptions(validOpts({ sttProvider: "assemblyai" })),
@@ -589,6 +661,43 @@ describe("buildNonInteractiveState", () => {
       authMode: "secret",
       validated: false,
     });
+  });
+
+  it("builds a googlechat (pubsub) channel from the --googlechat-* opts", () => {
+    const state = buildNonInteractiveState(
+      validOpts({
+        channels: ["googlechat"],
+        googlechatSaKey: '{"client_email":"bot@x.iam.gserviceaccount.com","private_key":"pk"}',
+        googlechatSubscription: "projects/p/subscriptions/s",
+        googlechatMode: "pubsub",
+      }),
+    );
+    expect(state.channels).toHaveLength(1);
+    const gc = state.channels![0];
+    expect(gc.type).toBe("googlechat");
+    expect(gc.serviceAccountKey).toBe(
+      '{"client_email":"bot@x.iam.gserviceaccount.com","private_key":"pk"}',
+    );
+    expect(gc.subscriptionName).toBe("projects/p/subscriptions/s");
+    expect(gc.mode).toBe("pubsub");
+    expect(gc.validated).toBe(false);
+  });
+
+  it("builds a googlechat (webhook) channel carrying the audience", () => {
+    const state = buildNonInteractiveState(
+      validOpts({
+        channels: ["googlechat"],
+        googlechatSaKey: '{"client_email":"bot@x.iam.gserviceaccount.com","private_key":"pk"}',
+        googlechatAudience: "123456789012",
+        googlechatMode: "webhook",
+      }),
+    );
+    expect(state.channels).toHaveLength(1);
+    const gc = state.channels![0];
+    expect(gc.type).toBe("googlechat");
+    expect(gc.mode).toBe("webhook");
+    expect(gc.audience).toBe("123456789012");
+    expect(gc.validated).toBe(false);
   });
 
   it("builds tokenless channels (whatsapp, signal, irc) correctly", () => {

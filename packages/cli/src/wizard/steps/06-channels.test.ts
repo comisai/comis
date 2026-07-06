@@ -9,6 +9,8 @@
  * @module
  */
 
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { WizardPrompter, Spinner } from "../prompter.js";
 import type { WizardState, ProviderConfig } from "../types.js";
@@ -464,5 +466,60 @@ describe("channelsStep", () => {
     expect(values).toContain("line");
     expect(values).toContain("msteams");
     expect(values).toContain("googlechat");
+  });
+
+  // ---------- Google Chat ----------
+
+  const GC_SA_KEY = JSON.stringify({
+    client_email: "bot@example-project.iam.gserviceaccount.com",
+    private_key: "-----BEGIN PRIVATE KEY-----\nMIIexample\n-----END PRIVATE KEY-----\n",
+  });
+
+  it("collects a googlechat (pubsub) channel from a pasted SA key and subscription", async () => {
+    const prompter = createMockPrompter({ confirm: false });
+    vi.mocked(prompter.multiselect).mockResolvedValueOnce(["googlechat"]);
+    vi.mocked(prompter.text)
+      .mockResolvedValueOnce(GC_SA_KEY) // SA key (pasted JSON)
+      .mockResolvedValueOnce("projects/p/subscriptions/s"); // subscription
+    vi.mocked(prompter.select).mockResolvedValueOnce("pubsub");
+
+    const result = await channelsStep.execute({ ...INITIAL_STATE }, prompter);
+
+    const gc = result.channels?.find((c) => c.type === "googlechat");
+    expect(gc).toEqual({
+      type: "googlechat",
+      serviceAccountKey: GC_SA_KEY,
+      mode: "pubsub",
+      subscriptionName: "projects/p/subscriptions/s",
+      validated: false,
+    });
+  });
+
+  it("reads the SA key from a file path and collects a googlechat (webhook) channel", async () => {
+    const dir = mkdtempSync(`${tmpdir()}/comis-gc-`);
+    const keyPath = `${dir}/sa-key.json`;
+    writeFileSync(keyPath, GC_SA_KEY, "utf-8");
+    try {
+      const prompter = createMockPrompter({ confirm: false });
+      vi.mocked(prompter.multiselect).mockResolvedValueOnce(["googlechat"]);
+      vi.mocked(prompter.text)
+        .mockResolvedValueOnce(keyPath) // SA key given as a path to the file
+        .mockResolvedValueOnce("123456789012"); // audience
+      vi.mocked(prompter.select).mockResolvedValueOnce("webhook");
+
+      const result = await channelsStep.execute({ ...INITIAL_STATE }, prompter);
+
+      const gc = result.channels?.find((c) => c.type === "googlechat");
+      expect(gc).toEqual({
+        type: "googlechat",
+        // The stored value is the FILE CONTENTS, not the path.
+        serviceAccountKey: GC_SA_KEY,
+        mode: "webhook",
+        audience: "123456789012",
+        validated: false,
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
