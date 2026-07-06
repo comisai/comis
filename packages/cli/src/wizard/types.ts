@@ -76,6 +76,10 @@ export type WizardError = {
 // ---------- Configuration Sub-types ----------
 
 /** Per-channel collected credentials. */
+// @optional-field-count: per-channel credential accumulator — one flat bag whose
+// `type` discriminates every supported channel and whose optional fields are the
+// union of all channels' credentials (token/app/secret/allow plus the Teams and
+// Matrix config-and-secret fields); each field is present only for its own channel.
 export type ChannelConfig = {
   type: "telegram" | "discord" | "slack" | "whatsapp" | "signal" | "irc" | "line" | "msteams" | "matrix";
   botToken?: string;
