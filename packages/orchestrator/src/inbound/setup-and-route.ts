@@ -48,6 +48,7 @@ export const PLATFORM_TYPING_DEFAULTS: Record<string, number> = {
   signal:   4000,   // ~5s expiry
   line:     15000,  // 20s expiry (showLoadingAnimation)
   imessage: 4000,   // ~5s process-based expiry
+  matrix:   25000,  // 5s margin before the 30s /typing timeout the adapter sends
 };
 
 // ---------------------------------------------------------------------------
