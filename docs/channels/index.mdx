@@ -1,6 +1,6 @@
 ---
 title: "Channels"
-description: "Connect Comis to Discord, Telegram, Slack, WhatsApp, Signal, iMessage, LINE, IRC, Email, and Microsoft Teams"
+description: "Connect Comis to Discord, Telegram, Slack, WhatsApp, Signal, iMessage, LINE, IRC, Email, Microsoft Teams, and Google Chat"
 icon: "message-dots"
 ---
 
@@ -25,6 +25,7 @@ Not sure which channel to connect first? Here's a quick comparison to help you c
 | IRC | Yes | No | No | No | None | No | No | IRC control codes (bold, color) |
 | Email | Yes | Yes (attachment) | Yes | No | Reply chain | No | No | HTML |
 | Microsoft Teams | Yes | Via attachment | Yes | Inbound only | Channel threads | Yes | Yes | Adaptive Cards |
+| Google Chat | Yes | Inbound only | Inbound only | No | Space threads | Yes | Yes | Cards v2 |
 
 <Tip>
 Discord and Telegram have the broadest feature support -- they're great choices if you're just getting started.
@@ -72,6 +73,7 @@ for your use case, or to understand the differences when connecting multiple pla
 | [IRC](/channels/irc) | DM, channel | None | No | No | No / No | No | IRC control codes |
 | [Email](/channels/email) | DM | None | Reply chain (RFC 5322) | No | No / No | No | HTML |
 | [Microsoft Teams](/channels/msteams) | DM, group, channel, thread | Edit | Channel threads | Inbound | Yes / Yes | Yes | Adaptive Cards |
+| [Google Chat](/channels/googlechat) | space, DM, thread | Edit | Space threads | No | Yes / Yes | Yes | Cards v2 |
 
 ### Limits
 
@@ -87,6 +89,7 @@ for your use case, or to understand the differences when connecting multiple pla
 | [IRC](/channels/irc) | 512 characters | N/A |
 | [Email](/channels/email) | 100,000 characters | N/A |
 | [Microsoft Teams](/channels/msteams) | 28,000 characters | Inline images |
+| [Google Chat](/channels/googlechat) | 4,000 characters | Inbound only |
 
 <Tip>
 **Reading the table:** "Edit / Delete" shows whether Comis can edit its own messages
@@ -164,6 +167,12 @@ Not sure which channel to start with? Here are some common scenarios:
   and approval workflows. Teams requires a public messaging endpoint -- the
   setup guide covers exposing it safely.
 
+- **Google Workspace** -- Use [Google Chat](/channels/googlechat). Your agent
+  works in spaces, direct messages, and threads with Cards v2 buttons and
+  approval workflows. Google Chat needs no public IP by default -- the daemon
+  pulls events over Cloud Pub/Sub, with an opt-in webhook mode when you prefer a
+  public endpoint.
+
 You can always add more channels later. Your agent's memory and personality carry
 across all connected platforms.
 
@@ -205,6 +214,9 @@ If you have not installed Comis yet, start with the [Quickstart](/get-started/qu
   </Card>
   <Card title="Microsoft Teams" icon="microsoft" href="/channels/msteams">
     1:1, group, and channel chats with Adaptive Cards, threads, and edit/delete.
+  </Card>
+  <Card title="Google Chat" icon="google" href="/channels/googlechat">
+    Spaces, DMs, threads, and Cards v2 over Pub/Sub or webhook.
   </Card>
   <Card title="Delivery Infrastructure" icon="truck-fast" href="/channels/delivery">
     How streaming, typing indicators, retry logic, and message pacing work.
