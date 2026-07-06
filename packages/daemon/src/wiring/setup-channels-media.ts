@@ -60,6 +60,10 @@ export interface MediaPipelineResult {
 // ---------------------------------------------------------------------------
 
 /** Dependencies for media pipeline assembly. */
+// @optional-field-count: 13 — the media-pipeline DI bag. Each optional field is an
+// independently-optional per-platform plugin handle or media-processor port, wired
+// only when that channel/processor is configured; the count tracks the number of
+// channels and processors, not incidental bloat.
 export interface MediaPipelineDeps {
   container: AppContainer;
   channelsLogger: ComisLogger;
