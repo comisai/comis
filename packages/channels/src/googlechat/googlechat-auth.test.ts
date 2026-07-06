@@ -4,9 +4,12 @@ import type { ComisLogger } from "@comis/core";
 import {
   generateKeyPair,
   exportPKCS8,
+  exportJWK,
+  createLocalJWKSet,
   jwtVerify,
   decodeJwt,
   decodeProtectedHeader,
+  SignJWT,
 } from "jose";
 import {
   createGoogleChatTokenProvider,
@@ -14,6 +17,10 @@ import {
   PUBSUB_SCOPE,
   type GoogleChatTokenDeps,
 } from "./googlechat-auth.js";
+// Namespace import for the INBOUND verify half so a not-yet-exported symbol reads
+// as `undefined` (a clean, isolated per-test failure) rather than breaking the
+// whole module load — mirrors the barrel index.test.ts technique.
+import * as gcAuth from "./googlechat-auth.js";
 
 const SA_EMAIL = "comis-bot@my-project.iam.gserviceaccount.com";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -482,5 +489,172 @@ describe("createGoogleChatTokenProvider — SA-JWT-bearer mint", () => {
     expect((await provider.getToken(CHAT_SCOPE)).ok).toBe(true); // valid → cached
     expect((await provider.getToken(CHAT_SCOPE)).ok).toBe(true); // served from cache
     expect(spy).toHaveBeenCalledTimes(2);
+  });
+});
+
+// --- Inbound dual-audience Bearer-JWT verify (the webhook-mode trust anchor) ---
+
+const PROJECT_NUMBER = "1234567890";
+const CHAT_SYSTEM_ISS = "chat@system.gserviceaccount.com";
+
+/**
+ * A locally-generated RS256 keypair + local JWK set stands in for Google's
+ * signing keys, so the verifier runs fully offline — no network to real Google
+ * endpoints. `jwk` is the raw public JWK (for the raw-JWKS seam entry point);
+ * `jwks` is the constructed local key set (for the `jwks` option).
+ */
+async function makeInboundKeyContext() {
+  const { publicKey, privateKey } = await generateKeyPair("RS256");
+  const jwk = await exportJWK(publicKey);
+  jwk.alg = "RS256";
+  jwk.kid = "k1";
+  const jwks = createLocalJWKSet({ keys: [jwk] });
+  return { privateKey: privateKey as CryptoKey, jwk, jwks };
+}
+
+/** Mint a project-number-audience token (a self-signed Chat-system JWT shape). */
+function mintProjectToken(
+  privateKey: CryptoKey,
+  opts: { iss?: string; aud?: string; exp?: number | string } = {},
+): Promise<string> {
+  return new SignJWT({})
+    .setProtectedHeader({ alg: "RS256", kid: "k1" })
+    .setIssuer(opts.iss ?? CHAT_SYSTEM_ISS)
+    .setAudience(opts.aud ?? PROJECT_NUMBER)
+    .setExpirationTime(opts.exp ?? "5m")
+    .sign(privateKey);
+}
+
+/** A hand-built alg:none unsecured JWT — jose must reject it by contract. */
+function makeUnsignedToken(payload: Record<string, unknown>): string {
+  const seg = (o: unknown): string =>
+    Buffer.from(JSON.stringify(o)).toString("base64url");
+  return `${seg({ alg: "none", typ: "JWT" })}.${seg(payload)}.`;
+}
+
+describe("createGoogleChatInboundVerifier — project-number audience", () => {
+  it("verifies a Chat-system token (iss/aud/RS256) signed by the trusted key", async () => {
+    const { privateKey, jwks } = await makeInboundKeyContext();
+    const verify = gcAuth.createGoogleChatInboundVerifier({
+      audienceType: "project-number",
+      audience: PROJECT_NUMBER,
+      jwks,
+    });
+    const token = await mintProjectToken(privateKey);
+    expect((await verify(`Bearer ${token}`)).ok).toBe(true);
+  });
+
+  it("fails closed on a blank expected audience BEFORE any key-set access", async () => {
+    const { privateKey } = await makeInboundKeyContext();
+    // A key set whose access is observable: it must never be consulted.
+    const jwksSpy = vi.fn();
+    const verify = gcAuth.createGoogleChatInboundVerifier({
+      audienceType: "project-number",
+      audience: "",
+      jwks: jwksSpy as unknown as Parameters<typeof jwtVerify>[1],
+    });
+    const token = await mintProjectToken(privateKey);
+    const result = await verify(`Bearer ${token}`);
+    expect(result.ok).toBe(false);
+    expect(jwksSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects missing / non-Bearer / bare-Bearer headers via the pre-gate (no key-set access)", async () => {
+    const jwksSpy = vi.fn();
+    const verify = gcAuth.createGoogleChatInboundVerifier({
+      audienceType: "project-number",
+      audience: PROJECT_NUMBER,
+      jwks: jwksSpy as unknown as Parameters<typeof jwtVerify>[1],
+    });
+    expect((await verify(undefined)).ok).toBe(false);
+    expect((await verify("Basic dXNlcjpwYXNz")).ok).toBe(false);
+    expect((await verify("")).ok).toBe(false);
+    expect((await verify("Bearer")).ok).toBe(false);
+    expect(jwksSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a wrong audience", async () => {
+    const { privateKey, jwks } = await makeInboundKeyContext();
+    const verify = gcAuth.createGoogleChatInboundVerifier({
+      audienceType: "project-number",
+      audience: PROJECT_NUMBER,
+      jwks,
+    });
+    const token = await mintProjectToken(privateKey, { aud: "9999999999" });
+    expect((await verify(`Bearer ${token}`)).ok).toBe(false);
+  });
+
+  it("rejects a wrong issuer", async () => {
+    const { privateKey, jwks } = await makeInboundKeyContext();
+    const verify = gcAuth.createGoogleChatInboundVerifier({
+      audienceType: "project-number",
+      audience: PROJECT_NUMBER,
+      jwks,
+    });
+    const token = await mintProjectToken(privateKey, { iss: "https://evil.example" });
+    expect((await verify(`Bearer ${token}`)).ok).toBe(false);
+  });
+
+  it("rejects a token signed by a key absent from the trusted key set", async () => {
+    const { jwks } = await makeInboundKeyContext(); // trusted set
+    const foreign = await generateKeyPair("RS256"); // a DIFFERENT, untrusted signer
+    const verify = gcAuth.createGoogleChatInboundVerifier({
+      audienceType: "project-number",
+      audience: PROJECT_NUMBER,
+      jwks,
+    });
+    const token = await mintProjectToken(foreign.privateKey as CryptoKey);
+    expect((await verify(`Bearer ${token}`)).ok).toBe(false);
+  });
+
+  it("rejects an alg:none / unsigned token", async () => {
+    const { jwks } = await makeInboundKeyContext();
+    const verify = gcAuth.createGoogleChatInboundVerifier({
+      audienceType: "project-number",
+      audience: PROJECT_NUMBER,
+      jwks,
+    });
+    const token = makeUnsignedToken({
+      iss: CHAT_SYSTEM_ISS,
+      aud: PROJECT_NUMBER,
+      exp: Math.floor(Date.now() / 1000) + 300,
+    });
+    expect((await verify(`Bearer ${token}`)).ok).toBe(false);
+  });
+
+  it("rejects an expired token", async () => {
+    const { privateKey, jwks } = await makeInboundKeyContext();
+    const verify = gcAuth.createGoogleChatInboundVerifier({
+      audienceType: "project-number",
+      audience: PROJECT_NUMBER,
+      jwks,
+    });
+    // Absolute epoch second 2 (1970) — unambiguously expired, no wall-clock read.
+    const token = await mintProjectToken(privateKey, { exp: 2 });
+    expect((await verify(`Bearer ${token}`)).ok).toBe(false);
+  });
+
+  it("warns on rejection but never records the token bytes in a log field", async () => {
+    const { privateKey, jwks } = await makeInboundKeyContext();
+    const loggerSpy = makeLoggerSpy();
+    const verify = gcAuth.createGoogleChatInboundVerifier({
+      audienceType: "project-number",
+      audience: PROJECT_NUMBER,
+      jwks,
+      logger: loggerSpy.logger,
+    });
+    const token = await mintProjectToken(privateKey, { aud: "9999999999" });
+    const result = await verify(`Bearer ${token}`);
+    expect(result.ok).toBe(false);
+    const authWarn = loggerSpy.warn.mock.calls
+      .map((c) => c[0])
+      .find(
+        (p) =>
+          p !== null &&
+          typeof p === "object" &&
+          (p as { errorKind?: string }).errorKind === "auth",
+      );
+    expect(authWarn).toBeDefined();
+    expect(loggerSpy.serialized()).not.toContain(token);
   });
 });
