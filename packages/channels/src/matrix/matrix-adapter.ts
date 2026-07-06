@@ -35,6 +35,7 @@
 import { Direction, EventType, type MatrixClient, type TimelineEvents } from "matrix-js-sdk";
 import * as sdk from "matrix-js-sdk";
 import type {
+  AttachmentPayload,
   ChannelPort,
   ChannelStatus,
   ComisLogger,
@@ -89,9 +90,15 @@ import {
   reactionKey,
   resolveThreadRootId,
   isRoomDirect,
+  runSendAttachment,
   sendEventWithRetry,
   withRateLimitRetry,
 } from "./matrix-adapter-internal.js";
+import {
+  createEncryptedFileCache,
+  encryptAttachment,
+  type EncryptedFileLike,
+} from "./media-handler.js";
 
 // MAX_TRACKED_REACTIONS stays on the adapter's public surface (asserted by the
 // adapter test); re-export the value the internal module now owns.
@@ -147,6 +154,12 @@ export interface MatrixAdapterDeps {
    */
   timer?: TimerPort;
   /**
+   * Injected attachment-byte reader (default: `node:fs/promises` readFile). The
+   * outbound handler writes the fetched, sniffed source to a temp file and hands
+   * `sendAttachment` its path; this seam lets a test run that path disk-free.
+   */
+  readFileImpl?: (path: string) => Promise<Buffer>;
+  /**
    * Sink for the dark-access-token health signal: when a mid-run token
    * expiry cannot auto-recover (no password), the `/sync` controller emits a
    * loud, secret-free signal naming `channels.matrix.accessToken`. The daemon
@@ -165,12 +178,32 @@ export interface MatrixAdapterDeps {
 }
 
 /**
- * Create a Matrix adapter implementing the `ChannelPort` interface.
+ * The Matrix adapter handle. Extends the base `ChannelPort` with the media getters
+ * the plugin's resolver factory closes over: the started media client (mxc→http URL
+ * builder, access token, homeserver host) and the encrypted-file lookup (the bounded
+ * cache the inbound mapper writes). `getMediaClient` is `undefined` before `start()`,
+ * so a resolver built at wiring time errs cleanly rather than crashing.
+ */
+export interface MatrixAdapterHandle extends ChannelPort {
+  /** The started media client the resolver reads the authed URL/token/host from; undefined before start(). */
+  getMediaClient():
+    | {
+        mxcUrlToHttp: (...args: unknown[]) => string | null;
+        getAccessToken: () => string | null;
+        homeserverHost: string;
+      }
+    | undefined;
+  /** The cached encrypted-file record for an mxc (an E2EE room), or undefined on a miss. */
+  getEncryptedFile(mxc: string): EncryptedFileLike | undefined;
+}
+
+/**
+ * Create a Matrix adapter implementing the {@link MatrixAdapterHandle} interface.
  *
  * @param deps - Credentials, gating config, the state directory, and seams.
- * @returns A `ChannelPort` whose `connectionMode` is `"polling"`.
+ * @returns A `MatrixAdapterHandle` whose `connectionMode` is `"polling"`.
  */
-export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
+export function createMatrixAdapter(deps: MatrixAdapterDeps): MatrixAdapterHandle {
   const now = deps.now ?? systemNowMs;
   const stateStore = createMatrixStateStore(deps.stateDir, deps.logger);
   const handlers: MessageHandler[] = [];
@@ -194,6 +227,11 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
   // the bot's own annotation; deferred until a persistent removal is required.
   // Insertion-ordered so overflow eviction drops the oldest entry.
   const reactionEventIds = new Map<string, string>();
+
+  // The mxc→EncryptedFile key side-channel: the inbound mapper writes each encrypted
+  // media event's record here (via the wired callback) and the resolver reads it back
+  // to decrypt. Bounded; a miss is a clean undefined the resolver fails closed on.
+  const encryptedFileCache = createEncryptedFileCache();
 
   let connected = false;
   let startedAt: number | undefined;
@@ -348,7 +386,7 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
     deps.emitDecryptHealth?.({ roomId: signal.roomId, reason: verdict.kind });
   }
 
-  const adapter: ChannelPort = {
+  const adapter: MatrixAdapterHandle = {
     get channelId(): string {
       return channelId;
     },
@@ -444,6 +482,9 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
         onReaction: onSyncReaction,
         isDirectRoom: (room) => isRoomDirect(authedClient, room),
         logger: deps.logger,
+        // Inbound encrypted media routes its encrypted-file record here (keyed by
+        // mxc); the resolver reads it back to decrypt. Plaintext media never fires it.
+        cacheEncryptedFile: (mxc, file) => encryptedFileCache.set(mxc, file),
         // The bot MXID rides into the mapper so an inbound @-mention of the bot
         // sets the group @-gate key; conditionally spread so an empty id is omitted.
         ...(botUserId.length > 0 ? { botUserId } : {}),
@@ -583,6 +624,34 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
 
       lastError = undefined;
       return ok(lastEventId);
+    },
+
+    async sendAttachment(
+      roomId: string,
+      attachment: AttachmentPayload,
+      _options?: SendMessageOptions,
+    ): Promise<Result<string, Error>> {
+      if (client === undefined) {
+        const notReady = notStartedFailure(
+          "send an attachment",
+          "sendAttachment",
+          "attachment send",
+          deps.logger,
+        );
+        lastError = notReady.message;
+        return err(notReady);
+      }
+      // Thin delegator: the orchestration (read the temp file the shared outbound
+      // handler wrote → upload/encrypt → send the typed media event) lives in the
+      // internal helper; record lastError on failure so getStatus surfaces it.
+      const result = await runSendAttachment(client, roomId, attachment, {
+        readFileImpl: deps.readFileImpl,
+        encryptAttachment,
+        timer: deps.timer,
+        logger: deps.logger,
+      });
+      lastError = result.ok ? undefined : result.error.message;
+      return result;
     },
 
     async reactToMessage(
@@ -813,6 +882,24 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
         connectionMode: "polling",
         // Verification posture for e2ee channels; absent on the plaintext path.
         ...(lastVerification !== undefined ? { verification: lastVerification } : {}),
+      };
+    },
+
+    getEncryptedFile(mxc: string): EncryptedFileLike | undefined {
+      return encryptedFileCache.get(mxc);
+    },
+
+    getMediaClient() {
+      // Undefined until start() authenticates the client (mirrors the pre-start
+      // guards); the resolver then reads the authed URL builder, token, and host.
+      if (client === undefined) return undefined;
+      const activeClient = client;
+      return {
+        mxcUrlToHttp: activeClient.mxcUrlToHttp.bind(activeClient) as (
+          ...args: unknown[]
+        ) => string | null,
+        getAccessToken: () => activeClient.getAccessToken(),
+        homeserverHost: new URL(deps.homeserverUrl).hostname,
       };
     },
 

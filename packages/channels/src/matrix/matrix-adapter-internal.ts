@@ -15,6 +15,7 @@ import type { ComisLogger, SendMessageOptions, TimerPort } from "@comis/core";
 import { runWithContext } from "@comis/core";
 import { err, fromPromise, ok, type Result } from "@comis/shared";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { classifyMatrixError, type MatrixErrorInput } from "./errors.js";
 import {
   buildAttachmentContent,
@@ -361,4 +362,50 @@ export async function buildAndSendAttachment(
     prepared.value as unknown as TimelineEvents[EventType.RoomMessage],
     deps,
   );
+}
+
+/**
+ * Read the temp file the shared outbound handler wrote and send it as a typed media
+ * event (encrypting first in an encrypted room). The adapter's `sendAttachment` is a
+ * thin delegator over this — the orchestration (the read seam, the upload/encrypt via
+ * {@link buildAndSendAttachment}, and the classified secret-free failure warns) lives
+ * here so the controller stays within the per-file size cap. Neither the temp path
+ * contents nor the bytes are ever logged. Returns the sent event id on success.
+ */
+export async function runSendAttachment(
+  client: MatrixClient,
+  roomId: string,
+  attachment: { url: string; mimeType?: string; fileName?: string },
+  deps: {
+    readFileImpl?: (path: string) => Promise<Buffer>;
+    encryptAttachment: (bytes: Buffer) => Promise<EncryptedAttachmentParts>;
+    timer?: TimerPort;
+    logger: ComisLogger;
+  },
+): Promise<Result<string, Error>> {
+  const read = await fromPromise((deps.readFileImpl ?? readFile)(attachment.url));
+  if (!read.ok) {
+    deps.logger.warn(
+      {
+        channelType: "matrix" as const,
+        hint: "Verify the outbound attachment temp file exists and is readable",
+        errorKind: "resource" as const,
+      },
+      "Matrix attachment send blocked: could not read the attachment bytes",
+    );
+    return err(read.error);
+  }
+  const sent = await buildAndSendAttachment(
+    client,
+    roomId,
+    read.value,
+    attachment.mimeType ?? "application/octet-stream",
+    attachment.fileName ?? "file",
+    { encryptAttachment: deps.encryptAttachment, timer: deps.timer, logger: deps.logger },
+  );
+  if (!sent.ok) {
+    classifiedSendWarn(sent.error, "Matrix attachment send failed", deps.logger);
+    return err(sent.error);
+  }
+  return ok(sent.value.event_id);
 }
