@@ -18,7 +18,11 @@
 import { generateKeyPairSync, createSign } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type { ComisLogger } from "@comis/core";
-import { resolveTestGoogleChatVerifier } from "./googlechat-test-seams.js";
+import {
+  resolveTestGoogleChatVerifier,
+  resolveTestGoogleChatEgress,
+  GOOGLECHAT_TEST_API_ENV,
+} from "./googlechat-test-seams.js";
 
 /** The issuer of a project-number Chat-system event token. */
 const CHAT_SYSTEM_ISSUER = "chat@system.gserviceaccount.com";
@@ -310,5 +314,97 @@ describe("resolveTestGoogleChatVerifier — unreadable/malformed JWKS file (fail
     const warnArg = warn.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(warnArg).toMatchObject({ channelType: "googlechat", errorKind: "config" });
     expect(String(warnArg.hint)).toContain("COMIS_GOOGLECHAT_TEST_JWKS");
+  });
+});
+
+describe("resolveTestGoogleChatEgress — off-by-default outbound egress redirect (COMIS_GOOGLECHAT_TEST_API)", () => {
+  it("env unset ⇒ returns undefined and logs no WARN (production endpoints, byte-identical)", () => {
+    const { logger, warn } = makeLoggerSpy();
+    const getEnv = (_k: string): string | undefined => undefined;
+    const egress = resolveTestGoogleChatEgress(getEnv, { logger });
+    expect(egress).toBeUndefined();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("env empty-string ⇒ returns undefined and logs no WARN", () => {
+    const { logger, warn } = makeLoggerSpy();
+    const getEnv = (k: string): string | undefined =>
+      k === GOOGLECHAT_TEST_API_ENV ? "" : undefined;
+    const egress = resolveTestGoogleChatEgress(getEnv, { logger });
+    expect(egress).toBeUndefined();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("env set to a loopback base ⇒ returns the three derived base URLs + exactly one content-free WARN", () => {
+    const { logger, warn, serialized } = makeLoggerSpy();
+    const getEnv = (k: string): string | undefined =>
+      k === GOOGLECHAT_TEST_API_ENV ? "http://127.0.0.1:53998" : undefined;
+
+    const egress = resolveTestGoogleChatEgress(getEnv, { logger });
+
+    // One loopback base fans out to the three outbound legs (Chat REST, Pub/Sub
+    // pull, token mint), each on a distinct path prefix so one emulator serves all
+    // three — the same layout the offline scenario injects.
+    expect(egress).toEqual({
+      chatBaseUrl: "http://127.0.0.1:53998/chat/v1",
+      pubsubBaseUrl: "http://127.0.0.1:53998/pubsub/v1",
+      tokenUrl: "http://127.0.0.1:53998/token",
+    });
+    // Exactly one activation WARN, content-free: it names the env var, never the
+    // resolved loopback value.
+    expect(warn).toHaveBeenCalledTimes(1);
+    const warnArg = warn.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(warnArg).toMatchObject({ channelType: "googlechat", errorKind: "config" });
+    expect(String(warnArg.hint)).toContain("COMIS_GOOGLECHAT_TEST_API");
+    expect(serialized()).not.toContain("127.0.0.1");
+  });
+
+  it("normalizes a trailing slash on the base before deriving the three suffixes", () => {
+    const { logger } = makeLoggerSpy();
+    const getEnv = (k: string): string | undefined =>
+      k === GOOGLECHAT_TEST_API_ENV ? "http://127.0.0.1:53998/" : undefined;
+    const egress = resolveTestGoogleChatEgress(getEnv, { logger });
+    expect(egress).toEqual({
+      chatBaseUrl: "http://127.0.0.1:53998/chat/v1",
+      pubsubBaseUrl: "http://127.0.0.1:53998/pubsub/v1",
+      tokenUrl: "http://127.0.0.1:53998/token",
+    });
+  });
+
+  it("reads ONLY via the injected getter — never the ambient process environment", () => {
+    const seen: string[] = [];
+    const getEnv = (k: string): string | undefined => {
+      seen.push(k);
+      return k === GOOGLECHAT_TEST_API_ENV ? "http://127.0.0.1:41000" : undefined;
+    };
+    const egress = resolveTestGoogleChatEgress(getEnv);
+    expect(egress).toBeDefined();
+    // The only env key consulted is the documented seam var, through the injected
+    // getter (globals.test.ts separately proves no direct process.env in src).
+    expect(seen).toContain(GOOGLECHAT_TEST_API_ENV);
+  });
+
+  it("resolves with no deps bag at all (logger optional)", () => {
+    const getEnv = (k: string): string | undefined =>
+      k === GOOGLECHAT_TEST_API_ENV ? "http://127.0.0.1:41000" : undefined;
+    expect(() => resolveTestGoogleChatEgress(getEnv)).not.toThrow();
+  });
+
+  it("malformed base URL ⇒ fails closed to production (undefined) + a config WARN naming the env var, never a boot crash", () => {
+    // An uncaught throw here would run inside the unwrapped bootstrapAdapters and
+    // fail daemon boot; the seam is off-by-default and test-only, so a bad value
+    // must degrade to production, not crash — mirroring the JWKS seam's fail-closed.
+    const { logger, warn } = makeLoggerSpy();
+    const getEnv = (k: string): string | undefined =>
+      k === GOOGLECHAT_TEST_API_ENV ? "not-a-url" : undefined;
+    let egress: ReturnType<typeof resolveTestGoogleChatEgress> | undefined;
+    expect(() => {
+      egress = resolveTestGoogleChatEgress(getEnv, { logger });
+    }).not.toThrow();
+    expect(egress).toBeUndefined();
+    expect(warn).toHaveBeenCalledTimes(1);
+    const warnArg = warn.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(warnArg).toMatchObject({ channelType: "googlechat", errorKind: "config" });
+    expect(String(warnArg.hint)).toContain("COMIS_GOOGLECHAT_TEST_API");
   });
 });

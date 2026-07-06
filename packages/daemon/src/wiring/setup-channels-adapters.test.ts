@@ -817,6 +817,66 @@ describe("bootstrapAdapters", () => {
     );
   });
 
+  it("threads the COMIS_GOOGLECHAT_TEST_API egress redirect into the plugin base URLs (pubsub mode)", async () => {
+    const saKey = '{"private_key":"pk","client_email":"bot@proj.iam.gserviceaccount.com"}';
+    const env = {
+      get: vi.fn((k: string) =>
+        k === "COMIS_GOOGLECHAT_TEST_API" ? "http://127.0.0.1:53998" : undefined,
+      ),
+    } as unknown as EnvPort;
+    const container = makeContainer({
+      googlechat: { enabled: true, serviceAccountKey: saKey, subscriptionName: "projects/p/subscriptions/s", mode: "pubsub" },
+    });
+    await bootstrapAdapters({ container, channelsLogger, env });
+
+    // Set ⇒ the adapter's Chat / Pub-Sub / token egress is redirected at the
+    // loopback emulator via the three base-URL overrides.
+    expect(createGoogleChatPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatBaseUrl: "http://127.0.0.1:53998/chat/v1",
+        pubsubBaseUrl: "http://127.0.0.1:53998/pubsub/v1",
+        tokenUrl: "http://127.0.0.1:53998/token",
+      }),
+    );
+  });
+
+  it("threads the egress redirect into the plugin base URLs in webhook mode too (send + token mint still route to the emulator)", async () => {
+    const saKey = '{"private_key":"pk","client_email":"bot@proj.iam.gserviceaccount.com"}';
+    const env = {
+      get: vi.fn((k: string) =>
+        k === "COMIS_GOOGLECHAT_TEST_API" ? "http://127.0.0.1:53998" : undefined,
+      ),
+    } as unknown as EnvPort;
+    const container = makeContainer({
+      googlechat: { enabled: true, serviceAccountKey: saKey, mode: "webhook", audienceType: "project-number", audience: "1234567890" },
+    });
+    await bootstrapAdapters({ container, channelsLogger, env });
+
+    expect(createGoogleChatPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatBaseUrl: "http://127.0.0.1:53998/chat/v1",
+        pubsubBaseUrl: "http://127.0.0.1:53998/pubsub/v1",
+        tokenUrl: "http://127.0.0.1:53998/token",
+      }),
+    );
+  });
+
+  it("leaves the plugin on production endpoints when COMIS_GOOGLECHAT_TEST_API is unset (no base-URL override)", async () => {
+    const saKey = '{"private_key":"pk","client_email":"bot@proj.iam.gserviceaccount.com"}';
+    const env = { get: vi.fn(() => undefined) } as unknown as EnvPort;
+    const container = makeContainer({
+      googlechat: { enabled: true, serviceAccountKey: saKey, subscriptionName: "projects/p/subscriptions/s" },
+    });
+    await bootstrapAdapters({ container, channelsLogger, env });
+
+    // Unset ⇒ no override reaches the plugin; the adapter keeps Google's real
+    // Chat / Pub-Sub / token endpoints (byte-identical to production).
+    const deps = vi.mocked(createGoogleChatPlugin).mock.calls[0]![0] as Record<string, unknown>;
+    expect(deps.chatBaseUrl).toBeUndefined();
+    expect(deps.pubsubBaseUrl).toBeUndefined();
+    expect(deps.tokenUrl).toBeUndefined();
+  });
+
   it("resolves the key from GOOGLECHAT_SA_KEY when config serviceAccountKey is absent", async () => {
     const container = makeContainer(
       { googlechat: { enabled: true, subscriptionName: "projects/p/subscriptions/s" } },
