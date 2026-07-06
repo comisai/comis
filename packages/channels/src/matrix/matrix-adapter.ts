@@ -32,7 +32,7 @@
  * @module
  */
 
-import { Direction, EventType, type MatrixClient, type Room, type TimelineEvents } from "matrix-js-sdk";
+import { Direction, EventType, type MatrixClient, type TimelineEvents } from "matrix-js-sdk";
 import * as sdk from "matrix-js-sdk";
 import type {
   ChannelPort,
@@ -73,77 +73,26 @@ import {
   type MatrixThreadRelation,
 } from "./matrix-adapter-outbound.js";
 import { classifyDecryptDegrade, type DecryptDegradeKind } from "./decrypt-degrade.js";
-import { classifyMatrixError, type MatrixErrorInput } from "./errors.js";
+import { classifyMatrixError } from "./errors.js";
 import { extractMentions } from "./mentions.js";
 import { decodeMatrixAction } from "./matrix-actions.js";
 
-/**
- * The senderId a synthesized decrypt-degrade note carries. Deliberately NOT a
- * user MXID (no leading `@`) so it can never be mistaken for — or spoof — a real
- * room member, and the full-MXID speaker allowlist could never accidentally admit
- * it. The note bypasses the speaker gate anyway (it is delivered via fanOut).
- */
-const DEGRADE_NOTE_SENDER = "system";
+// The pure/parameterized helpers + tuning constants live in the internal module
+// so this controller stays within the per-file size cap; call sites are unchanged.
+import {
+  DEGRADE_NOTE_SENDER,
+  MAX_TRACKED_REACTIONS,
+  MATRIX_TYPING_TIMEOUT_MS,
+  reactionKey,
+  resolveThreadRootId,
+  toMatrixErrorInput,
+  isRoomDirect,
+  sendEventWithRetry,
+} from "./matrix-adapter-internal.js";
 
-/**
- * Upper bound on the per-session retained-reaction map (see {@link reactionKey}).
- * The intended caller adds and removes a reaction within one session, so the map
- * normally stays tiny; this cap guards against unbounded growth if a caller ever
- * reacts without removing. The oldest entry is evicted on overflow — a redact for
- * an evicted key then degrades to the idempotent not-found path.
- */
-export const MAX_TRACKED_REACTIONS = 1000;
-
-/** The retained-reaction map key: one entry per (room, target message, emoji). */
-function reactionKey(roomId: string, messageId: string, emoji: string): string {
-  return `${roomId}|${messageId}|${emoji}`;
-}
-
-/**
- * The `/typing` timeout the adapter tells the homeserver a typing notice lasts.
- * The orchestrator refreshes at a shorter interval so a keepalive re-sends before
- * this expiry — the notice never lapses mid-turn, and it self-clears if the
- * process dies (no dangling "typing…" indicator).
- */
-const MATRIX_TYPING_TIMEOUT_MS = 30_000;
-
-/**
- * Retries a rate-limited chunk send makes on top of the first attempt before
- * surfacing the failure. Only a retryable classification (429 / M_LIMIT_EXCEEDED,
- * or a 5xx) re-attempts; a non-retryable error stops immediately.
- */
-const MATRIX_SEND_MAX_RETRIES = 4;
-/** Exponential-backoff base + ceiling (ms) for a retryable chunk resend. */
-const MATRIX_SEND_BACKOFF_BASE_MS = 500;
-const MATRIX_SEND_BACKOFF_CAP_MS = 8_000;
-
-/**
- * Resolve the thread-root event id a send should relate to, if any. An explicit
- * `threadId` (the thread-root event id) wins; otherwise a `threadReply` roots the
- * thread at the replied-to event. Absent both, the send is top-level.
- */
-function resolveThreadRootId(options?: SendMessageOptions): string | undefined {
-  if (typeof options?.threadId === "string" && options.threadId.length > 0) {
-    return options.threadId;
-  }
-  if (
-    options?.threadReply === true &&
-    typeof options?.replyTo === "string" &&
-    options.replyTo.length > 0
-  ) {
-    return options.replyTo;
-  }
-  return undefined;
-}
-
-/** Extract the classifier's normalized fields from a thrown/reported SDK error. */
-function toMatrixErrorInput(cause: unknown): MatrixErrorInput {
-  const e = cause as { errcode?: unknown; httpStatus?: unknown } | null;
-  const input: MatrixErrorInput = { cause };
-  if (e !== null && typeof e.errcode === "string") input.errcode = e.errcode;
-  if (e !== null && typeof e.httpStatus === "number") input.status = e.httpStatus;
-  return input;
-}
+// MAX_TRACKED_REACTIONS stays on the adapter's public surface (asserted by the
+// adapter test); re-export the value the internal module now owns.
+export { MAX_TRACKED_REACTIONS };
 
 /**
  * Dependencies for the Matrix adapter. Secrets are resolved to plain strings by
@@ -210,21 +159,6 @@ export interface MatrixAdapterDeps {
    * fires; only the obs mirror is skipped.
    */
   emitDecryptHealth?: (signal: { roomId: string; reason: DecryptDegradeKind }) => void;
-}
-
-/**
- * Whether a room is a direct (1:1) conversation, read from the client's
- * `m.direct` account data (each other-party MXID maps to the direct room ids
- * shared with them). Drives the mapper's `chatType: "dm"` classification; a room
- * absent from `m.direct` is a group. Pure over the client's account-data store.
- */
-function isRoomDirect(client: MatrixClient, room: Room): boolean {
-  const direct = client.getAccountData(EventType.Direct);
-  if (!direct) return false;
-  const content = direct.getContent() as Record<string, unknown>;
-  return Object.values(content).some(
-    (rooms) => Array.isArray(rooms) && (rooms as unknown[]).includes(room.roomId),
-  );
 }
 
 /**
@@ -462,51 +396,6 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
     deps.emitDecryptHealth?.({ roomId: signal.roomId, reason: verdict.kind });
   }
 
-  /**
-   * Send one already-built content object, retrying a rate-limited (429) or
-   * transient (5xx) failure with bounded exponential backoff on the injected
-   * timer. A non-retryable failure — or an exhausted retry budget, or no injected
-   * timer — surfaces the error to the caller. The backoff never uses a raw timer;
-   * with no timer the send makes a single attempt (honest degrade).
-   */
-  async function sendEventWithRetry(
-    activeClient: MatrixClient,
-    roomId: string,
-    content: TimelineEvents[EventType.RoomMessage],
-  ): Promise<Result<{ event_id: string }, Error>> {
-    for (let attempt = 0; ; attempt++) {
-      const sent = await fromPromise(
-        activeClient.sendEvent(roomId, EventType.RoomMessage, content),
-      );
-      if (sent.ok) return ok(sent.value);
-
-      const classified = classifyMatrixError(toMatrixErrorInput(sent.error));
-      const timer = deps.timer;
-      if (!classified.retryable || attempt >= MATRIX_SEND_MAX_RETRIES || timer === undefined) {
-        return err(sent.error);
-      }
-      const delayMs = Math.min(
-        MATRIX_SEND_BACKOFF_BASE_MS * 2 ** attempt,
-        MATRIX_SEND_BACKOFF_CAP_MS,
-      );
-      deps.logger.debug(
-        {
-          channelType: "matrix" as const,
-          step: "channels-outbound",
-          attempt: attempt + 1,
-          durationMs: delayMs,
-          hint: classified.hint,
-          errorKind: classified.errorKind,
-        },
-        "Matrix chunk send retry scheduled after a retryable status",
-      );
-      await new Promise<void>((resolve) => {
-        const handle = timer.setTimeout(() => resolve(), delayMs);
-        handle.unref();
-      });
-    }
-  }
-
   const adapter: ChannelPort = {
     get channelId(): string {
       return channelId;
@@ -717,6 +606,7 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
           activeClient,
           roomId,
           content as unknown as TimelineEvents[EventType.RoomMessage],
+          { timer: deps.timer, logger: deps.logger },
         );
         if (!sent.ok) {
           lastError = sent.error.message;
