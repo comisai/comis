@@ -255,3 +255,60 @@ describe("resolveTestGoogleChatVerifier — local-JWKS seam path (COMIS_GOOGLECH
     expect((await verify(`Bearer ${googleToken}`)).ok).toBe(false);
   });
 });
+
+describe("resolveTestGoogleChatVerifier — unreadable/malformed JWKS file (fail-closed to production, never crash boot)", () => {
+  it("does not throw when the JWKS file is unreadable; falls back to the production verifier + a config WARN naming the env var", async () => {
+    // readFileImpl throwing simulates ENOENT/EACCES — the seam must not let that
+    // propagate out of bootstrapAdapters and fail daemon boot.
+    const readFileImpl = vi.fn((_p: string): string => {
+      throw new Error("ENOENT: no such file or directory");
+    });
+    const { logger, warn, serialized } = makeLoggerSpy();
+    const getEnv = (k: string): string | undefined =>
+      k === "COMIS_GOOGLECHAT_TEST_JWKS" ? "/seam/missing.jwks.json" : undefined;
+
+    let verify: ReturnType<typeof resolveTestGoogleChatVerifier> | undefined;
+    expect(() => {
+      verify = resolveTestGoogleChatVerifier(
+        { audienceType: "project-number", audience: "1234567890" },
+        getEnv,
+        { readFileImpl, logger },
+      );
+    }).not.toThrow();
+
+    // A usable verifier is still returned — the production remote-JWKS one.
+    expect(typeof verify).toBe("function");
+    expect((await verify!(undefined)).ok).toBe(false);
+
+    // A single config-errorKind WARN names the env var and the fallback.
+    expect(warn).toHaveBeenCalledTimes(1);
+    const warnArg = warn.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(warnArg).toMatchObject({ channelType: "googlechat", errorKind: "config" });
+    expect(String(warnArg.hint)).toContain("COMIS_GOOGLECHAT_TEST_JWKS");
+    // Content-free: the read path is not echoed into the WARN structured fields.
+    expect(serialized()).not.toContain("/seam/missing.jwks.json");
+  });
+
+  it("does not throw when the JWKS file is not valid JSON; falls back to the production verifier + a config WARN", async () => {
+    const readFileImpl = vi.fn((_p: string): string => "not-json{{{");
+    const { logger, warn } = makeLoggerSpy();
+    const getEnv = (k: string): string | undefined =>
+      k === "COMIS_GOOGLECHAT_TEST_JWKS" ? "/seam/garbage.jwks.json" : undefined;
+
+    let verify: ReturnType<typeof resolveTestGoogleChatVerifier> | undefined;
+    expect(() => {
+      verify = resolveTestGoogleChatVerifier(
+        { audienceType: "app-url", audience: "https://example.com/app/" },
+        getEnv,
+        { readFileImpl, logger },
+      );
+    }).not.toThrow();
+
+    expect(typeof verify).toBe("function");
+    expect((await verify!(undefined)).ok).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
+    const warnArg = warn.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(warnArg).toMatchObject({ channelType: "googlechat", errorKind: "config" });
+    expect(String(warnArg.hint)).toContain("COMIS_GOOGLECHAT_TEST_JWKS");
+  });
+});
