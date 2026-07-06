@@ -493,3 +493,32 @@ describe("evaluateVerdict — the pure blocking predicate", () => {
     expect(evaluateVerdict({ ...base, scanStatus: "not-run", reasons: ["note:informational"] }).blocked).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// evaluateVerdict — reason matching is token-exact, not raw substring: a benign
+// reason that merely CONTAINS a blocking substring must not over-block, while a
+// reason whose delimited token IS a blocking keyword still blocks (no under-block).
+// ---------------------------------------------------------------------------
+
+describe("evaluateVerdict — reason matching is token-exact, not substring", () => {
+  const base = { ok: true, decision: "pass", blockedFromDownload: false, reasons: [] as readonly string[] };
+
+  it("does NOT over-block a benign reason that merely contains a blocking substring", () => {
+    expect(evaluateVerdict({ ...base, reasons: ["no-malicious-content-found"] }).blocked).toBe(false);
+    expect(evaluateVerdict({ ...base, reasons: ["malware-scan-passed"] }).blocked).toBe(false);
+    expect(evaluateVerdict({ ...base, reasons: ["unblocked"] }).blocked).toBe(false);
+  });
+
+  it("still blocks a reason whose delimited token IS a blocking keyword", () => {
+    for (const reason of [
+      "scan:malicious",
+      "static:malware",
+      "policy_blocked",
+      "moderation.blocked",
+      "blocked",
+      "malicious:high-confidence",
+    ]) {
+      expect(evaluateVerdict({ ...base, reasons: [reason] }).blocked).toBe(true);
+    }
+  });
+});
