@@ -91,8 +91,8 @@ describe("createMatrixPlugin", () => {
     const { features, limits, replyToMetaKey } = plugin.capabilities;
 
     expect(features.reactions).toBe(true);
-    expect(features.editMessages).toBe(false);
-    expect(features.deleteMessages).toBe(false);
+    expect(features.editMessages).toBe(true);
+    expect(features.deleteMessages).toBe(true);
     expect(features.fetchHistory).toBe(true);
     expect(features.attachments).toBe(false);
     expect(features.typing).toBe(true);

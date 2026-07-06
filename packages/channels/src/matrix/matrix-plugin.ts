@@ -8,15 +8,15 @@
  * replies (an `m.thread` relation, with over-budget content split into
  * byte-bounded sequential events), and typing (a `/typing` notice via
  * `platformAction`, refreshed before its timeout) are real and declared true.
- * Edits (send an `m.replace`), deletes (redact the target), and honest inbound
- * edit/redaction surfacing are implemented too, but `editMessages`/`deleteMessages`
- * stay false for now: flipping `editMessages` routes rendering to the edit-in-place
- * strategy, which needs the activity renderer wired in lockstep, so until then the
- * capability gate simply does not admit these calls (a safe under-declaration — a
- * false flag never advertises a missing behavior). Attachments are not yet
- * implemented and stay false; Matrix exposes no button surface (`buttons: "none"`).
- * `selectStrategy(caps)` routes rendering from these flags, so flipping one on
- * advertises a behavior the adapter genuinely performs.
+ * Edits (send an `m.replace`) and deletes (redact the target) are declared true
+ * TOGETHER: `selectStrategy` routes on `editMessages` first, so both flip in
+ * lockstep with the edit-in-place activity renderer — `editMessages: true` routes
+ * rendering to that strategy (an approval/status frame edits the same event
+ * rather than reposting), and `deleteMessages` never reaches the repost path.
+ * Attachments are not yet implemented and stay false; Matrix exposes no button
+ * surface (`buttons: "none"`), so approval frames degrade to text. `selectStrategy(caps)`
+ * routes rendering from these flags, so each true flag advertises a behavior the
+ * adapter genuinely performs.
  *
  * The plugin declares metadata and delegates its lifecycle: `activate()` starts
  * the adapter, `deactivate()` stops it. There is no media resolver this scope.
@@ -32,8 +32,8 @@ import { createMatrixAdapter, type MatrixAdapterDeps } from "./matrix-adapter.js
 const CAPABILITIES: ChannelCapability = {
   features: {
     reactions: true,
-    editMessages: false,
-    deleteMessages: false,
+    editMessages: true,
+    deleteMessages: true,
     fetchHistory: true,
     attachments: false,
     typing: true,
