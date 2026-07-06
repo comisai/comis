@@ -169,7 +169,7 @@ describe("chunkBySerializedBytes", () => {
 
   it("splits a plain over-budget message into in-budget chunks (no markup needed)", () => {
     // A long plain message with word boundaries splits at those boundaries.
-    const md = ("word ".repeat(20000)).trimEnd();
+    const md = ("word ".repeat(7000)).trimEnd();
     const budget = MATRIX_EVENT_BYTE_BUDGET;
     expect(serializedBytes(buildTextMessageContent(md))).toBeGreaterThan(budget);
 

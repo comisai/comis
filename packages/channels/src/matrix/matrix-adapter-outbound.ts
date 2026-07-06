@@ -82,3 +82,176 @@ export function buildReactionContent(messageId: string, emoji: string): MatrixRe
     },
   };
 }
+
+/**
+ * An `m.thread` relation to a thread root, carrying the spec reply fallback so a
+ * client that does not render threads still shows the message as a reply to the
+ * root. Snake-cased to match the Matrix event content wire shape.
+ */
+export interface MatrixThreadRelation {
+  /** Always `m.thread` for a threaded reply. */
+  rel_type: "m.thread";
+  /** The thread-root event id the reply hangs under. */
+  event_id: string;
+  /**
+   * `true`: this relation is ALSO a reply fallback. A non-threaded client reads
+   * `m.in_reply_to` and renders a plain reply to the root rather than dropping
+   * the message.
+   */
+  is_falling_back: boolean;
+  /** The reply-fallback target — the same thread root, for non-threaded clients. */
+  "m.in_reply_to": { event_id: string };
+}
+
+/**
+ * Build the `m.thread` relation for a threaded reply rooted at `threadRootId`.
+ *
+ * The relation carries the reply fallback (`is_falling_back` + `m.in_reply_to`)
+ * so a client that ignores threads still renders the message as a reply to the
+ * thread root instead of dropping it. Pure and SDK-free — the caller merges the
+ * returned object into the message content under `m.relates_to`.
+ *
+ * @param threadRootId - The event id of the thread root the reply hangs under.
+ * @returns The `m.thread` relation object.
+ */
+export function buildThreadRelation(threadRootId: string): MatrixThreadRelation {
+  return {
+    rel_type: "m.thread",
+    event_id: threadRootId,
+    is_falling_back: true,
+    "m.in_reply_to": { event_id: threadRootId },
+  };
+}
+
+/**
+ * The per-event serialized-byte budget an outbound message is chunked against.
+ *
+ * A Matrix federated PDU is capped at 64 KiB; this budget leaves headroom (of
+ * that cap) for the event envelope the homeserver adds around the content the
+ * adapter controls. Chunking measures the SERIALIZED content bytes (`body` +
+ * `formatted_body` + any relation), not the character count — the HTML
+ * `formatted_body` roughly doubles the plaintext, so a char-count-bounded chunk
+ * overflows the federation cap on HTML-heavy content and the homeserver rejects
+ * the event mid-turn.
+ */
+export const MATRIX_EVENT_BYTE_BUDGET = 48 * 1024;
+
+/** The serialized byte size of a built content object (UTF-8). */
+function contentBytes(content: MatrixTextMessageContent): number {
+  return Buffer.byteLength(JSON.stringify(content));
+}
+
+/**
+ * Whether a candidate markdown slice, once rendered to a content object, fits
+ * the budget with room reserved for a relation the caller will merge in.
+ */
+function sliceFits(markdown: string, budgetBytes: number, relationReserveBytes: number): boolean {
+  return contentBytes(buildTextMessageContent(markdown)) + relationReserveBytes <= budgetBytes;
+}
+
+/**
+ * Hard-split a single token that alone exceeds the budget (a pathological run of
+ * non-whitespace, e.g. a very long URL) into per-code-point pieces that each fit.
+ * The last resort under the paragraph→line→word hierarchy: only reached when no
+ * whitespace boundary is available.
+ */
+function hardSplitToken(
+  token: string,
+  budgetBytes: number,
+  relationReserveBytes: number,
+): string[] {
+  const pieces: string[] = [];
+  let buf = "";
+  for (const ch of token) {
+    const candidate = buf + ch;
+    if (sliceFits(candidate, budgetBytes, relationReserveBytes)) {
+      buf = candidate;
+      continue;
+    }
+    if (buf.length > 0) pieces.push(buf);
+    buf = ch;
+    // A single code point that cannot fit even alone (a budget smaller than one
+    // rendered char) is emitted as-is rather than looping forever.
+    if (!sliceFits(buf, budgetBytes, relationReserveBytes)) {
+      pieces.push(buf);
+      buf = "";
+    }
+  }
+  if (buf.length > 0) pieces.push(buf);
+  return pieces;
+}
+
+/**
+ * Split an outbound markdown message into `m.text` content objects, each bounded
+ * by SERIALIZED event bytes (not character count).
+ *
+ * Each returned content satisfies
+ * `Buffer.byteLength(JSON.stringify(content)) + relationReserveBytes <= budgetBytes`,
+ * so once the caller merges a reserved-for `m.relates_to` relation into a chunk
+ * the resulting event still fits under the federation cap. A message that
+ * already fits is returned as exactly ONE content (never over-split); the
+ * splitter greedily packs whitespace-delimited tokens (preferring paragraph →
+ * line → word boundaries, which fall out of packing tokens with their original
+ * separators) and only hard-splits a token that cannot fit alone. An empty chunk
+ * is never emitted.
+ *
+ * The size of each candidate is measured on the RENDERED content, so whatever
+ * the markdown renderer does to a slice (HTML expansion, escaping) is counted
+ * exactly — the bound holds regardless of markup density.
+ *
+ * @param markdown - The agent's markdown text.
+ * @param budgetBytes - The per-event serialized-byte budget. Defaults to
+ *   {@link MATRIX_EVENT_BYTE_BUDGET}.
+ * @param relationReserveBytes - Bytes to reserve in every chunk for an
+ *   `m.relates_to` relation the caller merges in afterward (0 when none).
+ * @returns One or more `m.text` content objects, each within budget.
+ */
+export function chunkBySerializedBytes(
+  markdown: string,
+  budgetBytes: number = MATRIX_EVENT_BYTE_BUDGET,
+  relationReserveBytes = 0,
+): MatrixTextMessageContent[] {
+  const text = markdown ?? "";
+
+  // Fast path: a message that already fits is one content — never over-split,
+  // even when empty (preserves single-event send behavior for short messages).
+  if (sliceFits(text, budgetBytes, relationReserveBytes)) {
+    return [buildTextMessageContent(text)];
+  }
+
+  // Tokenize keeping the whitespace separators so re-joining reconstructs the
+  // text faithfully; splitting only ever falls on a whitespace boundary (or,
+  // as a last resort, inside an over-long token).
+  const tokens = text.split(/(\s+)/).filter((t) => t.length > 0);
+  const slices: string[] = [];
+  let current = "";
+
+  const flush = (): void => {
+    if (current.trim().length > 0) slices.push(current);
+    current = "";
+  };
+
+  for (const token of tokens) {
+    if (sliceFits(current + token, budgetBytes, relationReserveBytes)) {
+      current += token;
+      continue;
+    }
+    // Adding this token overflows the current slice — close it out.
+    flush();
+    if (sliceFits(token, budgetBytes, relationReserveBytes)) {
+      current = token;
+      continue;
+    }
+    // The token alone exceeds the budget: hard-split it, keeping the final
+    // piece open so subsequent tokens continue packing into it.
+    const pieces = hardSplitToken(token, budgetBytes, relationReserveBytes);
+    for (let i = 0; i < pieces.length - 1; i++) slices.push(pieces[i]);
+    current = pieces[pieces.length - 1] ?? "";
+  }
+  flush();
+
+  // Guarantee at least one content (defensive: the fast path already handles a
+  // fitting/empty message, so a non-empty over-budget input always yields ≥1).
+  const nonEmpty = slices.filter((s) => s.length > 0);
+  return (nonEmpty.length > 0 ? nonEmpty : [text]).map(buildTextMessageContent);
+}
