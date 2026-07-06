@@ -64,6 +64,7 @@ import { runBundleInstallHook } from "../skills/bundle-install-helper.js";
 import { unwindImportedSkillOnDelete, repinLocallyModifiedSkill } from "../skills/skill-provenance-hooks.js";
 import {
   importThroughPipeline,
+  resolveWellKnownFileSet,
   uploadFileSetIdentifier,
   archiveBytesIdentifier,
   formatImportReject,
@@ -300,6 +301,8 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       let acquireInput: AcquireInput;
       let acqSource: AcquisitionSource;
       let identifier: string;
+      // Set ONLY for a registry source — threaded into provenance below.
+      let registryOrigin: string | undefined;
       const isArchive =
         params.source === "archive" ||
         params.archiveUrl !== undefined ||
@@ -316,6 +319,29 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
           throw new Error("Archive import requires archiveUrl or archiveBytes");
         }
         acqSource = "archive";
+      } else if (params.source === "wellknown") {
+        // Registry import: the runner's allowlist gate (fail-closed, before any
+        // fetch) + the SSRF-pinned resolver produce the file set; it then enters
+        // the SAME staged pipeline as every other source (never a parallel path).
+        const registry = (params.registry ?? "").trim();
+        if (!registry) {
+          throw new Error("A registry import requires 'registry' (the registry origin, e.g. https://registry.example).");
+        }
+        const registryName = (params.name ?? "").trim();
+        if (!registryName) {
+          throw new Error("A registry import requires 'name' (which advertised skill to fetch from the registry index).");
+        }
+        const resolved = await resolveWellKnownFileSet(deps, {
+          registry,
+          name: registryName,
+          scope,
+          agentId: callingAgentId,
+        });
+        if (!resolved.ok) throw new Error(formatImportReject(resolved.error));
+        acquireInput = { kind: "fileSet", files: resolved.value.files };
+        identifier = resolved.value.identifier;
+        registryOrigin = resolved.value.registryOrigin;
+        acqSource = "wellknown";
       } else {
         const url = (params.url ?? "").trim();
         if (!url) {
@@ -364,6 +390,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         agentId: callingAgentId,
         skillsDir: importBaseDir,
         ...(params.confirm !== undefined && { confirm: params.confirm }),
+        ...(registryOrigin !== undefined && { registry: registryOrigin }),
         ctx: importCtx,
       });
       if (!imported.ok) throw new Error(formatImportReject(imported.error));

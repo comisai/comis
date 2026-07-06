@@ -138,6 +138,8 @@ export async function importThroughPipeline(
     agentId: string;
     skillsDir: string;
     confirm?: boolean;
+    /** Normalized registry origin — recorded in provenance (wellknown/clawhub only). */
+    registry?: string;
     ctx: ImportCtx;
   },
 ): Promise<Result<RetrofitImportResult, ImportReject>> {
@@ -155,6 +157,7 @@ export async function importThroughPipeline(
       scope: args.scope,
       agentId: args.agentId,
       ...(args.confirm !== undefined && { confirm: args.confirm }),
+      ...(args.registry !== undefined && { registry: args.registry }),
     },
     importDeps,
   );
@@ -200,7 +203,6 @@ export interface ResolveWellKnownFileSetArgs {
   readonly name: string;
   readonly scope: SkillScope;
   readonly agentId: string;
-  readonly ctx?: ImportCtx;
   /**
    * Test-only overrides forwarded verbatim to {@link resolveWellKnown}. Production
    * omits — the real SSRF validate/fetch primitives + an on-disk index cache run.
