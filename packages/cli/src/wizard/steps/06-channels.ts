@@ -13,6 +13,7 @@
  * @module
  */
 
+import { existsSync, readFileSync } from "node:fs";
 import type {
   WizardState,
   WizardStep,
@@ -513,6 +514,83 @@ async function handleMsTeams(
 }
 
 /**
+ * Resolve a service-account key from either a path to the JSON key file or the
+ * pasted JSON itself. When the input names an existing file it is read;
+ * otherwise it is treated as the JSON blob verbatim. The value is never logged.
+ */
+function readServiceAccountKey(input: string): string {
+  const trimmed = input.trim();
+  if (trimmed.length > 0 && existsSync(trimmed)) {
+    return readFileSync(trimmed, "utf-8");
+  }
+  return input;
+}
+
+/**
+ * Collect Google Chat bot credentials.
+ *
+ * Google Chat authenticates with a service-account key (a JSON blob that mints a
+ * scoped JWT bearer), not a single bot token. The default inbound transport is a
+ * Pub/Sub pull loop (no public IP); an opt-in verified webhook is the
+ * alternative. The key is format-checked only (parseable JSON carrying
+ * client_email + private_key) and returned validated:false — the daemon surfaces
+ * an honest auth error at first use if it is wrong. The raw key is never echoed.
+ */
+async function handleGoogleChat(
+  prompter: WizardPrompter,
+): Promise<ChannelConfig | null> {
+  prompter.note(sectionSeparator("Google Chat Setup"));
+  prompter.note(
+    info("Create a Chat app + service account (Google Cloud console), download its key, and set up a Pub/Sub topic + subscription (pull mode)."),
+  );
+
+  const keyInput = await prompter.text({
+    message: "Service-account key (path to the JSON key file, or paste the JSON)",
+    validate: (v: string) => {
+      if (typeof v !== "string") return undefined;
+      const result = validateChannelCredential(
+        "googlechat",
+        "serviceAccountKey",
+        readServiceAccountKey(v),
+      );
+      return result?.message;
+    },
+  });
+  const serviceAccountKey = readServiceAccountKey(keyInput);
+
+  const mode = await prompter.select<"pubsub" | "webhook">({
+    message: "Inbound transport",
+    options: [
+      { value: "pubsub", label: "Pub/Sub pull", hint: "No public IP (recommended)" },
+      { value: "webhook", label: "Verified webhook", hint: "Inbound over the gateway ingress" },
+    ],
+    initialValue: "pubsub",
+  });
+
+  if (mode === "webhook") {
+    const audience = await prompter.text({
+      message: "Inbound JWT audience (project number or endpoint URL)",
+      validate: (v: string) => {
+        if (typeof v !== "string") return undefined;
+        const result = validateChannelCredential("googlechat", "audience", v);
+        return result?.message;
+      },
+    });
+    return { type: "googlechat", serviceAccountKey, mode, audience, validated: false };
+  }
+
+  const subscriptionName = await prompter.text({
+    message: "Pub/Sub subscription (projects/P/subscriptions/S)",
+    validate: (v: string) => {
+      if (typeof v !== "string") return undefined;
+      const result = validateChannelCredential("googlechat", "subscriptionName", v);
+      return result?.message;
+    },
+  });
+  return { type: "googlechat", serviceAccountKey, mode, subscriptionName, validated: false };
+}
+
+/**
  * WhatsApp: deferred configuration guidance.
  */
 function handleWhatsApp(prompter: WizardPrompter): ChannelConfig {
@@ -629,6 +707,8 @@ async function handleChannel(
       return { config: await handleLine(prompter) };
     case "msteams":
       return { config: await handleMsTeams(prompter) };
+    case "googlechat":
+      return { config: await handleGoogleChat(prompter) };
     case "whatsapp":
       return { config: handleWhatsApp(prompter) };
     case "signal":

@@ -298,6 +298,20 @@ export function validateNonInteractiveOptions(
     );
   }
 
+  // --googlechat-mode, when provided, must be one of the closed inbound-transport
+  // vocabulary. Like the enums above, a typo would be written verbatim into
+  // config.yaml and only rejected by the daemon's GoogleChatChannelEntrySchema at
+  // boot. Reject early with a clear hint, mirroring the interactive select prompt.
+  if (
+    opts.googlechatMode !== undefined &&
+    !["pubsub", "webhook"].includes(opts.googlechatMode)
+  ) {
+    throw new NonInteractiveError(
+      "--googlechat-mode must be one of: pubsub, webhook",
+      "googlechatMode",
+    );
+  }
+
   // Validate channel credentials
   if (opts.channels && opts.channels.length > 0) {
     for (const channel of opts.channels) {
@@ -366,6 +380,31 @@ export function validateNonInteractiveOptions(
             );
           }
           break;
+        case "googlechat": {
+          if (!opts.googlechatSaKey) {
+            throw new NonInteractiveError(
+              "--googlechat-sa-key is required when googlechat channel is enabled",
+              "googlechatSaKey",
+            );
+          }
+          // pubsub (the default when --googlechat-mode is absent) needs the
+          // Pub/Sub subscription; webhook needs the inbound JWT audience.
+          // Reject an incomplete block before it is written.
+          const mode = opts.googlechatMode ?? "pubsub";
+          if (mode === "pubsub" && !opts.googlechatSubscription) {
+            throw new NonInteractiveError(
+              "--googlechat-subscription is required for googlechat pubsub mode",
+              "googlechatSubscription",
+            );
+          }
+          if (mode === "webhook" && !opts.googlechatAudience) {
+            throw new NonInteractiveError(
+              "--googlechat-audience is required for googlechat webhook mode",
+              "googlechatAudience",
+            );
+          }
+          break;
+        }
         // whatsapp, signal, irc do not require tokens at init time
         default:
           // Unknown channel -- allow for forward compatibility
@@ -446,6 +485,19 @@ export function buildNonInteractiveState(
             appPassword: opts.msteamsAppPassword,
             tenantId: opts.msteamsTenantId,
             authMode: opts.msteamsAuthMode,
+            validated: false,
+          });
+          break;
+        case "googlechat":
+          // The SA key is taken verbatim (CI passes the JSON directly, e.g.
+          // --googlechat-sa-key "$(cat key.json)"); write-config swaps it for the
+          // ${GOOGLECHAT_SA_KEY} ref and persists the blob to the secret store.
+          channels.push({
+            type: "googlechat",
+            serviceAccountKey: opts.googlechatSaKey,
+            subscriptionName: opts.googlechatSubscription,
+            audience: opts.googlechatAudience,
+            mode: opts.googlechatMode,
             validated: false,
           });
           break;

@@ -185,6 +185,21 @@ function buildConfigObject(state: WizardState): Record<string, unknown> {
         if (ch.authMode) entry.authMode = ch.authMode;
       }
 
+      // Google Chat: the service-account key is a JSON blob (the secret) — only
+      // the ${GOOGLECHAT_SA_KEY} ref is written to config.yaml; the blob is
+      // persisted to the managed-secret store (the collectManagedSecrets branch
+      // below), never in config.yaml. mode and the per-mode field
+      // (subscriptionName for pubsub / audience+audienceType for webhook) are
+      // non-secret config written inline. The generic botToken fallback does NOT
+      // fit Google Chat (it has no botToken), so this explicit block is required.
+      if (ch.type === "googlechat") {
+        if (ch.mode) entry.mode = ch.mode;
+        if (ch.subscriptionName) entry.subscriptionName = ch.subscriptionName;
+        if (ch.audienceType) entry.audienceType = ch.audienceType;
+        if (ch.audience) entry.audience = ch.audience;
+        if (ch.serviceAccountKey) entry.serviceAccountKey = "${GOOGLECHAT_SA_KEY}";
+      }
+
       // Generic fallback for other channel types
       if (ch.botToken && !entry.botToken && !entry.accessToken && !entry.channelAccessToken) {
         entry.botToken = `\${${ch.type.toUpperCase()}_BOT_TOKEN}`;
@@ -273,6 +288,14 @@ function collectManagedSecrets(state: WizardState): Map<string, string> {
       if (ch.appPassword && ch.type === "msteams") {
         const msteamsEnvKeys = CHANNEL_ENV_KEYS["msteams"];
         if (msteamsEnvKeys?.[0]) managed.set(msteamsEnvKeys[0], ch.appPassword);
+      }
+      // Google Chat's secret is the service-account key JSON blob (not
+      // botToken/apiKey/channelSecret), so it needs its own branch — the join
+      // that keeps the config's ${GOOGLECHAT_SA_KEY} reference from being a
+      // dangling, boot-fatal ref.
+      if (ch.serviceAccountKey && ch.type === "googlechat") {
+        const googlechatEnvKeys = CHANNEL_ENV_KEYS["googlechat"];
+        if (googlechatEnvKeys?.[0]) managed.set(googlechatEnvKeys[0], ch.serviceAccountKey);
       }
       if (ch.appToken) managed.set(`${ch.type.toUpperCase()}_APP_TOKEN`, ch.appToken);
     }

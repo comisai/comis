@@ -123,6 +123,14 @@ function buildNonInteractiveOptionsFromCommander(
       | "certificate"
       | "managedIdentity"
       | undefined,
+    googlechatSaKey: options.googlechatSaKey as string | undefined,
+    googlechatSubscription: options.googlechatSubscription as string | undefined,
+    // Commander yields an arbitrary string; this assertion to the closed union is
+    // made sound by validateNonInteractiveOptions, which runs before any consumer
+    // and rejects a value outside pubsub|webhook (same cast-then-validate contract
+    // as --msteams-auth-mode / --storage above).
+    googlechatMode: options.googlechatMode as "pubsub" | "webhook" | undefined,
+    googlechatAudience: options.googlechatAudience as string | undefined,
     imageProvider: options.imageProvider as string | undefined,
     imageApiKey: options.imageApiKey as string | undefined,
     videoProvider: options.videoProvider as string | undefined,
