@@ -114,6 +114,39 @@ describe("SkillsConfigSchema -- skills.import unpack caps sub-block", () => {
 });
 
 /**
+ * The `skills.import.registries` allowlist. A default-empty list of permitted
+ * registry entries — normalized origins (`https://<host>[:port]`) plus the
+ * literal `clawhub` token. Empty (the shipped default) means no registry
+ * imports; archive/GitHub imports are unaffected. Fully defaulted like the
+ * sibling caps, so consumers read a resolved list rather than `?? fallback`.
+ */
+describe("SkillsConfigSchema -- skills.import.registries allowlist", () => {
+  it("defaults to an empty allowlist on a config with no registries key", () => {
+    const result = SkillsConfigSchema.parse({});
+    expect(result.import.registries).toEqual([]);
+  });
+
+  it("round-trips an operator-supplied origin allowlist", () => {
+    const result = SkillsConfigSchema.parse({
+      import: { registries: ["https://example.com"] },
+    });
+    expect(result.import.registries).toEqual(["https://example.com"]);
+  });
+
+  it("accepts the clawhub token alongside origins in the allowlist", () => {
+    const result = SkillsConfigSchema.parse({
+      import: { registries: ["https://example.com", "clawhub"] },
+    });
+    expect(result.import.registries).toEqual(["https://example.com", "clawhub"]);
+  });
+
+  it("rejects a non-array or non-string-entry registries value", () => {
+    expect(SkillsConfigSchema.safeParse({ import: { registries: "https://example.com" } }).success).toBe(false);
+    expect(SkillsConfigSchema.safeParse({ import: { registries: [42] } }).success).toBe(false);
+  });
+});
+
+/**
  * The closed `TerminalDriverConfig` schema. A `z.strictObject` at every
  * level rejects unknown keys by construction (a typo'd or injected key
  * throws at config load rather than being silently dropped — a restriction the
