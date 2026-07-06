@@ -35,6 +35,7 @@ import { z } from "zod";
 import { ok, err, type Result } from "@comis/shared";
 import { safePath, type ErrorKind } from "@comis/core";
 import { ensureContainedDir, writeRegularFile } from "@comis/observability";
+import { SkillNameSchema } from "../manifest/schema.js";
 
 const STORE_FILE_NAME = "skill-provenance.json";
 
@@ -64,8 +65,12 @@ const ScanVerdictSchema = z.strictObject({
  * `upload:sha256:<hash>` for an upload with no stable upstream identity.
  */
 export const ProvenanceRecordSchema = z.strictObject({
-  /** Installed skill name (also the last key segment). */
-  name: z.string().min(1).max(64),
+  /**
+   * Installed skill name (also the LAST segment of the `<scope>:<owner>:<name>`
+   * store key). Constrained to the manifest slug rule so a ':' — or any other
+   * key-splitting / separator char — can never forge or overlap a store key.
+   */
+  name: SkillNameSchema,
   /** Skill scope — mirrors the RPC scope enum. */
   scope: z.enum(["local", "shared"]),
   /** Owning agent id (the `shared` owner sentinel is applied when keying). */
@@ -187,6 +192,7 @@ function assertSafeInstallName(dataDir: string, name: string): Result<void, Prov
   if (
     name.includes("/") ||
     name.includes("\\") ||
+    name.includes(":") ||
     name.includes("\0") ||
     name === "." ||
     name === ".."
@@ -194,8 +200,8 @@ function assertSafeInstallName(dataDir: string, name: string): Result<void, Prov
     return err(
       mkErr(
         "validation",
-        `provenance record name '${name}' would escape the skills directory`,
-        "The record name must be a single path segment — no separators, dot-segments, or absolute forms.",
+        `provenance record name '${name}' would escape the skills directory or split its store key`,
+        "The record name must be a single path segment — no separators (including ':', the store-key delimiter), dot-segments, or absolute forms.",
       ),
     );
   }

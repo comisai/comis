@@ -155,6 +155,16 @@ describe("writeProvenanceRecord — validated, contained, 0o600 round-trip", () 
     expect(result.error.errorKind).toBe("validation");
   });
 
+  it("rejects a record name containing ':' (the store-key separator) with errorKind 'validation'", async () => {
+    // The store key is `<scope>:<owner>:<name>`. A ':' in the name would split
+    // the key ambiguously (a forged/overlapping key), so it must never persist.
+    const result = await writeProvenanceRecord(tmpDir, makeRecord({ name: "evil:injected" }));
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a validation reject");
+    expect(result.error.errorKind).toBe("validation");
+    expect(existsSync(join(tmpDir, STORE_FILE))).toBe(false);
+  });
+
   it("returns errorKind 'resource' when the data dir cannot be ensured", async () => {
     // A data dir nested under a regular file cannot be created (ENOTDIR).
     writeFileSync(join(tmpDir, "afile"), "x", "utf-8");
@@ -204,6 +214,15 @@ describe("parseProvenanceRecord — the strict parse helper", () => {
     expect(parseProvenanceRecord({ name: "x" }).ok).toBe(false);
     // An unknown extra key is rejected (strictObject).
     expect(parseProvenanceRecord({ ...makeRecord(), extra: 1 }).ok).toBe(false);
+  });
+
+  it("constrains the record name to the manifest slug (rejects ':' and other non-slug chars)", () => {
+    // The name is the last segment of the `<scope>:<owner>:<name>` store key, so
+    // it must match the manifest slug rule — no ':' (key-injection), separators,
+    // or uppercase.
+    expect(parseProvenanceRecord(makeRecord({ name: "a:b" })).ok).toBe(false);
+    expect(parseProvenanceRecord(makeRecord({ name: "Bad Name" })).ok).toBe(false);
+    expect(parseProvenanceRecord(makeRecord({ name: "ok-slug-1" })).ok).toBe(true);
   });
 });
 
