@@ -251,6 +251,38 @@ describe("buildMediaPipeline", () => {
     expect(hasMsteams).toBe(false);
   });
 
+  it("creates the googlechat resolver from the gcPlugin handle", async () => {
+    const mockResolver = { resolve: vi.fn(), schemes: ["googlechat-attachment"] };
+    const gcPlugin = { createResolver: vi.fn(() => mockResolver) } as any;
+    const deps = makeDeps({ gcPlugin });
+    await buildMediaPipeline(deps);
+
+    // The SAME injected auth-capable fetcher reaches createResolver — and, unlike
+    // msteams, NO mediaAuthAllowHosts (the single-host pin is the resolver's own).
+    expect(gcPlugin.createResolver).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ssrfFetcher: deps.ssrfFetcher,
+        maxBytes: 10_000_000,
+        logger: expect.anything(),
+      }),
+    );
+    expect(gcPlugin.createResolver.mock.calls[0][0]).not.toHaveProperty("mediaAuthAllowHosts");
+    // The googlechat-attachment resolver is registered in the composite.
+    const compositeCall = vi.mocked(createCompositeResolver).mock.calls[0][0];
+    expect(compositeCall.resolvers).toContainEqual(mockResolver);
+  });
+
+  it("omits the googlechat resolver when gcPlugin is absent", async () => {
+    const deps = makeDeps(); // no gcPlugin
+    await buildMediaPipeline(deps);
+
+    const compositeCall = vi.mocked(createCompositeResolver).mock.calls[0][0];
+    const hasGc = (compositeCall.resolvers as Array<{ schemes?: string[] }>).some(
+      (r) => r.schemes?.includes("googlechat-attachment"),
+    );
+    expect(hasGc).toBe(false);
+  });
+
   it("calls createCompositeResolver with empty resolvers when no adapters", async () => {
     const deps = makeDeps({ adaptersByType: new Map() });
     await buildMediaPipeline(deps);
