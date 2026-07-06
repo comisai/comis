@@ -83,50 +83,66 @@ export function sweepOrphanedImports(deps: SweepDeps): SweepResult {
   const discarded: string[] = [];
 
   for (const importRoot of deps.listImportRoots()) {
-    const intent = deps.readCommitIntent(importRoot);
-
-    // No (or corrupt) marker ⇒ the crash was before the move; pure debris.
-    if (intent === undefined) {
-      deps.removeDir(importRoot);
-      discarded.push(importRoot);
-      continue;
-    }
-
-    const store = deps.readProvenanceStore(deps.dataDir);
-    const key = provenanceKey(intent.record.scope, intent.record.agentId, intent.record.name);
-    const onDisk = store[key];
-    let parkedDir: string | undefined;
+    // The whole per-root reconciliation is wrapped: a single failing root (a
+    // throwing moveDir/removeDir — e.g. ENOTEMPTY when a best-effort removeDir
+    // left a non-empty target, or an EPERM on a locked file) is logged and
+    // skipped rather than propagated. This runs UNWRAPPED at boot, so an
+    // escaping throw would be a recurring boot-loop; the staging dir persists,
+    // so the skipped root is retried on the next boot.
     try {
-      parkedDir = safePath(importRoot, "parked");
-    } catch {
-      parkedDir = undefined;
-    }
+      const intent = deps.readCommitIntent(importRoot);
 
-    let action = false;
-    if (intent.mode === "fresh") {
-      // Roll back ONLY if the provenance write did not complete. A present record
-      // means the commit finished — leave the live dir intact.
-      if (onDisk === undefined) {
-        deps.removeDir(intent.targetPath);
-        action = true;
+      // No (or corrupt) marker ⇒ the crash was before the move; pure debris.
+      if (intent === undefined) {
+        deps.removeDir(importRoot);
+        discarded.push(importRoot);
+        continue;
       }
-    } else {
-      // update: the re-pin completed iff the on-disk pin matches the marker's
-      // intended contentHash. If so, the update is committed — leave it. Otherwise
-      // restore the parked previous install (or, if none was parked because the
-      // live dir was already gone at commit time, remove the moved-in dir).
-      const rePinned = onDisk !== undefined && onDisk.contentHash === intent.contentHash;
-      if (!rePinned) {
-        deps.removeDir(intent.targetPath);
-        if (parkedDir !== undefined && deps.pathExists(parkedDir)) {
-          deps.moveDir(parkedDir, intent.targetPath);
+
+      const store = deps.readProvenanceStore(deps.dataDir);
+      const key = provenanceKey(intent.record.scope, intent.record.agentId, intent.record.name);
+      const onDisk = store[key];
+      let parkedDir: string | undefined;
+      try {
+        parkedDir = safePath(importRoot, "parked");
+      } catch {
+        parkedDir = undefined;
+      }
+
+      let action = false;
+      if (intent.mode === "fresh") {
+        // Roll back ONLY if the provenance write did not complete. A present record
+        // means the commit finished — leave the live dir intact.
+        if (onDisk === undefined) {
+          deps.removeDir(intent.targetPath);
+          action = true;
         }
-        action = true;
+      } else {
+        // update: the re-pin completed iff the on-disk pin matches the marker's
+        // intended contentHash. If so, the update is committed — leave it. Otherwise
+        // restore the parked previous install (or, if none was parked because the
+        // live dir was already gone at commit time, remove the moved-in dir).
+        const rePinned = onDisk !== undefined && onDisk.contentHash === intent.contentHash;
+        if (!rePinned) {
+          deps.removeDir(intent.targetPath);
+          if (parkedDir !== undefined && deps.pathExists(parkedDir)) {
+            deps.moveDir(parkedDir, intent.targetPath);
+          }
+          action = true;
+        }
       }
-    }
 
-    deps.removeDir(importRoot);
-    (action ? reconciled : discarded).push(importRoot);
+      deps.removeDir(importRoot);
+      (action ? reconciled : discarded).push(importRoot);
+    } catch {
+      deps.logger?.warn?.(
+        {
+          errorKind: "internal" as const,
+          hint: "inspect <dataDir>/tmp for a locked or non-empty skill-import-* staging root; the sweep retries it on the next boot",
+        },
+        "Skill-import boot sweep skipped a staging root after a filesystem error",
+      );
+    }
   }
 
   if (reconciled.length > 0 || discarded.length > 0) {

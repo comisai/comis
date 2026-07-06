@@ -15,13 +15,13 @@
  * @module
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { writeProvenanceRecord, type ProvenanceRecord } from "@comis/skills";
-import { sweepOrphanedImports, defaultSweepDeps } from "./import-boot-sweep.js";
+import { sweepOrphanedImports, defaultSweepDeps, type SweepDeps } from "./import-boot-sweep.js";
 import type { CommitIntent } from "./import-commit.js";
 
 let dataDir: string;
@@ -132,6 +132,34 @@ describe("sweepOrphanedImports", () => {
     expect(liveBody("updskill")).toContain("NEW body"); // committed update preserved
     expect(existsSync(root)).toBe(false);
     expect(result.discarded).toContain(root);
+  });
+
+  it("never throws when a filesystem op fails mid-reconcile — logs the failure and continues (boot-safe)", async () => {
+    // An update whose re-pin did NOT complete drives the restore-parked path,
+    // which calls moveDir. A throwing moveDir (e.g. ENOTEMPTY when the best-
+    // effort removeDir left a non-empty target) must be caught — the module
+    // contract is "never throws / never blocks boot", and this runs unwrapped
+    // at boot, so a propagated throw is a recurring boot-loop.
+    const live = liveSkill("sweep-throw", "NEW body (half-committed)\n");
+    await writeProvenanceRecord(dataDir, makeRecord("sweep-throw", "OLD")); // re-pin NOT done
+    const root = stageDir(
+      "st",
+      { mode: "update", targetPath: live, contentHash: "NEW", record: makeRecord("sweep-throw", "NEW") },
+      { parkedContent: "OLD body\n" },
+    );
+
+    const warn = vi.fn();
+    const deps: SweepDeps = {
+      ...defaultSweepDeps(dataDir, { info: vi.fn(), warn }),
+      moveDir: () => {
+        throw new Error("ENOTEMPTY: target not empty");
+      },
+    };
+
+    expect(() => sweepOrphanedImports(deps)).not.toThrow();
+    expect(warn).toHaveBeenCalled();
+    // The poisoned staging root is left in place for the next boot to retry.
+    expect(existsSync(root)).toBe(true);
   });
 
   it("is idempotent across a double run", () => {
