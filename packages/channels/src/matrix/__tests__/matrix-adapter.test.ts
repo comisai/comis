@@ -3,7 +3,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ComisLogger, NormalizedMessage } from "@comis/core";
+import type { ComisLogger, NormalizedMessage, NormalizedReaction } from "@comis/core";
 import {
   ClientEvent,
   RoomEvent,
@@ -57,6 +57,23 @@ function fakeEvent(
     getTs: () => ts,
     getContent: () => ({ body }),
     // Plaintext: the fail-closed decrypt branch is skipped for a non-encrypted event.
+    isEncrypted: () => false,
+  } as unknown as MatrixEvent;
+}
+
+/** A minimal live `m.reaction` timeline event (annotation-relates a target event). */
+function fakeReactionEvent(
+  overrides: { id?: string; sender?: string; ts?: number; targetId?: string; key?: string } = {},
+): MatrixEvent {
+  const { id = "$react1", sender = "@alice:hs", ts = 300, targetId = "$target:hs", key = "👍" } =
+    overrides;
+  return {
+    getType: () => "m.reaction",
+    getId: () => id,
+    getSender: () => sender,
+    getTs: () => ts,
+    getContent: () => ({ "m.relates_to": { rel_type: "m.annotation", event_id: targetId, key } }),
+    // Reactions ride in the clear; the fail-closed decrypt branch is skipped.
     isEncrypted: () => false,
   } as unknown as MatrixEvent;
 }
@@ -758,5 +775,54 @@ describe("createMatrixAdapter — decrypt degrade note", () => {
     expect(received[0]?.text).not.toContain("channels.matrix.e2ee");
     // It carries the verification hint instead.
     expect(received[0]?.text).toContain("recoveryKey");
+  });
+});
+
+describe("createMatrixAdapter — inbound reactions", () => {
+  it("delivers an inbound reaction from an allowed reactor to a registered onReaction handler", async () => {
+    const { adapter, fake } = makeAdapter({ allowFrom: [], allowMode: "allowlist" });
+    const reactions: NormalizedReaction[] = [];
+    adapter.onReaction?.((r) => {
+      reactions.push(r);
+    });
+    await adapter.start();
+
+    await deliver(
+      fake,
+      fakeReactionEvent({ sender: "@alice:hs", targetId: "$t:hs", key: "🎉" }),
+      fakeRoom("!room:hs"),
+    );
+
+    expect(reactions).toHaveLength(1);
+    expect(reactions[0]).toEqual({
+      messageId: "$t:hs",
+      reactorId: "@alice:hs", // the FULL MXID the speaker gate + trust resolver key on
+      emoji: "🎉",
+      channelType: "matrix",
+      channelId: "!room:hs",
+    });
+  });
+
+  it("drops an inbound reaction from a non-allowlisted reactor and warns without a body", async () => {
+    const { adapter, fake, logger } = makeAdapter({
+      allowFrom: ["@a:hs"],
+      allowMode: "allowlist",
+    });
+    const reactions: NormalizedReaction[] = [];
+    adapter.onReaction?.((r) => {
+      reactions.push(r);
+    });
+    await adapter.start();
+
+    await deliver(fake, fakeReactionEvent({ sender: "@b:hs", key: "👍" }), fakeRoom("!room:hs"));
+
+    expect(reactions).toHaveLength(0);
+    const warn = vi.mocked(logger.warn);
+    const dropped = warn.mock.calls.find(
+      ([fields]) => (fields as { errorKind?: string }).errorKind === "precondition",
+    );
+    expect(dropped).toBeDefined();
+    // The drop WARN carries no reaction body (the emoji is never logged).
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("👍");
   });
 });

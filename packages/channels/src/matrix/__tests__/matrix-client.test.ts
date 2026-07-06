@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
 import { ok, err } from "@comis/shared";
-import type { NormalizedMessage, ComisLogger } from "@comis/core";
+import type { NormalizedMessage, NormalizedReaction, ComisLogger } from "@comis/core";
 import {
   ClientEvent,
   RoomEvent,
   KnownMembership,
   SyncState,
+  type Filter,
   type MatrixClient,
   type MatrixEvent,
   type Room,
@@ -68,6 +69,23 @@ function fakeEvent(
     getTs: () => ts,
     getContent: () => ({ body }),
     // Plaintext: the fail-closed decrypt branch is skipped for a non-encrypted event.
+    isEncrypted: () => false,
+  } as unknown as MatrixEvent;
+}
+
+/** A minimal live `m.reaction` timeline event (annotation-relates a target event). */
+function fakeReactionEvent(
+  overrides: { id?: string; sender?: string; ts?: number; targetId?: string; key?: string } = {},
+): MatrixEvent {
+  const { id = "$react1", sender = "@alice:hs", ts = 300, targetId = "$target:hs", key = "👍" } =
+    overrides;
+  return {
+    getType: () => "m.reaction",
+    getId: () => id,
+    getSender: () => sender,
+    getTs: () => ts,
+    getContent: () => ({ "m.relates_to": { rel_type: "m.annotation", event_id: targetId, key } }),
+    // Reactions ride in the clear; the fail-closed decrypt branch is skipped.
     isEncrypted: () => false,
   } as unknown as MatrixEvent;
 }
@@ -194,6 +212,7 @@ function makeHarness(over: HarnessOverrides = {}): {
   saves: MatrixState[];
   logger: ComisLogger;
   received: NormalizedMessage[];
+  reactions: NormalizedReaction[];
   healthSignals: HealthSignalRecord[];
   storeHandle: { failSave: boolean };
   controller: ReturnType<typeof createMatrixClient>;
@@ -211,6 +230,7 @@ function makeHarness(over: HarnessOverrides = {}): {
     ((m: NormalizedMessage) => {
       received.push(m);
     });
+  const reactions: NormalizedReaction[] = [];
   const healthSignals: HealthSignalRecord[] = [];
   const controller = createMatrixClient({
     client: fake.asClient(),
@@ -219,6 +239,9 @@ function makeHarness(over: HarnessOverrides = {}): {
     allowMode: over.allowMode ?? "allowlist",
     allowFrom: over.allowFrom ?? [],
     onMessage,
+    onReaction: (reaction: NormalizedReaction) => {
+      reactions.push(reaction);
+    },
     logger,
     emitHealth: (signal: HealthSignalRecord) => {
       healthSignals.push(signal);
@@ -231,6 +254,7 @@ function makeHarness(over: HarnessOverrides = {}): {
     saves: stateStore.saves,
     logger,
     received,
+    reactions,
     healthSignals,
     storeHandle: stateStore,
     controller,
@@ -850,5 +874,91 @@ describe("createMatrixClient — per-room watermark (cross-room + mid-run-join)"
       false,
     );
     expect(h.received.find((m) => m.text === "live after join")).toBeDefined();
+  });
+});
+
+describe("createMatrixClient — inbound reaction routing", () => {
+  it("admits reaction events in the /sync filter it starts with", async () => {
+    const h = makeHarness();
+    await h.controller.start();
+
+    // The server-side timeline filter must request reaction events, or the
+    // homeserver never returns them and no inbound reaction ever fires.
+    const filter = h.fake.startCalls[0]?.filter as Filter;
+    const types = filter.getDefinition().room?.timeline?.types;
+    expect(types).toContain("m.reaction");
+    // The message type is still requested (the reaction widening is additive).
+    expect(types).toContain("m.room.message");
+  });
+
+  it("routes a live post-watermark reaction to onReaction with the mapped shape", async () => {
+    const h = makeHarness({ seed: { watermarks: {} } });
+    await h.controller.start();
+    await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null, undefined);
+
+    await h.fake.emit(
+      RoomEvent.Timeline,
+      fakeReactionEvent({ sender: "@alice:hs", ts: 300, targetId: "$target:hs", key: "👍" }),
+      fakeRoom("!room:hs"),
+      false,
+    );
+
+    expect(h.reactions).toHaveLength(1);
+    expect(h.reactions[0]).toEqual({
+      messageId: "$target:hs",
+      reactorId: "@alice:hs",
+      emoji: "👍",
+      channelType: "matrix",
+      channelId: "!room:hs",
+    });
+    // The reaction never reaches the message handler (it is not a message).
+    expect(h.received).toHaveLength(0);
+  });
+
+  it("does not route a reaction the bot itself sent (no self-reaction loop)", async () => {
+    const h = makeHarness(); // fake getUserId() === "@bot:hs"
+    await h.controller.start();
+    await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null, undefined);
+
+    await h.fake.emit(
+      RoomEvent.Timeline,
+      fakeReactionEvent({ sender: "@bot:hs", ts: 300 }),
+      fakeRoom("!room:hs"),
+      false,
+    );
+
+    expect(h.reactions).toHaveLength(0);
+  });
+
+  it("does not route a backlog (toStartOfTimeline) reaction to onReaction", async () => {
+    const h = makeHarness({ seed: { watermarks: {} } });
+    await h.controller.start();
+    await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null, undefined);
+
+    // Pagination/backfill delivery → not live → dropped before the reaction branch.
+    await h.fake.emit(
+      RoomEvent.Timeline,
+      fakeReactionEvent({ ts: 300 }),
+      fakeRoom("!room:hs"),
+      true,
+    );
+
+    expect(h.reactions).toHaveLength(0);
+  });
+
+  it("does not route a pre-watermark reaction to onReaction", async () => {
+    const h = makeHarness({ seed: { watermarks: { "!room:hs": 500 } } });
+    await h.controller.start();
+    await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null, undefined);
+
+    // At/behind the room watermark (a restart replay) → dropped before delivery.
+    await h.fake.emit(
+      RoomEvent.Timeline,
+      fakeReactionEvent({ ts: 100 }),
+      fakeRoom("!room:hs"),
+      false,
+    );
+
+    expect(h.reactions).toHaveLength(0);
   });
 });
