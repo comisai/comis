@@ -284,7 +284,7 @@ describe("connectServer — stdio failure diagnosability", () => {
     return { bus: { emit: (event, payload) => { emitted.push({ event, payload }); } }, emitted };
   }
 
-  it("folds the child's captured stderr into the returned error + error-state entry (Fix 1)", async () => {
+  it("folds the child's captured stderr into the returned error + error-state entry", async () => {
     const state = makeState();
     // Simulate the child writing its OWN error to stderr during the attempt (→
     // captured on state.lastStderr by wireStderrCapture in production) and THEN
@@ -304,7 +304,33 @@ describe("connectServer — stdio failure diagnosability", () => {
     expect(state.connections.get("svc")?.error).toContain("SERVICE_USERNAME is a required");
   });
 
-  it("emits mcp:server:connect_failed with reason server_exited on a stdio crash (Fix 2)", async () => {
+  it("sanitizes a credential leaked in the child stderr before folding it into the error + error-state entry", async () => {
+    const state = makeState();
+    // A credentialed server that dies while echoing its own connection string to
+    // stderr — the exact leak vector for a stdio server given secrets via env.
+    connectImpl = () => {
+      state.lastStderr.set(
+        "svc",
+        "FATAL: could not connect: postgres://admin:s3cr3tPassw0rd@db.internal:5432/prod\n",
+      );
+      return Promise.reject(new Error("MCP error -32000: Connection closed"));
+    };
+    const { bus } = makeBus();
+    const deps = { logger: makeLogger(), eventBus: bus } as unknown as McpClientManagerDeps;
+
+    const result = await connectServer(state, deps, STDIO_CONFIG);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected err");
+    // The raw password must NOT survive into any sink the agent/operator sees.
+    expect(result.error.message).not.toContain("s3cr3tPassw0rd");
+    expect(state.connections.get("svc")?.error).not.toContain("s3cr3tPassw0rd");
+    // …and the folded stderr is redacted, not simply dropped.
+    expect(result.error.message).toContain("[REDACTED_CONN_STRING]");
+    expect(state.connections.get("svc")?.error).toContain("[REDACTED_CONN_STRING]");
+  });
+
+  it("emits mcp:server:connect_failed with reason server_exited on a stdio crash", async () => {
     const state = makeState();
     connectImpl = () => {
       state.lastStderr.set("svc", "boom");
@@ -321,7 +347,7 @@ describe("connectServer — stdio failure diagnosability", () => {
     expect((ev!.payload as { serverName: string }).serverName).toBe("svc");
   });
 
-  it("classifies an ENOENT spawn failure as command_not_found (Fix 4)", async () => {
+  it("classifies an ENOENT spawn failure as command_not_found", async () => {
     connectImpl = () => Promise.reject(new Error("spawn npx ENOENT"));
     const state = makeState();
     const { bus, emitted } = makeBus();
@@ -334,7 +360,7 @@ describe("connectServer — stdio failure diagnosability", () => {
     expect((ev!.payload as { reason: string }).reason).toBe("command_not_found");
   });
 
-  it("on a stdio failure with NO stderr, the failure log names the missing-env class (Fix 4)", async () => {
+  it("on a stdio failure with NO stderr, the failure log names the missing-env class", async () => {
     connectImpl = () => Promise.reject(new Error("MCP error -32000: Connection closed"));
     const state = makeState();
     const logger = makeLogger();
@@ -347,7 +373,7 @@ describe("connectServer — stdio failure diagnosability", () => {
     expect(errCalls.some((s: string) => /missing.*env|required env|env var/i.test(s))).toBe(true);
   });
 
-  it("emits mcp:server:connected on a successful connect (Fix 2)", async () => {
+  it("emits mcp:server:connected on a successful connect", async () => {
     connectImpl = () => Promise.resolve();
     const state = makeState();
     const { bus, emitted } = makeBus();

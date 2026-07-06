@@ -23,7 +23,7 @@ import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import PQueue from "p-queue";
-import { systemNowMs, systemScheduleTimeout } from "@comis/core";
+import { systemNowMs, systemScheduleTimeout, sanitizeLogString } from "@comis/core";
 import type {
   McpClientManagerDeps,
   McpClientManagerState,
@@ -540,8 +540,15 @@ export function classifyConnectFailure(
   stderrTail: string,
   connectTimeoutMs: number,
 ): ClassifiedConnectFailure {
-  const tail =
+  // Fold in the child's stderr, but SANITIZE it first: a credentialed server can
+  // echo a connection string / API key on the way down, and this tail flows into
+  // the returned error, the mcp.list/status error-state, AND the failure log (its
+  // `stderr` field is unstructured free-text, not a Pino-redacted key). Truncate
+  // before sanitizing so the redaction input is always bounded under the ReDoS
+  // cap, then scrub exactly what we expose.
+  const rawTail =
     stderrTail.length > STDERR_TAIL_MAX ? `…${stderrTail.slice(-STDERR_TAIL_MAX)}` : stderrTail;
+  const tail = sanitizeLogString(rawTail);
   const lower = rawMessage.toLowerCase();
 
   // A spawn ENOENT — the command (npx/uvx/binary) is missing or not on PATH.
