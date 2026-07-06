@@ -470,6 +470,25 @@ describe("createGoogleChatAdapter — status + lastInboundAt semantics", () => {
     expect(status?.lastInboundAt).toBeUndefined();
   });
 
+  it("reports connectionMode 'webhook' in webhook mode (the switch the liveness monitor keys on)", async () => {
+    const { deps } = await makeDeps({ mode: "webhook", subscriptionName: "" });
+    const adapter = createGoogleChatAdapter(deps);
+    expect(adapter.getStatus?.().connectionMode).toBe("webhook");
+  });
+
+  it("in webhook mode, an admitted inbound through handleChatEvent bumps lastInboundAt — both modes converge on the one normalizer feeding the liveness timer", async () => {
+    const { deps } = await makeDeps({
+      mode: "webhook",
+      subscriptionName: "",
+      allowFrom: ["users/123"],
+    });
+    const adapter = createGoogleChatAdapter(deps);
+    adapter.onMessage(vi.fn());
+    await adapter.handleChatEvent(makeEvent());
+    expect(adapter.getStatus?.().lastInboundAt).toBe(NOW);
+    expect(adapter.getStatus?.().connectionMode).toBe("webhook");
+  });
+
   it("sets lastInboundAt after an allowed inbound", async () => {
     const { deps } = await makeDeps({ allowFrom: ["users/123"] });
     const adapter = createGoogleChatAdapter(deps);
