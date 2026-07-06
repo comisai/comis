@@ -2,10 +2,10 @@
 /**
  * Channel setup step -- step 06 of the init wizard.
  *
- * Presents a multiselect of all 8 supported channels with credential hints,
+ * Presents a multiselect of the supported chat channels with credential hints,
  * collects per-channel credentials inline with format pre-checks and live
- * API validation, shows deferred guidance for WhatsApp/Signal, silently
- * adds IRC, and stores ChannelConfig[] on wizard state.
+ * API validation, shows deferred guidance for WhatsApp/Signal, and stores
+ * ChannelConfig[] on wizard state.
  *
  * Live validation uses native fetch (Node 22+) with AbortController
  * timeouts, matching the pattern from 04-credentials.ts.
