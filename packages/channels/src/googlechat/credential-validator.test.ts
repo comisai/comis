@@ -73,6 +73,59 @@ describe("validateGoogleChatCredentials", () => {
     if (!result.ok) expect(result.error.message).toContain("subscriptionName");
   });
 
+  // Webhook mode receives inbound over the gateway ingress (no Pub/Sub pull
+  // loop), so it requires no subscriptionName; it instead requires the audience
+  // the inbound Bearer-JWT verifier binds to.
+  it("returns ok in webhook mode with an audience and no subscriptionName", () => {
+    const result = validateGoogleChatCredentials({
+      serviceAccountKey: VALID_SA_KEY,
+      mode: "webhook",
+      audience: "1234567890",
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("returns err naming audience in webhook mode when the audience is blank", () => {
+    const result = validateGoogleChatCredentials({
+      serviceAccountKey: VALID_SA_KEY,
+      mode: "webhook",
+      audience: "",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain("audience");
+  });
+
+  it("treats a whitespace-only audience as blank in webhook mode", () => {
+    const result = validateGoogleChatCredentials({
+      serviceAccountKey: VALID_SA_KEY,
+      mode: "webhook",
+      audience: "   ",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain("audience");
+  });
+
+  it("does not require a subscriptionName in webhook mode even when it is blank", () => {
+    // A webhook config carries no subscriptionName by design; a blank one must
+    // NOT fail validation the way it does in pubsub mode.
+    const result = validateGoogleChatCredentials({
+      serviceAccountKey: VALID_SA_KEY,
+      mode: "webhook",
+      audience: "https://example.com/hook",
+      subscriptionName: "",
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("does not require an audience in pubsub mode (subscriptionName is the pubsub precondition)", () => {
+    const result = validateGoogleChatCredentials({
+      serviceAccountKey: VALID_SA_KEY,
+      mode: "pubsub",
+      subscriptionName: VALID_SUBSCRIPTION,
+    });
+    expect(result.ok).toBe(true);
+  });
+
   it("returns err for a serviceAccountKey that is not valid JSON, without echoing the raw value", () => {
     const malformed = `not-json ${PRIVATE_KEY_SENTINEL}`;
     const result = validateGoogleChatCredentials({

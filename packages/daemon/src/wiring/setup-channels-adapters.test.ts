@@ -917,4 +917,53 @@ describe("bootstrapAdapters", () => {
     expect(result.googlechatIngress).toBeUndefined();
     expect(createGoogleChatIngress).not.toHaveBeenCalled();
   });
+
+  // -------------------------------------------------------------------------
+  // Google Chat webhook mode — REAL credential validator. The suite otherwise
+  // stubs the validator to always pass, which masks whether the mode gate and
+  // the setup block agree. These two exercise the ACTUAL validator so a
+  // documented webhook config (no subscriptionName) registers, and a webhook
+  // config missing its audience fails fast at registration.
+  // -------------------------------------------------------------------------
+
+  it("registers a documented webhook config (real validator, no subscriptionName) and mounts the ingress", async () => {
+    const actual = await vi.importActual<typeof import("@comis/channels")>("@comis/channels");
+    vi.mocked(validateGoogleChatCredentials).mockImplementationOnce((opts) =>
+      actual.validateGoogleChatCredentials(opts),
+    );
+    const saKey = '{"private_key":"pk","client_email":"bot@proj.iam.gserviceaccount.com"}';
+    const container = makeContainer({
+      googlechat: { enabled: true, serviceAccountKey: saKey, mode: "webhook", audienceType: "project-number", audience: "1234567890" },
+    });
+    const result = await bootstrapAdapters({ container, channelsLogger });
+
+    expect(result.adaptersByType.get("googlechat")).toBe(mockGoogleChatAdapter);
+    expect(result.googlechatIngress).toBe(mockGoogleChatIngress);
+    expect(createGoogleChatIngress).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses to register a webhook config missing audience (real validator) and WARNs config naming channels.googlechat.audience", async () => {
+    const actual = await vi.importActual<typeof import("@comis/channels")>("@comis/channels");
+    vi.mocked(validateGoogleChatCredentials).mockImplementationOnce((opts) =>
+      actual.validateGoogleChatCredentials(opts),
+    );
+    const saKey = '{"private_key":"pk","client_email":"bot@proj.iam.gserviceaccount.com"}';
+    const container = makeContainer({
+      googlechat: { enabled: true, serviceAccountKey: saKey, mode: "webhook", audienceType: "project-number" }, // no audience
+    });
+    const result = await bootstrapAdapters({ container, channelsLogger });
+
+    expect(result.adaptersByType.has("googlechat")).toBe(false);
+    expect(result.googlechatIngress).toBeUndefined();
+    expect(createGoogleChatIngress).not.toHaveBeenCalled();
+    // An unset audience is a config error (name the exact knob), not the
+    // per-request invalid_token flood the fleet lens reads as a forged-webhook attack.
+    expect(channelsLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "config",
+        hint: expect.stringContaining("channels.googlechat.audience"),
+      }),
+      expect.stringContaining("Google Chat credential validation failed"),
+    );
+  });
 });
