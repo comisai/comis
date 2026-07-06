@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: codec/parse boundary — parseMediaEncryptionInfo raises a meaningful
+// error on absent/malformed media-encryption info (in place of an opaque JSON.parse
+// SyntaxError), and the audited WASM codec's own encrypt/hash-check failures throw.
+// Every such throw is caught and translated to Result.err at the `fromPromise`
+// boundary in buildAndSendAttachment (matrix-adapter-internal.ts), so it is lifted
+// into the send path's Result flow rather than escaping as an unhandled rejection.
 /**
  * Encrypted-attachment codec + a bounded encrypted-file cache for the Matrix
  * media path — pure GLUE around the audited WASM engine.
