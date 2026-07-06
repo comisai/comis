@@ -21,6 +21,7 @@ import {
   markResumable,
   loadResumeSpec,
   resolveScriptSource,
+  startDurableKeepAlive,
   defaultOrchestrateDurableFs,
   type OrchestrateDurableRuns,
   type OrchestrateDurableFs,
@@ -35,10 +36,17 @@ function makeFakeRuns(over?: {
   getRow?: DurableRunRecord | undefined;
   getError?: Error;
   upsertError?: Error;
-}): OrchestrateDurableRuns & { upserts: DurableRunRecord[] } {
+  touchError?: Error;
+  omitTouch?: boolean;
+}): OrchestrateDurableRuns & { upserts: DurableRunRecord[]; touches: Array<{ rootRunId: string; atMs: number }> } {
   const upserts: DurableRunRecord[] = [];
-  return {
+  const touches: Array<{ rootRunId: string; atMs: number }> = [];
+  const base: OrchestrateDurableRuns & {
+    upserts: DurableRunRecord[];
+    touches: Array<{ rootRunId: string; atMs: number }>;
+  } = {
     upserts,
+    touches,
     upsertCheckpoint: vi.fn(
       async (record: DurableRunRecord): Promise<Result<void, Error>> => {
         upserts.push(record);
@@ -50,6 +58,15 @@ function makeFakeRuns(over?: {
         over?.getError ? err(over.getError) : ok(over?.getRow),
     ),
   };
+  if (!over?.omitTouch) {
+    base.touchHeartbeat = vi.fn(
+      async (rootRunId: string, atMs: number): Promise<Result<void, Error>> => {
+        touches.push({ rootRunId, atMs });
+        return over?.touchError ? err(over.touchError) : ok(undefined);
+      },
+    );
+  }
+  return base;
 }
 
 /** A fake fs seam — canned exists/read so the loader logic is pure. */
@@ -79,6 +96,66 @@ function makeRow(over?: Partial<DurableRunRecord>): DurableRunRecord {
     ...over,
   };
 }
+
+describe("orchestrate-durable — startDurableKeepAlive", () => {
+  it("touches the durable heartbeat with a FRESH clock read on each scheduled tick", () => {
+    // A flat orchestrate run stamps lastHeartbeatAt only at start / checkpoint / timeout.
+    // Without a keep-alive, a long LIVE run that never checkpoints goes stale and the
+    // watchdog's no-progress re-anchor cap can orphan + reclaim it mid-run. The keep-alive
+    // advances the heartbeat while the child is alive so a live run is never seen as stale.
+    const runs = makeFakeRuns();
+    let captured: (() => void) | undefined;
+    let capturedMs = 0;
+    let stopped = false;
+    const scheduler = (cb: () => void, ms: number): (() => void) => {
+      captured = cb;
+      capturedMs = ms;
+      return () => {
+        stopped = true;
+      };
+    };
+    let clock = 1_000;
+    const stop = startDurableKeepAlive({
+      runs,
+      rootRunId: "orch-root",
+      now: () => clock,
+      keepAliveMs: 30_000,
+      scheduler,
+    });
+    expect(capturedMs).toBe(30_000);
+    expect(runs.touches).toHaveLength(0); // nothing until a tick fires
+
+    clock = 40_000;
+    captured?.();
+    clock = 70_000;
+    captured?.();
+
+    expect(runs.touches).toEqual([
+      { rootRunId: "orch-root", atMs: 40_000 },
+      { rootRunId: "orch-root", atMs: 70_000 },
+    ]);
+    stop();
+    expect(stopped).toBe(true);
+  });
+
+  it("is a no-op (never schedules) when the store cannot touch heartbeats", () => {
+    const runs = makeFakeRuns({ omitTouch: true });
+    let scheduled = false;
+    const scheduler = (): (() => void) => {
+      scheduled = true;
+      return () => {};
+    };
+    const stop = startDurableKeepAlive({
+      runs,
+      rootRunId: "orch-root",
+      now: () => 1,
+      keepAliveMs: 30_000,
+      scheduler,
+    });
+    expect(scheduled).toBe(false);
+    stop(); // safe no-op
+  });
+});
 
 describe("orchestrate-durable — buildResumableRow", () => {
   it("builds a FLAT running row carrying scriptRef with the never-sent step sentinel", () => {
