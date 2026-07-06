@@ -39,13 +39,15 @@ import {
   type MsTeamsAdapterHandle,
   type MsTeamsPluginHandle,
   type GoogleChatPluginHandle,
+  type GoogleChatAdapterHandle,
   type TeamsActivity,
 } from "@comis/channels";
-import { createMsTeamsIngress } from "@comis/gateway";
+import { createMsTeamsIngress, createGoogleChatIngress } from "@comis/gateway";
 import {
   resolveTestActivityValidator,
   resolveTestConnectorFetch,
 } from "./msteams-test-seams.js";
+import { resolveTestGoogleChatVerifier } from "./googlechat-test-seams.js";
 import os from "node:os";
 import { safePath, systemNowMs } from "@comis/core";
 
@@ -78,6 +80,13 @@ export interface AdapterBootstrapResult {
    *  inbound resolver over the service-account chat.bot token provider).
    *  Undefined when the channel is disabled or its credentials are invalid. */
   googlechatPlugin?: GoogleChatPluginHandle;
+  /** Google Chat inbound ingress sub-app — built here when the channel is
+   *  enabled in webhook mode with valid credentials, from the real adapter's
+   *  handleChatEvent driver + the audience-bound inbound verifier. The
+   *  composition root threads it to the gateway so the `/channels/googlechat`
+   *  route mounts only when a caller-backed ingress exists. Undefined in pubsub
+   *  mode (the pull loop opens the transport) or when the channel is disabled. */
+  googlechatIngress?: import("hono").Hono;
 }
 
 // ---------------------------------------------------------------------------
@@ -118,6 +127,7 @@ export async function bootstrapAdapters(deps: {
   let msTeamsIngress: import("hono").Hono | undefined;
   let msTeamsPlugin: MsTeamsPluginHandle | undefined;
   let googlechatPlugin: GoogleChatPluginHandle | undefined;
+  let googlechatIngress: import("hono").Hono | undefined;
 
   // Helper: attempt to get a secret, return undefined if not found
   const getSecret = (name: string): string | undefined => {
@@ -506,25 +516,36 @@ export async function bootstrapAdapters(deps: {
     }
   }
 
-  // Google Chat — a pull-driven channel: inbound arrives over a Cloud Pub/Sub
-  // pull loop the adapter opens on start(), so there is no gateway ingress to
-  // build here (unlike Teams — that's the webhook transport). On a valid config
-  // it registers the adapter/plugin and stops. The service-account key resolves
-  // as the config SecretRef (already resolved to a string upstream) OR the
-  // service-account-key env fallback, and is never placed in a log.
+  // Google Chat — a dual-transport channel. In pubsub mode inbound arrives over a
+  // Cloud Pub/Sub pull loop the adapter opens on start() (no gateway route). In
+  // webhook mode inbound instead arrives over the net-new gateway ingress: this
+  // block is that ingress's production CALLER — on valid creds it registers the
+  // adapter/plugin, then wires the REAL adapter's handleChatEvent driver + the
+  // audience-bound inbound verifier + the content-free auth-reject bridge into
+  // createGoogleChatIngress and exposes the sub-app for the gateway phase to mount
+  // at /channels/googlechat. A mounted route MUST reach the real adapter — there
+  // is no factory without a caller. The service-account key resolves as the config
+  // SecretRef (already resolved to a string upstream) OR the service-account-key
+  // env fallback, and is never placed in a log.
   if (channelConfig.googlechat.enabled) {
     const key = (channelConfig.googlechat.serviceAccountKey as string | undefined) || getSecret("GOOGLECHAT_SA_KEY");
     const subscriptionName = channelConfig.googlechat.subscriptionName;
+    // A pull-loop subscription is required to receive inbound in pubsub mode;
+    // webhook mode receives inbound over the ingress instead, so it needs none
+    // (the adapter's start() applies the same per-mode precondition).
+    const needsSubscription = channelConfig.googlechat.mode !== "webhook";
     const validation = validateGoogleChatCredentials({
       serviceAccountKey: key,
       subscriptionName,
       allowFrom: channelConfig.googlechat.allowFrom,
       logger: channelsLogger,
     });
-    if (validation.ok && key && subscriptionName) {
+    if (validation.ok && key && (subscriptionName || !needsSubscription)) {
       const plugin = createGoogleChatPlugin({
         serviceAccountKey: key,
-        subscriptionName,
+        // Webhook mode carries no subscription (empty placeholder); its start()
+        // never opens the pull loop, so the value is unused there.
+        subscriptionName: subscriptionName ?? "",
         allowFrom: channelConfig.googlechat.allowFrom,
         allowMode: channelConfig.googlechat.allowMode,
         logger: channelsLogger,
@@ -537,6 +558,45 @@ export async function bootstrapAdapters(deps: {
       // tgPlugin/msTeamsPlugin capture). Kept as a GoogleChatPluginHandle — a
       // down-cast to ChannelPluginPort would lose createResolver.
       googlechatPlugin = plugin as GoogleChatPluginHandle;
+      // Webhook mode: build the inbound ingress from the REAL adapter's inbound
+      // driver + the audience-bound verifier. Pubsub mode has no route.
+      if (channelConfig.googlechat.mode === "webhook") {
+        // OFF-BY-DEFAULT live-test seam (see googlechat-test-seams.ts): with
+        // COMIS_GOOGLECHAT_TEST_JWKS unset — the production case — the verifier is
+        // the live remote-JWKS one for the configured audience shape; set, it
+        // verifies against a local test JWKS (a full verify, never a bypass). Reads
+        // via the injected EnvPort (the sanctioned env boundary — never direct
+        // process.env). The audience is closed over here, fail-closed if blank.
+        const getEnv = (name: string): string | undefined => env?.get(name);
+        const gcAdapter = plugin.adapter as GoogleChatAdapterHandle;
+        googlechatIngress = createGoogleChatIngress({
+          validateInboundJwt: resolveTestGoogleChatVerifier(
+            {
+              audienceType: channelConfig.googlechat.audienceType,
+              audience: channelConfig.googlechat.audience ?? "",
+            },
+            getEnv,
+            { logger: channelsLogger },
+          ),
+          // Fire-and-forget: googlechat's one normalizer is async, so the ingress
+          // does not block its fast-ack on it (per-event failure is the adapter's
+          // own concern).
+          handleWebhookEvents: (events) => {
+            for (const e of events) void gcAdapter.handleChatEvent(e);
+          },
+          // Bridge the ingress auth-gate rejections onto the daemon eventBus as a
+          // content-free health_signal, so a forged/expired/wrong-audience/missing-
+          // token flood is COUNTED by `comis fleet` instead of raw-log-only. Carries
+          // the channel label + closed reason class only — never the token/header/body.
+          onAuthRejected: (reason) =>
+            container.eventBus.emit("channel:ingress_auth_rejected", {
+              channelType: "googlechat",
+              reason,
+              timestamp: systemNowMs(),
+            }),
+          logger: channelsLogger,
+        });
+      }
       channelsLogger.info({ channelType: "googlechat", mode: channelConfig.googlechat.mode }, "Channel adapter initialized");
     } else {
       channelsLogger.warn({ hint: "Set channels.googlechat.serviceAccountKey (SecretRef) or GOOGLECHAT_SA_KEY, and channels.googlechat.subscriptionName", errorKind: "auth" as const }, "Google Chat credential validation failed");
@@ -550,5 +610,5 @@ export async function bootstrapAdapters(deps: {
   }
   } // end if (channelConfig)
 
-  return { adaptersByType, tgPlugin, linePlugin, channelPlugins, msTeamsIngress, msTeamsPlugin, googlechatPlugin };
+  return { adaptersByType, tgPlugin, linePlugin, channelPlugins, msTeamsIngress, msTeamsPlugin, googlechatPlugin, googlechatIngress };
 }
