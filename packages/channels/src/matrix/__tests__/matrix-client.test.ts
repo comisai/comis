@@ -90,6 +90,24 @@ function fakeReactionEvent(
   } as unknown as MatrixEvent;
 }
 
+/** A minimal live `m.room.redaction` timeline event naming its redacted target. */
+function fakeRedactionEvent(
+  overrides: { id?: string; sender?: string; ts?: number; redacts?: string } = {},
+): MatrixEvent {
+  const { id = "$redact1", sender = "@alice:hs", ts = 400, redacts = "$gone:hs" } = overrides;
+  return {
+    getType: () => "m.room.redaction",
+    getId: () => id,
+    getSender: () => sender,
+    getTs: () => ts,
+    getContent: () => ({}),
+    // For a redaction the SDK reports the redacted target id here (from event.redacts).
+    getAssociatedId: () => redacts,
+    // Redactions ride in the clear; the fail-closed decrypt branch is skipped.
+    isEncrypted: () => false,
+  } as unknown as MatrixEvent;
+}
+
 /** A minimal room; `inviter` is the sender of the bot's own invite m.room.member event. */
 function fakeRoom(roomId: string, opts: { inviter?: string } = {}): Room {
   return {
@@ -960,5 +978,77 @@ describe("createMatrixClient — inbound reaction routing", () => {
     );
 
     expect(h.reactions).toHaveLength(0);
+  });
+});
+
+describe("createMatrixClient — inbound redaction routing", () => {
+  it("admits redaction events in the /sync filter it starts with", async () => {
+    const h = makeHarness();
+    await h.controller.start();
+
+    // The server-side timeline filter must request redaction events, or the
+    // homeserver never returns them and no inbound redaction ever surfaces.
+    const filter = h.fake.startCalls[0]?.filter as Filter;
+    const types = filter.getDefinition().room?.timeline?.types;
+    expect(types).toContain("m.room.redaction");
+    // The message + reaction types are still requested (the widening is additive).
+    expect(types).toContain("m.room.message");
+    expect(types).toContain("m.reaction");
+  });
+
+  it("routes a live post-watermark redaction to onMessage as a new honest event naming the redacted target", async () => {
+    // A redaction rides the timeline as its own m.room.redaction event. It must
+    // surface as a NEW honest normalized event (naming the redacted target) rather
+    // than silently rewriting prior context — an outbound-only test would be green
+    // while this inbound path is dead. It reaches onMessage, not onReaction.
+    const h = makeHarness({ seed: { watermarks: {} } });
+    await h.controller.start();
+    await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null, undefined);
+
+    await h.fake.emit(
+      RoomEvent.Timeline,
+      fakeRedactionEvent({ sender: "@alice:hs", ts: 300, redacts: "$gone:hs" }),
+      fakeRoom("!room:hs"),
+      false,
+    );
+
+    expect(h.received).toHaveLength(1);
+    expect(h.received[0]?.channelId).toBe("!room:hs");
+    expect(h.received[0]?.metadata.matrixRedactsEventId).toBe("$gone:hs");
+    // A redaction is not a reaction.
+    expect(h.reactions).toHaveLength(0);
+    // The room's own watermark advanced to the redaction ts (no reprocessing).
+    expect(h.saves.some((s) => s.watermarks["!room:hs"] === 300)).toBe(true);
+  });
+
+  it("does not route a redaction the bot itself sent (no self-redaction loop)", async () => {
+    const h = makeHarness(); // fake getUserId() === "@bot:hs"
+    await h.controller.start();
+    await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null, undefined);
+
+    await h.fake.emit(
+      RoomEvent.Timeline,
+      fakeRedactionEvent({ sender: "@bot:hs", ts: 300 }),
+      fakeRoom("!room:hs"),
+      false,
+    );
+
+    expect(h.received).toHaveLength(0);
+  });
+
+  it("does not route a backlog (toStartOfTimeline) redaction to onMessage", async () => {
+    const h = makeHarness({ seed: { watermarks: {} } });
+    await h.controller.start();
+    await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null, undefined);
+
+    // Pagination/backfill delivery → not live → dropped before the redaction branch.
+    await h.fake.emit(
+      RoomEvent.Timeline,
+      fakeRedactionEvent({ ts: 300 }),
+      fakeRoom("!room:hs"),
+      true,
+    );
+
+    expect(h.received).toHaveLength(0);
   });
 });

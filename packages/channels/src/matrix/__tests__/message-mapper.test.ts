@@ -13,6 +13,8 @@ interface FakeEventShape {
   content: Record<string, unknown>;
   /** The thread-root id the SDK getter reports; undefined for a non-thread event. */
   threadRootId: string | undefined;
+  /** The id `getAssociatedId()` reports for a redaction (its redacted target). */
+  associatedId: string | undefined;
 }
 
 /** Build a minimal MatrixEvent double exposing only the accessors the mapper reads. */
@@ -23,6 +25,7 @@ function makeEvent(overrides: Partial<FakeEventShape> = {}): MatrixEvent {
     sender: "@real:hs",
     content: { msgtype: "m.text", body: "hello world" },
     threadRootId: undefined,
+    associatedId: undefined,
     ...overrides,
   };
   return {
@@ -30,6 +33,8 @@ function makeEvent(overrides: Partial<FakeEventShape> = {}): MatrixEvent {
     getId: () => base.id,
     getSender: () => base.sender,
     getContent: () => base.content,
+    // For a redaction, the SDK reports the redacted target id here.
+    getAssociatedId: () => base.associatedId,
     // A getter, as in the SDK — undefined for a non-thread event.
     threadRootId: base.threadRootId,
   } as unknown as MatrixEvent;
@@ -164,5 +169,98 @@ describe("mapMatrixEventToNormalized", () => {
       { isDirect: false },
     );
     expect(result?.text).toBe("");
+  });
+
+  it("surfaces an inbound edit as a new message carrying the new content and a replaces pointer, without mutating the input", () => {
+    // A remote edit arrives as an m.replace: its m.new_content is the authoritative
+    // new text and its relation names the replaced event. It must surface as a NEW
+    // normalized event (advisory replaces pointer) — never an in-place rewrite of
+    // what the bot already received — so the agent reasons on receipt-time events.
+    const editContent = {
+      msgtype: "m.text",
+      body: "* edited text",
+      "m.new_content": { msgtype: "m.text", body: "edited text" },
+      "m.relates_to": { rel_type: "m.replace", event_id: "$orig:hs" },
+    };
+    const event = makeEvent({ id: "$edit:hs", content: editContent });
+    const inputBefore = JSON.stringify(event.getContent());
+
+    const result = mapMatrixEventToNormalized(event, makeRoom("!r:hs"), { isDirect: false });
+
+    // Its text is the NEW content, not the leading-"* " fallback body.
+    expect(result?.text).toBe("edited text");
+    // An advisory pointer to the replaced event (never a silent rewrite).
+    expect(result?.metadata.matrixReplacesEventId).toBe("$orig:hs");
+    // The new event has its own identity: a fresh UUID + the edit event's own id.
+    expect(result?.id).toMatch(UUID_RE);
+    expect(result?.metadata.matrixEventId).toBe("$edit:hs");
+    // The whole object round-trips through the domain validator.
+    expect(parseMessage(result).ok).toBe(true);
+    // The input event object was not mutated (the mapper reads, never writes).
+    expect(JSON.stringify(event.getContent())).toBe(inputBefore);
+  });
+
+  it("sanitizes the edit's new formatted_body so a script tag never reaches the normalized message", () => {
+    const result = mapMatrixEventToNormalized(
+      makeEvent({
+        content: {
+          msgtype: "m.text",
+          body: "* safe",
+          "m.new_content": {
+            msgtype: "m.text",
+            body: "safe",
+            format: "org.matrix.custom.html",
+            formatted_body: "<script>alert(1)</script><b>bold</b>",
+          },
+          "m.relates_to": { rel_type: "m.replace", event_id: "$orig:hs" },
+        },
+      }),
+      makeRoom(),
+      { isDirect: false },
+    );
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain("<script>");
+    expect(serialized).not.toContain("alert");
+    expect(result?.metadata.matrixFormattedBody).toContain("<b>bold</b>");
+  });
+
+  it("surfaces an inbound redaction as a new honest event naming the redacted target with no reconstructed body", () => {
+    // A redaction must surface honestly — the bot learns a message was removed —
+    // without ever reconstructing the removed content. The target id is advisory
+    // metadata; prior context is never silently rewritten or dropped.
+    const result = mapMatrixEventToNormalized(
+      makeEvent({ type: "m.room.redaction", id: "$redact:hs", content: {}, associatedId: "$gone:hs" }),
+      makeRoom("!r:hs"),
+      { isDirect: false },
+    );
+
+    expect(result).not.toBeNull();
+    expect(result?.metadata.matrixRedactsEventId).toBe("$gone:hs");
+    // An honest, non-empty marker — never the removed content.
+    expect(typeof result?.text).toBe("string");
+    expect(result?.text.length).toBeGreaterThan(0);
+    // The honest event round-trips through the domain validator.
+    expect(parseMessage(result).ok).toBe(true);
+  });
+
+  it("still surfaces an honest redaction event when the redacted target id is unresolved", () => {
+    // A redaction whose target cannot be resolved must NOT be silently dropped —
+    // the bot must still learn that a message was removed.
+    const result = mapMatrixEventToNormalized(
+      makeEvent({ type: "m.room.redaction", content: {}, associatedId: undefined }),
+      makeRoom(),
+      { isDirect: false },
+    );
+    expect(result).not.toBeNull();
+    expect(result?.metadata.matrixRedactsEventId).toBeUndefined();
+  });
+
+  it("returns null for a redaction event with no verifiable sender", () => {
+    const result = mapMatrixEventToNormalized(
+      makeEvent({ type: "m.room.redaction", sender: undefined, associatedId: "$gone:hs" }),
+      makeRoom(),
+      { isDirect: false },
+    );
+    expect(result).toBeNull();
   });
 });
