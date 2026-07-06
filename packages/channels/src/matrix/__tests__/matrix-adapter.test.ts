@@ -368,6 +368,8 @@ class FakeMatrixClient {
   sendAttempts = 0;
   /** A FIFO queue of errors to reject successive sends with (models a transient 429). */
   readonly pendingSendErrors: unknown[] = [];
+  /** When set, sendEvent rejects (non-retryable 403) from this attempt number on. */
+  failSendsFromAttempt?: number;
 
   sendEvent(
     roomId: string,
@@ -375,6 +377,12 @@ class FakeMatrixClient {
     content: Record<string, unknown>,
   ): Promise<{ event_id: string }> {
     this.sendAttempts += 1;
+    if (
+      this.failSendsFromAttempt !== undefined &&
+      this.sendAttempts >= this.failSendsFromAttempt
+    ) {
+      return Promise.reject(matrixError("M_FORBIDDEN", 403, "not allowed"));
+    }
     if (this.pendingSendErrors.length > 0) {
       return Promise.reject(this.pendingSendErrors.shift());
     }
@@ -1596,6 +1604,33 @@ describe("createMatrixAdapter — threaded + chunked send", () => {
       ([fields]) => (fields as { errorKind?: string }).errorKind === "platform",
     );
     expect(platformWarn).toBeDefined();
+  });
+
+  it("surfaces partial delivery in the error when a later chunk fails mid-send", async () => {
+    const fake = new FakeMatrixClient();
+    // The first chunk lands; the second fails with a non-retryable error.
+    fake.failSendsFromAttempt = 2;
+    const { adapter, logger } = makeAdapter({ fake });
+    await adapter.start();
+
+    const result = await adapter.sendMessage("!room:hs", overBudgetMarkdown());
+
+    expect(result.ok).toBe(false);
+    // Exactly one chunk landed before the failure.
+    expect(fake.sentEvents).toHaveLength(1);
+    if (!result.ok) {
+      // The error must reveal the partial delivery (count + last id) so a caller
+      // resends only the remainder rather than blind-full-resending (which would
+      // duplicate the delivered chunk).
+      expect(result.error.message).toMatch(/1 of \d+/);
+      expect(result.error.message).toContain("$sent1");
+    }
+    // The warn carries the machine-readable progress too.
+    const warn = vi.mocked(logger.warn);
+    const partialWarn = warn.mock.calls.find(
+      ([fields]) => (fields as { chunksSent?: number }).chunksSent === 1,
+    );
+    expect(partialWarn).toBeDefined();
   });
 });
 
