@@ -65,6 +65,7 @@ import {
 } from "./matrix-client.js";
 import { createMatrixStateStore } from "./matrix-state.js";
 import {
+  buildEditContent,
   buildReactionContent,
   buildThreadRelation,
   chunkBySerializedBytes,
@@ -856,6 +857,89 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
       }));
       lastError = undefined;
       return ok(mapped);
+    },
+
+    async editMessage(
+      roomId: string,
+      messageId: string,
+      text: string,
+    ): Promise<Result<void, Error>> {
+      if (client === undefined) {
+        const notReady = new Error("Matrix adapter cannot edit a message before start()");
+        lastError = notReady.message;
+        deps.logger.warn(
+          {
+            channelType: "matrix" as const,
+            hint: "Call start() (which authenticates the client) before editMessage()",
+            errorKind: "precondition" as const,
+          },
+          "Matrix edit blocked: adapter not started",
+        );
+        return err(notReady);
+      }
+
+      // An edit sends an m.replace whose m.new_content is the authoritative new
+      // message; the target event is never overwritten in place on the wire. The
+      // SDK types m.room.message content as a broad XOR union, so cast the exact
+      // builder shape at this single sendEvent boundary.
+      const content = buildEditContent(messageId, text);
+      const sent = await fromPromise(
+        client.sendEvent(
+          roomId,
+          EventType.RoomMessage,
+          content as unknown as TimelineEvents[EventType.RoomMessage],
+        ),
+      );
+      if (!sent.ok) {
+        lastError = sent.error.message;
+        const classified = classifyMatrixError(toMatrixErrorInput(sent.error));
+        deps.logger.warn(
+          {
+            channelType: "matrix" as const,
+            hint: classified.hint,
+            errorKind: classified.errorKind,
+          },
+          "Matrix message edit failed",
+        );
+        return err(sent.error);
+      }
+      // The port returns void: the replacement's own event id is discarded.
+      lastError = undefined;
+      return ok(undefined);
+    },
+
+    async deleteMessage(roomId: string, messageId: string): Promise<Result<void, Error>> {
+      if (client === undefined) {
+        const notReady = new Error("Matrix adapter cannot delete a message before start()");
+        lastError = notReady.message;
+        deps.logger.warn(
+          {
+            channelType: "matrix" as const,
+            hint: "Call start() (which authenticates the client) before deleteMessage()",
+            errorKind: "precondition" as const,
+          },
+          "Matrix delete blocked: adapter not started",
+        );
+        return err(notReady);
+      }
+
+      // Deleting a message is redacting the target event by its id.
+      const redacted = await fromPromise(client.redactEvent(roomId, messageId));
+      if (!redacted.ok) {
+        lastError = redacted.error.message;
+        const classified = classifyMatrixError(toMatrixErrorInput(redacted.error));
+        deps.logger.warn(
+          {
+            channelType: "matrix" as const,
+            hint: classified.hint,
+            errorKind: classified.errorKind,
+          },
+          "Matrix message delete failed",
+        );
+        return err(redacted.error);
+      }
+      lastError = undefined;
+      return ok(undefined);
     },
 
     onMessage(handler: MessageHandler): void {

@@ -47,6 +47,64 @@ export function buildTextMessageContent(markdown: string): MatrixTextMessageCont
 }
 
 /**
+ * The `m.replace` edit content: the leading-marker fallback (`body` /
+ * `formatted_body` a replacement-unaware client shows), the authoritative
+ * `m.new_content` replacement message, and the `m.relates_to` naming the edited
+ * event. Snake-cased to match the Matrix event content wire shape.
+ */
+export interface MatrixEditContent {
+  /** Always `m.text` for a rendered chat edit. */
+  msgtype: "m.text";
+  /**
+   * Fallback plaintext, prefixed with the leading edit marker so a client that
+   * does not apply replacements still shows it and reads it as an edit.
+   */
+  body: string;
+  /** The formatting marker Matrix requires alongside a `formatted_body`. */
+  format: "org.matrix.custom.html";
+  /** Fallback HTML, likewise prefixed with the leading edit marker. */
+  formatted_body: string;
+  /** The authoritative replacement message a replacement-aware client renders. */
+  "m.new_content": MatrixTextMessageContent;
+  /** Relates the edit to the event it replaces. */
+  "m.relates_to": {
+    /** Always `m.replace` for an edit. */
+    rel_type: "m.replace";
+    /** The event id this edit replaces. */
+    event_id: string;
+  };
+}
+
+/**
+ * Build the `m.replace` edit content for replacing `messageId` with `markdown`.
+ *
+ * The authoritative new message rides under `m.new_content`, rendered exactly as a
+ * fresh send (reusing `buildTextMessageContent`, so the single markdown renderer
+ * and its escaping apply). The top-level `body`/`formatted_body` are the fallback a
+ * client that does not understand replacements shows; the Matrix convention
+ * prefixes them with a leading `* ` marker so they read as an edit. Pure and
+ * SDK-free — the caller sends the returned object as an `m.room.message`.
+ *
+ * @param messageId - The event id being edited (replaced).
+ * @param markdown - The new markdown text.
+ * @returns The `m.replace` content object.
+ */
+export function buildEditContent(messageId: string, markdown: string): MatrixEditContent {
+  const newContent = buildTextMessageContent(markdown);
+  return {
+    msgtype: "m.text",
+    body: `* ${newContent.body}`,
+    format: "org.matrix.custom.html",
+    formatted_body: `* ${newContent.formatted_body}`,
+    "m.new_content": newContent,
+    "m.relates_to": {
+      rel_type: "m.replace",
+      event_id: messageId,
+    },
+  };
+}
+
+/**
  * The `m.reaction` event content: an `m.annotation` relation to the target event
  * carrying the reaction `key`. Snake-cased to match the Matrix event content wire
  * shape (`m.relates_to` / `rel_type` / `event_id`).
