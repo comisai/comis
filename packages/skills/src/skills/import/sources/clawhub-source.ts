@@ -322,6 +322,9 @@ async function fetchCapped(
 /** Moderation states that block a release regardless of the scan status. */
 const BLOCKING_MODERATION_STATES = new Set(["blocked", "quarantined", "revoked"]);
 
+/** Reason tokens that flag a release as blocked (matched on token boundaries). */
+const BLOCKING_REASON_TOKENS = new Set(["malicious", "malware", "blocked"]);
+
 /**
  * Top-level verify decisions that let a release proceed. The verdict is
  * fail-closed: only an explicit `ok:true` carrying one of these decisions passes
@@ -362,14 +365,14 @@ export function evaluateVerdict(trust: ClawHubTrust): { blocked: boolean; reason
     reasons.push(`the moderation state is ${trust.moderationState}`);
   }
   for (const r of trust.reasons) {
-    const lower = r.toLowerCase();
-    if (
-      lower.includes("malicious") ||
-      lower.includes("malware") ||
-      lower.endsWith("_blocked") ||
-      lower.endsWith(".blocked") ||
-      lower === "blocked"
-    ) {
+    // Match the reason on token boundaries, not as a raw substring: split on the
+    // structured delimiters the registry uses (`:` `.` `_` and whitespace, NOT
+    // hyphen) and block only when a resulting token IS a blocking keyword. This
+    // blocks `scan:malicious` / `policy_blocked` / `moderation.blocked` /
+    // `blocked` while a benign phrase that merely contains the substring
+    // (`no-malicious-content-found`, `malware-scan-passed`) does not over-block.
+    const tokens = r.toLowerCase().split(/[:._\s]+/);
+    if (tokens.some((t) => BLOCKING_REASON_TOKENS.has(t))) {
       reasons.push(`the registry verdict flags: ${r}`);
     }
   }
