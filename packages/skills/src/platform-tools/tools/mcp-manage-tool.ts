@@ -90,6 +90,12 @@ const McpManageToolParams = Type.Object({
       },
     ),
   ),
+  env: Type.Optional(
+    Type.Record(Type.String(), Type.String(), {
+      description:
+        'Environment variables for a STDIO server (e.g. SERVICE_USERNAME). REQUIRED for stdio servers that need credentials/config in the environment. Values may reference stored secrets as ${VAR_NAME} (e.g. {"SERVICE_PASSWORD":"${SERVICE_PASSWORD}"}) — resolved from the encrypted secret store at spawn, so the plaintext never enters config. Keys are env-var names, values are the value or a ${VAR} reference.',
+    }),
+  ),
 });
 
 const VALID_ACTIONS = ["list", "status", "connect", "disconnect", "reconnect"] as const;
@@ -188,6 +194,45 @@ function coerceHeaders(p: Record<string, unknown>): unknown {
     {
       param: "headers",
       hint: 'Pass headers as an object, e.g. {"Authorization":"Bearer ${TOKEN}"}, not a JSON string.',
+    },
+  );
+}
+
+/**
+ * Coerce `env` from a JSON-encoded string into a plain object — same shape rules
+ * as {@link coerceHeaders}. A stdio server that needs credentials (e.g. example-mcp
+ * needs SERVICE_USERNAME/SERVICE_PASSWORD) receives them here; values may be `${VAR}`
+ * secret references the daemon resolves at spawn. Coercion runs before
+ * `rpcCall("mcp.connect")` so the daemon-side env-var validation sees a real object,
+ * not a JSON string (the same footgun class the headers coercion guards).
+ */
+function coerceEnv(p: Record<string, unknown>): unknown {
+  const raw = p.env;
+  if (typeof raw !== "string") {
+    return raw; // object/undefined: pass through
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throwToolError(
+      "invalid_value",
+      `mcp_manage env must be an object; received a non-JSON string.`,
+      {
+        param: "env",
+        hint: 'Pass env as an object, e.g. {"SERVICE_PASSWORD":"${SERVICE_PASSWORD}"}, not a JSON string.',
+      },
+    );
+  }
+  if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+    return parsed;
+  }
+  throwToolError(
+    "invalid_value",
+    `mcp_manage env must be an object; the supplied JSON did not parse to an object.`,
+    {
+      param: "env",
+      hint: 'Pass env as an object, e.g. {"SERVICE_PASSWORD":"${SERVICE_PASSWORD}"}, not a JSON string.',
     },
   );
 }
@@ -327,6 +372,7 @@ export function createMcpManageTool(
               args: coercedArgs,
               url: p.url,
               headers: coerceHeaders(p) as Record<string, string> | undefined,
+              env: coerceEnv(p) as Record<string, string> | undefined,
               ...(coercedAuth !== undefined && { auth: coercedAuth }),
               _trustLevel: ctx.trustLevel,
             });
@@ -370,6 +416,7 @@ export function createMcpManageTool(
             args: coercedArgs,
             url: p.url,
             headers: coerceHeaders(p) as Record<string, string> | undefined,
+            env: coerceEnv(p) as Record<string, string> | undefined,
             _trustLevel: ctx.trustLevel,
           });
         },
