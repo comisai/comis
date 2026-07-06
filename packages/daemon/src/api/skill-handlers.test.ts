@@ -29,6 +29,16 @@ vi.mock("../skills/bundle-install-helper.js", async (importOriginal) => ({
   runBundleInstallHook: mockRunBundleInstallHook,
 }));
 
+// Partial mock: override ONLY resolveWellKnownFileSet (the allowlist-gated registry
+// resolve) so the source:"wellknown" dispatch is driven off-network with a fixture
+// file set / a gate refuse, while the REAL importThroughPipeline +
+// uploadFileSetIdentifier the other install tests depend on stay intact.
+const mockResolveWellKnownFileSet = vi.hoisted(() => vi.fn());
+vi.mock("../skills/skill-import-runner.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../skills/skill-import-runner.js")>()),
+  resolveWellKnownFileSet: mockResolveWellKnownFileSet,
+}));
+
 import { createSkillHandlers as createSkillHandlersRaw, type SkillHandlerDeps } from "./skill-handlers.js";
 import type { AppContainer } from "@comis/core";
 import { CapabilityDeniedError } from "@comis/core";
@@ -48,10 +58,12 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
+import { ok, err } from "@comis/shared";
 import {
   writeProvenanceRecord,
   provenanceKey,
   readProvenanceStore,
+  computeInstalledSetHash,
   type ProvenanceRecord,
 } from "@comis/skills";
 import { uploadFileSetIdentifier } from "../skills/skill-import-runner.js";
@@ -135,6 +147,7 @@ beforeEach(() => {
   // Reset (NOT restore) — restore would unbind the vi.mock hoisted factory.
   mockRunBundleInstallHook.mockReset();
   mockRunBundleInstallHook.mockResolvedValue({ persistence: "skipped" as const });
+  mockResolveWellKnownFileSet.mockReset();
 });
 
 afterEach(() => {
@@ -1680,5 +1693,139 @@ describe("skills.import retrofit (staged pipeline, pre-write scan + Phase-A)", (
     ).rejects.toThrow();
     // Phase-A ran PRE-write: the reject left zero live files.
     expect(fs.existsSync(join(wsDir, "skills", "mcp-skill"))).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// skills.import — source:"wellknown" dispatch. The branch delegates the gate +
+// fetch to resolveWellKnownFileSet (mocked off-network here) and feeds the
+// resolved {kind:"fileSet"} into the SINGLE staged pipeline with the registry +
+// stable identifier threaded into the real provenance store.
+// ---------------------------------------------------------------------------
+
+describe("skills.import source:\"wellknown\" dispatch", () => {
+  const WK_MD = "---\nname: pdf-extractor\ndescription: Extract text from PDF files.\n---\n\nExtract text.\n";
+  const WK_IDENTIFIER = "https://reg.example/.well-known/skills/pdf-extractor/";
+
+  it("routes a wellknown import through the pipeline, pinning source:imported + the registry + identifier", async () => {
+    const wsDir = join(tmpRoot, "ws");
+    fs.mkdirSync(wsDir, { recursive: true });
+    mockResolveWellKnownFileSet.mockResolvedValue(
+      ok({
+        files: [{ path: "SKILL.md", content: WK_MD }],
+        identifier: WK_IDENTIFIER,
+        registryOrigin: "https://reg.example",
+      }),
+    );
+    const deps = makeDeps({
+      defaultAgentId: "agent-a",
+      workspaceDirs: new Map([["agent-a", wsDir]]),
+      skillRegistries: new Map([["agent-a", makeRegistry([])]]),
+    });
+    const dataDir = (deps.container.config as { dataDir: string }).dataDir;
+    const handlers = createSkillHandlers(deps);
+    const result = (await handlers["skills.import"]!({
+      source: "wellknown",
+      registry: "https://reg.example",
+      name: "pdf-extractor",
+      scope: "local",
+      _agentId: "agent-a",
+    })) as { ok: boolean; name: string; source: string };
+    expect(result).toMatchObject({ ok: true, name: "pdf-extractor", source: "imported" });
+    // The resolve went through the gate with the caller's scope + agent.
+    expect(mockResolveWellKnownFileSet).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ registry: "https://reg.example", name: "pdf-extractor", scope: "local", agentId: "agent-a" }),
+    );
+    // Ground truth: the real provenance store carries the acquisition channel +
+    // the registry + the stable identifier, hashed over the installed set.
+    const rec = readProvenanceStore(dataDir)[provenanceKey("local", "agent-a", "pdf-extractor")];
+    expect(rec?.source).toBe("wellknown");
+    expect(rec?.registry).toBe("https://reg.example");
+    expect(rec?.identifier).toBe(WK_IDENTIFIER);
+    const installedMd = fs.readFileSync(join(wsDir, "skills", "pdf-extractor", "SKILL.md"), "utf-8");
+    expect(rec?.contentHash).toBe(
+      computeInstalledSetHash([{ relPath: "SKILL.md", bytes: Buffer.from(installedMd, "utf-8") }]),
+    );
+  });
+
+  it("surfaces the allowlist refuse even when confirm:true is supplied (gate never overridable)", async () => {
+    mockResolveWellKnownFileSet.mockResolvedValue(
+      err({
+        stage: "acquire",
+        message: 'the registry "https://evil.example" is not in the skills.import.registries allowlist',
+        hint: "add the registry's normalized origin to skills.import.registries to permit the import — this is a config edit; confirm does not override it",
+        errorKind: "precondition",
+      }),
+    );
+    const handlers = createSkillHandlers(
+      makeDeps({ defaultAgentId: "agent-a", workspaceDirs: new Map([["agent-a", join(tmpRoot, "ws")]]) }),
+    );
+    await expect(
+      handlers["skills.import"]!({
+        source: "wellknown",
+        registry: "https://evil.example",
+        name: "x",
+        scope: "local",
+        confirm: true,
+        _agentId: "agent-a",
+      }),
+    ).rejects.toThrow(/skills\.import\.registries/);
+  });
+
+  it("errors clearly when a wellknown import omits the registry (resolver not reached)", async () => {
+    const handlers = createSkillHandlers(
+      makeDeps({ defaultAgentId: "agent-a", workspaceDirs: new Map([["agent-a", join(tmpRoot, "ws")]]) }),
+    );
+    await expect(
+      handlers["skills.import"]!({ source: "wellknown", name: "pdf-extractor", scope: "local", _agentId: "agent-a" }),
+    ).rejects.toThrow(/registry/i);
+    expect(mockResolveWellKnownFileSet).not.toHaveBeenCalled();
+  });
+
+  it("errors clearly when a wellknown import omits the name (resolver not reached)", async () => {
+    const handlers = createSkillHandlers(
+      makeDeps({ defaultAgentId: "agent-a", workspaceDirs: new Map([["agent-a", join(tmpRoot, "ws")]]) }),
+    );
+    await expect(
+      handlers["skills.import"]!({ source: "wellknown", registry: "https://reg.example", scope: "local", _agentId: "agent-a" }),
+    ).rejects.toThrow(/name/i);
+    expect(mockResolveWellKnownFileSet).not.toHaveBeenCalled();
+  });
+
+  it("leaves GitHub/archive imports unaffected by the wellknown gate (empty allowlist still installs)", async () => {
+    const wsDir = join(tmpRoot, "ws");
+    fs.mkdirSync(wsDir, { recursive: true });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const u = typeof url === "string" ? url : url.toString();
+      if (u.includes("contents/skills/gh-skill?")) {
+        return new Response(
+          JSON.stringify([
+            { name: "SKILL.md", type: "file", download_url: "https://dl/SKILL.md", path: "skills/gh-skill/SKILL.md" },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (u.endsWith("/SKILL.md")) {
+        return new Response("---\nname: gh-skill\ndescription: A GitHub skill\n---\nBody", { status: 200 });
+      }
+      return new Response("body", { status: 200 });
+    });
+    // agents:{} (makeDeps default) ⇒ an empty allowlist; a GitHub import must still install.
+    const handlers = createSkillHandlers(
+      makeDeps({
+        defaultAgentId: "agent-a",
+        workspaceDirs: new Map([["agent-a", wsDir]]),
+        skillRegistries: new Map([["agent-a", makeRegistry([])]]),
+      }),
+    );
+    const result = (await handlers["skills.import"]!({
+      url: "https://github.com/owner/repo/tree/main/skills/gh-skill",
+      scope: "local",
+      _agentId: "agent-a",
+    })) as { ok: boolean; source: string };
+    expect(result).toMatchObject({ ok: true, source: "imported" });
+    // The wellknown gate is orthogonal — never consulted for a GitHub import.
+    expect(mockResolveWellKnownFileSet).not.toHaveBeenCalled();
   });
 });
