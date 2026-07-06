@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
 import {
+  buildAttachmentContent,
   buildEditContent,
   buildReactionContent,
   buildTextMessageContent,
@@ -145,6 +146,81 @@ describe("buildEditContent", () => {
     expect(content["m.new_content"].formatted_body).toContain("&lt;");
     expect(content["m.new_content"].formatted_body).toContain("&amp;");
     expect(content["m.new_content"].formatted_body).not.toContain("< b");
+  });
+});
+
+describe("buildAttachmentContent", () => {
+  /** A stand-in encrypted-file record (JWK key + iv + hashes + version), url-less. */
+  const encInfo = {
+    key: { alg: "A256CTR", key_ops: ["encrypt", "decrypt"], kty: "oct", k: "kkk", ext: true },
+    iv: "aviv",
+    hashes: { sha256: "abc" },
+    v: "v2",
+  };
+
+  it("maps an image MIME to m.image and a plaintext room to a top-level url (no file)", () => {
+    const content = buildAttachmentContent({
+      mime: "image/png",
+      fileName: "photo.png",
+      sizeBytes: 1234,
+      contentUri: "mxc://hs/abc",
+    });
+
+    expect(content.msgtype).toBe("m.image");
+    expect(content.body).toBe("photo.png");
+    // Plaintext: the uploaded mxc rides content.url and there is NO encrypted file record.
+    expect(content.url).toBe("mxc://hs/abc");
+    expect(content.file).toBeUndefined();
+    expect(content.info).toEqual({ mimetype: "image/png", size: 1234 });
+  });
+
+  it("maps an audio MIME to m.audio", () => {
+    const content = buildAttachmentContent({
+      mime: "audio/ogg",
+      fileName: "clip.ogg",
+      sizeBytes: 10,
+      contentUri: "mxc://hs/a",
+    });
+    expect(content.msgtype).toBe("m.audio");
+  });
+
+  it("maps a video MIME to m.video", () => {
+    const content = buildAttachmentContent({
+      mime: "video/mp4",
+      fileName: "clip.mp4",
+      sizeBytes: 20,
+      contentUri: "mxc://hs/v",
+    });
+    expect(content.msgtype).toBe("m.video");
+  });
+
+  it("maps any other MIME (a document) to m.file", () => {
+    const content = buildAttachmentContent({
+      mime: "application/pdf",
+      fileName: "doc.pdf",
+      sizeBytes: 30,
+      contentUri: "mxc://hs/d",
+    });
+    expect(content.msgtype).toBe("m.file");
+  });
+
+  it("in an encrypted room emits content.file (the record + the uploaded url) and NO top-level url", () => {
+    const content = buildAttachmentContent({
+      mime: "image/png",
+      fileName: "secret.png",
+      sizeBytes: 99,
+      contentUri: "mxc://hs/enc",
+      encryptedInfo: encInfo,
+    });
+
+    // The encrypted-file record is the url-less info plus the uploaded mxc; the
+    // plaintext content.url must be absent so no plaintext link leaks in an
+    // encrypted room.
+    expect(content.file).toEqual({ ...encInfo, url: "mxc://hs/enc" });
+    expect(content.url).toBeUndefined();
+    // The declared info block still rides alongside for a client's preview.
+    expect(content.info).toEqual({ mimetype: "image/png", size: 99 });
+    expect(content.msgtype).toBe("m.image");
   });
 });
 
