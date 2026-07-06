@@ -1052,3 +1052,57 @@ describe("createMatrixClient — inbound redaction routing", () => {
     expect(h.received).toHaveLength(0);
   });
 });
+
+describe("createMatrixClient — non-message events never gate a later message", () => {
+  it("still delivers a lower-ts message that arrives after a higher-ts reaction", async () => {
+    // A reaction frequently holds the highest timestamp in a burst. If it advanced
+    // the shared message-delivery watermark, a genuinely-new message with a lower
+    // origin_server_ts — routine under federated clock skew between homeservers —
+    // would be silently gated out. The reaction must NOT gate the message.
+    const h = makeHarness({ seed: { watermarks: {} } });
+    await h.controller.start();
+    await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null, undefined);
+
+    await h.fake.emit(
+      RoomEvent.Timeline,
+      fakeReactionEvent({ sender: "@alice:hs", ts: 1000, targetId: "$t:hs", key: "👍" }),
+      fakeRoom("!room:hs"),
+      false,
+    );
+    await h.fake.emit(
+      RoomEvent.Timeline,
+      fakeEvent({ id: "$m:later", sender: "@alice:hs", ts: 995, body: "still here" }),
+      fakeRoom("!room:hs"),
+      false,
+    );
+
+    expect(h.reactions).toHaveLength(1);
+    expect(h.received).toHaveLength(1);
+    expect(h.received[0]?.text).toBe("still here");
+  });
+
+  it("still delivers a lower-ts message that arrives after a higher-ts redaction", async () => {
+    // The same clock-skew hazard for a redaction, which surfaces via onMessage as
+    // an honest event: it must not advance the message watermark either.
+    const h = makeHarness({ seed: { watermarks: {} } });
+    await h.controller.start();
+    await h.fake.emit(ClientEvent.Sync, SyncState.Prepared, null, undefined);
+
+    await h.fake.emit(
+      RoomEvent.Timeline,
+      fakeRedactionEvent({ ts: 1000, redacts: "$gone:hs" }),
+      fakeRoom("!room:hs"),
+      false,
+    );
+    await h.fake.emit(
+      RoomEvent.Timeline,
+      fakeEvent({ id: "$m:later", sender: "@alice:hs", ts: 995, body: "still here" }),
+      fakeRoom("!room:hs"),
+      false,
+    );
+
+    // Both the redaction-as-honest-event and the later real message reach onMessage.
+    expect(h.received).toHaveLength(2);
+    expect(h.received.some((m) => m.text === "still here")).toBe(true);
+  });
+});
