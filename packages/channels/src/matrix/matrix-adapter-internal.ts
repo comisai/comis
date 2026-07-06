@@ -501,6 +501,23 @@ export async function reconcileSendByHistoryScan(
     return ok({ kind: "unresolved" });
   }
 
+  // Encrypted rooms cannot be reconciled by a raw history read: the low-level
+  // `/messages` call yields UNDECRYPTED `m.room.encrypted` events with no plaintext
+  // `body`, so the body digest can NEVER match — a covered scan would then wrongly
+  // report `not_sent` and drive a duplicate replay in the flagship e2ee path. The
+  // room-encryption decision is the rust-crypto authoritative
+  // `isEncryptionEnabledInRoom` (the same check the attachment path uses); a probe
+  // that itself throws is likewise uncertain. Either outcome → unresolved
+  // (park+escalate), never a false not_sent. A plaintext-only install (crypto
+  // backend absent) skips the probe and scans as before.
+  const crypto = client.getCrypto();
+  if (crypto !== undefined) {
+    const encryptedProbe = await fromPromise(crypto.isEncryptionEnabledInRoom(query.channelId));
+    if (!encryptedProbe.ok || encryptedProbe.value === true) {
+      return ok({ kind: "unresolved" });
+    }
+  }
+
   // Same backward `/messages` read the history fetch uses; a null `from` token
   // pages from the room's most-recent end.
   const page = await fromPromise(
