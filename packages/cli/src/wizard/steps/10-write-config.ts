@@ -293,9 +293,28 @@ function collectManagedSecrets(state: WizardState): Map<string, string> {
       // botToken/apiKey/channelSecret), so it needs its own branch — the join
       // that keeps the config's ${GOOGLECHAT_SA_KEY} reference from being a
       // dangling, boot-fatal ref.
+      //
+      // It is also the only channel secret that is a multi-line value: a real
+      // key (downloaded from the console, or `--googlechat-sa-key "$(cat
+      // key.json)"`) is pretty-printed across many lines. The plaintext .env
+      // writer is one-line-per-key and the daemon's .env reader is line-based,
+      // so a multi-line value is silently truncated to "{" at boot and the
+      // JSON.parse then fails. Compact to single-line JSON here, at the single
+      // point both the .env writer and the encrypted store draw from — lossless
+      // for JSON.parse and for the encrypted store alike. A non-JSON value
+      // (a fat-fingered non-interactive flag) is left raw so the daemon reports
+      // an honest parse error instead of a silently corrupted key.
       if (ch.serviceAccountKey && ch.type === "googlechat") {
         const googlechatEnvKeys = CHANNEL_ENV_KEYS["googlechat"];
-        if (googlechatEnvKeys?.[0]) managed.set(googlechatEnvKeys[0], ch.serviceAccountKey);
+        if (googlechatEnvKeys?.[0]) {
+          let compact = ch.serviceAccountKey;
+          try {
+            compact = JSON.stringify(JSON.parse(ch.serviceAccountKey));
+          } catch {
+            // Leave raw; the daemon surfaces the parse failure honestly.
+          }
+          managed.set(googlechatEnvKeys[0], compact);
+        }
       }
       if (ch.appToken) managed.set(`${ch.type.toUpperCase()}_APP_TOKEN`, ch.appToken);
     }

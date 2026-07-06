@@ -838,11 +838,17 @@ describe("writeConfigStep", () => {
     // and the per-mode field (subscriptionName for pubsub / audience for webhook)
     // are non-secret config written inline. The emitted block must parse under
     // the shipped GoogleChatChannelEntrySchema (via ChannelConfigSchema).
-    const SA_KEY_BLOB = JSON.stringify({
+    // A pretty-printed (multi-line) key -- the shape the Cloud console downloads
+    // and what `--googlechat-sa-key "$(cat key.json)"` expands to. Collection
+    // must compact it to a single .env line (SA_KEY_COMPACT), or the daemon's
+    // line-based .env reader truncates it to "{" and JSON.parse fails at boot.
+    const SA_KEY_OBJECT = {
       type: "service_account",
       client_email: "bot@example-project.iam.gserviceaccount.com",
       private_key: "-----BEGIN PRIVATE KEY-----\nMIIexample\n-----END PRIVATE KEY-----\n",
-    });
+    };
+    const SA_KEY_BLOB = JSON.stringify(SA_KEY_OBJECT, null, 2);
+    const SA_KEY_COMPACT = JSON.stringify(SA_KEY_OBJECT);
 
     function googlechatState(mode: "pubsub" | "webhook"): WizardState {
       return {
@@ -929,9 +935,22 @@ describe("writeConfigStep", () => {
       );
       expect(envWriteCall).toBeDefined();
       const envContent = envWriteCall![1] as string;
-      // The managed-secret branch persists the raw blob, so the
-      // ${GOOGLECHAT_SA_KEY} written into config.yaml always resolves at boot.
-      expect(envContent).toContain(`GOOGLECHAT_SA_KEY=${SA_KEY_BLOB}`);
+      // The SA key is the one multi-line channel secret. It MUST land on a
+      // single .env line, or the daemon's line-based reader truncates it to "{"
+      // and JSON.parse fails at boot. Assert the emitted line carries the whole,
+      // parseable key (compacted) -- not just its first "{" line.
+      const envLine = envContent
+        .split("\n")
+        .find((l) => l.startsWith("GOOGLECHAT_SA_KEY="));
+      expect(envLine).toBeDefined();
+      const rawValue = envLine!.slice("GOOGLECHAT_SA_KEY=".length);
+      expect(rawValue).toBe(SA_KEY_COMPACT);
+      const parsed = JSON.parse(rawValue) as {
+        client_email?: string;
+        private_key?: string;
+      };
+      expect(parsed.client_email).toBe("bot@example-project.iam.gserviceaccount.com");
+      expect(parsed.private_key).toContain("BEGIN PRIVATE KEY");
     });
   });
 });
