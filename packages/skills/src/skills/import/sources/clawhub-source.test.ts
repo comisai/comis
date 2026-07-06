@@ -386,6 +386,35 @@ describe("resolveClawHub — verdict-refuse-before-download", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Top-level verdict fail-closed — a verify body whose AUTHORITATIVE top-level
+// says the release did not pass (ok:false / decision non-pass) refuses BEFORE
+// the download, even with NO security sub-object and no recognized reason token.
+// ---------------------------------------------------------------------------
+
+describe("resolveClawHub — fail-closed on the top-level verify verdict", () => {
+  it("refuses an ok:false / decision:fail verdict with no security object, artifact untouched", async () => {
+    const fetchImpl = flowFetch({ verify: stubResponse({ body: JSON.stringify(F.FIXTURE_VERIFY_TOPLEVEL_BLOCK) }) });
+    const result = await resolveClawHub({ name: F.FIXTURE_NAME }, { caps: CAPS, validate: okValidate, fetchImpl });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("precondition");
+    expect(result.error.message).toContain("clawhub");
+    // install + verify fetched; the artifact download seam is UNTOUCHED.
+    const urls = fetchedUrls(fetchImpl);
+    expect(urls).toContain(INSTALL_URL);
+    expect(urls).toContain(VERIFY_URL);
+    expect(urls).not.toContain(DOWNLOAD_URL);
+    expect(fetchImpl).not.toHaveBeenCalledWith(DOWNLOAD_URL, expect.anything(), expect.anything());
+  });
+
+  it("still resolves a clean ok:true / decision:pass verdict", async () => {
+    const fetchImpl = flowFetch({});
+    const result = await resolveClawHub({ name: F.FIXTURE_NAME }, { caps: CAPS, validate: okValidate, fetchImpl });
+    expect(result.ok).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Server sha256 integrity — verified WHEN PRESENT (a mismatch refuses the
 // tampered artifact; an absent header is fine — the pipeline's self-computed
 // pin is the always-present floor).

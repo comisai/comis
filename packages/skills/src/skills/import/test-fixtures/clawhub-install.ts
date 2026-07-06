@@ -229,6 +229,19 @@ export const FIXTURE_VERIFY_DRIFT = {
   reasons: [],
 };
 
+/**
+ * A verdict whose AUTHORITATIVE top-level says the release did not pass
+ * (`ok:false` / `decision:"fail"`), carrying NO `security` sub-object and no
+ * recognized reason token — the block lives ONLY in the top-level verdict. A
+ * fail-closed resolver must refuse it (the release must NOT download) even
+ * though no granular scan / moderation / reason signal fires.
+ */
+export const FIXTURE_VERIFY_TOPLEVEL_BLOCK = {
+  ok: false,
+  decision: "fail",
+  reasons: ["policy_violation"],
+};
+
 // ---------------------------------------------------------------------------
 // Blocking verify verdicts — each isolates ONE blocking signal so the predicate
 // branch under test is unambiguous.
