@@ -90,10 +90,10 @@ describe("createMatrixPlugin", () => {
     const plugin = createMatrixPlugin(makeDeps(new FakeMatrixClient()));
     const { features, limits, replyToMetaKey } = plugin.capabilities;
 
-    expect(features.reactions).toBe(false);
+    expect(features.reactions).toBe(true);
     expect(features.editMessages).toBe(false);
     expect(features.deleteMessages).toBe(false);
-    expect(features.fetchHistory).toBe(false);
+    expect(features.fetchHistory).toBe(true);
     expect(features.attachments).toBe(false);
     expect(features.typing).toBe(false);
     expect(features.threads).toBe(false);

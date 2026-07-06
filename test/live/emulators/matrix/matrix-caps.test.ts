@@ -65,9 +65,10 @@ describe("matrix-caps — Matrix ChannelCaps descriptor", () => {
     expect(MATRIX_MAX_MESSAGE_CHARS).toBe(32768);
   });
 
-  it("declares the plaintext-text scope: every outbound rich flag false, buttons none, inbound text true", () => {
-    // Text-only scope: no reactions/edits/deletes/attachments/typing/threads send.
-    expect(matrixCaps.outbound.reactions).toBe(false);
+  it("declares the scope: reactions true, the other outbound rich flags false, buttons none, inbound text true", () => {
+    // Reactions send is live (m.reaction annotation); edits/deletes/attachments/
+    // typing/threads sends are not in this scope.
+    expect(matrixCaps.outbound.reactions).toBe(true);
     expect(matrixCaps.outbound.edits).toBe(false);
     expect(matrixCaps.outbound.deletes).toBe(false);
     expect(matrixCaps.outbound.attachments).toBe(false);
@@ -75,7 +76,7 @@ describe("matrix-caps — Matrix ChannelCaps descriptor", () => {
     expect(matrixCaps.outbound.threads).toBe(false);
     // No button surface here (the adapter declares the "none" flavour).
     expect(matrixCaps.outbound.buttons).toBe(false);
-    // The one live capability: inbound plaintext text (the round-trip surface).
+    // Inbound plaintext text (the round-trip surface).
     expect(matrixCaps.inbound.text).toBe(true);
   });
 });
@@ -86,7 +87,7 @@ describe("matrix-caps — caps↔adapter reconciliation (the drift tripwire)", (
     const f = caps.features;
 
     // emulator FLAT outbound  ⇄  adapter NESTED features
-    expect(matrixCaps.outbound.reactions).toBe(f.reactions); // false
+    expect(matrixCaps.outbound.reactions).toBe(f.reactions); // true
     expect(matrixCaps.outbound.edits).toBe(f.editMessages); // false
     expect(matrixCaps.outbound.deletes).toBe(f.deleteMessages); // false
     expect(matrixCaps.outbound.attachments).toBe(f.attachments); // false
@@ -100,8 +101,8 @@ describe("matrix-caps — caps↔adapter reconciliation (the drift tripwire)", (
     // The reconciled message-length limit.
     expect(MATRIX_MAX_MESSAGE_CHARS).toBe(caps.limits.maxMessageChars); // 32768
 
-    // The adapter declares NO inbound history-fetch surface.
-    expect(f.fetchHistory).toBe(false);
+    // The adapter declares a real /messages history-fetch surface.
+    expect(f.fetchHistory).toBe(true);
 
     // The reply-target metadata key the adapter carries (the reply seam).
     expect(caps.replyToMetaKey).toBe("matrixEventId");
@@ -110,10 +111,10 @@ describe("matrix-caps — caps↔adapter reconciliation (the drift tripwire)", (
   it("asserts the EXACT adapter values (a drift in any flips this test red)", () => {
     const f = adapterCapabilities().features;
     expect(f).toMatchObject({
-      reactions: false,
+      reactions: true,
       editMessages: false,
       deleteMessages: false,
-      fetchHistory: false,
+      fetchHistory: true,
       attachments: false,
       typing: false,
       threads: false,

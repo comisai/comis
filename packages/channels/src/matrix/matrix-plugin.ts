@@ -2,11 +2,13 @@
 /**
  * Matrix Channel Plugin: the ChannelPluginPort wrapper for the Matrix adapter.
  *
- * Every capability flag here is honest for the current plaintext scope —
- * nothing not-yet-real is advertised true. Reactions, edits, deletes, history,
- * attachments, typing, and threads are all false, and Matrix exposes no button
- * surface (`buttons: "none"`). `selectStrategy(caps)` routes rendering from
- * these flags, so a flag is flipped true only when the behavior actually ships.
+ * Every capability flag here is honest — a flag is true only when the behavior
+ * actually ships. Reactions (send an `m.reaction` annotation, redact to remove)
+ * and history fetch (paginate `/messages`) are real and declared true; edits,
+ * deletes, attachments, typing, and threads are not yet implemented and stay
+ * false; Matrix exposes no button surface (`buttons: "none"`). `selectStrategy(caps)`
+ * routes rendering from these flags, so flipping one on advertises a behavior the
+ * adapter genuinely performs.
  *
  * The plugin declares metadata and delegates its lifecycle: `activate()` starts
  * the adapter, `deactivate()` stops it. There is no media resolver this scope.
@@ -21,10 +23,10 @@ import { createMatrixAdapter, type MatrixAdapterDeps } from "./matrix-adapter.js
 /** Matrix platform capabilities (self-declared, validated at registration). */
 const CAPABILITIES: ChannelCapability = {
   features: {
-    reactions: false,
+    reactions: true,
     editMessages: false,
     deleteMessages: false,
-    fetchHistory: false,
+    fetchHistory: true,
     attachments: false,
     typing: false,
     threads: false,

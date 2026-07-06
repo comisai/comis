@@ -17,12 +17,13 @@
  * and asserts the overlapping fields match — a drift tripwire so the emulator's
  * caps can never silently diverge from the adapter's self-declaration.
  *
- * THE MATRIX SCOPE for this descriptor is plaintext text only: every rich
- * feature the adapter declares (`reactions` / `editMessages` / `deleteMessages` /
- * `fetchHistory` / `attachments` / `typing` / `threads`) is `false`, and
- * `features.buttons` is `"none"` (Matrix exposes no button surface here). So
- * every `outbound.*` flag is `false`. The one live capability is inbound/outbound
- * plaintext text, which the round-trip scenario proves against the real adapter.
+ * THE MATRIX SCOPE for this descriptor: `reactions` (bot reaction send) and
+ * `fetchHistory` (`/messages` pagination) are real and `true`; the remaining rich
+ * features the adapter declares (`editMessages` / `deleteMessages` / `attachments`
+ * / `typing` / `threads`) are `false`, and `features.buttons` is `"none"` (Matrix
+ * exposes no button surface here). So `outbound.reactions` is `true` and every
+ * other `outbound.*` flag is `false`. Plaintext text is proven inbound/outbound by
+ * the round-trip scenario against the real adapter.
  *
  * The flat `ChannelCaps` shape has no slot for a message-length limit, so the
  * reconciled `maxMessageChars` is carried as the sibling const
@@ -30,7 +31,7 @@
  * adapter's `limits.maxMessageChars`.
  *
  * --- FIELD-BY-FIELD MAP (emulator FLAT ⇄ adapter NESTED) ---
- *   outbound.reactions     == features.reactions      (false — no reaction send)
+ *   outbound.reactions     == features.reactions      (true — m.reaction send)
  *   outbound.edits         == features.editMessages   (false)
  *   outbound.deletes       == features.deleteMessages (false)
  *   outbound.attachments   == features.attachments    (false — no media send here)
@@ -38,7 +39,7 @@
  *   outbound.threads       == features.threads        (false)
  *   outbound.buttons:false ⇄ features.buttons === "none"
  *   MATRIX_MAX_MESSAGE_CHARS == limits.maxMessageChars (32768)
- *   (inbound has no history claim) ⇄ features.fetchHistory (false)
+ *   (no outbound history field) ⇄ features.fetchHistory (true — /messages pagination)
  *
  * --- NOT-RECONCILED-YET (documented) ---
  * The emulator's inbound-only fields (`inbound.text` / `inbound.media` /
@@ -70,12 +71,12 @@ export const MATRIX_MAX_MESSAGE_CHARS = 32768;
  * The Matrix emulator capability descriptor (the flat design-side shape).
  *
  * `outbound.*` mirrors the adapter's `features.*` (the reconciled overlap — see
- * the field map above); every flag is `false` because the plaintext scope sends
- * only text. `inbound.*` describes the emulator's inbound surface, which is
- * not-reconciled-yet (the adapter declares no inbound caps). `buttons` is `false`
- * because the adapter declares the `"none"` flavour — Matrix has no button
- * surface here. `inbound.text` is `true`: the plaintext round-trip the scenario
- * drives through the real adapter.
+ * the field map above); `reactions` is `true` (the adapter sends `m.reaction`
+ * annotations) and every other flag is `false`. `inbound.*` describes the
+ * emulator's inbound surface, which is not-reconciled-yet (the adapter declares no
+ * inbound caps). `buttons` is `false` because the adapter declares the `"none"`
+ * flavour — Matrix has no button surface here. `inbound.text` is `true`: the
+ * plaintext round-trip the scenario drives through the real adapter.
  */
 export const matrixCaps: ChannelCaps = {
   channel: "matrix",
@@ -96,7 +97,7 @@ export const matrixCaps: ChannelCaps = {
   },
   outbound: {
     // RECONCILED field-by-field against the adapter's `features` (see the map).
-    reactions: false, // == features.reactions (no bot-reaction send here)
+    reactions: true, // == features.reactions (bot reaction send: m.reaction annotation)
     edits: false, // == features.editMessages
     deletes: false, // == features.deleteMessages
     buttons: false, // ⇄ features.buttons === "none" — Matrix has no button surface here
