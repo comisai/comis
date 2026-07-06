@@ -52,6 +52,7 @@ import type {
 } from "./prompter.js";
 import { validatePort } from "./validators/port.js";
 import { validateAgentName } from "./validators/agent-name.js";
+import { readServiceAccountKey } from "./service-account-key.js";
 import { DAEMON_START_PROMPT, DAEMON_RESTART_PROMPT } from "./steps/11-daemon-start.js";
 
 // ---------- Types ----------
@@ -489,12 +490,19 @@ export function buildNonInteractiveState(
           });
           break;
         case "googlechat":
-          // The SA key is taken verbatim (CI passes the JSON directly, e.g.
-          // --googlechat-sa-key "$(cat key.json)"); write-config swaps it for the
-          // ${GOOGLECHAT_SA_KEY} ref and persists the blob to the secret store.
+          // --googlechat-sa-key may be a path to the key file OR the JSON
+          // content itself (e.g. --googlechat-sa-key "$(cat key.json)"). Resolve
+          // a path to its contents here, mirroring the interactive step, so a CI
+          // user who follows the flag's help gets the key persisted rather than
+          // the literal path (which would JSON.parse-fail at boot). write-config
+          // then swaps it for the ${GOOGLECHAT_SA_KEY} ref, compacts the (often
+          // multi-line) blob to a single line, and persists it.
           channels.push({
             type: "googlechat",
-            serviceAccountKey: opts.googlechatSaKey,
+            serviceAccountKey:
+              opts.googlechatSaKey !== undefined
+                ? readServiceAccountKey(opts.googlechatSaKey)
+                : undefined,
             subscriptionName: opts.googlechatSubscription,
             audience: opts.googlechatAudience,
             mode: opts.googlechatMode,

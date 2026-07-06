@@ -13,7 +13,6 @@
  * @module
  */
 
-import { existsSync, readFileSync } from "node:fs";
 import type {
   WizardState,
   WizardStep,
@@ -24,6 +23,7 @@ import type { WizardPrompter } from "../prompter.js";
 import { updateState } from "../state.js";
 import { sectionSeparator, info } from "../theme.js";
 import { validateChannelCredential } from "../validators/channel-creds.js";
+import { readServiceAccountKey } from "../service-account-key.js";
 import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 
 // ---------- Live Validation Functions ----------
@@ -511,19 +511,6 @@ async function handleMsTeams(
     authMode,
     validated: false,
   };
-}
-
-/**
- * Resolve a service-account key from either a path to the JSON key file or the
- * pasted JSON itself. When the input names an existing file it is read;
- * otherwise it is treated as the JSON blob verbatim. The value is never logged.
- */
-function readServiceAccountKey(input: string): string {
-  const trimmed = input.trim();
-  if (trimmed.length > 0 && existsSync(trimmed)) {
-    return readFileSync(trimmed, "utf-8");
-  }
-  return input;
 }
 
 /**
