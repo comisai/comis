@@ -54,13 +54,21 @@ const SkillsManageToolParams = Type.Object({
     }),
   ),
   source: Type.Optional(
-    Type.Union([Type.Literal("github"), Type.Literal("archive")], {
-      description: "Import acquisition channel (import action). 'github' fetches a directory URL; 'archive' fetches a .skill/zip/tar archive URL. Defaults to github when a url is given.",
-    }),
+    Type.Union(
+      [Type.Literal("github"), Type.Literal("archive"), Type.Literal("wellknown")],
+      {
+        description: "Import acquisition channel (import action). 'github' fetches a directory URL; 'archive' fetches a .skill/zip/tar archive URL; 'wellknown' resolves a skill by name from an allowlisted registry's well-known index. Defaults to github when a url is given.",
+      },
+    ),
   ),
   archiveUrl: Type.Optional(
     Type.String({
       description: "Archive URL to import from (import action, source=archive). Fetched size-capped over the SSRF guard, then safely unpacked.",
+    }),
+  ),
+  registry: Type.Optional(
+    Type.String({
+      description: "Registry origin (https://host[:port]) — required with source=wellknown. Must be allowlisted in skills.import.registries; a non-allowlisted registry refuses flatly.",
     }),
   ),
   confirm: Type.Optional(
@@ -70,7 +78,7 @@ const SkillsManageToolParams = Type.Object({
   ),
   name: Type.Optional(
     Type.String({
-      description: "Skill name. Required for delete, create, and update actions.",
+      description: "Skill name. Required for delete, create, and update actions. For import with source=wellknown it is the registry index-lookup key (which advertised skill to fetch) and does not override the installed manifest name.",
     }),
   ),
   content: Type.Optional(
@@ -135,18 +143,24 @@ export function createSkillsManageTool(
           return rpcCall("skills.list", { _trustLevel: ctx.trustLevel });
         },
         async import(p, rpcCall, ctx) {
-          // Archive imports carry no url, so every field is optional here; the
-          // handler validates that a usable source (url | archiveUrl) is present.
-          // No `force` is threaded — the collision override runs only via confirm.
+          // Archive/registry imports carry no url, so every field is optional
+          // here; the handler validates that a usable source is present. For
+          // source=wellknown the registry origin + name (the index-lookup key)
+          // are forwarded. No `force` is threaded — the collision override runs
+          // only via confirm.
           const url = readStringParam(p, "url", false);
           const source = readStringParam(p, "source", false);
           const archiveUrl = readStringParam(p, "archiveUrl", false);
+          const registry = readStringParam(p, "registry", false);
+          const name = readStringParam(p, "name", false);
           const scope = readStringParam(p, "scope", false) ?? "local";
           const confirm = readBooleanParam(p, "confirm", false);
           return rpcCall("skills.import", {
             ...(url !== undefined && { url }),
             ...(source !== undefined && { source }),
             ...(archiveUrl !== undefined && { archiveUrl }),
+            ...(registry !== undefined && { registry }),
+            ...(name !== undefined && { name }),
             scope,
             ...(confirm !== undefined && { confirm }),
             _trustLevel: ctx.trustLevel,

@@ -27,6 +27,7 @@ import { ensureGatewayToken } from "./mcp-token.js";
 
 interface ImportOptions {
   source?: string;
+  registry?: string;
   scope?: string;
   confirm?: boolean;
   format: string;
@@ -44,12 +45,19 @@ export function registerSkillsCommand(program: Command): void {
   skills
     .command("import <ref>")
     .description(
-      "Import a skill from a GitHub directory URL (source=github) or an archive URL (source=archive). " +
+      "Import a skill from a GitHub directory URL (source=github), an archive URL (source=archive), " +
+        "or by name from an allowlisted registry (source=wellknown, --registry <origin>). " +
         "Scanned + Phase-A-checked pre-write; stamped imported.",
     )
     .option(
       "--source <source>",
-      "Acquisition channel: github (a directory URL) or archive (a .skill/zip/tar URL). Defaults to github.",
+      "Acquisition channel: github (a directory URL), archive (a .skill/zip/tar URL), " +
+        "or wellknown (resolve <ref> as a skill name from --registry). Defaults to github.",
+    )
+    .option(
+      "--registry <registry>",
+      "Registry origin (https://host[:port]) to resolve the skill <ref> from — required with --source wellknown. " +
+        "Must be allowlisted in skills.import.registries.",
     )
     .option(
       "--scope <scope>",
@@ -68,12 +76,18 @@ export function registerSkillsCommand(program: Command): void {
     .action(async (ref: string, options: ImportOptions) => {
       try {
         ensureGatewayToken(options.token);
-        const isArchive = options.source === "archive";
+        const source = options.source;
         const result = await withClient((client) =>
           callTyped(client, SkillsImportContract, {
-            // github ⇒ <ref> is a directory URL; archive ⇒ <ref> is an archive URL.
-            ...(isArchive ? { archiveUrl: ref } : { url: ref }),
-            ...(options.source !== undefined && { source: options.source as "github" | "archive" }),
+            // Route <ref> by source: wellknown ⇒ skill name (the registry
+            // index-lookup key, resolved from --registry); archive ⇒ archive
+            // URL; github/default ⇒ GitHub directory URL.
+            ...(source === "wellknown"
+              ? { name: ref, ...(options.registry !== undefined && { registry: options.registry }) }
+              : source === "archive"
+                ? { archiveUrl: ref }
+                : { url: ref }),
+            ...(source !== undefined && { source: source as "github" | "archive" | "wellknown" }),
             ...(options.scope !== undefined && { scope: options.scope as "local" | "shared" }),
             ...(options.confirm === true && { confirm: true }),
           }),
