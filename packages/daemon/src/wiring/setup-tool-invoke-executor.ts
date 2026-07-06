@@ -226,6 +226,46 @@ function errorResult(error: string): { error: string } {
 }
 
 /**
+ * The closed, content-free enum of daemon-side SURFACE gates that can deny an
+ * authorized (`orch:*`-held) `tool.invoke` AFTER the cap chokepoint allowed the
+ * capability — the per-agent MCP inbound allowlist, the `orch:write` write
+ * surface, and the `orchestrateResume` checkpoint/resume surface. A gate NAME
+ * only — never a server/tool/arg/body (INV-5/V7).
+ */
+export type CapabilityDenyGate = "mcp_allowlist" | "write_surface" | "resume_surface";
+
+/**
+ * Non-enumerable marker riding a surface-gate deny's error-result. `handleToolInvoke`
+ * reads it IN-PROCESS (via {@link capabilityDenyReason}) to emit
+ * `capability:audited {decision:"deny"}` instead of `allow`, so an in-jail
+ * surface-gate denial is visible in `explain.orchestrate` + the durable audit —
+ * not just the WARN log. Non-enumerable + a Symbol key ⇒ `JSON.stringify` drops
+ * it, so the marker NEVER reaches the jailed script (which still sees `{ error }`).
+ */
+const CAPABILITY_DENY_GATE = Symbol("capabilityDenyGate");
+
+/** An error-result whose surface-gate deny is audited (the cap was held; THIS gate denied). */
+export function deniedResult(error: string, gate: CapabilityDenyGate): { error: string } {
+  const result: { error: string } = { error };
+  Object.defineProperty(result, CAPABILITY_DENY_GATE, { value: gate, enumerable: false });
+  return result;
+}
+
+/**
+ * Read the surface-gate deny marker off an executor result — the CLOSED gate enum
+ * when the result is a surface-gate deny, else `undefined`. Pure (no I/O, no
+ * throw); the chokepoint calls it to decide the audited decision.
+ */
+export function capabilityDenyReason(result: unknown): CapabilityDenyGate | undefined {
+  if (typeof result !== "object" || result === null) return undefined;
+  // The key is a module-private compile-time constant Symbol — not a string and
+  // not attacker-derivable (a jailed script cannot forge a Symbol identity), so
+  // this is categorically not an injection sink.
+  // eslint-disable-next-line security/detect-object-injection
+  return (result as Record<symbol, unknown>)[CAPABILITY_DENY_GATE] as CapabilityDenyGate | undefined;
+}
+
+/**
  * Build the daemon-side executor over the injected builtin cores + web seams.
  * See the module doc for the routing-class split and the DNS-pin rationale.
  */
@@ -377,7 +417,7 @@ export function createToolInvokeExecutor(
         { errorKind: "auth" as const, toolName: "mcp", decision: "deny", hint: "MCP tool not on the agent's inbound allowlist" },
         "tool.invoke mcp denied (allowlist)",
       );
-      return errorResult("MCP tool not permitted for this agent");
+      return deniedResult("MCP tool not permitted for this agent", "mcp_allowlist");
     }
     // Guard the manager present — an un-wired daemon honest-degrades (never crashes).
     if (!deps.mcpClientManager) {
@@ -477,7 +517,7 @@ export function createToolInvokeExecutor(
         { errorKind: "auth" as const, toolName: tool, decision: "deny", hint: "the orchestrate resume/checkpoint surface is not enabled for this agent (set autonomy.durability.orchestrateResume:true to opt in)" },
         `tool.invoke ${tool} denied (resume surface off)`,
       );
-      return errorResult("orchestrate resume surface not enabled for this agent");
+      return deniedResult("orchestrate resume surface not enabled for this agent", "resume_surface");
     }
     return undefined;
   }
@@ -643,7 +683,7 @@ export function createToolInvokeExecutor(
             { errorKind: "auth" as const, toolName: "write", decision: "deny", hint: "the write surface is not enabled for this agent (set autonomy.write:true to opt in)" },
             "tool.invoke write denied (surface off)",
           );
-          return errorResult("write surface not enabled for this agent");
+          return deniedResult("write surface not enabled for this agent", "write_surface");
         }
         // The injected core is safePath-confined to the run-scoped results/writes
         // root (run-ephemeral). No ResultRef threshold: a write returns a small ack.

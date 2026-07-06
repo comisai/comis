@@ -53,7 +53,7 @@ import {
 import { stableStringify } from "@comis/observability";
 import type { LeaseManager, LeaseInfo, ComisLogger } from "@comis/infra";
 import type { RpcCall } from "@comis/skills/platform-tools";
-import type { ExecuteToolInvoke } from "./setup-tool-invoke-executor.js";
+import { capabilityDenyReason, type ExecuteToolInvoke } from "./setup-tool-invoke-executor.js";
 import type { BoundedAutonomy } from "../autonomy/bounded-autonomy.js";
 // The per-cap audit emitter — the socket chokepoint has
 // the REAL lease, so it emits the FULL tuple (leaseId + parentLeaseId present)
@@ -579,10 +579,10 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
               rootRunId: lease.rootRunId,
             });
           })();
-    // The call was authorized AND the route resolved — emit the
-    // allow with the FULL lease tuple (the spawn-tree's per-node source with the
-    // real parent edge). Content-free: tool NAME + cap + ids ONLY, never args.
+    // A daemon-side SURFACE gate (MCP allowlist / write / resume) can DENY an authorized orch:* call
+    // AFTER the cap check; audit the FINAL decision so an in-jail deny shows decision:"deny" (no args).
     if (deps.container !== undefined) {
+      const surfaceDeny = capabilityDenyReason(result);
       emitCapabilityAudit({ container: deps.container }, {
         agentId: lease.agentId,
         capability: cap,
@@ -592,7 +592,7 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
         rootRunId: lease.rootRunId,
         leaseId: lease.leaseId,
         ...(lease.parentLeaseId !== undefined ? { parentLeaseId: lease.parentLeaseId } : {}),
-        decision: "allow",
+        decision: surfaceDeny !== undefined ? "deny" : "allow",
       });
     }
     return result;

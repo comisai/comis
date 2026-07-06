@@ -116,7 +116,10 @@ export function extractCapabilityFootprint(script: string): CapabilityFootprint 
  * Classify a bounded stderr tail into a known-recoverable failure class, or
  * `undefined` for anything else. Ordered first-match: `bad_import` (a missing
  * module/package/import), then `comis_tools_misuse` (a `comis_tools` reference
- * paired with a Type/Attribute error shape), then `syntax_error` (a malformed
+ * paired with a Type/Attribute error shape, OR an undefined-reference shape —
+ * a `ReferenceError`/`NameError` naming `comis_tools`, the canonical
+ * forgot-the-`import { comis_tools }` slip, recoverable by re-emitting the
+ * import), then `syntax_error` (a malformed
  * script body — the most frequent weak-model authoring failure; Node and Python
  * both emit the exact token `SyntaxError`), then the generic `type_error`. The
  * misuse class is tested BEFORE `syntax_error`/`type_error` so a `comis_tools`
@@ -137,7 +140,7 @@ export function classifyRecoverableStderr(
   }
   if (
     /comis_tools/.test(tail) &&
-    /TypeError|AttributeError|is not a function|has no attribute/.test(tail)
+    /TypeError|AttributeError|ReferenceError|NameError|is not a function|has no attribute|is not defined/.test(tail)
   ) {
     return "comis_tools_misuse";
   }
@@ -153,10 +156,13 @@ export function classifyRecoverableStderr(
 /**
  * Build a deterministic, bounded digest of the available `comis_tools` methods
  * grouped by the capability each requires — a pure projection of
- * `TOOL_CAPABILITY_MAP` the repair prompt hands the utility model. Caps and the
- * methods within each are sorted, so two calls are byte-identical (no
- * clock/random). The `orch:*` cap identifiers and method names are real code
- * identifiers (kept verbatim).
+ * `TOOL_CAPABILITY_MAP` the repair prompt hands the utility model. It leads with
+ * the SDK's MODULE-IMPORT form (JS + Python), because the digest IS "the SDK
+ * surface" the one-shot repair sees — without the access form a repair for the
+ * canonical `comis_tools is not defined` (forgot-import) failure just regenerates
+ * another bare-global script. Caps and the methods within each are sorted, so two
+ * calls are byte-identical (no clock/random). The `orch:*` cap identifiers and
+ * method names are real code identifiers (kept verbatim).
  */
 export function buildDescribeDigest(): string {
   const byCap = new Map<AgentCapability, string[]>();
@@ -168,7 +174,15 @@ export function buildDescribeDigest(): string {
       byCap.set(cap, [method]);
     }
   }
-  const lines: string[] = ["comis_tools methods and the capability each requires:"];
+  // The SDK is a MODULE, not a global — teach the access form FIRST, so a repair
+  // for the canonical `comis_tools is not defined` (forgot-import) failure can add
+  // the import instead of regenerating another bare-global script that fails again.
+  const lines: string[] = [
+    "comis_tools is a MODULE — the script MUST import it before calling any method:",
+    '  JavaScript/TypeScript:  import { comis_tools } from "./comis_tools.js";',
+    "  Python:                 import comis_tools",
+    "Then call comis_tools.<method>(...). The methods and the capability each requires:",
+  ];
   for (const [cap, capMethods] of [...byCap.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
     lines.push("", `${cap}:`);
     for (const method of [...capMethods].sort()) {

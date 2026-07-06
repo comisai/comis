@@ -53,6 +53,7 @@ import {
   lifecycleSweptEventToRow,
   wakeGateEventToRow,
   mcpReconnectFailedEventToRow,
+  mcpConnectFailedEventToRow,
   scriptZeroHitEventToRow,
   summaryLanguageMismatchEventToRow,
   generationQualityEventToRow,
@@ -133,6 +134,7 @@ export {
   lifecycleSweptEventToRow,
   wakeGateEventToRow,
   mcpReconnectFailedEventToRow,
+  mcpConnectFailedEventToRow,
   scriptZeroHitEventToRow,
   summaryLanguageMismatchEventToRow,
   generationQualityEventToRow,
@@ -351,6 +353,12 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   });
   eventBus.on("mcp:server:reconnect_failed", (payload) => {
     diagnosticBuffer.push(mcpReconnectFailedEventToRow(payload));
+  });
+  // An INITIAL connect/install failure (never reached the reconnect loop) → a
+  // health_signal row, so a failed MCP install surfaces in `comis fleet`
+  // (health_signal:mcp_connect_failed) instead of only a raw daemon.log grep.
+  eventBus.on("mcp:server:connect_failed", (payload) => {
+    diagnosticBuffer.push(mcpConnectFailedEventToRow(payload));
   });
   // The reflection funnel → a learning_health row, so the
   // fleet lens surfaces the daemon-wide reflection posture (admit/why-0-admitted) cross-session.

@@ -44,8 +44,13 @@ DIRTY="$(cd "$REPO" && git diff --quiet && git diff --cached --quiet && echo cle
 # place made /root/comis-deployed-build lie about the running build (the stale-provenance trap).
 (cd "$STAGE" && tar czf - . 2>/dev/null) \
   | ssh -o ConnectTimeout=20 "$VPS" "tar xzf - -C '$PKG' 2>/dev/null && chown -R $COMIS_USER:$COMIS_USER '$PKG' \
+      && (chmod +x '$PKG/dist/cli-entry.js' 2>/dev/null || true) \
       && echo '$SHA $DIRTY  dist-overlay '\$(date -u +%Y-%m-%dT%H:%M:%SZ) > /root/comis-deployed-build \
       && echo extracted"
+# Restore the CLI bin's executable bit: the umbrella's PATH wrapper (`comis`) is a symlink to
+# dist/cli-entry.js, but tsc emits that file WITHOUT +x and the overlay clobbers the npm-set +x
+# → `comis …` then fails "Permission denied" (a live friction that forced the explicit
+# `node …/cli.js` fallback). npm sets bin +x at install; a raw dist overlay must re-set it.
 
 echo "Verify (recursive — top-level globs miss dist subdirs):"
 ssh -o ConnectTimeout=15 "$VPS" "

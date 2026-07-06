@@ -1382,6 +1382,15 @@
           "description": "Command to execute for stdio transport (e.g. npx). Required for stdio connect.",
           "type": "string"
         },
+        "env": {
+          "description": "Environment variables for a STDIO server (e.g. SERVICE_USERNAME). REQUIRED for stdio servers that need credentials/config in the environment. Values may reference stored secrets as ${VAR_NAME} (e.g. {\"SERVICE_PASSWORD\":\"${SERVICE_PASSWORD}\"}) — resolved from the encrypted secret store at spawn, so the plaintext never enters config. Keys are env-var names, values are the value or a ${VAR} reference.",
+          "patternProperties": {
+            "^.*$": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
         "headers": {
           "description": "Custom HTTP headers for remote transports (e.g. Authorization). Keys are header names, values are header values.",
           "patternProperties": {

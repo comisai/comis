@@ -263,7 +263,7 @@ export function registerAllToolMetadata(): void {
 
   registerToolMetadata("mcp_manage", {
     validActions: ["list", "status", "connect", "disconnect", "reconnect"],
-    validKeys: ["action", "server_name", "transport", "command", "args", "url", "headers", "auth"],
+    validKeys: ["action", "server_name", "transport", "command", "args", "url", "headers", "auth", "env"],
     // connect requires [server_name, transport]; command (stdio) / url (sse|http) are
     // transport-conditional and validated downstream by the handler. `auth`
     // ("headers" | "oauth") is the OAuth opt-in — must be in validKeys

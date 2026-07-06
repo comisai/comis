@@ -36,6 +36,7 @@ import type { McpServerConfig } from "@comis/skills";
 import { createMcpClientManager, isNeedsOAuthLoginError } from "@comis/skills";
 import {
   findUnresolvedEnvRefs,
+  substituteEnvVars,
   formatMissingEnvRefError,
   McpListContract,
   McpStatusContract,
@@ -70,6 +71,7 @@ export type McpHandlerDeps = WorkspaceApiDeps & { mutableSecretManager?: Mutable
 import { looksLikeSecretValue } from "@comis/core";
 // Persisted-entry construction extracted (single source of
 // truth for the config-only field set; see mcp-persisted-entry.ts docblock).
+import type { ComisLogger } from "@comis/infra";
 import { buildPersistedMcpEntry } from "./mcp-persisted-entry.js";
 // Header-credential firewall: classifies and processes each
 // (headerName, headerValue) pair before the Zod contract parse. Called in both
@@ -81,6 +83,68 @@ import { processHeaderCredentials } from "./mcp-header-credential.js";
 // sanctioned writer to integrations.mcp.servers; see
 // shared/persist-mcp-servers.ts for the full docblock.
 import { persistMcpServers } from "./shared/persist-mcp-servers.js";
+
+// ---------------------------------------------------------------------------
+// Shared live-spawn env resolver (mcp.connect + mcp.test)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve an MCP server's `${VAR}` env refs to their live secret values for the
+ * IMMEDIATE spawn — the SINGLE resolver shared by `mcp.connect` and `mcp.test`, so
+ * the two live-spawn surfaces stay in lockstep (a credentialed stdio server that
+ * connects must also pass `mcp.test`; before this, only `mcp.connect` resolved and
+ * `mcp.test` spawned its probe on the literal `${VAR}`).
+ *
+ * Validation order is deliberate: it scans the ORIGINAL refs (`env`) against the
+ * secret store FIRST and throws {@link formatMissingEnvRefError} on any missing ref,
+ * THEN substitutes. Validating the refs — not the resolved values — is load-bearing:
+ * a resolved secret value that itself contains a `${...}` substring must never be
+ * re-scanned as a new reference (that would falsely reject a valid connect with a
+ * bogus "missing env var" for the inner name).
+ *
+ * Returns `env` unchanged when there is no env or no secretManager (test setups).
+ * The PERSISTED entry keeps the `${VAR}` literals (the caller uses `params.env` for
+ * `buildPersistedMcpEntry`), so secrets never land plaintext in config; only the
+ * running child sees resolved values — the exact mirror of `resolvedConnectHeaders`.
+ */
+function resolveMcpSpawnEnv(
+  env: Record<string, string> | undefined,
+  secretManager: { get: (key: string) => string | undefined } | undefined,
+  serverName: string,
+  method: "mcp.connect" | "mcp.test",
+  logger: ComisLogger,
+): Record<string, string> | undefined {
+  if (!env || !secretManager) return env;
+  const sm = secretManager;
+  const unresolved = findUnresolvedEnvRefs(env, (key) => sm.get(key));
+  if (unresolved.length > 0) {
+    throw new Error(formatMissingEnvRefError(serverName, unresolved.map((u) => u.varName)));
+  }
+  const sub = substituteEnvVars(env, (key) => sm.get(key), `${method} env (${serverName})`);
+  if (!sub.ok) {
+    // Unreachable after the ref validation above; keep a defensive warn + literal fallback.
+    logger.warn(
+      {
+        method,
+        entityId: serverName,
+        err: sub.error,
+        errorKind: "config" as const,
+        hint: "an env ${VAR} ref could not be resolved from the secret store — store it via secrets_manage; the child is spawned with the ref unresolved",
+      },
+      "MCP env-ref resolution incomplete for the live spawn",
+    );
+    return env;
+  }
+  // Positive confirmation of the env the child will receive — KEYS only (values are
+  // secrets) + the count of ${VAR} refs resolved. Without it, an env-wiring bug (the
+  // child gets no/literal env) is only inferable from a downstream "Connection closed".
+  const refsResolved = Object.values(env).filter((v) => /\$\{[^}]+\}/.test(v)).length;
+  logger.info(
+    { method, entityId: serverName, envKeys: Object.keys(env), refsResolved },
+    "MCP env resolved for the live spawn",
+  );
+  return sub.value as Record<string, string>;
+}
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -228,6 +292,18 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
 
       const params = McpConnectContract.request.parse(userParams);
 
+      // Resolve ${VAR} env refs to their live secret values for the IMMEDIATE spawn
+      // (the shared resolver validates the refs against the store first, then
+      // substitutes; the PERSISTED entry keeps the ${VAR} literals). Throws a
+      // missing-env-ref error when a referenced secret is absent.
+      const resolvedConnectEnv = resolveMcpSpawnEnv(
+        params.env,
+        deps.secretManager,
+        params.server_name,
+        "mcp.connect",
+        deps.logger,
+      );
+
       const manager = deps.mcpClientManager;
 
       // Copy operator-extension allowlist + OSV check toggles from the config
@@ -267,7 +343,9 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         command: params.command,
         args: params.args,
         url: params.url,
-        env: params.env,
+        // Resolved ${VAR} secrets for the live spawn; the persisted
+        // entry keeps the ${VAR} refs. Mirrors resolvedConnectHeaders below.
+        env: resolvedConnectEnv,
         // Use resolvedConnectHeaders (raw values) for the live connect so the
         // immediate connection uses the actual credential, not the unresolved ${VAR}
         // literal that processHeaderCredentials wrote into params.headers for config
@@ -307,19 +385,9 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         ...(persistedEntry?.oauth !== undefined && { oauth: persistedEntry.oauth }),
       };
 
-      // Reject connects that reference env vars not in the secrets store.
-      // mcp.connect is unconditionally enabled (config.enabled = true
-      // above), so the check always applies when both env and secretManager
-      // are present. Skipped only when secretManager is unwired (test
-      // setups) — production always wires it via rpc-dispatch.
-      if (config.env && deps.secretManager) {
-        const sm = deps.secretManager;
-        const unresolved = findUnresolvedEnvRefs(config.env, (key) => sm.get(key));
-        if (unresolved.length > 0) {
-          const missingNames = unresolved.map((u) => u.varName);
-          throw new Error(formatMissingEnvRefError(params.server_name, missingNames));
-        }
-      }
+      // (Missing-env-ref rejection now happens up-front in resolveMcpSpawnEnv,
+      // over the ORIGINAL ${VAR} refs — before substitution — so a resolved secret
+      // value that contains a ${...} substring is never re-scanned as a new ref.)
 
       // Build + persist the auth:"oauth" entry and throw the structured
       // needs_oauth_login signal. Used by:
@@ -617,13 +685,25 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       const persistedEntry = persistedServers.find((s) => s.name === params.name);
       const resolvedRlimits = params.rlimits ?? persistedEntry?.rlimits;
 
+      // Resolve ${VAR} env refs for the live probe spawn — the exact mirror of
+      // mcp.connect (shared resolver). Throws a missing-env-ref error when a
+      // referenced secret is absent; the probe child receives the resolved values,
+      // not the literal ${VAR} (which would fail a credentialed stdio server).
+      const resolvedTestEnv = resolveMcpSpawnEnv(
+        params.env,
+        deps.secretManager,
+        params.name,
+        "mcp.test",
+        deps.logger,
+      );
+
       const config: McpServerConfig = {
         name: `__test__${params.name}`,
         transport: params.transport,
         command: params.command,
         args: params.args,
         url: params.url,
-        env: params.env,
+        env: resolvedTestEnv,
         // Use resolvedTestHeaders (raw values) for the live test connect
         // so the probe uses the actual credential (same rationale as mcp.connect).
         headers: resolvedTestHeaders ?? params.headers,
@@ -639,17 +719,8 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         ...(persistedEntry?.oauth !== undefined && { oauth: persistedEntry.oauth }),
       };
 
-      // Pre-spawn env-ref validation. Mirrors the mcp.connect site — reject
-      // when any env value references a key not present in the secrets store.
-      // Skipped only when secretManager is unwired (test setups).
-      if (config.env && deps.secretManager) {
-        const sm = deps.secretManager;
-        const unresolved = findUnresolvedEnvRefs(config.env, (key) => sm.get(key));
-        if (unresolved.length > 0) {
-          const missingNames = unresolved.map((u) => u.varName);
-          throw new Error(formatMissingEnvRefError(params.name, missingNames));
-        }
-      }
+      // (Missing-env-ref rejection now happens up-front in resolveMcpSpawnEnv above,
+      // mirroring mcp.connect — over the ORIGINAL refs, before substitution.)
 
       // Create a temporary manager with short timeout for test
       const tempManager = createMcpClientManager({

@@ -422,6 +422,33 @@ export function mcpReconnectFailedEventToRow(
 }
 
 /**
+ * Map a `mcp:server:connect_failed` event payload (an INITIAL connect/install
+ * that never reached the reconnect loop) to a `health_signal` DiagnosticRow so
+ * a failed MCP install is queryable via `comis fleet` (grouped by the closed
+ * `reason` class) instead of living only in a raw daemon.log grep — the exact
+ * gap the credentialed-stdio-MCP investigation hit. Unlike its reconnect_failed
+ * sibling there is NO error body to drop: `reason`/`transport` are CLOSED enums,
+ * safe to carry. Daemon-global (no agentId/sessionKey).
+ */
+export function mcpConnectFailedEventToRow(
+  payload: EventMap["mcp:server:connect_failed"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "warning",
+    message: "mcp:server:connect_failed",
+    details: JSON.stringify({
+      signal: "mcp_connect_failed",
+      serverName: payload.serverName,
+      transport: payload.transport,
+      reason: payload.reason,
+    }),
+    traceId: undefined,
+  };
+}
+
+/**
  * Map a `context:script_zero_hit` event payload (a non-Latin
  * search returned zero hits on a cleanly-executed lane) to a flat DiagnosticRow
  * stored under `category:"health_signal"`. Severity is ALWAYS `"warning"`: this
