@@ -636,14 +636,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "GoogleChatTokenProvider",
       "GoogleChatScope",
       "classifyGoogleChatError",
-      // GoogleChatPluginHandle: the plugin-handle type that widens
-      // createGoogleChatPlugin's return with createResolver (mirrors
-      // MsTeamsPluginHandle). The daemon media wiring
-      // (setup-channels-media.ts) name-imports it to build the inbound resolver
-      // in a later wave — surfaced here ahead of that consumer (the CHAT_SCOPE
-      // ahead-of-consumer precedent directly above). Shrink this entry once the
-      // media wiring name-imports it cross-package.
-      "GoogleChatPluginHandle",
       "createIMessageAdapter",
       "IMessageAdapterDeps",
       "mapImsgToNormalized",

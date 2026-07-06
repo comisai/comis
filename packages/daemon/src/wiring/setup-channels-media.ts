@@ -22,6 +22,7 @@ import {
   type TelegramPluginHandle,
   type LinePluginHandle,
   type MsTeamsPluginHandle,
+  type GoogleChatPluginHandle,
 } from "@comis/channels";
 import {
   createCompositeResolver,
@@ -66,6 +67,7 @@ export interface MediaPipelineDeps {
   tgPlugin?: TelegramPluginHandle;
   linePlugin?: LinePluginHandle;
   msTeamsPlugin?: MsTeamsPluginHandle;
+  gcPlugin?: GoogleChatPluginHandle;
   ssrfFetcher: SsrfGuardedFetcher;
   linkRunner: LinkRunner;
   transcriber?: TranscriptionPort;
@@ -102,6 +104,7 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
     tgPlugin,
     linePlugin,
     msTeamsPlugin,
+    gcPlugin,
     ssrfFetcher,
     linkRunner,
     transcriber,
@@ -244,6 +247,16 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
         logger: channelsLogger,
         mediaAuthAllowHosts: channelConfig?.msteams?.mediaAuthAllowHosts ?? [],
       }),
+    );
+  }
+
+  // Google Chat: resolver created from the plugin handle (closes over the
+  // service-account chat.bot token provider). The SAME injected auth-capable
+  // ssrfFetcher — the resolver pins the Bearer to the single media host
+  // internally, so unlike Teams it takes no host-allowlist argument.
+  if (gcPlugin) {
+    platformResolvers.push(
+      gcPlugin.createResolver({ ssrfFetcher, maxBytes: maxMediaBytes, logger: channelsLogger }),
     );
   }
 
