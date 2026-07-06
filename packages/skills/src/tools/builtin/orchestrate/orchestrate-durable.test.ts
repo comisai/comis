@@ -219,7 +219,7 @@ describe("orchestrate-durable — loadResumeSpec", () => {
     expect(result.ok && result.value.scriptBytes).toBe("THE-ONLY-PINNED-BYTES");
   });
 
-  it("carries the resumed run's checkpointRef so resume() rehydrates its checkpoint (F-WS4-A)", async () => {
+  it("carries the resumed run's checkpointRef so resume() rehydrates its checkpoint", async () => {
     // The resumed run HAS a prior checkpoint. loadResumeSpec must surface its ref so the
     // caller seeds it onto the NEW run's durable row → the replayed script's resume() returns
     // that checkpoint (skip completed work) instead of an empty new-root checkpoint.
@@ -310,7 +310,7 @@ describe("orchestrate-durable — loadResumeSpec", () => {
   });
 });
 
-describe("orchestrate-durable — resolveScriptSource (F-WS4-A checkpoint carry)", () => {
+describe("orchestrate-durable — resolveScriptSource (checkpoint carry)", () => {
   const ctx = { workspacePath: "/ws", runId: "orch-new-run" };
 
   it("threads the resumed run's checkpointRef onto the resolved source", async () => {

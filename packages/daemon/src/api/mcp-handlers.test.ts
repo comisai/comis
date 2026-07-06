@@ -241,7 +241,7 @@ describe("MCP RPC Handlers", () => {
       expect(result.toolCount).toBe(1);
     });
 
-    it("F-MCP-ENV-RESOLVE: resolves ${VAR} env refs to live secret values for the spawn", async () => {
+    it("resolves ${VAR} env refs to live secret values for the spawn", async () => {
       // A credentialed stdio server passes env as ${VAR} refs. The LIVE spawn must receive the
       // RESOLVED values (else the child sees "${VAR}" literally → invalid URL / empty creds until
       // a restart). Persistence keeps the ${VAR} refs (asserted elsewhere); only manager.connect
@@ -266,7 +266,7 @@ describe("MCP RPC Handlers", () => {
       );
     });
 
-    it("Fix 3: logs a positive env-resolution INFO (keys + refsResolved) for the live spawn", async () => {
+    it("logs a positive env-resolution INFO (keys + refsResolved) for the live spawn", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("svc-mcp", [])));
       const secretManager = {
         get: (k: string) =>
@@ -1182,7 +1182,7 @@ describe("MCP RPC Handlers", () => {
         env: { FINNHUB_API_KEY: "${FINNHUB_API_KEY}" },
       }) as any;
 
-      // The LIVE spawn receives the RESOLVED secret (F-MCP-ENV-RESOLVE) — consistent with the
+      // The LIVE spawn receives the RESOLVED secret — consistent with the
       // config-load path, which substitutes ${VAR} before the config ever reaches manager.connect.
       // The ${VAR} ref is preserved only in the PERSISTED entry, so secrets stay out of config.
       expect(manager.connect).toHaveBeenCalledWith(

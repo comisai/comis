@@ -793,7 +793,7 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
           await registerDurableRun(deps.durableRuns, {
             rootRunId: durableKey,
             scriptRef: scriptName,
-            // F-WS4-A: on a resume, carry the resumed run's checkpointRef onto THIS run's
+            // On a resume, carry the resumed run's checkpointRef onto THIS run's
             // durable row so the replayed script's `resume()` returns that checkpoint (skip
             // completed work) instead of an empty new-root checkpoint. `undefined` for a fresh
             // run ⇒ omitted by buildResumableRow (no-op). The blob is workspace-scoped (same

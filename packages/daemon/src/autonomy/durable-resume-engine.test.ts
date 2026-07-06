@@ -468,7 +468,7 @@ describe("createDurableResumeEngine resume-or-orphan and bounded recovery", () =
     expect(notify).toHaveBeenCalled();
   });
 
-  it("F-WS4-B: caps no-progress re-anchors — a stale run whose heartbeat never advances is orphaned after MAX_REANCHOR_ATTEMPTS, then never re-anchored again", async () => {
+  it("caps no-progress re-anchors — a stale run whose heartbeat never advances is orphaned after MAX_REANCHOR_ATTEMPTS, then never re-anchored again", async () => {
     // A surface-only re-anchor never advances the heartbeat, so a dead run (process gone,
     // never explicitly resumed) would loop forever. The engine must re-anchor a bounded
     // number of times, then orphan it. MAX_REANCHOR_ATTEMPTS = 3 → passes 1..3 resume, pass 4 orphans.
@@ -483,7 +483,7 @@ describe("createDurableResumeEngine resume-or-orphan and bounded recovery", () =
     expect(String(orphans[0]!.args[1])).toMatch(/no-progress re-anchor/); // reason names the cap
   });
 
-  it("F-WS4-B: a heartbeat advance (progress) resets the re-anchor counter — a live run is never false-orphaned", async () => {
+  it("a heartbeat advance (progress) resets the re-anchor counter — a live run is never false-orphaned", async () => {
     const record = durableRecord({ rootRunId: "root-live", lastHeartbeatAt: 500_000 });
     const durableRuns = makeDurableRuns({ resumable: [record] });
     const engine = createDurableResumeEngine(makeEngineDeps({ durableRuns }));

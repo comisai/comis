@@ -628,7 +628,7 @@ describe("resolveModelProfile — capability/capacity boundary invariants", () =
   // does — else a pinned-`small` frontier-provider agent gets small tool-deferral/context
   // yet repair silently OFF (the auto-repair class-gate saw the family `frontier`).
   describe("resolveEffectiveCapabilityClass — operator pin precedence (auto-repair gate)", () => {
-    it("the operator PIN wins over the provider-family heuristic (the F-6 divergence)", () => {
+    it("the operator PIN wins over the provider-family heuristic", () => {
       // pinned small on an openai (family-frontier) agent → small, NOT frontier.
       expect(resolveEffectiveCapabilityClass("small", undefined, "openai")).toBe("small");
       expect(resolveEffectiveCapabilityClass("nano", undefined, "anthropic")).toBe("nano");

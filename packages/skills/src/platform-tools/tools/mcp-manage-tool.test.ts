@@ -179,7 +179,7 @@ describe("mcp_manage tool", () => {
       expect(result.details).toEqual(expect.objectContaining({ connected: true }));
     });
 
-    it("F-MCP-ENV: forwards env to mcp.connect for a stdio credentialed server", async () => {
+    it("forwards env to mcp.connect for a stdio credentialed server", async () => {
       // A stdio server that needs credentials (e.g. example-mcp needs SERVICE_USERNAME/PASSWORD)
       // must receive them via env. Pre-fix the tool schema had no env field, so the secret
       // references were dropped and the server spawned credential-less → "Connection closed".
@@ -206,7 +206,7 @@ describe("mcp_manage tool", () => {
       );
     });
 
-    it("F-MCP-ENV: coerces a JSON-string env into an object before mcp.connect", async () => {
+    it("coerces a JSON-string env into an object before mcp.connect", async () => {
       mockRpcCall.mockResolvedValue({ connected: true });
       const tool = createMcpManageTool(mockRpcCall);
       await runWithContext(makeContext("admin"), () =>

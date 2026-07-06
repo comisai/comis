@@ -94,7 +94,7 @@ export interface ResumeSpec {
    * the replayed script's `comis_tools.resume()` returns the resumed run's checkpoint
    * (skip-completed-work), not an empty new-root checkpoint. `undefined` when the
    * resumed run never checkpointed. The blob is workspace-scoped (same agent) so the
-   * ref resolves in the new run. (F-WS4-A.)
+   * ref resolves in the new run.
    */
   readonly checkpointRef?: string;
 }

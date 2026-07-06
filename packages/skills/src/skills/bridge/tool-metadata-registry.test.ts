@@ -1466,7 +1466,7 @@ describe("tool-metadata-registry -- gateway validateInput patchable path hints",
   });
 });
 
-describe("tool-metadata-registry -- mcp_manage env parity (F-MCP-ENV)", () => {
+describe("tool-metadata-registry -- mcp_manage env parity", () => {
   // The registry validKeys is a SECOND source of truth beside McpManageToolParams; when the
   // tool schema gained `env` (so a stdio server can receive credentials), this list must too —
   // else the bridge validator rejects `env` with "[invalid_value] unknown key 'env'" BEFORE

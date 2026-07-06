@@ -196,10 +196,10 @@ describe("createCapabilityEndpoint — per-cap audit at the socket chokepoint", 
     }
   });
 
-  it("a cap-HELD tool.invoke DENIED by a daemon-side SURFACE gate (MCP allowlist) audits decision=deny / kind=capability_denied, NOT allow (F-1)", async () => {
+  it("a cap-HELD tool.invoke DENIED by a daemon-side SURFACE gate (MCP allowlist) audits decision=deny / kind=capability_denied, NOT allow", async () => {
     // The cap (orch:mcp) IS held → the chokepoint's requireCapability passes and it
     // routes to the executor. The executor's inbound-allowlist gate denies with a
-    // MARKED error-result. Before F-1 the chokepoint emitted decision:allow (the
+    // MARKED error-result. The chokepoint previously emitted decision:allow (the
     // route "resolved"), so explain.orchestrate showed a denied MCP call as allowed.
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });

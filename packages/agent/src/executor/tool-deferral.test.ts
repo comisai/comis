@@ -3137,7 +3137,7 @@ describe("enforceToolBudgetFit — window-aware tool-budget fit-enforcement", ()
     return Math.ceil(toolDefOverheadChars(tools) / CHARS_PER_TOKEN_RATIO);
   }
 
-  it("F-LCD-A: honors neverDefer — keeps a neverDefer-pinned tool active over cold tools under budget pressure", () => {
+  it("honors neverDefer — keeps a neverDefer-pinned tool active over cold tools under budget pressure", () => {
     // A tight window forces the fit pass to drop most heavy tools. The neverDefer-pinned
     // tool (placed FIRST, so on pre-patch code its rank-0 tie would drop it first) must be
     // kept — it ranks just below CORE/discover_tools — while cold tools are dropped instead.
@@ -3165,7 +3165,7 @@ describe("enforceToolBudgetFit — window-aware tool-budget fit-enforcement", ()
     expect(result.newlyDeferred).not.toContain("ctx_search");
   });
 
-  it("F-LCD-A: WARNs when the window is too small to keep even a neverDefer-pinned tool", () => {
+  it("WARNs when the window is too small to keep even a neverDefer-pinned tool", () => {
     // Window so tiny that even the pinned tool + discover_tools cannot fit: the pass must
     // still drop the pinned tool (fit is the hard guarantee) but WARN so the override is
     // never SILENTLY overridden.

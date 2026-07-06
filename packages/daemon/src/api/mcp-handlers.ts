@@ -229,7 +229,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
 
       const params = McpConnectContract.request.parse(userParams);
 
-      // F-MCP-ENV-RESOLVE: resolve ${VAR} env refs to their live secret values for the IMMEDIATE
+      // Resolve ${VAR} env refs to their live secret values for the IMMEDIATE
       // spawn — the exact mirror of resolvedConnectHeaders below. Without it a freshly-connected
       // stdio server receives the literal "${VAR}" (e.g. an invalid base URL / empty credential →
       // the child fails or returns "Invalid URL") until the next config-load restart resolves it.
@@ -308,7 +308,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         command: params.command,
         args: params.args,
         url: params.url,
-        // Resolved ${VAR} secrets for the live spawn (F-MCP-ENV-RESOLVE); the persisted
+        // Resolved ${VAR} secrets for the live spawn; the persisted
         // entry keeps the ${VAR} refs. Mirrors resolvedConnectHeaders below.
         env: resolvedConnectEnv,
         // Use resolvedConnectHeaders (raw values) for the live connect so the

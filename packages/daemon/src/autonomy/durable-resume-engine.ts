@@ -389,7 +389,7 @@ export interface DurableResumeEngine {
 const DEFAULT_BUDGET_REF = "durable-resume";
 
 /**
- * F-WS4-B: bound how many times the watchdog re-anchors a run that makes NO progress.
+ * Bound how many times the watchdog re-anchors a run that makes NO progress.
  * The orchestrate resume arm is SURFACE-ONLY (re-anchor the lease, no re-spawn on boot),
  * so a run whose process is gone (killed by a restart) is re-detected as lapsed and
  * re-anchored on EVERY watchdog tick — forever — because a surface-only re-anchor never
@@ -420,7 +420,7 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
     reclaimOrchestrateRun,
   } = deps;
 
-  // F-WS4-B re-anchor ledger: rootRunId → { the heartbeat we last saw, how many consecutive
+  // Re-anchor ledger: rootRunId → { the heartbeat we last saw, how many consecutive
   // no-progress re-anchors at that heartbeat }. A changed heartbeat (progress) resets count.
   const reanchorLedger = new Map<string, { heartbeat: number; count: number }>();
 
@@ -459,7 +459,7 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
       }
       const backlog = backlogResult.value;
 
-      // F-WS4-B: prune re-anchor-ledger entries for runs no longer in the backlog (completed /
+      // Prune re-anchor-ledger entries for runs no longer in the backlog (completed /
       // orphaned / revoked ⇒ off listResumable) so the in-memory map can't slowly grow.
       const backlogRoots = new Set(backlog.map((c) => c.rootRunId));
       for (const key of reanchorLedger.keys()) {
@@ -524,7 +524,7 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
         }
         const record = parsed.value;
 
-        // F-WS4-B: bound no-progress re-anchors. A surface-only re-anchor never advances the
+        // Bound no-progress re-anchors. A surface-only re-anchor never advances the
         // heartbeat, so a run whose process is gone (killed by a restart, never explicitly
         // resumed) would otherwise be re-anchored on EVERY watchdog tick forever. Count
         // consecutive re-anchors at an UNCHANGED heartbeat; once it exceeds the cap, abandon the
