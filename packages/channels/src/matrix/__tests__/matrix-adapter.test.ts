@@ -1716,6 +1716,78 @@ describe("createMatrixAdapter — reconcileSend history-scan oracle", () => {
     expect(fake.lastMessagesRequest).toBeUndefined();
   });
 
+  it("returns unresolved when an in-window bot event fails to match because its body was mention-rewritten", async () => {
+    // The ledger digests the agent's RAW markdown, but the adapter rewrites mention
+    // markup @[Name](@mxid) into a matrix.to pill link BEFORE sending, so the wire
+    // body differs from the ledgered text and its digest never matches. The bot DID
+    // author an event in-window; reconcile cannot prove which event is ours, so a
+    // not_sent would replay a delivered message → duplicate. Unresolved is the safe
+    // verdict; not_sent is reserved for a covered scan with NO in-window bot event.
+    const rawText = "ping @[Alice](@alice:example.org) about the deploy";
+    const rewrittenWireBody = "ping [Alice](https://matrix.to/#/@alice:example.org) about the deploy";
+    const fake = new FakeMatrixClient();
+    fake.messagesEnd = undefined; // fully-covered scan, no older history remains
+    fake.messagesChunk = [
+      {
+        event_id: "$mention:hs",
+        sender: "@bot:hs",
+        origin_server_ts: 1_500,
+        type: "m.room.message",
+        content: { body: rewrittenWireBody },
+      },
+    ];
+    const { adapter } = makeAdapter({ fake });
+    await adapter.start();
+
+    const result = await adapter.reconcileSend?.({
+      channelId: "!room:hs",
+      contentDigest: ledgerDigest(rawText),
+      ...WINDOW,
+    });
+
+    expect(result?.ok).toBe(true);
+    if (!result?.ok) throw new Error("expected an ok result");
+    expect(result.value).toEqual({ kind: "unresolved" });
+  });
+
+  it("returns unresolved when a large send landed as multiple chunk events none of which match the whole-message digest", async () => {
+    // A send exceeding the per-event byte budget is split into multiple events; NO
+    // single chunk body digests to the whole-message ledger digest. The bot DID
+    // author events in-window (the N chunks), so a not_sent would replay all N →
+    // duplicates. Unresolved is the safe verdict.
+    const wholeMessage = "chunk-one-half chunk-two-half";
+    const fake = new FakeMatrixClient();
+    fake.messagesEnd = undefined; // fully-covered scan, no older history remains
+    fake.messagesChunk = [
+      {
+        event_id: "$chunk2:hs",
+        sender: "@bot:hs",
+        origin_server_ts: 1_600,
+        type: "m.room.message",
+        content: { body: "chunk-two-half" },
+      },
+      {
+        event_id: "$chunk1:hs",
+        sender: "@bot:hs",
+        origin_server_ts: 1_500,
+        type: "m.room.message",
+        content: { body: "chunk-one-half" },
+      },
+    ];
+    const { adapter } = makeAdapter({ fake });
+    await adapter.start();
+
+    const result = await adapter.reconcileSend?.({
+      channelId: "!room:hs",
+      contentDigest: ledgerDigest(wholeMessage),
+      ...WINDOW,
+    });
+
+    expect(result?.ok).toBe(true);
+    if (!result?.ok) throw new Error("expected an ok result");
+    expect(result.value).toEqual({ kind: "unresolved" });
+  });
+
   it("returns unresolved in an encrypted room where a raw history read has no plaintext body to digest", async () => {
     // The flagship default is e2ee ON. A raw /messages read of an encrypted room
     // yields m.room.encrypted events with NO plaintext body, so a body digest can
