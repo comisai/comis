@@ -73,16 +73,29 @@ function makeLogger(): ComisLogger {
 
 /** A minimal m.room.message-shaped timeline event. */
 function fakeEvent(
-  overrides: { type?: string; id?: string; sender?: string; ts?: number; body?: string } = {},
+  overrides: {
+    type?: string;
+    id?: string;
+    sender?: string;
+    ts?: number;
+    body?: string;
+    /** When set, rides as `m.mentions.user_ids` on the content (inbound mention test). */
+    mentions?: string[];
+    /** When set, rides as the `formatted_body` on the content. */
+    formattedBody?: string;
+  } = {},
 ): MatrixEvent {
   const { type = "m.room.message", id = "$evt1", sender = "@alice:hs", ts = 100, body = "hi" } =
     overrides;
+  const content: Record<string, unknown> = { body };
+  if (overrides.mentions !== undefined) content["m.mentions"] = { user_ids: overrides.mentions };
+  if (overrides.formattedBody !== undefined) content.formatted_body = overrides.formattedBody;
   return {
     getType: () => type,
     getId: () => id,
     getSender: () => sender,
     getTs: () => ts,
-    getContent: () => ({ body }),
+    getContent: () => content,
     // Plaintext: the fail-closed decrypt branch is skipped for a non-encrypted event.
     isEncrypted: () => false,
   } as unknown as MatrixEvent;
@@ -578,6 +591,55 @@ describe("createMatrixAdapter", () => {
     const result = await adapter.sendMessage("!room:hs", "hi");
 
     expect(result.ok).toBe(false);
+  });
+
+  it("outbound: rewrites @[Name](@mxid) mentions to matrix.to pills and rides m.mentions.user_ids", async () => {
+    const { adapter, fake } = makeAdapter();
+    await adapter.start();
+
+    const result = await adapter.sendMessage("!room:hs", "ping @[Bob](@bob:hs) and @[Al](@al:hs)");
+
+    expect(result.ok).toBe(true);
+    const [sent] = fake.sentEvents;
+    expect((sent?.content["m.mentions"] as { user_ids: string[] }).user_ids).toEqual([
+      "@bob:hs",
+      "@al:hs",
+    ]);
+    // The shared markdown renderer turned the rewritten link into an HTML pill.
+    expect(sent?.content.formatted_body).toContain('<a href="https://matrix.to/#/@bob:hs">Bob</a>');
+  });
+
+  it("outbound: a message with no mention carries no m.mentions field", async () => {
+    const { adapter, fake } = makeAdapter();
+    await adapter.start();
+
+    await adapter.sendMessage("!room:hs", "no mention here");
+
+    const [sent] = fake.sentEvents;
+    expect(sent?.content["m.mentions"]).toBeUndefined();
+  });
+
+  it("inbound: an event whose m.mentions name the bot MXID sets metadata.isBotMentioned — the group @-gate key", async () => {
+    const { adapter, fake, received } = makeAdapter({ allowFrom: [] });
+    await adapter.start();
+
+    await deliver(fake, fakeEvent({ sender: "@alice:hs", body: "hey bot", mentions: ["@bot:hs"] }));
+
+    expect(received).toHaveLength(1);
+    expect(received[0]?.metadata.isBotMentioned).toBe(true);
+  });
+
+  it("inbound: an event that does not mention the bot leaves isBotMentioned false", async () => {
+    const { adapter, fake, received } = makeAdapter({ allowFrom: [] });
+    await adapter.start();
+
+    await deliver(
+      fake,
+      fakeEvent({ sender: "@alice:hs", body: "hey all", mentions: ["@someone:hs"] }),
+    );
+
+    expect(received).toHaveLength(1);
+    expect(received[0]?.metadata.isBotMentioned).toBe(false);
   });
 
   it("tears the sync client down on stop and reports disconnected", async () => {

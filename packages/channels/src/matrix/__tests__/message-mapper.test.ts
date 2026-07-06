@@ -263,4 +263,42 @@ describe("mapMatrixEventToNormalized", () => {
     );
     expect(result).toBeNull();
   });
+
+  it("sets metadata.isBotMentioned true when the inbound m.mentions name the bot MXID", () => {
+    const result = mapMatrixEventToNormalized(
+      makeEvent({
+        content: { msgtype: "m.text", body: "hey there", "m.mentions": { user_ids: ["@bot:hs"] } },
+      }),
+      makeRoom(),
+      { isDirect: false, botUserId: "@bot:hs" },
+    );
+    expect(result?.metadata.isBotMentioned).toBe(true);
+  });
+
+  it("does not flag isBotMentioned when the inbound mentions do not name the bot", () => {
+    const result = mapMatrixEventToNormalized(
+      makeEvent({
+        content: { msgtype: "m.text", body: "hey all", "m.mentions": { user_ids: ["@other:hs"] } },
+      }),
+      makeRoom(),
+      { isDirect: false, botUserId: "@bot:hs" },
+    );
+    expect(result?.metadata.isBotMentioned).toBe(false);
+  });
+
+  it("sets the exact isBotMentioned gate key (never mentionedBot) the group @-mention gate reads", () => {
+    // The group @-mention gate reads metadata.isBotMentioned; the Teams channel uses
+    // a different key (mentionedBot) the gate does NOT read. Matrix must set the one
+    // the gate keys on, so the bot answers when addressed in a group.
+    const result = mapMatrixEventToNormalized(
+      makeEvent({
+        content: { msgtype: "m.text", body: "hey", "m.mentions": { user_ids: ["@bot:hs"] } },
+      }),
+      makeRoom(),
+      { isDirect: false, botUserId: "@bot:hs" },
+    );
+    const meta = result?.metadata ?? {};
+    expect(Object.prototype.hasOwnProperty.call(meta, "isBotMentioned")).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(meta, "mentionedBot")).toBe(false);
+  });
 });
