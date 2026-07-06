@@ -886,6 +886,35 @@ describe("bootstrapAdapters", () => {
     expect(mockGoogleChatAdapter.handleChatEvent).toHaveBeenCalledWith({ some: "event" });
   });
 
+  it("contains a rejecting webhook handler in a single debug log with no unhandled rejection", async () => {
+    const saKey = '{"private_key":"pk","client_email":"bot@proj.iam.gserviceaccount.com"}';
+    const container = makeContainer({
+      googlechat: { enabled: true, serviceAccountKey: saKey, mode: "webhook", audienceType: "project-number", audience: "123456789" },
+    });
+    await bootstrapAdapters({ container, channelsLogger });
+
+    const ingressDeps = vi.mocked(createGoogleChatIngress).mock.calls[0]![0] as unknown as {
+      handleWebhookEvents: (events: unknown[]) => void;
+    };
+    // handleChatEvent rejects by design (its Pub/Sub pull-loop skip-ack signal),
+    // which is meaningless in webhook mode — the dispatch must contain the
+    // rejection, not leak an unhandled rejection that the daemon's global safety
+    // net re-logs as a second, generic internal error (double-counting in fleet).
+    mockGoogleChatAdapter.handleChatEvent.mockImplementationOnce(() =>
+      Promise.reject(new Error("handler boom")),
+    );
+    ingressDeps.handleWebhookEvents([{ some: "event" }]);
+
+    // Exactly one contained log line (debug); the rejection is caught, so no
+    // unhandled rejection escapes to the global handler.
+    await vi.waitFor(() =>
+      expect(channelsLogger.debug).toHaveBeenCalledWith(
+        expect.stringContaining("googlechat-webhook-dispatch"),
+      ),
+    );
+    expect(channelsLogger.debug).toHaveBeenCalledTimes(1);
+  });
+
   it("bridges onAuthRejected onto the content-free channel:ingress_auth_rejected eventBus signal", async () => {
     const saKey = '{"private_key":"pk","client_email":"bot@proj.iam.gserviceaccount.com"}';
     const container = makeContainer({
