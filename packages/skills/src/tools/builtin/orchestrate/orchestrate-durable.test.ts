@@ -22,6 +22,7 @@ import {
   loadResumeSpec,
   resolveScriptSource,
   startDurableKeepAlive,
+  withDurableKeepAlive,
   defaultOrchestrateDurableFs,
   type OrchestrateDurableRuns,
   type OrchestrateDurableFs,
@@ -154,6 +155,54 @@ describe("orchestrate-durable — startDurableKeepAlive", () => {
     });
     expect(scheduled).toBe(false);
     stop(); // safe no-op
+  });
+});
+
+describe("orchestrate-durable — withDurableKeepAlive", () => {
+  it("keeps the heartbeat alive for the whole fn and stops it after (even on throw)", async () => {
+    const runs = makeFakeRuns();
+    let clock = 1_000;
+    let stopped = false;
+    const scheduler = (cb: () => void, _ms: number): (() => void) => {
+      // fire one tick synchronously while fn is in flight, then a stop() that flips the flag
+      cb();
+      return () => {
+        stopped = true;
+      };
+    };
+    const result = await withDurableKeepAlive(
+      runs,
+      "orch-root",
+      { now: () => clock, scheduler },
+      async () => {
+        clock = 2_000;
+        return "OK";
+      },
+    );
+    expect(result).toBe("OK");
+    expect(runs.touches).toEqual([{ rootRunId: "orch-root", atMs: 1_000 }]);
+    expect(stopped).toBe(true);
+
+    // Stops even when fn throws.
+    stopped = false;
+    await expect(
+      withDurableKeepAlive(runs, "orch-root", { now: () => clock, scheduler }, async () => {
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    expect(stopped).toBe(true);
+  });
+
+  it("is a pass-through no-op when durability is off (runs undefined) — never touches", async () => {
+    const runs = makeFakeRuns();
+    const result = await withDurableKeepAlive(
+      undefined,
+      "orch-root",
+      { now: () => 1 },
+      async () => "PLAIN",
+    );
+    expect(result).toBe("PLAIN");
+    expect(runs.touches).toHaveLength(0);
   });
 });
 

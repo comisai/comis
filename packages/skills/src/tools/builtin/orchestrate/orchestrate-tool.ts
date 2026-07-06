@@ -97,7 +97,6 @@ import {
   markResumable,
   registerDurableRun,
   resolveScriptSource,
-  startDurableKeepAlive,
   defaultOrchestrateDurableFs,
 } from "./orchestrate-durable.js";
 import type { OrchestrateDurableRuns } from "./orchestrate-durable.js";
@@ -365,14 +364,6 @@ const STDOUT_MAX_CHARS = 30_000;
 export const DEFAULT_TIMEOUT_MS = 60_000;
 
 /**
- * Durable heartbeat keep-alive interval (ms) for a live durable run. Must stay well
- * under the watchdog's stale-heartbeat threshold (default 120s) so a run that runs to
- * the timeout ceiling (10 min) — far past the no-progress re-anchor cap window — keeps
- * a fresh heartbeat and is never reaped as a crash. Mirrors the sub-agent runner's 30s.
- */
-const DURABLE_KEEPALIVE_MS = 30_000;
-
-/**
  * The hard ceiling on a model-supplied `timeoutMs`. The schema accepts
  * any positive integer, so without this a jailed (attacker-controlled) script
  * could request `timeoutMs: 999_999_999` (~11.5 days) and pin a child for an
@@ -485,9 +476,6 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
       // `skipCleanup` gates the finally on a resumable timeout.
       const durableKey = deps.rootRunId ?? runId;
       let skipCleanup = false;
-      // Stops the durable keep-alive interval; replaced once the row is registered,
-      // always invoked in the finally so no interval leaks past the run.
-      let stopKeepAlive: () => void = () => {};
 
       // Resolve the script source (fresh params, or PINNED bytes on a resume).
       // Fail-CLOSED: a resumeRunId with the surface off is REFUSED, not run as `script`.
@@ -798,24 +786,13 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         // mintRunLease). A run with none is degraded — flagged lease_absent below.
         const leasePresent = childEnv.COMIS_CAP_LEASE !== undefined;
 
-        // 5c. Register a resumable durable row (scriptRef set) BEFORE the run so a mid-pipeline
-        //     restart's boot sweep finds it (after the honest-degrade refusals). Best-effort; COALESCE-safe.
+        // 5c. Register a resumable durable row (scriptRef) BEFORE the run so a restart's boot sweep finds it. Best-effort; COALESCE-safe.
         if (deps.durableRuns !== undefined) {
           await registerDurableRun(deps.durableRuns, {
             rootRunId: durableKey,
             scriptRef: scriptName,
             ...(resumedCheckpointRef !== undefined ? { checkpointRef: resumedCheckpointRef } : {}), // resume: carry resumed checkpointRef so the replayed resume() returns it (undefined ⇒ omitted)
             nowMs: now(),
-          });
-          // Keep the row's heartbeat fresh while the child is alive so a long LIVE run
-          // that never checkpoints is not mistaken for a crashed process and orphaned +
-          // reclaimed by the watchdog's no-progress re-anchor cap. Stopped in the finally.
-          stopKeepAlive = startDurableKeepAlive({
-            runs: deps.durableRuns,
-            rootRunId: durableKey,
-            now,
-            keepAliveMs: DURABLE_KEEPALIVE_MS,
-            logger: log,
           });
         }
 
@@ -840,6 +817,7 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
           repairSeam: deps.repairSeam,
           log,
           runId,
+          keepAlive: { runs: deps.durableRuns, rootRunId: durableKey, now }, // durable heartbeat for the child run (no-op if durability off)
         });
 
         const bounced = sizeBounceStdout(stdout);
@@ -879,10 +857,6 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         }
         throw err;
       } finally {
-        // Stop the durable keep-alive first — the run is settling, so no further
-        // heartbeat touch is wanted (and no interval must outlive the run).
-        stopKeepAlive();
-
         // 7. Close the PARENT's copy of the seccomp fd. By the time the
         //    finally runs the child has already inherited it (spawn returned, or
         //    threw — either way the parent's copy is open and must be released).

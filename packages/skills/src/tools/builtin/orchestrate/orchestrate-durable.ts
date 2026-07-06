@@ -36,7 +36,13 @@
  */
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 
-import { safePath, type ComisLogger, type DurableRunRecord } from "@comis/core";
+import {
+  safePath,
+  systemSetInterval,
+  systemClearInterval,
+  type ComisLogger,
+  type DurableRunRecord,
+} from "@comis/core";
 import { ok, err, suppressError, type Result } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
@@ -80,11 +86,19 @@ export interface OrchestrateDurableRuns {
  */
 export type KeepAliveScheduler = (cb: () => void, ms: number) => () => void;
 
+/**
+ * Default durable heartbeat keep-alive interval (ms). Must stay well under the
+ * watchdog's stale-heartbeat threshold (default 120s) so a run at the timeout
+ * ceiling keeps a fresh heartbeat and is never reaped as a crash. Mirrors the
+ * sub-agent runner's 30s.
+ */
+export const DEFAULT_DURABLE_KEEPALIVE_MS = 30_000;
+
 /** The production keep-alive scheduler — an unref'd interval so it never pins the event loop. */
 export const defaultKeepAliveScheduler: KeepAliveScheduler = (cb, ms) => {
-  const handle = setInterval(cb, ms);
-  (handle as { unref?: () => void }).unref?.();
-  return () => clearInterval(handle);
+  const handle = systemSetInterval(cb, ms);
+  handle.unref();
+  return () => systemClearInterval(handle);
 };
 
 /**
@@ -136,6 +150,39 @@ export function startDurableKeepAlive(input: {
       "durable keep-alive touch (best-effort)",
     );
   }, keepAliveMs);
+}
+
+/**
+ * Run `fn` with a durable heartbeat keep-alive active for its whole duration, so a
+ * long LIVE flat orchestrate run is never mistaken for a crash and reaped by the
+ * watchdog's no-progress re-anchor cap. Starts the keep-alive (via
+ * {@link startDurableKeepAlive}) before awaiting `fn`, stops it in a `finally`, and
+ * returns `fn`'s result. A no-op wrapper when `runs` is undefined (durability off).
+ * Keeps the start/stop lifecycle out of the caller (one call site) — the runner just
+ * wraps its child-execution await.
+ */
+export async function withDurableKeepAlive<T>(
+  runs: OrchestrateDurableRuns | undefined,
+  rootRunId: string,
+  opts: { now: () => number; logger?: ComisLogger; keepAliveMs?: number; scheduler?: KeepAliveScheduler },
+  fn: () => Promise<T>,
+): Promise<T> {
+  const stop =
+    runs === undefined
+      ? () => {}
+      : startDurableKeepAlive({
+          runs,
+          rootRunId,
+          now: opts.now,
+          keepAliveMs: opts.keepAliveMs ?? DEFAULT_DURABLE_KEEPALIVE_MS,
+          ...(opts.scheduler ? { scheduler: opts.scheduler } : {}),
+          ...(opts.logger ? { logger: opts.logger } : {}),
+        });
+  try {
+    return await fn();
+  } finally {
+    stop();
+  }
 }
 
 /**
