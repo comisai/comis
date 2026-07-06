@@ -12,7 +12,9 @@
  *   which any user can set to impersonate another; an event with no verifiable
  *   sender maps to null rather than emit an identity-less message
  * - the Matrix event id rides in `metadata.matrixEventId` (the reply target)
- * - `chatType` is `dm` for a direct room, `group` otherwise
+ * - `chatType` is `thread` when the event hangs under a thread root (its
+ *   `threadRootId` rides in `metadata.matrixThreadId`), else `dm` for a direct
+ *   room and `group` otherwise
  * - a `formatted_body` is reduced to a safe subset by `sanitizeInboundHtml`
  *   before any of it is carried into metadata (the normalized `text` is always
  *   the plaintext `body`, never the HTML)
@@ -71,6 +73,17 @@ export function mapMatrixEventToNormalized(
     metadata.matrixFormattedBody = sanitizeInboundHtml(formattedBody);
   }
 
+  // A thread event hangs under a thread root. The root id is advisory routing
+  // metadata (federated, untrusted) — identity still keys on the sender MXID
+  // above; here it only classifies the chatType and rides in metadata so a reply
+  // can target the same thread. `chatType: "thread"` takes precedence over
+  // dm/group when present.
+  const threadRootId = event.threadRootId;
+  const isThread = typeof threadRootId === "string" && threadRootId.length > 0;
+  if (isThread) {
+    metadata.matrixThreadId = threadRootId;
+  }
+
   return {
     id: randomUUID(),
     channelId: room.roomId,
@@ -79,7 +92,7 @@ export function mapMatrixEventToNormalized(
     text,
     timestamp: systemNowMs(),
     attachments: [],
-    chatType: opts.isDirect ? "dm" : "group",
+    chatType: isThread ? "thread" : opts.isDirect ? "dm" : "group",
     metadata,
   };
 }

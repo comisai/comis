@@ -533,6 +533,9 @@ export async function bootstrapAdapters(deps: {
         autoJoinOnInvite,
         allowPrivateHomeserver,
         logger: channelsLogger,
+        // The shared daemon timer backs the bounded rate-limit (429) backoff on a
+        // chunked outbound send; absent, a rate-limited chunk surfaces immediately.
+        ...(timer ? { timer } : {}),
         // Matrix's dark-access-token and decrypt signals are channel HEALTH
         // events. Matrix is a polling channel with NO gateway ingress, so it
         // MUST NOT borrow the ingress-auth-rejected event — a wrong-direction

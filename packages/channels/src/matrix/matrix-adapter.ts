@@ -45,6 +45,7 @@ import type {
   NormalizedReaction,
   ReactionHandler,
   SendMessageOptions,
+  TimerPort,
 } from "@comis/core";
 import { runWithContext, systemNowMs } from "@comis/core";
 import { err, fromPromise, ok, type Result } from "@comis/shared";
@@ -63,7 +64,13 @@ import {
   type MatrixVerificationStatus,
 } from "./matrix-client.js";
 import { createMatrixStateStore } from "./matrix-state.js";
-import { buildReactionContent, buildTextMessageContent } from "./matrix-adapter-outbound.js";
+import {
+  buildReactionContent,
+  buildThreadRelation,
+  chunkBySerializedBytes,
+  MATRIX_EVENT_BYTE_BUDGET,
+  type MatrixThreadRelation,
+} from "./matrix-adapter-outbound.js";
 import { classifyDecryptDegrade, type DecryptDegradeKind } from "./decrypt-degrade.js";
 import { classifyMatrixError, type MatrixErrorInput } from "./errors.js";
 
@@ -87,6 +94,35 @@ export const MAX_TRACKED_REACTIONS = 1000;
 /** The retained-reaction map key: one entry per (room, target message, emoji). */
 function reactionKey(roomId: string, messageId: string, emoji: string): string {
   return `${roomId}|${messageId}|${emoji}`;
+}
+
+/**
+ * Retries a rate-limited chunk send makes on top of the first attempt before
+ * surfacing the failure. Only a retryable classification (429 / M_LIMIT_EXCEEDED,
+ * or a 5xx) re-attempts; a non-retryable error stops immediately.
+ */
+const MATRIX_SEND_MAX_RETRIES = 4;
+/** Exponential-backoff base + ceiling (ms) for a retryable chunk resend. */
+const MATRIX_SEND_BACKOFF_BASE_MS = 500;
+const MATRIX_SEND_BACKOFF_CAP_MS = 8_000;
+
+/**
+ * Resolve the thread-root event id a send should relate to, if any. An explicit
+ * `threadId` (the thread-root event id) wins; otherwise a `threadReply` roots the
+ * thread at the replied-to event. Absent both, the send is top-level.
+ */
+function resolveThreadRootId(options?: SendMessageOptions): string | undefined {
+  if (typeof options?.threadId === "string" && options.threadId.length > 0) {
+    return options.threadId;
+  }
+  if (
+    options?.threadReply === true &&
+    typeof options?.replyTo === "string" &&
+    options.replyTo.length > 0
+  ) {
+    return options.replyTo;
+  }
+  return undefined;
 }
 
 /** Extract the classifier's normalized fields from a thrown/reported SDK error. */
@@ -140,6 +176,13 @@ export interface MatrixAdapterDeps {
   initCryptoImpl?: MatrixClientDeps["initCryptoImpl"];
   /** Injected clock in ms, defaulting to systemNowMs; makes timing deterministic. */
   now?: () => number;
+  /**
+   * Injected timer for the bounded rate-limit (429) backoff on a chunked send.
+   * OPTIONAL — mirrors the `now` seam; never a raw `setTimeout`. When absent the
+   * send makes a single attempt per chunk (no retry), so a rate-limited chunk
+   * surfaces its failure immediately rather than blocking on a raw timer.
+   */
+  timer?: TimerPort;
   /**
    * Sink for the dark-access-token health signal: when a mid-run token
    * expiry cannot auto-recover (no password), the `/sync` controller emits a
@@ -408,6 +451,51 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
     deps.emitDecryptHealth?.({ roomId: signal.roomId, reason: verdict.kind });
   }
 
+  /**
+   * Send one already-built content object, retrying a rate-limited (429) or
+   * transient (5xx) failure with bounded exponential backoff on the injected
+   * timer. A non-retryable failure — or an exhausted retry budget, or no injected
+   * timer — surfaces the error to the caller. The backoff never uses a raw timer;
+   * with no timer the send makes a single attempt (honest degrade).
+   */
+  async function sendEventWithRetry(
+    activeClient: MatrixClient,
+    roomId: string,
+    content: TimelineEvents[EventType.RoomMessage],
+  ): Promise<Result<{ event_id: string }, Error>> {
+    for (let attempt = 0; ; attempt++) {
+      const sent = await fromPromise(
+        activeClient.sendEvent(roomId, EventType.RoomMessage, content),
+      );
+      if (sent.ok) return ok(sent.value);
+
+      const classified = classifyMatrixError(toMatrixErrorInput(sent.error));
+      const timer = deps.timer;
+      if (!classified.retryable || attempt >= MATRIX_SEND_MAX_RETRIES || timer === undefined) {
+        return err(sent.error);
+      }
+      const delayMs = Math.min(
+        MATRIX_SEND_BACKOFF_BASE_MS * 2 ** attempt,
+        MATRIX_SEND_BACKOFF_CAP_MS,
+      );
+      deps.logger.debug(
+        {
+          channelType: "matrix" as const,
+          step: "channels-outbound",
+          attempt: attempt + 1,
+          durationMs: delayMs,
+          hint: classified.hint,
+          errorKind: classified.errorKind,
+        },
+        "Matrix chunk send retry scheduled after a retryable status",
+      );
+      await new Promise<void>((resolve) => {
+        const handle = timer.setTimeout(() => resolve(), delayMs);
+        handle.unref();
+      });
+    }
+  }
+
   const adapter: ChannelPort = {
     get channelId(): string {
       return channelId;
@@ -551,7 +639,7 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
     async sendMessage(
       roomId: string,
       text: string,
-      _options?: SendMessageOptions,
+      options?: SendMessageOptions,
     ): Promise<Result<string, Error>> {
       if (client === undefined) {
         const notReady = new Error("Matrix adapter cannot send before start()");
@@ -566,32 +654,56 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
         );
         return err(notReady);
       }
+      const activeClient = client;
 
-      const content = buildTextMessageContent(text);
-      // The SDK types `m.room.message` content as a broad XOR union; the builder
-      // emits the exact m.text shape, so cast to the expected content type at
-      // this single boundary.
-      const sent = await fromPromise(
-        client.sendEvent(
+      // A thread reply relates every chunk to the thread root. Reserve the
+      // relation's serialized bytes in the chunker so each event stays within the
+      // federation cap AFTER the relation is merged in.
+      const threadRootId = resolveThreadRootId(options);
+      const relation: MatrixThreadRelation | undefined =
+        threadRootId !== undefined ? buildThreadRelation(threadRootId) : undefined;
+      const reserveBytes =
+        relation !== undefined
+          ? Buffer.byteLength(JSON.stringify({ "m.relates_to": relation }))
+          : 0;
+
+      // Split by SERIALIZED bytes (not chars): the HTML formatted_body roughly
+      // doubles the plaintext, so a char-bounded split overflows the cap on
+      // HTML-heavy content. A fitting message stays a single event.
+      const chunks = chunkBySerializedBytes(text, MATRIX_EVENT_BYTE_BUDGET, reserveBytes);
+
+      // Send each chunk sequentially through the rate-limit taxonomy. A chunked
+      // send yields N events; the returned id is the LAST chunk's (a single-chunk
+      // message returns that one id). A mid-sequence failure stops and returns err.
+      let lastEventId = "";
+      for (const chunk of chunks) {
+        const content =
+          relation !== undefined ? { ...chunk, "m.relates_to": relation } : chunk;
+        // The SDK types `m.room.message` content as a broad XOR union; the builder
+        // emits the exact m.text (+ optional relation) shape, so cast at this
+        // single boundary.
+        const sent = await sendEventWithRetry(
+          activeClient,
           roomId,
-          EventType.RoomMessage,
           content as unknown as TimelineEvents[EventType.RoomMessage],
-        ),
-      );
-      if (!sent.ok) {
-        lastError = sent.error.message;
-        deps.logger.warn(
-          {
-            channelType: "matrix" as const,
-            hint: "Verify the room id and that the bot has permission to send in it",
-            errorKind: "platform" as const,
-          },
-          "Matrix message send failed",
         );
-        return err(sent.error);
+        if (!sent.ok) {
+          lastError = sent.error.message;
+          deps.logger.warn(
+            {
+              channelType: "matrix" as const,
+              hint: "Verify the room id and that the bot has permission to send in it",
+              errorKind: "platform" as const,
+            },
+            "Matrix message send failed",
+          );
+          return err(sent.error);
+        }
+        lastEventId = sent.value.event_id;
       }
+
       lastError = undefined;
-      return ok(sent.value.event_id);
+      return ok(lastEventId);
     },
 
     async reactToMessage(
