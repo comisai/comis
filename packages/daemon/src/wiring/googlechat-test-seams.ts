@@ -76,9 +76,33 @@ export function resolveTestGoogleChatVerifier(
   const readFileImpl =
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- jwksPath is an operator-set test-only env var, not user input
     deps?.readFileImpl ?? ((path: string) => readFileSync(path, "utf8"));
-  const jwks = JSON.parse(readFileImpl(jwksPath)) as Parameters<
-    typeof createLocalGoogleChatInboundVerifier
-  >[0];
+  // The read + parse can throw (ENOENT/EACCES from the read, SyntaxError from a
+  // malformed file). This resolver runs inside the unwrapped bootstrapAdapters,
+  // so an uncaught throw would fail daemon boot. Contain it: warn (config) naming
+  // the env var and fall closed to the production remote-JWKS verifier. The seam
+  // is off-by-default and test-only, so a bad file must degrade to production, not
+  // crash — the very misconfiguration the activation WARN below warns against.
+  let jwks: Parameters<typeof createLocalGoogleChatInboundVerifier>[0];
+  try {
+    jwks = JSON.parse(readFileImpl(jwksPath)) as Parameters<
+      typeof createLocalGoogleChatInboundVerifier
+    >[0];
+  } catch (readErr) {
+    deps?.logger?.warn(
+      {
+        channelType: "googlechat" as const,
+        err: readErr,
+        hint: "COMIS_GOOGLECHAT_TEST_JWKS is set but its JWKS file could not be read or parsed — falling back to the production remote-JWKS verifier; unset it in production",
+        errorKind: "config" as const,
+      },
+      "Google Chat test JWKS unreadable; falling back to the production remote-JWKS verifier",
+    );
+    return createGoogleChatInboundVerifier({
+      audienceType: cfg.audienceType,
+      audience: cfg.audience,
+      ...(deps?.logger ? { logger: deps.logger } : {}),
+    });
+  }
   const issuer = getEnv(GOOGLECHAT_TEST_ISSUER_ENV);
   const verifier = createLocalGoogleChatInboundVerifier(jwks, {
     audienceType: cfg.audienceType,
