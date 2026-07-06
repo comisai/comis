@@ -238,4 +238,66 @@ describe("validateGoogleChatCredentials", () => {
     });
     expect(result.ok).toBe(true);
   });
+
+  // Google Chat delivers a space MESSAGE event only when the app is @mentioned or
+  // slash-commanded, so an "always" group-activation mode never sees the
+  // unmentioned traffic it is meant to answer — it is inert on this channel.
+  it("emits exactly one content-free WARN when groupActivation is 'always' (inert on Google Chat), without failing validation", () => {
+    const logger = makeLogger();
+    const result = validateGoogleChatCredentials({
+      serviceAccountKey: VALID_SA_KEY,
+      subscriptionName: VALID_SUBSCRIPTION,
+      groupActivation: "always",
+      logger,
+    });
+    // Advisory only: an inert activation mode does NOT fail validation.
+    expect(result.ok).toBe(true);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelType: "googlechat",
+        errorKind: "precondition",
+        hint: expect.stringContaining("never delivers unmentioned"),
+      }),
+      expect.stringContaining("Inert groupActivation"),
+    );
+    // Content-free: no secret and no config value beyond the mode literal reach
+    // the WARN (the SA key material and the subscription id never cross into it).
+    const warnDump = JSON.stringify(
+      (logger.warn as ReturnType<typeof vi.fn>).mock.calls,
+    );
+    expect(warnDump).not.toContain(PRIVATE_KEY_SENTINEL);
+    expect(warnDump).not.toContain(VALID_SUBSCRIPTION);
+  });
+
+  it("does NOT WARN about groupActivation when it is 'mention-gated' (the mode Google Chat actually delivers)", () => {
+    const logger = makeLogger();
+    const result = validateGoogleChatCredentials({
+      serviceAccountKey: VALID_SA_KEY,
+      subscriptionName: VALID_SUBSCRIPTION,
+      groupActivation: "mention-gated",
+      logger,
+    });
+    expect(result.ok).toBe(true);
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("does NOT WARN about groupActivation when it is absent", () => {
+    const logger = makeLogger();
+    validateGoogleChatCredentials({
+      serviceAccountKey: VALID_SA_KEY,
+      subscriptionName: VALID_SUBSCRIPTION,
+      logger,
+    });
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("does not throw when groupActivation is 'always' but no logger is injected", () => {
+    const result = validateGoogleChatCredentials({
+      serviceAccountKey: VALID_SA_KEY,
+      subscriptionName: VALID_SUBSCRIPTION,
+      groupActivation: "always",
+    });
+    expect(result.ok).toBe(true);
+  });
 });
