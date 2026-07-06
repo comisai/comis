@@ -384,7 +384,15 @@ class FakeMatrixClient {
     return Promise.resolve({ event_id: `$sent${this.sendCount}` });
   }
 
+  /** Total redactEvent invocations, INCLUDING attempts that reject — the retry proof. */
+  redactAttempts = 0;
+  /** A FIFO queue of errors to reject successive redactions with (models a 429). */
+  readonly pendingRedactErrors: unknown[] = [];
   redactEvent(roomId: string, eventId: string): Promise<{ event_id: string }> {
+    this.redactAttempts += 1;
+    if (this.pendingRedactErrors.length > 0) {
+      return Promise.reject(this.pendingRedactErrors.shift());
+    }
     if (this.redactError !== undefined) return Promise.reject(this.redactError);
     this.redactedEvents.push({ roomId, eventId });
     return Promise.resolve({ event_id: "$redact1" });
@@ -1681,5 +1689,59 @@ describe("createMatrixAdapter — edits and deletes", () => {
       ([fields]) => (fields as { errorKind?: string }).errorKind === "platform",
     );
     expect(platformWarn).toBeDefined();
+  });
+});
+
+describe("createMatrixAdapter — uniform rate-limit retry across outbound actions", () => {
+  it("retries a rate-limited reaction and then succeeds", async () => {
+    const fake = new FakeMatrixClient();
+    fake.pendingSendErrors.push(matrixError("M_LIMIT_EXCEEDED", 429, "slow down"));
+    const { adapter } = makeAdapter({ fake, timer: instantTimer() });
+    await adapter.start();
+
+    const result = await adapter.reactToMessage?.("!room:hs", "$t:hs", "👍");
+
+    expect(result?.ok).toBe(true);
+    // Two attempts: the 429, then the successful resend — like sendMessage.
+    expect(fake.sendAttempts).toBe(2);
+  });
+
+  it("retries a rate-limited edit and then succeeds", async () => {
+    const fake = new FakeMatrixClient();
+    fake.pendingSendErrors.push(matrixError("M_LIMIT_EXCEEDED", 429, "slow down"));
+    const { adapter } = makeAdapter({ fake, timer: instantTimer() });
+    await adapter.start();
+
+    const result = await adapter.editMessage?.("!room:hs", "$orig:hs", "new text");
+
+    expect(result?.ok).toBe(true);
+    expect(fake.sendAttempts).toBe(2);
+  });
+
+  it("retries a rate-limited delete (redaction) and then succeeds", async () => {
+    const fake = new FakeMatrixClient();
+    fake.pendingRedactErrors.push(matrixError("M_LIMIT_EXCEEDED", 429, "slow down"));
+    const { adapter } = makeAdapter({ fake, timer: instantTimer() });
+    await adapter.start();
+
+    const result = await adapter.deleteMessage?.("!room:hs", "$target:hs");
+
+    expect(result?.ok).toBe(true);
+    expect(fake.redactAttempts).toBe(2);
+  });
+
+  it("retries a rate-limited reaction removal (redaction) and then succeeds", async () => {
+    const fake = new FakeMatrixClient();
+    const { adapter } = makeAdapter({ fake, timer: instantTimer() });
+    await adapter.start();
+
+    // Retain an annotation id to redact, then rate-limit its first redaction.
+    await adapter.reactToMessage?.("!room:hs", "$t:hs", "👍");
+    fake.pendingRedactErrors.push(matrixError("M_LIMIT_EXCEEDED", 429, "slow down"));
+
+    const result = await adapter.removeReaction?.("!room:hs", "$t:hs", "👍");
+
+    expect(result?.ok).toBe(true);
+    expect(fake.redactAttempts).toBe(2);
   });
 });
