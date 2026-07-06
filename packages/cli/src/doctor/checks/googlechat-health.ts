@@ -32,6 +32,12 @@
  *   4. allowlist lint — an email-shaped allowFrom entry surfaces a warn steering
  *                       the operator toward the immutable users/{id} resource id
  *                       (an email display id is mutable and spoofable).
+ *   5. audience shape  — webhook mode only. The inbound verifier binds to a
+ *                       different key set + claim shape per audienceType, so an
+ *                       audience whose shape contradicts audienceType (a URL
+ *                       audience declared project-number, or a non-URL audience
+ *                       declared app-url) warns — that mismatch silently rejects
+ *                       every inbound request. Omitted in pubsub mode.
  *
  * The webhook endpoint + recent-inbound probes degrade to `skip` when the
  * daemon/gateway is unreachable (mirrors the other daemon-dependent doctor
@@ -97,6 +103,14 @@ function isBlank(value: string | undefined): boolean {
 function isEmailShaped(entry: string): boolean {
   if (entry.startsWith("users/") || entry.startsWith("spaces/")) return false;
   return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(entry);
+}
+
+/**
+ * True when an audience value looks like an endpoint URL (an `app-url` audience)
+ * rather than a numeric project number (a `project-number` audience).
+ */
+function isUrlShapedAudience(audience: string): boolean {
+  return /^https?:\/\//i.test(audience.trim());
 }
 
 /** Compact finding constructor (all googlechat findings are non-repairable). */
@@ -389,6 +403,51 @@ function emailAllowFromLintFindings(gc: GoogleChatConfigView): DoctorFinding[] {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Probe 5: webhook audience shape vs audienceType cross-check
+// ---------------------------------------------------------------------------
+
+/**
+ * Webhook-only cross-check: the inbound verifier binds to a different key set +
+ * claim shape per audienceType — a self-signed Chat-system token whose `aud` is
+ * the numeric project number (`project-number`), or a Google OIDC token whose
+ * `aud` is the endpoint URL (`app-url`). An audience whose SHAPE contradicts
+ * audienceType selects the wrong path and silently rejects EVERY inbound request,
+ * so `comis doctor` flags it before the daemon does. Returns [] in pubsub mode
+ * (audienceType is inert there) and when the audience is blank (a separate
+ * precondition the inbound-path probe and the daemon validator own). Content-free:
+ * the finding names the two config keys and the fix, never the audience value.
+ */
+function audienceShapeFindings(gc: GoogleChatConfigView): DoctorFinding[] {
+  const check = "Google Chat webhook audience";
+  if (gc.mode !== "webhook" || isBlank(gc.audience)) return [];
+
+  const audienceType = gc.audienceType ?? "project-number";
+  const urlShaped = isUrlShapedAudience(gc.audience as string);
+
+  if (audienceType === "app-url" && !urlShaped) {
+    return [
+      finding(
+        "warn",
+        check,
+        'audienceType is "app-url" but audience is not an endpoint URL — the inbound verifier expects a Google OIDC token whose audience is the endpoint URL',
+        'Set channels.googlechat.audience to your https:// endpoint URL, or set channels.googlechat.audienceType to "project-number" if audience is your numeric Cloud project number',
+      ),
+    ];
+  }
+  if (audienceType === "project-number" && urlShaped) {
+    return [
+      finding(
+        "warn",
+        check,
+        'audienceType is "project-number" but audience looks like an endpoint URL — the inbound verifier expects a self-signed Chat-system token whose audience is your numeric Cloud project number',
+        'Set channels.googlechat.audienceType to "app-url" for a URL audience, or set channels.googlechat.audience to your numeric Cloud project number',
+      ),
+    ];
+  }
+  return [finding("pass", check, "Webhook audience shape matches audienceType")];
+}
+
 /**
  * Doctor check: Google Chat health.
  *
@@ -429,6 +488,7 @@ export const googlechatHealthCheck: DoctorCheck = {
       await subscriptionOrIngressFinding(gc, context.gatewayUrl),
       await recentInboundFinding(),
       ...emailAllowFromLintFindings(gc),
+      ...audienceShapeFindings(gc),
     ];
   },
 };

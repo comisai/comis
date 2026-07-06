@@ -444,4 +444,100 @@ describe("googlechatHealthCheck", () => {
       ]),
     );
   });
+
+  // -------------------------------------------------------------------------
+  // Probe 5: webhook audience shape vs audienceType cross-check
+  // -------------------------------------------------------------------------
+  //
+  // The inbound verifier binds to a different key set + claim shape per
+  // audienceType, so an audience whose shape contradicts audienceType silently
+  // rejects every request. `comis doctor` must catch that before the daemon does.
+
+  it("warns the webhook-audience probe when audienceType is project-number but audience is a URL", async () => {
+    const findings = await googlechatHealthCheck.run(
+      contextWith({
+        enabled: true,
+        mode: "webhook",
+        serviceAccountKey: validSaKey,
+        audienceType: "project-number",
+        audience: "https://chat.example.com/hook",
+      }),
+    );
+    const audienceCheck = find(findings, "Google Chat webhook audience");
+    expect(audienceCheck?.status).toBe("warn");
+    const text = `${audienceCheck?.message ?? ""} ${audienceCheck?.suggestion ?? ""}`;
+    expect(text).toContain("audienceType");
+  });
+
+  it("warns the webhook-audience probe when audienceType is app-url but audience is not URL-shaped", async () => {
+    const findings = await googlechatHealthCheck.run(
+      contextWith({
+        enabled: true,
+        mode: "webhook",
+        serviceAccountKey: validSaKey,
+        audienceType: "app-url",
+        audience: "1234567890",
+      }),
+    );
+    const audienceCheck = find(findings, "Google Chat webhook audience");
+    expect(audienceCheck?.status).toBe("warn");
+    const text = `${audienceCheck?.message ?? ""} ${audienceCheck?.suggestion ?? ""}`;
+    expect(text).toContain("audienceType");
+  });
+
+  it("passes the webhook-audience probe when audienceType app-url matches a URL audience", async () => {
+    const findings = await googlechatHealthCheck.run(
+      contextWith({
+        enabled: true,
+        mode: "webhook",
+        serviceAccountKey: validSaKey,
+        audienceType: "app-url",
+        audience: "https://chat.example.com/hook",
+      }),
+    );
+    const audienceCheck = find(findings, "Google Chat webhook audience");
+    expect(audienceCheck?.status).toBe("pass");
+  });
+
+  it("passes the webhook-audience probe when audienceType project-number matches a numeric audience", async () => {
+    const findings = await googlechatHealthCheck.run(
+      contextWith({
+        enabled: true,
+        mode: "webhook",
+        serviceAccountKey: validSaKey,
+        audienceType: "project-number",
+        audience: "1234567890",
+      }),
+    );
+    const audienceCheck = find(findings, "Google Chat webhook audience");
+    expect(audienceCheck?.status).toBe("pass");
+  });
+
+  it("omits the webhook-audience probe entirely in pubsub mode (audienceType is inert there)", async () => {
+    const findings = await googlechatHealthCheck.run(
+      contextWith({
+        enabled: true,
+        mode: "pubsub",
+        serviceAccountKey: validSaKey,
+        subscriptionName: "projects/test-project/subscriptions/comis",
+        audienceType: "project-number",
+      }),
+    );
+    expect(find(findings, "Google Chat webhook audience")).toBeUndefined();
+  });
+
+  it("never echoes the service-account key into the webhook-audience finding (secret-safe)", async () => {
+    const findings = await googlechatHealthCheck.run(
+      contextWith({
+        enabled: true,
+        mode: "webhook",
+        serviceAccountKey: validSaKey,
+        audienceType: "project-number",
+        audience: "https://chat.example.com/hook",
+      }),
+    );
+    const audienceCheck = find(findings, "Google Chat webhook audience");
+    expect(audienceCheck?.message ?? "").not.toContain(SECRET_MARKER);
+    expect(audienceCheck?.suggestion ?? "").not.toContain(SECRET_MARKER);
+  });
 });
