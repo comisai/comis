@@ -1,0 +1,454 @@
+---
+title: "Google Chat"
+description: "Connect Comis to Google Chat with step-by-step setup"
+icon: "google"
+---
+
+import Prereqs from '/snippets/prereqs.mdx';
+import SecretWarning from '/snippets/secret-warning.mdx';
+import NonTechnicalNote from '/snippets/non-technical-note.mdx';
+
+Connect your Comis agent to Google Chat -- spaces, direct messages, and space
+threads, with Cards v2 buttons, edit/delete, and inbound media. Google Chat is
+the one channel that needs **no public IP by default**: the `pubsub` transport
+pulls inbound events from a Cloud Pub/Sub subscription, so your Comis daemon
+reaches out to Google rather than the other way around. An opt-in `webhook` mode
+is available when you would rather Google push events to a public HTTPS endpoint.
+This page walks you through creating the Chat app, wiring the transport, and
+configuring authentication.
+
+<NonTechnicalNote />
+
+## Prerequisites
+
+<Prereqs />
+
+- A Google Cloud project with the **Google Chat API** and the **Cloud Pub/Sub
+  API** enabled
+- A **service account** in that project, with its key JSON downloaded -- this is
+  the only credential Comis needs; there is no bot token
+- For the default `pubsub` transport: a Pub/Sub **topic** and a **pull
+  subscription** (see [Setup](#setup))
+- For the opt-in `webhook` transport only: a public HTTPS URL that reaches your
+  Comis gateway (see [Public endpoint](#public-endpoint))
+
+## Public endpoint
+
+<Warning>
+This section applies **only** to the opt-in `mode: webhook`. In the default
+`mode: pubsub`, Comis pulls events from a Pub/Sub subscription and needs **no
+public endpoint at all** -- skip ahead to [Setup](#setup).
+</Warning>
+
+In `webhook` mode, Google delivers each event as an authenticated HTTPS POST to
+`/channels/googlechat` on your gateway, so the gateway must be reachable from the
+internet at `https://your-host/channels/googlechat`. The route rides your
+gateway's existing host, port, and TLS surface (`gateway.host` / `gateway.port`)
+and is mounted **only** when `channels.googlechat.enabled` is `true` **and**
+`mode` is `webhook`; in `pubsub` mode, or while the channel is disabled, no
+inbound route exists at all. Every inbound request is Bearer-JWT-verified before
+it reaches your agent, so an unauthenticated POST is rejected regardless of how
+you expose the endpoint.
+
+You have several ways to make the gateway publicly reachable. They are listed
+most-hardened first; **all** of them see the same inbound token verification, so
+the choice is about network exposure, not authentication.
+
+<Steps>
+  <Step title="Reverse proxy with HTTPS (production)">
+    Terminate TLS at a reverse proxy (Nginx, Caddy) in front of the gateway and
+    forward `/channels/googlechat` to it. This gives you full control over
+    certificates, headers, and rate limiting. See
+    [Reverse proxy](/operations/reverse-proxy) for a worked Nginx and Caddy
+    configuration.
+  </Step>
+
+  <Step title="Tailscale Funnel (production, no open port)">
+    [Tailscale Funnel](https://tailscale.com/kb/1223/funnel) publishes a local
+    port to the public internet over HTTPS with an auto-provisioned certificate
+    and a stable `*.ts.net` hostname -- without forwarding a port on your router
+    or firewall.
+
+    ```bash
+    tailscale funnel 4766
+    ```
+
+    Your endpoint becomes
+    `https://your-machine.your-tailnet.ts.net/channels/googlechat`. Funnel
+    handles the certificate; Comis still verifies every inbound request.
+  </Step>
+
+  <Step title="Dev tunnel (testing only)">
+    For local testing, a tunnel such as [ngrok](https://ngrok.com) gives you a
+    temporary public HTTPS URL that forwards to your gateway port. Use the tunnel
+    URL as the endpoint while you iterate; move to a reverse proxy or Funnel
+    before you run in production.
+  </Step>
+</Steps>
+
+## Setup
+
+Google Chat needs a Google Cloud project with a service account (the app's
+credential) and a Chat app configuration that selects a transport. The default
+`pubsub` transport also needs a Pub/Sub topic and a pull subscription.
+
+<Steps>
+  <Step title="Create a project and enable APIs">
+    In the [Google Cloud console](https://console.cloud.google.com), create (or
+    pick) a project and enable the **Google Chat API** and the **Cloud Pub/Sub
+    API**. Note the project's **number** -- you will need it for `webhook` mode's
+    `project-number` audience.
+  </Step>
+
+  <Step title="Create a service account and download its key">
+    Create a service account in the project and download its **key JSON**. This
+    single credential lets Comis mint the tokens it needs to call the Chat API;
+    there is no separate bot token. Keep the key file safe -- it is a secret.
+
+    <SecretWarning />
+  </Step>
+
+  <Step title="Configure the Chat app and choose a transport">
+    On the Chat API **Configuration** page, set the app name and avatar, then
+    pick how inbound events are delivered:
+
+    <Tabs>
+      <Tab title="Cloud Pub/Sub (default)">
+        1. Create a Pub/Sub **topic** and a **pull subscription** on it
+           (`projects/{project}/subscriptions/{sub}`).
+        2. Grant the **Chat service account**
+           (`chat@system.gserviceaccount.com`) the **Pub/Sub Publisher** role on
+           the topic, so Google can publish inbound events to it.
+        3. Grant **your** service account the `roles/pubsub.subscriber` role on
+           the subscription, so Comis can pull events.
+        4. In the Chat app's connection settings, select **Cloud Pub/Sub** and
+           point it at your topic.
+
+        No public IP or gateway is required -- Comis pulls from the subscription.
+      </Tab>
+
+      <Tab title="HTTPS endpoint (webhook)">
+        1. Expose your gateway over HTTPS (see
+           [Public endpoint](#public-endpoint)).
+        2. In the Chat app's connection settings, select **HTTP endpoint URL**
+           and set it to `https://your-host/channels/googlechat`.
+        3. Note whether Google mints the token with your **project number** or
+           your **endpoint URL** as the audience -- this maps to `audienceType`
+           in [Authentication](#authentication).
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Configure Comis">
+    Add the Google Chat channel to your Comis configuration file
+    (`~/.comis/config.yaml`). The default `pubsub` transport:
+
+    ```yaml
+    channels:
+      googlechat:
+        enabled: true
+        serviceAccountKey: "${GOOGLECHAT_SA_KEY}"
+        subscriptionName: "projects/my-project/subscriptions/comis-chat"
+        allowFrom: ["users/1234567890"]
+    ```
+
+    Set the service-account key in your `~/.comis/.env` file (the full key JSON
+    on one line):
+
+    ```bash
+    GOOGLECHAT_SA_KEY={"type":"service_account", ... }
+    ```
+
+    <SecretWarning />
+  </Step>
+
+  <Step title="Restart and verify">
+    Restart the Comis daemon to pick up the new configuration:
+
+    ```bash
+    comis daemon stop && comis daemon start
+    ```
+
+    Check that the Google Chat probes pass:
+
+    ```bash
+    comis doctor
+    ```
+
+    Then message the bot from a Google Chat space or direct message and confirm
+    it replies.
+  </Step>
+</Steps>
+
+## Authentication
+
+Google Chat authenticates with a **service-account key** -- the same credential
+in both transports. The key is the only secret; keep it in `~/.comis/.env` as
+`GOOGLECHAT_SA_KEY` or supply a `SecretRef`. What differs between the modes is how
+**inbound** events are trusted.
+
+<Tabs>
+  <Tab title="pubsub (default)">
+    Comis pulls events from your Pub/Sub subscription, so inbound trust comes
+    from the subscription's IAM -- there is no public endpoint and no inbound
+    token verification to configure.
+
+    ```yaml
+    channels:
+      googlechat:
+        enabled: true
+        serviceAccountKey: "${GOOGLECHAT_SA_KEY}"
+        subscriptionName: "projects/my-project/subscriptions/comis-chat"
+    ```
+  </Tab>
+
+  <Tab title="webhook">
+    Google POSTs events to your endpoint with a Bearer JWT, and Comis verifies
+    every one before processing. Set `audienceType` to match how Google mints
+    the token:
+
+    - **`project-number`** -- the token's `aud` is your Google Cloud project
+      number, issued by `chat@system.gserviceaccount.com`. Set `audience` to the
+      project number.
+    - **`app-url`** -- the token's `aud` is your endpoint URL, a Google OIDC ID
+      token bound to the Chat sender. Set `audience` to the endpoint URL.
+
+    ```yaml
+    channels:
+      googlechat:
+        enabled: true
+        mode: webhook
+        serviceAccountKey: "${GOOGLECHAT_SA_KEY}"
+        audienceType: project-number
+        audience: "1234567890"          # your Google Cloud project number
+    ```
+
+    Webhook mode also needs `gateway.enabled: true` and a public URL.
+  </Tab>
+</Tabs>
+
+## Configuration
+
+The full option table -- all fields, types, and defaults -- lives in the
+[Configuration reference](/reference/config-yaml#channels). The service-account
+key environment variable is documented in
+[Environment variables](/reference/environment-variables#googlechat_sa_key). This
+section covers the one option that carries a security consequence worth spelling
+out.
+
+### Sender allowlist and the email caveat
+
+`allowFrom` restricts who can talk to the bot. When it is non-empty (and
+`allowMode` is the default `allowlist`), only listed senders reach the agent.
+Each entry is a Google Chat resource id -- a `users/{id}` for one person or a
+`spaces/{id}` for a whole space.
+
+<Warning>
+Prefer the **immutable** `users/{id}` form. A human-readable, email-shaped id is
+mutable and spoofable -- a display value can change or be impersonated, so
+allowlisting one is weaker than pinning the stable numeric `users/{id}`. Approval
+authority on Cards v2 approval cards is derived from the verified sender of the
+click, so a loose allowlist entry effectively widens who can press **Approve**.
+Comis emits a boot-time WARN when it sees an email-shaped `allowFrom` entry.
+</Warning>
+
+## Media
+
+Inbound attachments (images, documents, voice, video) are downloaded
+**exclusively** through the Chat API's `attachmentDataRef.resourceName` via
+`media.download`, host-pinned to `chat.googleapis.com`, and MIME-checked before
+the media pipeline (transcription, vision, document extraction) sees them.
+
+A file shared through the Drive picker arrives **without** a `resourceName` and
+degrades with an honest WARN: downloading Drive-hosted content needs a user-OAuth
+credential plus the Drive scope, which the service-account app does not have.
+
+<Note>
+Google Chat media is **inbound only**. Uploading files or videos into a space is
+a user-auth-only method and a later addition; today the agent replies with text
+and Cards v2 messages.
+</Note>
+
+## Liveness
+
+In `pubsub` mode the pull loop self-heals: it retries with bounded, jittered
+backoff and de-duplicates redelivered events, so a transient Pub/Sub error
+recovers without operator action.
+
+In `webhook` mode the channel is exempt from the health monitor's stale-reap --
+because Google pushes events over a connection Comis cannot watch, a mis-wired or
+silently broken endpoint would otherwise report healthy forever, and the only
+symptom would be a bot that quietly stops receiving messages. Two guards close
+that gap:
+
+- **`comis doctor`** runs the Google Chat (`googlechat-health`) probes: the
+  service-account key parses and resolves; the Pub/Sub subscription is reachable
+  (in `pubsub` mode -- a failure names the `roles/pubsub.subscriber` grant) or
+  the ingress endpoint is reachable (in `webhook` mode); an inbound event has
+  arrived recently; and `allowFrom` entries are immutable `users/{id}` ids rather
+  than email-shaped. The reachability and recent-inbound probes skip (rather than
+  fail) when the daemon is down.
+- A **missed-inbound alert** compares the time since the last inbound event to
+  `missedInboundThresholdMs` (default **6 hours**). On breach it emits a
+  `channel:inbound_silent` event and a WARN that surfaces as a `comis fleet`
+  health signal. Lower the threshold for a busy space where a few hours of
+  silence is itself a red flag.
+
+## Live-smoke checklist
+
+The build gates cover the adapter, mapper, renderer, auth, Pub/Sub source, and
+gateway ingress. The end-to-end sign-off needs a real Chat app and a Google Cloud
+project, so run this operator checklist once against a live account:
+
+- [ ] Text round-trips in a space and in a direct message
+- [ ] A threaded reply lands on the original message's thread; the bot edits and
+      deletes its own messages
+- [ ] A Cards v2 card renders, and clicking **Approve** on an approval card is
+      authorized to the clicking user -- a non-allowlisted user cannot approve
+- [ ] An inbound image and an inbound document each resolve through the media
+      pipeline
+- [ ] Both `pubsub` and `webhook` modes start cleanly
+- [ ] `comis doctor` shows the Google Chat (`googlechat-health`) probes green; in
+      webhook mode the missed-inbound alert fires after the configured silence
+      window
+
+## Local emulator (self-drive testing)
+
+The live-smoke checklist above needs a real Chat app. For an offline, no-Google
+round trip -- and for the self-driving live-test rig -- an in-tree emulator plays
+the Google side (a fake Chat REST API + Pub/Sub pull endpoint + a JWKS signer for
+webhook tokens). It lives at `test/live/emulators/googlechat/` and is driven from
+`test/live/self-driving/`.
+
+Google Chat has both inbound and outbound loopback bridges, and all are
+**off-by-default environment variables set only on the test daemon** -- never in
+production:
+
+| Env var | Bridges |
+|---------|---------|
+| [`COMIS_GOOGLECHAT_TEST_JWKS`](/reference/environment-variables#comis_googlechat_test_jwks) | The webhook ingress verifies inbound event tokens against the emulator's local JWKS (a full signature/issuer/audience verify -- not a bypass) instead of Google's remote keys. |
+| [`COMIS_GOOGLECHAT_TEST_ISSUER`](/reference/environment-variables#comis_googlechat_test_issuer) | Optional issuer override for a fully-synthetic emulator key set. |
+| [`COMIS_GOOGLECHAT_TEST_API`](/reference/environment-variables#comis_googlechat_test_api) | The daemon's outbound egress -- the Chat REST API, the Pub/Sub pull endpoint, and the OAuth token endpoint -- is redirected to the loopback emulator. |
+
+<Warning>
+With these variables unset, the daemon behaves identically to a normal Google
+Chat deployment. Setting them on a production daemon would point inbound trust
+and outbound delivery at a local process -- they are strictly for the live-test
+rig.
+</Warning>
+
+Wiring (as the operator, on the test box):
+
+```bash
+# 1. Start the emulator (prints the exact daemonEnv to set).
+tsx test/live/bin/vps-emu-googlechat.ts
+
+# 2. Enable channels.googlechat in config.yaml (allowMode: open), then boot the
+#    daemon with the seams from the emulator's printed daemonEnv:
+COMIS_GOOGLECHAT_TEST_JWKS=/tmp/comis-googlechat-jwks.json \
+COMIS_GOOGLECHAT_TEST_API=http://127.0.0.1:53998 \
+  node packages/daemon/dist/daemon.js
+
+# 3. Drive an inbound turn (pubsub mode injects into the fake pull queue; webhook
+#    mode signs a Bearer and POSTs to the ingress), then poll the Chat-API oracle
+#    for the agent reply:
+node test/live/self-driving/scripts/googlechat-drive.mjs --mode pubsub "spaces/AAAA" "hello google chat"
+```
+
+The whole wire stack is also proven offline (no daemon) by the round-trip
+scenario at `test/live/scenarios/channels/googlechat-emulator.test.ts`, which
+pushes a signed event through the real ingress and adapter into the emulator's
+oracle.
+
+## What your agent can do
+
+Once connected to Google Chat, your agent can:
+
+- Send, edit, and delete messages in spaces and direct messages
+- Reply in a space thread (threaded on the original message)
+- Send Cards v2 messages with interactive buttons, including default-deny
+  approval cards for privileged actions
+- Receive inbound images, documents, and other attachments (routed through the
+  media pipeline)
+- Detect when it is `@mentioned` in a space
+
+Google Chat does **not** support the agent *sending* reactions, uploading files
+or videos, fetching un-approved message history, showing a typing indicator, or
+token-by-token streaming. Those methods are user-auth-only or admin-approval-only
+on this platform -- see [Later additions](#later-additions).
+
+## Platform limits
+
+| Limit | Value | What Comis does about it |
+|---|---|---|
+| Message length | 4,000 characters (32,000-byte platform cap) | Splits long responses into multiple messages at paragraph boundaries |
+| Send rate | 1 message/second per space | Paces chunked replies per space to stay within the limit |
+| Outbound attachments | None (inbound media only) | The agent replies with text and Cards v2 messages; file upload is a later addition |
+| Space activation | Unmentioned messages are not delivered in multi-person spaces | The app receives space messages only when `@mentioned` or slash-commanded; a `groupActivation: "always"` setting is inert here |
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Bot can send messages but never receives any (pubsub mode)">
+    **What happened:** Comis cannot pull from the Pub/Sub subscription, or Google
+    is not publishing to the topic.
+
+    **How to fix it:** Grant your service account the `roles/pubsub.subscriber`
+    role on the subscription, and confirm `subscriptionName` is the full
+    `projects/{project}/subscriptions/{sub}` path. Verify the Chat app's Pub/Sub
+    connection publishes to the topic that subscription is attached to, and that
+    the Chat service account has the Publisher role on the topic.
+  </Accordion>
+
+  <Accordion title="Webhook inbound requests are rejected with a 401">
+    **What happened:** Bearer-JWT verification failed -- usually an `audienceType`
+    / `audience` mismatch.
+
+    **How to fix it:** Match `audienceType` to how Google mints the token:
+    `project-number` (`aud` is your project number, issuer
+    `chat@system.gserviceaccount.com`) or `app-url` (`aud` is your endpoint URL).
+    Set `audience` to the matching value, and confirm `gateway.enabled` is `true`
+    and the public URL resolves to `/channels/googlechat`.
+  </Accordion>
+
+  <Accordion title="Service-account key fails to parse at startup">
+    **What happened:** The `serviceAccountKey` value is not the full
+    service-account key JSON.
+
+    **How to fix it:** Supply the complete key JSON (it must contain the
+    `client_email` and the private-key material), not a file path or a partial
+    copy. If you use a `${GOOGLECHAT_SA_KEY}` reference, confirm the variable is
+    set in `~/.comis/.env`. Comis never prints the key -- the doctor probe reports
+    only whether it parsed.
+  </Accordion>
+</AccordionGroup>
+
+## Later additions
+
+The Google Chat channel focuses on chat, Cards v2, threaded replies, edit/delete,
+and inbound media. These are documented as not-yet-shipped so you can plan around
+them:
+
+- Uploading files and videos into a space (needs a user-OAuth credential -- the
+  service-account app cannot upload)
+- Sending and receiving reactions (user-auth-only on this platform)
+- Fetching un-approved message history (needs admin approval and the read-only
+  scope)
+- A Google Workspace Events event source (the path to inbound reactions and
+  listening to every space message)
+- Typing indicators and token-by-token streaming
+
+<CardGroup cols={2}>
+  <Card title="All Channels" icon="message-dots" href="/channels">
+    Compare all 11 supported platforms side by side.
+  </Card>
+  <Card title="Configuration reference" icon="sliders" href="/reference/config-yaml">
+    Every `channels.googlechat` option, type, and default.
+  </Card>
+  <Card title="Environment variables" icon="key" href="/reference/environment-variables">
+    The `GOOGLECHAT_SA_KEY` secret and the Google Chat live-test seams.
+  </Card>
+  <Card title="Secret Management" icon="lock" href="/security/secrets">
+    Learn how to manage API keys and tokens securely.
+  </Card>
+</CardGroup>
