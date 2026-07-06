@@ -1408,6 +1408,22 @@ describe("createMatrixAdapter — threaded + chunked send", () => {
     return md;
   }
 
+  /**
+   * An over-budget message carrying MANY distinct @-mentions. Each mention is both
+   * a large pill in the rendered body AND a distinct `m.mentions.user_ids` entry —
+   * and that user_ids list rides the FIRST chunk only. The list is several KiB, so
+   * merging it into the first chunk after chunking overflows the budget unless the
+   * chunker reserved room for it.
+   */
+  function mentionHeavyOverBudgetMarkdown(mentions = 400): string {
+    const parts: string[] = [];
+    for (let i = 0; i < mentions; i++) {
+      const id = String(i).padStart(4, "0");
+      parts.push(`@[User ${id}](@user${id}:homeserver.example.org)`);
+    }
+    return parts.join(" and also ");
+  }
+
   it("threads a send by merging an m.thread relation into the sent content", async () => {
     const { adapter, fake } = makeAdapter();
     await adapter.start();
@@ -1473,6 +1489,31 @@ describe("createMatrixAdapter — threaded + chunked send", () => {
     }
     // A chunked send yields N events; the returned id is the LAST chunk's.
     if (result.ok) expect(result.value).toBe(`$sent${fake.sentEvents.length}`);
+  });
+
+  it("keeps the first chunk within budget when the message carries many mentions", async () => {
+    const { adapter, fake } = makeAdapter();
+    await adapter.start();
+
+    const result = await adapter.sendMessage("!room:hs", mentionHeavyOverBudgetMarkdown());
+
+    expect(result.ok).toBe(true);
+    // The message is large enough to split, so there is a distinct first chunk.
+    expect(fake.sentEvents.length).toBeGreaterThanOrEqual(2);
+    // The FIRST delivered event carries the full m.mentions list, merged AFTER
+    // chunking. Its serialized size must still fit the federation byte budget —
+    // the chunker has to reserve the mention bytes for the first chunk.
+    const first = fake.sentEvents[0];
+    expect((first?.content["m.mentions"] as { user_ids?: string[] })?.user_ids?.length).toBe(400);
+    expect(Buffer.byteLength(JSON.stringify(first?.content))).toBeLessThanOrEqual(
+      MATRIX_EVENT_BYTE_BUDGET,
+    );
+    // Every chunk (not just the first) stays within budget.
+    for (const sent of fake.sentEvents) {
+      expect(Buffer.byteLength(JSON.stringify(sent.content))).toBeLessThanOrEqual(
+        MATRIX_EVENT_BYTE_BUDGET,
+      );
+    }
   });
 
   it("keeps every threaded chunk within budget once the relation is merged in", async () => {
