@@ -3,6 +3,7 @@
  * Tests for API image sanitizer.
  */
 
+import zlib from "node:zlib";
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { sanitizeImageForApi, IMAGE_API_LIMITS } from "./image-sanitizer.js";
@@ -37,6 +38,35 @@ async function generateJpeg(width: number, height: number, quality = 95): Promis
   })
     .jpeg({ quality })
     .toBuffer();
+}
+
+/**
+ * Forge a tiny PNG whose IHDR DECLARES a `width`×`height` pixel count while the
+ * file itself is a few dozen bytes — a decompression bomb. A decoder reads the
+ * declared dimensions from the IHDR and can be tricked into allocating a huge
+ * bitmap; sharp's `limitInputPixels` guard rejects it on the declared count
+ * BEFORE decoding, which is exactly what this fixture exercises. No pixel data is
+ * needed (an empty IDAT) — the guard trips on the header alone.
+ */
+function forgePixelBombPng(width: number, height: number): Buffer {
+  const u32 = (n: number): Buffer => {
+    const b = Buffer.alloc(4);
+    b.writeUInt32BE(n >>> 0);
+    return b;
+  };
+  const chunk = (type: string, data: Buffer): Buffer => {
+    const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+    return Buffer.concat([u32(data.length), body, u32(zlib.crc32(body) >>> 0)]);
+  };
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  // IHDR: width, height, bit depth 8, colour type 2 (RGB), default compression/filter/interlace.
+  const ihdr = Buffer.concat([u32(width), u32(height), Buffer.from([8, 2, 0, 0, 0])]);
+  return Buffer.concat([
+    signature,
+    chunk("IHDR", ihdr),
+    chunk("IDAT", zlib.deflateSync(Buffer.alloc(0))),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
 }
 
 /** Generate a PNG with an alpha channel. */
@@ -174,5 +204,30 @@ describe("sanitizeImageForApi", () => {
 
     const longest = Math.max(result.value.width, result.value.height);
     expect(longest).toBeLessThanOrEqual(IMAGE_API_LIMITS.maxDimension);
+  });
+
+  it("rejects a decompression bomb whose decoded pixel count exceeds the decode limit, even though its byte size is tiny", async () => {
+    // The decode-side pixel cap is a SECOND, independent bound: a byte-size cap
+    // alone is not enough because a tiny file can DECLARE a huge decoded bitmap.
+    // Forge an IHDR whose pixel count is well past limitInputPixels.
+    const side = 20_000;
+    expect(side * side).toBeGreaterThan(IMAGE_API_LIMITS.limitInputPixels);
+    const bomb = forgePixelBombPng(side, side);
+    // Tiny on disk — far under the 5MB byte cap — yet decodes past the pixel cap,
+    // so the byte cap would let it through and only the decode cap stops it.
+    expect(bomb.length).toBeLessThan(1024);
+    expect(bomb.length).toBeLessThan(IMAGE_API_LIMITS.maxBytes);
+
+    const bombed = await sanitizeImageForApi(bomb, "image/png");
+    expect(bombed.ok).toBe(false);
+    if (!bombed.ok) {
+      expect(bombed.error.toLowerCase()).toContain("pixel limit");
+    }
+
+    // Contrast: a genuinely small image still passes — the guard rejects the bomb,
+    // not everything.
+    const normal = await generatePng(64, 64);
+    const passed = await sanitizeImageForApi(normal, "image/png");
+    expect(passed.ok).toBe(true);
   });
 });
