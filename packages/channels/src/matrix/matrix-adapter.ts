@@ -89,6 +89,7 @@ import {
   toMatrixErrorInput,
   isRoomDirect,
   sendEventWithRetry,
+  withRateLimitRetry,
 } from "./matrix-adapter-internal.js";
 
 // MAX_TRACKED_REACTIONS stays on the adapter's public surface (asserted by the
@@ -606,15 +607,20 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
         return err(notReady);
       }
 
+      const activeClient = client;
       const content = buildReactionContent(messageId, emoji);
       // The SDK types reaction content as `ReactionEventContent`; the builder emits
       // the exact `m.annotation` shape, so cast at this single sendEvent boundary.
-      const sent = await fromPromise(
-        client.sendEvent(
-          roomId,
-          EventType.Reaction,
-          content as unknown as TimelineEvents[EventType.Reaction],
-        ),
+      // Route through the shared 429 retry so a reaction rides the same rate-limit
+      // policy as sendMessage.
+      const sent = await withRateLimitRetry(
+        () =>
+          activeClient.sendEvent(
+            roomId,
+            EventType.Reaction,
+            content as unknown as TimelineEvents[EventType.Reaction],
+          ),
+        { timer: deps.timer, logger: deps.logger },
       );
       if (!sent.ok) {
         lastError = sent.error.message;
@@ -660,6 +666,7 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
         return err(notReady);
       }
 
+      const activeClient = client;
       const key = reactionKey(roomId, messageId, emoji);
       const reactionEventId = reactionEventIds.get(key);
       // Idempotent: with no retained annotation id (never reacted this session, or a
@@ -669,7 +676,10 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
         return ok(undefined);
       }
 
-      const redacted = await fromPromise(client.redactEvent(roomId, reactionEventId));
+      const redacted = await withRateLimitRetry(
+        () => activeClient.redactEvent(roomId, reactionEventId),
+        { timer: deps.timer, logger: deps.logger },
+      );
       if (!redacted.ok) {
         lastError = redacted.error.message;
         const classified = classifyMatrixError(toMatrixErrorInput(redacted.error));
@@ -779,14 +789,18 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
       // An edit sends an m.replace whose m.new_content is the authoritative new
       // message; the target event is never overwritten in place on the wire. The
       // SDK types m.room.message content as a broad XOR union, so cast the exact
-      // builder shape at this single sendEvent boundary.
+      // builder shape at this single sendEvent boundary. Route through the shared
+      // 429 retry so an edit rides the same rate-limit policy as sendMessage.
+      const activeClient = client;
       const content = buildEditContent(messageId, text);
-      const sent = await fromPromise(
-        client.sendEvent(
-          roomId,
-          EventType.RoomMessage,
-          content as unknown as TimelineEvents[EventType.RoomMessage],
-        ),
+      const sent = await withRateLimitRetry(
+        () =>
+          activeClient.sendEvent(
+            roomId,
+            EventType.RoomMessage,
+            content as unknown as TimelineEvents[EventType.RoomMessage],
+          ),
+        { timer: deps.timer, logger: deps.logger },
       );
       if (!sent.ok) {
         lastError = sent.error.message;
@@ -821,8 +835,13 @@ export function createMatrixAdapter(deps: MatrixAdapterDeps): ChannelPort {
         return err(notReady);
       }
 
-      // Deleting a message is redacting the target event by its id.
-      const redacted = await fromPromise(client.redactEvent(roomId, messageId));
+      // Deleting a message is redacting the target event by its id. Route through
+      // the shared 429 retry so a delete rides the same rate-limit policy.
+      const activeClient = client;
+      const redacted = await withRateLimitRetry(
+        () => activeClient.redactEvent(roomId, messageId),
+        { timer: deps.timer, logger: deps.logger },
+      );
       if (!redacted.ok) {
         lastError = redacted.error.message;
         const classified = classifyMatrixError(toMatrixErrorInput(redacted.error));

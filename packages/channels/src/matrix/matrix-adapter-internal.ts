@@ -34,9 +34,14 @@ export const DEGRADE_NOTE_SENDER = "system";
  */
 export const MAX_TRACKED_REACTIONS = 1000;
 
-/** The retained-reaction map key: one entry per (room, target message, emoji). */
+/**
+ * The retained-reaction map key: one entry per (room, target message, emoji).
+ * Serialized as a JSON array so a component that contains the old `|` delimiter
+ * cannot make two distinct triples collide onto one key (which would let one
+ * removeReaction redact another reaction's annotation).
+ */
 export function reactionKey(roomId: string, messageId: string, emoji: string): string {
-  return `${roomId}|${messageId}|${emoji}`;
+  return JSON.stringify([roomId, messageId, emoji]);
 }
 
 /**
@@ -147,28 +152,26 @@ export function isRoomDirect(client: MatrixClient, room: Room): boolean {
 }
 
 /**
- * Send one already-built content object, retrying a rate-limited (429) or
- * transient (5xx) failure with bounded exponential backoff on the injected
- * timer. A non-retryable failure — or an exhausted retry budget, or no injected
- * timer — surfaces the error to the caller. The backoff never uses a raw timer;
- * with no timer the send makes a single attempt per chunk (honest degrade).
+ * Run one homeserver operation, retrying a rate-limited (429) or transient (5xx)
+ * failure with bounded exponential backoff on the injected timer. A non-retryable
+ * failure — or an exhausted retry budget, or no injected timer — surfaces the
+ * error to the caller. The backoff never uses a raw timer; with no timer the
+ * operation makes a single attempt (honest degrade). Generic over the operation
+ * result so every outbound action (send, react, edit, redact) shares ONE uniform
+ * rate-limit policy rather than each open-coding a bare call.
  */
-export async function sendEventWithRetry(
-  activeClient: MatrixClient,
-  roomId: string,
-  content: TimelineEvents[EventType.RoomMessage],
+export async function withRateLimitRetry<T>(
+  op: () => Promise<T>,
   deps: { timer?: TimerPort; logger: ComisLogger },
-): Promise<Result<{ event_id: string }, Error>> {
+): Promise<Result<T, Error>> {
   for (let attempt = 0; ; attempt++) {
-    const sent = await fromPromise(
-      activeClient.sendEvent(roomId, EventType.RoomMessage, content),
-    );
-    if (sent.ok) return ok(sent.value);
+    const done = await fromPromise(op());
+    if (done.ok) return ok(done.value);
 
-    const classified = classifyMatrixError(toMatrixErrorInput(sent.error));
+    const classified = classifyMatrixError(toMatrixErrorInput(done.error));
     const timer = deps.timer;
     if (!classified.retryable || attempt >= MATRIX_SEND_MAX_RETRIES || timer === undefined) {
-      return err(sent.error);
+      return err(done.error);
     }
     const delayMs = Math.min(
       MATRIX_SEND_BACKOFF_BASE_MS * 2 ** attempt,
@@ -183,11 +186,28 @@ export async function sendEventWithRetry(
         hint: classified.hint,
         errorKind: classified.errorKind,
       },
-      "Matrix chunk send retry scheduled after a retryable status",
+      "Matrix request retry scheduled after a retryable status",
     );
     await new Promise<void>((resolve) => {
       const handle = timer.setTimeout(() => resolve(), delayMs);
       handle.unref();
     });
   }
+}
+
+/**
+ * Send one already-built `m.room.message` content object through the shared
+ * rate-limit retry policy ({@link withRateLimitRetry}). A thin, type-pinning
+ * wrapper the chunked-send loop calls.
+ */
+export async function sendEventWithRetry(
+  activeClient: MatrixClient,
+  roomId: string,
+  content: TimelineEvents[EventType.RoomMessage],
+  deps: { timer?: TimerPort; logger: ComisLogger },
+): Promise<Result<{ event_id: string }, Error>> {
+  return withRateLimitRetry(
+    () => activeClient.sendEvent(roomId, EventType.RoomMessage, content),
+    deps,
+  );
 }
