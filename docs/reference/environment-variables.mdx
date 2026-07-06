@@ -305,6 +305,59 @@ Source: `packages/daemon/src/wiring/msteams-test-seams.ts`
 export COMIS_MSTEAMS_TEST_CONNECTOR=http://127.0.0.1:53999
 ```
 
+### Google Chat live-test seams (test-only)
+
+<Warning>
+These variables exist ONLY to point the Google Chat webhook ingress at a local
+loopback emulator for live testing. They are **unset in production** — with them
+unset the daemon verifies inbound events against Google's live signing keys,
+byte-identically to a normal Google Chat webhook deployment. **Never set them on
+a production daemon.** They do not relax a security control: the seam swaps in a
+full local-JWKS signature/issuer/audience verify, never a bypass. Google Chat has
+no outbound connector-redirect seam — its egress base URLs (`tokenUrl`,
+`chatBaseUrl`, `pubsubBaseUrl`) are already injectable via config, so there is no
+`COMIS_GOOGLECHAT_TEST_CONNECTOR`.
+</Warning>
+
+#### `COMIS_GOOGLECHAT_TEST_JWKS`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Daemon (googlechat webhook ingress) |
+| **Format** | Absolute path to a public JWKS JSON file |
+| **Default** | (unset) — Google's live remote JWKS (the Chat-system keys for a `project-number` audience, or Google's OIDC certs for an `app-url` audience) |
+
+When set, the Google Chat ingress verifies inbound event tokens against the local
+JWKS at this path (the emulator's public signing key) instead of Google's remote
+keys. A full RS256 signature + issuer + audience verify — plus the `app-url`
+sender-binding email claim — not a bypass. Activating it emits a content-free WARN
+so a stray production setting is loud in the logs.
+
+Source: `packages/daemon/src/wiring/googlechat-test-seams.ts`
+
+```bash
+export COMIS_GOOGLECHAT_TEST_JWKS=/tmp/comis-googlechat-jwks.json
+```
+
+#### `COMIS_GOOGLECHAT_TEST_ISSUER`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Daemon (googlechat webhook ingress) |
+| **Format** | Expected token `iss` claim |
+| **Default** | (unset) — the Google issuer for the configured `audienceType` |
+
+Optional. Only meaningful alongside `COMIS_GOOGLECHAT_TEST_JWKS`: overrides the
+expected issuer when the emulator mints tokens from a fully-synthetic key set
+rather than impersonating Google's issuer. Unset, the verifier still requires the
+real Google issuer for the configured audience shape.
+
+Source: `packages/daemon/src/wiring/googlechat-test-seams.ts`
+
+```bash
+export COMIS_GOOGLECHAT_TEST_ISSUER=https://emulator.test/issuer
+```
+
 ## Secret Variables
 
 ### `SECRETS_MASTER_KEY`
