@@ -438,8 +438,8 @@ export function createGoogleChatAdapter(
       return; // drop BEFORE any processing → ack (resolve)
     }
 
-    // Surface an honest degrade for every share that carries no downloadable
-    // resource name. The mapper already used the extractor's `attachments` half
+    // Surface an honest degrade when a message carries shares with no
+    // downloadable resource name. The mapper already used the extractor's `attachments` half
     // to populate the message; calling the pure extractor again here for the
     // `skipped` half keeps ONE source of truth for the extraction while the
     // mapper stays logger-free (the skip half is never threaded through the
@@ -449,15 +449,22 @@ export function createGoogleChatAdapter(
     const { skipped } = extractGoogleChatAttachments(
       (event as GoogleChatEvent).message,
     );
-    for (const s of skipped) {
+    if (skipped.length > 0) {
+      // Aggregate to ONE WARN per message. Sharing Drive files in Chat is
+      // routine, not exceptional; a WARN per share would let an ordinary user
+      // action dominate the cross-session degraded rate + top-errorKind tallies
+      // the fleet lens aggregates, masking an acute signal. The count + the
+      // distinct sources keep the diagnostic while staying content-free (no
+      // resource name, body, or token), and the hint still names the unlock.
       deps.logger.warn(
         {
           channelType: "googlechat" as const,
-          source: s.source,
+          skippedCount: skipped.length,
+          sources: [...new Set(skipped.map((s) => s.source))],
           errorKind: "precondition" as const,
           hint: "Google Drive shared files need user-OAuth mode with a Drive scope; a service-account app can only download uploaded (drag-drop / paste) content",
         },
-        "Inbound Drive-file attachment skipped: no downloadable resource name",
+        "Inbound Drive-file attachment(s) skipped: no downloadable resource name",
       );
     }
 

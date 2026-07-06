@@ -1823,11 +1823,11 @@ describe("createGoogleChatAdapter — inbound Drive-picker skip WARN", () => {
   function skipWarns(spy: ReturnType<typeof vi.fn>): unknown[][] {
     return spy.mock.calls.filter(
       ([, msg]) =>
-        typeof msg === "string" && msg.includes("Drive-file attachment skipped"),
+        typeof msg === "string" && msg.includes("Drive-file attachment"),
     );
   }
 
-  it("emits ONE skip WARN (source, errorKind precondition, OAuth+Drive-scope hint) for a resource-name-less share on an allowlisted message, and still fans out", async () => {
+  it("emits ONE aggregate skip WARN (skippedCount, distinct sources, errorKind precondition, OAuth+Drive-scope hint) for a resource-name-less share on an allowlisted message, and still fans out", async () => {
     const { deps, loggerSpy } = await makeDeps({ allowFrom: ["users/123"] });
     const adapter = createGoogleChatAdapter(deps);
     const handler = vi.fn();
@@ -1843,7 +1843,9 @@ describe("createGoogleChatAdapter — inbound Drive-picker skip WARN", () => {
     expect(warns).toHaveLength(1);
     const obj = warns[0][0] as Record<string, unknown>;
     expect(obj.channelType).toBe("googlechat");
-    expect(obj.source).toBe("DRIVE_FILE");
+    // Aggregate shape: a count + the distinct sources, not one WARN per share.
+    expect(obj.skippedCount).toBe(1);
+    expect(obj.sources).toEqual(["DRIVE_FILE"]);
     expect(obj.errorKind).toBe("precondition");
     expect(String(obj.hint).toLowerCase()).toContain("oauth");
     expect(String(obj.hint).toLowerCase()).toContain("drive");
@@ -1900,14 +1902,20 @@ describe("createGoogleChatAdapter — inbound Drive-picker skip WARN", () => {
     const warns = skipWarns(loggerSpy.warn);
     expect(warns).toHaveLength(1);
     const obj = warns[0][0] as Record<string, unknown>;
-    expect(Object.keys(obj).sort()).toEqual(["channelType", "errorKind", "hint", "source"]);
+    expect(Object.keys(obj).sort()).toEqual([
+      "channelType",
+      "errorKind",
+      "hint",
+      "skippedCount",
+      "sources",
+    ]);
     const serialized = JSON.stringify(warns);
     expect(serialized).not.toContain("DRIVE_SECRET_ID");
     expect(serialized).not.toContain("SENSITIVE_MESSAGE_BODY");
     expect(serialized).not.toContain(MINTED_TOKEN);
   });
 
-  it("emits one skip WARN per resource-name-less share (two shares → two WARNs)", async () => {
+  it("aggregates multiple resource-name-less shares into ONE WARN carrying the count and the distinct sources (routine Drive shares must not inflate the fleet WARN rate)", async () => {
     const { deps, loggerSpy } = await makeDeps({ allowFrom: ["users/123"] });
     const adapter = createGoogleChatAdapter(deps);
     adapter.onMessage(vi.fn());
@@ -1919,7 +1927,13 @@ describe("createGoogleChatAdapter — inbound Drive-picker skip WARN", () => {
       ]),
     );
 
-    expect(skipWarns(loggerSpy.warn)).toHaveLength(2);
+    const warns = skipWarns(loggerSpy.warn);
+    // ONE WARN for the whole message, not one per share.
+    expect(warns).toHaveLength(1);
+    const obj = warns[0][0] as Record<string, unknown>;
+    expect(obj.skippedCount).toBe(2);
+    // Distinct sources only (both were DRIVE_FILE → a single entry).
+    expect(obj.sources).toEqual(["DRIVE_FILE"]);
   });
 });
 
