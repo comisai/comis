@@ -100,6 +100,11 @@ const CLAWHUB_API_BASE = "https://clawhub.ai/api/v1";
 /** The registry origin token used in provenance + hints. */
 const REGISTRY_LABEL = "clawhub";
 
+// A structured block is a refusal body served at one of these HTTP statuses; the
+// resolver reads + refuses on the body rather than treating it as a generic
+// network fault, and any OTHER non-2xx stays a network reject.
+const STRUCTURED_BLOCK_STATUSES: readonly number[] = [403, 409, 410, 423];
+
 // A scoped skill name: `@owner/slug`, with no whitespace or extra path segments.
 const SCOPED_NAME_RE = /^@([^/\s]+)\/([^/\s]+)$/;
 
@@ -156,6 +161,15 @@ function overCapError(maxBytes: number, what: string, capName: string): ClawHubR
     "resource",
     `${what} from the ${REGISTRY_LABEL} registry exceeds its ${maxBytes}-byte cap`,
     `raise ${capName} or reduce the published size`,
+  );
+}
+
+/** A structured install block — refused pre-download, never overridable. */
+function structuredBlockError(owner: string, slug: string, reason: string): ClawHubResolveError {
+  return mkErr(
+    "precondition",
+    `the ${REGISTRY_LABEL} registry refused the install of '@${owner}/${slug}': ${reason}`,
+    "the registry blocked this skill from installation; this refusal is not overridable",
   );
 }
 
@@ -301,14 +315,41 @@ async function fetchCapped(
 // Verdict evaluation
 // ---------------------------------------------------------------------------
 
+/** Moderation states that block a release regardless of the scan status. */
+const BLOCKING_MODERATION_STATES = new Set(["blocked", "quarantined", "revoked"]);
+
 /**
- * The pure blocking predicate over the derived trust signal. A clean, approved,
- * not-blocked verdict is NOT blocked. The blocking branches (a malicious scan, a
- * blocked-from-download flag, a blocking moderation state, a flagged reason) are
- * completed with the security-refusal step; a clean verdict never blocks.
+ * The pure blocking predicate over the derived trust signal. A release is
+ * blocked when ANY of: it is flagged blocked-from-download, the artifact scan
+ * status is malicious, the moderation state is a blocking one, or a verdict
+ * reason matches a malicious / malware / `*_blocked` / `*.blocked` / `blocked`
+ * pattern. A clean / pending / not-run verdict with no flags is NOT blocked. The
+ * returned reasons are human-readable and drive the refusal hint.
  */
-export function evaluateVerdict(_trust: ClawHubTrust): { blocked: boolean; reasons: readonly string[] } {
-  return { blocked: false, reasons: [] };
+export function evaluateVerdict(trust: ClawHubTrust): { blocked: boolean; reasons: readonly string[] } {
+  const reasons: string[] = [];
+  if (trust.blockedFromDownload === true) {
+    reasons.push("the release is blocked from download");
+  }
+  if (trust.scanStatus === "malicious") {
+    reasons.push("the artifact scan status is malicious");
+  }
+  if (trust.moderationState !== undefined && BLOCKING_MODERATION_STATES.has(trust.moderationState)) {
+    reasons.push(`the moderation state is ${trust.moderationState}`);
+  }
+  for (const r of trust.reasons) {
+    const lower = r.toLowerCase();
+    if (
+      lower.includes("malicious") ||
+      lower.includes("malware") ||
+      lower.endsWith("_blocked") ||
+      lower.endsWith(".blocked") ||
+      lower === "blocked"
+    ) {
+      reasons.push(`the registry verdict flags: ${r}`);
+    }
+  }
+  return { blocked: reasons.length > 0, reasons };
 }
 
 // ---------------------------------------------------------------------------
@@ -349,13 +390,19 @@ async function resolveInner(
     "the maximum registry-response size",
     validate,
     fetchImpl,
+    { allowStatuses: STRUCTURED_BLOCK_STATUSES },
   );
   if (!installFetch.ok) return installFetch;
+  const installStatus = installFetch.value.status;
 
   let installJson: unknown;
   try {
     installJson = JSON.parse(installFetch.value.bytes.toString("utf-8"));
   } catch {
+    // A block status with a non-JSON body is still a block; a 2xx non-JSON is drift.
+    if (STRUCTURED_BLOCK_STATUSES.includes(installStatus)) {
+      return err(structuredBlockError(owner, slug, `HTTP ${installStatus}`));
+    }
     return err(
       mkErr(
         "validation",
@@ -366,6 +413,9 @@ async function resolveInner(
   }
   const installParsed = ClawHubInstallResponseSchema.safeParse(installJson);
   if (!installParsed.success) {
+    if (STRUCTURED_BLOCK_STATUSES.includes(installStatus)) {
+      return err(structuredBlockError(owner, slug, `HTTP ${installStatus}`));
+    }
     return err(
       mkErr(
         "validation",
@@ -375,17 +425,26 @@ async function resolveInner(
     );
   }
   const install = installParsed.data;
-  if (install.ok !== true) {
+
+  // A structured block — a block HTTP status OR an `ok:false` body — refuses
+  // BEFORE the verify + artifact fetches, and is never overridable.
+  if (STRUCTURED_BLOCK_STATUSES.includes(installStatus) || install.ok !== true) {
+    const reason = install.reason ?? install.message ?? `HTTP ${installStatus}`;
+    return err(structuredBlockError(owner, slug, reason));
+  }
+  // A non-archive install kind (e.g. github) is handled by a separate import
+  // source — refuse clearly rather than trying to download a release zip.
+  if (install.installKind !== undefined && install.installKind !== "archive") {
     return err(
       mkErr(
         "precondition",
-        `the ${REGISTRY_LABEL} registry refused the install of '@${owner}/${slug}'`,
-        "the registry did not return an installable resolution for this skill",
+        `'@${owner}/${slug}' resolves to a ${install.installKind} install, which this import source does not handle`,
+        "import a GitHub-sourced skill via the github import source instead",
       ),
     );
   }
-  // Require an archive install with an archive to download (drift otherwise).
-  if (install.installKind !== "archive" || install.archive === undefined) {
+  // An install with no archive to download is drift.
+  if (install.archive === undefined) {
     return err(
       mkErr(
         "validation",
@@ -454,7 +513,8 @@ async function resolveInner(
     );
   }
 
-  // 5. Derive the publisher signal (feeds the commit-time confirm, not a refuse).
+  // 5. Derive the publisher signal (feeds the commit-time acknowledgement, not a
+  //    refuse here — a non-official publisher is a warnable class, not a block).
   const officialPublisher =
     install.isOfficial === true ||
     install.channel === "official" ||
@@ -473,6 +533,26 @@ async function resolveInner(
   );
   if (!artifactFetch.ok) return artifactFetch;
   const bytes = artifactFetch.value.bytes;
+
+  // 6a. Verify the server-provided artifact sha256 WHEN PRESENT. Absence is fine
+  //     — no release carries one today, and the pipeline's self-computed pin over
+  //     the INSTALLED set is the always-present integrity floor. A present-but-
+  //     wrong hash means a tampered / swapped artifact and refuses the download.
+  const headerHash =
+    artifactFetch.value.headers.get("X-ClawHub-Artifact-Sha256") ??
+    artifactFetch.value.headers.get("X-ClawHub-ClawPack-Sha256");
+  if (headerHash !== null) {
+    const actual = createHash("sha256").update(bytes).digest("hex");
+    if (headerHash.trim().toLowerCase() !== actual.toLowerCase()) {
+      return err(
+        mkErr(
+          "validation",
+          `the release artifact for '@${owner}/${slug}' failed its server-provided sha256 check`,
+          "the download does not match the registry's published hash — refusing the tampered artifact",
+        ),
+      );
+    }
+  }
 
   // 7. Return the base64 bytes + the stable identifier + the publisher signal.
   return ok({
