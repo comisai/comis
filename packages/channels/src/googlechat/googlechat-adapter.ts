@@ -941,7 +941,7 @@ export function createGoogleChatAdapter(
         lastMessageAt: _lastMessageAt,
         lastInboundAt: _lastInboundAt,
         error: _lastError ?? source?.lastError,
-        connectionMode: "polling",
+        connectionMode: deps.mode === "webhook" ? "webhook" : "polling",
       };
     },
 
