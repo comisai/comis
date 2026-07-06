@@ -13,8 +13,11 @@
  * lockstep with the edit-in-place activity renderer — `editMessages: true` routes
  * rendering to that strategy (an approval/status frame edits the same event
  * rather than reposting), and `deleteMessages` never reaches the repost path.
- * Attachments are not yet implemented and stay false; Matrix exposes no button
- * surface (`buttons: "none"`), so approval frames degrade to text. `selectStrategy(caps)`
+ * Attachments are declared true: an inbound `mxc://` reference resolves through the
+ * authenticated downloader (decrypting E2EE media before the MIME sniff) and an
+ * outbound attachment uploads the bytes (the ciphertext in an encrypted room).
+ * Matrix exposes no button surface (`buttons: "none"`), so approval frames degrade
+ * to text. `selectStrategy(caps)`
  * routes rendering from these flags, so each true flag advertises a behavior the
  * adapter genuinely performs.
  *
@@ -89,7 +92,7 @@ const CAPABILITIES: ChannelCapability = {
     editMessages: true,
     deleteMessages: true,
     fetchHistory: true,
-    attachments: false,
+    attachments: true,
     typing: true,
     threads: true,
     buttons: "none",
