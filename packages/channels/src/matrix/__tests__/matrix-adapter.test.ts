@@ -1343,6 +1343,27 @@ describe("createMatrixAdapter — history fetch", () => {
     expect(fake.lastMessagesRequest?.dir).toBe(Direction.Backward);
   });
 
+  it("errs honestly when a before cursor is given rather than returning the wrong page", async () => {
+    const fake = new FakeMatrixClient();
+    fake.messagesChunk = [
+      { event_id: "$m1", sender: "@a:hs", origin_server_ts: 100, type: "m.room.message", content: { body: "first" } },
+    ];
+    const { adapter, logger } = makeAdapter({ fake });
+    await adapter.start();
+
+    const result = await adapter.fetchMessages?.("!room:hs", { before: "$cursor:hs", limit: 2 });
+
+    // Backward-from-cursor paging is not wired (it needs an event-id→token
+    // resolve). Rather than silently returning the most-recent page — a wrong
+    // answer to a cursor query — it errs and issues NO /messages request.
+    expect(result?.ok).toBe(false);
+    expect(fake.lastMessagesRequest).toBeUndefined();
+    const validationWarn = vi
+      .mocked(logger.warn)
+      .mock.calls.find(([fields]) => (fields as { errorKind?: string }).errorKind === "validation");
+    expect(validationWarn).toBeDefined();
+  });
+
   it("defaults to a bounded page size when no limit option is given", async () => {
     const fake = new FakeMatrixClient();
     fake.messagesChunk = [];
