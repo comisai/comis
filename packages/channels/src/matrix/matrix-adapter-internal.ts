@@ -329,9 +329,13 @@ export async function buildAndSendAttachment(
         (await client.getCrypto()?.isEncryptionEnabledInRoom(roomId)) === true;
       if (encrypted) {
         const enc = await deps.encryptAttachment(bytes);
+        // The media upload endpoint is NOT end-to-end encrypted and the homeserver is
+        // adversarial under the E2EE threat model. Scrub the upload metadata: hand the
+        // media repo a generic octet-stream with no filename so it learns neither the
+        // real MIME type nor the name. Both still reach the recipient — they ride the
+        // ENCRYPTED event content (content.info.mimetype / content.body) built below.
         const uploaded = await client.uploadContent(enc.ciphertext as unknown as UploadFile, {
-          type: mime,
-          name: fileName,
+          type: "application/octet-stream",
         });
         return buildAttachmentContent({
           mime,
