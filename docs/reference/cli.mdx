@@ -535,7 +535,7 @@ comis daemon logs -n 100
 
 ### `comis doctor`
 
-Run diagnostic health checks across nine categories: configuration, daemon, gateway, version, channels, workspace, oauth, secrets-audit, and LCD store. Supports auto-repair mode for fixable issues. The `oauth` category covers JWT expiry, schema mismatch, ca-certificates, HTTPS_PROXY drift, and TLS preflight — see [OAuth concepts → Error classification](/security/oauth#error-classification).
+Run diagnostic health checks across eleven categories: configuration, daemon, gateway, version, channels, Teams, Matrix, workspace, oauth, secrets-audit, and LCD store. The Teams and Matrix categories add channel-specific probes the shared channel check cannot: Teams probes its inbound webhook route, while Matrix — a polling channel — probes reachability, the e2ee crypto backend, and the device-verification posture over RPC. Supports auto-repair mode for fixable issues. The `oauth` category covers JWT expiry, schema mismatch, ca-certificates, HTTPS_PROXY drift, and TLS preflight — see [OAuth concepts → Error classification](/security/oauth#error-classification).
 
 The `version` category compares the running `comis` CLI version against the daemon's reported version (read from the `gateway.status` RPC) and **warns on a mismatch** — with a stronger message on a major.minor skew. This catches a stale global `comis` (e.g. an old `npm i -g comisai`) earlier on `PATH` than a freshly-built daemon: an out-of-date CLI validates config against an OLD schema and reports **phantom failures** (a valid key flagged "Unrecognized"). It passes when the versions match and skips cleanly (never fails) when the daemon is unreachable or its status response carries no version field.
 

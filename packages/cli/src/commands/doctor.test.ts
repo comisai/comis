@@ -17,10 +17,10 @@ describe("registerDoctorCommand", () => {
 
     const doctorCmd = program.commands.find((c) => c.name() === "doctor");
     expect(doctorCmd).toBeDefined();
-    // Description names all 10 diagnostic subsystems (including version-skew,
-    // Teams, secrets-audit, and LCD, which the earlier 6-subsystem string omitted).
+    // Description names all 11 diagnostic subsystems (including version-skew,
+    // Teams, Matrix, secrets-audit, and LCD, which the earlier 6-subsystem string omitted).
     expect(doctorCmd!.description()).toBe(
-      "Diagnose 10 subsystems: configuration, daemon, gateway, version-skew, channel, Teams, workspace, OAuth, secrets-audit, and LCD health",
+      "Diagnose 11 subsystems: configuration, daemon, gateway, version-skew, channel, Teams, Matrix, workspace, OAuth, secrets-audit, and LCD health",
     );
 
     const optionNames = doctorCmd!.options.map((o) => o.long);
