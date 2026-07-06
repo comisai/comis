@@ -513,6 +513,70 @@ async function handleMsTeams(
 }
 
 /**
+ * Collect Matrix bot credentials.
+ *
+ * Matrix authenticates via an access token bound to a bot user (MXID) on a
+ * homeserver. The homeserver URL and user ID are non-secret config; the access
+ * token is the credential (persisted as a ${VAR} ref, never inline). Values are
+ * format-checked only (validateChannelCredential) and returned validated:false
+ * -- the adapter's whoami is the authoritative auth check at first use.
+ * End-to-end encryption defaults on.
+ */
+async function handleMatrix(
+  prompter: WizardPrompter,
+): Promise<ChannelConfig | null> {
+  prompter.note(sectionSeparator("Matrix Setup"));
+  prompter.note(
+    info("Create a bot user on your homeserver, then copy its user ID (MXID) and an access token."),
+  );
+
+  const homeserverUrl = await prompter.text({
+    message: "Matrix homeserver base URL",
+    validate: (v: string) => {
+      if (typeof v !== "string") return undefined;
+      const result = validateChannelCredential("matrix", "homeserverUrl", v);
+      return result?.message;
+    },
+  });
+
+  const userId = await prompter.text({
+    message: "Matrix bot user ID (MXID, @bot:host)",
+    validate: (v: string) => {
+      if (typeof v !== "string") return undefined;
+      const result = validateChannelCredential("matrix", "userId", v);
+      return result?.message;
+    },
+  });
+
+  const accessToken = await prompter.password({
+    message: "Matrix bot access token",
+    validate: (v: string) => {
+      if (typeof v !== "string") return undefined;
+      const result = validateChannelCredential("matrix", "accessToken", v);
+      return result?.message;
+    },
+  });
+
+  const e2ee = await prompter.select<boolean>({
+    message: "Enable end-to-end encryption?",
+    options: [
+      { value: true, label: "Yes", hint: "Recommended" },
+      { value: false, label: "No" },
+    ],
+    initialValue: true,
+  });
+
+  return {
+    type: "matrix",
+    homeserverUrl,
+    userId,
+    accessToken,
+    e2ee,
+    validated: false,
+  };
+}
+
+/**
  * WhatsApp: deferred configuration guidance.
  */
 function handleWhatsApp(prompter: WizardPrompter): ChannelConfig {
@@ -629,6 +693,8 @@ async function handleChannel(
       return { config: await handleLine(prompter) };
     case "msteams":
       return { config: await handleMsTeams(prompter) };
+    case "matrix":
+      return { config: await handleMatrix(prompter) };
     case "whatsapp":
       return { config: handleWhatsApp(prompter) };
     case "signal":

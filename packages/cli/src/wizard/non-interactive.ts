@@ -86,6 +86,10 @@ export type NonInteractiveOptions = {
   msteamsAppPassword?: string;
   msteamsTenantId?: string;
   msteamsAuthMode?: "secret" | "certificate" | "managedIdentity";
+  matrixHomeserver?: string;
+  matrixUserId?: string;
+  matrixAccessToken?: string;
+  matrixE2ee?: boolean;
   // Media generation
   imageProvider?: string;
   imageApiKey?: string;
@@ -362,6 +366,26 @@ export function validateNonInteractiveOptions(
             );
           }
           break;
+        case "matrix":
+          if (!opts.matrixHomeserver) {
+            throw new NonInteractiveError(
+              "--matrix-homeserver is required when matrix channel is enabled",
+              "matrixHomeserver",
+            );
+          }
+          if (!opts.matrixUserId) {
+            throw new NonInteractiveError(
+              "--matrix-user-id is required when matrix channel is enabled",
+              "matrixUserId",
+            );
+          }
+          if (!opts.matrixAccessToken) {
+            throw new NonInteractiveError(
+              "--matrix-access-token is required when matrix channel is enabled",
+              "matrixAccessToken",
+            );
+          }
+          break;
         // whatsapp, signal, irc do not require tokens at init time
         default:
           // Unknown channel -- allow for forward compatibility
@@ -442,6 +466,16 @@ export function buildNonInteractiveState(
             appPassword: opts.msteamsAppPassword,
             tenantId: opts.msteamsTenantId,
             authMode: opts.msteamsAuthMode,
+            validated: false,
+          });
+          break;
+        case "matrix":
+          channels.push({
+            type: "matrix",
+            homeserverUrl: opts.matrixHomeserver,
+            userId: opts.matrixUserId,
+            accessToken: opts.matrixAccessToken,
+            e2ee: opts.matrixE2ee,
             validated: false,
           });
           break;

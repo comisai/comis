@@ -59,7 +59,7 @@ describe("registerInitCommand", () => {
     expect(optionLongs).toContain("--gateway-bind");
     expect(optionLongs).toContain("--gateway-token");
 
-    // Channels (11)
+    // Channels (15)
     expect(optionLongs).toContain("--channels");
     expect(optionLongs).toContain("--telegram-token");
     expect(optionLongs).toContain("--discord-token");
@@ -71,6 +71,10 @@ describe("registerInitCommand", () => {
     expect(optionLongs).toContain("--msteams-app-password");
     expect(optionLongs).toContain("--msteams-tenant-id");
     expect(optionLongs).toContain("--msteams-auth-mode");
+    expect(optionLongs).toContain("--matrix-homeserver");
+    expect(optionLongs).toContain("--matrix-user-id");
+    expect(optionLongs).toContain("--matrix-access-token");
+    expect(optionLongs).toContain("--matrix-e2ee");
 
     // Media generation + processing (8)
     expect(optionLongs).toContain("--image-provider");
@@ -99,11 +103,11 @@ describe("registerInitCommand", () => {
     expect(optionLongs).toContain("--reset-scope");
   });
 
-  it("has exactly 38 options", () => {
+  it("has exactly 42 options", () => {
     const program = new Command();
     registerInitCommand(program);
     const initCmd = program.commands.find((c) => c.name() === "init")!;
-    expect(initCmd.options).toHaveLength(38);
+    expect(initCmd.options).toHaveLength(42);
   });
 
   it("parses --channels as comma-separated list", () => {

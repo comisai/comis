@@ -185,6 +185,20 @@ function buildConfigObject(state: WizardState): Record<string, unknown> {
         if (ch.authMode) entry.authMode = ch.authMode;
       }
 
+      // Matrix: homeserverUrl/userId are non-secret config written inline and
+      // e2ee is an inline toggle; only accessToken (the bot credential) becomes a
+      // ${VAR} ref -- a plaintext token in config.yaml would be a secret-at-rest
+      // exposure. This block is paired with the collectManagedSecrets branch
+      // below, or the reference would dangle into a boot-fatal unresolved ${VAR}.
+      // (allowFrom is handled by the generic sender-allowlist block below.)
+      if (ch.type === "matrix") {
+        if (ch.homeserverUrl) entry.homeserverUrl = ch.homeserverUrl;
+        if (ch.userId) entry.userId = ch.userId;
+        if (ch.accessToken) entry.accessToken = "${MATRIX_ACCESS_TOKEN}";
+        if (ch.e2ee !== undefined) entry.e2ee = ch.e2ee;
+        if (ch.allowMode) entry.allowMode = ch.allowMode;
+      }
+
       // Generic fallback for other channel types
       if (ch.botToken && !entry.botToken && !entry.accessToken && !entry.channelAccessToken) {
         entry.botToken = `\${${ch.type.toUpperCase()}_BOT_TOKEN}`;
@@ -273,6 +287,13 @@ function collectManagedSecrets(state: WizardState): Map<string, string> {
       if (ch.appPassword && ch.type === "msteams") {
         const msteamsEnvKeys = CHANNEL_ENV_KEYS["msteams"];
         if (msteamsEnvKeys?.[0]) managed.set(msteamsEnvKeys[0], ch.appPassword);
+      }
+      // Matrix' secret is accessToken (not botToken/apiKey/channelSecret), so it
+      // needs its own type-keyed branch -- the join that keeps the config's
+      // ${MATRIX_ACCESS_TOKEN} reference from dangling into a boot-fatal ref.
+      if (ch.type === "matrix" && ch.accessToken) {
+        const matrixEnvKeys = CHANNEL_ENV_KEYS["matrix"];
+        if (matrixEnvKeys?.[0]) managed.set(matrixEnvKeys[0], ch.accessToken);
       }
       if (ch.appToken) managed.set(`${ch.type.toUpperCase()}_APP_TOKEN`, ch.appToken);
     }
