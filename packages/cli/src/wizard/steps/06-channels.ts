@@ -555,15 +555,40 @@ async function handleGoogleChat(
   });
 
   if (mode === "webhook") {
+    // The inbound Bearer-JWT verifier binds to a DIFFERENT audience shape per
+    // type: "project-number" expects a self-signed Chat-system token whose aud is
+    // your Cloud project number; "app-url" expects a Google OIDC token whose aud
+    // is your endpoint URL (plus a sender-binding email claim). Capturing the type
+    // is load-bearing — a config whose audience shape contradicts the type
+    // selects the wrong key set and silently rejects every inbound request.
+    const audienceType = await prompter.select<"project-number" | "app-url">({
+      message: "Inbound JWT audience type",
+      options: [
+        {
+          value: "project-number",
+          label: "Project number",
+          hint: "Google mints the token with your Cloud project number as the audience (recommended)",
+        },
+        {
+          value: "app-url",
+          label: "Endpoint URL",
+          hint: "Google mints an OIDC token with your endpoint URL as the audience",
+        },
+      ],
+      initialValue: "project-number",
+    });
     const audience = await prompter.text({
-      message: "Inbound JWT audience (project number or endpoint URL)",
+      message:
+        audienceType === "app-url"
+          ? "Inbound JWT audience (endpoint URL)"
+          : "Inbound JWT audience (project number)",
       validate: (v: string) => {
         if (typeof v !== "string") return undefined;
         const result = validateChannelCredential("googlechat", "audience", v);
         return result?.message;
       },
     });
-    return { type: "googlechat", serviceAccountKey, mode, audience, validated: false };
+    return { type: "googlechat", serviceAccountKey, mode, audienceType, audience, validated: false };
   }
 
   const subscriptionName = await prompter.text({

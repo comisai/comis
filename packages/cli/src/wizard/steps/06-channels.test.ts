@@ -495,7 +495,7 @@ describe("channelsStep", () => {
     });
   });
 
-  it("reads the SA key from a file path and collects a googlechat (webhook) channel", async () => {
+  it("reads the SA key from a file path and collects a googlechat (webhook, project-number) channel", async () => {
     const dir = mkdtempSync(`${tmpdir()}/comis-gc-`);
     const keyPath = `${dir}/sa-key.json`;
     writeFileSync(keyPath, GC_SA_KEY, "utf-8");
@@ -504,8 +504,11 @@ describe("channelsStep", () => {
       vi.mocked(prompter.multiselect).mockResolvedValueOnce(["googlechat"]);
       vi.mocked(prompter.text)
         .mockResolvedValueOnce(keyPath) // SA key given as a path to the file
-        .mockResolvedValueOnce("123456789012"); // audience
-      vi.mocked(prompter.select).mockResolvedValueOnce("webhook");
+        .mockResolvedValueOnce("123456789012"); // audience (numeric project number)
+      // Two selects in webhook mode: the transport, then the audience type.
+      vi.mocked(prompter.select)
+        .mockResolvedValueOnce("webhook")
+        .mockResolvedValueOnce("project-number");
 
       const result = await channelsStep.execute({ ...INITIAL_STATE }, prompter);
 
@@ -515,11 +518,40 @@ describe("channelsStep", () => {
         // The stored value is the FILE CONTENTS, not the path.
         serviceAccountKey: GC_SA_KEY,
         mode: "webhook",
+        audienceType: "project-number",
         audience: "123456789012",
         validated: false,
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("captures audienceType 'app-url' for a webhook channel with an endpoint-URL audience", async () => {
+    // The exact misconfig this closes: a webhook app whose token audience is the
+    // endpoint URL must record audienceType: "app-url" so the inbound verifier
+    // selects the OIDC key set + sender-binding claim rather than the Chat-system
+    // key set. Without capturing it, the config keeps the schema default
+    // ("project-number") and every inbound request is silently rejected.
+    const prompter = createMockPrompter({ confirm: false });
+    vi.mocked(prompter.multiselect).mockResolvedValueOnce(["googlechat"]);
+    vi.mocked(prompter.text)
+      .mockResolvedValueOnce(GC_SA_KEY) // SA key (pasted JSON)
+      .mockResolvedValueOnce("https://chat.example.com/hook"); // audience (endpoint URL)
+    vi.mocked(prompter.select)
+      .mockResolvedValueOnce("webhook")
+      .mockResolvedValueOnce("app-url");
+
+    const result = await channelsStep.execute({ ...INITIAL_STATE }, prompter);
+
+    const gc = result.channels?.find((c) => c.type === "googlechat");
+    expect(gc).toEqual({
+      type: "googlechat",
+      serviceAccountKey: GC_SA_KEY,
+      mode: "webhook",
+      audienceType: "app-url",
+      audience: "https://chat.example.com/hook",
+      validated: false,
+    });
   });
 });
