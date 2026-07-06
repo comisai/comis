@@ -16,9 +16,14 @@
  * so an entrypoint/script declaration drops with a loud warning rather than
  * carrying an execution vector into the manifest.
  *
- * Legacy pre-migration Comis top-level fields (`comis:`, `userInvocable`, …)
- * are passed through untouched; the shipped lift converts them (with its own
- * deprecation warning). This module does not re-implement that lift.
+ * Pre-migration Comis top-level fields (`version`, `userInvocable`, the `comis:`
+ * namespace, …) are RELOCATED onto the spec-pure carrier here — `version` under
+ * `metadata.version`, the extension keys inside the `metadata.comis` JSON string,
+ * the camelCase `allowedTools` onto the spec `allowed-tools` — so the installed
+ * SKILL.md this writer emits is fully spec-pure and loads WITHOUT the read-compat
+ * deprecation warning. The mapper is a writer, so it never emits the legacy
+ * top-level form; the shipped lift (which reads that form with a warning) then
+ * lifts the emitted carrier to the identical internal manifest.
  *
  * @module
  */
@@ -72,10 +77,15 @@ const EXECUTABLE_ENTRYPOINT_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Pre-migration Comis top-level fields. Passed through untouched so the shipped
- * lift converts them (with its deprecation warning) — never re-implemented here.
+ * Pre-migration Comis extension keys authored at the top level. The mapper is a
+ * WRITER, so it relocates each under the `metadata.comis` JSON-string carrier
+ * rather than emit the legacy top-level form — which would re-trigger the shipped
+ * lift's per-key deprecation warning on every subsequent load. Mirrors the lift's
+ * own `metadata.comis` key set so the emitted carrier lifts back to the identical
+ * internal manifest. The pre-migration camelCase `allowedTools` is NOT here: it
+ * has a top-level spec home (`allowed-tools`) and is normalized onto it.
  */
-const LEGACY_PASSTHROUGH_KEYS: ReadonlySet<string> = new Set([
+const LEGACY_EXTENSION_KEYS: ReadonlySet<string> = new Set([
   "userInvocable",
   "disableModelInvocation",
   "argumentHint",
@@ -83,7 +93,6 @@ const LEGACY_PASSTHROUGH_KEYS: ReadonlySet<string> = new Set([
   "inputSchema",
   "comis",
   "mcpServers",
-  "allowedTools",
 ]);
 
 /**
@@ -375,6 +384,57 @@ function handleName(
 }
 
 /**
+ * Normalize an authored tool restriction onto the spec-pure `allowed-tools`
+ * top-level string. Accepts a space-separated string (kept as-is) or a list of
+ * tool-name strings (joined; non-string members dropped-with-warning). An
+ * all-non-string list is left UNNORMALIZED — never coerced to `""` — so the
+ * manifest lift's fail-closed guard rejects it rather than reading an empty
+ * restriction as "no restriction". Any other shape drops with a warning. Shared
+ * by the spec `allowed-tools` field and the pre-migration camelCase `allowedTools`
+ * (both write the one canonical spec-pure home).
+ */
+function handleAllowedTools(
+  value: unknown,
+  specPure: Record<string, unknown>,
+  warnings: MapWarning[],
+): void {
+  if (typeof value === "string") {
+    specPure["allowed-tools"] = value;
+    return;
+  }
+  if (Array.isArray(value)) {
+    const tools = value.filter((v): v is string => typeof v === "string");
+    if (tools.length === 0) {
+      specPure["allowed-tools"] = value;
+      warn(
+        warnings,
+        "allowed-tools",
+        `'allowed-tools' was a list with no string entries and was left unnormalized for the manifest to reject.`,
+        `Author 'allowed-tools' as a space-separated string (or a list of tool-name strings); an empty tool restriction is refused, never treated as 'no restriction'.`,
+      );
+      return;
+    }
+    specPure["allowed-tools"] = tools.join(" ");
+    if (tools.length !== value.length) {
+      const dropped = value.length - tools.length;
+      warn(
+        warnings,
+        "allowed-tools",
+        `'allowed-tools' had ${dropped} non-string entr${dropped === 1 ? "y" : "ies"} dropped during normalization.`,
+        `Author every 'allowed-tools' entry as a tool-name string; non-string entries are not carried onto the manifest.`,
+      );
+    }
+    return;
+  }
+  warn(
+    warnings,
+    "allowed-tools",
+    `'allowed-tools' was neither a space-separated string nor a list and was dropped.`,
+    `Author 'allowed-tools' as a space-separated string naming the exact tools the skill may use.`,
+  );
+}
+
+/**
  * Map foreign / legacy SKILL.md frontmatter onto the spec-pure carrier.
  *
  * Pure: no I/O, no mutation of the input. Follows the lift's discipline —
@@ -389,7 +449,13 @@ function handleName(
 export function mapForeignFrontmatter(rawFrontmatter: Record<string, unknown>): ForeignMapResult {
   const warnings: MapWarning[] = [];
   const specPure: Record<string, unknown> = {};
+  // The comis NAMESPACE bag (skill-key/primary-env/os/requires) built by the
+  // foreign mappers; folded under the extension bag's `comis` key at the end.
   const comisBag: Record<string, unknown> = {};
+  // The metadata.comis EXTENSION bag: the sibling extension keys (userInvocable,
+  // mcpServers, the comis namespace, …) a pre-migration Comis form authored at
+  // the top level, relocated here so the emitted carrier is spec-pure.
+  const extensionBag: Record<string, unknown> = {};
   const metaMap: Record<string, unknown> = {};
 
   for (const key of Object.keys(rawFrontmatter)) {
@@ -422,46 +488,12 @@ export function mapForeignFrontmatter(rawFrontmatter: Record<string, unknown>): 
           );
         }
         break;
-      case "allowed-tools": {
-        if (typeof value === "string") {
-          specPure["allowed-tools"] = value;
-        } else if (Array.isArray(value)) {
-          const tools = value.filter((v): v is string => typeof v === "string");
-          if (tools.length === 0) {
-            // A list with NO string members would join to "" — and an empty
-            // internal allowedTools means "no restriction", so emitting "" would
-            // fail OPEN on the tool-restriction boundary and defeat the manifest
-            // lift's fail-closed guard. Preserve the original value so the lift
-            // rejects a non-string allowed-tools instead of silently unrestricting.
-            specPure["allowed-tools"] = value;
-            warn(
-              warnings,
-              "allowed-tools",
-              `'allowed-tools' was a list with no string entries and was left unnormalized for the manifest to reject.`,
-              `Author 'allowed-tools' as a space-separated string (or a list of tool-name strings); an empty tool restriction is refused, never treated as 'no restriction'.`,
-            );
-          } else {
-            specPure["allowed-tools"] = tools.join(" ");
-            if (tools.length !== value.length) {
-              const dropped = value.length - tools.length;
-              warn(
-                warnings,
-                "allowed-tools",
-                `'allowed-tools' had ${dropped} non-string entr${dropped === 1 ? "y" : "ies"} dropped during normalization.`,
-                `Author every 'allowed-tools' entry as a tool-name string; non-string entries are not carried onto the manifest.`,
-              );
-            }
-          }
-        } else {
-          warn(
-            warnings,
-            "allowed-tools",
-            `'allowed-tools' was neither a space-separated string nor a list and was dropped.`,
-            `Author 'allowed-tools' as a space-separated string naming the exact tools the skill may use.`,
-          );
-        }
+      case "allowed-tools":
+        // An all-non-string list is left unnormalized (never coerced to "") so
+        // the lift's fail-closed guard rejects it rather than reading an empty
+        // restriction as "no restriction".
+        handleAllowedTools(value, specPure, warnings);
         break;
-      }
       case "metadata":
         processMetadataMap(value, comisBag, metaMap, warnings);
         break;
@@ -527,9 +559,16 @@ export function mapForeignFrontmatter(rawFrontmatter: Record<string, unknown>): 
             `The executable entrypoint '${key}' was dropped; skills import prompt-only.`,
             `Import never maps an executable entrypoint ('${key}'); only the prompt body and metadata are imported.`,
           );
-        } else if (LEGACY_PASSTHROUGH_KEYS.has(key)) {
-          // Pre-migration Comis field: pass through so the shipped lift converts it.
-          specPure[key] = value;
+        } else if (key === "allowedTools") {
+          // Pre-migration camelCase tool restriction → the spec `allowed-tools`
+          // top-level string (its authoritative spec-pure home).
+          handleAllowedTools(value, specPure, warnings);
+        } else if (LEGACY_EXTENSION_KEYS.has(key)) {
+          // Pre-migration Comis extension authored at the top level: relocate it
+          // under the metadata.comis carrier so the installed manifest is
+          // spec-pure and loads without a deprecation warning. Never emit the
+          // legacy top-level form.
+          extensionBag[key] = value;
           if (INERT_IMPORTED_AUTHOR_FIELDS.has(key)) {
             warn(
               warnings,
@@ -549,10 +588,20 @@ export function mapForeignFrontmatter(rawFrontmatter: Record<string, unknown>): 
     }
   }
 
+  // Fold the foreign-mapped comis namespace (skill-key/primary-env/os/requires,
+  // built by the platforms/prerequisites/sibling-namespace mappers) into the
+  // extension bag under `comis`, merging over a legacy top-level `comis:` block
+  // if a single input carried both.
   if (Object.keys(comisBag).length > 0) {
-    // The platform extension bag rides as a JSON string under metadata.comis;
-    // the shipped lift parses it and merges the comis namespace block.
-    metaMap["comis"] = JSON.stringify({ comis: comisBag });
+    const existingNs: Record<string, unknown> = isPlainObject(extensionBag["comis"])
+      ? extensionBag["comis"]
+      : {};
+    extensionBag["comis"] = { ...existingNs, ...comisBag };
+  }
+  if (Object.keys(extensionBag).length > 0) {
+    // The platform extension bag rides as a JSON string under metadata.comis; the
+    // shipped lift parses it and merges each known extension key onto the manifest.
+    metaMap["comis"] = JSON.stringify(extensionBag);
   }
   if (Object.keys(metaMap).length > 0) {
     specPure["metadata"] = metaMap;

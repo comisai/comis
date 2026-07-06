@@ -223,7 +223,8 @@ The mapper never silently reinterprets a field. It assigns only a fixed set of k
 | Top-level `version` | `metadata.version` | |
 | Top-level `author` | `metadata.author` | |
 | Top-level `prerequisites` | `comis.requires` | `commands` -> `requires.bins`, `env_vars` -> `requires.env` |
-| Legacy top-level Comis fields (`userInvocable`, `disableModelInvocation`, `argumentHint`, `permissions`, `inputSchema`, `comis`, `mcpServers`, `allowedTools`) | Passed through to the compatibility lift above | The lift converts them to their `metadata.comis` home and emits its own deprecation warning |
+| Legacy top-level Comis extension fields (`userInvocable`, `disableModelInvocation`, `argumentHint`, `permissions`, `inputSchema`, `comis`, `mcpServers`) | Relocated under `metadata.comis` | The mapper is a writer: it rewrites these onto the spec-pure carrier directly, so the installed `SKILL.md` is spec-pure and loads without a deprecation warning -- the legacy top-level form is never re-emitted |
+| Legacy top-level `allowedTools` (array) | `allowed-tools` (space-separated string) | The pre-migration camelCase tool restriction normalizes onto its spec-pure home |
 | A non-`prompt` `type` declaration | Dropped (warned) | Skills import prompt-only; a script/exec type is not carried |
 | Executable entrypoints (`entrypoint`, `main`, `exec`, `run`, `scripts`, `command`, `bin`, `binary`, `executable`) | Dropped (warned) | Import never maps an execution vector -- only the prompt body and metadata are imported |
 | `__proto__` | Refused | A prototype-pollution vector; never copied onto the manifest |
