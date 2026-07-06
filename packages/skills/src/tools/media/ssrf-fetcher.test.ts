@@ -718,4 +718,102 @@ describe("createSsrfGuardedFetcher", () => {
     expect(((calls[0]![1] as { headers?: Record<string, string> }).headers ?? {}).authorization).toBeUndefined();
     expect(((calls[1]![1] as { headers?: Record<string, string> }).headers ?? {}).authorization).toBeUndefined();
   });
+
+  // A trusted-origin allowance must apply on the AUTHENTICATED (opts-supplied) path
+  // too, not only the single-shot path — otherwise an authed download from a
+  // self-hosted homeserver / loopback media host is SSRF-blocked even though its
+  // exact origin was operator-configured as trusted. A hop whose ORIGIN matches a
+  // trusted origin is validated leniently (loopback permitted via
+  // validateLocalServerUrl); every other hop stays on strict validateUrl. The
+  // token-drop is INDEPENDENT of this allowance (enforced by authAllowHosts).
+  it("validates a TRUSTED-origin loopback hop via validateLocalServerUrl on the authed path (not SSRF-blocked)", async () => {
+    const logger = createMockLogger();
+    const fetcher = createSsrfGuardedFetcher(
+      { maxBytes: 1024 * 1024, trustedFetchOrigins: ["http://127.0.0.1:38411"] },
+      logger,
+    );
+    mockValidateLocalServerUrl.mockResolvedValue(
+      ok(
+        makeValidatedUrl({
+          hostname: "127.0.0.1",
+          ip: "127.0.0.1",
+          url: new URL("http://127.0.0.1:38411/_matrix/client/v1/media/download/hs.test/x"),
+        }),
+      ),
+    );
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      createMockResponse({ headers: { "content-type": "image/png" }, body: new Uint8Array([1, 2, 3]) }),
+    );
+
+    const result = await fetcher.fetch(
+      "http://127.0.0.1:38411/_matrix/client/v1/media/download/hs.test/x",
+      { authHeader: "Bearer T", authAllowHosts: ["127.0.0.1"] },
+    );
+
+    expect(result.ok).toBe(true);
+    // The trusted loopback hop went through the LENIENT validator, never strict validateUrl.
+    expect(mockValidateLocalServerUrl).toHaveBeenCalledWith(
+      "http://127.0.0.1:38411/_matrix/client/v1/media/download/hs.test/x",
+      ["127.0.0.1"],
+    );
+    expect(mockValidateUrl).not.toHaveBeenCalled();
+    // The homeserver-scoped bearer still rides the allowlisted loopback hop.
+    const init = vi.mocked(globalThis.fetch).mock.calls[0]![1] as { headers?: Record<string, string> };
+    expect(init.headers).toMatchObject({ authorization: "Bearer T" });
+  });
+
+  it("drops the bearer on a cross-host redirect between two trusted loopback origins (allowance is independent of the token-drop)", async () => {
+    const logger = createMockLogger();
+    const fetcher = createSsrfGuardedFetcher(
+      {
+        maxBytes: 1024 * 1024,
+        trustedFetchOrigins: ["http://127.0.0.1:38411", "http://localhost:38412"],
+      },
+      logger,
+    );
+    // Hop 0: the trusted homeserver origin (auth-allowlisted host). Hop 1: a trusted
+    // CDN origin on a DIFFERENT host (localhost) — off the auth allowlist.
+    mockValidateLocalServerUrl
+      .mockResolvedValueOnce(
+        ok(
+          makeValidatedUrl({
+            hostname: "127.0.0.1",
+            ip: "127.0.0.1",
+            url: new URL("http://127.0.0.1:38411/_matrix/client/v1/media/download/hs.test/x"),
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        ok(
+          makeValidatedUrl({
+            hostname: "localhost",
+            ip: "127.0.0.1",
+            url: new URL("http://localhost:38412/blob"),
+          }),
+        ),
+      );
+    vi.mocked(globalThis.fetch)
+      .mockResolvedValueOnce(
+        createMockResponse({ ok: false, status: 307, headers: { location: "http://localhost:38412/blob" } }),
+      )
+      .mockResolvedValueOnce(
+        createMockResponse({ headers: { "content-type": "image/png" }, body: new Uint8Array([9, 9, 9]) }),
+      );
+
+    const result = await fetcher.fetch(
+      "http://127.0.0.1:38411/_matrix/client/v1/media/download/hs.test/x",
+      { authHeader: "Bearer T", authAllowHosts: ["127.0.0.1"] },
+    );
+
+    expect(result.ok).toBe(true);
+    // Both trusted hops used the lenient validator; strict validateUrl never ran.
+    expect(mockValidateLocalServerUrl).toHaveBeenCalledTimes(2);
+    expect(mockValidateUrl).not.toHaveBeenCalled();
+    const calls = vi.mocked(globalThis.fetch).mock.calls;
+    // Hop 0 (allowlisted host) carried the bearer; hop 1 (cross-host) did NOT.
+    expect((calls[0]![1] as { headers?: Record<string, string> }).headers).toMatchObject({
+      authorization: "Bearer T",
+    });
+    expect(((calls[1]![1] as { headers?: Record<string, string> }).headers ?? {}).authorization).toBeUndefined();
+  });
 });
