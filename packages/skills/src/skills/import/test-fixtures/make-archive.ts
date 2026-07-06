@@ -29,6 +29,13 @@ export interface ZipEntryInput {
   /** When true, set the Unix exec bit in the external attributes. */
   readonly execBit?: boolean;
   /**
+   * Override the full Unix file mode encoded in the external attributes (e.g.
+   * `0o120777` for a symlink entry), so the reader's file-type-bit rejects can
+   * be authored. Takes precedence over {@link execBit}; defaults to a regular
+   * file mode (`0o100644`, or `0o100755` when `execBit`).
+   */
+  readonly unixMode?: number;
+  /**
    * Force a raw compression-method code (e.g. 99), overriding {@link method},
    * so the reader's unsupported-method reject can be authored. The raw bytes
    * are stored verbatim under the forced method code.
@@ -112,7 +119,7 @@ export function makeZip(entries: readonly ZipEntryInput[]): Buffer {
     const data = method === 8 ? deflateRawSync(raw) : raw;
     const nameBuf = Buffer.from(entry.name, "utf-8");
     const crc = crc32(raw);
-    const unixMode = entry.execBit === true ? 0o100755 : 0o100644;
+    const unixMode = entry.unixMode ?? (entry.execBit === true ? 0o100755 : 0o100644);
     const externalAttr = (unixMode << 16) >>> 0;
 
     const local = Buffer.alloc(30 + nameBuf.length);

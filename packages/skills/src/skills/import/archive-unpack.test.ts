@@ -79,6 +79,23 @@ describe("unpackArchive rejects link entries outright", () => {
     });
     expect(expectReject(r).errorKind).toBe("validation");
   });
+
+  it("rejects a zip entry whose mode marks it a symlink, for parity with the tar reader", () => {
+    // A symlink zip entry stores the link target as its content; without the
+    // file-type-bit check it would be treated as a regular file (an asymmetry
+    // with the tar path, which rejects symlinks). The archive is otherwise
+    // valid (a SKILL.md is present), so the reject is specifically the symlink.
+    const r = unpackArchive(
+      makeZip([
+        { name: "SKILL.md", content: MANIFEST },
+        { name: "link", content: "/etc/passwd", unixMode: 0o120777 },
+      ]),
+      { caps: caps() },
+    );
+    const e = expectReject(r);
+    expect(e.errorKind).toBe("validation");
+    expect(e.message.toLowerCase()).toContain("symlink");
+  });
 });
 
 describe("unpackArchive enforces the streamed decompression bomb cap", () => {

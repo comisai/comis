@@ -233,6 +233,15 @@ function readZipEntries(bytes: Buffer, caps: UnpackCaps): Result<Candidate[], Un
 
     const execBit = ((externalAttr >>> 16) & 0o111) !== 0;
 
+    // Reject a symlink entry for parity with the tar reader: a zip symlink
+    // stores the link target string as its content, so treating it as a regular
+    // file would both disagree with the tar path and mis-describe the entry. A
+    // DOS/Windows-authored zip carries 0 in the high mode bits, so this never
+    // false-triggers on a regular file.
+    if (((externalAttr >>> 16) & 0o170000) === 0o120000) {
+      return err(mk("validation", `zip entry "${name}" is a symlink`, "remove link entries; only regular files are imported"));
+    }
+
     // A directory entry (trailing slash) still needs path validation, but has
     // no content to add.
     if (name.endsWith("/")) {
