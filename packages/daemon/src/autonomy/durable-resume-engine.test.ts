@@ -483,6 +483,26 @@ describe("createDurableResumeEngine resume-or-orphan and bounded recovery", () =
     expect(String(orphans[0]!.args[1])).toMatch(/no-progress re-anchor/); // reason names the cap
   });
 
+  it("a NEVER-SENT run (stepIndex=-1) is re-anchored past the cap but NEVER orphaned — the no-progress cap only reaps runs that progressed past the spawn boundary", async () => {
+    // The re-anchor cap reaps a run that has PROGRESSED (stepIndex >= 0) and then stalled.
+    // A never-sent run (stepIndex = -1) is the canonical fresh-resumable checkpoint (nothing
+    // sent yet) and MUST survive a restart / repeated boot-sweep re-anchors, never be
+    // false-orphaned — the durable-resume-e2e "never-sent RESUMES, not orphaned" acceptance gate.
+    const record = durableRecord({ rootRunId: "root-neversent-loop", stepIndex: -1, lastHeartbeatAt: 500_000 });
+    const durableRuns = makeDurableRuns({
+      resumable: [record],
+      byRootRun: new Map([["root-neversent-loop", record]]),
+    });
+    const resumeRun = vi.fn(async () => ok(undefined));
+    const engine = createDurableResumeEngine(makeEngineDeps({ durableRuns, resumeRun }));
+    // Drive well past MAX_REANCHOR_ATTEMPTS with an UNCHANGED heartbeat (no progress).
+    for (let i = 0; i < 6; i++) await engine.resumeAll();
+    expect(
+      durableRuns.calls.filter((c) => c.method === "markOrphaned" && c.args[0] === "root-neversent-loop"),
+      "a never-sent run must never be reaped by the no-progress cap",
+    ).toHaveLength(0);
+  });
+
   it("a heartbeat advance (progress) resets the re-anchor counter — a live run is never false-orphaned", async () => {
     const record = durableRecord({ rootRunId: "root-live", lastHeartbeatAt: 500_000 });
     const durableRuns = makeDurableRuns({ resumable: [record] });
