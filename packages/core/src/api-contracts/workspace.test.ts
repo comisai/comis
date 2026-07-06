@@ -465,6 +465,50 @@ describe("workspace-umbrella domain contracts", () => {
     it("accepts a minimal github-url request", () => {
       expect(() => SkillsImportContract.request.parse({ url: "https://example.com/owner/repo" })).not.toThrow();
     });
+
+    it("accepts source \"clawhub\" and retains the owner/slug lookup name", () => {
+      // The clawhub resolver channel: `name` is the "@owner/slug" install
+      // reference; the enum must admit clawhub (the handler parses the request
+      // through it, so an unrecognized value is rejected before dispatch).
+      const parsed = SkillsImportContract.request.parse({ source: "clawhub", name: "@owner/slug" });
+      expect(parsed.source).toBe("clawhub");
+      expect(parsed.name).toBe("@owner/slug");
+    });
+
+    it("rejects an unrecognized source value (the request source enum stays closed)", () => {
+      expect(() => SkillsImportContract.request.parse({ source: "pirate-bay" })).toThrow();
+    });
+
+    it("response retains warnings[] through parse (the acknowledged warnable classes)", () => {
+      const parsed = SkillsImportContract.response.parse({
+        ok: true,
+        path: "/data/skills/x",
+        name: "x",
+        fileCount: 1,
+        source: "imported",
+        resolvedAgentId: "default",
+        warnings: [
+          "the registry publisher is not official",
+          "re-import diverges from the pinned content hash",
+        ],
+      });
+      expect(parsed.warnings).toEqual([
+        "the registry publisher is not official",
+        "re-import diverges from the pinned content hash",
+      ]);
+    });
+
+    it("response still parses WITHOUT warnings (optional — a warning-free import)", () => {
+      const parsed = SkillsImportContract.response.parse({
+        ok: true,
+        path: "/data/skills/x",
+        name: "x",
+        fileCount: 1,
+        source: "imported",
+        resolvedAgentId: "default",
+      });
+      expect(parsed.warnings).toBeUndefined();
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -510,6 +554,28 @@ describe("workspace-umbrella domain contracts", () => {
           skills: [{ ...baseSkill, source: "counterfeit" }],
         }),
       ).toThrow();
+    });
+
+    it("provenanceSummary retains officialPublisher (true / false) through parse", () => {
+      for (const officialPublisher of [true, false] as const) {
+        const parsed = SkillsListContract.response.parse({
+          skills: [
+            {
+              ...baseSkill,
+              source: "imported",
+              provenanceSummary: { source: "clawhub", officialPublisher, hashPrefix: "abc123", importedAt: "2026-01-01T00:00:00Z" },
+            },
+          ],
+        });
+        expect(parsed.skills[0]?.provenanceSummary?.officialPublisher).toBe(officialPublisher);
+      }
+    });
+
+    it("provenanceSummary still parses with officialPublisher absent (optional)", () => {
+      const parsed = SkillsListContract.response.parse({
+        skills: [{ ...baseSkill, source: "imported", provenanceSummary: { source: "clawhub" } }],
+      });
+      expect(parsed.skills[0]?.provenanceSummary?.officialPublisher).toBeUndefined();
     });
   });
 

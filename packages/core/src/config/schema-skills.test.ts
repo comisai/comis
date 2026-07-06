@@ -147,6 +147,37 @@ describe("SkillsConfigSchema -- skills.import.registries allowlist", () => {
 });
 
 /**
+ * The `skills.import.requireOfficialPublisher` fail-closed default. When a
+ * registry import resolves a non-official publisher, the commit records
+ * `officialPublisher:false` and requires an explicit `confirm`. The default is
+ * `true` (fail-closed): an operator opts OUT per agent by setting it `false`.
+ * Fully defaulted like the sibling caps, so consumers read a resolved value
+ * rather than `?? fallback`; the closed strictObject rejects a non-boolean.
+ */
+describe("SkillsConfigSchema -- skills.import.requireOfficialPublisher", () => {
+  it("defaults to true (fail-closed) on a config with no requireOfficialPublisher key", () => {
+    const result = SkillsConfigSchema.parse({});
+    expect(result.import.requireOfficialPublisher).toBe(true);
+  });
+
+  it("round-trips an explicit false (the operator opt-out allowing non-official publishers)", () => {
+    const result = SkillsConfigSchema.parse({ import: { requireOfficialPublisher: false } });
+    expect(result.import.requireOfficialPublisher).toBe(false);
+  });
+
+  it("rejects a non-boolean requireOfficialPublisher (the import block is a closed strictObject)", () => {
+    expect(SkillsConfigSchema.safeParse({ import: { requireOfficialPublisher: "yes" } }).success).toBe(false);
+    expect(SkillsConfigSchema.safeParse({ import: { requireOfficialPublisher: 1 } }).success).toBe(false);
+  });
+
+  it("keeps the sibling caps + registries at their defaults when only this key is overridden", () => {
+    const result = SkillsConfigSchema.parse({ import: { requireOfficialPublisher: false } });
+    expect(result.import.maxFileCount).toBe(200);
+    expect(result.import.registries).toEqual([]);
+  });
+});
+
+/**
  * The closed `TerminalDriverConfig` schema. A `z.strictObject` at every
  * level rejects unknown keys by construction (a typo'd or injected key
  * throws at config load rather than being silently dropped — a restriction the
