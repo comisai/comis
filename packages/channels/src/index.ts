@@ -190,6 +190,8 @@ export { mapGoogleChatEventToNormalized } from "./googlechat/message-mapper.js";
 export type { GoogleChatEvent } from "./googlechat/message-mapper.js";
 export {
   createGoogleChatTokenProvider,
+  createGoogleChatInboundVerifier,
+  createLocalGoogleChatInboundVerifier,
   CHAT_SCOPE,
   PUBSUB_SCOPE,
 } from "./googlechat/googlechat-auth.js";
@@ -197,6 +199,7 @@ export type {
   GoogleChatTokenDeps,
   GoogleChatTokenProvider,
   GoogleChatScope,
+  GoogleChatInboundVerifierOpts,
 } from "./googlechat/googlechat-auth.js";
 export { validateGoogleChatCredentials } from "./googlechat/credential-validator.js";
 export { classifyGoogleChatError } from "./googlechat/errors.js";

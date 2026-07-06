@@ -7,7 +7,8 @@
  *     library-backed (jose) signature + issuer + audience + expiry verification
  *     against Google's signing keys — dual-audience by config (`project-number`
  *     verifies against the Chat-system JWK set; `app-url` against Google's OIDC
- *     certs). Never hand-rolled crypto.
+ *     certs PLUS a sender-binding `email` claim that ties the generic OIDC token
+ *     to the Chat system). Never hand-rolled crypto.
  *  2. Outbound service-account token mint: a per-scope expiry+skew-cached
  *     JWT-bearer access token.
  *
@@ -43,7 +44,9 @@ import {
   importPKCS8,
   SignJWT,
   createRemoteJWKSet,
+  createLocalJWKSet,
   jwtVerify,
+  type JSONWebKeySet,
 } from "jose";
 import { classifyGoogleChatError } from "./errors.js";
 
@@ -343,6 +346,14 @@ export function createGoogleChatTokenProvider(
 const CHAT_SYSTEM_ISSUER = "chat@system.gserviceaccount.com";
 
 /**
+ * The sender-binding `email` claim an app-url OIDC token must carry (with
+ * `email_verified === true`) to prove the Chat system is the sender. Without this
+ * assertion any Google-signed OIDC token minted for the endpoint URL would verify;
+ * the email claim is what binds the generic OIDC token to Google Chat.
+ */
+const CHAT_SYSTEM_EMAIL = "chat@system.gserviceaccount.com";
+
+/**
  * Accepted issuers for an app-url OIDC ID token — Google's OIDC issuer in both
  * the scheme-qualified and bare forms (jose's `issuer` option accepts an array).
  */
@@ -415,9 +426,10 @@ export interface GoogleChatInboundVerifierOpts {
  * A missing or non-Bearer header is rejected by a cheap pre-gate with no key-set
  * access (no network). A blank expected audience fails closed before any key-set
  * access. A present token is verified by jose against the issuer, the audience,
- * the signature, the expiry, and an `["RS256"]` algorithm allowlist. The verify
- * error stays here (the caller surfaces an opaque rejection); the token is never
- * logged.
+ * the signature, the expiry, and an `["RS256"]` algorithm allowlist. For the
+ * `app-url` shape the verified token must additionally carry the Chat-system
+ * sender-binding claims (`email` + `email_verified`). The verify error stays here
+ * (the caller surfaces an opaque rejection); the token is never logged.
  */
 export function createGoogleChatInboundVerifier(
   opts: GoogleChatInboundVerifierOpts,
@@ -459,6 +471,54 @@ export function createGoogleChatInboundVerifier(
       );
       return err(verified.error);
     }
+    // An app-url token is a generic Google OIDC ID token; the `email` +
+    // `email_verified` claims are what bind it to the Chat system as the sender.
+    // Without this, any Google-signed OIDC token for the endpoint URL would pass.
+    if (!isProjectNumber) {
+      const { payload } = verified.value;
+      if (
+        payload.email !== CHAT_SYSTEM_EMAIL ||
+        payload.email_verified !== true
+      ) {
+        logger?.warn(
+          {
+            channelType: "googlechat" as const,
+            hint: "Reject the unverified inbound event; confirm the caller is Google Chat",
+            errorKind: "auth" as const,
+          },
+          "Inbound event rejected: token not bound to the Chat system sender",
+        );
+        return err(new Error("token not bound to the Chat system sender"));
+      }
+    }
     return ok(undefined);
   };
+}
+
+/**
+ * Build an inbound Chat-event verifier over a LOCAL JWKS (a `{ keys: [...] }`
+ * set) instead of the default remote Google JWK set — verification runs with NO
+ * network, against a key set the caller supplies. The offline analog of
+ * {@link createGoogleChatInboundVerifier}, for a test rig / live-test emulator
+ * that holds its own signing key. Production keeps the default remote-JWKS
+ * verifier untouched: this path is reached only when a caller opts in with a
+ * local key set. The FULL verify still runs — signature, issuer, audience, and
+ * (for app-url) the sender-binding email claims — so this is never a verification
+ * bypass. The issuer defaults to the audienceType's Google issuer and can be
+ * overridden for a fully-synthetic emulator issuer.
+ */
+export function createLocalGoogleChatInboundVerifier(
+  jwks: JSONWebKeySet,
+  opts: {
+    audienceType: "project-number" | "app-url";
+    audience: string;
+    issuer?: string;
+  },
+): (authHeader: string | undefined) => Promise<Result<void, Error>> {
+  return createGoogleChatInboundVerifier({
+    audienceType: opts.audienceType,
+    audience: opts.audience,
+    jwks: createLocalJWKSet(jwks),
+    ...(opts.issuer !== undefined ? { issuer: opts.issuer } : {}),
+  });
 }
