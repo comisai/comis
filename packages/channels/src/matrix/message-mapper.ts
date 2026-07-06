@@ -121,6 +121,13 @@ function detectMediaAttachment(
   if (mxc === undefined) return undefined;
 
   const attachment: Attachment = { type, url: mxc };
+  // The event indicated E2EE for this media if it carried a `content.file` structure
+  // at all. When it is a COMPLETE record the key is cached below; when it is present
+  // but structurally incomplete NO key is cached — either way the attachment is marked
+  // encrypted so the resolver fails closed (rather than serving the undecryptable
+  // ciphertext as plaintext) if the key is unavailable at resolve time. A genuine
+  // plaintext media event carries no `content.file` and is never marked.
+  if (typeof content.file === "object" && content.file !== null) attachment.encrypted = true;
   const info = content.info;
   if (typeof info === "object" && info !== null) {
     const i = info as { mimetype?: unknown; size?: unknown };

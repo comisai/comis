@@ -219,6 +219,23 @@ export function createMatrixResolver(deps: MatrixResolverDeps): MediaResolverPor
           return err(new Error(sanitizeError(decrypted.error.message, url, token)));
         }
         bytes = decrypted.value;
+      } else if (attachment.encrypted === true) {
+        // The inbound event indicated E2EE for this attachment (it carried a
+        // content.file structure) but its decryption key is unavailable — evicted
+        // from the bounded key cache under load, or the record was structurally
+        // incomplete. FAIL CLOSED: never hand back the undecryptable ciphertext as
+        // if it were plaintext media. (A genuinely-plaintext attachment is not marked
+        // encrypted, so its cache miss resolves as plaintext in the branch below.)
+        deps.logger.warn(
+          {
+            platform: "matrix",
+            durationMs,
+            errorKind: "validation" as const,
+            hint: "Drop the attachment: its decryption key is unavailable; re-request the media so its key is re-cached",
+          },
+          "Matrix media resolve failed: encrypted attachment key unavailable",
+        );
+        return err(new Error("encrypted attachment key unavailable"));
       } else {
         bytes = fetched.value.buffer;
       }
