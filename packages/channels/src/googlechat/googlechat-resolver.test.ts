@@ -213,6 +213,64 @@ describe("googlechat-resolver / createGoogleChatResolver", () => {
     },
   );
 
+  // Encoded traversal/separators are NOT scanned by hasResourceNameInjection (it
+  // only catches a literal ".."); their safety rests entirely on the downstream
+  // URL-API build + host/`/v1/media/` pathname assertion (the WHATWG parser
+  // normalizes %2e%2e as a double-dot segment, collapsing an off-path result;
+  // %2f stays a single opaque segment). Pin that load-bearing invariant so a
+  // future refactor of the assertion cannot silently regress it: no encoded form
+  // may steer the fetch off chat.googleapis.com or off the /v1/media/ prefix —
+  // either the ref is rejected before any fetch, or the ONE fetched URL stays
+  // on-host and on-path.
+  it.each([
+    ["encoded dot-dot, lowercase %2e%2e", "spaces/AAA/%2e%2e/%2e%2e/etc"],
+    ["encoded dot-dot, uppercase %2E%2E", "spaces/AAA/%2E%2E/CCC"],
+    ["encoded dot-dot mixed with a literal traversal", "spaces/AAA/%2E%2E/../secret"],
+    ["encoded slash, lowercase %2f", "spaces/AAA/%2f/CCC"],
+    ["encoded slash, uppercase %2F", "spaces/AAA/%2F/CCC"],
+  ])(
+    "keeps an encoded-traversal/separator resource name (%s) on chat.googleapis.com/v1/media/ or rejects it before any fetch",
+    async (_label, resourceName) => {
+      const deps = mockDeps();
+      const resolver = createGoogleChatResolver(deps);
+
+      const result = await resolver.resolve(makeAttachment(attachmentUrl(resourceName)));
+
+      if (result.ok) {
+        // Resolved → the ONE fetched URL must stay on the pinned host and path;
+        // an encoded form must never collapse or decode the request off /v1/media/.
+        expect(deps.ssrfFetcher.fetch).toHaveBeenCalledTimes(1);
+        const fetched = new URL(
+          (deps.ssrfFetcher.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string,
+        );
+        expect(fetched.hostname).toBe("chat.googleapis.com");
+        expect(fetched.pathname.startsWith("/v1/media/")).toBe(true);
+      } else {
+        // Rejected → the guard fired before any (cross-host) fetch could run.
+        expect(deps.ssrfFetcher.fetch).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it("keeps a percent-encoded slash (%2f) as a single opaque path segment — never decoded to a separator that could break out", async () => {
+    const deps = mockDeps();
+    const resolver = createGoogleChatResolver(deps);
+
+    const result = await resolver.resolve(
+      makeAttachment(attachmentUrl("spaces/AAA/%2f/CCC")),
+    );
+
+    // On-host, on-path, and the %2f survived as an opaque token (not decoded to /).
+    expect(result.ok).toBe(true);
+    expect(deps.ssrfFetcher.fetch).toHaveBeenCalledTimes(1);
+    const fetched = new URL(
+      (deps.ssrfFetcher.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string,
+    );
+    expect(fetched.hostname).toBe("chat.googleapis.com");
+    expect(fetched.pathname.startsWith("/v1/media/")).toBe(true);
+    expect(fetched.pathname.toLowerCase()).toContain("%2f");
+  });
+
   it("RESOLVES an opaque base64/token resource name — no charset allowlist drops it", async () => {
     const deps = mockDeps();
     const resolver = createGoogleChatResolver(deps);
