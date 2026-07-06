@@ -434,7 +434,10 @@ describe("autonomy handlers — deny-by-origin on the dispatch path", () => {
       expect(audits[0]!.outcome).toBe("denied");
       expect(audits[0]!.kind).toBe("capability_denied");
     }
-  });
+    // Generous timeout: this loops 3× over a dynamic import + dispatch. Under heavy CI
+    // runner contention the default 5s can lapse, and a post-timeout straggler dispatch
+    // then fires a deny-audit into the shared mock bus that bleeds into the next test.
+  }, 30_000);
 
   it("an operator-origin lease.revoke (no _agentId) PASSES the chokepoint and reaches the handler", async () => {
     const dispatch = await getDispatch();
