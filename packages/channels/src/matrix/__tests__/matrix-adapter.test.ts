@@ -1248,3 +1248,96 @@ describe("createMatrixAdapter — threaded + chunked send", () => {
     expect(platformWarn).toBeDefined();
   });
 });
+
+describe("createMatrixAdapter — edits and deletes", () => {
+  it("editMessage sends an m.replace whose new content carries the updated text and relates to the target", async () => {
+    const { adapter, fake } = makeAdapter();
+    await adapter.start();
+
+    const result = await adapter.editMessage?.("!room:hs", "$orig:hs", "the corrected text");
+
+    expect(result?.ok).toBe(true);
+    // A single m.room.message send carrying the replacement relation.
+    expect(fake.sentEvents).toHaveLength(1);
+    const [sent] = fake.sentEvents;
+    expect(sent?.roomId).toBe("!room:hs");
+    expect(sent?.eventType).toBe("m.room.message");
+    expect(sent?.content["m.relates_to"]).toEqual({
+      rel_type: "m.replace",
+      event_id: "$orig:hs",
+    });
+    // The new content is the authoritative replacement; the fallback body is marked.
+    expect((sent?.content["m.new_content"] as { body?: string }).body).toBe("the corrected text");
+    expect((sent?.content.body as string).startsWith("* ")).toBe(true);
+  });
+
+  it("editMessage returns void (discards the new event id) on success", async () => {
+    const { adapter } = makeAdapter();
+    await adapter.start();
+
+    const result = await adapter.editMessage?.("!room:hs", "$orig:hs", "x");
+
+    expect(result?.ok).toBe(true);
+    if (result?.ok) expect(result.value).toBeUndefined();
+  });
+
+  it("errs on editMessage before start rather than dereferencing an absent client", async () => {
+    const { adapter } = makeAdapter();
+
+    const result = await adapter.editMessage?.("!room:hs", "$orig:hs", "x");
+
+    expect(result?.ok).toBe(false);
+  });
+
+  it("propagates an edit send failure as err with a classified errorKind hint", async () => {
+    const fake = new FakeMatrixClient();
+    fake.sendError = matrixError("M_FORBIDDEN", 403, "cannot edit");
+    const { adapter, logger } = makeAdapter({ fake });
+    await adapter.start();
+
+    const result = await adapter.editMessage?.("!room:hs", "$orig:hs", "x");
+
+    expect(result?.ok).toBe(false);
+    const warn = vi.mocked(logger.warn);
+    const authWarn = warn.mock.calls.find(
+      ([fields]) => (fields as { errorKind?: string }).errorKind === "auth",
+    );
+    expect(authWarn).toBeDefined();
+  });
+
+  it("deleteMessage redacts the target event and returns ok", async () => {
+    const { adapter, fake } = makeAdapter();
+    await adapter.start();
+
+    const result = await adapter.deleteMessage?.("!room:hs", "$target:hs");
+
+    expect(result?.ok).toBe(true);
+    expect(fake.redactedEvents).toHaveLength(1);
+    expect(fake.redactedEvents[0]).toEqual({ roomId: "!room:hs", eventId: "$target:hs" });
+    if (result?.ok) expect(result.value).toBeUndefined();
+  });
+
+  it("errs on deleteMessage before start rather than dereferencing an absent client", async () => {
+    const { adapter } = makeAdapter();
+
+    const result = await adapter.deleteMessage?.("!room:hs", "$target:hs");
+
+    expect(result?.ok).toBe(false);
+  });
+
+  it("propagates a delete redaction failure as err with a classified errorKind hint", async () => {
+    const fake = new FakeMatrixClient();
+    fake.redactError = matrixError("M_LIMIT_EXCEEDED", 429, "slow down");
+    const { adapter, logger } = makeAdapter({ fake });
+    await adapter.start();
+
+    const result = await adapter.deleteMessage?.("!room:hs", "$target:hs");
+
+    expect(result?.ok).toBe(false);
+    const warn = vi.mocked(logger.warn);
+    const platformWarn = warn.mock.calls.find(
+      ([fields]) => (fields as { errorKind?: string }).errorKind === "platform",
+    );
+    expect(platformWarn).toBeDefined();
+  });
+});

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
 import {
+  buildEditContent,
   buildReactionContent,
   buildTextMessageContent,
   buildThreadRelation,
@@ -105,6 +106,45 @@ describe("buildThreadRelation", () => {
     const relation = buildThreadRelation("$anchor:hs");
     expect(relation.event_id).toBe("$anchor:hs");
     expect(relation["m.in_reply_to"].event_id).toBe("$anchor:hs");
+  });
+});
+
+describe("buildEditContent", () => {
+  it("builds an m.replace whose m.new_content carries the new rendered text and relates to the target", () => {
+    const content = buildEditContent("$orig:hs", "**bold** new");
+
+    // The replacement relation names the edited event.
+    expect(content["m.relates_to"]).toEqual({
+      rel_type: "m.replace",
+      event_id: "$orig:hs",
+    });
+    // m.new_content is the authoritative new message: the rendered body + HTML.
+    expect(content["m.new_content"].msgtype).toBe("m.text");
+    expect(content["m.new_content"].body).toBe("**bold** new");
+    expect(content["m.new_content"].format).toBe("org.matrix.custom.html");
+    expect(content["m.new_content"].formatted_body).toContain("<strong>bold</strong>");
+  });
+
+  it("prefixes the top-level fallback body and formatted_body with the leading edit marker", () => {
+    // The top-level fields are the fallback a client that ignores m.replace shows;
+    // the Matrix convention prefixes them with "* " so they read as an edit.
+    const content = buildEditContent("$orig:hs", "hello");
+
+    expect(content.msgtype).toBe("m.text");
+    expect(content.body).toBe("* hello");
+    expect(content.format).toBe("org.matrix.custom.html");
+    expect(content.formatted_body.startsWith("* ")).toBe(true);
+    expect(content.formatted_body).toContain("hello");
+    // The un-prefixed new text is the one that lands under m.new_content.
+    expect(content["m.new_content"].body).toBe("hello");
+  });
+
+  it("escapes HTML-significant characters in the new content so edited text cannot inject markup", () => {
+    const content = buildEditContent("$orig:hs", "a < b & c");
+
+    expect(content["m.new_content"].formatted_body).toContain("&lt;");
+    expect(content["m.new_content"].formatted_body).toContain("&amp;");
+    expect(content["m.new_content"].formatted_body).not.toContain("< b");
   });
 });
 
