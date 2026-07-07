@@ -201,71 +201,89 @@ describe("createTokenStore", () => {
     expect(await store.discoveryState("ghost")).toBeUndefined();
   });
 
-  it("invalidates its cache on an EXTERNAL rewrite of <server>.json", async () => {
-    // Write the baseline BEFORE the watcher starts so it is part of the initial
-    // scan, then await the watcher `ready` so the external write below is
-    // cleanly observed as a `change` (not coalesced into the initial scan).
-    await store.saveTokens("notion", {
-      access_token: "AT",
-      refresh_token: "RT",
-      expires_in: 3600,
-      token_type: "Bearer",
-    });
-    await store.startWatch();
-    // Prime the in-memory cache.
-    const first = await store.tokens("notion");
-    expect(first?.access_token).toBe("AT");
+  // The two watcher-bound tests below carry their own generous vitest timeout
+  // and a poll budget UNDER it: with the defaults, the waitFor budget (5s)
+  // EQUALED the vitest testTimeout (5s), so a cold, fully-loaded machine — the
+  // first run after a clean-room rebuild, with every worker cold-compiling —
+  // starved the fs-watch event past the cap and flaked the suite. The happy
+  // path still exits on the first successful poll.
+  const WATCH_TEST_TIMEOUT_MS = 30_000;
+  const WATCH_POLL = { attempts: 800, intervalMs: 25 } as const; // 20s < the 30s cap
 
-    // External rewrite, bypassing the store entirely (a cron/sibling refresh).
-    const external: TokenFile = {
-      accessToken: "AT-EXTERNAL",
-      refreshToken: "RT2",
-      expiresAt: PINNED_NOW + 7200 * 1000,
-      tokenType: "Bearer",
-    };
-    writeFileSync(join(dir, "notion.json"), JSON.stringify(external), { mode: 0o600 });
+  it(
+    "invalidates its cache on an EXTERNAL rewrite of <server>.json",
+    async () => {
+      // Write the baseline BEFORE the watcher starts so it is part of the initial
+      // scan, then await the watcher `ready` so the external write below is
+      // cleanly observed as a `change` (not coalesced into the initial scan).
+      await store.saveTokens("notion", {
+        access_token: "AT",
+        refresh_token: "RT",
+        expires_in: 3600,
+        token_type: "Bearer",
+      });
+      await store.startWatch();
+      // Prime the in-memory cache.
+      const first = await store.tokens("notion");
+      expect(first?.access_token).toBe("AT");
 
-    // Poll until the watcher's debounced cache-invalidation lands and the next
-    // read re-reads the external value — no fixed sleep, so not load-sensitive.
-    const invalidated = await waitFor(
-      async () => (await store.tokens("notion"))?.access_token === "AT-EXTERNAL",
-    );
-    expect(invalidated).toBe(true);
+      // External rewrite, bypassing the store entirely (a cron/sibling refresh).
+      const external: TokenFile = {
+        accessToken: "AT-EXTERNAL",
+        refreshToken: "RT2",
+        expiresAt: PINNED_NOW + 7200 * 1000,
+        tokenType: "Bearer",
+      };
+      writeFileSync(join(dir, "notion.json"), JSON.stringify(external), { mode: 0o600 });
 
-    const second = await store.tokens("notion");
-    expect(second?.access_token).toBe("AT-EXTERNAL");
-    expect(second?.refresh_token).toBe("RT2");
-  });
+      // Poll until the watcher's debounced cache-invalidation lands and the next
+      // read re-reads the external value — no fixed sleep, so not load-sensitive.
+      const invalidated = await waitFor(
+        async () => (await store.tokens("notion"))?.access_token === "AT-EXTERNAL",
+        WATCH_POLL,
+      );
+      expect(invalidated).toBe(true);
 
-  it("keeps the last-good cache and logs WARN on a truncated/partial external write (fail-soft)", async () => {
-    await store.saveTokens("notion", {
-      access_token: "AT-GOOD",
-      expires_in: 3600,
-      token_type: "Bearer",
-    });
-    await store.startWatch();
-    const primed = await store.tokens("notion");
-    expect(primed?.access_token).toBe("AT-GOOD");
+      const second = await store.tokens("notion");
+      expect(second?.access_token).toBe("AT-EXTERNAL");
+      expect(second?.refresh_token).toBe("RT2");
+    },
+    WATCH_TEST_TIMEOUT_MS,
+  );
 
-    // Ignore any construction-time warns; only the fail-soft re-read counts.
-    logger.warn.mockClear();
+  it(
+    "keeps the last-good cache and logs WARN on a truncated/partial external write (fail-soft)",
+    async () => {
+      await store.saveTokens("notion", {
+        access_token: "AT-GOOD",
+        expires_in: 3600,
+        token_type: "Bearer",
+      });
+      await store.startWatch();
+      const primed = await store.tokens("notion");
+      expect(primed?.access_token).toBe("AT-GOOD");
 
-    // Write a truncated (invalid JSON) file directly.
-    writeFileSync(join(dir, "notion.json"), '{"accessToken":"AT-', { mode: 0o600 });
+      // Ignore any construction-time warns; only the fail-soft re-read counts.
+      logger.warn.mockClear();
 
-    // The WARN only fires when a read re-parses the file AFTER the watcher
-    // clears the cache, so poll BY reading until the fail-soft path logs.
-    const warned = await waitFor(async () => {
-      await store.tokens("notion");
-      return logger.warn.mock.calls.length > 0;
-    });
-    expect(warned).toBe(true);
+      // Write a truncated (invalid JSON) file directly.
+      writeFileSync(join(dir, "notion.json"), '{"accessToken":"AT-', { mode: 0o600 });
 
-    // Fail-soft: parse error must NOT throw; the last-good cache is served.
-    const after = await store.tokens("notion");
-    expect(after?.access_token).toBe("AT-GOOD");
-    expect(logger.warn).toHaveBeenCalled();
-  });
+      // The WARN only fires when a read re-parses the file AFTER the watcher
+      // clears the cache, so poll BY reading until the fail-soft path logs.
+      const warned = await waitFor(async () => {
+        await store.tokens("notion");
+        return logger.warn.mock.calls.length > 0;
+      }, WATCH_POLL);
+      expect(warned).toBe(true);
+
+      // Fail-soft: parse error must NOT throw; the last-good cache is served.
+      const after = await store.tokens("notion");
+      expect(after?.access_token).toBe("AT-GOOD");
+      expect(logger.warn).toHaveBeenCalled();
+    },
+    WATCH_TEST_TIMEOUT_MS,
+  );
 
   it("close() tears down the watcher (no leaked timers/handles)", async () => {
     await store.startWatch();
