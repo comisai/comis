@@ -4,7 +4,9 @@
  * Skill management commands: `comis skills import`.
  *
  * `comis skills import <ref>` imports a skill from a GitHub directory URL
- * (source=github, the default) or an archive URL (source=archive) through the
+ * (source=github, the default), an archive URL (source=archive), an
+ * allowlisted well-known registry (source=wellknown, --registry <origin>), or
+ * ClawHub (source=clawhub) through the
  * daemon's staged pipeline — the content scan + the MCP Phase-A check run
  * PRE-write, and a successful import is stamped the `imported` trust tier and
  * pinned in the provenance store. The command dispatches `skills.import`

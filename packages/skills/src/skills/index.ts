@@ -35,8 +35,8 @@ export { createSkillRegistry } from "./registry/skill-registry/index.js";
 export type { SkillRegistry, SkillWatcherHandle } from "./registry/skill-registry/index.js";
 
 // Manifest schema + parser
-// SkillManifestSchema lives at `./manifest/schema.ts:137-164` and parseSkillManifest at
-// `./manifest/parser.ts:80-95`. Re-exported here so daemon-side consumers
+// SkillManifestSchema lives in `./manifest/schema.ts` and parseSkillManifest in
+// `./manifest/parser.ts`. Re-exported here so daemon-side consumers
 // can read freshly-written SKILL.md content + validate the optional mcpServers block
 // WITHOUT reaching into `@comis/skills/src/skills/manifest/...` deep-paths.
 export { SkillManifestSchema, type SkillManifestParsed } from "./manifest/schema.js";

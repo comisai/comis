@@ -2998,7 +2998,7 @@
               "type": "string"
             }
           ],
-          "description": "Skill management action. Valid values: list (show installed skills), import (install from GitHub URL), delete (remove skill by name), create (create new skill from content), update (modify existing skill content)"
+          "description": "Skill management action. Valid values: list (show installed skills), import (install from a GitHub URL, an archive, or an allowlisted registry), delete (remove skill by name), create (create new skill from content), update (modify existing skill content)"
         },
         "archiveUrl": {
           "description": "Archive URL to import from (import action, source=archive). Fetched size-capped over the SSRF guard, then safely unpacked.",

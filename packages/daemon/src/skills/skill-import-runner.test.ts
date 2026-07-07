@@ -281,7 +281,7 @@ describe("resolveWellKnownFileSet — fail-closed allowlist gate (before any fet
       },
     );
     expect(matches.ok).toBe(true);
-    // A clawhub-only allowlist does NOT satisfy an http-origin request (Phase 235 owns clawhub).
+    // A clawhub-only allowlist does NOT satisfy an http-origin request.
     const clawhubOnly = await resolveWellKnownFileSet(
       makeWkDeps({ registriesByAgent: { "agent-a": ["clawhub"] } }),
       {

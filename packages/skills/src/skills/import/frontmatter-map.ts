@@ -9,7 +9,8 @@
  * top-level fields with every platform extension under one `metadata.comis`
  * JSON-string key — which the shipped `parseSkillManifest` then lifts and
  * validates. The mapper NEVER silently reinterprets a field: it assigns only a
- * fixed set of known keys (never spreads the untrusted input), and every field
+ * fixed set of known keys — the raw frontmatter is never spread onto the
+ * output (only vetted extension bags merge at assembly) — and every field
  * without an internal home is DROPPED with a warning naming the exact key.
  *
  * Executable entrypoint declarations are never mapped — import is prompt-only,
@@ -532,7 +533,8 @@ function assembleCarrier(
  * Map foreign / legacy SKILL.md frontmatter onto the spec-pure carrier.
  *
  * Pure: no I/O, no mutation of the input. Follows the lift's discipline —
- * assign only fixed known keys, never spread untrusted input. Every field
+ * assign only fixed known keys; the raw input is never spread onto the output
+ * (only vetted extension bags merge at assembly). Every field
  * without an internal home drops with a warning naming the exact key; executable
  * entrypoints are never mapped. Hand the returned `specPure` to
  * `parseSkillManifest`, which runs the shipped lift + strict validation.

@@ -461,15 +461,15 @@ describe("the full disposition table — every branch, named", () => {
 });
 
 describe("the legacy Comis top-level form is rewritten to the spec-pure carrier (never re-emitted)", () => {
-  // A pre-migration Comis SKILL.md: extension fields authored at the top level,
-  // with no metadata carrier. The mapper is a WRITER (SPEC-04), so it must
-  // relocate them onto the spec-pure carrier rather than pass the legacy
-  // top-level form through — otherwise the installed SKILL.md re-triggers the
-  // read-compat deprecation WARN (SPEC-03/D8: the legacy form is "never written
-  // by any writer") on every subsequent load.
+  // A legacy Comis SKILL.md: extension fields authored at the top level, with
+  // no metadata carrier. The mapper is a WRITER, so it must relocate them onto
+  // the spec-pure carrier rather than pass the legacy top-level form through —
+  // the legacy form is read-only compatibility (no writer ever emits it), and
+  // passing it through would re-trigger the read-compat deprecation WARN on
+  // every subsequent load.
   const LEGACY_RAW: Record<string, unknown> = {
     name: "legacy-comis-skill",
-    description: "A skill authored in the pre-migration top-level Comis form",
+    description: "A skill authored in the legacy top-level Comis form",
     version: "1.2.0",
     type: "prompt",
     userInvocable: false,
@@ -520,7 +520,7 @@ describe("the legacy Comis top-level form is rewritten to the spec-pure carrier 
     const fromMapped = parseSkillManifest(mappedMd, { logger, skillName: "legacy-comis-skill" });
     expect(fromMapped.ok).toBe(true);
 
-    // SPEC-04: the writer emitted spec-pure frontmatter, so loading it runs the
+    // The writer emitted spec-pure frontmatter, so loading it runs the
     // spec-pure lift path and emits NO per-key deprecation WARN (movedKeys).
     const deprecationWarns = calls.filter((c) => "movedKeys" in c.payload);
     expect(deprecationWarns.length).toBe(0);
