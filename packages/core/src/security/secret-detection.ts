@@ -214,7 +214,7 @@ export function looksLikeSecretValue(value: string): boolean {
  * Pattern matching field names that contain secrets.
  */
 const SECRET_FIELD_PATTERN =
-  /^(.*token|.*secret|.*password|.*apiKey|.*api_key|.*credential|.*private_key|botToken|appSecret|hmacSecret|webhookSecret)$/i;
+  /^(.*token|.*secret|.*password|.*apiKey|.*api_key|.*credential|.*private_key|botToken|appSecret|hmacSecret|webhookSecret|serviceAccountKey)$/i;
 
 /**
  * Exact (lowercased) field names that imply a secret but are NOT matched by
