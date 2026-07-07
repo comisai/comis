@@ -535,6 +535,43 @@ describe("AnnouncementDeadLetterQueue", () => {
     );
     expect(dlq.size()).toBe(0);
   });
+
+  it("accepts googlechat as a ChannelType and round-trips a dead-letter entry through enqueue and drain", async () => {
+    // Type-level: googlechat is a member of the closed ChannelType union. The
+    // type-check rejects both this assignment and the makeEntry call below
+    // until the union admits "googlechat".
+    const channelType: ChannelType = "googlechat";
+    expect(channelType).toBe("googlechat");
+
+    const eventBus = createMockEventBus();
+    const dlq = createAnnouncementDeadLetterQueue({ filePath, eventBus, retryIntervalMs: 0 });
+
+    dlq.enqueue(
+      makeEntry({
+        runId: "run-googlechat-1",
+        channelType: "googlechat",
+        channelId: "spaces/AAAA1234",
+      }),
+    );
+    // Wait for the fire-and-forget append so drain reloads it from disk.
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Persisted with channelType "googlechat".
+    const content = await readFile(filePath, "utf-8");
+    const parsed = JSON.parse(content.trim()) as DeadLetterEntry;
+    expect(parsed.channelType).toBe("googlechat");
+
+    // And it round-trips through drain to sendToChannel with the googlechat type.
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+    await dlq.drain(sendToChannel);
+    expect(sendToChannel).toHaveBeenCalledWith(
+      "googlechat",
+      "spaces/AAAA1234",
+      "Task completed successfully",
+      undefined,
+    );
+    expect(dlq.size()).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
