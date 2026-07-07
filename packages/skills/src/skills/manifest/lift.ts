@@ -69,9 +69,11 @@ const DANGEROUS_KEYS = new Set<string>(["__proto__"]);
  * Deep-scan a parsed JSON value for an own `__proto__` key at any depth.
  * `JSON.parse` materializes `__proto__` as an own data property (it does not
  * pollute the prototype), and the strict schema does not flag it, so the lift
- * refuses such a payload at this boundary rather than merge it onward.
+ * refuses such a payload at this boundary rather than merge it onward. The
+ * import mapper reuses the same scan to decide whether a preserved carrier is
+ * reconcilable, so the two layers cannot drift on what counts as polluting.
  */
-function hasDangerousKey(value: unknown): boolean {
+export function hasDangerousKey(value: unknown): boolean {
   if (value === null || typeof value !== "object") return false;
   if (Array.isArray(value)) return value.some((element) => hasDangerousKey(element));
   for (const key of Object.keys(value as Record<string, unknown>)) {

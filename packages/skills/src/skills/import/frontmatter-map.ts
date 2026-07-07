@@ -28,6 +28,7 @@
  * @module
  */
 import type { ErrorKind } from "@comis/core";
+import { hasDangerousKey } from "../manifest/lift.js";
 
 /**
  * A single non-fatal mapping decision the operator should see: a dropped or
@@ -435,6 +436,99 @@ function handleAllowedTools(
 }
 
 /**
+ * Parse a preserved `metadata.comis` carrier string into a reconcilable bag: a
+ * plain JSON object with no `__proto__` key at any depth (the lift's own scan,
+ * so the two layers cannot drift). Anything else returns `undefined` — the
+ * caller keeps the string VERBATIM so the shipped lift, the authoritative
+ * boundary for a malformed or polluting carrier, refuses it with an error
+ * naming `metadata.comis` rather than this mapper laundering it into a clean
+ * re-serialized bag.
+ */
+function parseReconcilableCarrier(carrier: string): Record<string, unknown> | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(carrier);
+  } catch {
+    return undefined;
+  }
+  if (!isPlainObject(parsed)) return undefined;
+  return hasDangerousKey(parsed) ? undefined : parsed;
+}
+
+/**
+ * Write the final `metadata.comis` carrier: reconcile the relocated-extension
+ * bag with an already-spec-pure carrier preserved off the authored metadata.
+ * The carrier is the canonical spec-pure authorship, so on a same-key conflict
+ * it wins over a relocated top-level field — with a warning naming the exact
+ * losing key, never a silent override. The `comis` namespace merges one level
+ * deep so a foreign-mapped `os`/`requires` and a carrier-authored `skill-key`
+ * both survive. An unreconcilable carrier stays verbatim (see
+ * {@link parseReconcilableCarrier}) and the relocated fields drop with a
+ * warning naming each key. With no preserved carrier, the bag rides alone;
+ * with no bag, the preserved carrier string passes through untouched.
+ */
+function assembleCarrier(
+  extensionBag: Record<string, unknown>,
+  metaMap: Record<string, unknown>,
+  warnings: MapWarning[],
+): void {
+  if (Object.keys(extensionBag).length === 0) return;
+  const carrier = metaMap["comis"];
+  if (typeof carrier !== "string") {
+    // No preserved carrier: the bag IS the carrier (the pre-fix sole behavior).
+    metaMap["comis"] = JSON.stringify(extensionBag);
+    return;
+  }
+  const parsed = parseReconcilableCarrier(carrier);
+  if (parsed === undefined) {
+    for (const key of Object.keys(extensionBag)) {
+      warn(
+        warnings,
+        key,
+        `'${key}' was dropped: the authored metadata.comis carrier is not a reconcilable JSON object to merge it into.`,
+        `Fix the metadata.comis JSON string (a JSON object with no '__proto__' key at any depth); manifest validation refuses the carrier as authored.`,
+      );
+    }
+    return;
+  }
+  // Both present: bag first (lower precedence), carrier keys win on top. Every
+  // key in both sets is a fixed known name — the dangerous-key scan above
+  // guarantees no `__proto__` bracket-copy on the carrier side.
+  const merged: Record<string, unknown> = {};
+  for (const key of Object.keys(extensionBag)) {
+    merged[key] = extensionBag[key];
+  }
+  for (const key of Object.keys(parsed)) {
+    const carrierValue = parsed[key];
+    const bagValue = merged[key];
+    if (key === "comis" && isPlainObject(carrierValue) && isPlainObject(bagValue)) {
+      for (const sub of Object.keys(bagValue)) {
+        if (Object.prototype.hasOwnProperty.call(carrierValue, sub)) {
+          warn(
+            warnings,
+            `comis.${sub}`,
+            `'comis.${sub}' was authored both outside and inside the metadata.comis carrier; the carrier's value was kept.`,
+            `Author 'comis.${sub}' once, inside the metadata.comis carrier — its authoritative spec-pure home.`,
+          );
+        }
+      }
+      merged["comis"] = { ...bagValue, ...carrierValue };
+      continue;
+    }
+    if (Object.prototype.hasOwnProperty.call(merged, key)) {
+      warn(
+        warnings,
+        key,
+        `'${key}' was authored both at the top level and inside the metadata.comis carrier; the carrier's value was kept.`,
+        `Remove the top-level '${key}'; the metadata.comis carrier is its authoritative spec-pure home.`,
+      );
+    }
+    merged[key] = carrierValue;
+  }
+  metaMap["comis"] = JSON.stringify(merged);
+}
+
+/**
  * Map foreign / legacy SKILL.md frontmatter onto the spec-pure carrier.
  *
  * Pure: no I/O, no mutation of the input. Follows the lift's discipline —
@@ -598,11 +692,10 @@ export function mapForeignFrontmatter(rawFrontmatter: Record<string, unknown>): 
       : {};
     extensionBag["comis"] = { ...existingNs, ...comisBag };
   }
-  if (Object.keys(extensionBag).length > 0) {
-    // The platform extension bag rides as a JSON string under metadata.comis; the
-    // shipped lift parses it and merges each known extension key onto the manifest.
-    metaMap["comis"] = JSON.stringify(extensionBag);
-  }
+  // The platform extension bag rides as a JSON string under metadata.comis
+  // (the shipped lift parses it and merges each known extension key onto the
+  // manifest), reconciled with any carrier preserved off the authored metadata.
+  assembleCarrier(extensionBag, metaMap, warnings);
   if (Object.keys(metaMap).length > 0) {
     specPure["metadata"] = metaMap;
   }
