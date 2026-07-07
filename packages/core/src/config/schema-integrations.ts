@@ -80,8 +80,17 @@ const inferTransport = (input: unknown, ctx: z.RefinementCtx): unknown => {
 export const McpServerEntrySchema = z.preprocess(
   inferTransport,
   z.strictObject({
-    /** Unique name for this MCP server */
-    name: z.string().min(1).regex(/^[a-zA-Z0-9_-]+$/, "MCP server name must be alphanumeric with hyphens/underscores only"),
+    /**
+     * Unique name for this MCP server. Consumed as a dynamic object key
+     * downstream (connection registries, the bundle-ownership ledger), so the
+     * `__proto__` own-key pollution vector is refused here — the one schema
+     * every source (config.yaml, skill manifests) funnels through.
+     */
+    name: z
+      .string()
+      .min(1)
+      .regex(/^[a-zA-Z0-9_-]+$/, "MCP server name must be alphanumeric with hyphens/underscores only")
+      .refine((n) => n !== "__proto__", "MCP server name must not be the prototype-polluting '__proto__' key"),
     /** Transport type: "stdio" for local process, "sse" for legacy SSE servers, "http" for Streamable HTTP */
     transport: z.enum(["stdio", "sse", "http"]),
     /** Command to execute for stdio transport */
