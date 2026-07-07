@@ -57,6 +57,8 @@ const KNOWN_PROVIDER_PATTERNS: ReadonlyArray<{ pattern: RegExp; provider: string
   { pattern: /^SLACK_SIGNING_SECRET$/, provider: "slack" },
   { pattern: /^MSTEAMS_APP_PASSWORD$/, provider: "msteams" },
   { pattern: /^MATRIX_ACCESS_TOKEN$/, provider: "matrix" },
+  { pattern: /^MATRIX_PASSWORD$/, provider: "matrix" },
+  { pattern: /^MATRIX_RECOVERY_KEY$/, provider: "matrix" },
   { pattern: /^GROQ_API_KEY$/, provider: "groq" },
   { pattern: /^DEEPGRAM_API_KEY$/, provider: "deepgram" },
   { pattern: /^ELEVENLABS_API_KEY$/, provider: "elevenlabs" },
