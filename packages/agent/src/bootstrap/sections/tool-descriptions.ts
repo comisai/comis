@@ -471,6 +471,8 @@ Single mcp.servers entry shape: {name, transport, command?, args?, url?, env?, c
 Enable, disable, and configure actions persist to config.yaml and trigger daemon restart. Current execution terminates after the tool returns. Batch changes together and warn the user before proceeding.`,
 
   mcp_manage: `Use mcp_manage as the canonical path for MCP server connect, disconnect, and status. A Validation failed result means fix the arguments — not abandon the tool or switch to gateway.
+## STDIO servers that need credentials/env
+A stdio server that reads credentials or config from the environment (e.g. SERVICE_USERNAME/SERVICE_PASSWORD) takes them via the connect action's env field: mcp_manage(action:"connect", server_name, command:"npx", args:[...], env:{"SERVICE_PASSWORD":"\${SERVICE_PASSWORD}", ...}). Reference stored secrets as \${VAR_NAME} (store them first with gateway env_set / your secret tool) so the plaintext never enters config — the daemon resolves them at spawn. If connect returns "Connection closed" for a stdio server, the most common cause is a MISSING or wrong env — check the server's required env vars and pass them via env, do NOT switch to gateway.
 ## OAuth-required MCP servers
 When mcp_manage(action:"connect", url:..., transport:"http") returns an Unauthorized error or a structured needs_oauth_login action hint, the server requires OAuth. Retry as: mcp_manage(action:"connect", auth:"oauth", url:..., transport:"http"). If the daemon then responds with a needs_oauth_login action, invoke mcp_login({server_name}) to start the PKCE flow. mcp_login returns a verification URL — deliver it to the user via the message tool BEFORE starting any background polling. Do NOT curl device-code endpoints. Do NOT write tokens to the workspace. Do NOT call gateway(action:"patch") against integrations.mcp.servers. For RFC 8628 device-flow servers (when mcp_login returns status:"device_code_pending"), deliver BOTH the verificationUri AND the userCode to the user via the message tool in the form \`Verification URL: <verificationUri>\\nCode: <userCode>\` BEFORE waiting for the poll to complete. Do NOT continue with other tool calls until the operator has had time to authorize at the verification URL.`,
 
@@ -649,8 +651,8 @@ After any restart, the system will automatically reconnect to the last active se
 When ANY tool action returns \`requiresConfirmation: true\` (gateway, pipeline, cron, message, discord_action, telegram_action, slack_action, whatsapp_action, subagents):
 1. Read the \`hint\` field in the response for specific guidance.
 2. Present the pending action to the user and ask them to confirm.
-3. After the user approves, call the SAME tool and action again with \`_confirmed: true\` added to the parameters.
-4. Do NOT claim the action succeeded until you receive a success response from the tool.
+3. After the user approves, call the SAME tool and action again with \`_confirmed: true\` added to the parameters. The re-call with \`_confirmed: true\` IS the confirmation — a chat "yes"/"I confirm" (even given pre-emptively in the same message) does NOT perform the action by itself.
+4. Do NOT claim the action succeeded until you receive a SUCCESS response from that re-call. A \`requiresConfirmation: true\` response means NOTHING has happened yet — reporting "done" then is a false success.
 If the user declines, inform them the action was not performed.`,
 
   // Coding & Execution Fallback -- triggered by exec

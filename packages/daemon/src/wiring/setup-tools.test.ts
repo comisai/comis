@@ -266,7 +266,7 @@ vi.mock("@comis/core", () => ({
       capabilities: ["orch:spawn", "orch:graph", "orch:cron", "orch:skill", "orch:read", "orch:web", "orch:analyze", "orch:write"],
       resolvedCapabilities: [],
       mode: "accept-reversible",
-      aggregateBudgetUsd: 2.0,
+      aggregateBudgetUsd: 200,
       maxConcurrentSelfAgents: 4,
       maxSelfSpawnRatePerMin: 30,
       cronSelfMax: 8,
@@ -300,9 +300,12 @@ vi.mock("@comis/agent", () => ({
   // value itself is asserted in setup-context-tools.test.ts against the real resolver.
   resolveModelProfile: () => ({ capabilityClass: "small" }),
   // The orchestrate wiring resolves an effective capability class via
-  // capabilityClassFromProvider (the one-shot auto-repair class-gate). A minimal
-  // stub keeps tool assembly running; the resolver behavior itself is covered in
-  // setup-tools-orchestrate-repair.test.ts.
+  // resolveEffectiveCapabilityClass (the one-shot auto-repair class-gate). A
+  // minimal stub keeps tool assembly running; the resolver's pin → provider-level
+  // → "small" precedence is asserted in setup-tools-orchestrate-repair.test.ts.
+  resolveEffectiveCapabilityClass: () => "small",
+  // Still a live @comis/agent export (rpc-dispatch consumes it) — keep it mocked
+  // for any transitively-loaded consumer.
   capabilityClassFromProvider: () => "small",
 }));
 

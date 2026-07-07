@@ -15,16 +15,27 @@
 //   node logscan.mjs --kind resource --last 10
 //   node logscan.mjs --method graph.execute --raw   # full matched lines
 //
-// Defaults: --log /home/comis/comis-m1.log · --fields level,module,msg,errorKind,hint.
-// `err` projects as err.message. Non-JSON lines are skipped. Run as root or comis on the VPS.
-import { readFileSync } from 'node:fs';
+// Defaults: --log = ALL of <dataDir>/logs/daemon*.log (the structured Pino logs — the authoritative
+// record under the systemd install; the old supervisor capture is gone) · --fields level,module,msg,
+// errorKind,hint. `err` projects as err.message. Non-JSON lines are skipped. Run as root or comis.
+import { readFileSync, readdirSync } from 'node:fs';
+import { rig } from './_rig.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (name, def) => { const i = argv.indexOf('--' + name); return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : def; };
 const flag = (name) => argv.includes('--' + name);
 const csv = (v) => (v ? String(v).split(',').map((s) => s.trim()).filter(Boolean) : []);
 
-const logPath = opt('log', '/home/comis/comis-m1.log');
+const defaultLogs = () => {
+  try {
+    const dir = `${rig.dataDir}/logs`;
+    const names = readdirSync(dir).filter((n) => n.startsWith('daemon') && n.endsWith('.log')).sort();
+    return names.map((n) => `${dir}/${n}`);
+  } catch { return []; }
+};
+const logPathOpt = opt('log');
+const logPaths = logPathOpt ? [logPathOpt] : defaultLogs();
+if (!logPaths.length) { console.error(`logscan: no daemon*.log under ${rig.dataDir}/logs — pass --log PATH`); process.exit(2); }
 const levels = new Set(csv(opt('level')).map(Number));
 const kinds = new Set(csv(opt('kind')));
 const msgSub = opt('msg');
@@ -51,9 +62,12 @@ const matches = (j) => {
   return true;
 };
 
-let lines;
-try { lines = readFileSync(logPath, 'utf8').split('\n'); }
-catch (e) { console.error('logscan: cannot read ' + logPath + ' — ' + (e?.message || e)); process.exit(1); }
+// Concatenate in name order (daemon.1.log, daemon.2.log, … = the rotation order).
+let lines = [];
+for (const p of logPaths) {
+  try { lines = lines.concat(readFileSync(p, 'utf8').split('\n')); }
+  catch (e) { console.error('logscan: cannot read ' + p + ' — ' + (e?.message || e)); process.exit(1); }
+}
 
 let hits = [];
 for (const line of lines) {
@@ -80,4 +94,4 @@ if (raw) {
     console.log(JSON.stringify(proj));
   }
 }
-console.error(`logscan: ${hits.length} match(es) in ${logPath}`);
+console.error(`logscan: ${hits.length} match(es) in ${logPaths.join(', ')}`);

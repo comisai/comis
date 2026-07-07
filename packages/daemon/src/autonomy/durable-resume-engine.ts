@@ -388,6 +388,22 @@ export interface DurableResumeEngine {
 
 const DEFAULT_BUDGET_REF = "durable-resume";
 
+/**
+ * Bound how many times the watchdog re-anchors a run that makes NO progress.
+ * The orchestrate resume arm is SURFACE-ONLY (re-anchor the lease, no re-spawn on boot),
+ * so a run whose process is gone (killed by a restart) is re-detected as lapsed and
+ * re-anchored on EVERY watchdog tick — forever — because a surface-only re-anchor never
+ * advances the heartbeat and the row never reaches a terminal state. That is a real (LOW,
+ * resource-light) lifecycle defect: an unbounded re-anchor loop + a permanent "running"
+ * ghost row. We cap it: after this many consecutive re-anchors with an UNCHANGED heartbeat
+ * (no progress), the run is abandoned → orphaned (durable:orphaned). A run that DOES advance
+ * its heartbeat (a genuinely live run that checkpoints) resets the counter, so a healthy long
+ * run is never false-orphaned; a live no-checkpoint run is bounded by its own orchestrate
+ * timeoutMs. The count is in-memory (resets on daemon restart — boot re-anchors once, then the
+ * watchdog counts), keyed by rootRunId+heartbeat so progress resets it.
+ */
+const MAX_REANCHOR_ATTEMPTS = 3;
+
 export function createDurableResumeEngine(deps: DurableResumeEngineDeps): DurableResumeEngine {
   const {
     durableRuns,
@@ -403,6 +419,10 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
     eventBus,
     reclaimOrchestrateRun,
   } = deps;
+
+  // Re-anchor ledger: rootRunId → { the heartbeat we last saw, how many consecutive
+  // no-progress re-anchors at that heartbeat }. A changed heartbeat (progress) resets count.
+  const reanchorLedger = new Map<string, { heartbeat: number; count: number }>();
 
   /** Orphan a run: markOrphaned + NotifyFn + eventBus + INFO (never silent). */
   async function orphan(rootRunId: string, reason: string, hint: string): Promise<void> {
@@ -438,6 +458,13 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
         return err(backlogResult.error);
       }
       const backlog = backlogResult.value;
+
+      // Prune re-anchor-ledger entries for runs no longer in the backlog (completed /
+      // orphaned / revoked ⇒ off listResumable) so the in-memory map can't slowly grow.
+      const backlogRoots = new Set(backlog.map((c) => c.rootRunId));
+      for (const key of reanchorLedger.keys()) {
+        if (!backlogRoots.has(key)) reanchorLedger.delete(key);
+      }
 
       let resumed = 0;
       let orphaned = 0;
@@ -496,6 +523,35 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
           continue;
         }
         const record = parsed.value;
+
+        // Bound no-progress re-anchors. A surface-only re-anchor never advances the
+        // heartbeat, so a run whose process is gone (killed by a restart, never explicitly
+        // resumed) would otherwise be re-anchored on EVERY watchdog tick forever. Count
+        // consecutive re-anchors at an UNCHANGED heartbeat; once it exceeds the cap, abandon the
+        // run → orphan it (never re-anchor again). A heartbeat change (progress) resets the
+        // counter, so a genuinely live run that checkpoints is never false-orphaned.
+        //
+        // The cap reaps ONLY a run that has PROGRESSED past the spawn boundary
+        // (stepIndex >= 0 — it allocated at least one outward step) and then stalled. A
+        // NEVER-SENT run (stepIndex === -1) is the canonical fresh-resumable checkpoint —
+        // nothing sent yet — and MUST survive repeated boot-sweep re-anchors, never be
+        // false-orphaned (the durable-resume-e2e "never-sent RESUMES, not orphaned" gate).
+        const seen = reanchorLedger.get(rootRunId);
+        const attempts = seen !== undefined && seen.heartbeat === record.lastHeartbeatAt ? seen.count + 1 : 1;
+        reanchorLedger.set(rootRunId, { heartbeat: record.lastHeartbeatAt, count: attempts });
+        if (record.stepIndex >= 0 && attempts > MAX_REANCHOR_ATTEMPTS) {
+          await orphan(
+            rootRunId,
+            `not resumable: exceeded ${MAX_REANCHOR_ATTEMPTS} no-progress re-anchor attempts`,
+            "the run's heartbeat never advanced across repeated re-anchors — its process is gone and it was never explicitly resumed; re-launch it if still needed",
+          );
+          orphaned++;
+          reanchorLedger.delete(rootRunId);
+          // Reclaim the dead resumable orchestrate run's workspace (RESUME-04), mirroring the
+          // resume-failure orphan path below (a non-orchestrate row is a no-op).
+          if (reclaimOrchestrateRun) await reclaimOrchestrateRun(record);
+          continue;
+        }
 
         // Reconcile this run's crashed-mid-send rows BEFORE resuming, so a
         // mid-send row is resolved (acked/replayed/parked) before the run advances.

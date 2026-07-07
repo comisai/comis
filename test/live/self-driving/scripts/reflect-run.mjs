@@ -12,19 +12,19 @@
 //   node /root/reflect-run.mjs "Memory lifecycle"    # the forget sweep
 //   node /root/reflect-run.mjs Reflection 180 mldag  # explicit wait + non-default agent (TARGET-01)
 //
-// Env: COMIS_CONFIG_PATHS + COMIS_GATEWAY_TOKEN (the RPC, like revoke.mjs); DATA (the data dir whose
-// logs/ it polls; default /home/comis/.comis). Run as root (reads the comis-owned log fine) or comis.
-// Adjust the import path if the daemon src tree isn't at /root/comis-src.
+// Env: COMIS_CONFIG_PATHS + COMIS_GATEWAY_TOKEN default via _rig.mjs (rig env; explicit env wins);
+// DATA (the data dir whose logs/ it polls). Run as root (reads the comis-owned log fine) or comis.
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-// COMIS_SRC overrides the daemon src root (VPS default /root/comis-src; set to a local checkout for a
-// LOCAL daemon run). Dynamic import so the path is env-resolvable.
-const { withClient } = await import((process.env.COMIS_SRC || "/root/comis-src") + "/packages/cli/dist/client/rpc-client.js");
+import { ensureRpcEnv, importCli, rig } from "./_rig.mjs";
+
+ensureRpcEnv();
+const { withClient } = await importCli("client/rpc-client.js");
 
 const [, , jobName = "Reflection", maxWaitArg, agentId] = process.argv;
 const maxWaitS = Number.parseInt(maxWaitArg ?? "120", 10);
 if (!Number.isFinite(maxWaitS) || maxWaitS <= 0) { console.log("ERROR:maxWaitS must be a positive integer (arg 2)"); process.exit(1); }
-const DATA = process.env.DATA || "/home/comis/.comis";
+const DATA = rig.dataDir;
 const logDir = join(DATA, "logs");
 
 // The EXACT completion marker per cron — NEVER the fire-and-forget "Job dispatched" dispatch line.

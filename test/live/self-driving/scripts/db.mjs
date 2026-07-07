@@ -8,24 +8,13 @@
 //   node db.mjs pick <table> <c1,c2,..> [n]  selected columns, last n rows
 //   node db.mjs pickw <t> <c1,..> <col> <val> [n]  filter col=val (val BOUND as a param — no quote-hell)
 //   node db.mjs sql <raw...>                 raw read-only SQL (argv joined) — use only when canned won't do
-import { createRequire } from 'node:module';
-// COMIS_SRC overrides the better-sqlite3 resolution root (VPS default /root/comis-src; set to a local
-// checkout for a LOCAL daemon run). COMIS_DB_PATH / COMIS_DATA_DIR target a NON-default data dir (a local
-// isolated daemon); VPS default stays ~/.comis/memory.db.
-const require = createRequire((process.env.COMIS_SRC || '/root/comis-src') + '/packages/daemon/package.json');
-const Database = require('better-sqlite3');
-// ROOT-HOME GUARD: the daemon runs as the
-// `comis` user, so its data dir is /home/comis/.comis. If this helper is invoked as ROOT (HOME=/root —
-// the common `ssh root@vps 'node db.mjs …'` mistake) WITHOUT an explicit override, HOME resolution would
-// point at /root/.comis (which throws fileMustExist here, and SILENTLY returns 0 rows in the obs assembler
-// — the "explain blind" false-negative that cost a cycle). Resolve to the comis data dir + warn instead.
-const resolvedHome =
-  typeof process.getuid === 'function' && process.getuid() === 0 ? '/home/comis' : process.env.HOME || '/home/comis';
-if (typeof process.getuid === 'function' && process.getuid() === 0 && !process.env.COMIS_DATA_DIR && !process.env.COMIS_DB_PATH) {
-  console.error('[db.mjs] running as root → using /home/comis/.comis (the daemon\'s comis-user data dir, NOT /root/.comis); set COMIS_DATA_DIR to override');
-}
-const dbpath = process.env.COMIS_DB_PATH
-  || (process.env.COMIS_DATA_DIR ? process.env.COMIS_DATA_DIR + '/memory.db' : resolvedHome + '/.comis/memory.db');
+// Code root (better-sqlite3 resolution) + data dir come from _rig.mjs: installed comisai package OR
+// source checkout, COMIS_SRC/COMIS_DATA_DIR/COMIS_DB_PATH overrides honored. rig.dataDir derives from
+// the SERVICE USER's home (never process HOME) — that kills the old root-HOME trap where an
+// `ssh root@vps 'node db.mjs …'` resolved /root/.comis and silently read 0 rows ("explain blind").
+import { rig, requireCodeRoot } from './_rig.mjs';
+const Database = requireCodeRoot('better-sqlite3');
+const dbpath = process.env.COMIS_DB_PATH || rig.dataDir + '/memory.db';
 const [cmd, a, b, c, d, e] = process.argv.slice(2);
 const ident = (s) => { if (!/^[A-Za-z0-9_,]+$/.test(s || '')) throw new Error('bad identifier: ' + s); return s; };
 try {

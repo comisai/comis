@@ -1,6 +1,6 @@
 {
   "name": "comisai",
-  "version": "1.0.46",
+  "version": "1.0.47",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Security-first AI agent platform — connects AI agents to Discord, Telegram, Slack, WhatsApp, and more",
@@ -225,7 +225,7 @@
     "json-rpc-2.0": "1.7.1",
     "linkedom": "0.18.12",
     "lru-cache": "11.5.1",
-    "mailparser": "3.9.11",
+    "mailparser": "3.9.12",
     "matrix-js-sdk": "41.8.0",
     "music-metadata": "11.12.3",
     "node-llama-cpp": "3.18.1",

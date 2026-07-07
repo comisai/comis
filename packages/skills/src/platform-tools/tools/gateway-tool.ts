@@ -128,6 +128,22 @@ const GatewayToolParams = Type.Object({
   ),
 });
 
+/**
+ * The hint returned with a `requiresConfirmation` gate result. Leads with an explicit
+ * "NOT performed — do NOT report success" so the agent cannot claim a gated action
+ * succeeded on a pending confirmation: the action runs ONLY when the agent RE-CALLS the
+ * same action with `_confirmed: true` after the operator approves — a chat "yes"/"I confirm"
+ * is not itself the confirmation. Fixes the foot-gun where an agent, seeing an inline
+ * pre-confirmation, replied "done" without re-calling (nothing was actually written).
+ */
+export function confirmationRequiredHint(action: string): string {
+  return (
+    `NOT performed — "${action}" has NOT run and nothing has changed. Do NOT report success. ` +
+    `Present it to the user; ONLY after they approve, re-call the SAME action with ` +
+    `_confirmed: true. A chat "yes"/"I confirm" alone does not perform it.`
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -213,7 +229,7 @@ export function createGatewayTool(
                 return {
                   requiresConfirmation: true,
                   actionType: gate.actionType,
-                  hint: "Ask the user to confirm this config patch, then call again with _confirmed: true.",
+                  hint: confirmationRequiredHint("config patch"),
                 };
               }
             }
@@ -227,7 +243,7 @@ export function createGatewayTool(
               return {
                 requiresConfirmation: true,
                 actionType: gate.actionType,
-                hint: "Ask the user to confirm this restart, then call again with _confirmed: true.",
+                hint: confirmationRequiredHint("gateway restart"),
               };
             }
             // Inside Docker the restart relies entirely on the container's
@@ -289,7 +305,7 @@ export function createGatewayTool(
               return {
                 requiresConfirmation: true,
                 actionType: gate.actionType,
-                hint: "Ask the user to confirm this config apply, then call again with _confirmed: true.",
+                hint: confirmationRequiredHint("config apply"),
               };
             }
             const value = p.value;
@@ -302,7 +318,7 @@ export function createGatewayTool(
               return {
                 requiresConfirmation: true,
                 actionType: gate.actionType,
-                hint: "Ask the user to confirm this rollback, then call again with _confirmed: true.",
+                hint: confirmationRequiredHint("config rollback"),
               };
             }
             const sha = readStringParam(p, "sha");
@@ -374,7 +390,7 @@ export function createGatewayTool(
               return {
                 requiresConfirmation: true,
                 actionType: gate.actionType,
-                hint: `Confirm setting secret "${envKey}". Call again with _confirmed: true.`,
+                hint: confirmationRequiredHint(`setting secret "${envKey}"`),
               };
             }
             const result = await rpcCall("env.set", { key: envKey, value: envValue, _trustLevel });

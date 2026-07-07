@@ -1474,6 +1474,24 @@ resolve_comisai_install_dir() {
     return 1
 }
 
+# comisai_cli_loads
+# -----------------
+# Behavioral canary for the bundled-deps prune: actually load the installed
+# CLI entry (the `comis` bin target). The sentinel checks in
+# repair_comisai_bundled_deps catch the two KNOWN prune shapes cheaply; this
+# catches every shape by construction — an upgrade over an existing prefix
+# pruned @earendil-works/pi-tui (a transitive dep of pi-coding-agent), which
+# left both sentinels green while `comis --version` died with
+# ERR_MODULE_NOT_FOUND. Returns 0 when the CLI loads (or when there is no
+# entry to probe — an unexpected layout must not force a reify).
+comisai_cli_loads() {
+    local comisai_dir="$1"
+    if [[ ! -f "${comisai_dir}/dist/cli-entry.js" ]]; then
+        return 0
+    fi
+    ( cd "$comisai_dir" && node dist/cli-entry.js --version >/dev/null 2>&1 )
+}
+
 repair_comisai_bundled_deps() {
     local comisai_dir=""
     comisai_dir="$(resolve_comisai_install_dir || true)"
@@ -1505,6 +1523,11 @@ repair_comisai_bundled_deps() {
           && ! -d "${pca_dir}/node_modules/glob" ]]; then
         needs_repair=true
     fi
+    # Behavioral canary — catches the prune shapes the sentinels don't (the
+    # pi-tui class: sentinels clean, CLI load-broken).
+    if [[ "$needs_repair" != "true" ]] && ! comisai_cli_loads "$comisai_dir"; then
+        needs_repair=true
+    fi
     if [[ "$needs_repair" != "true" ]]; then
         return 0
     fi
@@ -1518,6 +1541,9 @@ repair_comisai_bundled_deps() {
         if [[ -d "$pca_dir" \
               && ! -d "${comisai_dir}/node_modules/glob" \
               && ! -d "${pca_dir}/node_modules/glob" ]]; then
+            repair_ok=false
+        fi
+        if ! comisai_cli_loads "$comisai_dir"; then
             repair_ok=false
         fi
         if [[ "$repair_ok" == "true" ]]; then
@@ -3792,7 +3818,7 @@ ProtectSystem=strict
 ProtectHome=read-only
 ${COMIS_PRIVATE_TMP_LINE}
 # ReadWritePaths punches through ProtectHome=read-only. It grants the WHOLE
-# service home read-write — the terminal driver's `filesystem: home` scope runs driven CLIs
+# service home read-write — the terminal driver's "filesystem: home" scope runs driven CLIs
 # (claude, codex, …) that keep state in their own home dirs (~/.claude, ~/.codex, ~/.local),
 # and the bwrap jail binds the DAEMON's view of ~/, so a read-only home read-onlys exactly
 # those dirs and the CLI exits at launch (can't write its state). The bwrap jail (uid/network

@@ -36,8 +36,14 @@
  */
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 
-import { safePath, type ComisLogger, type DurableRunRecord } from "@comis/core";
-import { ok, err, type Result } from "@comis/shared";
+import {
+  safePath,
+  systemSetInterval,
+  systemClearInterval,
+  type ComisLogger,
+  type DurableRunRecord,
+} from "@comis/core";
+import { ok, err, suppressError, type Result } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Injected seams.
@@ -62,6 +68,121 @@ export interface OrchestrateDurableRuns {
    * concrete store always provides it, and the runner skips it on a resumable timeout).
    */
   markCompleted?(rootRunId: string): Promise<Result<void, Error>>;
+  /**
+   * Advance the run's `lastHeartbeatAt` while its process is alive — the keep-alive
+   * the durable watchdog's whole premise depends on ("a long-running run stamps its
+   * heartbeat; a crashed process stops"). A structural subset of the daemon's
+   * `DurableRunPort.touchHeartbeat`; optional so a minimal store stub compiles (the
+   * concrete store always provides it). Absent ⇒ no keep-alive (a live no-checkpoint
+   * run degrades to the prior at-risk behavior, never worse).
+   */
+  touchHeartbeat?(rootRunId: string, atMs: number): Promise<Result<void, Error>>;
+}
+
+/**
+ * A scheduler seam for {@link startDurableKeepAlive}: schedule `cb` every `ms` and
+ * return a `stop()` that cancels it. The production default wraps an unref'd
+ * `setInterval`; tests inject a fake that captures the callback.
+ */
+export type KeepAliveScheduler = (cb: () => void, ms: number) => () => void;
+
+/**
+ * Default durable heartbeat keep-alive interval (ms). Must stay well under the
+ * watchdog's stale-heartbeat threshold (default 120s) so a run at the timeout
+ * ceiling keeps a fresh heartbeat and is never reaped as a crash. Mirrors the
+ * sub-agent runner's 30s.
+ */
+export const DEFAULT_DURABLE_KEEPALIVE_MS = 30_000;
+
+/** The production keep-alive scheduler — an unref'd interval so it never pins the event loop. */
+export const defaultKeepAliveScheduler: KeepAliveScheduler = (cb, ms) => {
+  const handle = systemSetInterval(cb, ms);
+  handle.unref();
+  return () => systemClearInterval(handle);
+};
+
+/**
+ * Start a best-effort keep-alive that stamps the durable row's `lastHeartbeatAt`
+ * on every tick while the flat orchestrate child is alive, and return a `stop()`
+ * for the caller's `finally`.
+ *
+ * WHY: the flat runner registers a `running` durable row at start but only advances
+ * its heartbeat on an explicit `checkpoint()` or the timeout re-affirm. Every OTHER
+ * long-running durable runner (the sub-agent runner) stamps a periodic keep-alive, so
+ * the watchdog can treat "lapsed heartbeat" as "process gone". Without one here, a
+ * live run that runs longer than a few stale-thresholds without checkpointing looks
+ * dead: the no-progress re-anchor cap orphans it and reclaims its workspace mid-run.
+ * This restores that contract for the flat runner.
+ *
+ * Uses a FRESH `now()` per tick (not the registration timestamp). No-op when the store
+ * can't `touchHeartbeat` (never schedules). Errors are swallowed (best-effort — a failed
+ * touch never disrupts the run; the watchdog reaps only if it persists past the cap).
+ */
+export function startDurableKeepAlive(input: {
+  runs: OrchestrateDurableRuns;
+  rootRunId: string;
+  now: () => number;
+  keepAliveMs: number;
+  scheduler?: KeepAliveScheduler;
+  logger?: ComisLogger;
+}): () => void {
+  const { runs, rootRunId, now, keepAliveMs, logger } = input;
+  const touch = runs.touchHeartbeat?.bind(runs);
+  if (!touch) return () => {};
+  const scheduler = input.scheduler ?? defaultKeepAliveScheduler;
+  return scheduler(() => {
+    // Best-effort: a failed/throwing touch never disrupts the run; the watchdog only
+    // reaps if the lapse persists past the cap. suppressError replaces an empty .catch.
+    suppressError(
+      touch(rootRunId, now()).then((r) => {
+        if (!r.ok) {
+          logger?.debug(
+            {
+              rootRunId,
+              err: r.error,
+              errorKind: "internal" as const,
+              hint: "durable keep-alive touch failed; the watchdog may orphan-sweep this run if it persists",
+            },
+            "orchestrate durable keep-alive: touch failed",
+          );
+        }
+      }),
+      "durable keep-alive touch (best-effort)",
+    );
+  }, keepAliveMs);
+}
+
+/**
+ * Run `fn` with a durable heartbeat keep-alive active for its whole duration, so a
+ * long LIVE flat orchestrate run is never mistaken for a crash and reaped by the
+ * watchdog's no-progress re-anchor cap. Starts the keep-alive (via
+ * {@link startDurableKeepAlive}) before awaiting `fn`, stops it in a `finally`, and
+ * returns `fn`'s result. A no-op wrapper when `runs` is undefined (durability off).
+ * Keeps the start/stop lifecycle out of the caller (one call site) — the runner just
+ * wraps its child-execution await.
+ */
+export async function withDurableKeepAlive<T>(
+  runs: OrchestrateDurableRuns | undefined,
+  rootRunId: string,
+  opts: { now: () => number; logger?: ComisLogger; keepAliveMs?: number; scheduler?: KeepAliveScheduler },
+  fn: () => Promise<T>,
+): Promise<T> {
+  const stop =
+    runs === undefined
+      ? () => {}
+      : startDurableKeepAlive({
+          runs,
+          rootRunId,
+          now: opts.now,
+          keepAliveMs: opts.keepAliveMs ?? DEFAULT_DURABLE_KEEPALIVE_MS,
+          ...(opts.scheduler ? { scheduler: opts.scheduler } : {}),
+          ...(opts.logger ? { logger: opts.logger } : {}),
+        });
+  try {
+    return await fn();
+  } finally {
+    stop();
+  }
 }
 
 /**
@@ -89,6 +210,14 @@ export interface ResumeSpec {
   readonly scriptBytes: string;
   /** The interpreter language, derived from the scriptRef extension. */
   readonly language: "ts" | "js" | "py";
+  /**
+   * The resumed run's last checkpointRef, carried onto the NEW run's durable row so
+   * the replayed script's `comis_tools.resume()` returns the resumed run's checkpoint
+   * (skip-completed-work), not an empty new-root checkpoint. `undefined` when the
+   * resumed run never checkpointed. The blob is workspace-scoped (same agent) so the
+   * ref resolves in the new run.
+   */
+  readonly checkpointRef?: string;
 }
 
 /** Inputs shared by the row builders (the content-free durable pointers + clock). */
@@ -179,7 +308,7 @@ export async function finalizeCompletedRun(
   const done = await runs.markCompleted?.(input.rootRunId);
   if (done !== undefined && !done.ok) {
     logger?.warn(
-      { runId: input.runId, rootRunId: input.rootRunId, err: done.error, errorKind: "internal" as const, hint: "the durable row could not be marked completed — the watchdog orphan-sweep eventually reclaims the stale 'running' row (no live impact)" },
+      { runId: input.runId, rootRunId: input.rootRunId, err: done.error, errorKind: "internal" as const, hint: "the durable row could not be marked completed — the watchdog re-anchor cap eventually orphans the stale 'running' row after repeated no-progress attempts (no live impact)" },
       "orchestrate durable markCompleted failed (non-fatal)",
     );
   }
@@ -212,6 +341,12 @@ export interface ResolvedScriptSource {
   readonly language: "ts" | "js" | "py";
   /** The workspace-relative script path (`<runId>.<language>`, or the pinned scriptRef). */
   readonly scriptName: string;
+  /**
+   * On a RESUME (`resumeRunId`), the resumed run's last checkpointRef — the runner seeds it
+   * onto the new run's durable row so the replayed script's `resume()` returns the resumed
+   * run's checkpoint. `undefined` for a fresh run or a resumed run that never checkpointed.
+   */
+  readonly checkpointRef?: string;
 }
 
 /**
@@ -247,7 +382,12 @@ export async function resolveScriptSource(
   if (!loaded.ok) {
     return err({ code: "not_found", message: "The orchestrate run to resume could not be loaded.", hint: loaded.error });
   }
-  return ok({ script: loaded.value.scriptBytes, language: loaded.value.language, scriptName: loaded.value.scriptRef });
+  return ok({
+    script: loaded.value.scriptBytes,
+    language: loaded.value.language,
+    scriptName: loaded.value.scriptRef,
+    checkpointRef: loaded.value.checkpointRef,
+  });
 }
 
 /**
@@ -285,7 +425,7 @@ export async function loadResumeSpec(
   } catch {
     return err("the pinned script could not be read");
   }
-  return ok({ scriptRef, scriptBytes, language });
+  return ok({ scriptRef, scriptBytes, language, checkpointRef: row.checkpointRef ?? undefined });
 }
 
 /** Derive the interpreter language from a `<runId>.<language>` scriptRef extension. */

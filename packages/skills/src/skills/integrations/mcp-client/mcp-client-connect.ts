@@ -56,6 +56,10 @@ import {
   prepareOAuthProvider,
 } from "./mcp-client-oauth-connect.js";
 export { isNeedsOAuthLoginError } from "./mcp-client-oauth-connect.js";
+// Connect-FAILURE classification + recording lives in a sibling leaf to keep this
+// file under the 500-line per-subdirectory cap (the OAuth-seam split precedent).
+import { recordConnectFailure } from "./mcp-client-connect-classify.js";
+export { classifyConnectFailure } from "./mcp-client-connect-classify.js";
 
 // ---------------------------------------------------------------------------
 // connect (state-first)
@@ -174,18 +178,27 @@ export async function connectServer(
     return err(discoveryError instanceof Error ? discoveryError : new Error(message));
   }
 
+  // Clear stderr captured by any PRIOR attempt so a failure below reflects only
+  // THIS spawn; stamp a start time for the connected-event durationMs.
+  state.lastStderr.delete(config.name);
+  const connectStartedMs = systemNowMs();
+
   try {
     // Create transport (logger threaded for prlimit-skip WARN).
     // For an auth:"oauth" server, effectiveConfig now carries the oauthProvider.
     const transport = createTransport(effectiveConfig, logger);
 
-    // Wire stderr capture for stdio transports
-    wireStderrCapture(deps, effectiveConfig, transport);
+    // Wire stderr capture for stdio transports (writes the running buffer onto
+    // state.lastStderr so the catch below can fold it into a failure).
+    wireStderrCapture(state, deps, effectiveConfig, transport);
 
     // Log transport type at INFO
     if (config.transport === "stdio") {
       logger.info(
-        { serverName: config.name, command: config.command, args: config.args, cwd: config.cwd },
+        // envKeys (names only — values are resolved secrets) so an env-wiring bug
+        // (a credential the child needs but never received) is visible at the
+        // spawn line, not inferred from a downstream "Connection closed".
+        { serverName: config.name, command: config.command, args: config.args, cwd: config.cwd, envKeys: config.env ? Object.keys(config.env) : undefined },
         "Spawning MCP server process",
       );
     } else if (config.transport === "sse") {
@@ -291,9 +304,18 @@ export async function connectServer(
 
     logger.info(`MCP server "${config.name}" connected: ${tools.length} tool(s) discovered`);
 
+    // Initial-connect success → trajectory (symmetric with mcp:server:reconnected).
+    deps.eventBus?.emit("mcp:server:connected", {
+      serverName: config.name,
+      transport: config.transport,
+      toolCount: tools.length,
+      durationMs: systemNowMs() - connectStartedMs,
+      timestamp: systemNowMs(),
+    });
+
     return ok(connection);
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
+    const rawMessage = error instanceof Error ? error.message : String(error);
 
     // The SDK throws UnauthorizedError from client.connect when an auth:"oauth"
     // server has no valid token (or refresh failed). For first-install (no
@@ -309,30 +331,38 @@ export async function connectServer(
       error instanceof UnauthorizedError ||
       (error instanceof StreamableHTTPError && (error as { code?: unknown }).code === 401);
 
-    // Store error state
-    state.connections.set(config.name, {
-      name: config.name,
-      client: null as unknown as Client,
-      status: "error",
-      tools: [],
-      lastHealthCheck: systemNowMs(),
-      reconnectAttempt: 0,
-      maxReconnectAttempts: state.options.reconnectOpts.maxAttempts,
-      error: isUnauthorized ? `${NEEDS_OAUTH_LOGIN}: ${message}` : message,
-      generation: state.generations.get(config.name) ?? 0,
-    });
-
     if (isUnauthorized) {
+      state.connections.set(config.name, {
+        name: config.name,
+        client: null as unknown as Client,
+        status: "error",
+        tools: [],
+        lastHealthCheck: systemNowMs(),
+        reconnectAttempt: 0,
+        maxReconnectAttempts: state.options.reconnectOpts.maxAttempts,
+        error: `${NEEDS_OAUTH_LOGIN}: ${rawMessage}`,
+        generation: state.generations.get(config.name) ?? 0,
+      });
       logger.warn(
         { serverName: config.name, hint: `OAuth login required — run \`comis mcp login ${config.name}\`; no browser launched (operator-initiated)`, errorKind: "config" as const },
         "MCP server connect requires OAuth login",
       );
+      // Initial-connect failure → obs (health_signal + trajectory), like the
+      // reconnect_failed sibling — so a failed install is diagnosable via
+      // `comis fleet`/`explain`, not only a raw daemon.log grep.
+      deps.eventBus?.emit("mcp:server:connect_failed", {
+        serverName: config.name,
+        transport: config.transport,
+        reason: "auth_required",
+        timestamp: systemNowMs(),
+      });
       return err(tagNeedsOAuthLogin(config.name));
     }
 
-    logger.error({ serverName: config.name, err: message, hint: "Check MCP server configuration and ensure the server process is running", errorKind: "dependency" as const }, "MCP server connection failed");
-
-    return err(error instanceof Error ? error : new Error(message));
+    // Generic failure → the classify sibling folds + SANITIZES the child stderr,
+    // writes the error-state entry, logs the ERROR (reason + hint), emits
+    // mcp:server:connect_failed, and returns the enriched err.
+    return recordConnectFailure(state, deps, config, rawMessage, error);
   }
 }
 

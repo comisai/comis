@@ -1344,6 +1344,19 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       durationMs: 200,
       timestamp: 0,
     },
+    "mcp:server:connected": {
+      serverName: "fs-server",
+      transport: "stdio",
+      toolCount: 10,
+      durationMs: 200,
+      timestamp: 0,
+    },
+    "mcp:server:connect_failed": {
+      serverName: "fs-server",
+      transport: "stdio",
+      reason: "server_exited",
+      timestamp: 0,
+    },
     "mcp:server:tools_changed": {
       serverName: "fs-server",
       previousToolCount: 10,
@@ -3893,7 +3906,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // This count guards TRAJECTORY_BRIDGE_MAPPING against a silent add or
     // removal: any change to the mapping must update this number in lockstep,
     // forcing a deliberate review of every newly-bridged or dropped event.
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(118);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(120);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

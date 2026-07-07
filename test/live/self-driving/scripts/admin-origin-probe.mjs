@@ -19,13 +19,14 @@
 //   denylist layer-3 SUB_AGENT_TOOL_DENYLIST contains all 8 (sub-agent can never be delegated them)
 //
 // Usage (on the VPS):  node /root/admin-origin-probe.mjs [guard|origin|audit|adminset|denylist|all]
-//   SRC=/root/comis-src overridable. Exit 0 = all PASS, 1 = any FAIL.
+//   Code root via _rig.mjs (installed package or source checkout; COMIS_SRC overrides). Exit 0 = all PASS, 1 = any FAIL.
 
-const SRC = process.env.SRC || "/root/comis-src";
+import { rig, comisDist } from "./_rig.mjs";
+const SRC = rig.codeRoot; // printed in verdicts; COMIS_SRC env overrides the code root via _rig
 const P = {
-  origin: `${SRC}/packages/daemon/dist/api/shared/assert-not-agent-origin.js`,
-  helpers: `${SRC}/packages/skills/dist/platform-tools/tool-helpers.js`,
-  core: `${SRC}/packages/core/dist/index.js`,
+  origin: comisDist("daemon", "dist/api/shared/assert-not-agent-origin.js"),
+  helpers: comisDist("skills", "dist/platform-tools/tool-helpers.js"),
+  core: comisDist("core", "dist/index.js"),
 };
 const load = async (p, name) => { const m = await import(p); return m[name] ?? m.default?.[name]; };
 

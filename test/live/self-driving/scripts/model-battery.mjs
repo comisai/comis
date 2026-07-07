@@ -9,8 +9,9 @@
 // Usage:  node model-battery.mjs <modelLabel>
 //   GWTOKEN env = the gateway token (for the HARD token-leak check) — REQUIRED; set in scripts/.live-env.
 import { readFileSync } from "node:fs";
-const emu = JSON.parse(readFileSync("/tmp/comis-emu.json", "utf8"));
-const base = emu.apiRoot, chatId = process.env.CHATID || "678314278";
+import { rig } from "./_rig.mjs";
+const emu = JSON.parse(readFileSync(rig.emuWiringPath, "utf8"));
+const base = emu.apiRoot, chatId = rig.chatId;
 const label = process.argv[2] || "?";
 const GW = process.env.GWTOKEN;
 if (!GW) { console.error("model-battery: set GWTOKEN (see scripts/.live-env.example) — needed for the token-leak HARD check"); process.exit(1); }
