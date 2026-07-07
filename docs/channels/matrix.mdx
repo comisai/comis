@@ -174,7 +174,8 @@ Only `accessToken` and `password` are secrets -- keep them in `~/.comis/.env`
 Encryption is **on by default** (`e2ee: true`). On first start Comis initializes
 a crypto backend and persists it in the state directory (`stateDir`, default
 `~/.comis/matrix-state`), so the bot can send and receive in encrypted rooms.
-Set `e2ee: false` if you want the bot to operate in plaintext rooms only.
+Set `e2ee: false` if you want the bot to operate in plaintext rooms only; for a
+headless install, pass `--matrix-e2ee false` to `comis init`.
 
 **Keep a stable device.** The bot's encryption keys belong to its device, so a
 stable `deviceId` is what lets those keys survive a restart. A password login
