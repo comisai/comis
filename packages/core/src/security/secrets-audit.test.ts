@@ -323,6 +323,39 @@ describe("scanEnvForSecrets", () => {
     expect(findings[0].message).toContain("matrix");
     expect(findings[0].message).not.toContain("unknown");
   });
+
+  it("names matrix as the provider for MATRIX_PASSWORD instead of the generic unknown fallthrough", () => {
+    const env = {
+      MATRIX_PASSWORD: "password-value",
+    };
+
+    const findings = scanEnvForSecrets("/home/user/.comis/.env", env);
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0].code).toBe("KNOWN_PROVIDER_ENV");
+    expect(findings[0].jsonPath).toBe("MATRIX_PASSWORD");
+    // First-match-wins: the specific MATRIX_PASSWORD pattern must precede the
+    // generic /_PASSWORD$/ fallthrough, so the audit names the real provider
+    // rather than mis-attributing the secret to "unknown".
+    expect(findings[0].message).toContain("matrix");
+    expect(findings[0].message).not.toContain("unknown");
+  });
+
+  it("detects MATRIX_RECOVERY_KEY — no generic _KEY fallthrough exists, so an unregistered recovery key would be invisible", () => {
+    const env = {
+      MATRIX_RECOVERY_KEY: "EsTx abcd efgh ijkl",
+    };
+
+    const findings = scanEnvForSecrets("/home/user/.comis/.env", env);
+
+    // The recovery key unlocks the encrypted-session backup (message history);
+    // it is a real credential and must surface in the .env audit like the other
+    // two Matrix secrets, not fall through every pattern to zero findings.
+    expect(findings).toHaveLength(1);
+    expect(findings[0].code).toBe("KNOWN_PROVIDER_ENV");
+    expect(findings[0].jsonPath).toBe("MATRIX_RECOVERY_KEY");
+    expect(findings[0].message).toContain("matrix");
+  });
 });
 
 // ── auditSecrets ───────────────────────────────────────────────────
