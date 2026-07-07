@@ -400,6 +400,17 @@ describe("McpServerEntrySchema", () => {
       expect(msg).toMatch(/alphanumeric|hyphens|underscores/i);
     }
   });
+
+  it("rejects the prototype-polluting __proto__ name (dynamic-key sink guard)", () => {
+    // Reviewed live on #294: mcpServers[].name is bracket-assigned as a dynamic
+    // object key downstream (e.g. the bundle-ownership ledger), and the name
+    // charset admitted the literal '__proto__' — the one own-key pollution
+    // vector. It is refused here, the single schema every source (config.yaml,
+    // skill manifests) funnels through.
+    expect(() =>
+      McpServerEntrySchema.parse({ name: "__proto__", transport: "stdio", command: "npx" }),
+    ).toThrow(/__proto__/);
+  });
 });
 
 describe("McpServerEntrySchema transport inference", () => {
