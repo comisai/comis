@@ -18,9 +18,10 @@ import { defineContract } from "../types.js";
 
 /**
  * Acquisition channel for an imported skill (HOW the bytes arrived) — distinct
- * from the trust-tier `source` below. Only `github` / `archive` land in this
- * slice; the registry-resolver channels (`wellknown` / `clawhub`) are modeled
- * ahead of their handlers so the provenance summary is forward-stable.
+ * from the trust-tier `source` below. All four import channels are live in the
+ * daemon (`github`/`archive` acquire directly; `wellknown`/`clawhub` resolve a
+ * registry first); `upload` records the operator-upload path, which shares the
+ * same staged pipeline and provenance store.
  */
 const AcquisitionSourceSchema = z.enum([
   "github",
@@ -105,13 +106,18 @@ export const SkillsListContract = defineContract({
 });
 
 /**
- * `skills.upload` — create a skill folder from operator-uploaded
- * files. ADMIN scope (gateway router registers at line 295). Bespoke
- * guards (skill-handlers.ts:130-148) enforce name format, file count,
- * SKILL.md presence, and the shared-scope default-agent guard.
+ * `skills.upload` — create a skill folder from operator-uploaded files.
+ * Bespoke guards (skill-handlers.ts:193-244) enforce name format, file count,
+ * SKILL.md presence, and the shared-scope default-agent guard; the write then
+ * routes through the STAGED IMPORT PIPELINE (`importThroughPipeline`,
+ * skill-handlers.ts:258): unconditional content scan + MCP Phase-A check
+ * pre-write, collision flat-refuse against unprovenanced same-named skills,
+ * and a successful upload is stamped the `imported` trust tier with a
+ * provenance record (acquisition source `upload`; bundled MCP entries persist
+ * disabled).
  *
  * Request: `{ name, scope?, files[], agentId? }`. `scope` defaults to
- * `"local"` when absent or invalid (skill-handlers.ts:117). `agentId`
+ * `"local"` when absent or invalid (skill-handlers.ts:193). `agentId`
  * falls back to `_agentId` then errors with "Agent ID is required..."
  * when both are missing.
  *
@@ -196,9 +202,12 @@ export const SkillsImportContract = defineContract({
 });
 
 /**
- * `skills.delete` — remove a skill folder. ADMIN scope. Performs
- * scope-aware containment checks against the agent's workspace skills
- * directory + the shared skills directory (skill-handlers.ts:354-367).
+ * `skills.delete` — remove a skill folder. Performs scope-aware containment
+ * checks against the agent's workspace skills directory + the shared skills
+ * directory (skill-handlers.ts:488-512), then unwinds an imported skill's
+ * side effects via `unwindImportedSkillOnDelete` (skill-handlers.ts:534) —
+ * bundle-owned MCP entries drop off the config through the ownership ledger
+ * and the provenance record is removed.
  *
  * Request: `{ name, scope?, agentId? }`.
  *
@@ -220,10 +229,10 @@ export const SkillsDeleteContract = defineContract({
 
 /**
  * `skills.create` — create a new skill from operator-supplied
- * SKILL.md content. ADMIN scope (by intent; the handler is NOT
- * registered in setup-gateway-api.ts — same registration-plane
- * exception as admin.approval.resolveAll). Bespoke guards
- * (skill-handlers.ts:399-419) enforce name format + content scan
+ * SKILL.md content. The handler is NOT registered in
+ * setup-gateway-api.ts — same registration-plane exception as
+ * admin.approval.resolveAll. Bespoke guards
+ * (skill-handlers.ts:551-589) enforce name format + content scan
  * (rejects CRITICAL `scanSkillContent` findings).
  *
  * Note: `skills.create` and `skills.update` are NOT registered in
@@ -260,9 +269,11 @@ export const SkillsCreateContract = defineContract({
 });
 
 /**
- * `skills.update` — overwrite a skill's SKILL.md content. ADMIN
- * scope (by intent; same registration-plane exception as
- * `skills.create`). Re-runs the security scan before writing.
+ * `skills.update` — overwrite a skill's SKILL.md content (registration-plane
+ * exception as `skills.create`). Re-runs the security scan before writing,
+ * then re-pins an imported skill's provenance via `repinLocallyModifiedSkill`
+ * (skill-handlers.ts:753) — the content hash is recomputed and the record is
+ * marked `locallyModified`.
  *
  * Request: `{ name, content, scope?, agentId? }`.
  *
