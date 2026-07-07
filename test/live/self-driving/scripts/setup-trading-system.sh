@@ -61,7 +61,7 @@ ssh -o ConnectTimeout=20 -o ServerAliveInterval=8 "$VPS" '
   if [ -n "$F" ] && grep -q "100000" "$F"; then echo "  [PASS] LEDGER-1 $F (cash 100000)"; pass=$((pass+1)); else echo "  [FAIL] LEDGER-1 portfolio.json missing/invalid"; fail=$((fail+1)); fi
   # STRAT-1
   # scan up to 500 rows (robust on a rig with accumulated memory — a 15-row sample false-FAILs after other memories pile up)
-  s=$(sudo -u comis env HOME=/home/comis node /root/db.mjs pick memories content 500 2>/dev/null | grep -ci "TRADING STRATEGY")
+  s=$(node /root/db.mjs pick memories content 500 2>/dev/null | grep -ci "TRADING STRATEGY")
   if [ "${s:-0}" -ge 1 ]; then echo "  [PASS] STRAT-1  strategy stored in memory"; pass=$((pass+1)); else echo "  [FAIL] STRAT-1  strategy memory row not found"; fail=$((fail+1)); fi
   # CRON-1
   c=$(node /root/revoke.mjs cron.list 2>/dev/null | sed "s/^RESULT://" | node -e "try{const d=JSON.parse(require(\"fs\").readFileSync(0,\"utf8\"));const j=(d.jobs||d).find(x=>/trading-cycle/.test(x.name||\"\"));console.log(j?(j.schedule?.expr||\"?\")+\":\"+(j.enabled?\"on\":\"off\"):\"absent\");}catch(e){console.log(\"err\")}")

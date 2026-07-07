@@ -174,6 +174,16 @@ describe("classifyRecoverableStderr", () => {
     ["node:internal/modules/cjs/loader: Cannot find module './missing.js'", "bad_import"],
     ["TypeError: comis_tools.web_fetch is not a function", "comis_tools_misuse"],
     ["AttributeError: module 'comis_tools' has no attribute 'web_fetch'", "comis_tools_misuse"],
+    // A bare `comis_tools.<m>(` call WITHOUT the `import { comis_tools } from "./comis_tools.js"`
+    // line is the canonical weak-model authoring slip — the module exists but was never bound, so
+    // Node throws a ReferenceError (Python a NameError). It IS recoverable: the one-shot repair
+    // re-emits the script with the import. Live-observed shape (VPS drive, orchestrate-repair):
+    ["ReferenceError: comis_tools is not defined", "comis_tools_misuse"],
+    [
+      "ReferenceError: comis_tools is not defined\n    at file:///home/comis/.comis/workspace/orch-x.js:1:11",
+      "comis_tools_misuse",
+    ],
+    ["NameError: name 'comis_tools' is not defined", "comis_tools_misuse"],
     ["TypeError: Cannot read properties of undefined (reading 'jq')", "type_error"],
     ["AttributeError: 'NoneType' object has no attribute 'read'", "type_error"],
     // A malformed body — the single most frequent small/nano-model authoring
@@ -210,6 +220,10 @@ describe("classifyRecoverableStderr", () => {
     ["RangeError: Maximum call stack size exceeded"],
     [""],
     ["   \n  "],
+    // A ReferenceError/NameError that does NOT mention comis_tools is not a comis_tools misuse
+    // (the misuse branch keys on the comis_tools token) — it must NOT be misclassified as recoverable.
+    ["ReferenceError: fetch is not defined"],
+    ["NameError: name 'requests' is not defined"],
   ] as const)("returns undefined for the non-recoverable tail %j", (tail) => {
     expect(classifyRecoverableStderr(tail)).toBeUndefined();
   });
@@ -225,6 +239,16 @@ describe("buildDescribeDigest", () => {
     expect(digest).toContain("web_fetch");
     expect(digest).toContain("web_search");
     expect(digest).toContain("read");
+  });
+
+  it("teaches the SDK MODULE import form (the fix for a 'comis_tools is not defined' forgot-import repair)", () => {
+    // The digest IS the "SDK surface" the one-shot repair hands the utility model.
+    // Without the import form, a repair for the canonical forgot-import ReferenceError
+    // regenerates another bare-global script that fails again — the digest must show
+    // HOW to access the module, not just its methods.
+    const digest = buildDescribeDigest();
+    expect(digest).toContain('import { comis_tools } from "./comis_tools.js"'); // JS/TS
+    expect(digest).toContain("import comis_tools"); // Python
   });
 
   it("is deterministic — two calls are byte-equal", () => {

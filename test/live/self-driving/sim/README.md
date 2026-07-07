@@ -51,17 +51,18 @@ It prints the exact install commands for the workload you're testing.
 ## Install onto the running daemon
 Two faces (see [`DESIGN-DRAFT.md` §Deployment](./DESIGN-DRAFT.md)): the MCP server can be added **live, no
 restart**; the skill needs a discovery path (picked up on the next restart / file-watch). The CLI is **not on
-PATH** — prefix everything with `node packages/cli/dist/cli.js`.
+PATH for root** — on the production install the CLI rides the comis user's PATH: run
+`su - comis -c 'comis …'` (from a source checkout: `node packages/cli/dist/cli.js …`).
 
 **1. Connect the workload's MCP server (LIVE — no restart):**
 ```bash
 # ⚠ --args is VARIADIC (space-separated). Do NOT comma-join "path,workload" — the CLI passes it as a
 #   SINGLE arg and node fails with "Cannot find module '…/mcp-server.mjs,workload'" (verified live).
-node packages/cli/dist/cli.js mcp connect th-sim \
+su - comis -c 'comis mcp connect th-sim \
   --transport stdio --command node \
-  --args /home/comis/sim/bin/mcp-server.mjs threat-hunting
-node packages/cli/dist/cli.js mcp list             # th-sim → connected, 12 tools
-node packages/cli/dist/cli.js mcp status th-sim    # the discovered tool names
+  --args /home/comis/sim/bin/mcp-server.mjs threat-hunting'
+su - comis -c 'comis mcp list'             # th-sim → connected, 12 tools
+su - comis -c 'comis mcp status th-sim'    # the discovered tool names
 ```
 The MCP server takes an optional **3rd arg = the variant** (A/B/C): `--args …/mcp-server.mjs threat-hunting B`
 rotates the surface facts for the transfer/reuse step — no config-env needed. (`mcp connect` persists to
@@ -72,7 +73,7 @@ config; `mcp disconnect th-sim` removes it. The server runs **unsandboxed** and 
 then restart once so it loads:
 ```bash
 ssh root@$VPS 'printf "%s" "{\"agents\":{\"default\":{\"skills\":{\"discoveryPaths\":[\"/home/comis/sim/threat-hunting\"]}}}}" > /tmp/patch.json; \
-               su - comis -c "node /tmp/cfg-patch.mjs"'
+               node /root/cfg-patch.mjs'
 # (or drop the SKILL.md into the agent's auto-discovered ~/.comis/workspace-<agentId>/skills/)
 ```
 A from-scratch memory/learning drive restarts anyway (next section), so the skill comes up with it.
@@ -157,16 +158,16 @@ node /root/db.mjs pick mental_models name,kind,state,trust_level,proof_count
 **4. Reuse on a ROTATED variant (the transfer + promote step)** — reconnect the server on variant B
 (every hash/IP/domain rotates; only a *behavioral* learned skill still works), then drive a FRESH session:
 ```bash
-node packages/cli/dist/cli.js mcp disconnect th-sim
-node packages/cli/dist/cli.js mcp connect th-sim --transport stdio --command node \
-  --args /home/comis/sim/bin/mcp-server.mjs threat-hunting B    # 3rd arg = variant (surface rotation)
+su - comis -c 'comis mcp disconnect th-sim'
+su - comis -c 'comis mcp connect th-sim --transport stdio --command node \
+  --args /home/comis/sim/bin/mcp-server.mjs threat-hunting B'   # 3rd arg = variant (surface rotation)
 node /root/drive.mjs "$CHATID" "New SOC alert just came in — work it on the console and resolve it."
 ```
 The fresh session surfaces the learned skill (`memory:skill_used` / `used_skill_ids`), a successful reuse
 fires `learning:skill_promoted`, bumps `proof_count`, and flips `candidate→active` at `promoteAtProofCount`:
 ```bash
 node /root/db.mjs pick mental_models name,kind,state,proof_count            # state→active, proof_count↑
-node packages/cli/dist/cli.js explain "<sessionKey>" --offline --format json   # .learning.{skillsUsed,skillsPromoted}
+su - comis -c 'comis explain "<sessionKey>" --offline --format json'   # .learning.{skillsUsed,skillsPromoted}
 ```
 That closes the loop the catalog is built to test: **learn the behavior from successful episodes → reuse it on
 a case whose surface facts all changed.**
@@ -180,7 +181,7 @@ a case whose surface facts all changed.**
 
 ## Teardown
 ```bash
-node packages/cli/dist/cli.js mcp disconnect th-sim
+su - comis -c 'comis mcp disconnect th-sim'
 # remove the discoveryPath from config; WIPE_CRONS=1 clean-restart for the next from-scratch run
 ```
 

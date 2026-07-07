@@ -289,6 +289,8 @@ Approval gates, config patches, plugin lifecycle, hook execution, auth token rot
 | `diagnostic:message_processed` | messageId, channelId, channelType, agentId, sessionKey, receivedAt, executionDurationMs, deliveryDurationMs, totalDurationMs, tokensUsed, cost, success, finishReason, timestamp |
 | `diagnostic:webhook_delivered` | webhookId, source, event, statusCode, success, durationMs, error, timestamp |
 | `hook:executed` | hookName, pluginId, durationMs, success, error, timestamp |
+| `mcp:server:connected` | serverName, transport, toolCount, durationMs, timestamp |
+| `mcp:server:connect_failed` | serverName, transport, reason, timestamp |
 | `mcp:server:disconnected` | serverName, reason, timestamp |
 | `mcp:server:reconnect_failed` | serverName, attempts, lastError, timestamp |
 | `mcp:server:reconnected` | serverName, attempt, toolCount, durationMs, timestamp |

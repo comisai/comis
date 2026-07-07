@@ -24,6 +24,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { EventEmitter } from "node:events";
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import {
   scrubStdioEnv,
@@ -35,8 +36,14 @@ import {
   __resetPrlimitProbeForTests,
   refreshPrlimitAvailable,
   diffToolLists,
+  wireStderrCapture,
 } from "./mcp-client-discover.js";
-import type { McpServerConfig, McpToolDefinition } from "./mcp-client-types.js";
+import type {
+  McpServerConfig,
+  McpToolDefinition,
+  McpClientManagerState,
+  McpClientManagerDeps,
+} from "./mcp-client-types.js";
 
 // ---------------------------------------------------------------------------
 // Env-mutation harness
@@ -613,5 +620,38 @@ describe("diffToolLists — tools/list_changed diff", () => {
     expect(diff.addedTools).toEqual(["add_me"]);
     expect(diff.removedTools).toEqual(["remove_me"]);
     expect(diff.changedTools).toEqual(["mutate_me"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// wireStderrCapture — credential redaction in the LOGGED stderr. A credentialed
+// stdio child can echo a connection string / API key on the way down; the
+// per-line DEBUG + the end-of-stream INFO buffer are unstructured free-text (NOT
+// Pino-redacted keys), so they must be sanitized before they hit the log — the
+// same scrub the connect-failure fold applies.
+// ---------------------------------------------------------------------------
+
+describe("wireStderrCapture — credential redaction in logged stderr", () => {
+  it("sanitizes a leaked credential before the DEBUG line + the INFO buffer are logged", () => {
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const stderr = new EventEmitter();
+    const state = { lastStderr: new Map<string, string>() } as unknown as McpClientManagerState;
+    const deps = { logger } as unknown as McpClientManagerDeps;
+    const config = { name: "svc", transport: "stdio" } as McpServerConfig;
+    const transport = { stderr } as unknown as ReturnType<typeof createTransport>;
+
+    wireStderrCapture(state, deps, config, transport);
+    const leak =
+      "FATAL: could not connect: postgres://admin:s3cr3tPassw0rd@db.internal:5432/prod (key sk-abcdefghij1234567890klmnop)";
+    stderr.emit("data", Buffer.from(leak + "\n"));
+    stderr.emit("end");
+
+    const logged = JSON.stringify([...logger.debug.mock.calls, ...logger.info.mock.calls]);
+    // The raw secret NEVER reaches the log …
+    expect(logged).not.toContain("s3cr3tPassw0rd");
+    expect(logged).not.toContain("sk-abcdefghij1234567890klmnop");
+    // … it is REDACTED, not merely dropped (the diagnostic shape survives).
+    expect(logged).toContain("[REDACTED_CONN_STRING]");
+    expect(logged).toContain("sk-[REDACTED]");
   });
 });

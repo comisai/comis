@@ -11,15 +11,14 @@
 //
 // spec = { name, script | scriptFile, language?, timeoutSeconds?, payloadKind?,
 //          payloadText?, deliveryTarget?, agentId?, noFire? }
-// Env: COMIS_CONFIG_PATHS + COMIS_GATEWAY_TOKEN (same as revoke.mjs); COMIS_SRC optional.
+// Env: COMIS_CONFIG_PATHS + COMIS_GATEWAY_TOKEN default via _rig.mjs (rig env); COMIS_SRC optional.
 import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
+import { ensureRpcEnv, importCli, requireCodeRoot, rig } from "./_rig.mjs";
 
-const SRC = process.env.COMIS_SRC || "/root/comis-src";
-const { withClient } = await import(SRC + "/packages/cli/dist/client/rpc-client.js");
-const require = createRequire(SRC + "/packages/daemon/package.json");
-const Database = require("better-sqlite3");
-const DATA = process.env.COMIS_DATA_DIR || "/home/comis/.comis";
+ensureRpcEnv();
+const { withClient } = await importCli("client/rpc-client.js");
+const Database = requireCodeRoot("better-sqlite3");
+const DATA = rig.dataDir;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const call = (m, p) => withClient((c) => c.call(m, p));

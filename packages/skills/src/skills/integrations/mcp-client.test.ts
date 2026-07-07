@@ -290,7 +290,11 @@ describe("McpClientManager", () => {
 
       expect(result.ok).toBe(false);
       if (result.ok) return;
-      expect(result.error.message).toBe("Connection refused");
+      // The message is now ENRICHED (fault class + folded stderr) but preserves
+      // the raw cause — a stdio failure with no stderr names the exit + missing-env
+      // class and embeds the original "Connection refused".
+      expect(result.error.message).toContain("Connection refused");
+      expect(result.error.message).toMatch(/exited before the handshake/i);
     });
 
     it("stores error state when connection fails", async () => {

@@ -19,7 +19,7 @@ import {
   systemNowMs,
   resolveAutonomy,
 } from "@comis/core";
-import { sessionKeyToPath, capabilityClassFromProvider } from "@comis/agent";
+import { sessionKeyToPath, resolveEffectiveCapabilityClass } from "@comis/agent";
 import type { SessionTrackerRegistry, CapabilityClass, OrchestrateRepairSeam } from "@comis/agent";
 import { toolResultsDirFromSessionPath } from "./tool-results-dir.js";
 import {
@@ -484,7 +484,12 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         videoStatusEnabled: deps.videoStatusEnabled, // gates the video_status descriptor
         backgroundTaskManager: deps.backgroundTaskManager,
         toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),
-        contextEngineVersion: agentConfig?.contextEngine?.version ?? "pipeline",
+        // Default "dag" — the canonical default (schema `version.default("dag")` +
+        // setup-context-tools.ts's `?? "dag"` gate). `contextEngine` is optional/undefaulted,
+        // so a no-block agent lands here with version=undefined; using "pipeline" was a skew
+        // that would mis-signal any future consumer (the field is currently unused, so this is
+        // a defensive alignment, not a behavior change).
+        contextEngineVersion: agentConfig?.contextEngine?.version ?? "dag",
         builtinToolsBrowserEnabled: skillsConfig.builtinTools.browser,
         // Opt-in gate for the memory_ask (dialectic) tool. `=== true` so an
         // absent/typo'd `dialectic` block is OFF (default-OFF byte-identity — the tool
@@ -583,15 +588,18 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         }
       }
 
-      // The effective capability class: operator override → provider-family
-      // heuristic → the "small" fail-safe (the platform resolve idiom). The
-      // one-shot auto-repair is a PURE class-gate off this (no config toggle);
-      // defaulting absent to "small" (repair-ON) keeps an unknown/keyless
-      // small-target deployment self-repairing rather than silently OFF.
-      const capabilityClass: CapabilityClass =
-        deps.getProviderCapabilityClass?.(agentConfig?.provider)
-        ?? capabilityClassFromProvider(agentConfig?.provider)
-        ?? "small";
+      // The effective capability class: operator PIN (agents.<id>.capabilityClass)
+      // → provider-level override → provider-family heuristic → the "small"
+      // fail-safe — the SAME precedence resolveModelProfile uses, so the pin that
+      // drives tool-deferral/context also drives the one-shot auto-repair class-gate
+      // (a pinned-`small` frontier-provider agent must get repair, not silently OFF).
+      // Auto-repair is a PURE class-gate off this (no config toggle); the "small"
+      // fail-safe keeps an unknown/keyless small-target deployment self-repairing.
+      const capabilityClass: CapabilityClass = resolveEffectiveCapabilityClass(
+        agentConfig?.capabilityClass,
+        deps.getProviderCapabilityClass?.(agentConfig?.provider),
+        agentConfig?.provider,
+      );
       // The daemon-minted repair closure — resolved ONLY when the class is
       // repair-eligible AND a utility model resolves (else undefined → repair off).
       const repairSeam = deps.resolveOrchestrateRepairSeam?.(agentConfig, agentId, capabilityClass);

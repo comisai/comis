@@ -246,6 +246,8 @@ export const TRAJECTORY_EVENT_TYPES = [
   "mcp.reconnecting",
   "mcp.reconnect_failed",
   "mcp.reconnected",
+  "mcp.connected",
+  "mcp.connect_failed",
   "mcp.tools_changed",
 
   // Channel lifecycle + health

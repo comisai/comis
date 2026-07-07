@@ -642,6 +642,10 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     outputHeadroom: fitWindowBudget.outputHeadroom,
     messageFloorTokens: fitWindowBudget.messageFloorTokens,
     recentlyUsedToolNames: recentlyUsedTools,
+    // Honor the operator's deferredTools.neverDefer here too — the count-based deferral pass
+    // (applyToolDeferral) respects it, but this window-aware fit pass must as well, or a small
+    // window silently drops a neverDefer-pinned tool (e.g. the dag-mode ctx_* expansion tools).
+    neverDeferToolNames: config.deferredTools?.neverDefer ? new Set(config.deferredTools.neverDefer) : undefined,
     logger: deps.logger,
     embeddingPort: deps.embeddingPort,
     scoreConfig: config.skills?.toolDiscovery,

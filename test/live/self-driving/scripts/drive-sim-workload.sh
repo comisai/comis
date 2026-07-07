@@ -3,14 +3,15 @@
 #
 # This loop was hand-orchestrated ~14x per run (restart→connect→reset→2 byte-identical feeders→reflect→read)
 # before being standardized here — the missing COMPOSITION over the primitives
-# (restart-m1.sh / drive.mjs / reflect-run.mjs / db.mjs).
+# (restart-daemon.sh / drive.mjs / reflect-run.mjs / db.mjs).
 #
-# Runs ON the box, AS ROOT (it orchestrates restart-m1 as comis + the gateway-token RPCs). Needs the
-# revoke.mjs env: COMIS_CONFIG_PATHS + COMIS_GATEWAY_TOKEN (export them, or this sources ~/.comis/.env).
+# Runs ON the box, AS ROOT (it orchestrates the systemd restart + the gateway-token RPCs). Needs the
+# revoke.mjs env: COMIS_CONFIG_PATHS + COMIS_GATEWAY_TOKEN (export them, or /root/comis-rig.env + the
+# data-dir .env supply them).
 #
 #   bash drive-sim-workload.sh <workload> [variant=A] [feeder1=678314279] [feeder2=678314280]
 #
-# Steps: restart-m1 (resets the per-root meter — avoids a spurious-abort from an accumulated meter) → disconnect ALL sim
+# Steps: daemon restart (resets the per-root meter — avoids a spurious-abort from an accumulated meter) → disconnect ALL sim
 # servers + connect THIS workload's server (one server at a time, no tool confusion) → reset the 2 feeder
 # sessions (clear cross-workload LCD) → 2 BYTE-IDENTICAL feeders (the topicKey card-2 bar) → reflect-run →
 # read GROUND TRUTH (mental_models delta + the newest skill row + a grounding grep of its body).
@@ -20,12 +21,16 @@ WL="${1:?usage: drive-sim-workload.sh <workload> [variant=A] [feeder1] [feeder2]
 VARIANT="${2:-A}"
 F1="${3:-678314279}"
 F2="${4:-678314280}"
+[ -f /root/comis-rig.env ] && . /root/comis-rig.env
 DATA="${DATA:-/home/comis/.comis}"
-SRC="${COMIS_SRC:-/root/comis-src}"
-CLI="node $SRC/packages/cli/dist/cli.js"
-[ -f "$HOME/.comis/.env" ] && . "$HOME/.comis/.env" 2>/dev/null || true
-[ -f /home/comis/.comis/.env ] && . /home/comis/.comis/.env 2>/dev/null || true
+COMIS_HOME="${COMIS_HOME:-/home/${COMIS_USER:-comis}}"
+PKG="${PKG:-$COMIS_HOME/.npm-global/lib/node_modules/comisai}"
+GW_PORT="${GW_PORT:-4766}"
+# The installed CLI dist (COMIS_SRC overrides to a source checkout's packages/cli/dist/cli.js).
+if [ -n "${COMIS_SRC:-}" ]; then CLI="node $COMIS_SRC/packages/cli/dist/cli.js"; else CLI="node $PKG/node_modules/@comis/cli/dist/cli.js"; fi
+[ -f "$DATA/.env" ] && . "$DATA/.env" 2>/dev/null || true
 export COMIS_CONFIG_PATHS="${COMIS_CONFIG_PATHS:-$DATA/config.yaml}"
+export COMIS_GATEWAY_TOKEN="${COMIS_GATEWAY_TOKEN:-${GWTOKEN:-}}"
 
 # workload → MCP server name (the sim/README dir↔server map).
 declare -A SERVER=(
@@ -56,7 +61,7 @@ declare -A PROMPT=(
 # EVERY real sim workload dir (a `tools.json`), so a workload added to sim/ but not registered here is
 # caught loudly instead of silently un-drivable. Runs offline (no daemon); SIM_DIR overrides the box path.
 if [ "$WL" = "--check" ]; then
-  SIM_DIR="${SIM_DIR:-/home/comis/sim}"
+  SIM_DIR="${SIM_DIR:-${COMIS_HOME:-/home/comis}/sim}"
   miss=0 n=0
   for d in "$SIM_DIR"/*/; do
     w="$(basename "$d")"
@@ -77,14 +82,14 @@ if [ -z "$SRV" ] || [ -z "$P" ]; then
 fi
 echo "== drive-sim-workload: $WL (server=$SRV variant=$VARIANT feeders=$F1,$F2) =="
 
-# 1) restart-m1 — fresh per-root meter (a reused sender's accumulated meter spuriously aborts later turns).
-su - comis -c 'bash /home/comis/restart-m1.sh' >/dev/null 2>&1
-for i in $(seq 1 30); do ss -ltnp 2>/dev/null | grep -q ':4766' && break; sleep 2; done
+# 1) daemon restart — fresh per-root meter (a reused sender's accumulated meter spuriously aborts later turns).
+bash /root/restart-daemon.sh >/dev/null 2>&1
+for i in $(seq 1 30); do ss -ltnp 2>/dev/null | grep -q ":$GW_PORT" && break; sleep 2; done
 
 # 2) one server at a time: disconnect every known sim server, then connect THIS one on the chosen variant.
 for s in "${SERVER[@]}"; do $CLI mcp disconnect "$s" >/dev/null 2>&1; done
 $CLI mcp connect "$SRV" --transport stdio --command node \
-  --args /home/comis/sim/bin/mcp-server.mjs "$WL" "$VARIANT" 2>&1 | grep -iE 'connected|tool|error' | head -1
+  --args "${SIM_DIR:-$COMIS_HOME/sim}/bin/mcp-server.mjs" "$WL" "$VARIANT" 2>&1 | grep -iE 'connected|tool|error' | head -1
 
 # 3) reset the 2 feeder sessions (clear any prior workload's LCD — cross-task contamination trap).
 for s in "$F1" "$F2"; do

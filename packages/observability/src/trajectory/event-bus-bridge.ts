@@ -323,6 +323,8 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "mcp:server:reconnecting": "mcp.reconnecting",
   "mcp:server:reconnect_failed": "mcp.reconnect_failed",
   "mcp:server:reconnected": "mcp.reconnected",
+  "mcp:server:connected": "mcp.connected",
+  "mcp:server:connect_failed": "mcp.connect_failed",
   "mcp:server:tools_changed": "mcp.tools_changed",
 
   // Channel lifecycle + health (events-channel.ts; emitter packages/channels — not arch-scanned)

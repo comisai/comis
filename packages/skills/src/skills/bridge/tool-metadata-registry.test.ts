@@ -918,7 +918,7 @@ describe("tool-metadata-registry -- completeness", () => {
 
 describe("tool-metadata-registry -- tool-entry schema metadata", () => {
   it.each([
-    ["mcp_manage",       ["list", "status", "connect", "disconnect", "reconnect"], 8],
+    ["mcp_manage",       ["list", "status", "connect", "disconnect", "reconnect"], 9],
     ["agents_manage",    ["create", "get", "update", "delete", "suspend", "resume", "list"], 3],
     ["tokens_manage",    ["list", "create", "revoke", "rotate"], 3],
     ["providers_manage", ["list", "get", "create", "update", "delete", "enable", "disable"], 3],
@@ -1462,6 +1462,32 @@ describe("tool-metadata-registry -- gateway validateInput patchable path hints",
     });
 
     // Should pass validation -- model is now a mutable override
+    expect(error).toBeUndefined();
+  });
+});
+
+describe("tool-metadata-registry -- mcp_manage env parity", () => {
+  // The registry validKeys is a SECOND source of truth beside McpManageToolParams; when the
+  // tool schema gained `env` (so a stdio server can receive credentials), this list must too —
+  // else the bridge validator rejects `env` with "[invalid_value] unknown key 'env'" BEFORE
+  // execute() runs, and a credentialed stdio MCP (e.g. example-mcp) can never be installed.
+  it("mcp_manage validKeys includes env", () => {
+    expect(getToolMetadata("mcp_manage")?.validKeys).toContain("env");
+  });
+
+  it("validateToolEntry accepts a connect carrying env (no 'unknown key env' rejection)", () => {
+    const meta = getToolMetadata("mcp_manage")!;
+    const error = validateToolEntry(
+      {
+        action: "connect",
+        server_name: "svc-mcp",
+        transport: "stdio",
+        command: "npx",
+        args: ["-y", "example-mcp"],
+        env: { SERVICE_PASSWORD: "${SERVICE_PASSWORD}" },
+      },
+      meta,
+    );
     expect(error).toBeUndefined();
   });
 });

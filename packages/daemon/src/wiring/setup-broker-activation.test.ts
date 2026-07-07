@@ -165,8 +165,10 @@ vi.mock("@comis/core", () => ({
 vi.mock("@comis/agent", () => ({
   sessionKeyToPath: mockSessionKeyToPath,
   // The orchestrate wiring resolves an effective capability class via
-  // capabilityClassFromProvider (the one-shot auto-repair class-gate) on every
+  // resolveEffectiveCapabilityClass (the one-shot auto-repair class-gate) on every
   // assembly — a minimal stub keeps tool assembly running here.
+  resolveEffectiveCapabilityClass: () => "small",
+  // Still a live @comis/agent export (rpc-dispatch consumes it) — keep it mocked.
   capabilityClassFromProvider: () => "small",
 }));
 

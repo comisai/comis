@@ -675,6 +675,12 @@ export interface EnforceToolBudgetFitParams {
   coreToolNames: ReadonlySet<string>;
   /** Recently-used tools — kept active preferentially (one tier above cold tools). */
   recentlyUsedToolNames: ReadonlySet<string>;
+  /** Operator `deferredTools.neverDefer` tools — kept active over cold/recent tools
+   *  (ranked just below CORE/discover_tools), so an explicit "keep active" override is
+   *  honored here too, not only in the count-based deferral pass. Dropped only as an
+   *  absolute last resort (the window can't fit even the override) — and then WARNed,
+   *  so the override is never SILENTLY overridden. Default empty. */
+  neverDeferToolNames?: ReadonlySet<string>;
   /** The discover_tools tool name — kept while anything stays reachable; dropped
    *  last (a chat reply needs no tools). */
   discoverToolName: string;
@@ -716,10 +722,13 @@ export interface EnforceToolBudgetFitResult {
  * (the same algebra as estimateSystemTokensFactored at toolOverheadChars=0).
  *
  * Drop order (lowest priority first, so capability loss is minimized):
- *   1. cold non-core tools (not CORE, not recently-used, not discover_tools)
+ *   1. cold non-core tools (not CORE, not recently-used, not neverDefer, not discover_tools)
  *   2. recently-used tools
- *   3. CORE_TOOLS (last resort — they ARE droppable when nothing else fits)
- *   4. discover_tools (dropped only when the budget is so tiny nothing else
+ *   3. neverDefer'd tools (operator `deferredTools.neverDefer` — the count-based deferral
+ *      pass honors it, and so must this one; dropped only when the window cannot fit them,
+ *      and then a WARN names them so the override is never SILENTLY overridden)
+ *   4. CORE_TOOLS (last resort — they ARE droppable when nothing else fits)
+ *   5. discover_tools (dropped only when the budget is so tiny nothing else
  *      remains; a chat reply needs no tools).
  *
  * Dropped tools join `deferredEntries`, so they stay reachable via discover_tools
@@ -735,6 +744,7 @@ export function enforceToolBudgetFit(
     outputHeadroom, messageFloorTokens, coreToolNames, recentlyUsedToolNames,
     discoverToolName, logger,
   } = params;
+  const neverDefer = params.neverDeferToolNames ?? new Set<string>();
 
   // The system-prompt term divides chars by the SAME script factor as
   // estimateSystemTokensFactored (a dense Hebrew/CJK prompt carries ~2-3× tokens
@@ -758,9 +768,14 @@ export function enforceToolBudgetFit(
   }
 
   // Priority rank: lower = dropped first. discover_tools is highest (dropped last).
+  // neverDefer'd tools rank just below CORE/discover_tools (above recent/cold) so the
+  // operator's "keep active" override is honored here too — dropped only when the window
+  // cannot fit even them (then WARNed below). Checks are ordered so a tool matching several
+  // sets takes the HIGHEST rank (a neverDefer'd CORE tool stays CORE-ranked).
   const rankOf = (name: string): number => {
-    if (name === discoverToolName) return 3;
-    if (coreToolNames.has(name)) return 2;
+    if (name === discoverToolName) return 4;
+    if (coreToolNames.has(name)) return 3;
+    if (neverDefer.has(name)) return 2;
     if (recentlyUsedToolNames.has(name)) return 1;
     return 0; // cold non-core
   };
@@ -800,6 +815,27 @@ export function enforceToolBudgetFit(
     });
   }
 
+  // A neverDefer-pinned tool was dropped only as an absolute last resort (the window cannot
+  // fit even the operator's override on top of CORE + discover_tools). Surface it explicitly
+  // so the override is never SILENTLY overridden — the operator needs to raise the window.
+  const droppedNeverDefer = newlyDeferred.filter((n) => neverDefer.has(n));
+  if (droppedNeverDefer.length > 0) {
+    logger.warn(
+      {
+        step: "tool-budget-fit",
+        errorKind: "resource" as const,
+        droppedNeverDefer,
+        contextWindow,
+        toolTokenBudget,
+        hint:
+          `The window is too small to keep even neverDefer-pinned tool(s) active; they were deferred ` +
+          `to fit (still reachable via discover_tools). Raise the model's context window / ` +
+          `effectiveContextCap or reduce active tools — deferredTools.neverDefer cannot be honored here.`,
+      },
+      "tool-budget fit-enforcement dropped neverDefer-pinned tools (window too small to honor the override)",
+    );
+  }
+
   logger.warn(
     {
       step: "tool-budget-fit",
@@ -836,6 +872,8 @@ export interface ApplyToolBudgetFitParams {
   outputHeadroom: number;
   messageFloorTokens: number;
   recentlyUsedToolNames: ReadonlySet<string>;
+  /** Operator `deferredTools.neverDefer` names — kept over cold/recent tools by the fit pass. */
+  neverDeferToolNames?: ReadonlySet<string>;
   logger: ComisLogger;
   embeddingPort?: EmbeddingPort;
   scoreConfig?: ToolDiscoveryScoreConfig;
@@ -872,6 +910,7 @@ export function applyToolBudgetFit(
     messageFloorTokens: params.messageFloorTokens,
     coreToolNames: CORE_TOOLS,
     recentlyUsedToolNames: params.recentlyUsedToolNames,
+    neverDeferToolNames: params.neverDeferToolNames,
     discoverToolName: "discover_tools",
     logger: params.logger,
   });

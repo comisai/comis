@@ -178,6 +178,52 @@ describe("mcp_manage tool", () => {
       });
       expect(result.details).toEqual(expect.objectContaining({ connected: true }));
     });
+
+    it("forwards env to mcp.connect for a stdio credentialed server", async () => {
+      // A stdio server that needs credentials (e.g. example-mcp needs SERVICE_USERNAME/PASSWORD)
+      // must receive them via env. Pre-fix the tool schema had no env field, so the secret
+      // references were dropped and the server spawned credential-less → "Connection closed".
+      mockRpcCall.mockResolvedValue({ connected: true, name: "svc-mcp" });
+      const tool = createMcpManageTool(mockRpcCall);
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-env-1", {
+          action: "connect",
+          server_name: "svc-mcp",
+          transport: "stdio",
+          command: "npx",
+          args: ["-y", "example-mcp"],
+          env: { SERVICE_USERNAME: "${SERVICE_USERNAME}", SERVICE_PASSWORD: "${SERVICE_PASSWORD}" },
+        } as never),
+      );
+      expect(mockRpcCall).toHaveBeenCalledWith(
+        "mcp.connect",
+        expect.objectContaining({
+          server_name: "svc-mcp",
+          command: "npx",
+          args: ["-y", "example-mcp"],
+          env: { SERVICE_USERNAME: "${SERVICE_USERNAME}", SERVICE_PASSWORD: "${SERVICE_PASSWORD}" },
+        }),
+      );
+    });
+
+    it("coerces a JSON-string env into an object before mcp.connect", async () => {
+      mockRpcCall.mockResolvedValue({ connected: true });
+      const tool = createMcpManageTool(mockRpcCall);
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-env-2", {
+          action: "connect",
+          server_name: "x",
+          transport: "stdio",
+          command: "npx",
+          args: ["-y", "m"],
+          env: '{"SERVICE_PASSWORD":"${SERVICE_PASSWORD}"}',
+        } as never),
+      );
+      expect(mockRpcCall).toHaveBeenCalledWith(
+        "mcp.connect",
+        expect.objectContaining({ env: { SERVICE_PASSWORD: "${SERVICE_PASSWORD}" } }),
+      );
+    });
   });
 
   // -----------------------------------------------------------------------

@@ -22,7 +22,7 @@ vi.mock("@comis/core", async (importOriginal) => {
   };
 });
 
-import { createGatewayTool } from "./gateway-tool.js";
+import { createGatewayTool, confirmationRequiredHint } from "./gateway-tool.js";
 import type { ComisLogger } from "@comis/core";
 
 /**
@@ -1217,5 +1217,21 @@ describe("gateway tool", () => {
       // The key invariant: no raw thrown error propagated to the caller.
       expect(typeof details).toBe("object");
     });
+  });
+});
+
+describe("confirmationRequiredHint (approval foot-gun fix)", () => {
+  // The pre-fix hints ("Confirm setting secret X. Call again with _confirmed: true.") told the
+  // agent to re-call but never said the action had NOT run / not to report success — so an agent
+  // given an inline "I confirm" replied "done" without re-calling (nothing was stored). The hint
+  // now leads with the negative and forbids the false success.
+  it("states NOT performed, forbids reporting success, names the re-call + the action", () => {
+    const hint = confirmationRequiredHint('setting secret "SERVICE_PASSWORD"');
+    expect(hint).toContain("NOT performed");
+    expect(hint).toContain("Do NOT report success");
+    expect(hint).toContain("_confirmed: true");
+    expect(hint).toContain('setting secret "SERVICE_PASSWORD"');
+    // an inline chat "yes" is explicitly not the confirmation
+    expect(hint.toLowerCase()).toContain("does not perform it");
   });
 });

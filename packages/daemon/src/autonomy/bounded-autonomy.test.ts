@@ -302,7 +302,7 @@ describe("createBoundedAutonomy — the single composite chokepoint", () => {
     const config: ResolvedAutonomy = {
       ...resolveAutonomy(),
       spawn: { maxConcurrentSelfAgents: 4, maxSpawnDepth: 3, maxChildrenPerAgent: 5 },
-      budget: { aggregateUsd: 100, tokens: 1_000_000, wallClockMs: 1_800_000 }, // 30-min default
+      budget: { aggregateUsd: 100, tokens: 1_000_000, wallClockMs: 1_800_000 }, // explicit per-test ceilings (30-min wall-clock)
     };
     const { service, clock } = makeService({ config });
 

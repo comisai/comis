@@ -241,6 +241,88 @@ describe("MCP RPC Handlers", () => {
       expect(result.toolCount).toBe(1);
     });
 
+    it("resolves ${VAR} env refs to live secret values for the spawn", async () => {
+      // A credentialed stdio server passes env as ${VAR} refs. The LIVE spawn must receive the
+      // RESOLVED values (else the child sees "${VAR}" literally → invalid URL / empty creds until
+      // a restart). Persistence keeps the ${VAR} refs (asserted elsewhere); only manager.connect
+      // gets resolved values.
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("svc-mcp", [])));
+      const secretManager = {
+        get: (k: string) =>
+          k === "SERVICE_PASSWORD" ? "s3cret-val" : k === "SERVICE_BASE_URL" ? "https://api.example.com/v2" : undefined,
+      } as any;
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger(), secretManager });
+      await handlers["mcp.connect"]({
+        server_name: "svc-mcp",
+        transport: "stdio",
+        command: "npx",
+        args: ["-y", "example-mcp"],
+        env: { SERVICE_PASSWORD: "${SERVICE_PASSWORD}", SERVICE_BASE_URL: "${SERVICE_BASE_URL}" },
+      } as any);
+      expect(manager.connect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          env: { SERVICE_PASSWORD: "s3cret-val", SERVICE_BASE_URL: "https://api.example.com/v2" },
+        }),
+      );
+    });
+
+    it("logs a positive env-resolution INFO (keys + refsResolved) for the live spawn", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("svc-mcp", [])));
+      const secretManager = {
+        get: (k: string) =>
+          k === "SERVICE_PASSWORD" ? "s3cret-val" : k === "SERVICE_BASE_URL" ? "https://api.example.com/v2" : undefined,
+      } as any;
+      const logger = makeLogger();
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger, secretManager });
+      await handlers["mcp.connect"]({
+        server_name: "svc-mcp",
+        transport: "stdio",
+        command: "npx",
+        args: ["-y", "example-mcp"],
+        env: { SERVICE_PASSWORD: "${SERVICE_PASSWORD}", SERVICE_BASE_URL: "${SERVICE_BASE_URL}" },
+      } as any);
+      const infoCall = (logger.info as any).mock.calls.find((c: any[]) => /env resolved/i.test(String(c[1])));
+      expect(infoCall).toBeDefined();
+      expect(infoCall[0]).toMatchObject({
+        entityId: "svc-mcp",
+        envKeys: ["SERVICE_PASSWORD", "SERVICE_BASE_URL"],
+        refsResolved: 2,
+      });
+    });
+
+    it("does NOT re-scan resolved secret VALUES as env refs (a value containing ${...} is not a missing ref)", async () => {
+      // Regression: the ref-validation must run over the ORIGINAL ${VAR} refs, NOT the
+      // resolved values. A stored secret whose VALUE contains a `${...}` substring must
+      // resolve cleanly — re-scanning the resolved value would falsely report the inner
+      // name (WORD) as a missing env var and reject a valid connect.
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("svc-mcp", [])));
+      const secretManager = { get: (k: string) => (k === "SERVICE_PASSWORD" ? "pa${WORD}ss" : undefined) } as any;
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger(), secretManager });
+      await handlers["mcp.connect"]({
+        server_name: "svc-mcp",
+        transport: "stdio",
+        command: "npx",
+        env: { SERVICE_PASSWORD: "${SERVICE_PASSWORD}" },
+      } as any);
+      expect(manager.connect).toHaveBeenCalledWith(
+        expect.objectContaining({ env: { SERVICE_PASSWORD: "pa${WORD}ss" } }),
+      );
+    });
+
+    it("throws a missing-env-ref error naming the var when an env ${VAR} ref is absent from the store", async () => {
+      const secretManager = { get: () => undefined } as any;
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger(), secretManager });
+      await expect(
+        handlers["mcp.connect"]({
+          server_name: "svc-mcp",
+          transport: "stdio",
+          command: "npx",
+          env: { SERVICE_PASSWORD: "${SERVICE_PASSWORD}" },
+        } as any),
+      ).rejects.toThrow(/SERVICE_PASSWORD/);
+      expect(manager.connect).not.toHaveBeenCalled();
+    });
+
     it("passes sse transport directly", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("remote", [])));
 
@@ -765,6 +847,30 @@ describe("MCP RPC Handlers", () => {
       expect(mockTempDisconnectAll).toHaveBeenCalled();
     });
 
+    it("resolves ${VAR} env refs to live secret values for the temp probe spawn", async () => {
+      // mcp.test spawns a REAL child to probe it, exactly like mcp.connect. It must receive
+      // the RESOLVED env — else a credentialed stdio server fails the probe on the literal
+      // "${VAR}" (invalid URL / empty credential), diverging from what mcp.connect would do.
+      mockTempConnect.mockResolvedValueOnce(ok(makeConnection("__test__svc", [])));
+      const secretManager = {
+        get: (k: string) =>
+          k === "SERVICE_PASSWORD" ? "s3cret-val" : k === "SERVICE_BASE_URL" ? "https://api.example.com/v2" : undefined,
+      } as any;
+      const handlers = createMcpHandlers({ mcpClientManager: createMockManager(), logger: makeLogger(), secretManager });
+      await handlers["mcp.test"]({
+        name: "svc",
+        transport: "stdio",
+        command: "npx",
+        args: ["-y", "example-mcp"],
+        env: { SERVICE_PASSWORD: "${SERVICE_PASSWORD}", SERVICE_BASE_URL: "${SERVICE_BASE_URL}" },
+      } as any);
+      expect(mockTempConnect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          env: { SERVICE_PASSWORD: "s3cret-val", SERVICE_BASE_URL: "https://api.example.com/v2" },
+        }),
+      );
+    });
+
     it("returns error details on connection failure", async () => {
       mockTempConnect.mockResolvedValueOnce(err(new Error("ENOENT: npx not found")));
 
@@ -1133,10 +1239,13 @@ describe("MCP RPC Handlers", () => {
         env: { FINNHUB_API_KEY: "${FINNHUB_API_KEY}" },
       }) as any;
 
+      // The LIVE spawn receives the RESOLVED secret — consistent with the
+      // config-load path, which substitutes ${VAR} before the config ever reaches manager.connect.
+      // The ${VAR} ref is preserved only in the PERSISTED entry, so secrets stay out of config.
       expect(manager.connect).toHaveBeenCalledWith(
         expect.objectContaining({
           name: "finnhub",
-          env: { FINNHUB_API_KEY: "${FINNHUB_API_KEY}" },
+          env: { FINNHUB_API_KEY: "abc123" },
         }),
       );
       expect(result.status).toBe("connected");
