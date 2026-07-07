@@ -211,3 +211,82 @@ describe("acquire — fileSet pass-through", () => {
     expect(validate).not.toHaveBeenCalled();
   });
 });
+
+describe("acquire — mid-stream body failures stay Result-typed (never throw)", () => {
+  // Reviewed live on #294: a body error AFTER the headers arrived — a
+  // connection reset mid-body, or the 30s per-fetch AbortSignal.timeout firing
+  // while the body streamed — rejected out of the capped read loop and escaped
+  // acquire() as an untyped throw, violating the module's "no throws escape"
+  // contract. The sibling registry resolvers guard this exact branch; acquire
+  // must match.
+
+  function rejectingStream(
+    rejection: Error,
+    firstChunk?: Uint8Array,
+  ): { body: ArchiveResponseBody; cancelled: () => boolean } {
+    let cancelled = false;
+    let served = false;
+    return {
+      body: {
+        getReader() {
+          return {
+            async read(): Promise<{ done: boolean; value?: Uint8Array }> {
+              if (firstChunk && !served) {
+                served = true;
+                return { done: false, value: firstChunk };
+              }
+              throw rejection;
+            },
+            async cancel() {
+              cancelled = true;
+            },
+          };
+        },
+        async cancel() {
+          cancelled = true;
+        },
+      },
+      cancelled: () => cancelled,
+    };
+  }
+
+  function responseWith(body: ArchiveResponseBody): ArchiveHttpResponse {
+    return { ok: true, status: 200, headers: { get: () => null }, body };
+  }
+
+  it("maps a mid-stream timeout to a typed timeout reject and cancels the reader", async () => {
+    const timeout = new Error("The operation was aborted due to timeout");
+    timeout.name = "TimeoutError";
+    const { body, cancelled } = rejectingStream(timeout, new Uint8Array([1, 2]));
+    const result = await acquire(
+      { kind: "archiveUrl", url: "https://example.invalid/a.skill" },
+      {
+        caps: { maxArchiveBytes: 1024 },
+        validate: okValidator,
+        fetchImpl: async () => responseWith(body),
+      },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("timeout");
+    expect(result.error.hint.length).toBeGreaterThan(0);
+    expect(cancelled()).toBe(true);
+  });
+
+  it("maps a mid-stream connection reset to a typed network reject instead of an escaping throw", async () => {
+    const { body, cancelled } = rejectingStream(new Error("mid-stream reset"));
+    const result = await acquire(
+      { kind: "archiveUrl", url: "https://example.invalid/a.skill" },
+      {
+        caps: { maxArchiveBytes: 1024 },
+        validate: okValidator,
+        fetchImpl: async () => responseWith(body),
+      },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("network");
+    expect(result.error.message).toContain("mid-stream reset");
+    expect(cancelled()).toBe(true);
+  });
+});
