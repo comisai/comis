@@ -65,12 +65,17 @@ const validSaKey = JSON.stringify({
   client_email: "bot@test-project.iam.gserviceaccount.com",
 });
 
-/** Build a DoctorContext whose googlechat config is exactly `googlechat`. */
+/**
+ * Build a DoctorContext whose googlechat config is exactly `googlechat`.
+ * `configExtra` merges additional top-level config sections (e.g. the global
+ * autoReplyEngine block the group-activation probe reads).
+ */
 function contextWith(
   googlechat: Record<string, unknown>,
   extra: Partial<DoctorContext> = {},
+  configExtra: Record<string, unknown> = {},
 ): DoctorContext {
-  const config = { channels: { googlechat } } as unknown as AppConfig;
+  const config = { channels: { googlechat }, ...configExtra } as unknown as AppConfig;
   return {
     ...baseContext,
     config,
@@ -424,7 +429,7 @@ describe("googlechatHealthCheck", () => {
   // Aggregate: an enabled channel yields all four probes.
   // -------------------------------------------------------------------------
 
-  it("reports all four probes for an enabled channel", async () => {
+  it("reports the four applicable probes for a clean pubsub config", async () => {
     const findings = await googlechatHealthCheck.run(
       contextWith({
         enabled: true,
@@ -539,5 +544,49 @@ describe("googlechatHealthCheck", () => {
     const audienceCheck = find(findings, "Google Chat webhook audience");
     expect(audienceCheck?.message ?? "").not.toContain(SECRET_MARKER);
     expect(audienceCheck?.suggestion ?? "").not.toContain(SECRET_MARKER);
+  });
+
+  // -------------------------------------------------------------------------
+  // Probe 6: inert "always" groupActivation lint
+  // -------------------------------------------------------------------------
+  //
+  // Google Chat only delivers mentioned/slash-command space messages, so
+  // groupActivation "always" is inert there. The boot validator WARNs about it
+  // once in the daemon log; the doctor read is the surface an operator actually
+  // consults, so it must surface the same advisory.
+
+  it('warns that groupActivation "always" is inert on Google Chat, naming the exact knob', async () => {
+    const findings = await googlechatHealthCheck.run(
+      contextWith(
+        {
+          enabled: true,
+          mode: "pubsub",
+          serviceAccountKey: validSaKey,
+          subscriptionName: "projects/test-project/subscriptions/comis",
+        },
+        {},
+        { autoReplyEngine: { groupActivation: "always" } },
+      ),
+    );
+    const activation = find(findings, "Google Chat group activation");
+    expect(activation?.status).toBe("warn");
+    expect(activation?.message).toContain("autoReplyEngine.groupActivation");
+    expect(activation?.message).toContain('"always"');
+  });
+
+  it("omits the group-activation probe for mention-gated activation (nothing inert to flag)", async () => {
+    const findings = await googlechatHealthCheck.run(
+      contextWith(
+        {
+          enabled: true,
+          mode: "pubsub",
+          serviceAccountKey: validSaKey,
+          subscriptionName: "projects/test-project/subscriptions/comis",
+        },
+        {},
+        { autoReplyEngine: { groupActivation: "mention-gated" } },
+      ),
+    );
+    expect(find(findings, "Google Chat group activation")).toBeUndefined();
   });
 });
