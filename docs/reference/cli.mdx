@@ -643,6 +643,15 @@ Interactive setup wizard for first-time configuration. Supports three modes: int
 | `--slack-app-token <tok>` | `string` | - | Slack app token |
 | `--line-token <tok>` | `string` | - | LINE channel token |
 | `--line-secret <sec>` | `string` | - | LINE channel secret |
+| `--msteams-app-id <id>` | `string` | - | Microsoft Teams bot app (client) ID |
+| `--msteams-app-password <pw>` | `string` | - | Microsoft Teams app password (client secret) |
+| `--msteams-tenant-id <id>` | `string` | - | Microsoft Teams directory (tenant) ID |
+| `--msteams-auth-mode <mode>` | `secret` \| `certificate` \| `managedIdentity` | `secret` | Microsoft Teams auth mode |
+| `--googlechat-sa-key <keyOrPath>` | `string` | - | Google Chat service-account key JSON, or a path to the downloaded key file |
+| `--googlechat-subscription <name>` | `string` | - | Google Chat Pub/Sub pull subscription (`pubsub` mode): `projects/P/subscriptions/S` |
+| `--googlechat-mode <mode>` | `pubsub` \| `webhook` | `pubsub` | Google Chat inbound transport |
+| `--googlechat-audience <aud>` | `string` | - | Google Chat inbound JWT audience (`webhook` mode) |
+| `--googlechat-audience-type <type>` | `project-number` \| `app-url` | `project-number` | Google Chat webhook audience type |
 
 #### Media Generation and Processing
 
