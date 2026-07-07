@@ -305,6 +305,48 @@ describe("setupMedia", () => {
     );
   });
 
+  it("threads the Matrix homeserver origin into trustedFetchOrigins when allowPrivateHomeserver is set", async () => {
+    const setupMedia = await getSetupMedia();
+    const container = createMinimalMediaConfig();
+    container.config.channels = {
+      telegram: { apiRoot: "http://127.0.0.1:8081/custom" },
+      matrix: { homeserverUrl: "http://10.0.0.5:8008/_matrix", allowPrivateHomeserver: true },
+    };
+
+    await setupMedia({
+      container,
+      skillsLogger: createMockLogger() as any,
+    });
+
+    expect(mockCreateSsrfGuardedFetcher).toHaveBeenCalledWith(
+      expect.objectContaining({
+        trustedFetchOrigins: expect.arrayContaining([
+          "http://127.0.0.1:8081",
+          "http://10.0.0.5:8008",
+        ]),
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("does NOT trust the Matrix homeserver origin without the allowPrivateHomeserver opt-in", async () => {
+    const setupMedia = await getSetupMedia();
+    const container = createMinimalMediaConfig();
+    container.config.channels = {
+      matrix: { homeserverUrl: "http://10.0.0.5:8008", allowPrivateHomeserver: false },
+    };
+
+    await setupMedia({
+      container,
+      skillsLogger: createMockLogger() as any,
+    });
+
+    const fetcherConfig = mockCreateSsrfGuardedFetcher.mock.calls[0][0] as {
+      trustedFetchOrigins?: string[];
+    };
+    expect(fetcherConfig.trustedFetchOrigins ?? []).not.toContain("http://10.0.0.5:8008");
+  });
+
   // -------------------------------------------------------------------------
   // 6. Creates STT provider and fallback chain
   // -------------------------------------------------------------------------
