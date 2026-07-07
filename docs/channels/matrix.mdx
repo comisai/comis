@@ -251,7 +251,8 @@ want the bot to answer anyone in any room it has joined.
 `homeserverUrl` is validated against server-side request forgery before any
 connection is opened, which blocks private-range addresses by default. To point
 the bot at a homeserver you run on a private address, set
-`allowPrivateHomeserver: true`. Cloud-metadata endpoints stay blocked regardless.
+`allowPrivateHomeserver: true`. The opt-in covers the sync connection and
+`mxc://` media downloads alike. Cloud-metadata endpoints stay blocked regardless.
 
 ## Media
 

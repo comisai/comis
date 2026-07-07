@@ -247,9 +247,20 @@ export async function setupMedia(deps: {
   // (a self-hosted local Bot API server / the test emulator on loopback) so media file-byte
   // downloads from a custom apiRoot are permitted past the loopback block — host:port-scoped, so
   // the strict SSRF firewall still gates every OTHER URL (e.g. the daemon's own 127.0.0.1:4766 stays blocked).
+  // The Matrix homeserver origin joins the list ONLY behind the
+  // channels.matrix.allowPrivateHomeserver opt-in — that flag is the documented knob that relaxes
+  // the private-range block for a self-hosted homeserver, and mxc:// media downloads must follow
+  // the same verdict as the sync connection. A public homeserver needs no allowance (strict
+  // validateUrl already passes public IPs), so without the opt-in nothing is added.
   const channelsCfg = (container.config.channels ?? {}) as Record<string, { apiRoot?: string } | undefined>;
-  const trustedFetchOrigins = Object.values(channelsCfg)
-    .map((c) => c?.apiRoot)
+  const matrixCfg = (container.config.channels as {
+    matrix?: { homeserverUrl?: string; allowPrivateHomeserver?: boolean };
+  } | undefined)?.matrix;
+  const trustedServerUrls = [
+    ...Object.values(channelsCfg).map((c) => c?.apiRoot),
+    ...(matrixCfg?.allowPrivateHomeserver ? [matrixCfg.homeserverUrl] : []),
+  ];
+  const trustedFetchOrigins = trustedServerUrls
     .filter((r): r is string => typeof r === "string" && r.length > 0)
     .map((r) => {
       try {
