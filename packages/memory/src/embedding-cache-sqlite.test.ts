@@ -775,15 +775,19 @@ describe("cache maintenance", () => {
   });
 
   it("TTL expiration removes old entries", async () => {
+    // Expiry is decided by the DATA (2-minute-stale rows vs a 60s TTL), never
+    // by sleep timing: with a 100ms TTL the "recent" row sat exactly at the
+    // boundary and a load-stretched sleep expired it too (observed live on a
+    // saturated post-build:clean cold run — prune deleted all 4 rows).
     const cache = createSqliteEmbeddingCache(inner, {
       db,
       maxEntries: 50_000,
-      ttlMs: 100, // 100ms TTL for test speed
+      ttlMs: 60_000,
       pruneIntervalMs: 30,
     });
 
-    // Insert 3 "old" entries with created_at in the past (> 100ms ago)
-    const oldTime = Date.now() - 500;
+    // Insert 3 "old" entries with created_at well past the TTL
+    const oldTime = Date.now() - 120_000;
     for (let i = 0; i < 3; i++) {
       insertRawRow(db, `old-text-${i}`, {
         createdAt: oldTime,
@@ -803,11 +807,15 @@ describe("cache maintenance", () => {
     const before = db.prepare("SELECT COUNT(*) as cnt FROM embedding_cache").get() as { cnt: number };
     expect(before.cnt).toBe(4);
 
-    // Wait for prune timer to fire
-    await delay(100);
+    // Poll until the prune timer has removed the expired rows (no fixed sleep
+    // racing the timer). The recent row cannot age past the 60s TTL in-window.
+    let after = db.prepare("SELECT COUNT(*) as cnt FROM embedding_cache").get() as { cnt: number };
+    for (let i = 0; i < 400 && after.cnt !== 1; i++) {
+      await delay(25);
+      after = db.prepare("SELECT COUNT(*) as cnt FROM embedding_cache").get() as { cnt: number };
+    }
 
     // The 3 old entries should be deleted, the recent one should remain
-    const after = db.prepare("SELECT COUNT(*) as cnt FROM embedding_cache").get() as { cnt: number };
     expect(after.cnt).toBe(1);
 
     const recent = db.prepare(
@@ -816,7 +824,7 @@ describe("cache maintenance", () => {
     expect(recent).toBeDefined();
 
     await cache.dispose?.();
-  });
+  }, 30_000);
 
   it("WAL checkpoint runs after prune without error", async () => {
     // This test verifies prune + WAL checkpoint completes without throwing

@@ -287,7 +287,14 @@ function createMinimalContainer(overrides: Record<string, any> = {}) {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("setupMemory", () => {
+// Every test dynamically imports the real setup-memory module; the FIRST one
+// pays the full cold transform under whatever load the run is under. On a
+// saturated post-build:clean whole-workspace run the default 5s timeout fired
+// mid-setupMemory — and the abandoned continuation then invoked the shared
+// module mocks DURING the next test, breaking its toHaveBeenCalledOnce()
+// (observed live: buildProvenanceReadStore "called 2 times"). Headroom removes
+// both the timeout and its cascade.
+describe("setupMemory", { timeout: 30_000 }, () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });

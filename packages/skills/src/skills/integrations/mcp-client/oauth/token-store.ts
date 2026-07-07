@@ -167,6 +167,8 @@ export interface TokenStoreDeps {
    * platform set this to `true`; production (Linux-only) keeps the default.
    */
   readonly watchPersistent?: boolean;
+  /** chokidar `usePolling` for the disk-watch. Default `false` (native events — production keeps this). Tests set `true`: stat-polling the few token files stays deterministic where a saturated machine delays macOS FSEvents past any poll budget. */
+  readonly watchUsePolling?: boolean;
 }
 
 /** The OAuth token store surface (disk-backed `OAuthClientProvider` glue). */
@@ -223,6 +225,7 @@ export function createTokenStore(deps: TokenStoreDeps): TokenStore {
   const now = deps.now ?? systemNowMs;
   const { logger } = deps;
   const watchPersistent = deps.watchPersistent ?? false;
+  const watchUsePolling = deps.watchUsePolling ?? false;
 
   // In-memory read cache of parsed file contents keyed by ABSOLUTE file path.
   // The watcher clears it wholesale on any external change; reads repopulate
@@ -437,6 +440,7 @@ export function createTokenStore(deps: TokenStoreDeps): TokenStore {
         ignoreInitial: true,
         atomic: WATCH_DEBOUNCE_MS,
         awaitWriteFinish: false,
+        ...(watchUsePolling ? { usePolling: true, interval: 50 } : {}),
       });
       watcher = w;
       w.on("change", scheduleCacheInvalidation);

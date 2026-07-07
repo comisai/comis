@@ -235,7 +235,7 @@ describe("assembleIncidentReportOffline — real nested layout, no daemon, no me
   // Generous timeout: the FIRST offline call lazy-loads the whole @comis/daemon
   // graph (a deliberate trade — CLI startup stays light; the offline
   // path pays once). Under vitest's transform that load can take ~10s cold.
-  it("assembles the numbers-backed context_exhausted post-mortem from disk alone", { timeout: 30_000 }, async () => {
+  it("assembles the numbers-backed context_exhausted post-mortem from disk alone", { timeout: 120_000 }, async () => {
     const dataDir = tmpDataDir();
     buildLiveShapedSession(dataDir);
 
@@ -276,7 +276,7 @@ describe("assembleIncidentReportOffline — real nested layout, no daemon, no me
 });
 
 describe("assembleFleetHealthReportOffline — memory.db present but missing obs tables", () => {
-  it("degrades to file-only sources when the db lacks the obs schema (post-reset live state)", { timeout: 30_000 }, async () => {
+  it("degrades to file-only sources when the db lacks the obs schema (post-reset live state)", { timeout: 120_000 }, async () => {
     const dataDir = tmpDataDir();
     fs.mkdirSync(path.join(dataDir, "logs"), { recursive: true });
     // An empty SQLite db — exactly what an operator reset can leave behind.
@@ -290,7 +290,7 @@ describe("assembleFleetHealthReportOffline — memory.db present but missing obs
 });
 
 describe("assembleFleetHealthReportOffline — local day files, no daemon, no memory.db", () => {
-  it("returns an honest report with coverage gaps when memory.db is absent", { timeout: 30_000 }, async () => {
+  it("returns an honest report with coverage gaps when memory.db is absent", { timeout: 120_000 }, async () => {
     const dataDir = tmpDataDir();
     const logsDir = path.join(dataDir, "logs");
     fs.mkdirSync(logsDir, { recursive: true });
@@ -341,7 +341,7 @@ describe("resolveSessionFileOffline — real nested layout via the daemon pointe
   // Generous timeout: the first daemon-seam call lazy-loads the whole
   // @comis/daemon graph (~10s cold under vitest's transform), like the
   // assembler seam above.
-  it("resolves a formatted sessionKey to its REAL workspace .jsonl through the daemon seam", { timeout: 30_000 }, async () => {
+  it("resolves a formatted sessionKey to its REAL workspace .jsonl through the daemon seam", { timeout: 120_000 }, async () => {
     const dataDir = tmpDataDir();
     const sessionFile = buildLiveShapedSession(dataDir);
 
@@ -353,7 +353,7 @@ describe("resolveSessionFileOffline — real nested layout via the daemon pointe
     expect(resolved!.startsWith(path.join(dataDir, "workspace", "sessions"))).toBe(true);
   });
 
-  it("returns undefined for a sessionKey with no on-disk artifacts", { timeout: 30_000 }, async () => {
+  it("returns undefined for a sessionKey with no on-disk artifacts", { timeout: 120_000 }, async () => {
     const dataDir = tmpDataDir(); // no workspace/sessions tree written
     expect(await resolveSessionFileOffline(dataDir, SESSION_KEY)).toBeUndefined();
   });

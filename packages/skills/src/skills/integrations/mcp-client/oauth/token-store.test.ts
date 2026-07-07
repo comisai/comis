@@ -84,6 +84,10 @@ describe("createTokenStore", () => {
       // production default, kept for clean daemon shutdown on Linux). Tests run
       // on the dev platform, so opt into persistent watching here.
       watchPersistent: true,
+      // Stat-poll instead of native events: a saturated whole-workspace test
+      // run floods macOS FSEvents and can starve the change event past any
+      // poll budget (observed live on a post-build:clean cold run).
+      watchUsePolling: true,
     });
   });
 

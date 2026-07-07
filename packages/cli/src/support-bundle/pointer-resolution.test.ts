@@ -241,7 +241,7 @@ describe("support bundle --session — resolves the incident via the on-disk poi
   // (~10s cold under vitest's transform); the session path pays it once.
   it(
     "assembles explain.json from the pointer target and never the co-located decoy",
-    { timeout: 30_000 },
+    { timeout: 120_000 },
     async () => {
       const dataDir = makeDataDir();
       const fx = buildNonColocatedSession(dataDir);
@@ -307,7 +307,7 @@ describe("support bundle --session — resolves the incident via the on-disk poi
 describe("support bundle --deep — exports the trace bundle from the pointer target, in place", () => {
   it(
     "writes the eight-file trace bundle whose runtime source is the pointer target, not the decoy",
-    { timeout: 30_000 },
+    { timeout: 120_000 },
     async () => {
       const dataDir = makeDataDir();
       const fx = buildNonColocatedSession(dataDir);
@@ -376,7 +376,7 @@ describe("support bundle --deep — exports the trace bundle from the pointer ta
 describe("support bundle — dead daemon (no audit store) degrades honestly", () => {
   it(
     "records an audit-store warning, still produces the bundle, and is never healthy",
-    { timeout: 30_000 },
+    { timeout: 120_000 },
     async () => {
       const dataDir = makeDataDir();
       // No memory.db is written — the offline audit store is absent, exactly as on

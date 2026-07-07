@@ -420,7 +420,7 @@ describe("no seeded secret survives the --session --deep depth surface", () => {
   // (~10s cold under vitest's transform); the session/deep path pays it once.
   it(
     "recursively sweeps explain.json + audit-summary.json + every trace-export file for surviving seeds",
-    { timeout: 30_000 },
+    { timeout: 120_000 },
     async () => {
       const dataDir = makeDataDir();
       writeSeededSession(dataDir, NOW_MS);
