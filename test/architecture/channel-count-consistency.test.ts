@@ -18,7 +18,7 @@
  * @module
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -30,6 +30,28 @@ const CHANNELS_ASTRO_SRC = readFileSync(
   "utf8",
 );
 const DOCS_JSON_SRC = readFileSync(resolve(REPO_ROOT, "docs/docs.json"), "utf8");
+const PACKAGES_MDX_SRC = readFileSync(
+  resolve(REPO_ROOT, "docs/developer-guide/packages.mdx"),
+  "utf8",
+);
+const OBSERVABILITY_MDX_SRC = readFileSync(
+  resolve(REPO_ROOT, "docs/operations/observability.mdx"),
+  "utf8",
+);
+
+/**
+ * The adapter-implementation universe: one directory per adapter under
+ * `packages/channels/src/` (this INCLUDES the internal `echo` adapter, so it is
+ * one larger than the user-facing website count). Derived from the filesystem
+ * so a newly added channel directory fails this guard until every prose count
+ * below is bumped with it.
+ */
+const NON_ADAPTER_DIRS = new Set(["__tests__", "shared"]);
+const adapterDirs = readdirSync(resolve(REPO_ROOT, "packages/channels/src"), {
+  withFileTypes: true,
+})
+  .filter((e) => e.isDirectory() && !NON_ADAPTER_DIRS.has(e.name))
+  .map((e) => e.name);
 
 /** The `channels: N` headline literal. */
 function headlineChannelCount(src: string): number {
@@ -126,5 +148,31 @@ describe("channel count is reconciled across every surface that states it", () =
 
   it("lists one Adapters-nav documentation page per counted channel", () => {
     expect(adapterNavChannelPages(DOCS_JSON_SRC)).toHaveLength(channels);
+  });
+});
+
+describe("developer-docs adapter counts match the adapter directories on disk", () => {
+  const expected = adapterDirs.length;
+
+  it("keeps every 'N platform/channel adapters' prose count in packages.mdx equal to the directory count", () => {
+    const counts = [...PACKAGES_MDX_SRC.matchAll(/(\d+)\s+(?:platform|channel) adapters/g)].map(
+      (m) => Number(m[1]),
+    );
+    expect(counts.length).toBeGreaterThan(0);
+    for (const count of counts) expect(count).toBe(expected);
+  });
+
+  it("enumerates one adapter per directory in the packages.mdx channels row, including Matrix", () => {
+    const m = PACKAGES_MDX_SRC.match(/platform adapters\s*\(([^)]+)\)/);
+    if (!m) throw new Error("packages.mdx: could not find the 'platform adapters ( ... )' enumeration");
+    const listed = m[1]!.split(",").map((s) => s.trim());
+    expect(listed).toHaveLength(expected);
+    expect(listed).toContain("Matrix");
+  });
+
+  it("keeps the observability.mdx 'All N channel adapters' count equal to the directory count", () => {
+    const m = OBSERVABILITY_MDX_SRC.match(/All (\d+) channel adapters/);
+    if (!m) throw new Error("observability.mdx: could not find the 'All N channel adapters' count");
+    expect(Number(m[1])).toBe(expected);
   });
 });
