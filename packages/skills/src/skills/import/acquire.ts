@@ -22,7 +22,7 @@
  * @module
  */
 import type { Result } from "@comis/shared";
-import { ok, err } from "@comis/shared";
+import { ok, err, suppressError } from "@comis/shared";
 import { validateUrl, type ErrorKind } from "@comis/core";
 import { fetchPinned } from "../../tools/integrations/pinned-fetch.js";
 
@@ -136,6 +136,12 @@ function overCapError(maxArchiveBytes: number): AcquireError {
  * declared Content-Length (pre-stream) and the streamed size (a server may
  * under-declare). Mirrors the shared SSRF fetcher's capped-read contract; the
  * cap key is named in the reject hint.
+ *
+ * The read loop is wrapped so a body error AFTER the headers arrive — a
+ * connection reset mid-body, or the per-fetch 30s streaming timeout firing
+ * during `read()` — returns a TYPED reject, never an uncaught throw, keeping
+ * the module's "no throws escape" contract intact (the registry resolvers
+ * guard the identical branch).
  */
 async function readCappedBody(
   response: ArchiveHttpResponse,
@@ -159,16 +165,40 @@ async function readCappedBody(
 
   const chunks: Uint8Array[] = [];
   let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value === undefined) continue;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel();
-      return err(overCapError(maxBytes));
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value === undefined) continue;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        return err(overCapError(maxBytes));
+      }
+      chunks.push(value);
     }
-    chunks.push(value);
+  } catch (e) {
+    suppressError(reader.cancel(), "cancel archive body reader after a mid-stream read error");
+    // The only AbortSignal on the pinned fetch is AbortSignal.timeout(30_000),
+    // so a Timeout/Abort raised during read() IS the streaming-timeout branch;
+    // any other rejection is a mid-stream network failure of the archive host.
+    const name = e instanceof Error ? e.name : "";
+    if (name === "TimeoutError" || name === "AbortError") {
+      return err(
+        mkErr(
+          "timeout",
+          "fetching the archive timed out mid-stream (the 30s per-fetch cap fired while the body was streaming)",
+          "the archive host sent headers then stalled the body; verify it serves the archive fully within 30s",
+        ),
+      );
+    }
+    return err(
+      mkErr(
+        "network",
+        `reading the archive body failed mid-stream: ${e instanceof Error ? e.message : String(e)}`,
+        "verify the archive URL is reachable and responsive; the fetch is pinned to the SSRF-validated IP and aborts after 30s",
+      ),
+    );
   }
   return ok(Buffer.concat(chunks));
 }
