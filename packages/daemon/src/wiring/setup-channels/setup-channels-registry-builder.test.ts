@@ -149,4 +149,18 @@ describe("buildChannelCredentialMap", () => {
     expect(buildChannelCredentialMap({ msteams: { enabled: false } }).has("MSTEAMS_APP_PASSWORD")).toBe(false);
     expect(buildChannelCredentialMap({}).has("MSTEAMS_APP_PASSWORD")).toBe(false);
   });
+
+  it("maps GOOGLECHAT_SA_KEY to googlechat when the googlechat channel is enabled", () => {
+    // The adapter reads the service-account key once at setup and mints JWTs
+    // from it in memory — without this entry a rotated key never triggers the
+    // targeted reconnect, and the adapter keeps signing with the stale key
+    // until a manual daemon restart.
+    const m = buildChannelCredentialMap({ googlechat: { enabled: true } });
+    expect(m.get("GOOGLECHAT_SA_KEY")).toBe("googlechat");
+  });
+
+  it("omits the googlechat credential entry when googlechat is disabled or absent", () => {
+    expect(buildChannelCredentialMap({ googlechat: { enabled: false } }).has("GOOGLECHAT_SA_KEY")).toBe(false);
+    expect(buildChannelCredentialMap({}).has("GOOGLECHAT_SA_KEY")).toBe(false);
+  });
 });
