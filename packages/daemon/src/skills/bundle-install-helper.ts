@@ -4,11 +4,13 @@
 /**
  * applyBundleInstall: install-path hook.
  *
- * Invoked from the three skill install RPC handlers (skills.import,
- * skills.create, skills.upload) AFTER the existing file-write + registry.init()
- * steps. Reads the freshly-written SKILL.md, runs Phase A via resolveBundle,
- * and on success commits via persistMcpServers + a sequential per-entry
- * manager.connect.
+ * Invoked from the two OPERATOR-AUTHORED skill RPC handlers (skills.create,
+ * skills.update) AFTER the existing file-write + registry.init() steps — the
+ * third-party surfaces (skills.import, skills.upload) route through the staged
+ * pipeline's {@link applyImportedBundleInstall} instead, which persists
+ * disabled and never connects. Reads the freshly-written SKILL.md, runs
+ * Phase A via resolveBundle, and on success commits via persistMcpServers + a
+ * sequential per-entry manager.connect.
  *
  * Atomic two-phase invariant: Phase A reject ⇒ THROW before any persist call.
  * The throw fires before persistMcpServers and before any
@@ -424,9 +426,10 @@ export interface ImportedBundleInstallArgs {
 /**
  * Imported-tier Phase-B persist — the disabled-by-default install path.
  *
- * Unlike {@link applyBundleInstall} (the trusted create/upload path, which
+ * Unlike {@link applyBundleInstall} (the trusted create/update path, which
  * persists `enabled: true` and auto-connects), an IMPORTED skill's bundled MCP
- * entries persist DISABLED and are NEVER connected at install. The operator opts
+ * entries — every skills.import source AND skills.upload — persist DISABLED
+ * and are NEVER connected at install. The operator opts
  * in per server later, and each later connect re-runs the malware/plaintext-
  * secret checks at the connect site. This disabled-by-default posture is
  * inseparable from the imported trust tier — there is deliberately no config
@@ -490,14 +493,16 @@ export async function applyImportedBundleInstall(
 // ---------------------------------------------------------------------------
 
 /**
- * Thin wrapper invoked from each of the three install RPC handlers
- * (skills.import, skills.create, skills.upload) to keep their per-handler
- * wiring to a single line. Unpacks `force` + `_context` from the dispatcher-
- * raw params and delegates to applyBundleInstall.
+ * Thin wrapper invoked from the two operator-authored install RPC handlers
+ * (skills.create, skills.update) to keep their per-handler wiring to a single
+ * line — skills.import and skills.upload never call this; they route through
+ * the staged pipeline's applyImportedBundleInstall. Unpacks `force` +
+ * `_context` from the dispatcher-raw params and delegates to
+ * applyBundleInstall.
  *
  * Kept here (rather than at the call site) to preserve the 800-line cap
  * on packages/daemon/src/api/skill-handlers.ts — moving the unpacking
- * here trades 5L per handler call (15L total) for 0L at the call site.
+ * here trades 5L per handler call for 0L at the call site.
  */
 export async function runBundleInstallHook(
   deps: WorkspaceApiDeps,
