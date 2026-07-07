@@ -285,9 +285,12 @@ that gap:
   service-account key parses and resolves; the Pub/Sub subscription is reachable
   (in `pubsub` mode -- a failure names the `roles/pubsub.subscriber` grant) or
   the ingress endpoint is reachable (in `webhook` mode); an inbound event has
-  arrived recently; and `allowFrom` entries are immutable `users/{id}` ids rather
-  than email-shaped. The reachability and recent-inbound probes skip (rather than
-  fail) when the daemon is down.
+  arrived recently; `allowFrom` entries are immutable `users/{id}` ids rather
+  than email-shaped; the webhook `audience` shape matches `audienceType` (a
+  mismatch silently rejects every inbound request); and
+  `autoReplyEngine.groupActivation: "always"` draws a warning because it is
+  inert on this platform. The reachability and recent-inbound probes skip
+  (rather than fail) when the daemon is down.
 - A **missed-inbound alert** compares the time since the last inbound event to
   `missedInboundThresholdMs` (default **6 hours**). On breach it emits a
   `channel:inbound_silent` event and a WARN that surfaces as a `comis fleet`

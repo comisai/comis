@@ -7,7 +7,7 @@
  * health monitor's stale-reap (a webhook has no socket to go quiet), so a dead
  * ingress would never surface through the monitor. An operator therefore needs a
  * one-command answer to "is my Google Chat app actually receiving?" — which this
- * check provides via four probes:
+ * check provides via six probes:
  *
  *   1. creds-parse    — the service-account key parses into a key JSON carrying
  *                       the two fields the outbound JWT mint needs (private_key
@@ -38,6 +38,12 @@
  *                       audience declared project-number, or a non-URL audience
  *                       declared app-url) warns — that mismatch silently rejects
  *                       every inbound request. Omitted in pubsub mode.
+ *   6. activation lint — autoReplyEngine.groupActivation "always" warns: Google
+ *                       Chat only delivers mentioned/slash-command space
+ *                       messages, so "always" is inert on this platform. The
+ *                       boot validator logs the same advisory once; the doctor
+ *                       read is where an operator actually looks. Omitted for
+ *                       any other activation mode.
  *
  * The webhook endpoint + recent-inbound probes degrade to `skip` when the
  * daemon/gateway is unreachable (mirrors the other daemon-dependent doctor
@@ -448,6 +454,31 @@ function audienceShapeFindings(gc: GoogleChatConfigView): DoctorFinding[] {
   return [finding("pass", check, "Webhook audience shape matches audienceType")];
 }
 
+// ---------------------------------------------------------------------------
+// Probe 6: inert "always" groupActivation lint
+// ---------------------------------------------------------------------------
+
+/**
+ * Google Chat delivers a space MESSAGE event only when the app is mentioned or
+ * slash-commanded, so autoReplyEngine.groupActivation "always" never sees the
+ * unmentioned traffic it is meant to answer — it is inert on this platform
+ * (mentions and slash commands still activate). The boot-time credential
+ * validator emits the same advisory once into the daemon log; this probe is the
+ * doctor-visible parity read so the operator's first troubleshooting command
+ * surfaces it too. Returns [] for any other activation mode.
+ */
+function groupActivationLintFindings(groupActivation: string | undefined): DoctorFinding[] {
+  if (groupActivation !== "always") return [];
+  return [
+    finding(
+      "warn",
+      "Google Chat group activation",
+      'autoReplyEngine.groupActivation is "always", but Google Chat never delivers unmentioned space messages — "always" is inert on this platform (mentions and slash commands still activate)',
+      'Expect mention-gated behavior on Google Chat regardless of autoReplyEngine.groupActivation — "always" cannot broaden delivery here',
+    ),
+  ];
+}
+
 /**
  * Doctor check: Google Chat health.
  *
@@ -489,6 +520,7 @@ export const googlechatHealthCheck: DoctorCheck = {
       await recentInboundFinding(),
       ...emailAllowFromLintFindings(gc),
       ...audienceShapeFindings(gc),
+      ...groupActivationLintFindings(context.config?.autoReplyEngine?.groupActivation),
     ];
   },
 };
