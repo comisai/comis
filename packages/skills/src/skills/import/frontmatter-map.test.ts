@@ -533,3 +533,117 @@ describe("the legacy Comis top-level form is rewritten to the spec-pure carrier 
     expect(fromMapped.value).toEqual(fromLegacy.value);
   });
 });
+
+describe("a preserved metadata.comis carrier reconciles with relocated fields (never clobbered)", () => {
+  // Reviewed live on #294: a carrier preserved from the authored metadata was
+  // silently REPLACED at assembly whenever ANY relocatable field (a top-level
+  // legacy key, `platforms:`, `prerequisites:`, a sibling namespace) populated
+  // the extension bag — losing mcpServers/permissions/disableModelInvocation
+  // with zero warnings, so a skill the author hid from model invocation became
+  // model-invocable after import. Reconciliation must merge (carrier wins on a
+  // same-key conflict, with a warning naming the losing key) and an
+  // unreconcilable carrier must stay verbatim for the lift to refuse.
+
+  const metaComisOf = (specPure: Record<string, unknown>): string =>
+    (specPure["metadata"] as Record<string, string>)["comis"];
+
+  it("merges the carrier with a foreign-mapped field instead of clobbering it", () => {
+    const { specPure, warnings } = mapForeignFrontmatter({
+      name: "n",
+      platforms: "linux",
+      metadata: { comis: '{"userInvocable":false}' },
+    });
+    const bag = JSON.parse(metaComisOf(specPure)) as Record<string, unknown>;
+    expect(bag["userInvocable"]).toBe(false);
+    expect(bag["comis"]).toEqual({ os: ["linux"] });
+    // No same-key conflict: nothing dropped, nothing to warn.
+    expect(warnings).toEqual([]);
+  });
+
+  it("keeps every security-relevant carrier field when a stray top-level legacy key rides along", () => {
+    const { specPure, warnings } = mapForeignFrontmatter({
+      name: "n",
+      userInvocable: false,
+      metadata: {
+        comis: JSON.stringify({
+          mcpServers: [{ name: "srv", transport: "stdio", command: "npx" }],
+          permissions: { net: ["good.example.com"] },
+          disableModelInvocation: true,
+        }),
+      },
+    });
+    const bag = JSON.parse(metaComisOf(specPure)) as Record<string, unknown>;
+    expect(bag["mcpServers"]).toEqual([{ name: "srv", transport: "stdio", command: "npx" }]);
+    expect(bag["permissions"]).toEqual({ net: ["good.example.com"] });
+    expect(bag["disableModelInvocation"]).toBe(true);
+    expect(bag["userInvocable"]).toBe(false);
+    expect(warnings).toEqual([]);
+  });
+
+  it("the carrier wins a same-key conflict and the losing top-level key is named in a warning", () => {
+    const { specPure, warnings } = mapForeignFrontmatter({
+      name: "n",
+      userInvocable: true,
+      metadata: { comis: '{"userInvocable":false,"disableModelInvocation":true}' },
+    });
+    const bag = JSON.parse(metaComisOf(specPure)) as Record<string, unknown>;
+    expect(bag["userInvocable"]).toBe(false);
+    expect(bag["disableModelInvocation"]).toBe(true);
+    expect(warnsFor(warnings, "userInvocable")).toBe(true);
+  });
+
+  it("merges the comis namespace one level deep — foreign-mapped os and carrier skill-key both survive", () => {
+    const { specPure } = mapForeignFrontmatter({
+      name: "n",
+      platforms: ["linux", "darwin"],
+      metadata: { comis: '{"comis":{"skill-key":"k"}}' },
+    });
+    const bag = JSON.parse(metaComisOf(specPure)) as Record<string, unknown>;
+    expect(bag["comis"]).toEqual({ os: ["linux", "darwin"], "skill-key": "k" });
+  });
+
+  it("keeps an unreconcilable carrier verbatim for the lift to refuse and drops the relocated key with a warning", () => {
+    const { specPure, warnings } = mapForeignFrontmatter({
+      name: "n",
+      description: "d",
+      userInvocable: false,
+      metadata: { comis: "not-json" },
+    });
+    expect(metaComisOf(specPure)).toBe("not-json");
+    expect(warnsFor(warnings, "userInvocable")).toBe(true);
+    // Fail-closed downstream: the lift refuses the malformed carrier as authored.
+    expect(parseSkillManifest(toSkillMd(specPure)).ok).toBe(false);
+  });
+
+  it("keeps a __proto__-carrying carrier verbatim so the lift's refusal still fires (no laundering)", () => {
+    const carrier = '{"__proto__":{"x":1}}';
+    const { specPure } = mapForeignFrontmatter({
+      name: "n",
+      description: "d",
+      userInvocable: false,
+      metadata: { comis: carrier },
+    });
+    expect(metaComisOf(specPure)).toBe(carrier);
+    expect(parseSkillManifest(toSkillMd(specPure)).ok).toBe(false);
+  });
+
+  it("the mapped mixed form lifts to the identical internal manifest as its fully-authored equivalent", () => {
+    const mapped = mapForeignFrontmatter({
+      name: "mixed-form",
+      description: "d",
+      platforms: "linux",
+      metadata: { comis: '{"userInvocable":false}' },
+    }).specPure;
+    const equivalent: Record<string, unknown> = {
+      name: "mixed-form",
+      description: "d",
+      metadata: { comis: '{"userInvocable":false,"comis":{"os":["linux"]}}' },
+    };
+    const fromMapped = parseSkillManifest(toSkillMd(mapped));
+    const fromEquivalent = parseSkillManifest(toSkillMd(equivalent));
+    expect(fromMapped.ok).toBe(true);
+    expect(fromEquivalent.ok).toBe(true);
+    if (!fromMapped.ok || !fromEquivalent.ok) return;
+    expect(fromMapped.value).toEqual(fromEquivalent.value);
+  });
+});
