@@ -21,18 +21,19 @@
 // world-readable file first (`printf '%s' '{"channel_type":"telegram","to":"…","text":"…"}' > /tmp/rpc.json`)
 // then call with `--file` — same trick `cfg-patch.mjs` already uses for /tmp/patch.json.
 //
-// Needs COMIS_CONFIG_PATHS + COMIS_GATEWAY_TOKEN in env so withClient() resolves the gateway URL+token:
-//   export COMIS_CONFIG_PATHS=/home/comis/.comis/config.yaml
-//   export COMIS_GATEWAY_TOKEN=<the literal ≥32-char token from config.yaml>
-// Adjust the import path if the daemon src tree isn't at /root/comis-src.
+// withClient() needs COMIS_CONFIG_PATHS + COMIS_GATEWAY_TOKEN; _rig.mjs defaults BOTH from the box
+// rig config (/root/comis-rig.env → DATA + GWTOKEN), so a bare `node revoke.mjs <method>` works on a
+// deployed box. Explicit env still wins (e.g. to probe with a WRONG token on purpose).
 // --pick <dotpath>: print ONLY that field of the result instead of the whole
 // RESULT:{…} blob, so the caller stops hand-writing `node -e 'JSON.parse(...)'` extractors. A dotpath
 // indexes objects + arrays: `report.findings.0.code`, `runs.0.summary`, `triggered`. Prints `PICK:<json>`
 // (or `PICK:undefined` for a missing path). Errors still print `ERROR:…` unchanged.
 import { readFileSync } from "node:fs";
-// COMIS_SRC overrides the daemon src root (VPS default /root/comis-src; set to a local checkout for a
-// LOCAL daemon run). Dynamic import so the path is env-resolvable.
-const { withClient } = await import((process.env.COMIS_SRC || "/root/comis-src") + "/packages/cli/dist/client/rpc-client.js");
+// Code-root resolution (installed comisai package OR source checkout; COMIS_SRC overrides) + RPC env
+// defaults live in _rig.mjs — shared by every helper, deployed alongside by deploy-scripts.sh.
+import { ensureRpcEnv, importCli } from "./_rig.mjs";
+ensureRpcEnv();
+const { withClient } = await importCli("client/rpc-client.js");
 const rawArgv = process.argv.slice(2);
 let pickPath;
 const pIdx = rawArgv.indexOf("--pick");

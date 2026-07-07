@@ -20,6 +20,9 @@ import {
   registerDurableRun,
   markResumable,
   loadResumeSpec,
+  resolveScriptSource,
+  startDurableKeepAlive,
+  withDurableKeepAlive,
   defaultOrchestrateDurableFs,
   type OrchestrateDurableRuns,
   type OrchestrateDurableFs,
@@ -34,10 +37,17 @@ function makeFakeRuns(over?: {
   getRow?: DurableRunRecord | undefined;
   getError?: Error;
   upsertError?: Error;
-}): OrchestrateDurableRuns & { upserts: DurableRunRecord[] } {
+  touchError?: Error;
+  omitTouch?: boolean;
+}): OrchestrateDurableRuns & { upserts: DurableRunRecord[]; touches: Array<{ rootRunId: string; atMs: number }> } {
   const upserts: DurableRunRecord[] = [];
-  return {
+  const touches: Array<{ rootRunId: string; atMs: number }> = [];
+  const base: OrchestrateDurableRuns & {
+    upserts: DurableRunRecord[];
+    touches: Array<{ rootRunId: string; atMs: number }>;
+  } = {
     upserts,
+    touches,
     upsertCheckpoint: vi.fn(
       async (record: DurableRunRecord): Promise<Result<void, Error>> => {
         upserts.push(record);
@@ -49,6 +59,15 @@ function makeFakeRuns(over?: {
         over?.getError ? err(over.getError) : ok(over?.getRow),
     ),
   };
+  if (!over?.omitTouch) {
+    base.touchHeartbeat = vi.fn(
+      async (rootRunId: string, atMs: number): Promise<Result<void, Error>> => {
+        touches.push({ rootRunId, atMs });
+        return over?.touchError ? err(over.touchError) : ok(undefined);
+      },
+    );
+  }
+  return base;
 }
 
 /** A fake fs seam — canned exists/read so the loader logic is pure. */
@@ -78,6 +97,114 @@ function makeRow(over?: Partial<DurableRunRecord>): DurableRunRecord {
     ...over,
   };
 }
+
+describe("orchestrate-durable — startDurableKeepAlive", () => {
+  it("touches the durable heartbeat with a FRESH clock read on each scheduled tick", () => {
+    // A flat orchestrate run stamps lastHeartbeatAt only at start / checkpoint / timeout.
+    // Without a keep-alive, a long LIVE run that never checkpoints goes stale and the
+    // watchdog's no-progress re-anchor cap can orphan + reclaim it mid-run. The keep-alive
+    // advances the heartbeat while the child is alive so a live run is never seen as stale.
+    const runs = makeFakeRuns();
+    let captured: (() => void) | undefined;
+    let capturedMs = 0;
+    let stopped = false;
+    const scheduler = (cb: () => void, ms: number): (() => void) => {
+      captured = cb;
+      capturedMs = ms;
+      return () => {
+        stopped = true;
+      };
+    };
+    let clock = 1_000;
+    const stop = startDurableKeepAlive({
+      runs,
+      rootRunId: "orch-root",
+      now: () => clock,
+      keepAliveMs: 30_000,
+      scheduler,
+    });
+    expect(capturedMs).toBe(30_000);
+    expect(runs.touches).toHaveLength(0); // nothing until a tick fires
+
+    clock = 40_000;
+    captured?.();
+    clock = 70_000;
+    captured?.();
+
+    expect(runs.touches).toEqual([
+      { rootRunId: "orch-root", atMs: 40_000 },
+      { rootRunId: "orch-root", atMs: 70_000 },
+    ]);
+    stop();
+    expect(stopped).toBe(true);
+  });
+
+  it("is a no-op (never schedules) when the store cannot touch heartbeats", () => {
+    const runs = makeFakeRuns({ omitTouch: true });
+    let scheduled = false;
+    const scheduler = (): (() => void) => {
+      scheduled = true;
+      return () => {};
+    };
+    const stop = startDurableKeepAlive({
+      runs,
+      rootRunId: "orch-root",
+      now: () => 1,
+      keepAliveMs: 30_000,
+      scheduler,
+    });
+    expect(scheduled).toBe(false);
+    stop(); // safe no-op
+  });
+});
+
+describe("orchestrate-durable — withDurableKeepAlive", () => {
+  it("keeps the heartbeat alive for the whole fn and stops it after (even on throw)", async () => {
+    const runs = makeFakeRuns();
+    let clock = 1_000;
+    let stopped = false;
+    const scheduler = (cb: () => void, _ms: number): (() => void) => {
+      // fire one tick synchronously while fn is in flight, then a stop() that flips the flag
+      cb();
+      return () => {
+        stopped = true;
+      };
+    };
+    const result = await withDurableKeepAlive(
+      runs,
+      "orch-root",
+      { now: () => clock, scheduler },
+      async () => {
+        clock = 2_000;
+        return "OK";
+      },
+    );
+    expect(result).toBe("OK");
+    expect(runs.touches).toEqual([{ rootRunId: "orch-root", atMs: 1_000 }]);
+    expect(stopped).toBe(true);
+
+    // Stops even when fn throws.
+    stopped = false;
+    await expect(
+      withDurableKeepAlive(runs, "orch-root", { now: () => clock, scheduler }, async () => {
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    expect(stopped).toBe(true);
+  });
+
+  it("is a pass-through no-op when durability is off (runs undefined) — never touches", async () => {
+    const runs = makeFakeRuns();
+    const result = await withDurableKeepAlive(
+      undefined,
+      "orch-root",
+      { now: () => 1 },
+      async () => "PLAIN",
+    );
+    expect(result).toBe("PLAIN");
+    expect(runs.touches).toHaveLength(0);
+  });
+});
 
 describe("orchestrate-durable — buildResumableRow", () => {
   it("builds a FLAT running row carrying scriptRef with the never-sent step sentinel", () => {
@@ -218,6 +345,25 @@ describe("orchestrate-durable — loadResumeSpec", () => {
     expect(result.ok && result.value.scriptBytes).toBe("THE-ONLY-PINNED-BYTES");
   });
 
+  it("carries the resumed run's checkpointRef so resume() rehydrates its checkpoint", async () => {
+    // The resumed run HAS a prior checkpoint. loadResumeSpec must surface its ref so the
+    // caller seeds it onto the NEW run's durable row → the replayed script's resume() returns
+    // that checkpoint (skip completed work) instead of an empty new-root checkpoint.
+    const runs = makeFakeRuns({
+      getRow: makeRow({ scriptRef: "orch-abc-def.ts", checkpointRef: "results/ckpt-x.json" }),
+    });
+    const result = await loadResumeSpec(runs, makeFakeFs(), { resumeRunId: "root-abc", workspacePath });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.checkpointRef).toBe("results/ckpt-x.json");
+  });
+
+  it("checkpointRef is undefined when the resumed run never checkpointed", async () => {
+    const runs = makeFakeRuns({ getRow: makeRow({ scriptRef: "orch-abc-def.ts" }) }); // no checkpointRef
+    const result = await loadResumeSpec(runs, makeFakeFs(), { resumeRunId: "root-abc", workspacePath });
+    expect(result.ok && result.value.checkpointRef).toBeUndefined();
+  });
+
   it("honest-errors when the durable row is missing", async () => {
     const runs = makeFakeRuns({ getRow: undefined });
     const result = await loadResumeSpec(runs, makeFakeFs(), {
@@ -287,6 +433,38 @@ describe("orchestrate-durable — loadResumeSpec", () => {
     expect(result.ok).toBe(false);
     // The traversal is refused BEFORE the fs read is ever attempted.
     expect(readCalled).toBe(false);
+  });
+});
+
+describe("orchestrate-durable — resolveScriptSource (checkpoint carry)", () => {
+  const ctx = { workspacePath: "/ws", runId: "orch-new-run" };
+
+  it("threads the resumed run's checkpointRef onto the resolved source", async () => {
+    const runs = makeFakeRuns({
+      getRow: makeRow({ scriptRef: "orch-old.js", checkpointRef: "results/ckpt-old.json" }),
+    });
+    const resolved = await resolveScriptSource(
+      { script: "IGNORED", language: "js", resumeRunId: "root-old" },
+      runs,
+      makeFakeFs({ read: () => "PINNED" }),
+      ctx,
+    );
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    // pinned bytes (smuggled `script` ignored) AND the resumed checkpointRef carried through
+    expect(resolved.value.script).toBe("PINNED");
+    expect(resolved.value.checkpointRef).toBe("results/ckpt-old.json");
+  });
+
+  it("a fresh run (no resumeRunId) carries no checkpointRef", async () => {
+    const resolved = await resolveScriptSource(
+      { script: "fresh();", language: "ts" },
+      makeFakeRuns(),
+      makeFakeFs(),
+      ctx,
+    );
+    expect(resolved.ok && resolved.value.script).toBe("fresh();");
+    expect(resolved.ok && resolved.value.checkpointRef).toBeUndefined();
   });
 });
 

@@ -29,8 +29,15 @@ that loop exactly. The spine:
    `runs/‹target›-‹date›/TEST-PLAN.md` covering the WHOLE scenario on all four axes: real-world end-to-end
    use cases · edge/boundary/failure cases · deep (every requirement + its negative/abuse/security variant
    + config both-polarities) · broad (cross-cutting system flows + the surface sweep). A happy-path-only
-   plan is NOT done — do not start driving until the plan covers the scenario.
-3. Stand up the rig + a green baseline (01-SETUP: VPS, daemon as `comis`, emulator, scripts/).
+   plan is NOT done — do not start driving until the plan covers the scenario. Order it highest-risk-first
+   — the HARD security/honesty oracles and the riskiest requirements ahead of happy-path polish — so a run
+   that has to stop early still covered the binary checks.
+3. Stand up the rig + a green baseline (01-SETUP). The daemon runs under systemd (`comis.service`), so
+   FIRST reinstall THIS checkout onto the box (`install-vps.sh`; a fresh box also needs `init-config.mjs`
+   for a config) and CONFIRM the box is actually serving it — the baseline is green only when
+   `phase0-check.sh` + `rig-doctor.sh` + `verify-build.sh` all pass. A live test against a stale build (an
+   installer upgrade does NOT restart the daemon; a dist overlay leaves the old code in memory; a stale
+   global CLI validates with an old schema) is a FALSE RESULT — the exact failure this kit exists to catch.
 4. Drive in order and STOP AT THE FIRST COMIS-FAIL. Read GROUND TRUTH — daemon log / trajectory /
    `explain` / the dual oracle / `db.mjs` — NEVER the agent's chat reply. Per failure: stop → RED test in
    `packages/*/src/**` reproducing the live shape → GREEN → review → clean-slate → rebuild + clean-restart →
@@ -41,12 +48,15 @@ that loop exactly. The spine:
 5. Sweep broad (Track K/L/M) AND run the system-health sweep — fix EVERY system issue you trip over, even
    ones unrelated to the target (non-negotiable #6); document the nuanced/security-sensitive ones with a
    verdict + evidence + fix direction.
-6. Audit against the stop condition (02-DISCIPLINE) → fill `RESULTS-LOG.md` → land fixes test-first
-   (branch-first; commit/push ONLY when I ask) → record the lesson in memory.
+6. Audit against the stop condition (02-DISCIPLINE) → fill `RESULTS-LOG.md` (record the DEPLOYED SHA the
+   run drove — a result is valid only against that build) → land fixes test-first (branch-first;
+   commit/push ONLY when I ask) → record the lesson in memory.
 
 ## NON-NEGOTIABLES
 - A false success is the worst outcome — make the system tell the truth about failure before optimizing
   for success. Security/honesty oracles are binary HARD.
+- The build under test is what's DEPLOYED and confirmed-serving — not the source, not a registry install.
+  Reinstall this checkout, verify the box serves it, and record the SHA; a green against a stale build is void.
 - Every test ends works-or-fails-honestly, proven in ground truth, not the reply.
 - ≤ 1 open COMIS-FAIL at a time: stop at the first failure and close it (or document it as a finding)
   BEFORE the next test. Never collect failures and fix them at the end of the run.
@@ -83,7 +93,9 @@ lightweight analysis needed to enrich the prompt — do NOT run the test, stand 
    table/job/event/port/RPC/flag exist, is it wired/scheduled/default-ON or shipped-gated-off, what are the
    config defaults? Note every spec→code DEVIATION (renamed/moved config keys, a different mechanism, a
    feature the doc calls "dormant/absent" that actually SHIPPED). Check for an existing test plan to
-   start from, and recent git log for fixes already landed in this surface.
+   start from, and recent git log for fixes already landed in this surface. (This verifies the SOURCE at
+   HEAD; the driver separately confirms the BOX runs that build — flag if the surface changed enough that
+   a reinstall, not just a dist overlay, is needed.)
 3. Classify the drive surface: CHANNEL-driven (DAG / messaging / agent tools via the emulator) vs
    OFFLINE / cron / DB / event-resident (memory, learning, scheduler — driven via cron triggers + scripts/
    db.mjs + the *:* events) vs MIXED. Name the worked example to model (targets/EXAMPLE-nvda-dag.md =
@@ -128,12 +140,13 @@ observability. (Worked target spec: targets/EXAMPLE-nvda-dag.md.)
 … (template body) …
 
 ## TARGET
-Spec: `design/new/verified-learning.md`. Test every implementation, success-criterion, security invariant,
-and config knob — verifying implementation state at HEAD FIRST (the draft predates its ship; much of
-it is live + default-ON). It is an OFFLINE/cron/DB/event-resident capability — drive via tool/graph turns +
-cron triggers, observe via `comis memory learning|skills`, the `outcome_events`/`learned_skills`/
-`tuned_alpha` tables (scripts/db.mjs), and the `learning:*` trajectory events. (Worked target spec:
-targets/EXAMPLE-verified-learning.md.)
+Spec: `test/live/self-driving/targets/EXAMPLE-verified-learning.md` (point at your own design/spec doc —
+in a real run that's often a local, gitignored `design/…` path; this tracked worked spec stands in). Test
+every implementation, success-criterion, security invariant, and config knob — verifying implementation
+state at HEAD FIRST (a spec often predates its ship; much of it is live + default-ON). It is an
+OFFLINE/cron/DB/event-resident capability — drive via tool/graph turns + cron triggers, observe via
+`comis memory learning|skills`, the `outcome_events`/`mental_models` tables (scripts/db.mjs), and the
+`learning:*`/`reflect:*` trajectory events.
 ```
 
 ### A user story
@@ -185,11 +198,14 @@ parallel no-confusion (connect ≥2 sim servers → tools stay namespaced per us
 ---
 
 ## Notes
-- The prompt deliberately **does not** restate the rig details, the scripts, the oracles, or the catalog —
-  the agent reads those from `00-MISSION.md` → `01-SETUP.md`/`03-OBSERVABILITY.md`/`05-CATALOG.md`. Keep the
-  kickoff thin so it stays current as the framework evolves.
-- The single most load-bearing line is **"plan comprehensively before you drive"** — it forces the §D gate
-  (real-world + edge + deep + broad over the whole scenario) before a single inject.
+- The prompt stays **thin** — it names only the load-bearing pointers (the go/no-go gate
+  `phase0-check`/`rig-doctor`/`verify-build`; the ground-truth tools `explain`/`db.mjs`) and defers the rest
+  of the rig details, scripts, oracles, and catalog to `00-MISSION.md` → `01-SETUP.md`/`03-OBSERVABILITY.md`/
+  `05-CATALOG.md`. Don't restate their internals here — keep the kickoff current as the framework evolves.
+- Two lines are the most load-bearing: **"plan comprehensively before you drive"** (forces the §D gate —
+  real-world + edge + deep + broad — before a single inject) and **"confirm the box serves THIS checkout"**
+  (an installer upgrade doesn't restart the daemon and a dist overlay leaves stale code in memory, so a
+  run against the wrong build is a false result — the worst outcome).
 - Paths are repo-relative (the agent's cwd is the repo root). The VPS rig is fixed in `01-SETUP.md`.
 - For anything non-trivial, also drop a pinned spec under `targets/‹name›.md` (copy a worked example) and
   point the TARGET at it — a good spec is the difference between a thin smoke test and a comprehensive one.

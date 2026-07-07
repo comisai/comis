@@ -44,6 +44,7 @@ import { autoRepairForClass } from "@comis/agent";
 import type { CapabilityClass } from "@comis/agent";
 
 import { buildDescribeDigest, classifyRecoverableStderr } from "./orchestrate-preflight.js";
+import { withDurableKeepAlive, type OrchestrateDurableRuns } from "./orchestrate-durable.js";
 
 // ---------------------------------------------------------------------------
 // The spawned-child seam (injected so the macOS unit suite runs with no real spawn).
@@ -349,6 +350,13 @@ export async function runScriptWithOneShotRepair(input: {
   readonly repairSeam: OrchestrateRepairSeam | undefined;
   readonly log: ComisLogger;
   readonly runId: string;
+  /**
+   * When wired, bracket the WHOLE run (initial + one-shot repair) with a durable
+   * heartbeat keep-alive so a long LIVE child is never mistaken for a crash and
+   * reaped by the watchdog's no-progress re-anchor cap. No-op when `runs` is
+   * undefined (durability off).
+   */
+  readonly keepAlive?: { runs: OrchestrateDurableRuns | undefined; rootRunId: string; now: () => number };
 }): Promise<string> {
   const {
     spawnFn,
@@ -363,6 +371,7 @@ export async function runScriptWithOneShotRepair(input: {
     repairSeam,
     log,
     runId,
+    keepAlive,
   } = input;
 
   // attemptRun writes the script into the workspace then drives the jailed child
@@ -380,6 +389,7 @@ export async function runScriptWithOneShotRepair(input: {
     );
   };
 
+  const runWithRepair = async (): Promise<string> => {
   try {
     return await attemptRun(script);
   } catch (runErr) {
@@ -420,4 +430,9 @@ export async function runScriptWithOneShotRepair(input: {
     // surface the original bounded error unchanged.
     throw runErr;
   }
+  };
+
+  return keepAlive
+    ? withDurableKeepAlive(keepAlive.runs, keepAlive.rootRunId, { now: keepAlive.now, logger: log }, runWithRepair)
+    : runWithRepair();
 }

@@ -486,7 +486,7 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
       if (!resolved.ok) {
         throwToolError(resolved.error.code, resolved.error.message, { hint: resolved.error.hint });
       }
-      const { script, language, scriptName } = resolved.value;
+      const { script, language, scriptName, checkpointRef: resumedCheckpointRef } = resolved.value;
 
       // Static pre-flight, run BEFORE any resource is acquired — no seccomp fd
       // opened, no run_summary emitted, no child spawned on a rejection (it precedes
@@ -786,13 +786,12 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         // mintRunLease). A run with none is degraded — flagged lease_absent below.
         const leasePresent = childEnv.COMIS_CAP_LEASE !== undefined;
 
-        // 5c. Register a resumable durable row (scriptRef set) BEFORE the run so a
-        //     mid-pipeline restart's boot sweep finds it (after the honest-degrade
-        //     refusals so a refused run writes no row). Best-effort; COALESCE-safe.
+        // 5c. Register a resumable durable row (scriptRef) BEFORE the run so a restart's boot sweep finds it. Best-effort; COALESCE-safe.
         if (deps.durableRuns !== undefined) {
           await registerDurableRun(deps.durableRuns, {
             rootRunId: durableKey,
             scriptRef: scriptName,
+            ...(resumedCheckpointRef !== undefined ? { checkpointRef: resumedCheckpointRef } : {}), // resume: carry resumed checkpointRef so the replayed resume() returns it (undefined ⇒ omitted)
             nowMs: now(),
           });
         }
@@ -818,6 +817,7 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
           repairSeam: deps.repairSeam,
           log,
           runId,
+          keepAlive: { runs: deps.durableRuns, rootRunId: durableKey, now }, // durable heartbeat for the child run (no-op if durability off)
         });
 
         const bounced = sizeBounceStdout(stdout);

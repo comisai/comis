@@ -20,7 +20,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { systemNowMs } from "@comis/core";
+import { systemNowMs, sanitizeLogString } from "@comis/core";
 import type {
   McpClientManagerDeps,
   McpClientManagerState,
@@ -391,6 +391,7 @@ export function extractServerMetadata(client: Client) {
 // ---------------------------------------------------------------------------
 
 export function wireStderrCapture(
+  state: McpClientManagerState,
   deps: McpClientManagerDeps,
   config: McpServerConfig,
   transport: ReturnType<typeof createTransport>,
@@ -417,9 +418,18 @@ export function wireStderrCapture(
     } else {
       stderrBuffer += text;
     }
-    // Log each stderr line at DEBUG level for real-time visibility
+    // Stash the running buffer on state so a connect-time failure (the catch in
+    // connectServer) can fold the child's OWN error text into the returned error
+    // — without this, a stdio failure surfaces only the opaque SDK "Connection
+    // closed" and the "why" (e.g. a missing required env var) is a separate log
+    // line the operator has to hand-correlate.
+    state.lastStderr.set(config.name, stderrBuffer);
+    // Log each stderr line at DEBUG level for real-time visibility. SANITIZE it:
+    // a credentialed child can echo a connection string / API key, and this
+    // free-text `stderr` field is NOT a Pino-redacted key — it would leak raw
+    // into the daemon log (mirrors the connect-failure fold's scrub).
     for (const line of text.split("\n").filter(Boolean)) {
-      logger.debug?.({ serverName: config.name, stderr: line }, "MCP server stderr");
+      logger.debug?.({ serverName: config.name, stderr: sanitizeLogString(line) }, "MCP server stderr");
     }
   });
 
@@ -431,7 +441,9 @@ export function wireStderrCapture(
         "MCP stdio server stderr captured",
       );
       logger.info(
-        { serverName: config.name, stderr: stderrBuffer.trim() },
+        // SANITIZE the accumulated buffer before it hits the log — same credential
+        // scrub as the per-line DEBUG + the connect-failure fold above.
+        { serverName: config.name, stderr: sanitizeLogString(stderrBuffer.trim()) },
         "MCP stdio server stderr output",
       );
     }

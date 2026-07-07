@@ -2,13 +2,31 @@
 #
 #   Setup:  cp .live-env.example .live-env   &&  $EDITOR .live-env   (it's gitignored — never committed)
 #
-# The LOCAL scripts (deploy-dist.sh, deploy-scripts.sh) AUTO-SOURCE ./.live-env, so once it exists you
-# just run them. For ad-hoc ssh/RPC one-liners, `source .live-env` first to load these into your shell.
-# GWTOKEN must also be set on the VPS in ~/.comis/.env (restart-m1.sh sources it there) and MUST equal
-# config.yaml's gateway.tokens[].secret. Generate a fresh >=32-char token per box.
+# The rig targets the PRODUCTION installation that website/public/install.sh creates (or that
+# scripts/install-vps.sh creates from this checkout): systemd `comis.service`, daemon as the
+# dedicated service user, code at the npm-global comisai package, data dir ~<user>/.comis.
+#
+# The LOCAL scripts (install-vps.sh, deploy-dist.sh, deploy-scripts.sh, deploy-emu.sh,
+# run-linux-tests.sh) AUTO-SOURCE ./.live-env; deploy-scripts.sh renders these values to
+# /root/comis-rig.env ON the box, where the box-side scripts source them and the .mjs helpers read
+# them via _rig.mjs. For ad-hoc one-liners, `source .live-env` first.
+#
+# Only VPS is mandatory — every other value below IS the standard install.sh layout; override per box.
 
-export VPS="user@your-vps-host-or-ip"   # ssh target — how you reach the test VPS (ssh KEY lives in ~/.ssh)
-export GWTOKEN="REPLACE-WITH-YOUR-OWN-GATEWAY-TOKEN-min-32-chars"   # gateway bearer token (>=32 chars)
-export CHATID="678314278"               # emulator chat/sender id to drive
-export SRC="/root/comis-src"            # daemon source tree on the VPS (deploy target)
-export DATA="/home/comis/.comis"        # daemon data dir on the VPS
+export VPS="user@your-vps-host-or-ip" # ssh target — how you reach the test VPS (ssh KEY lives in ~/.ssh)
+export COMIS_USER="comis"             # the dedicated service user install.sh creates
+export COMIS_HOME="/home/comis"       # that user's home
+export DATA="/home/comis/.comis"      # daemon data dir (config.yaml, secrets.db, logs, workspace)
+export PKG="/home/comis/.npm-global/lib/node_modules/comisai" # installed package root (daemon+cli dist live under its node_modules/@comis/)
+export SERVICE="comis"                # systemd unit name
+export GW_PORT="4766"                 # gateway port (config.yaml gateway.port)
+export CHATID="678314278"             # emulator chat/sender id to drive
+export EMU_DIR="/root/comis-emu"      # emulator tree on the box (deploy-emu.sh rsyncs test/live/ here)
+
+# Gateway bearer token for the RPC helpers (revoke.mjs & co). Under a production install `comis init`
+# stores it in the encrypted secrets store and config.yaml references ${COMIS_GATEWAY_TOKEN} — fetch
+# the RESOLVED literal once per box:
+#   ssh $VPS "su - comis -c 'comis secrets get COMIS_GATEWAY_TOKEN'"
+# (If your config.yaml carries a literal token instead, copy that. Fresh box with no config yet:
+# generate a fresh ≥32-char token and put the SAME literal in config.yaml gateway.tokens[].secret.)
+export GWTOKEN="REPLACE-WITH-THE-BOX-GATEWAY-TOKEN-min-32-chars"

@@ -490,6 +490,28 @@ export interface InfraEvents {
     timestamp: number;
   };
 
+  /** MCP server INITIAL connect succeeded (first connect, before any reconnect loop) */
+  "mcp:server:connected": {
+    serverName: string;
+    transport: "stdio" | "sse" | "http";
+    toolCount: number;
+    durationMs: number;
+    timestamp: number;
+  };
+
+  /**
+   * MCP server INITIAL connect FAILED (a first-time connect/install that never
+   * reached the reconnect loop — the reconnect_failed sibling only fires AFTER a
+   * successful connect flaps). `reason` is a CLOSED class so the health-signal
+   * row can carry it without an untrusted error body.
+   */
+  "mcp:server:connect_failed": {
+    serverName: string;
+    transport: "stdio" | "sse" | "http";
+    reason: "auth_required" | "command_not_found" | "server_exited" | "handshake_timeout" | "transport_error";
+    timestamp: number;
+  };
+
   // -------------------------------------------------------------------------
   // Notification events
   // -------------------------------------------------------------------------

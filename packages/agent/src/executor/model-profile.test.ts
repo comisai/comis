@@ -20,6 +20,7 @@ import { describe, it, expect } from "vitest";
 import {
   resolveModelProfile,
   capabilityClassFromProvider,
+  resolveEffectiveCapabilityClass,
   autoRepairForClass,
 } from "./model-profile.js";
 import type { ModelProfile, CapabilityClass } from "./model-profile.js";
@@ -619,6 +620,31 @@ describe("resolveModelProfile — capability/capacity boundary invariants", () =
     it("returns undefined for an undefined/empty provider (caller decides fail-safe)", () => {
       expect(capabilityClassFromProvider(undefined)).toBeUndefined();
       expect(capabilityClassFromProvider("")).toBeUndefined();
+    });
+  });
+
+  // The effective-class resolver used by the daemon-side auto-repair gate. It MUST
+  // honor the operator `capabilityClass` pin with the same precedence resolveModelProfile
+  // does — else a pinned-`small` frontier-provider agent gets small tool-deferral/context
+  // yet repair silently OFF (the auto-repair class-gate saw the family `frontier`).
+  describe("resolveEffectiveCapabilityClass — operator pin precedence (auto-repair gate)", () => {
+    it("the operator PIN wins over the provider-family heuristic", () => {
+      // pinned small on an openai (family-frontier) agent → small, NOT frontier.
+      expect(resolveEffectiveCapabilityClass("small", undefined, "openai")).toBe("small");
+      expect(resolveEffectiveCapabilityClass("nano", undefined, "anthropic")).toBe("nano");
+    });
+    it("the operator PIN wins over the provider-level class too", () => {
+      expect(resolveEffectiveCapabilityClass("small", "frontier", "openai")).toBe("small");
+    });
+    it("no pin → provider-level class", () => {
+      expect(resolveEffectiveCapabilityClass(undefined, "mid", "openai")).toBe("mid");
+    });
+    it("no pin, no provider-level → provider-family heuristic", () => {
+      expect(resolveEffectiveCapabilityClass(undefined, undefined, "openai")).toBe("frontier");
+      expect(resolveEffectiveCapabilityClass(undefined, undefined, "ollama")).toBe("small");
+    });
+    it("nothing resolvable → the small fail-safe (repair-ON for an unknown/keyless target)", () => {
+      expect(resolveEffectiveCapabilityClass(undefined, undefined, undefined)).toBe("small");
     });
   });
 });

@@ -136,6 +136,28 @@ export function capabilityClassFromProvider(provider: string | undefined): Capab
   return "small";
 }
 
+/**
+ * Resolve the EFFECTIVE capability class an agent runs under, honoring the SAME
+ * precedence as {@link resolveModelProfile}'s `capabilityClassOverride`:
+ *   1. the operator PIN (`agents.<id>.capabilityClass`) — OVERRIDES everything;
+ *   2. the provider-level class (`providers.entries.<id>.capabilities.capabilityClass`);
+ *   3. the provider-family heuristic ({@link capabilityClassFromProvider});
+ *   4. the `"small"` fail-safe (repair-ON for an unknown/keyless small target).
+ *
+ * The single source of truth for any daemon-side call site that must class-gate on
+ * the SAME class the model profile resolved — so a `capabilityClass` pin cannot be
+ * honored for tool-deferral/context yet silently ignored for the orchestrate
+ * auto-repair gate (the divergence that left a pinned-`small` frontier-provider
+ * agent with repair OFF). Pure; total.
+ */
+export function resolveEffectiveCapabilityClass(
+  pin: CapabilityClass | undefined,
+  providerLevel: CapabilityClass | undefined,
+  provider: string | undefined,
+): CapabilityClass {
+  return pin ?? providerLevel ?? capabilityClassFromProvider(provider) ?? "small";
+}
+
 // ---------------------------------------------------------------------------
 // Pure resolver function
 // ---------------------------------------------------------------------------

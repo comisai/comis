@@ -58,8 +58,8 @@ the reuse-verbatim cardinality metric).
 ## STEP 0 — verify impl-state at HEAD FIRST (on the VPS)
 
 The procedure pass is behind the per-agent learning flag under the master `memory.enabled`.
-Confirm the SHIPPED shape on the box before driving (CLI is not on PATH — prefix
-`node packages/cli/dist/cli.js`):
+Confirm the SHIPPED shape on the box before driving (the CLI rides the comis user's PATH —
+`su - comis -c 'comis …'`; from a source checkout: `node packages/cli/dist/cli.js …`):
 
 - `db.mjs schema mental_models` shows `required_tools` + `params_schema` columns and **NO
   `scripts` column** (advisory text, no learned-code); `trust_level ... CHECK (trust_level
@@ -72,9 +72,9 @@ Confirm the SHIPPED shape on the box before driving (CLI is not on PATH — pref
 ## STEP 1 — deploy + restart (ground the run on THIS build)
 
 Deploy the current `dist` and restart the daemon so the live process is not running a stale
-`dist/daemon.js` (CLAUDE.md — the pm2 canonical clean-start block, or the direct
-`node packages/daemon/dist/daemon.js` production path). Verify the live exec path is THIS
-checkout before driving.
+`dist/daemon.js` (`scripts/deploy-dist.sh` + `bash /root/restart-daemon.sh`; full dep changes →
+`scripts/install-vps.sh`). Verify the live build is THIS checkout before driving
+(`cat /root/comis-deployed-build` + the HEAD-only symbol grep, 01-SETUP.md §2).
 
 ## STEP 2 — drive the two arms
 
@@ -97,7 +97,7 @@ checkout before driving.
 
 ## STEP 3 — corroborate against GROUND TRUTH (never the chat reply)
 
-- `node packages/cli/dist/cli.js explain "<sessionKey|traceId>"` — inspect the reflect funnel:
+- `su - comis -c 'comis explain "<sessionKey|traceId>"'` — inspect the reflect funnel:
   `admissionOutcome` (`admitted` for Arm A; `uncorroborated` for Arm B if the dead-end holds),
   `maxTopicCardinality`, `selected`.
 - Inspect `~/.comis/memory.db` directly (`db.mjs`) for the `mental_models` procedure row
