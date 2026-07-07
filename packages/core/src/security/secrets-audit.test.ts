@@ -44,6 +44,43 @@ describe("scanConfigForSecrets", () => {
     });
   });
 
+  it("detects a plaintext googlechat serviceAccountKey (raw service-account JSON)", () => {
+    // The service-account JSON blob contains a private key but the field name
+    // matches no generic secret suffix — the audit must recognize it exactly,
+    // like botToken/appPassword, or a pasted key sits in config.yaml unflagged.
+    const config = {
+      channels: {
+        googlechat: {
+          enabled: true,
+          serviceAccountKey:
+            '{"type":"service_account","private_key":"-----BEGIN PRIVATE KEY-----\\ntest-key\\n-----END PRIVATE KEY-----\\n","client_email":"test-bot@example.iam.gserviceaccount.com"}',
+        },
+      },
+    };
+
+    const findings = scanConfigForSecrets("/etc/comis/config.yaml", config);
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toEqual({
+      code: "PLAINTEXT_SECRET",
+      severity: "error",
+      file: "/etc/comis/config.yaml",
+      jsonPath: "channels.googlechat.serviceAccountKey",
+      message: expect.stringContaining("Plaintext secret detected in field 'serviceAccountKey'"),
+    });
+  });
+
+  it("skips the wizard-written ${GOOGLECHAT_SA_KEY} reference for serviceAccountKey", () => {
+    const config = {
+      channels: {
+        googlechat: { enabled: true, serviceAccountKey: "${GOOGLECHAT_SA_KEY}" },
+      },
+    };
+
+    const findings = scanConfigForSecrets("/etc/comis/config.yaml", config);
+    expect(findings).toHaveLength(0);
+  });
+
   it("skips SecretRef objects (properly configured)", () => {
     const config = {
       channels: {
@@ -305,6 +342,22 @@ describe("scanEnvForSecrets", () => {
     // rather than mis-attributing the secret to "unknown".
     expect(findings[0].message).toContain("msteams");
     expect(findings[0].message).not.toContain("unknown");
+  });
+
+  it("names googlechat as the provider for GOOGLECHAT_SA_KEY in .env", () => {
+    // GOOGLECHAT_SA_KEY ends in _KEY — not _API_KEY/_SECRET/_TOKEN/_PASSWORD —
+    // so no generic fallthrough matches it; without an explicit provider entry
+    // the env audit is fully blind to the Google Chat service-account key.
+    const env = {
+      GOOGLECHAT_SA_KEY: '{"type":"service_account","private_key":"test-key"}',
+    };
+
+    const findings = scanEnvForSecrets("/home/user/.comis/.env", env);
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0].code).toBe("KNOWN_PROVIDER_ENV");
+    expect(findings[0].jsonPath).toBe("GOOGLECHAT_SA_KEY");
+    expect(findings[0].message).toContain("googlechat");
   });
 });
 

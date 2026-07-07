@@ -112,6 +112,13 @@ describe("isSecretFieldName — superset", () => {
     }
   });
 
+  it("flags serviceAccountKey — the Google Chat service-account JSON field", () => {
+    // A raw service-account JSON blob carries a private key but matches no
+    // generic suffix (*token/*secret/*password/*apiKey/…), so the exact name
+    // must be in the superset or the whole keystone is blind to it.
+    expect(isSecretFieldName("serviceAccountKey")).toBe(true);
+  });
+
   it("does not flag plainly non-secret field names", () => {
     expect(isSecretFieldName("name")).toBe(false);
     expect(isSecretFieldName("url")).toBe(false);
