@@ -1422,17 +1422,18 @@ comis signal-setup
 
 Manage prompt skills. Today the group has one subcommand: `import`.
 
-`comis skills import <ref>` installs a skill from a GitHub directory URL or a packaged archive through the daemon's staged pipeline. The import is scanned and MCP-checked **before** anything is written, and a successful import is stamped the `imported` trust tier and pinned in the provenance store. See [Importing Skills](/skills/importing) for the full model.
+`comis skills import <ref>` installs a skill from a GitHub directory URL, a packaged archive, an allowlisted well-known registry, or ClawHub through the daemon's staged pipeline. The import is scanned and MCP-checked **before** anything is written, and a successful import is stamped the `imported` trust tier and pinned in the provenance store. See [Importing Skills](/skills/importing) for the full model.
 
 Accepts `--token <token>` to override `COMIS_GATEWAY_TOKEN`; the token is resolved before the socket opens, so a missing token surfaces a friendly error naming the env var rather than a generic handshake failure.
 
 | Subcommand | Description |
 |------------|-------------|
-| `skills import <ref>` | Import a skill. `<ref>` is a GitHub directory URL (default) or an archive URL (with `--source archive`). |
+| `skills import <ref>` | Import a skill. `<ref>` is a GitHub directory URL (default), an archive URL (`--source archive`), a skill name (`--source wellknown`), or an `@owner/slug` (`--source clawhub`). |
 
 | Flag | Values | Description |
 |------|--------|-------------|
-| `--source <source>` | `github` \| `archive` | Acquisition channel. `github` (default) treats `<ref>` as a directory URL; `archive` treats it as a `.skill`/`.zip`/`.tar` URL. |
+| `--source <source>` | `github` \| `archive` \| `wellknown` \| `clawhub` | Acquisition channel. `github` (default) treats `<ref>` as a directory URL; `archive` treats it as a `.skill`/`.zip`/`.tar` URL; `wellknown` resolves `<ref>` as a skill **name** from the `--registry` origin's well-known index; `clawhub` resolves `<ref>` as an `@owner/slug` from ClawHub. |
+| `--registry <origin>` | `https://host[:port]` | Registry origin to resolve `<ref>` from -- required with `--source wellknown`. Must be allowlisted in [`skills.import.registries`](/reference/config-yaml#skills-agents-skills); a non-allowlisted registry refuses flatly. |
 | `--scope <scope>` | `local` \| `shared` | `local` (default) installs into this agent's workspace; `shared` installs into the global directory (default agent only). |
 | `--confirm` | flag | Confirm a re-import whose content diverges from the pinned hash of a prior import of the **same** source. Never overrides a name collision on an unprovenanced or foreign-source skill -- delete that skill first. There is no `force` flag. |
 | `--format <format>` | `table` \| `json` | Output format (default `table`). |
@@ -1444,6 +1445,12 @@ comis skills import https://github.com/owner/repo/tree/main/skills/my-skill
 
 # Import a packaged archive into the shared directory
 comis skills import https://example.com/my-skill.skill --source archive --scope shared
+
+# Import by name from an allowlisted well-known registry
+comis skills import my-skill --source wellknown --registry https://registry.example
+
+# Import an @owner/slug skill from ClawHub (allowlist the `clawhub` token first)
+comis skills import @acme/pdf-extractor --source clawhub
 
 # Re-import the same source after its content changed
 comis skills import https://example.com/my-skill.skill --source archive --confirm
