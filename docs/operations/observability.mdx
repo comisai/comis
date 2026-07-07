@@ -25,7 +25,7 @@ Every inbound message receives a `traceId` at channel ingress — before the que
 
 **Practical consequence:** `grep "traceId=<id>" ~/.comis/logs/daemon.log` returns the complete causal chain for a single message — channel ingress, queue enqueue, agent execution, and outbound delivery — without any cross-file correlation.
 
-The on-wire field is `normalized.metadata.traceId`; the helper `getMessageTraceId()` reads it. All 11 channel adapters wrap their dispatch loops in `runWithContext`, and the orchestrator's `adapter.onMessage` handler applies a defense-in-depth second wrap so no adapter can silently skip propagation.
+The on-wire field is `normalized.metadata.traceId`; the helper `getMessageTraceId()` reads it. All 12 channel adapters wrap their dispatch loops in `runWithContext`, and the orchestrator's `adapter.onMessage` handler applies a defense-in-depth second wrap so no adapter can silently skip propagation.
 
 <Info>
 **Architecture invariant:** `test/architecture/trace-propagation.test.ts` asserts that every `adapter.onMessage(...)` registration site is wrapped in `runWithContext`. This test is shrink-only — violations are caught at CI time, not at incident time.
