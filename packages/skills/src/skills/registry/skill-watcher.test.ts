@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // Mock chokidar
 // ---------------------------------------------------------------------------
 
-type EventHandler = (path: string) => void;
+type EventHandler = (arg: unknown) => void;
 
 /** Simulated FSWatcher that stores event handlers for test-driven invocation. */
 function createMockWatcher() {
@@ -17,9 +17,17 @@ function createMockWatcher() {
     },
     close: vi.fn(async () => {}),
     /** Invoke the handler registered for the given event. */
-    simulateEvent(event: string, path: string) {
+    simulateEvent(event: string, arg: unknown) {
       const handler = handlers.get(event);
-      if (handler) handler(path);
+      if (handler) {
+        handler(arg);
+        return;
+      }
+      // Faithful to Node's EventEmitter: emitting "error" with no listener
+      // re-throws the error (in a real chokidar watcher this surfaces as an
+      // unhandled rejection that crashes the daemon). Other unhandled events
+      // are silently dropped, as EventEmitter does.
+      if (event === "error") throw arg;
     },
   };
 }
@@ -287,5 +295,55 @@ describe("createSkillWatcher", () => {
     // Re-discovery should be triggered after debounce
     vi.advanceTimersByTime(400);
     expect(onReload).toHaveBeenCalledTimes(1);
+  });
+
+  it("swallows and logs a skill-watcher error instead of crashing the daemon", () => {
+    // A chokidar watch error (e.g. a unix socket in a watched dir throws
+    // UNKNOWN/errno -102 on macOS; EMFILE/ENOSPC on Linux) must never become an
+    // unhandled rejection that takes down the daemon. The watcher registers an
+    // "error" listener that logs and swallows, so the process survives.
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    createSkillWatcher({
+      discoveryPaths: ["/skills"],
+      debounceMs: 400,
+      onReload: vi.fn(),
+      logger,
+    });
+
+    const watchErr = Object.assign(new Error("UNKNOWN: unknown error, watch '/data/cap.sock'"), {
+      code: "UNKNOWN",
+      errno: -102,
+      syscall: "watch",
+    });
+
+    expect(() => mockWatchers[0].simulateEvent("error", watchErr)).not.toThrow();
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it("swallows and logs a parent-watcher error instead of crashing the daemon", () => {
+    // The parent watcher (depth-recursive, watching the parent of a not-yet-created
+    // discovery dir) can recurse into the data dir and hit a unix socket the same
+    // way. It, too, must register an "error" listener.
+    accessSyncMock.mockImplementation((p: string) => {
+      if (p === "/data/skills") throw new Error("ENOENT");
+      // /data exists
+    });
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    createSkillWatcher({
+      discoveryPaths: ["/data/skills"],
+      debounceMs: 400,
+      onReload: vi.fn(),
+      logger,
+    });
+
+    const watchErr = Object.assign(new Error("UNKNOWN: unknown error, watch '/data/cap.sock'"), {
+      code: "UNKNOWN",
+      errno: -102,
+      syscall: "watch",
+    });
+
+    // mockWatchers[0] is the parent watcher (first watch() call for a missing path).
+    expect(() => mockWatchers[0].simulateEvent("error", watchErr)).not.toThrow();
+    expect(logger.warn).toHaveBeenCalled();
   });
 });
