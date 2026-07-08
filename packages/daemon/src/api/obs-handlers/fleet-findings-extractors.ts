@@ -188,6 +188,12 @@ export const DEDICATED_SCRIPT_SIGNALS: ReadonlySet<string> = new Set([
   "sandbox_downgrade_refused",
   "delivery_deadlettered",
   "node_budget_exceeded",
+  // subagent_killed gets the dedicated subagent_stuck_killed finding below
+  // (warning rows = health-monitor kills only; parent/operator/system kills are
+  // severity:info by construction and surface nowhere). Excluded here so a
+  // stuck-kill is not ALSO counted as a generic `health_signal:subagent_killed`
+  // finding — finding + entry MOVE TOGETHER.
+  "subagent_killed",
   // The four persisted autonomy/durable-run signals
   // are EXCLUDED from the generic `health_signal:<label>` rollup.
   // durable_orphaned / autonomy_revoked / autonomy_killed each get a dedicated
@@ -339,6 +345,24 @@ export function nodeBudgetExceededFromRow(row: DiagnosticRow): { capSource: stri
     const capSource =
       typeof parsed.capSource === "string" && parsed.capSource.length > 0 ? parsed.capSource : "unknown";
     return { capSource };
+  } catch {
+    return null;
+  }
+}
+
+/** The closed `killedBy` attribution from a `subagent_killed` row's details
+ *  JSON. Defensive parse cloning `nodeBudgetExceededFromRow` — a non-kill /
+ *  malformed / missing row folds to `null` (ignored). Only warning-severity
+ *  rows reach the dedicated finding (the row-builder stamps deliberate
+ *  parent/operator/system kills severity:"info"). */
+export function subagentKilledFromRow(row: DiagnosticRow): { killedBy: string } | null {
+  if (row.details === undefined) return null;
+  try {
+    const parsed = JSON.parse(row.details) as { signal?: unknown; killedBy?: unknown };
+    if (parsed.signal !== "subagent_killed") return null;
+    const killedBy =
+      typeof parsed.killedBy === "string" && parsed.killedBy.length > 0 ? parsed.killedBy : "unknown";
+    return { killedBy };
   } catch {
     return null;
   }

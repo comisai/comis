@@ -28,6 +28,7 @@ import {
   healthSignalReason,
   multilingualFromRow,
   nodeBudgetExceededFromRow,
+  subagentKilledFromRow,
   orchestrateEfficiencyFromRow,
   pipelineAuthoringFromRow,
   pricingGapFromRow,
@@ -395,6 +396,30 @@ export function buildFindings(
           : `${budgetCount} node(s) exceeded their token budget`,
       count: budgetCount,
       hint: "graph nodes are being cut off by their token budget; raise the binding knob — the node's own `tokenBudget`, the operator default `security.agentToAgent.tokenBudget`, or the graph `budget.maxTokens` (inherit-share). run `comis explain` for the per-node numbers",
+    });
+  }
+
+  // Dedicated subagent_stuck_killed finding — sub-agent run(s) force-killed by
+  // the DAEMON HEALTH MONITOR (no observed progress past the stuck threshold).
+  // Only warning rows carry the health-monitor attribution (deliberate
+  // parent/operator/system kills are severity:info by construction and are
+  // skipped by the severity gate here). Counts only; the runtime/idle numbers
+  // are per-incident (`comis explain` on the killed child). The hint names the
+  // exact knob (a live stuck-kill of a HEALTHY run took a raw log grep to
+  // diagnose without this).
+  let stuckKilledCount = 0;
+  for (const row of healthSignals) {
+    if (row.severity === "info") continue;
+    const parsed = subagentKilledFromRow(row);
+    if (parsed === null || parsed.killedBy !== "health_monitor") continue;
+    stuckKilledCount += 1;
+  }
+  if (stuckKilledCount > 0) {
+    findings.push({
+      code: "subagent_stuck_killed",
+      detail: `${stuckKilledCount} sub-agent run(s) force-killed by the daemon health monitor (no observed progress past the stuck threshold)`,
+      count: stuckKilledCount,
+      hint: "run `comis explain` on the killed child session (the row's sessionKey) for the idle/threshold numbers; if legitimate work pauses longer than the threshold, raise security.agentToAgent.subagentContext.stuckKillThresholdMs (graph runs: graphStuckKillThresholdMs)",
     });
   }
 

@@ -1429,3 +1429,30 @@ describe("toIncidentSignals — terminal.session_evicted (idle-reap signal)", ()
     expect(toIncidentSignals([event("session.started", 0, {})]).terminalDriveEvicted).toBeUndefined();
   });
 });
+
+describe("toIncidentSignals — subagent.killed (attributed kill signal)", () => {
+  it("sets subagentKilled{killedBy,runtimeMs,idleMs,thresholdMs} from the record", () => {
+    const s = toIncidentSignals([
+      event("subagent.killed", 1, {
+        runId: "r", killedBy: "health_monitor",
+        runtimeMs: 186_592, idleMs: 186_592, thresholdMs: 180_000,
+      }),
+    ]);
+    expect(s.subagentKilled).toEqual({
+      killedBy: "health_monitor", runtimeMs: 186_592, idleMs: 186_592, thresholdMs: 180_000,
+    });
+  });
+
+  it("keeps the LAST kill when more than one fires", () => {
+    const s = toIncidentSignals([
+      event("subagent.killed", 1, { runId: "a", killedBy: "parent", runtimeMs: 5 }),
+      event("subagent.killed", 2, { runId: "b", killedBy: "health_monitor", runtimeMs: 9, idleMs: 9, thresholdMs: 5 }),
+    ]);
+    expect(s.subagentKilled?.killedBy).toBe("health_monitor");
+    expect(s.subagentKilled?.runtimeMs).toBe(9);
+  });
+
+  it("is ABSENT (undefined, not {}) when no kill fired", () => {
+    expect(toIncidentSignals([event("session.started", 0, {})]).subagentKilled).toBeUndefined();
+  });
+});

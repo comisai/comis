@@ -469,6 +469,47 @@ See [Resilience Architecture](/agents/resilience) for how these systems work tog
     3. Review `modelFailover.fallbackModels` for the agent to ensure fallback models are configured
   </Accordion>
 
+  <Accordion title="Sub-agent killed by the daemon health monitor (stuck sweep)">
+    **Log message:**
+
+    ```
+    Stuck sub-agent killed by health handler
+    ```
+
+    **What it means:**
+
+    The daemon's health tick observed **no tool/LLM progress event** from the
+    run for longer than
+    `security.agentToAgent.subagentContext.stuckKillThresholdMs` (default 3
+    minutes; graph runs use `graphStuckKillThresholdMs`, default 10 minutes).
+    The threshold measures **idle time since the last observed progress**, not
+    total runtime -- a long-running sub-agent that keeps producing tool calls
+    or model turns is never killed by this sweep (its wall-clock ceiling is
+    `maxRunTimeoutMs`).
+
+    The kill is attributed: the run status, the failure record, and the
+    `subagent.killed` trajectory record all carry `killedBy: health_monitor`
+    plus the idle/threshold numbers, the announce channel receives an LLM-free
+    failure notification, and `comis explain` on the killed child session
+    returns the `subagent_stuck_killed` root-cause verdict. `comis fleet`
+    counts these as the `subagent_stuck_killed` finding.
+
+    **How to fix:**
+
+    1. Run `comis explain` on the killed child session for the idle/threshold
+       numbers and the final pre-kill records.
+    2. If the run was genuinely wedged (a leaked promise, a dead SDK session),
+       the kill worked as designed -- check what the run was waiting on.
+    3. If legitimate work pauses longer than the threshold (a slow external
+       tool between boundary events), raise it:
+       ```yaml
+       security:
+         agentToAgent:
+           subagentContext:
+             stuckKillThresholdMs: 600000   # 10 minutes idle allowance
+       ```
+  </Accordion>
+
   <Accordion title="Sub-agent watchdog timeout">
     **Log message:**
 

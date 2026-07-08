@@ -803,6 +803,9 @@ async function runSessionLocked(
         trajectoryUnsubscribe = attachTrajectoryToEventBus({
           eventBus: deps.eventBus,
           recorder: trajectoryRecorder,
+          // Session-scope the per-turn subscription too — same
+          // cross-session-contamination guard the registry path applies.
+          ownerSessionKey: formattedKey,
           ...(eventTypesFilter !== undefined
             ? {
                 filter:

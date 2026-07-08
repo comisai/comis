@@ -23,6 +23,7 @@ import {
   sandboxDowngradeRefusedEventToRow,
   deliveryDeadletteredEventToRow,
   nodeBudgetExceededEventToRow,
+  subagentKilledEventToRow,
 } from "./obs-orchestration-rows.js";
 // The four autonomy/durable lifecycle row-builders, in a
 // sibling module for the 800-line cap (mirroring obs-orchestration-rows);
@@ -151,6 +152,7 @@ export {
   sandboxDowngradeRefusedEventToRow,
   deliveryDeadletteredEventToRow,
   nodeBudgetExceededEventToRow,
+  subagentKilledEventToRow,
 };
 
 // The four autonomy/durable lifecycle row-builders live in
@@ -420,6 +422,13 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   });
   eventBus.on("subagent:budget_exceeded", (payload) => {
     diagnosticBuffer.push(nodeBudgetExceededEventToRow(payload));
+  });
+  // The attributed sub-agent kill → a health_signal row (warning ONLY for the
+  // autonomous health-monitor kill; parent/operator/system kills are info —
+  // deliberate orchestration). The fleet lens rolls the warning rows into the
+  // dedicated subagent_stuck_killed finding.
+  eventBus.on("subagent:killed", (payload) => {
+    diagnosticBuffer.push(subagentKilledEventToRow(payload));
   });
 
   // The four autonomy/durable lifecycle signals →

@@ -307,6 +307,7 @@ export function translatePayload(
     case "graph:repaired":
     case "graph:synthesized_from_intent":
     case "subagent:steered":
+    case "subagent:killed": // Attributed kill — {runId, killedBy, runtimeMs, idleMs?, thresholdMs?}; the free-text reason never crosses the bus.
     case "security:sandbox_downgrade_refused":
     case "subagent:delivery_deadlettered":
     case "subagent:delivery_retried": // The self-healing transient retry (sibling of delivery_deadlettered) — content-free {runId, channelType, attempt, transient}

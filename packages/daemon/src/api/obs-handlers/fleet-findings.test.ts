@@ -1527,3 +1527,53 @@ describe("buildFindings — cron_wake_gate_efficiency (wake-gate rollup)", () =>
     expect(JSON.stringify(f)).not.toContain("gather the inbox");
   });
 });
+
+// ---------------------------------------------------------------------------
+// subagent_stuck_killed — the daemon health monitor force-killed sub-agent
+// run(s). Dedicated finding (the sandbox_downgrade_refused discipline) whose
+// hint names the exact knob; parent/operator kills are severity-info rows and
+// never surface. The label is in DEDICATED_SCRIPT_SIGNALS, so it must NOT
+// double-count as a generic `health_signal:subagent_killed` finding.
+// ---------------------------------------------------------------------------
+
+/** A `health_signal` row labelled `subagent_killed`, carrying the closed killedBy. */
+function subagentKilledRow(ts: number, killedBy: string, severity: "warning" | "info" = "warning"): DiagnosticRow {
+  return {
+    timestamp: ts,
+    category: "health_signal",
+    severity,
+    agentId: "default",
+    sessionKey: `default:sub-agent-${ts}:sub-agent:${ts}`,
+    message: "subagent:killed",
+    details: JSON.stringify({ signal: "subagent_killed", killedBy }),
+  };
+}
+
+describe("buildFindings — subagent_stuck_killed finding", () => {
+  const CODE = "subagent_stuck_killed";
+
+  it("emits ONE counted finding for health-monitor kills, hint naming the stuck threshold knob", () => {
+    const findings = buildFindings(
+      [subagentKilledRow(1_000, "health_monitor"), subagentKilledRow(2_000, "health_monitor")],
+      [],
+      [],
+    );
+    const f = findings.filter((x) => x.code === CODE);
+    expect(f).toHaveLength(1);
+    expect(f[0]!.count).toBe(2);
+    expect(f[0]!.detail).toMatch(/2 sub-agent run\(s\) force-killed by the daemon health monitor/);
+    expect(f[0]!.hint).toMatch(/stuckKillThresholdMs/);
+    expect(f[0]!.hint).toMatch(/comis explain/);
+  });
+
+  it("does NOT double-count via the generic health_signal rollup", () => {
+    const findings = buildFindings([subagentKilledRow(1_000, "health_monitor")], [], []);
+    expect(findings.some((x) => x.code === "health_signal:subagent_killed")).toBe(false);
+  });
+
+  it("info-severity (parent/deliberate) kill rows never surface", () => {
+    const findings = buildFindings([subagentKilledRow(1_000, "parent", "info")], [], []);
+    expect(findings.some((x) => x.code === CODE)).toBe(false);
+    expect(findings.some((x) => x.code === "health_signal:subagent_killed")).toBe(false);
+  });
+});

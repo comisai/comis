@@ -171,6 +171,7 @@ import {
 import { setupSingleAgent, createLearnedSkillSurfaceRegistry } from "./wiring/setup-agents/index.js";
 import { buildDialecticWiring, dialecticWiringDepsFromBoot } from "./wiring/setup-dialectic.js";
 import { createConversationReset } from "./wiring/conversation-reset.js";
+import { createSubagentActivityTracker, sweepStuckSubAgentRuns } from "./wiring/subagent-stuck-sweep.js"; // idle-based stuck sub-agent sweep (health tick)
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
 import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, createBoundedAutonomyWiring } from "./wiring/main-helpers.js";
 import { setupChannelLivenessMonitor } from "./wiring/setup-channel-liveness-monitor.js";
@@ -965,6 +966,14 @@ function wireHealthLogging(deps: {
     promptTimeoutTimestamps, activeExecutions, getActiveConnectionCount,
     deadLetterQueue, providerHealth, deliveryQueue,
   } = deps;
+  // Bus-fed per-session progress clock for the stuck sweep: "stuck" is
+  // idle-time (no tool/LLM boundary event), NOT run age — a healthy
+  // long-running sub-agent must never be killed at the finish line. The
+  // wall-clock budget is the runner's own per-run watchdog.
+  const subagentActivity = createSubagentActivityTracker(
+    container.eventBus,
+    () => Date.now(),
+  );
   container.eventBus.on("observability:metrics", async (metrics) => {
     // Prune prompt timeout timestamps to 5-minute window
     const fiveMinAgo = Date.now() - 5 * 60_000;
@@ -983,31 +992,47 @@ function wireHealthLogging(deps: {
       }
     } catch { /* stat failure must not crash health check */ }
     maintenanceTick();
-    // Inlined computeAndKillStuckSubAgents: count active sub-agent runs and
-    // force-kill any past the threshold-aware cutoff. Graph sub-agents get a
-    // longer threshold since they do multi-step analytical work.
+    // Stuck sub-agent sweep: idle-based (no tool/LLM boundary event for the
+    // threshold window), NOT run-age-based — a healthy long-running sub-agent
+    // with recent progress survives regardless of total runtime (the
+    // wall-clock budget belongs to the runner's per-run watchdog). Graph
+    // sub-agents get a longer threshold since they do multi-step analytical
+    // work. The kill is ATTRIBUTED (killedBy health_monitor) so the status
+    // the parent later polls never reads "Killed by parent agent", and the
+    // runner delivers the LLM-free failure notification to the announce
+    // channel — an autonomous kill must never be silent.
     const stuckKillThresholdMs = container.config.security.agentToAgent.subagentContext?.stuckKillThresholdMs ?? 180_000;
     const graphStuckKillThresholdMs = container.config.security.agentToAgent.subagentContext?.graphStuckKillThresholdMs ?? 600_000;
     const allRuns = subAgentRunner.listRuns();
     const now = Date.now();
-    let activeSubAgentRuns = 0;
-    let stuckSubAgentRuns = 0;
+    subagentActivity.prune(
+      new Set(allRuns.filter((r) => r.status === "running").map((r) => r.sessionKey)),
+    );
+    const sweep = sweepStuckSubAgentRuns({
+      runs: allRuns,
+      now,
+      stuckKillThresholdMs,
+      graphStuckKillThresholdMs,
+      lastActivityFor: (key) => subagentActivity.lastActivityFor(key),
+    });
+    const { activeSubAgentRuns, stuckSubAgentRuns } = sweep;
     let stuckKilledThisTick = 0;
-    for (const run of allRuns) {
-      if (run.status !== "running") continue;
-      activeSubAgentRuns++;
-      const threshold = run.graphId ? graphStuckKillThresholdMs : stuckKillThresholdMs;
-      if (threshold > 0 && (now - run.startedAt) > threshold) stuckSubAgentRuns++;
-      if (threshold <= 0) continue;
-      if ((now - run.startedAt) <= threshold) continue;
-      subAgentRunner.killRun(run.runId);
+    for (const kill of sweep.kills) {
+      const knob = kill.isGraphRun
+        ? "security.agentToAgent.subagentContext.graphStuckKillThresholdMs"
+        : "security.agentToAgent.subagentContext.stuckKillThresholdMs";
+      subAgentRunner.killRun(kill.runId, {
+        killedBy: "health_monitor",
+        reason: `Stuck sub-agent: no observed progress for ${kill.idleMs}ms (${knob}=${kill.thresholdMs}); force-killed by the daemon health monitor`,
+        idleMs: kill.idleMs,
+        thresholdMs: kill.thresholdMs,
+      });
       stuckKilledThisTick++;
       daemonLogger.warn({
-        runId: run.runId, agentId: run.agentId, runtimeMs: now - run.startedAt,
-        thresholdMs: threshold, isGraphRun: !!run.graphId,
-        hint: run.graphId
-          ? "Graph sub-agent exceeded graphStuckKillThresholdMs; force-killed by health handler. Adjust security.agentToAgent.subagentContext.graphStuckKillThresholdMs if needed."
-          : "Sub-agent exceeded stuckKillThresholdMs; force-killed by health handler. Adjust security.agentToAgent.subagentContext.stuckKillThresholdMs if needed.",
+        runId: kill.runId, agentId: kill.agentId, runtimeMs: kill.runtimeMs,
+        idleMs: kill.idleMs,
+        thresholdMs: kill.thresholdMs, isGraphRun: kill.isGraphRun,
+        hint: `Sub-agent produced no tool/LLM progress event for longer than ${knob}; force-killed by health handler. Raise ${knob} if legitimate work pauses longer.`,
         errorKind: "timeout" as const,
       }, "Stuck sub-agent killed by health handler");
     }
@@ -2241,6 +2266,8 @@ async function bootChannels(boot: BootContext): Promise<void> {
     ...(durableResume.durableRunStore ? { durableRuns: durableResume.durableRunStore } : {}),
     ...(durabilityCfg.enabled ? { durability: { keepAliveMs: durabilityCfg.keepAliveMs, staleHeartbeatMs: durabilityCfg.staleHeartbeatMs } } : {}),
     ...(durableRunFacts ? { durableRunFacts } : {}),
+    // Trajectory-recorder release on sub-agent terminal settle — without it a dead child's recorder stays bus-subscribed and ingests other sessions' events.
+    closeTrajectory: (formattedSessionKey: string) => handle.trajectoryRegistry.close(formattedSessionKey),
     // The SAME outward ledger + rootRunId resolver → announce() + the DLQ drain route through the exactly-once ledger (off ⇒ pass-through).
     ...(durableResume.outwardLedger ? { outwardLedger: durableResume.outwardLedger } : {}),
     ...(handle.resolveRootRunId ? { resolveRootRunId: handle.resolveRootRunId } : {}),

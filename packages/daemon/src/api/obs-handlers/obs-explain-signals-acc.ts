@@ -169,4 +169,11 @@ export interface Acc {
    *  `terminalDriveEvicted`; `wasProducing` is derived from `terminalDrivePromotedReason`. */
   terminalDriveEvictedReason?: string;
   terminalDriveEvictedMs?: number;
+  /** The LAST `subagent.killed` record's closed attribution + kill telemetry
+   *  (runtime always; idle/threshold on health-monitor kills). Folded into
+   *  `subagentKilled` for the subagent_stuck_killed verdict. */
+  subagentKilledBy?: string;
+  subagentKilledRuntimeMs?: number;
+  subagentKilledIdleMs?: number;
+  subagentKilledThresholdMs?: number;
 }

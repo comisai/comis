@@ -27,6 +27,7 @@
  * @module
  */
 
+import { tryGetContext } from "@comis/core";
 import type { EventMap, TypedEventBus } from "@comis/core";
 
 import type { TrajectoryEventType, TrajectoryRecorder } from "./types.js";
@@ -159,6 +160,13 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // a path/host/uid value, an announcement body, or a task. These ALSO feed
   // the fleet lens via obs-persistence-wiring (the daemon-wide aggregate surface).
   "security:sandbox_downgrade_refused": "security.sandbox_downgrade_refused",
+  // An attributed sub-agent kill (killRun chokepoint,
+  // packages/agent — arch-scanned, so mapped, NOT allowlisted). The payload's
+  // CHILD sessionKey routes the record into the killed child's own trajectory,
+  // where the explain verdict reads killedBy/idleMs/thresholdMs. Content-free
+  // (translate-orchestration-payload.ts): runId + closed killedBy + numbers
+  // ONLY — the free-text kill reason never crosses the bus.
+  "subagent:killed": "subagent.killed",
   "subagent:delivery_deadlettered": "subagent.delivery_deadlettered",
   // The self-healing transient RETRY
   // — the sibling of subagent:delivery_deadlettered. Emitted by the announcement-batcher
@@ -475,6 +483,32 @@ export interface AttachTrajectoryParams {
    * at attach time — it does not run per event emit.
    */
   readonly filter?: (eventName: TrajectoryBridgedEventName) => boolean;
+  /**
+   * The owning session's formatted key. When present, the bridge records
+   * ONLY events that belong to this session: the payload's own
+   * `sessionKey` decides first; a session-less payload falls back to the
+   * emitting turn's AsyncLocalStorage `RequestContext.sessionKey`; an
+   * event with NEITHER (a daemon-global signal like `reflect:funnel`)
+   * rides along unchanged. Every open recorder shares ONE bus — without
+   * this filter each recorder ingests EVERY session's events and stamps
+   * them with its own sessionId (cross-session trajectory contamination;
+   * per-session cost/toolStats in `comis explain` double-count other
+   * sessions' turns). Absent ⇒ the legacy fan-out (tests / direct callers).
+   */
+  readonly ownerSessionKey?: string;
+}
+
+/**
+ * Resolve which session an emitted payload belongs to: the payload's own
+ * `sessionKey` string wins; otherwise the emitting turn's ALS context.
+ * Returns undefined for daemon-global events (no session identity anywhere).
+ */
+function resolveEventSessionKey(payload: unknown): string | undefined {
+  const own = (payload as { sessionKey?: unknown } | undefined)?.sessionKey;
+  if (typeof own === "string" && own.length > 0) return own;
+  const ctxKey = tryGetContext()?.sessionKey;
+  if (typeof ctxKey === "string" && ctxKey.length > 0) return ctxKey;
+  return undefined;
 }
 
 /**
@@ -489,7 +523,7 @@ export interface AttachTrajectoryParams {
 export function attachTrajectoryToEventBus(
   params: AttachTrajectoryParams,
 ): () => void {
-  const { eventBus, recorder, filter } = params;
+  const { eventBus, recorder, filter, ownerSessionKey } = params;
 
   // Per-handler bag so unsubscribe can pop them all in one call.
   const subscriptions: Array<{
@@ -503,6 +537,12 @@ export function attachTrajectoryToEventBus(
     if (filter !== undefined && !filter(eventName)) continue;
 
     const handler = (payload: unknown) => {
+      // Session-scoping: another session's event never lands in this
+      // recorder (see AttachTrajectoryParams.ownerSessionKey).
+      if (ownerSessionKey !== undefined) {
+        const eventSessionKey = resolveEventSessionKey(payload);
+        if (eventSessionKey !== undefined && eventSessionKey !== ownerSessionKey) return;
+      }
       const data = translatePayload(eventName, payload);
       const trajectoryType = TRAJECTORY_BRIDGE_MAPPING[eventName];
       recorder.recordEvent(trajectoryType, data);

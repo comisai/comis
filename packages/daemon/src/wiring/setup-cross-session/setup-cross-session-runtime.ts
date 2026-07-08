@@ -180,6 +180,14 @@ export function setupCrossSession(deps: {
    */
   outwardLedger?: OutwardSendLedgerPort;
   resolveRootRunId?: (sessionKey: SessionKey) => string;
+  /**
+   * Release a child session's trajectory recorder when its run settles
+   * (bound to `SessionTrajectoryHandleRegistry.close` by the daemon).
+   * Absent ⇒ the runner's teardown is inert (older test wiring); without it
+   * a terminal child's recorder stays bus-subscribed for the daemon's
+   * lifetime and keeps ingesting events into the dead child's trajectory.
+   */
+  closeTrajectory?: (formattedSessionKey: string) => Promise<void>;
 }): CrossSessionResult {
   const { sessionStore, container, assembleToolsForAgent, getExecutor, adaptersByType } = deps;
 
@@ -517,6 +525,8 @@ export function setupCrossSession(deps: {
     ...(deps.durableRuns ? { durableRuns: deps.durableRuns } : {}),
     ...(deps.durability ? { durability: deps.durability } : {}),
     ...(deps.durableRunFacts ? { durableRunFacts: deps.durableRunFacts } : {}),
+    // Trajectory-recorder release on terminal settle (registry.close).
+    ...(deps.closeTrajectory ? { closeTrajectory: deps.closeTrajectory } : {}),
   });
 
   // Register proxy typing event listeners (typing:proxy_start/stop + TTL

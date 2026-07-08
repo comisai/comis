@@ -22,6 +22,7 @@ import {
   sandboxDowngradeRefusedEventToRow,
   deliveryDeadletteredEventToRow,
   nodeBudgetExceededEventToRow,
+  subagentKilledEventToRow,
   durableOrphanedEventToRow,
   durableResumedEventToRow,
   autonomyRevokedEventToRow,
@@ -2770,5 +2771,69 @@ describe("setupObsPersistence — cache break + token-usage persistence (real st
     result.drainAll();
     // Gated off → no cache_break row persisted.
     expect(queryCacheBreakRateByReason(db, {})).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// subagentKilledEventToRow — the attributed sub-agent kill → health_signal row.
+// A health-monitor stuck-kill is fleet-visible degradation (warning); a
+// parent/operator/system kill is deliberate orchestration (info — the
+// BENIGN_DAG_DEGRADED severity discipline, so it never inflates the fleet
+// degrade count). Content-free: closed signal + closed killedBy ONLY — the
+// runtime/idle numbers stay per-incident (trajectory record + failure record).
+// ---------------------------------------------------------------------------
+
+describe("subagentKilledEventToRow", () => {
+  it("maps a health-monitor kill to a warning health_signal row (closed labels only)", () => {
+    const row = subagentKilledEventToRow({
+      runId: "run-k",
+      agentId: "default",
+      sessionKey: "default:sub-agent-k:sub-agent:k",
+      killedBy: "health_monitor",
+      runtimeMs: 186_592,
+      idleMs: 186_592,
+      thresholdMs: 180_000,
+      timestamp: 9_000,
+    });
+
+    expect(row.timestamp).toBe(9_000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.agentId).toBe("default");
+    expect(row.sessionKey).toBe("default:sub-agent-k:sub-agent:k");
+    expect(row.message).toBe("subagent:killed");
+    expect(row.traceId).toBeUndefined();
+
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details.signal).toBe("subagent_killed");
+    expect(details.killedBy).toBe("health_monitor");
+  });
+
+  it("maps a parent kill to severity info (deliberate orchestration, not degradation)", () => {
+    const row = subagentKilledEventToRow({
+      runId: "run-p",
+      agentId: "default",
+      sessionKey: "default:sub-agent-p:sub-agent:p",
+      killedBy: "parent",
+      runtimeMs: 1_000,
+      timestamp: 1,
+    });
+    expect(row.severity).toBe("info");
+    expect(JSON.parse(row.details ?? "{}").killedBy).toBe("parent");
+  });
+
+  it("NO-LEAK (§2.7): details carry the closed labels ONLY — no numbers, no reason text", () => {
+    const row = subagentKilledEventToRow({
+      runId: "run-k",
+      agentId: "default",
+      sessionKey: "default:sub-agent-k:sub-agent:k",
+      killedBy: "health_monitor",
+      runtimeMs: 186_592,
+      idleMs: 186_592,
+      thresholdMs: 180_000,
+      timestamp: 1,
+    });
+    expect(Object.keys(JSON.parse(row.details ?? "{}"))).toEqual(["signal", "killedBy"]);
+    expect(row.details).not.toContain("186592");
   });
 });

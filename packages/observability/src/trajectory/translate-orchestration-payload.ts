@@ -24,6 +24,11 @@ export type OrchestrationBridgedEventName =
   | "graph:repaired"
   | "graph:synthesized_from_intent"
   | "subagent:steered"
+  // An attributed sub-agent kill (parent / health_monitor / operator /
+  // system) — bridged so a killed child's own trajectory names WHO killed it
+  // and the idle/threshold numbers. Content-free: runId + closed killedBy +
+  // numbers ONLY (the free-text reason never crosses the bus).
+  | "subagent:killed"
   // Three sub-agent-lifecycle
   // events bridged for per-session `comis explain` visibility (the subagent:steered
   // daemon-side precedent). Content-free: closed labels/ids/numbers ONLY.
@@ -68,6 +73,19 @@ export function translateOrchestrationPayload(
     case "subagent:steered":
       // The steered runId + the closed-union mode (steer|followup) ONLY — NEVER the steer message body (the highest-risk leak); agentId/timestamp are envelope-only and stripped (the graph:repaired precedent).
       return { runId: payload.runId, mode: payload.mode };
+
+    case "subagent:killed":
+      // The killed run id + the closed killedBy attribution + the runtime/idle/
+      // threshold NUMBERS the explain verdict needs — NEVER the free-text kill
+      // reason (it stays on the failure record + WARN log). agentId/sessionKey/
+      // timestamp are envelope-only and stripped.
+      return {
+        runId: payload.runId,
+        killedBy: payload.killedBy,
+        runtimeMs: payload.runtimeMs,
+        idleMs: payload.idleMs,
+        thresholdMs: payload.thresholdMs,
+      };
 
     case "security:sandbox_downgrade_refused":
       // The violated sandbox DIMENSION labels ONLY (exec/filesystem/

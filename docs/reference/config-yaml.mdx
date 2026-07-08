@@ -1538,6 +1538,8 @@ Controls how sub-agent sessions receive context, condense results, and manage th
 | `autoCompactThreshold` | `number` | `0.95` | Context fill ratio (0.5-1.0) for triggering auto-compaction. This field is present in the schema but its runtime effect on the context engine compaction trigger is being refined in a future release. |
 | `maxRunTimeoutMs` | `number` | `600000` | Maximum wall-clock time for a sub-agent run before watchdog force-fail (10 minutes). Hard ceiling regardless of step count. |
 | `perStepTimeoutMs` | `number` | `60000` | Per-step time budget for dynamic watchdog calculation (1 minute). Dynamic timeout = min(max_steps x perStepTimeoutMs, maxRunTimeoutMs). |
+| `stuckKillThresholdMs` | `number` | `180000` | Idle threshold for the daemon health monitor's stuck sweep (3 minutes). Measures time since the run's last observed tool/LLM boundary event -- NOT total runtime -- so a healthy long run with recent progress is never killed. `0` disables. A tripped sweep kills the run with `killedBy: health_monitor`, notifies the announce channel, and records a `subagent.killed` trajectory event. |
+| `graphStuckKillThresholdMs` | `number` | `600000` | Idle threshold for graph sub-agents (10 minutes) -- graph nodes routinely pause longer between boundary events. Same idle semantics as `stuckKillThresholdMs`; `0` disables for graph runs. |
 | `errorPreservation` | `boolean` | `true` | Preserve error details in condensed results instead of summarizing them away. |
 | `narrativeCasting` | `boolean` | `true` | Format sub-agent results with tagged prefixes and metadata for the parent agent. |
 | `resultTagPrefix` | `string` | `"Subagent Result"` | Tag prefix used in narrative casting (1-100 characters). Appears as `[{prefix}: {label}]`. |
