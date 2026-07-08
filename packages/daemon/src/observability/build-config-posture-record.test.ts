@@ -2,7 +2,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { DiagnosticRow, ObservabilityStore } from "@comis/memory";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
-import { buildConfigPostureRecord, countPricingGaps, isLoopbackHost } from "./build-config-posture-record.js";
+import { buildConfigPostureRecord, countPricingGaps, countMediaCredentialGaps, isLoopbackHost } from "./build-config-posture-record.js";
 
 describe("isLoopbackHost (TLS-off is benign on a loopback bind)", () => {
   it("treats 127.0.0.1 / ::1 / localhost / 127.x as loopback (TLS-off suppressed)", () => {
@@ -78,6 +78,7 @@ describe("buildConfigPostureRecord", () => {
       chimericModelCount: 0, // always present (0 default), count-only
       pricingGapCount: 0, // always present (0 default), count-only
       sandboxNoDowngradeDisabled: false, // always present (false default)
+      mediaCredentialGapCount: 0, // always present (0 default), count-only
     });
     // SECURITY: the stranded entry is a {label, count} — no value-bearing key.
     const strandedJson = JSON.stringify(details["stranded"]);
@@ -112,6 +113,7 @@ describe("buildConfigPostureRecord", () => {
       chimericModelCount: 0,
       pricingGapCount: 0,
       sandboxNoDowngradeDisabled: false,
+      mediaCredentialGapCount: 0,
     });
   });
 
@@ -396,5 +398,59 @@ describe("countPricingGaps — boot count of remote-unknown-priced agents (resol
       empty: {},
     };
     expect(countPricingGaps(agents)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// countMediaCredentialGaps — a configured media provider whose credential is
+// absent will FAIL at first use, but the chimeric/credential detector only
+// watched the main completion pipeline, so the media gap was invisible to
+// `comis fleet` (the incident-day image-gen unavailability, 2026-07-08). This
+// makes it a boot-time posture COUNT.
+// ---------------------------------------------------------------------------
+describe("countMediaCredentialGaps — configured media provider missing its credential", () => {
+  const hasNone = () => false;
+  const hasAll = () => true;
+
+  it("flags an env-key media provider whose key is absent (per pipeline)", () => {
+    const media = {
+      imageGeneration: { provider: "openai" },
+      transcription: { provider: "groq" },
+      tts: { provider: "elevenlabs" },
+      videoGeneration: { provider: "xai" },
+    };
+    expect(countMediaCredentialGaps(media, hasNone, false)).toBe(4);
+    expect(countMediaCredentialGaps(media, hasAll, true)).toBe(0);
+  });
+
+  it("checks the RIGHT env key per provider", () => {
+    const present = new Set(["OPENAI_API_KEY"]); // only openai present
+    const has = (k: string) => present.has(k);
+    // image openai (present) → ok; tts elevenlabs (absent) → gap.
+    expect(countMediaCredentialGaps(
+      { imageGeneration: { provider: "openai" }, tts: { provider: "elevenlabs" } },
+      has, false,
+    )).toBe(1);
+  });
+
+  it("openai-codex uses the store-aware image availability, not an env key", () => {
+    const media = { imageGeneration: { provider: "openai-codex" } };
+    expect(countMediaCredentialGaps(media, hasNone, /* imageCodexAvailable */ true)).toBe(0);
+    expect(countMediaCredentialGaps(media, hasNone, /* imageCodexAvailable */ false)).toBe(1);
+  });
+
+  it("keyless / follow-main providers never count (auto, local, edge, piper)", () => {
+    const media = {
+      imageGeneration: { provider: "auto" },
+      transcription: { provider: "local" },
+      tts: { provider: "edge" },
+      videoGeneration: { provider: "auto" },
+    };
+    expect(countMediaCredentialGaps(media, hasNone, false)).toBe(0);
+  });
+
+  it("undefined media / unknown provider is a safe zero (no false flag)", () => {
+    expect(countMediaCredentialGaps(undefined, hasNone, false)).toBe(0);
+    expect(countMediaCredentialGaps({ tts: { provider: "piper" } }, hasNone, false)).toBe(0);
   });
 });

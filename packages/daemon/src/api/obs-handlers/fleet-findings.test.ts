@@ -1577,3 +1577,27 @@ describe("buildFindings — subagent_stuck_killed finding", () => {
     expect(findings.some((x) => x.code === "health_signal:subagent_killed")).toBe(false);
   });
 });
+
+describe("buildFindings — config_posture:media_credential_gap", () => {
+  const postureRow = (mediaCredentialGapCount: number): DiagnosticRow => ({
+    timestamp: 1000,
+    category: "config_posture",
+    severity: "warning",
+    message: "config_posture",
+    details: JSON.stringify({ tlsOff: false, canaryFallbackActive: false, mediaCredentialGapCount }),
+  });
+
+  it("emits a media_credential_gap finding naming the count + remediation", () => {
+    const findings = buildFindings([], [], [postureRow(2)], [], []);
+    const f = findings.find((x) => x.code === "config_posture:media_credential_gap");
+    expect(f).toBeDefined();
+    expect(f!.count).toBe(2);
+    expect(f!.detail).toMatch(/2 configured media pipeline/);
+    expect(f!.hint).toMatch(/OPENAI_API_KEY|openai-codex|integrations\.media/);
+  });
+
+  it("does NOT emit when the media gap count is zero", () => {
+    const findings = buildFindings([], [], [postureRow(0)], [], []);
+    expect(findings.some((x) => x.code === "config_posture:media_credential_gap")).toBe(false);
+  });
+});

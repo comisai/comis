@@ -100,6 +100,71 @@ export function countPricingGaps(
   ).length;
 }
 
+/**
+ * Media provider → the SecretManager env key its credential comes from. A
+ * provider absent from this map needs NO credential and can never be a gap:
+ * `auto` (follows the agent's main provider, resolved on that path), `local`
+ * (keyless whisper STT), `edge`/`piper` (keyless TTS). `openai-codex` is
+ * handled separately (OAuth, not an env key — see countMediaCredentialGaps).
+ */
+const MEDIA_PROVIDER_ENV_KEY: Readonly<Record<string, string>> = {
+  openai: "OPENAI_API_KEY",
+  google: "GOOGLE_API_KEY",
+  fal: "FAL_KEY",
+  openrouter: "OPENROUTER_API_KEY",
+  groq: "GROQ_API_KEY",
+  deepgram: "DEEPGRAM_API_KEY",
+  elevenlabs: "ELEVENLABS_API_KEY",
+  xai: "XAI_API_KEY",
+};
+
+/**
+ * Count configured media pipelines (imageGeneration / transcription / tts /
+ * videoGeneration) whose PINNED provider's credential is ABSENT — the pipeline
+ * will fail at first use (the incident-day image-gen unavailability). The
+ * chimeric/pricing detectors only watch the main COMPLETION pipeline, so a
+ * media credential gap was invisible to `comis fleet`; this makes it a boot
+ * COUNT (never provider names — the no-free-text contract).
+ *
+ * `hasSecret` is `container.secretManager.has`. `imageCodexAvailable` is the
+ * store-aware image-codex availability the image bundle already resolved
+ * (`openai-codex` uses an OAuth profile, not an env key, and only appears in
+ * the image pipeline) — reused so a cold in-memory cache does not false-flag a
+ * logged-in Codex profile (the trap the image fix closed).
+ */
+export function countMediaCredentialGaps(
+  media:
+    | {
+        imageGeneration?: { provider?: string };
+        transcription?: { provider?: string };
+        tts?: { provider?: string };
+        videoGeneration?: { provider?: string };
+      }
+    | undefined,
+  hasSecret: (key: string) => boolean,
+  imageCodexAvailable: boolean,
+): number {
+  if (!media) return 0;
+  const providers = [
+    media.imageGeneration?.provider,
+    media.transcription?.provider,
+    media.tts?.provider,
+    media.videoGeneration?.provider,
+  ];
+  let gaps = 0;
+  for (const p of providers) {
+    if (typeof p !== "string") continue;
+    if (p === "openai-codex") {
+      if (!imageCodexAvailable) gaps++;
+      continue;
+    }
+    const key = MEDIA_PROVIDER_ENV_KEY[p];
+    if (key === undefined) continue; // keyless / follow-main → never a gap
+    if (!hasSecret(key)) gaps++;
+  }
+  return gaps;
+}
+
 /** The boot-time config-posture inputs (counts/booleans/closed labels only). */
 export interface ConfigPostureInputs {
   /** The gateway is running without TLS (and not explicitly allowing insecure HTTP). */
@@ -148,6 +213,13 @@ export interface ConfigPostureInputs {
    * silent. A boolean, never config bodies. Optional (defaults to `false`).
    */
   sandboxNoDowngradeDisabled?: boolean;
+  /**
+   * Number of configured media pipelines (image / transcription / tts / video)
+   * whose PINNED provider's credential is absent — the pipeline will fail at
+   * first use. A COUNT, never provider names. Computed via
+   * {@link countMediaCredentialGaps} at boot. Optional (defaults to 0).
+   */
+  mediaCredentialGapCount?: number;
 }
 
 /**
@@ -168,6 +240,7 @@ export function buildConfigPostureRecord(
   const chimericModelCount = inputs.chimericModelCount ?? 0;
   const pricingGapCount = inputs.pricingGapCount ?? 0;
   const sandboxNoDowngradeDisabled = inputs.sandboxNoDowngradeDisabled ?? false;
+  const mediaCredentialGapCount = inputs.mediaCredentialGapCount ?? 0;
   const hasIssue =
     inputs.tlsOff ||
     inputs.strandedFindings.length > 0 ||
@@ -175,7 +248,8 @@ export function buildConfigPostureRecord(
     inputs.servedBelowConfiguredCount > 0 ||
     chimericModelCount > 0 ||
     pricingGapCount > 0 ||
-    sandboxNoDowngradeDisabled;
+    sandboxNoDowngradeDisabled ||
+    mediaCredentialGapCount > 0;
 
   obsStore?.insertDiagnostic({
     timestamp: clock.now(),
@@ -197,6 +271,9 @@ export function buildConfigPostureRecord(
       // The no-downgrade sandbox invariant is DISABLED (relaxed
       // default surfaced at boot, not silent). A boolean, never config bodies.
       sandboxNoDowngradeDisabled,
+      // Configured media pipelines whose pinned provider's credential is
+      // absent (image/transcription/tts/video). A COUNT, never provider names.
+      mediaCredentialGapCount,
     }),
   });
 }

@@ -144,7 +144,7 @@ import { createEmptyBootContext } from "./daemon-types.js";
 export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
 import { setupObsPersistence } from "./observability/obs-persistence-wiring.js";
 import { recordModelHealth } from "./observability/record-model-health.js";
-import { buildConfigPostureRecord, countChimericModels, countPricingGaps, isLoopbackHost } from "./observability/build-config-posture-record.js";
+import { buildConfigPostureRecord, countChimericModels, countPricingGaps, countMediaCredentialGaps, isLoopbackHost } from "./observability/build-config-posture-record.js";
 import { setupDeliveryQueueLogging } from "./observability/delivery-queue-logger.js";
 import { createContextPipelineCollector } from "./observability/context-pipeline-collector.js";
 import { createLogLevelManager, expandTilde } from "./observability/log-infra.js";
@@ -2818,7 +2818,17 @@ async function bootShutdown(
   // Surface the relaxed no-downgrade sandbox default at boot.
   // The typed field defaults to true (schema-security.ts); === false is the relaxation.
   const sandboxNoDowngradeDisabled = container.config.security.agentToAgent.sandboxNoDowngrade === false;
-  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount: countChimericModels(container.config.agents), pricingGapCount: countPricingGaps(container.config.agents), sandboxNoDowngradeDisabled }, boot.clock);
+  // Media credential gap: a PINNED media provider whose credential is absent
+  // (image/transcription/tts/video) — invisible to the main-pipeline chimeric
+  // detector. `imageGenProvider.isAvailable()` is the store-aware image-codex
+  // signal (openai-codex is OAuth, image-only); env-key providers check the
+  // secret manager.
+  const mediaCredentialGapCount = countMediaCredentialGaps(
+    container.config.integrations.media,
+    (key) => container.secretManager.has(key),
+    boot.imageGenProvider?.isAvailable() ?? false,
+  );
+  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount: countChimericModels(container.config.agents), pricingGapCount: countPricingGaps(container.config.agents), sandboxNoDowngradeDisabled, mediaCredentialGapCount }, boot.clock);
 
   // Snapshot current config as last-known-good after successful startup.
   // Honor diagnostics.configAudit.enabled.

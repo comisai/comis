@@ -38,6 +38,7 @@ import {
   diffToolLists,
   wireStderrCapture,
 } from "./mcp-client-discover.js";
+import { mcpStderrLooksLikeError } from "./mcp-client-connect-classify.js";
 import type {
   McpServerConfig,
   McpToolDefinition,
@@ -653,5 +654,35 @@ describe("wireStderrCapture — credential redaction in logged stderr", () => {
     // … it is REDACTED, not merely dropped (the diagnostic shape survives).
     expect(logged).toContain("[REDACTED_CONN_STRING]");
     expect(logged).toContain("sk-[REDACTED]");
+  });
+});
+
+describe("mcpStderrLooksLikeError — banner vs crash classification", () => {
+  it("treats a benign startup banner as NOT an error (no crash markers)", () => {
+    const banner = [
+      "================================================================",
+      "[ituran-mcp] ⚠  PRODUCTION fleet — https://api.ituran.com",
+      "[ituran-mcp] ⚠  Mutations are DISABLED (read-only).",
+      "================================================================",
+      "[ituran-mcp] stdio transport ready",
+    ].join("\n");
+    expect(mcpStderrLooksLikeError(banner)).toBe(false);
+  });
+
+  it("classifies genuine crash/error output as an error", () => {
+    for (const s of [
+      "Error: connect ECONNREFUSED 127.0.0.1:443",
+      "Uncaught Exception: boom",
+      "Traceback (most recent call last):",
+      "FATAL: bootstrap failed",
+      "    at Object.<anonymous> (/app/server.js:12:9)",
+    ]) {
+      expect(mcpStderrLooksLikeError(s), s).toBe(true);
+    }
+  });
+
+  it("empty / whitespace is not an error", () => {
+    expect(mcpStderrLooksLikeError("")).toBe(false);
+    expect(mcpStderrLooksLikeError("   \n  ")).toBe(false);
   });
 });

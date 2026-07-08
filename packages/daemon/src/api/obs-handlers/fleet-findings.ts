@@ -32,6 +32,7 @@ import {
   orchestrateEfficiencyFromRow,
   pipelineAuthoringFromRow,
   pricingGapFromRow,
+  mediaCredentialGapFromRow,
   sandboxDowngradeFromRow,
   scriptZeroHitFromRow,
   servedBelowConfiguredFromRow,
@@ -568,6 +569,20 @@ export function buildFindings(
         hint: "set the model id under a priced provider, or use a local/free provider where $0 is correct; run `comis explain` on an unknown-priced session for the pricing_state",
       });
     }
+    // Dedicated media-credential-gap finding from the SAME latest posture row.
+    // A configured media pipeline (image/transcription/tts/video) whose pinned
+    // provider's credential is absent will fail at first use — invisible to the
+    // main-pipeline chimeric detector, so it took a hand-grep to find (the
+    // incident-day image-gen unavailability). Counts + remediation only.
+    const mediaGapCount = mediaCredentialGapFromRow(latest);
+    if (mediaGapCount > 0) {
+      findings.push({
+        code: "config_posture:media_credential_gap",
+        detail: `${mediaGapCount} configured media pipeline(s) whose pinned provider's credential is absent — the pipeline fails at first use (image/transcription/tts/video)`,
+        count: mediaGapCount,
+        hint: "set the provider's credential (e.g. OPENAI_API_KEY / GOOGLE_API_KEY / FAL_KEY), log in for openai-codex (`comis auth login --provider openai-codex`), or switch the integrations.media.<pipeline>.provider to one whose credential is present (or `auto` to follow the main provider)",
+      });
+    }
   }
   // Dedicated learning_health finding — the reflection funnel
   // rolled up over the window. The daemon-wide "is reflection learning / why-0-admitted" posture, beside
@@ -596,7 +611,7 @@ export function buildFindings(
       code: "learning_health",
       detail: `${learningHealth.length} reflection run(s) in the window; latest outcome=${latestOutcome}, admitted=${admittedSum}, untrustedDrops=${untrustedSum}`,
       count: learningHealth.length,
-      hint: 'run `cron.runs jobName "Reflection"` for the per-run funnel; admitted=0 with untrustedDrops/uncorroborated is the anti-poison gates WORKING (not a fault); admitted=0 DESPITE genuine corroboration ⇒ a topicKey under-merge — `comis explain` the reflection run',
+      hint: 'admitted=0 with untrustedDrops/uncorroborated is the anti-poison gates WORKING (not a fault); admitted=0 DESPITE genuine corroboration ⇒ a topicKey under-merge. The per-run funnel is the `cron.runs` tool (agent/gateway RPC — there is no `comis cron` CLI); these summed counts are the operator surface.',
     });
   }
 
@@ -616,7 +631,7 @@ export function buildFindings(
       code: "memory_lifecycle",
       detail: `${memoryLifecycle.length} forget sweep(s) in the window; evicted=${evictedSum}, demoted=${demotedSum}`,
       count: memoryLifecycle.length,
-      hint: 'run `cron.runs jobName "Memory lifecycle"` for the per-sweep counts; evicted=0 is usually healthy (no corroborated-wrong / dormant candidates) — NOT a fault. Eviction is gated by learning.forget + the anti-induced-eviction exemptions (pinned/high-proof/system survive).',
+      hint: 'evicted=0 is usually healthy (no corroborated-wrong / dormant candidates) — NOT a fault. Eviction is gated by learning.forget + the anti-induced-eviction exemptions (pinned/high-proof/system survive). Per-sweep counts are the `cron.runs` tool (agent/gateway RPC — there is no `comis cron` CLI); these summed counts are the operator surface.',
     });
   }
 
@@ -652,7 +667,7 @@ export function buildFindings(
       code: "cron_wake_gate_efficiency",
       detail: `${cronWakeGate.length} gated cron fire(s) in the window; skipped=${skippedSum}, failedOpen=${failedOpenSum}, turnsSaved=${turnsSavedSum}, toolCalls=${toolCallsSum}`,
       count: cronWakeGate.length,
-      hint: `run \`cron.runs jobName "<job>"\` for the per-fire gate decisions; a high skip-rate is the gate WORKING (savings), not a fault; a 100% skip-rate on a monitor you expect to fire, a high failedOpen count, or toolCalls exceeding turnsSaved, is the signal to inspect.${failOpenNote}`,
+      hint: `a high skip-rate is the gate WORKING (savings), not a fault; a 100% skip-rate on a monitor you expect to fire, a high failedOpen count, or toolCalls exceeding turnsSaved, is the signal to inspect. Per-fire gate decisions are the \`cron.runs\` tool (agent/gateway RPC — there is no \`comis cron\` CLI); these summed counts are the operator surface.${failOpenNote}`,
     });
   }
 

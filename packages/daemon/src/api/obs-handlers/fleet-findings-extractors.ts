@@ -97,6 +97,23 @@ export function pricingGapFromRow(row: DiagnosticRow): number {
   }
 }
 
+/** mediaCredentialGapCount from a config_posture row's details JSON —
+ *  configured media pipelines (image/transcription/tts/video) whose pinned
+ *  provider's credential is absent (the pipeline fails at first use; the
+ *  incident-day image-gen unavailability). Defensive parse cloning
+ *  pricingGapFromRow — malformed/missing folds to 0 (counts only, never a
+ *  provider name / credential body). */
+export function mediaCredentialGapFromRow(row: DiagnosticRow): number {
+  if (row.details === undefined) return 0;
+  try {
+    const parsed = JSON.parse(row.details) as { mediaCredentialGapCount?: unknown };
+    const n = parsed.mediaCredentialGapCount;
+    return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
 /** The SPECIFIC flagged config keys from a config_posture row — CLOSED labels
  *  only (never raw details / secret values, per the no-body rule), so a fleet finding
  *  NAMES which knob is off instead of "the flagged config keys" (the live friction was

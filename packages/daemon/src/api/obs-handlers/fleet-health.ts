@@ -126,6 +126,29 @@ interface FleetSignals {
   /** The worst autonomy run's rootRunId (an id the operator pastes into
    *  `comis explain`). Undefined when no autonomy row carried one. */
   worstRootRunId?: string;
+  /** The worst degraded session's sessionKey (the one carrying the dominant
+   *  cause, most-recent tiebreak) — so the acute-degradation verdict names the
+   *  exact session to paste into `comis explain` instead of "the worst session".
+   *  Undefined when no degraded runtime session is in the window. */
+  worstDegradedSessionKey?: string;
+}
+
+/**
+ * Pick the worst degraded session's key: prefer a session whose named
+ * `endReason` matches the dominant cause; among matches (or, if none match,
+ * across all degraded runtime sessions) take the MOST RECENT (`lastTs`). Pure,
+ * deterministic. Returns undefined when no degraded runtime session exists.
+ */
+export function pickWorstDegradedSessionKey(
+  rows: readonly { sessionKey: string; degraded: boolean; endReason: string; lastTs: number; source: string }[],
+  topCause: string | undefined,
+): string | undefined {
+  const degraded = rows.filter((r) => r.source === "runtime" && r.degraded && r.sessionKey.length > 0);
+  if (degraded.length === 0) return undefined;
+  const matching = topCause !== undefined ? degraded.filter((r) => r.endReason === topCause) : [];
+  const pool = matching.length > 0 ? matching : degraded;
+  // Most-recent tiebreak (deterministic: lastTs desc, then sessionKey asc).
+  return [...pool].sort((a, b) => b.lastTs - a.lastTs || a.sessionKey.localeCompare(b.sessionKey))[0]!.sessionKey;
 }
 
 /**
@@ -180,11 +203,18 @@ const FLEET_HEURISTICS: ReadonlyArray<(s: FleetSignals) => FleetRootCause | null
   (s) => {
     if (s.degradedCount === 0) return null;
     const cause = s.topDegradedCause ?? "a named cause";
+    // Name the exact session to explain when we resolved one — "the worst
+    // session" with no key made the operator hunt for it (live incident).
+    const explainStep = s.worstDegradedSessionKey !== undefined
+      ? `run \`comis explain ${s.worstDegradedSessionKey}\` for the per-session verdict`
+      : "run `comis explain <sessionKey>` on the worst degraded session for the per-session verdict";
     return {
       code: "fleet_acute_degradation",
-      detail: `${s.degradedCount} of ${s.sessionCount} session(s) degraded over the window (top cause: ${cause})`,
+      detail: s.worstDegradedSessionKey !== undefined
+        ? `${s.degradedCount} of ${s.sessionCount} session(s) degraded over the window (top cause: ${cause}; worst: ${s.worstDegradedSessionKey})`
+        : `${s.degradedCount} of ${s.sessionCount} session(s) degraded over the window (top cause: ${cause})`,
       suggestedNextSteps: [
-        "run `comis explain` on the worst degraded session for the per-session verdict",
+        explainStep,
         `address the dominant degradation cause (${cause}) before the chronic posture findings`,
       ],
     };
@@ -412,6 +442,11 @@ export async function assembleFleetHealthReport(
     healthSignalCount: healthSignals.filter((r) => r.severity !== "info").length,
     configPostureCount: configPosture.length,
     topErrorKind: topErrorKinds[0]?.kind,
+    // Name the exact worst degraded session so the acute-degradation verdict
+    // pastes straight into `comis explain` (undefined-safe spread).
+    ...(pickWorstDegradedSessionKey(rows, topDegradedCause) !== undefined
+      ? { worstDegradedSessionKey: pickWorstDegradedSessionKey(rows, topDegradedCause) }
+      : {}),
     // The autonomy verdict keys on the DEGRADED autonomy run count +
     // the worst rootRunId (both from the slice above) — undefined-safe spread.
     // A denial-breaker-aborted run lands in durable status 'completed'
