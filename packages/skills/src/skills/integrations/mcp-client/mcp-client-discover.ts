@@ -19,6 +19,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { mcpStderrLooksLikeError } from "./mcp-client-connect-classify.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { systemNowMs, sanitizeLogString } from "@comis/core";
 import type {
@@ -433,13 +434,24 @@ export function wireStderrCapture(
     }
   });
 
-  // On transport close, log accumulated stderr at WARN if non-empty
+  // On transport close, surface accumulated stderr. Classify it: genuine
+  // crash/error output logs at WARN ("crash diagnostics"); a benign banner /
+  // "ready" line logs at INFO ("informational") so a healthy server's startup
+  // banner does not read as a fault on every restart. Either way the full
+  // (sanitized) buffer is captured at INFO below.
   stdioTransport.stderr.on("end", () => {
     if (stderrBuffer.trim()) {
-      logger.warn(
-        { serverName: config.name, stderrLength: stderrBuffer.length, truncated: stderrOverflowed, hint: "Review stderr output for crash diagnostics", errorKind: "dependency" as const },
-        "MCP stdio server stderr captured",
-      );
+      if (mcpStderrLooksLikeError(stderrBuffer)) {
+        logger.warn(
+          { serverName: config.name, stderrLength: stderrBuffer.length, truncated: stderrOverflowed, hint: "Review stderr output for crash diagnostics", errorKind: "dependency" as const },
+          "MCP stdio server stderr captured",
+        );
+      } else {
+        logger.info(
+          { serverName: config.name, stderrLength: stderrBuffer.length, truncated: stderrOverflowed, hint: "Server wrote to stderr with no error markers — likely a startup banner, not a crash" },
+          "MCP stdio server stderr (informational)",
+        );
+      }
       logger.info(
         // SANITIZE the accumulated buffer before it hits the log — same credential
         // scrub as the per-line DEBUG + the connect-failure fold above.

@@ -131,7 +131,17 @@ export function createImageHandlers(
       // caller's provider while execution uses the default's port, which would
       // otherwise mislead triage. Agents that share the default's provider
       // (matching ids) are unaffected — the common multi-agent case still works.
+      // An EXPLICIT operator pin (`integrations.media.imageGeneration.provider: <id>`)
+      // makes caller-vs-executed divergence BY DESIGN — the executed port IS the pinned
+      // provider, so it must not WARN (live incident: a default-agent box pinned to
+      // openai-codex warned "This non-default agent's…" on EVERY image call, and the
+      // hint told the operator to set the exact key that was already set). The misroute
+      // WARN is for FOLLOW-MAIN (`provider: "auto"`) drift only. The divergence stays
+      // observable either way via the image_resolve DEBUG + the image.requested
+      // trajectory event (provider + mainProvider).
+      const explicitPin = deps.config.provider !== "auto" && deps.provider.id === deps.config.provider;
       if (
+        !explicitPin &&
         main.providerId !== deps.provider.id &&
         // "auto"/"unavailable" are selector sentinels, not real provider ids —
         // a mismatch against them is not a credential misroute.
@@ -147,8 +157,8 @@ export function createImageHandlers(
             step: "image_provider_divergence",
             errorKind: "precondition" as const,
             hint:
-              "This non-default agent's image request runs the DEFAULT agent's " +
-              "boot-selected provider/credentials. Per-agent re-selection is a " +
+              "This agent's image request runs the DEFAULT agent's " +
+              "boot-selected provider/credentials (follow-main). Per-agent re-selection is a " +
               "deferred multi-agent refinement; until then set integrations.media." +
               "imageGeneration.provider explicitly, or run the image-capable agent as the default.",
           },

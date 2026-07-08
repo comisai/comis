@@ -196,3 +196,30 @@ export function recordConnectFailure(
   if (error instanceof Error) (outErr as Error & { cause?: unknown }).cause = error;
   return err(outErr);
 }
+
+/**
+ * Does accumulated stdio stderr look like CRASH diagnostics rather than a
+ * benign informational banner? Many well-behaved MCP servers write a startup
+ * banner / "ready" line to stderr (stdout is the JSON-RPC channel), so the
+ * accumulated buffer at transport close is often harmless. Only genuine
+ * error/crash output (an `Error:`/exception, a stack frame, a fatal/panic, a
+ * traceback, an errno) should surface at WARN as "crash diagnostics";
+ * otherwise a healthy server's banner reads like a fault every restart (live
+ * incident 2026-07-08: ituran-mcp's read-only banner logged WARN "Review
+ * stderr output for crash diagnostics"). Content-only heuristic — the caller
+ * already sanitizes the text before logging.
+ */
+export function mcpStderrLooksLikeError(text: string): boolean {
+  if (!text || text.trim().length === 0) return false;
+  return (
+    /\berror\b/i.test(text) ||
+    /\bexception\b/i.test(text) ||
+    /\bfatal\b/i.test(text) ||
+    /\bpanic\b/i.test(text) ||
+    /traceback/i.test(text) ||
+    /uncaught/i.test(text) ||
+    /segfault|segmentation fault/i.test(text) ||
+    /\bE[A-Z]{3,}\b/.test(text) || // errno tokens: ECONNREFUSED, ENOENT, ETIMEDOUT…
+    /(?:^|\n)\s*at\s+.+:\d+:\d+/.test(text) // a JS stack frame (line start or after newline)
+  );
+}

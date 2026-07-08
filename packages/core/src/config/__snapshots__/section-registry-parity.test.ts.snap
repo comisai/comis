@@ -1284,6 +1284,10 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
         "maxDormantDays": 365
       },
       "reflect": {
+        "corroboration": {
+          "minObservations": 2,
+          "mode": "single_owner"
+        },
         "maxDocsPerRun": 100,
         "maxProcedureDocsSurfaced": 10,
         "minConfidence": 0.6,
@@ -1331,6 +1335,10 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
+      "corroboration": {
+        "minObservations": 2,
+        "mode": "single_owner"
+      },
       "maxDocsPerRun": 100,
       "maxProcedureDocsSurfaced": 10,
       "minConfidence": 0.6,
@@ -1340,6 +1348,27 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.learning.reflect",
     "type": "object"
+  },
+  {
+    "default": {
+      "minObservations": 2,
+      "mode": "single_owner"
+    },
+    "immutable": true,
+    "path": "agents.learning.reflect.corroboration",
+    "type": "object"
+  },
+  {
+    "default": 2,
+    "immutable": true,
+    "path": "agents.learning.reflect.corroboration.minObservations",
+    "type": "integer"
+  },
+  {
+    "default": "single_owner",
+    "immutable": true,
+    "path": "agents.learning.reflect.corroboration.mode",
+    "type": "string"
   },
   {
     "default": 100,
@@ -6384,7 +6413,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
         "maxPerHour": 10,
         "provider": "auto",
         "safetyChecker": true,
-        "timeoutMs": 120000
+        "timeoutMs": 300000
       },
       "infrastructure": {
         "concurrencyLimit": 3,
@@ -6582,7 +6611,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
       "maxPerHour": 10,
       "provider": "auto",
       "safetyChecker": true,
-      "timeoutMs": 120000
+      "timeoutMs": 300000
     },
     "immutable": true,
     "path": "integrations.media.imageGeneration",
@@ -6629,7 +6658,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
     "type": "boolean"
   },
   {
-    "default": 120000,
+    "default": 300000,
     "immutable": true,
     "path": "integrations.media.imageGeneration.timeoutMs",
     "type": "integer"
@@ -8534,6 +8563,10 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
             "maxDormantDays": 365
           },
           "reflect": {
+            "corroboration": {
+              "minObservations": 2,
+              "mode": "single_owner"
+            },
             "maxDocsPerRun": 100,
             "maxProcedureDocsSurfaced": 10,
             "minConfidence": 0.6,
@@ -12185,7 +12218,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "maxPerHour": 10,
           "provider": "auto",
           "safetyChecker": true,
-          "timeoutMs": 120000
+          "timeoutMs": 300000
         },
         "infrastructure": {
           "concurrencyLimit": 3,
@@ -12444,7 +12477,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "maxPerHour": 10,
         "provider": "auto",
         "safetyChecker": true,
-        "timeoutMs": 120000
+        "timeoutMs": 300000
       },
       "infrastructure": {
         "concurrencyLimit": 3,
@@ -12642,7 +12675,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       "maxPerHour": 10,
       "provider": "auto",
       "safetyChecker": true,
-      "timeoutMs": 120000
+      "timeoutMs": 300000
     },
     "immutable": true,
     "path": "integrations.media.imageGeneration",
@@ -12689,7 +12722,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "boolean"
   },
   {
-    "default": 120000,
+    "default": 300000,
     "immutable": true,
     "path": "integrations.media.imageGeneration.timeoutMs",
     "type": "integer"
@@ -17632,6 +17665,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "maxDormantDays": 365
         },
         "reflect": {
+          "corroboration": {
+            "minObservations": 2,
+            "mode": "single_owner"
+          },
           "maxDocsPerRun": 100,
           "maxProcedureDocsSurfaced": 10,
           "minConfidence": 0.6,
@@ -17681,6 +17718,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "reflect": {
           "additionalProperties": false,
           "default": {
+            "corroboration": {
+              "minObservations": 2,
+              "mode": "single_owner"
+            },
             "maxDocsPerRun": 100,
             "maxProcedureDocsSurfaced": 10,
             "minConfidence": 0.6,
@@ -17688,6 +17729,34 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "schedule": "0 */3 * * *"
           },
           "properties": {
+            "corroboration": {
+              "additionalProperties": false,
+              "default": {
+                "minObservations": 2,
+                "mode": "single_owner"
+              },
+              "properties": {
+                "minObservations": {
+                  "default": 2,
+                  "maximum": 9007199254740991,
+                  "minimum": 2,
+                  "type": "integer"
+                },
+                "mode": {
+                  "default": "single_owner",
+                  "enum": [
+                    "distinct_sessions",
+                    "single_owner"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "mode",
+                "minObservations"
+              ],
+              "type": "object"
+            },
             "maxDocsPerRun": {
               "default": 100,
               "exclusiveMinimum": 0,
@@ -17722,7 +17791,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "minConfidence",
             "promoteAtProofCount",
             "maxDocsPerRun",
-            "maxProcedureDocsSurfaced"
+            "maxProcedureDocsSurfaced",
+            "corroboration"
           ],
           "type": "object"
         }
@@ -24442,7 +24512,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
           "maxPerHour": 10,
           "provider": "auto",
           "safetyChecker": true,
-          "timeoutMs": 120000
+          "timeoutMs": 300000
         },
         "infrastructure": {
           "concurrencyLimit": 3,
@@ -24650,7 +24720,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
             "maxPerHour": 10,
             "provider": "auto",
             "safetyChecker": true,
-            "timeoutMs": 120000
+            "timeoutMs": 300000
           },
           "properties": {
             "defaultSize": {
@@ -24702,7 +24772,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
               "type": "boolean"
             },
             "timeoutMs": {
-              "default": 120000,
+              "default": 300000,
               "exclusiveMinimum": 0,
               "maximum": 9007199254740991,
               "type": "integer"
@@ -28796,6 +28866,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "maxDormantDays": 365
               },
               "reflect": {
+                "corroboration": {
+                  "minObservations": 2,
+                  "mode": "single_owner"
+                },
                 "maxDocsPerRun": 100,
                 "maxProcedureDocsSurfaced": 10,
                 "minConfidence": 0.6,
@@ -28845,6 +28919,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "reflect": {
                 "additionalProperties": false,
                 "default": {
+                  "corroboration": {
+                    "minObservations": 2,
+                    "mode": "single_owner"
+                  },
                   "maxDocsPerRun": 100,
                   "maxProcedureDocsSurfaced": 10,
                   "minConfidence": 0.6,
@@ -28852,6 +28930,34 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "schedule": "0 */3 * * *"
                 },
                 "properties": {
+                  "corroboration": {
+                    "additionalProperties": false,
+                    "default": {
+                      "minObservations": 2,
+                      "mode": "single_owner"
+                    },
+                    "properties": {
+                      "minObservations": {
+                        "default": 2,
+                        "maximum": 9007199254740991,
+                        "minimum": 2,
+                        "type": "integer"
+                      },
+                      "mode": {
+                        "default": "single_owner",
+                        "enum": [
+                          "distinct_sessions",
+                          "single_owner"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "minObservations"
+                    ],
+                    "type": "object"
+                  },
                   "maxDocsPerRun": {
                     "default": 100,
                     "exclusiveMinimum": 0,
@@ -28886,7 +28992,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "minConfidence",
                   "promoteAtProofCount",
                   "maxDocsPerRun",
-                  "maxProcedureDocsSurfaced"
+                  "maxProcedureDocsSurfaced",
+                  "corroboration"
                 ],
                 "type": "object"
               }
@@ -31752,6 +31859,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "maxDormantDays": 365
             },
             "reflect": {
+              "corroboration": {
+                "minObservations": 2,
+                "mode": "single_owner"
+              },
               "maxDocsPerRun": 100,
               "maxProcedureDocsSurfaced": 10,
               "minConfidence": 0.6,
@@ -36553,7 +36664,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "maxPerHour": 10,
             "provider": "auto",
             "safetyChecker": true,
-            "timeoutMs": 120000
+            "timeoutMs": 300000
           },
           "infrastructure": {
             "concurrencyLimit": 3,
@@ -36881,7 +36992,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "maxPerHour": 10,
               "provider": "auto",
               "safetyChecker": true,
-              "timeoutMs": 120000
+              "timeoutMs": 300000
             },
             "infrastructure": {
               "concurrencyLimit": 3,
@@ -37089,7 +37200,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "maxPerHour": 10,
                 "provider": "auto",
                 "safetyChecker": true,
-                "timeoutMs": 120000
+                "timeoutMs": 300000
               },
               "properties": {
                 "defaultSize": {
@@ -37141,7 +37252,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "type": "boolean"
                 },
                 "timeoutMs": {
-                  "default": 120000,
+                  "default": 300000,
                   "exclusiveMinimum": 0,
                   "maximum": 9007199254740991,
                   "type": "integer"

@@ -109,6 +109,15 @@ export interface IncidentSourceReader {
    * audit events). Existing audit-less fixture readers therefore need no change.
    */
   readAuditEvents?(sessionKey: string): Promise<Array<Record<string, unknown>>>;
+  /**
+   * The closest REAL session keys to `requestedKey`, for the "did you mean …?"
+   * breadcrumb the assembler attaches when the request resolved ZERO records (a
+   * lossy/partial key). Scans the on-disk trajectory pointers + ranks. OPTIONAL:
+   * the production `makeRealReader` implements it; a fixture reader that omits it
+   * simply produces no `candidateSessionKeys` (additive — the same posture as a
+   * key that resolved records). Soft-fails to `[]`.
+   */
+  listCandidateSessionKeys?(requestedKey: string): Promise<string[]>;
 }
 
 /** Default data directory (lazy). Mirrors obs-trace.ts. */
@@ -283,6 +292,95 @@ export function resolveSessionFilePath(dataDir: string, sessionKey: string): str
   return resolved;
 }
 
+/** Cap on suggested candidate keys (a "did you mean …?" list, not a dump). */
+const MAX_CANDIDATE_KEYS = 8;
+
+/**
+ * PURE ranker: given a requested (possibly lossy/partial) session key and the set
+ * of REAL formatted keys on disk, return the closest matches most-relevant-first.
+ * Score = how many colon-segments of the request appear (case-insensitive
+ * substring) in the candidate; ties break toward the shorter (closer) key then
+ * lexicographic. Zero-overlap candidates are dropped (never a false suggestion),
+ * and an empty/colons-only request yields `[]`. No I/O, no globals — same inputs,
+ * same order forever.
+ */
+export function rankCandidateSessionKeys(
+  requested: string,
+  realKeys: readonly string[],
+  limit: number = MAX_CANDIDATE_KEYS,
+): string[] {
+  const reqTokens = requested.split(":").map((t) => t.trim().toLowerCase()).filter((t) => t.length > 0);
+  if (reqTokens.length === 0) return [];
+  const seen = new Set<string>();
+  return realKeys
+    .map((key) => {
+      const lower = key.toLowerCase();
+      const score = reqTokens.reduce((n, t) => n + (lower.includes(t) ? 1 : 0), 0);
+      return { key, score };
+    })
+    .filter((s) => s.score > 0)
+    .sort((a, b) => b.score - a.score || a.key.length - b.key.length || a.key.localeCompare(b.key))
+    .filter((s) => (seen.has(s.key) ? false : (seen.add(s.key), true)))
+    .slice(0, limit)
+    .map((s) => s.key);
+}
+
+/**
+ * Scan the workspace sessions base for the formatted keys of every real session
+ * (from the `<file>.jsonl.trajectory-path.json` pointers, the authoritative
+ * key→file record) and rank them against `requested`. Scans ALL tenant dirs (a
+ * lossy `channel:chatId` key's first segment is NOT a real tenant, so the
+ * tenant-scoped fast path can't be used), bounded by `MAX_POINTER_SCAN` total.
+ * Soft-fails to `[]` (a missing base / unreadable dir never throws). Content-free.
+ */
+function scanCandidateSessionKeys(dataDir: string, requested: string): string[] {
+  const base = dataDir.length > 0 ? dataDir : defaultDataDir();
+  const sessionsBase = safePath(base, "workspace", "sessions");
+  let tenants: fs.Dirent[];
+  try {
+    tenants = fs.readdirSync(sessionsBase, { withFileTypes: true });
+  } catch {
+    return []; // sessions base absent/unreadable — soft-fail.
+  }
+  const keys: string[] = [];
+  let scanned = 0;
+  outer: for (const tenant of tenants) {
+    if (!tenant.isDirectory()) continue;
+    const tenantDir = safePath(sessionsBase, tenant.name);
+    let channels: fs.Dirent[];
+    try {
+      channels = fs.readdirSync(tenantDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const channel of channels) {
+      if (!channel.isDirectory()) continue;
+      const channelDir = safePath(tenantDir, channel.name);
+      let entries: string[];
+      try {
+        entries = fs.readdirSync(channelDir);
+      } catch {
+        continue;
+      }
+      for (const name of entries) {
+        if (!name.endsWith(TRAJECTORY_POINTER_SUFFIX)) continue;
+        if (scanned >= MAX_POINTER_SCAN) break outer; // Runaway backstop.
+        scanned++;
+        try {
+          const pointer = JSON.parse(fs.readFileSync(safePath(channelDir, name), "utf-8")) as Record<string, unknown>;
+          const sid = pointer["sessionId"];
+          if (pointer["traceSchema"] === "comis-trajectory-pointer" && typeof sid === "string" && sid.length > 0) {
+            keys.push(sid);
+          }
+        } catch {
+          continue; // Corrupt/unreadable pointer — skip.
+        }
+      }
+    }
+  }
+  return rankCandidateSessionKeys(requested, keys);
+}
+
 /**
  * Resolve the trajectory JSONL path for a session file, the canonical way:
  *   1. Read `<sessionFile>.trajectory-path.json` (pointer); if it fence-checks
@@ -418,6 +516,9 @@ export function makeRealReader(
         limit: AUDIT_QUERY_LIMIT,
       });
       return rows as unknown as Array<Record<string, unknown>>;
+    },
+    async listCandidateSessionKeys(requestedKey: string): Promise<string[]> {
+      return scanCandidateSessionKeys(base, requestedKey);
     },
   };
 }

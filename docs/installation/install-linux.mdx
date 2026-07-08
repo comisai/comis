@@ -185,6 +185,13 @@ curl -fsSL https://comis.ai/install.sh | bash -s -- --with-cloakbrowser
 curl -fsSL https://comis.ai/install.sh | bash -s -- --with-cloakbrowser --with-xvfb
 ```
 
+<Info>
+Run as a regular user, these one-liners ask to re-run themselves with `sudo`
+and install under a dedicated `comis` system user -- the secure default on
+Linux. Pass `--no-user` (or set `COMIS_NO_USER=1`) for a current-user install;
+non-interactive runs without root require one of the two choices explicitly.
+</Info>
+
 <Warning>
 **Datacenter IPs (AWS, DigitalOcean, Hetzner, Hostinger, …) are pre-blocked by Reddit, X/Twitter, LinkedIn, and many anti-bot services at the network layer** — regardless of browser fingerprint. CloakBrowser does not include a proxy. If your daemon runs on a datacenter VPS, pair the stealth flag with a residential proxy. Self-hosted on a home/office network: stealth alone usually works.
 

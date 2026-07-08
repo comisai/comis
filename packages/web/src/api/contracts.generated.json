@@ -8853,6 +8853,12 @@
                 "divergentTools"
               ],
               "additionalProperties": false
+            },
+            "candidateSessionKeys": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
@@ -8920,6 +8926,9 @@
               "type": "number"
             },
             "degradedRate": {
+              "type": "number"
+            },
+            "deliveredWithToolErrors": {
               "type": "number"
             }
           },

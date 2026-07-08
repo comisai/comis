@@ -50,12 +50,18 @@ export const SubagentContextConfigSchema = z.strictObject({
   maxRunTimeoutMs: z.number().int().positive().default(600_000),
   /** Per-step timeout used to compute dynamic watchdog: min(max_steps * perStepTimeoutMs, maxRunTimeoutMs). */
   perStepTimeoutMs: z.number().int().positive().default(60_000),
-  /** Health-tick stuck kill threshold for graph sub-agents (ms). Graph spawns do multi-step
-   *  analytical work that routinely exceeds the regular threshold. Falls back to
+  /** Health-tick stuck kill threshold for graph sub-agents (ms), measured as
+   *  IDLE time — how long since the run's last observed tool/LLM boundary
+   *  event — NOT total runtime (the wall-clock budget is maxRunTimeoutMs).
+   *  Graph spawns do multi-step analytical work that routinely pauses longer
+   *  than the regular threshold. Falls back to
    *  stuckKillThresholdMs if unset. Set to 0 to disable for graph runs. */
   graphStuckKillThresholdMs: z.number().int().min(0).default(600_000),
-  /** Health-tick stuck kill threshold for regular (non-graph) sub-agents (ms).
-   *  Set to 0 to disable. */
+  /** Health-tick stuck kill threshold for regular (non-graph) sub-agents (ms),
+   *  measured as IDLE time since the run's last observed tool/LLM boundary
+   *  event — NOT total runtime, so a healthy long run with recent progress is
+   *  never killed at the finish line (the wall-clock budget is
+   *  maxRunTimeoutMs). Set to 0 to disable. */
   stuckKillThresholdMs: z.number().int().min(0).default(180_000),
 });
 

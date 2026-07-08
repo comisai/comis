@@ -70,6 +70,7 @@ import {
 // The two BENIGN learning verdicts (sibling — subdir cap).
 import { learnedSkillFailingVerdict, synthesisAbstainedVerdict } from "./obs-explain-learning-verdicts.js";
 import { spendExceededVerdict } from "./obs-explain-spend-verdict.js"; // NAMED spend verdict (sibling — subdir cap)
+import { subagentStuckKilledVerdict } from "./obs-explain-subagent-killed-verdict.js"; // health-monitor-killed sub-agent (sibling — subdir cap)
 import { recallMissVerdict } from "./obs-explain-recall-verdict.js"; // recall_miss verdict (sibling — subdir cap)
 import { terminalDriveNoTaskVerdict } from "./obs-explain-terminal-drive-verdict.js"; // unattended abandoned-drive (sibling — subdir cap)
 import { terminalDriveEvictedVerdict } from "./obs-explain-terminal-drive-evicted-verdict.js"; // reaper-killed drive (sibling — subdir cap)
@@ -131,6 +132,15 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //    stays BELOW #1, the frozen misclassification verdict. Keyed strictly on
   //    endReason "spend_exceeded" (frozen 678/503 fixtures carry it not).
   spendExceededVerdict,
+
+  // 2b) subagent_stuck_killed (the health monitor's ADMINISTRATIVE
+  //     pre-emption of a sub-agent run — the spend_exceeded rationale: an acute
+  //     autonomous kill must out-rank the chronic breaker/degradation symptoms
+  //     below, and the kill can even race the run's own completion so the
+  //     rollup reads clean. Keyed strictly on the bridged subagentKilled signal
+  //     with killedBy health_monitor (absent on the frozen 678/503 fixtures —
+  //     cannot regress them; deliberate parent/operator kills return null).
+  subagentStuckKilledVerdict,
 
   // 3) breaker_opened_repeated_failure (503 — real transport failure cascade).
   (s) => {

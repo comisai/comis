@@ -154,6 +154,31 @@ describe("CronScheduler", () => {
     scheduler.stop();
   });
 
+  it('a kind:"in" ONE-SHOT fires exactly once — never re-armed after completion (live-incident regression)', async () => {
+    // Live incident: "remind me in 1 minute" re-fired every ~minute forever — the
+    // post-completion recompute returned now+N unconditionally. With the
+    // job.createdAtMs anchor the fired one-shot terminates (nextRun undefined).
+    const oneShot = makeJob({
+      id: "reminder",
+      schedule: { kind: "in", seconds: 60 },
+      createdAtMs: clock - 120_000, // created 2 minutes ago
+      nextRunAtMs: clock - 1, // due now (the fire the user asked for)
+    });
+    const executeJob = vi.fn(async () => ({ status: "ok" as const }));
+    const { scheduler } = makeScheduler({ jobs: [oneShot], executeJob });
+    await scheduler.start();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(executeJob).toHaveBeenCalledTimes(1); // the intended fire
+
+    // Let wall-clock + timers roll well past another interval — it must NOT re-fire.
+    clock += 61_000;
+    await vi.advanceTimersByTimeAsync(61_000);
+    clock += 61_000;
+    await vi.advanceTimersByTimeAsync(61_000);
+    expect(executeJob).toHaveBeenCalledTimes(1);
+    scheduler.stop();
+  });
+
   it("a fire-and-forget system_event job logs 'dispatched', NOT 'completed' (work runs async)", async () => {
     // The __REFLECT__ sentinel is a fire-and-forget system_event — executeJob
     // dispatches and returns in ms while the reflection runs ~20s async. Logging "Job completed

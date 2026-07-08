@@ -39,6 +39,15 @@ export const FleetHealthReportSchema = z.object({
     total: z.number(),
     degraded: z.number(),
     degradedRate: z.number(),
+    /**
+     * Of `degraded`, how many finished `completed_with_tool_errors` — the model
+     * DELIVERED a final answer despite a (recovered/acknowledged) tool error. The
+     * degradation FINDINGS fire on the HARD count (`degraded −
+     * deliveredWithToolErrors`) so a fleet of self-healed tool hiccups does not
+     * read as a false "N% degraded" alarm; this field makes the split explicit for
+     * a JSON consumer / the CLI. Optional (additive; pre-existing readers ignore it).
+     */
+    deliveredWithToolErrors: z.number().optional(),
   }),
   /** Merged across the window + capped top-N (counts only — no raw bodies). */
   topErrorKinds: z.array(z.object({ kind: z.string(), count: z.number() })),

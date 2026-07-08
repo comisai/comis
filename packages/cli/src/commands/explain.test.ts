@@ -337,6 +337,53 @@ describe("comis explain table view tolerates a null likelyRootCause and empty ne
     expect(output).not.toContain("Root cause");
     expect(output).not.toContain("→");
   });
+
+  it("renders a 'Did you mean' block with candidate keys on a 0-record miss (the lossy-key friction)", async () => {
+    const missReport = {
+      ...FAKE_REPORT,
+      summary: "no activity found for this session",
+      likelyRootCause: null,
+      suggestedNextSteps: [],
+      coverage: {
+        trajectory: { found: false, records: 0 },
+        rollup: { present: false },
+        offloads: { pointersResolved: 0, pointersTotal: 0 },
+        candidateSessionKeys: [
+          "default:678314278:678314278:peer:678314278",
+          "default:111:111:peer:111",
+        ],
+      },
+    };
+    const client: RpcClient = {
+      call: () => Promise.resolve(missReport),
+      close: () => {},
+      onNotification: () => {},
+    };
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerExplainCommand(program);
+    await program.parseAsync(["node", "test", "explain", "telegram:678314278"]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    expect(output).toContain("Did you mean");
+    expect(output).toContain("default:678314278:678314278:peer:678314278");
+  });
+
+  it("does NOT render 'Did you mean' when the session resolved records (no candidate list)", async () => {
+    const client: RpcClient = {
+      call: () => Promise.resolve(FAKE_REPORT), // FAKE_REPORT has no candidateSessionKeys
+      close: () => {},
+      onNotification: () => {},
+    };
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerExplainCommand(program);
+    await program.parseAsync(["node", "test", "explain", "default:user123:telegram:1717000000"]);
+
+    expect(getSpyOutput(consoleSpy.log)).not.toContain("Did you mean");
+  });
 });
 
 // ---------------------------------------------------------------------------

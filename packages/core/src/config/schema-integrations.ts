@@ -536,14 +536,17 @@ export const ImageGenerationConfigSchema = z.strictObject({
     /** Default image size/dimensions (default: "1024x1024") */
     defaultSize: z.string().default("1024x1024"),
     /**
-     * Generation timeout in milliseconds (default: 120000 = 120s). The Codex
+     * Generation timeout in milliseconds (default: 300000 = 300s). The Codex
      * hosted `image_generation` tool (the follow-main path for a ChatGPT-login
-     * agent) takes ~20-60s to generate in practice, so a 60s cap would clip the
-     * slow generations as a `timeout`. 120s gives headroom; the fast key-auth
-     * providers (openai / google / openrouter) finish well under it. Operators
+     * agent) routinely runs 60-120s and intermittently LONGER — at a 120s cap a
+     * live box clipped 3 of 4 generations as `timeout` (each aborted attempt
+     * still consumed quota) while the survivor finished in ~64s. 300s matches
+     * the videoGeneration ceiling and converts slow-successes back into
+     * successes while still bounding a genuine hang. The fast key-auth
+     * providers (openai / google / openrouter) finish well under it; operators
      * on fast-only providers may lower it.
      */
-    timeoutMs: z.number().int().positive().default(120_000),
+    timeoutMs: z.number().int().positive().default(300_000),
     /** Providers consulted in order ONLY after the follow-main path fails. Default empty. */
     fallbackChain: z.array(z.enum(IMAGE_PROVIDER_VALUES)).default([]),
     /** Optional per-agent/hour USD cost ceiling, enforced before generation. */

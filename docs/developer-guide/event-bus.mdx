@@ -141,6 +141,7 @@ Skill lifecycle, tool execution, audit logging, observability (tokens and latenc
 | `subagent:delivery_retried` | runId, channelType, attempt, transient, timestamp |
 | `subagent:delivery_deadlettered` | runId, channelType, attempt, transient, timestamp |
 | `subagent:steered` | runId, agentId, mode, timestamp |
+| `subagent:killed` | runId, agentId, sessionKey, killedBy, runtimeMs, idleMs, thresholdMs, timestamp |
 | `memory:review_completed` | agentId, sessionsReviewed, memoriesExtracted, duplicatesSkipped, durationMs, timestamp |
 | `model:auth_cooldown` | keyName, provider, cooldownMs, failureCount, timestamp |
 | `model:catalog_loaded` | providerCount, modelCount, timestamp |
@@ -196,6 +197,8 @@ Subscribe to this event for driver-level monitoring, logging, or triggering down
 - `graph:synthesized_from_intent` fires when the `pipeline` tool's `from_intent` action synthesizes a graph from a one-line intent. It omits the tier (the synthesizer is tier-agnostic). The one-line intent text is the highest-risk leak and is intentionally absent from the payload.
 
 See [Execution Graphs: Small-model authoring](/agents/execution-graphs#small-model-authoring) for the behavior and [Pipelines: from_intent](/agent-tools/pipelines#from-intent) for the action.
+
+**Attributed sub-agent kills:** `subagent:killed` fires at the runner's kill chokepoint for every force-killed sub-agent run, naming who initiated it via the closed `killedBy` union (`parent` | `health_monitor` | `operator` | `system`). A daemon health-monitor stuck-kill carries the `idleMs`/`thresholdMs` telemetry; the free-text kill reason never rides the bus (it stays on the run's failure record and the WARN log). `sessionKey` is the killed child's key, so the trajectory record lands in the child's own file and `comis explain` on the child yields the `subagent_stuck_killed` verdict.
 
 **Self-healing completion delivery:** `subagent:delivery_retried` and `subagent:delivery_deadlettered` track the retry/dead-letter routing when a sub-agent completion delivery falls back to a direct channel send and that send fails. Like `subagent:budget_exceeded`, both payloads are counts and ids only -- never the announcement text, the sub-agent output, or the error string.
 

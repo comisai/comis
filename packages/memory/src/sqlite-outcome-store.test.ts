@@ -122,6 +122,22 @@ describe("createSqliteOutcomeStore", () => {
       expect(pairs).toEqual(["turn-a|sess-1", "turn-b|sess-1"]);
     });
 
+    it("returns each turn's observedAt (MAX across its source rows) — the per-turn window key", async () => {
+      // The reflection source builder windows a turn's LCD rows by (prevObservedAt,
+      // observedAt] to derive PER-TURN signatures — without observedAt every turn in a
+      // single long DM collapses into one whole-session mega-topic (live incident:
+      // 42 selected → distinctTopicKeys 1).
+      await store.observe(makeObs({ trajectoryId: "turn-a", sessionId: "sess-1", source: "tool", observedAt: 1_000 }));
+      await store.observe(makeObs({ trajectoryId: "turn-a", sessionId: "sess-1", source: "explicit", observedAt: 1_001 }));
+      await store.observe(makeObs({ trajectoryId: "turn-b", sessionId: "sess-1", source: "tool", observedAt: 2_000 }));
+      const r = await store.listTrajectoryIds!(SCOPE_A);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      const byId = new Map(r.value.map((p) => [p.trajectoryId, p]));
+      expect(byId.get("turn-a")?.observedAt).toBe(1_001); // MAX across the turn's rows
+      expect(byId.get("turn-b")?.observedAt).toBe(2_000);
+    });
+
     it("is scoped — never returns another (tenant, agent)'s trajectories", async () => {
       await store.observe(makeObs({ trajectoryId: "mine", sessionId: "s" }));
       await store.observe(makeObs({ tenantId: "other", agentId: "other", trajectoryId: "theirs", sessionId: "s" }));

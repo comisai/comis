@@ -136,6 +136,15 @@ export interface LearningEvents {
     /** The largest distinct (session,sender) corroboration size (1 = single instance → not admissible). */
     maxClusterCardinality: number;
     /**
+     * How many topics corroborated via the `single_owner` REPETITION path (an
+     * explicitly-trusted owner repeating a topic ≥minObservations times) rather than the
+     * distinct-sessions gate. 0 in `distinct_sessions` mode. Lets `comis explain`
+     * show the single-owner learning mode is active and how many topics it corroborated —
+     * so a `maxClusterCardinality:1` run that STILL admitted reads as single-owner, not a bug.
+     * Content-free (a count, like `admitted`).
+     */
+    singleOwnerCorroborated: number;
+    /**
      * How many DISTINCT topicKey groups the selected sources formed — the under-merge
      * DISCRIMINATOR. `synthesized:2, distinctTopicKeys:2, maxClusterCardinality:1` = 2 successes that
      * landed on 2 SEPARATE topics (under-merge), vs `distinctTopicKeys:1, maxClusterCardinality:2` =

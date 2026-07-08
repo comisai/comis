@@ -112,6 +112,15 @@ export function registerExplainCommand(program: Command): void {
           // Table view — concise key fields (kept small; the test exercises both
           // this branch and the json branch to hold the coverage floor).
           info(`Session:    ${report.sessionKey}`);
+          // "Did you mean …?" — the request resolved ZERO records and the
+          // assembler found closer REAL keys (a lossy/partial key like
+          // `telegram:<chatId>`). Surface them so the operator copies the right
+          // key instead of hand-joining the session index.
+          const candidates = report.coverage?.candidateSessionKeys ?? [];
+          if (candidates.length > 0) {
+            info(`Did you mean (no records for '${report.sessionKey}'):`);
+            for (const c of candidates) info(`  ${c}`);
+          }
           // Obs honesty: a defaulted "unknown" endReason with NO session-end rollup
           // is an UNRESOLVED outcome, not a finding — caveat it so the operator does
           // not read the "unknown" (or the cost/tools the session-index still supplies)

@@ -94,6 +94,15 @@ export interface IncidentSignals {
    *  (a producing drive that was idle-reaped). Lets the terminal_drive_evicted verdict name a
    *  reaper-killed autonomous drive. Absent (never `{}`) when no eviction fired. */
   terminalDriveEvicted?: { reason: string; idleMs: number; wasProducing: boolean };
+  /** Set when a sub-agent run was force-killed during the session — folded from
+   *  `subagent.killed` trajectory records (bridged from the `subagent:killed`
+   *  event, emitted at the runner's kill chokepoint). `killedBy` is the closed
+   *  attribution union (`parent` | `health_monitor` | `operator` | `system`),
+   *  last-wins; the numbers are the kill telemetry (idle/threshold present on
+   *  health-monitor kills only). Lets the subagent_stuck_killed verdict name an
+   *  autonomous stuck-kill — the child's own rollup can still read success when
+   *  the kill races completion. Absent (never `{}`) when no kill fired. */
+  subagentKilled?: { killedBy: string; runtimeMs?: number; idleMs?: number; thresholdMs?: number };
   failures: IncidentFailure[]; // normalized, newest-first
   breakerEvents: Array<{
     seq: number;

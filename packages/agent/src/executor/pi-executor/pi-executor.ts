@@ -110,7 +110,7 @@ import { resolveEffectiveContextWindow } from "../../model/effective-context-win
 import { DEFAULT_EFFECTIVE_CAP_BY_CLASS } from "../../context-engine/budget-capacity-cap.js";
 import { isAnthropicFamily, isGoogleFamily, resolveProviderCapabilities } from "../../provider/capabilities.js";
 import { detectOnboardingState } from "../../workspace/onboarding-detector.js";
-import { validateRoleAttribution } from "../../context-engine/index.js";
+import { validateRoleAttribution, sessionTreeHasSameRoleAnomaly } from "../../context-engine/index.js";
 import type { TokenAnchor, WindowProvenance } from "../../context-engine/types.js";
 import { getElapsedSinceLastResponse } from "../ttl-guard.js";
 import { clearSessionBlockStability } from "../block-stability-tracker.js";
@@ -562,15 +562,6 @@ async function runSessionLocked(
   const adaptiveRetentionClear = () => { adaptiveRetentionRef.set(undefined); };
   const executionMinTokensOverrideClear = () => { minTokensOverrideRef.set(undefined); };
 
-  // Repair orphaned messages
-  const repairResult = repairOrphanedMessages(sm);
-  if (repairResult.repaired) {
-    deps.logger.info(
-      { reason: repairResult.reason },
-      "Repaired orphaned message",
-    );
-  }
-
   // One-time scrub for sessions poisoned by an earlier on-disk thinking-signature stripper.
   // Must run before buildSessionContext so the context pipeline sees the clean fileEntries.
   const scrubResult = scrubPoisonedThinkingBlocks(sm);
@@ -597,13 +588,31 @@ async function runSessionLocked(
     );
   }
 
+  // Repair orphaned messages — runs AFTER the scrubs so it validates the SAME
+  // post-scrub tree the detector (validateRoleAttribution below) checks. When
+  // repair ran BEFORE the scrubs, a scrub-induced anomaly was left unrepaired
+  // while the detector flagged it every turn forever (the idx-47 incident).
+  const repairResult = repairOrphanedMessages(sm);
+  if (repairResult.repaired) {
+    deps.logger.info(
+      { reason: repairResult.reason },
+      "Repaired orphaned message",
+    );
+  }
+
   // Detect first message in session for BOOT.md injection
   const sessionContext = sm.buildSessionContext();
 
-  // Diagnostic assertion -- detect role attribution anomalies
-  // in continued sessions. Fires WARN log only; repair is handled by
-  // repairOrphanedMessages() above.
-  validateRoleAttribution(sessionContext.messages, deps.logger);
+  // Diagnostic assertion — classify any consecutive same-role adjacency in the
+  // assembled context by whether the RAW tree still carries it after repair: a
+  // still-anomalous raw tree is genuine unrepaired corruption (WARN); a
+  // well-formed raw tree means the adjacency is an assembled/merged-view
+  // artifact the provider adapter normalizes (benign DEBUG). No repair here.
+  validateRoleAttribution(
+    sessionContext.messages,
+    sessionTreeHasSameRoleAnomaly(sm),
+    deps.logger,
+  );
 
   const isFirstMessageInSession = sessionContext.messages.length === 0;
 
@@ -803,6 +812,9 @@ async function runSessionLocked(
         trajectoryUnsubscribe = attachTrajectoryToEventBus({
           eventBus: deps.eventBus,
           recorder: trajectoryRecorder,
+          // Session-scope the per-turn subscription too — same
+          // cross-session-contamination guard the registry path applies.
+          ownerSessionKey: formattedKey,
           ...(eventTypesFilter !== undefined
             ? {
                 filter:

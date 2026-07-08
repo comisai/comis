@@ -34,6 +34,7 @@
  */
 
 import { suppressError } from "@comis/shared";
+import { systemNowMs } from "@comis/core";
 import type { TypedEventBus, BackgroundTaskOrigin } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import type {
@@ -136,6 +137,19 @@ export interface CompletionDispatcherDeps {
   /** Active-session check (production wiring). When absent, the dispatcher
    *  defers to the runner without firing fallback. */
   sessionStore?: DispatcherSessionStore;
+  /**
+   * LIVE-TURN oracle: returns true while the given FORMATTED sessionKey has a
+   * turn currently executing. Load-bearing for the auto-background stub
+   * protocol: a task promoted mid-turn is consumed by ITS OWN still-running
+   * turn (which polls `background_tasks`), so a completion that lands while
+   * the origin turn is in flight must fire NO user-visible fallback — the
+   * live incident was a raw 'Background task "…" completed.' message landing
+   * mid-conversation because the `sessionStore` check below (the persistent
+   * store, near-EMPTY in DAG mode) mis-read a live conversation as "no active
+   * session". When absent, behavior is unchanged (the sessionStore check
+   * decides alone).
+   */
+  isTurnInFlight?: (formattedSessionKey: string) => boolean;
   /** Recursion limit for background-task hop counting. When absent, the
    *  dispatcher does not enforce the cap (defers to the runner). */
   maxBackgroundHops?: number;
@@ -241,12 +255,38 @@ export function createCompletionDispatcher(
       const nextHopCount = (origin.backgroundHopCount ?? 0) + 1;
       if (nextHopCount >= deps.maxBackgroundHops) {
         transitionTo(taskId, "notified");
+        emitNotified(task, origin, true, "hop_cap");
         await fireFallback(
           task,
           `Background task "${task.toolName}" completed but follow-up was skipped — recursion limit reached. Run again or check the result manually.`,
         );
         return;
       }
+    }
+
+    // LIVE-TURN suppression (when wired): the origin turn is STILL EXECUTING —
+    // it promoted this task mid-turn and consumes the result itself via the
+    // background_tasks stub protocol. A user-visible fallback here is pure
+    // noise landing mid-conversation (the live incident: a raw
+    // 'Background task "…" completed.' followed by the turn's real answer).
+    // Transition to "dispatched" — no notice; the runner's own in-flight
+    // check also skips re-entry (the live turn owns consumption; an
+    // unconsumed result stays readable via `background_tasks`).
+    if (deps.isTurnInFlight?.(origin.sessionKey) === true) {
+      transitionTo(taskId, "dispatched");
+      emitNotified(task, origin, false, "live_turn_suppressed");
+      log.debug(
+        {
+          taskId,
+          sessionKey: origin.sessionKey,
+          agentId: origin.agentId,
+          toolName: task.toolName,
+          traceId: origin.traceId ?? undefined,
+          hint: "Origin turn in flight — live turn consumes the result; no fallback notice",
+        },
+        "Completion dispatcher: suppressed fallback (origin turn live)",
+      );
+      return;
     }
 
     // Active-session check (when configured). No active session → fallback.
@@ -260,6 +300,7 @@ export function createCompletionDispatcher(
         // dispatcher transitions to "notified" so the runner does NOT
         // also fire (single-owner contract).
         transitionTo(taskId, "notified");
+        emitNotified(task, origin, true, "no_session");
         await fireFallback(
           task,
           `Background task "${task.toolName}" completed.`,
@@ -297,6 +338,36 @@ export function createCompletionDispatcher(
     // updated state. Test fixtures take this branch.
     const task = deps.taskManager.getTask(taskId);
     if (task) task.dispatchState = next;
+  }
+
+  /**
+   * Emit the content-free `background_task:notified` OBSERVABILITY signal for
+   * the fallback-notice decision, so `comis explain` shows whether a raw
+   * completion notice fired and whether it was correct (a `notified:true` with
+   * the origin turn live is the leak class this makes diagnosable in one call —
+   * previously wire-grep-only). Best-effort — a bus fault must never abort the
+   * dispatch.
+   */
+  function emitNotified(
+    task: BackgroundTask,
+    origin: BackgroundTaskOrigin,
+    notified: boolean,
+    reason: "no_session" | "hop_cap" | "live_turn_suppressed",
+  ): void {
+    try {
+      deps.eventBus.emit("background_task:notified", {
+        agentId: origin.agentId,
+        taskId: task.id,
+        toolName: task.toolName,
+        sessionKey: origin.sessionKey,
+        notified,
+        reason,
+        traceId: origin.traceId ?? null,
+        timestamp: systemNowMs(),
+      });
+    } catch {
+      // A bus emit fault must never abort the completion dispatch.
+    }
   }
 
   async function fireFallback(task: BackgroundTask, message: string): Promise<void> {

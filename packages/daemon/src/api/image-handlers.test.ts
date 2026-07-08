@@ -741,11 +741,15 @@ describe("createImageHandlers", () => {
   // is not misled by the per-request obs line that names the caller's provider
   // while execution uses the default's port.
 
-  it("WARNs when the caller's resolved provider diverges from the boot-selected port (misroute risk)", async () => {
+  it("WARNs when the caller's resolved provider diverges from the boot-selected port under follow-main (misroute risk)", async () => {
     const logger = createMockLogger() as unknown as ReturnType<typeof createMockLogger> & {
       warn: ReturnType<typeof vi.fn>;
     };
     const deps = createMockDeps({
+      // Follow-main selection (`provider: "auto"`) — the divergence is a REAL
+      // misroute signal here: a non-default agent's main provider differs from the
+      // boot-selected port it will actually execute on.
+      config: { provider: "auto", safetyChecker: true, maxPerHour: 10, defaultSize: "1024x1024", timeoutMs: 60000 } as never,
       // Boot-selected port = the DEFAULT agent's (openrouter).
       provider: {
         id: "openrouter",
@@ -772,6 +776,36 @@ describe("createImageHandlers", () => {
     // Assert the actionable remediation knob: pin the hint to the stable
     // config key an operator must set, not to incidental hint wording.
     expect(payload.hint).toContain("integrations.media.imageGeneration.provider");
+  });
+
+  it("does NOT WARN when the executed port IS the operator's EXPLICIT provider pin (live-incident regression)", async () => {
+    // Live incident: `integrations.media.imageGeneration.provider: openai-codex` on the
+    // DEFAULT agent (main = anthropic) warned "This non-default agent's image request…"
+    // on EVERY image call, and its hint told the operator to set the exact key that was
+    // already set. An explicit pin makes caller-vs-executed divergence BY DESIGN — no warn.
+    const logger = createMockLogger() as unknown as ReturnType<typeof createMockLogger> & {
+      warn: ReturnType<typeof vi.fn>;
+    };
+    const deps = createMockDeps({
+      config: { provider: "openai-codex", safetyChecker: true, maxPerHour: 10, defaultSize: "1024x1024", timeoutMs: 60000 } as never,
+      // The executed port IS the pinned provider.
+      provider: {
+        id: "openai-codex",
+        isAvailable: () => true,
+        execute: vi.fn().mockResolvedValue(ok({ buffer: Buffer.from("x"), mimeType: "image/png" })),
+      },
+      // The default agent's own main provider differs (anthropic) — expected with a pin.
+      resolveAgentMainProvider: vi.fn().mockReturnValue({ providerId: "anthropic" }),
+      logger: logger as never,
+    });
+    const handlers = createImageHandlers(deps);
+
+    await handlers["image.generate"]!({ _agentId: "default", prompt: "a fox" });
+
+    const warned = logger.warn.mock.calls.find(
+      ([payload]) => (payload as { step?: string }).step === "image_provider_divergence",
+    );
+    expect(warned).toBeUndefined();
   });
 
   it("does NOT WARN when the caller's provider matches the boot-selected port (shared-provider agents)", async () => {

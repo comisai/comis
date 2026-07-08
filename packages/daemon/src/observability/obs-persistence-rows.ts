@@ -320,6 +320,10 @@ export function reflectFunnelEventToRow(
       admissionOutcome: payload.admissionOutcome,
       admitted: payload.admitted,
       maxClusterCardinality: payload.maxClusterCardinality,
+      // How many topics corroborated via single_owner REPETITION (0 in distinct_sessions mode).
+      // Makes an `admitted>0` run with `maxClusterCardinality:1` explicable as single-owner
+      // learning rather than a contradiction — the fleet lens shows the mode is active + working.
+      singleOwnerCorroborated: payload.singleOwnerCorroborated,
       // The under-merge discriminator (admitted=0 with distinctTopicKeys>1 & maxClusterCardinality<2
       // = successes that didn't merge → topicKey under-merge, not a genuine single-source).
       distinctTopicKeys: payload.distinctTopicKeys,

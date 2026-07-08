@@ -45,7 +45,7 @@ import { pipelineAuthoringAggregateFromRows } from "./fleet-findings.js";
 import { initSchema, createObservabilityStore } from "@comis/memory";
 import type { ObservabilityStore } from "@comis/memory";
 import { createFakeClock } from "../../../../../test/support/fake-clock.js";
-import { assembleFleetHealthReport, bindFleetHealthHandlers } from "./fleet-health.js";
+import { assembleFleetHealthReport, bindFleetHealthHandlers, pickWorstDegradedSessionKey } from "./fleet-health.js";
 import type { ObsHandlerDeps } from "./obs-helpers.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -273,6 +273,56 @@ describe("assembleFleetHealthReport (4-source read fan-in)", () => {
     });
     const report = await assembleFleetHealthReport({ obsStore: store, dataDir: makeDataDirWithActivity(), clock: createFakeClock(now) }, 24);
     expect(report.likelyRootCause?.code).toBe("fleet_recurring_health_signal");
+  });
+
+  // #4: a window whose ONLY degradation is delivered-with-tool-errors (the model
+  // DELIVERED a final answer despite a recovered/acknowledged tool error) must NOT
+  // root-cause to the high/acute degradation verdict — the user got a reply. The
+  // split is reported on sessions.deliveredWithToolErrors; sessions.degraded is
+  // unchanged (a tool DID error — the per-session warning stands for drill-down).
+  it("does NOT root-cause to degradation when ALL degraded sessions merely delivered-with-tool-errors", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    for (let i = 0; i < 4; i++) {
+      store.insertDiagnostic({
+        timestamp: now - 1_000 - i, category: "session_summary", severity: "warning", sessionKey: `d${i}`,
+        message: "session:summary",
+        details: summaryDetails({ degraded: true, endReason: "completed_with_tool_errors", toolStats: { exec: { ok: 2, failed: 3 } } }),
+      });
+    }
+    const report = await assembleFleetHealthReport({ obsStore: store, dataDir: makeDataDirWithActivity(), clock: createFakeClock(now) }, 24);
+
+    expect(report.likelyRootCause?.code, "self-healed hiccups must not root-cause to high-degraded").not.toBe("fleet_high_degraded_rate");
+    expect(report.likelyRootCause?.code, "delivered-with-tool-errors is not an acute event").not.toBe("fleet_acute_degradation");
+    expect(report.sessions.deliveredWithToolErrors).toBe(4);
+    expect(report.sessions.degraded).toBe(4); // the raw flag is unchanged (invariant)
+  });
+
+  it("STILL root-causes to acute degradation on a genuine HARD failure amid delivered-with-tool-errors", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    // 2 delivered + 1 hard = 3 sessions → hard rate 1/3 < 0.5 (below the high-rate
+    // gate) so the ACUTE verdict is the winner (not high-rate).
+    for (let i = 0; i < 2; i++) {
+      store.insertDiagnostic({
+        timestamp: now - 1_000 - i, category: "session_summary", severity: "warning", sessionKey: `d${i}`,
+        message: "session:summary",
+        details: summaryDetails({ degraded: true, endReason: "completed_with_tool_errors" }),
+      });
+    }
+    store.insertDiagnostic({
+      timestamp: now - 500, category: "session_summary", severity: "warning", sessionKey: "hard",
+      message: "session:summary",
+      details: summaryDetails({ degraded: true, endReason: "context_exhausted", topErrorKinds: { tool_timeout: 2 } }),
+    });
+    const report = await assembleFleetHealthReport({ obsStore: store, dataDir: makeDataDirWithActivity(), clock: createFakeClock(now) }, 24);
+
+    expect(report.likelyRootCause?.code, "a genuine hard failure must still root-cause").toBe("fleet_acute_degradation");
+    // The detail names the HARD count + the top HARD cause (never the soft delivered cause).
+    expect(report.likelyRootCause!.detail).toContain("context_exhausted");
+    expect(report.likelyRootCause!.detail).not.toContain("top cause: completed_with_tool_errors");
+    expect(report.likelyRootCause!.detail).toContain("1 of 3 session(s) HARD-degraded");
+    expect(report.sessions.deliveredWithToolErrors).toBe(2);
   });
 
   it("surfaces the learning_health finding from reflection-funnel rows (handler wiring)", async () => {
@@ -592,7 +642,10 @@ describe("assembleFleetHealthReport (4-source read fan-in)", () => {
 
     expect(report.likelyRootCause?.code).toBe("fleet_acute_degradation");
     expect(report.likelyRootCause?.detail).toContain("context_exhausted");
-    expect(report.likelyRootCause?.suggestedNextSteps.join(" | ")).toContain("comis explain");
+    // The exact worst session is NAMED — the operator pastes it straight into
+    // `comis explain` instead of hunting for "the worst session" (live incident).
+    expect(report.likelyRootCause?.detail).toContain("s-degraded");
+    expect(report.likelyRootCause?.suggestedNextSteps.join(" | ")).toContain("comis explain s-degraded");
   });
 
   it("HEURISTIC: chronic config posture still wins when no session degraded", async () => {
@@ -1424,5 +1477,44 @@ describe("bindFleetHealthHandlers (boot.clock wiring is load-bearing)", () => {
     await expect(
       handlers["obs.fleet.health"]!({ sinceHours: 24, _trustLevel: "admin" }),
     ).rejects.toThrow();
+  });
+});
+
+describe("pickWorstDegradedSessionKey", () => {
+  const row = (o: Partial<{ sessionKey: string; degraded: boolean; endReason: string; lastTs: number; source: string }>) => ({
+    sessionKey: "s", degraded: false, endReason: "success", lastTs: 0, source: "runtime", ...o,
+  });
+
+  it("prefers a degraded session whose endReason matches the dominant cause", () => {
+    const rows = [
+      row({ sessionKey: "s-other", degraded: true, endReason: "output_starved", lastTs: 9 }),
+      row({ sessionKey: "s-match", degraded: true, endReason: "context_exhausted", lastTs: 5 }),
+    ];
+    expect(pickWorstDegradedSessionKey(rows, "context_exhausted")).toBe("s-match");
+  });
+
+  it("breaks ties on most-recent (lastTs desc) among matching causes", () => {
+    const rows = [
+      row({ sessionKey: "s-old", degraded: true, endReason: "context_exhausted", lastTs: 1 }),
+      row({ sessionKey: "s-new", degraded: true, endReason: "context_exhausted", lastTs: 9 }),
+    ];
+    expect(pickWorstDegradedSessionKey(rows, "context_exhausted")).toBe("s-new");
+  });
+
+  it("falls back to the most-recent degraded session when none match the cause", () => {
+    const rows = [
+      row({ sessionKey: "s-a", degraded: true, endReason: "output_starved", lastTs: 3 }),
+      row({ sessionKey: "s-b", degraded: true, endReason: "provider_degraded", lastTs: 7 }),
+    ];
+    expect(pickWorstDegradedSessionKey(rows, "context_exhausted")).toBe("s-b");
+  });
+
+  it("ignores synthetic and clean sessions; undefined when none degraded", () => {
+    const rows = [
+      row({ sessionKey: "s-synth", degraded: true, endReason: "context_exhausted", lastTs: 9, source: "synthetic" }),
+      row({ sessionKey: "s-clean", degraded: false, lastTs: 5 }),
+    ];
+    expect(pickWorstDegradedSessionKey(rows, "context_exhausted")).toBeUndefined();
+    expect(pickWorstDegradedSessionKey([], undefined)).toBeUndefined();
   });
 });

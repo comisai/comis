@@ -83,9 +83,11 @@ The installer takes 2-3 minutes. You will see a progress log like this:
 ```
 
 <Warning>
-Do **not** run the installer with `sudo`. Run it as `root` directly. The
-installer creates a dedicated `comis` user with restricted permissions and runs
-the daemon under that user -- this is the secure default.
+Run the installer as `root` (the standard VPS login). If you run it as a
+regular user instead, it asks to re-run itself with `sudo` -- either way it
+creates a dedicated `comis` user with restricted permissions and runs the
+daemon under that user. This is the secure default; pass `--no-user` only if
+you explicitly want the daemon running as your login user.
 </Warning>
 
 ### Want the browser tool too?

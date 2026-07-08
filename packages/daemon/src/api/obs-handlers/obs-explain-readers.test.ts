@@ -542,3 +542,47 @@ describe("makeRealReader path containment", () => {
     fs.rmSync(outside, { force: true });
   });
 });
+
+// ---------------------------------------------------------------------------
+// rankCandidateSessionKeys — the "did you mean …?" ranker for a 0-record miss
+// (a lossy/partial key like `telegram:<chatId>` → the real formatted key).
+// ---------------------------------------------------------------------------
+describe("rankCandidateSessionKeys", () => {
+  const REAL = [
+    "default:678314278:678314278:peer:678314278",
+    "default:111:111:peer:111",
+    "default:heartbeat-agent1:system:cron:x",
+  ];
+
+  it("surfaces the formatted key from a natural `channel:chatId` request (the live friction)", async () => {
+    const { rankCandidateSessionKeys } = await import("./obs-explain-readers.js");
+    const out = rankCandidateSessionKeys("telegram:678314278", REAL);
+    expect(out[0]).toBe("default:678314278:678314278:peer:678314278");
+  });
+
+  it("ranks a MORE-matching key above a less-matching one (segment overlap count)", async () => {
+    const { rankCandidateSessionKeys } = await import("./obs-explain-readers.js");
+    // Requesting two segments that both appear in the 678 key ranks it first.
+    const out = rankCandidateSessionKeys("678314278:peer", REAL);
+    expect(out[0]).toBe("default:678314278:678314278:peer:678314278");
+  });
+
+  it("returns [] when nothing shares a segment (no false suggestions)", async () => {
+    const { rankCandidateSessionKeys } = await import("./obs-explain-readers.js");
+    expect(rankCandidateSessionKeys("telegram:999999", REAL)).toEqual([]);
+  });
+
+  it("returns [] for an empty / colons-only request", async () => {
+    const { rankCandidateSessionKeys } = await import("./obs-explain-readers.js");
+    expect(rankCandidateSessionKeys("", REAL)).toEqual([]);
+    expect(rankCandidateSessionKeys(":::", REAL)).toEqual([]);
+  });
+
+  it("dedupes + caps to the limit", async () => {
+    const { rankCandidateSessionKeys } = await import("./obs-explain-readers.js");
+    const many = Array.from({ length: 20 }, (_, i) => `default:678314278:${i}:peer:${i}`);
+    const out = rankCandidateSessionKeys("678314278", [...many, ...many], 5);
+    expect(out).toHaveLength(5);
+    expect(new Set(out).size).toBe(5); // no duplicates
+  });
+});

@@ -135,6 +135,15 @@ export const TRAJECTORY_EVENT_TYPES = [
   // (`comis explain`).
   "subagent.steered",
 
+  // An attributed sub-agent kill — WHO killed the run (closed union:
+  // parent / health_monitor / operator / system) + the runtime/idle/threshold
+  // numbers. Emitted at the runner's killRun chokepoint (packages/agent —
+  // arch-scanned, so bridged, never allowlisted); the payload's CHILD
+  // sessionKey routes the record into the killed child's own trajectory where
+  // the explain verdict reads it. Content-free: runId + closed killedBy +
+  // numbers ONLY — never the free-text kill reason.
+  "subagent.killed",
+
   // The reserved trajectory types for three
   // sub-agent-lifecycle events — a fail-closed sandbox-downgrade spawn
   // refusal, a dead-lettered sub-agent delivery, and a
@@ -176,6 +185,11 @@ export const TRAJECTORY_EVENT_TYPES = [
   "background_task.promoted",
   "background_task.completed",
   "background_task.failed",
+  // The fallback-notice decision — whether a raw completion notice fired and
+  // whether it was correct (content-free: tool NAME + notified bool + reason enum).
+  // `notified:true` with the origin turn live is the F-8 leak class this makes
+  // diagnosable from `comis explain` in one call.
+  "background_task.notified",
 
   // Terminal-driver drive lifecycle: a long coding-CLI drive crossed the
   // inline→detached boundary and was backgrounded (reason: mode_detached | producing).

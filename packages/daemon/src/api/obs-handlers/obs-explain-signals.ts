@@ -165,6 +165,21 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       acc.terminalDriveEvictedMs = asNumber(data.durationMs) ?? acc.terminalDriveEvictedMs;
       return;
     }
+    case "subagent.killed": {
+      // An attributed sub-agent kill (bridged from subagent:killed, the
+      // runner's kill chokepoint). Keep the LAST kill's closed attribution +
+      // telemetry for the subagent_stuck_killed verdict — the child's own
+      // rollup can still read success when the kill races completion, so this
+      // record is the kill's authoritative explain-side evidence.
+      const killedBy = asString(data.killedBy);
+      if (killedBy !== undefined) {
+        acc.subagentKilledBy = killedBy;
+        acc.subagentKilledRuntimeMs = asNumber(data.runtimeMs);
+        acc.subagentKilledIdleMs = asNumber(data.idleMs);
+        acc.subagentKilledThresholdMs = asNumber(data.thresholdMs);
+      }
+      return;
+    }
     case "tool.result": {
       if (!tool) return;
       // Dedupe by toolCallId — the live ctx_search counted twice when its
@@ -741,6 +756,18 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
             reason: acc.terminalDriveEvictedReason,
             idleMs: acc.terminalDriveEvictedMs ?? 0,
             wasProducing: acc.terminalDrivePromotedReason === "producing",
+          },
+        }
+      : {}),
+    // Surface an attributed sub-agent kill ONLY when one fired (undefined,
+    // never {}). Idle/threshold ride only when present (health-monitor kills).
+    ...(acc.subagentKilledBy !== undefined
+      ? {
+          subagentKilled: {
+            killedBy: acc.subagentKilledBy,
+            ...(acc.subagentKilledRuntimeMs !== undefined ? { runtimeMs: acc.subagentKilledRuntimeMs } : {}),
+            ...(acc.subagentKilledIdleMs !== undefined ? { idleMs: acc.subagentKilledIdleMs } : {}),
+            ...(acc.subagentKilledThresholdMs !== undefined ? { thresholdMs: acc.subagentKilledThresholdMs } : {}),
           },
         }
       : {}),
