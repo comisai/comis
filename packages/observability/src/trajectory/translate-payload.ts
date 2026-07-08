@@ -345,6 +345,12 @@ export function translatePayload(
       return { taskId: payload.taskId, toolName: payload.toolName, durationMs: payload.durationMs };
     case "background_task:failed":
       return { taskId: payload.taskId, toolName: payload.toolName, durationMs: payload.durationMs };
+    case "background_task:notified":
+      // The fallback-notice decision — taskId + tool NAME + the notified bool +
+      // closed-union reason ONLY. agentId/sessionKey/traceId/timestamp are
+      // envelope/correlation ids (sessionKey routes the record, then is stripped);
+      // the notice BODY never crosses the bus.
+      return { taskId: payload.taskId, toolName: payload.toolName, notified: payload.notified, reason: payload.reason };
 
     case "terminal:drive_promoted":
       // Terminal drive promotion → trajectory. Content-free: the reason enum

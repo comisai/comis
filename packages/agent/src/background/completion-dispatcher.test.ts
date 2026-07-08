@@ -188,6 +188,12 @@ describe("createCompletionDispatcher: at-most-once routing via dispatchState", (
       isTurnInFlight: vi.fn((key: string) => key === task.origin.sessionKey),
     });
 
+    // OBSERVABILITY: the suppression must be visible from the trajectory in one
+    // `comis explain` call (previously wire-grep-only) — a content-free
+    // background_task:notified event, notified:false + reason:live_turn_suppressed.
+    const notifiedEvents: Array<Record<string, unknown>> = [];
+    eventBus.on("background_task:notified", (d) => notifiedEvents.push(d as Record<string, unknown>));
+
     eventBus.emit("background_task:completed", {
       agentId: task.origin.agentId,
       taskId: task.id,
@@ -200,10 +206,18 @@ describe("createCompletionDispatcher: at-most-once routing via dispatchState", (
 
     expect(fallbackNotifyFn).not.toHaveBeenCalled(); // NO raw notice mid-conversation
     expect(transitionDispatchState).toHaveBeenCalledWith(task.id, "dispatched");
+    expect(notifiedEvents).toHaveLength(1);
+    expect(notifiedEvents[0]).toMatchObject({
+      taskId: task.id,
+      toolName: task.toolName,
+      sessionKey: task.origin.sessionKey,
+      notified: false,
+      reason: "live_turn_suppressed",
+    });
     await dispatcher.shutdown();
   });
 
-  it("origin turn NOT in flight + no session → the fallback notice still fires (the notify path is preserved)", async () => {
+  it("origin turn NOT in flight + no session → the fallback notice still fires + is OBSERVABLE (notified:true, reason:no_session)", async () => {
     const mod = await loadDispatcher();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -219,6 +233,8 @@ describe("createCompletionDispatcher: at-most-once routing via dispatchState", (
       sessionStore: { loadByFormattedKey: vi.fn(() => undefined) },
       isTurnInFlight: vi.fn(() => false),
     });
+    const notifiedEvents: Array<Record<string, unknown>> = [];
+    eventBus.on("background_task:notified", (d) => notifiedEvents.push(d as Record<string, unknown>));
 
     eventBus.emit("background_task:completed", {
       agentId: task.origin.agentId,
@@ -232,6 +248,8 @@ describe("createCompletionDispatcher: at-most-once routing via dispatchState", (
 
     expect(fallbackNotifyFn).toHaveBeenCalledTimes(1);
     expect(transitionDispatchState).toHaveBeenCalledWith(task.id, "notified");
+    expect(notifiedEvents).toHaveLength(1);
+    expect(notifiedEvents[0]).toMatchObject({ notified: true, reason: "no_session" });
     await dispatcher.shutdown();
   });
 });

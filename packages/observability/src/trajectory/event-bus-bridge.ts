@@ -178,6 +178,15 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "subagent:delivery_retried": "subagent.delivery_retried",
   "subagent:budget_exceeded": "subagent.budget_exceeded",
 
+  // The background-completion FALLBACK-NOTICE decision — makes the
+  // "did a raw 'Background task \"…\" completed.' message fire, and was it
+  // correct?" question answerable from `comis explain` in ONE call (previously
+  // wire-grep-only; the F-8 leak class). Agent-emitted (completion-dispatcher.ts),
+  // routed to the ORIGIN session's trajectory via the payload sessionKey.
+  // Content-free (translate-payload.ts): taskId + tool NAME + the notified bool
+  // + closed-union reason ONLY — NEVER the notice body.
+  "background_task:notified": "background_task.notified",
+
   // The per-capability authorization
   // decision for a gated call (allow + deny) — the spawn-tree's per-node
   // producer (the tree fold groups these by leaseId). DAEMON-emitted

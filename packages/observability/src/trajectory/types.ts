@@ -185,6 +185,11 @@ export const TRAJECTORY_EVENT_TYPES = [
   "background_task.promoted",
   "background_task.completed",
   "background_task.failed",
+  // The fallback-notice decision — whether a raw completion notice fired and
+  // whether it was correct (content-free: tool NAME + notified bool + reason enum).
+  // `notified:true` with the origin turn live is the F-8 leak class this makes
+  // diagnosable from `comis explain` in one call.
+  "background_task.notified",
 
   // Terminal-driver drive lifecycle: a long coding-CLI drive crossed the
   // inline→detached boundary and was backgrounded (reason: mode_detached | producing).

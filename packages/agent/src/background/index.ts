@@ -43,7 +43,6 @@ export type {
 } from "./auto-background-middleware.js";
 export { formatCompletionAnnouncement, TRAILING_INSTRUCTION } from "./completion-formatter.js";
 export { createTurnFlightTracker } from "./turn-flight-tracker.js";
-export type { TurnFlightTracker, TurnFlightTrackerDeps } from "./turn-flight-tracker.js";
 export { createBackgroundCompletionRunner } from "./completion-runner.js";
 export type {
   BackgroundCompletionRunner,

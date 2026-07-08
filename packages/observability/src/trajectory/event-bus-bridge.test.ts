@@ -1111,6 +1111,16 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       origin: { agentId: "default", sessionKey: "k" },
       timestamp: 1000,
     },
+    "background_task:notified": {
+      agentId: "default",
+      taskId: "t-1",
+      toolName: "mcp__ituran--ituran_fleet_summary",
+      sessionKey: "k",
+      notified: false,
+      reason: "live_turn_suppressed",
+      traceId: null,
+      timestamp: 1000,
+    },
     "terminal:drive_promoted": {
       sessionId: "term-1",
       agentId: "default",
@@ -3842,8 +3852,9 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // This count guards TRAJECTORY_BRIDGE_MAPPING against a silent add or
     // removal: any change to the mapping must update this number in lockstep,
     // forcing a deliberate review of every newly-bridged or dropped event.
-    // 120 = 119 + subagent:killed (the attributed sub-agent kill record).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(120);
+    // 121 = 120 + background_task:notified (the fallback-notice-decision record —
+    // makes the F-8 leak class diagnosable from `comis explain` in one call).
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(121);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

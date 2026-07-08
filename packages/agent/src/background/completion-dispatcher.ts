@@ -34,6 +34,7 @@
  */
 
 import { suppressError } from "@comis/shared";
+import { systemNowMs } from "@comis/core";
 import type { TypedEventBus, BackgroundTaskOrigin } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import type {
@@ -254,6 +255,7 @@ export function createCompletionDispatcher(
       const nextHopCount = (origin.backgroundHopCount ?? 0) + 1;
       if (nextHopCount >= deps.maxBackgroundHops) {
         transitionTo(taskId, "notified");
+        emitNotified(task, origin, true, "hop_cap");
         await fireFallback(
           task,
           `Background task "${task.toolName}" completed but follow-up was skipped — recursion limit reached. Run again or check the result manually.`,
@@ -272,6 +274,7 @@ export function createCompletionDispatcher(
     // unconsumed result stays readable via `background_tasks`).
     if (deps.isTurnInFlight?.(origin.sessionKey) === true) {
       transitionTo(taskId, "dispatched");
+      emitNotified(task, origin, false, "live_turn_suppressed");
       log.debug(
         {
           taskId,
@@ -297,6 +300,7 @@ export function createCompletionDispatcher(
         // dispatcher transitions to "notified" so the runner does NOT
         // also fire (single-owner contract).
         transitionTo(taskId, "notified");
+        emitNotified(task, origin, true, "no_session");
         await fireFallback(
           task,
           `Background task "${task.toolName}" completed.`,
@@ -334,6 +338,36 @@ export function createCompletionDispatcher(
     // updated state. Test fixtures take this branch.
     const task = deps.taskManager.getTask(taskId);
     if (task) task.dispatchState = next;
+  }
+
+  /**
+   * Emit the content-free `background_task:notified` OBSERVABILITY signal for
+   * the fallback-notice decision, so `comis explain` shows whether a raw
+   * completion notice fired and whether it was correct (a `notified:true` with
+   * the origin turn live is the leak class this makes diagnosable in one call —
+   * previously wire-grep-only). Best-effort — a bus fault must never abort the
+   * dispatch.
+   */
+  function emitNotified(
+    task: BackgroundTask,
+    origin: BackgroundTaskOrigin,
+    notified: boolean,
+    reason: "no_session" | "hop_cap" | "live_turn_suppressed",
+  ): void {
+    try {
+      deps.eventBus.emit("background_task:notified", {
+        agentId: origin.agentId,
+        taskId: task.id,
+        toolName: task.toolName,
+        sessionKey: origin.sessionKey,
+        notified,
+        reason,
+        traceId: origin.traceId ?? null,
+        timestamp: systemNowMs(),
+      });
+    } catch {
+      // A bus emit fault must never abort the completion dispatch.
+    }
   }
 
   async function fireFallback(task: BackgroundTask, message: string): Promise<void> {
