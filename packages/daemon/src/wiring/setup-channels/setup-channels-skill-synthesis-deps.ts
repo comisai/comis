@@ -68,30 +68,35 @@ export interface ReflectionDepsInput {
 const UNTRUSTED_TRUST_TIER = "external";
 
 /**
- * Derive whether a session-source sender is a TRUSTED origin, reading
- * the per-agent `elevatedReply.senderTrustMap` (senderId -> trust-tier name) with
- * the configured `defaultTrustLevel` (schema default `"external"`) for an unmapped
- * sender. A sender resolving to the `"external"` tier is NOT trusted.
+ * Derive the two origin-trust signals for a session-source sender, reading the
+ * per-agent `elevatedReply.senderTrustMap` (senderId -> trust-tier name) with the
+ * configured `defaultTrustLevel` (schema default `"external"`) for an unmapped sender:
  *
- * DENY-ON-UNKNOWN: when trust CANNOT be positively established — no
- * sender id, no `senderTrustMap` entry, and the default is the `"external"` tier —
- * the result is `false`. NEVER default to trusted: an untrusted/unknown-origin
- * success must seed nothing (a deny-default merely UNDER-seeds — under-learning is
- * benign; an allow-default would silently weaken this invariant by letting a planted
- * unknown-origin success corroborate a doc). The JOB enforces the filter
- * (reflection-job.ts SELECT); this is the daemon
- * DERIVATION that feeds it.
+ *  - `trustedOrigin` (ANTI-POISON AXIS 1): trusted iff the resolved tier is NOT the
+ *    `"external"` tier. DENY-ON-UNKNOWN — no sender id, no `senderTrustMap` entry with
+ *    an external default ⇒ `false`. NEVER default to trusted: a deny-default merely
+ *    UNDER-seeds (benign), an allow-default would let a planted unknown-origin success
+ *    corroborate a doc. The JOB enforces the filter (reflection-job.ts SELECT).
+ *  - `explicitlyTrusted` (the SINGLE-OWNER belt): true iff the sender was found via an
+ *    EXPLICIT `senderTrustMap` entry (the operator NAMED it) AND resolves to a non-external
+ *    tier — NOT via a promiscuous `defaultTrustLevel`, NOT an unknown sender. Only an
+ *    explicitly-trusted owner's repetition may corroborate a topic in `single_owner` mode,
+ *    so a promiscuous-default success (trustedOrigin:true, explicitlyTrusted:false) can ride
+ *    past SELECT yet NEVER self-corroborate by repetition.
  */
-function deriveTrustedOrigin(
+function deriveOriginTrust(
   sender: string,
   senderTrustMap: Record<string, string>,
   defaultTrustLevel: string,
-): boolean {
-  // No sender id ⇒ cannot establish trust ⇒ deny-on-unknown.
-  if (sender.length === 0) return false;
+): { trustedOrigin: boolean; explicitlyTrusted: boolean } {
+  // No sender id ⇒ cannot establish trust ⇒ deny-on-unknown (both axes false).
+  if (sender.length === 0) return { trustedOrigin: false, explicitlyTrusted: false };
+  const explicitEntry = Object.prototype.hasOwnProperty.call(senderTrustMap, sender);
   const tier = senderTrustMap[sender] ?? defaultTrustLevel;
-  // Trusted iff the resolved tier is NOT the untrusted/external tier.
-  return tier !== UNTRUSTED_TRUST_TIER;
+  const trustedOrigin = tier !== UNTRUSTED_TRUST_TIER;
+  // Explicitly trusted ONLY when the operator NAMED this sender (an explicit map entry)
+  // AND that entry resolves to a trusted tier — a promiscuous default never qualifies.
+  return { trustedOrigin, explicitlyTrusted: explicitEntry && trustedOrigin };
 }
 
 /**
@@ -212,15 +217,18 @@ async function buildSkillSources(
     // byte-identical keys collide). The tool method names never contain `>`, so the separator
     // is injective. Absent (empty) ⇒ omit — the turn ran no cap-mapped tool call sites.
     const sequence = descriptor ?? [];
+    // Trust axis 1 (trustedOrigin) + the single-owner belt (explicitlyTrusted), both
+    // derived DAEMON-SIDE (deny-on-unknown). The job filters on axis 1 and counts
+    // repetition only among explicitlyTrusted members.
+    const originTrust = deriveOriginTrust(sender, senderTrustMap, defaultTrustLevel);
     out.push({
       trajectoryId,
       sessionId,
       sender,
       text: texts.text,
       signature: texts.signature,
-      // Trust axis 1: derive SESSION-origin trust DAEMON-SIDE
-      // (deny-on-unknown). The job filters on it.
-      trustedOrigin: deriveTrustedOrigin(sender, senderTrustMap, defaultTrustLevel),
+      trustedOrigin: originTrust.trustedOrigin,
+      explicitlyTrusted: originTrust.explicitlyTrusted,
       // Trust axis 2: the per-MEMORY source-trust axis is always
       // false for kind:skill — a skill source is an OUTCOME trajectory (a finished
       // session), NOT a source memory carrying a per-memory trustLevel.
@@ -296,6 +304,11 @@ function buildMemorySources(
         // The high-trust source corpus is the trusted origin (the old user-rep semantics);
         // axis 2 below is the per-memory firewall.
         trustedOrigin: true,
+        // The single-owner belt: the profile/topic corpus is read ONLY from the high-trust
+        // system/learned tiers (trust-gated at admission), so it is explicitly trusted — a
+        // single owner's profile/topic may corroborate by repetition in single_owner mode.
+        // An `external` row (defence-in-depth) is still excluded by axis 2 regardless.
+        explicitlyTrusted: true,
         // Trust axis 2 (the old layer-1 firewall, memory-user-representation-job.ts:322):
         // an `external`-trust source memory NEVER seeds a doc — the job SELECT excludes it.
         sourceTrustExternal: rowTrust === "external",

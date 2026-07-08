@@ -701,6 +701,7 @@ describe("reflectFunnelEventToRow", () => {
       validated: 1,
       admitted: 1,
       maxClusterCardinality: 2,
+      singleOwnerCorroborated: 1,
       distinctTopicKeys: 1,
       untrustedDrops: 0,
       nameLengthRejections: 0,
@@ -722,6 +723,7 @@ describe("reflectFunnelEventToRow", () => {
     expect(d.untrustedDrops).toBe(0);
     expect(d.sourceTrajectoryCount).toBe(2);
     expect(d.distinctTopicKeys).toBe(1); // the under-merge discriminator rides the persisted row
+    expect(d.singleOwnerCorroborated).toBe(1); // the single-owner repetition count rides the persisted row
     // Counts + the closed enum only — never a reflected doc body.
     expect(row.details).not.toMatch(/procedure|markdown|##/);
   });

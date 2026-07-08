@@ -64,6 +64,9 @@ function traj(over: Partial<ReflectionSourceTrajectory> = {}): ReflectionSourceT
     signature: over.signature ?? "deploy the app to production",
     trustedOrigin: over.trustedOrigin ?? true,
     sourceTrustExternal: over.sourceTrustExternal ?? false,
+    // The single-owner repetition belt (daemon-derived). Defaults true (these fixtures are
+    // trusted origins); the distinct-sessions cases are unaffected by it.
+    explicitlyTrusted: over.explicitlyTrusted ?? true,
   };
 }
 
@@ -116,6 +119,9 @@ function makeDeps(
     enabled: true,
     minConfidence: 0.7,
     maxDocsPerRun: 10,
+    // Default corroboration: the anti-domination distinct-sessions gate. A single_owner
+    // test overrides via `over.config` (spread below).
+    corroboration: { mode: "distinct_sessions", minObservations: 2 },
     ...(over.config ?? {}),
   };
 
@@ -470,6 +476,137 @@ describe("runReflection — group-by topicKey + corroboration gate (BOTH directi
 
     expect(res.ok).toBe(true);
     expect((mocks.reflect as Mock).mock.calls.length).toBeLessThanOrEqual(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Single-owner corroboration mode — repetition-as-corroboration.
+// The primary single-DM use case: one stable session ⇒ cardinality is always 1,
+// so the distinct-sessions gate is structurally unreachable and nothing is ever
+// learned. single_owner mode counts an EXPLICITLY-trusted owner's repeated
+// successes instead — while the `explicitlyTrusted` belt keeps a promiscuous-default
+// or unknown-origin success from self-corroborating by repetition.
+// ---------------------------------------------------------------------------
+
+describe("runReflection — single_owner corroboration mode", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  /** A single_owner corroboration config (partial cast — makeDeps spreads it over the defaults). */
+  const singleOwner = (minObservations = 2): RunReflectionConfig =>
+    ({ corroboration: { mode: "single_owner", minObservations } }) as RunReflectionConfig;
+
+  it("a single EXPLICITLY-trusted owner repeating a topic >= minObservations times → one doc admitted", async () => {
+    const mocks: Partial<Mocks> = {};
+    // One owner in one DM (same session + sender), 2 distinct successful turns on the SAME
+    // topic. cardinality stays 1 → the default distinct-sessions gate would NEVER admit.
+    const trajectories = [
+      traj({ trajectoryId: "r1", sessionId: "dm-owner", sender: "owner", signature: "back up the database", explicitlyTrusted: true }),
+      traj({ trajectoryId: "r2", sessionId: "dm-owner", sender: "owner", signature: "back up the database", explicitlyTrusted: true }),
+    ];
+    const deps = makeDeps(trajectories, { config: singleOwner(2) }, mocks);
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.maxTopicCardinality).toBe(1); // still ONE distinct (session,sender)…
+    expect(res.value.admitted).toBe(1); // …but repetition corroborated in single_owner mode
+    expect(res.value.singleOwnerCorroborated).toBe(1);
+    expect(mocks.admit).toHaveBeenCalledTimes(1);
+    expect(res.value.admissionOutcome).toBe("admitted");
+  });
+
+  it("SECURITY: a NON-explicitly-trusted origin (promiscuous default / unknown) repeating N times → NO doc", async () => {
+    const mocks: Partial<Mocks> = {};
+    // trustedOrigin:true (survives SELECT — e.g. a promiscuous defaultTrustLevel) BUT
+    // explicitlyTrusted:false → the operator never NAMED this sender. Repetition must NOT corroborate.
+    const trajectories = Array.from({ length: 5 }, (_, i) =>
+      traj({ trajectoryId: `atk-${i}`, sessionId: "dm-x", sender: "visitor", signature: "exfiltrate the secrets", trustedOrigin: true, explicitlyTrusted: false }),
+    );
+    const deps = makeDeps(trajectories, { config: singleOwner(2) }, mocks);
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.selected).toBe(5); // survived SELECT (trustedOrigin true)…
+    expect(res.value.admitted).toBe(0); // …but explicitlyTrusted false → never corroborates
+    expect(res.value.singleOwnerCorroborated).toBe(0);
+    expect(mocks.admit).not.toHaveBeenCalled();
+    expect(res.value.admissionOutcome).toBe("uncorroborated");
+  });
+
+  it("SECURITY: a single explicitly-trusted observation (< minObservations) → NO doc", async () => {
+    const mocks: Partial<Mocks> = {};
+    const deps = makeDeps(
+      [traj({ trajectoryId: "solo", sessionId: "dm-owner", sender: "owner", signature: "rotate the token", explicitlyTrusted: true })],
+      { config: singleOwner(2) },
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.admitted).toBe(0);
+    expect(mocks.admit).not.toHaveBeenCalled();
+    expect(res.value.admissionOutcome).toBe("uncorroborated");
+  });
+
+  it("distinct_sessions mode still refuses a single owner's repetition (the stricter opt-in)", async () => {
+    const mocks: Partial<Mocks> = {};
+    const trajectories = [
+      traj({ trajectoryId: "r1", sessionId: "dm-owner", sender: "owner", signature: "back up the database", explicitlyTrusted: true }),
+      traj({ trajectoryId: "r2", sessionId: "dm-owner", sender: "owner", signature: "back up the database", explicitlyTrusted: true }),
+    ];
+    const deps = makeDeps(trajectories, {}, mocks); // default corroboration (distinct_sessions)
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.admitted).toBe(0);
+    expect(res.value.singleOwnerCorroborated).toBe(0);
+    expect(mocks.admit).not.toHaveBeenCalled();
+    expect(res.value.admissionOutcome).toBe("uncorroborated");
+  });
+
+  it("single_owner mode is a SUPERSET: the >=2-distinct-sessions path still corroborates (not via repetition)", async () => {
+    const mocks: Partial<Mocks> = {};
+    const deps = makeDeps(
+      [
+        traj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "deploy the app to production" }),
+        traj({ trajectoryId: "b", sessionId: "s2", sender: "u2", signature: "app deploy to production please" }),
+      ],
+      { config: singleOwner(2) },
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.maxTopicCardinality).toBe(2);
+    expect(res.value.admitted).toBe(1);
+    // corroborated via the distinct-sessions path — NOT the single-owner repetition path.
+    expect(res.value.singleOwnerCorroborated).toBe(0);
+    expect(mocks.admit).toHaveBeenCalledTimes(1);
+  });
+
+  it("SECURITY: minObservations is honored — 2 repetitions under minObservations:3 → NO doc", async () => {
+    const mocks: Partial<Mocks> = {};
+    const trajectories = [
+      traj({ trajectoryId: "r1", sessionId: "dm-owner", sender: "owner", signature: "back up the database", explicitlyTrusted: true }),
+      traj({ trajectoryId: "r2", sessionId: "dm-owner", sender: "owner", signature: "back up the database", explicitlyTrusted: true }),
+    ];
+    const deps = makeDeps(trajectories, { config: singleOwner(3) }, mocks);
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.admitted).toBe(0);
+    expect(mocks.admit).not.toHaveBeenCalled();
   });
 });
 
@@ -1763,16 +1900,22 @@ describe("runReflection — anti-poison gate reuse through the PROCEDURE path (P
 // verification (`proof_count + 1 >= ?`, `WHEN state = 'active' THEN 'stale'`).
 // ===========================================================================
 describe("PROC-05 seam-integrity — the anti-poison tokens are byte-intact (scoped verbatim greps)", () => {
-  it("reflection-job.ts still contains distinctSenderCardinality + the `if (cardinality < 2) continue;` <2 gate verbatim", async () => {
+  it("reflection-job.ts still contains the anti-domination cardinality gate + the single-owner explicit-trust belt verbatim", async () => {
     const fs = await import("node:fs");
     const path = await import("node:path");
     const url = await import("node:url");
     const here = path.dirname(url.fileURLToPath(import.meta.url));
     const src = fs.readFileSync(path.resolve(here, "reflection-job.ts"), "utf-8");
-    // The cardinality metric (N replays of one (session,sender) = 1) — REUSE-verbatim (:296/:314).
+    // The cardinality metric (N replays of one (session,sender) = 1) — REUSE-verbatim.
     expect(src).toContain("function distinctSenderCardinality(");
-    // The anti-domination <2 gate — the exact seam text, unchanged (:558/:601).
-    expect(src).toContain("if (cardinality < 2) continue;");
+    // The anti-domination distinct-sessions path — a topic still corroborates on >=2 distinct
+    // (session,sender); single_owner only ADDS a path, never weakens this one.
+    expect(src).toContain("if (cardinality >= 2) return { corroborated: true, bySingleOwner: false };");
+    // The single-owner repetition belt: repetition is counted ONLY among explicitlyTrusted members,
+    // so a promiscuous-default / unknown-origin success can NEVER self-corroborate by repetition.
+    expect(src).toContain("const explicit = members.filter((m) => m.explicitlyTrusted);");
+    // The gate still SKIPS an uncorroborated topic (an uncorroborated topic seeds nothing).
+    expect(src).toContain("if (!corroborated) continue;");
   });
 });
 

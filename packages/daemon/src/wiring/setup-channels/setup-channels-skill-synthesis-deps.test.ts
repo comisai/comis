@@ -216,26 +216,42 @@ describe("buildReflectionCronDeps", () => {
       return { config: { tenantId: "t", agents: { "agent-1": { elevatedReply } } } } as any;
     }
 
-    it("a sender mapped to a NON-external tier is a trusted origin (trustedOrigin: true)", async () => {
+    it("a sender mapped to a NON-external tier is a trusted origin AND explicitly trusted (named in senderTrustMap)", async () => {
       const container = withAgentTrust({ senderTrustMap: { u1: "verified" }, defaultTrustLevel: "external" });
       const bundle = buildReflectionCronDeps(makeInput({ ...ONE_TURN(), container }))!;
       const traj = await bundle.buildSourceTrajectories("skill", "agent-1", "t");
       expect(traj[0].trustedOrigin).toBe(true);
+      // The operator NAMED u1 in senderTrustMap ⇒ eligible for single-owner repetition corroboration.
+      expect(traj[0].explicitlyTrusted).toBe(true);
     });
 
-    it("a sender explicitly mapped to the external tier is NOT trusted (trustedOrigin: false)", async () => {
+    it("SINGLE-OWNER BELT: a promiscuous defaultTrustLevel makes an UNMAPPED sender trusted-origin but NOT explicitly trusted", async () => {
+      // defaultTrustLevel is a NON-external tier ⇒ every unmapped sender rides trustedOrigin:true
+      // past SELECT. But the operator never NAMED this sender ⇒ explicitlyTrusted:false, so it can
+      // NEVER self-corroborate by repetition in single_owner mode. THE load-bearing safety case.
+      const container = withAgentTrust({ senderTrustMap: {}, defaultTrustLevel: "verified" });
+      const bundle = buildReflectionCronDeps(makeInput({ ...ONE_TURN(), container }))!;
+      const traj = await bundle.buildSourceTrajectories("skill", "agent-1", "t");
+      expect(traj[0].trustedOrigin).toBe(true); // promiscuous default ⇒ survives SELECT
+      expect(traj[0].explicitlyTrusted).toBe(false); // …but never explicitly named ⇒ no repetition corroboration
+    });
+
+    it("a sender explicitly mapped to the external tier is NOT trusted (trustedOrigin AND explicitlyTrusted false)", async () => {
       const container = withAgentTrust({ senderTrustMap: { u1: "external" }, defaultTrustLevel: "verified" });
       const bundle = buildReflectionCronDeps(makeInput({ ...ONE_TURN(), container }))!;
       const traj = await bundle.buildSourceTrajectories("skill", "agent-1", "t");
       expect(traj[0].trustedOrigin).toBe(false);
+      // Mapped, but to the external tier ⇒ not trusted ⇒ not explicitly trusted either.
+      expect(traj[0].explicitlyTrusted).toBe(false);
     });
 
-    it("DENY-ON-UNKNOWN: an UNMAPPED sender with the default 'external' tier is NOT trusted", async () => {
+    it("DENY-ON-UNKNOWN: an UNMAPPED sender with the default 'external' tier is NOT trusted (neither axis)", async () => {
       // No senderTrustMap entry for u1, default is the external tier ⇒ deny.
       const container = withAgentTrust({ senderTrustMap: {}, defaultTrustLevel: "external" });
       const bundle = buildReflectionCronDeps(makeInput({ ...ONE_TURN(), container }))!;
       const traj = await bundle.buildSourceTrajectories("skill", "agent-1", "t");
       expect(traj[0].trustedOrigin).toBe(false);
+      expect(traj[0].explicitlyTrusted).toBe(false);
     });
 
     it("DENY-ON-UNKNOWN: an agent with NO elevatedReply config at all denies an unmapped sender (schema-default external)", async () => {
@@ -345,6 +361,9 @@ describe("buildReflectionCronDeps", () => {
       const sources = await bundle.buildSourceTrajectories("profile", "agent-1", "t");
       expect(sources[0].trustedOrigin).toBe(true);
       expect(sources[0].sourceTrustExternal).toBe(false);
+      // The high-trust corpus (system/learned tiers, trust-gated at admission) is explicitly
+      // trusted — a profile of the one owner can corroborate by repetition in single_owner mode.
+      expect(sources[0].explicitlyTrusted).toBe(true);
     });
 
     it("a PROFILE/TOPIC build returns empty when no memoryApi read surface is wired (fail-closed, no fabricated sources)", async () => {

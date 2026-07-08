@@ -138,6 +138,19 @@ export interface ReflectionSourceTrajectory {
    */
   sourceTrustExternal: boolean;
   /**
+   * SINGLE-OWNER belt. true ⇒ this success came from a sender the operator
+   * EXPLICITLY named as trusted (an `elevatedReply.senderTrustMap` entry resolving to a
+   * non-external tier) — NOT via a promiscuous `defaultTrustLevel` and NOT an unknown
+   * sender. Load-bearing ONLY in `corroboration.mode: "single_owner"`: repetition
+   * corroborates a topic solely among `explicitlyTrusted` members, so a promiscuous-default
+   * or unknown-origin success (which can still ride `trustedOrigin:true` past SELECT) can
+   * NEVER self-corroborate by repetition. Orthogonal to the two anti-poison axes above and
+   * to the distinct-sessions gate — it only GATES the single-owner repetition path. The
+   * daemon derives it; kind:profile/topic corpus sources (system/learned tiers, trust-gated
+   * at admission) set it true.
+   */
+  explicitlyTrusted: boolean;
+  /**
    * Content-free procedure descriptor for the turn — `key` groups (self-sufficient:
    * a custom groupKey BYPASSES the Jaccard signature-merge, so only byte-identical keys
    * collide), `sequence` is the ordered call-site sequence + counts (repeats preserved,
@@ -154,6 +167,20 @@ export interface RunReflectionConfig {
   minConfidence: number;
   /** Max topics reflected per run (defaults to 10). */
   maxDocsPerRun: number;
+  /**
+   * How a topic must corroborate before it can seed a doc. `single_owner` (the PRODUCT
+   * default, applied by `learning.reflect.corroboration` in schema-learning.ts and
+   * threaded by the daemon) counts an explicitly-trusted owner repeating a topic
+   * ≥`minObservations` times — for a single-DM box where distinct_sessions is
+   * structurally unreachable. `distinct_sessions` needs ≥2 distinct (sessionId, sender).
+   * Absent ⇒ this JOB PRIMITIVE falls back to the STRICT `distinct_sessions` gate
+   * (fail-safe when a caller supplies no policy); production always threads the parsed
+   * config, so the effective default a deployment sees is `single_owner`.
+   */
+  corroboration?: {
+    mode: "distinct_sessions" | "single_owner";
+    minObservations: number;
+  };
 }
 
 /** A minimal structural logger (no Pino import — the closed-graph discipline). */
@@ -263,6 +290,13 @@ export interface RunReflectionResult {
   /** The largest distinct-(sessionId, sender) cardinality across the topic groups (anti-domination telemetry). */
   maxTopicCardinality: number;
   /**
+   * How many topics corroborated via the `single_owner` REPETITION path (an
+   * explicitly-trusted owner repeating a topic ≥`minObservations` times) rather than the
+   * distinct-sessions gate (0 in `distinct_sessions` mode). Lets `comis fleet` / `comis explain`
+   * show the single-owner mode is active and how much it learned. Content-free (a count).
+   */
+  singleOwnerCorroborated: number;
+  /**
    * How many DISTINCT topicKey groups the selected sources formed. The under-merge DISCRIMINATOR
    * paired with `selected` + `maxTopicCardinality`: `selected:2, distinctTopicKeys:2,
    * maxTopicCardinality:1` = 2 successes that landed on 2 SEPARATE topicKeys (under-merge), vs
@@ -318,6 +352,44 @@ function distinctSenderCardinality(members: ReflectionSourceTrajectory[]): numbe
     seen.add(`${m.sessionId} ${m.sender}`);
   }
   return seen.size;
+}
+
+/**
+ * The count of distinct successful observations attributable to a SINGLE
+ * EXPLICITLY-trusted owner — the single-owner repetition metric. Filters to
+ * `explicitlyTrusted` members (a promiscuous-default or unknown-origin success is
+ * EXCLUDED even though it rode `trustedOrigin:true` past SELECT), requires they all
+ * share ONE sender (a genuine single owner — two distinct trusted senders are already
+ * the distinct-sessions gate's job), then counts distinct `trajectoryId`s (each = one
+ * outcome-signal-verified success). Returns 0 when no explicit owner or >1 sender.
+ */
+function distinctObservationsByExplicitOwner(members: ReflectionSourceTrajectory[]): number {
+  const explicit = members.filter((m) => m.explicitlyTrusted);
+  if (explicit.length === 0) return 0;
+  const senders = new Set(explicit.map((m) => m.sender));
+  if (senders.size !== 1) return 0; // not a single owner — the distinct-sessions gate covers that
+  return new Set(explicit.map((m) => m.trajectoryId)).size;
+}
+
+/**
+ * Whether a topic corroborates, and by WHICH path. A topic corroborates iff the
+ * anti-domination distinct-sessions gate passes (≥2 distinct (sessionId, sender)) OR —
+ * in `single_owner` mode ONLY — a single explicitly-trusted owner produced
+ * ≥`minObservations` distinct successful observations of it. `bySingleOwner` is true
+ * only when the repetition path (not the distinct-sessions path) was the corroborator,
+ * so the caller can count it for observability. The distinct-sessions path always wins
+ * first, so a genuinely multi-session topic is never mis-attributed to single-owner.
+ */
+function classifyTopicCorroboration(
+  members: ReflectionSourceTrajectory[],
+  cardinality: number,
+  corroboration: RunReflectionConfig["corroboration"],
+): { corroborated: boolean; bySingleOwner: boolean } {
+  if (cardinality >= 2) return { corroborated: true, bySingleOwner: false };
+  if (corroboration?.mode !== "single_owner") return { corroborated: false, bySingleOwner: false };
+  const ownerObservations = distinctObservationsByExplicitOwner(members);
+  if (ownerObservations >= corroboration.minObservations) return { corroborated: true, bySingleOwner: true };
+  return { corroborated: false, bySingleOwner: false };
 }
 
 /**
@@ -533,8 +605,8 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
     // When nothing survived SELECT, the acute reason is `untrusted_origin` if
     // some success was dropped for an untrusted origin / external-trust source, else `no_successes`.
     const emptyOutcome = classifyReflectOutcome({ selected: 0, maxTopicCardinality: 0, admitted: 0, emptyReflections: 0, untrustedDrops });
-    logRunComplete(deps, startMs, { selected: 0, admitted: 0, maxTopicCardinality: 0, skipped: 0, emptyReflections: 0, untrustedDrops, nameLengthRejections: 0 });
-    return ok({ admissionOutcome: emptyOutcome, selected: 0, admitted: 0, maxTopicCardinality: 0, distinctTopicKeys: 0, skipped: 0, emptyReflections: 0, untrustedDrops, nameLengthRejections: 0, sourceTrajectoryCount, totalSourceChars });
+    logRunComplete(deps, startMs, { selected: 0, admitted: 0, maxTopicCardinality: 0, skipped: 0, emptyReflections: 0, untrustedDrops, nameLengthRejections: 0, singleOwnerCorroborated: 0 });
+    return ok({ admissionOutcome: emptyOutcome, selected: 0, admitted: 0, maxTopicCardinality: 0, singleOwnerCorroborated: 0, distinctTopicKeys: 0, skipped: 0, emptyReflections: 0, untrustedDrops, nameLengthRejections: 0, sourceTrajectoryCount, totalSourceChars });
   }
 
   // 2. GROUP: Map<topicKey, members[]> via the per-kind
@@ -593,12 +665,19 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
   let nameLengthRejections = 0;
   let maxTopicCardinality = 0;
   let reflectedTopics = 0;
+  // Topics corroborated via the single_owner REPETITION path (not distinct-sessions).
+  let singleOwnerCorroborated = 0;
+  const corroboration = config.corroboration;
 
   for (const [topicKey, members] of corroborationGroups) {
     const cardinality = distinctSenderCardinality(members);
     maxTopicCardinality = Math.max(maxTopicCardinality, cardinality);
-    // Anti-domination: a topic needs >=2 distinct (sessionId, sender) to corroborate.
-    if (cardinality < 2) continue;
+    // Corroboration gate: the anti-domination distinct-sessions path (≥2 distinct
+    // (sessionId, sender)) OR — in single_owner mode — an explicitly-trusted owner's
+    // repetition (≥minObservations distinct successes). An uncorroborated topic seeds nothing.
+    const { corroborated, bySingleOwner } = classifyTopicCorroboration(members, cardinality, corroboration);
+    if (!corroborated) continue;
+    if (bySingleOwner) singleOwnerCorroborated += 1;
 
     // Bound the number of LLM calls per run.
     if (reflectedTopics >= maxDocsPerRun) {
@@ -629,9 +708,9 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
 
   const admissionOutcome = classifyReflectOutcome({ selected: selected.length, maxTopicCardinality, admitted, emptyReflections, untrustedDrops, nameLengthRejections });
 
-  logRunComplete(deps, startMs, { selected: selected.length, admitted, maxTopicCardinality, skipped, emptyReflections, untrustedDrops, nameLengthRejections });
+  logRunComplete(deps, startMs, { selected: selected.length, admitted, maxTopicCardinality, skipped, emptyReflections, untrustedDrops, nameLengthRejections, singleOwnerCorroborated });
 
-  return ok({ admissionOutcome, selected: selected.length, admitted, maxTopicCardinality, distinctTopicKeys: corroborationGroups.length, skipped, emptyReflections, untrustedDrops, nameLengthRejections, sourceTrajectoryCount, totalSourceChars });
+  return ok({ admissionOutcome, selected: selected.length, admitted, maxTopicCardinality, singleOwnerCorroborated, distinctTopicKeys: corroborationGroups.length, skipped, emptyReflections, untrustedDrops, nameLengthRejections, sourceTrajectoryCount, totalSourceChars });
 }
 
 // ---------------------------------------------------------------------------
@@ -870,6 +949,7 @@ function logRunComplete(
     emptyReflections: number;
     untrustedDrops: number;
     nameLengthRejections: number;
+    singleOwnerCorroborated: number;
   },
 ): void {
   const admissionOutcome = classifyReflectOutcome({
@@ -887,6 +967,9 @@ function logRunComplete(
       selected: counts.selected,
       admitted: counts.admitted,
       maxTopicCardinality: counts.maxTopicCardinality,
+      // How many topics corroborated via the single_owner repetition path — visible at INFO so
+      // an operator can see the mode is active without turning on debug (the §2.7 litmus test).
+      singleOwnerCorroborated: counts.singleOwnerCorroborated,
       skipped: counts.skipped,
       admissionOutcome, // the readable "why 0 admitted" verdict, grep-able in the log
       durationMs: deps.clock.now() - startMs,

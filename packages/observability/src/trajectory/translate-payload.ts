@@ -335,8 +335,8 @@ export function translatePayload(
         ...(Array.isArray(payload.demotedSkillNames) ? { demotedSkillNames: payload.demotedSkillNames } : {}),
         ...(typeof payload.triggerTrajectoryId === "string" ? { triggerTrajectoryId: payload.triggerTrajectoryId } : {}),
       };
-    case "reflect:funnel": // The reflection FUNNEL COUNTS + the acute admissionOutcome verdict — never a procedure body/script. Answers "why 0 admitted" from the trajectory in ONE field. The funnel MAGNITUDES (untrustedDrops / source counts) ride too — all counts, never bodies.
-      return { synthesized: payload.synthesized, validated: payload.validated, admitted: payload.admitted, maxClusterCardinality: payload.maxClusterCardinality, distinctTopicKeys: payload.distinctTopicKeys, untrustedDrops: payload.untrustedDrops, nameLengthRejections: payload.nameLengthRejections, skipped: payload.skipped, sourceTrajectoryCount: payload.sourceTrajectoryCount, totalSourceChars: payload.totalSourceChars, admissionOutcome: payload.admissionOutcome };
+    case "reflect:funnel": // The reflection FUNNEL COUNTS + the acute admissionOutcome verdict — never a procedure body/script. Answers "why 0 admitted" from the trajectory in ONE field. The funnel MAGNITUDES (untrustedDrops / source counts / singleOwnerCorroborated) ride too — all counts, never bodies.
+      return { synthesized: payload.synthesized, validated: payload.validated, admitted: payload.admitted, maxClusterCardinality: payload.maxClusterCardinality, singleOwnerCorroborated: payload.singleOwnerCorroborated, distinctTopicKeys: payload.distinctTopicKeys, untrustedDrops: payload.untrustedDrops, nameLengthRejections: payload.nameLengthRejections, skipped: payload.skipped, sourceTrajectoryCount: payload.sourceTrajectoryCount, totalSourceChars: payload.totalSourceChars, admissionOutcome: payload.admissionOutcome };
     // Background task lifecycle: closed ids + durationMs ONLY — agentId/origin are envelope ids; no result/
     // error body crosses the bus; the record TYPE conveys promoted/completed/failed.
     case "background_task:promoted":
