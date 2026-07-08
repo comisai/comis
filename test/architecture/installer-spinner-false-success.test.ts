@@ -122,7 +122,7 @@ describe("install.sh run_quiet_step under a gum that exits 0 without running the
 });
 
 describe("install.sh run_quiet_step under a well-behaved gum", () => {
-  it("propagates success", () => {
+  it("propagates a succeeding command's exit code 0 through the spinner", () => {
     const result = runStep({ gum: HONEST_GUM, commandExit: 0 });
     expect(result.ran).toBe(true);
     expect(result.code).toBe(0);
