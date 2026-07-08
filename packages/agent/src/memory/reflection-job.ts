@@ -528,6 +528,15 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
   // (axis 1) / external-trust source (axis 2). Counts only — feeds the `untrusted_origin`
   // verdict when this is the acute reason nothing seeded.
   let untrustedDrops = 0;
+  // The OUTCOME gate applies to OUTCOME-trajectory sources only (kind:skill, incl. the
+  // procedure pass): their trajectoryId is a per-turn traceId the outcome store resolves.
+  // CORPUS kinds (profile/topic) read PRE-TRUSTED source memories (system/learned tiers,
+  // trust-gated at admission) whose trajectoryId is the memory ROW id — provenance only,
+  // it NEVER resolves. Outcome-gating them made both kinds structurally inert in
+  // production (candidates:N → selected:0, forever) while unit mocks resolved everything
+  // green. Corpus sources are gated by the two trust axes above + corroboration +
+  // validation; the outcome gate is the skill belt.
+  const outcomeGated = (deps.kind ?? "skill") === "skill";
   for (const t of sourceTrajectories) {
     // ANTI-POISON AXIS 1 (the session-origin belt): an untrusted-origin
     // success NEVER seeds a doc. Filter FIRST (cheap, before the outcome resolve) — a
@@ -565,6 +574,12 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
         },
         "reflection: external-trust source skipped",
       );
+      continue;
+    }
+    // CORPUS kinds: both trust axes passed — the row is selected as-is (its id is
+    // provenance-only and never resolves; see `outcomeGated` above).
+    if (!outcomeGated) {
+      selected.push(t);
       continue;
     }
     const resolved = await fromPromise(outcomeSignal.resolve(t.trajectoryId, scope));

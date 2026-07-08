@@ -135,18 +135,46 @@ describe("computeNextRunAtMs", () => {
   // UTC hour with the user's display timezone. The relative "in" kind resolves
   // deterministically as now + N seconds, with NO timezone parse, so the error
   // class cannot occur.
-  describe('kind "in" (relative, timezone-free)', () => {
-    it("fires exactly N seconds from now", () => {
-      const nowMs = new Date("2026-06-20T09:33:30Z").getTime();
+  describe('kind "in" (relative, timezone-free, ONE-SHOT)', () => {
+    it("fires exactly N seconds from the ANCHOR (the job's creation time)", () => {
+      const createdAtMs = new Date("2026-06-20T09:33:30Z").getTime();
       const schedule: CronSchedule = { kind: "in", seconds: 120 };
-      expect(computeNextRunAtMs(schedule, nowMs)).toBe(nowMs + 120_000);
+      expect(computeNextRunAtMs(schedule, createdAtMs, createdAtMs)).toBe(createdAtMs + 120_000);
     });
 
     it("is independent of any timezone (same delta regardless of system zone)", () => {
       const schedule: CronSchedule = { kind: "in", seconds: 3600 };
       for (const nowMs of [0, 1_000_000, new Date("2026-12-31T23:59:00Z").getTime()]) {
-        expect(computeNextRunAtMs(schedule, nowMs)).toBe(nowMs + 3_600_000);
+        expect(computeNextRunAtMs(schedule, nowMs, nowMs)).toBe(nowMs + 3_600_000);
       }
+    });
+
+    it("ONE-SHOT: once the anchored fire time is past, there is NO next run (live-incident regression)", () => {
+      // Live incident: "remind me in 1 minute" fired EVERY ~minute forever — the
+      // post-completion recompute returned nowMs + N unconditionally, re-arming the
+      // one-shot after each run (and boot recovery re-armed stale reminders). With
+      // the anchor (job.createdAtMs), a fired one-shot terminates exactly like the
+      // "at" kind: past fire time → undefined.
+      const createdAtMs = new Date("2026-06-20T09:33:30Z").getTime();
+      const schedule: CronSchedule = { kind: "in", seconds: 60 };
+      // Recompute AFTER the job fired (endTime ≈ fire time + a few seconds):
+      const endTime = createdAtMs + 63_000;
+      expect(computeNextRunAtMs(schedule, endTime, createdAtMs)).toBeUndefined();
+      // Boot recovery long after: still terminated.
+      expect(computeNextRunAtMs(schedule, createdAtMs + 86_400_000, createdAtMs)).toBeUndefined();
+    });
+
+    it("a daemon restart BEFORE the fire time re-arms at the ORIGINAL absolute time (not restart+N)", () => {
+      const createdAtMs = new Date("2026-06-20T09:33:30Z").getTime();
+      const schedule: CronSchedule = { kind: "in", seconds: 3600 };
+      // Boot recovery 10 minutes in: the fire time is still createdAt + 1h.
+      expect(computeNextRunAtMs(schedule, createdAtMs + 600_000, createdAtMs)).toBe(createdAtMs + 3_600_000);
+    });
+
+    it("LEGACY fallback: without an anchor the old now+N behavior is preserved", () => {
+      const nowMs = 1_000_000;
+      const schedule: CronSchedule = { kind: "in", seconds: 120 };
+      expect(computeNextRunAtMs(schedule, nowMs)).toBe(nowMs + 120_000);
     });
   });
 });

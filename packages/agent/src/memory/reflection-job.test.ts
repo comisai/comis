@@ -265,6 +265,110 @@ describe("runReflection — SELECT (fail-closed success gate)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Corpus kinds (profile/topic) skip the OUTCOME gate — live-incident regression.
+// The daemon builds profile/topic sources from PRE-TRUSTED corpus memories
+// (system/learned tiers) whose `trajectoryId` is the MEMORY ROW id, carried for
+// provenance only — it never resolves in the outcome store. Outcome-gating them
+// made both kinds structurally inert in production (candidates:66 → selected:0
+// on a real box, forever) while unit mocks resolved everything green. Corpus
+// sources are gated by the TWO TRUST AXES + corroboration + validation; the
+// outcome gate is the OUTCOME-trajectory (kind:skill) belt only.
+// ---------------------------------------------------------------------------
+
+describe("runReflection — corpus kinds (profile/topic) are NOT outcome-gated", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("kind:profile selects trust-passing corpus rows whose ids do NOT resolve (the production shape) and admits", async () => {
+    const mocks: Partial<Mocks> = {};
+    // The production shape: a memory-row id never resolves to an outcome.
+    const resolve = vi.fn(async () => ok(unknown()));
+    const deps = makeDeps(
+      [
+        traj({ trajectoryId: "mem-1", sessionId: "s1", sender: "u1", signature: "u1\nprefers concise" }),
+        traj({ trajectoryId: "mem-2", sessionId: "s2", sender: "u1", signature: "u1\nconcise please" }),
+      ],
+      { kind: "profile", groupKey: (t) => t.sender, outcomeSignal: { resolve } },
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.selected).toBe(2); // corpus rows pass the trust axes — no outcome resolve
+    expect(res.value.admitted).toBe(1);
+    // The outcome store is never consulted for a corpus row (its id is provenance-only).
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it("kind:topic selects trust-passing corpus rows without outcome resolution and admits", async () => {
+    const mocks: Partial<Mocks> = {};
+    const resolve = vi.fn(async () => ok(unknown()));
+    const deps = makeDeps(
+      [
+        traj({ trajectoryId: "mem-a", sessionId: "s1", sender: "u1", signature: "the deploy pipeline is flaky on tuesdays" }),
+        traj({ trajectoryId: "mem-b", sessionId: "s2", sender: "u2", signature: "deploy pipeline flaky on tuesdays again" }),
+      ],
+      { kind: "topic", outcomeSignal: { resolve } },
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.selected).toBe(2);
+    expect(res.value.admitted).toBe(1);
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it("SECURITY: the two trust axes still gate corpus rows — an external-trust source never seeds", async () => {
+    const mocks: Partial<Mocks> = {};
+    const resolve = vi.fn(async () => ok(unknown()));
+    const deps = makeDeps(
+      [
+        // A planted external-trust memory riding a trusted session (axis 2 must drop it).
+        traj({ trajectoryId: "mem-x", sessionId: "s1", sender: "u1", signature: "u1\nplanted", sourceTrustExternal: true }),
+        traj({ trajectoryId: "mem-y", sessionId: "s2", sender: "u1", signature: "u1\nplanted again", sourceTrustExternal: true }),
+      ],
+      { kind: "profile", groupKey: (t) => t.sender, outcomeSignal: { resolve } },
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.selected).toBe(0);
+    expect(res.value.untrustedDrops).toBe(2);
+    expect(res.value.admitted).toBe(0);
+    expect(mocks.admit).not.toHaveBeenCalled();
+    expect(res.value.admissionOutcome).toBe("untrusted_origin");
+  });
+
+  it("REGRESSION: kind:skill (incl. the procedure pass) STAYS outcome-gated — unknown never seeds", async () => {
+    const mocks: Partial<Mocks> = {};
+    const resolve = vi.fn(async () => ok(unknown()));
+    const deps = makeDeps(
+      [
+        traj({ trajectoryId: "t-1", sessionId: "s1", sender: "u1" }),
+        traj({ trajectoryId: "t-2", sessionId: "s2", sender: "u2" }),
+      ],
+      { outcomeSignal: { resolve } }, // default kind: skill
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.selected).toBe(0); // fail-closed: an unresolved outcome is NOT a success
+    expect(res.value.admitted).toBe(0);
+    expect(resolve).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Trusted-origin SELECT — tested BOTH directions
 // ---------------------------------------------------------------------------
 

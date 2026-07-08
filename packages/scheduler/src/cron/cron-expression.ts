@@ -6,14 +6,22 @@ import { systemDateFrom } from "@comis/core";
 /**
  * Compute the next run time in milliseconds for a given schedule.
  *
- * Handles three schedule kinds:
+ * Handles four schedule kinds:
  * - "cron": standard cron expression via croner library
  * - "every": interval-based with optional anchor
  * - "at": one-shot at a specific ISO 8601 datetime
+ * - "in": one-shot N seconds after `anchorMs` (the job's creation time)
+ *
+ * `anchorMs` is the job's `createdAtMs` — load-bearing for "in": the fire time is
+ * `anchor + N`, an ABSOLUTE instant, so a fired one-shot terminates (undefined)
+ * exactly like a past "at". Without it, every post-completion recompute returned
+ * `nowMs + N` — re-arming the one-shot after each run ("remind me in 1 minute"
+ * fired every ~minute forever, live incident) and boot recovery re-armed stale
+ * reminders N seconds after every restart.
  *
  * Returns undefined if no future run is possible (past one-shot, invalid expression, etc).
  */
-export function computeNextRunAtMs(schedule: CronSchedule, nowMs: number): number | undefined {
+export function computeNextRunAtMs(schedule: CronSchedule, nowMs: number, anchorMs?: number): number | undefined {
   switch (schedule.kind) {
     case "cron":
       return computeCron(schedule.expr, schedule.tz, nowMs);
@@ -21,11 +29,16 @@ export function computeNextRunAtMs(schedule: CronSchedule, nowMs: number): numbe
       return computeEvery(schedule.everyMs, schedule.anchorMs, nowMs);
     case "at":
       return computeAt(schedule.at, nowMs, schedule.tz);
-    case "in":
-      // Deterministic relative one-shot: now + N seconds. No timezone, no
-      // wall-clock parse — the whole point is to bypass the absolute-`at` + IANA
-      // conversion that small models get wrong.
-      return nowMs + schedule.seconds * 1000;
+    case "in": {
+      // Deterministic relative one-shot: ANCHOR (creation time) + N seconds. No
+      // timezone, no wall-clock parse — the whole point is to bypass the
+      // absolute-`at` + IANA conversion that small models get wrong. Once the
+      // fire time is past, there is NO next run (one-shot semantics — the "at"
+      // parity). Absent anchor (legacy callers) falls back to nowMs, preserving
+      // the old now+N arming for a caller that computes at creation time.
+      const fireAtMs = (anchorMs ?? nowMs) + schedule.seconds * 1000;
+      return fireAtMs > nowMs ? fireAtMs : undefined;
+    }
   }
 }
 
