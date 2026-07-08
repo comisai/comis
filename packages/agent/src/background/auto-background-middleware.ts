@@ -54,6 +54,33 @@ export interface ToolDefinition {
  * If the tool exceeds the timeout, promotes to background via manager.promote().
  * If promotion fails (concurrency limit), awaits the tool normally (foreground fallback).
  */
+/**
+ * Tools that must NEVER be auto-background-promoted, regardless of
+ * `config.excludeTools` (structural exclusions, the `exec` class):
+ *
+ *   - `background_tasks` — the META tool that lists/reads/waits on background
+ *     tasks. Its `read_output` on a pending task legitimately blocks, so it
+ *     hits `autoBackgroundMs` and SELF-promotes — which fires a "Background
+ *     task background_tasks completed" notification and a re-entry LLM turn
+ *     that polls again: a self-amplifying loop that burned the per-execution
+ *     token budget in a live incident (2026-07-08). Promoting the observer of
+ *     background tasks into a background task is structurally self-referential.
+ *   - `image_generate` / `video_generate` — self-delivering media tools. They
+ *     deliver out-of-band via the media pipeline (`image.delivered` fires
+ *     independent of the wrapper — verified live), so the "backgrounded"
+ *     placeholder buys NO delivery and only tricks the model into polling for
+ *     an already-in-flight result. Excluded so the turn awaits the tool inline
+ *     and delivers once, cleanly.
+ *
+ * `exec` is excluded separately (below) for a DIFFERENT reason — it owns its
+ * own escalation path, so the generic wrapper would double-promote.
+ */
+const NEVER_AUTO_BACKGROUND_TOOLS: ReadonlySet<string> = new Set([
+  "background_tasks",
+  "image_generate",
+  "video_generate",
+]);
+
 export function wrapToolForAutoBackground(
   tool: ToolDefinition,
   manager: BackgroundTaskManager,
@@ -67,6 +94,12 @@ export function wrapToolForAutoBackground(
   // double-promote. Hardcoded literal — does NOT modify config.excludeTools
   // so operator-set exclusions remain unchanged.
   if (tool.name === "exec") {
+    return tool;
+  }
+  // Structural never-background tools (the background-task meta tool + the
+  // self-delivering media tools) — see NEVER_AUTO_BACKGROUND_TOOLS. Like exec,
+  // this is independent of config.excludeTools (operator exclusions untouched).
+  if (NEVER_AUTO_BACKGROUND_TOOLS.has(tool.name)) {
     return tool;
   }
   if (config.excludeTools.includes(tool.name)) {

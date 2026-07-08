@@ -161,6 +161,29 @@ describe("buildAbortRedirectMessage — pre-lock abort sites (no plan, msg.text 
     expect(response).toContain("circuit_open");
     expect(response).toContain(msgText);
   });
+
+  // Live incident (2026-07-08): a budget_exceeded abort landed on a
+  // background-continuation re-entry turn (no user message text) → the
+  // fallback echoed `Your request was: ''`. An empty echo is noise; omit the
+  // clause entirely when there is no request text to show.
+  it("no plan AND empty fallback → omits the empty 'Your request was' clause", () => {
+    const response = buildAbortRedirectMessage(undefined, "budget_exceeded", "");
+    expect(response).toContain("budget_exceeded");
+    expect(response).not.toContain("Your request was");
+    expect(response).not.toContain("''");
+    expect(response).toContain("Please try again");
+  });
+
+  it("no plan AND undefined fallback → omits the empty 'Your request was' clause", () => {
+    const response = buildAbortRedirectMessage(undefined, "budget_exceeded");
+    expect(response).not.toContain("Your request was");
+    expect(response).toContain("Please try again");
+  });
+
+  it("no plan but a NON-empty fallback still echoes the request (unchanged)", () => {
+    const response = buildAbortRedirectMessage(undefined, "budget_exceeded", "generate a nice image");
+    expect(response).toContain("Your request was: 'generate a nice image'");
+  });
 });
 
 // ---------------------------------------------------------------------------

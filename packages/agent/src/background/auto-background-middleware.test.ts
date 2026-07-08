@@ -412,4 +412,61 @@ describe("wrapToolForAutoBackground", () => {
       expect(promoteSpy).not.toHaveBeenCalled();
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Never-auto-background tools: the background-task META tool and the
+  // self-delivering media-generation tools must never be promoted (regardless
+  // of excludeTools config), exactly like exec.
+  //
+  // Live incident (2026-07-08): a "make me an image" request auto-promoted
+  // image_generate at the 10s threshold and returned a "backgrounded"
+  // placeholder; the model then tried to WAIT for it via `background_tasks
+  // read_output`/`list` — each blocking ~10s and SELF-promoting into a
+  // "Background task background_tasks completed" notification + a re-entry
+  // LLM turn that polled again, an amplifying loop that burned the 2M-token
+  // per-execution budget → budget_exceeded (with an empty request echo).
+  //   - background_tasks OBSERVES background tasks; promoting it is
+  //     structurally self-referential and self-amplifying.
+  //   - image_generate/video_generate DELIVER out-of-band via the media
+  //     pipeline (image.delivered fires independent of the wrapper — verified
+  //     live), so the "backgrounded" placeholder is redundant and is exactly
+  //     what tricks the model into polling.
+  // ---------------------------------------------------------------------------
+  describe("never-auto-background tools (meta + self-delivering media)", () => {
+    for (const name of ["background_tasks", "image_generate", "video_generate"]) {
+      it(`when tool.name === '${name}', wrapToolForAutoBackground returns the original tool unchanged (excludeTools=[])`, () => {
+        config.excludeTools = [];
+        const tool = createMockTool({ name });
+        const wrapped = wrapToolForAutoBackground(tool, manager, config, () => buildOrigin({ agentId: "agent-1" }));
+        expect(wrapped).toBe(tool);
+      });
+
+      it(`a slow '${name}' exceeding autoBackgroundMs does NOT call manager.promote`, async () => {
+        config.excludeTools = [];
+        const promoteSpy = vi.spyOn(manager, "promote");
+        const tool = createMockTool({
+          name,
+          resolveAfterMs: config.autoBackgroundMs + 100,
+          result: toolOk(`foreground-${name}-result`),
+        });
+        const wrapped = wrapToolForAutoBackground(tool, manager, config, () => buildOrigin({ agentId: "agent-1" }));
+        const result = await wrapped.execute("call-1", {}, undefined, undefined, undefined);
+        expect((result.content[0] as { text: string }).text).toBe(`foreground-${name}-result`);
+        expect(promoteSpy).not.toHaveBeenCalled();
+      });
+    }
+
+    it("a generic slow tool is STILL promoted (the exclusion is narrow, not a blanket disable)", async () => {
+      config.excludeTools = [];
+      const promoteSpy = vi.spyOn(manager, "promote");
+      const tool = createMockTool({
+        name: "web_search",
+        resolveAfterMs: config.autoBackgroundMs + 100,
+        result: toolOk("late"),
+      });
+      const wrapped = wrapToolForAutoBackground(tool, manager, config, () => buildOrigin({ agentId: "agent-1" }));
+      await wrapped.execute("call-1", {}, undefined, undefined, undefined);
+      expect(promoteSpy).toHaveBeenCalled();
+    });
+  });
 });
