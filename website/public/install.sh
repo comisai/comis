@@ -1629,6 +1629,10 @@ TAGLINE="$DEFAULT_TAGLINE"
 
 NO_INIT=${COMIS_NO_INIT:-0}
 NO_PROMPT=${COMIS_NO_PROMPT:-0}
+# Skip the dedicated 'comis' user and install for the invoking user instead
+NO_USER="${COMIS_NO_USER:-0}"
+# Original CLI args, captured before parsing — replayed verbatim by the sudo re-exec
+ORIGINAL_ARGS=()
 DRY_RUN=${COMIS_DRY_RUN:-0}
 INSTALL_METHOD=${COMIS_INSTALL_METHOD:-}
 COMIS_VERSION=${COMIS_VERSION:-latest}
@@ -1703,8 +1707,9 @@ Install options:
   --tarball <path>                     Install from a local .tgz (bypasses npm registry)
   --git-dir, --dir <path>              Checkout directory (default: ~/comis)
   --no-git-update                      Skip git pull for existing checkout
-  --user <name>                        Dedicated Linux user (default: comis, created if root)
-  --no-user                            Install as current user even when root (skip user creation)
+  --user <name>                        Dedicated Linux user (default: comis)
+  --no-user                            Install for the invoking user (skip the dedicated user;
+                                       non-root Linux installs otherwise offer to re-run with sudo)
   --no-init                            Skip interactive init (non-interactive)
   --no-prompt                          Disable prompts (required in CI/automation)
   --dry-run                            Print what would happen (no changes)
@@ -1758,7 +1763,8 @@ Environment variables:
   COMIS_TARBALL=/path/to/comisai.tgz
   COMIS_GIT_DIR=...
   COMIS_GIT_UPDATE=0|1
-  COMIS_USER=comis                    Default user for Linux root installs
+  COMIS_USER=comis                    Dedicated user for Linux installs
+  COMIS_NO_USER=0|1                   Skip the dedicated user (install for the invoking user)
   COMIS_SERVICE=auto|systemd|systemd-user|pm2|none
   COMIS_NO_AUTOSTART=1
   COMIS_NO_SERVICE_START=1
@@ -1842,7 +1848,7 @@ parse_args() {
                 shift 2
                 ;;
             --no-user)
-                COMIS_REEXEC=1
+                NO_USER=1
                 shift
                 ;;
             --tarball)
@@ -2531,16 +2537,111 @@ is_root() {
     [[ "$(id -u)" -eq 0 ]]
 }
 
+has_sudo() {
+    command -v sudo >/dev/null 2>&1
+}
+
 COMIS_USER="${COMIS_USER:-comis}"
 COMIS_REEXEC="${COMIS_REEXEC:-0}"
 
 should_create_dedicated_user() {
-    # Only on Linux, only when running as root, not re-exec'd, and only when
-    # we're actually going to register a system-scope systemd service that
-    # benefits from a dedicated user. For --service none, systemd-user, or pm2,
-    # install as the invoking user so `comis` is immediately on their PATH.
+    # Only on Linux, only when running as root, not re-exec'd, not opted out
+    # via --no-user, and only when we're actually going to register a
+    # system-scope systemd service that benefits from a dedicated user. For
+    # --service none, systemd-user, or pm2, install as the invoking user so
+    # `comis` is immediately on their PATH.
     [[ "$OS" == "linux" ]] && is_root && [[ "$COMIS_REEXEC" != "1" ]] \
+        && [[ "$NO_USER" != "1" ]] \
         && [[ "$RESOLVED_SERVICE_MANAGER" == "systemd" ]]
+}
+
+# Decide how a Linux non-root install proceeds. The dedicated-user layout is
+# the default — the daemon should not run as the login user (whose ~/.ssh and
+# ~/.aws stay readable to it) just because the installer wasn't run as root.
+# Prints exactly one strategy token:
+#   dedicated-prompt — ask for consent, then re-run the installer under sudo
+#   current-user     — proceed as the invoking user (opt-out or not applicable)
+#   refuse-no-prompt — cannot ask (no TTY / --no-prompt): explicit choice required
+#   refuse-no-sudo   — cannot elevate: needs root or an explicit opt-out
+nonroot_install_strategy() {
+    if [[ "$OS" != "linux" ]] || is_root || [[ "$COMIS_REEXEC" == "1" ]] \
+        || [[ "$NO_USER" == "1" ]] || [[ "$SERVICE_MANAGER" != "auto" ]] \
+        || ! has_working_systemd; then
+        echo "current-user"
+        return 0
+    fi
+    if ! has_sudo; then
+        echo "refuse-no-sudo"
+        return 0
+    fi
+    if is_promptable; then
+        echo "dedicated-prompt"
+    else
+        echo "refuse-no-prompt"
+    fi
+}
+
+prompt_dedicated_user_consent() {
+    local answer=""
+    answer="$(prompt_choice "Comis installs under a dedicated '${COMIS_USER}' system user (recommended).\nContinue with sudo? [Y/n] ")" || return 1
+    case "$answer" in
+        ""|y|Y|yes|Yes|YES) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+elevate_install_to_root() {
+    local script_copy rc=0
+    script_copy="$(mktempfile)"
+    stage_install_script "$script_copy"
+    ui_info "Re-running the installer with sudo"
+    sudo bash "$script_copy" ${ORIGINAL_ARGS[@]+"${ORIGINAL_ARGS[@]}"} || rc=$?
+    exit "$rc"
+}
+
+enforce_dedicated_user_default() {
+    local strategy
+    strategy="$(nonroot_install_strategy)"
+    if [[ "$strategy" == "current-user" ]]; then
+        return 0
+    fi
+
+    if [[ "$DRY_RUN" == "1" ]]; then
+        case "$strategy" in
+            dedicated-prompt)
+                ui_info "Dry run: would offer to re-run with sudo and install under the dedicated '${COMIS_USER}' user (--no-user opts out)"
+                ;;
+            *)
+                ui_info "Dry run: a real run would stop here — a non-root install needs sudo (dedicated '${COMIS_USER}' user) or an explicit --no-user"
+                ;;
+        esac
+        return 0
+    fi
+
+    case "$strategy" in
+        dedicated-prompt)
+            if prompt_dedicated_user_consent; then
+                elevate_install_to_root
+                # Unreachable: elevate_install_to_root exits with the re-run's status
+                exit 1
+            fi
+            ui_info "Installing for the current user instead (config under \$HOME/.comis)"
+            NO_USER=1
+            return 0
+            ;;
+        refuse-no-sudo)
+            ui_error "Comis installs under a dedicated '${COMIS_USER}' system user by default, and sudo is not available to elevate."
+            echo "  Recommended:  re-run this installer as root"
+            echo "  Alternative:  add --no-user (or COMIS_NO_USER=1) to install for the current user"
+            exit 2
+            ;;
+        refuse-no-prompt)
+            ui_error "A non-root install needs an explicit choice when prompts are unavailable."
+            echo "  Recommended (dedicated '${COMIS_USER}' user):  re-run with sudo"
+            echo "  Current-user install:                        add --no-user (or COMIS_NO_USER=1)"
+            exit 2
+            ;;
+    esac
 }
 
 comis_user_exists() {
@@ -2600,6 +2701,23 @@ install_system_deps_as_root() {
     ui_success "System dependencies ready"
 }
 
+# Materialize the currently-running script at $dest — works for a file-based
+# invocation ($0) and for a curl|bash pipe (bash's script fd, else re-download).
+stage_install_script() {
+    local dest="$1"
+    if [[ -f "$0" ]]; then
+        cp "$0" "$dest"
+    else
+        if [[ -f "/proc/self/fd/255" ]]; then
+            cp /proc/self/fd/255 "$dest" 2>/dev/null || true
+        fi
+        if [[ ! -s "$dest" ]]; then
+            download_file "https://comis.ai/install.sh" "$dest"
+        fi
+    fi
+    chmod +x "$dest"
+}
+
 reexec_as_comis_user() {
     local comis_home
     comis_home="$(eval echo "~$COMIS_USER")"
@@ -2640,23 +2758,7 @@ reexec_as_comis_user() {
 
     # Copy the install script to a location the comis user can read
     local script_copy="${comis_home}/.comis-install.sh"
-    if [[ -f "$0" ]]; then
-        cp "$0" "$script_copy"
-    else
-        # Piped via curl — save stdin copy
-        local self_tmp
-        self_tmp="$(mktemp)"
-        TMPFILES+=("$self_tmp")
-        # The script is already running, so we need the original file.
-        # Fall back to re-downloading if we can't find ourselves.
-        if [[ -f "/proc/self/fd/255" ]]; then
-            cp /proc/self/fd/255 "$script_copy" 2>/dev/null || true
-        fi
-        if [[ ! -s "$script_copy" ]]; then
-            download_file "https://comis.ai/install.sh" "$script_copy"
-        fi
-    fi
-    chmod +x "$script_copy"
+    stage_install_script "$script_copy"
     chown "$COMIS_USER:$COMIS_USER" "$script_copy"
 
     ui_info "Handing off to user '$COMIS_USER'"
@@ -3487,8 +3589,9 @@ resolve_service_template_vars() {
         fi
     fi
 
-    # Target service user
-    if [[ "$RESOLVED_SERVICE_MANAGER" == "systemd" ]] && is_root && [[ -n "${COMIS_USER:-}" ]] && comis_user_exists; then
+    # Target service user (--no-user pins the service to the invoking user even
+    # when a comis user is left over from an earlier dedicated-user install)
+    if [[ "$RESOLVED_SERVICE_MANAGER" == "systemd" ]] && is_root && [[ "$NO_USER" != "1" ]] && [[ -n "${COMIS_USER:-}" ]] && comis_user_exists; then
         COMIS_SVC_USER="$COMIS_USER"
         COMIS_SVC_GROUP="$COMIS_USER"
     else
@@ -4857,6 +4960,11 @@ main() {
         detect_os_or_die
     fi
 
+    # Linux non-root: the dedicated-user layout is the default. Ask to elevate
+    # (or require an explicit --no-user) before any other prompt runs, so the
+    # sudo re-run owns the rest of the interactive flow.
+    enforce_dedicated_user_default
+
     local detected_checkout=""
     detected_checkout="$(detect_comis_checkout "$PWD" || true)"
 
@@ -5143,6 +5251,7 @@ main() {
 }
 
 if [[ "${COMIS_INSTALL_SH_NO_RUN:-0}" != "1" ]]; then
+    ORIGINAL_ARGS=("$@")
     parse_args "$@"
     configure_verbose
     main
