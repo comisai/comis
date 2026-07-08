@@ -1,7 +1,7 @@
 {
   "name": "@comis/observability",
   "private": true,
-  "version": "1.0.47",
+  "version": "1.0.48",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Observability substrate (queued writer, payload bounding, sanitization, path guards) for Comis diagnostics artifacts",
