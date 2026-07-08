@@ -574,6 +574,18 @@ export const IncidentReportSchema = z.object({
           ),
         })
         .optional(),
+      /**
+       * The closest REAL session keys when the requested key resolved ZERO records
+       * (a lossy/partial key — e.g. `telegram:<chatId>` instead of the formatted
+       * `<agent>:<chatId>:<chatId>:peer:<chatId>`). Populated only on a 0-record miss,
+       * from the on-disk trajectory pointers whose formatted `sessionId` shares a
+       * segment with the request, ranked most-relevant-first + capped. Turns a silent
+       * empty report into a "did you mean …?" so the operator copies the right key
+       * instead of hand-joining the session index. Content-free (keys are ids, already
+       * in the trajectory path layout). Absent when the key resolved records OR no
+       * candidate matched.
+       */
+      candidateSessionKeys: z.array(z.string()).optional(),
     })
     .optional(),
 });

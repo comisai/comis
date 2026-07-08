@@ -243,6 +243,13 @@ export function assembleIncidentReport(
   rollup: Record<string, unknown> | null,
   sessionKey: string,
   recordCount: number,
+  /**
+   * The closest REAL session keys, populated by the async caller ONLY on a
+   * 0-record miss (a lossy/partial key). Surfaced on `coverage.candidateSessionKeys`
+   * so a silent empty report becomes a "did you mean …?". Defaults to `[]` (the
+   * common resolved-record path adds no field). Stays PURE — the caller does the I/O.
+   */
+  candidateSessionKeys: readonly string[] = [],
 ): IncidentReport {
   const sessionEnd = sessionEndOf(metadata);
   const rollupPayload = rollupPayloadOf(rollup);
@@ -397,6 +404,9 @@ export function assembleIncidentReport(
     rollup: { present: sessionEnd !== undefined },
     offloads: { pointersResolved: offloadsResolved, pointersTotal: offloads.length },
     toolStats: toolStatsReconciliation,
+    // "did you mean …?" — only when the request resolved nothing AND the caller
+    // found closer real keys (a lossy/partial key). Omitted otherwise.
+    ...(candidateSessionKeys.length > 0 ? { candidateSessionKeys: [...candidateSessionKeys] } : {}),
   };
 
   return {

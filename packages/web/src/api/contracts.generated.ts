@@ -8975,6 +8975,12 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
                 "divergentTools"
               ],
               "additionalProperties": false
+            },
+            "candidateSessionKeys": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
@@ -9042,6 +9048,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               "type": "number"
             },
             "degradedRate": {
+              "type": "number"
+            },
+            "deliveredWithToolErrors": {
               "type": "number"
             }
           },

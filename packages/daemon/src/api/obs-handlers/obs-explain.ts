@@ -149,11 +149,21 @@ export async function assembleIncidentReportFromSources(
   // Normalize both shapes → uniform signals; assemble the report;
   // stamp the deterministic root cause; bound to the depth budget.
   const signals = toIncidentSignals([...records, ...cache]);
+  // ZERO-RECORD MISS → "did you mean …?": a lossy/partial key (e.g.
+  // `telegram:<chatId>` instead of the formatted `<agent>:<chatId>:<chatId>:peer:
+  // <chatId>`) resolves nothing. Enumerate the closest REAL keys so the operator
+  // copies the right one instead of hand-joining the session index (the recurring
+  // live friction). Only on a genuine miss (no records AND no rollup) — a resolved
+  // session never pays the scan.
+  const candidateSessionKeys =
+    records.length === 0 && metadata === null && reader.listCandidateSessionKeys
+      ? await reader.listCandidateSessionKeys(sessionKey)
+      : [];
   // Pass the trajectory READ count (records.length) so coverage.trajectory
   // reflects what the reader actually READ — the meta-observability point: a
   // "reader read nothing" bug surfaces as coverage.trajectory.records:0
   // on a report that otherwise looks like a clean zero-activity session.
-  const report = assembleIncidentReport(signals, metadata, rollup, sessionKey, records.length);
+  const report = assembleIncidentReport(signals, metadata, rollup, sessionKey, records.length, candidateSessionKeys);
   // The report is genuinely empty only when NO source surfaced any activity.
   const reportIsEmpty =
     report.failures.length === 0 &&
