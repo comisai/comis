@@ -74,6 +74,7 @@ function partitionPaths(discoveryPaths: string[]): { existing: string[]; missing
 function startSkillWatcher(
   existingPaths: string[],
   onChange: (filePath: string) => void,
+  logger?: SkillsLogger,
 ): FSWatcher {
   const watchedRoots = existingPaths.map((p) => fs.realpathSync(p));
 
@@ -94,6 +95,14 @@ function startSkillWatcher(
   watcher.on("add", onChange);
   watcher.on("change", onChange);
   watcher.on("unlink", onChange);
+  // A watch error must never crash the daemon. Recursing into a non-regular
+  // file (a unix socket like cap.sock throws UNKNOWN/errno -102 on macOS) or
+  // hitting a fs limit (EMFILE/ENOSPC on Linux) emits "error"; without a
+  // listener that becomes an unhandled rejection. Log and keep watching the
+  // paths that do work — skill hot-reload degrades gracefully.
+  watcher.on("error", (err: unknown) => {
+    logger?.warn({ err, watchedPaths: existingPaths }, "Skill watcher error (continuing)");
+  });
 
   return watcher;
 }
@@ -136,7 +145,7 @@ export function createSkillWatcher(options: SkillWatcherOptions): SkillWatcherHa
 
   // Start watching existing paths immediately
   if (existing.length > 0) {
-    skillWatcher = startSkillWatcher(existing, scheduleReload);
+    skillWatcher = startSkillWatcher(existing, scheduleReload, logger);
   }
 
   // For missing paths, watch parent directories for creation
@@ -168,7 +177,14 @@ export function createSkillWatcher(options: SkillWatcherOptions): SkillWatcherHa
         ignorePermissionErrors: true,
       });
 
-       
+      // See startSkillWatcher: the depth-recursive parent watcher can hit a
+      // unix socket (cap.sock) or a fs limit while scanning the data dir. Log
+      // and swallow so the miss doesn't crash the daemon via unhandled rejection.
+      parentWatcher.on("error", (err: unknown) => {
+        logger?.warn({ err, watchedParents: [...parentDirs] }, "Skill parent-watcher error (continuing)");
+      });
+
+
       parentWatcher.on("addDir", (_createdPath: string) => {
         // Check if any missing discovery path now exists
         const nowExists = missing.some((p) => {
@@ -193,7 +209,7 @@ export function createSkillWatcher(options: SkillWatcherOptions): SkillWatcherHa
         }
         const { existing: allExisting } = partitionPaths(discoveryPaths);
         if (allExisting.length > 0) {
-          skillWatcher = startSkillWatcher(allExisting, scheduleReload);
+          skillWatcher = startSkillWatcher(allExisting, scheduleReload, logger);
         }
 
         // Trigger re-discovery for newly available paths
