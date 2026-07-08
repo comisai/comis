@@ -136,6 +136,19 @@ export interface CompletionDispatcherDeps {
   /** Active-session check (production wiring). When absent, the dispatcher
    *  defers to the runner without firing fallback. */
   sessionStore?: DispatcherSessionStore;
+  /**
+   * LIVE-TURN oracle: returns true while the given FORMATTED sessionKey has a
+   * turn currently executing. Load-bearing for the auto-background stub
+   * protocol: a task promoted mid-turn is consumed by ITS OWN still-running
+   * turn (which polls `background_tasks`), so a completion that lands while
+   * the origin turn is in flight must fire NO user-visible fallback — the
+   * live incident was a raw 'Background task "…" completed.' message landing
+   * mid-conversation because the `sessionStore` check below (the persistent
+   * store, near-EMPTY in DAG mode) mis-read a live conversation as "no active
+   * session". When absent, behavior is unchanged (the sessionStore check
+   * decides alone).
+   */
+  isTurnInFlight?: (formattedSessionKey: string) => boolean;
   /** Recursion limit for background-task hop counting. When absent, the
    *  dispatcher does not enforce the cap (defers to the runner). */
   maxBackgroundHops?: number;
@@ -247,6 +260,30 @@ export function createCompletionDispatcher(
         );
         return;
       }
+    }
+
+    // LIVE-TURN suppression (when wired): the origin turn is STILL EXECUTING —
+    // it promoted this task mid-turn and consumes the result itself via the
+    // background_tasks stub protocol. A user-visible fallback here is pure
+    // noise landing mid-conversation (the live incident: a raw
+    // 'Background task "…" completed.' followed by the turn's real answer).
+    // Transition to "dispatched" — no notice; the runner's own in-flight
+    // check also skips re-entry (the live turn owns consumption; an
+    // unconsumed result stays readable via `background_tasks`).
+    if (deps.isTurnInFlight?.(origin.sessionKey) === true) {
+      transitionTo(taskId, "dispatched");
+      log.debug(
+        {
+          taskId,
+          sessionKey: origin.sessionKey,
+          agentId: origin.agentId,
+          toolName: task.toolName,
+          traceId: origin.traceId ?? undefined,
+          hint: "Origin turn in flight — live turn consumes the result; no fallback notice",
+        },
+        "Completion dispatcher: suppressed fallback (origin turn live)",
+      );
+      return;
     }
 
     // Active-session check (when configured). No active session → fallback.

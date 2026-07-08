@@ -379,9 +379,11 @@ describe("wrapToolForAutoBackground", () => {
       expect(wrapped).toBe(tool);
     });
 
-    it("a non-exec tool (e.g., 'sleep') is STILL wrapped when excludeTools does not list it (regression: only exec is narrowed)", () => {
+    it("a non-exec tool (e.g., 'web_search') is STILL wrapped when excludeTools does not list it (regression: only exec is narrowed)", () => {
+      // NB: 'sleep' moved to NEVER_AUTO_BACKGROUND_TOOLS (backgrounding a wait is
+      // self-defeating — live incident), so the generic example here is web_search.
       config.excludeTools = [];
-      const tool = createMockTool({ name: "sleep" });
+      const tool = createMockTool({ name: "web_search" });
       const wrapped = wrapToolForAutoBackground(tool, manager, config, () => buildOrigin({ agentId: "agent-1" }));
 
       // Non-exec tools must still receive the wrapper (the wrapper is a NEW object,
@@ -433,7 +435,13 @@ describe("wrapToolForAutoBackground", () => {
   //     what tricks the model into polling.
   // ---------------------------------------------------------------------------
   describe("never-auto-background tools (meta + self-delivering media)", () => {
-    for (const name of ["background_tasks", "image_generate", "video_generate"]) {
+    // `sleep` joined the set after a second live incident (2026-07-08): the model
+    // slept to await a backgrounded MCP result; the sleep itself hit the 10s
+    // threshold, promoted, and its raw 'Background task "sleep" completed.'
+    // notice leaked to the user. Backgrounding a WAIT is self-defeating — the
+    // stub returns instantly (defeating the wait) and the completion notice is
+    // pure noise.
+    for (const name of ["background_tasks", "sleep", "image_generate", "video_generate"]) {
       it(`when tool.name === '${name}', wrapToolForAutoBackground returns the original tool unchanged (excludeTools=[])`, () => {
         config.excludeTools = [];
         const tool = createMockTool({ name });

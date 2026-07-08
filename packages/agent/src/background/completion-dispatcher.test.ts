@@ -161,4 +161,77 @@ describe("createCompletionDispatcher: at-most-once routing via dispatchState", (
     expect(fallbackNotifyFn).not.toHaveBeenCalled();
     await dispatcher.shutdown();
   });
+
+  it("LIVE-TURN suppression: origin turn in flight → NO raw notice, state → dispatched (live-incident regression)", async () => {
+    // Live incident: an auto-backgrounded MCP call completed ~1s after promotion
+    // while its ORIGIN TURN was still executing (consuming the result via the
+    // background_tasks stub protocol). The dispatcher consulted the persistent
+    // session store — near-EMPTY in DAG mode — concluded "no active session",
+    // and sent the user a raw 'Background task "…" completed.' message; the real
+    // answer then arrived from the live turn. With `isTurnInFlight` wired, an
+    // in-flight origin turn suppresses the notice (the live turn owns consumption).
+    const mod = await loadDispatcher();
+    expect(mod).toBeDefined();
+    if (!mod) return;
+
+    const task = buildTask({ dispatchState: "pending" });
+    taskManager.getTask.mockReturnValue(task);
+    const transitionDispatchState = vi.fn();
+    const dispatcher = (mod.createCompletionDispatcher as unknown as (deps: Record<string, unknown>) => { shutdown(): Promise<void> })({
+      eventBus,
+      taskManager: { getTask: taskManager.getTask, transitionDispatchState },
+      fallbackNotifyFn,
+      logger: makeLogger(),
+      // The DAG-mode live-incident shape: the persistent store misses the LIVE session…
+      sessionStore: { loadByFormattedKey: vi.fn(() => undefined) },
+      // …but the origin turn is demonstrably in flight.
+      isTurnInFlight: vi.fn((key: string) => key === task.origin.sessionKey),
+    });
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((r) => setTimeout(r, 5));
+
+    expect(fallbackNotifyFn).not.toHaveBeenCalled(); // NO raw notice mid-conversation
+    expect(transitionDispatchState).toHaveBeenCalledWith(task.id, "dispatched");
+    await dispatcher.shutdown();
+  });
+
+  it("origin turn NOT in flight + no session → the fallback notice still fires (the notify path is preserved)", async () => {
+    const mod = await loadDispatcher();
+    expect(mod).toBeDefined();
+    if (!mod) return;
+
+    const task = buildTask({ dispatchState: "pending" });
+    taskManager.getTask.mockReturnValue(task);
+    const transitionDispatchState = vi.fn();
+    const dispatcher = (mod.createCompletionDispatcher as unknown as (deps: Record<string, unknown>) => { shutdown(): Promise<void> })({
+      eventBus,
+      taskManager: { getTask: taskManager.getTask, transitionDispatchState },
+      fallbackNotifyFn,
+      logger: makeLogger(),
+      sessionStore: { loadByFormattedKey: vi.fn(() => undefined) },
+      isTurnInFlight: vi.fn(() => false),
+    });
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((r) => setTimeout(r, 5));
+
+    expect(fallbackNotifyFn).toHaveBeenCalledTimes(1);
+    expect(transitionDispatchState).toHaveBeenCalledWith(task.id, "notified");
+    await dispatcher.shutdown();
+  });
 });

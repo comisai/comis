@@ -65,6 +65,11 @@ export interface ToolDefinition {
  *     that polls again: a self-amplifying loop that burned the per-execution
  *     token budget in a live incident (2026-07-08). Promoting the observer of
  *     background tasks into a background task is structurally self-referential.
+ *   - `sleep` — the WAIT tool. The model sleeps to await a backgrounded result;
+ *     the sleep itself hits `autoBackgroundMs`, promotes, and its raw
+ *     'Background task "sleep" completed.' notice leaked to the user (live
+ *     incident, 2026-07-08). Backgrounding a wait is self-defeating: the stub
+ *     returns instantly (defeating the wait) and the completion is pure noise.
  *   - `image_generate` / `video_generate` — self-delivering media tools. They
  *     deliver out-of-band via the media pipeline (`image.delivered` fires
  *     independent of the wrapper — verified live), so the "backgrounded"
@@ -77,6 +82,7 @@ export interface ToolDefinition {
  */
 const NEVER_AUTO_BACKGROUND_TOOLS: ReadonlySet<string> = new Set([
   "background_tasks",
+  "sleep",
   "image_generate",
   "video_generate",
 ]);

@@ -79,7 +79,7 @@ describe("createBackgroundCompletionRunner", () => {
     fallbackNotifyFn = vi.fn().mockResolvedValue(undefined);
   });
 
-  function build(maxBackgroundHops = 3) {
+  function build(maxBackgroundHops = 3, isTurnInFlight?: (key: string) => boolean) {
     return createBackgroundCompletionRunner({
       eventBus,
       getExecutor: (_agentId: string) => executor as unknown as import("../executor/types.js").AgentExecutor,
@@ -87,9 +87,28 @@ describe("createBackgroundCompletionRunner", () => {
       taskManager: taskManager as unknown as import("./background-task-manager.js").BackgroundTaskManager,
       fallbackNotifyFn,
       maxBackgroundHops,
+      ...(isTurnInFlight ? { isTurnInFlight } : {}),
       logger: makeLogger(),
     });
   }
+
+  it("LIVE-TURN skip: origin turn in flight → NO re-entry turn (the live turn owns consumption)", async () => {
+    // Mirrors the dispatcher's suppression (live incident: an auto-backgrounded
+    // MCP call completed mid-turn; the live turn consumed it via background_tasks).
+    // A re-entry now would serialize a redundant continuation behind the live turn.
+    const task = buildTask({ result: "ok" });
+    taskManager.getTask.mockReturnValue(task);
+    const runner = build(3, (key) => key === task.origin.sessionKey);
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      durationMs: 1, origin: task.origin, timestamp: 3,
+    });
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    expect(executor.execute).not.toHaveBeenCalled();
+    expect(fallbackNotifyFn).not.toHaveBeenCalled();
+    await runner.shutdown();
+  });
 
   it("completed event triggers executor.execute with synthetic message AND emits background_task:reentered", async () => {
     const reenteredEvents: unknown[] = [];
