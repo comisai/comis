@@ -4874,13 +4874,17 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               "qualifiedName": {
                 "type": "string"
               },
+              "callableName": {
+                "type": "string"
+              },
               "description": {
                 "type": "string"
               }
             },
             "required": [
               "name",
-              "qualifiedName"
+              "qualifiedName",
+              "callableName"
             ],
             "additionalProperties": false
           }

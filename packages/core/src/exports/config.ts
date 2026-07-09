@@ -48,7 +48,6 @@ export {
   BraveSearchConfigSchema,
   McpServerEntrySchema,
   McpConfigSchema,
-  EmbeddingConfigSchema,
   TranscriptionConfigSchema,
   TtsConfigSchema,
   TtsAutoModeSchema,

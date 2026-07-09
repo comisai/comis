@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { EmbeddingConfigSchema } from "@comis/core";
+import { AppConfigSchema } from "@comis/core";
 import type { WizardPrompter, WizardState, Spinner } from "../index.js";
 import { EMBED_BGE_M3_MODEL_URI } from "../index.js";
 import { recallStep } from "./08g-recall.js";
@@ -82,15 +82,22 @@ describe("recallStep", () => {
     });
   });
 
-  it("drift guard: the written embedding shapes parse against the daemon's EmbeddingConfigSchema", () => {
+  it("drift guard: the written embedding block parses in the real root config (AppConfigSchema)", () => {
+    const agents = { default: { provider: "anthropic", model: "claude-opus-4-8" } };
     // local (bge-m3)
-    expect(
-      EmbeddingConfigSchema.parse({ provider: "local", multilingual: true, local: { modelUri: EMBED_BGE_M3_MODEL_URI } }).local.modelUri,
-    ).toBe(EMBED_BGE_M3_MODEL_URI);
+    const local = AppConfigSchema.parse({
+      agents,
+      embedding: { provider: "local", multilingual: true, local: { modelUri: EMBED_BGE_M3_MODEL_URI } },
+    });
+    expect(local.embedding.provider).toBe("local");
+    expect(local.embedding.multilingual).toBe(true);
+    expect(local.embedding.local.modelUri).toBe(EMBED_BGE_M3_MODEL_URI);
     // openai (text-embedding-3-small)
-    const parsed = EmbeddingConfigSchema.parse({ provider: "openai", multilingual: true, openai: { model: "text-embedding-3-small", dimensions: 1536 } });
-    expect(parsed.provider).toBe("openai");
-    expect(parsed.multilingual).toBe(true);
-    expect(parsed.openai.dimensions).toBe(1536);
+    const openai = AppConfigSchema.parse({
+      agents,
+      embedding: { provider: "openai", multilingual: true, openai: { model: "text-embedding-3-small", dimensions: 1536 } },
+    });
+    expect(openai.embedding.provider).toBe("openai");
+    expect(openai.embedding.openai.dimensions).toBe(1536);
   });
 });
