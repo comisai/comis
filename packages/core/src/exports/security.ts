@@ -2,6 +2,8 @@
 // @comis/core exports — Security utilities
 
 export { safePath, PathTraversalError } from "../security/index.js";
+// Loopback bind detection — shared by the gateway boot log + fleet config-posture.
+export { isLoopbackHost } from "../security/index.js";
 // Bind-mount validator — consumed by the bwrap sandbox provider.
 export { validateBindMount } from "../security/index.js";
 // Master-key file helpers (daemon-free `secrets init` body)

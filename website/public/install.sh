@@ -1761,7 +1761,7 @@ Browser tool (optional):
 
 Uninstall:
   --uninstall                          Remove Comis (keeps data by default)
-  --purge                              With --uninstall: also delete ~/.comis, /etc/comis, /var/log/comis
+  --purge                              With --uninstall: also delete ~/.comis, /etc/comis, /var/log/comis, and the COMIS_EGRESS iptables chain
   --remove-user                        Linux+root only: also delete the comis system user (implies --purge)
   --yes                                Skip interactive confirmation prompts
 
@@ -4142,6 +4142,12 @@ YAML
 }
 
 # Poll the gateway health endpoint after service start.
+#
+# A cold first boot downloads the local embedding model (~146MB GGUF) into
+# ~/.comis/models/ and loads it before the gateway binds — ~30s on a small
+# 2-vCPU instance — so the window must comfortably outlast that. Override
+# with COMIS_GATEWAY_WAIT_SECS. Sets GATEWAY_WAIT_SECS_USED so callers can
+# report the window they actually waited.
 wait_for_daemon_ready() {
     local host="localhost"
     local port=4766
@@ -4155,7 +4161,15 @@ wait_for_daemon_ready() {
         [[ -n "$cfg_port" ]] && port="$cfg_port"
     fi
 
-    local deadline=$((SECONDS + 20))
+    local wait_secs="${COMIS_GATEWAY_WAIT_SECS:-90}"
+    GATEWAY_WAIT_SECS_USED="$wait_secs"
+    local deadline=$((SECONDS + wait_secs))
+    # Partway through (capped at 15s in), reassure the operator: a slow first
+    # boot is the embedding-model download, not a hang.
+    local progress_delay=$((wait_secs / 2))
+    [[ $progress_delay -gt 15 ]] && progress_delay=15
+    local progress_at=$((SECONDS + progress_delay))
+    local progress_shown=0
     while [[ $SECONDS -lt $deadline ]]; do
         if command -v curl >/dev/null 2>&1; then
             if curl -fsS --max-time 2 "http://${host}:${port}/health" >/dev/null 2>&1; then
@@ -4165,6 +4179,10 @@ wait_for_daemon_ready() {
             if wget -q --timeout=2 -O /dev/null "http://${host}:${port}/health" 2>/dev/null; then
                 return 0
             fi
+        fi
+        if [[ $progress_shown -eq 0 && $SECONDS -ge $progress_at ]]; then
+            ui_info "Still waiting — a first boot downloads the local embedding model (~146MB) before the gateway listens"
+            progress_shown=1
         fi
         sleep 1
     done
@@ -4285,7 +4303,7 @@ SUDOERS
     if wait_for_daemon_ready; then
         ui_success "Daemon is responding on the gateway port"
     else
-        ui_warn "Service is active but the gateway didn't respond within 20s"
+        ui_warn "Service is active but the gateway didn't respond within ${GATEWAY_WAIT_SECS_USED:-90}s"
         ui_info "Tail logs with: journalctl -u comis.service -f"
     fi
 }
@@ -4366,7 +4384,7 @@ ENV
     if wait_for_daemon_ready; then
         ui_success "Daemon is responding on the gateway port"
     else
-        ui_warn "Service is active but the gateway didn't respond within 20s"
+        ui_warn "Service is active but the gateway didn't respond within ${GATEWAY_WAIT_SECS_USED:-90}s"
         ui_info "Tail logs with: journalctl --user -u comis.service -f"
     fi
 
@@ -4452,7 +4470,7 @@ register_service_pm2() {
     if wait_for_daemon_ready; then
         ui_success "Daemon is responding on the gateway port"
     else
-        ui_warn "Daemon started but gateway didn't respond within 20s"
+        ui_warn "Daemon started but gateway didn't respond within ${GATEWAY_WAIT_SECS_USED:-90}s"
         ui_info "Tail logs with: pm2 logs comis"
     fi
 
@@ -4860,6 +4878,48 @@ uninstall_purge_data() {
     done
 }
 
+# uninstall_egress_chain
+# ----------------------
+# Reverse install_egress_logging(): drop the uid-scoped OUTPUT jump(s), then
+# flush and delete the COMIS_EGRESS chain. Runs on the purge path BEFORE the
+# comis user is removed — the OUTPUT rule is uid-scoped, and deleting by rule
+# number keeps this working even when the uid no longer resolves to a name.
+# Idempotent and non-fatal: silently skipped when iptables is unavailable or
+# the chain does not exist.
+uninstall_egress_chain() {
+    [[ "$OS" == "linux" ]] || return 0
+    command -v iptables >/dev/null 2>&1 || return 0
+
+    local sudo_prefix=""
+    if ! is_root; then
+        sudo_prefix="sudo "
+    fi
+
+    $sudo_prefix iptables -L COMIS_EGRESS -n >/dev/null 2>&1 || return 0
+
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[dry-run] would: remove COMIS_EGRESS iptables chain (OUTPUT jump, flush, delete)"
+        return 0
+    fi
+
+    # Unhook every OUTPUT jump into the chain, highest rule number first so
+    # earlier deletions don't renumber the ones still pending.
+    local jump_nums
+    jump_nums="$($sudo_prefix iptables -L OUTPUT --line-numbers -n 2>/dev/null | awk '$2 == "COMIS_EGRESS" {print $1}' | sort -rn)"
+    local n
+    for n in $jump_nums; do
+        $sudo_prefix iptables -D OUTPUT "$n" 2>/dev/null || true
+    done
+
+    $sudo_prefix iptables -F COMIS_EGRESS 2>/dev/null || true
+    if $sudo_prefix iptables -X COMIS_EGRESS 2>/dev/null; then
+        ui_success "Removed COMIS_EGRESS iptables chain"
+    else
+        ui_warn "Could not delete COMIS_EGRESS chain — remove manually: iptables -X COMIS_EGRESS"
+    fi
+    return 0
+}
+
 uninstall_remove_user() {
     [[ "$REMOVE_USER_FLAG" == "1" ]] || return 0
     if [[ "$OS" != "linux" ]]; then
@@ -4920,6 +4980,7 @@ uninstall_main() {
     if [[ "$PURGE" == "1" || "$REMOVE_USER_FLAG" == "1" ]]; then
         ui_stage "Purging data"
         uninstall_purge_data
+        uninstall_egress_chain
     fi
 
     if [[ "$REMOVE_USER_FLAG" == "1" ]]; then

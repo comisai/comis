@@ -1734,7 +1734,7 @@ Remove Comis from the host. Re-invokes `install.sh --uninstall` (downloaded from
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--purge` | `boolean` | `false` | Also delete `~/.comis`, `/etc/comis`, and (if `--with-cloakbrowser` was used to install) `~/.cloakbrowser` + `~/.cloakbrowser-wrapper` |
+| `--purge` | `boolean` | `false` | Also delete `~/.comis`, `/etc/comis`, the `COMIS_EGRESS` egress-logging iptables chain, and (if `--with-cloakbrowser` was used to install) `~/.cloakbrowser` + `~/.cloakbrowser-wrapper` |
 | `--remove-user` | `boolean` | `false` | Linux+root only: also delete the `comis` system user (implies `--purge`) |
 | `--yes` | `boolean` | `false` | Skip confirmation prompt |
 | `--dry-run` | `boolean` | `false` | Print actions without performing them |
@@ -1748,7 +1748,7 @@ comis uninstall
 comis uninstall --purge --yes
 ```
 
-The uninstaller cleans up everything the installer wrote: the main `comis.service` systemd unit, the optional `comis-xvfb.service` companion (if `--with-xvfb` was used), the CLI binary, and — when `--purge` is set — the data dir plus the CloakBrowser binary cache (which can be 200–500 MB depending on cached versions). On `--remove-user` the `comis` system user is dropped too. Sudoers rules, AppArmor profile, and the egress-logging iptables chain are left in place; remove those manually if you're decommissioning the host.
+The uninstaller cleans up everything the installer wrote: the main `comis.service` systemd unit, the optional `comis-xvfb.service` companion (if `--with-xvfb` was used), the CLI binary, and — when `--purge` is set — the data dir, the CloakBrowser binary cache (which can be 200–500 MB depending on cached versions), and the `COMIS_EGRESS` egress-logging iptables chain (the uid-scoped `OUTPUT` jump is unhooked before the chain is flushed and deleted). On `--remove-user` the `comis` system user is dropped too. Sudoers rules and the AppArmor profile are left in place; remove those manually if you're decommissioning the host.
 
 ---
 

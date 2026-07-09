@@ -3,6 +3,10 @@
 
 export { safePath, PathTraversalError } from "./safe-path.js";
 
+// Loopback bind detection — the shared TLS-off-is-benign-on-loopback judgment
+// (gateway boot log, fleet config-posture, gateway-exposure security check).
+export { isLoopbackHost } from "./loopback-host.js";
+
 // Bind-mount validator — pure denylist backstop reusing the
 // safe-path symlink-resolve-through-ancestors primitive.
 export { validateBindMount } from "./bind-mount-validator.js";
