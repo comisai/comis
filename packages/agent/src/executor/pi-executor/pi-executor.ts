@@ -73,6 +73,7 @@ import type { ComisSessionManager } from "../../session/comis-session-manager.js
 import type { RunHandle } from "../active-run-registry.js";
 import { repairOrphanedMessages, scrubPoisonedThinkingBlocks } from "../../session/orphaned-message-repair.js";
 import { scrubRedactedToolCalls } from "../../session/scrub-redacted-tool-calls.js";
+import { scrubForgedContextMarkers } from "../../session/forged-context-markers.js";
 import { createPiEventBridge } from "../../bridge/pi-event-bridge.js";
 import { assertThinkingBlocksUnchanged, restoreCanonicalThinkingBlocks } from "../../bridge/thinking-block-hash-invariant.js";
 import type { AdaptiveCacheRetention } from "../adaptive-cache-retention.js";
@@ -597,6 +598,27 @@ async function runSessionLocked(
     deps.logger.info(
       { reason: repairResult.reason },
       "Repaired orphaned message",
+    );
+  }
+
+  // Neutralize any forged context-boundary markers the model emitted in its OWN
+  // prior output ([System context]/[End system context] wrappers, or a line-start
+  // [<channel>] <id> (<time>): inbound header) before buildSessionContext replays
+  // them — so a self-forged "user turn" can never re-enter the SDK replay path as
+  // real history (the comis-daniel 2026-07-09 incident; the LCD replay path is
+  // guarded symmetrically at executor/lcd-ingest.ts). In-memory only + idempotent
+  // (mirrors scrubRedactedToolCalls): the on-disk JSONL keeps the raw record for
+  // forensics; the replayed prefix stays byte-stable.
+  const forgedScrub = scrubForgedContextMarkers(sm);
+  if (forgedScrub.scrubbed) {
+    deps.logger.warn(
+      {
+        messagesRewritten: forgedScrub.messagesRewritten,
+        markersStripped: forgedScrub.markersStripped,
+        errorKind: "validation" as ErrorKind,
+        hint: "assistant replay context contained self-emitted context-boundary markers — neutralized before buildSessionContext to prevent a fabricated turn re-entering history",
+      },
+      "Scrubbed forged context markers from replay context",
     );
   }
 

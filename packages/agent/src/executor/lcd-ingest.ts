@@ -37,6 +37,7 @@
 
 import { messageToParts } from "@comis/core"; // CORE codec (allowed; the agent↛memory cut keeps the concrete store injected)
 import { stripInlineRecalledMemory } from "../rag/hybrid-memory-injector.js";
+import { neutralizeForgedMarkersInMessage } from "../session/forged-context-markers.js";
 import type { ContextStorePort, ContextStoreScope, ComisLogger, ErrorKind } from "@comis/core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
@@ -100,12 +101,23 @@ export function ingestTurn(
 ): void {
   let seq = startSeq;
   let appended = 0;
+  let forgedMarkersStripped = 0;
   for (const msg of messages) {
     // The agent message is structurally the pi-ai canonical Message at this
     // boundary; the codec + estimator are typed against pi-ai `Message`. Carve the
     // transient inline-recall block out of user turns BEFORE token-count + parts so
     // BOTH reflect the clean conversation (not the per-turn recalled prompt).
-    const m = stripRecallFromUserMessage(msg as unknown as Message);
+    const userStripped = stripRecallFromUserMessage(msg as unknown as Message);
+    // Symmetric assistant-side defense: neutralize any forged context-boundary
+    // markers (`[System context]` / `[End system context]` / a line-start
+    // `[<channel>] <id> (<time>):` header) the model emitted in its OWN output, so
+    // model-authored text can never re-enter replay history masquerading as a
+    // system/user turn boundary (the comis-daniel 2026-07-09 self-forgery incident).
+    // Role-scoped + idempotent (see forged-context-markers.ts) → the clean path is
+    // referentially unchanged and the replayed prefix stays byte-stable.
+    const forged = neutralizeForgedMarkersInMessage(userStripped);
+    const m = forged.message;
+    forgedMarkersStripped += forged.strippedCount;
     const currentSeq = seq;
     seq += 1;
     try {
@@ -133,6 +145,25 @@ export function ingestTurn(
         "LCD ingest append failed for one message (non-fatal)",
       );
     }
+  }
+  if (forgedMarkersStripped > 0) {
+    // Post-incident visibility (§2.7): the model emitted context-boundary markers
+    // in its OWN output — a self-forgery attempt that was neutralized before it
+    // could re-enter replay history. Counts only, no bodies. WARN (not DEBUG) so
+    // it is visible at the default log level and can be lifted onto the
+    // FleetHealthReport as a health_signal.
+    logger.warn(
+      {
+        step: "lcd-ingest",
+        conversationId: scope.conversationId,
+        agentId: scope.agentId,
+        sessionKey: scope.sessionKey,
+        forgedMarkersStripped,
+        errorKind: "validation" as ErrorKind,
+        hint: "assistant output contained inbound-envelope/system-context markers and was neutralized before persistence — the model attempted to fabricate a turn boundary in its own reply (self-forged context)",
+      },
+      "Neutralized forged context markers in assistant turn",
+    );
   }
   if (appended > 0) {
     // Post-incident visibility (§2.7): an operator can reconstruct what was
