@@ -219,7 +219,7 @@ The credential broker emits 7 typed events on the daemon event bus. All event pa
 
 The `broker:egress_blocked` event deliberately carries `targetHostHash` (SHA-256 hex) rather than the plaintext hostname — even blocked egress targets are not logged in plaintext (redaction-by-construction).
 
-The `secret:accessed` event is also emitted by the broker for each per-request SecretManager resolution, separately from the `broker:*` taxonomy. Fields: `secretName`, `agentId`, `outcome` (success/not_found), `timestamp`. This allows you to audit which secrets an agent touched regardless of whether the broker injection succeeded.
+The `secret:accessed` event is also emitted by the broker for each per-request SecretManager resolution, separately from the `broker:*` taxonomy. Fields: `secretName`, `agentId`, `outcome` (success/denied/not_found), `timestamp`. This lets you audit which secrets an agent touched. The durable audit trail records `success` reads (a secret was actually accessed) and `denied` reads (a blocked access — the security signal); a routine `not_found` read (an optional-key probe that resolved to nothing — no access occurred, and re-emitted every turn) is **not** persisted, so the trail stays legible instead of being dominated by per-turn probe noise.
 
 <Info>
 Source: `packages/infra/src/credential-broker/broker-events.ts`
