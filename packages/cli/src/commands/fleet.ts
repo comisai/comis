@@ -158,7 +158,11 @@ export function registerFleetCommand(program: Command): void {
           );
         } else {
           info(
-            `Cost:       $${report.cost.costUsd} · ${report.cost.totalTokens} tok`,
+            // Name the token basis: fleet's total is the session-index
+            // input+output sum (NO cache), so it is far smaller than explain's
+            // cache-inclusive per-call ledger — labeling both keeps the two
+            // lenses from reading as the same "tok" (comis-daniel 2026-07-09).
+            `Cost:       $${report.cost.costUsd} · ${report.cost.totalTokens} tok (input+output, excl cache)`,
           );
         }
         for (const f of report.findings) {

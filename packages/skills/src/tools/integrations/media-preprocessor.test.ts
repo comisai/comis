@@ -244,6 +244,46 @@ describe("preprocessMessage", () => {
     expect(logger.warn).toHaveBeenCalled();
   });
 
+  it("surfaces an EMPTY transcript (ok with blank text) as a WARN + honest hint, not a silent success (comis-daniel 2026-07-09)", async () => {
+    // STT returned ok but with no text — an 18KB voice note that transcribed to
+    // nothing. Pre-fix this logged INFO "Audio attachment transcribed" (success)
+    // and returned an empty [Voice message transcription]: block, invisible to obs.
+    const transcriber: TranscriptionPort = {
+      transcribe: vi.fn().mockResolvedValue(ok({ text: "   ", language: "he" })),
+    };
+    const resolver = makeResolver();
+    const logger = makeLogger();
+    const msg = makeMessage({ text: "", attachments: [makeAudioAttachment()] });
+    const deps: MediaProcessorDeps = { transcriber, resolveAttachment: resolver, logger };
+
+    const result = await preprocessMessage(deps, msg);
+
+    // No successful transcription recorded (empty text must not become a transcription row).
+    expect(result.transcriptions).toHaveLength(0);
+    // The agent gets an honest signal, NOT an empty transcription block.
+    expect(result.message.text).not.toContain("[Voice message transcription]:   ");
+    expect(result.message.text.toLowerCase()).toContain("empty");
+    // Observable: a WARN carrying transcriptChars:0 + audioBytes fired (not an INFO success).
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ transcriptChars: 0, errorKind: "dependency" }),
+      expect.stringContaining("empty"),
+    );
+  });
+
+  it("logs transcriptChars on a successful transcription (obs completeness)", async () => {
+    const transcriber = makeTranscriber(); // "hello from voice" → 16 chars
+    const logger = makeLogger();
+    const msg = makeMessage({ text: "hi", attachments: [makeAudioAttachment()] });
+    const deps: MediaProcessorDeps = { transcriber, resolveAttachment: makeResolver(), logger };
+
+    await preprocessMessage(deps, msg);
+
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ transcriptChars: 16 }),
+      "Audio attachment transcribed",
+    );
+  });
+
   it("logs warning and continues when imageAnalyzer returns error", async () => {
     const imageAnalyzer: ImageAnalysisPort = {
       analyze: vi.fn().mockResolvedValue(err(new Error("Image too large"))),

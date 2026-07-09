@@ -105,13 +105,12 @@ export interface AuditRowSink {
  * (a string label, not a boolean) so the row carries an operator-readable
  * severity without importing the exhaustiveness guard into the wiring layer.
  *
- * `secret_access` is outcome-aware: a routine READ resolution — a successful
- * get or an expected-absent probe (boot resolves optional provider keys, the
- * canary reads its env seed per inbound message) — is the audit TRAIL, not an
- * alert; at "warning" a healthy boot wrote ~10 warning rows and inflated every
- * severity-filtered sweep. Secret MUTATIONS (classification mutate/destructive)
- * and non-routine outcomes (denied/error/unknown) stay "warning" —
- * fail-toward-visibility.
+ * `secret_access` is outcome-aware: a successful READ (a secret WAS accessed) is
+ * the audit TRAIL, not an alert, so it rides "info". (A `not_found` READ accesses
+ * nothing — a routine optional-key probe — and is dropped upstream at the
+ * `secret:accessed` subscriber, never reaching this mapping.) Secret MUTATIONS
+ * (classification mutate/destructive) and non-routine outcomes (denied/error/
+ * unknown) stay "warning" — fail-toward-visibility.
  */
 export function kindToSeverity(
   kind: string,
@@ -354,6 +353,14 @@ export function wireAuditSink(deps: WireAuditSinkDeps): void {
 
   // secret:accessed — already content-free (NAME + outcome, no value).
   eventBus.on("secret:accessed", (payload) => {
+    // A `not_found` READ accessed NOTHING — a routine per-turn probe for an
+    // optional key (boot resolves optional provider keys; the canary reads its
+    // env seed every inbound message). It is not an access-trail event and
+    // dominated the trail (60/69 rows on comis-daniel 2026-07-09), burying the
+    // env.set/mcp.connect signal. Skip it: the access trail keeps `success`
+    // (a secret WAS read) and the security signal keeps `denied` (unauthorized
+    // probing is a denial, not a not_found). Mutations audit via `audit:event`.
+    if (payload.outcome === "not_found") return;
     const ctx = tryGetContext();
     persistAuditRow(buildAuditRow({
       kind: "secret_access",

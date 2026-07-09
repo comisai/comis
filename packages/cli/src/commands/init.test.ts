@@ -99,11 +99,11 @@ describe("registerInitCommand", () => {
     expect(optionLongs).toContain("--reset-scope");
   });
 
-  it("has exactly 38 options", () => {
+  it("has exactly 41 options", () => {
     const program = new Command();
     registerInitCommand(program);
     const initCmd = program.commands.find((c) => c.name() === "init")!;
-    expect(initCmd.options).toHaveLength(38);
+    expect(initCmd.options).toHaveLength(41);
   });
 
   it("parses --channels as comma-separated list", () => {

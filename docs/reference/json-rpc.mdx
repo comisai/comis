@@ -2556,7 +2556,7 @@ Get the current connection status of a specific MCP server, including which tool
 |----------|-------|
 | **Scope** | `admin` |
 | **Parameters** | `{ serverId: string }` |
-| **Returns** | `{ serverId, status, tools: string[], error?: string }` |
+| **Returns** | `{ name, status, toolCount, tools: Array<{ name, qualifiedName, callableName, description? }>, error?: string, … }`. `callableName` (`mcp__<server>--<tool>`) is the name the agent must **invoke** the tool by; `qualifiedName` (`mcp:<server>/<tool>`) is advisory only. |
 
 ### `mcp.connect`
 

@@ -365,7 +365,7 @@ export function createMcpManageTool(
           // validateConnectParams threw if any field was missing — past this
           // point both serverName and inferredTransport are non-empty strings.
           try {
-            return await rpcCall("mcp.connect", {
+            const connectResult = await rpcCall("mcp.connect", {
               server_name: serverName,
               transport: inferredTransport,
               command: p.command,
@@ -376,6 +376,28 @@ export function createMcpManageTool(
               ...(coercedAuth !== undefined && { auth: coercedAuth }),
               _trustLevel: ctx.trustLevel,
             });
+            // A freshly-connected server's tools are assembled into the ACTIVE
+            // tool set on the NEXT message — the set is frozen per turn — so they
+            // are NOT callable (nor discoverable via discover_tools) in this same
+            // turn. Surface that on a successful connect so the agent proceeds
+            // instead of flailing with discover_tools + bare calls that can't yet
+            // resolve (comis-daniel 2026-07-09 in-turn connect dead-window).
+            if (
+              connectResult && typeof connectResult === "object" && !Array.isArray(connectResult) &&
+              (connectResult as Record<string, unknown>).status === "connected"
+            ) {
+              const r = connectResult as Record<string, unknown>;
+              const n = typeof r.toolCount === "number" ? r.toolCount : undefined;
+              return {
+                ...r,
+                availability:
+                  `Connected${n !== undefined ? ` — ${n} tool${n === 1 ? "" : "s"}` : ""}. ` +
+                  `These tools become callable on your NEXT message: the active tool set is assembled ` +
+                  `per turn, so they are NOT in this turn's set yet. Do NOT run discover_tools for them ` +
+                  `or call them in this same turn — just continue; they will be available on your next message.`,
+              };
+            }
+            return connectResult;
           } catch (err: unknown) {
             // Catch the structured needs_oauth_login error from mcp-handlers
             // and surface an actionable hint instead of re-throwing a

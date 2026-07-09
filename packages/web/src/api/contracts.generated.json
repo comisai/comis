@@ -4752,13 +4752,17 @@
               "qualifiedName": {
                 "type": "string"
               },
+              "callableName": {
+                "type": "string"
+              },
               "description": {
                 "type": "string"
               }
             },
             "required": [
               "name",
-              "qualifiedName"
+              "qualifiedName",
+              "callableName"
             ],
             "additionalProperties": false
           }

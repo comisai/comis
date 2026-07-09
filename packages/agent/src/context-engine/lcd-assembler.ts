@@ -57,6 +57,7 @@
  */
 
 import { partsToMessage, systemNowMs } from "@comis/core";
+import { neutralizeForgedMarkersInMessage } from "../session/forged-context-markers.js";
 import type {
   ContextStorePort,
   ContextStoreScope,
@@ -259,7 +260,16 @@ export function createLcdContextEngine(
         config.freshTailTurns,
       );
       const tailStart = freshTailBoundaryIndex(liveMessages, clampedFreshTailTurns);
-      const rawFreshTail = liveMessages.slice(tailStart);
+      // The fresh tail is sliced VERBATIM from the live array (it bypasses the
+      // store, so the ingest-time neutralization in executor/lcd-ingest.ts does not
+      // reach it). Neutralize any forged context-boundary markers an assistant turn
+      // emitted here too, so a self-forged `[System context]`/`[telegram] …:` turn
+      // in the recent window cannot be replayed as a real boundary (comis-daniel
+      // 2026-07-09). Role-scoped + idempotent → clean assistant turns keep their
+      // exact reference and the fresh-tail prefix stays byte-stable for caching.
+      const rawFreshTail = liveMessages
+        .slice(tailStart)
+        .map((m) => neutralizeForgedMarkersInMessage(m as unknown as Message).message as unknown as AgentMessage);
       deps.logger.debug(
         {
           step: "lcd-fresh-tail",

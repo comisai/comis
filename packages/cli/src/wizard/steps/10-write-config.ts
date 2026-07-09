@@ -235,6 +235,19 @@ function buildConfigObject(state: WizardState): Record<string, unknown> {
     config.integrations = { media };
   }
 
+  // Embedding section — the semantic-recall embedder chosen in step 08g. Only a
+  // multilingual choice is written (English keeps the daemon's nomic default, so
+  // there is nothing to emit). Writes the AUTHORITATIVE `embedding.*` surface,
+  // NOT the legacy `memory.recall.embeddingModel` field. `multilingual: true` is
+  // the advisory flag that reconciles the `comis fleet` model-health line.
+  if (state.recallProvider?.multilingual === true) {
+    const rp = state.recallProvider;
+    config.embedding =
+      rp.provider === "openai"
+        ? { provider: "openai", multilingual: true, openai: { model: rp.model, dimensions: rp.dimensions } }
+        : { provider: "local", multilingual: true, local: { modelUri: rp.modelUri } };
+  }
+
   return config;
 }
 
@@ -318,6 +331,13 @@ function collectManagedSecrets(state: WizardState): Map<string, string> {
   if (state.ttsProvider?.apiKey) {
     const envKey = TTS_PROVIDER_ENV_KEYS[state.ttsProvider.provider];
     if (envKey) managed.set(envKey, state.ttsProvider.apiKey);
+  }
+
+  // Embedding credential (step 08g). Only the OpenAI embedder needs a key, and
+  // only when the main provider is NOT openai (else it is already in the map
+  // from the provider section). Set() is idempotent.
+  if (state.recallProvider?.apiKey) {
+    managed.set("OPENAI_API_KEY", state.recallProvider.apiKey);
   }
 
   // Gateway credentials -- token is the only supported gateway auth method.

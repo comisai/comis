@@ -2582,6 +2582,29 @@ describe("wireAuditSink — a logger missing the custom .audit() level", () => {
     expect(jsonl).toContain("file.delete");
   });
 
+  it("does NOT persist a routine not_found secret READ (non-event), but keeps success + denied (comis-daniel 2026-07-09 audit-noise)", () => {
+    const logger = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), trace: vi.fn(), fatal: vi.fn(),
+      audit: vi.fn(), child: vi.fn(function (this: unknown) { return logger; }),
+    } as unknown as ComisLogger;
+    const { bus, emit } = makeBus();
+    wireAuditSink({ eventBus: bus, auditBuffer: makeRealAuditBuffer(), logger, dataDir, logRotation: { maxSizeBytes: 10_000_000, maxFiles: 5 } });
+
+    // A not_found READ accessed nothing — a per-turn optional-key probe, 60/69 of
+    // the comis-daniel rows. It must not enter the trail (unauthorized probing is
+    // covered by `denied`, which stays).
+    emit("secret:accessed", { secretName: "OAUTH_ANTHROPIC", agentId: "default", outcome: "not_found", timestamp: 1000 });
+    expect(store.queryAuditEvents({ kind: "secret_access" })).toHaveLength(0);
+
+    // A success READ (a secret WAS accessed) and a denied (security signal) are the
+    // meaningful access trail — kept.
+    emit("secret:accessed", { secretName: "ANTHROPIC_API_KEY", agentId: "default", outcome: "success", timestamp: 1001 });
+    emit("secret:accessed", { secretName: "SECRETS_MASTER_KEY", agentId: "default", outcome: "denied", timestamp: 1002 });
+    const rows = store.queryAuditEvents({ kind: "secret_access" });
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.outcome).sort()).toEqual(["denied", "success"]);
+  });
+
   it("STILL invokes .audit() on a full logger that implements the custom level (healthy path unchanged)", () => {
     const auditLines: Array<Record<string, unknown>> = [];
     const fullLogger = {
