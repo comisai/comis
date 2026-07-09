@@ -133,7 +133,11 @@ export function registerExplainCommand(program: Command): void {
             `Outcome:    ${report.outcome.severity} (endReason=${endReasonLabel}, degraded=${report.outcome.degraded})`,
           );
           info(
-            `Cost:       $${report.cost.costUsd} · ${report.cost.totalTokens} tok`,
+            // Name the token basis: explain sums the full per-LLM-call ledger
+            // (input+output+cacheRead+cacheCreation), so it is much larger than
+            // fleet's cache-excluding session-index total — labeling both prevents
+            // the two lenses reading as the same "tok" (comis-daniel 2026-07-09).
+            `Cost:       $${report.cost.costUsd} · ${report.cost.totalTokens} tok (incl cache reads)`,
           );
           info(
             `Timing:     ${report.timing.durationMs} ms · ${report.timing.turnCount} turns`,
