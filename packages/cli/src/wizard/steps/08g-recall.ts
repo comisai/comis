@@ -14,11 +14,11 @@
  *      is multilingual regardless.
  *   2. Yes → pick the multilingual embedder:
  *      - `local`  — on-device `bge-m3` (1024-d): private, $0, ~635MB download,
- *                   slower on CPU. Always offered (the safe default).
+ *                   slower on CPU. The recommended default.
  *      - `openai` — `text-embedding-3-small` (1536-d): hosted, no download, but
- *                   sends memory text to OpenAI and costs per embed. Offered
- *                   ONLY when the main provider is OpenAI, so its key is already
- *                   collected (no new secret path here).
+ *                   sends memory text to OpenAI and costs per embed. Reuses the
+ *                   main OPENAI_API_KEY when the main provider is OpenAI; else
+ *                   prompts for a standalone key (mirrors the 08e Deepgram path).
  *
  * Writes the AUTHORITATIVE `embedding.*` surface (provider + local.modelUri /
  * openai.model+dimensions + the advisory `multilingual` flag) in step 10 — NOT
@@ -34,8 +34,8 @@ import { updateState } from "../state.js";
 import { sectionSeparator } from "../theme.js";
 
 /** True when the main LLM provider is OpenAI with a collected key — so an
- *  OpenAI embedder reuses it (mirrors the 08e transcription key-reuse rule). */
-function openAiKeyAvailable(state: WizardState): boolean {
+ *  OpenAI embedder reuses it silently (mirrors the 08e transcription key-reuse). */
+function mainProvidesOpenAiKey(state: WizardState): boolean {
   return state.provider?.id === "openai" && state.provider.apiKey !== undefined;
 }
 
@@ -61,43 +61,45 @@ export const recallStep: WizardStep = {
       return updateState(state, { recallProvider: { multilingual: false, provider: "local" } });
     }
 
-    // Multilingual: on-device bge-m3 is always available; OpenAI only when the
-    // main provider already supplies the key.
-    const options = [
-      {
-        value: "local",
-        label: "On-device — bge-m3 (recommended)",
-        hint: "private, $0, multilingual · ~635MB download, slower on CPU",
-      },
-    ];
-    if (openAiKeyAvailable(state)) {
-      options.push({
-        value: "openai",
-        label: "OpenAI — text-embedding-3-small",
-        hint: "multilingual, no download · sends memory text to OpenAI, per-embed cost",
-      });
-    }
-
-    const provider =
-      options.length === 1
-        ? "local"
-        : await prompter.select<string>({
-            message: "Embedding provider for multilingual semantic recall:",
-            options,
-            initialValue: state.recallProvider?.provider ?? "local",
-          });
+    // Multilingual: on-device bge-m3 (recommended) or OpenAI-hosted.
+    const provider = await prompter.select<string>({
+      message: "Embedding provider for multilingual semantic recall:",
+      options: [
+        {
+          value: "local",
+          label: "On-device — bge-m3 (recommended)",
+          hint: "private, $0, multilingual · ~635MB download, slower on CPU",
+        },
+        {
+          value: "openai",
+          label: "OpenAI — text-embedding-3-small",
+          hint: "multilingual, no download · sends memory text to OpenAI, per-embed cost",
+        },
+      ],
+      initialValue: state.recallProvider?.provider ?? "local",
+    });
 
     if (provider === "openai") {
-      prompter.log.info(
-        "Reusing your OpenAI API key for embeddings (text-embedding-3-small, 1536-d, multilingual).",
-      );
-      return updateState(state, {
-        recallProvider: {
-          multilingual: true,
-          provider: "openai",
-          model: "text-embedding-3-small",
-          dimensions: 1536,
+      // Reuse the main OPENAI_API_KEY when the main provider is OpenAI; else
+      // collect a standalone key (mirrors 08e Deepgram / non-openai-main OpenAI).
+      if (mainProvidesOpenAiKey(state)) {
+        prompter.log.info(
+          "Reusing your OpenAI API key for embeddings (text-embedding-3-small, 1536-d, multilingual).",
+        );
+        return updateState(state, {
+          recallProvider: { multilingual: true, provider: "openai", model: "text-embedding-3-small", dimensions: 1536 },
+        });
+      }
+      const apiKey = await prompter.password({
+        message: "OpenAI API key for embeddings (OPENAI_API_KEY)",
+        validate: (v: string) => {
+          if (typeof v !== "string" || v.length === 0) return "API key is required";
+          if (v.length < 10) return "API key seems too short (minimum 10 characters)";
+          return undefined;
         },
+      });
+      return updateState(state, {
+        recallProvider: { multilingual: true, provider: "openai", model: "text-embedding-3-small", dimensions: 1536, apiKey },
       });
     }
 

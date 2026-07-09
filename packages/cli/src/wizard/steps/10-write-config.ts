@@ -333,6 +333,13 @@ function collectManagedSecrets(state: WizardState): Map<string, string> {
     if (envKey) managed.set(envKey, state.ttsProvider.apiKey);
   }
 
+  // Embedding credential (step 08g). Only the OpenAI embedder needs a key, and
+  // only when the main provider is NOT openai (else it is already in the map
+  // from the provider section). Set() is idempotent.
+  if (state.recallProvider?.apiKey) {
+    managed.set("OPENAI_API_KEY", state.recallProvider.apiKey);
+  }
+
   // Gateway credentials -- token is the only supported gateway auth method.
   if (state.gateway?.token) {
     managed.set("COMIS_GATEWAY_TOKEN", state.gateway.token);

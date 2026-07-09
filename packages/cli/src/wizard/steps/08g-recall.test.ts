@@ -10,17 +10,18 @@ import { EMBED_BGE_M3_MODEL_URI } from "../index.js";
 import { recallStep } from "./08g-recall.js";
 
 function createMockPrompter(
-  responses: { confirm?: boolean[]; select?: string[] } = {},
+  responses: { confirm?: boolean[]; select?: string[]; password?: string[] } = {},
 ): WizardPrompter {
   const confirmQueue = [...(responses.confirm ?? [])];
   const selectQueue = [...(responses.select ?? [])];
+  const passwordQueue = [...(responses.password ?? [])];
   const mockSpinner: Spinner = { start: vi.fn(), update: vi.fn(), stop: vi.fn() };
   return {
     intro: vi.fn(), outro: vi.fn(), note: vi.fn(),
     text: vi.fn(async () => ""),
     select: vi.fn(async (opts) => selectQueue.shift() ?? opts.initialValue ?? ""),
     multiselect: vi.fn(async () => []),
-    password: vi.fn(async () => ""),
+    password: vi.fn(async () => passwordQueue.shift() ?? ""),
     confirm: vi.fn(async (opts) => confirmQueue.shift() ?? opts.initialValue ?? false),
     spinner: vi.fn(() => mockSpinner),
     group: vi.fn(async (steps) => {
@@ -56,13 +57,15 @@ describe("recallStep", () => {
     });
   });
 
-  it("multilingual + non-openai main: OpenAI is NOT offered, so local is auto-picked (no select prompt)", async () => {
-    const prompter = createMockPrompter({ confirm: [true] });
+  it("multilingual + non-openai main + openai selection: prompts for a standalone OPENAI_API_KEY and stores it", async () => {
+    const prompter = createMockPrompter({ confirm: [true], select: ["openai"], password: ["sk-standalone-embed-123456"] });
     const result = await recallStep.execute(anthropicMain, prompter);
-    // Only one option (local) → no interactive select needed.
-    expect(prompter.select).not.toHaveBeenCalled();
-    expect(result.recallProvider?.provider).toBe("local");
-    expect(result.recallProvider?.modelUri).toBe(EMBED_BGE_M3_MODEL_URI);
+    expect(prompter.password).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining("OPENAI_API_KEY") }),
+    );
+    expect(result.recallProvider).toEqual({
+      multilingual: true, provider: "openai", model: "text-embedding-3-small", dimensions: 1536, apiKey: "sk-standalone-embed-123456",
+    });
   });
 
   it("multilingual + openai main: offers BOTH local and openai; choosing openai reuses the key (no prompt) and writes text-embedding-3-small", async () => {

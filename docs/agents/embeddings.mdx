@@ -98,12 +98,42 @@ does not have enough resources for the local model.
   setup is needed -- just start Comis and it handles everything.
 </Tip>
 
+### Multilingual deployments
+
+The default on-device model (`nomic-embed-text-v1.5`) is **English-centric**. On a
+deployment that mostly handles non-Latin text (Hebrew, Arabic, CJK, Cyrillic), its
+*semantic* recall degrades: lexical full-text search and the multilingual reranker
+(`bge-reranker-v2-m3`) still carry recall, but meaning-based matches across
+paraphrase and synonyms weaken. For those deployments, switch to a multilingual
+embedder:
+
+- **On-device `bge-m3`** -- private, $0, ~635MB download, 1024-d. Set
+  `embedding.local.modelUri` to a bge-m3 GGUF (e.g. `hf:gpustack/bge-m3-GGUF:bge-m3-Q8_0.gguf`)
+  and `embedding.multilingual: true`.
+- **OpenAI `text-embedding-3-small`** -- hosted, multilingual, 1536-d, but sends
+  memory text to OpenAI and costs per embed. Set `embedding.provider: openai` and
+  `embedding.multilingual: true`.
+
+The `comis init` wizard asks about this at install ("mostly non-English?") and
+writes the right `embedding.*` block for you. Non-interactive installs use
+`--embedding-multilingual` with `--embedding-provider local|openai` (and
+`--embedding-api-key` for OpenAI when the main provider is not OpenAI). Changing
+the embedder later re-embeds existing memories automatically (`embedding.autoReindex`).
+
+<Note>
+  `embedding.multilingual` is an **advisory** flag — it declares the embedder
+  multilingual for the `comis fleet` model-health line and gates no behavior. The
+  embedder itself is selected by `embedding.provider` / `embedding.local.modelUri`.
+</Note>
+
 ## Configuration
 
 | Option | Type | Default | What it does |
 |--------|------|---------|--------------|
 | `embedding.enabled` | boolean | `true` | Enable embedding generation for meaning-based search |
 | `embedding.provider` | string | `"auto"` | Provider: `auto`, `local`, or `openai` |
+| `embedding.multilingual` | boolean | _(inferred from model id)_ | Advisory only: declares the embedder multilingual for the `comis fleet` health line — gates no behavior |
+| `embedding.local.modelUri` | string | `nomic-embed-text-v1.5` GGUF | Local GGUF model (HuggingFace `hf:` URI or path); set a `bge-m3` GGUF for multilingual recall |
 | `embedding.local.gpu` | string | `"auto"` | GPU acceleration: `auto`, `metal`, `cuda`, `vulkan`, or `false` |
 | `embedding.local.contextSize` | number | `2048` | Maximum text length the local model can process (in tokens) |
 | `embedding.openai.model` | string | `"text-embedding-3-small"` | OpenAI embedding model to use |

@@ -187,6 +187,10 @@ export type RecallProviderConfig = {
   /** openai path */
   model?: string;
   dimensions?: number;
+  /** openai path: a standalone OPENAI_API_KEY collected when the main provider
+   *  is NOT openai (reused silently when it is). Flows to the managed-secrets
+   *  path in step 10, like the transcription/tts provider keys. */
+  apiKey?: string;
 };
 
 /** Gateway settings collected during the wizard. Token is the only supported

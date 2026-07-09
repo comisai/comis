@@ -133,6 +133,9 @@ function buildNonInteractiveOptionsFromCommander(
     sttApiKey: options.sttApiKey as string | undefined,
     ttsProvider: options.ttsProvider as string | undefined,
     ttsApiKey: options.ttsApiKey as string | undefined,
+    embeddingMultilingual: options.embeddingMultilingual as boolean | undefined,
+    embeddingProvider: options.embeddingProvider as string | undefined,
+    embeddingApiKey: options.embeddingApiKey as string | undefined,
     dataDir: options.dataDir as string | undefined,
     configDir: options.configDir as string | undefined,
     storage: options.storage as "encrypted" | "file" | undefined,
@@ -212,6 +215,9 @@ export function registerInitCommand(program: Command): void {
     .option("--stt-api-key <key>", "Transcription provider API key (reuses --api-key for a matching main provider; auto/local need none)")
     .option("--tts-provider <id>", "Text-to-speech provider: edge|openai|elevenlabs|local")
     .option("--tts-api-key <key>", "TTS provider API key (reuses --api-key for a matching main provider; edge needs none)")
+    .option("--embedding-multilingual", "Use a multilingual semantic-recall embedder (default: English-centric on-device nomic)")
+    .option("--embedding-provider <id>", "Multilingual embedder: local (bge-m3, on-device) | openai (text-embedding-3-small)")
+    .option("--embedding-api-key <key>", "OpenAI embedding key (reuses --api-key for an openai main; required for openai embeddings otherwise)")
     // Paths
     .option("--data-dir <path>", "Workspace directory")
     .option("--config-dir <dir>", "Override config directory")

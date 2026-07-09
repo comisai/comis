@@ -533,6 +533,20 @@ describe("writeConfigStep", () => {
     expect(envContent).toContain("FAL_KEY=fal-img-secret-7890");
   });
 
+  it("writes the standalone OPENAI_API_KEY to .env when recallProvider is openai with its own key (non-openai main)", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      provider: { id: "anthropic", apiKey: "sk-ant-main-123456" },
+      recallProvider: { multilingual: true, provider: "openai", model: "text-embedding-3-small", dimensions: 1536, apiKey: "sk-standalone-embed-7890" },
+    };
+    await writeConfigStep.execute(state, createMockPrompter());
+
+    const envWriteCall = vi.mocked(writeFileSync).mock.calls.find(
+      ([path]) => typeof path === "string" && path.includes(".env"),
+    );
+    expect(envWriteCall![1] as string).toContain("OPENAI_API_KEY=sk-standalone-embed-7890");
+  });
+
   it("emits transcription + tts providers and the deepgram/elevenlabs keys", async () => {
     const state: WizardState = {
       ...populatedState(),
