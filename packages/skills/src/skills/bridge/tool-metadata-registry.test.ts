@@ -941,12 +941,30 @@ describe("tool-metadata-registry -- tool-entry schema metadata", () => {
 
   it("mcp_manage requiredByAction matches the connect / status / disconnect / reconnect spec", () => {
     const meta = getToolMetadata("mcp_manage");
+    // `transport` is NOT unconditionally required at the pre-flight gate — it is
+    // inferable (stdio from `command`, http from `url`) and the "command OR url"
+    // requirement is transport-conditional, which a flat required-list cannot
+    // express. Both are validated downstream by the handler's
+    // validateConnectParams + transport inference. The gate enforces only the
+    // unconditional field (server_name). See the comis-daniel 2026-07-09 incident:
+    // a valid `connect(server_name, command:"npx", args:[...])` HARD-FAILED the
+    // gate with "missing … transport" before the handler could infer stdio.
     expect(meta?.requiredByAction).toEqual({
       status: ["server_name"],
-      connect: ["server_name", "transport"],
+      connect: ["server_name"],
       disconnect: ["server_name"],
       reconnect: ["server_name"],
     });
+  });
+
+  it("pre-flight gate accepts a stdio connect with command but no explicit transport (comis-daniel 2026-07-09)", () => {
+    const meta = getToolMetadata("mcp_manage");
+    // Daniel's exact first attempt — valid, transport inferable as stdio.
+    const result = validateToolEntry(
+      { action: "connect", server_name: "ituran", command: "npx", args: ["-y", "ituran-mcp"] },
+      meta,
+    );
+    expect(result).toBeUndefined(); // gate passes → handler infers transport=stdio
   });
 
   // Bridge-layer gate must accept the `auth` field that
