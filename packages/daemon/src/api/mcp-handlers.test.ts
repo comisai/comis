@@ -187,6 +187,10 @@ describe("MCP RPC Handlers", () => {
       expect(result.status).toBe("connected");
       expect(result.tools).toHaveLength(1);
       expect(result.tools[0].name).toBe("search");
+      // The projection must advertise the CALLABLE name (mcp__<server>--<tool>) —
+      // the name the agent must invoke by — alongside the advisory qualifiedName
+      // (mcp:<server>/<tool>). Closes the comis-daniel 2026-07-09 naming mismatch.
+      expect(result.tools[0].callableName).toBe("mcp__ctx7--search");
     });
 
     it("returns instructions, capabilities, and serverVersion from connection", async () => {
