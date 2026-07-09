@@ -235,6 +235,19 @@ function buildConfigObject(state: WizardState): Record<string, unknown> {
     config.integrations = { media };
   }
 
+  // Embedding section — the semantic-recall embedder chosen in step 08g. Only a
+  // multilingual choice is written (English keeps the daemon's nomic default, so
+  // there is nothing to emit). Writes the AUTHORITATIVE `embedding.*` surface,
+  // NOT the legacy `memory.recall.embeddingModel` field. `multilingual: true` is
+  // the advisory flag that reconciles the `comis fleet` model-health line.
+  if (state.recallProvider?.multilingual === true) {
+    const rp = state.recallProvider;
+    config.embedding =
+      rp.provider === "openai"
+        ? { provider: "openai", multilingual: true, openai: { model: rp.model, dimensions: rp.dimensions } }
+        : { provider: "local", multilingual: true, local: { modelUri: rp.modelUri } };
+  }
+
   return config;
 }
 

@@ -40,6 +40,7 @@ import { toolProvidersStep } from "../wizard/steps/08b-tool-providers.js";
 import { videoProvidersStep } from "../wizard/steps/08c-video-providers.js";
 import { imageProvidersStep } from "../wizard/steps/08d-image-providers.js";
 import { transcriptionStep } from "../wizard/steps/08e-transcription.js";
+import { recallStep } from "../wizard/steps/08g-recall.js";
 import { ttsStep } from "../wizard/steps/08f-tts.js";
 import { reviewStep } from "../wizard/steps/09-review.js";
 import { writeConfigStep } from "../wizard/steps/10-write-config.js";
@@ -71,6 +72,7 @@ export function buildStepRegistry(): StepRegistry {
   registry.set("video-providers", videoProvidersStep);
   registry.set("transcription", transcriptionStep);
   registry.set("tts", ttsStep);
+  registry.set("recall", recallStep);
   registry.set("review", reviewStep);
   registry.set("write-config", writeConfigStep);
   registry.set("daemon-start", daemonStartStep);

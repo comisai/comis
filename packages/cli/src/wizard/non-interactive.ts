@@ -604,6 +604,11 @@ export function buildNonInteractiveState(
     "video-providers",
     "transcription",
     "tts",
+    // recall (08g) is skipped in non-interactive mode → the embedder keeps the
+    // daemon default (nomic). A future --embedding-multilingual / --embedding-provider
+    // flag pair would set it here; for now mark it complete so the runner does not
+    // hit the interactive confirm() prompt.
+    "recall",
     "review",
   ];
 

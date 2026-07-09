@@ -33,6 +33,7 @@ export type WizardStepId =
   | "video-providers"
   | "transcription"
   | "tts"
+  | "recall"
   | "review"
   | "write-config"
   | "daemon-start"
@@ -161,6 +162,33 @@ export type TtsProviderConfig = {
   apiKey?: string;
 };
 
+/** GGUF model URIs the `recall` step writes to `embedding.local.modelUri`. */
+export const EMBED_NOMIC_MODEL_URI =
+  "hf:nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q8_0.gguf";
+export const EMBED_BGE_M3_MODEL_URI = "hf:gpustack/bge-m3-GGUF:bge-m3-Q8_0.gguf";
+
+/**
+ * Recall/embedding selection from the `recall` step — the embedder for semantic
+ * memory recall.
+ *
+ * - `multilingual: false` → keep the default English-centric on-device nomic
+ *   embedder. No `embedding` block is written (the daemon default applies); the
+ *   choice is recorded only for the review screen.
+ * - `multilingual: true` → write an explicit `embedding` block: on-device
+ *   `bge-m3` (1024-d, private, $0, ~635MB) or OpenAI `text-embedding-3-small`
+ *   (1536-d, hosted — offered only when the main provider is OpenAI so its key
+ *   is already collected).
+ */
+export type RecallProviderConfig = {
+  multilingual: boolean;
+  provider: "local" | "openai";
+  /** local path */
+  modelUri?: string;
+  /** openai path */
+  model?: string;
+  dimensions?: number;
+};
+
 /** Gateway settings collected during the wizard. Token is the only supported
  *  gateway auth method (the daemon's GatewayConfigSchema is a z.strictObject
  *  whose only auth keys are tokens[]/tls — there is no password field). */
@@ -229,6 +257,7 @@ export type WizardState = {
   readonly imageProvider?: ImageProviderConfig;
   /** Speech-to-text provider selection from the `transcription` step. */
   readonly transcriptionProvider?: TranscriptionProviderConfig;
+  readonly recallProvider?: RecallProviderConfig;
   /** Text-to-speech provider selection from the `tts` step. */
   readonly ttsProvider?: TtsProviderConfig;
   readonly dataDir?: string;

@@ -746,6 +746,7 @@ describe("buildNonInteractiveState", () => {
       "video-providers",
       "transcription",
       "tts",
+      "recall",
       "review",
     ]);
   });

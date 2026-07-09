@@ -462,6 +462,60 @@ describe("writeConfigStep", () => {
     expect(configContent.integrations.media.videoGeneration.provider).toBe("google");
   });
 
+  it("emits embedding.* (local bge-m3 + multilingual) when recallProvider is a multilingual on-device choice", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      recallProvider: {
+        multilingual: true,
+        provider: "local",
+        modelUri: "hf:gpustack/bge-m3-GGUF:bge-m3-Q8_0.gguf",
+      },
+    };
+    await writeConfigStep.execute(state, createMockPrompter());
+
+    const configWriteCall = vi.mocked(writeFileSync).mock.calls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    const config = JSON.parse(configWriteCall![1] as string);
+    expect(config.embedding).toEqual({
+      provider: "local",
+      multilingual: true,
+      local: { modelUri: "hf:gpustack/bge-m3-GGUF:bge-m3-Q8_0.gguf" },
+    });
+  });
+
+  it("emits embedding.openai (text-embedding-3-small) when recallProvider is a multilingual OpenAI choice", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      recallProvider: { multilingual: true, provider: "openai", model: "text-embedding-3-small", dimensions: 1536 },
+    };
+    await writeConfigStep.execute(state, createMockPrompter());
+
+    const configWriteCall = vi.mocked(writeFileSync).mock.calls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    const config = JSON.parse(configWriteCall![1] as string);
+    expect(config.embedding).toEqual({
+      provider: "openai",
+      multilingual: true,
+      openai: { model: "text-embedding-3-small", dimensions: 1536 },
+    });
+  });
+
+  it("writes NO embedding block for the English default (multilingual:false) — the daemon keeps nomic", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      recallProvider: { multilingual: false, provider: "local" },
+    };
+    await writeConfigStep.execute(state, createMockPrompter());
+
+    const configWriteCall = vi.mocked(writeFileSync).mock.calls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    const config = JSON.parse(configWriteCall![1] as string);
+    expect(config.embedding).toBeUndefined();
+  });
+
   it("writes the FAL_KEY image credential to .env when imageProvider is fal", async () => {
     const state: WizardState = {
       ...populatedState(),
