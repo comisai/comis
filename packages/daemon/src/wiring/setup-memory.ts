@@ -261,18 +261,36 @@ export async function setupMemory(deps: {
         })()
       : undefined;
 
+    const localOptions = embeddingConfig.provider !== "openai"
+      ? { modelUri: embeddingConfig.local.modelUri, modelsDir: safePath(container.config.dataDir || ".", embeddingConfig.local.modelsDir), contextSize: embeddingConfig.local.contextSize }
+      : undefined;
+
+    // A cold boot downloads the local GGUF (~146MB) and loads it into memory —
+    // tens of seconds on a small instance, and node-llama-cpp's own progress
+    // output bypasses the Pino pipeline. Announce at INFO before blocking so
+    // the stall is attributable from the default log level, and stamp the
+    // completion with the blocking window.
+    memoryLogger.info(
+      {
+        provider: embeddingConfig.provider,
+        modelUri: localOptions?.modelUri,
+        modelsDir: localOptions?.modelsDir,
+        step: "embedding_provider_init",
+        hint: "a first boot downloads the local embedding model before the gateway starts",
+      },
+      "Initializing embedding provider (may download + load the local model)",
+    );
+    const embedInitStartMs = clock.now();
     const providerResult = await createEmbeddingProvider({
       provider: embeddingConfig.provider,
-      local: embeddingConfig.provider !== "openai"
-        ? { modelUri: embeddingConfig.local.modelUri, modelsDir: safePath(container.config.dataDir || ".", embeddingConfig.local.modelsDir), contextSize: embeddingConfig.local.contextSize }
-        : undefined,
+      local: localOptions,
       remote: remoteConfig,
     });
 
     if (providerResult.ok) {
       embeddingPort = providerResult.value;
-      memoryLogger.debug(
-        { provider: embeddingPort.provider, modelId: embeddingPort.modelId, dimensions: embeddingPort.dimensions },
+      memoryLogger.info(
+        { provider: embeddingPort.provider, modelId: embeddingPort.modelId, dimensions: embeddingPort.dimensions, durationMs: clock.now() - embedInitStartMs },
         "Embedding provider initialized",
       );
 
@@ -289,7 +307,7 @@ export async function setupMemory(deps: {
       embeddingPort = createEmbeddingCircuitBreaker(embeddingPort, embeddingCb, memoryLogger);
       memoryLogger.debug("Embedding circuit breaker active (threshold=3, reset=60s)");
     } else {
-      memoryLogger.warn({ err: providerResult.error.message, hint: "Set OPENAI_API_KEY or configure an embedding provider in integrations.media", errorKind: "config" as const }, "No embedding provider available, using FTS5 only");
+      memoryLogger.warn({ err: providerResult.error.message, durationMs: clock.now() - embedInitStartMs, hint: "Set OPENAI_API_KEY or configure an embedding provider in integrations.media", errorKind: "config" as const }, "No embedding provider available, using FTS5 only");
     }
   }
 

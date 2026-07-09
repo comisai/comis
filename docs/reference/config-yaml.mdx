@@ -1283,10 +1283,12 @@ Hono HTTPS server for JSON-RPC, WebSocket, and REST API access.
 | `maxBatchSize` | `number` | `50` | Maximum JSON-RPC batch size |
 | `wsHeartbeatMs` | `number` | `30000` | WebSocket heartbeat interval in ms |
 | `corsOrigins` | `string[]` | `[]` | CORS allowed origins (empty = same-origin only) |
-| `allowInsecureHttp` | `boolean` | `false` | Suppress insecure-HTTP warning |
+| `allowInsecureHttp` | `boolean` | `false` | Suppress the insecure-HTTP warning on a non-loopback bind |
 | `trustedProxies` | `string[]` | `[]` | Trusted proxy IPs for X-Forwarded-For |
 | `httpBodyLimitBytes` | `number` | `1048576` | Max HTTP request body size (1MB) |
 | `wsMaxMessageBytes` | `number` | `1048576` | Max WebSocket message size (1MB) |
+
+Running without `gateway.tls` on the default loopback bind (`127.0.0.1`) is the normal install posture and logs no warning — a loopback listener has no off-host exposure. Binding a non-loopback host (for example `0.0.0.0`) without TLS logs a boot warning; set `gateway.tls` (or `allowInsecureHttp: true` behind a TLS-terminating proxy) to clear it.
 
 **TLS (gateway.tls)** -- optional, enables mTLS when provided
 
