@@ -42,7 +42,7 @@ vi.mock("./config.js", () => ({}));
 import fs from "node:fs";
 import os from "node:os";
 import { spawn } from "node:child_process";
-import { findChrome, launchChrome, stopChrome, type RunningChrome } from "./chrome-detection.js";
+import { findChrome, launchChrome, stopChrome, buildChromeEnv, type RunningChrome } from "./chrome-detection.js";
 
 let fetchMock: ReturnType<typeof vi.fn>;
 let originalPlatform: PropertyDescriptor | undefined;
@@ -621,5 +621,47 @@ describe("stopChrome", () => {
     expect(running.proc.kill).toHaveBeenCalledWith("SIGKILL");
 
     vi.useRealTimers();
+  });
+});
+
+describe("buildChromeEnv — headed Chrome DISPLAY passthrough", () => {
+  // Regression: headed Chrome (headless:false — the default when the installer
+  // provisions Xvfb) is spawned with the FILTERED subprocess env, which strips
+  // DISPLAY. Without DISPLAY, headed Chrome cannot reach the Xvfb virtual display
+  // (:99), exits immediately, nothing listens on the CDP port, and the browser
+  // tool's navigate fails `connectOverCDP: connect ECONNREFUSED 127.0.0.1:9222`.
+  // Verified live on a clean install (2026-07-10): direct headed chrome under
+  // DISPLAY=:99 renders example.com, but the daemon-spawned chrome (no DISPLAY)
+  // dies. Fix: pass DISPLAY/XAUTHORITY from the daemon env into the Chrome env
+  // when headed (never for headless — no wasted X wiring, and exec-tool
+  // subprocesses still never receive DISPLAY).
+  const savedDisplay = process.env["DISPLAY"];
+  const savedXauth = process.env["XAUTHORITY"];
+  afterEach(() => {
+    if (savedDisplay === undefined) delete process.env["DISPLAY"];
+    else process.env["DISPLAY"] = savedDisplay;
+    if (savedXauth === undefined) delete process.env["XAUTHORITY"];
+    else process.env["XAUTHORITY"] = savedXauth;
+  });
+
+  it("passes DISPLAY + XAUTHORITY into the Chrome env when headed, preserving the filtered subprocess env", () => {
+    process.env["DISPLAY"] = ":99";
+    process.env["XAUTHORITY"] = "/home/comis/.Xauthority";
+    const env = buildChromeEnv({ PATH: "/usr/bin", HOME: "/home/comis" }, true);
+    expect(env["DISPLAY"]).toBe(":99");
+    expect(env["XAUTHORITY"]).toBe("/home/comis/.Xauthority");
+    expect(env["PATH"]).toBe("/usr/bin");
+  });
+
+  it("does NOT inject DISPLAY when headless (headless chrome needs no X display)", () => {
+    process.env["DISPLAY"] = ":99";
+    const env = buildChromeEnv({ PATH: "/usr/bin" }, false);
+    expect(env["DISPLAY"]).toBeUndefined();
+  });
+
+  it("omits DISPLAY when headed but the daemon env has none (no X available)", () => {
+    delete process.env["DISPLAY"];
+    const env = buildChromeEnv({ PATH: "/usr/bin" }, true);
+    expect(env["DISPLAY"]).toBeUndefined();
   });
 });
