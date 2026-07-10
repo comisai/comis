@@ -105,6 +105,7 @@ import {
 import { normalizeModelCompat } from "../../provider/model-compat.js";
 import { normalizeModelId } from "../../provider/model-id-normalize.js";
 import { resolveModelProfile } from "../model-profile.js";
+import { diagnoseUnresolvedModel } from "../model-resolution-hint.js";
 import { observedModelId } from "../observed-model-id.js";
 import type { ModelProfile } from "../model-profile.js";
 import { resolveEffectiveContextWindow } from "../../model/effective-context-window.js";
@@ -258,11 +259,11 @@ export function createPiExecutor(
       // rename a custom provider entry to its built-in pi name.
       let resolvedProviderKey = config.provider;
       let resolvedModel = deps.modelRegistry.find(config.provider, normalizedPrimary.modelId);
-      if (!resolvedModel && deps.providerAliases) {
-        const builtInName = deps.providerAliases.get(config.provider);
-        if (builtInName) {
-          resolvedModel = deps.modelRegistry.find(builtInName, normalizedPrimary.modelId);
-        }
+      // Hoisted so the unresolved-model diagnostic below can list the alias
+      // target's ids too (the second lookup find() tries).
+      const aliasBuiltInName = deps.providerAliases?.get(config.provider);
+      if (!resolvedModel && aliasBuiltInName) {
+        resolvedModel = deps.modelRegistry.find(aliasBuiltInName, normalizedPrimary.modelId);
       }
       if (normalizedPrimary.normalized) {
         deps.logger.debug(
@@ -273,12 +274,31 @@ export function createPiExecutor(
       if (!resolvedModel
         && config.provider.toLowerCase() !== "default"
         && config.model.toLowerCase() !== "default") {
+        // Distinguish "provider unregistered" from "provider OK, model id unknown"
+        // (the far more common typo/alias case — e.g. `gpt-5.6` where the real
+        // openai-codex ids are gpt-5.6-terra/luna/sol). The old hint blamed
+        // providers.entries unconditionally and misdirected; the model-id class
+        // needs the available ids + the fail-closed-nano cause of the downstream
+        // context_exhausted. availableForProvider spans config.provider AND its
+        // built-in alias (the same two lookups find() tried above).
+        const availableForProvider = [
+          ...new Set(
+            deps.modelRegistry
+              .getAll()
+              .filter(m => m.provider === config.provider
+                || (aliasBuiltInName !== undefined && m.provider === aliasBuiltInName))
+              .map(m => m.id),
+          ),
+        ];
+        const diag = diagnoseUnresolvedModel(config.provider, normalizedPrimary.modelId, availableForProvider);
         deps.logger.warn(
           {
             agentId,
             configuredProvider: config.provider,
             configuredModel: normalizedPrimary.modelId,
-            hint: "Provider not registered in pi ModelRegistry. Check providers.entries.<name> in config.yaml has type/baseUrl/apiKeyName set, the API key resolves via SecretManager, and the provider is enabled. Without a match, pi-coding-agent silently falls back to whatever built-in provider has env-var credentials.",
+            unresolvedReason: diag.reason,
+            availableModelCount: availableForProvider.length,
+            hint: diag.hint,
             errorKind: "config" as ErrorKind,
           },
           "Configured provider/model not found in registry; pi-coding-agent will fall back",
