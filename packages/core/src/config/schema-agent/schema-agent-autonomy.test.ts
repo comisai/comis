@@ -434,16 +434,16 @@ describe("resolveAutonomy (every profile surfaces a TOTAL resolved budget/rate/s
 });
 
 // ---------------------------------------------------------------------------
-// The durability sub-block. Default-off — a
+// The durability sub-block. Default-ON (full capability out of the box) — a
 // fully-omitted autonomy block (and a fully-omitted durability block) resolves
-// durability.enabled === false, so the daemon constructs no durable stores /
-// boot recovery / watchdog (byte-identical default install). strictObject is the
-// typo guard; each ms limb is a positive int (never fails-open at zero).
+// durability.enabled === true, so the daemon constructs durable stores + boot
+// recovery + watchdog by default (an operator sets false to opt out). strictObject
+// is the typo guard; each ms limb is a positive int (never fails-open at zero).
 // ---------------------------------------------------------------------------
-describe("AutonomyConfigSchema (durability sub-block defaults off)", () => {
-  it("a fully-omitted autonomy block resolves durability.enabled = false", () => {
+describe("AutonomyConfigSchema (durability sub-block defaults on)", () => {
+  it("a fully-omitted autonomy block resolves durability.enabled = true", () => {
     const parsed = AutonomyConfigSchema.parse({});
-    expect(parsed.durability.enabled).toBe(false);
+    expect(parsed.durability.enabled).toBe(true);
   });
 
   it("an omitted durability block fills the conservative-ratio defaults (stale = 4x keepAlive)", () => {

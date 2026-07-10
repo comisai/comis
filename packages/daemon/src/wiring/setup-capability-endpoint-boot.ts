@@ -377,15 +377,17 @@ function buildToolInvokeExecutor(
         return mcpCfg !== undefined && permitsMcpTool(mcpCfg, server, tool);
       },
     },
-    // The default-OFF write SURFACE gate (NG2): `orch:write` is a FLOOR cap (held
-    // by every standard/unattended/max agent), but the typed write surface must be
-    // an explicit opt-in. Resolved PER agentId from THAT agent's
-    // `autonomy.write === true` (prototype-safe own-entry lookup, mirroring
-    // mcpAllowlist). Absent/false ⇒ the executor denies the write dispatch even
-    // though the lease holds orch:write — restoring the read-only-by-default surface.
+    // The write SURFACE gate (NG2): `orch:write` is a FLOOR cap (held by every
+    // standard/unattended/max agent), and the typed write surface is now ON by
+    // default (full capability out of the box) — resolved PER agentId as
+    // `autonomy.write !== false` (prototype-safe own-entry lookup, mirroring
+    // mcpAllowlist). Only an EXPLICIT `autonomy.write: false` denies the write
+    // dispatch (read-only opt-out); absent/true ⇒ the surface is available. The
+    // surface is gated here (not via the cap toggle) so it never unions orch:write
+    // into a degraded/assistant posture — the deny-by-preflight floor stays zero-cap.
     writeSurfaceEnabled: (agentId): boolean => {
       const agentCfg = Object.entries(deps.agents).find(([id]) => id === agentId)?.[1];
-      return agentCfg?.autonomy?.write === true;
+      return agentCfg?.autonomy?.write !== false;
     },
     // The default-OFF RESUME surface gate (RESUME-01/04, T-233-04): checkpoint/
     // resume reuse the orch:write/orch:read FLOOR caps, so the cap is NOT the gate —

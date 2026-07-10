@@ -224,7 +224,7 @@ export const AutonomyConfigSchema = z.strictObject({
   web: z.boolean().optional(),
   /** orch:analyze — cost-bearing media analysis (behind the aggregate budget). */
   analyze: z.boolean().optional(),
-  /** orch:write — workspace mutation (jailed + reversible-ish). */
+  /** orch:write — workspace mutation. Optional (no cap-toggle default ⇒ never unions orch:write into a degraded posture); the WRITE SURFACE defaults ON via `writeSurfaceEnabled` (`autonomy.write !== false`). */
   write: z.boolean().optional(),
   /** orch:browse — browser; OUTWARD/semi-irreversible. OFF in every default profile. */
   browse: z.boolean().optional(),

@@ -198,7 +198,7 @@ All 42 top-level configuration sections at a glance:
 | `documentation` | `DocumentationConfig` | Documentation links for system prompt |
 | `telegramFileRefGuard` | `TelegramFileRefGuardConfig` | Telegram file reference guard |
 | `tooling` | `ToolingConfig` | Tool-first capability layer -- MCP/skill hints, install-detour mode |
-| `orchestration` | `OrchestrationConfig` | Small-model DAG-authoring gates (all default `false`; flipped on by the operator on telemetry) |
+| `orchestration` | `OrchestrationConfig` | Small-model DAG-authoring gates (all default `true` — full authoring out of the box; set a flag `false` to opt it out) |
 | `executor` | `ExecutorConfig` | Credential-broker executor configuration (optional; omit unless using the broker) |
 
 ## Core Settings
@@ -317,7 +317,7 @@ behavior.
 | `outward.originOnly` | `boolean` | `true` | When true, only the agent's own origin channel is an auto-allowable outward target; a new target needs an explicit grant. |
 | `outward.perTargetGrants` | `string[]` | `[]` | Explicit per-target grant list. A send to a non-origin target is denied unless its channel id is listed here. |
 | `outward.volumeCap` | `number` | `4000` | Per-send volume bound (a mass-recipient / high-volume send trips this gate even when reversible). Positive integer. |
-| `durability.enabled` | `boolean` | `false` | Turn on durable runs: the daemon persists a per-root checkpoint as the spawn tree advances, emits a keep-alive heartbeat, and on restart re-mints the run from its persisted (attenuated) capabilities + reconciles any crashed-mid-send message exactly-once. Off by default; a default install builds no durable stores or watchdog (byte-identical). Only takes effect for an autonomy-bearing agent. |
+| `durability.enabled` | `boolean` | `true` | Durable runs (on by default — full capability out of the box): the daemon persists a per-root checkpoint as the spawn tree advances, emits a keep-alive heartbeat, and on restart re-mints the run from its persisted (attenuated) capabilities + reconciles any crashed-mid-send message exactly-once. Set `false` to opt out (no durable stores or watchdog). Only takes effect for an autonomy-bearing agent. |
 | `durability.staleHeartbeatMs` | `number` | `120000` | Lapsed-heartbeat threshold in milliseconds. A running run whose last heartbeat is older than this is treated as crashed and orphan-swept by the daemon-wide watchdog (which also fires at this cadence). Default is 4x `keepAliveMs` (the conservative ratio: a transiently-slow run must not be falsely failed and its work duplicated). Positive integer. |
 | `durability.keepAliveMs` | `number` | `30000` | Keep-alive write cadence in milliseconds — how often a live run stamps its heartbeat, independent of step/spawn completion so a long-running child never looks stale. Positive integer. |
 | `durability.recoveryBudgetMs` | `number` | `30000` | Wall-clock recovery budget in milliseconds for one boot/watchdog pass. A backlog larger than the budget is partially recovered and the remainder deferred to the next pass (no thundering herd on a large crash backlog). Positive integer. |
@@ -2080,7 +2080,7 @@ Browser automation via Chrome DevTools Protocol (CDP).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | `boolean` | `false` | Enable browser automation |
+| `enabled` | `boolean` | `true` | Enable browser automation (on by default; stays sandboxed, orch:browse still escalates) |
 | `chromePath` | `string` | _(unset)_ | Path to Chrome/Chromium binary (auto-detected) |
 | `cdpPort` | `number` | `9222` | CDP debug port (1-65535) |
 | `defaultProfile` | `string` | `"default"` | Named browser profile directory |
@@ -2153,16 +2153,16 @@ Operator typos in any cluster reference (under `capabilityClusters.builtinAssign
 Small-model DAG-authoring gates. These flags help a **weaker** model author multi-agent execution graphs that a frontier model would write correctly on its own — by repairing a schema-invalid graph to its intended canonical template, synthesizing a graph from a one-line intent, and grammar-constraining the tool schema for local providers. Operator-only — the `orchestration` tree is not agent-configurable.
 
 <Warning>
-  **The entire authoring layer ships gated-off — every flag defaults to `false`.** With all three flags off, the repair producer, the `from_intent` synthesizer, and the GBNF constrain path are unreachable and behavior is byte-identical to a build without this section. Flip a flag on **only on real telemetry**: run the daemon for a representative window so the [`pipeline:authored`](/developer-guide/event-bus) event accrues, read the `pipeline_authoring` finding (and the pre-committed build/defer gate) from [`obs.fleet.health`](/reference/json-rpc#obs-fleet-health), and enable the relevant flag only once small-tier authoring is materially below frontier. This is the measure-first gate — the capability is built but inert until the data justifies it.
+  **The entire authoring layer ships ENABLED — every flag defaults to `true`** (full capability out of the box): the repair producer, the `from_intent` synthesizer, and the GBNF constrain path are all available without operator action. Set a flag `false` to opt it out. The [`pipeline:authored`](/developer-guide/event-bus) event + the `pipeline_authoring` finding in [`obs.fleet.health`](/reference/json-rpc#obs-fleet-health) let an operator measure small-tier authoring quality and opt a flag out if it is not helping.
 </Warning>
 
 **orchestration.authoring** fields:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `repairProducer` | `boolean` | `false` | Enable the conservative weak-model graph repair producer. When a weak-tier model emits a schema-invalid pipeline graph, the daemon attempts a deterministic match to a canonical template (`research-fanout` / `debate` / `vote` / `map-reduce`) and repairs it; an ambiguous match returns a structured "did you mean this template?" instead of synthesizing. The calling tier is resolved **server-side** (never tool-supplied). Off → the existing fail-closed validation error throws unchanged. |
-| `intentAction` | `boolean` | `false` | Enable the `pipeline` tool's `from_intent` action and its deterministic synthesizer — a one-line intent (`{ pattern, agents \| tasks, budget? }`) expands into a validated, **template-shaped** graph (plain agent nodes, not the typed multi-round drivers). Off → the daemon refuses any `from_intent` call before a graph runs. See [Pipelines: from_intent](/agent-tools/pipelines#from-intent). |
-| `gbnfConstrain` | `boolean` | `false` | **Best-effort.** Grammar-constrain the raw `pipeline` tool schema for GBNF-eligible local providers (the local/default family — never a cloud provider by name). This is a removal/relaxation-only structural transform; it **never widens field value validation**. The daemon-side schema validation remains the single source of truth. Off → byte-identical schema normalization. |
+| `repairProducer` | `boolean` | `true` | Enable the conservative weak-model graph repair producer. When a weak-tier model emits a schema-invalid pipeline graph, the daemon attempts a deterministic match to a canonical template (`research-fanout` / `debate` / `vote` / `map-reduce`) and repairs it; an ambiguous match returns a structured "did you mean this template?" instead of synthesizing. The calling tier is resolved **server-side** (never tool-supplied). Off → the existing fail-closed validation error throws unchanged. |
+| `intentAction` | `boolean` | `true` | Enable the `pipeline` tool's `from_intent` action and its deterministic synthesizer — a one-line intent (`{ pattern, agents \| tasks, budget? }`) expands into a validated, **template-shaped** graph (plain agent nodes, not the typed multi-round drivers). Off → the daemon refuses any `from_intent` call before a graph runs. See [Pipelines: from_intent](/agent-tools/pipelines#from-intent). |
+| `gbnfConstrain` | `boolean` | `true` | **Best-effort.** Grammar-constrain the raw `pipeline` tool schema for GBNF-eligible local providers (the local/default family — never a cloud provider by name). This is a removal/relaxation-only structural transform; it **never widens field value validation**. The daemon-side schema validation remains the single source of truth. Off → byte-identical schema normalization. |
 
 Governance is preserved regardless of these flags: a repaired or synthesized graph runs the **same** validation, denylist, and child⊆parent sandbox checks as a hand-authored graph — the producer/synthesizer return a graph and never execute one directly. See [Execution Graphs: Small-model authoring](/agents/execution-graphs#small-model-authoring) for the behavior and [Event Bus](/developer-guide/event-bus) for the `graph:repaired` and `graph:synthesized_from_intent` audit events.
 
