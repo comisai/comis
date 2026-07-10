@@ -342,6 +342,19 @@ export async function launchChrome(
     env: chromeEnv,
   });
 
+  // Capture Chrome's own diagnostics so a launch failure is explainable from the
+  // tool result alone. Otherwise a silent Chrome death (e.g. a seccomp SIGSYS
+  // under a hardened systemd sandbox, or a missing shared lib) surfaces only as an
+  // opaque downstream "connectOverCDP ECONNREFUSED" and needs hand-reproduction.
+  let stderrTail = "";
+  proc.stderr?.on("data", (chunk: Buffer) => {
+    stderrTail = (stderrTail + chunk.toString()).slice(-2000);
+  });
+  let exitInfo = "";
+  proc.on("exit", (code, signal) => {
+    exitInfo = signal ? `killed by signal ${signal}` : `exited with code ${code}`;
+  });
+
   // Wait for CDP to become reachable.
   const cdpUrl = `http://127.0.0.1:${cdpPort}`;
   const readyDeadline = systemNowMs() + 15_000;
@@ -358,8 +371,14 @@ export async function launchChrome(
     } catch {
       // ignore
     }
+    const diag = [
+      exitInfo ? `chrome ${exitInfo}` : "chrome process alive but CDP never became reachable",
+      stderrTail.trim() ? `stderr: ${stderrTail.trim().split("\n").slice(-4).join(" ⏎ ")}` : "",
+    ]
+      .filter(Boolean)
+      .join("; ");
     throw new Error(
-      `Failed to start Chrome CDP on port ${cdpPort} for profile "${profileName}".`,
+      `Failed to start Chrome CDP on port ${cdpPort} for profile "${profileName}" — ${diag}`,
     );
   }
 
