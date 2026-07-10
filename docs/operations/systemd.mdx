@@ -163,7 +163,16 @@ Before setting up the systemd service, make sure you have:
     # Drop all capabilities
     CapabilityBoundingSet=
 
-    # System call filtering: allow only standard service calls
+    # System call filtering: allow only standard service calls (the real
+    # installer also adds @mount + setns for bubblewrap's exec sandbox). When the
+    # browser tool is provisioned, Chrome needs a few more or the kernel
+    # SIGSYS-kills it before it opens its CDP socket, so the installer appends:
+    #   SystemCallFilter=pkey_alloc pkey_free pkey_mprotect \
+    #                    landlock_create_ruleset landlock_add_rule landlock_restrict_self \
+    #                    ptrace seccomp
+    # (pkey_* = V8 memory-protection keys; landlock_*/seccomp = Chrome's own
+    # restriction-only self-sandbox; ptrace is same-uid-limited under
+    # NoNewPrivileges + empty CapabilityBoundingSet). Omitted for --without-browser.
     SystemCallFilter=@system-service
     SystemCallArchitectures=native
 
