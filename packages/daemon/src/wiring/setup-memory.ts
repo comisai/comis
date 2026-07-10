@@ -649,7 +649,13 @@ export async function setupMemory(deps: {
             "Embedding reindex complete with failures",
           );
         } else {
-          memoryLogger.info({ indexed, failed }, "Embedding reindex complete");
+          // Self-evidence: name the embedder identity the reindex ran under —
+          // a bare "indexed:0 complete" line once read as success while the
+          // vec table was still at the OLD dimension (pre-rebuild era).
+          memoryLogger.info(
+            { indexed, failed, provider: cachedPort.provider, modelId: cachedPort.modelId, dimensions: cachedPort.dimensions },
+            "Embedding reindex complete",
+          );
         }
       }).catch((e) => {
         memoryLogger.warn({ err: String(e), hint: "Check database integrity and embedding provider connectivity", errorKind: "dependency" as const }, "Background embedding reindex failed");

@@ -2043,28 +2043,57 @@ describe("SqliteMemoryAdapter.supersede (contradiction → revise, non-destructi
 });
 
 describe("SqliteMemoryAdapter.searchLanes dimension-mismatch diagnosability", () => {
-  it("warns with errorKind config and a dimensions-naming hint when the vector lane throws a dimension mismatch", async () => {
-    if (!isVecAvailable()) return;
-    const warn = vi.fn();
-    const logger = { info: vi.fn(), warn, debug: vi.fn() };
-    const adapter = new SqliteMemoryAdapter(testConfig, createMockEmbeddingPort(4), logger);
-    // Simulate embedder/table drift while the daemon is running (the boot-time
-    // reconcile only runs inside initSchema): swap the vec table for one at a
-    // different dimension, then query with the adapter's own 4-dim embedding.
+  /** Swap the vec table for one at a different dimension — simulates
+   *  embedder/table drift while the daemon is running (the boot-time reconcile
+   *  only runs inside initSchema). */
+  function breakVectorLane(adapter: SqliteMemoryAdapter): void {
     const db = adapter.getDb();
     db.exec("DROP TABLE vec_memories");
     db.exec(
       "CREATE VIRTUAL TABLE vec_memories USING vec0(memory_id TEXT PRIMARY KEY, embedding float[8] distance_metric=cosine)",
     );
+  }
+
+  it("degrades the vector lane (never the whole call) and warns with errorKind config on a dimension mismatch", async () => {
+    if (!isVecAvailable()) return;
+    const warn = vi.fn();
+    const logger = { info: vi.fn(), warn, debug: vi.fn() };
+    const adapter = new SqliteMemoryAdapter(testConfig, createMockEmbeddingPort(4), logger);
+    breakVectorLane(adapter);
 
     const res = await adapter.searchLanes!(testSessionKey, [0.1, 0.2, 0.3, 0.4]);
 
-    expect(res.ok).toBe(false);
+    // Lane isolation: the call SUCCEEDS with an empty vector lane + the
+    // degradation marker (a broken vector backend must not kill text recall —
+    // observed live: a whole-call err meant zero recall for hours while FTS
+    // was perfectly healthy).
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.vector).toEqual([]);
+    expect(res.value.vectorLaneDegraded).toEqual({ errorKind: "config" });
     expect(warn).toHaveBeenCalledTimes(1);
     const [obj] = warn.mock.calls[0]!;
     expect(obj.errorKind).toBe("config");
     expect(String(obj.hint)).toMatch(/dimension/i);
     expect(String(obj.hint)).toMatch(/restart/i);
+    adapter.close();
+  });
+
+  it("still serves FTS results for a text query while the vector lane is degraded", async () => {
+    if (!isVecAvailable()) return;
+    const warn = vi.fn();
+    const logger = { info: vi.fn(), warn, debug: vi.fn() };
+    const adapter = new SqliteMemoryAdapter(testConfig, createMockEmbeddingPort(4), logger);
+    await adapter.store(makeEntry({ content: "dentist appointment on Tuesday" }));
+    breakVectorLane(adapter);
+
+    const res = await adapter.searchLanes!(testSessionKey, "dentist");
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.fts.some((r) => r.entry.content.includes("dentist"))).toBe(true);
+    expect(res.value.vector).toEqual([]);
+    expect(res.value.vectorLaneDegraded?.errorKind).toBe("config");
     adapter.close();
   });
 });

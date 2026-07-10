@@ -468,7 +468,21 @@ export function assembleIncidentReport(
     // painted, and whether a failed event reclassified the outcome) + the
     // blocks an aborted delivery left unsent — together they answer "what did
     // the user's chat actually show this turn" from the trajectory alone.
-    ...(signals.turnFinalized !== undefined ? { activityFinalize: signals.turnFinalized } : {}),
+    ...(signals.turnFinalized !== undefined
+      ? {
+          activityFinalize: {
+            ...signals.turnFinalized,
+            // Session-wide finalize tally: a mid-session failure paint is
+            // visible even when a later success is the last-wins snapshot.
+            ...(signals.turnFinalizeCounts !== undefined
+              ? {
+                  failedTurnCount: signals.turnFinalizeCounts.failure,
+                  recoveredTurnCount: signals.turnFinalizeCounts.recovered,
+                }
+              : {}),
+          },
+        }
+      : {}),
     ...(signals.deliveryAborts !== undefined
       ? { deliverySkipped: { events: signals.deliveryAborts.events, chunksNotSent: signals.deliveryAborts.chunksNotSent } }
       : {}),

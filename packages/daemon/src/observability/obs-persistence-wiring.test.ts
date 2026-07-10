@@ -6,6 +6,7 @@ import {
   diagnosticEventToRow,
   sessionSummaryEventToRow,
   dagDegradedEventToRow,
+  recallDegradedEventToRow,
   healthBudgetExceededEventToRow,
   channelInboundSilentEventToRow,
   channelIngressAuthRejectedEventToRow,
@@ -2860,5 +2861,53 @@ describe("subagentKilledEventToRow", () => {
     });
     expect(Object.keys(JSON.parse(row.details ?? "{}"))).toEqual(["signal", "killedBy"]);
     expect(row.details).not.toContain("186592");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// recallDegradedEventToRow (degraded recall → health_signal)
+// ---------------------------------------------------------------------------
+
+describe("recallDegradedEventToRow", () => {
+  it("maps a memory:recall_degraded payload to a health_signal row the fleet rollup groups on (signal:recall_degraded)", () => {
+    // Live incident: hours of per-turn recall failures were daemon.log-only —
+    // this row is what turns them into a counted `comis fleet` finding.
+    const row = recallDegradedEventToRow({
+      agentId: "a1",
+      sessionKey: "sk-1",
+      traceId: "t-1",
+      scope: "vector_lane",
+      errorKind: "config",
+      timestamp: 2000,
+    });
+
+    expect(row.timestamp).toBe(2000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.agentId).toBe("a1");
+    expect(row.sessionKey).toBe("sk-1");
+    expect(row.message).toBe("memory:recall_degraded");
+    expect(row.traceId).toBe("t-1");
+
+    // details: closed labels only — exactly {signal, scope, errorKind}.
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details).toEqual({
+      signal: "recall_degraded",
+      scope: "vector_lane",
+      errorKind: "config",
+    });
+  });
+
+  it("omits the sessionKey column when the payload carries none (whole-lanes failure outside a session scope)", () => {
+    const row = recallDegradedEventToRow({
+      agentId: "a1",
+      traceId: "t-2",
+      scope: "lanes",
+      errorKind: "internal",
+      timestamp: 3000,
+    });
+    expect(row.sessionKey).toBeUndefined();
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details["scope"]).toBe("lanes");
   });
 });

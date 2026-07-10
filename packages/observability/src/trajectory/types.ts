@@ -79,6 +79,9 @@ export const TRAJECTORY_EVENT_TYPES = [
   // Per-recall lane/candidate/final counts + rerank outcome (content-free).
   "memory.recalled",
   "memory.reranked",
+  // A retrieval lane (or the whole lane split) failed and recall degraded —
+  // closed scope + ErrorKind labels only (content-free).
+  "memory.recall_degraded",
   // A memory-generation pass's output diverged from its source (content-free).
   "memory.generation_quality",
   // A detected prompt-cache break on the per-session

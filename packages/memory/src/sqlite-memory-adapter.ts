@@ -440,7 +440,16 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
     sessionKey: SessionKey,
     query: string | number[],
     options?: MemorySearchOptions,
-  ): Promise<Result<{ fts: MemorySearchResult[]; vector: MemorySearchResult[] }, Error>> {
+  ): Promise<
+    Result<
+      {
+        fts: MemorySearchResult[];
+        vector: MemorySearchResult[];
+        vectorLaneDegraded?: { errorKind: string };
+      },
+      Error
+    >
+  > {
     const startMs = systemNowMs();
     const queryLen = typeof query === "string" ? query.length : 0;
     try {
@@ -464,10 +473,38 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
         queryEmbedding = query;
       }
 
-      // Vector lane: only when vec is available AND we have a non-empty embedding.
+      // Vector lane: only when vec is available AND we have a non-empty
+      // embedding. ISOLATED — a vector-lane failure degrades THAT lane to
+      // empty instead of failing the whole call, so text recall survives a
+      // broken vector backend (observed live: a vec dimension mismatch erred
+      // every searchLanes call for hours while FTS was perfectly healthy).
       let vecIds: Array<{ id: string }> = [];
+      let vectorLaneDegraded: { errorKind: string } | undefined;
       if (this.vecAvailable && queryEmbedding !== undefined && queryEmbedding.length > 0) {
-        vecIds = searchByVector(this.db, queryEmbedding, overfetchLimit);
+        try {
+          vecIds = searchByVector(this.db, queryEmbedding, overfetchLimit);
+        } catch (e: unknown) {
+          // Branch the hint by failure class: a vec dimension mismatch is an
+          // embedder/table drift (config), not database corruption — the
+          // generic check-database-integrity pointer sent a live investigation
+          // the wrong way while recall was fully dead.
+          const dimensionMismatch = isVecDimensionMismatch(e);
+          const errorKind = dimensionMismatch ? ("config" as const) : ("internal" as const);
+          vectorLaneDegraded = { errorKind };
+          this.logger?.warn(
+            {
+              err: e instanceof Error ? e : new Error(String(e)),
+              op: "search-lanes",
+              durationMs: systemNowMs() - startMs,
+              queryLen,
+              hint: dimensionMismatch
+                ? "query embedding dimensions do not match the vec_memories table — the embedder changed while the daemon was running; restart the daemon (the vec tables rebuild to the configured dimensions at boot); FTS recall still serves"
+                : "vector lane query failed; FTS recall still serves — check database integrity",
+              errorKind,
+            },
+            "Memory searchLanes vector lane degraded",
+          );
+        }
       }
 
       // Hydrate each lane independently (rank order preserved). NO RRF fusion,
@@ -488,28 +525,24 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
         },
         "Memory searchLanes complete",
       );
-      return ok({ fts, vector });
+      return ok({
+        fts,
+        vector,
+        ...(vectorLaneDegraded !== undefined ? { vectorLaneDegraded } : {}),
+      });
     } catch (e: unknown) {
       const durationMs = systemNowMs() - startMs;
-      // Branch the hint by failure class: a vec dimension mismatch is an
-      // embedder/table drift (config), not database corruption — the generic
-      // check-database-integrity pointer sent a live investigation the wrong
-      // way while recall was fully dead.
-      // TODO(2026-07-10): recurring recall-lane failures should also emit a
-      // health_signal obs row (bus event → obs-persistence-rows) so the fleet
-      // lens flags dead recall without a log grep; observed live as hours of
-      // per-turn WARNs with zero fleet finding.
-      const dimensionMismatch = isVecDimensionMismatch(e);
+      // Both lanes are unusable (FTS query or hydration failed) — a genuine
+      // whole-call failure. The caller emits memory:recall_degraded so the
+      // failure is visible beyond this log line.
       this.logger?.warn(
         {
           err: e instanceof Error ? e : new Error(String(e)),
           op: "search-lanes",
           durationMs,
           queryLen,
-          hint: dimensionMismatch
-            ? "query embedding dimensions do not match the vec_memories table — the embedder changed while the daemon was running; restart the daemon (the vec tables rebuild to the configured dimensions at boot)"
-            : "Memory searchLanes query failed; check database integrity",
-          errorKind: dimensionMismatch ? ("config" as const) : ("internal" as const),
+          hint: "Memory searchLanes query failed; check database integrity",
+          errorKind: "internal" as const,
         },
         "Memory searchLanes failed",
       );

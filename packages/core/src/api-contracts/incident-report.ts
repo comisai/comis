@@ -178,8 +178,9 @@ export const IncidentReportSchema = z.object({
    *  so a `context_exhausted` abort shows the tightening (assembled-input growth + eviction) in one
    *  `explain` field instead of the terminal fit-check alone. Optional + additive (schemaVersion 1). */
   contextBudgetHistory: z.array(IncidentContextBudgetHistoryEntrySchema).optional(),
-  /** Memory-recall outcome aggregated over the session's `memory.recalled`
-   *  trajectory records, so recall behavior is diagnosable from the report alone.
+  /** Memory-recall outcome aggregated over the session's `memory.recalled` +
+   *  `memory.recall_degraded` trajectory records, so recall behavior — and a
+   *  DEAD/DEGRADED recall — is diagnosable from the report alone.
    *  Counts/booleans ONLY — never query text or memory bodies.
    *  Optional + additive (present only when the trajectory carries recall records). */
   recall: z
@@ -192,6 +193,13 @@ export const IncidentReportSchema = z.object({
       lastLanes: z.number(),
       lastFinalCount: z.number(),
       rerankerAvailable: z.boolean(),
+      /** Count of degraded recalls (a retrieval lane — or the whole lane
+       *  split — failed; previously a daemon.log-grep-only discovery). */
+      degraded: z.number().optional(),
+      /** The last degradation's scope: "vector_lane" (FTS still served) or "lanes" (no recall ran). */
+      lastDegradedScope: z.string().optional(),
+      /** The last degradation's closed ErrorKind string. */
+      lastDegradedErrorKind: z.string().optional(),
     })
     .optional(),
   /** The image-generation turn reconstructed from the
@@ -482,6 +490,11 @@ export const IncidentReportSchema = z.object({
       /** True when a failed event flipped a delivered success to
        *  success_with_recovered_failures. */
       reclassified: z.boolean(),
+      /** Session-wide count of turns that finalized as kept failure pills —
+       *  the last-wins snapshot above cannot show a mid-session failure paint. */
+      failedTurnCount: z.number().optional(),
+      /** Session-wide count of turns that finalized as recovered successes. */
+      recoveredTurnCount: z.number().optional(),
     })
     .optional(),
   /** Silent-failure recovery attempts folded from the session's

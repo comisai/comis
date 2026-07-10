@@ -1184,8 +1184,45 @@ describe("assembleIncidentReport — user surface (activity finalize + skipped d
       errorKind: "resource",
       reason: "stopped — spend limit reached",
       reclassified: false,
+      failedTurnCount: 1,
+      recoveredTurnCount: 0,
     });
     expect(report.deliverySkipped).toEqual({ events: 1, chunksNotSent: 2 });
+  });
+
+  it("tallies mid-session failure paints so a later success finalize cannot hide the pill turn (session-wide counts)", () => {
+    // Live investigation friction: the last-wins activityFinalize showed the
+    // final turn's success while turn 2's kept failure pill was findable only
+    // by reading the raw trajectory.
+    const signals = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "activity.turn_finalized",
+        seq: 1,
+        sessionKey: SESSION_KEY,
+        data: { strategy: "EditPlace", outcome: "failure", errorKind: "validation", reclassified: false, failedEventCount: 2 },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "activity.turn_finalized",
+        seq: 2,
+        sessionKey: SESSION_KEY,
+        data: { strategy: "EditPlace", outcome: "success_with_recovered_failures", reclassified: true, failedEventCount: 1 },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "activity.turn_finalized",
+        seq: 3,
+        sessionKey: SESSION_KEY,
+        data: { strategy: "EditPlace", outcome: "success", reclassified: false, failedEventCount: 0 },
+      },
+    ]);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 3);
+    // Last-wins snapshot is the final success…
+    expect(report.activityFinalize?.outcome).toBe("success");
+    // …but the session-wide tally still names the failure + recovered paints.
+    expect(report.activityFinalize?.failedTurnCount).toBe(1);
+    expect(report.activityFinalize?.recoveredTurnCount).toBe(1);
   });
 
   it("omits both sections when the trajectory carries no such records (undefined, never empty objects)", () => {
@@ -1193,6 +1230,48 @@ describe("assembleIncidentReport — user surface (activity finalize + skipped d
     const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 0);
     expect(report.activityFinalize).toBeUndefined();
     expect(report.deliverySkipped).toBeUndefined();
+  });
+});
+
+describe("assembleIncidentReport — degraded-recall visibility (memory.recall_degraded)", () => {
+  // Live incident: recall failed on EVERY turn for hours (vec dimension
+  // mismatch) and `explain` showed nothing — the failure lived only in
+  // daemon.log WARNs. The recall section must answer "did this session run
+  // without memory?" from the report alone.
+  it("folds recall_degraded records into the recall section even when NO successful recall ever ran (degraded-only session)", () => {
+    const signals = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "memory.recall_degraded",
+        seq: 1,
+        sessionKey: SESSION_KEY,
+        data: { scope: "lanes", errorKind: "internal" },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "memory.recall_degraded",
+        seq: 2,
+        sessionKey: SESSION_KEY,
+        data: { scope: "vector_lane", errorKind: "config" },
+      },
+    ]);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 2);
+    expect(report.recall).toEqual({
+      recalls: 0,
+      zeroHits: 0,
+      lastLanes: 0,
+      lastFinalCount: 0,
+      rerankerAvailable: false,
+      degraded: 2,
+      lastDegradedScope: "vector_lane",
+      lastDegradedErrorKind: "config",
+    });
+  });
+
+  it("keeps the recall section absent when the session has neither recalls nor degradations", () => {
+    const signals = toIncidentSignals([]);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 0);
+    expect(report.recall).toBeUndefined();
   });
 });
 

@@ -181,6 +181,43 @@ export function captureRecallObservability(
 }
 
 /**
+ * Emit the counts-only `memory:recall_degraded` event — one retrieval lane (or
+ * the whole lane split) failed and recall degraded instead of silently
+ * vanishing. Wrapped non-fatal like the recalled/reranked emits: observability
+ * degrades, never errors the recall hot path. Payload is a closed scope tag +
+ * the closed ErrorKind string only (§2.7).
+ */
+export function emitRecallDegraded(
+  deps: MemoryRecallDeps,
+  sessionKey: SessionKey,
+  agentId: string | undefined,
+  scope: "vector_lane" | "lanes",
+  errorKind: string,
+): void {
+  if (deps.eventBus === undefined) return;
+  try {
+    deps.eventBus.emit("memory:recall_degraded", {
+      agentId: agentId ?? "default",
+      sessionKey: formatTenantSessionKey(sessionKey),
+      traceId: tryGetContext()?.traceId ?? sessionKey.tenantId ?? agentId ?? "default",
+      scope,
+      errorKind,
+      timestamp: deps.clock.now(),
+    });
+  } catch (e) {
+    deps.logger.warn(
+      {
+        agentId,
+        err: e instanceof Error ? e : new Error(String(e)),
+        errorKind: "internal" as const,
+        hint: "memory:recall_degraded emit failed; the recall itself is unaffected",
+      },
+      "recall event emit failed (non-fatal)",
+    );
+  }
+}
+
+/**
  * Format a SessionKey into the counts-only sessionKey string for the event envelope.
  * Best-effort: a non-string field falls back to the tenant id so the emit never throws.
  */

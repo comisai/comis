@@ -991,6 +991,14 @@ function wireHealthLogging(deps: {
         catch { /* WAL file may not exist */ }
       }
     } catch { /* stat failure must not crash health check */ }
+    // Best-effort embedding backlog: memories awaiting their vector twin. A
+    // monotonically-growing count while the embedding provider is healthy is
+    // the one-look signal for a silently-dead embedding queue (observed live:
+    // rows stranded unembedded for hours with zero log lines).
+    let unembeddedMemoryCount: number | undefined;
+    try {
+      unembeddedMemoryCount = (db.prepare("SELECT COUNT(*) AS n FROM memories WHERE has_embedding = 0").get() as { n: number } | undefined)?.n;
+    } catch { /* count failure must not crash health check */ }
     maintenanceTick();
     // Stuck sub-agent sweep: idle-based (no tool/LLM boundary event for the
     // threshold window), NOT run-age-based — a healthy long-running sub-agent
@@ -1049,6 +1057,7 @@ function wireHealthLogging(deps: {
       promptTimeoutsLast5m: promptTimeoutTimestamps.length,
       ...(memoryDbSizeBytes !== undefined && { memoryDbSizeBytes }),
       ...(memoryDbWalSizeBytes !== undefined && { memoryDbWalSizeBytes }),
+      ...(unembeddedMemoryCount !== undefined && { unembeddedMemoryCount }),
       pendingDeliveryCount: await deliveryQueue.pendingEntries().then(r => r.ok ? r.value.length : 0),
     }, "Daemon health");
   });
@@ -1437,10 +1446,18 @@ async function bootFoundation(
   // signals as a queryable obs_diagnostics row (no-ops when persistence off).
   // Includes the two advisory multilingual booleans (provider-aware resolution
   // in resolveModelHealthMultilingual; advisory only — no recall is gated on them).
+  // Best-effort boot embedding backlog (memories awaiting their vector twin):
+  // a count that persists/grows across boots while the embedder is available
+  // names a silently-dead embedding queue in one fleet look.
+  let unembeddedAtBoot: number | undefined;
+  try {
+    unembeddedAtBoot = (db.prepare("SELECT COUNT(*) AS n FROM memories WHERE has_embedding = 0").get() as { n: number } | undefined)?.n;
+  } catch { /* pre-schema/db failure must not block boot */ }
   recordModelHealth(obsStore, {
     embeddingAvailable: !!cachedPort, rerankerModelPresent, rerankerBuilt: rerankerPort !== undefined,
     ...resolveModelHealthMultilingual(container.config),
     vecRebuilt: memoryAdapter.getVecRebuilt(),
+    ...(unembeddedAtBoot !== undefined ? { unembeddedCount: unembeddedAtBoot } : {}),
   }, clock);
 
   // Create daemon-level runtime registries

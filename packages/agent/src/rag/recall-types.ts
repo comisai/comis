@@ -27,15 +27,27 @@ import type {
   TimerPort,
   ClockPort,
   ComisLogger,
-  TypedEventBus,
   TripleStorePort,
   MemorySearchResult,
   SessionKey,
   LcdProvenanceReadStore,
+  EventMap,
 } from "@comis/core";
 import type { RecallTrace } from "@comis/observability";
 import type { Result } from "@comis/shared";
 import type { ScoringAlphas } from "./score.js";
+
+/**
+ * The narrow bus surface recall needs: typed `emit` only. The real
+ * `TypedEventBus` satisfies this structurally, but the prompt-assembly caller
+ * passes a DEFERRING sink instead — assembly runs BEFORE the per-turn
+ * trajectory bridge subscribes, so an inline emit to the real bus is lost to
+ * the trajectory on every turn (the memory:injected precedent); the sink
+ * buffers the emits and postExecution flushes them after the bridge listens.
+ */
+export interface RecallEventSink {
+  emit<K extends keyof EventMap>(event: K, payload: EventMap[K]): boolean;
+}
 
 /** Injected dependencies for the recall orchestrator. */
 export interface MemoryRecallDeps {
@@ -143,12 +155,13 @@ export interface MemoryRecallDeps {
    */
   recallTrace?: RecallTrace;
   /**
-   * Optional event bus. When present, recall emits the counts-only
-   * `memory:recalled` (once per recall) and `memory:reranked` (only when a rerank stage
-   * was attempted). Payloads are counts/booleans/ids ONLY — never the query text or
+   * Optional event sink. When present, recall emits the counts-only
+   * `memory:recalled` (once per recall), `memory:reranked` (only when a rerank stage
+   * was attempted), and `memory:recall_degraded` (a lane / the lane split failed).
+   * Payloads are counts/booleans/ids ONLY — never the query text or
    * memory bodies. Absent -> no emit (today's behavior). The emit is wrapped non-fatal.
    */
-  eventBus?: TypedEventBus;
+  eventBus?: RecallEventSink;
 }
 
 /** Recall configuration (sourced from RagConfig at the call site). */

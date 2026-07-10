@@ -8382,6 +8382,15 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             },
             "rerankerAvailable": {
               "type": "boolean"
+            },
+            "degraded": {
+              "type": "number"
+            },
+            "lastDegradedScope": {
+              "type": "string"
+            },
+            "lastDegradedErrorKind": {
+              "type": "string"
             }
           },
           "required": [
@@ -8751,6 +8760,12 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             },
             "reclassified": {
               "type": "boolean"
+            },
+            "failedTurnCount": {
+              "type": "number"
+            },
+            "recoveredTurnCount": {
+              "type": "number"
             }
           },
           "required": [

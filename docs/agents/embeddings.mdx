@@ -225,6 +225,13 @@ re-embedding. The rebuild is logged at INFO (`Vector table rebuilt for new
 embedding dimension`) and recorded in the boot `model_health` diagnostic, so
 `comis fleet` drill-downs can confirm it ran.
 
+If the vector lane ever fails at query time (for example, a vector-table /
+embedder mismatch while the daemon is running), recall degrades to
+**FTS-only for that query** instead of failing outright — the degradation is
+recorded in the session trajectory (`memory.recall_degraded`), surfaced in
+`comis explain`'s recall section, and counted as a
+`health_signal:recall_degraded` finding in `comis fleet`.
+
 When `embedding.autoReindex: true` (the default), a background batch indexer
 re-embeds every existing memory in batches of `embedding.batch.batchSize`
 (default 100) until the database is consistent again. The agent stays

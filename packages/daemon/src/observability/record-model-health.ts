@@ -51,6 +51,12 @@ export interface ModelHealthSignals {
    *  when a rebuild happened, so the fleet drill-down confirms the heal ran
    *  and names both dimensions in one look. */
   vecRebuilt?: readonly VecTableRebuild[];
+  /** Memories awaiting their vector twin (`has_embedding = 0`) at boot — the
+   *  embedding backlog. A count that persists/grows across boots while
+   *  `embeddingAvailable` is true names a silently-dead embedding queue in
+   *  one look (a single integer — content-free). Absent when the count could
+   *  not be read. */
+  unembeddedCount?: number;
 }
 
 /**
@@ -81,6 +87,9 @@ export function recordModelHealth(
       rerankerMultilingual: signals.rerankerMultilingual,
       ...(signals.vecRebuilt !== undefined && signals.vecRebuilt.length > 0
         ? { vecRebuilt: signals.vecRebuilt }
+        : {}),
+      ...(signals.unembeddedCount !== undefined
+        ? { unembeddedCount: signals.unembeddedCount }
         : {}),
     }),
   });
