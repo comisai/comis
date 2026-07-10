@@ -201,12 +201,14 @@ See the full field list in the [config reference](/reference/config-yaml#autonom
 
 ## Connected MCP Tools
 
-By default an agent cannot reach any connected MCP server's tools from a jailed
-[`orchestrate`](/agent-tools/orchestrate) script -- the surface is **off**, and
-the [`orch:mcp`](/security/capability-model#connected-mcp-tools-orch-mcp)
-capability is in no default profile. To turn it on for one agent, set the nested
-`autonomy.mcp` block: flip `enabled: true` (which grants `orch:mcp`) **and**
-allowlist the exact `{server -> tools}` the agent may call.
+The [`orch:mcp`](/security/capability-model#connected-mcp-tools-orch-mcp)
+capability -- which lets a jailed [`orchestrate`](/agent-tools/orchestrate)
+script reach connected MCP server tools -- is a **floor capability** held by
+default on the autonomy-bearing profiles (standard/unattended/max), like
+`orch:write`. Holding the cap opens **no** server, though: reachability is gated
+by the per-server `autonomy.mcp.allow` allowlist, which is **empty by default**.
+So a fresh agent holds `orch:mcp` yet reaches no MCP tool until you allowlist the
+exact `{server -> tools}` it may call.
 
 ```yaml title="~/.comis/config.yaml -- expose two allowlisted MCP tools to one agent"
 agents:
@@ -214,27 +216,30 @@ agents:
     autonomy:
       profile: standard
       mcp:
-        enabled: true                    # grants orch:mcp (off by default)
+        # `enabled` is NOT required on standard/unattended/max -- orch:mcp is
+        # floor-granted there. Set it only for the `assistant` profile opt-in.
         allow:
           weather-server:
             tools: [forecast, current]   # explicit tool names -- no wildcard
             classification: safe         # inbound tier: safe | permission-gated
 ```
 
-`autonomy.mcp` defaults to `{ enabled: false, allow: {} }` -- a fresh agent's MCP
-surface is dark at **both** layers: it holds no `orch:mcp` capability, and its
-allowlist is empty. Both must be set for a tool to be reachable:
+`autonomy.mcp` defaults to `{ enabled: false, allow: {} }`. On standard/unattended/max
+the `orch:mcp` cap is floor-held regardless of `enabled`, so a fresh agent's MCP
+surface is dark at exactly **one** operative layer -- the empty allowlist. Setting
+`allow` is the only step needed to make a tool reachable:
 
-- **`enabled`** is the surface gate. `true` grants the agent the `orch:mcp`
-  capability; `false` (the default) means the capability is never granted and the
-  whole surface stays off -- no `allow` entry can override that. (There is no
-  separate boolean `mcp:` toggle beside `web`/`analyze`/`write`/`browse`; the
-  nested block's own `enabled` field is the grant signal, mirroring
-  `durability.enabled`.)
-- **`allow`** is the per-server inbound allowlist. Each key is a connected
-  server's name; its `tools` is the **explicit** list of tool names reachable on
-  that server (there is no `*` wildcard -- you name each tool), and
-  `classification` is the inbound tier.
+- **`allow`** is the per-server inbound allowlist -- **the operative gate**. Each
+  key is a connected server's name; its `tools` is the **explicit** list of tool
+  names reachable on that server (there is no `*` wildcard -- you name each tool),
+  and `classification` is the inbound tier. Absent from `allow` ⇒ denied by
+  absence.
+- **`enabled`** grants `orch:mcp` to the `assistant` profile (which has autonomy
+  off and no floor caps) as an explicit opt-in. On standard/unattended/max the cap
+  is already floor-held, so `enabled` is not required there (it is a harmless
+  no-op for the grant). There is no separate boolean `mcp:` toggle beside
+  `web`/`analyze`/`write`/`browse`; the nested block's own `enabled` field is the
+  assistant-opt-in signal, mirroring `durability.enabled`.
 
 The `classification` is a **three-tier inbound gate**:
 

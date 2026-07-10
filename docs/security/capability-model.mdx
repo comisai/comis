@@ -39,7 +39,7 @@ inferred from it, so the two can never drift.
 | `orch:skill` | Invoke skills |
 | `orch:message` | Send a message to the agent's origin channel (the outward send subset: `message.send`/`reply`/`react`). Editing, deleting, fetching, and attaching stay admin-only and are not part of this capability. |
 | `orch:browse` | Drive a real browser (outward; off in every default profile) |
-| `orch:mcp` | Call an allowlisted connected MCP server's tool from a jailed script (inbound; off in every default profile) |
+| `orch:mcp` | Call an allowlisted connected MCP server's tool from a jailed script (inbound; a floor cap on standard/unattended/max — reachability is gated by the per-server `autonomy.mcp.allow` allowlist, not the cap) |
 
 Every member is namespaced `orch:`. None of them is, or implies, a gateway
 scope -- the two sets are **disjoint**, and an architecture test asserts the
@@ -85,25 +85,32 @@ construction, asserted by architecture tests:
 When the operator connects MCP servers, their tools can be surfaced **into** a
 jailed [`orchestrate`](/agent-tools/orchestrate) script as
 `comis_tools.mcp.<server>.<tool>()`, gated by a dedicated capability, `orch:mcp`.
-This is the **one genuinely new default-off capability** on this surface: unlike
-the floor capabilities below, `orch:mcp` is in **no** default profile. It is
-granted only by an explicit operator opt-in (`autonomy.mcp.enabled: true`), and
-even then a call is reachable only if the specific `{server, tool}` pair is on
-that agent's [inbound allowlist](/agents/autonomy#connected-mcp-tools).
+`orch:mcp` is a **floor capability** held by default on the autonomy-bearing
+profiles (standard/unattended/max) -- exactly like `orch:write`. Holding the cap
+is **not** the reachability gate: a call is reachable only if the specific
+`{server, tool}` pair is on that agent's
+[inbound allowlist](/agents/autonomy#connected-mcp-tools), which is empty by
+default. So a fresh agent holds `orch:mcp` yet reaches **no** MCP server until
+the operator allowlists one -- granting the cap by default opens nothing.
 
-Reachability is therefore **default-deny at two independent layers**:
+Reachability is therefore **default-deny at the allowlist layer** (the cap being
+held is the same floor-cap + surface-opt-in shape as `orch:write` + its
+`writeSurfaceEnabled` gate):
 
 <Steps>
-  <Step title="The capability grant">
-    Without `orch:mcp` in the resolved capability set, the gate denies every
-    `mcp` call outright -- the whole surface is dark. A fresh agent has no
-    `autonomy.mcp` block, so it never holds the capability.
+  <Step title="The capability grant (floor)">
+    `orch:mcp` is in the standard/unattended/max floor set (the `assistant`
+    profile, which has autonomy off, holds it only via an explicit
+    `autonomy.mcp.enabled: true` opt-in). The cap being present is necessary but
+    not sufficient -- it authorizes the `mcp` surface to exist, not any specific
+    server.
   </Step>
-  <Step title="The per-agent inbound allowlist">
-    Even holding `orch:mcp`, a `{server, tool}` pair absent from
-    `autonomy.mcp.allow` -- or on a server with no explicit inbound
-    classification -- is denied at the daemon-side executor. An unlisted server
-    or tool is unreachable by absence.
+  <Step title="The per-agent inbound allowlist (the operative gate)">
+    A `{server, tool}` pair absent from `autonomy.mcp.allow` -- or on a server
+    with no explicit inbound classification -- is denied at the daemon-side
+    executor. `autonomy.mcp.allow` defaults `{}`, so an unlisted server or tool
+    is unreachable by absence. This is the layer that keeps the surface dark by
+    default.
   </Step>
 </Steps>
 
@@ -128,14 +135,15 @@ exactly as for every other capability.
 
 The [typed mutation surface](/agent-tools/orchestrate#the-typed-mutation-surface-write-and-message)
 -- `comis_tools.write(...)` and `comis_tools.message_send`/`reply`/`react(...)` --
-is often described alongside `orch:mcp`, but its posture is different and worth
-stating plainly: **`orch:write` and `orch:message` are floor capabilities**, on
-by default in `standard` and up (only `assistant` withholds them). What is new is
-only the **typed SDK methods** that reach those already-granted capabilities in
-one jailed turn. Calling the write/message *capabilities* "default-off" would be
-inaccurate -- the honest statement is that the **typed surface** is new (and
-inert for an agent that does not hold the underlying floor capability), while
-**only `orch:mcp` is a new default-off capability**.
+shares its posture with `orch:mcp`, and it is worth stating plainly:
+**`orch:write`, `orch:message`, and `orch:mcp` are all floor capabilities**, on
+by default in `standard` and up (only `assistant` withholds them). The *capability*
+being held is never the operative gate -- a separate per-surface opt-in is:
+`autonomy.write: true` for the typed write surface, and the per-server
+`autonomy.mcp.allow` allowlist (default `{}`) for connected MCP tools. Calling any
+of these *capabilities* "default-off" would be inaccurate -- the honest statement
+is that each **surface** is default-deny (inert until its opt-in is set), while the
+underlying floor capability is held.
 
 ## Wake-Gate Suppression Bound
 

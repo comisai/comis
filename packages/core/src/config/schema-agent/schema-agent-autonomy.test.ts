@@ -10,6 +10,8 @@ import {
 import { resolveEffectiveMode } from "./schema-agent-autonomy-mode.js";
 // The honest-degrade path lives in its own leaf (file-size split).
 import { degradeAutonomy, type AutonomyDownshift } from "./schema-agent-autonomy-degrade.js";
+// Layer-2 per-server allowlist predicate — the operative default-deny gate.
+import { permitsMcpTool } from "./schema-agent-autonomy-mcp.js";
 
 // ---------------------------------------------------------------------------
 // The named-profile resolver. An
@@ -26,12 +28,17 @@ import { degradeAutonomy, type AutonomyDownshift } from "./schema-agent-autonomy
 // AGENTS §2.2).
 // ---------------------------------------------------------------------------
 
-// The nine FLOOR-CONTAINED orchestration caps `standard` turns on.
+// The ten FLOOR-CONTAINED orchestration caps `standard` turns on.
 // `orch:message` IS a member: the
 // standard profile turns ON origin-channel messaging. The ORIGIN-vs-new scoping
 // rides `message.channels` (`["origin"]` default); origin sends are
 // auto-allowable under quota, a NEW channel is an `autoApprovable:false` floor
 // item — so the cap-literal is floor-contained + autoApprovable.
+// `orch:mcp` IS a member (floor-granted like orch:write): the CAP is held by
+// default, but the OPERATIVE default-deny is the per-server allowlist
+// (`autonomy.mcp.allow`, default {} ⇒ permitsMcpTool denies by absence), exactly
+// mirroring orch:write's floor-cap + writeSurfaceEnabled opt-in. So granting the
+// cap opens NO MCP server until the operator allowlists one.
 const STANDARD_FLOOR_CAPS = [
   "orch:read",
   "orch:web",
@@ -42,6 +49,7 @@ const STANDARD_FLOOR_CAPS = [
   "orch:cron",
   "orch:skill",
   "orch:message",
+  "orch:mcp",
 ] as const;
 
 describe("AutonomyConfigSchema (zero-config default → standard)", () => {
@@ -80,7 +88,7 @@ describe("resolveAutonomy (pure profile → cap/guard block)", () => {
     );
   });
 
-  it("standard resolves to exactly the nine floor-contained caps (incl. origin orch:message)", () => {
+  it("standard resolves to exactly the ten floor-contained caps (incl. origin orch:message + orch:mcp)", () => {
     const r = resolveAutonomy({ profile: "standard" });
     expect([...r.capabilities].sort()).toEqual([...STANDARD_FLOOR_CAPS].sort());
   });
@@ -638,22 +646,25 @@ describe("resolveEffectiveMode (fail-closed mode resolution)", () => {
 
 // ---------------------------------------------------------------------------
 // The `orch:mcp` grant surface + the nested `autonomy.mcp` inbound leaf.
-// Two-layer default-deny. LAYER 1 (here) is the cap grant: the `autonomy.mcp`
-// surface gate (`autonomy.mcp.enabled`) unions `orch:mcp` into the resolved caps
-// via SURFACE_TOGGLE_TO_CAP — the same "one cap model" as the web/analyze/write/
-// browse toggles. Absent ⇒ the cap is NOT granted, so `requireCapability` denies
-// the whole surface. LAYER 2 (the per-server allowlist) lives in
-// schema-agent-autonomy-mcp.ts. A fresh agent has the surface dark at BOTH layers
-// (mcp.enabled false, allow {}). `orch:mcp` is NOT in any profile's floor set —
-// it is grantable ONLY via the surface gate (default-off by construction).
+// Two layers, but the OPERATIVE default-deny is LAYER 2 (not the cap). LAYER 1
+// (here) is the cap grant: `orch:mcp` is now a FLOOR cap for the autonomy-bearing
+// profiles (standard/unattended/max) — held by default, exactly like orch:write —
+// AND still grantable to `assistant` via the `autonomy.mcp.enabled` surface toggle
+// (SURFACE_TOGGLE_TO_CAP, the web/analyze/write/browse "one cap model"). LAYER 2
+// (the per-server allowlist, schema-agent-autonomy-mcp.ts `permitsMcpTool`) is the
+// operative gate: `autonomy.mcp.allow` defaults `{}` ⇒ EVERY server denied by
+// absence. So a fresh standard agent HOLDS orch:mcp yet reaches NO MCP server
+// until the operator allowlists one — the same floor-cap + surface-opt-in shape
+// as orch:write (floor cap + `writeSurfaceEnabled`). Granting the cap opens
+// nothing.
 // ---------------------------------------------------------------------------
-describe("resolveAutonomy (the orch:mcp grant surface — layer 1 of default-deny)", () => {
+describe("resolveAutonomy (the orch:mcp grant surface — floor cap, allowlist is the gate)", () => {
   it("autonomy.mcp.enabled:true unions orch:mcp into the resolved caps", () => {
     const r = resolveAutonomy(AutonomyConfigSchema.parse({ mcp: { enabled: true } }));
     expect(r.capabilities).toContain("orch:mcp");
   });
 
-  it("the mcp surface gate OVERRIDES the profile posture — { profile:assistant, mcp:{enabled:true} } grants orch:mcp yet resolves enabled:false", () => {
+  it("the mcp surface gate grants orch:mcp on assistant too — { profile:assistant, mcp:{enabled:true} } grants orch:mcp yet resolves enabled:false", () => {
     const r = resolveAutonomy(
       AutonomyConfigSchema.parse({ profile: "assistant", mcp: { enabled: true } }),
     );
@@ -661,24 +672,31 @@ describe("resolveAutonomy (the orch:mcp grant surface — layer 1 of default-den
     expect(r.capabilities).toContain("orch:mcp");
   });
 
-  it("an absent autonomy.mcp surface does NOT grant orch:mcp (layer-1 default-deny by absence)", () => {
-    expect(resolveAutonomy(AutonomyConfigSchema.parse({})).capabilities).not.toContain("orch:mcp");
-    expect(resolveAutonomy({ profile: "standard" }).capabilities).not.toContain("orch:mcp");
-    expect(resolveAutonomy(undefined).capabilities).not.toContain("orch:mcp");
+  it("orch:mcp is FLOOR-granted by default on standard (zero-config / undefined / explicit standard)", () => {
+    expect(resolveAutonomy(AutonomyConfigSchema.parse({})).capabilities).toContain("orch:mcp");
+    expect(resolveAutonomy({ profile: "standard" }).capabilities).toContain("orch:mcp");
+    expect(resolveAutonomy(undefined).capabilities).toContain("orch:mcp");
   });
 
-  it("mcp.enabled:false does NOT grant orch:mcp (the gate is the enable signal, honored as false)", () => {
-    const r = resolveAutonomy(AutonomyConfigSchema.parse({ mcp: { enabled: false } }));
-    expect(r.capabilities).not.toContain("orch:mcp");
-  });
-
-  it("orch:mcp is NOT floor-granted by ANY named profile (default-off; never a floor member)", () => {
-    for (const profile of ["assistant", "standard", "unattended", "max"] as const) {
+  it("orch:mcp is floor-granted by standard/unattended/max but NOT the (autonomy-off) assistant profile", () => {
+    for (const profile of ["standard", "unattended", "max"] as const) {
       expect(
         resolveAutonomy({ profile }).capabilities,
-        `${profile} must not floor-grant orch:mcp`,
-      ).not.toContain("orch:mcp");
+        `${profile} must floor-grant orch:mcp`,
+      ).toContain("orch:mcp");
     }
+    // assistant's floor is [] (autonomy off); orch:mcp only via an explicit toggle.
+    expect(resolveAutonomy({ profile: "assistant" }).capabilities).not.toContain("orch:mcp");
+  });
+
+  it("SAFE-BY-DEFAULT invariant: a fresh agent HOLDS orch:mcp yet reaches NO MCP server (layer-2 allow {} denies by absence)", () => {
+    const parsed = AutonomyConfigSchema.parse({});
+    // Layer 1: the cap is held (floor).
+    expect(resolveAutonomy(parsed).capabilities).toContain("orch:mcp");
+    // Layer 2: the allowlist is empty ⇒ permitsMcpTool denies every {server,tool}.
+    expect(parsed.mcp).toEqual({ enabled: false, allow: {} });
+    expect(permitsMcpTool(parsed.mcp, "weather", "weather_forecast")).toBe(false);
+    expect(permitsMcpTool(parsed.mcp, "anyserver", "anytool")).toBe(false);
   });
 });
 
