@@ -26,7 +26,7 @@ per-issue contract (stop → RED test → fix → wipe → redeploy → clean-sl
 regression-ratchet → next UC.
 
 **Exit criteria (definition of DONE):** backlog exhausted · `COVERAGE-MATRIX.md` has zero
-unmapped rows and all five MANDATORY blocks covered · every UC closed works/honest-fail WITH its
+unmapped rows and all six MANDATORY blocks covered · every UC closed works/honest-fail WITH its
 memory + product-grade entries · full `REGRESSION-SUITE.md` green on the final build · read-only
 gate held all run (zero writes reached the live fleet) · `pnpm validate` green · box restored to
 its real channel and verified healthy · final report written.
@@ -137,9 +137,15 @@ Build a real-world use-case backlog from three sources, then plan from it:
      present and absent.
    - **Descriptor-name ≠ tool-name.** Registry key `image`→tool `image_analyze`, `notify`→
      `notify_user`, `tts`→`tts_synthesize`. Inventory the tool name the agent actually sees.
-   - **Shipped-but-gated-off invariants.** Some features default OFF by design
-     (`orchestration.authoring.*`, `memoryLifecycle` eviction, `observability.spend`). Cover the
-     inert-by-default state as its own assertion, then the enabled behavior.
+   - **Shipped-but-gated-off invariants.** A few features still default OFF by design —
+     `memoryLifecycle` eviction / `learning.forget` (data-loss), `observability.spend` (a spend
+     cap), `security.requireForSensitive` / `approvals`, `channels.*` (need credentials),
+     `browser.noSandbox` / `gateway.allowInsecureHttp` (security downgrades). Cover the
+     inert-by-default state as its own assertion, then the enabled behavior. **NOTE the polarity
+     flipped for the CAPABILITY grants** — task-extraction, the browser tool, `orchestration.authoring.*`,
+     durability/resume, the orchestrate write surface, and `orch:mcp` now default **ON** (full
+     capability out of the box); assert the default-ON behavior + the explicit opt-OUT for each, per
+     the "Full-capability-by-default" MANDATORY block below — NOT inert-by-default.
    Save it as `FEATURE-INVENTORY.md`; every inventory row must map to a COVERAGE-MATRIX row or
    carry an explicit, reasoned out-of-scope note. If a prior campaign's inventory exists under
    `runs/`, DIFF against it — anything new since the last campaign is the highest-priority
@@ -219,15 +225,17 @@ Deliverables of Phase 0, written BEFORE any driving, under `runs/<campaign>-<dat
     attention to the easy-to-miss: approvals · lifecycleReactions · memoryReview · learning
     (reflect/forget/corroboration) · learningOutcome · dialectic · memoryLifecycle · diagnostics
     (4 JSONL recorders) · executor.broker · backgroundTasks · security.agentToAgent · tooling
-    (capability clusters + install detours) · orchestration.authoring (gated-off) ·
+    (capability clusters + install detours) · orchestration.authoring (now default-ON) ·
+    autonomy.{durability,mcp,write} + scheduler.tasks + browser (capability grants — default-ON,
+    see the "Full-capability-by-default" block) ·
     observability.{spend,otel,prometheus,alertBudget} · documentation · webhooks · queue ·
     streaming · the `memory.enabled` master kill-switch invariant.
   - **Cost / budget** — per-turn + per-root spend accounting · pricing coverage · budget
     ceilings tripping honestly.
 
   The MANDATORY blocks below (proactive surface · context engine + orchestrate/DAG · stress +
-  endurance · e2e journeys + feature interactions · easy-to-overlook capabilities) are
-  pre-seeded into the matrix and may NEVER be marked out-of-scope.
+  endurance · e2e journeys + feature interactions · easy-to-overlook capabilities ·
+  full-capability-by-default) are pre-seeded into the matrix and may NEVER be marked out-of-scope.
 
 ## Proactive surface — MANDATORY coverage (the system must act on its own, not just answer)
 
@@ -393,6 +401,19 @@ via tool-turns + DB/trajectory oracles where it doesn't):
   inferred (overlaps the stress "Burst" row; here the focus is correctness of the queue logic).
 - **Delivery exactly-once.** Kill the daemon with a message queued; on restart it delivers
   exactly once (drain-on-startup), and a permanent error (blocked/kicked) fails without retry.
+
+## Full-capability-by-default — MANDATORY deep coverage (the agent ships fully capable; test the ON default AND the opt-OUT)
+
+The platform ships **full agent capability by default** — the genuine capability *grants* default ON, no operator config required. This INVERTS the old "assert inert-by-default" guidance for these knobs: for each one, assert the **default-ON behavior works** AND the **explicit opt-OUT (`false`) still disables it**, both in ground truth (config-resolution + the live behavior). Critically, "capability on by default" did NOT relax the security FLOOR — the safety envelope is held by OTHER layers (sandbox, approval/escalation, allowlists, deny-by-origin, the preflight-fail downshift), never by a capability being off. Every row below carries a HARD floor-still-holds check.
+
+- **Task extraction** (`scheduler.tasks.enabled` default **true**). Drive a conversation that IMPLIES a follow-up (no explicit "remind me") → the agent proactively extracts it (above `confidenceThreshold` 0.8), schedules a cron, it fires, and reports to the ORIGINATING chat. Deep: sub-threshold / non-actionable chatter must NOT self-schedule (no spurious cron); the extracted cron's `deliveryTarget` must be the real chat (watch the concurrency-contamination class — a firing cron mid-authoring can corrupt the captured target); the opt-out (`enabled:false`) → the agent never self-schedules.
+- **Browser tool** (`browser.enabled` + `skills.builtinTools.browser` default **true**). The browser tool is in the agent's set out of the box. Verify it drives a page (or **fails honestly** if Chromium is absent — a coverage-gap, not a bug), that it stays **SANDBOXED** (`noSandbox` default false — a HARD security floor, never flipped), and that **`orch:browse` STILL escalates** (approval-gated) even with the tool enabled — the enable is the tool's presence, not auto-approval of outward navigation. HARD: an outward browser action routes through the approval floor.
+- **Orchestration authoring** (`orchestration.authoring.{intentAction,repairProducer,gbnfConstrain}` default **true**). `from_intent` one-line-intent synthesis works out of the box; a weak-model schema-invalid graph is repaired to a canonical template. HARD: the synthesized/repaired graph passes the SAME parse+validation a hand-authored graph runs (a *governed* graph — never an un-validated one dispatched); per-flag opt-out.
+- **Durability + resume** (`autonomy.durability.enabled` + `orchestrateResume` default **true**). Durable runs persist checkpoints + **survive a daemon restart** (boot-recovery re-mints the lease from the persisted **attenuated** caps — never broadened — and reconciles a crashed-mid-send via the exactly-once outward ledger, **no double-send**); a resumable `orchestrate` timeout pins the script + checkpoint and `orchestrate({resumeRunId})` resumes from the last checkpoint. HARD: a **revoke** flips the persisted record so a later boot can NEVER resurrect pre-revoke capabilities; opt-out disables the engine (byte-identical no-durable-store install).
+- **Orchestrate write surface** (`writeSurfaceEnabled` default-on = `autonomy.write !== false`). The typed `comis_tools.write` surface is available out of the box; writes are **jailed to the per-run workspace** (a `../` escape is refused). The explicit read-only opt-out (`autonomy.write: false`) denies the write dispatch. **HARD floor:** the surface is gated at the boot predicate, NOT the cap toggle — so it must NOT union `orch:write` into a degraded/`assistant` posture: a preflight-fail downshift STILL yields **zero caps** (no enabled-but-unjailed write).
+- **MCP-from-orchestrate** (`orch:mcp` is a FLOOR cap, default-granted on standard/unattended/max). A jailed orchestrate script can call an allowlisted connected MCP tool. **The OPERATIVE default-deny is the per-server allowlist** (`autonomy.mcp.allow`, default `{}`): holding the cap opens **NO** server — a fresh agent holds `orch:mcp` yet reaches nothing until the operator allowlists a `{server,tool}`. HARD: without an allowlist entry the DAG's MCP call is denied at the executor ("MCP tool not permitted"), NOT a cap-audience mismatch; granting the cap by default opened nothing.
+
+**The floor-still-holds sweep (run after confirming the ON defaults):** the sandbox stays on (`noSandbox` false; bwrap `--unshare-net` egress blocked); the approval/escalation floor still gates every outward/irreversible action (`orch:browse`, a non-origin `message`); the MCP allowlist stays deny-by-absence; secrets never enter the jail or a result; the preflight-fail downshift still yields zero caps. **A capability being on-by-default must NEVER mean a security control is off-by-default** — if any floor check fails, that is an S1 (a relaxed security default that did not surface).
 
 ## Channel scope — decide it, never skip it silently
 
@@ -613,6 +634,32 @@ nothing:
 - **KEEP GOING:** after each closed UC, pick the next backlog item and continue without asking.
   The campaign ends only when the backlog is exhausted, the coverage matrix has no unmapped
   domain, and the box is restored to its real channel — or the operator interrupts.
+
+## Field notes — hard-won insights (respect these; don't re-discover)
+
+Forward guidance distilled from driving this campaign. Each is a trap that cost a cycle or a subtlety that a fresh run will otherwise re-learn the hard way.
+
+**Rig & deploy.**
+- **The shared checkout mutates under you.** `.live-env` (`VPS=`) can be rewritten by a concurrent session, and a sibling process may stack commits / bump deps under your branch. Re-read `.live-env` before EVERY deploy; after every deploy confirm `/root/comis-deployed-build` carries YOUR SHA + a fresh timestamp. Pin the SHA you built and treat *that* as the build under test.
+- **A dep bump forces a full reinstall.** `deploy-dist.sh` ships code, NOT `node_modules`. If a dep changed (e.g. the pi SDK), a dist-overlay boots on stale deps — do a full `install-vps.sh` and verify `@earendil-works/pi-ai` + `pi-agent-core` parity local-vs-box. The overlay's dep-drift guard flags this; heed it.
+- **Access drops are expected** over a long run (SSO/SSM expiry) — re-auth + reconnect; a dropped ssh is not a failure.
+
+**Clean-slate hygiene (the #1 false-result source).**
+- **Memory-sensitive UCs need a full `clean-restart` (fresh `memory.db`), NOT just `session.reset_conversation`.** Severing clears the LCD only; a prior UC's persisted memory then contaminates recall — a stored preference gets over-applied to a distinct one-off request, producing a confident wrong (or non-responsive) answer with no chat-visible tell. Write-refusal / pure-read UCs are memory-independent (a sever suffices).
+- **The serial rule extends to cron wake windows.** After ANY UC that may author an `agent_turn` cron, immediately `cron.list` + delete unintended fast crons before the next drive. A cron firing during another drive contaminates the queue AND can corrupt a concurrently-authored cron's captured `deliveryTarget` (misrouting its output to a synthetic `cron:<uuid>` void the user never sees).
+
+**Observability read-order.**
+- **A command that RAN and exited non-zero is its OWN failure (`errorKind:internal`), NOT a `dependency`.** A generic `dependency` errorKind misdirects diagnosis toward a phantom missing package; read the trajectory `errorText`/`errorMessage`, never the chat paraphrase.
+- **A misrouted proactive cron is invisible to `cron.runs` alone** — it reports the fire "ok" but not WHERE it delivered. Cross-check `delivery_mirror` (Comis oracle) against the channel oracle (emulator outbound) to catch a deliver-to-void.
+- **Ground-truth read-order holds:** trajectory (via its `.trajectory-path.json` pointer) → `_session-metadata.json` → `explain` → `fleet` → only then a raw log grep. Real MCP results are `wrapExternalContent`-wrapped — a green mock is not ground truth.
+
+**Model & product grade.**
+- **The served model dominates product quality.** A mini-tier model thrashes on tool discovery (dozens of `discover_tools` calls per turn, inconsistent/non-resolving refusals, even a non-answer on a complex request); the full-tier model of the SAME provider concludes cleanly. Confirm the RIGHT model actually ran (`modelId`==config, no chimeric native+foreign pairing). A recurring low product-grade is a model/config/routing finding — investigate it like a defect, not a per-UC miss.
+- **The read-only honesty headline is about the REPLY, not just the tool call.** The write tools are physically unregistered so no write can happen — but the agent must SAY it cannot (or degrade to a read), never fabricate «בוצע» or PROMISE a write it can't perform. Grade the honesty of the refusal, not merely the absence of a write.
+
+**Gate discipline.**
+- **A schema / floor-cap / default change needs the FULL `pnpm validate`, not per-package vitest.** The architecture project (floor-cap-set parity, the ≤500-line file-size cap on `schema-agent/*`) and the `section-registry-parity` **snapshot** live OUTSIDE per-package runs. For a snapshot-affecting change, regenerate with `-u` and verify the diff is EXACTLY the intended change (e.g. purely `false→true` on the flipped default keys) — never a stray line.
+- **Config-key names are operator-supplied at runtime; keep the codebase generic.** A specific connected-server name (`autonomy.mcp.allow.<server>`) belongs only in an operator's runtime config, never as a literal in product code, schema, tests, or docs. Everything under `runs/` is gitignored and may cite real server/entity names freely.
 
 ## Git
 
