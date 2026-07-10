@@ -129,7 +129,7 @@ describe("tokenUsageEventToRow", () => {
       channelId: "chan-1",
       executionId: "exec-1",
       provider: "anthropic",
-      model: "claude-3-5-sonnet-20241022",
+      model: "claude-sonnet-4-5-20250929",
       tokens: { prompt: 100, completion: 50, total: 150 },
       cost: { input: 0.01, output: 0.005, cacheRead: 0.001, cacheWrite: 0.002, total: 0.015 },
       latencyMs: 200,
@@ -195,7 +195,7 @@ describe("tokenUsageEventToRow", () => {
       channelId: "chan-1",
       executionId: "exec-1",
       provider: "anthropic",
-      model: "claude-3-5-sonnet-20241022",
+      model: "claude-sonnet-4-5-20250929",
       tokens: { prompt: 100, completion: 50, total: 150 },
       cost: { input: 0.01, output: 0.005, cacheRead: 0.001, cacheWrite: 0.002, total: 0.015 },
       latencyMs: 200,
@@ -218,7 +218,7 @@ describe("tokenUsageEventToRow", () => {
       channelId: "",
       executionId: "",
       provider: "anthropic",
-      model: "claude-3-5-sonnet-20241022",
+      model: "claude-sonnet-4-5-20250929",
       tokens: { prompt: 0, completion: 0, total: 0 },
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       latencyMs: 0,
@@ -240,7 +240,7 @@ describe("tokenUsageEventToRow", () => {
       channelId: "",
       executionId: "",
       provider: "anthropic",
-      model: "claude-3-5-sonnet-20241022",
+      model: "claude-sonnet-4-5-20250929",
       tokens: { prompt: 0, completion: 0, total: 0 },
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       latencyMs: 0,
@@ -2692,7 +2692,7 @@ describe("setupObsPersistence — cache break + token-usage persistence (real st
       timestamp: 1000,
       toolsAdded: ["a"], toolsRemoved: [], toolsSchemaChanged: [],
       systemCharDelta: 10,
-      model: "claude-3-5-sonnet-20241022",
+      model: "claude-sonnet-4-5-20250929",
       ...overrides,
     };
   }
@@ -2726,7 +2726,7 @@ describe("setupObsPersistence — cache break + token-usage persistence (real st
     const result = setupObsPersistence(deps as never);
     eventBus.emit("observability:token_usage", {
       timestamp: 1000, traceId: "t", agentId: "a1", channelId: "c1", executionId: "e1",
-      provider: "anthropic", model: "claude-3-5-sonnet-20241022",
+      provider: "anthropic", model: "claude-sonnet-4-5-20250929",
       tokens: { prompt: 100, completion: 50, total: 150 },
       cost: { input: 0.01, output: 0.005, cacheRead: 0.001, cacheWrite: 0.002, total: 0.015 },
       latencyMs: 200, cacheReadTokens: 0, cacheWriteTokens: 100, sessionKey: "sk",
@@ -2749,7 +2749,7 @@ describe("setupObsPersistence — cache break + token-usage persistence (real st
     const result = setupObsPersistence(deps as never);
     eventBus.emit("observability:token_usage", {
       timestamp: 1000, traceId: "t", agentId: "a1", channelId: "c1", executionId: "e1",
-      provider: "anthropic", model: "claude-3-5-sonnet-20241022",
+      provider: "anthropic", model: "claude-sonnet-4-5-20250929",
       tokens: { prompt: 1, completion: 1, total: 2 },
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       latencyMs: 1, cacheReadTokens: 0, cacheWriteTokens: 0, sessionKey: "sk",

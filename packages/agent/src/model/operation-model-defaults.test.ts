@@ -176,13 +176,13 @@ describe("resolveOperationDefaults — top-of-cohort selection", () => {
         .filter((m) => m.input?.includes("text") && totalCost(m) > 0 && !m.id.endsWith("-latest"))
         .sort((a, b) => totalCost(a) - totalCost(b));
       if (priced.length === 0) continue;
+      const ladder = [...new Set(priced.map(totalCost))];
       for (const [tier, pct] of [
         ["fast", 0.1],
         ["mid", 0.5],
       ] as const) {
-        const idx = Math.min(priced.length - 1, Math.floor(priced.length * pct));
-        const cohortCost = totalCost(priced[idx]!);
-        const cohort = priced.filter((m) => totalCost(m) === cohortCost);
+        const rungCost = ladder[Math.min(ladder.length - 1, Math.floor((ladder.length - 1) * pct))]!;
+        const cohort = priced.filter((m) => totalCost(m) === rungCost);
         const expectedId = [...cohort].sort((a, b) => b.id.localeCompare(a.id))[0]!.id;
         const actual = tier === "fast" ? result.fast : result.mid;
         expect(actual, `${provider} ${tier} should be lex-greatest of its cost cohort`).toBe(expectedId);
@@ -224,7 +224,7 @@ describe("resolveOperationDefaults — top-of-cohort selection", () => {
   });
 
   it("multi-cost cohort: fast and mid each select lex-greatest within their respective cost cohorts", () => {
-    // Anthropic's catalog has three distinct cost tiers ($1.5, $4.8, $6, $18, $30, $90).
+    // Anthropic's catalog has multiple distinct cost rungs (e.g. $6, $12, $18, $30, $60, $90).
     // Verifies that fast and mid land in *different* cohorts (when they differ)
     // and each picks lex-greatest within its own cohort — i.e. cross-cohort
     // contamination cannot happen.
@@ -234,10 +234,9 @@ describe("resolveOperationDefaults — top-of-cohort selection", () => {
     const priced = all
       .filter((m) => m.input?.includes("text") && totalCost(m) > 0 && !m.id.endsWith("-latest"))
       .sort((a, b) => totalCost(a) - totalCost(b));
-    const fastIdx = Math.min(priced.length - 1, Math.floor(priced.length * 0.1));
-    const midIdx = Math.min(priced.length - 1, Math.floor(priced.length * 0.5));
-    const fastCohortCost = totalCost(priced[fastIdx]!);
-    const midCohortCost = totalCost(priced[midIdx]!);
+    const ladder = [...new Set(priced.map(totalCost))];
+    const fastCohortCost = ladder[Math.min(ladder.length - 1, Math.floor((ladder.length - 1) * 0.1))]!;
+    const midCohortCost = ladder[Math.min(ladder.length - 1, Math.floor((ladder.length - 1) * 0.5))]!;
     const fastModel = all.find((m) => m.id === result.fast);
     const midModel = all.find((m) => m.id === result.mid);
     expect(fastModel, "fast model must exist in catalog").toBeDefined();
