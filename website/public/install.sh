@@ -3769,6 +3769,14 @@ render_xvfb_unit() {
         return 0
     fi
 
+    # Shared X-socket dir that both comis-xvfb.service (read-write) and
+    # comis.service (read-only) bind onto their PrivateTmp /tmp/.X11-unix, so the
+    # X99 socket Xvfb creates is reachable from the daemon. Create it now for the
+    # immediate start AND via tmpfiles so it is recreated on reboot before the
+    # units mount it (BindPaths fails if the source is missing).
+    install -d -m 1777 /run/comis-x11 2>/dev/null || true
+    printf 'd /run/comis-x11 1777 root root -\n' > /etc/tmpfiles.d/comis-x11.conf 2>/dev/null || true
+
     local target="/etc/systemd/system/comis-xvfb.service"
     if [[ -f "$target" ]] && ! unit_is_managed "$target"; then
         ui_warn "Existing unit at ${target} has been hand-edited; leaving untouched."
@@ -3788,14 +3796,18 @@ User=${COMIS_SVC_USER}
 Group=${COMIS_SVC_GROUP}
 # -ac disables host-based access control; safe because -nolisten tcp keeps
 # the X server on a Unix-domain socket only. /tmp/.X11-unix/X99 is owned by
-# COMIS_SVC_USER, so only the comis daemon (running as the same user, joined
-# to the /tmp namespace of this service) can connect.
+# COMIS_SVC_USER, so only the comis daemon (running as the same user, sharing
+# the /run/comis-x11 socket dir via BindPaths) can connect.
 ExecStart=/usr/bin/Xvfb :99 -screen 0 1920x1080x24 -ac -nolisten tcp
 Restart=on-failure
 RestartSec=2s
 # Xvfb needs almost nothing.
 NoNewPrivileges=yes
 PrivateTmp=yes
+# Bind the shared host X-socket dir onto /tmp/.X11-unix so the socket Xvfb
+# creates here (X99) is visible to the daemon, which read-only-binds the same
+# /run/comis-x11 (JoinsNamespaceOf does not share PrivateTmp content on systemd 255).
+BindPaths=/run/comis-x11:/tmp/.X11-unix
 ProtectSystem=strict
 ProtectHome=yes
 ProtectKernelTunables=yes
@@ -3905,14 +3917,18 @@ render_systemd_unit() {
         fi
     fi
     if [[ "$WITH_XVFB" == "1" ]]; then
-        # comis-xvfb.service owns the virtual display. JoinsNamespaceOf= shares
-        # /tmp with that service so the X11 socket at /tmp/.X11-unix/X99 is
-        # reachable from the daemon despite PrivateTmp=yes still being on.
+        # comis-xvfb.service owns the virtual display at :99. The X11 socket must
+        # be reachable from the daemon despite BOTH units running PrivateTmp=yes.
+        # JoinsNamespaceOf= was tried but does NOT share the PrivateTmp /tmp CONTENT
+        # on systemd 255 (the daemon's ns gets an empty /tmp/.X11-unix). Instead,
+        # both units bind a SHARED host dir (/run/comis-x11, created by tmpfiles)
+        # onto /tmp/.X11-unix: Xvfb writes X99 there (read-write bind), the daemon
+        # reads it (read-only bind). PrivateTmp stays on for everything else.
         COMIS_BROWSER_ENV_LINES="Environment=DISPLAY=:99"
         COMIS_XVFB_AFTER=" comis-xvfb.service"
         COMIS_XVFB_WANTS=" comis-xvfb.service"
         COMIS_PRIVATE_TMP_LINE="PrivateTmp=yes
-JoinsNamespaceOf=comis-xvfb.service"
+BindReadOnlyPaths=/run/comis-x11:/tmp/.X11-unix"
     fi
 
     local body

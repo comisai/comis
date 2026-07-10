@@ -119,6 +119,22 @@ describe("install.sh browser + xvfb provisioning is on by default (full capabili
     );
   });
 
+  it("shares the Xvfb X11 socket via a bind-mounted dir, not JoinsNamespaceOf (which doesn't share PrivateTmp on systemd 255)", () => {
+    // Headed Chrome reaches the Xvfb :99 display through /tmp/.X11-unix/X99.
+    // JoinsNamespaceOf=comis-xvfb.service was tried but does NOT share the
+    // PrivateTmp /tmp CONTENT (verified: daemon ns gets an empty /tmp/.X11-unix).
+    // Fix: a shared host dir /run/comis-x11 bind-mounted onto /tmp/.X11-unix in
+    // BOTH units — Xvfb writes X99 (rw bind), the daemon reads it (ro bind).
+    expect(installSh, "the stale JoinsNamespaceOf approach must be gone").not.toContain("JoinsNamespaceOf=comis-xvfb.service");
+    // Xvfb unit: read-write bind so it can create the socket.
+    expect(installSh, "the Xvfb unit must rw-bind the shared socket dir").toContain("BindPaths=/run/comis-x11:/tmp/.X11-unix");
+    // Daemon unit: read-only bind so it can connect to the socket.
+    expect(installSh, "the daemon unit must ro-bind the shared socket dir").toContain("BindReadOnlyPaths=/run/comis-x11:/tmp/.X11-unix");
+    // The shared dir must be created (immediately + via tmpfiles for reboot).
+    expect(installSh, "the shared X-socket dir must be created").toMatch(/install -d -m 1777 \/run\/comis-x11/);
+    expect(installSh, "a tmpfiles entry must recreate the dir on reboot").toMatch(/tmpfiles\.d\/comis-x11\.conf/);
+  });
+
   it("render_xvfb_unit refuses to register the companion unit when Xvfb is absent", () => {
     const body = fnBody("render_xvfb_unit");
     // Must consult the ground-truth helper — not merely reference the binary in
