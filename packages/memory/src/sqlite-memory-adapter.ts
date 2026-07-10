@@ -24,6 +24,7 @@ import type Database from "better-sqlite3";
 import { z } from "zod";
 import { hybridSearch, searchByText, searchByVector } from "./hybrid-search.js";
 import { initSchema } from "./schema.js";
+import { isVecDimensionMismatch, type VecTableRebuild } from "./vec-dimension.js";
 import { rowToEntry, insertMemoryRow, storeEmbedding, parseTags, createRowMapper } from "./row-mapper.js";
 import { MemoryRowSchema, IdProjectionRowSchema } from "./row-schemas.js";
 import { truncateForEmbedding } from "./embedding-batch-indexer.js";
@@ -102,6 +103,8 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
   private readonly logger?: MemoryLogger;
   /** Per-instance sqlite-vec availability flag. */
   private readonly vecAvailable: boolean;
+  /** The vec0 twins rebuilt at open because the embedder dimension changed. */
+  private readonly vecRebuilt?: readonly VecTableRebuild[];
 
   constructor(config: MemoryConfig, embeddingPort?: EmbeddingPort, logger?: MemoryLogger) {
     this.config = config;
@@ -110,6 +113,7 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
 
     // Open database with standardized lifecycle (WAL mode, chmod)
     let vecAvailable = false;
+    let vecRebuilt: VecTableRebuild[] | undefined;
     this.db = openSqliteDatabase({
       dbPath: config.dbPath,
       walMode: config.walMode,
@@ -117,9 +121,27 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
         // Initialize schema and capture per-instance vec state (recall keys nest under .recall)
         const schemaResult = initSchema(db, config.recall.embeddingDimensions);
         vecAvailable = schemaResult.vecAvailable;
+        vecRebuilt = schemaResult.vecRebuilt;
       },
     });
     this.vecAvailable = vecAvailable;
+    this.vecRebuilt = vecRebuilt;
+
+    // INFO, not DEBUG: a dimension rebuild wipes every stored vector until the
+    // reindex lands — an operator diagnosing empty recall must see it at the
+    // default log level.
+    for (const rebuild of vecRebuilt ?? []) {
+      this.logger?.info(
+        {
+          step: "vec-dimension-rebuild",
+          table: rebuild.table,
+          fromDimensions: rebuild.fromDimensions,
+          toDimensions: rebuild.toDimensions,
+          hint: "embedding dimensions changed; stale vectors dropped and rows re-queued for embedding",
+        },
+        "Vector table rebuilt for new embedding dimension",
+      );
+    }
 
     this.logger?.debug({ dbPath: config.dbPath }, "Memory database opened");
   }
@@ -127,6 +149,12 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
   /** Get the underlying database (for testing/advanced use). */
   getDb(): Database.Database {
     return this.db;
+  }
+
+  /** The vec0 twins rebuilt when this adapter opened (embedder dimension
+   *  changed since the previous boot), for the boot model_health snapshot. */
+  getVecRebuilt(): readonly VecTableRebuild[] | undefined {
+    return this.vecRebuilt;
   }
 
   // ── store ────────────────────────────────────────────────────────
@@ -463,14 +491,25 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
       return ok({ fts, vector });
     } catch (e: unknown) {
       const durationMs = systemNowMs() - startMs;
+      // Branch the hint by failure class: a vec dimension mismatch is an
+      // embedder/table drift (config), not database corruption — the generic
+      // check-database-integrity pointer sent a live investigation the wrong
+      // way while recall was fully dead.
+      // TODO(2026-07-10): recurring recall-lane failures should also emit a
+      // health_signal obs row (bus event → obs-persistence-rows) so the fleet
+      // lens flags dead recall without a log grep; observed live as hours of
+      // per-turn WARNs with zero fleet finding.
+      const dimensionMismatch = isVecDimensionMismatch(e);
       this.logger?.warn(
         {
           err: e instanceof Error ? e : new Error(String(e)),
           op: "search-lanes",
           durationMs,
           queryLen,
-          hint: "Memory searchLanes query failed; check database integrity",
-          errorKind: "internal" as const,
+          hint: dimensionMismatch
+            ? "query embedding dimensions do not match the vec_memories table — the embedder changed while the daemon was running; restart the daemon (the vec tables rebuild to the configured dimensions at boot)"
+            : "Memory searchLanes query failed; check database integrity",
+          errorKind: dimensionMismatch ? ("config" as const) : ("internal" as const),
         },
         "Memory searchLanes failed",
       );

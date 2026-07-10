@@ -1440,6 +1440,7 @@ async function bootFoundation(
   recordModelHealth(obsStore, {
     embeddingAvailable: !!cachedPort, rerankerModelPresent, rerankerBuilt: rerankerPort !== undefined,
     ...resolveModelHealthMultilingual(container.config),
+    vecRebuilt: memoryAdapter.getVecRebuilt(),
   }, clock);
 
   // Create daemon-level runtime registries

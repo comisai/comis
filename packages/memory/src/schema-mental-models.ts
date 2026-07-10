@@ -62,6 +62,8 @@
 
 import type Database from "better-sqlite3";
 
+import { reconcileVecTableDimension } from "./vec-dimension.js";
+
 /**
  * Create the `mental_models` table + its scope index + the FTS5/vec0/trigram
  * twins idempotently, and (one-time) copy any pre-existing `learned_skills` rows
@@ -77,12 +79,15 @@ import type Database from "better-sqlite3";
  * @param db - An open better-sqlite3 Database instance.
  * @param embeddingDimensions - Vector dimension for `vec_mental_models` (runtime-probed; same value as `vec_memories`).
  * @param vecAvailable - Whether sqlite-vec loaded (the vec twin is skipped when false, mirroring `vec_memories`).
+ * @returns `vecRebuiltFromDimensions` — the stale dimension when the vec twin
+ *   was dropped + recreated because the embedder dimension changed (mirrors
+ *   the `vec_memories` reconciliation in `initSchema`); `undefined` otherwise.
  */
 export function ensureMentalModelsTable(
   db: Database.Database,
   embeddingDimensions: number,
   vecAvailable: boolean,
-): void {
+): { vecRebuiltFromDimensions?: number } {
   // --- Base table + scope index (forward-only, additive) ---
   // The generalized doc shape: kind/topic_key/structured_body/history added; the
   // executable `scripts` column and the dead `trigger` column dropped.
@@ -173,8 +178,19 @@ export function ensureMentalModelsTable(
   // Mirrors `vec_memories` (schema.ts:502-507): skipped wholesale when sqlite-vec
   // is unavailable (FTS5 still works). Best-effort so a partial-extension host
   // still boots the base table.
+  let vecRebuiltFromDimensions: number | undefined;
   if (vecAvailable) {
     try {
+      // Same dimension reconciliation as `vec_memories` (initSchema): a vec0
+      // table cannot be migrated in place, so a changed embedder dimension
+      // means drop + recreate. `mental_models` carries no has_embedding flag
+      // (its embedding lane repopulates from the doc store), so the drop alone
+      // is complete here.
+      vecRebuiltFromDimensions = reconcileVecTableDimension(
+        db,
+        "vec_mental_models",
+        embeddingDimensions,
+      );
       db.exec(`
         CREATE VIRTUAL TABLE IF NOT EXISTS vec_mental_models USING vec0(
           skill_id TEXT PRIMARY KEY,
@@ -260,4 +276,6 @@ export function ensureMentalModelsTable(
     // triggers live in the SAME try so a failed CREATE can never orphan a trigger
     // that would break a base-table DELETE.
   }
+
+  return vecRebuiltFromDimensions !== undefined ? { vecRebuiltFromDimensions } : {};
 }

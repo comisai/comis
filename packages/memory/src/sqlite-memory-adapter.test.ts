@@ -2041,3 +2041,30 @@ describe("SqliteMemoryAdapter.supersede (contradiction → revise, non-destructi
     if (!res.ok) expect(res.error).toBeInstanceOf(Error);
   });
 });
+
+describe("SqliteMemoryAdapter.searchLanes dimension-mismatch diagnosability", () => {
+  it("warns with errorKind config and a dimensions-naming hint when the vector lane throws a dimension mismatch", async () => {
+    if (!isVecAvailable()) return;
+    const warn = vi.fn();
+    const logger = { info: vi.fn(), warn, debug: vi.fn() };
+    const adapter = new SqliteMemoryAdapter(testConfig, createMockEmbeddingPort(4), logger);
+    // Simulate embedder/table drift while the daemon is running (the boot-time
+    // reconcile only runs inside initSchema): swap the vec table for one at a
+    // different dimension, then query with the adapter's own 4-dim embedding.
+    const db = adapter.getDb();
+    db.exec("DROP TABLE vec_memories");
+    db.exec(
+      "CREATE VIRTUAL TABLE vec_memories USING vec0(memory_id TEXT PRIMARY KEY, embedding float[8] distance_metric=cosine)",
+    );
+
+    const res = await adapter.searchLanes!(testSessionKey, [0.1, 0.2, 0.3, 0.4]);
+
+    expect(res.ok).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
+    const [obj] = warn.mock.calls[0]!;
+    expect(obj.errorKind).toBe("config");
+    expect(String(obj.hint)).toMatch(/dimension/i);
+    expect(String(obj.hint)).toMatch(/restart/i);
+    adapter.close();
+  });
+});
