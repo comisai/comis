@@ -71,6 +71,7 @@ import {
 import { topicMatchScores, type TopicMatchScore } from "../memory/topic-key.js";
 import { createHybridMemoryInjector } from "../rag/hybrid-memory-injector.js";
 import { createMemoryRecall } from "../rag/memory-recall.js";
+import type { RecallEventSink } from "../rag/recall-types.js";
 import { formatMemorySection } from "../rag/rag-retriever.js";
 import { buildTemporalGuidanceBlock } from "../rag/temporal-guidance.js";
 import { buildProfileBlock } from "./user-representation-block.js";
@@ -254,6 +255,23 @@ export function getSessionPromptMemoryInjected(snapshotKey: string): MemoryInjec
  *  later no-injection turn). */
 export function clearSessionPromptMemoryInjected(snapshotKey: string): void {
   sessionPromptMemoryInjected.delete(snapshotKey);
+}
+
+/** Deferred recall bus emits (memory:recalled / memory:reranked /
+ *  memory:recall_degraded) — typed flush closures buffered during assembly
+ *  (which runs BEFORE the per-turn trajectory bridge subscribes; an inline
+ *  emit was lost to the trajectory on EVERY turn — the same pre-bridge timing
+ *  bug as memory:injected above). postExecution drains + flushes them to the
+ *  real bus after the bridge is listening. */
+const sessionPromptRecallEvents = new Map<string, Array<(bus: TypedEventBus) => void>>();
+
+/** Drain (read + clear) the deferred recall emits for postExecution to flush. */
+export function drainSessionPromptRecallEvents(
+  snapshotKey: string,
+): Array<(bus: TypedEventBus) => void> | undefined {
+  const pending = sessionPromptRecallEvents.get(snapshotKey);
+  sessionPromptRecallEvents.delete(snapshotKey);
+  return pending;
 }
 
 /**
@@ -1087,6 +1105,19 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   let retrievedRagHits = 0;
   if (deps.memoryPort && config.rag?.enabled && !params.skipRag) {
     const ragStart = deps.clock.now();
+    // Deferring sink for recall's bus events (memory:recalled / reranked /
+    // recall_degraded): assembly runs BEFORE the per-turn trajectory bridge
+    // subscribes, so an inline emit is lost to the trajectory on every turn —
+    // the same pre-bridge timing bug fixed for memory:injected. The sink
+    // buffers typed emit closures; the buffer is stored per session below
+    // (success AND failure paths) and postExecution flushes it to the real bus.
+    const deferredRecallEvents: Array<(bus: TypedEventBus) => void> = [];
+    const recallEventSink: RecallEventSink = {
+      emit(event, payload) {
+        deferredRecallEvents.push((bus) => void bus.emit(event, payload));
+        return true;
+      },
+    };
     try {
       // Recall-trace recorder, null-when-disabled (default-off). Constructed
       // per assembly but shares a daemon-wide queued writer by path (the recorder's
@@ -1148,7 +1179,8 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           clock: deps.clock,
           logger,
           ...(recallTrace !== null ? { recallTrace } : {}),
-          ...(deps.eventBus !== undefined ? { eventBus: deps.eventBus } : {}),
+          // The DEFERRING sink, never the real bus: see deferredRecallEvents above.
+          eventBus: recallEventSink,
         },
         {
           maxResults: config.rag.maxResults,
@@ -1287,6 +1319,16 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       logger.debug({ agentId, resultCount: recalled.ok ? recalled.value.length : 0, durationMs: deps.clock.now() - ragStart }, "RAG recall complete");
     } catch (err) {
       logger.warn({ agentId, err, durationMs: deps.clock.now() - ragStart, hint: "RAG recall failed — agent will proceed without memory context", errorKind: "dependency" as const }, "RAG recall failed (non-fatal)");
+    } finally {
+      // Store the deferred recall events on BOTH the success and the failure
+      // path (a failed recall is exactly when memory:recall_degraded must
+      // still reach the trajectory + fleet). postExecution drains + flushes.
+      if (deferredRecallEvents.length > 0) {
+        const key = formatSessionKey(sessionKey);
+        const existing = sessionPromptRecallEvents.get(key);
+        if (existing !== undefined) existing.push(...deferredRecallEvents);
+        else sessionPromptRecallEvents.set(key, deferredRecallEvents);
+      }
     }
   }
 

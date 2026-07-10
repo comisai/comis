@@ -17,6 +17,7 @@ import { ensureOutwardLedgerTable } from "./schema-outward-ledger.js";
 import { ensureMsTeamsConversationTable } from "./schema-msteams-conversation.js";
 import { ensureOutcomeEventsTable } from "./schema-outcome-events.js";
 import { ensureMentalModelsTable } from "./schema-mental-models.js";
+import { reconcileVecTableDimension, type VecTableRebuild } from "./vec-dimension.js";
 import { ensureUsefulnessFailureColumn } from "./schema-usefulness.js";
 import { ensureObsTokenColumns, ensureObsAuditTable } from "./schema-obs-token.js";
 
@@ -360,12 +361,20 @@ export function ensureTripleTable(db: Database.Database): void {
  * - `memory_fts` FTS5 virtual table with external content triggers
  * - `sessions` table with indexes
  *
- * Safe to call multiple times (all DDL uses IF NOT EXISTS).
+ * Safe to call multiple times (all DDL uses IF NOT EXISTS). The one deliberate
+ * exception: when an existing vec0 twin declares a different embedding
+ * dimension than `embeddingDimensions`, it is dropped and recreated (vec0
+ * bakes the dimension into the DDL) and every `memories.has_embedding` flag is
+ * reset so the batch indexer re-embeds into the fresh table. Such rebuilds are
+ * reported via `vecRebuilt` so the caller can log them.
  *
  * @param db - An open better-sqlite3 Database instance
  * @param embeddingDimensions - Vector dimension size for vec_memories (e.g. 1536)
  */
-export function initSchema(db: Database.Database, embeddingDimensions: number): { vecAvailable: boolean } {
+export function initSchema(
+  db: Database.Database,
+  embeddingDimensions: number,
+): { vecAvailable: boolean; vecRebuilt?: VecTableRebuild[] } {
   // --- Validate embeddingDimensions before DDL interpolation ---
   if (!Number.isInteger(embeddingDimensions) || embeddingDimensions <= 0) {
     throw new Error(
@@ -423,7 +432,22 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_agent ON memories(agent_id);`);
 
   // --- Vector search table (sqlite-vec) ---
+  const vecRebuilt: VecTableRebuild[] = [];
   if (localVecAvailable) {
+    // vec0 bakes the dimension into the DDL, so IF NOT EXISTS alone cannot
+    // migrate an existing table when the embedder dimension changes — the
+    // stale table would reject every INSERT/KNN at the new dimension. Drop +
+    // recreate, and reset has_embedding so the batch indexer re-embeds every
+    // row into the fresh table (vectors are derived data).
+    const fromDimensions = reconcileVecTableDimension(db, "vec_memories", embeddingDimensions);
+    if (fromDimensions !== undefined) {
+      db.exec("UPDATE memories SET has_embedding = 0");
+      vecRebuilt.push({
+        table: "vec_memories",
+        fromDimensions,
+        toDimensions: embeddingDimensions,
+      });
+    }
     db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS vec_memories USING vec0(
         memory_id TEXT PRIMARY KEY,
@@ -509,7 +533,14 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   ensureOutwardLedgerTable(db); // exactly-once outward send ledger
   ensureMsTeamsConversationTable(db); // conversation-id → routing-tuple map (proactive send)
   ensureOutcomeEventsTable(db); // outcome_events ledger — no FK, (tenant,agent)-scoped
-  ensureMentalModelsTable(db, embeddingDimensions, localVecAvailable); // mental_models doc store + FTS/vec/trigram twins (generalized from the learned_skills store) — trust CHECK IN ('learned'), (tenant,agent)-scoped; copies a pre-existing learned_skills table forward as kind='skill'
+  const mentalModels = ensureMentalModelsTable(db, embeddingDimensions, localVecAvailable); // mental_models doc store + FTS/vec/trigram twins (generalized from the learned_skills store) — trust CHECK IN ('learned'), (tenant,agent)-scoped; copies a pre-existing learned_skills table forward as kind='skill'
+  if (mentalModels.vecRebuiltFromDimensions !== undefined) {
+    vecRebuilt.push({
+      table: "vec_mental_models",
+      fromDimensions: mentalModels.vecRebuiltFromDimensions,
+      toDimensions: embeddingDimensions,
+    });
+  }
 
   // --- Observation partial indexes --- created AFTER ensureMemoryColumns (indexed columns must exist first).
   // `idx_memories_unconsol` serves the candidate scan (consolidated_at IS NULL); `idx_memories_observations` serves the observation lookup (proof_count IS NOT NULL).
@@ -714,5 +745,8 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   `);
 
   // Return per-instance vec state
-  return { vecAvailable: localVecAvailable };
+  return {
+    vecAvailable: localVecAvailable,
+    ...(vecRebuilt.length > 0 ? { vecRebuilt } : {}),
+  };
 }

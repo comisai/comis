@@ -397,7 +397,26 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
           ...(asString(data.reason) !== undefined ? { reason: asString(data.reason) } : {}),
           reclassified: data.reclassified === true,
         };
+        // Session-wide finalize tally (the last-wins snapshot above hid a
+        // mid-session failure paint behind a later success — reading the raw
+        // trajectory was the only way to find which turn wore the pill).
+        const counts = acc.turnFinalizeCounts ?? { failure: 0, recovered: 0 };
+        if (outcome === "failure") counts.failure += 1;
+        if (outcome === "success_with_recovered_failures") counts.recovered += 1;
+        acc.turnFinalizeCounts = counts;
       }
+      return;
+    }
+    case "memory.recall_degraded": {
+      // A recall lane (or the whole lane split) failed this session — the
+      // counted section that answers "did this session run without memory?"
+      // from `explain` alone (previously a daemon.log-grep discovery).
+      const prev = acc.recallDegraded ?? { count: 0, lastScope: "", lastErrorKind: "" };
+      acc.recallDegraded = {
+        count: prev.count + 1,
+        lastScope: asString(data.scope) ?? prev.lastScope,
+        lastErrorKind: asString(data.errorKind) ?? prev.lastErrorKind,
+      };
       return;
     }
     case "delivery.aborted": {
@@ -688,14 +707,25 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.toolSchemaUnsupported !== undefined
       ? { toolSchemaUnsupported: acc.toolSchemaUnsupported }
       : {}),
-    ...(acc.recallCount > 0 && acc.lastRecall !== undefined
+    // Present when the session issued recalls OR a recall degraded — a
+    // degraded-ONLY session (the whole lane split failed, so no
+    // memory.recalled ever fired) must still surface the recall section
+    // with honest zero counts + the degradation tally.
+    ...((acc.recallCount > 0 && acc.lastRecall !== undefined) || acc.recallDegraded !== undefined
       ? {
           recall: {
             recalls: acc.recallCount,
             zeroHits: acc.recallZeroHits,
-            lastLanes: acc.lastRecall.lanes,
-            lastFinalCount: acc.lastRecall.finalCount,
-            rerankerAvailable: acc.lastRecall.rerankerAvailable,
+            lastLanes: acc.lastRecall?.lanes ?? 0,
+            lastFinalCount: acc.lastRecall?.finalCount ?? 0,
+            rerankerAvailable: acc.lastRecall?.rerankerAvailable ?? false,
+            ...(acc.recallDegraded !== undefined
+              ? {
+                  degraded: acc.recallDegraded.count,
+                  lastDegradedScope: acc.recallDegraded.lastScope,
+                  lastDegradedErrorKind: acc.recallDegraded.lastErrorKind,
+                }
+              : {}),
           },
         }
       : {}),
@@ -724,6 +754,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.summaryTurnCount !== undefined ? { summaryTurnCount: acc.summaryTurnCount } : {}),
     ...(acc.modelTokens !== undefined ? { modelTokens: acc.modelTokens } : {}),
     ...(acc.turnFinalized !== undefined ? { turnFinalized: acc.turnFinalized } : {}),
+    ...(acc.turnFinalizeCounts !== undefined ? { turnFinalizeCounts: acc.turnFinalizeCounts } : {}),
     ...(acc.deliveryAborts !== undefined ? { deliveryAborts: acc.deliveryAborts } : {}),
     ...(acc.recoveries !== undefined ? { recoveries: acc.recoveries } : {}),
     ...(acc.abortReason !== undefined ? { abortReason: acc.abortReason } : {}),

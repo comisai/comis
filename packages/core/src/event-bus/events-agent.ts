@@ -628,6 +628,30 @@ export interface AgentEvents {
   };
 
   /**
+   * A recall retrieval lane (or the whole lane split) FAILED and recall
+   * degraded rather than silently vanishing. MINIMAL payload — a closed scope
+   * tag + the closed ErrorKind string ONLY, never query text or error bodies
+   * (§2.7). `scope:"vector_lane"` = the vector lane returned empty while FTS
+   * still served (e.g. a vec-table/embedder dimension drift); `scope:"lanes"`
+   * = the whole searchLanes call failed and the turn ran with NO recall.
+   * Bridged to the trajectory and persisted as a `health_signal` obs row so a
+   * recurring recall failure is a fleet finding, not a log-grep discovery
+   * (observed live: hours of per-turn failures with zero fleet signal).
+   * Emit site: `createMemoryRecall` (memory-recall.ts), via the same
+   * deferred-emit path as `memory:recalled`.
+   */
+  "memory:recall_degraded": {
+    agentId: string;
+    sessionKey?: string;
+    traceId: string;
+    /** Which layer degraded: one lane ("vector_lane") or the whole split ("lanes"). */
+    scope: "vector_lane" | "lanes";
+    /** The closed LogFields.ErrorKind string from the failing layer. */
+    errorKind: string;
+    timestamp: number;
+  };
+
+  /**
    * Cross-encoder rerank stage completed for one recall. MINIMAL payload —
    * counts/booleans ONLY, NEVER memory bodies or query text (§2.7). The `fellBack` /
    * `timedOut` flags make the graceful-degradation paths queryable (rerank-fallback-rate

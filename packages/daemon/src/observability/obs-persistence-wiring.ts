@@ -48,6 +48,7 @@ import {
   sessionSummaryEventToRow,
   dagDegradedEventToRow,
   healthBudgetExceededEventToRow,
+  recallDegradedEventToRow,
   channelInboundSilentEventToRow,
   channelIngressAuthRejectedEventToRow,
   reflectFunnelEventToRow,
@@ -129,6 +130,7 @@ export {
   sessionSummaryEventToRow,
   dagDegradedEventToRow,
   healthBudgetExceededEventToRow,
+  recallDegradedEventToRow,
   channelInboundSilentEventToRow,
   channelIngressAuthRejectedEventToRow,
   reflectFunnelEventToRow,
@@ -338,6 +340,12 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   });
   eventBus.on("health:budget_exceeded", (payload) => {
     diagnosticBuffer.push(healthBudgetExceededEventToRow(payload));
+  });
+  // A degraded/failed recall lane → a health_signal row (fleet finding
+  // `health_signal:recall_degraded`) — dead recall must be a fleet finding,
+  // not a daemon.log-grep discovery.
+  eventBus.on("memory:recall_degraded", (payload) => {
+    diagnosticBuffer.push(recallDegradedEventToRow(payload));
   });
   // A silently-dead webhook ingress (past its missed-inbound threshold) → a
   // health_signal row, so the fleet lens surfaces it (health_signal:channel_ingress_silent)

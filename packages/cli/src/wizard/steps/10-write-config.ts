@@ -17,6 +17,12 @@ import { existsSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from "no
 import { homedir } from "node:os";
 import { stringify, parse } from "yaml";
 import { safePath, loadEnvFile } from "@comis/core";
+import {
+  appendConfigAuditRecordSync,
+  createConfigWriteAuditRecordBase,
+  finalizeConfigWriteAuditRecord,
+  ensureConfigAuditParentDir,
+} from "@comis/observability";
 import type {
   WizardState,
   WizardStep,
@@ -433,6 +439,29 @@ export const writeConfigStep: WizardStep = {
     // Always assigned before the (post-try) return — the catch always rethrows.
     let unresolvedSecretRefs: string[];
 
+    // Config-audit provenance: the wizard's write must land in the SAME
+    // config-audit.jsonl the daemon's config-io writes do — a config.yaml
+    // that changes between boots with NO config.write row is unattributable
+    // (observed live: an embedder switch that broke recall arrived with no
+    // audit trail). Base is built BEFORE the write so the record captures the
+    // previous file state; best-effort throughout — audit failure never
+    // fails init.
+    let auditBase: ReturnType<typeof createConfigWriteAuditRecordBase> | undefined;
+    try {
+      auditBase = createConfigWriteAuditRecordBase({
+        source: "cli-init",
+        configPath,
+        pid: process.pid,
+        ppid: process.ppid,
+        argv: process.argv,
+        cwd: process.cwd(),
+        execArgv: process.execArgv,
+        watchMode: false,
+      });
+    } catch {
+      // Best-effort provenance — never block the wizard on audit plumbing.
+    }
+
     try {
       // 7. Create config directory
       mkdirSync(configDir, { recursive: true, mode: 0o700 });
@@ -463,6 +492,23 @@ export const writeConfigStep: WizardStep = {
       // Atomic rename (POSIX guarantees atomicity)
       renameSync(tempPath, configPath);
       spinner.update("config.yaml written");
+
+      // Append the config.write audit record (result: rename — same closed
+      // vocabulary as the daemon's atomic config-io writes). Confined to the
+      // config dir itself so custom --config-dir installs audit too.
+      if (auditBase !== undefined) {
+        try {
+          const auditPath = safePath(configDir, "logs", "config-audit.jsonl");
+          ensureConfigAuditParentDir(auditPath);
+          appendConfigAuditRecordSync({
+            filePath: auditPath,
+            record: finalizeConfigWriteAuditRecord(auditBase, { result: "rename" }),
+            confinedBaseDir: configDir,
+          });
+        } catch {
+          // Best-effort provenance — never block the wizard on audit plumbing.
+        }
+      }
 
       // 9. Write .env file
       // Load existing .env to preserve keys the wizard doesn't manage

@@ -1125,6 +1125,13 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
         // return type is Message-or-true).
         return editMessageText(body);
 
+      case "deleteMessage":
+        // Delete outbound — RECORD it (the EditPlace pill-cleanup ground
+        // truth: a success/recovered turn deletes its activity placeholder
+        // after the answer lands; caps declare outbound.deletes:true, so a
+        // silent default-case absorb here made that lifecycle unprovable).
+        return deleteMessage(body);
+
       case "sendPhoto":
       case "sendAudio":
       case "sendVideo":
@@ -1259,6 +1266,15 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
       raw: body,
     });
     // The adapter awaits the call and grammy expects `result: true`.
+    return okEnvelope(true);
+  }
+
+  function deleteMessage(body: Record<string, unknown>): RouteResult {
+    // Record-and-ack: the oracle keeps the delete as a RecordedOutbound (the
+    // message's terminal lifecycle event); the Bot-API return is boolean True.
+    const chatId = Number(body["chat_id"] ?? 0) || 0;
+    const messageId = Number(body["message_id"] ?? 0) || 0;
+    record(chatId, { method: "deleteMessage", messageId, raw: body });
     return okEnvelope(true);
   }
 

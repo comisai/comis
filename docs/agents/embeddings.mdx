@@ -216,6 +216,22 @@ ones — they live in a different vector space. Comis tracks the embedding
 **fingerprint** (provider + model + dimensions) and detects mismatches at
 startup.
 
+When the new model's **dimensions** differ from the old one's (for example,
+switching from a local 768-dimension model to OpenAI's 1536-dimension
+`text-embedding-3-small`), the vector tables themselves are rebuilt at startup —
+a vector table's dimension is fixed when the table is created, so Comis drops
+and recreates it at the new dimension and queues every memory for
+re-embedding. The rebuild is logged at INFO (`Vector table rebuilt for new
+embedding dimension`) and recorded in the boot `model_health` diagnostic, so
+`comis fleet` drill-downs can confirm it ran.
+
+If the vector lane ever fails at query time (for example, a vector-table /
+embedder mismatch while the daemon is running), recall degrades to
+**FTS-only for that query** instead of failing outright — the degradation is
+recorded in the session trajectory (`memory.recall_degraded`), surfaced in
+`comis explain`'s recall section, and counted as a
+`health_signal:recall_degraded` finding in `comis fleet`.
+
 When `embedding.autoReindex: true` (the default), a background batch indexer
 re-embeds every existing memory in batches of `embedding.batch.batchSize`
 (default 100) until the database is consistent again. The agent stays

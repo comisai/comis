@@ -268,6 +268,36 @@ export function channelInboundSilentEventToRow(
 }
 
 /**
+ * Map a `memory:recall_degraded` event (a recall retrieval lane — or the whole
+ * lane split — failed and recall degraded) to a flat DiagnosticRow under
+ * `category:"health_signal"`, `severity:"warning"`. The `details.signal` label
+ * `"recall_degraded"` rides the generic `health_signal:<label>` fleet-findings
+ * rollup, so a RECURRING recall failure surfaces as a counted `comis fleet`
+ * finding with no extractor change — the incident class this closes was hours
+ * of per-turn recall failures visible only as daemon.log WARNs while the fleet
+ * lens reported nothing. Content-free: closed scope tag + closed ErrorKind
+ * string only — never query text or error bodies.
+ */
+export function recallDegradedEventToRow(
+  payload: EventMap["memory:recall_degraded"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "warning",
+    agentId: payload.agentId,
+    ...(payload.sessionKey !== undefined ? { sessionKey: payload.sessionKey } : {}),
+    message: "memory:recall_degraded",
+    details: JSON.stringify({
+      signal: "recall_degraded",
+      scope: payload.scope,
+      errorKind: payload.errorKind,
+    }),
+    traceId: payload.traceId,
+  };
+}
+
+/**
  * Map a `channel:ingress_auth_rejected` event (an inbound activity rejected at
  * a channel gateway ingress auth gate) to a flat DiagnosticRow under
  * `category:"health_signal"`, `severity:"warning"`. The `details.signal` label

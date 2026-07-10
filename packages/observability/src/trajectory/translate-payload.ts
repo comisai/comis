@@ -267,6 +267,14 @@ export function translatePayload(
         durationMs: payload.durationMs,
       };
 
+    case "memory:recall_degraded":
+      // A lane / the lane split failed and recall degraded. Closed scope tag +
+      // the closed ErrorKind string ONLY — never error bodies or query text.
+      return {
+        scope: payload.scope,
+        errorKind: payload.errorKind,
+      };
+
     case "memory:reranked":
       // Rerank candidate/hit counts + the graceful-degradation flags
       // (timedOut/fellBack) — counts/booleans ONLY.

@@ -216,10 +216,12 @@ export interface IncidentSignals {
    */
   promptTimeout?: IncidentPromptTimeout;
   /**
-   * Memory-recall outcome aggregated over the session's
-   * `memory.recalled` trajectory records. Lets the `recall_miss` heuristic name a
-   * zero-hit recall on a degraded session. Counts/booleans
-   * only. Absent ⇒ no recall records in the trajectory (omitted from the report).
+   * Memory-recall outcome aggregated over the session's `memory.recalled` +
+   * `memory.recall_degraded` trajectory records. Lets the `recall_miss`
+   * heuristic name a zero-hit recall on a degraded session, and surfaces a
+   * DEAD/DEGRADED recall (lane or whole-split failure) with the last closed
+   * scope/ErrorKind labels. Counts/booleans only. Absent ⇒ no recall records
+   * in the trajectory (omitted from the report).
    */
   recall?: {
     recalls: number;
@@ -227,6 +229,9 @@ export interface IncidentSignals {
     lastLanes: number;
     lastFinalCount: number;
     rerankerAvailable: boolean;
+    degraded?: number;
+    lastDegradedScope?: string;
+    lastDegradedErrorKind?: string;
   };
   /**
    * Cache breaks folded per-reason from the session's
@@ -266,6 +271,13 @@ export interface IncidentSignals {
     reason?: string;
     reclassified: boolean;
   };
+  /**
+   * Session-wide finalize tally: turns that painted a kept failure pill and
+   * turns that finalized as recovered successes. The last-wins `turnFinalized`
+   * snapshot above cannot answer "which turn wore the pill" mid-session.
+   * Absent ⇒ no finalize records.
+   */
+  turnFinalizeCounts?: { failure: number; recovered: number };
   /**
    * Σ over the session's `delivery.aborted` records — aborted-delivery events
    * and the blocks they left unsent (chunksNotSent = Σ(totalChunks −

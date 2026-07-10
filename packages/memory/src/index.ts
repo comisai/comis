@@ -4,6 +4,10 @@
 
 // Schema and initialization
 export { initSchema, isVecAvailable } from "./schema.js";
+// The reconcile/classify helpers stay package-internal (schema + adapter +
+// queue import them relatively); only the rebuild REPORT shape is public — the
+// daemon threads it into the boot model_health diagnostic.
+export type { VecTableRebuild } from "./vec-dimension.js";
 
 // Session store
 export { createSessionStore } from "./session-store.js";

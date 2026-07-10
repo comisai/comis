@@ -46,7 +46,7 @@ import {
 import { mmrRerank } from "./mmr.js";
 import { appendCausalLane } from "./recall-causal-lane.js";
 import { appendGraphSpreadLane } from "./recall-graph-spread-lane.js";
-import { captureRecallObservability } from "./recall-observability.js";
+import { captureRecallObservability, emitRecallDegraded } from "./recall-observability.js";
 import { applyProvenanceDownweighting } from "./recall-provenance.js";
 import { gateLanes, resolveEffectiveBaseFloor, logPrefilterDrops, passesBaseFloor, type PrefilterAccumulator } from "./recall-security-prefilter.js";
 import {
@@ -190,7 +190,25 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
           agentId,
           ...(occurredAtRange !== undefined ? { occurredAtRange } : {}),
         });
-        if (!laneRes.ok) return laneRes;
+        if (!laneRes.ok) {
+          // The whole lane split failed — this turn runs with NO recall. Emit
+          // the degradation marker so the failure reaches the trajectory +
+          // fleet (observed live: hours of per-turn recall failures visible
+          // only as log WARNs).
+          emitRecallDegraded(deps, sessionKey, agentId, "lanes", "internal");
+          return laneRes;
+        }
+        if (laneRes.value.vectorLaneDegraded !== undefined) {
+          // The adapter isolated a vector-lane failure (FTS still serves).
+          // Record the queryable degradation + emit the counts-only event.
+          const laneErrorKind = laneRes.value.vectorLaneDegraded.errorKind;
+          degradations.push({
+            kind: "vec_lane_failed",
+            errorKind: laneErrorKind,
+            hint: "vector lane failed; recall used FTS only — see the memory searchLanes WARN for the failure class",
+          });
+          emitRecallDegraded(deps, sessionKey, agentId, "vector_lane", laneErrorKind);
+        }
         // Each lane's RRF weight is multiplied by intentMultiplier(intent, lane) (1.0 off).
         const ftsWeight = laneWeight(cfg.lanes?.fts.weight ?? 1.0, "fts");
         const vectorWeight = laneWeight(cfg.lanes?.vector.weight ?? 1.5, "vector");

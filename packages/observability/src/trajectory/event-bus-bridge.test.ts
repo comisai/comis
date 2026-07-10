@@ -998,6 +998,10 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       fellBack: false,
       durationMs: 7,
     },
+    "memory:recall_degraded": {
+      scope: "vector_lane",
+      errorKind: "config",
+    },
     "memory:generation_quality": {
       agentId: "default",
       pass: "user_representation",
@@ -3852,9 +3856,10 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // This count guards TRAJECTORY_BRIDGE_MAPPING against a silent add or
     // removal: any change to the mapping must update this number in lockstep,
     // forcing a deliberate review of every newly-bridged or dropped event.
-    // 121 = 120 + background_task:notified (the fallback-notice-decision record —
-    // makes the F-8 leak class diagnosable from `comis explain` in one call).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(121);
+    // 122 = 121 + memory:recall_degraded (the degraded/failed-recall record —
+    // makes a dead recall diagnosable from `comis explain` + the fleet lens
+    // instead of a daemon.log grep).
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(122);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

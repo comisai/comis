@@ -8260,6 +8260,15 @@
             },
             "rerankerAvailable": {
               "type": "boolean"
+            },
+            "degraded": {
+              "type": "number"
+            },
+            "lastDegradedScope": {
+              "type": "string"
+            },
+            "lastDegradedErrorKind": {
+              "type": "string"
             }
           },
           "required": [
@@ -8629,6 +8638,12 @@
             },
             "reclassified": {
               "type": "boolean"
+            },
+            "failedTurnCount": {
+              "type": "number"
+            },
+            "recoveredTurnCount": {
+              "type": "number"
             }
           },
           "required": [

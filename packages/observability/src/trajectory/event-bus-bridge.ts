@@ -99,6 +99,10 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // rerank outcome. Content-free (counts/booleans only).
   "memory:recalled": "memory.recalled",
   "memory:reranked": "memory.reranked",
+  // A retrieval lane (or the whole lane split) failed and recall degraded —
+  // the trajectory record that makes a dead/degraded recall diagnosable from
+  // `comis explain` instead of a daemon.log grep. Closed scope + ErrorKind only.
+  "memory:recall_degraded": "memory.recall_degraded",
 
   // A memory-generation pass (consolidation /
   // reasoning / user-representation) produced output whose quality diverged from

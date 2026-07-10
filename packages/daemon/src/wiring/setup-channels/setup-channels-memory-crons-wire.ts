@@ -288,6 +288,35 @@ export async function handleWireMemoryCronSentinel(
         logger: reflectLogger,
         systemPrompt,
         source,
+        // Background-run spend attribution: reflection LLM calls previously
+        // hit the provider bill with ZERO obs_token_usage rows — invisible to
+        // fleet/billing/obs_query. The synthetic __REFLECT__ session key keys
+        // the rows to the background job, never a user session.
+        onUsage: (usage) => {
+          container.eventBus.emit("observability:token_usage", {
+            timestamp: clock.now(),
+            traceId: `reflect-${agentId}-${clock.now()}`,
+            agentId,
+            channelId: "__reflect__",
+            executionId: `reflect-${kind}-${clock.now()}`,
+            provider: resolved.provider,
+            model: resolved.modelId,
+            tokens: {
+              prompt: usage.inputTokens,
+              completion: usage.outputTokens,
+              total: usage.inputTokens + usage.outputTokens,
+            },
+            cost: usage.cost,
+            latencyMs: usage.durationMs,
+            cacheReadTokens: usage.cacheReadTokens,
+            cacheWriteTokens: usage.cacheWriteTokens,
+            sessionKey: `__REFLECT__:${agentId}`,
+            savedVsUncached: 0,
+            cacheEligible: false,
+            warmupTurn: false,
+            pendingCacheInvestmentUsd: 0,
+          });
+        },
         ...cronCustomModelOpt(container.config.providers?.entries?.[resolved.provider], resolved.provider, resolved.modelId),
       });
       const sourceTrajectories = await reflection.buildSourceTrajectories(kind, agentId, reflectTenantId);
