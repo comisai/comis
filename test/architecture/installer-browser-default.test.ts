@@ -127,6 +127,37 @@ describe("install.sh browser + xvfb provisioning is on by default (full capabili
     expect(body, "render_xvfb_unit must gate on xvfb_present, not just WITH_XVFB").toMatch(/xvfb_present/);
   });
 
+  it("grants Chrome's extra syscalls (pkey + landlock) in the systemd SystemCallFilter when the browser is provisioned", () => {
+    // Chrome is SIGSYS-killed (status=31/SYS) before opening the CDP socket
+    // under `SystemCallFilter=@system-service @mount setns` — it needs pkey_*
+    // (V8 memory-protection keys, syscall 330) and landlock_* (its own
+    // self-sandbox, syscall 444). Verified via seccomp audit on a clean install:
+    // WITHOUT these, headless AND headed Chrome die and the browser tool's
+    // navigate fails `connectOverCDP ECONNREFUSED`. Landlock is restriction-only
+    // (Chrome can only ADD limits to itself) so allowing it is low-risk.
+    // Gated on WITH_BROWSER so a --without-browser install keeps the tighter set.
+    expect(installSh, "a browser-only SystemCallFilter line var must default empty").toMatch(
+      /COMIS_BROWSER_SYSCALL_LINE=""/,
+    );
+    const m = installSh.match(/COMIS_BROWSER_SYSCALL_LINE="SystemCallFilter=([^"]+)"/);
+    expect(m, "COMIS_BROWSER_SYSCALL_LINE must be assigned the Chrome syscalls").not.toBeNull();
+    const syscalls = m?.[1] ?? "";
+    // The converged set (SIGSYS-audit-iterated until Chrome launches + serves CDP
+    // + renders a real page with zero denials): pkey + landlock + ptrace + seccomp.
+    for (const sc of ["pkey_alloc", "pkey_free", "pkey_mprotect", "landlock_create_ruleset", "landlock_add_rule", "landlock_restrict_self", "ptrace", "seccomp"]) {
+      expect(syscalls, `SystemCallFilter must grant ${sc}`).toContain(sc);
+    }
+    // The assignment must live inside the WITH_BROWSER conditional (so
+    // --without-browser omits it): default-empty decl → WITH_BROWSER guard → assign.
+    const iDefault = installSh.indexOf('COMIS_BROWSER_SYSCALL_LINE=""');
+    const iGuard = installSh.indexOf('if [[ "$WITH_BROWSER" == "1" ]]; then', iDefault);
+    const iAssign = installSh.indexOf('COMIS_BROWSER_SYSCALL_LINE="SystemCallFilter=');
+    expect(iGuard, "a WITH_BROWSER guard must sit between the default and the assignment").toBeGreaterThan(iDefault);
+    expect(iAssign, "the syscall assignment must be gated by WITH_BROWSER").toBeGreaterThan(iGuard);
+    // The rendered unit must interpolate the line.
+    expect(installSh, "the unit body must emit the browser syscall line").toContain("${COMIS_BROWSER_SYSCALL_LINE}");
+  });
+
   it("maybe_seed_browser_config seeds headless:false ONLY when Xvfb is actually present", () => {
     const body = fnBody("maybe_seed_browser_config");
     expect(body, "config seed must exist").not.toBe("");

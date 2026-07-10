@@ -3857,10 +3857,27 @@ render_systemd_unit() {
     local COMIS_BROWSER_FS_WRITE_FLAGS=""
     local COMIS_BROWSER_RW_PATHS=""
     local COMIS_BROWSER_ENV_LINES=""
+    local COMIS_BROWSER_SYSCALL_LINE=""
     local COMIS_XVFB_AFTER=""
     local COMIS_XVFB_WANTS=""
     local COMIS_PRIVATE_TMP_LINE="PrivateTmp=yes"
     if [[ "$WITH_BROWSER" == "1" ]]; then
+        # Chrome needs syscalls outside `@system-service @mount setns` or the
+        # kernel SIGSYS-kills it (status=31/SYS) BEFORE it opens the CDP socket —
+        # so the browser tool's every navigate fails `connectOverCDP ECONNREFUSED`.
+        # Determined by seccomp audit (type=1326) on a clean install, iterated to
+        # convergence (launches + serves CDP + renders a real page, zero further
+        # denials): pkey_* (330 — V8 memory-protection keys), landlock_* (444 —
+        # Chrome's own self-sandbox), and — once a renderer spins up — ptrace (101)
+        # + seccomp (317). systemd unions multiple SystemCallFilter= lines.
+        # Security posture: seccomp + landlock are RESTRICTION-ONLY (a process can
+        # only ADD limits to itself, never escape), pkey_* is memory-protection —
+        # all safe. ptrace is the one real relaxation, but with NoNewPrivileges +
+        # empty CapabilityBoundingSet (no CAP_SYS_PTRACE) + default YAMA it is
+        # limited to same-uid children (Chrome tracing its own crash handler).
+        # Only added when a browser is provisioned (--without-browser keeps the
+        # tighter set).
+        COMIS_BROWSER_SYSCALL_LINE="SystemCallFilter=pkey_alloc pkey_free pkey_mprotect landlock_create_ruleset landlock_add_rule landlock_restrict_self ptrace seccomp"
         # chrome-detection.ts:154 resolves the profile dir to
         # $XDG_CONFIG_HOME/comis/browser/<profile>/user-data. Allow the daemon
         # to write there at both the Node permission layer (--allow-fs-write)
@@ -4009,6 +4026,7 @@ CapabilityBoundingSet=
 # Without them, bwrap dies with SIGSYS (exit code 159) on seccomp violation.
 SystemCallFilter=@system-service @mount
 SystemCallFilter=setns
+${COMIS_BROWSER_SYSCALL_LINE}
 SystemCallArchitectures=native
 PrivateDevices=yes
 # ProtectKernelTunables / ProtectKernelLogs / ProtectHostname are intentionally
