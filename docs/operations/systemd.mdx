@@ -362,16 +362,22 @@ A second managed unit at `/etc/systemd/system/comis-xvfb.service` runs Xvfb on d
 ExecStart=/usr/bin/Xvfb :99 -screen 0 1920x1080x24 -ac -nolisten tcp
 ```
 
-`-nolisten tcp` keeps the X server on a Unix socket only; `-ac` is safe because the socket is owned by the `comis` user and inaccessible from outside that namespace. The main `comis.service` unit picks up the display by way of three additional directives:
+`-nolisten tcp` keeps the X server on a Unix socket only; `-ac` is safe because the socket is owned by the `comis` user. The companion unit also binds a shared host dir onto its `/tmp/.X11-unix` so the socket it creates is reachable from the daemon:
+
+```
+BindPaths=/run/comis-x11:/tmp/.X11-unix
+```
+
+The main `comis.service` unit picks up the display with:
 
 ```
 After=network-online.target comis-xvfb.service
 Wants=network-online.target comis-xvfb.service
 Environment=DISPLAY=:99
-JoinsNamespaceOf=comis-xvfb.service
+BindReadOnlyPaths=/run/comis-x11:/tmp/.X11-unix
 ```
 
-`JoinsNamespaceOf=` is load-bearing — without it, `PrivateTmp=yes` on the main unit gives the daemon its own `/tmp` namespace and the X11 socket at `/tmp/.X11-unix/X99` is unreachable. The pair share `/tmp` for exactly this purpose.
+The shared-bind pair is load-bearing — without it, `PrivateTmp=yes` on each unit gives the daemon its own `/tmp` and the X11 socket at `/tmp/.X11-unix/X99` is unreachable. (`JoinsNamespaceOf=` was tried first but does **not** share the `PrivateTmp` `/tmp` content on systemd 255 — the daemon's namespace gets an empty `/tmp/.X11-unix`.) `/run/comis-x11` is created with mode `1777` by `/etc/tmpfiles.d/comis-x11.conf` so it survives reboot before the units mount it.
 
 Manage the companion unit the same way as the main one:
 
