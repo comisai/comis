@@ -16,7 +16,7 @@
  */
 
 import type { MemorySearchResult, SessionKey } from "@comis/core";
-import { tryGetContext } from "@comis/core";
+import { tryGetContext, formatSessionKey } from "@comis/core";
 import type { MemoryRecallDeps, MemoryRecallConfig } from "./recall-types.js";
 import type { ScoreBreakdown } from "./score.js";
 import {
@@ -218,11 +218,24 @@ export function emitRecallDegraded(
 }
 
 /**
- * Format a SessionKey into the counts-only sessionKey string for the event envelope.
- * Best-effort: a non-string field falls back to the tenant id so the emit never throws.
+ * Format a SessionKey into the event-envelope sessionKey string — the
+ * CANONICAL `formatSessionKey` form, byte-identical to the per-session
+ * trajectory bridge's `ownerSessionKey`. This must never drift: the bridge
+ * DROPS any payload whose sessionKey does not equal the owner recorder's key,
+ * and the previous home-grown "tenant:channel:user" approximation (wrong
+ * field order, no peer/guild/thread parts) meant memory:recalled /
+ * memory:reranked were silently filtered from EVERY per-session trajectory
+ * (observed live: recall invisible to `comis explain` on every turn).
+ * Best-effort: a degenerate key falls back to the tenant id so the emit
+ * never throws.
  */
 function formatTenantSessionKey(key: SessionKey): string {
-  const k = key as unknown as { tenantId?: string; agentId?: string; channelId?: string; userId?: string };
-  const parts = [k.tenantId, k.channelId ?? k.agentId, k.userId].filter((p): p is string => typeof p === "string");
-  return parts.length > 0 ? parts.join(":") : (k.tenantId ?? "default");
+  try {
+    const formatted = formatSessionKey(key);
+    if (!formatted.includes("undefined")) return formatted;
+  } catch {
+    // fall through to the tenant-id fallback
+  }
+  const k = key as unknown as { tenantId?: string };
+  return typeof k.tenantId === "string" ? k.tenantId : "default";
 }

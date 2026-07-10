@@ -41,6 +41,7 @@ import type {
   ComisLogger,
   TripleStorePort,
 } from "@comis/core";
+import { formatSessionKey } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 import { describe, it, expect, vi } from "vitest";
 import { fuse } from "./fuse.js";
@@ -4237,5 +4238,41 @@ describe("createMemoryRecall — degraded-lane visibility (memory:recall_degrade
     expect(degraded).toHaveLength(1);
     expect(degraded[0]!.payload["scope"]).toBe("lanes");
     expect(typeof degraded[0]!.payload["errorKind"]).toBe("string");
+  });
+});
+
+describe("recall event payloads carry the CANONICAL formatted sessionKey", () => {
+  // The per-session trajectory bridge drops any payload whose sessionKey does
+  // not EQUAL the owner recorder's formatSessionKey(...) key. The old local
+  // formatter produced "tenant:channel:user" (wrong order, no peer/guild/
+  // thread parts), so memory:recalled / memory:reranked NEVER matched and
+  // were silently filtered from every per-session trajectory — recall was
+  // invisible to `comis explain` on every turn (observed live).
+  it("memory:recalled and memory:recall_degraded carry formatSessionKey(sessionKey) so the session-scoped bridge keeps them", async () => {
+    const input = [makeResult("a", { base: 0.9, trustLevel: "learned", createdAt: NOW })];
+    const { eventBus, emits } = recordingEventBus();
+    const port = {
+      async search() {
+        return ok(input);
+      },
+      async searchLanes() {
+        return ok({ fts: input, vector: [], vectorLaneDegraded: { errorKind: "config" } });
+      },
+    } as unknown as MemoryPort;
+    const recall = recallWithObs(
+      { memoryPort: port, clock: fixedClock, logger: noopLogger, eventBus },
+      baseConfig(),
+    );
+
+    const got = await recall.recall("what is the plan", SESSION_KEY_OBJ, "agent_z");
+
+    expect(got.ok).toBe(true);
+    const expectedKey = formatSessionKey(SESSION_KEY_OBJ);
+    const recalled = emits.find((e) => e.event === "memory:recalled");
+    expect(recalled).toBeDefined();
+    expect(recalled!.payload["sessionKey"]).toBe(expectedKey);
+    const degraded = emits.find((e) => e.event === "memory:recall_degraded");
+    expect(degraded).toBeDefined();
+    expect(degraded!.payload["sessionKey"]).toBe(expectedKey);
   });
 });
