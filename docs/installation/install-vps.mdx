@@ -90,20 +90,22 @@ daemon under that user. This is the secure default; pass `--no-user` only if
 you explicitly want the daemon running as your login user.
 </Warning>
 
-### Want the browser tool too?
+### Browser tool
 
-If your agent needs to drive a browser (scraping, dashboards, authenticated workflows, anti-bot-protected sites), add a stealth flag to the install line. Same command, more provisioning:
+The browser tool ships **enabled by default**, so the default install already provisions
+Chrome + the headless libs + the headed Xvfb stack (best-effort — see the Linux install
+guide's fallback note). You only need a flag to opt out or to switch to the stealth build:
 
 ```bash
-# Stock Chrome — enough for most public sites
-curl -fsSL https://comis.ai/install.sh | bash -s -- --with-browser
+# Default install — browser tool + headed stack provisioned best-effort
+curl -fsSL https://comis.ai/install.sh | bash
+
+# Minimal footprint — skip the browser runtime entirely
+curl -fsSL https://comis.ai/install.sh | bash -s -- --without-browser
 
 # Stealth Chromium — bypasses Cloudflare Turnstile, FingerprintJS,
 # BrowserScan, and Reddit's secondary fingerprint check
 curl -fsSL https://comis.ai/install.sh | bash -s -- --with-cloakbrowser
-
-# Full stack — for sites that detect headless mode itself
-curl -fsSL https://comis.ai/install.sh | bash -s -- --with-cloakbrowser --with-xvfb
 ```
 
 <Warning>

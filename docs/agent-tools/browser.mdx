@@ -185,15 +185,15 @@ Use the `profiles` action to create, list, and switch between browser profiles.
 
 ## Stealth mode (anti-bot detection)
 
-By default the browser runs headless Chrome — fine for most public sites and internal tools, but instantly flagged by modern bot-detection services (Cloudflare Turnstile, FingerprintJS, BrowserScan, reCAPTCHA v3 scoring, Reddit's secondary fingerprint check). For agents that hit those sites you can install Comis with progressively stronger stealth.
+The default install provisions **stock Chrome running headed via Xvfb** (both `--with-browser` and `--with-xvfb` are on by default) — headed already clears the low tier of headless-detection (BrowserScan flips `Robot` → `Normal`). Still flagged by fingerprint-tier services (Cloudflare Turnstile, FingerprintJS, reCAPTCHA v3 scoring, Reddit's secondary fingerprint check); for those, add `--with-cloakbrowser`. A `--without-xvfb` install runs plain headless Chrome; `--without-browser` skips the runtime entirely.
 
-Three install-time flags compose together. They're available in both the bare-metal installer (`install.sh`) and the Docker image (build args):
+The install-time flags compose. They're available in both the bare-metal installer (`install.sh`) and the Docker image (build args):
 
-| Flag | What it adds | When you need it |
+| Flag | What it adds | Default |
 |---|---|---|
-| `--with-browser` | Stock Google Chrome + headless shared libs. Sandbox `ReadWritePaths` widened for Chrome's out-of-profile writes (`~/.config/google-chrome`, `~/.local/share/applications`). | Baseline. The browser tool needs a Chrome binary to launch; this provisions one if you didn't bring your own. |
-| `--with-xvfb` | Adds Xvfb + a `comis-xvfb.service` systemd companion that runs a virtual display on `:99`. The main daemon unit joins its `/tmp` namespace so the X11 socket is reachable. Config seeded with `headless: false`. | Sites that detect headless mode itself (BrowserScan, DataDome-tier, Cloudflare managed). On the test VPS, BrowserScan flipped from `Robot` to `Normal` just by switching to headed mode via Xvfb. |
-| `--with-cloakbrowser` | Installs CloakBrowser — a stealth Chromium fork with source-level fingerprint patches at the C++ level (canvas, WebGL, audio, fonts, GPU, screen, WebRTC, hardware reporting). `findChrome()` auto-detects and prefers it over stock Chrome. Sandbox paths are tighter than the Chrome variant. | Sites that fingerprint visitors. Verified bypass on Cloudflare Turnstile (non-interactive), FingerprintJS, BrowserScan, bot.incolumitas (1 fail vs 4 fails for stock Chrome — only the irreducible W3C WebDriver-spec leak remains), and Reddit's secondary fingerprint check on non-datacenter IPs. |
+| `--with-browser` | Stock Google Chrome + headless shared libs. Sandbox `ReadWritePaths` widened for Chrome's out-of-profile writes (`~/.config/google-chrome`, `~/.local/share/applications`). | **On** (opt out with `--without-browser`). The browser tool needs a Chrome binary to launch. |
+| `--with-xvfb` | Adds Xvfb + a `comis-xvfb.service` systemd companion that runs a virtual display on `:99`. The main daemon unit joins its `/tmp` namespace so the X11 socket is reachable. Config seeded with `headless: false` **only when Xvfb actually installed** (else it downshifts to headless — see [install-linux](/installation/install-linux#browser-tool-provisioning)). | **On** (opt out with `--without-xvfb`). Clears headless-detection (BrowserScan `Robot` → `Normal`). |
+| `--with-cloakbrowser` | Installs CloakBrowser — a stealth Chromium fork with source-level fingerprint patches at the C++ level (canvas, WebGL, audio, fonts, GPU, screen, WebRTC, hardware reporting). `findChrome()` auto-detects and prefers it over stock Chrome. Sandbox paths are tighter than the Chrome variant. | **Opt-in.** Sites that fingerprint visitors — verified bypass on Cloudflare Turnstile (non-interactive), FingerprintJS, BrowserScan, bot.incolumitas (1 fail vs 4 for stock Chrome — only the irreducible W3C WebDriver-spec leak remains), and Reddit's secondary fingerprint check on non-datacenter IPs. |
 
 ### Verified results (Ubuntu 24.04 VPS, head-to-head against the same probes)
 

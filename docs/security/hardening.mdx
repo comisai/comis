@@ -293,7 +293,7 @@ These items provide additional hardening for environments with strict security r
 
     **Verify:** Check your `comis doctor` output for specific browser security recommendations.
 
-    **What the installer does for you:** When the daemon is installed with `--with-browser`, `--with-xvfb`, or `--with-cloakbrowser`, the systemd unit is written with two layers of filesystem isolation around the browser binary:
+    **What the installer does for you:** The browser tool ships enabled, so a default install provisions the browser runtime (unless you pass `--without-browser`). Whenever the browser runtime is provisioned — the default, or an explicit `--with-browser` / `--with-cloakbrowser` — the systemd unit is written with two layers of filesystem isolation around the browser binary:
 
     | Layer | What it does | Browser-tool specifics |
     |---|---|---|

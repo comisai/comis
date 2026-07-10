@@ -754,11 +754,37 @@ install_build_tools_linux() {
     return 1
 }
 
+# xvfb_present
+# ------------
+# GROUND TRUTH for "can we run headed?": is the Xvfb binary actually installed?
+# The companion unit's ExecStart hard-codes /usr/bin/Xvfb, so headed mode is
+# impossible without it. Everything that decides headed-vs-headless keys off THIS,
+# not the WITH_XVFB *intent* flag — so a failed Xvfb install falls back to headless
+# Chromium consistently across every install path (root, rootless, --service none),
+# regardless of the order deps/unit/config-seed happen to run in.
+xvfb_present() {
+    [[ -x /usr/bin/Xvfb ]] || command -v Xvfb >/dev/null 2>&1
+}
+
+# install_xvfb_pkg <install-cmd...>
+# --------------------------------
+# Install the Xvfb package for HEADED mode. Best-effort UPGRADE, never a hard
+# requirement: if the install fails (or the binary still isn't present after),
+# downshift WITH_XVFB=0 so the rest of the install treats this as a headless
+# browser — the browser tool then works with the Chromium installed just above,
+# just without headed mode. Called only when WITH_XVFB is set.
+install_xvfb_pkg() {
+    [[ "$WITH_XVFB" == "1" ]] || return 0
+    run_quiet_step "Installing Xvfb (headed mode)" "$@" && xvfb_present && return 0
+    WITH_XVFB=0
+    ui_warn "Xvfb install failed — falling back to headless Chromium (browser tool still works; headed mode disabled)"
+}
+
 # install_browser_deps_linux
 # --------------------------
 # Install the Chromium runtime that packages/skills/src/tools/browser uses.
 # Idempotent — apt/dnf/yum/apk skip already-installed packages. The browser is
-# off-by-default; only runs when --with-browser is set.
+# on-by-default (the browser tool ships enabled); only skipped by --without-browser.
 #
 # Stock-Chromium path. If you adopt CloakBrowser instead, swap the Chromium
 # package out for `cloakbrowser` (npm/pip) — the shared libs below are still
@@ -818,10 +844,7 @@ install_browser_deps_linux() {
         # if requested.
         if [[ "$WITH_CLOAKBROWSER" == "1" ]]; then
             ui_info "CloakBrowser mode — Chrome install skipped (binary comes via npm later)"
-            if [[ "$WITH_XVFB" == "1" ]]; then
-                run_quiet_step "Installing Xvfb" $sudo_cmd apt-get install -y -qq xvfb || \
-                    ui_warn "Xvfb install failed — headed mode will not work"
-            fi
+            install_xvfb_pkg $sudo_cmd apt-get install -y -qq xvfb
             return 0
         fi
 
@@ -864,10 +887,7 @@ install_browser_deps_linux() {
         if [[ ! -x /usr/bin/chromium && -x /usr/bin/chromium-browser ]]; then
             $sudo_cmd ln -sf /usr/bin/chromium-browser /usr/bin/chromium || true
         fi
-        if [[ "$WITH_XVFB" == "1" ]]; then
-            run_quiet_step "Installing Xvfb" $sudo_cmd apt-get install -y -qq xvfb || \
-                ui_warn "Xvfb install failed — headed mode will not work"
-        fi
+        install_xvfb_pkg $sudo_cmd apt-get install -y -qq xvfb
         return 0
     fi
 
@@ -877,8 +897,7 @@ install_browser_deps_linux() {
             libxkbcommon mesa-libgbm pango cairo alsa-lib liberation-fonts \
             google-noto-emoji-color-fonts || \
             ui_warn "Browser dep install had errors"
-        [[ "$WITH_XVFB" == "1" ]] && run_quiet_step "Installing Xvfb" \
-            $sudo_cmd dnf install -y xorg-x11-server-Xvfb
+        install_xvfb_pkg $sudo_cmd dnf install -y xorg-x11-server-Xvfb
         return 0
     fi
 
@@ -887,8 +906,7 @@ install_browser_deps_linux() {
             chromium nss nspr atk at-spi2-atk at-spi2-core cups-libs libdrm \
             libxkbcommon mesa-libgbm pango cairo alsa-lib liberation-fonts || \
             ui_warn "Browser dep install had errors"
-        [[ "$WITH_XVFB" == "1" ]] && run_quiet_step "Installing Xvfb" \
-            $sudo_cmd yum install -y xorg-x11-server-Xvfb
+        install_xvfb_pkg $sudo_cmd yum install -y xorg-x11-server-Xvfb
         return 0
     fi
 
@@ -896,8 +914,7 @@ install_browser_deps_linux() {
         run_quiet_step "Installing browser runtime" $sudo_cmd apk add --no-cache \
             chromium nss freetype harfbuzz ca-certificates ttf-freefont \
             font-noto-emoji || ui_warn "Browser dep install had errors"
-        [[ "$WITH_XVFB" == "1" ]] && run_quiet_step "Installing Xvfb" \
-            $sudo_cmd apk add --no-cache xvfb
+        install_xvfb_pkg $sudo_cmd apk add --no-cache xvfb
         return 0
     fi
 
@@ -1668,11 +1685,20 @@ NO_AUTOSTART="${COMIS_NO_AUTOSTART:-0}"
 # Install + enable but do not start the service yet
 NO_SERVICE_START="${COMIS_NO_SERVICE_START:-0}"
 
-# Browser-tool provisioning (optional — disabled by default to keep the
-# minimal-VPS footprint small). WITH_XVFB and WITH_CLOAKBROWSER imply
-# WITH_BROWSER (both share the headless shared-libs install).
-WITH_BROWSER="${COMIS_WITH_BROWSER:-0}"
-WITH_XVFB="${COMIS_WITH_XVFB:-0}"
+# Browser-tool provisioning. ON by default — the browser tool ships enabled
+# (full capability out of the box), so a fresh install provisions Chromium + the
+# headless shared libs, plus Xvfb + a virtual-display companion unit so the tool
+# can also run HEADED for sites that detect headless (DataDome / Kasada / Turnstile).
+# STRICTLY best-effort: the call sites guard it (`install_browser_deps_linux || true`,
+# `render_xvfb_unit || ui_warn`), so a box where Chromium/Xvfb can't install — or a
+# rootless install that can't register the unit — still gets a fully working daemon
+# (the browser tool then fails honestly at use). Opt out of the whole stack with
+# `--without-browser` / `COMIS_WITH_BROWSER=0`, or keep headless-only (drop the Xvfb
+# headed stack) with `--without-xvfb` / `COMIS_WITH_XVFB=0`, for a minimal footprint.
+# CloakBrowser stays opt-in (`--with-cloakbrowser`) — it swaps Chrome for a specialized
+# stealth build, not an additive capability. WITH_XVFB / WITH_CLOAKBROWSER imply WITH_BROWSER.
+WITH_BROWSER="${COMIS_WITH_BROWSER:-1}"
+WITH_XVFB="${COMIS_WITH_XVFB:-1}"
 WITH_CLOAKBROWSER="${COMIS_WITH_CLOAKBROWSER:-0}"
 [[ "$WITH_XVFB" == "1" ]] && WITH_BROWSER=1
 [[ "$WITH_CLOAKBROWSER" == "1" ]] && WITH_BROWSER=1
@@ -1734,14 +1760,25 @@ Service options (how to run the daemon):
                                        pm2 startup). Useful when you lack admin rights.
   --no-service-start                   Register + enable but do not start the daemon yet.
 
-Browser tool (optional):
+Browser tool:
   --with-browser                       Install Chromium + headless shared libs and widen
                                        the systemd sandbox so the agent browser tool can
-                                       run on this host. Off by default.
+                                       run on this host. ON by default (the browser tool
+                                       ships enabled); best-effort, so a host where Chromium
+                                       can't install still gets a working daemon.
+  --without-browser                    Opt out of the default browser provisioning for a
+                                       minimal footprint (skips Chromium + headless libs).
+                                       The browser tool stays enabled but fails at use for
+                                       lack of a runtime. Same as COMIS_WITH_BROWSER=0.
   --with-xvfb                          Implies --with-browser. Also installs Xvfb and
                                        registers a virtual-display companion unit so the
                                        browser tool can run headed for sites that detect
                                        headless (DataDome, Kasada, Turnstile managed).
+                                       ON by default; best-effort (rootless installs skip
+                                       the companion unit with a warning, never abort).
+  --without-xvfb                       Keep the default headless browser but drop the
+                                       heavier Xvfb headed stack + companion unit.
+                                       Same as COMIS_WITH_XVFB=0.
   --with-cloakbrowser                  Implies --with-browser. Installs CloakBrowser
                                        (stealth Chromium with source-level fingerprint
                                        patches) instead of Google Chrome. Bypasses
@@ -1777,8 +1814,8 @@ Environment variables:
   COMIS_SERVICE=auto|systemd|systemd-user|pm2|none
   COMIS_NO_AUTOSTART=1
   COMIS_NO_SERVICE_START=1
-  COMIS_WITH_BROWSER=0|1
-  COMIS_WITH_XVFB=0|1
+  COMIS_WITH_BROWSER=0|1               (default 1 — set 0 for a minimal footprint)
+  COMIS_WITH_XVFB=0|1                   (default 1 — set 0 to keep headless-only)
   COMIS_WITH_CLOAKBROWSER=0|1
   COMIS_PURGE=1
   COMIS_REMOVE_USER=1
@@ -1888,6 +1925,24 @@ parse_args() {
                 ;;
             --with-browser)
                 WITH_BROWSER=1
+                shift
+                ;;
+            --without-browser)
+                # Opt out of the entire default browser stack (minimal footprint —
+                # skips Chromium, the headless shared libs, and the Xvfb headed unit).
+                # The browser TOOL stays enabled in config but fails honestly at use
+                # for lack of a runtime. Must also zero WITH_XVFB / WITH_CLOAKBROWSER
+                # so the pre-parse `WITH_XVFB=1 ⟹ WITH_BROWSER=1` implication can't
+                # silently re-enable the stack.
+                WITH_BROWSER=0
+                WITH_XVFB=0
+                WITH_CLOAKBROWSER=0
+                shift
+                ;;
+            --without-xvfb)
+                # Keep the (default) headless browser but drop the heavier Xvfb headed
+                # stack + its companion unit. Same as COMIS_WITH_XVFB=0.
+                WITH_XVFB=0
                 shift
                 ;;
             --with-xvfb)
@@ -3697,6 +3752,14 @@ resolve_service_template_vars() {
 # The header lets us detect user edits on upgrade without clobbering them.
 render_xvfb_unit() {
     [[ "$WITH_XVFB" == "1" ]] || return 0
+    # Ground truth: don't register a companion unit whose ExecStart points at an
+    # Xvfb binary that isn't installed (headed install failed) — that would just
+    # crash-loop the unit. Fall back silently to headless (the browser tool still
+    # works; only headed mode is unavailable).
+    if ! xvfb_present; then
+        ui_warn "Xvfb binary not found — skipping headed companion unit (browser runs headless)"
+        return 0
+    fi
     # User-scope systemd-user installs can't write to /etc/systemd/system; in
     # that case the operator owns Xvfb (or runs --with-xvfb under --service systemd).
     # Skip and warn rather than mis-installing a system unit from a non-root run.
@@ -4093,9 +4156,15 @@ maybe_seed_browser_config() {
     local headless_value="true"
     local source_flag="--with-browser"
     [[ "$WITH_CLOAKBROWSER" == "1" ]] && source_flag="--with-cloakbrowser"
-    if [[ "$WITH_XVFB" == "1" ]]; then
+    # Seed headless=false (headed) ONLY when Xvfb is actually present — ground truth,
+    # not the WITH_XVFB intent flag. If the headed install failed, seeding headless=false
+    # would launch Chrome against a display that isn't there; fall back to headless so
+    # the browser tool works on the Chromium installed above.
+    if [[ "$WITH_XVFB" == "1" ]] && xvfb_present; then
         headless_value="false"
         source_flag="${source_flag} --with-xvfb"
+    elif [[ "$WITH_XVFB" == "1" ]]; then
+        ui_warn "Xvfb not present — seeding headless browser config (headed mode unavailable)"
     fi
 
     local block
