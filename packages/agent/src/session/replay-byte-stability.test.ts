@@ -40,10 +40,10 @@ function seedPoisonedSession(): string {
   const now = 1_000_000;
   // A realistic secret-install turn sequence + trailing real conversation so the
   // scrubbed turn ages into replayed history (as idx-96 did in production).
-  sm.appendMessage({ role: "user", content: "store my ituran password", timestamp: now } as never);
+  sm.appendMessage({ role: "user", content: "store my weather-api password", timestamp: now } as never);
   sm.appendMessage({
     role: "assistant",
-    content: [{ type: "tool_use", id: "tc_env", name: "gateway", input: { action: "env_set", env_key: "ITURAN_PASSWORD", env_value: "[REDACTED]" } }],
+    content: [{ type: "tool_use", id: "tc_env", name: "gateway", input: { action: "env_set", env_key: "WEATHER_API_KEY", env_value: "[REDACTED]" } }],
     api: "messages", provider: "anthropic", model: "test-model",
     usage: { input: 10, output: 20, cacheRead: 0, cacheWrite: 0, totalTokens: 30, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
     stopReason: "toolUse", timestamp: now + 1,
@@ -84,10 +84,10 @@ function seedMultiAnomalySession(): string {
     usage: { input: 10, output: 20, cacheRead: 0, cacheWrite: 0, totalTokens: 30, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
     stopReason: extra.stopReason ?? "stop", timestamp: ts,
   });
-  sm.appendMessage({ role: "user", content: "install ituran mcp with my creds", timestamp: now } as never);
+  sm.appendMessage({ role: "user", content: "install weather mcp with my creds", timestamp: now } as never);
   // A multi-tool-call connect turn + poisoned env_set → the scrub reroles the
   // poisoned result to user, adjacent to real user turns → same-role runs.
-  sm.appendMessage(asst("connecting…", now + 1, { blocks: [{ type: "tool_use", id: "tc_env", name: "gateway", input: { action: "env_set", env_key: "ITURAN_PASSWORD", env_value: "[REDACTED]" } }], stopReason: "toolUse" }) as never);
+  sm.appendMessage(asst("connecting…", now + 1, { blocks: [{ type: "tool_use", id: "tc_env", name: "gateway", input: { action: "env_set", env_key: "WEATHER_API_KEY", env_value: "[REDACTED]" } }], stopReason: "toolUse" }) as never);
   sm.appendMessage({ role: "tool", content: [{ type: "text", text: JSON.stringify({ ok: true }) }], toolCallId: "tc_env", timestamp: now + 2 } as never);
   sm.appendMessage({ role: "user", content: "thanks", timestamp: now + 3 } as never);
   // elevatedReply double-send: two assistant turns in a row (a real same-role anomaly).

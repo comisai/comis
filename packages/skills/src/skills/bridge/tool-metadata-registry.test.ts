@@ -961,7 +961,7 @@ describe("tool-metadata-registry -- tool-entry schema metadata", () => {
     const meta = getToolMetadata("mcp_manage");
     // Daniel's exact first attempt — valid, transport inferable as stdio.
     const result = validateToolEntry(
-      { action: "connect", server_name: "ituran", command: "npx", args: ["-y", "ituran-mcp"] },
+      { action: "connect", server_name: "weather", command: "npx", args: ["-y", "weather-mcp"] },
       meta,
     );
     expect(result).toBeUndefined(); // gate passes → handler infers transport=stdio

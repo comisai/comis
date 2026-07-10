@@ -421,15 +421,15 @@ describe("mcp_manage tool", () => {
     });
 
     it("annotates a successful connect with a NEXT-turn availability note (comis-daniel 2026-07-09 dead-window)", async () => {
-      mockRpcCall.mockResolvedValue({ name: "ituran", status: "connected", toolCount: 93, tools: ["ituran_users_me"] });
+      mockRpcCall.mockResolvedValue({ name: "weather", status: "connected", toolCount: 93, tools: ["weather_status"] });
       const tool = createMcpManageTool(mockRpcCall);
 
       const result = await runWithContext(makeContext("admin"), () =>
         tool.execute("call-connect-note", {
           action: "connect",
-          server_name: "ituran",
+          server_name: "weather",
           command: "npx",
-          args: ["-y", "ituran-mcp"],
+          args: ["-y", "weather-mcp"],
         } as never),
       );
 

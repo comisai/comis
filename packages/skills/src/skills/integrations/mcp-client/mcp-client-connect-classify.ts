@@ -204,10 +204,10 @@ export function recordConnectFailure(
  * accumulated buffer at transport close is often harmless. Only genuine
  * error/crash output (an `Error:`/exception, a stack frame, a fatal/panic, a
  * traceback, an errno) should surface at WARN as "crash diagnostics";
- * otherwise a healthy server's banner reads like a fault every restart (live
- * incident 2026-07-08: ituran-mcp's read-only banner logged WARN "Review
- * stderr output for crash diagnostics"). Content-only heuristic — the caller
- * already sanitizes the text before logging.
+ * otherwise a healthy server's banner reads like a fault every restart (e.g. a
+ * read-only server whose startup banner says "Mutations are DISABLED" would
+ * otherwise log WARN "Review stderr output for crash diagnostics"). Content-only
+ * heuristic — the caller already sanitizes the text before logging.
  */
 export function mcpStderrLooksLikeError(text: string): boolean {
   if (!text || text.trim().length === 0) return false;

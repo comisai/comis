@@ -1118,7 +1118,7 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
     "background_task:notified": {
       agentId: "default",
       taskId: "t-1",
-      toolName: "mcp__ituran--ituran_fleet_summary",
+      toolName: "mcp__weather--weather_forecast",
       sessionKey: "k",
       notified: false,
       reason: "live_turn_suppressed",
