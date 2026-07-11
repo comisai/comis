@@ -753,6 +753,11 @@ function buildRpcDispatchDeps(deps: {
   return {
     defaultAgentId: c.defaultAgentId, getAgentCronScheduler: c.getAgentCronScheduler,
     cronSchedulers: c.cronSchedulers, executionTrackers: c.executionTrackers, wakeCoalescer: c.wakeCoalescer,
+    // perAgentRunner MUST be threaded here alongside wakeCoalescer (both live on
+    // the boot context `c`): the heartbeat.trigger/states handlers gate on
+    // deps.perAgentRunner, so omitting it leaves the heartbeat_manage round-trip
+    // dead even while the runner ticks. See heartbeat-runner-wiring-guard.test.ts.
+    perAgentRunner: c.perAgentRunner,
     defaultWorkspaceDir: c.defaultWorkspaceDir, workspaceDirs: c.workspaceDirs,
     memoryApi: c.memoryApi, memoryAdapter: c.memoryAdapter, embeddingQueue: c.embeddingQueue,
     // Thread the memory adapter as the MemoryPort for the
