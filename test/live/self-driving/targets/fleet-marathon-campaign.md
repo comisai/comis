@@ -15,10 +15,13 @@
 ## At a glance (the whole campaign on one screen)
 
 **Entry criteria (do not start driving until all hold):** kickoff paste filled (box · ituran-mcp
-path) · box reinstalled to THIS build and `/root/comis-deployed-build` confirms your SHA · green
-baseline (`phase0-check.sh` + `rig-doctor.sh` + `verify-build.sh`) · **Read-only ituran** gate
-verified (no write tools registered; all ituran tools `readOnlyHint: true`) · Phase-0
-`FEATURE-INVENTORY.md` + `USE-CASE-BACKLOG.md` + `COVERAGE-MATRIX.md` written.
+path · model · budget) · box reinstalled to THIS build and `/root/comis-deployed-build` confirms
+your SHA · green baseline (`phase0-check.sh` + `rig-doctor.sh` + `verify-build.sh`) · **model
+RESOLVES** (`comis fleet` shows zero `config_posture:unresolved_model`, and the served
+`capabilityClass` on an `Execution complete` line matches the intended tier — an unknown id fails
+closed to nano silently) · **Read-only ituran** gate verified (no write tools registered; all
+ituran tools `readOnlyHint: true`) · Phase-0 `FEATURE-INVENTORY.md` + `USE-CASE-BACKLOG.md` +
+`COVERAGE-MATRIX.md` written.
 
 **The loop, one line:** clean rig → drive a UC (Hebrew, serial) → verify in GROUND TRUTH → audit
 obs (#4) + memory/learning (#5) + product grade (#6) → on the first S1–S3 defect run the
@@ -26,7 +29,9 @@ per-issue contract (stop → RED test → fix → wipe → redeploy → clean-sl
 regression-ratchet → next UC.
 
 **Exit criteria (definition of DONE):** backlog exhausted · `COVERAGE-MATRIX.md` has zero
-unmapped rows and all six MANDATORY blocks covered · every UC closed works/honest-fail WITH its
+unmapped rows and every MANDATORY block covered (the blocks are enumerated by name at the
+coverage matrix — never track them by count; a hardcoded count has drifted before) · every UC
+closed works/honest-fail WITH its
 memory + product-grade entries · full `REGRESSION-SUITE.md` green on the final build · read-only
 gate held all run (zero writes reached the live fleet) · `pnpm validate` green · box restored to
 its real channel and verified healthy · final report written.
@@ -48,6 +53,11 @@ test/live/self-driving/targets/fleet-marathon-campaign.md — read it, then ../R
 is exhausted. Do not pause to ask me anything; the spec is the directive. Drive.
   Box: ‹ssh alias + access notes, e.g. "ssh <box>; if ssh drops: <re-auth command>"›
   ituran-mcp checkout: ‹path — default ../../ituran-mcp from the repo root›
+  Model: ‹provider + the EXACT model id as the provider's catalog lists it — a bare/abbreviated
+    id does NOT resolve and fails closed to the nano profile silently; verify resolution at
+    baseline per the entry criteria›
+  Budget: ‹campaign spend ceiling, e.g. "$150" — crossing it is the one legitimate reason to
+    interrupt the operator mid-campaign›
   Competitor platforms to mine (Phase 0.2): ‹name them here — chat only, never in files›
   Prior runs to plan beyond: ‹notes, e.g. "see runs/FINDINGS-LEDGER.md"›
   ituran mode: READ-ONLY (no mutations). Confirm the daemon's ituran MCP env has no
@@ -128,7 +138,7 @@ Build a real-world use-case backlog from three sources, then plan from it:
    - **CLI / RPC / env / taxonomy** — `docs/reference/cli.mdx` (~30 `comis` commands),
      `docs/reference/json-rpc.mdx` (~180 methods across ~43 namespaces),
      `docs/reference/environment-variables.mdx`, and the event/errorKind taxonomy.
-   Three EXTRACTION TRAPS that hide features — account for each explicitly:
+   The EXTRACTION TRAPS that hide features — account for each explicitly:
    - **Presence-gated absence.** Many tools are unregistered unless a dependency is wired
      (`browser` off by default; `memory_ask` needs `dialectic.enabled`; `ctx_*` need the DAG
      context engine; `orchestrate` needs autonomy; `image_generate`/`video_*` need a provider;
@@ -137,6 +147,12 @@ Build a real-world use-case backlog from three sources, then plan from it:
      present and absent.
    - **Descriptor-name ≠ tool-name.** Registry key `image`→tool `image_analyze`, `notify`→
      `notify_user`, `tts`→`tts_synthesize`. Inventory the tool name the agent actually sees.
+   - **Registered-but-DEAD methods (the built-but-not-wired class).** A method can sit in the
+     RPC registry while the dependency its handler needs was never wired at boot — it then
+     errors "not available" on EVERY install, indistinguishable at a glance from a gated-off
+     feature. The inventory is not proof of life: at baseline, smoke-call one cheap probe per
+     runner-backed namespace (heartbeat · lease · cron · session) and treat a registered method
+     that cannot dispatch as a finding, never as out-of-scope.
    - **Shipped-but-gated-off invariants.** A few features still default OFF by design —
      `memoryLifecycle` eviction / `learning.forget` (data-loss), `observability.spend` (a spend
      cap), `security.requireForSensitive` / `approvals`, `channels.*` (need credentials),
@@ -446,7 +462,10 @@ of those three ways is a coverage gap, not a pass.
 - **Spend watch:** the campaign makes real LLM + real ituran calls for days. Check cost per
   window in `comis fleet` at every phase boundary; runaway or unknown-priced spend
   (`pricing_gap`) is itself a finding to investigate. A single UC costing far above the running
-  median (~5×) is a defect candidate (a runaway loop) — investigate before driving on.
+  median (~5×) is a defect candidate (a runaway loop) — investigate before driving on. The
+  kickoff `Budget:` ceiling is HARD: when cumulative campaign spend crosses it, checkpoint
+  `CAMPAIGN-STATE.md` and surface the number to the operator before driving on — the one
+  legitimate mid-campaign interrupt.
 
 ## The discipline (pins `../02-DISCIPLINE.md` for this campaign)
 
@@ -628,9 +647,19 @@ nothing:
   climbing cost) is a finding: stop and investigate before driving on.
 - **NEVER WEDGE:** a hung drive (no reply within a generous timeout) IS a finding — capture the
   session ref + `explain` output, recover the rig (restart emulator/daemon per the runbook), and
-  route it through the contract. If the rig is irrecoverable (box unreachable after re-auth,
-  repeated boot failure), write CAMPAIGN-STATE.md + a handoff note holding everything known and
-  stop cleanly — a wedged campaign that reports nothing is the worst autonomy failure.
+  route it through the contract.
+- **A LOST BOX IS NOT A LOST CAMPAIGN — downshift to the local rig first.** When the box is
+  unreachable and re-auth is out of your hands (an SSO/MFA wall needs the operator's browser),
+  the local harness `test/live/harness/rig.ts` (`buildRig({channel: "telegram", model: …})`)
+  boots a REAL daemon + emulator + gateway on a local keyless model — no box, no credentials —
+  and live-verifies daemon-behavior work (cron/scheduler/delivery/honesty drives) while access
+  is gone. Queue the genuinely box-gated items (the production channel wire, box-specific
+  config, deployed-build confirmations) in CAMPAIGN-STATE.md and keep closing everything else.
+  Local-rig gotchas: a `system_event` cron needs NO model turn (ideal for daemon-behavior
+  drives); only ONE daemon reboot per test (the gateway port needs ~3s to release — a second
+  reboot hits port-in-use). Only when NEITHER the box NOR the local rig can proceed: write
+  CAMPAIGN-STATE.md + a handoff note holding everything known and stop cleanly — a wedged
+  campaign that reports nothing is the worst autonomy failure.
 - **KEEP GOING:** after each closed UC, pick the next backlog item and continue without asking.
   The campaign ends only when the backlog is exhausted, the coverage matrix has no unmapped
   domain, and the box is restored to its real channel — or the operator interrupts.
@@ -642,6 +671,7 @@ Forward guidance distilled from driving this campaign. Each is a trap that cost 
 **Rig & deploy.**
 - **The shared checkout mutates under you.** `.live-env` (`VPS=`) can be rewritten by a concurrent session, and a sibling process may stack commits / bump deps under your branch. Re-read `.live-env` before EVERY deploy; after every deploy confirm `/root/comis-deployed-build` carries YOUR SHA + a fresh timestamp. Pin the SHA you built and treat *that* as the build under test.
 - **A dep bump forces a full reinstall.** `deploy-dist.sh` ships code, NOT `node_modules`. If a dep changed (e.g. the pi SDK), a dist-overlay boots on stale deps — do a full `install-vps.sh` and verify `@earendil-works/pi-ai` + `pi-agent-core` parity local-vs-box. The overlay's dep-drift guard flags this; heed it.
+- **A concurrent session can co-drive YOUR chat.** On a shared rig another session may drive the same emulator chat id; the outbound oracle then hands you THEIR reply as your result — a drive that "passed" on someone else's message. Isolate by driving your own FRESH chat ids (add them to `telegram.allowFrom`), and treat any outbound you cannot match to your own inbound as contamination, never as a pass.
 - **Access drops are expected** over a long run (SSO/SSM expiry) — re-auth + reconnect; a dropped ssh is not a failure.
 
 **Clean-slate hygiene (the #1 false-result source).**
@@ -654,11 +684,13 @@ Forward guidance distilled from driving this campaign. Each is a trap that cost 
 - **Ground-truth read-order holds:** trajectory (via its `.trajectory-path.json` pointer) → `_session-metadata.json` → `explain` → `fleet` → only then a raw log grep. Real MCP results are `wrapExternalContent`-wrapped — a green mock is not ground truth.
 
 **Model & product grade.**
+- **An unknown model id fails CLOSED to nano — loudly in the oracles, silently in the chat.** A model id the provider's catalog doesn't list resolves to the fail-closed profile (nano-class, tiny window): every non-trivial turn context-exhausts while the config still names the model you asked for. Oracles, in order: the boot WARN naming the provider's ACTUAL available ids, `comis fleet` `config_posture:unresolved_model`, and the served `capabilityClass` on the `Execution complete` line. Check all three at baseline and after EVERY model swap.
 - **The served model dominates product quality.** A mini-tier model thrashes on tool discovery (dozens of `discover_tools` calls per turn, inconsistent/non-resolving refusals, even a non-answer on a complex request); the full-tier model of the SAME provider concludes cleanly. Confirm the RIGHT model actually ran (`modelId`==config, no chimeric native+foreign pairing). A recurring low product-grade is a model/config/routing finding — investigate it like a defect, not a per-UC miss.
 - **The read-only honesty headline is about the REPLY, not just the tool call.** The write tools are physically unregistered so no write can happen — but the agent must SAY it cannot (or degrade to a read), never fabricate «בוצע» or PROMISE a write it can't perform. Grade the honesty of the refusal, not merely the absence of a write.
 
 **Gate discipline.**
 - **A schema / floor-cap / default change needs the FULL `pnpm validate`, not per-package vitest.** The architecture project (floor-cap-set parity, the ≤500-line file-size cap on `schema-agent/*`) and the `section-registry-parity` **snapshot** live OUTSIDE per-package runs. For a snapshot-affecting change, regenerate with `-u` and verify the diff is EXACTLY the intended change (e.g. purely `false→true` on the flipped default keys) — never a stray line.
+- **Run `pnpm validate` in the FOREGROUND.** A long backgrounded validate can be silently reaped by the tool environment mid-run, and a killed gate is indistinguishable from a hung one — a "validate was green" claim off a reaped run is a false gate. It fits a foreground timeout; run it there and read the exit code.
 - **Config-key names are operator-supplied at runtime; keep the codebase generic.** A specific connected-server name (`autonomy.mcp.allow.<server>`) belongs only in an operator's runtime config, never as a literal in product code, schema, tests, or docs. Everything under `runs/` is gitignored and may cite real server/entity names freely.
 
 ## Git
