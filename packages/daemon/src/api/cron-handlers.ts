@@ -213,6 +213,22 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
       // payload TEXT). Language falls back to the store schema value.
       const wakeGateScript = normalized.wake_gate_script as string | undefined;
       const wakeGateLanguage = normalized.wake_gate_language as "js" | "ts" | undefined;
+      // Resolve the cron's delivery target: trusted context-injected
+      // `_deliveryTarget` first (agent-origin, cannot be forged/redirected), then an
+      // explicit `deliveryTarget` param as an operator-RPC fallback (validated like
+      // cron.update). See the field comment below (IB-19).
+      let resolvedDeliveryTarget = rawParams._deliveryTarget as
+        | { channelId: string; userId: string; tenantId: string; channelType?: string }
+        | undefined;
+      if (resolvedDeliveryTarget === undefined && rawParams.deliveryTarget != null) {
+        const parsed = CronDeliveryTargetSchema.safeParse(rawParams.deliveryTarget);
+        if (!parsed.success) {
+          throw new Error(
+            `Invalid deliveryTarget: ${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`,
+          );
+        }
+        resolvedDeliveryTarget = parsed.data;
+      }
       const job = {
         id: randomUUID(),
         name,
@@ -234,15 +250,14 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
         enabled: true,
         consecutiveErrors: 0,
         createdAtMs: systemNowMs(),
-        // Capture delivery target from current context if available
-        deliveryTarget: rawParams._deliveryTarget as
-          | {
-              channelId: string;
-              userId: string;
-              tenantId: string;
-              channelType?: string;
-            }
-          | undefined,
+        // Delivery target: the context-injected `_deliveryTarget` (agent-origin,
+        // forgery-proof — set from the turn's session in setup-tools-capabilities)
+        // takes PRECEDENCE so an agent can never redirect a cron's delivery. An
+        // explicit `deliveryTarget` param is honored only as a FALLBACK when no
+        // context is injected (an operator/kit RPC with no turn), validated like
+        // cron.update. (IB-19: without this, an RPC-scripted cron had no target
+        // and fired "no delivery target, skipping delivery".)
+        deliveryTarget: resolvedDeliveryTarget,
       };
 
       const agentScheduler = deps.getAgentCronScheduler(cronAgentId);

@@ -158,6 +158,70 @@ describe("createCronHandlers", () => {
       expect(deps.getAgentCronScheduler).toHaveBeenCalledWith("agent-2");
     });
 
+    it("honors an explicit deliveryTarget param when no _deliveryTarget is injected (operator RPC)", async () => {
+      // IB-19: an operator/kit RPC cron.add has no context-injected _deliveryTarget,
+      // so an explicit deliveryTarget MUST be honored — else the cron fires with
+      // "no delivery target, skipping delivery". cron.update already honors it.
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+      const scheduler = (deps.getAgentCronScheduler as ReturnType<typeof vi.fn>)();
+
+      await handlers["cron.add"]!({
+        name: "op-scripted-cron",
+        schedule_kind: "every",
+        schedule_every_ms: 60000,
+        payload_kind: "agent_turn",
+        payload_text: "status",
+        deliveryTarget: { channelId: "678314278", userId: "678314278", tenantId: "default", channelType: "telegram" },
+      });
+
+      expect(scheduler.addJob).toHaveBeenCalledWith(
+        expect.objectContaining({
+          deliveryTarget: expect.objectContaining({ channelId: "678314278", userId: "678314278", tenantId: "default" }),
+        }),
+      );
+    });
+
+    it("the context-injected _deliveryTarget WINS over an explicit deliveryTarget (agent cannot redirect)", async () => {
+      // Security invariant: for an agent-origin call the daemon injects the trusted
+      // _deliveryTarget from the turn's session; an agent-supplied explicit
+      // deliveryTarget must NOT override it (no cron delivery-redirect).
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+      const scheduler = (deps.getAgentCronScheduler as ReturnType<typeof vi.fn>)();
+
+      await handlers["cron.add"]!({
+        name: "agent-cron",
+        schedule_kind: "every",
+        schedule_every_ms: 60000,
+        payload_kind: "agent_turn",
+        payload_text: "status",
+        _deliveryTarget: { channelId: "TRUSTED-origin", userId: "u", tenantId: "default", channelType: "telegram" },
+        deliveryTarget: { channelId: "ATTACKER-redirect", userId: "u", tenantId: "default", channelType: "telegram" },
+      });
+
+      expect(scheduler.addJob).toHaveBeenCalledWith(
+        expect.objectContaining({
+          deliveryTarget: expect.objectContaining({ channelId: "TRUSTED-origin" }),
+        }),
+      );
+    });
+
+    it("rejects an invalid explicit deliveryTarget (validated like cron.update)", async () => {
+      const deps = makeDeps();
+      const handlers = createCronHandlers(deps);
+      await expect(
+        handlers["cron.add"]!({
+          name: "bad-target-cron",
+          schedule_kind: "every",
+          schedule_every_ms: 60000,
+          payload_kind: "agent_turn",
+          payload_text: "status",
+          deliveryTarget: { channelId: 123 }, // wrong type / missing fields
+        }),
+      ).rejects.toThrow(/deliveryTarget/i);
+    });
+
     it("accepts session_target and wake_mode from params", async () => {
       const deps = makeDeps();
       const handlers = createCronHandlers(deps);
