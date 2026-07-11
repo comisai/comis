@@ -1,6 +1,6 @@
 {
-  "totalMinified": 136058,
-  "totalGzipped": 13896,
+  "totalMinified": 136085,
+  "totalGzipped": 13900,
   "budget": {
     "minified": 138000,
     "gzipped": 38912
@@ -209,7 +209,7 @@
     "tokens.revoke": 422,
     "tokens.rotate": 555,
     "tts.auto_check": 508,
-    "tts.synthesize": 469,
+    "tts.synthesize": 500,
     "video.generate": 516,
     "video.status": 480,
     "whatsapp.action": 268,
