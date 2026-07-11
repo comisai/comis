@@ -33,8 +33,19 @@ unmapped rows and every MANDATORY block covered (the blocks are enumerated by na
 coverage matrix — never track them by count; a hardcoded count has drifted before) · every UC
 closed works/honest-fail WITH its
 memory + product-grade entries · full `REGRESSION-SUITE.md` green on the final build · read-only
-gate held all run (zero writes reached the live fleet) · `pnpm validate` green · box restored to
-its real channel and verified healthy · final report written.
+gate held all run (zero writes reached the live fleet) · `pnpm validate` green (only if a fix was
+written — see below) · box restored to its real channel and verified healthy · final report written.
+
+**A "0-defect verification run" is a valid DONE — the loop is not defect-mandatory.** When the
+build under test already carries a **prior campaign's merged fixes** (e.g. you re-run against
+`main` after that campaign's PR landed), the run may find **zero S1–S3 defects** — and that is a
+correct, expected outcome, not an under-test. In that case **live-verifying the shipped delta**
+(diff the build vs the prior campaign's inventory — the net-new/changed surface is the highest
+priority) **IS the primary deliverable**, alongside the whole-system sweep. The fix-centric exit
+criteria then apply conditionally: there is **no fix branch, no RED tests, and no `pnpm validate`
+to run when no production code was touched** — record "0 S1–S3; delta verified; findings are
+backlog-only" in the final report and treat that as DONE. (Do NOT invent a fix to satisfy the
+criteria, and do NOT read "no fix branch" as "incomplete.")
 
 **When in doubt:** a false success is the worst outcome; verify ground truth, not the reply;
 ituran is read-only (writes must be impossible, not merely avoided); one issue fully closed
@@ -85,6 +96,15 @@ first — never a prose denylist alone:
   `_update_keyboard` / `_share_drive`; (b) every ituran tool present carries `readOnlyHint:
   true`. Record the confirmed read-only tool list in `CAMPAIGN-STATE.md`. If a write tool is
   present, STOP — the gate is off.
+  - ⚠ **The daemon `mcp.status` lens does NOT expose `readOnlyHint`** (its tool projection carries
+    `{name, qualifiedName, callableName, description}` only — no `annotations`). So check (a) — the
+    name-suffix sweep — from `mcp.status`, but for check (b) fall back to the **authoritative
+    source**: the connected MCP server's own dist (`tool-safety.ts` derives `readOnlyHint: !mutating`
+    from the `MUTATING_TOOLS` set) + the `ITURAN_ALLOW_MUTATIONS`-unset env + the mutating-tools
+    non-registration. The absence of any mutating-suffix name in the served list is already
+    dispositive; the per-tool `readOnlyHint` is confirmed by construction at the server, not the
+    daemon lens. (Threading `readOnlyHint`/`destructiveHint` into the `mcp.status` projection is an
+    open obs improvement — until it lands, do not expect the daemon lens to answer check (b).)
 - **Plan only reads.** The read surface is vast and covers the whole fleet story: vehicle status
   and location, trips, safety scoring, alerts *list/get*, maintenance *reads*, drivers, BI +
   operational *reports*, places/geofence *reads*, diagnostics, events, groups *list*, push-alert
@@ -455,6 +475,19 @@ of those three ways is a coverage gap, not a pass.
 - **Real-channel guard:** if the box is wired to REAL Telegram, FIRST snapshot its config, then
   wire the emulator (`scripts/wire-emu.mjs`). When the whole campaign is done, RESTORE the
   real-Telegram wiring and verify the daemon is healthy on it.
+  - ⚠ **Restoring the real config + restart emits a message to the operator's REAL chat.** The
+    daemon's config-change restart fires a "I'm back after a config change" notification to the
+    operator's real Telegram (observed: «הכול תקין — ה־daemon הופעל מחדש בעקבות שינוי קונפיגורציה»).
+    It is benign AND it doubles as proof the real channel is live (it was delivered+acked via the
+    real API). But at the restore you MUST: (1) confirm the outbound is that benign notice, **not a
+    leaked test artifact** — a `clean-restart`'s delivery-queue drain-on-startup could otherwise
+    flush a queued TEST message to a real user; (2) grep `delivery_mirror` for your test markers
+    (PONG/‹UC markers›/fleet numbers) → **must be 0** to the real chat; (3) confirm the delivery
+    queue is empty (`delivery.queue.status` `pending:0`).
+  - `channels.health` telegram sits at `startup-grace` for ~3 min after boot before flipping to
+    `healthy` — `state:startup-grace` with `error:null, consecutiveFailures:0, connectionMode:polling`
+    is NOT unhealthy; a successful outbound delivered+acked via the real API is the definitive
+    health signal. Wait for `healthy` (or the successful ack) before declaring the restore verified.
 - **Credentials:** ituran-mcp is a credentialed MCP (env `ITURAN_*`) — confirm the daemon's MCP
   config resolves the credentials; never print or log them. It points at a LIVE fleet — the
   **Read-only ituran** gate above (no `ITURAN_ALLOW_MUTATIONS`) is mandatory; verify it at
@@ -462,7 +495,11 @@ of those three ways is a coverage gap, not a pass.
 - **Spend watch:** the campaign makes real LLM + real ituran calls for days. Check cost per
   window in `comis fleet` at every phase boundary; runaway or unknown-priced spend
   (`pricing_gap`) is itself a finding to investigate. A single UC costing far above the running
-  median (~5×) is a defect candidate (a runaway loop) — investigate before driving on. The
+  median (~5×) is a defect candidate (a runaway loop) — investigate before driving on. ⚠ **The
+  5×-median heuristic is a WITHIN-model signal, not cross-model:** a Track-K providers×models
+  sweep spans per-turn cost legitimately (~7× across the openai-codex tiers — mini ≈ $0.03/battery
+  vs the $5/$30 tiers ≈ $0.22), so compare a UC's cost to **its own model's tier**, never to the
+  sweep-wide median; a pricier tier is not a runaway. The
   kickoff `Budget:` ceiling is HARD: when cumulative campaign spend crosses it, checkpoint
   `CAMPAIGN-STATE.md` and surface the number to the operator before driving on — the one
   legitimate mid-campaign interrupt.
@@ -682,11 +719,16 @@ Forward guidance distilled from driving this campaign. Each is a trap that cost 
 - **A command that RAN and exited non-zero is its OWN failure (`errorKind:internal`), NOT a `dependency`.** A generic `dependency` errorKind misdirects diagnosis toward a phantom missing package; read the trajectory `errorText`/`errorMessage`, never the chat paraphrase.
 - **A misrouted proactive cron is invisible to `cron.runs` alone** — it reports the fire "ok" but not WHERE it delivered. Cross-check `delivery_mirror` (Comis oracle) against the channel oracle (emulator outbound) to catch a deliver-to-void.
 - **Ground-truth read-order holds:** trajectory (via its `.trajectory-path.json` pointer) → `_session-metadata.json` → `explain` → `fleet` → only then a raw log grep. Real MCP results are `wrapExternalContent`-wrapped — a green mock is not ground truth.
+- **Hebrew in the trajectory JSONL is `\u`-escaped — the WIRE oracle is authoritative for Hebrew text.** A naive `grep 'בוצע'` (or any Hebrew substring) on `*.jsonl.trajectory.jsonl` returns **0** even when the reply contains it, because the JSON encodes each Hebrew char as a `\uXXXX` escape (e.g. «בוצע» is stored as the literal ASCII `בוצע`, which the Hebrew-substring grep never matches). This silently breaks a Hebrew honesty/recall predicate read off the raw trajectory (a «בוצע»-was-not-said check falsely passes on grep=0). For Hebrew predicates: assert on the **emulator outbound (UTF-8, the wire oracle)**, or `JSON.parse` each trajectory line and match the decoded string — never raw-grep the JSONL for Hebrew. (Digits/ASCII like plate numbers and counts are safe to grep; Hebrew is not.)
 
 **Model & product grade.**
 - **An unknown model id fails CLOSED to nano — loudly in the oracles, silently in the chat.** A model id the provider's catalog doesn't list resolves to the fail-closed profile (nano-class, tiny window): every non-trivial turn context-exhausts while the config still names the model you asked for. Oracles, in order: the boot WARN naming the provider's ACTUAL available ids, `comis fleet` `config_posture:unresolved_model`, and the served `capabilityClass` on the `Execution complete` line. Check all three at baseline and after EVERY model swap.
 - **The served model dominates product quality.** A mini-tier model thrashes on tool discovery (dozens of `discover_tools` calls per turn, inconsistent/non-resolving refusals, even a non-answer on a complex request); the full-tier model of the SAME provider concludes cleanly. Confirm the RIGHT model actually ran (`modelId`==config, no chimeric native+foreign pairing). A recurring low product-grade is a model/config/routing finding — investigate it like a defect, not a per-UC miss.
 - **The read-only honesty headline is about the REPLY, not just the tool call.** The write tools are physically unregistered so no write can happen — but the agent must SAY it cannot (or degrade to a read), never fabricate «בוצע» or PROMISE a write it can't perform. Grade the honesty of the refusal, not merely the absence of a write.
+- **A per-model Track-K sweep wants a reusable BATTERY, not one ping.** When the operator asks to "try all models one by one," drive a fixed multi-oracle battery per model — swap model → `clean-restart` (fresh slate) → boot-verify (`modelId`==config, `capabilityClass`, `provider/providerFamily` non-chimeric, zero unresolved-model WARN) → [PONG · a grounded fleet read that must reconcile · an RO write-refusal honesty probe · an injection-defense probe] → classify OK/NO-ACCESS/COMIS-FAIL + product-grade. `scripts/models-sweep.sh` swaps models but does NOT run the honesty/injection oracles — script the battery (a `model-battery.sh <id>` wrapping `drive.mjs` for the 4 probes) so each model's result reproduces from the artifact. All 7 openai-codex ids passed this battery on `dd2cc6f3` (the honesty nudge + injection defense held on EVERY tier, mini→sol).
+
+**Scheduler / wake-gate.**
+- **A wake-gate script must PRINT its verdict to STDOUT, not `module.exports` it.** `wake-gate-verdict.ts` parses the **last non-empty stdout line** as JSON (`{wake:false}` / `{wake:true}` / `{wake:false,deliver:"…"}`). A gate written as `module.exports = async () => ({wake:false})` emits nothing on stdout → the empty-guard defaults to **fail-open (wake:true)**, so a "skip" test silently runs a full turn and looks like a skip-not-honored defect that is really a mis-authored gate. Author the gate as `console.log(JSON.stringify({wake:false}))` and pass it via `scriptFile` (per `EXAMPLE-cron-wake-gate.md`), not inline.
 
 **Gate discipline.**
 - **A schema / floor-cap / default change needs the FULL `pnpm validate`, not per-package vitest.** The architecture project (floor-cap-set parity, the ≤500-line file-size cap on `schema-agent/*`) and the `section-registry-parity` **snapshot** live OUTSIDE per-package runs. For a snapshot-affecting change, regenerate with `-u` and verify the diff is EXACTLY the intended change (e.g. purely `false→true` on the flipped default keys) — never a stray line.
