@@ -82,6 +82,21 @@ export function chimericModelFromRow(row: DiagnosticRow): number {
   }
 }
 
+/** unresolvedModelCount from a config_posture row's details JSON — configured
+ *  agents whose (provider, model) does NOT resolve in the catalog (and is not a
+ *  custom model) → fail-closed-to-nano. Defensive parse — malformed/missing folds
+ *  to 0 (the chimericModelFromRow clone; counts only, never a model id). */
+export function unresolvedModelFromRow(row: DiagnosticRow): number {
+  if (row.details === undefined) return 0;
+  try {
+    const parsed = JSON.parse(row.details) as { unresolvedModelCount?: unknown };
+    const n = parsed.unresolvedModelCount;
+    return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
 /** pricingGapCount from a config_posture row's details JSON — configured
  *  agents burning tokens on remote-unknown-priced models (resolvePricingState ==
  *  "unknown"). Defensive parse — malformed/missing folds to 0 (the chimericModelFromRow
