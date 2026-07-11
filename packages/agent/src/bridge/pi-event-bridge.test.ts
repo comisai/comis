@@ -711,11 +711,31 @@ describe("createPiEventBridge", () => {
       expect(endEmit![1].errorKind).toBe("timeout");
     });
 
-    it("emits tool:executed with success=false when result has non-zero exitCode", () => {
+    it("emits tool:executed with success=false + errorKind=internal for a generic non-zero exitCode (the command's OWN failure, not a dependency)", () => {
+      // Live 2026-07-10 (fleet-marathon): a python script exiting 1 on its own
+      // JSONDecodeError was classified errorKind:"dependency", sending diagnosis
+      // at a phantom missing interpreter. A command that RAN and exited non-zero
+      // is the command's own failure → `internal`; `dependency` is reserved for
+      // external/MCP/transport failures + the command-not-found case (127) below.
       const { listener } = createPiEventBridge(deps);
 
       const result = { content: [{ type: "text", text: '{"exitCode":1}' }], details: { exitCode: 1, stdout: "", stderr: "error" } };
       listener(makeToolExecutionEndEvent("exec", "tc-3", false, result) as any);
+
+      const calls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+      const endEmit = calls.find(
+        (c) => c[0] === "tool:executed" && c[1].toolName === "exec",
+      );
+      expect(endEmit).toBeDefined();
+      expect(endEmit![1].success).toBe(false);
+      expect(endEmit![1].errorKind).toBe("internal");
+    });
+
+    it("emits errorKind=dependency for exitCode 127 (command not found = a genuine missing dependency)", () => {
+      const { listener } = createPiEventBridge(deps);
+
+      const result = { content: [{ type: "text", text: '{"exitCode":127}' }], details: { exitCode: 127, stdout: "", stderr: "bash: frobnicate: command not found" } };
+      listener(makeToolExecutionEndEvent("exec", "tc-3b", false, result) as any);
 
       const calls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
       const endEmit = calls.find(
@@ -805,7 +825,7 @@ describe("createPiEventBridge", () => {
         expect(warn![0].transportOk).toBe(false);
       });
 
-      it("exec non-zero exitCode → classifiedFailureBy:'exit_code', transportOk:true", () => {
+      it("exec non-zero exitCode → classifiedFailureBy:'exit_code', transportOk:true, errorKind=internal", () => {
         const { listener } = createPiEventBridge(deps);
         const result = { content: [{ type: "text", text: '{"exitCode":1}' }], details: { exitCode: 1, stdout: "", stderr: "boom" } };
         listener(makeToolExecutionEndEvent("exec", "tc-p1b", false, result) as any);
@@ -814,6 +834,10 @@ describe("createPiEventBridge", () => {
         expect(endEmit).toBeDefined();
         expect(endEmit![1].classifiedFailureBy).toBe("exit_code");
         expect(endEmit![1].transportOk).toBe(true);
+        // A ran-and-exited-non-zero command is `internal` (its own failure), not
+        // `dependency` — the transport was fine (transportOk:true), so the label
+        // must not point an operator at a missing external dependency.
+        expect(endEmit![1].errorKind).toBe("internal");
         expect(warn![0].classifiedFailureBy).toBe("exit_code");
         expect(warn![0].transportOk).toBe(true);
       });

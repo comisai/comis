@@ -20,12 +20,12 @@ import { z } from "zod";
  * schema.ts / AppConfigSchema).
  */
 export const OrchestrationAuthoringConfigSchema = z.strictObject({
-  /** Enable the `from_intent` action + deterministic synthesizer (default: false). */
-  intentAction: z.boolean().default(false),
-  /** Enable the weak-model graph repair producer (server-side tier feed + repair) (default: false). */
-  repairProducer: z.boolean().default(false),
-  /** Best-effort: grammar-constrain the raw pipeline schema for GBNF providers (default: false). */
-  gbnfConstrain: z.boolean().default(false),
+  /** Enable the `from_intent` action + deterministic synthesizer (default: true — full authoring out of the box). */
+  intentAction: z.boolean().default(true),
+  /** Enable the weak-model graph repair producer (server-side tier feed + repair) (default: true). */
+  repairProducer: z.boolean().default(true),
+  /** Best-effort: grammar-constrain the raw pipeline schema for GBNF providers (default: true). */
+  gbnfConstrain: z.boolean().default(true),
 });
 
 export const OrchestrationConfigSchema = z.strictObject({

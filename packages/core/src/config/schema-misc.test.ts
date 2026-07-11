@@ -47,7 +47,7 @@ describe("SkillsConfigSchema", () => {
       expect(bt.process).toBe(true);
       expect(bt.webSearch).toBe(true);
       expect(bt.webFetch).toBe(true);
-      expect(bt.browser).toBe(false);
+      expect(bt.browser).toBe(true); // full capability by default — the browser tool is available out of the box
     }
   });
 
@@ -292,11 +292,11 @@ describe("BrowserConfigSchema", () => {
     const result = BrowserConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.enabled).toBe(false);
+      expect(result.data.enabled).toBe(true); // browser automation on by default (still sandboxed)
       expect(result.data.cdpPort).toBe(9222);
       expect(result.data.defaultProfile).toBe("default");
       expect(result.data.headless).toBe(true);
-      expect(result.data.noSandbox).toBe(false);
+      expect(result.data.noSandbox).toBe(false); // sandbox stays ON (security — not a capability flip)
       expect(result.data.screenshotMaxSide).toBe(2000);
       expect(result.data.screenshotQuality).toBe(80);
       expect(result.data.snapshotMaxChars).toBe(120_000);

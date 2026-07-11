@@ -103,8 +103,10 @@ const ExecutionConfigSchema = z.strictObject({
   });
 
 const TasksConfigSchema = z.strictObject({
-    /** Enable task extraction from conversations */
-    enabled: z.boolean().default(false),
+    /** Enable task extraction from conversations. Default TRUE — the agent is
+     * fully capable out of the box (proactive follow-up extraction on by
+     * default; the operator can set false to opt out). */
+    enabled: z.boolean().default(true),
     /** Minimum confidence threshold for extracted tasks (0-1) */
     confidenceThreshold: z.number().min(0).max(1).default(0.8),
     /** Directory for task state persistence */

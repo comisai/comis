@@ -39,7 +39,7 @@
  * @module
  */
 import type { ClockPort } from "@comis/core";
-import { isProviderModelChimera, resolvePricingState } from "@comis/core";
+import { isProviderModelChimera, resolvePricingState, modelResolvesInCatalog } from "@comis/core";
 import type { ObservabilityStore } from "@comis/memory";
 import type { StrandedFinding } from "../wiring/setup-storage-mismatch-warn.js";
 
@@ -84,6 +84,33 @@ export function countPricingGaps(
       typeof a.model === "string" &&
       resolvePricingState(a.provider, a.model) === "unknown",
   ).length;
+}
+
+/**
+ * Count configured agents whose (provider, model) does NOT resolve in the model
+ * catalog — the fail-closed-to-nano class (`modelRegistry.find()` → undefined →
+ * FAIL_CLOSED_PROFILE nano/8192, so every non-trivial turn context-exhausts).
+ * Neither the chimeric NOR the pricing detector catches it: a non-native provider
+ * like `openai-codex` resolves `"free"` (not `"unknown"`) for an unknown model, and
+ * the model family still parses, so both return clean (the live fleet-marathon
+ * `gpt-5.6` incident). Operator-declared custom models (`providers.entries.<p>.models`)
+ * are legitimately absent from the static catalog and are EXEMPTED (no false-flag).
+ * Lives here (not inline in daemon.ts) to keep daemon.ts under its 3000-line cap.
+ * Count only — the caller persists the COUNT, never agent ids/model names.
+ */
+export function countUnresolvedModels(
+  agents: Readonly<Record<string, { provider?: string; model?: string }>>,
+  providersEntries: Readonly<Record<string, { models?: ReadonlyArray<{ id: string }> }>> | undefined,
+): number {
+  let count = 0;
+  for (const a of Object.values(agents)) {
+    if (typeof a.provider !== "string" || typeof a.model !== "string") continue;
+    // Exempt operator-declared custom models (legitimately not in the static catalog).
+    const isCustom = providersEntries?.[a.provider]?.models?.some((m) => m.id === a.model) ?? false;
+    if (isCustom) continue;
+    if (!modelResolvesInCatalog(a.provider, a.model)) count++;
+  }
+  return count;
 }
 
 /**
@@ -183,6 +210,14 @@ export interface ConfigPostureInputs {
    */
   chimericModelCount?: number;
   /**
+   * Number of configured agents whose (provider, model) does NOT resolve in the
+   * model catalog and is not an operator-declared custom model — the
+   * fail-closed-to-nano class (see {@link countUnresolvedModels}). A COUNT, never
+   * agent ids or model names. Computed in daemon.ts via `countUnresolvedModels`
+   * over the configured agents at boot. Optional (defaults to 0 in the record).
+   */
+  unresolvedModelCount?: number;
+  /**
    * Number of configured agents burning tokens
    * on remote-unknown-priced models (`resolvePricingState == "unknown"` — a NATIVE
    * provider with no catalog rate, the fail-open where spend is silently
@@ -224,6 +259,7 @@ export function buildConfigPostureRecord(
   clock: ClockPort,
 ): void {
   const chimericModelCount = inputs.chimericModelCount ?? 0;
+  const unresolvedModelCount = inputs.unresolvedModelCount ?? 0;
   const pricingGapCount = inputs.pricingGapCount ?? 0;
   const sandboxNoDowngradeDisabled = inputs.sandboxNoDowngradeDisabled ?? false;
   const mediaCredentialGapCount = inputs.mediaCredentialGapCount ?? 0;
@@ -233,6 +269,7 @@ export function buildConfigPostureRecord(
     inputs.canaryFallbackActive ||
     inputs.servedBelowConfiguredCount > 0 ||
     chimericModelCount > 0 ||
+    unresolvedModelCount > 0 ||
     pricingGapCount > 0 ||
     sandboxNoDowngradeDisabled ||
     mediaCredentialGapCount > 0;
@@ -251,6 +288,9 @@ export function buildConfigPostureRecord(
       // Agents booted with a NATIVE provider + a foreign model family
       // (the provider/model chimera). A COUNT, never agent ids/model names (no free text).
       chimericModelCount,
+      // Agents whose (provider, model) does NOT resolve in the catalog (and is not a
+      // custom model) → fail-closed-to-nano. A COUNT, never agent ids/model names.
+      unresolvedModelCount,
       // Agents burning tokens on remote-unknown-priced models
       // (resolvePricingState == "unknown"). A COUNT, never agent ids/model names.
       pricingGapCount,

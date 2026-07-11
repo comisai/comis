@@ -21,6 +21,7 @@ import type { DiagnosticRow } from "@comis/memory";
 import type { PipelineAuthoringAggregate } from "@comis/observability";
 import {
   chimericModelFromRow,
+  unresolvedModelFromRow,
   DEDICATED_SCRIPT_SIGNALS,
   deliveryDeadletteredFromRow,
   flaggedPostureKeys,
@@ -553,6 +554,22 @@ export function buildFindings(
         detail: `${chimeraCount} agent(s) configured with a native provider + a foreign model family (chimera — resolves a phantom capability profile)`,
         count: chimeraCount,
         hint: "align agents.<id>.provider with the model family (e.g. provider:anthropic ⇒ a claude model; for a qwen/llama model use an ollama/openrouter provider), or set the model id explicitly under the right provider",
+      });
+    }
+    // Dedicated unresolved-model finding from the SAME latest posture row.
+    // A configured (provider, model) that does NOT resolve in the catalog collapses
+    // the whole ModelProfile to the fail-closed nano/8192 profile, so every
+    // non-trivial turn context-exhausts (observed live: openai-codex:gpt-5.6 where the
+    // real ids are gpt-5.6-terra/luna/sol). Neither the chimeric nor the pricing
+    // detector catches it (a non-native provider resolves "free" for an unknown model).
+    // Counts + remediation only.
+    const unresolvedModelCount = unresolvedModelFromRow(latest);
+    if (unresolvedModelCount > 0) {
+      findings.push({
+        code: "config_posture:unresolved_model",
+        detail: `${unresolvedModelCount} agent(s) configured with a model id that does NOT resolve in the catalog — fail-closed to the nano/8192 profile, so non-trivial turns context-exhaust`,
+        count: unresolvedModelCount,
+        hint: "set agents.<id>.model to a valid catalog id for its provider (the daemon.log unresolved-model WARN names the provider's available ids), or declare a custom model under providers.entries.<provider>.models",
       });
     }
     // Dedicated pricing-gap finding from the SAME latest posture row.

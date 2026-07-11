@@ -367,7 +367,7 @@ describe("redactValue — URL host not stripped by absolute-path matcher", () =>
 describe("redactValue — URL paths protected from PII matchers (PHONE/CC/SSN/EMAIL)", () => {
   it("preserves a 9-digit press-release ID in a URL path (no PHONE_RE false positive)", () => {
     const url =
-      "https://www.prnewswire.com/news-releases/ituran-presents-first-quarter-2026-results-302781634.html";
+      "https://www.prnewswire.com/news-releases/acme-corp-presents-first-quarter-2026-results-302781634.html";
     const out = redactValue({ url });
     const value = out.value as Record<string, unknown>;
     // The URL must render verbatim — `302781634` is a press-release ID in the

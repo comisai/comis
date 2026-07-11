@@ -80,9 +80,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
       },
       "denialBreakerN": 5,
       "durability": {
-        "enabled": false,
+        "enabled": true,
         "keepAliveMs": 30000,
-        "orchestrateResume": false,
+        "orchestrateResume": true,
         "recoveryBudgetMs": 30000,
         "staleHeartbeatMs": 120000
       },
@@ -185,9 +185,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
-      "enabled": false,
+      "enabled": true,
       "keepAliveMs": 30000,
-      "orchestrateResume": false,
+      "orchestrateResume": true,
       "recoveryBudgetMs": 30000,
       "staleHeartbeatMs": 120000
     },
@@ -196,7 +196,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.autonomy.durability.enabled",
     "type": "boolean"
@@ -208,7 +208,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "integer"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.autonomy.durability.orchestrateResume",
     "type": "boolean"
@@ -2919,7 +2919,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
-      "browser": false,
+      "browser": true,
       "edit": true,
       "exec": true,
       "find": true,
@@ -2937,7 +2937,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.skills.builtinTools.browser",
     "type": "boolean"
@@ -7777,7 +7777,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("sched
   {
     "default": {
       "confidenceThreshold": 0.8,
-      "enabled": false,
+      "enabled": true,
       "storeDir": "./data/scheduler/tasks"
     },
     "immutable": false,
@@ -7791,7 +7791,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("sched
     "type": "number"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": false,
     "path": "scheduler.tasks.enabled",
     "type": "boolean"
@@ -8469,9 +8469,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           },
           "denialBreakerN": 5,
           "durability": {
-            "enabled": false,
+            "enabled": true,
             "keepAliveMs": 30000,
-            "orchestrateResume": false,
+            "orchestrateResume": true,
             "recoveryBudgetMs": 30000,
             "staleHeartbeatMs": 120000
           },
@@ -8846,7 +8846,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       "cdpPort": 9222,
       "defaultProfile": "default",
       "downloadTimeoutMs": 120000,
-      "enabled": false,
+      "enabled": true,
       "headless": true,
       "maxProfiles": 10,
       "noSandbox": false,
@@ -8898,7 +8898,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "string"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": false,
     "path": "browser.enabled",
     "type": "boolean"
@@ -14255,9 +14255,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   {
     "default": {
       "authoring": {
-        "gbnfConstrain": false,
-        "intentAction": false,
-        "repairProducer": false
+        "gbnfConstrain": true,
+        "intentAction": true,
+        "repairProducer": true
       }
     },
     "immutable": false,
@@ -14266,28 +14266,28 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
-      "gbnfConstrain": false,
-      "intentAction": false,
-      "repairProducer": false
+      "gbnfConstrain": true,
+      "intentAction": true,
+      "repairProducer": true
     },
     "immutable": false,
     "path": "orchestration.authoring",
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": false,
     "path": "orchestration.authoring.gbnfConstrain",
     "type": "boolean"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": false,
     "path": "orchestration.authoring.intentAction",
     "type": "boolean"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": false,
     "path": "orchestration.authoring.repairProducer",
     "type": "boolean"
@@ -14598,7 +14598,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       },
       "tasks": {
         "confidenceThreshold": 0.8,
-        "enabled": false,
+        "enabled": true,
         "storeDir": "./data/scheduler/tasks"
       }
     },
@@ -14810,7 +14810,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   {
     "default": {
       "confidenceThreshold": 0.8,
-      "enabled": false,
+      "enabled": true,
       "storeDir": "./data/scheduler/tasks"
     },
     "immutable": false,
@@ -14824,7 +14824,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "number"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": false,
     "path": "scheduler.tasks.enabled",
     "type": "boolean"
@@ -16145,9 +16145,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         },
         "denialBreakerN": 5,
         "durability": {
-          "enabled": false,
+          "enabled": true,
           "keepAliveMs": 30000,
-          "orchestrateResume": false,
+          "orchestrateResume": true,
           "recoveryBudgetMs": 30000,
           "staleHeartbeatMs": 120000
         },
@@ -16260,15 +16260,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "durability": {
           "additionalProperties": false,
           "default": {
-            "enabled": false,
+            "enabled": true,
             "keepAliveMs": 30000,
-            "orchestrateResume": false,
+            "orchestrateResume": true,
             "recoveryBudgetMs": 30000,
             "staleHeartbeatMs": 120000
           },
           "properties": {
             "enabled": {
-              "default": false,
+              "default": true,
               "type": "boolean"
             },
             "keepAliveMs": {
@@ -16278,7 +16278,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
               "type": "integer"
             },
             "orchestrateResume": {
-              "default": false,
+              "default": true,
               "type": "boolean"
             },
             "recoveryBudgetMs": {
@@ -19550,7 +19550,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "builtinTools": {
           "additionalProperties": false,
           "default": {
-            "browser": false,
+            "browser": true,
             "edit": true,
             "exec": true,
             "find": true,
@@ -19565,7 +19565,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           },
           "properties": {
             "browser": {
-              "default": false,
+              "default": true,
               "type": "boolean"
             },
             "edit": {
@@ -20672,7 +20672,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("bro
       "type": "string"
     },
     "enabled": {
-      "default": false,
+      "default": true,
       "type": "boolean"
     },
     "headless": {
@@ -26355,7 +26355,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sch
       "additionalProperties": false,
       "default": {
         "confidenceThreshold": 0.8,
-        "enabled": false,
+        "enabled": true,
         "storeDir": "./data/scheduler/tasks"
       },
       "properties": {
@@ -26366,7 +26366,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sch
           "type": "number"
         },
         "enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "storeDir": {
@@ -27346,9 +27346,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               },
               "denialBreakerN": 5,
               "durability": {
-                "enabled": false,
+                "enabled": true,
                 "keepAliveMs": 30000,
-                "orchestrateResume": false,
+                "orchestrateResume": true,
                 "recoveryBudgetMs": 30000,
                 "staleHeartbeatMs": 120000
               },
@@ -27461,15 +27461,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "durability": {
                 "additionalProperties": false,
                 "default": {
-                  "enabled": false,
+                  "enabled": true,
                   "keepAliveMs": 30000,
-                  "orchestrateResume": false,
+                  "orchestrateResume": true,
                   "recoveryBudgetMs": 30000,
                   "staleHeartbeatMs": 120000
                 },
                 "properties": {
                   "enabled": {
-                    "default": false,
+                    "default": true,
                     "type": "boolean"
                   },
                   "keepAliveMs": {
@@ -27479,7 +27479,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                     "type": "integer"
                   },
                   "orchestrateResume": {
-                    "default": false,
+                    "default": true,
                     "type": "boolean"
                   },
                   "recoveryBudgetMs": {
@@ -30751,7 +30751,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "builtinTools": {
                 "additionalProperties": false,
                 "default": {
-                  "browser": false,
+                  "browser": true,
                   "edit": true,
                   "exec": true,
                   "find": true,
@@ -30766,7 +30766,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 },
                 "properties": {
                   "browser": {
-                    "default": false,
+                    "default": true,
                     "type": "boolean"
                   },
                   "edit": {
@@ -31765,9 +31765,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             },
             "denialBreakerN": 5,
             "durability": {
-              "enabled": false,
+              "enabled": true,
               "keepAliveMs": 30000,
-              "orchestrateResume": false,
+              "orchestrateResume": true,
               "recoveryBudgetMs": 30000,
               "staleHeartbeatMs": 120000
             },
@@ -32204,7 +32204,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "cdpPort": 9222,
         "defaultProfile": "default",
         "downloadTimeoutMs": 120000,
-        "enabled": false,
+        "enabled": true,
         "headless": true,
         "maxProfiles": 10,
         "noSandbox": false,
@@ -32247,7 +32247,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "type": "string"
         },
         "enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "headless": {
@@ -39106,30 +39106,30 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
       "additionalProperties": false,
       "default": {
         "authoring": {
-          "gbnfConstrain": false,
-          "intentAction": false,
-          "repairProducer": false
+          "gbnfConstrain": true,
+          "intentAction": true,
+          "repairProducer": true
         }
       },
       "properties": {
         "authoring": {
           "additionalProperties": false,
           "default": {
-            "gbnfConstrain": false,
-            "intentAction": false,
-            "repairProducer": false
+            "gbnfConstrain": true,
+            "intentAction": true,
+            "repairProducer": true
           },
           "properties": {
             "gbnfConstrain": {
-              "default": false,
+              "default": true,
               "type": "boolean"
             },
             "intentAction": {
-              "default": false,
+              "default": true,
               "type": "boolean"
             },
             "repairProducer": {
-              "default": false,
+              "default": true,
               "type": "boolean"
             }
           },
@@ -39894,7 +39894,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         },
         "tasks": {
           "confidenceThreshold": 0.8,
-          "enabled": false,
+          "enabled": true,
           "storeDir": "./data/scheduler/tasks"
         }
       },
@@ -40112,7 +40112,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "additionalProperties": false,
           "default": {
             "confidenceThreshold": 0.8,
-            "enabled": false,
+            "enabled": true,
             "storeDir": "./data/scheduler/tasks"
           },
           "properties": {
@@ -40123,7 +40123,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "type": "number"
             },
             "enabled": {
-              "default": false,
+              "default": true,
               "type": "boolean"
             },
             "storeDir": {

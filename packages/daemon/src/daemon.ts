@@ -144,7 +144,7 @@ import { createEmptyBootContext } from "./daemon-types.js";
 export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
 import { setupObsPersistence } from "./observability/obs-persistence-wiring.js";
 import { recordModelHealth } from "./observability/record-model-health.js";
-import { buildConfigPostureRecord, countChimericModels, countPricingGaps, countMediaCredentialGaps, isLoopbackHost } from "./observability/build-config-posture-record.js";
+import { buildConfigPostureRecord, countChimericModels, countUnresolvedModels, countPricingGaps, countMediaCredentialGaps, isLoopbackHost } from "./observability/build-config-posture-record.js";
 import { setupDeliveryQueueLogging } from "./observability/delivery-queue-logger.js";
 import { createContextPipelineCollector } from "./observability/context-pipeline-collector.js";
 import { createLogLevelManager, expandTilde } from "./observability/log-infra.js";
@@ -753,6 +753,11 @@ function buildRpcDispatchDeps(deps: {
   return {
     defaultAgentId: c.defaultAgentId, getAgentCronScheduler: c.getAgentCronScheduler,
     cronSchedulers: c.cronSchedulers, executionTrackers: c.executionTrackers, wakeCoalescer: c.wakeCoalescer,
+    // perAgentRunner MUST be threaded here alongside wakeCoalescer (both live on
+    // the boot context `c`): the heartbeat.trigger/states handlers gate on
+    // deps.perAgentRunner, so omitting it leaves the heartbeat_manage round-trip
+    // dead even while the runner ticks. See heartbeat-runner-wiring-guard.test.ts.
+    perAgentRunner: c.perAgentRunner,
     defaultWorkspaceDir: c.defaultWorkspaceDir, workspaceDirs: c.workspaceDirs,
     memoryApi: c.memoryApi, memoryAdapter: c.memoryAdapter, embeddingQueue: c.embeddingQueue,
     // Thread the memory adapter as the MemoryPort for the
@@ -2846,7 +2851,7 @@ async function bootShutdown(
     (key) => container.secretManager.has(key),
     boot.imageGenProvider?.isAvailable() ?? false,
   );
-  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount: countChimericModels(container.config.agents), pricingGapCount: countPricingGaps(container.config.agents), sandboxNoDowngradeDisabled, mediaCredentialGapCount }, boot.clock);
+  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount: countChimericModels(container.config.agents), unresolvedModelCount: countUnresolvedModels(container.config.agents, container.config.providers?.entries), pricingGapCount: countPricingGaps(container.config.agents), sandboxNoDowngradeDisabled, mediaCredentialGapCount }, boot.clock);
 
   // Snapshot current config as last-known-good after successful startup.
   // Honor diagnostics.configAudit.enabled.

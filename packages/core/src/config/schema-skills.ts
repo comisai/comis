@@ -30,8 +30,10 @@ const BuiltinToolsSchema = z.strictObject({
     webSearch: z.boolean().default(true),
     /** URL content fetching */
     webFetch: z.boolean().default(true),
-    /** Headless browser control (requires Playwright/Chromium) */
-    browser: z.boolean().default(false),
+    /** Headless browser control (requires Playwright/Chromium). Default true —
+     * the browser tool is available out of the box; a missing Chromium binary
+     * fails honestly at use, and `orch:browse` stays approval-gated. */
+    browser: z.boolean().default(true),
   });
 
 const ToolPolicySchema = z.strictObject({

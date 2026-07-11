@@ -661,10 +661,10 @@ describe("mcpStderrLooksLikeError — banner vs crash classification", () => {
   it("treats a benign startup banner as NOT an error (no crash markers)", () => {
     const banner = [
       "================================================================",
-      "[ituran-mcp] ⚠  PRODUCTION fleet — https://api.ituran.com",
-      "[ituran-mcp] ⚠  Mutations are DISABLED (read-only).",
+      "[weather-mcp] ⚠  PRODUCTION data — https://api.example.com",
+      "[weather-mcp] ⚠  Mutations are DISABLED (read-only).",
       "================================================================",
-      "[ituran-mcp] stdio transport ready",
+      "[weather-mcp] stdio transport ready",
     ].join("\n");
     expect(mcpStderrLooksLikeError(banner)).toBe(false);
   });

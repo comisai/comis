@@ -2,7 +2,8 @@
 import { describe, it, expect, vi } from "vitest";
 import type { DiagnosticRow, ObservabilityStore } from "@comis/memory";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
-import { buildConfigPostureRecord, countPricingGaps, countMediaCredentialGaps, isLoopbackHost } from "./build-config-posture-record.js";
+import { buildConfigPostureRecord, countPricingGaps, countUnresolvedModels, countMediaCredentialGaps, isLoopbackHost } from "./build-config-posture-record.js";
+import { unresolvedModelFromRow } from "../api/obs-handlers/fleet-findings-extractors.js";
 
 describe("isLoopbackHost (TLS-off is benign on a loopback bind)", () => {
   it("treats 127.0.0.1 / ::1 / localhost / 127.x as loopback (TLS-off suppressed)", () => {
@@ -76,6 +77,7 @@ describe("buildConfigPostureRecord", () => {
       canaryFallbackActive: true,
       servedBelowConfiguredCount: 0,
       chimericModelCount: 0, // always present (0 default), count-only
+      unresolvedModelCount: 0, // always present (0 default), count-only
       pricingGapCount: 0, // always present (0 default), count-only
       sandboxNoDowngradeDisabled: false, // always present (false default)
       mediaCredentialGapCount: 0, // always present (0 default), count-only
@@ -111,6 +113,7 @@ describe("buildConfigPostureRecord", () => {
       canaryFallbackActive: false,
       servedBelowConfiguredCount: 0,
       chimericModelCount: 0,
+      unresolvedModelCount: 0,
       pricingGapCount: 0,
       sandboxNoDowngradeDisabled: false,
       mediaCredentialGapCount: 0,
@@ -354,6 +357,52 @@ describe("buildConfigPostureRecord", () => {
 // with countChimericModels (keeps daemon.ts under its 3000-line cap). Uses the
 // shipped 3-state `resolvePricingState`, never a catalog-presence boolean.
 // ---------------------------------------------------------------------------
+
+describe("countUnresolvedModels — boot count of agents whose model id does NOT resolve (fail-closed-to-nano)", () => {
+  it("counts an unresolved model id on a registered provider (the live gpt-5.6 case)", () => {
+    // openai-codex has NO bare 'gpt-5.6' (real ids: gpt-5.6-terra/luna/sol). Neither
+    // the chimeric nor the pricing detector catches this (openai-codex resolves 'free').
+    const agents = { a: { provider: "openai-codex", model: "gpt-5.6" } };
+    expect(countUnresolvedModels(agents, undefined)).toBe(1);
+  });
+
+  it("does NOT count a resolved catalog model id", () => {
+    const agents = {
+      sol: { provider: "openai-codex", model: "gpt-5.6-sol" },
+      g54: { provider: "openai-codex", model: "gpt-5.4" },
+    };
+    expect(countUnresolvedModels(agents, undefined)).toBe(0);
+  });
+
+  it("EXEMPTS an operator-declared custom model (providers.entries.<p>.models) — no false-flag", () => {
+    const agents = { a: { provider: "my-ollama", model: "qwen3.6:35b" } };
+    const providers = { "my-ollama": { models: [{ id: "qwen3.6:35b" }] } };
+    // Without the exemption this would count (not in the static catalog); with it → 0.
+    expect(countUnresolvedModels(agents, providers)).toBe(0);
+    // And a DIFFERENT model on that custom provider (not declared) still counts.
+    expect(countUnresolvedModels({ a: { provider: "my-ollama", model: "not-declared" } }, providers)).toBe(1);
+  });
+
+  it("counts only the unresolved agents in a mixed fleet", () => {
+    const agents = {
+      ok: { provider: "openai-codex", model: "gpt-5.6-sol" }, // resolves
+      bad1: { provider: "openai-codex", model: "gpt-5.6" }, // unresolved
+      bad2: { provider: "anthropic", model: "totally-made-up-model-xyz" }, // unresolved
+    };
+    expect(countUnresolvedModels(agents, undefined)).toBe(2);
+  });
+
+  it("ignores an agent missing provider or model", () => {
+    expect(countUnresolvedModels({ noModel: { provider: "openai-codex" }, noProvider: { model: "x" }, empty: {} }, undefined)).toBe(0);
+  });
+
+  it("unresolvedModelFromRow parses the count from a config_posture row (fleet surfacing)", () => {
+    expect(unresolvedModelFromRow({ details: JSON.stringify({ unresolvedModelCount: 2 }) } as never)).toBe(2);
+    expect(unresolvedModelFromRow({ details: JSON.stringify({ unresolvedModelCount: 0 }) } as never)).toBe(0);
+    expect(unresolvedModelFromRow({ details: "not json" } as never)).toBe(0);
+    expect(unresolvedModelFromRow({ details: undefined } as never)).toBe(0);
+  });
+});
 
 describe("countPricingGaps — boot count of remote-unknown-priced agents (resolvePricingState == 'unknown')", () => {
   it("counts a NATIVE provider + an off-catalog model (the unknown-pricing case)", () => {
