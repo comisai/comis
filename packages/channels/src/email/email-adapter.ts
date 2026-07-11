@@ -62,6 +62,19 @@ export interface EmailAdapterDeps {
   logger: ComisLogger;
 }
 
+/**
+ * Form the reply subject from the inbound subject the delivery layer threads
+ * through `SendMessageOptions.subject`. Prefixes "Re: " unless already present
+ * (case-insensitive), so a mail-client threads the reply and it never shows an
+ * empty subject line. Returns undefined when no subject was provided (a
+ * non-reply send, or a channel that does not thread by subject).
+ */
+export function buildReplySubject(subject: string | undefined): string | undefined {
+  const trimmed = subject?.trim();
+  if (!trimmed) return undefined;
+  return /^re:/i.test(trimmed) ? trimmed : `Re: ${trimmed}`;
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -268,10 +281,13 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
         : undefined;
     }
 
+    const replySubject = buildReplySubject(options?.subject);
+
     const mailResult = await fromPromise(
       transport.sendMail({
         from: deps.address,
         to: recipient,
+        ...(replySubject ? { subject: replySubject } : {}),
         html: text,
         headers: {
           "Auto-Submitted": "auto-generated",
@@ -324,10 +340,13 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
         : undefined;
     }
 
+    const replySubject = buildReplySubject(options?.subject);
+
     const mailResult = await fromPromise(
       transport.sendMail({
         from: deps.address,
         to: recipient,
+        ...(replySubject ? { subject: replySubject } : {}),
         text: attachment.caption ?? "",
         headers: {
           "Auto-Submitted": "auto-generated",

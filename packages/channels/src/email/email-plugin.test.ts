@@ -110,6 +110,15 @@ describe("createEmailPlugin", () => {
     expect(plugin.capabilities.replyToMetaKey).toBe("emailMessageId");
   });
 
+  it("threadReplyInDm is true so 1:1 email replies still thread via In-Reply-To", async () => {
+    // ISSUE-2 (chief-of-staff live campaign): email threads via invisible
+    // In-Reply-To/References headers, so reply-to must be set even on DM (1:1)
+    // replies — unlike visible-quote channels that skip DM reply-to.
+    const { createEmailPlugin } = await getModule();
+    const plugin = createEmailPlugin(makeDeps());
+    expect(plugin.capabilities.threadReplyInDm).toBe(true);
+  });
+
   it("activate() calls adapter.start()", async () => {
     const { createEmailPlugin } = await getModule();
     const plugin = createEmailPlugin(makeDeps());
