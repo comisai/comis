@@ -216,7 +216,7 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
       // Resolve the cron's delivery target: trusted context-injected
       // `_deliveryTarget` first (agent-origin, cannot be forged/redirected), then an
       // explicit `deliveryTarget` param as an operator-RPC fallback (validated like
-      // cron.update). See the field comment below (IB-19).
+      // cron.update). See the field comment below.
       let resolvedDeliveryTarget = rawParams._deliveryTarget as
         | { channelId: string; userId: string; tenantId: string; channelType?: string }
         | undefined;
@@ -255,8 +255,8 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
         // takes PRECEDENCE so an agent can never redirect a cron's delivery. An
         // explicit `deliveryTarget` param is honored only as a FALLBACK when no
         // context is injected (an operator/kit RPC with no turn), validated like
-        // cron.update. (IB-19: without this, an RPC-scripted cron had no target
-        // and fired "no delivery target, skipping delivery".)
+        // cron.update. Without this, an RPC-scripted cron had no target and
+        // fired "no delivery target, skipping delivery".
         deliveryTarget: resolvedDeliveryTarget,
       };
 

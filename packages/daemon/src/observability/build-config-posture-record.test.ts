@@ -358,7 +358,7 @@ describe("buildConfigPostureRecord", () => {
 // shipped 3-state `resolvePricingState`, never a catalog-presence boolean.
 // ---------------------------------------------------------------------------
 
-describe("countUnresolvedModels — boot count of agents whose model id does NOT resolve (fail-closed-to-nano, IB-17)", () => {
+describe("countUnresolvedModels — boot count of agents whose model id does NOT resolve (fail-closed-to-nano)", () => {
   it("counts an unresolved model id on a registered provider (the live gpt-5.6 case)", () => {
     // openai-codex has NO bare 'gpt-5.6' (real ids: gpt-5.6-terra/luna/sol). Neither
     // the chimeric nor the pricing detector catches this (openai-codex resolves 'free').

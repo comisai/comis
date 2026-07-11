@@ -159,7 +159,7 @@ describe("createCronHandlers", () => {
     });
 
     it("honors an explicit deliveryTarget param when no _deliveryTarget is injected (operator RPC)", async () => {
-      // IB-19: an operator/kit RPC cron.add has no context-injected _deliveryTarget,
+      // An operator/kit RPC cron.add has no context-injected _deliveryTarget,
       // so an explicit deliveryTarget MUST be honored — else the cron fires with
       // "no delivery target, skipping delivery". cron.update already honors it.
       const deps = makeDeps();
