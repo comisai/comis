@@ -206,6 +206,10 @@ function makeContainer(): { container: AppContainer; eventHandlers: EventHandler
       autoReplyEngine: {},
       sendPolicy: {},
       lifecycleReactions: { enabled: false, emojiTier: "unicode", timing: { debounceMs: 700, holdDoneMs: 3000, holdErrorMs: 5000, stallSoftMs: 15000, stallHardMs: 30000 }, perChannel: {} },
+      // The cron delivery listener reads scheduler.quietHours to gate off-hours
+      // pings. Disabled here so delivery proceeds normally in these tests (the schema
+      // always provides this block in production via SchedulerConfigSchema.default).
+      scheduler: { quietHours: { enabled: false, start: "22:00", end: "07:00", timezone: "UTC", criticalBypass: false } },
     },
     secretManager: { get: vi.fn(() => { throw new Error("not found"); }) },
     eventBus: {
