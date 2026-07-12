@@ -64,8 +64,14 @@ export type {
 export { validateUrl, validateLocalServerUrl, BLOCKED_RANGES, CLOUD_METADATA_IPS, setSsrfBlockHook } from "../security/index.js";
 export type { SsrfBlockReason } from "../security/index.js";
 export type { ValidatedUrl } from "../security/index.js";
-export { wrapExternalContent, wrapWebContent, detectSuspiciousPatterns, EXTERNAL_CONTENT_WARNING } from "../security/index.js";
-export type { ExternalContentSource, WrapExternalContentOptions } from "../security/index.js";
+export {
+  wrapExternalContent,
+  unwrapExternalContent,
+  wrapWebContent,
+  detectSuspiciousPatterns,
+  EXTERNAL_CONTENT_WARNING,
+} from "../security/index.js";
+export type { ExternalContentSource, WrapExternalContentOptions, UnwrappedExternalContent } from "../security/index.js";
 export { createOutputGuard } from "../security/index.js";
 export { generateCanaryToken, detectCanaryLeakage } from "../security/index.js";
 // Signed interactive-approval callback primitive — channels

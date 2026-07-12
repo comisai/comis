@@ -308,10 +308,10 @@ export function wrapExternalContent(content: string, options: WrapExternalConten
   const metadataLines: string[] = [`Source: ${sourceLabel}`];
 
   if (sender) {
-    metadataLines.push(`From: ${sender}`);
+    metadataLines.push(`From: ${flattenMetadataValue(sender)}`);
   }
   if (subject) {
-    metadataLines.push(`Subject: ${subject}`);
+    metadataLines.push(`Subject: ${flattenMetadataValue(subject)}`);
   }
 
   const metadata = metadataLines.join("\n");
@@ -333,6 +333,99 @@ export function wrapExternalContent(content: string, options: WrapExternalConten
     sanitized,
     endMarker,
   ].join("\n");
+}
+
+/**
+ * Attacker-controlled metadata values (sender, subject) are flattened to one
+ * line before they are interpolated into the wrapper's metadata block. An
+ * embedded newline could otherwise forge extra metadata lines — including a
+ * bare `---` line, which would shift the metadata/content separator that
+ * {@link unwrapExternalContent} keys on.
+ */
+function flattenMetadataValue(value: string): string {
+  return value.replace(/\s*\r?\n\s*/g, " ");
+}
+
+/** Reverse of {@link EXTERNAL_SOURCE_LABELS}: human label → source key. */
+const LABEL_TO_SOURCE: Record<string, ExternalContentSource> = Object.fromEntries(
+  (Object.entries(EXTERNAL_SOURCE_LABELS) as Array<[ExternalContentSource, string]>).map(([key, label]) => [
+    label,
+    key,
+  ]),
+) as Record<string, ExternalContentSource>;
+
+/** First line that is exactly a start marker, capturing the hex delimiter. */
+const START_MARKER_LINE = /^<<<UNTRUSTED_([a-f0-9]+)>>>$/m;
+
+/** The payload and metadata recovered from a {@link wrapExternalContent} envelope. */
+export interface UnwrappedExternalContent {
+  /**
+   * The body between the wrapper markers — exactly the (sanitized) payload
+   * that was wrapped. Forged inner markers stay neutralized as their
+   * `[[MARKER_SANITIZED]]` placeholders; unwrap never resurrects a boundary.
+   */
+  content: string;
+  /** Source key reverse-mapped from the `Source:` label; `"unknown"` when unrecognized. */
+  source: ExternalContentSource;
+  /** `From:` metadata line, when present. */
+  sender?: string;
+  /** `Subject:` metadata line, when present. */
+  subject?: string;
+  /** The hex delimiter of the envelope that was removed. */
+  delimiter: string;
+}
+
+/**
+ * The exact inverse of {@link wrapExternalContent}: recovers the payload and
+ * metadata from a wrapped envelope, or returns `null` when the input is not a
+ * (complete) envelope — no markers, or an end marker that is missing/cut
+ * (a truncated wrapper never yields a partial payload).
+ *
+ * This exists so storage layers can persist CLEAN payload bytes and re-apply
+ * the taint boundary at the presentation layer instead of baking the security
+ * notice into artifacts at rest (live incident: the tool-result offload file's
+ * own `json.load` recovery example failed on every offloaded MCP result
+ * because the envelope was written into the `.json` file).
+ *
+ * Parsing is anchored on the generator's exact layout: the FIRST start-marker
+ * line (body forgeries are sanitized at wrap time), the LAST matching end
+ * marker for that delimiter, and the first `---` separator line after the
+ * metadata block (metadata values are newline-flattened at wrap time, so the
+ * separator cannot be forged).
+ */
+export function unwrapExternalContent(wrapped: string): UnwrappedExternalContent | null {
+  const start = START_MARKER_LINE.exec(wrapped);
+  if (!start) {
+    return null;
+  }
+  const delimiter = start[1];
+  const endToken = `\n<<<END_UNTRUSTED_${delimiter}>>>`;
+  const endIdx = wrapped.lastIndexOf(endToken);
+  const bodyStart = start.index + start[0].length + 1; // past the start-marker line's newline
+  if (endIdx < bodyStart) {
+    return null; // truncated or malformed envelope
+  }
+  const inner = wrapped.slice(bodyStart, endIdx); // metadata \n --- \n content
+  const sep = inner.indexOf("\n---\n");
+  if (sep < 0) {
+    return null;
+  }
+  const metadata = inner.slice(0, sep);
+  const content = inner.slice(sep + "\n---\n".length);
+
+  let source: ExternalContentSource = "unknown";
+  let sender: string | undefined;
+  let subject: string | undefined;
+  for (const line of metadata.split("\n")) {
+    if (line.startsWith("Source: ")) {
+      source = LABEL_TO_SOURCE[line.slice("Source: ".length)] ?? "unknown";
+    } else if (line.startsWith("From: ")) {
+      sender = line.slice("From: ".length);
+    } else if (line.startsWith("Subject: ")) {
+      subject = line.slice("Subject: ".length);
+    }
+  }
+  return { content, source, sender, subject, delimiter };
 }
 
 /**

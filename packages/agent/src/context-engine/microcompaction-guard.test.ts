@@ -370,11 +370,15 @@ describe("installMicrocompactionGuard", () => {
     const appended = sm.appended[0] as any;
     const referenceText: string = appended.content[0].text;
 
-    // Should contain exec-based hint, NOT the read tool suggestion
+    // Should lead with the exec-based hint, NOT the small-file read suggestion.
+    // (No stale "will re-offload" claim: recovery reads of tool-results files
+    // under the hard cap are exempt from re-offload, and disk copies are
+    // capped at the hard cap — the read tool always works; exec is cheaper.)
     expect(referenceText).toContain("exec");
     expect(referenceText).toContain("python");
     expect(referenceText).not.toContain("use the read tool to re-access");
-    expect(referenceText).toContain("re-offload");
+    expect(referenceText).not.toContain("re-offload");
+    expect(referenceText).toContain("read tool also works");
     // Disk path should be present
     const expectedDiskPath = join(tempDir, "tool-results", "call-exec-hint.json");
     expect(referenceText).toContain(expectedDiskPath);
@@ -403,7 +407,11 @@ describe("installMicrocompactionGuard", () => {
     const sm = createMockSessionManager(tempDir);
     installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
-    const result = createToolResult("mcp__github_list_issues", 20_000, "call-path-in-exec");
+    // JSON payload — the json.load example is only emitted when the written
+    // bytes actually parse (content-aware recovery guidance).
+    const jsonText = JSON.stringify({ issues: Array.from({ length: 500 }, (_, i) => ({ id: i, title: `issue ${i}` })) });
+    const result = createToolResult("mcp__github_list_issues", jsonText.length, "call-path-in-exec");
+    result.content = [{ type: "text", text: jsonText }];
     sm.appendMessage(result);
 
     const appended = sm.appended[0] as any;
