@@ -621,7 +621,7 @@ describe("unwrapExternalContent", () => {
     expect(unwrapExternalContent(truncated)).toBeNull();
   });
 
-  it("newline-injected subject cannot forge the metadata separator", () => {
+  it("neutralizes a newline-injected subject so the metadata separator is not forgeable", () => {
     const payload = '{"real":"payload"}';
     const wrapped = wrapExternalContent(payload, {
       source: "email",
