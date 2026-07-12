@@ -153,6 +153,10 @@ export const TtsSynthesizeContract = defineContract({
     filePath: z.string(),
     mimeType: z.string(),
     sizeBytes: z.number(),
+    /** True when the audio was auto-delivered to the caller's channel (an
+     *  interactive-channel turn). Absent for orchestrate/cron/non-channel callers,
+     *  which receive only the file path to send via the message tool. */
+    delivered: z.boolean().optional(),
   }),
   scopes: ["rpc"] as const,
 });

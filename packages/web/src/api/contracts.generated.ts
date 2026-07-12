@@ -12146,6 +12146,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "sizeBytes": {
           "type": "number"
+        },
+        "delivered": {
+          "type": "boolean"
         }
       },
       "required": [

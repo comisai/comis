@@ -41,6 +41,13 @@ export const ChannelCapabilitySchema = z.strictObject({
 
     /** Metadata key used for reply-to references (platform-specific) */
     replyToMetaKey: z.string().optional(),
+
+    /** Set reply-to references even on 1:1 (DM) replies. Visible-quote channels
+     *  (Telegram/Slack) skip reply-to in DMs to avoid quoting the user's own
+     *  message as noise; email needs it always — In-Reply-To/References are
+     *  invisible headers a mail client requires to thread the reply. Optional
+     *  (absent ⇒ DM reply-to is skipped, the visible-quote default). */
+    threadReplyInDm: z.boolean().optional(),
   });
 
 /** Inferred type from ChannelCapabilitySchema */

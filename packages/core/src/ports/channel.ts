@@ -320,6 +320,9 @@ export type ReconcileSendOutcome =
 export interface SendMessageOptions {
   /** Reply to a specific message by its platform ID */
   replyTo?: string;
+  /** Reply subject (email: the adapter forms a "Re: <subject>" reply subject
+   *  from this; channels without a subject concept ignore it). */
+  subject?: string;
   /** Parse mode (e.g. "markdown", "html") */
   parseMode?: string;
   /** Whether to suppress link previews */

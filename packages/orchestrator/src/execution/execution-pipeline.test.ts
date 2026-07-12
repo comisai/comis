@@ -1293,6 +1293,39 @@ describe("executeAndDeliver", () => {
       expect(sendOpts.threadId).toBeUndefined();
     });
 
+    it("threads a 1:1 (DM) reply when the channel declares threadReplyInDm (email invisible In-Reply-To)", async () => {
+      // ISSUE-2 (chief-of-staff live campaign): email threads via invisible
+      // In-Reply-To/References headers, so a DM (1:1) reply must still carry
+      // reply-to — unlike visible-quote channels that skip DM reply-to as noise.
+      // Pre-fix the DM-skip was unconditional (isGroupMessage only), so email
+      // replies started a fresh thread every time.
+      const adapter = makeAdapter({ channelType: "email" });
+      const channelRegistry = {
+        getCapabilities: vi.fn(() => ({
+          features: { reactions: false, editMessages: false, deleteMessages: false, fetchHistory: false, attachments: true, typing: false, threads: false, buttons: "none" as const },
+          limits: { maxMessageChars: 100_000 },
+          replyToMetaKey: "emailMessageId",
+          threadReplyInDm: true,
+        })),
+      } as unknown as ExecutionPipelineDeps["channelRegistry"];
+      const deps = makeDeps({ channelRegistry });
+      const msg = makeMessage({
+        channelType: "email",
+        chatType: "dm",
+        metadata: { emailMessageId: "<orig@home.test>", emailSubject: "Budget" },
+      });
+
+      await executeAndDeliver(
+        deps, adapter, msg, msg, makeExecutor(), makeSessionKey(),
+        "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+      );
+
+      const calls = vi.mocked(adapter.sendMessage).mock.calls;
+      expect(calls.length).toBeGreaterThanOrEqual(1);
+      // Block 0 must carry the inbound Message-ID as reply-to so the mail client threads it.
+      expect((calls[0][2] as Record<string, unknown>).replyTo).toBe("<orig@home.test>");
+    });
+
     // followupTrigger-based tests were removed: the followupTrigger and
     // followupConfig deps slots + handleFollowupTrigger helper were removed
     // from the execution pipeline. createFollowupMessage cross-reference
