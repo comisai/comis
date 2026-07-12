@@ -269,6 +269,14 @@ describe("isImmutableConfigPath", () => {
     expect(isImmutableConfigPath("agents", "default.persona")).toBe(true);
   });
 
+  // Security lock: an agent must NEVER be able to disable its own terminal-driver sandbox via
+  // config.patch. `skills.terminal.unsafeDisableSandbox` lives under `agents.*` (an immutable
+  // prefix), so it is operator-config/env only — the same guarantee browser.noSandbox gets
+  // top-level. A prompt-injected agent cannot self-remove the bwrap jail.
+  it("rejects agents.default.skills.terminal.unsafeDisableSandbox (sandbox opt-out is operator-only)", () => {
+    expect(isImmutableConfigPath("agents", "default.skills.terminal.unsafeDisableSandbox")).toBe(true);
+  });
+
   // Mutable overrides: promptTimeout runtime tuning
   it("allows agents.*.promptTimeout.promptTimeoutMs (mutable override for timeout tuning)", () => {
     expect(isImmutableConfigPath("agents", "default.promptTimeout.promptTimeoutMs")).toBe(false);

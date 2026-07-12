@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 
 import type { EgressControlPort } from "@comis/core";
 
-import { buildSpawnPlan, type SpawnPlanInput } from "./terminal-spawn-plan.js";
+import { buildSpawnPlan, JailUnavailableError, type SpawnPlanInput } from "./terminal-spawn-plan.js";
 import { RELAY_INIT_SCRIPT_URL } from "./terminal-egress-relay.js";
 import type { TerminalScope } from "./allowlist-matcher.js";
 
@@ -207,5 +207,66 @@ describe("buildSpawnPlan — claude session-env carve-out (the actual EROFS fix)
     const comisIdx = s.indexOf("--tmpfs /home/u/.comis");
     expect(seIdx).toBeGreaterThanOrEqual(0);
     expect(comisIdx).toBeGreaterThan(seIdx); // the secret-masking ~/.comis tmpfs comes AFTER → stays last
+  });
+});
+
+describe("buildSpawnPlan — unsafeDisableSandbox (the operator opt-out of the jail)", () => {
+  // The terminal driver is fail-closed by design: no bwrap ⇒ no child (JailUnavailableError).
+  // `skills.terminal.unsafeDisableSandbox: true` is the operator-only, immutable opt-out for
+  // constrained hosts that cannot run bwrap (a container with no user-namespaces, a CI box) — the
+  // exact peer of `browser.noSandbox`. It runs the driven CLI DIRECTLY (no bwrap), so it provides
+  // NO filesystem/network/uid confinement — but the env-scrub is preserved, so daemon SECRETS
+  // still never reach the child. It is a genuine security downgrade, surfaced in config_posture.
+
+  it("returns an UNSANDBOXED plan (child runs directly, no bwrap) when the operator opts out", async () => {
+    const plan = await buildSpawnPlan(makeInput(), { unsafeDisableSandbox: true });
+    expect(plan.bin).toBe("/bin/cat"); // the driven CLI itself, NOT the bwrap binary
+    expect(plan.unsandboxed).toBe(true); // the backend reads this to force the non-durable PTY path
+    expect(plan.cwd).toBe("/ws"); // the child still runs in the session workspace (no bwrap --chdir)
+    expect(plan.argv.join(" ")).not.toContain("bwrap"); // no jail wrapper anywhere in the argv
+    // We did NOT bubblewrap it, so we must NOT lie to a sandbox-aware CLI (claude may nest its own).
+    expect(plan.env.CLAUDE_CODE_BUBBLEWRAP).toBeUndefined();
+  });
+
+  it("SECURITY: even unsandboxed, daemon secrets are STILL scrubbed from the child env", async () => {
+    // The whole point of the guarantee: "unsandboxed" must never also mean "secrets leak". The
+    // env-scrub runs on the direct-spawn path exactly as on the jailed path.
+    const LEAKY_ENV: NodeJS.ProcessEnv = {
+      COMIS_GATEWAY_TOKEN: "admin-bearer-scope-star",
+      GWTOKEN: "ops-alias",
+      GATEWAY_TOKEN_DEFAULT: "minted-default",
+      SECRETS_MASTER_KEY: "store-master-key",
+      COMIS_CAP_LEASE: "keep-lease", // broker/cap path must survive
+      TERM: "xterm-256color", // rich TUI env must survive
+    };
+    const plan = await buildSpawnPlan(makeInput({ env: LEAKY_ENV }), { unsafeDisableSandbox: true });
+    expect(plan.env.COMIS_GATEWAY_TOKEN).toBeUndefined();
+    expect(plan.env.GWTOKEN).toBeUndefined();
+    expect(plan.env.GATEWAY_TOKEN_DEFAULT).toBeUndefined();
+    expect(plan.env.SECRETS_MASTER_KEY).toBeUndefined();
+    // No over-scrub — the child still gets the broker/cap lease + a rich TUI env.
+    expect(plan.env.COMIS_CAP_LEASE).toBe("keep-lease");
+    expect(plan.env.TERM).toBe("xterm-256color");
+  });
+
+  it("opts out UNCONDITIONALLY — runs unsandboxed even when bwrap IS available (the browser.noSandbox precedent)", async () => {
+    const plan = await buildSpawnPlan(makeInput(), {
+      unsafeDisableSandbox: true,
+      bwrapPath: "/usr/bin/bwrap", // present, but the operator asked for no sandbox
+    });
+    expect(plan.bin).toBe("/bin/cat");
+    expect(plan.unsandboxed).toBe(true);
+  });
+
+  it("runs unsandboxed with NO bwrapPath (the constrained-host case) — does NOT throw", async () => {
+    const plan = await buildSpawnPlan(makeInput(), { unsafeDisableSandbox: true });
+    expect(plan.unsandboxed).toBe(true);
+  });
+
+  it("FLOOR UNCHANGED: without the opt-out, no bwrapPath STILL fails closed (never an unjailed child)", async () => {
+    await expect(buildSpawnPlan(makeInput(), {})).rejects.toBeInstanceOf(JailUnavailableError);
+    await expect(buildSpawnPlan(makeInput(), { unsafeDisableSandbox: false })).rejects.toBeInstanceOf(
+      JailUnavailableError,
+    );
   });
 });

@@ -144,7 +144,7 @@ import { createEmptyBootContext } from "./daemon-types.js";
 export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
 import { setupObsPersistence } from "./observability/obs-persistence-wiring.js";
 import { recordModelHealth } from "./observability/record-model-health.js";
-import { buildConfigPostureRecord, countChimericModels, countUnresolvedModels, countPricingGaps, countMediaCredentialGaps, isLoopbackHost } from "./observability/build-config-posture-record.js";
+import { buildConfigPostureRecord, countChimericModels, countUnresolvedModels, countPricingGaps, countMediaCredentialGaps, anyAgentTerminalUnsafeDisableSandbox, isLoopbackHost } from "./observability/build-config-posture-record.js";
 import { setupDeliveryQueueLogging } from "./observability/delivery-queue-logger.js";
 import { createContextPipelineCollector } from "./observability/context-pipeline-collector.js";
 import { createLogLevelManager, expandTilde } from "./observability/log-infra.js";
@@ -2846,6 +2846,9 @@ async function bootShutdown(
   // security default that must SURFACE in the config-posture snapshot, not stay
   // silent (the browser tool processes untrusted web content).
   const browserNoSandbox = container.config.browser?.noSandbox === true;
+  // skills.terminal.unsafeDisableSandbox: true runs a driven coding CLI WITHOUT the bwrap jail — a
+  // relaxed security default that must SURFACE in the config-posture snapshot, not stay silent.
+  const terminalUnsafeDisableSandbox = anyAgentTerminalUnsafeDisableSandbox(container.config.agents);
   // Media credential gap: a PINNED media provider whose credential is absent
   // (image/transcription/tts/video) — invisible to the main-pipeline chimeric
   // detector. `imageGenProvider.isAvailable()` is the store-aware image-codex
@@ -2856,7 +2859,7 @@ async function bootShutdown(
     (key) => container.secretManager.has(key),
     boot.imageGenProvider?.isAvailable() ?? false,
   );
-  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount: countChimericModels(container.config.agents), unresolvedModelCount: countUnresolvedModels(container.config.agents, container.config.providers?.entries), pricingGapCount: countPricingGaps(container.config.agents), sandboxNoDowngradeDisabled, browserNoSandbox, mediaCredentialGapCount }, boot.clock);
+  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount: countChimericModels(container.config.agents), unresolvedModelCount: countUnresolvedModels(container.config.agents, container.config.providers?.entries), pricingGapCount: countPricingGaps(container.config.agents), sandboxNoDowngradeDisabled, browserNoSandbox, terminalUnsafeDisableSandbox, mediaCredentialGapCount }, boot.clock);
 
   // Snapshot current config as last-known-good after successful startup.
   // Honor diagnostics.configAudit.enabled.

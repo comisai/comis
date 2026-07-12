@@ -2,7 +2,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { DiagnosticRow, ObservabilityStore } from "@comis/memory";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
-import { buildConfigPostureRecord, countPricingGaps, countUnresolvedModels, countMediaCredentialGaps, isLoopbackHost } from "./build-config-posture-record.js";
+import { buildConfigPostureRecord, countPricingGaps, countUnresolvedModels, countMediaCredentialGaps, anyAgentTerminalUnsafeDisableSandbox, isLoopbackHost } from "./build-config-posture-record.js";
 import { unresolvedModelFromRow } from "../api/obs-handlers/fleet-findings-extractors.js";
 
 describe("isLoopbackHost (TLS-off is benign on a loopback bind)", () => {
@@ -81,6 +81,7 @@ describe("buildConfigPostureRecord", () => {
       pricingGapCount: 0, // always present (0 default), count-only
       sandboxNoDowngradeDisabled: false, // always present (false default)
       browserNoSandbox: false, // always present (false default)
+      terminalUnsafeDisableSandbox: false, // always present (false default)
       mediaCredentialGapCount: 0, // always present (0 default), count-only
     });
     // SECURITY: the stranded entry is a {label, count} — no value-bearing key.
@@ -118,6 +119,7 @@ describe("buildConfigPostureRecord", () => {
       pricingGapCount: 0,
       sandboxNoDowngradeDisabled: false,
       browserNoSandbox: false,
+      terminalUnsafeDisableSandbox: false,
       mediaCredentialGapCount: 0,
     });
   });
@@ -192,6 +194,30 @@ describe("buildConfigPostureRecord", () => {
     expect(row.severity).toBe("warning");
     const details = JSON.parse(row.details ?? "{}") as { browserNoSandbox?: boolean };
     expect(details.browserNoSandbox).toBe(true);
+  });
+
+  it("RELAX-SURFACE: flips severity to warning and surfaces the flag when skills.terminal.unsafeDisableSandbox is on", () => {
+    // unsafeDisableSandbox:true runs a driven coding CLI WITHOUT the bwrap jail — a RELAXED security
+    // default (no filesystem/network/uid confinement) that must SURFACE at boot, not stay silent,
+    // exactly like browser.noSandbox. Distinct from browserNoSandbox and sandboxNoDowngradeDisabled.
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    const clock = createFakeClock(11);
+    buildConfigPostureRecord(
+      obsStore,
+      {
+        tlsOff: false,
+        allowInsecureHttp: false,
+        strandedFindings: [],
+        canaryFallbackActive: false,
+        servedBelowConfiguredCount: 0,
+        terminalUnsafeDisableSandbox: true,
+      },
+      clock,
+    );
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    expect(row.severity).toBe("warning");
+    const details = JSON.parse(row.details ?? "{}") as { terminalUnsafeDisableSandbox?: boolean };
+    expect(details.terminalUnsafeDisableSandbox).toBe(true);
   });
 
   it("flips severity to warning when ANY single posture issue is present", () => {
@@ -530,5 +556,26 @@ describe("countMediaCredentialGaps — configured media provider missing its cre
   it("undefined media / unknown provider is a safe zero (no false flag)", () => {
     expect(countMediaCredentialGaps(undefined, hasNone, false)).toBe(0);
     expect(countMediaCredentialGaps({ tts: { provider: "piper" } }, hasNone, false)).toBe(0);
+  });
+});
+
+describe("anyAgentTerminalUnsafeDisableSandbox — boot signal that a driven CLI runs unsandboxed", () => {
+  it("true when ANY agent set skills.terminal.unsafeDisableSandbox: true", () => {
+    expect(
+      anyAgentTerminalUnsafeDisableSandbox({
+        default: { skills: { terminal: { unsafeDisableSandbox: false } } },
+        ci: { skills: { terminal: { unsafeDisableSandbox: true } } },
+      }),
+    ).toBe(true);
+  });
+
+  it("false when no agent opts out (the jail stays on everywhere)", () => {
+    expect(
+      anyAgentTerminalUnsafeDisableSandbox({
+        default: { skills: { terminal: { unsafeDisableSandbox: false } } },
+        other: { skills: {} },
+        bare: {},
+      }),
+    ).toBe(false);
   });
 });

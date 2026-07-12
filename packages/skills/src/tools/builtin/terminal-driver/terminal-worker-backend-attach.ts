@@ -11,9 +11,11 @@
  * `errorKind:"dependency"`, flip to `degraded`, spawn the pipe child and wire its
  * `stdout.on("data")`→ring + `close`/`error`→exit and set `state.pipe`). {@link appendRing}
  * and {@link markExited} (the worker's former closure locals, whose ONLY callers were these
- * backend stream handlers) move with it byte-for-byte. Both backends spawn
- * `bwrap [scope args] -- bin argv` (the plan is composed upstream) — no unjailed path. Only
- * the LOCATION of this block changed.
+ * backend stream handlers) move with it byte-for-byte. Both backends normally spawn
+ * `bwrap [scope args] -- bin argv` (the plan is composed upstream); the ONE exception is an
+ * `unsandboxed` plan (operator `unsafeDisableSandbox`), where the plan is the CLI itself and the
+ * spawns run it directly with `plan.cwd` — and such a plan is FORCED onto the PTY path (never the
+ * tmux backend, whose server env would bypass the plan's secret-scrub).
  *
  * INFRA-FREE (like every worker-side sibling): value-imports ONLY node builtins, and
  * type-imports the worker's structural contracts from the neutral leaf
@@ -38,6 +40,16 @@ interface BackendSpawnPlan {
   bin: string;
   argv: string[];
   env: NodeJS.ProcessEnv;
+  /** Child cwd — present ONLY on the {@link unsandboxed} direct-spawn path (the jailed path bakes cwd into bwrap's `--chdir`). */
+  cwd?: string;
+  /**
+   * `true` when the jail was bypassed (`unsafeDisableSandbox`) — the child runs DIRECTLY, no bwrap.
+   * FORCES the non-durable PTY backend: a tmux server would inherit — and leak — the daemon env
+   * that the jail's per-session `--unsetenv` normally strips (the scrubbed `plan.env` protects the
+   * FIRST session that starts the server, but a pre-existing server's env bypasses it), so a durable
+   * `backend:"tmux"` request is downgraded to PTY here rather than run a secret-leaking session.
+   */
+  unsandboxed?: boolean;
 }
 
 /**
@@ -100,11 +112,11 @@ export interface AttachBackendArgs {
   state: SessionState;
   /** Load node-pty (the worker's injected `deps.loadPty`); a throw → the pipe backend, `degraded`. */
   loadPty: () => PtyModuleLike;
-  /** Spawn the pipe-backend child (the worker's resolved `spawnPipe`). */
+  /** Spawn the pipe-backend child (the worker's resolved `spawnPipe`). `cwd` rides only on the unsandboxed path. */
   spawnPipe: (
     bin: string,
     argv: string[],
-    opts: { env: NodeJS.ProcessEnv },
+    opts: { env: NodeJS.ProcessEnv; cwd?: string },
   ) => PipeChildLike;
   /** Structural worker logger (the worker's injected logger) — threaded to {@link markExited}. */
   logger: WorkerLogger;
@@ -176,12 +188,28 @@ export function attachBackend(args: AttachBackendArgs): boolean {
     return true;
   }
 
+  // An unsandboxed drive can NEVER take the tmux backend: the tmux server inherits — and would
+  // leak — the daemon env that the jail's per-session `--unsetenv` normally strips (the scrubbed
+  // plan.env only protects the session that STARTS the server; a pre-existing server bypasses it).
+  // Downgrade a durable `backend:"tmux"` request to the non-durable PTY path here + WARN, mirroring
+  // the tmux-unavailable degrade — never a secret-leaking session.
+  if (requestedBackend === "tmux" && plan.unsandboxed === true) {
+    logger.warn(
+      {
+        hint: "durable tmux backend disabled under unsafeDisableSandbox (no jail --unsetenv to strip the tmux server env); running non-durable pty",
+        errorKind: "precondition" as const,
+      },
+      "terminal durable drive downgraded (sandbox disabled)",
+    );
+  }
+
   // The tmux named-session backend — selected ONLY when the create frame
-  // requested it AND the worker was built with the tmux loader. The handle is FakePtyLike-
-  // shaped, so it wires EXACTLY like the pty branch (onData→ring, onExit→markExited, set
-  // state.pty so writeToBackend uses it) — one seam, no worker-entry branching. The driven
-  // plan command + geometry ride into the loader; the loader owns has-session-then-attach.
-  if (requestedBackend === "tmux" && loadTmux !== undefined) {
+  // requested it AND the worker was built with the tmux loader AND the drive is jailed (an
+  // unsandboxed drive is forced to PTY above). The handle is FakePtyLike-shaped, so it wires
+  // EXACTLY like the pty branch (onData→ring, onExit→markExited, set state.pty so writeToBackend
+  // uses it) — one seam, no worker-entry branching. The driven plan command + geometry ride into
+  // the loader; the loader owns has-session-then-attach.
+  if (requestedBackend === "tmux" && loadTmux !== undefined && plan.unsandboxed !== true) {
     const handle = loadTmux.spawn({
       sessionId,
       bin: plan.bin,
@@ -212,8 +240,15 @@ export function attachBackend(args: AttachBackendArgs): boolean {
   }
 
   if (pty !== undefined) {
-    // PTY backend — spawn the bwrap jail; the child rides after the composer's `--`.
-    const handle = pty.spawn(plan.bin, plan.argv, { cols, rows, env: plan.env });
+    // PTY backend — spawn the bwrap jail; the child rides after the composer's `--`. On the
+    // unsandboxed path `plan.bin` is the CLI itself and `plan.cwd` sets its working dir (bwrap's
+    // `--chdir` is gone with the jail).
+    const handle = pty.spawn(plan.bin, plan.argv, {
+      cols,
+      rows,
+      env: plan.env,
+      ...(plan.cwd !== undefined ? { cwd: plan.cwd } : {}),
+    });
     handle.onData((d) => appendRing(state, d));
     // Wire child exit -> markExited (the pty analog of the pipe close/error below).
     // WITHOUT it a real node-pty child that exits never notifies an in-flight
@@ -224,8 +259,12 @@ export function attachBackend(args: AttachBackendArgs): boolean {
     });
     state.pty = handle;
   } else {
-    // Pipe backend (degraded) — ALSO wrapped in bwrap (no unjailed degraded path).
-    const child = spawnPipe(plan.bin, plan.argv, { env: plan.env });
+    // Pipe backend (degraded) — bwrap-wrapped on the jailed path; on the unsandboxed path the CLI
+    // itself with `plan.cwd` as its working dir.
+    const child = spawnPipe(plan.bin, plan.argv, {
+      env: plan.env,
+      ...(plan.cwd !== undefined ? { cwd: plan.cwd } : {}),
+    });
     child.stdout?.on("data", (chunk: Buffer) => appendRing(state, chunk.toString("utf8")));
     child.on("close", () => {
       markExited(state, logger);

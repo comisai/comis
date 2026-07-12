@@ -150,6 +150,16 @@ describe("TerminalDriverConfigSchema -- closed allow-set", () => {
     expect(result.success).toBe(false);
   });
 
+  it("defaults unsafeDisableSandbox to false (the jail stays ON — a bwrap opt-out is opt-IN only)", () => {
+    const parsed = TerminalDriverConfigSchema.parse(validCfg); // validCfg omits the field
+    expect(parsed.unsafeDisableSandbox).toBe(false);
+  });
+
+  it("accepts unsafeDisableSandbox: true (the operator opt-out of the bwrap jail)", () => {
+    const parsed = TerminalDriverConfigSchema.parse({ ...validCfg, unsafeDisableSandbox: true });
+    expect(parsed.unsafeDisableSandbox).toBe(true);
+  });
+
   it("rejects an unknown NESTED key (scope strictObject is closed too)", () => {
     const withNestedUnknown = structuredClone(validCfg) as Record<string, unknown>;
     // allow[0].scope.extra is not a member of the closed scope schema.
