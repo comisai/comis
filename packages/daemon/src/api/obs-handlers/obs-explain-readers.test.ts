@@ -560,6 +560,17 @@ describe("rankCandidateSessionKeys", () => {
     expect(out[0]).toBe("default:678314278:678314278:peer:678314278");
   });
 
+  it("surfaces the formatted key from the TILDE-form `<user>~peer~<peer>` request (the trajectory-filename + drive.mjs friction)", async () => {
+    // `drive.mjs` and the ground-truth read-order surface the tilde-form
+    // (`678314278~peer~678314278`) as the session's name — an operator naturally
+    // pastes THAT into `comis explain`. Splitting only on ':' left it one
+    // no-overlap blob → [] → the misleading bare session_not_found. It must
+    // tokenize on '~' and match the real colon-form key.
+    const { rankCandidateSessionKeys } = await import("./obs-explain-readers.js");
+    const out = rankCandidateSessionKeys("678314278~peer~678314278", REAL);
+    expect(out[0]).toBe("default:678314278:678314278:peer:678314278");
+  });
+
   it("ranks a MORE-matching key above a less-matching one (segment overlap count)", async () => {
     const { rankCandidateSessionKeys } = await import("./obs-explain-readers.js");
     // Requesting two segments that both appear in the 678 key ranks it first.
@@ -572,10 +583,11 @@ describe("rankCandidateSessionKeys", () => {
     expect(rankCandidateSessionKeys("telegram:999999", REAL)).toEqual([]);
   });
 
-  it("returns [] for an empty / colons-only request", async () => {
+  it("returns [] for an empty / separators-only request", async () => {
     const { rankCandidateSessionKeys } = await import("./obs-explain-readers.js");
     expect(rankCandidateSessionKeys("", REAL)).toEqual([]);
     expect(rankCandidateSessionKeys(":::", REAL)).toEqual([]);
+    expect(rankCandidateSessionKeys("~/~", REAL)).toEqual([]);
   });
 
   it("dedupes + caps to the limit", async () => {
