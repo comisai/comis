@@ -58,6 +58,19 @@ export function countChimericModels(
   ).length;
 }
 
+/**
+ * `true` when ANY configured agent set `skills.terminal.unsafeDisableSandbox: true` — the operator
+ * opt-out of the terminal-driver bwrap jail (a driven CLI runs unsandboxed). A RELAXED security
+ * default that should be surfaced at boot, not silent — the peer of `browser.noSandbox`. A boolean,
+ * never agent ids or config bodies. Lives here (not inline in daemon.ts) to keep daemon.ts under its
+ * 3000-line cap.
+ */
+export function anyAgentTerminalUnsafeDisableSandbox(
+  agents: Readonly<Record<string, { skills?: { terminal?: { unsafeDisableSandbox?: boolean } } }>>,
+): boolean {
+  return Object.values(agents).some((a) => a.skills?.terminal?.unsafeDisableSandbox === true);
+}
+
 // isLoopbackHost moved to @comis/core (security/loopback-host) so the gateway's
 // boot log shares the SAME TLS-off-is-benign-on-loopback judgment as this
 // posture record and the gateway-exposure security check. Re-exported so the
@@ -244,6 +257,16 @@ export interface ConfigPostureInputs {
    */
   browserNoSandbox?: boolean;
   /**
+   * `true` when ANY configured agent set `skills.terminal.unsafeDisableSandbox: true` — the
+   * operator opt-out of the terminal-driver bwrap jail (a driven coding CLI runs unsandboxed). A
+   * RELAXED security default (the child has no filesystem/network/uid confinement), distinct from
+   * `browserNoSandbox` (the Chromium sandbox) and `sandboxNoDowngradeDisabled` (the agent-to-agent
+   * spawn sandbox). Should be surfaced at boot, not silent. A boolean, never agent ids or config
+   * bodies. Computed via {@link anyAgentTerminalUnsafeDisableSandbox} at boot. Optional (defaults
+   * to `false`).
+   */
+  terminalUnsafeDisableSandbox?: boolean;
+  /**
    * Number of configured media pipelines (image / transcription / tts / video)
    * whose PINNED provider's credential is absent — the pipeline will fail at
    * first use. A COUNT, never provider names. Computed via
@@ -272,6 +295,7 @@ export function buildConfigPostureRecord(
   const pricingGapCount = inputs.pricingGapCount ?? 0;
   const sandboxNoDowngradeDisabled = inputs.sandboxNoDowngradeDisabled ?? false;
   const browserNoSandbox = inputs.browserNoSandbox ?? false;
+  const terminalUnsafeDisableSandbox = inputs.terminalUnsafeDisableSandbox ?? false;
   const mediaCredentialGapCount = inputs.mediaCredentialGapCount ?? 0;
   const hasIssue =
     inputs.tlsOff ||
@@ -283,6 +307,7 @@ export function buildConfigPostureRecord(
     pricingGapCount > 0 ||
     sandboxNoDowngradeDisabled ||
     browserNoSandbox ||
+    terminalUnsafeDisableSandbox ||
     mediaCredentialGapCount > 0;
 
   obsStore?.insertDiagnostic({
@@ -311,6 +336,10 @@ export function buildConfigPostureRecord(
       // Chromium runs WITHOUT its sandbox (browser.noSandbox: true) — a relaxed
       // security default surfaced at boot, not silent. A boolean, never bodies.
       browserNoSandbox,
+      // A driven coding CLI runs WITHOUT the bwrap jail
+      // (skills.terminal.unsafeDisableSandbox: true) — a relaxed security default surfaced at
+      // boot, not silent. A boolean, never agent ids or bodies.
+      terminalUnsafeDisableSandbox,
       // Configured media pipelines whose pinned provider's credential is
       // absent (image/transcription/tts/video). A COUNT, never provider names.
       mediaCredentialGapCount,

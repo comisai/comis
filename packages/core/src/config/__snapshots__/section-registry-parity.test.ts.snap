@@ -3224,6 +3224,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "boolean"
   },
   {
+    "default": false,
+    "immutable": true,
+    "path": "agents.skills.terminal.unsafeDisableSandbox",
+    "type": "boolean"
+  },
+  {
     "immutable": true,
     "path": "agents.skills.terminal.worker",
     "type": "object"
@@ -20088,6 +20094,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "redactSecrets": {
               "type": "boolean"
             },
+            "unsafeDisableSandbox": {
+              "default": false,
+              "type": "boolean"
+            },
             "worker": {
               "additionalProperties": false,
               "properties": {
@@ -20138,7 +20148,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "defaults",
             "allow",
             "redactSecrets",
-            "audit"
+            "audit",
+            "unsafeDisableSandbox"
           ],
           "type": "object"
         },
@@ -31289,6 +31300,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "redactSecrets": {
                     "type": "boolean"
                   },
+                  "unsafeDisableSandbox": {
+                    "default": false,
+                    "type": "boolean"
+                  },
                   "worker": {
                     "additionalProperties": false,
                     "properties": {
@@ -31339,7 +31354,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "defaults",
                   "allow",
                   "redactSecrets",
-                  "audit"
+                  "audit",
+                  "unsafeDisableSandbox"
                 ],
                 "type": "object"
               },

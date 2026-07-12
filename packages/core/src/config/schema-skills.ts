@@ -229,6 +229,24 @@ export const TerminalDriverConfigSchema = z.strictObject({
   redactSecrets: z.boolean(),
   audit: z.strictObject({ enabled: z.boolean() }),
   /**
+   * Operator opt-out of the bwrap jail — DANGEROUS, default `false`. When `true`, a
+   * `terminal_session_create` runs the driven CLI DIRECTLY (no bwrap) instead of failing closed
+   * when the jail cannot be materialized. It exists for constrained hosts that genuinely cannot run
+   * bwrap (a container without unprivileged user-namespaces, a locked-down CI box) so the
+   * coding-CLI drive can run at all — the exact peer of `browser.noSandbox`.
+   *
+   * SECURITY POSTURE: this removes ALL filesystem / network / uid confinement (the `allow[].scope`
+   * dimensions are unenforceable without the jail) — a genuine downgrade. Two protections are
+   * PRESERVED and never optional: (1) the env-scrub still strips daemon secrets (gateway token /
+   * master key) from the child env, so an unsandboxed CLI still cannot read them; (2) a durable
+   * `backend:"tmux"` drive is force-downgraded to the non-durable PTY backend (a tmux server would
+   * inherit env the jail's per-session `--unsetenv` normally strips). The relaxation is surfaced at
+   * boot in `config_posture` (`terminalUnsafeDisableSandbox`), never silent. It lives under
+   * `agents.*` (an immutable config prefix), so an agent can never self-enable it via `config.patch`
+   * — operator config files / env only. Leave it `false` on any host where bwrap is available.
+   */
+  unsafeDisableSandbox: z.boolean().default(false),
+  /**
    * Autonomous-drive policy. OPTIONAL + `strictObject`: the block is purely
    * additive — a config with NO `drive` block parses cleanly and yields the inert
    * baseline behavior. The block carries
