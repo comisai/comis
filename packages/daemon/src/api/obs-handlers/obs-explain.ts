@@ -155,9 +155,18 @@ export async function assembleIncidentReportFromSources(
   // copies the right one instead of hand-joining the session index (the recurring
   // live friction). Only on a genuine miss (no records AND no rollup) — a resolved
   // session never pays the scan.
+  // Seed the scan with the ORIGINAL requested ref, not the resolved `sessionKey`:
+  // a chatId / tilde-form / typo'd ref that lacks ':' misroutes to `{traceId}`
+  // (the CLI's separator heuristic), `resolveTraceToSession` misses, and
+  // `sessionKey` collapses to "". Scanning against "" hands the ranker an empty
+  // request → zero suggestions — the "did you mean …?" list silently no-ops for
+  // the exact lossy-key case it exists to serve. Fall back to the raw ref so the
+  // ranker can match it (the recurring live friction).
+  const candidateSeed =
+    sessionKey !== "" ? sessionKey : (params.sessionKey ?? params.traceId ?? params.rootRunId ?? "");
   const candidateSessionKeys =
     records.length === 0 && metadata === null && reader.listCandidateSessionKeys
-      ? await reader.listCandidateSessionKeys(sessionKey)
+      ? await reader.listCandidateSessionKeys(candidateSeed)
       : [];
   // Pass the trajectory READ count (records.length) so coverage.trajectory
   // reflects what the reader actually READ — the meta-observability point: a
@@ -177,14 +186,28 @@ export async function assembleIncidentReportFromSources(
     // overwrites likelyRootCause). The detail/field name the ref that missed
     // (traceId or rootRunId), so a typo'd autonomy-run id
     // surfaces an honest not-found verdict instead of a clean-looking report.
-    report.likelyRootCause = {
-      code: "session_not_found",
-      detail: `${missedRefField} did not resolve to any session in the index (today/yesterday); it may be a typo, expired, or older than the 2-day resolution horizon`,
-      suggestedNextSteps: [
-        `verify the ${missedRefField}, or query by sessionKey directly`,
-        "confirm the session ended within the last two days (the session-index lookup window)",
-      ],
-    };
+    // When the ranker surfaced closest-key candidates, the ref was almost
+    // certainly a lossy/partial sessionKey (a chatId / tilde-form) that misrouted
+    // to a traceId lookup — NOT a typo'd/expired traceId. Name that + point at the
+    // candidates instead of the misdirecting "typo/expired" hint.
+    report.likelyRootCause =
+      candidateSessionKeys.length > 0
+        ? {
+            code: "session_not_found",
+            detail: `${missedRefField} did not resolve — it looks like a lossy/partial sessionKey (e.g. a bare chatId or the "<user>~peer~<peer>" trajectory-filename form), which routes to a traceId lookup and misses. See coverage.candidateSessionKeys for the closest real keys.`,
+            suggestedNextSteps: [
+              `re-run with one of the candidate session keys (coverage.candidateSessionKeys), e.g. "${candidateSessionKeys[0]}"`,
+              "or pass the traceId from the trajectory's model.completed record",
+            ],
+          }
+        : {
+            code: "session_not_found",
+            detail: `${missedRefField} did not resolve to any session in the index (today/yesterday); it may be a typo, expired, or older than the 2-day resolution horizon`,
+            suggestedNextSteps: [
+              `verify the ${missedRefField}, or query by sessionKey directly`,
+              "confirm the session ended within the last two days (the session-index lookup window)",
+            ],
+          };
     report.truncations.push({
       field: missedRefField,
       reason: `${missedRefField} not found in session index (today/yesterday) — empty report is unresolved, not a clean session`,
