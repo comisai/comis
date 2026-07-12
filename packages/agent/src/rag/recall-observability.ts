@@ -137,6 +137,20 @@ export function captureRecallObservability(
     // Include the graph-spread lane so the counts-only event reflects the 6th lane (the
     // trace's RecallLaneCounts stays the 5-lane shape — extending it is a deferred obs change).
     (ctx.graphSpreadCandidates > 0 ? 1 : 0);
+  // Content-free provenance summary over the SAME final set finalCount counts: how many
+  // recalled memories belong to a DIFFERENT user than the current conversation (the
+  // cross-sender injection signal — one shared agent surfaces sender A's memory into
+  // sender B's turn), and how many distinct authors contributed. COUNTS only — the
+  // requesting user-id and every entry's user-id/body stay OUT of the payload (§2.7).
+  // `requesterUserId` is undefined only on the type-erased test edge / a malformed key;
+  // it is a schema-required field in production, so crossUserCount is 0 solely when the
+  // requester genuinely can't be resolved (a conservative under-count, never a false leak).
+  const requesterUserId = ctx.sessionKey.userId as string | undefined;
+  const crossUserCount =
+    requesterUserId === undefined
+      ? 0
+      : ctx.finalRanked.reduce((n, r) => (r.entry.userId !== requesterUserId ? n + 1 : n), 0);
+  const distinctSources = new Set(ctx.finalRanked.map((r) => r.entry.source?.who)).size;
   try {
     deps.eventBus.emit("memory:recalled", {
       agentId: ctx.agentId ?? "default",
@@ -147,6 +161,8 @@ export function captureRecallObservability(
       vectorCandidates: ctx.vectorCandidates,
       entityCandidates: ctx.entityCandidates,
       finalCount: ctx.finalRanked.length,
+      crossUserCount,
+      distinctSources,
       rerankerAvailable,
       durationMs: ctx.durationMs,
       timestamp: deps.clock.now(),

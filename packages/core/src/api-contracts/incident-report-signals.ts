@@ -229,6 +229,11 @@ export interface IncidentSignals {
     lastLanes: number;
     lastFinalCount: number;
     rerankerAvailable: boolean;
+    /** Recalls that injected ≥1 memory scoped to a different user than the conversation
+     *  (the cross-sender privacy signal). Optional/additive (absent on pre-fix trajectories). */
+    crossUserRecalls?: number;
+    /** The terminal recall's cross-user injected count. Counts only — never ids/bodies. */
+    lastCrossUserCount?: number;
     degraded?: number;
     lastDegradedScope?: string;
     lastDegradedErrorKind?: string;
