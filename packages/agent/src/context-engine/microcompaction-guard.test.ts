@@ -23,6 +23,7 @@ import {
   PREVIEW_TAIL_CHARS,
 } from "./constants.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
+import { wrapExternalContent } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -851,5 +852,257 @@ describe("microcompaction-guard file/dir mode invariants", () => {
     const diskPath = join(tempDir, "tool-results", "mode-file.json");
     expect(existsSync(diskPath)).toBe(true);
     expect(statSync(diskPath).mode & 0o777).toBe(0o600);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Clean-payload offload: external-wrapped results are UNWRAPPED at rest.
+//
+// Live incident 2026-07-12 (comis-harel, "when was I last in the Golan"): the
+// offload marker's own `json.load` example failed on every offloaded MCP
+// result because the wrapExternalContent security envelope was baked into the
+// .json file. The file is a STORAGE artifact — the taint boundary belongs to
+// the presentation layer: payload bytes on disk, origin recorded in a sidecar,
+// re-wrap at the boundaries (marker preview + read-tool recovery).
+// ---------------------------------------------------------------------------
+
+/** A JSON payload whose serialized form is at least `minChars` long. */
+function bigJsonPayload(minChars: number): { rows: Array<{ id: number; address: string; lat: number; lon: number }> } {
+  const rows: Array<{ id: number; address: string; lat: number; lon: number }> = [];
+  let size = 20;
+  let i = 0;
+  while (size < minChars) {
+    const row = { id: i, address: `Ahuza Street ${i}, Raanana`, lat: 32.184 + i * 0.0001, lon: 34.871 };
+    rows.push(row);
+    size += JSON.stringify(row).length + 1;
+    i++;
+  }
+  return { rows };
+}
+
+/** A wrapped-MCP toolResult message (single wrapper over the joined text, as mcp-tool-bridge produces). */
+function createWrappedMcpResult(
+  payloadText: string,
+  toolCallId: string,
+): {
+  role: "toolResult";
+  toolCallId: string;
+  toolName: string;
+  content: { type: "text"; text: string }[];
+  isError: boolean;
+  timestamp: number;
+  details?: Record<string, unknown>;
+} {
+  return {
+    role: "toolResult",
+    toolCallId,
+    toolName: "mcp__testsrv--big_query",
+    content: [{ type: "text", text: wrapExternalContent(payloadText, { source: "mcp_tool" }) }],
+    isError: false,
+    timestamp: Date.now(),
+  };
+}
+
+describe("clean-payload offload (external wrapper stripped at rest)", () => {
+  let tempDir: string;
+  let logger: ReturnType<typeof createMockLogger>;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "microcompaction-clean-"));
+    logger = createMockLogger();
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("writes the UNWRAPPED payload to disk — the .json file parses as the original JSON", () => {
+    const sm = createMockSessionManager(tempDir);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
+
+    const payload = bigJsonPayload(20_000);
+    sm.appendMessage(createWrappedMcpResult(JSON.stringify(payload), "call-clean"));
+
+    const diskPath = join(tempDir, "tool-results", "call-clean.json");
+    expect(existsSync(diskPath)).toBe(true);
+    const fileText = readFileSync(diskPath, "utf8");
+    expect(fileText.startsWith("SECURITY NOTICE")).toBe(false);
+    expect(fileText).not.toContain("<<<UNTRUSTED_");
+    expect(JSON.parse(fileText)).toEqual(payload);
+  });
+
+  it("writes an origin sidecar recording the external source", () => {
+    const sm = createMockSessionManager(tempDir);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
+
+    sm.appendMessage(createWrappedMcpResult(JSON.stringify(bigJsonPayload(20_000)), "call-sidecar"));
+
+    const sidecarPath = join(tempDir, "tool-results", "call-sidecar.origin.json");
+    expect(existsSync(sidecarPath)).toBe(true);
+    const sidecar = JSON.parse(readFileSync(sidecarPath, "utf8"));
+    expect(sidecar.source).toBe("mcp_tool");
+  });
+
+  it("does NOT write a sidecar for internal (never-wrapped) offloads", () => {
+    const sm = createMockSessionManager(tempDir);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
+
+    sm.appendMessage(createToolResult("bash", 10_000, "call-internal"));
+
+    expect(existsSync(join(tempDir, "tool-results", "call-internal.json"))).toBe(true);
+    expect(existsSync(join(tempDir, "tool-results", "call-internal.origin.json"))).toBe(false);
+  });
+
+  it("cuts the marker preview from the CLEAN payload and re-wraps the preview section as untrusted", () => {
+    const sm = createMockSessionManager(tempDir);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
+
+    const payload = bigJsonPayload(20_000);
+    sm.appendMessage(createWrappedMcpResult(JSON.stringify(payload), "call-preview"));
+
+    const appended = sm.appended[0] as any;
+    const referenceText: string = appended.content[0].text;
+
+    // Head preview starts with the clean payload, not the security envelope.
+    expect(referenceText).toMatch(/--- head \(\d+ chars\) ---\n\{"rows"/);
+    // The preview section itself is taint-wrapped so external content never
+    // sits in context without its boundary.
+    expect(referenceText).toContain("SECURITY NOTICE");
+    expect(referenceText).toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/);
+    expect(referenceText).toMatch(/<<<END_UNTRUSTED_[a-f0-9]+>>>/);
+    // isAlreadyOffloaded contract unchanged.
+    expect(referenceText.startsWith("[Tool result offloaded to disk:")).toBe(true);
+  });
+
+  it("does NOT taint-wrap the preview of internal offloads", () => {
+    const sm = createMockSessionManager(tempDir);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
+
+    sm.appendMessage(createToolResult("bash", 10_000, "call-internal-preview"));
+
+    const appended = sm.appended[0] as any;
+    const referenceText: string = appended.content[0].text;
+    expect(referenceText).not.toContain("SECURITY NOTICE");
+    expect(referenceText).not.toContain("<<<UNTRUSTED_");
+  });
+
+  it("emits the json.load example only when the disk payload actually parses as JSON", () => {
+    const sm = createMockSessionManager(tempDir);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
+
+    // JSON payload → json.load example with the real path.
+    sm.appendMessage(createWrappedMcpResult(JSON.stringify(bigJsonPayload(20_000)), "call-json-ex"));
+    const jsonRef: string = (sm.appended[0] as any).content[0].text;
+    const jsonDiskPath = join(tempDir, "tool-results", "call-json-ex.json");
+    expect(jsonRef).toContain(`json.load(open('${jsonDiskPath}'))`);
+
+    // Plain-text payload (wrapped web-fetch-style markdown) → NO json.load claim.
+    const proseLine = "Golan Heights travel guide — plain prose, definitely not JSON. ";
+    sm.appendMessage(createWrappedMcpResult(proseLine.repeat(300), "call-text-ex"));
+    const textRef: string = (sm.appended[1] as any).content[0].text;
+    expect(textRef).not.toContain("json.load");
+    expect(textRef).toContain("plain text");
+  });
+
+  it("no longer claims the read tool will re-offload files under the hard cap", () => {
+    const sm = createMockSessionManager(tempDir);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
+
+    sm.appendMessage(createWrappedMcpResult(JSON.stringify(bigJsonPayload(20_000)), "call-read-claim"));
+    const referenceText: string = (sm.appended[0] as any).content[0].text;
+
+    // Offloaded files are capped at TOOL_RESULT_HARD_CAP_CHARS on disk, and
+    // recovery reads under the cap are exempt from re-offload — the old
+    // "will re-offload" warning was stale.
+    expect(referenceText).not.toContain("re-offload");
+    expect(referenceText).toContain("read tool also works");
+  });
+
+  it("hard-cap case: truncates the CLEAN payload on disk and says so instead of promising json.load", () => {
+    const sm = createMockSessionManager(tempDir);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
+
+    // Clean payload > 100K → wrapped input exceeds the hard cap.
+    const payload = bigJsonPayload(120_000);
+    sm.appendMessage(createWrappedMcpResult(JSON.stringify(payload), "call-hardcap"));
+
+    const diskPath = join(tempDir, "tool-results", "call-hardcap.json");
+    const fileText = readFileSync(diskPath, "utf8");
+    // Clean payload prefix, no envelope, capped length.
+    expect(fileText.startsWith('{"rows"')).toBe(true);
+    expect(fileText).not.toContain("SECURITY NOTICE");
+    expect(fileText.length).toBeLessThanOrEqual(TOOL_RESULT_HARD_CAP_CHARS);
+
+    const referenceText: string = (sm.appended[0] as any).content[0].text;
+    expect(referenceText.toLowerCase()).toContain("truncated");
+    // A truncated JSON slice does not parse — never promise json.load on it.
+    expect(referenceText).not.toContain("json.load");
+
+    const sidecar = JSON.parse(readFileSync(join(tempDir, "tool-results", "call-hardcap.origin.json"), "utf8"));
+    expect(sidecar.source).toBe("mcp_tool");
+    expect(sidecar.truncated).toBe(true);
+  });
+});
+
+describe("wrap-on-read: recovery reads restore the taint boundary", () => {
+  let tempDir: string;
+  let logger: ReturnType<typeof createMockLogger>;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "microcompaction-wrapread-"));
+    logger = createMockLogger();
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  /** A read-tool toolResult for a recovery read of `filePath`. */
+  function createRecoveryRead(filePath: string, toolCallId: string) {
+    return {
+      role: "toolResult" as const,
+      toolCallId,
+      toolName: "read",
+      content: [{ type: "text" as const, text: readFileSync(filePath, "utf8") }],
+      isError: false,
+      timestamp: Date.now(),
+      details: { filePath },
+    };
+  }
+
+  it("re-wraps recovery reads of external-origin offload files", () => {
+    const sm = createMockSessionManager(tempDir);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
+
+    const payload = bigJsonPayload(20_000);
+    sm.appendMessage(createWrappedMcpResult(JSON.stringify(payload), "call-wrapread"));
+    const diskPath = join(tempDir, "tool-results", "call-wrapread.json");
+
+    sm.appendMessage(createRecoveryRead(diskPath, "call-wrapread-read"));
+
+    const readAppended = sm.appended[1] as any;
+    const text: string = readAppended.content[0].text;
+    // The taint boundary is restored at the presentation layer...
+    expect(text).toContain("SECURITY NOTICE");
+    expect(text).toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/);
+    // ...around the clean payload the file holds.
+    expect(text).toContain('{"rows"');
+    // Still exempt from re-offload (no second disk file for the read).
+    expect(existsSync(join(tempDir, "tool-results", "call-wrapread-read.json"))).toBe(false);
+  });
+
+  it("passes through recovery reads of internal-origin offload files unwrapped", () => {
+    const sm = createMockSessionManager(tempDir);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
+
+    sm.appendMessage(createToolResult("bash", 10_000, "call-internal-read"));
+    const diskPath = join(tempDir, "tool-results", "call-internal-read.json");
+    const originalFileText = readFileSync(diskPath, "utf8");
+
+    sm.appendMessage(createRecoveryRead(diskPath, "call-internal-read-read"));
+
+    const readAppended = sm.appended[1] as any;
+    expect(readAppended.content[0].text).toBe(originalFileText);
+    expect(readAppended.content[0].text).not.toContain("SECURITY NOTICE");
   });
 });
