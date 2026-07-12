@@ -80,6 +80,7 @@ describe("buildConfigPostureRecord", () => {
       unresolvedModelCount: 0, // always present (0 default), count-only
       pricingGapCount: 0, // always present (0 default), count-only
       sandboxNoDowngradeDisabled: false, // always present (false default)
+      browserNoSandbox: false, // always present (false default)
       mediaCredentialGapCount: 0, // always present (0 default), count-only
     });
     // SECURITY: the stranded entry is a {label, count} — no value-bearing key.
@@ -116,6 +117,7 @@ describe("buildConfigPostureRecord", () => {
       unresolvedModelCount: 0,
       pricingGapCount: 0,
       sandboxNoDowngradeDisabled: false,
+      browserNoSandbox: false,
       mediaCredentialGapCount: 0,
     });
   });
@@ -163,6 +165,33 @@ describe("buildConfigPostureRecord", () => {
     expect(row.severity).toBe("warning");
     const details = JSON.parse(row.details ?? "{}") as { sandboxNoDowngradeDisabled?: boolean };
     expect(details.sandboxNoDowngradeDisabled).toBe(true);
+  });
+
+  it("RELAX-SURFACE: flips severity to warning and surfaces the flag when browser.noSandbox is on", () => {
+    // browser.noSandbox:true runs Chromium WITHOUT its sandbox while the browser
+    // tool processes untrusted web content — a RELAXED security default the
+    // Track-M floor sweep wants SURFACED at boot. Pre-fix there was no signal
+    // (the config-posture builder checked agentToAgent.sandboxNoDowngrade but not
+    // browser.noSandbox), so a fleet-visible `browser.noSandbox (Chromium sandbox
+    // off)` never appeared — the live friction this campaign hit.
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    const clock = createFakeClock(9);
+    buildConfigPostureRecord(
+      obsStore,
+      {
+        tlsOff: false,
+        allowInsecureHttp: false,
+        strandedFindings: [],
+        canaryFallbackActive: false,
+        servedBelowConfiguredCount: 0,
+        browserNoSandbox: true,
+      },
+      clock,
+    );
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    expect(row.severity).toBe("warning");
+    const details = JSON.parse(row.details ?? "{}") as { browserNoSandbox?: boolean };
+    expect(details.browserNoSandbox).toBe(true);
   });
 
   it("flips severity to warning when ANY single posture issue is present", () => {

@@ -298,18 +298,23 @@ const MAX_CANDIDATE_KEYS = 8;
 /**
  * PURE ranker: given a requested (possibly lossy/partial) session key and the set
  * of REAL formatted keys on disk, return the closest matches most-relevant-first.
- * Score = how many colon-segments of the request appear (case-insensitive
- * substring) in the candidate; ties break toward the shorter (closer) key then
- * lexicographic. Zero-overlap candidates are dropped (never a false suggestion),
- * and an empty/colons-only request yields `[]`. No I/O, no globals — same inputs,
- * same order forever.
+ * Score = how many request segments appear (case-insensitive substring) in the
+ * candidate; ties break toward the shorter (closer) key then lexicographic.
+ * Zero-overlap candidates are dropped (never a false suggestion), and an
+ * empty/separators-only request yields `[]`. The request is split on every
+ * separator an operator or the kit actually types — `:` (the formatted key),
+ * `~` (the trajectory-filename form `<user>~peer~<peer>` that `drive.mjs` and the
+ * ground-truth read-order surface), and `/` — so a tilde-form or chatId ref
+ * tokenizes into matchable segments instead of one no-overlap blob (the recurring
+ * live friction the candidate list exists to end). No I/O, no globals — same
+ * inputs, same order forever.
  */
 export function rankCandidateSessionKeys(
   requested: string,
   realKeys: readonly string[],
   limit: number = MAX_CANDIDATE_KEYS,
 ): string[] {
-  const reqTokens = requested.split(":").map((t) => t.trim().toLowerCase()).filter((t) => t.length > 0);
+  const reqTokens = requested.split(/[:~/]/).map((t) => t.trim().toLowerCase()).filter((t) => t.length > 0);
   if (reqTokens.length === 0) return [];
   const seen = new Set<string>();
   return realKeys
