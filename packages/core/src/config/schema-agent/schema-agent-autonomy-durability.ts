@@ -8,15 +8,17 @@
  * with every field `.default()`-ed and `strictObject` as the typo guard
  * (fails-closed).
  *
- * GATING: `enabled` defaults to FALSE. The
+ * GATING: `enabled` defaults to TRUE (durable runs out of the box). The
  * daemon constructs the durable stores + resume engine + watchdog ONLY when this
- * is true AND an autonomy-bearing agent is configured — so a default install is
- * byte-identical (no new timer, no boot recovery work), mirroring the
- * `cap.sock`-only-when-autonomy-configured gate (data-directory.mdx).
+ * is true AND an autonomy-bearing agent is configured — an install with no
+ * autonomy-bearing agent is byte-identical (no new timer, no boot recovery
+ * work), mirroring the `cap.sock`-only-when-autonomy-configured gate
+ * (data-directory.mdx).
  *
  * `schema-agent-autonomy.ts` wires this into `AutonomyConfigSchema` as
  * `durability: DurabilityConfigSchema.default({})`, so a fully-omitted block
- * resolves to `{ enabled:false, ... }` (default-off).
+ * resolves to `{ enabled:true, ... }` (an operator sets `enabled:false` to opt
+ * out).
  *
  * Pure schema leaf — imports only `zod`. No `process.env` / `Date.now` /
  * `path.join` (AGENTS §2.2).
