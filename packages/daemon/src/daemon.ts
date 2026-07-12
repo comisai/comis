@@ -2842,6 +2842,10 @@ async function bootShutdown(
   // Surface the relaxed no-downgrade sandbox default at boot.
   // The typed field defaults to true (schema-security.ts); === false is the relaxation.
   const sandboxNoDowngradeDisabled = container.config.security.agentToAgent.sandboxNoDowngrade === false;
+  // browser.noSandbox: true runs Chromium without its sandbox — a relaxed
+  // security default that must SURFACE in the config-posture snapshot, not stay
+  // silent (the browser tool processes untrusted web content).
+  const browserNoSandbox = container.config.browser?.noSandbox === true;
   // Media credential gap: a PINNED media provider whose credential is absent
   // (image/transcription/tts/video) — invisible to the main-pipeline chimeric
   // detector. `imageGenProvider.isAvailable()` is the store-aware image-codex
@@ -2852,7 +2856,7 @@ async function bootShutdown(
     (key) => container.secretManager.has(key),
     boot.imageGenProvider?.isAvailable() ?? false,
   );
-  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount: countChimericModels(container.config.agents), unresolvedModelCount: countUnresolvedModels(container.config.agents, container.config.providers?.entries), pricingGapCount: countPricingGaps(container.config.agents), sandboxNoDowngradeDisabled, mediaCredentialGapCount }, boot.clock);
+  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount: countChimericModels(container.config.agents), unresolvedModelCount: countUnresolvedModels(container.config.agents, container.config.providers?.entries), pricingGapCount: countPricingGaps(container.config.agents), sandboxNoDowngradeDisabled, browserNoSandbox, mediaCredentialGapCount }, boot.clock);
 
   // Snapshot current config as last-known-good after successful startup.
   // Honor diagnostics.configAudit.enabled.

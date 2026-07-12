@@ -218,6 +218,17 @@ describe("buildFindings — config_posture rollup names the flagged keys", () =>
     expect(cp!.detail).toMatch(/sandboxNoDowngrade/);
   });
 
+  it("names browser.noSandbox when Chromium runs without its sandbox", () => {
+    const findings = buildFindings(
+      [],
+      [],
+      [configPostureRow(1_000, { browserNoSandbox: true })],
+    );
+    const cp = findings.find((f) => f.code === "config_posture");
+    expect(cp).toBeDefined();
+    expect(cp!.detail).toMatch(/noSandbox/);
+  });
+
   it("names keys from the LATEST posture row only (standing state — a healthy newer boot supersedes)", () => {
     const findings = buildFindings(
       [],

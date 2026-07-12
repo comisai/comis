@@ -142,6 +142,7 @@ export function flaggedPostureKeys(row: DiagnosticRow): string[] {
       canaryFallbackActive?: unknown;
       strandedFindings?: unknown;
       sandboxNoDowngradeDisabled?: unknown;
+      browserNoSandbox?: unknown;
     };
     const keys: string[] = [];
     if (d.tlsOff === true) keys.push("gateway.tls (off)");
@@ -153,6 +154,12 @@ export function flaggedPostureKeys(row: DiagnosticRow): string[] {
     // a weaker posture than its parent) — NAME the exact knob, not "a flagged key".
     if (d.sandboxNoDowngradeDisabled === true) {
       keys.push("security.agentToAgent.sandboxNoDowngrade (off)");
+    }
+    // Chromium runs without its sandbox while the browser tool handles untrusted
+    // web content — NAME the exact knob (the live friction was a relaxed browser
+    // sandbox that never surfaced in fleet).
+    if (d.browserNoSandbox === true) {
+      keys.push("browser.noSandbox (Chromium sandbox off)");
     }
     return keys;
   } catch {
