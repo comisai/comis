@@ -8383,6 +8383,12 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             "rerankerAvailable": {
               "type": "boolean"
             },
+            "crossUserRecalls": {
+              "type": "number"
+            },
+            "lastCrossUserCount": {
+              "type": "number"
+            },
             "degraded": {
               "type": "number"
             },
@@ -9000,6 +9006,22 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               "items": {
                 "type": "string"
               }
+            },
+            "sources": {
+              "type": "object",
+              "properties": {
+                "session": {
+                  "type": "string"
+                },
+                "trajectory": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "session",
+                "trajectory"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
