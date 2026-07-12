@@ -195,39 +195,67 @@ const TerminalAllowEntrySchema = z.strictObject({
 });
 
 /**
+ * The terminal worker's reaper + emulator caps. Every field carries a production DEFAULT
+ * so a PARTIAL `terminal` block (e.g. just `unsafeDisableSandbox: true` on a bwrap-less
+ * host) parses without the operator restating the whole worker object. `stuckMs` mirrors
+ * the runtime `STUCK_DEFAULT_MS` and `maxConcurrentAttentionTurns` the daemon
+ * `DEFAULT_MAX_CONCURRENT` — @comis/core cannot import @comis/skills / @comis/daemon, so
+ * the values are inlined. Closed `z.strictObject`: an unknown/typo'd worker key still rejects.
+ */
+const TerminalWorkerSchema = z.strictObject({
+  maxSessions: z.number().int().default(8),
+  idleTtlMs: z.number().int().default(900_000),
+  ringBytes: z.number().int().default(262_144),
+  stuckMs: z.number().int().default(30_000), // mirrors terminal-worker-defaults STUCK_DEFAULT_MS
+  maxConcurrentAttentionTurns: z.number().int().default(4), // mirrors daemon DEFAULT_MAX_CONCURRENT
+  /**
+   * The operator-dialable cgroup `TasksMax` ceiling bounding the concurrent-session
+   * subprocess footprint vs. the systemd `TasksMax`. The tmux
+   * backend makes a worker's named sessions outlive the worker, so N
+   * memory-hungry sessions share one cgroup; this bounds the fork footprint so an
+   * unbounded fan-out cannot OOM/fork-starve the daemon. Absent ⇒ bounded by
+   * `maxSessions` alone (no extra ceiling). Optional + positive — adding it keeps the
+   * `worker` block a `strictObject` (an unknown/typo'd worker key still rejects).
+   */
+  tasksMax: z.number().int().positive().optional(),
+});
+
+/**
+ * The per-session emulator geometry. Defaults mirror the worker's own fallbacks
+ * (`cols:80`/`rows:24` in terminal-worker-entry) + `SCROLLBACK_DEFAULT` (1000), so a
+ * partial `terminal` block need not restate them. Closed `z.strictObject`.
+ */
+const TerminalEmulatorDefaultsSchema = z.strictObject({
+  cols: z.number().int().default(80),
+  rows: z.number().int().default(24),
+  scrollback: z.number().int().default(1000), // mirrors terminal-worker-defaults SCROLLBACK_DEFAULT
+});
+
+/** Terminal-driver audit toggle. Defaults ON — a security-sensitive subsystem audits by default. */
+const TerminalAuditSchema = z.strictObject({ enabled: z.boolean().default(true) });
+
+/**
  * Closed configuration schema for the interactive terminal driver.
  *
  * Operator-dialable, never agent-dialable. Closed by construction (every level
  * is `z.strictObject`) so unknown/typo'd keys are rejected at config load —
  * the gate against a believed-but-unparsed restriction.
+ *
+ * Every field carries a production DEFAULT (via the named sub-schemas above), so a
+ * MINIMAL block parses — e.g. `terminal: { unsafeDisableSandbox: true }` on a bwrap-less
+ * host, instead of forcing the operator to restate worker/defaults/redactSecrets/audit.
+ * The parent `terminal:` key stays `.optional()`, so an ABSENT block is still `undefined`
+ * (the fail-closed unconfigured-agent posture, unchanged); the defaults only fill a
+ * PARTIALLY-specified block. `unsafeDisableSandbox` keeps its own `false` default (the jail
+ * stays ON unless the operator explicitly opts out).
  */
 export const TerminalDriverConfigSchema = z.strictObject({
-  enabled: z.boolean(),
-  worker: z.strictObject({
-    maxSessions: z.number().int(),
-    idleTtlMs: z.number().int(),
-    ringBytes: z.number().int(),
-    stuckMs: z.number().int(),
-    maxConcurrentAttentionTurns: z.number().int(),
-    /**
-     * The operator-dialable cgroup `TasksMax` ceiling bounding the concurrent-session
-     * subprocess footprint vs. the systemd `TasksMax`. The tmux
-     * backend makes a worker's named sessions outlive the worker, so N
-     * memory-hungry sessions share one cgroup; this bounds the fork footprint so an
-     * unbounded fan-out cannot OOM/fork-starve the daemon. Absent ⇒ bounded by
-     * `maxSessions` alone (no extra ceiling). Optional + positive — adding it keeps the
-     * `worker` block a `strictObject` (an unknown/typo'd worker key still rejects).
-     */
-    tasksMax: z.number().int().positive().optional(),
-  }),
-  defaults: z.strictObject({
-    cols: z.number().int(),
-    rows: z.number().int(),
-    scrollback: z.number().int(),
-  }),
+  enabled: z.boolean().default(true),
+  worker: TerminalWorkerSchema.default(() => TerminalWorkerSchema.parse({})),
+  defaults: TerminalEmulatorDefaultsSchema.default(() => TerminalEmulatorDefaultsSchema.parse({})),
   allow: z.array(TerminalAllowEntrySchema).default([]),
-  redactSecrets: z.boolean(),
-  audit: z.strictObject({ enabled: z.boolean() }),
+  redactSecrets: z.boolean().default(true),
+  audit: TerminalAuditSchema.default(() => TerminalAuditSchema.parse({})),
   /**
    * Operator opt-out of the bwrap jail — DANGEROUS, default `false`. When `true`, a
    * `terminal_session_create` runs the driven CLI DIRECTLY (no bwrap) instead of failing closed

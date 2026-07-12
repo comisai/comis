@@ -3137,31 +3137,43 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "array"
   },
   {
+    "default": {
+      "enabled": true
+    },
     "immutable": true,
     "path": "agents.skills.terminal.audit",
     "type": "object"
   },
   {
+    "default": true,
     "immutable": true,
     "path": "agents.skills.terminal.audit.enabled",
     "type": "boolean"
   },
   {
+    "default": {
+      "cols": 80,
+      "rows": 24,
+      "scrollback": 1000
+    },
     "immutable": true,
     "path": "agents.skills.terminal.defaults",
     "type": "object"
   },
   {
+    "default": 80,
     "immutable": true,
     "path": "agents.skills.terminal.defaults.cols",
     "type": "integer"
   },
   {
+    "default": 24,
     "immutable": true,
     "path": "agents.skills.terminal.defaults.rows",
     "type": "integer"
   },
   {
+    "default": 1000,
     "immutable": true,
     "path": "agents.skills.terminal.defaults.scrollback",
     "type": "integer"
@@ -3214,11 +3226,13 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "string"
   },
   {
+    "default": true,
     "immutable": true,
     "path": "agents.skills.terminal.enabled",
     "type": "boolean"
   },
   {
+    "default": true,
     "immutable": true,
     "path": "agents.skills.terminal.redactSecrets",
     "type": "boolean"
@@ -3230,31 +3244,43 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "boolean"
   },
   {
+    "default": {
+      "idleTtlMs": 900000,
+      "maxConcurrentAttentionTurns": 4,
+      "maxSessions": 8,
+      "ringBytes": 262144,
+      "stuckMs": 30000
+    },
     "immutable": true,
     "path": "agents.skills.terminal.worker",
     "type": "object"
   },
   {
+    "default": 900000,
     "immutable": true,
     "path": "agents.skills.terminal.worker.idleTtlMs",
     "type": "integer"
   },
   {
+    "default": 4,
     "immutable": true,
     "path": "agents.skills.terminal.worker.maxConcurrentAttentionTurns",
     "type": "integer"
   },
   {
+    "default": 8,
     "immutable": true,
     "path": "agents.skills.terminal.worker.maxSessions",
     "type": "integer"
   },
   {
+    "default": 262144,
     "immutable": true,
     "path": "agents.skills.terminal.worker.ringBytes",
     "type": "integer"
   },
   {
+    "default": 30000,
     "immutable": true,
     "path": "agents.skills.terminal.worker.stuckMs",
     "type": "integer"
@@ -19983,8 +20009,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             },
             "audit": {
               "additionalProperties": false,
+              "default": {
+                "enabled": true
+              },
               "properties": {
                 "enabled": {
+                  "default": true,
                   "type": "boolean"
                 }
               },
@@ -19995,18 +20025,26 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             },
             "defaults": {
               "additionalProperties": false,
+              "default": {
+                "cols": 80,
+                "rows": 24,
+                "scrollback": 1000
+              },
               "properties": {
                 "cols": {
+                  "default": 80,
                   "maximum": 9007199254740991,
                   "minimum": -9007199254740991,
                   "type": "integer"
                 },
                 "rows": {
+                  "default": 24,
                   "maximum": 9007199254740991,
                   "minimum": -9007199254740991,
                   "type": "integer"
                 },
                 "scrollback": {
+                  "default": 1000,
                   "maximum": 9007199254740991,
                   "minimum": -9007199254740991,
                   "type": "integer"
@@ -20089,9 +20127,11 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
               "type": "object"
             },
             "enabled": {
+              "default": true,
               "type": "boolean"
             },
             "redactSecrets": {
+              "default": true,
               "type": "boolean"
             },
             "unsafeDisableSandbox": {
@@ -20100,28 +20140,40 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             },
             "worker": {
               "additionalProperties": false,
+              "default": {
+                "idleTtlMs": 900000,
+                "maxConcurrentAttentionTurns": 4,
+                "maxSessions": 8,
+                "ringBytes": 262144,
+                "stuckMs": 30000
+              },
               "properties": {
                 "idleTtlMs": {
+                  "default": 900000,
                   "maximum": 9007199254740991,
                   "minimum": -9007199254740991,
                   "type": "integer"
                 },
                 "maxConcurrentAttentionTurns": {
+                  "default": 4,
                   "maximum": 9007199254740991,
                   "minimum": -9007199254740991,
                   "type": "integer"
                 },
                 "maxSessions": {
+                  "default": 8,
                   "maximum": 9007199254740991,
                   "minimum": -9007199254740991,
                   "type": "integer"
                 },
                 "ringBytes": {
+                  "default": 262144,
                   "maximum": 9007199254740991,
                   "minimum": -9007199254740991,
                   "type": "integer"
                 },
                 "stuckMs": {
+                  "default": 30000,
                   "maximum": 9007199254740991,
                   "minimum": -9007199254740991,
                   "type": "integer"
@@ -31189,8 +31241,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   },
                   "audit": {
                     "additionalProperties": false,
+                    "default": {
+                      "enabled": true
+                    },
                     "properties": {
                       "enabled": {
+                        "default": true,
                         "type": "boolean"
                       }
                     },
@@ -31201,18 +31257,26 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   },
                   "defaults": {
                     "additionalProperties": false,
+                    "default": {
+                      "cols": 80,
+                      "rows": 24,
+                      "scrollback": 1000
+                    },
                     "properties": {
                       "cols": {
+                        "default": 80,
                         "maximum": 9007199254740991,
                         "minimum": -9007199254740991,
                         "type": "integer"
                       },
                       "rows": {
+                        "default": 24,
                         "maximum": 9007199254740991,
                         "minimum": -9007199254740991,
                         "type": "integer"
                       },
                       "scrollback": {
+                        "default": 1000,
                         "maximum": 9007199254740991,
                         "minimum": -9007199254740991,
                         "type": "integer"
@@ -31295,9 +31359,11 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                     "type": "object"
                   },
                   "enabled": {
+                    "default": true,
                     "type": "boolean"
                   },
                   "redactSecrets": {
+                    "default": true,
                     "type": "boolean"
                   },
                   "unsafeDisableSandbox": {
@@ -31306,28 +31372,40 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   },
                   "worker": {
                     "additionalProperties": false,
+                    "default": {
+                      "idleTtlMs": 900000,
+                      "maxConcurrentAttentionTurns": 4,
+                      "maxSessions": 8,
+                      "ringBytes": 262144,
+                      "stuckMs": 30000
+                    },
                     "properties": {
                       "idleTtlMs": {
+                        "default": 900000,
                         "maximum": 9007199254740991,
                         "minimum": -9007199254740991,
                         "type": "integer"
                       },
                       "maxConcurrentAttentionTurns": {
+                        "default": 4,
                         "maximum": 9007199254740991,
                         "minimum": -9007199254740991,
                         "type": "integer"
                       },
                       "maxSessions": {
+                        "default": 8,
                         "maximum": 9007199254740991,
                         "minimum": -9007199254740991,
                         "type": "integer"
                       },
                       "ringBytes": {
+                        "default": 262144,
                         "maximum": 9007199254740991,
                         "minimum": -9007199254740991,
                         "type": "integer"
                       },
                       "stuckMs": {
+                        "default": 30000,
                         "maximum": 9007199254740991,
                         "minimum": -9007199254740991,
                         "type": "integer"
