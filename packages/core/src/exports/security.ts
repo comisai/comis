@@ -71,7 +71,7 @@ export {
   detectSuspiciousPatterns,
   EXTERNAL_CONTENT_WARNING,
 } from "../security/index.js";
-export type { ExternalContentSource, WrapExternalContentOptions, UnwrappedExternalContent } from "../security/index.js";
+export type { ExternalContentSource, WrapExternalContentOptions } from "../security/index.js";
 export { createOutputGuard } from "../security/index.js";
 export { generateCanaryToken, detectCanaryLeakage } from "../security/index.js";
 // Signed interactive-approval callback primitive — channels
