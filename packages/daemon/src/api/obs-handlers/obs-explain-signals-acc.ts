@@ -86,7 +86,10 @@ export interface Acc {
    *  how many returned zero injected memories, and the TERMINAL recall's shape. */
   recallCount: number;
   recallZeroHits: number;
-  lastRecall?: { lanes: number; finalCount: number; rerankerAvailable: boolean };
+  /** Recalls that injected ≥1 memory scoped to a DIFFERENT user than the conversation
+   *  (`crossUserCount > 0`) — the cross-sender privacy signal aggregated for the report. */
+  crossUserRecalls: number;
+  lastRecall?: { lanes: number; finalCount: number; rerankerAvailable: boolean; crossUserCount: number };
   /** Cache breaks folded per-reason from `cache.break` records
    *  — `{count, estCostUsd}` summed per closed reason. Counts + a number
    *  ONLY (never the changed tool names — the trajectory carries only the digest). */

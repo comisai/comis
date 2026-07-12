@@ -621,6 +621,21 @@ export interface AgentEvents {
     entityCandidates: number;
     /** Size of the final ranked set returned to the prompt (0 ⇒ no hit). */
     finalCount: number;
+    /**
+     * Count of final-set memories scoped to a DIFFERENT user than the current
+     * conversation (`entry.userId !== sessionKey.userId`). `> 0` means agent-scoped
+     * recall injected another sender's memory into THIS turn — the cross-sender/privacy
+     * signal a recall or privacy audit needs from the ALWAYS-ON event, so "was
+     * cross-sender data injected into this turn's context?" is answerable without the
+     * opt-in `diagnostics.recallTrace` artifact having been pre-enabled. A COUNT only —
+     * never the user-ids or memory bodies (§2.7); the per-row detail stays in the trace.
+     */
+    crossUserCount: number;
+    /**
+     * Count of DISTINCT authors (`source.who`) among the final ranked set — a breadth
+     * signal (several senders' memories fused into one turn). A COUNT only (§2.7).
+     */
+    distinctSources: number;
     /** Whether the cross-encoder reranker was available for this recall. */
     rerankerAvailable: boolean;
     durationMs: number;

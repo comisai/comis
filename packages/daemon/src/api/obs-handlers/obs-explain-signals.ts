@@ -362,10 +362,15 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       acc.recallCount += 1;
       const finalCount = asNumber(data.finalCount) ?? 0;
       if (finalCount === 0) acc.recallZeroHits += 1;
+      // crossUserCount > 0 ⇒ agent-scoped recall injected another sender's memory into
+      // this turn (the cross-sender privacy signal). Absent on pre-fix trajectories ⇒ 0.
+      const crossUserCount = asNumber(data.crossUserCount) ?? 0;
+      if (crossUserCount > 0) acc.crossUserRecalls += 1;
       acc.lastRecall = {
         lanes: asNumber(data.lanes) ?? 0,
         finalCount,
         rerankerAvailable: data.rerankerAvailable === true,
+        crossUserCount,
       };
       return;
     }
@@ -580,6 +585,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     turnTraceIds: new Set(),
     recallCount: 0,
     recallZeroHits: 0,
+    crossUserRecalls: 0,
     contextBudgetHistory: [],
     cacheBreaksByReason: new Map(),
     learning: emptyLearningFold(),
@@ -719,6 +725,10 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
             lastLanes: acc.lastRecall?.lanes ?? 0,
             lastFinalCount: acc.lastRecall?.finalCount ?? 0,
             rerankerAvailable: acc.lastRecall?.rerankerAvailable ?? false,
+            // Cross-sender recall injection — surfaced so "did another sender's memory
+            // reach this turn?" is answerable from `comis explain` alone (not a raw-session read).
+            ...(acc.crossUserRecalls > 0 ? { crossUserRecalls: acc.crossUserRecalls } : {}),
+            ...(acc.lastRecall !== undefined ? { lastCrossUserCount: acc.lastRecall.crossUserCount } : {}),
             ...(acc.recallDegraded !== undefined
               ? {
                   degraded: acc.recallDegraded.count,

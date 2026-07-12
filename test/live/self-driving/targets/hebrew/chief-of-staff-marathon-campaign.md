@@ -1,12 +1,12 @@
 # TARGET — Chief-of-staff MARATHON campaign: the ENTIRE system, end to end, Hebrew-first, over the live web + a real mailbox + a real personal stack
 
 > A **pinned CAMPAIGN target** — shape 1 (use case), sized for an autonomous run of **hours to
-> days**. One agent drives the full `../00-MISSION.md` loop repeatedly over a **researched
+> days**. One agent drives the full `../../00-MISSION.md` loop repeatedly over a **researched
 > backlog** of real-world personal chief-of-staff use cases — the daily work of an always-on
 > household + solo-operator executive assistant — until every Comis capability domain is proven
 > live or has **failed honestly**. Drive surface = the Telegram emulator, **Hebrew-first** (the
-> household cast below adds multi-sender and mixed-language reality), like `EXAMPLE-nvda-dag.md`;
-> memory/learning/cron predicates use the offline/DB oracles of `EXAMPLE-verified-learning.md`.
+> household cast below adds multi-sender and mixed-language reality), like `../EXAMPLE-nvda-dag.md`;
+> memory/learning/cron predicates use the offline/DB oracles of `../EXAMPLE-verified-learning.md`.
 > The tool surface is REAL and stateful (**no sims**): the **live web** (web_search / web_fetch /
 > browser), a **dedicated real mailbox** on the Email channel (IMAP/SMTP), and the
 > **operator-named personal-stack MCP(s)** from the kickoff paste. The chief-of-staff theme
@@ -78,8 +78,8 @@ MCP identities, and the names of the competitor platforms to mine — stay OUT o
 
 ```
 You are a Comis live-test driver on a MARATHON CAMPAIGN. Your target spec is
-test/live/self-driving/targets/chief-of-staff-marathon-campaign.md — read it, then ../README.md
-+ ../00-MISSION.md, and follow them exactly. Run autonomously for hours or days until the
+test/live/self-driving/targets/hebrew/chief-of-staff-marathon-campaign.md — read it, then ../../README.md
++ ../../00-MISSION.md, and follow them exactly. Run autonomously for hours or days until the
 backlog is exhausted. Do not pause to ask me anything; the spec is the directive. Drive.
   Box: ‹ssh alias + access notes, e.g. "ssh <box>; if ssh drops: <re-auth command>"›
   Mailbox: ‹the DEDICATED test account (IMAP/SMTP host+address; creds via the secrets store /
@@ -174,7 +174,7 @@ Build a real-world use-case backlog from four sources, then plan from it:
    (AGENTS.md §2.12): competitor project names NEVER enter committed files — code, tests, docs,
    comments, runtime strings. Everything under `runs/` is gitignored (local-only), so
    backlog/source notes there may cite them freely.
-3. **The kit's own catalog.** `../05-CATALOG.md` (capability domains, the 30 UCs, Track K/L/M,
+3. **The kit's own catalog.** `../../05-CATALOG.md` (capability domains, the 30 UCs, Track K/L/M,
    the HARD security oracles) + prior runs under `runs/` and `runs/FINDINGS-LEDGER.md`
    (local-only, if present) — plan BEYOND what is already proven: deeper compositions,
    edge/failure/abuse variants, not reruns.
@@ -390,7 +390,7 @@ hours, completed one-shot, disabled toggle).
   protocol — skip vs wake), fail-OPEN on gate error/timeout/over-cap, ✓ status
   direct-to-channel with no model turn, and the `scheduler.cron.wakeGate` toggle both ways.
   Oracles: the `cron.runs` per-fire lens + fleet `cron_wake_gate_efficiency` + the
-  `security audit-log` jail trail — model on `EXAMPLE-cron-wake-gate.md`, drive with
+  `security audit-log` jail trail — model on `../EXAMPLE-cron-wake-gate.md`, drive with
   `scripts/wg.mjs`. (Gate scripts PRINT their verdict to stdout — see Field notes.)
 - **Scheduled reflection cycles** — the learning crons fire on schedule and produce admits
   (ties into non-negotiable #5c).
@@ -713,7 +713,7 @@ say so in the matrix.)
   `CAMPAIGN-STATE.md` and surface the number to the operator before driving on — the one
   legitimate mid-campaign interrupt.
 
-## The discipline (pins `../02-DISCIPLINE.md` for this campaign)
+## The discipline (pins `../../02-DISCIPLINE.md` for this campaign)
 
 **THE PER-ISSUE CONTRACT (memorize; it overrides everything else):** run forward → stop at the
 FIRST failure → fix it test-first → wipe logs + memory + test sessions → rebuild + clean-restart
@@ -748,7 +748,7 @@ Non-negotiables:
    then a green baseline = `phase0-check.sh` + `rig-doctor.sh` + `verify-build.sh` all pass.
    Driving a stale build is a FALSE RESULT — confirm the box serves the build you think it
    does.
-2. **PLAN BEFORE DRIVING** (the `../04-DERIVE-TESTS.md` §D gate): from the backlog, write
+2. **PLAN BEFORE DRIVING** (the `../../04-DERIVE-TESTS.md` §D gate): from the backlog, write
    `runs/<campaign>-<date>/TEST-PLAN.md` covering all five axes — real-world end-to-end ·
    edge/boundary/failure · deep (every requirement + its negative/abuse/security variant,
    config both polarities) · broad (cross-cutting flows) · adversarial/chaos (hostile Hebrew

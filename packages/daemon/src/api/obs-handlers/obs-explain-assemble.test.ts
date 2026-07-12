@@ -917,6 +917,22 @@ describe("assembleIncidentReport — coverage (READ-coverage)", () => {
     expect(report.coverage!.offloads.pointersTotal).toBe(2);
   });
 
+  it("surfaces coverage.sources — session=VALUES path, trajectory=PROVENANCE path — when the caller resolved real artifacts", () => {
+    // The numeric/value-reconciliation pointer: a reported figure is reconciled against
+    // the raw session `.jsonl` (VALUES), not the provenance-only `.trajectory.jsonl`.
+    const sessionPath = "/data/workspace/sessions/default/678314278/678314278~peer~678314278.jsonl";
+    const report = assembleIncidentReport(makeSignals(), makeMetadata(), null, SESSION_KEY, 2, [], sessionPath);
+    expect(report.coverage!.sources).toEqual({
+      session: sessionPath,
+      trajectory: `${sessionPath}.trajectory.jsonl`,
+    });
+  });
+
+  it("omits coverage.sources when no path was resolved (a genuine miss / a fixture reader over a non-real dataDir)", () => {
+    const report = assembleIncidentReport(makeSignals(), makeMetadata(), null, SESSION_KEY, 2);
+    expect(report.coverage!.sources).toBeUndefined();
+  });
+
   it("preserves coverage unchanged through boundIncidentReport at BOTH summary and full depth", () => {
     // coverage is a fixed 4-int + 2-bool object far below every cap and is NOT a
     // REPORT_ARRAY_FIELD, so the bounding pass passes it through untouched. Pin

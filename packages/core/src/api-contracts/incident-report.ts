@@ -193,6 +193,14 @@ export const IncidentReportSchema = z.object({
       lastLanes: z.number(),
       lastFinalCount: z.number(),
       rerankerAvailable: z.boolean(),
+      /** How many recalls injected ≥1 memory scoped to a DIFFERENT user than the
+       *  conversation (agent-scoped recall crossing a sender boundary) — the cross-sender
+       *  privacy signal, answerable from the report alone. Optional/additive: absent on
+       *  pre-fix trajectories that predate the crossUserCount event field. */
+      crossUserRecalls: z.number().optional(),
+      /** The terminal recall's cross-user injected count (`> 0` ⇒ another sender's
+       *  memory reached this turn's context). Counts only — never the ids/bodies. */
+      lastCrossUserCount: z.number().optional(),
       /** Count of degraded recalls (a retrieval lane — or the whole lane
        *  split — failed; previously a daemon.log-grep-only discovery). */
       degraded: z.number().optional(),
@@ -600,6 +608,25 @@ export const IncidentReportSchema = z.object({
        * candidate matched.
        */
       candidateSessionKeys: z.array(z.string()).optional(),
+      /**
+       * On-disk source PATHS the report was built from — a POINTER, never the content.
+       * The distinction is load-bearing for numeric/value reconciliation: the
+       * `.trajectory.jsonl` carries tool-call PROVENANCE only (toolName/success/
+       * durationMs — the result body is kept OUT of the event stream for secret-egress
+       * safety, §2.7), while the co-located raw session `.jsonl` carries the tool-result
+       * VALUES the model actually saw (wrapExternalContent-wrapped). So to RECONCILE a
+       * reported figure to the tool result that produced it, read `session` (values),
+       * NOT `trajectory` (provenance). Large results additionally offload to disk (see
+       * `offloads[].diskPathRel`). Paths only — never bodies; ids in the path mirror
+       * `candidateSessionKeys` (already in the trajectory layout). Present only when the
+       * session resolved to real on-disk artifacts.
+       */
+      sources: z
+        .object({
+          session: z.string(),
+          trajectory: z.string(),
+        })
+        .optional(),
     })
     .optional(),
 });

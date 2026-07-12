@@ -33,7 +33,7 @@ import { ObsExplainContract, stripInternalFields, safePath, type IncidentReport 
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, type ObsHandlerDeps } from "./obs-helpers.js";
 import { resolveTraceToSession, resolveRootRunToSession } from "./obs-explain-resolve.js";
-import { makeRealReader, type IncidentSourceReader } from "./obs-explain-readers.js";
+import { makeRealReader, resolveSessionFilePath, type IncidentSourceReader } from "./obs-explain-readers.js";
 import { toIncidentSignals } from "./obs-explain-signals.js";
 import { assembleIncidentReport } from "./obs-explain-assemble.js";
 import { rootCause } from "./obs-explain-heuristics.js";
@@ -172,7 +172,31 @@ export async function assembleIncidentReportFromSources(
   // reflects what the reader actually READ — the meta-observability point: a
   // "reader read nothing" bug surfaces as coverage.trajectory.records:0
   // on a report that otherwise looks like a clean zero-activity session.
-  const report = assembleIncidentReport(signals, metadata, rollup, sessionKey, records.length, candidateSessionKeys);
+  // The resolved raw session `.jsonl` path → coverage.sources, so a numeric/value
+  // reconciliation knows the VALUES live in the session file (not the provenance-only
+  // trajectory). Only for a resolved key with real on-disk artifacts (undefined ⇒ omitted;
+  // a fixture-reader test over a non-real dataDir simply gets no sources field).
+  // NON-FATAL: this coverage-pointer resolution is enrichment — it must NEVER fail the
+  // report. `resolveSessionFilePath` does real fs work and throws a PathTraversalError on a
+  // relative/odd dataDir (e.g. the "." offline/CLI base); swallow to undefined so the pointer
+  // is simply omitted rather than crashing the assembly (degrade, never error).
+  let sessionSourcePath: string | undefined;
+  if (sessionKey !== "") {
+    try {
+      sessionSourcePath = resolveSessionFilePath(dataDir, sessionKey);
+    } catch {
+      sessionSourcePath = undefined;
+    }
+  }
+  const report = assembleIncidentReport(
+    signals,
+    metadata,
+    rollup,
+    sessionKey,
+    records.length,
+    candidateSessionKeys,
+    sessionSourcePath,
+  );
   // The report is genuinely empty only when NO source surfaced any activity.
   const reportIsEmpty =
     report.failures.length === 0 &&

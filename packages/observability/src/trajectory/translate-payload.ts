@@ -257,12 +257,16 @@ export function translatePayload(
       // Per-recall lane/candidate/final counts, on the explain/trace timeline.
       // Counts/booleans ONLY — never query text or memory
       // bodies; agentId/sessionKey/traceId are envelope correlation ids.
+      // crossUserCount/distinctSources are the content-free cross-sender provenance
+      // signal (see events-agent.ts) — counts, no ids/bodies.
       return {
         lanes: payload.lanes,
         ftsCandidates: payload.ftsCandidates,
         vectorCandidates: payload.vectorCandidates,
         entityCandidates: payload.entityCandidates,
         finalCount: payload.finalCount,
+        crossUserCount: payload.crossUserCount,
+        distinctSources: payload.distinctSources,
         rerankerAvailable: payload.rerankerAvailable,
         durationMs: payload.durationMs,
       };

@@ -8261,6 +8261,12 @@
             "rerankerAvailable": {
               "type": "boolean"
             },
+            "crossUserRecalls": {
+              "type": "number"
+            },
+            "lastCrossUserCount": {
+              "type": "number"
+            },
             "degraded": {
               "type": "number"
             },
@@ -8878,6 +8884,22 @@
               "items": {
                 "type": "string"
               }
+            },
+            "sources": {
+              "type": "object",
+              "properties": {
+                "session": {
+                  "type": "string"
+                },
+                "trajectory": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "session",
+                "trajectory"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
