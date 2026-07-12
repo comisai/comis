@@ -72,22 +72,30 @@ const SEVERITY_LEVELS: Record<Severity, number> = {
 function buildAuditContext(configPaths: string[]): AuditContext {
   let config: AppConfig | undefined;
   let rawConfigContent: string | undefined;
+  let configError: string | undefined;
 
   if (configPaths.length > 0) {
     // Read raw content of first config file for secrets scanning
     try {
       rawConfigContent = readFileSync(configPaths[0], "utf-8");
-    } catch {
+    } catch (err) {
       // File not readable -- leave raw content undefined
+      configError = `could not read config file: ${err instanceof Error ? err.message : String(err)}`;
     }
 
-    // Attempt to load and validate config
+    // Attempt to load and validate config. Capture WHY it failed so the
+    // config-validation check can report the real reason instead of guessing,
+    // and so a failed load never silently drops every config-scoped check.
     const loadResult = loadConfigFile(configPaths[0]);
     if (loadResult.ok) {
       const validateResult = validateConfig(loadResult.value);
       if (validateResult.ok) {
         config = validateResult.value;
+      } else {
+        configError = validateResult.error.message;
       }
+    } else if (configError === undefined) {
+      configError = loadResult.error.message;
     }
   }
 
@@ -110,6 +118,7 @@ function buildAuditContext(configPaths: string[]): AuditContext {
     configPaths,
     dataDir,
     skillsPaths,
+    configError,
   };
 }
 

@@ -140,20 +140,24 @@ else
   warn "msteams-mounted" "channels.msteams not enabled — skipping the Teams ingress probe (Telegram is the default drive target)"
 fi
 
-# 5) terminal capability config present — the drive needs the `terminal` tool allowed for its origin/agent
-#    AND a complete `worker` block (the FATAL this run hit: schema requires worker.{maxSessions,idleTtlMs,
-#    ringBytes,stuckMs,maxConcurrentAttentionTurns} + defaults.{cols,rows,scrollback}).
+# 5) terminal capability config present — the drive needs the `terminal` tool enabled for its
+#    origin/agent. The worker/defaults/audit sub-blocks are OPTIONAL: every field carries a
+#    production default (TerminalWorkerSchema/TerminalEmulatorDefaultsSchema/TerminalAuditSchema in
+#    schema-skills.ts), so a MINIMAL block — e.g. `terminal: { unsafeDisableSandbox: true }` on a
+#    bwrap-less host — parses. An ABSENT block is the fail-closed unconfigured posture. The daemon
+#    validates the block at boot, so the clean-boot check above is the AUTHORITATIVE parse proof;
+#    this check only reports the terminal tool's presence + which worker fields are explicit.
 if [ -f "$CONFIG" ] && sudo -u "$COMIS_USER" test -r "$CONFIG" 2>/dev/null; then
   cfg=$(sudo -u "$COMIS_USER" cat "$CONFIG" 2>/dev/null)
-  if grep -q 'terminal' <<<"$cfg"; then
-    missing=""
+  if grep -qE "^[[:space:]]*terminal:" <<<"$cfg"; then
+    explicit=""
     for k in maxSessions idleTtlMs ringBytes stuckMs maxConcurrentAttentionTurns; do
-      grep -qE "^[[:space:]]*$k:" <<<"$cfg" || missing="$missing $k"
+      grep -qE "^[[:space:]]*$k:" <<<"$cfg" && explicit="$explicit $k"
     done
-    if [ -z "$missing" ]; then
-      pass "terminal-config" "terminal present + worker block complete"
+    if [ -n "$explicit" ]; then
+      pass "terminal-config" "terminal present; worker fields explicit:$explicit (rest schema-defaulted)"
     else
-      fail "terminal-config" "terminal present but worker block MISSING:$missing (schema requires them → FATAL boot)"
+      pass "terminal-config" "terminal present; worker/defaults/audit rely on schema defaults (minimal block — valid, boots clean)"
     fi
   else
     warn "terminal-config" "no 'terminal' key in config — is the terminal tool enabled for this drive?"
