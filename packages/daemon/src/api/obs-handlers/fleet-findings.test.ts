@@ -229,6 +229,21 @@ describe("buildFindings — config_posture rollup names the flagged keys", () =>
     expect(cp!.detail).toMatch(/noSandbox/);
   });
 
+  it("names skills.terminal.unsafeDisableSandbox when the bwrap jail is opted out", () => {
+    // The boot config_posture row carries `terminalUnsafeDisableSandbox` and flips the
+    // row to `warning` (build-config-posture-record.ts), but the fleet lens must NAME the
+    // knob too — an operator triaging via `comis fleet` should not have to grep daemon.log
+    // to learn the terminal driver runs unjailed. Mirrors the browser + no-downgrade cells.
+    const findings = buildFindings(
+      [],
+      [],
+      [configPostureRow(1_000, { terminalUnsafeDisableSandbox: true })],
+    );
+    const cp = findings.find((f) => f.code === "config_posture");
+    expect(cp).toBeDefined();
+    expect(cp!.detail).toMatch(/terminal\.unsafeDisableSandbox/);
+  });
+
   it("names keys from the LATEST posture row only (standing state — a healthy newer boot supersedes)", () => {
     const findings = buildFindings(
       [],

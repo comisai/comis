@@ -143,6 +143,7 @@ export function flaggedPostureKeys(row: DiagnosticRow): string[] {
       strandedFindings?: unknown;
       sandboxNoDowngradeDisabled?: unknown;
       browserNoSandbox?: unknown;
+      terminalUnsafeDisableSandbox?: unknown;
     };
     const keys: string[] = [];
     if (d.tlsOff === true) keys.push("gateway.tls (off)");
@@ -160,6 +161,13 @@ export function flaggedPostureKeys(row: DiagnosticRow): string[] {
     // sandbox that never surfaced in fleet).
     if (d.browserNoSandbox === true) {
       keys.push("browser.noSandbox (Chromium sandbox off)");
+    }
+    // The terminal-driver bwrap jail is opted out (a coding-CLI drive runs directly,
+    // no jail) — NAME the exact knob. The boot config_posture row already carries this
+    // and flips to `warning`, but the fleet lens omitted it, so an operator triaging via
+    // `comis fleet` saw the browser + no-downgrade relaxations named and this one silent.
+    if (d.terminalUnsafeDisableSandbox === true) {
+      keys.push("skills.terminal.unsafeDisableSandbox (bwrap jail off)");
     }
     return keys;
   } catch {

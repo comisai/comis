@@ -107,6 +107,10 @@ agents:
           heartbeatNotifyMs: 3600000    # user "still working" heartbeat for a long drive (default 1h; 0 = terminal-only)
 ```
 
+<Tip>
+**Minimal config.** `enabled`, `worker`, `defaults`, `redactSecrets`, and `audit` all carry defaults -- the example above sets them explicitly for illustration, but you may omit any of them. On a bwrap-less host the jail opt-out is a one-liner: `terminal: { unsafeDisableSandbox: true, allow: [ … ] }`. Omitted worker caps default to `maxSessions: 8` / `idleTtlMs: 900000` / `ringBytes: 262144` / `stuckMs: 30000` / `maxConcurrentAttentionTurns: 4`, the emulator to `cols: 80` / `rows: 24` / `scrollback: 1000`, and `redactSecrets` / `audit.enabled` to `true`. You still need `allow` entries to launch anything (an empty allow-set fails closed), and an **absent** `terminal:` block leaves the driver unconfigured.
+</Tip>
+
 The whole `drive:` block is **optional** and additive: a config with no `drive` block behaves **exactly as before** (no auto-promotion change, the digest read is already the effective default). An unknown key under `drive:` (a typo) is rejected at config load, like every other terminal key.
 
 The agent then drives it: `terminal_session_create({ allowId: "claude", command: "claude", project: "<name>" })` (the operator-pinned `argsPrefix` above is prepended automatically) -> wait -> `terminal_session_send_text(...)` -> `terminal_session_read(...)`. For the full per-CLI setup (Claude Code **and** Codex), see [Coding CLIs](/agent-tools/coding-clis).
