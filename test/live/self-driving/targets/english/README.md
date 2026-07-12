@@ -9,6 +9,12 @@ niqqud, Hebrew/English code-switching as pedagogy, the `he-IL-*Neural` voice-con
 exercised only by the Hebrew-first originals — each mirror notes inline where such an axis is
 reassigned to its sibling.
 
+One entry is **English-primary, not a mirror**: `swe-factory-marathon-campaign.md` (the autonomous
+spec→PR build factory) has no Hebrew-first original — it was authored here directly. Its inline
+"a Hebrew-first sibling exercises the RTL/mixed-direction axis" notes are forward-looking (they
+point at where such an axis WOULD live if a Hebrew sibling is later added), not references to an
+existing file.
+
 The campaign file itself is the authoritative spec. `../README.md` ("The worked patterns") carries
 the full per-campaign summaries and the lighter, non-campaign target shapes; the kit loop lives at
 `../../README.md` + `../../00-MISSION.md`.
@@ -48,3 +54,4 @@ the full per-campaign summaries and the lighter, non-campaign target shapes; the
 | `travel-desk-marathon-campaign.md` | personal/family travel desk — the time-geometry oracle, the itinerary as a governed estate, the world-clock proactive surface | travel confinement + itinerary integrity (never books, pays, or checks in) |
 | `front-desk-marathon-campaign.md` | an OPEN public counter for a small service business — many untrusted senders, a two-agent desk, a real appointment book | counter confinement |
 | `back-office-marathon-campaign.md` | an UNATTENDED multi-agent workforce running multi-day mandates under the autonomy governance envelope | mandate confinement |
+| `swe-factory-marathon-campaign.md` | an autonomous spec→PR **build factory** — a spec + GitHub repo link arrives (chat or signed webhook), the agent clones-or-fetches, drives Claude Code through the GSD workflow (the `gsd-builder` bundled skill), then opens a real PR, reviews it, and proves the tests are green (English-primary; no Hebrew mirror) | delivery confinement (clone-target validated · push/PR token target-scoped · the push/PR/merge approval-gated · a claimed-but-unperformed clone/push/PR/merge or a green-lie about the tests is an S1) |
