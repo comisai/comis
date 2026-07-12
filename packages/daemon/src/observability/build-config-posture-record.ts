@@ -235,6 +235,15 @@ export interface ConfigPostureInputs {
    */
   sandboxNoDowngradeDisabled?: boolean;
   /**
+   * `true` when the operator set `browser.noSandbox: true` — a RELAXED security
+   * default (Chromium runs WITHOUT its own sandbox while the browser tool
+   * processes untrusted web content). Distinct from
+   * `sandboxNoDowngradeDisabled` (the agent-to-agent spawn sandbox). A relaxed
+   * security default should be surfaced at boot, not silent. A boolean, never
+   * config bodies. Optional (defaults to `false`).
+   */
+  browserNoSandbox?: boolean;
+  /**
    * Number of configured media pipelines (image / transcription / tts / video)
    * whose PINNED provider's credential is absent — the pipeline will fail at
    * first use. A COUNT, never provider names. Computed via
@@ -262,6 +271,7 @@ export function buildConfigPostureRecord(
   const unresolvedModelCount = inputs.unresolvedModelCount ?? 0;
   const pricingGapCount = inputs.pricingGapCount ?? 0;
   const sandboxNoDowngradeDisabled = inputs.sandboxNoDowngradeDisabled ?? false;
+  const browserNoSandbox = inputs.browserNoSandbox ?? false;
   const mediaCredentialGapCount = inputs.mediaCredentialGapCount ?? 0;
   const hasIssue =
     inputs.tlsOff ||
@@ -272,6 +282,7 @@ export function buildConfigPostureRecord(
     unresolvedModelCount > 0 ||
     pricingGapCount > 0 ||
     sandboxNoDowngradeDisabled ||
+    browserNoSandbox ||
     mediaCredentialGapCount > 0;
 
   obsStore?.insertDiagnostic({
@@ -297,6 +308,9 @@ export function buildConfigPostureRecord(
       // The no-downgrade sandbox invariant is DISABLED (relaxed
       // default surfaced at boot, not silent). A boolean, never config bodies.
       sandboxNoDowngradeDisabled,
+      // Chromium runs WITHOUT its sandbox (browser.noSandbox: true) — a relaxed
+      // security default surfaced at boot, not silent. A boolean, never bodies.
+      browserNoSandbox,
       // Configured media pipelines whose pinned provider's credential is
       // absent (image/transcription/tts/video). A COUNT, never provider names.
       mediaCredentialGapCount,
