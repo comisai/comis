@@ -40,6 +40,7 @@ import { registerOrchestrateCommand } from "./commands/orchestrate.js";
 import { registerWhoamiCommand } from "./commands/whoami.js";
 import { registerCostExportCommand } from "./commands/cost-export.js";
 import { registerFleetCommand } from "./commands/fleet.js";
+import { registerMessagesCommand } from "./commands/messages.js";
 import { registerSupportBundleCommand } from "./commands/support-bundle.js";
 import { registerUninstallCommand } from "./commands/uninstall.js";
 
@@ -75,6 +76,7 @@ registerOrchestrateCommand(program);
 registerWhoamiCommand(program);
 registerCostExportCommand(program);
 registerFleetCommand(program);
+registerMessagesCommand(program);
 registerSupportBundleCommand(program);
 registerUninstallCommand(program);
 

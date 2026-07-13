@@ -27,7 +27,17 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import { safePath, systemGetEnv, systemNowDate, systemNowMs } from "@comis/core";
 import type { ClockPort, FleetHealthReport, IncidentReport } from "@comis/core";
+import type { SessionMessagesFilter, SessionMessagesResult } from "@comis/daemon";
 import type { CostBucketFilter, QuarterHourBucket } from "@comis/memory";
+
+// Re-exported so command modules consume the extractor's types from THIS seam —
+// keeping `util/offline-obs.ts` the single @comis/daemon import site in cli/src.
+export type {
+  SessionMessagesFilter,
+  SessionMessagesResult,
+  ExtractedChannelMessage,
+  SessionMessagesCoverage,
+} from "@comis/daemon";
 import { resolveTrajectoryPointerFilePath } from "@comis/observability";
 import type { AuditSummary } from "../support-bundle/types.js";
 import {
@@ -135,6 +145,22 @@ export async function assembleFleetHealthReportOffline(
   } finally {
     close();
   }
+}
+
+/**
+ * Extract inbound channel messages from the LOCAL session logs without a
+ * daemon — the `comis messages` data source. CONTENT-BEARING by design
+ * (message bodies are the payload), so it deliberately has NO RPC surface:
+ * the obs network surfaces stay digest-only/content-free, and this read adds
+ * no privilege over the files the local operator already owns (the same
+ * offline-only posture as `comis cost export`).
+ */
+export async function extractSessionMessagesOffline(
+  dataDir: string,
+  filter: SessionMessagesFilter,
+): Promise<SessionMessagesResult> {
+  const { extractSessionMessages } = await loadDaemonAssemblers();
+  return extractSessionMessages(dataDir, filter);
 }
 
 /**
