@@ -410,7 +410,7 @@ export {
 export { deepMerge, mergeLayered, loadLayered } from "./layered.js";
 
 // Immutable key guard (runtime config mutation protection)
-export { IMMUTABLE_CONFIG_PREFIXES, MUTABLE_CONFIG_OVERRIDES, isImmutableConfigPath, matchesOverridePattern, getMutableOverridesForSection } from "./immutable-keys.js";
+export { IMMUTABLE_CONFIG_PREFIXES, MUTABLE_CONFIG_OVERRIDES, isImmutableConfigPath, matchesOverridePattern, getMutableOverridesForSection, OPERATOR_ONLY_AGENT_SUBPATHS, findOperatorOnlyAgentPaths } from "./immutable-keys.js";
 
 // Managed-section redirects (LLM-readable hints for immutable rejections)
 export {
