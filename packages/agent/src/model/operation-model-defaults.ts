@@ -81,6 +81,23 @@ function pickFromCohort(
 }
 
 /**
+ * Family key for the supersession prune: the model id with trailing
+ * version-ish segments (each starting with a digit) stripped.
+ * "claude-sonnet-4-6", "claude-sonnet-5", and "claude-sonnet-4-5-20250929"
+ * all share the family "claude-sonnet"; an id whose trailing segment is
+ * non-numeric ("gpt-4o-mini") keeps its full id as its family, so distinct
+ * product lines never supersede each other. Under-pruning is the safe
+ * direction — an unpruned model just leaves the ladder as-is.
+ *
+ * Module-internal — not exported.
+ */
+function familyKey(id: string): string {
+  const segs = id.split("-");
+  while (segs.length > 1 && /^\d/.test(segs[segs.length - 1]!)) segs.pop();
+  return segs.join("-");
+}
+
+/**
  * Resolve cost-tier model defaults for a given native pi-ai provider.
  *
  * Returns `{ fast, mid }` model IDs (without provider prefix) selected from
@@ -92,13 +109,21 @@ function pickFromCohort(
  *   2. Filter to models supporting text input (`m.input.includes("text")`).
  *   3. Filter to non-zero cost (eliminates free/local-only models from
  *      ranking — they won't be reachable in production).
- *   4. Sort ascending by total cost.
- *   5. `fast` and `mid` are top-of-cohort at the 10th and 50th percentile
+ *   4. Drop family-superseded listings: a model is excluded when the same
+ *      family (see `familyKey`) ships a lex-greater — i.e. newer — id at an
+ *      equal-or-lower total cost. Providers keep superseded generations
+ *      listed at their legacy prices; left in the ranking they inflate the
+ *      price ladder with rungs that no longer represent a current tier
+ *      (the legacy $18 Sonnet rung sat above the current $12 Sonnet and
+ *      captured the 50th-percentile "mid" pick, routing cron/skillSynthesis
+ *      to the older generation at a higher price).
+ *   5. Sort ascending by total cost.
+ *   6. `fast` and `mid` are top-of-cohort at the 10th and 50th percentile
  *      of the DISTINCT price ladder respectively (lex-greatest ID within
  *      the price rung the percentile lands in). Cost ties broken by
  *      lex-greatest ID — avoids picking a model purely because of catalog
  *      iteration order (e.g. several Anthropic Sonnets all at $18/MTok).
- *   6. If post-filter set is empty (all-free provider), use the first
+ *   7. If post-filter set is empty (all-free provider), use the first
  *      text-capable model id for both slots.
  *
  * Pure function — no async, no side effects. Re-callable per request.
@@ -133,9 +158,23 @@ export function resolveOperationDefaults(provider: string): { fast?: string; mid
     return { fast: fallback, mid: fallback };
   }
 
+  // Supersession prune: drop listings with a same-family, lex-greater (newer),
+  // not-pricier sibling so legacy generations don't hold ladder rungs.
+  // Never empties the list — each family's lex-greatest cheapest member survives.
+  const current = priced.filter(
+    (m) =>
+      !priced.some(
+        (n) =>
+          n.id !== m.id &&
+          familyKey(n.id) === familyKey(m.id) &&
+          n.id.localeCompare(m.id) > 0 &&
+          totalCost(n) <= totalCost(m),
+      ),
+  );
+
   return {
-    fast: pickFromCohort(priced, 0.1),
-    mid: pickFromCohort(priced, 0.5),
+    fast: pickFromCohort(current, 0.1),
+    mid: pickFromCohort(current, 0.5),
   };
 }
 
