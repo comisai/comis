@@ -282,6 +282,33 @@ describe("redactValue — absolute path COMPACTION (not stripping)", () => {
     expect(value.detail).toContain("~");
     expect(value.detail).not.toContain("/home/bob");
   });
+
+  it("compacts a DEEP $HOME-rooted path unambiguously — never the misleading `~tool-results` (an elided ~/…/tail)", () => {
+    // Live friction (comis-harel Golan investigation, 2026-07-12): a deep
+    // home-rooted offload path rendered as `~tool-results/call_x.json` — the `~`
+    // abutting the last-2-segment compaction reads as a LITERAL `~tool-results`
+    // token, not "home / … / tool-results". The `…/` ellipsis makes the elision
+    // explicit so the path is unambiguous.
+    const out = redactValue(
+      { path: "/home/comis/.comis/workspace/sessions/default/678314278/tool-results/call_x.json" },
+      { homeDir: "/home/comis" },
+    );
+    const value = out.value as Record<string, unknown>;
+    const p = value.path as string;
+    // NOT the misleading literal.
+    expect(p).not.toContain("~tool-results");
+    // The elided form keeps the load-bearing tail with an explicit ellipsis.
+    expect(p).toContain("…/tool-results/call_x.json");
+    expect(p).not.toContain("/home/comis");
+    expect(reasons(out)).toContain("absolute_path");
+  });
+
+  it("prefixes an explicit `…/` when a system-absolute path is compacted (elision is visible, not silent)", () => {
+    const out = redactValue({ path: "/var/folders/xy/T/deep/tmpfile" });
+    const value = out.value as Record<string, unknown>;
+    expect(value.path).toContain("…/");
+    expect(value.path).toContain("deep/tmpfile");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -396,6 +423,29 @@ describe("redactValue — URL paths protected from PII matchers (PHONE/CC/SSN/EM
     expect(String(value.note)).toContain("<redacted>");
     expect(String(value.note)).not.toContain("555-123-4567");
     expect(reasons(out)).toContain("pii_phone");
+  });
+
+  it("does NOT false-positive a digit run EMBEDDED in an alphanumeric token (a hex tool-call id in a filename)", () => {
+    // Live friction (comis-harel 2026-07-12): PHONE_RE matched the 8-digit
+    // substring `50414984` inside a hex tool-call id
+    // (`fc_0df8…19b8ded50414984b629.json`) and redacted the middle of a
+    // NON-secret filename in a progress message. A phone number is a STANDALONE
+    // numeric run (non-alphanumeric-bounded); a digit run flanked by hex letters
+    // is not a phone.
+    const out = redactValue({
+      label: "reading …/tool-results/fc_0df844766a5d69e1016a5404d7f304819b8ded50414984b629.json",
+    });
+    const value = out.value as Record<string, unknown>;
+    expect(String(value.label)).toContain("50414984");
+    expect(String(value.label)).not.toContain("<redacted>");
+    expect(reasons(out)).not.toContain("pii_phone");
+  });
+
+  it("still masks phones at string boundaries and letter-adjacent-free contexts (no over-narrowing)", () => {
+    for (const note of ["555-123-4567", "+1 (504) 149-8400 please", "reach 5041498400 now"]) {
+      const out = redactValue({ note });
+      expect(reasons(out)).toContain("pii_phone");
+    }
   });
 
   it("span-precision: URL intact AND standalone phone masked in the same string", () => {
