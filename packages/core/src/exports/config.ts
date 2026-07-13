@@ -126,6 +126,7 @@ export {
   isImmutableConfigPath,
   matchesOverridePattern,
   getMutableOverridesForSection,
+  findOperatorOnlyAgentPaths,
   MANAGED_SECTIONS,
   getManagedSectionRedirect,
   formatRedirectHint,

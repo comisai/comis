@@ -49,6 +49,7 @@ import {
   dagDegradedEventToRow,
   healthBudgetExceededEventToRow,
   recallDegradedEventToRow,
+  prefixUnstableEventToRow,
   channelInboundSilentEventToRow,
   channelIngressAuthRejectedEventToRow,
   reflectFunnelEventToRow,
@@ -131,6 +132,7 @@ export {
   dagDegradedEventToRow,
   healthBudgetExceededEventToRow,
   recallDegradedEventToRow,
+  prefixUnstableEventToRow,
   channelInboundSilentEventToRow,
   channelIngressAuthRejectedEventToRow,
   reflectFunnelEventToRow,
@@ -346,6 +348,13 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   // not a daemon.log-grep discovery.
   eventBus.on("memory:recall_degraded", (payload) => {
     diagnosticBuffer.push(recallDegradedEventToRow(payload));
+  });
+  // A recurring cached-prefix collapse (wasted Anthropic cache writes) → a
+  // health_signal row, so the churn is a fleet finding
+  // (health_signal:cache_prefix_churn) instead of a daemon.log-grep discovery
+  // (the comis-harel fleet-blindness incident, 2026-07-12).
+  eventBus.on("agent:prefix_unstable", (payload) => {
+    diagnosticBuffer.push(prefixUnstableEventToRow(payload));
   });
   // A silently-dead webhook ingress (past its missed-inbound threshold) → a
   // health_signal row, so the fleet lens surfaces it (health_signal:channel_ingress_silent)

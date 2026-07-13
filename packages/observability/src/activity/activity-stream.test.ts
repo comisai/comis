@@ -614,20 +614,21 @@ describe("buildLabel compresses the post-redaction defaultLabel", () => {
 
   it("leaves a redact-compacted path untouched in the rendered label", () => {
     // Redact-then-compress order: redactValue compacts the absolute
-    // path ($HOME→~, last-2-segments) BEFORE compressLabel runs; the compressor
-    // must treat that as a fixed point and NOT re-trim it. The emit site then
-    // prepends `${markers.running} ` (as with the subagent labels) — the
-    // compaction body is unchanged.
+    // path ($HOME→~, `…/`-prefixed last-2-segments) BEFORE compressLabel runs;
+    // the compressor must treat that as a fixed point and NOT re-trim it. The
+    // emit site then prepends `${markers.running} ` (as with the subagent
+    // labels) — the compaction body is unchanged. The `…/` ellipsis makes the
+    // elision explicit so the `~` never abuts a segment as a misleading literal.
     const event = renderToolLabel(
       "ux02_path_tool",
       { actions: { run: { label: "reading {path}", detailKeys: ["path"] } } },
       { path: "/Users/me/comis/packages/observability/src/activity/activity-stream.ts" },
       { homeDir: "/Users/me" },
     );
-    expect(event.defaultLabel).toBe("🔧 reading ~activity/activity-stream.ts");
+    expect(event.defaultLabel).toBe("🔧 reading ~…/activity/activity-stream.ts");
     // The compressed sub-string (sans marker prefix) remains a fixed point.
-    expect(compressLabel("reading ~activity/activity-stream.ts")).toBe(
-      "reading ~activity/activity-stream.ts",
+    expect(compressLabel("reading ~…/activity/activity-stream.ts")).toBe(
+      "reading ~…/activity/activity-stream.ts",
     );
   });
 

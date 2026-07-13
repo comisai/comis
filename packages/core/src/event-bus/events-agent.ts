@@ -667,6 +667,29 @@ export interface AgentEvents {
   };
 
   /**
+   * A cached-prefix message MUTATED across turns (Anthropic prompt-cache
+   * collapse) on THRESHOLD+ calls within a recent window — a wasted-cache-write
+   * signal. MINIMAL payload — the divergent index + a windowed mutation count +
+   * the closed mutation-class label ONLY, NEVER message text (§2.7). Emitted
+   * alongside the "Unstable prefix detected" WARN so the churn surfaces as a
+   * `comis fleet` `cache_prefix_churn` health signal instead of being visible
+   * only as a daemon.log WARN (the fleet-blindness incident, comis-harel
+   * 2026-07-12). `mutationClass` is the classifier's label
+   * (structural-shift / datetime-preamble / thinking-cleared / …).
+   */
+  "agent:prefix_unstable": {
+    agentId?: string;
+    sessionKey: string;
+    /** Index of the first cached-region message that diverged from the prior turn. */
+    firstDivergentIndex: number;
+    /** Windowed count of cached-region mutations that crossed the WARN threshold. */
+    cacheRegionMutations: number;
+    /** Closed classifier label for what changed (no message text). */
+    mutationClass: string;
+    timestamp: number;
+  };
+
+  /**
    * Cross-encoder rerank stage completed for one recall. MINIMAL payload —
    * counts/booleans ONLY, NEVER memory bodies or query text (§2.7). The `fellBack` /
    * `timedOut` flags make the graceful-degradation paths queryable (rerank-fallback-rate

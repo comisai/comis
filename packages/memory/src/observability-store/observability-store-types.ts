@@ -419,16 +419,14 @@ export interface ObservabilityStore extends CacheStatsQueriesSlice, CacheBreakQu
    */
   aggregateHourlyCost(sinceMs?: number, filter?: CostBucketFilter): QuarterHourBucket[];
   /**
-   * The per-tool even-split for ONE agent — turns the persisted
-   * `tool_tag` distinct-tool set into a per-tool cost share (see
-   * {@link ToolCostAggregation}). NULL-tag rows are excluded. `sinceMs` = lower bound.
+   * The per-tool even-split for ONE agent — the persisted `tool_tag` distinct-tool
+   * set → a per-tool cost share ({@link ToolCostAggregation}). NULL-tag rows excluded.
    */
   aggregateToolCostByAgent(agentId: string, sinceMs?: number): ToolCostAggregation[];
   /**
-   * Per-agent rolling SUM(cost_total) over the last `windowMs` (window bound derived
-   * from the current time INSIDE the method — the prune() precedent). The spend
-   * accumulator's BOOT rehydration read, NOT a per-check read; the rows
-   * ARE the durability. Grouped by agent_id only (obs_token_usage has no tenant_id).
+   * Per-agent rolling SUM(cost_total) over the last `windowMs` (bound derived from
+   * current time INSIDE the method — the prune() precedent). The spend accumulator's
+   * BOOT rehydration read; the rows ARE the durability. Grouped by agent_id only.
    */
   getRollingSpendUsd(windowMs: number): AgentRollingSpend[];
 
@@ -443,6 +441,8 @@ export interface ObservabilityStore extends CacheStatsQueriesSlice, CacheBreakQu
   // Diagnostics
   insertDiagnostic(entry: DiagnosticRow): void;
   queryDiagnostics(params?: DiagnosticQueryParams): DiagnosticRow[];
+  /** Total USD cost of off-session (background-job, `__PREFIX__`-keyed) LLM spend since `sinceMs`. */
+  offSessionCostSince(sinceMs: number): number;
 
   // Security audit. Insert/query the dedicated obs_audit_events
   // table. `refs` is a pre-scrubbed JSON blob — the sink routes the

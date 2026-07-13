@@ -9163,6 +9163,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             },
             "totalTokens": {
               "type": "number"
+            },
+            "offSessionUsd": {
+              "type": "number"
             }
           },
           "required": [

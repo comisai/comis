@@ -9041,6 +9041,9 @@
             },
             "totalTokens": {
               "type": "number"
+            },
+            "offSessionUsd": {
+              "type": "number"
             }
           },
           "required": [

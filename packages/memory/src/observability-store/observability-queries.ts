@@ -1,11 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * ObservabilityStore query helpers (READS).
- *
- * Each `bind*` function creates the prepared statements its methods need
- * (closure-captured) and returns the partial handle slice.
- *
- * @module
+ * ObservabilityStore query helpers (READS): each `bind*` creates its prepared
+ * statements (closure-captured) and returns the partial handle slice. @module
  */
 
 import type Database from "better-sqlite3";
@@ -54,6 +50,7 @@ export type ObservabilityQueries = Pick<
   | "queryDelivery"
   | "deliveryStats"
   | "queryDiagnostics"
+  | "offSessionCostSince"
   | "latestChannelSnapshots"
   | "latestSystemPromptReport"
   | "listSystemPromptReports"
@@ -61,10 +58,8 @@ export type ObservabilityQueries = Pick<
 
 /**
  * Validate the `details.toolStats` record from an untrusted session_summary row,
- * keeping ONLY entries whose value is an object with finite numeric `ok`/`failed`.
- * A malformed entry (a bare number, a string, a missing field) is DROPPED rather
- * than passed through — the fleet reducer does raw arithmetic on these and would
- * otherwise emit `NaN`. Mirrors the session reader's `Number.isFinite` discipline.
+ * keeping ONLY entries with finite numeric `ok`/`failed`. A malformed entry is
+ * DROPPED — the fleet reducer does raw arithmetic and would otherwise emit `NaN`.
  */
 function parseToolStats(value: unknown): Record<string, { ok: number; failed: number }> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
@@ -82,12 +77,7 @@ function parseToolStats(value: unknown): Record<string, { ok: number; failed: nu
   return out;
 }
 
-/**
- * Validate the `details.topErrorKinds` record from an untrusted session_summary
- * row, keeping ONLY entries whose value is a finite number. A string/NaN count is
- * DROPPED rather than passed through (the fleet reducer would otherwise concatenate it
- * into a string or propagate `NaN`). Mirrors the session reader's `Number.isFinite` discipline.
- */
+/** Validate `details.topErrorKinds` from an untrusted row, keeping ONLY finite-number entries (a string/NaN count would corrupt the fleet reducer). */
 function parseErrorKinds(value: unknown): Record<string, number> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
   const out: Record<string, number> = {};
@@ -137,6 +127,14 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     FROM obs_token_usage WHERE session_key = ? AND timestamp >= ? GROUP BY session_key
   `);
 
+  // Off-session (`__PREFIX__`-keyed background-job, e.g. `__REFLECT__`) spend. The
+  // `\_` ESCAPE is load-bearing — SQLite LIKE treats bare `_` as a wildcard, so
+  // unescaped `'__%'` matches EVERY session key.
+  const offSessionCostSinceStmt = db.prepare(`
+    SELECT COALESCE(SUM(cost_total), 0) as total_cost
+    FROM obs_token_usage WHERE timestamp >= ? AND session_key LIKE '\\_\\_%' ESCAPE '\\'
+  `);
+
   const aggHourlyAllStmt = db.prepare(`
     SELECT (timestamp / 3600000) * 3600000 as hour, SUM(cost_total) as total_cost, SUM(total_tokens) as total_tokens, COUNT(*) as call_count, COALESCE(SUM(cache_saved), 0) as total_cache_saved
     FROM obs_token_usage GROUP BY (timestamp / 3600000) ORDER BY hour
@@ -147,16 +145,9 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     FROM obs_token_usage WHERE timestamp >= ? GROUP BY (timestamp / 3600000) ORDER BY hour
   `);
 
-  // Fleet aggregate: ALL in-window session_summary rows, ordered by insert id so
-  // the bound method's per-session reduce sees a session's executions in order
-  // (last row seen = latest state). A session emits ONE summary row per
-  // EXECUTION — each row carries that execution's own cost/turns/toolStats —
-  // so a rollup must SUM the additive fields across the session's in-window
-  // rows; representing the session by its latest row alone under-reported every
-  // additive field (a 4-execution session that spent ~$0.50 fleet-reported at
-  // $0.03 with empty toolStats). The health fields live inside `details` JSON —
-  // parsed per row in the bound method below. Rides the
-  // idx_obs_diag_session_cat composite index.
+  // Fleet aggregate: ALL in-window session_summary rows, ordered by insert id. A
+  // session emits ONE summary row per EXECUTION → the rollup SUMs additive fields
+  // across a session's rows (latest-row-only under-reports). Rides idx_obs_diag_session_cat.
   const aggSessionsInWindowStmt = db.prepare(`
     SELECT session_key, timestamp as last_ts, details, severity
     FROM obs_diagnostics
@@ -441,6 +432,12 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     return rows.map(diagnosticFromRow);
   }
 
+  /** Total USD cost of off-session (`__PREFIX__`-keyed background-job) LLM spend since `sinceMs`. Distinct from the per-session cost the fleet rollup sums (no double-count). */
+  function offSessionCostSince(sinceMs: number): number {
+    const row = offSessionCostSinceStmt.get(sinceMs) as { total_cost: number } | undefined;
+    return row?.total_cost ?? 0;
+  }
+
   function latestChannelSnapshots(): ChannelSnapshotRow[] {
     const parsed = channelSnapshotMapper.parseRows(latestSnapshotsStmt.all());
     // Degrade-on-validation-error: observability snapshot -> empty result.
@@ -489,6 +486,7 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     queryDelivery,
     deliveryStats,
     queryDiagnostics,
+    offSessionCostSince,
     latestChannelSnapshots,
     latestSystemPromptReport,
     listSystemPromptReports,

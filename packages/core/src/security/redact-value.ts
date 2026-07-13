@@ -204,7 +204,13 @@ const CREDIT_CARD_RE = /\b(?:\d[ -]?){13,19}\b/g;
 // SSN-shaped: 3-2-4 digit groups.
 const SSN_RE = /\b\d{3}-\d{2}-\d{4}\b/g;
 // Phone-shaped: optional +, then 7+ digits possibly separated by space/-/(). Run AFTER CC/SSN.
-const PHONE_RE = /\+?\d[\d ()\-.]{6,}\d/g;
+// Alphanumeric BOUNDARIES: a phone number is a STANDALONE numeric run (real phones in text are
+// always flanked by whitespace/punctuation/start/end). Without the boundaries PHONE_RE matched a
+// digit SUBSTRING embedded in an alphanumeric token — e.g. the `50414984` inside a hex tool-call id
+// `fc_0df8…ded50414984b629.json` — and redacted the middle of a NON-secret filename (comis-harel
+// 2026-07-12). The lookarounds exclude digit runs abutting a letter/digit (hex ids, base64, …) while
+// preserving every standard phone format in free text.
+const PHONE_RE = /(?<![A-Za-z0-9])\+?\d[\d ()\-.]{6,}\d(?![A-Za-z0-9])/g;
 // IPv4 dotted quad.
 const IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
 // MAC address (colon- or hyphen-separated hex octets).
@@ -284,7 +290,12 @@ function compactPaths(s: string, homeDir: string | undefined, sink: RedactionRec
     const segments = match.split("/").filter((seg) => seg.length > 0);
     if (segments.length <= 2) return match;
     changed = true;
-    return segments.slice(-2).join("/");
+    // Prefix an explicit `…/` ellipsis so the elision is VISIBLE, not silent.
+    // Without it, a deep $HOME-rooted path compacts to `~` + `tool-results/x`
+    // = `~tool-results/x`, which reads as a LITERAL `~tool-results` token rather
+    // than "home / … / tool-results / x" (comis-harel Golan investigation,
+    // 2026-07-12: a misleading argsPreview sent the triage the wrong way).
+    return "…/" + segments.slice(-2).join("/");
   });
 
   if (changed) sink.push({ key: "<string>", reason: "absolute_path" });
