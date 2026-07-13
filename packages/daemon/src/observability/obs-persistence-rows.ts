@@ -298,6 +298,40 @@ export function recallDegradedEventToRow(
 }
 
 /**
+ * Map an `agent:prefix_unstable` event (a cached-prefix message mutated on
+ * THRESHOLD+ calls within a recent window — Anthropic prompt-cache collapse) to
+ * a flat DiagnosticRow under `category:"health_signal"`, `severity:"warning"`.
+ * The `details.signal` label `"cache_prefix_churn"` rides the generic
+ * `health_signal:<label>` fleet-findings rollup, so a RECURRING churn surfaces
+ * as a counted `comis fleet` finding with no extractor change — the incident
+ * class this closes was a cache-prefix collapse (~328k wasted cache-write tokens
+ * in one session) visible only as daemon.log WARNs while the fleet lens reported
+ * nothing (comis-harel 2026-07-12). Content-free: closed `mutationClass` label +
+ * the divergent index + the windowed mutation count only — never message text.
+ * `mutationClass` rides `details.reason` so the fleet finding names WHICH class
+ * recurred (structural-shift / datetime-preamble / …) without a per-session explain.
+ */
+export function prefixUnstableEventToRow(
+  payload: EventMap["agent:prefix_unstable"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "warning",
+    ...(payload.agentId !== undefined ? { agentId: payload.agentId } : {}),
+    sessionKey: payload.sessionKey,
+    message: "agent:prefix_unstable",
+    details: JSON.stringify({
+      signal: "cache_prefix_churn",
+      reason: payload.mutationClass,
+      firstDivergentIndex: payload.firstDivergentIndex,
+      cacheRegionMutations: payload.cacheRegionMutations,
+    }),
+    traceId: undefined,
+  };
+}
+
+/**
  * Map a `channel:ingress_auth_rejected` event (an inbound activity rejected at
  * a channel gateway ingress auth gate) to a flat DiagnosticRow under
  * `category:"health_signal"`, `severity:"warning"`. The `details.signal` label

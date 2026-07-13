@@ -7,6 +7,7 @@ import {
   sessionSummaryEventToRow,
   dagDegradedEventToRow,
   recallDegradedEventToRow,
+  prefixUnstableEventToRow,
   healthBudgetExceededEventToRow,
   channelInboundSilentEventToRow,
   channelIngressAuthRejectedEventToRow,
@@ -2909,5 +2910,56 @@ describe("recallDegradedEventToRow", () => {
     expect(row.sessionKey).toBeUndefined();
     const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
     expect(details["scope"]).toBe("lanes");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// prefixUnstableEventToRow (cache-prefix churn → health_signal)
+// ---------------------------------------------------------------------------
+
+describe("prefixUnstableEventToRow", () => {
+  it("maps an agent:prefix_unstable payload to a health_signal row the fleet rollup groups on (signal:cache_prefix_churn)", () => {
+    // Live incident (comis-harel 2026-07-12): ~328k wasted cache-write tokens
+    // in one session were visible only as daemon.log WARNs — this row turns a
+    // recurring churn into a counted `comis fleet` finding.
+    const row = prefixUnstableEventToRow({
+      agentId: "default",
+      sessionKey: "default:5177:5177:peer:5177",
+      firstDivergentIndex: 20,
+      cacheRegionMutations: 3,
+      mutationClass: "structural-shift",
+      timestamp: 5000,
+    });
+
+    expect(row.timestamp).toBe(5000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.agentId).toBe("default");
+    expect(row.sessionKey).toBe("default:5177:5177:peer:5177");
+    expect(row.message).toBe("agent:prefix_unstable");
+
+    // details: closed labels + counts only — the signal label the fleet rollup
+    // groups on, and the mutationClass under `reason` so the finding names it.
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details["signal"]).toBe("cache_prefix_churn");
+    expect(details["reason"]).toBe("structural-shift");
+    expect(details["firstDivergentIndex"]).toBe(20);
+    expect(details["cacheRegionMutations"]).toBe(3);
+    // Content-free: no message text ever.
+    expect(row.details).not.toContain("Current Date");
+  });
+
+  it("omits the agentId column when the payload carries none (daemon-global emit)", () => {
+    const row = prefixUnstableEventToRow({
+      sessionKey: "sk-x",
+      firstDivergentIndex: 5,
+      cacheRegionMutations: 4,
+      mutationClass: "datetime-preamble",
+      timestamp: 6000,
+    });
+    expect(row.agentId).toBeUndefined();
+    expect(row.sessionKey).toBe("sk-x");
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details["reason"]).toBe("datetime-preamble");
   });
 });
