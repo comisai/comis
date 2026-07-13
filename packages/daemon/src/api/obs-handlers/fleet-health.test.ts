@@ -258,6 +258,53 @@ describe("assembleFleetHealthReport (4-source read fan-in)", () => {
     expect(report.likelyRootCause?.code).not.toBe("fleet_recurring_health_signal");
   });
 
+  it("surfaces off-session (reflection/background) spend as cost.offSessionUsd, distinct from per-session costUsd", async () => {
+    // The fleet cost sums session_summary rows; a reflection cron run spends
+    // real tokens under the synthetic __REFLECT__ session key with NO
+    // session_summary, so its spend was invisible — an operator reconciling
+    // against the provider bill saw unexplained drift (comis-harel 2026-07-12).
+    const now = systemNowMs();
+    const store = makeStore();
+    // One real user session: $0.10.
+    store.insertDiagnostic({
+      timestamp: now - 1_000, category: "session_summary", severity: "info", sessionKey: "default:u:c:peer:u",
+      message: "session:summary",
+      details: summaryDetails({ degraded: false, costUsd: 0.1, turnCount: 2 }),
+    });
+    // A reflection run's token usage under the synthetic __REFLECT__ key: $0.05.
+    const usage = (sessionKey: string, costTotal: number) => ({
+      timestamp: now - 500, traceId: "t-r", agentId: "default", channelId: "__reflect__", sessionKey,
+      provider: "anthropic", model: "claude-opus-4-8",
+      promptTokens: 1000, completionTokens: 200, totalTokens: 1200,
+      cacheReadTokens: 0, cacheWriteTokens: 0,
+      costInput: 0.03, costOutput: 0.02, costTotal, costCacheRead: 0, costCacheWrite: 0,
+      cacheSaved: 0, latencyMs: 500,
+    });
+    store.insertTokenUsage(usage("__REFLECT__:default", 0.05));
+    // A REAL-session token_usage row must NOT count as off-session.
+    store.insertTokenUsage(usage("default:u:c:peer:u", 0.10));
+
+    const report = await assembleFleetHealthReport({ obsStore: store, dataDir: makeDataDirWithActivity(), clock: createFakeClock(now) }, 24);
+
+    // Per-session cost unchanged (session_summary rollup).
+    expect(report.cost.costUsd).toBeCloseTo(0.1, 5);
+    // Off-session cost = the reflection spend only (the real-session token_usage
+    // row is NOT counted here — it is already in costUsd via session_summary).
+    expect(report.cost.offSessionUsd).toBeCloseTo(0.05, 5);
+  });
+
+  it("reports offSessionUsd = 0 when there is no synthetic/background spend", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    store.insertDiagnostic({
+      timestamp: now - 1_000, category: "session_summary", severity: "info", sessionKey: "default:u:c:peer:u",
+      message: "session:summary",
+      details: summaryDetails({ degraded: false, costUsd: 0.2, turnCount: 3 }),
+    });
+    const report = await assembleFleetHealthReport({ obsStore: store, dataDir: makeDataDirWithActivity(), clock: createFakeClock(now) }, 24);
+    expect(report.cost.offSessionUsd).toBe(0);
+  });
+
   it("still root-causes to recurring-health-WARNs from severity-warning signals (genuine divergence)", async () => {
     const now = systemNowMs();
     const store = makeStore();
