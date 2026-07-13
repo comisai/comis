@@ -126,7 +126,6 @@ export {
   isImmutableConfigPath,
   matchesOverridePattern,
   getMutableOverridesForSection,
-  OPERATOR_ONLY_AGENT_SUBPATHS,
   findOperatorOnlyAgentPaths,
   MANAGED_SECTIONS,
   getManagedSectionRedirect,
