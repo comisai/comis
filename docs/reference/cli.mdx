@@ -1618,6 +1618,47 @@ Requires an admin-scoped gateway token (same as `comis explain` / `comis trace`)
 
 ---
 
+### `comis messages`
+
+Extract the **inbound messages users typed**, per channel, from the local session logs — the conversation-export lens. It reads the raw session `.jsonl` message logs under every agent workspace tree (`<dataDir>/workspace[-<agentId>]/sessions/...`) and parses each user turn's inbound envelope (`[<channelType>] <senderId> (<time>):`), so one command answers "what did users send us on Telegram yesterday" without hand-joining session files.
+
+The command runs **fully offline and has no RPC sibling — on purpose**. Unlike `comis explain` / `comis fleet` (bounded digests, counts + hints only), its output is **content-bearing**: message bodies are the payload. The obs network surfaces stay content-free, so this read never crosses the gateway — it only reads local files the operator already owns.
+
+Internal dispatch turns are excluded by default and **counted, not hidden**: cron, sub-agent, and heartbeat sessions plus the reserved `system` sender are agent-/scheduler-authored prompts, not humans — a summary note reports how many were excluded, and `--include-internal` shows them tagged `origin: "internal"`. Two more honest-coverage notes: user turns with **no parsable envelope** (e.g. `envelope.showProvider: false` produces headerless turns) are counted instead of silently dropped, and when `--limit` cuts the result the **latest N** are kept and the truncation is announced.
+
+`<when>` values for `--since` / `--until` accept **epoch ms** (`1783900800000`), **relative-ago** (`30m`, `24h`, `7d`), or an **ISO date/datetime** (`2026-07-12`, `2026-07-12T10:00:00Z`). An unparsable bound is an **error naming the accepted forms** — never a silent widen-to-everything. `--date` is one-UTC-day sugar and cannot be combined with `--since`/`--until`.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--channel <type>` | `string` | — | Filter by channel type (`telegram`, `discord`, ...) |
+| `--chat <id>` | `string` | — | Filter by chat/conversation id |
+| `--sender <id>` | `string` | — | Filter by sender id |
+| `--agent <id>` | `string` | — | Filter by agent id (`default`, or the `workspace-<agentId>` suffix) |
+| `--since <when>` | `string` | — | Lower bound (inclusive) |
+| `--until <when>` | `string` | — | Upper bound (exclusive) |
+| `--date <YYYY-MM-DD>` | `string` | — | One UTC day (sugar for `--since <day> --until <next day>`) |
+| `--limit <n>` | `number` | `500` | Max messages returned (the latest N are kept) |
+| `--include-internal` | `boolean` | `false` | Include cron/sub-agent/heartbeat/`system` dispatch messages |
+| `--format <format>` | `table` \| `text` \| `json` \| `jsonl` | `table` | `table` previews the first line; `text` is the full chat log; `json`/`jsonl` carry the full records |
+
+```bash
+# Everything users sent, newest window last (first-line preview table)
+comis messages
+
+# All Telegram messages from one chat on a specific day, as a readable chat log
+comis messages --channel telegram --chat 5177964605 --date 2026-07-12 --format text
+
+# The last 24h across every channel, machine-readable (one JSON record per line)
+comis messages --since 24h --format jsonl > messages.jsonl
+
+# A precise time frame
+comis messages --since 2026-07-12T10:00:00Z --until 2026-07-12T18:00:00Z
+```
+
+Reads `COMIS_DATA_DIR` (falling back to `~/.comis`) like the other offline commands — run it as the daemon's user, or point `COMIS_DATA_DIR` at the daemon's data dir.
+
+---
+
 ### `comis support-bundle`
 
 Assemble a **paste-ready support bundle** — a single directory to hand to a maintainer or attach to a bug report. Each run writes up to nine content-free files (plus a `trace-exports/` directory with `--deep`) under `<dataDir>/support-bundles/comis-support-<ts>/`: a machine-readable triage verdict, the full health-check findings, a human-readable issue summary, an AI-fillable issue draft, a cross-session fleet health digest, a config-posture digest (config section membership only), a window-scoped audit-summary digest, and a manifest carrying the redaction fingerprint. Focusing on one session with `--session` adds a per-session `explain.json` incident digest; `--deep` additionally embeds that session's redacted trace bundle under `trace-exports/`. The fleet digest, config-posture digest, and audit-summary digest are each omitted when their source cannot be read — a thrown fleet assembly, an unparseable config, or an absent observability store — and the manifest records the gap. The verdict is derived from the local health checks only — no LLM is invoked, so the same install state always yields the same verdict.
