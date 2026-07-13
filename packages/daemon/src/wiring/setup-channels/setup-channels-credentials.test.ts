@@ -135,6 +135,9 @@ function makeDeps(overrides: {
       tenantId: "tenant-a",
       agents: overrides.agents ?? {},
       providers: { entries: {} },
+      // Cron delivery listener reads scheduler.quietHours (disabled here so
+      // delivery proceeds; the schema always provides this block in production).
+      scheduler: { quietHours: { enabled: false, start: "22:00", end: "07:00", timezone: "UTC", criticalBypass: false } },
     },
     eventBus,
     secretManager: { get: vi.fn(() => (overrides.apiKey === undefined ? undefined : overrides.apiKey)) },

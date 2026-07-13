@@ -42,7 +42,7 @@ import {
   resolveImageApiKey,
   ImageGenError,
 } from "../api/pi-image-adapter.js";
-import { createCodexImageAdapter, CODEX_IMAGE_MODEL } from "../api/codex-image-adapter.js";
+import { createCodexImageAdapter, CODEX_IMAGE_MODEL, CODEX_DEFAULT_CHAT_MODEL_ID } from "../api/codex-image-adapter.js";
 import { OPENAI_IMAGE_MODEL } from "../api/openai-images-transport.js";
 import { GOOGLE_IMAGE_MODEL } from "../api/google-images-transport.js";
 
@@ -116,10 +116,14 @@ export function createImageProviderSelector(deps: {
    * The agent's resolved CHAT model id (e.g. "gpt-5.5") for the follow-main
    * Codex path. The Codex Responses endpoint rejects the image-API model id
    * "gpt-image-1" with HTTP 400 ("returned a non-image response" — verified live)
-   * — it needs a valid CHAT model with `image_generation` as a TOOL. Threaded
-   * from buildImageGenBundle (the SAME resolveAgentModel the completion path
-   * uses) into the codex adapter's request model. Absent ⇒ the legacy
-   * CODEX_IMAGE_MODEL default (back-compat for callers/tests).
+   * — it needs a valid CODEX CHAT model with `image_generation` as a TOOL.
+   * Threaded from buildImageGenBundle (the SAME resolveAgentModel the
+   * completion path uses). CONSUMED ONLY when `mainProviderId` is
+   * "openai-codex": an explicit codex pin on a foreign main must not leak
+   * that main's model into the codex request (an anthropic-main box sent its
+   * anthropic model id → 400 "not supported when using Codex with a ChatGPT
+   * account"; verified live). Otherwise the request model is the operator's
+   * imageGeneration.model override, then CODEX_DEFAULT_CHAT_MODEL_ID.
    */
   codexChatModelId?: string;
 }): () => ImageGenerationPort | undefined {
@@ -191,16 +195,25 @@ export function createImageProviderSelector(deps: {
           deps.logger,
         );
       }
+      // The Codex Responses request needs a CODEX CHAT model as the top-level
+      // `model` (image_generation is a hosted TOOL; the endpoint 400s on the
+      // image-API id "gpt-image-1" — verified live). Precedence:
+      //   1. the operator's imageGeneration.model override (sel.model — the
+      //      same override the openai/google branches honor),
+      //   2. the agent's resolved chat model, but ONLY when the MAIN provider
+      //      IS openai-codex — an explicit codex pin on a foreign main leaked
+      //      that main's model into the request (an anthropic-main box sent
+      //      its anthropic model id → 400 "not supported when using Codex
+      //      with a ChatGPT account"; verified live),
+      //   3. the codex chat default (CODEX_DEFAULT_CHAT_MODEL_ID).
+      const codexRequestModelId =
+        sel.model
+        ?? (deps.mainProviderId === "openai-codex" ? deps.codexChatModelId : undefined)
+        ?? CODEX_DEFAULT_CHAT_MODEL_ID;
       return createCodexImageAdapter({
         oauthManager: deps.oauthManager,
         oauthProfiles: deps.oauthProfiles,
-        // Use the agent's CHAT model (e.g. "gpt-5.5") for the Codex Responses
-        // request — the endpoint 400s on the image-API model id "gpt-image-1"
-        // (verified live); image_generation is a TOOL, not the top-level model.
-        // Falls back to CODEX_IMAGE_MODEL when the chat model is not threaded.
-        model: deps.codexChatModelId
-          ? { ...CODEX_IMAGE_MODEL, id: deps.codexChatModelId }
-          : CODEX_IMAGE_MODEL,
+        model: { ...CODEX_IMAGE_MODEL, id: codexRequestModelId },
         timeoutMs: cfg.timeoutMs,
         logger: deps.logger,
         // Store-aware availability snapshot → the adapter's isAvailable() (so it

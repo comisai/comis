@@ -16,7 +16,7 @@
  */
 
 import type { MemorySearchResult, SessionKey } from "@comis/core";
-import { tryGetContext } from "@comis/core";
+import { tryGetContext, formatSessionKey } from "@comis/core";
 import type { MemoryRecallDeps, MemoryRecallConfig } from "./recall-types.js";
 import type { ScoreBreakdown } from "./score.js";
 import {
@@ -137,6 +137,20 @@ export function captureRecallObservability(
     // Include the graph-spread lane so the counts-only event reflects the 6th lane (the
     // trace's RecallLaneCounts stays the 5-lane shape — extending it is a deferred obs change).
     (ctx.graphSpreadCandidates > 0 ? 1 : 0);
+  // Content-free provenance summary over the SAME final set finalCount counts: how many
+  // recalled memories belong to a DIFFERENT user than the current conversation (the
+  // cross-sender injection signal — one shared agent surfaces sender A's memory into
+  // sender B's turn), and how many distinct authors contributed. COUNTS only — the
+  // requesting user-id and every entry's user-id/body stay OUT of the payload (§2.7).
+  // `requesterUserId` is undefined only on the type-erased test edge / a malformed key;
+  // it is a schema-required field in production, so crossUserCount is 0 solely when the
+  // requester genuinely can't be resolved (a conservative under-count, never a false leak).
+  const requesterUserId = ctx.sessionKey.userId as string | undefined;
+  const crossUserCount =
+    requesterUserId === undefined
+      ? 0
+      : ctx.finalRanked.reduce((n, r) => (r.entry.userId !== requesterUserId ? n + 1 : n), 0);
+  const distinctSources = new Set(ctx.finalRanked.map((r) => r.entry.source?.who)).size;
   try {
     deps.eventBus.emit("memory:recalled", {
       agentId: ctx.agentId ?? "default",
@@ -147,6 +161,8 @@ export function captureRecallObservability(
       vectorCandidates: ctx.vectorCandidates,
       entityCandidates: ctx.entityCandidates,
       finalCount: ctx.finalRanked.length,
+      crossUserCount,
+      distinctSources,
       rerankerAvailable,
       durationMs: ctx.durationMs,
       timestamp: deps.clock.now(),
@@ -181,11 +197,61 @@ export function captureRecallObservability(
 }
 
 /**
- * Format a SessionKey into the counts-only sessionKey string for the event envelope.
- * Best-effort: a non-string field falls back to the tenant id so the emit never throws.
+ * Emit the counts-only `memory:recall_degraded` event — one retrieval lane (or
+ * the whole lane split) failed and recall degraded instead of silently
+ * vanishing. Wrapped non-fatal like the recalled/reranked emits: observability
+ * degrades, never errors the recall hot path. Payload is a closed scope tag +
+ * the closed ErrorKind string only (§2.7).
+ */
+export function emitRecallDegraded(
+  deps: MemoryRecallDeps,
+  sessionKey: SessionKey,
+  agentId: string | undefined,
+  scope: "vector_lane" | "lanes",
+  errorKind: string,
+): void {
+  if (deps.eventBus === undefined) return;
+  try {
+    deps.eventBus.emit("memory:recall_degraded", {
+      agentId: agentId ?? "default",
+      sessionKey: formatTenantSessionKey(sessionKey),
+      traceId: tryGetContext()?.traceId ?? sessionKey.tenantId ?? agentId ?? "default",
+      scope,
+      errorKind,
+      timestamp: deps.clock.now(),
+    });
+  } catch (e) {
+    deps.logger.warn(
+      {
+        agentId,
+        err: e instanceof Error ? e : new Error(String(e)),
+        errorKind: "internal" as const,
+        hint: "memory:recall_degraded emit failed; the recall itself is unaffected",
+      },
+      "recall event emit failed (non-fatal)",
+    );
+  }
+}
+
+/**
+ * Format a SessionKey into the event-envelope sessionKey string — the
+ * CANONICAL `formatSessionKey` form, byte-identical to the per-session
+ * trajectory bridge's `ownerSessionKey`. This must never drift: the bridge
+ * DROPS any payload whose sessionKey does not equal the owner recorder's key,
+ * and the previous home-grown "tenant:channel:user" approximation (wrong
+ * field order, no peer/guild/thread parts) meant memory:recalled /
+ * memory:reranked were silently filtered from EVERY per-session trajectory
+ * (observed live: recall invisible to `comis explain` on every turn).
+ * Best-effort: a degenerate key falls back to the tenant id so the emit
+ * never throws.
  */
 function formatTenantSessionKey(key: SessionKey): string {
-  const k = key as unknown as { tenantId?: string; agentId?: string; channelId?: string; userId?: string };
-  const parts = [k.tenantId, k.channelId ?? k.agentId, k.userId].filter((p): p is string => typeof p === "string");
-  return parts.length > 0 ? parts.join(":") : (k.tenantId ?? "default");
+  try {
+    const formatted = formatSessionKey(key);
+    if (!formatted.includes("undefined")) return formatted;
+  } catch {
+    // fall through to the tenant-id fallback
+  }
+  const k = key as unknown as { tenantId?: string };
+  return typeof k.tenantId === "string" ? k.tenantId : "default";
 }

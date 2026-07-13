@@ -24,6 +24,7 @@ import type Database from "better-sqlite3";
 import { z } from "zod";
 import { hybridSearch, searchByText, searchByVector } from "./hybrid-search.js";
 import { initSchema } from "./schema.js";
+import { isVecDimensionMismatch, type VecTableRebuild } from "./vec-dimension.js";
 import { rowToEntry, insertMemoryRow, storeEmbedding, parseTags, createRowMapper } from "./row-mapper.js";
 import { MemoryRowSchema, IdProjectionRowSchema } from "./row-schemas.js";
 import { truncateForEmbedding } from "./embedding-batch-indexer.js";
@@ -102,6 +103,8 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
   private readonly logger?: MemoryLogger;
   /** Per-instance sqlite-vec availability flag. */
   private readonly vecAvailable: boolean;
+  /** The vec0 twins rebuilt at open because the embedder dimension changed. */
+  private readonly vecRebuilt?: readonly VecTableRebuild[];
 
   constructor(config: MemoryConfig, embeddingPort?: EmbeddingPort, logger?: MemoryLogger) {
     this.config = config;
@@ -110,6 +113,7 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
 
     // Open database with standardized lifecycle (WAL mode, chmod)
     let vecAvailable = false;
+    let vecRebuilt: VecTableRebuild[] | undefined;
     this.db = openSqliteDatabase({
       dbPath: config.dbPath,
       walMode: config.walMode,
@@ -117,9 +121,27 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
         // Initialize schema and capture per-instance vec state (recall keys nest under .recall)
         const schemaResult = initSchema(db, config.recall.embeddingDimensions);
         vecAvailable = schemaResult.vecAvailable;
+        vecRebuilt = schemaResult.vecRebuilt;
       },
     });
     this.vecAvailable = vecAvailable;
+    this.vecRebuilt = vecRebuilt;
+
+    // INFO, not DEBUG: a dimension rebuild wipes every stored vector until the
+    // reindex lands — an operator diagnosing empty recall must see it at the
+    // default log level.
+    for (const rebuild of vecRebuilt ?? []) {
+      this.logger?.info(
+        {
+          step: "vec-dimension-rebuild",
+          table: rebuild.table,
+          fromDimensions: rebuild.fromDimensions,
+          toDimensions: rebuild.toDimensions,
+          hint: "embedding dimensions changed; stale vectors dropped and rows re-queued for embedding",
+        },
+        "Vector table rebuilt for new embedding dimension",
+      );
+    }
 
     this.logger?.debug({ dbPath: config.dbPath }, "Memory database opened");
   }
@@ -127,6 +149,12 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
   /** Get the underlying database (for testing/advanced use). */
   getDb(): Database.Database {
     return this.db;
+  }
+
+  /** The vec0 twins rebuilt when this adapter opened (embedder dimension
+   *  changed since the previous boot), for the boot model_health snapshot. */
+  getVecRebuilt(): readonly VecTableRebuild[] | undefined {
+    return this.vecRebuilt;
   }
 
   // ── store ────────────────────────────────────────────────────────
@@ -412,7 +440,16 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
     sessionKey: SessionKey,
     query: string | number[],
     options?: MemorySearchOptions,
-  ): Promise<Result<{ fts: MemorySearchResult[]; vector: MemorySearchResult[] }, Error>> {
+  ): Promise<
+    Result<
+      {
+        fts: MemorySearchResult[];
+        vector: MemorySearchResult[];
+        vectorLaneDegraded?: { errorKind: string };
+      },
+      Error
+    >
+  > {
     const startMs = systemNowMs();
     const queryLen = typeof query === "string" ? query.length : 0;
     try {
@@ -436,10 +473,38 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
         queryEmbedding = query;
       }
 
-      // Vector lane: only when vec is available AND we have a non-empty embedding.
+      // Vector lane: only when vec is available AND we have a non-empty
+      // embedding. ISOLATED — a vector-lane failure degrades THAT lane to
+      // empty instead of failing the whole call, so text recall survives a
+      // broken vector backend (observed live: a vec dimension mismatch erred
+      // every searchLanes call for hours while FTS was perfectly healthy).
       let vecIds: Array<{ id: string }> = [];
+      let vectorLaneDegraded: { errorKind: string } | undefined;
       if (this.vecAvailable && queryEmbedding !== undefined && queryEmbedding.length > 0) {
-        vecIds = searchByVector(this.db, queryEmbedding, overfetchLimit);
+        try {
+          vecIds = searchByVector(this.db, queryEmbedding, overfetchLimit);
+        } catch (e: unknown) {
+          // Branch the hint by failure class: a vec dimension mismatch is an
+          // embedder/table drift (config), not database corruption — the
+          // generic check-database-integrity pointer sent a live investigation
+          // the wrong way while recall was fully dead.
+          const dimensionMismatch = isVecDimensionMismatch(e);
+          const errorKind = dimensionMismatch ? ("config" as const) : ("internal" as const);
+          vectorLaneDegraded = { errorKind };
+          this.logger?.warn(
+            {
+              err: e instanceof Error ? e : new Error(String(e)),
+              op: "search-lanes",
+              durationMs: systemNowMs() - startMs,
+              queryLen,
+              hint: dimensionMismatch
+                ? "query embedding dimensions do not match the vec_memories table — the embedder changed while the daemon was running; restart the daemon (the vec tables rebuild to the configured dimensions at boot); FTS recall still serves"
+                : "vector lane query failed; FTS recall still serves — check database integrity",
+              errorKind,
+            },
+            "Memory searchLanes vector lane degraded",
+          );
+        }
       }
 
       // Hydrate each lane independently (rank order preserved). NO RRF fusion,
@@ -460,9 +525,16 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
         },
         "Memory searchLanes complete",
       );
-      return ok({ fts, vector });
+      return ok({
+        fts,
+        vector,
+        ...(vectorLaneDegraded !== undefined ? { vectorLaneDegraded } : {}),
+      });
     } catch (e: unknown) {
       const durationMs = systemNowMs() - startMs;
+      // Both lanes are unusable (FTS query or hydration failed) — a genuine
+      // whole-call failure. The caller emits memory:recall_degraded so the
+      // failure is visible beyond this log line.
       this.logger?.warn(
         {
           err: e instanceof Error ? e : new Error(String(e)),

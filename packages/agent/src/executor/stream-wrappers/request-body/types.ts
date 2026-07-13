@@ -103,6 +103,17 @@ export interface RequestBodyInjectorConfig {
    *  Used by microcompaction to skip clearing messages within the cached prefix.
    *  Returns -1 when no fence exists (cold start). */
   getCacheFenceIndex?: () => number;
+  /** Content-free sink for the prefix-stability diagnostic's WARN — the daemon
+   *  wires this to emit the `agent:prefix_unstable` event so a recurring
+   *  cached-prefix collapse surfaces as a `comis fleet` cache_prefix_churn
+   *  health signal instead of being visible only as a daemon.log WARN. Absent
+   *  in non-daemon contexts (the diagnostic still logs its WARN). */
+  onPrefixUnstable?: (signal: {
+    sessionKey: string;
+    firstDivergentIndex: number;
+    cacheRegionMutations: number;
+    mutationClass: string;
+  }) => void;
   /** Getter for elapsed ms since last assistant response.
    *  Used for time-based microcompact to detect cold-start scenarios. */
   getElapsedSinceLastResponse?: () => number | undefined;

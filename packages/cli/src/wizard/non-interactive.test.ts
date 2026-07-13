@@ -428,6 +428,27 @@ describe("validateNonInteractiveOptions", () => {
       ).not.toThrow();
     }
   });
+
+  it("rejects an unknown --embedding-provider", () => {
+    expect(() =>
+      validateNonInteractiveOptions(validOpts({ embeddingProvider: "cohere" })),
+    ).toThrow(NonInteractiveError);
+  });
+
+  it("rejects --embedding-provider openai with no key available", () => {
+    expect(() =>
+      validateNonInteractiveOptions(validOpts({ provider: "anthropic", apiKey: "x", embeddingMultilingual: true, embeddingProvider: "openai" })),
+    ).toThrow(NonInteractiveError);
+  });
+
+  it("accepts openai embeddings when a standalone --embedding-api-key is given, or the main is openai", () => {
+    expect(() =>
+      validateNonInteractiveOptions(validOpts({ embeddingMultilingual: true, embeddingProvider: "openai", embeddingApiKey: "sk-embed-123456" })),
+    ).not.toThrow();
+    expect(() =>
+      validateNonInteractiveOptions(validOpts({ provider: "openai", apiKey: "sk-main-123456", embeddingMultilingual: true, embeddingProvider: "openai" })),
+    ).not.toThrow();
+  });
 });
 
 // ==========================================================================
@@ -450,6 +471,31 @@ describe("buildNonInteractiveState", () => {
     expect(state.provider).toBeDefined();
     expect(state.provider!.id).toBe("openai");
     expect(state.provider!.apiKey).toBe("sk-test");
+  });
+
+  it("no --embedding-multilingual → no recallProvider (keeps the daemon nomic default)", () => {
+    expect(buildNonInteractiveState(validOpts()).recallProvider).toBeUndefined();
+  });
+
+  it("--embedding-multilingual defaults to on-device bge-m3", () => {
+    const state = buildNonInteractiveState(validOpts({ embeddingMultilingual: true }));
+    expect(state.recallProvider).toEqual({
+      multilingual: true, provider: "local", modelUri: "hf:gpustack/bge-m3-GGUF:bge-m3-Q8_0.gguf",
+    });
+  });
+
+  it("--embedding-provider openai with a standalone --embedding-api-key stores the key", () => {
+    const state = buildNonInteractiveState(validOpts({ provider: "anthropic", apiKey: "x-anthropic", embeddingMultilingual: true, embeddingProvider: "openai", embeddingApiKey: "sk-embed-123456" }));
+    expect(state.recallProvider).toEqual({
+      multilingual: true, provider: "openai", model: "text-embedding-3-small", dimensions: 1536, apiKey: "sk-embed-123456",
+    });
+  });
+
+  it("--embedding-provider openai with an openai main reuses the key (no standalone apiKey stored)", () => {
+    const state = buildNonInteractiveState(validOpts({ provider: "openai", apiKey: "sk-main-123456", embeddingMultilingual: true, embeddingProvider: "openai" }));
+    expect(state.recallProvider).toEqual({
+      multilingual: true, provider: "openai", model: "text-embedding-3-small", dimensions: 1536,
+    });
   });
 
   it("uses default agent name 'comis-agent' when not specified", () => {
@@ -746,6 +792,7 @@ describe("buildNonInteractiveState", () => {
       "video-providers",
       "transcription",
       "tts",
+      "recall",
       "review",
     ]);
   });

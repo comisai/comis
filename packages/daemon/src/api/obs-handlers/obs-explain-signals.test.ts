@@ -1178,7 +1178,26 @@ describe("toIncidentSignals — memory.recalled aggregation", () => {
       lastLanes: 4, // seq=3 is terminal
       lastFinalCount: 7,
       rerankerAvailable: false,
+      lastCrossUserCount: 0, // no crossUserCount on these records ⇒ 0 (no cross-sender injection)
     });
+  });
+
+  it("surfaces crossUserRecalls + lastCrossUserCount when agent-scoped recall injected another sender's memory", () => {
+    const s = toIncidentSignals([
+      recall(1, 4, { crossUserCount: 0 }), // own-user recall
+      recall(2, 5, { crossUserCount: 3 }), // cross-user injection (3 foreign rows)
+      recall(3, 2, { crossUserCount: 1 }), // terminal recall: still cross-user
+    ]);
+    // two of the three recalls crossed a sender boundary → the privacy-audit signal.
+    expect(s.recall?.crossUserRecalls).toBe(2);
+    // the terminal recall's cross-user injected count.
+    expect(s.recall?.lastCrossUserCount).toBe(1);
+  });
+
+  it("omits crossUserRecalls when no recall crossed a sender boundary (all own-user)", () => {
+    const s = toIncidentSignals([recall(1, 4, { crossUserCount: 0 }), recall(2, 5, { crossUserCount: 0 })]);
+    expect(s.recall?.crossUserRecalls).toBeUndefined();
+    expect(s.recall?.lastCrossUserCount).toBe(0);
   });
 
   it("counts every zero-hit recall (finalCount === 0 is a recall MISS)", () => {
@@ -1216,6 +1235,7 @@ describe("toIncidentSignals — memory.recalled aggregation", () => {
       lastLanes: 3,
       lastFinalCount: 2,
       rerankerAvailable: true,
+      lastCrossUserCount: 0,
     });
     expect(JSON.stringify(s.recall)).not.toContain("Main St");
     expect(JSON.stringify(s.recall)).not.toContain("home address");
@@ -1427,5 +1447,32 @@ describe("toIncidentSignals — terminal.session_evicted (idle-reap signal)", ()
 
   it("is ABSENT (undefined, not {}) when no eviction fired", () => {
     expect(toIncidentSignals([event("session.started", 0, {})]).terminalDriveEvicted).toBeUndefined();
+  });
+});
+
+describe("toIncidentSignals — subagent.killed (attributed kill signal)", () => {
+  it("sets subagentKilled{killedBy,runtimeMs,idleMs,thresholdMs} from the record", () => {
+    const s = toIncidentSignals([
+      event("subagent.killed", 1, {
+        runId: "r", killedBy: "health_monitor",
+        runtimeMs: 186_592, idleMs: 186_592, thresholdMs: 180_000,
+      }),
+    ]);
+    expect(s.subagentKilled).toEqual({
+      killedBy: "health_monitor", runtimeMs: 186_592, idleMs: 186_592, thresholdMs: 180_000,
+    });
+  });
+
+  it("keeps the LAST kill when more than one fires", () => {
+    const s = toIncidentSignals([
+      event("subagent.killed", 1, { runId: "a", killedBy: "parent", runtimeMs: 5 }),
+      event("subagent.killed", 2, { runId: "b", killedBy: "health_monitor", runtimeMs: 9, idleMs: 9, thresholdMs: 5 }),
+    ]);
+    expect(s.subagentKilled?.killedBy).toBe("health_monitor");
+    expect(s.subagentKilled?.runtimeMs).toBe(9);
+  });
+
+  it("is ABSENT (undefined, not {}) when no kill fired", () => {
+    expect(toIncidentSignals([event("session.started", 0, {})]).subagentKilled).toBeUndefined();
   });
 });

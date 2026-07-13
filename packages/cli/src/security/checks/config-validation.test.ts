@@ -21,10 +21,39 @@ const baseContext: AuditContext = {
 };
 
 describe("configValidationCheck", () => {
-  it("returns empty findings when no config and no rawConfigContent", async () => {
+  it("warns that config-scoped checks were SKIPPED when no config was provided (never a silent all-clear)", async () => {
+    // Regression: a bare `comis security audit` (no -c/--config) used to return
+    // EMPTY here, so the audit reported "PASSED (no critical findings)" while
+    // every config-scoped check silently no-op'd — a false all-clean. It must
+    // now surface the skip.
     const findings = await configValidationCheck.run(baseContext);
 
-    expect(findings).toHaveLength(0);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].code).toBe("SEC-CFG-002");
+    expect(findings[0].severity).toBe("warning");
+    expect(findings[0].message).toContain("SKIPPED");
+    expect(findings[0].remediation).toContain("--config");
+  });
+
+  it("reports the REAL captured validation error (not a guessed syntax error) and names the ${ENV} caveat", async () => {
+    // Regression: a production config whose gateway secret is `${COMIS_GATEWAY_TOKEN}`
+    // fails the audit's raw-file length validation; buildAuditContext captures that
+    // in configError. The check must report THAT (and that checks were skipped),
+    // not the misleading "Config file could not be parsed / check YAML syntax".
+    const findings = await configValidationCheck.run({
+      ...baseContext,
+      configPaths: ["/home/comis/.comis/config.yaml"],
+      rawConfigContent: "gateway:\n  tokens:\n    - id: default\n      secret: ${COMIS_GATEWAY_TOKEN}\n",
+      configError: "Config validation failed: gateway.tokens.0.secret: Too small: expected string to have >=32 characters",
+    });
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0].code).toBe("SEC-CFG-001");
+    expect(findings[0].severity).toBe("critical");
+    expect(findings[0].message).toContain("SKIPPED");
+    expect(findings[0].message).toContain(">=32 characters");
+    expect(findings[0].message).not.toContain("could not be parsed");
+    expect(findings[0].remediation).toContain("${ENV}");
   });
 
   it("produces info SEC-CFG-PASS when config already exists (pre-parsed)", async () => {

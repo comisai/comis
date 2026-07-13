@@ -2,7 +2,7 @@
 /**
  * Tests for the CLI entry point (cli.ts).
  *
- * Verifies that all 29 commands are registered on the root program,
+ * Verifies that all 30 commands are registered on the root program,
  * program metadata is correct, and subcommand structure is intact.
  * Does NOT re-test command behavior (covered by per-command behavior tests).
  *
@@ -88,6 +88,9 @@ describe("CLI entry point", () => {
       // Cross-session FleetHealthReport triage (obs.fleet.health) — the
       // remote-admin sibling of `explain`, DISTINCT from the local `health` doctor.
       "fleet",
+      // Offline inbound-message extraction per channel (`comis messages`) —
+      // content-bearing by design, so it is offline-only with NO RPC sibling.
+      "messages",
       // Offline, paste-ready support bundle (triage verdict + health findings).
       "support-bundle",
       "uninstall",
@@ -104,8 +107,8 @@ describe("CLI entry point", () => {
       "orchestrate",
     ] as const;
 
-    it("registers exactly 30 commands", () => {
-      expect(program.commands).toHaveLength(30);
+    it("registers exactly 31 commands", () => {
+      expect(program.commands).toHaveLength(31);
     });
 
     it.each(expectedCommands)("registers the '%s' command", (name) => {

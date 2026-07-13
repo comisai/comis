@@ -80,6 +80,20 @@ export const CODEX_IMAGE_MODEL: ImagesModel<"openai-codex-images"> = {
 };
 
 /**
+ * The codex CHAT model the image request defaults to when no chat model is
+ * threaded (non-codex main / nothing resolved) and no operator override is
+ * set. The Codex Responses endpoint requires a CURRENT codex CHAT model as
+ * the top-level `model` — `image_generation` rides as a hosted TOOL, and the
+ * endpoint 400s on the image-API id "gpt-image-1", on any foreign-provider
+ * model id, AND on retired codex ids (each rejected live with "not supported
+ * when using Codex with a ChatGPT account"). The hosted tool selects the
+ * actual image model server-side regardless of this value. Kept in lockstep
+ * with the pi-ai openai-codex chat catalog (its current flagship); operators
+ * can steer per-deployment via `integrations.media.imageGeneration.model`.
+ */
+export const CODEX_DEFAULT_CHAT_MODEL_ID = "gpt-5.5";
+
+/**
  * Create the per-call-bearer Codex `ImageGenerationPort`.
  *
  * @param opts.oauthManager  - The per-agent OAuth manager (its `getApiKey`

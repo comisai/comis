@@ -264,7 +264,7 @@ task templates.
 
 ## The pipeline tool
 
-Agents create and manage execution graphs using the `pipeline` built-in tool. It supports 10 actions: `define`, `execute`, `status`, `outputs`, `cancel`, `save`, `load`, `list`, `delete`, and `from_intent` (the gated-off one-line-intent synthesizer).
+Agents create and manage execution graphs using the `pipeline` built-in tool. It supports 10 actions: `define`, `execute`, `status`, `outputs`, `cancel`, `save`, `load`, `list`, `delete`, and `from_intent` (the one-line-intent synthesizer, on by default).
 
 See the [Pipeline Tool Guide](/agent-tools/pipelines) for the complete action reference with examples.
 
@@ -290,7 +290,7 @@ See [Configuration Reference](/reference/config-yaml) for all security settings.
 
 ## Small-model authoring
 
-Frontier models write valid execution graphs directly. Weaker models sometimes emit a graph that is *almost* right -- the correct shape but a schema slip -- or would benefit from describing the workflow in one line rather than hand-writing every node. The small-model authoring layer helps them, and it is **gated off by default**: every flag under [`orchestration.authoring`](/reference/config-yaml#orchestration) defaults to `false`, so without operator action nothing below is reachable and graph authoring behaves exactly as it always has. The operator flips a flag on only once production telemetry (the [`pipeline:authored`](/developer-guide/event-bus) event surfaced via [`obs.fleet.health`](/reference/json-rpc#obs-fleet-health)) shows small-tier authoring is materially below frontier -- the measure-first gate.
+Frontier models write valid execution graphs directly. Weaker models sometimes emit a graph that is *almost* right -- the correct shape but a schema slip -- or would benefit from describing the workflow in one line rather than hand-writing every node. The small-model authoring layer helps them, and it is **on by default** (full capability out of the box): every flag under [`orchestration.authoring`](/reference/config-yaml#orchestration) defaults to `true`, so the authoring aids below are available without operator action. An operator sets a flag `false` to opt it out (e.g. if [`obs.fleet.health`](/reference/json-rpc#obs-fleet-health) telemetry from the [`pipeline:authored`](/developer-guide/event-bus) event shows an aid is not helping).
 
 **Governance is preserved end to end.** None of the paths below execute a graph directly: the repair producer and the intent synthesizer *return* a graph, which is then dispatched through the same `graph.execute` path a hand-authored graph takes. A synthesized or repaired graph runs the **identical** validation, tool denylist, and child⊆parent sandbox-intersection checks as one you wrote by hand. The authoring layer can never produce a graph that bypasses governance.
 
@@ -319,15 +319,15 @@ When `orchestration.authoring.gbnfConstrain` is on, the daemon grammar-constrain
 
 ## Events
 
-The graph coordinator emits three lifecycle events during execution, plus two audit events for the (gated-off) small-model authoring layer:
+The graph coordinator emits three lifecycle events during execution, plus two audit events for the (default-on) small-model authoring layer:
 
 | Event | When | Key fields |
 |-------|------|------------|
 | `graph:started` | Graph execution begins | `graphId`, `label`, `nodeCount` |
 | `graph:node_updated` | A node transitions to a new status | `graphId`, `nodeId`, `status`, `durationMs`, `error` |
 | `graph:completed` | Graph reaches terminal state | `graphId`, `status`, `durationMs`, `nodesCompleted`, `nodesFailed`, `nodesSkipped`, `cancelReason` |
-| `graph:repaired` | A weak-model graph is repaired to a canonical template (gated off by default) | `pattern`, `nodeCount`, `capabilityClass` |
-| `graph:synthesized_from_intent` | A graph is synthesized from a one-line intent (gated off by default) | `pattern`, `nodeCount` |
+| `graph:repaired` | A weak-model graph is repaired to a canonical template (on by default) | `pattern`, `nodeCount`, `capabilityClass` |
+| `graph:synthesized_from_intent` | A graph is synthesized from a one-line intent (on by default) | `pattern`, `nodeCount` |
 
 Both authoring events are counts/ids/enums only -- never a graph body, a node config value, a task/label string, or the intent text -- and fire only after the graph passes the same validation a hand-authored graph runs. See [Event Bus](/developer-guide/event-bus) for the full event reference.
 

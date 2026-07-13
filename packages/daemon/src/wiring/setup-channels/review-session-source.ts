@@ -137,9 +137,12 @@ export function buildReviewSessionSource(deps: ReviewSessionSourceDeps): ReviewS
       });
       if (lcdMessages.length === 0) return fromStore;
 
-      // Map LCD rows to the `{ role, content }` shape extractMessageContent
+      // Map LCD rows to the `{ role, content, createdAt }` shape extractMessageContent
       // reads. Text parts only (the verbatim block's `text` rides
-      // part.metadata.raw); user/assistant roles only.
+      // part.metadata.raw); user/assistant roles only. `createdAt` (the LCD row
+      // timestamp) rides through so the reflection skill-source builder can window a
+      // session's rows PER TURN ((prevObservedAt, observedAt]) — consumers reading
+      // only { role, content } are unaffected (additive field).
       const messages = lcdMessages
         .filter((m) => m.role === "user" || m.role === "assistant")
         .map((m) => ({
@@ -152,6 +155,7 @@ export function buildReviewSessionSource(deps: ReviewSessionSourceDeps): ReviewS
             })
             .filter((t) => t.length > 0)
             .join(" "),
+          createdAt: m.createdAt,
         }))
         .filter((m) => m.content.length > 0);
 

@@ -54,6 +54,14 @@ export interface AuditContext {
   readonly configPaths: string[];
   readonly dataDir: string;
   readonly skillsPaths: string[];
+  /**
+   * When `config` is undefined despite a config path being provided, this holds
+   * the reason (a load or schema-validation error message). It lets
+   * config-validation report the REAL failure instead of a guessed "syntax"
+   * error, and ensures the config-scoped checks' silent skip is surfaced rather
+   * than read as an all-clear.
+   */
+  readonly configError?: string;
 }
 
 /**

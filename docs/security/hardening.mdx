@@ -293,7 +293,7 @@ These items provide additional hardening for environments with strict security r
 
     **Verify:** Check your `comis doctor` output for specific browser security recommendations.
 
-    **What the installer does for you:** When the daemon is installed with `--with-browser`, `--with-xvfb`, or `--with-cloakbrowser`, the systemd unit is written with two layers of filesystem isolation around the browser binary:
+    **What the installer does for you:** The browser tool ships enabled, so a default install provisions the browser runtime (unless you pass `--without-browser`). Whenever the browser runtime is provisioned — the default, or an explicit `--with-browser` / `--with-cloakbrowser` — the systemd unit is written with two layers of filesystem isolation around the browser binary:
 
     | Layer | What it does | Browser-tool specifics |
     |---|---|---|
@@ -302,7 +302,7 @@ These items provide additional hardening for environments with strict security r
 
     Both are emitted by `render_systemd_unit` in `install.sh` and rendered into `/etc/systemd/system/comis.service`. The unit is checksummed and refuses to overwrite hand edits, so once you've audited the paths they stay stable across upgrades.
 
-    For the `--with-xvfb` variant, the companion `comis-xvfb.service` unit runs as the same user, joins the daemon's `/tmp` namespace via `JoinsNamespaceOf=`, and exposes Xvfb on a Unix socket only (`-nolisten tcp`) — no network surface added.
+    For the `--with-xvfb` variant, the companion `comis-xvfb.service` unit runs as the same user and exposes Xvfb on a Unix socket only (`-nolisten tcp`) — no network surface added. Both units bind a shared host dir (`/run/comis-x11`) onto their `PrivateTmp` `/tmp/.X11-unix` — Xvfb read-write (it creates the `X99` socket), the daemon read-only (it connects) — so the socket is reachable without opening either `/tmp` more broadly.
 
     **What it does *not* do:** the daemon does not block what URLs the browser navigates to (beyond the always-on SSRF guard against private IPs, loopback, and cloud metadata endpoints). If you need URL allowlisting, layer that at the network egress level (egress-logging chain + outbound firewall rules).
   </Step>

@@ -900,3 +900,50 @@ describe("deliverAnnouncement idempotency-key threading", () => {
     expect(entry.idempotencyKey).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// classifyErrorContext kill attribution — the errorType must track killedBy.
+// A health-monitor stuck-kill's failure record read "KilledByParent" in a live
+// incident replay; the structured errorType is the machine-readable twin of
+// the attributed error string and must never contradict it.
+// ---------------------------------------------------------------------------
+
+describe("classifyErrorContext — killedBy attribution", () => {
+  it("maps a health-monitor kill to StuckKilledByHealthMonitor", () => {
+    const ctx = classifyErrorContext("Stuck sub-agent: no observed progress for 17313ms", "killed", "health_monitor");
+    expect(ctx.errorType).toBe("StuckKilledByHealthMonitor");
+    expect(ctx.retryable).toBe(false);
+  });
+
+  it("keeps KilledByParent for parent (and default) kills", () => {
+    expect(classifyErrorContext("Killed by parent agent", "killed", "parent").errorType).toBe("KilledByParent");
+    expect(classifyErrorContext("Killed by parent agent", "killed").errorType).toBe("KilledByParent");
+  });
+
+  it("maps operator/system kills to their own attribution", () => {
+    expect(classifyErrorContext("stop", "killed", "operator").errorType).toBe("KilledByOperator");
+    expect(classifyErrorContext("stop", "killed", "system").errorType).toBe("KilledBySystem");
+  });
+});
+
+describe("persistFailureRecord — killedBy rides the structured errorContext", () => {
+  it("writes StuckKilledByHealthMonitor for a health-monitor kill record", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "kill-attrib-record-"));
+    await persistFailureRecord({
+      dataDir: dir,
+      sessionKey: "default:sub-agent-x:sub-agent:x",
+      runId: "run-x",
+      task: "t",
+      error: "Stuck sub-agent: no observed progress for 20000ms",
+      endReason: "killed",
+      runtimeMs: 20_000,
+      killedBy: "health_monitor",
+    });
+    const sessionDirs = await readdir(join(dir, "subagent-results"));
+    const files = await readdir(join(dir, "subagent-results", sessionDirs[0]!));
+    const content = JSON.parse(await readFile(join(dir, "subagent-results", sessionDirs[0]!, files[0]!), "utf-8"));
+    expect(content.killedBy).toBe("health_monitor");
+    expect(content.errorContext.errorType).toBe("StuckKilledByHealthMonitor");
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});

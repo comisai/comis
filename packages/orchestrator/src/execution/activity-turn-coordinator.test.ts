@@ -315,22 +315,30 @@ describe("createActivityTurnCoordinator — delete gate", () => {
     coord.dispose();
   });
 
-  it("reclassifies a success outcome to failure when ANY observed event had status:'failed' (no delete)", async () => {
+  it("reclassifies a delivered success to success_with_recovered_failures when an observed event had status:'failed'", async () => {
     const clock = createFakeClock(5_000);
     const { deps, timer, stream, renderer } = makeCoordinatorDeps({ clock });
     const coord = createActivityTurnCoordinator(deps);
     coord.start(makeCtx());
 
-    // Observe a failed event during the turn.
+    // Observe a failed event during the turn (a recovered tool retry).
     stream.emit(makeEvent({ status: "failed", errorKind: "dependency", phase: "end" }));
     timer.advance(800);
 
-    // Delivery itself SUCCEEDED — but the failed event must flip the outcome.
+    // Delivery SUCCEEDED — the turn recovered. The renderer must get the
+    // success-shaped recovered outcome (scaffold cleanup), never kind:"failure",
+    // which would keep a "❌ {errorKind}" pill directly above the delivered
+    // answer (live incident: a recovered USER.md edit retry wore a kept
+    // "❌ validation" over a successful reply).
     await coord.finalize({ kind: "success", trivial: false, delivery: makeReceipt(1_000) });
 
     expect(renderer.finalizeCalls.length).toBe(1);
-    // Reclassified: the renderer receives kind:"failure", NOT success → no delete.
-    expect(renderer.finalizeCalls[0].outcome.kind).toBe("failure");
+    const outcome = renderer.finalizeCalls[0].outcome;
+    expect(outcome.kind).toBe("success_with_recovered_failures");
+    if (outcome.kind !== "success_with_recovered_failures") throw new Error("expected recovered success");
+    // The failed events ride the outcome verbatim — the evidence is preserved.
+    expect(outcome.recoveredFailures).toHaveLength(1);
+    expect(outcome.recoveredFailures[0]!.errorKind).toBe("dependency");
 
     coord.dispose();
   });
@@ -358,10 +366,12 @@ describe("createActivityTurnCoordinator — delete gate", () => {
       agentId: "agent-1",
       channelType: "telegram",
       strategy: "EditPlace",
-      outcome: "failure",
-      errorKind: "validation",
+      outcome: "success_with_recovered_failures",
       reclassified: true,
+      failedEventCount: 1,
     });
+    // A recovered success carries no errorKind — that field is failure-only.
+    expect(calls[0]![1]).not.toHaveProperty("errorKind");
 
     coord.dispose();
   });
@@ -387,24 +397,26 @@ describe("createActivityTurnCoordinator — delete gate", () => {
     coord.dispose();
   });
 
-  it("reclassify carries the observed failed event's errorKind, never the hardcoded platform default", async () => {
+  it("reclassifies even a trivial success to success_with_recovered_failures when a failed event was observed", async () => {
     const clock = createFakeClock(5_000);
     const { deps, timer, stream, renderer } = makeCoordinatorDeps({ clock });
     const coord = createActivityTurnCoordinator(deps);
     coord.start(makeCtx());
 
-    // The failed event carried a non-platform kind — the reclassify must honor it.
     stream.emit(makeEvent({ status: "failed", errorKind: "dependency", phase: "end" }));
     timer.advance(800);
 
-    await coord.finalize({ kind: "success", trivial: false, delivery: makeReceipt(1_000) });
+    // A trivial success would normally drop the scaffold with no edit history;
+    // with an observed failure it takes the recovered path instead (trivial is
+    // hard-false on the recovered kind), so the cleanup still waits for the
+    // delivered answer.
+    await coord.finalize({ kind: "success", trivial: true, delivery: makeReceipt(1_000) });
 
     expect(renderer.finalizeCalls.length).toBe(1);
     const outcome = renderer.finalizeCalls[0].outcome;
-    expect(outcome.kind).toBe("failure");
-    if (outcome.kind !== "failure") throw new Error("expected failure");
-    expect(outcome.errorKind).toBe("dependency");
-    expect(outcome.errorKind).not.toBe("platform");
+    expect(outcome.kind).toBe("success_with_recovered_failures");
+    if (outcome.kind !== "success_with_recovered_failures") throw new Error("expected recovered success");
+    expect(outcome.trivial).toBe(false);
 
     coord.dispose();
   });

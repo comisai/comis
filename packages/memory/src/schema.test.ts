@@ -11,6 +11,7 @@ import {
 } from "./schema.js";
 import { ensureLcdTables } from "./schema-lcd.js";
 import { createSqliteMemoryUsefulnessStore } from "./sqlite-memory-usefulness-store.js";
+import { searchByVector } from "./hybrid-search.js";
 
 describe("initSchema", () => {
   let db: Database.Database;
@@ -1796,3 +1797,86 @@ describe("ensureUsefulnessTable intent column", () => {
   });
 });
 
+
+describe("initSchema vec dimension reconciliation", () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+  });
+
+  /** Seed one memory row flagged as embedded plus its vec twin at the given dimension. */
+  function seedEmbeddedMemory(dimensions: number): void {
+    db.prepare(
+      `INSERT INTO memories (id, user_id, content, trust_level, source_who, created_at, has_embedding)
+       VALUES ('m1', 'u1', 'hello world', 'learned', 'user', 0, 1)`,
+    ).run();
+    db.prepare("INSERT INTO vec_memories(memory_id, embedding) VALUES (?, ?)").run(
+      "m1",
+      new Float32Array(dimensions),
+    );
+  }
+
+  it("rebuilds vec tables and resets has_embedding flags when embeddingDimensions change across boots", () => {
+    initSchema(db, 768);
+    if (!isVecAvailable()) return;
+    seedEmbeddedMemory(768);
+
+    // Second boot with a different embedder dimension. A vec0 table's dimension
+    // is baked into its DDL, so IF NOT EXISTS alone would keep the stale 768
+    // table and every KNN query at the new dimension throws SqliteError
+    // ("Expected 768 dimensions but received 1536").
+    const result = initSchema(db, 1536);
+
+    const vecSql = (
+      db
+        .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='vec_memories'")
+        .get() as { sql: string }
+    ).sql;
+    expect(vecSql).toContain("float[1536]");
+    const mmSql = (
+      db
+        .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='vec_mental_models'")
+        .get() as { sql: string }
+    ).sql;
+    expect(mmSql).toContain("float[1536]");
+
+    // Stale vectors are gone and rows are queued for re-embedding.
+    expect(
+      (db.prepare("SELECT COUNT(*) AS c FROM vec_memories").get() as { c: number }).c,
+    ).toBe(0);
+    expect(
+      (db.prepare("SELECT has_embedding FROM memories WHERE id = 'm1'").get() as {
+        has_embedding: number;
+      }).has_embedding,
+    ).toBe(0);
+
+    // The rebuild is reported so the boot path can log it at INFO.
+    expect(result.vecRebuilt).toEqual([
+      { table: "vec_memories", fromDimensions: 768, toDimensions: 1536 },
+      { table: "vec_mental_models", fromDimensions: 768, toDimensions: 1536 },
+    ]);
+
+    // Incident-replay probe: the production KNN path at the new dimension
+    // must return empty instead of throwing.
+    expect(() => searchByVector(db, new Array(1536).fill(0), 3)).not.toThrow();
+  });
+
+  it("preserves vec rows and has_embedding flags when dimensions are unchanged across boots", () => {
+    initSchema(db, 768);
+    if (!isVecAvailable()) return;
+    seedEmbeddedMemory(768);
+
+    const result = initSchema(db, 768);
+
+    expect(result.vecRebuilt).toBeUndefined();
+    expect(
+      (db.prepare("SELECT COUNT(*) AS c FROM vec_memories").get() as { c: number }).c,
+    ).toBe(1);
+    expect(
+      (db.prepare("SELECT has_embedding FROM memories WHERE id = 'm1'").get() as {
+        has_embedding: number;
+      }).has_embedding,
+    ).toBe(1);
+  });
+});

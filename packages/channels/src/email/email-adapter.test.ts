@@ -197,6 +197,38 @@ describe("createEmailAdapter", () => {
     );
   });
 
+  it("sendMessage forms a Re: reply subject from the subject option for mail-client threading", async () => {
+    // ISSUE-2 (chief-of-staff live campaign): an email reply with an empty
+    // Subject line is orphaned in mail clients and reads as broken. The reply
+    // must carry a "Re: <original subject>" subject derived from the inbound
+    // subject the delivery layer threads through options.subject.
+    const { createEmailAdapter } = await getModule();
+    const adapter = createEmailAdapter(makeDeps());
+    await adapter.start();
+
+    await adapter.sendMessage("recipient@example.com", "Reply text", {
+      subject: "Quarterly budget",
+    });
+
+    expect(transportMock.sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({ subject: "Re: Quarterly budget" }),
+    );
+  });
+
+  it("sendMessage does not double-prefix Re: when the reply subject already has it", async () => {
+    const { createEmailAdapter } = await getModule();
+    const adapter = createEmailAdapter(makeDeps());
+    await adapter.start();
+
+    await adapter.sendMessage("recipient@example.com", "Reply text", {
+      subject: "RE: Quarterly budget",
+    });
+
+    expect(transportMock.sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({ subject: "RE: Quarterly budget" }),
+    );
+  });
+
   it("onMessage registers handler that receives NormalizedMessage", async () => {
     const { createEmailAdapter } = await getModule();
     const adapter = createEmailAdapter(makeDeps());

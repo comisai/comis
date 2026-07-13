@@ -39,7 +39,7 @@
  * @module
  */
 import type { ClockPort } from "@comis/core";
-import { isProviderModelChimera, resolvePricingState } from "@comis/core";
+import { isProviderModelChimera, resolvePricingState, modelResolvesInCatalog } from "@comis/core";
 import type { ObservabilityStore } from "@comis/memory";
 import type { ProvenanceStore } from "@comis/skills";
 import type { StrandedFinding } from "../wiring/setup-storage-mismatch-warn.js";
@@ -60,24 +60,23 @@ export function countChimericModels(
 }
 
 /**
- * Is the gateway bound to a LOOPBACK address?
- *
- * A loopback-bound gateway has no off-host network exposure, so running it WITHOUT
- * TLS is benign — it matches the `gateway-exposure` security check, which flags only
- * a `0.0.0.0`-without-TLS bind as critical, never a loopback one. Used to suppress the
- * `tlsOff` config-posture finding on a loopback bind so it does not become the fleet
- * `likelyRootCause` headline on a dev / loopback box (where it is noise). A non-loopback
- * bind (`0.0.0.0` or a routable IP) WITHOUT TLS still flags — correct for production.
- *
- * `gateway.host` defaults to `127.0.0.1`, so a default daemon is loopback (benign by
- * default); only an operator-set non-loopback host opts into the TLS-off finding. An
- * absent/unknown host is treated as NON-loopback (conservative — never suppress on doubt).
+ * `true` when ANY configured agent set `skills.terminal.unsafeDisableSandbox: true` — the operator
+ * opt-out of the terminal-driver bwrap jail (a driven CLI runs unsandboxed). A RELAXED security
+ * default that should be surfaced at boot, not silent — the peer of `browser.noSandbox`. A boolean,
+ * never agent ids or config bodies. Lives here (not inline in daemon.ts) to keep daemon.ts under its
+ * 3000-line cap.
  */
-export function isLoopbackHost(host: string | undefined): boolean {
-  if (typeof host !== "string") return false;
-  const h = host.trim().toLowerCase();
-  return h === "127.0.0.1" || h === "::1" || h === "localhost" || h.startsWith("127.");
+export function anyAgentTerminalUnsafeDisableSandbox(
+  agents: Readonly<Record<string, { skills?: { terminal?: { unsafeDisableSandbox?: boolean } } }>>,
+): boolean {
+  return Object.values(agents).some((a) => a.skills?.terminal?.unsafeDisableSandbox === true);
 }
+
+// isLoopbackHost moved to @comis/core (security/loopback-host) so the gateway's
+// boot log shares the SAME TLS-off-is-benign-on-loopback judgment as this
+// posture record and the gateway-exposure security check. Re-exported so the
+// existing daemon-side consumers (daemon.ts, tests) keep one import site.
+export { isLoopbackHost } from "@comis/core";
 
 /**
  * Count configured agents burning tokens on remote-unknown-priced models
@@ -161,6 +160,98 @@ export function countImportedNonAllowlisted(
   return { total, drift };
 }
 
+/**
+ * Count configured agents whose (provider, model) does NOT resolve in the model
+ * catalog — the fail-closed-to-nano class (`modelRegistry.find()` → undefined →
+ * FAIL_CLOSED_PROFILE nano/8192, so every non-trivial turn context-exhausts).
+ * Neither the chimeric NOR the pricing detector catches it: a non-native provider
+ * like `openai-codex` resolves `"free"` (not `"unknown"`) for an unknown model, and
+ * the model family still parses, so both return clean (the live fleet-marathon
+ * `gpt-5.6` incident). Operator-declared custom models (`providers.entries.<p>.models`)
+ * are legitimately absent from the static catalog and are EXEMPTED (no false-flag).
+ * Lives here (not inline in daemon.ts) to keep daemon.ts under its 3000-line cap.
+ * Count only — the caller persists the COUNT, never agent ids/model names.
+ */
+export function countUnresolvedModels(
+  agents: Readonly<Record<string, { provider?: string; model?: string }>>,
+  providersEntries: Readonly<Record<string, { models?: ReadonlyArray<{ id: string }> }>> | undefined,
+): number {
+  let count = 0;
+  for (const a of Object.values(agents)) {
+    if (typeof a.provider !== "string" || typeof a.model !== "string") continue;
+    // Exempt operator-declared custom models (legitimately not in the static catalog).
+    const isCustom = providersEntries?.[a.provider]?.models?.some((m) => m.id === a.model) ?? false;
+    if (isCustom) continue;
+    if (!modelResolvesInCatalog(a.provider, a.model)) count++;
+  }
+  return count;
+}
+
+/**
+ * Media provider → the SecretManager env key its credential comes from. A
+ * provider absent from this map needs NO credential and can never be a gap:
+ * `auto` (follows the agent's main provider, resolved on that path), `local`
+ * (keyless whisper STT), `edge`/`piper` (keyless TTS). `openai-codex` is
+ * handled separately (OAuth, not an env key — see countMediaCredentialGaps).
+ */
+const MEDIA_PROVIDER_ENV_KEY: Readonly<Record<string, string>> = {
+  openai: "OPENAI_API_KEY",
+  google: "GOOGLE_API_KEY",
+  fal: "FAL_KEY",
+  openrouter: "OPENROUTER_API_KEY",
+  groq: "GROQ_API_KEY",
+  deepgram: "DEEPGRAM_API_KEY",
+  elevenlabs: "ELEVENLABS_API_KEY",
+  xai: "XAI_API_KEY",
+};
+
+/**
+ * Count configured media pipelines (imageGeneration / transcription / tts /
+ * videoGeneration) whose PINNED provider's credential is ABSENT — the pipeline
+ * will fail at first use (the incident-day image-gen unavailability). The
+ * chimeric/pricing detectors only watch the main COMPLETION pipeline, so a
+ * media credential gap was invisible to `comis fleet`; this makes it a boot
+ * COUNT (never provider names — the no-free-text contract).
+ *
+ * `hasSecret` is `container.secretManager.has`. `imageCodexAvailable` is the
+ * store-aware image-codex availability the image bundle already resolved
+ * (`openai-codex` uses an OAuth profile, not an env key, and only appears in
+ * the image pipeline) — reused so a cold in-memory cache does not false-flag a
+ * logged-in Codex profile (the trap the image fix closed).
+ */
+export function countMediaCredentialGaps(
+  media:
+    | {
+        imageGeneration?: { provider?: string };
+        transcription?: { provider?: string };
+        tts?: { provider?: string };
+        videoGeneration?: { provider?: string };
+      }
+    | undefined,
+  hasSecret: (key: string) => boolean,
+  imageCodexAvailable: boolean,
+): number {
+  if (!media) return 0;
+  const providers = [
+    media.imageGeneration?.provider,
+    media.transcription?.provider,
+    media.tts?.provider,
+    media.videoGeneration?.provider,
+  ];
+  let gaps = 0;
+  for (const p of providers) {
+    if (typeof p !== "string") continue;
+    if (p === "openai-codex") {
+      if (!imageCodexAvailable) gaps++;
+      continue;
+    }
+    const key = MEDIA_PROVIDER_ENV_KEY[p];
+    if (key === undefined) continue; // keyless / follow-main → never a gap
+    if (!hasSecret(key)) gaps++;
+  }
+  return gaps;
+}
+
 /** The boot-time config-posture inputs (counts/booleans/closed labels only). */
 export interface ConfigPostureInputs {
   /** The gateway is running without TLS (and not explicitly allowing insecure HTTP). */
@@ -192,6 +283,14 @@ export interface ConfigPostureInputs {
    * Optional (defaults to 0 in the record) so existing callers/tests need no change.
    */
   chimericModelCount?: number;
+  /**
+   * Number of configured agents whose (provider, model) does NOT resolve in the
+   * model catalog and is not an operator-declared custom model — the
+   * fail-closed-to-nano class (see {@link countUnresolvedModels}). A COUNT, never
+   * agent ids or model names. Computed in daemon.ts via `countUnresolvedModels`
+   * over the configured agents at boot. Optional (defaults to 0 in the record).
+   */
+  unresolvedModelCount?: number;
   /**
    * Number of configured agents burning tokens
    * on remote-unknown-priced models (`resolvePricingState == "unknown"` — a NATIVE
@@ -225,6 +324,32 @@ export interface ConfigPostureInputs {
    * silent. A boolean, never config bodies. Optional (defaults to `false`).
    */
   sandboxNoDowngradeDisabled?: boolean;
+  /**
+   * `true` when the operator set `browser.noSandbox: true` — a RELAXED security
+   * default (Chromium runs WITHOUT its own sandbox while the browser tool
+   * processes untrusted web content). Distinct from
+   * `sandboxNoDowngradeDisabled` (the agent-to-agent spawn sandbox). A relaxed
+   * security default should be surfaced at boot, not silent. A boolean, never
+   * config bodies. Optional (defaults to `false`).
+   */
+  browserNoSandbox?: boolean;
+  /**
+   * `true` when ANY configured agent set `skills.terminal.unsafeDisableSandbox: true` — the
+   * operator opt-out of the terminal-driver bwrap jail (a driven coding CLI runs unsandboxed). A
+   * RELAXED security default (the child has no filesystem/network/uid confinement), distinct from
+   * `browserNoSandbox` (the Chromium sandbox) and `sandboxNoDowngradeDisabled` (the agent-to-agent
+   * spawn sandbox). Should be surfaced at boot, not silent. A boolean, never agent ids or config
+   * bodies. Computed via {@link anyAgentTerminalUnsafeDisableSandbox} at boot. Optional (defaults
+   * to `false`).
+   */
+  terminalUnsafeDisableSandbox?: boolean;
+  /**
+   * Number of configured media pipelines (image / transcription / tts / video)
+   * whose PINNED provider's credential is absent — the pipeline will fail at
+   * first use. A COUNT, never provider names. Computed via
+   * {@link countMediaCredentialGaps} at boot. Optional (defaults to 0).
+   */
+  mediaCredentialGapCount?: number;
 }
 
 /**
@@ -234,10 +359,11 @@ export interface ConfigPostureInputs {
  * the `?.` is mandatory so a disabled-persistence boot cannot crash shutdown.
  * Severity is `"warning"` when ANY posture issue is present — `tlsOff`, a
  * stranded finding, `canaryFallbackActive`, `servedBelowConfiguredCount > 0`,
- * `chimericModelCount > 0`, `pricingGapCount > 0`,
- * `importedNonAllowlistedRegistryCount > 0`, or `sandboxNoDowngradeDisabled` —
- * else `"info"`. The timestamp comes from the injected `ClockPort` — never
- * `Date.now()` (globals gate).
+ * `chimericModelCount > 0`, `unresolvedModelCount > 0`, `pricingGapCount > 0`,
+ * `importedNonAllowlistedRegistryCount > 0`, `sandboxNoDowngradeDisabled`,
+ * `browserNoSandbox`, `terminalUnsafeDisableSandbox`, or
+ * `mediaCredentialGapCount > 0` — else `"info"`. The timestamp comes from the
+ * injected `ClockPort` — never `Date.now()` (globals gate).
  */
 export function buildConfigPostureRecord(
   obsStore: ObservabilityStore | undefined,
@@ -245,19 +371,27 @@ export function buildConfigPostureRecord(
   clock: ClockPort,
 ): void {
   const chimericModelCount = inputs.chimericModelCount ?? 0;
+  const unresolvedModelCount = inputs.unresolvedModelCount ?? 0;
   const pricingGapCount = inputs.pricingGapCount ?? 0;
   const importedSkillCount = inputs.importedSkillCount ?? 0;
   const importedNonAllowlistedRegistryCount = inputs.importedNonAllowlistedRegistryCount ?? 0;
   const sandboxNoDowngradeDisabled = inputs.sandboxNoDowngradeDisabled ?? false;
+  const browserNoSandbox = inputs.browserNoSandbox ?? false;
+  const terminalUnsafeDisableSandbox = inputs.terminalUnsafeDisableSandbox ?? false;
+  const mediaCredentialGapCount = inputs.mediaCredentialGapCount ?? 0;
   const hasIssue =
     inputs.tlsOff ||
     inputs.strandedFindings.length > 0 ||
     inputs.canaryFallbackActive ||
     inputs.servedBelowConfiguredCount > 0 ||
     chimericModelCount > 0 ||
+    unresolvedModelCount > 0 ||
     pricingGapCount > 0 ||
     importedNonAllowlistedRegistryCount > 0 ||
-    sandboxNoDowngradeDisabled;
+    sandboxNoDowngradeDisabled ||
+    browserNoSandbox ||
+    terminalUnsafeDisableSandbox ||
+    mediaCredentialGapCount > 0;
 
   obsStore?.insertDiagnostic({
     timestamp: clock.now(),
@@ -273,6 +407,9 @@ export function buildConfigPostureRecord(
       // Agents booted with a NATIVE provider + a foreign model family
       // (the provider/model chimera). A COUNT, never agent ids/model names (no free text).
       chimericModelCount,
+      // Agents whose (provider, model) does NOT resolve in the catalog (and is not a
+      // custom model) → fail-closed-to-nano. A COUNT, never agent ids/model names.
+      unresolvedModelCount,
       // Agents burning tokens on remote-unknown-priced models
       // (resolvePricingState == "unknown"). A COUNT, never agent ids/model names.
       pricingGapCount,
@@ -284,6 +421,16 @@ export function buildConfigPostureRecord(
       // The no-downgrade sandbox invariant is DISABLED (relaxed
       // default surfaced at boot, not silent). A boolean, never config bodies.
       sandboxNoDowngradeDisabled,
+      // Chromium runs WITHOUT its sandbox (browser.noSandbox: true) — a relaxed
+      // security default surfaced at boot, not silent. A boolean, never bodies.
+      browserNoSandbox,
+      // A driven coding CLI runs WITHOUT the bwrap jail
+      // (skills.terminal.unsafeDisableSandbox: true) — a relaxed security default surfaced at
+      // boot, not silent. A boolean, never agent ids or bodies.
+      terminalUnsafeDisableSandbox,
+      // Configured media pipelines whose pinned provider's credential is
+      // absent (image/transcription/tts/video). A COUNT, never provider names.
+      mediaCredentialGapCount,
     }),
   });
 }

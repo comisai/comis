@@ -271,6 +271,8 @@ export async function handleWireMemoryCronSentinel(
     // Distinct topicKey groups across the kinds — the under-merge
     // discriminator (selected>1 + distinctTopicKeys>1 + maxCardinality<2 = successes that didn't merge).
     let sumDistinctTopicKeys = 0;
+    // Topics corroborated via the single_owner repetition path, summed across kinds (obs).
+    let sumSingleOwnerCorroborated = 0;
 
     for (const { kind, systemPrompt, source, groupKey, populateProcedureMetadata } of reflectKinds) {
       // CLOSED-GRAPH CUT: the per-kind @comis/agent reflect adapter (wraps the UNTRUSTED
@@ -286,6 +288,35 @@ export async function handleWireMemoryCronSentinel(
         logger: reflectLogger,
         systemPrompt,
         source,
+        // Background-run spend attribution: reflection LLM calls previously
+        // hit the provider bill with ZERO obs_token_usage rows — invisible to
+        // fleet/billing/obs_query. The synthetic __REFLECT__ session key keys
+        // the rows to the background job, never a user session.
+        onUsage: (usage) => {
+          container.eventBus.emit("observability:token_usage", {
+            timestamp: clock.now(),
+            traceId: `reflect-${agentId}-${clock.now()}`,
+            agentId,
+            channelId: "__reflect__",
+            executionId: `reflect-${kind}-${clock.now()}`,
+            provider: resolved.provider,
+            model: resolved.modelId,
+            tokens: {
+              prompt: usage.inputTokens,
+              completion: usage.outputTokens,
+              total: usage.inputTokens + usage.outputTokens,
+            },
+            cost: usage.cost,
+            latencyMs: usage.durationMs,
+            cacheReadTokens: usage.cacheReadTokens,
+            cacheWriteTokens: usage.cacheWriteTokens,
+            sessionKey: `__REFLECT__:${agentId}`,
+            savedVsUncached: 0,
+            cacheEligible: false,
+            warmupTurn: false,
+            pendingCacheInvestmentUsd: 0,
+          });
+        },
         ...cronCustomModelOpt(container.config.providers?.entries?.[resolved.provider], resolved.provider, resolved.modelId),
       });
       const sourceTrajectories = await reflection.buildSourceTrajectories(kind, agentId, reflectTenantId);
@@ -306,6 +337,10 @@ export async function handleWireMemoryCronSentinel(
           // from `learning.reflect.maxDocsPerRun` (default 25). Each kind is
           // bounded independently → a known 3×maxDocsPerRun per-run LLM ceiling.
           maxDocsPerRun: cfg.reflect.maxDocsPerRun,
+          // The corroboration policy — single_owner (default) or distinct_sessions.
+          // Threaded so a single-owner box learns from the owner's repeated successes
+          // (distinct_sessions is structurally unreachable for one stable DM).
+          corroboration: cfg.reflect.corroboration,
         },
         sourceTrajectories,
         reflectionAdapter,
@@ -329,6 +364,7 @@ export async function handleWireMemoryCronSentinel(
         sumSourceChars += v.totalSourceChars;
         sumEmptyReflections += v.emptyReflections;
         sumDistinctTopicKeys += v.distinctTopicKeys;
+        sumSingleOwnerCorroborated += v.singleOwnerCorroborated;
         maxCardinality = Math.max(maxCardinality, v.maxTopicCardinality);
         // Per-kind INFO completion line (the real counts) so an operator sees each kind's
         // outcome; the SUMMED daemon emit follows the loop. Counts ONLY (§2.7).
@@ -360,7 +396,7 @@ export async function handleWireMemoryCronSentinel(
     // nameLengthRejections / skipped + the source counts ALSO ride the content-free bus payload (they
     // are COUNTS, like admitted/synthesized — bodies are forbidden on the bus, not counts), so `comis explain`
     // answers "HOW MANY untrusted dropped / was the source empty" without a daemon.log grep.
-    reflectLogger.info({ agentId, selected: sumSelected, admitted: sumAdmitted, maxTopicCardinality: maxCardinality, distinctTopicKeys: sumDistinctTopicKeys, skipped: sumSkipped, untrustedDrops: sumUntrustedDrops, nameLengthRejections: sumNameLengthRejections, sourceTrajectoryCount: sumSourceTrajectoryCount, totalSourceChars: sumSourceChars, admissionOutcome, durationMs: clock.now() - reflectStartMs }, "Reflection complete (all kinds)");
+    reflectLogger.info({ agentId, selected: sumSelected, admitted: sumAdmitted, maxTopicCardinality: maxCardinality, singleOwnerCorroborated: sumSingleOwnerCorroborated, distinctTopicKeys: sumDistinctTopicKeys, skipped: sumSkipped, untrustedDrops: sumUntrustedDrops, nameLengthRejections: sumNameLengthRejections, sourceTrajectoryCount: sumSourceTrajectoryCount, totalSourceChars: sumSourceChars, admissionOutcome, durationMs: clock.now() - reflectStartMs }, "Reflection complete (all kinds)");
     // The `reflect:admitted.count` contract is "how many were ADMITTED this run"
     // (events-learning.ts) — emit the SUMMED admitted across skill+profile+topic.
     container.eventBus.emit("reflect:admitted", { agentId, count: sumAdmitted, timestamp: clock.now() });
@@ -378,6 +414,9 @@ export async function handleWireMemoryCronSentinel(
       validated: sumAdmitted,
       admitted: sumAdmitted,
       maxClusterCardinality: maxCardinality,
+      // Topics corroborated via the single_owner repetition path (0 in distinct_sessions mode) —
+      // so a maxClusterCardinality:1 run that STILL admitted reads as single-owner, not a bug.
+      singleOwnerCorroborated: sumSingleOwnerCorroborated,
       // Distinct topicKey groups — the under-merge discriminator (paired with synthesized +
       // maxClusterCardinality: synthesized>1 & distinctTopicKeys>1 & maxClusterCardinality<2 = under-merge).
       distinctTopicKeys: sumDistinctTopicKeys,

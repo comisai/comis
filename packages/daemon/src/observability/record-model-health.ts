@@ -31,7 +31,7 @@
  * @module
  */
 import type { ClockPort } from "@comis/core";
-import type { ObservabilityStore } from "@comis/memory";
+import type { ObservabilityStore, VecTableRebuild } from "@comis/memory";
 
 /** The boot-time load-level model-health signals (booleans / "unknown" only). */
 export interface ModelHealthSignals {
@@ -46,6 +46,17 @@ export interface ModelHealthSignals {
   embeddingMultilingual: boolean | "unknown";
   /** Advisory: the resolved reranker GGUF id reads multilingual. */
   rerankerMultilingual: boolean | "unknown";
+  /** The vec0 twins rebuilt at THIS boot because the embedder dimension
+   *  changed (closed table names + two integers — content-free). Present only
+   *  when a rebuild happened, so the fleet drill-down confirms the heal ran
+   *  and names both dimensions in one look. */
+  vecRebuilt?: readonly VecTableRebuild[];
+  /** Memories awaiting their vector twin (`has_embedding = 0`) at boot — the
+   *  embedding backlog. A count that persists/grows across boots while
+   *  `embeddingAvailable` is true names a silently-dead embedding queue in
+   *  one look (a single integer — content-free). Absent when the count could
+   *  not be read. */
+  unembeddedCount?: number;
 }
 
 /**
@@ -74,6 +85,12 @@ export function recordModelHealth(
       rerankerBuilt: signals.rerankerBuilt,
       embeddingMultilingual: signals.embeddingMultilingual,
       rerankerMultilingual: signals.rerankerMultilingual,
+      ...(signals.vecRebuilt !== undefined && signals.vecRebuilt.length > 0
+        ? { vecRebuilt: signals.vecRebuilt }
+        : {}),
+      ...(signals.unembeddedCount !== undefined
+        ? { unembeddedCount: signals.unembeddedCount }
+        : {}),
     }),
   });
 }

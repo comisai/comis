@@ -88,80 +88,71 @@ export function repairOrphanedMessages(sessionManager: SessionManager): RepairRe
     return { repaired: false };
   }
 
-  // Case 1: Orphaned user message -- append synthetic assistant reply
+  // A session can carry MORE THAN ONE anomaly at once — e.g. a trailing
+  // orphaned user AND a mid-session same-role run. The tail cases used to
+  // `return` after the first match, so the mid-session repair (Case 4) never
+  // ran when a tail anomaly was present, leaving the mid-session anomaly
+  // unrepaired and re-detected every turn forever (live incident 2026-07-08:
+  // a `user, assistant, user, user` session got its tail fixed while the
+  // mid-session user-user survived). Both passes now run and their reasons
+  // combine. The tail pass runs FIRST (its synthetic append is a leaf
+  // operation); the mid-session pass then re-scans the fresh tree.
+  const reasons: string[] = [];
+
+  // Tail cases (1-3): the session ends on an orphaned user / tool result /
+  // interrupted toolUse — append a synthetic assistant so the tail alternates.
+  // Exactly one can match (they key on the last message's role/stopReason).
+
+  // Case 1: Orphaned user message.
   if (lastMsg.role === "user") {
     appendSyntheticAssistant(sessionManager, "(previous response was interrupted)");
-    return {
-      repaired: true,
-      reason: "trailing user message without assistant reply",
-    };
-  }
+    reasons.push("trailing user message without assistant reply");
+  } else {
+    /* eslint-disable @typescript-eslint/no-explicit-any -- role "tool"/"toolResult" not in SDK AgentMessage union; stopReason "toolUse" internal SDK value */
+    const isToolResult =
+      (lastMsg as any).role === "tool" || (lastMsg as any).role === "toolResult";
+    const isInterruptedToolUse =
+      lastMsg.role === "assistant" && (lastMsg as any).stopReason === "toolUse";
+    /* eslint-enable @typescript-eslint/no-explicit-any */
 
-  // Case 2: Tool-result tail -- session ends with tool/toolResult after
-  // an assistant toolUse, but execution was interrupted by a restart.
-  // Content-aware: the synthetic assistant text
-  // reflects the actual trailing toolResult body so the model is not given
-  // a prompt that contradicts the real successful result already on disk.
-  /* eslint-disable @typescript-eslint/no-explicit-any -- role "tool"/"toolResult" not in SDK AgentMessage union */
-  const isToolResult =
-    (lastMsg as any).role === "tool" || (lastMsg as any).role === "toolResult";
-  /* eslint-enable @typescript-eslint/no-explicit-any */
-
-  if (isToolResult) {
-    let text: string;
-    if (isErroredToolResult(lastMsg)) {
-      text = "(previous tool errored before I could react)";
-    } else {
-      const body = parseToolResultBody(lastMsg);
-      if (body && body.restarting === true) {
-        text = "(daemon restarted to apply the change — continuing)";
+    // Case 2: Tool-result tail -- content-aware synthetic text reflects the
+    // actual trailing toolResult body so the model is not given a prompt that
+    // contradicts the real successful result already on disk.
+    if (isToolResult) {
+      let text: string;
+      if (isErroredToolResult(lastMsg)) {
+        text = "(previous tool errored before I could react)";
       } else {
-        text = "(continuing after daemon restart)";
+        const body = parseToolResultBody(lastMsg);
+        text = body && body.restarting === true
+          ? "(daemon restarted to apply the change — continuing)"
+          : "(continuing after daemon restart)";
       }
+      appendSyntheticAssistant(sessionManager, text);
+      reasons.push("trailing tool result without assistant reply (interrupted by restart)");
+    } else if (isInterruptedToolUse) {
+      // Case 3: Assistant requested tool calls but was interrupted before
+      // results arrived.
+      appendSyntheticAssistant(
+        sessionManager,
+        "(previous tool execution was interrupted by a system restart)",
+      );
+      reasons.push("assistant toolUse interrupted before processing results");
     }
-    appendSyntheticAssistant(sessionManager, text);
-    return {
-      repaired: true,
-      reason: "trailing tool result without assistant reply (interrupted by restart)",
-    };
   }
 
-  // Case 3: Assistant message with stopReason "toolUse" -- the assistant
-  // requested tool calls but execution was interrupted before results arrived.
-  /* eslint-disable @typescript-eslint/no-explicit-any -- stopReason "toolUse" internal SDK value */
-  const isInterruptedToolUse =
-    lastMsg.role === "assistant" &&
-    (lastMsg as any).stopReason === "toolUse";
-  /* eslint-enable @typescript-eslint/no-explicit-any */
-
-  if (isInterruptedToolUse) {
-    appendSyntheticAssistant(
-      sessionManager,
-      "(previous tool execution was interrupted by a system restart)",
-    );
-    return {
-      repaired: true,
-      reason: "assistant toolUse interrupted before processing results",
-    };
-  }
-
-  // Case 4: Mid-session role alternation anomalies.
-  // Consecutive same-role messages (user-user or assistant-assistant) in the
-  // middle of the history. Happens when a daemon restart writes a synthetic
-  // repair at the tail, then a new execution adds another message of the
-  // same role. Tail checks above won't catch these because the tail is clean.
-
-  // Strategy: use getBranch() to get the entry path (root to leaf).
-  // Detect anomalies among SessionMessageEntry entries. When found,
-  // branch() back to the parent of the first anomaly and re-append
-  // all subsequent entries with synthetic fillers inserted between
-  // consecutive same-role messages.
+  // Case 4: Mid-session role alternation anomalies (consecutive same-role
+  // anywhere). Runs REGARDLESS of whether a tail case fired — this is the gap
+  // the early `return` used to open. Re-scans the fresh tree (its own
+  // getBranch()/buildSessionContext()), so it sees any synthetic tail append.
   const midSessionResult = repairMidSessionAnomalies(sessionManager);
-  if (midSessionResult.repaired) {
-    return midSessionResult;
+  if (midSessionResult.repaired && midSessionResult.reason) {
+    reasons.push(midSessionResult.reason);
   }
 
-  return { repaired: false };
+  return reasons.length > 0
+    ? { repaired: true, reason: reasons.join("; ") }
+    : { repaired: false };
 }
 
 // ---------------------------------------------------------------------------

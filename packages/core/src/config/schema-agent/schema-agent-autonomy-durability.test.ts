@@ -5,26 +5,26 @@ import { AutonomyConfigSchema } from "./schema-agent-autonomy.js";
 
 /**
  * The durability posture's `orchestrateResume` toggle — the single gate every
- * resumable-orchestrate behavior nests under. It is default-OFF, nested INSIDE
- * `DurabilityConfigSchema` (not a flat toggle), so an omitted block fails closed
- * (deny-by-absence) and a typo'd key is rejected by the `strictObject` rather
- * than silently ignored.
+ * resumable-orchestrate behavior nests under. Full-capability-by-default: it (and
+ * the durability master `enabled`) ship `.default(true)`, nested INSIDE
+ * `DurabilityConfigSchema`, so an omitted block materializes durable+resumable ON
+ * and a typo'd key is rejected by the `strictObject` rather than silently ignored.
  */
-describe("DurabilityConfigSchema.orchestrateResume (default-off resume gate)", () => {
-  it("resolves to false when the durability block is parsed with no override (field default)", () => {
+describe("DurabilityConfigSchema.orchestrateResume (default-on resume gate)", () => {
+  it("resolves to true when the durability block is parsed with no override (field default)", () => {
     const cfg = DurabilityConfigSchema.parse({});
-    expect(cfg.orchestrateResume).toBe(false);
-    // The pre-existing default-off posture is unchanged.
-    expect(cfg.enabled).toBe(false);
+    expect(cfg.orchestrateResume).toBe(true);
+    // Durability master gate is also on by default (full capability out of the box).
+    expect(cfg.enabled).toBe(true);
   });
 
-  it("resolves to false when the WHOLE durability block is omitted (parent .default() factory carries it)", () => {
+  it("resolves to true when the WHOLE durability block is omitted (parent .default() factory carries it)", () => {
     // AutonomyConfigSchema wires `durability: DurabilityConfigSchema.default(() =>
     // DurabilityConfigSchema.parse({}))` — a re-parsing factory, so an omitted
-    // block materializes every field default INCLUDING orchestrateResume:false.
-    // This is the deny-by-absence proof: no autonomy config ⇒ resume disabled.
+    // block materializes every field default INCLUDING orchestrateResume:true.
+    // No autonomy config ⇒ durable resume ON out of the box.
     const autonomy = AutonomyConfigSchema.parse({});
-    expect(autonomy.durability.orchestrateResume).toBe(false);
+    expect(autonomy.durability.orchestrateResume).toBe(true);
   });
 
   it("parses an explicit { orchestrateResume: true } to true", () => {

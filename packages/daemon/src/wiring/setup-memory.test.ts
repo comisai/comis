@@ -389,6 +389,61 @@ describe("setupMemory", { timeout: 30_000 }, () => {
   });
 
   // -------------------------------------------------------------------------
+  // 2b. Cold-boot embedding init must be attributable from the default level:
+  //     a first boot blocks tens of seconds downloading + loading the local
+  //     GGUF with (previously) zero log lines in between — the operator saw
+  //     an unexplained startup stall. Contract: an INFO start line fires
+  //     BEFORE the blocking factory call, and the completion line is INFO
+  //     with a durationMs covering the blocking window.
+  // -------------------------------------------------------------------------
+
+  it("logs an INFO start line before the blocking embedding init and stamps durationMs on completion", async () => {
+    const container = createMinimalContainer({
+      embedding: {
+        enabled: true,
+        provider: "local",
+        local: {
+          modelUri: "hf:nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q8_0.gguf",
+          modelsDir: "models",
+        },
+      },
+    });
+    const memoryLogger = createMockLogger() as any;
+    let infoCallsWhenFactoryRan = -1;
+    mockCreateEmbeddingProvider.mockImplementationOnce(async () => {
+      infoCallsWhenFactoryRan = memoryLogger.info.mock.calls.length;
+      testClock.advance(13_000); // the download+load stall
+      return {
+        ok: true,
+        value: { provider: "local", embed: vi.fn(), modelId: "nomic-test", dimensions: 384 },
+      };
+    });
+    const setupMemory = await getSetupMemory();
+
+    await setupMemory({ container, memoryLogger, clock: testClock, timers: testTimers });
+
+    // At least one INFO line landed BEFORE the potentially-minutes-long call,
+    // and it names what the daemon is about to block on (model URI + dir).
+    expect(infoCallsWhenFactoryRan).toBeGreaterThanOrEqual(1);
+    const startCall = memoryLogger.info.mock.calls
+      .slice(0, infoCallsWhenFactoryRan)
+      .find((c: unknown[]) => /embedding/i.test(String(c[1])));
+    expect(startCall).toBeDefined();
+    expect(startCall![0]).toEqual(
+      expect.objectContaining({
+        modelUri: expect.stringContaining("nomic"),
+        modelsDir: expect.any(String),
+      }),
+    );
+
+    // The completion line is INFO (not DEBUG) and carries the blocking window.
+    expect(memoryLogger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ modelId: "nomic-test", durationMs: 13_000 }),
+      "Embedding provider initialized",
+    );
+  });
+
+  // -------------------------------------------------------------------------
   // 3. Falls back to FTS5-only when provider returns err
   // -------------------------------------------------------------------------
 

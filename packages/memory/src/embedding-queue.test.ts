@@ -332,3 +332,70 @@ describe("createEmbeddingQueue", () => {
     expect(float32[1]).toBeCloseTo(66 / 256, 5);
   });
 });
+
+describe("embedding store failure diagnosability", () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, DIMS);
+  });
+
+  /** A port whose vectors do NOT match the vec table's dimension. */
+  function createWrongDimsPort(dimensions: number): EmbeddingPort {
+    return {
+      provider: "test",
+      dimensions,
+      modelId: "test-embed-model",
+      async embed(): Promise<Result<number[], Error>> {
+        return ok(new Array(dimensions).fill(0.5));
+      },
+      async embedBatch(texts: string[]): Promise<Result<number[][], Error>> {
+        return ok(texts.map(() => new Array(dimensions).fill(0.5)));
+      },
+    };
+  }
+
+  it("warns with errorKind config and a dimensions-naming hint when the vec insert fails on a dimension mismatch", async () => {
+    if (!isVecAvailable()) return;
+    insertMemory(db, "m1", "hello world");
+    const warn = vi.fn();
+    // The port emits 8-dim vectors into a 4-dim table — the INSERT throws.
+    // Pre-fix this throw escaped the queue task and was swallowed whole
+    // (suppressError), leaving rows permanently unembedded with zero log
+    // lines (observed live: 8 stored / 0 embedded / no WARN).
+    const queue = createEmbeddingQueue(db, createWrongDimsPort(DIMS * 2), { warn });
+
+    queue.enqueue("m1", "hello world");
+    await queue.onIdle();
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    const [obj, msg] = warn.mock.calls[0]!;
+    expect(msg).toBe("Embedding store failed");
+    expect(obj.errorKind).toBe("config");
+    expect(String(obj.hint)).toMatch(/dimension/i);
+    // The row honestly remains unembedded (FTS5 still serves it).
+    const row = db.prepare("SELECT has_embedding FROM memories WHERE id = 'm1'").get() as {
+      has_embedding: number;
+    };
+    expect(row.has_embedding).toBe(0);
+  });
+
+  it("warns with errorKind internal when a non-dimension store failure occurs (never silently swallowed)", async () => {
+    if (!isVecAvailable()) return;
+    insertMemory(db, "m1", "hello world");
+    const warn = vi.fn();
+    const queue = createEmbeddingQueue(db, createWrongDimsPort(DIMS), { warn });
+    // Force a non-dimension SQL failure: drop the memories table's row so the
+    // UPDATE succeeds but the vec INSERT hits a dropped vec table.
+    db.exec("DROP TABLE vec_memories");
+
+    queue.enqueue("m1", "hello world");
+    await queue.onIdle();
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    const [obj, msg] = warn.mock.calls[0]!;
+    expect(msg).toBe("Embedding store failed");
+    expect(obj.errorKind).toBe("internal");
+  });
+});

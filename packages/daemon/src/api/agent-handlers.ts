@@ -27,6 +27,8 @@ import {
   AgentGetOperationModelsContract,
   stripInternalFields,
   systemGetEnv,
+  findOperatorOnlyAgentPaths,
+  systemNowMs,
 } from "@comis/core";
 import type {
   PerAgentConfig,
@@ -73,6 +75,56 @@ import type { AgentsApiDeps as AgentHandlerDeps } from "./types.js";
 export type { AgentHandlerDeps };
 
 // ---------------------------------------------------------------------------
+// Operator-only security-posture guard
+// ---------------------------------------------------------------------------
+
+/**
+ * Refuse an agents.create / agents.update that would SET an operator-only
+ * security-posture field (sandbox/jail escape switches, terminal allowlist).
+ *
+ * The authoritative layer for agent-config policy. `config.patch` already
+ * rejects the whole `agents` section and redirects to `agents_manage`; without
+ * this, `agents_manage` itself applied NO immutability check, so an admin-trust
+ * agent could flip its own `skills.execSandbox.enabled` never→always at runtime
+ * (unsandboxed marathon BL-1, 2026-07-12). These fields are operator-file-only.
+ *
+ * `userConfig` is the RAW user-supplied partial (before schema defaults) — the
+ * defaulted config always carries `skills.execSandbox`, so scanning post-parse
+ * would reject every create. Throws with a file-edit redirect on any hit, after
+ * a best-effort security audit event. No-op for the common case.
+ */
+function assertNoOperatorOnlyAgentFields(
+  userConfig: unknown,
+  agentId: string,
+  actionType: string,
+  deps: AgentHandlerDeps,
+): void {
+  const hits = findOperatorOnlyAgentPaths(userConfig);
+  if (hits.length === 0) return;
+
+  // Best-effort security audit — same eventBus persistToConfig uses. Absent in
+  // some test contexts; the throw below is the load-bearing refusal.
+  const eventBus = deps.persistDeps?.container.eventBus;
+  if (eventBus) {
+    eventBus.emit("audit:event", {
+      timestamp: systemNowMs(),
+      agentId,
+      tenantId: deps.persistDeps?.container.config.tenantId ?? "default",
+      actionType,
+      classification: "destructive" as const,
+      outcome: "failure" as const,
+      metadata: { entityId: agentId, error: `operator-only fields refused: ${hits.join(", ")}` },
+    });
+  }
+
+  throw new AuthorizationError(
+    `Config path${hits.length > 1 ? "s" : ""} "${hits.join('", "')}" ${hits.length > 1 ? "are" : "is"} ` +
+      `operator-only and cannot be set at runtime via agents_manage — these gate sandbox/jail escape and ` +
+      `terminal command allowlisting. Edit the agent's config file directly and restart the daemon to change them.`,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
@@ -112,6 +164,12 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
       const inlineContent = (params.inlineContent as { role?: string; identity?: string } | undefined) ?? undefined;
 
       const config = (params.config as Partial<PerAgentConfig>) ?? {};
+
+      // Operator-only security-posture guard — refuse sandbox/jail/terminal
+      // escape switches BEFORE any defaulting, in-memory commit, or persist.
+      // Checked on the raw user input (defaults would flag every create).
+      assertNoOperatorOnlyAgentFields(config, agentId, "agents.create", deps);
+
       // Strip workspacePath so new agents always get the auto-computed
       // isolated workspace (~/.comis/workspace-{agentId}) instead of
       // an LLM-guessed relative path that nests inside the default workspace.
@@ -313,6 +371,11 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
 
       const userParams = stripInternalFields(rawParams);
       const params = AgentsUpdateContract.request.parse(userParams);
+
+      // Operator-only security-posture guard — refuse sandbox/jail/terminal
+      // escape switches BEFORE the dryRun short-circuit and the persist path.
+      // Checked on the raw user patch (only fields the caller explicitly set).
+      assertNoOperatorOnlyAgentFields(params.config, agentId, "agents.update", deps);
 
       // dryRun: run the SAME validation below (deep-merge + Zod parse +
       // oauthProfiles existence check + credential guard/probe) but skip BOTH

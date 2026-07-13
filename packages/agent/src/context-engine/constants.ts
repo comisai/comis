@@ -201,6 +201,7 @@ export const MIN_CACHEABLE_TOKENS: Record<string, number> = {
   "claude-opus-4-5": 4096,
   "claude-opus-4-1": 1024,
   "claude-opus-4-": 1024,
+  "claude-sonnet-5": 2048,
   "claude-sonnet-4-6": 2048,
   "claude-sonnet-4-5": 1024,
   "claude-sonnet-4-": 1024,

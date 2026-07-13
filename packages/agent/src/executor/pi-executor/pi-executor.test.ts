@@ -234,6 +234,10 @@ vi.mock("../../session/orphaned-message-repair.js", () => ({
   scrubPoisonedThinkingBlocks: vi.fn().mockReturnValue({ scrubbed: false, blocksRemoved: 0 }),
 }));
 
+vi.mock("../../session/scrub-redacted-tool-calls.js", () => ({
+  scrubRedactedToolCalls: vi.fn().mockReturnValue({ scrubbed: false, blocksRewritten: 0, resultsRewritten: 0 }),
+}));
+
 vi.mock("../../bridge/pi-event-bridge.js", () => ({
   createPiEventBridge: vi.fn().mockReturnValue({
     listener: mockBridgeListener,
@@ -313,7 +317,8 @@ import {
 // factory re-exported from @comis/core — the architecture-grep boundary
 // forbids production-stub crossover both ways).
 import { createCapabilityPortStub } from "../../../../core/src/ports/__test-helpers/tool-capability-stub.js";
-import { repairOrphanedMessages } from "../../session/orphaned-message-repair.js";
+import { repairOrphanedMessages, scrubPoisonedThinkingBlocks } from "../../session/orphaned-message-repair.js";
+import { scrubRedactedToolCalls } from "../../session/scrub-redacted-tool-calls.js";
 import { createPiEventBridge } from "../../bridge/pi-event-bridge.js";
 import { assembleRichSystemPrompt, loadWorkspaceBootstrapFiles, buildBootstrapContextFiles } from "../../bootstrap/index.js";
 import { wrapInEnvelope } from "../../envelope/message-envelope.js";
@@ -1584,6 +1589,24 @@ describe("PiExecutor", () => {
       const repairOrder = (repairOrphanedMessages as Mock).mock.invocationCallOrder[0];
       const promptOrder = mockPrompt.mock.invocationCallOrder[0];
       expect(repairOrder).toBeLessThan(promptOrder!);
+    });
+
+    it("runs repairOrphanedMessages AFTER the scrubs so it validates the post-scrub tree", async () => {
+      // The scrubs (scrubPoisonedThinkingBlocks / scrubRedactedToolCalls) mutate
+      // the session tree; if repair runs BEFORE them, a scrub-induced anomaly is
+      // left unrepaired while the detector (which runs on the post-scrub
+      // buildSessionContext) flags it forever (live incident 2026-07-08: the
+      // idx-47 anomaly was detected every turn but never repaired). Repair must
+      // see the same post-scrub state the detector validates.
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+      await executor.execute(testMessage, testSessionKey);
+
+      const repairOrder = (repairOrphanedMessages as Mock).mock.invocationCallOrder[0]!;
+      const scrubPoisonOrder = (scrubPoisonedThinkingBlocks as Mock).mock.invocationCallOrder[0]!;
+      const scrubRedactOrder = (scrubRedactedToolCalls as Mock).mock.invocationCallOrder[0]!;
+      expect(scrubPoisonOrder).toBeLessThan(repairOrder);
+      expect(scrubRedactOrder).toBeLessThan(repairOrder);
     });
 
     it("logs when repair is performed", async () => {

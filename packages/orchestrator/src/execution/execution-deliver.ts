@@ -204,6 +204,10 @@ export async function deliverExecutionResponse(
       // closure at composition root; replyMode + abortSignal still ride per-call.
       const deliveryResult = await deps.deliveryService.deliverToChannel(adapter, effectiveMsg.channelId, text, {
         replyTo: blockIndex === 0 ? replyTo : undefined,
+        // Original subject rides through so subject-threading channels (email)
+        // can form a "Re: <subject>" reply; only inbound email messages carry
+        // emailSubject metadata, so other channels get undefined and ignore it.
+        subject: effectiveMsg.metadata?.emailSubject as string | undefined,
         threadId: threadOpts?.threadId,
         extra: threadOpts?.extra,
         skipFormat: true,

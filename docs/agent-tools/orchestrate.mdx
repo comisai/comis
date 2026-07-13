@@ -149,9 +149,10 @@ console.log(JSON.stringify(result));
 Because a server's tool set is discovered per connection, `comis_tools.mcp` is a **runtime
 namespace**, not a fixed list — `comis_tools.mcp.<server>.<tool>(args)` resolves each `<server>`
 and `<tool>` on the fly to a single cap-socket call. It runs under the `orch:mcp` capability, which
-is **off in every default profile** — the one genuinely new default-off *capability* of this surface
-(the write/message *capabilities* are already on in `standard`, though the `write` surface itself is
-a separate opt-in — see below).
+is a **floor cap on standard/unattended/max** (held by default, like `write`/`message`). Holding the
+cap opens **no** server, though — reachability is gated by the per-server `autonomy.mcp.allow`
+allowlist (empty by default ⇒ deny by absence), exactly like the `write` surface's separate opt-in
+(see below).
 
 The call runs exactly like `web_fetch`: **daemon-side**, on the daemon's network, so the jail
 stays `--unshare-net`. The jailed script's call crosses the `0600` capability socket to the
@@ -204,8 +205,9 @@ methods are reachable by default; the **`write` method is gated by a separate, d
 toggle** — even though a `standard` agent *holds* `orch:write`, the typed write surface stays dark
 until you set `write: true` under the agent's `autonomy` block, so the orchestrate surface is
 **read-only by default**. The methods are inert for an agent that does not hold the underlying
-capability (an `assistant`-profile agent, or one you set `write: false`, cannot call `write`). Only
-`orch:mcp` above is a genuinely new default-off *capability*.
+capability (an `assistant`-profile agent, or one you set `write: false`, cannot call `write`).
+`orch:mcp` follows the same shape: the cap is floor-held on standard/unattended/max, but the `mcp`
+surface reaches **no** server until you list it under `autonomy.mcp.allow` (empty by default).
 </Warning>
 
 `write` is **run-scoped, run-ephemeral, and isolated from the discovery/config subtrees**: every

@@ -257,14 +257,26 @@ export function translatePayload(
       // Per-recall lane/candidate/final counts, on the explain/trace timeline.
       // Counts/booleans ONLY — never query text or memory
       // bodies; agentId/sessionKey/traceId are envelope correlation ids.
+      // crossUserCount/distinctSources are the content-free cross-sender provenance
+      // signal (see events-agent.ts) — counts, no ids/bodies.
       return {
         lanes: payload.lanes,
         ftsCandidates: payload.ftsCandidates,
         vectorCandidates: payload.vectorCandidates,
         entityCandidates: payload.entityCandidates,
         finalCount: payload.finalCount,
+        crossUserCount: payload.crossUserCount,
+        distinctSources: payload.distinctSources,
         rerankerAvailable: payload.rerankerAvailable,
         durationMs: payload.durationMs,
+      };
+
+    case "memory:recall_degraded":
+      // A lane / the lane split failed and recall degraded. Closed scope tag +
+      // the closed ErrorKind string ONLY — never error bodies or query text.
+      return {
+        scope: payload.scope,
+        errorKind: payload.errorKind,
       };
 
     case "memory:reranked":
@@ -307,6 +319,7 @@ export function translatePayload(
     case "graph:repaired":
     case "graph:synthesized_from_intent":
     case "subagent:steered":
+    case "subagent:killed": // Attributed kill — {runId, killedBy, runtimeMs, idleMs?, thresholdMs?}; the free-text reason never crosses the bus.
     case "security:sandbox_downgrade_refused":
     case "subagent:delivery_deadlettered":
     case "subagent:delivery_retried": // The self-healing transient retry (sibling of delivery_deadlettered) — content-free {runId, channelType, attempt, transient}
@@ -334,8 +347,8 @@ export function translatePayload(
         ...(Array.isArray(payload.demotedSkillNames) ? { demotedSkillNames: payload.demotedSkillNames } : {}),
         ...(typeof payload.triggerTrajectoryId === "string" ? { triggerTrajectoryId: payload.triggerTrajectoryId } : {}),
       };
-    case "reflect:funnel": // The reflection FUNNEL COUNTS + the acute admissionOutcome verdict — never a procedure body/script. Answers "why 0 admitted" from the trajectory in ONE field. The funnel MAGNITUDES (untrustedDrops / source counts) ride too — all counts, never bodies.
-      return { synthesized: payload.synthesized, validated: payload.validated, admitted: payload.admitted, maxClusterCardinality: payload.maxClusterCardinality, distinctTopicKeys: payload.distinctTopicKeys, untrustedDrops: payload.untrustedDrops, nameLengthRejections: payload.nameLengthRejections, skipped: payload.skipped, sourceTrajectoryCount: payload.sourceTrajectoryCount, totalSourceChars: payload.totalSourceChars, admissionOutcome: payload.admissionOutcome };
+    case "reflect:funnel": // The reflection FUNNEL COUNTS + the acute admissionOutcome verdict — never a procedure body/script. Answers "why 0 admitted" from the trajectory in ONE field. The funnel MAGNITUDES (untrustedDrops / source counts / singleOwnerCorroborated) ride too — all counts, never bodies.
+      return { synthesized: payload.synthesized, validated: payload.validated, admitted: payload.admitted, maxClusterCardinality: payload.maxClusterCardinality, singleOwnerCorroborated: payload.singleOwnerCorroborated, distinctTopicKeys: payload.distinctTopicKeys, untrustedDrops: payload.untrustedDrops, nameLengthRejections: payload.nameLengthRejections, skipped: payload.skipped, sourceTrajectoryCount: payload.sourceTrajectoryCount, totalSourceChars: payload.totalSourceChars, admissionOutcome: payload.admissionOutcome };
     // Background task lifecycle: closed ids + durationMs ONLY — agentId/origin are envelope ids; no result/
     // error body crosses the bus; the record TYPE conveys promoted/completed/failed.
     case "background_task:promoted":
@@ -344,6 +357,12 @@ export function translatePayload(
       return { taskId: payload.taskId, toolName: payload.toolName, durationMs: payload.durationMs };
     case "background_task:failed":
       return { taskId: payload.taskId, toolName: payload.toolName, durationMs: payload.durationMs };
+    case "background_task:notified":
+      // The fallback-notice decision — taskId + tool NAME + the notified bool +
+      // closed-union reason ONLY. agentId/sessionKey/traceId/timestamp are
+      // envelope/correlation ids (sessionKey routes the record, then is stripped);
+      // the notice BODY never crosses the bus.
+      return { taskId: payload.taskId, toolName: payload.toolName, notified: payload.notified, reason: payload.reason };
 
     case "terminal:drive_promoted":
       // Terminal drive promotion → trajectory. Content-free: the reason enum

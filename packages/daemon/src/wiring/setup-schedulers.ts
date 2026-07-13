@@ -512,8 +512,13 @@ export async function setupSchedulers(deps: {
                 cacheRetention: job.cacheRetention,
                 toolPolicy: job.toolPolicy,
               });
-              await agentExecTracker.record({ ts: systemNowMs(), jobId: job.id, status: "ok", durationMs: systemNowMs() - startTs, summary: "No delivery target (event emitted)" });
-              return { status: "ok" as const, summary: "No delivery target (event emitted)" };
+              // A background/system-event job (reflect, the memory crons) whose
+              // WORK rode the emitted scheduler:job_result — there is simply no
+              // chat to deliver a reply to. Phrase the summary as the SUCCESS it
+              // is, so a log review does not read a healthy reflect fire as a
+              // "No delivery target" failure.
+              await agentExecTracker.record({ ts: systemNowMs(), jobId: job.id, status: "ok", durationMs: systemNowMs() - startTs, summary: "Background event emitted (no chat delivery target)" });
+              return { status: "ok" as const, summary: "Background event emitted (no chat delivery target)" };
             }
             jobLogger.warn(
               { payloadKind: job.payload.kind, hint: "Job has no delivery target — result cannot be delivered. Was the job created from a channel context?", errorKind: "config" as const },

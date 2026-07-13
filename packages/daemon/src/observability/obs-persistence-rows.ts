@@ -268,6 +268,70 @@ export function channelInboundSilentEventToRow(
 }
 
 /**
+ * Map a `memory:recall_degraded` event (a recall retrieval lane — or the whole
+ * lane split — failed and recall degraded) to a flat DiagnosticRow under
+ * `category:"health_signal"`, `severity:"warning"`. The `details.signal` label
+ * `"recall_degraded"` rides the generic `health_signal:<label>` fleet-findings
+ * rollup, so a RECURRING recall failure surfaces as a counted `comis fleet`
+ * finding with no extractor change — the incident class this closes was hours
+ * of per-turn recall failures visible only as daemon.log WARNs while the fleet
+ * lens reported nothing. Content-free: closed scope tag + closed ErrorKind
+ * string only — never query text or error bodies.
+ */
+export function recallDegradedEventToRow(
+  payload: EventMap["memory:recall_degraded"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "warning",
+    agentId: payload.agentId,
+    ...(payload.sessionKey !== undefined ? { sessionKey: payload.sessionKey } : {}),
+    message: "memory:recall_degraded",
+    details: JSON.stringify({
+      signal: "recall_degraded",
+      scope: payload.scope,
+      errorKind: payload.errorKind,
+    }),
+    traceId: payload.traceId,
+  };
+}
+
+/**
+ * Map an `agent:prefix_unstable` event (a cached-prefix message mutated on
+ * THRESHOLD+ calls within a recent window — Anthropic prompt-cache collapse) to
+ * a flat DiagnosticRow under `category:"health_signal"`, `severity:"warning"`.
+ * The `details.signal` label `"cache_prefix_churn"` rides the generic
+ * `health_signal:<label>` fleet-findings rollup, so a RECURRING churn surfaces
+ * as a counted `comis fleet` finding with no extractor change — the incident
+ * class this closes was a cache-prefix collapse (~328k wasted cache-write tokens
+ * in one session) visible only as daemon.log WARNs while the fleet lens reported
+ * nothing (comis-harel 2026-07-12). Content-free: closed `mutationClass` label +
+ * the divergent index + the windowed mutation count only — never message text.
+ * `mutationClass` rides `details.reason` so the fleet finding names WHICH class
+ * recurred (structural-shift / datetime-preamble / …) without a per-session explain.
+ */
+export function prefixUnstableEventToRow(
+  payload: EventMap["agent:prefix_unstable"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "warning",
+    ...(payload.agentId !== undefined ? { agentId: payload.agentId } : {}),
+    sessionKey: payload.sessionKey,
+    message: "agent:prefix_unstable",
+    details: JSON.stringify({
+      signal: "cache_prefix_churn",
+      reason: payload.mutationClass,
+      firstDivergentIndex: payload.firstDivergentIndex,
+      cacheRegionMutations: payload.cacheRegionMutations,
+    }),
+    traceId: undefined,
+  };
+}
+
+/**
  * Map a `channel:ingress_auth_rejected` event (an inbound activity rejected at
  * a channel gateway ingress auth gate) to a flat DiagnosticRow under
  * `category:"health_signal"`, `severity:"warning"`. The `details.signal` label
@@ -320,6 +384,10 @@ export function reflectFunnelEventToRow(
       admissionOutcome: payload.admissionOutcome,
       admitted: payload.admitted,
       maxClusterCardinality: payload.maxClusterCardinality,
+      // How many topics corroborated via single_owner REPETITION (0 in distinct_sessions mode).
+      // Makes an `admitted>0` run with `maxClusterCardinality:1` explicable as single-owner
+      // learning rather than a contradiction — the fleet lens shows the mode is active + working.
+      singleOwnerCorroborated: payload.singleOwnerCorroborated,
       // The under-merge discriminator (admitted=0 with distinctTopicKeys>1 & maxClusterCardinality<2
       // = successes that didn't merge → topicKey under-merge, not a genuine single-source).
       distinctTopicKeys: payload.distinctTopicKeys,

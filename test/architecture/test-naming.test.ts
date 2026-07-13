@@ -104,6 +104,7 @@ const VERB_FORMS: ReadonlySet<string> = new Set([
   "return","returns","returned","returning",
   "reject","rejects","rejected","rejecting",
   "refuse","refuses","refused","refusing",
+  "neutralize","neutralizes","neutralized","neutralizing",
   "apply","applies","applied","applying",
   "dispatch","dispatches","dispatched","dispatching",
   "propagate","propagates","propagated","propagating",

@@ -19,6 +19,7 @@
 import {
   createBackgroundCompletionRunner,
   createCompletionDispatcher,
+  createTurnFlightTracker,
   type BackgroundCompletionRunner,
   type BackgroundTaskManager,
   type CompletionDispatcher,
@@ -70,6 +71,15 @@ export interface SetupBackgroundCompletionRunnerDeps {
 export function setupBackgroundCompletionRunner(
   deps: SetupBackgroundCompletionRunnerDeps,
 ): BackgroundCompletionRunnerContext {
+  // LIVE-TURN oracle shared by dispatcher + runner: a tool auto-backgrounded
+  // mid-turn is consumed by its own still-running turn (the background_tasks
+  // stub protocol), so a completion landing while the origin turn is in
+  // flight fires NO raw fallback notice and NO re-entry. The persistent
+  // sessionStore below is near-EMPTY in DAG mode, so it cannot be this
+  // oracle (the live incident: a raw 'Background task "…" completed.'
+  // message mid-conversation, followed by the live turn's real answer).
+  const turnFlight = createTurnFlightTracker({ eventBus: deps.eventBus });
+
   // Dispatcher subscribes FIRST so its synchronous transitionDispatchState
   // runs before the runner's handler reads task.dispatchState within the
   // same event-bus tick.
@@ -79,6 +89,7 @@ export function setupBackgroundCompletionRunner(
     taskManager: deps.taskManager,
     fallbackNotifyFn: deps.fallbackNotifyFn,
     maxBackgroundHops: deps.maxBackgroundHops,
+    isTurnInFlight: (key) => turnFlight.isTurnInFlight(key),
     logger: deps.logger,
   });
 
@@ -89,16 +100,19 @@ export function setupBackgroundCompletionRunner(
     taskManager: deps.taskManager,
     fallbackNotifyFn: deps.fallbackNotifyFn,
     maxBackgroundHops: deps.maxBackgroundHops,
+    isTurnInFlight: (key) => turnFlight.isTurnInFlight(key),
     logger: deps.logger,
   });
 
   return {
     runner: {
       // Reverse-order shutdown: runner first (stops accepting events), then
-      // dispatcher (ensures the at-most-once gate is the last to tear down).
+      // dispatcher (the at-most-once gate), then the turn-flight tracker
+      // (the oracle both consult).
       async shutdown(): Promise<void> {
         await runner.shutdown();
         await dispatcher.shutdown();
+        turnFlight.shutdown();
       },
     },
     dispatcher,

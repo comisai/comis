@@ -98,7 +98,7 @@ function firstDivergentMessage(prev: number[] | undefined, curr: number[]): numb
  * Productizes the ad-hoc instrumentation used to root-cause a live
  * prefix-instability incident: the next one is diagnosable from this one WARN line.
  */
-function classifyPrefixMutation(
+export function classifyPrefixMutation(
   msg: Record<string, unknown> | undefined,
   prevSig?: string,
   currSig?: string,
@@ -106,15 +106,30 @@ function classifyPrefixMutation(
   if (!msg) return "unknown";
   const classes: string[] = [];
 
-  // Structural delta first (a cause a content-pattern-only classifier misses):
+  // Role change FIRST — the dominant, non-benign signal. When the message at a
+  // cached index changed ROLE between turns (e.g. assistant tool-use → user
+  // turn), the message is a DIFFERENT message, not an in-place edit: a
+  // STRUCTURAL index-shift (LCD condense/re-admit or history restructure shifted
+  // everything below the fence). It must be detected before the content-pattern
+  // classifier, because a shifted-in user turn carries the dynamic preamble
+  // (which holds `## Current Date & Time`) and would otherwise be mislabeled
+  // "datetime-preamble" — the misleading label that sent the comis-harel
+  // investigation the wrong way (the datetime is already relocated below the
+  // fence; the real cost is the index shift, not the timestamp).
+  const prevRole = prevSig ? prevSig.split("|")[0] : undefined;
+  const currRole = currSig ? currSig.split("|")[0] : undefined;
+  const roleChanged = !!prevRole && !!currRole && prevRole !== currRole;
+  if (roleChanged) classes.push("structural-shift");
+
+  // Structural delta next (a cause a content-pattern-only classifier misses):
   // a thinking block disappearing or content shrinking between turns means microcompaction
   // (clearStaleThinkingBlocks / clearStaleToolResults) mutated a CACHED message.
   const p = parseSig(prevSig); const c = parseSig(currSig);
   if (p && c) {
     // r1→r0 = the inline-recall block was stripped as a user message went historical
-    // — a one-time transient-by-design transition. Classify it FIRST and on its
-    // own so the diagnostic can treat it as benign (it would otherwise read as content-cleared).
-    if (p.r > c.r) return "inline-recall";
+    // — a one-time transient-by-design transition, benign ONLY when it is NOT
+    // also a structural shift (a role change is never benign).
+    if (!roleChanged && p.r > c.r) return "inline-recall";
     if (p.t > c.t) classes.push("thinking-cleared");
     else if (p.len - c.len > 500) classes.push("content-cleared");
   }
@@ -182,11 +197,21 @@ export function runPrefixStabilityDiagnostic(
     const mutationClass = classifyPrefixMutation(msgs[fd], pSig, cSig);
     // inline-recall is transient BY DESIGN — the history strip removes it from a user message
     // the turn AFTER it carried the current turn's recall. That is a one-time transition per message,
-    // not a recurring bug, so it must NOT accumulate toward the WARN.
-    if (!mutationClass.includes("inline-recall")) {
+    // not a recurring bug, so it must NOT accumulate toward the WARN — UNLESS it is also a
+    // structural-shift (a role change is a real cache invalidation, never benign).
+    const benignInlineRecall = mutationClass.includes("inline-recall") && !mutationClass.includes("structural-shift");
+    if (!benignInlineRecall) {
       mutations = [...mutations, callCount];
       if (mutations.length >= THRESHOLD) {
         emitUnstableWarn(logger, config.sessionKey, mutations.length, WINDOW, fd, pSig, cSig, mutationClass);
+        // Surface the churn to the fleet lens (content-free) so a recurring
+        // cache-prefix collapse is a `comis fleet` finding, not a log-only WARN.
+        config.onPrefixUnstable?.({
+          sessionKey: config.sessionKey,
+          firstDivergentIndex: fd,
+          cacheRegionMutations: mutations.length,
+          mutationClass,
+        });
       }
     }
   }

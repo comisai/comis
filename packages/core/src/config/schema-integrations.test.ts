@@ -111,11 +111,12 @@ describe("MediaConfigSchema - documentExtraction nesting", () => {
     expect(result.imageGeneration.safetyChecker).toBe(true);
     expect(result.imageGeneration.maxPerHour).toBe(10);
     expect(result.imageGeneration.defaultSize).toBe("1024x1024");
-    // 120s default: the Codex hosted image_generation takes ~20-60s in
-    // practice, so a 60s cap would clip the slow generations as "timeout".
-    // 120s gives headroom; fast providers (openai/google/openrouter) finish
-    // well under it.
-    expect(result.imageGeneration.timeoutMs).toBe(120_000);
+    // 300s default: the Codex hosted image_generation routinely runs 60-120s
+    // and intermittently longer — at a 120s cap a live box clipped 3 of 4
+    // generations as "timeout" (each aborted attempt still consumed quota).
+    // 300s matches the videoGeneration ceiling; fast providers
+    // (openai/google/openrouter) finish well under it.
+    expect(result.imageGeneration.timeoutMs).toBe(300_000);
     // fallbackChain defaults to an empty array; maxCostPerHourUsd is omitted.
     expect(result.imageGeneration.fallbackChain).toEqual([]);
     expect(result.imageGeneration.maxCostPerHourUsd).toBeUndefined();

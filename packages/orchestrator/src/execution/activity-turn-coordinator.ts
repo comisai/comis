@@ -12,9 +12,12 @@
  *      injected `TimerPort` (`handle.cancel()` for cancellation — never a raw
  *      timer global),
  *   3. on `finalize(outcome)` enforces the delete gate:
- *      • any observed `ActivityEvent{status:"failed"}` reclassifies the
- *        outcome to `kind:"failure"` with NO delete branch — even when delivery
- *        itself succeeded,
+ *      • any observed `ActivityEvent{status:"failed"}` on a DELIVERED success
+ *        reclassifies the outcome to `success_with_recovered_failures` — the
+ *        renderer's success-shaped cleanup runs (a recovered turn never keeps
+ *        a "❌ {errorKind}" pill above its delivered answer) and the failed
+ *        events ride the outcome + the `activity:turn_finalized` event as
+ *        evidence,
  *      • a `success` / `success_with_recovered_failures` outcome calls
  *        `renderer.finalize` ONLY after `outcome.delivery.deliveredAtMs` is
  *        acknowledged (delete never precedes the answer),
@@ -48,7 +51,7 @@ import type {
   ComisLogger,
   ErrorKind,
 } from "@comis/core";
-import { redactValue } from "@comis/core";
+import { redactValue, isNonEmptyEvents } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { suppressError } from "@comis/shared";
 import { randomUUID } from "node:crypto";
@@ -275,26 +278,6 @@ function renderErrorKind(e: ActivityRenderError): ErrorKind {
       return "internal";
     }
   }
-}
-
-/**
- * Honest fallback errorKind when a reclassified failure carries no failed event
- * with a classified `errorKind`. An unclassified failure is an internal one —
- * never "platform" (which falsely blames the chat platform). This is the
- * documented default for the reclassify path (FIX #3 / T-hbe-04).
- */
-const RECLASSIFY_FALLBACK_ERROR_KIND: ErrorKind = "internal";
-
-/**
- * Derive the reclassify `errorKind` from the observed failed events: the first
- * failed event that carries a classified `errorKind` wins; otherwise the honest
- * internal fallback. Never returns the hardcoded "platform" default.
- */
-function deriveReclassifyErrorKind(failedEvents: readonly ActivityEvent[]): ErrorKind {
-  for (const e of failedEvents) {
-    if (e.errorKind !== undefined) return e.errorKind;
-  }
-  return RECLASSIFY_FALLBACK_ERROR_KIND;
 }
 
 // ---------------------------------------------------------------------------
@@ -534,17 +517,24 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
   async function runFinalize(outcome: TurnOutcome): Promise<void> {
     counters.turnDurationMs = deps.clock.now() - startedAtMs;
 
-    // (1) Reclassify: any observed failed event flips a non-failure outcome to
-    // failure with NO delete branch — even if delivery itself succeeded.
-    // Already-failure / silent / aborted outcomes are left as-is.
+    // (1) Reclassify: a DELIVERED success that observed failed events becomes
+    // success_with_recovered_failures — the renderer runs its success-shaped
+    // cleanup (never a kept "❌ {errorKind}" pill directly above a delivered
+    // answer) while the failed events ride the outcome and the
+    // `activity:turn_finalized` event as evidence. Already-failure / silent /
+    // aborted outcomes are left as-is, and an outcome that already carries its
+    // recovered failures passes through untouched.
     let effective = outcome;
-    if (sawFailedEvent && (outcome.kind === "success" || outcome.kind === "success_with_recovered_failures")) {
+    if (sawFailedEvent && outcome.kind === "success") {
       const failedEvents = events.filter((e) => e.status === "failed");
-      effective = {
-        kind: "failure",
-        errorKind: deriveReclassifyErrorKind(failedEvents),
-        failedEvents,
-      };
+      if (isNonEmptyEvents(failedEvents)) {
+        effective = {
+          kind: "success_with_recovered_failures",
+          trivial: false,
+          delivery: outcome.delivery,
+          recoveredFailures: failedEvents,
+        };
+      }
     }
 
     // Announce the EFFECTIVE terminal surface state (the user-visible pill's

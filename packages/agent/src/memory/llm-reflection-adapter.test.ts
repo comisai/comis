@@ -200,3 +200,90 @@ describe("createLlmReflectionAdapter (untrusted-input boundary + honest error br
     expect(res.ok).toBe(false);
   });
 });
+
+describe("reflection LLM usage attribution (onUsage hook)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (getModel as Mock).mockReturnValue({ id: "mock-model", reasoning: false });
+  });
+
+  // Background reflection runs previously spent tokens with ZERO obs rows —
+  // invisible to fleet/billing (comis-daniel review finding). The hook hands
+  // the SDK usage to the daemon wiring, which attributes it under the
+  // synthetic __REFLECT__ session key.
+  it("hands the SDK usage (tokens + cost + durationMs) to onUsage on a completed call", async () => {
+    (completeSimple as Mock).mockResolvedValue({
+      content: [{ type: "text", text: JSON.stringify({ sections: [] }) }],
+      usage: {
+        input: 1200,
+        output: 340,
+        cacheRead: 800,
+        cacheWrite: 0,
+        cost: { input: 0.001, output: 0.002, cacheRead: 0.0001, cacheWrite: 0, total: 0.0031 },
+      },
+    });
+    const onUsage = vi.fn();
+    const adapter = createLlmReflectionAdapter({
+      provider: "anthropic",
+      modelId: "claude-x",
+      apiKey: "sk-test",
+      clock: { now: () => 5000 },
+      logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      onUsage,
+    });
+
+    const res = await adapter.reflect({ trajectoryText: "t", currentSections: [] });
+
+    expect(res.ok).toBe(true);
+    expect(onUsage).toHaveBeenCalledTimes(1);
+    expect(onUsage.mock.calls[0]![0]).toEqual({
+      inputTokens: 1200,
+      outputTokens: 340,
+      cacheReadTokens: 800,
+      cacheWriteTokens: 0,
+      cost: { input: 0.001, output: 0.002, cacheRead: 0.0001, cacheWrite: 0, total: 0.0031 },
+      durationMs: 0,
+    });
+  });
+
+  it("never fails the reflect call when onUsage itself throws (attribution is best-effort)", async () => {
+    (completeSimple as Mock).mockResolvedValue({
+      content: [{ type: "text", text: JSON.stringify({ sections: [] }) }],
+      usage: { input: 1, output: 1 },
+    });
+    const adapter = createLlmReflectionAdapter({
+      provider: "anthropic",
+      modelId: "claude-x",
+      apiKey: "sk-test",
+      clock: { now: () => 5000 },
+      logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      onUsage: () => {
+        throw new Error("attribution sink exploded");
+      },
+    });
+
+    const res = await adapter.reflect({ trajectoryText: "t", currentSections: [] });
+
+    expect(res.ok).toBe(true);
+  });
+
+  it("skips onUsage silently when the response carries no usage (older providers)", async () => {
+    (completeSimple as Mock).mockResolvedValue({
+      content: [{ type: "text", text: JSON.stringify({ sections: [] }) }],
+    });
+    const onUsage = vi.fn();
+    const adapter = createLlmReflectionAdapter({
+      provider: "anthropic",
+      modelId: "claude-x",
+      apiKey: "sk-test",
+      clock: { now: () => 5000 },
+      logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      onUsage,
+    });
+
+    const res = await adapter.reflect({ trajectoryText: "t", currentSections: [] });
+
+    expect(res.ok).toBe(true);
+    expect(onUsage).not.toHaveBeenCalled();
+  });
+});

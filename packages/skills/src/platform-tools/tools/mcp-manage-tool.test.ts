@@ -420,6 +420,36 @@ describe("mcp_manage tool", () => {
       });
     });
 
+    it("annotates a successful connect with a NEXT-turn availability note (comis-daniel 2026-07-09 dead-window)", async () => {
+      mockRpcCall.mockResolvedValue({ name: "weather", status: "connected", toolCount: 93, tools: ["weather_status"] });
+      const tool = createMcpManageTool(mockRpcCall);
+
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-connect-note", {
+          action: "connect",
+          server_name: "weather",
+          command: "npx",
+          args: ["-y", "weather-mcp"],
+        } as never),
+      );
+
+      // The agent must be told the tools are callable NEXT message, not this turn,
+      // so it doesn't flail with discover_tools / a bare call in the same turn.
+      const text = JSON.stringify(result);
+      expect(text).toMatch(/next message/i);
+      expect(text).toContain("93");
+      expect(text).toMatch(/discover_tools/);
+    });
+
+    it("does NOT add the availability note when the connect did not reach 'connected'", async () => {
+      mockRpcCall.mockResolvedValue({ name: "x", status: "error", error: "boom" });
+      const tool = createMcpManageTool(mockRpcCall);
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-connect-err", { action: "connect", server_name: "x", command: "npx", args: ["-y", "m"] } as never),
+      );
+      expect(JSON.stringify(result)).not.toMatch(/next message/i);
+    });
+
     it("defaults transport to 'http' when url is set and transport is omitted", async () => {
       mockRpcCall.mockResolvedValue({ connected: true });
       const tool = createMcpManageTool(mockRpcCall);

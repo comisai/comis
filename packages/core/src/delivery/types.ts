@@ -42,6 +42,9 @@ export interface DeliveryAdapter {
 export interface DeliverToChannelOptions {
   /** Reply-to message ID (platform-specific). Applied to first chunk only. */
   replyTo?: string;
+  /** Reply subject (email forms a "Re: <subject>" reply subject from this).
+   *  Applied to all chunks; channels without a subject concept ignore it. */
+  subject?: string;
   /** Target thread ID for threaded delivery. Applied to all chunks. */
   threadId?: string;
   /** Extra platform-specific options. Applied to all chunks. */

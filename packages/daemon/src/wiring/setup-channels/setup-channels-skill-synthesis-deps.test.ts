@@ -149,6 +149,92 @@ describe("buildReflectionCronDeps", () => {
     expect(resolved.value.outcome).toBe("success");
   });
 
+  // ── PER-TURN WINDOWING (live-incident regression: the single-DM mega-topic) ──
+  // A single-owner box is ONE long session: with the whole-session user text as every
+  // turn's signature, ALL turns collapse into one topicKey (live: 42 selected →
+  // distinctTopicKeys 1) and the reflect input is the giant transcript repeated N×.
+  // The builder must slice PER TURN: a turn's rows are the session messages with
+  // createdAt in (prevObservedAt, observedAt] (the outcome ledger's per-turn window
+  // key), its signature = THAT turn's user text, its text = THAT turn's exchange.
+  describe("per-turn windowing (single-session multi-turn slicing)", () => {
+    const TWO_TURN_SESSION = {
+      listDetailed: vi.fn(() => [{ sessionKey: "dm", userId: "u1", tenantId: "t", channelId: "c", metadata: null, createdAt: 1, updatedAt: 300, messageCount: 4 }]),
+      loadByFormattedKey: vi.fn(() => ({
+        messages: [
+          { role: "user", content: "make me coffee", createdAt: 100 },
+          { role: "assistant", content: "coffee made", createdAt: 110 },
+          { role: "user", content: "compile the report", createdAt: 200 },
+          { role: "assistant", content: "report compiled", createdAt: 210 },
+        ],
+        metadata: {},
+        createdAt: 1,
+        updatedAt: 300,
+      })),
+    };
+    const TWO_TURN_OUTCOMES = {
+      observe: vi.fn(), prune: vi.fn(), resolve: vi.fn(),
+      listTrajectoryIds: vi.fn(async () => ({
+        ok: true as const,
+        value: [
+          { trajectoryId: "turn-2", sessionId: "dm", observedAt: 220 }, // ledger returns most-recent-first
+          { trajectoryId: "turn-1", sessionId: "dm", observedAt: 120 },
+        ],
+      })),
+    };
+
+    it("each turn gets ITS OWN signature + text (not the whole-session collapse)", async () => {
+      const bundle = buildReflectionCronDeps(
+        makeInput({ sessionStore: TWO_TURN_SESSION as any, outcomeStore: TWO_TURN_OUTCOMES as any }),
+      )!;
+      const trajectories = await bundle.buildSourceTrajectories("skill", "agent-1", "t");
+      expect(trajectories).toHaveLength(2);
+      const byId = new Map(trajectories.map((t) => [t.trajectoryId, t]));
+      // Turn 1: rows in (−∞, 120] → the coffee exchange only.
+      expect(byId.get("turn-1")?.signature).toBe("make me coffee");
+      expect(byId.get("turn-1")?.text).toContain("coffee made");
+      expect(byId.get("turn-1")?.text).not.toContain("report");
+      // Turn 2: rows in (120, 220] → the report exchange only.
+      expect(byId.get("turn-2")?.signature).toBe("compile the report");
+      expect(byId.get("turn-2")?.text).toContain("report compiled");
+      expect(byId.get("turn-2")?.text).not.toContain("coffee");
+    });
+
+    it("a turn whose window holds NO user text is SKIPPED (e.g. severed LCD) — never a whole-session fallback for a windowable session", async () => {
+      const outcomeStore = {
+        observe: vi.fn(), prune: vi.fn(), resolve: vi.fn(),
+        listTrajectoryIds: vi.fn(async () => ({
+          ok: true as const,
+          value: [
+            { trajectoryId: "turn-old", sessionId: "dm", observedAt: 50 }, // before every surviving row
+            { trajectoryId: "turn-1", sessionId: "dm", observedAt: 120 },
+          ],
+        })),
+      };
+      const bundle = buildReflectionCronDeps(
+        makeInput({ sessionStore: TWO_TURN_SESSION as any, outcomeStore: outcomeStore as any }),
+      )!;
+      const trajectories = await bundle.buildSourceTrajectories("skill", "agent-1", "t");
+      expect(trajectories.map((t) => t.trajectoryId)).toEqual(["turn-1"]);
+      expect(trajectories[0].signature).toBe("make me coffee");
+    });
+
+    it("FALLBACK: messages without createdAt (or ids without observedAt) keep the whole-session signature (pipeline-mode unchanged)", async () => {
+      const sessionStore = {
+        listDetailed: vi.fn(() => [{ sessionKey: "s1", userId: "u1", tenantId: "t", channelId: "c", metadata: null, createdAt: 1, updatedAt: 2, messageCount: 2 }]),
+        loadByFormattedKey: vi.fn(() => ({ messages: [{ role: "user", content: "do X" }, { role: "assistant", content: "did X" }], metadata: {}, createdAt: 1, updatedAt: 2 })),
+      };
+      const outcomeStore = {
+        observe: vi.fn(), prune: vi.fn(), resolve: vi.fn(),
+        listTrajectoryIds: vi.fn(async () => ({ ok: true as const, value: [{ trajectoryId: "turn-1", sessionId: "s1" }] })),
+      };
+      const bundle = buildReflectionCronDeps(makeInput({ sessionStore: sessionStore as any, outcomeStore: outcomeStore as any }))!;
+      const trajectories = await bundle.buildSourceTrajectories("skill", "agent-1", "t");
+      expect(trajectories).toHaveLength(1);
+      expect(trajectories[0].signature).toBe("do X");
+      expect(trajectories[0].text).toContain("did X");
+    });
+  });
+
   // ── PROCEDURE DESCRIPTOR ATTACH (read-back → ReflectionSourceTrajectory) ──
   // The skill source builder reads the content-free procedure_descriptor back out of
   // listTrajectoryIds and attaches a { key, sequence } to each source. The key is the ORDERED
@@ -216,26 +302,42 @@ describe("buildReflectionCronDeps", () => {
       return { config: { tenantId: "t", agents: { "agent-1": { elevatedReply } } } } as any;
     }
 
-    it("a sender mapped to a NON-external tier is a trusted origin (trustedOrigin: true)", async () => {
+    it("a sender mapped to a NON-external tier is a trusted origin AND explicitly trusted (named in senderTrustMap)", async () => {
       const container = withAgentTrust({ senderTrustMap: { u1: "verified" }, defaultTrustLevel: "external" });
       const bundle = buildReflectionCronDeps(makeInput({ ...ONE_TURN(), container }))!;
       const traj = await bundle.buildSourceTrajectories("skill", "agent-1", "t");
       expect(traj[0].trustedOrigin).toBe(true);
+      // The operator NAMED u1 in senderTrustMap ⇒ eligible for single-owner repetition corroboration.
+      expect(traj[0].explicitlyTrusted).toBe(true);
     });
 
-    it("a sender explicitly mapped to the external tier is NOT trusted (trustedOrigin: false)", async () => {
+    it("SINGLE-OWNER BELT: a promiscuous defaultTrustLevel makes an UNMAPPED sender trusted-origin but NOT explicitly trusted", async () => {
+      // defaultTrustLevel is a NON-external tier ⇒ every unmapped sender rides trustedOrigin:true
+      // past SELECT. But the operator never NAMED this sender ⇒ explicitlyTrusted:false, so it can
+      // NEVER self-corroborate by repetition in single_owner mode. THE load-bearing safety case.
+      const container = withAgentTrust({ senderTrustMap: {}, defaultTrustLevel: "verified" });
+      const bundle = buildReflectionCronDeps(makeInput({ ...ONE_TURN(), container }))!;
+      const traj = await bundle.buildSourceTrajectories("skill", "agent-1", "t");
+      expect(traj[0].trustedOrigin).toBe(true); // promiscuous default ⇒ survives SELECT
+      expect(traj[0].explicitlyTrusted).toBe(false); // …but never explicitly named ⇒ no repetition corroboration
+    });
+
+    it("a sender explicitly mapped to the external tier is NOT trusted (trustedOrigin AND explicitlyTrusted false)", async () => {
       const container = withAgentTrust({ senderTrustMap: { u1: "external" }, defaultTrustLevel: "verified" });
       const bundle = buildReflectionCronDeps(makeInput({ ...ONE_TURN(), container }))!;
       const traj = await bundle.buildSourceTrajectories("skill", "agent-1", "t");
       expect(traj[0].trustedOrigin).toBe(false);
+      // Mapped, but to the external tier ⇒ not trusted ⇒ not explicitly trusted either.
+      expect(traj[0].explicitlyTrusted).toBe(false);
     });
 
-    it("DENY-ON-UNKNOWN: an UNMAPPED sender with the default 'external' tier is NOT trusted", async () => {
+    it("DENY-ON-UNKNOWN: an UNMAPPED sender with the default 'external' tier is NOT trusted (neither axis)", async () => {
       // No senderTrustMap entry for u1, default is the external tier ⇒ deny.
       const container = withAgentTrust({ senderTrustMap: {}, defaultTrustLevel: "external" });
       const bundle = buildReflectionCronDeps(makeInput({ ...ONE_TURN(), container }))!;
       const traj = await bundle.buildSourceTrajectories("skill", "agent-1", "t");
       expect(traj[0].trustedOrigin).toBe(false);
+      expect(traj[0].explicitlyTrusted).toBe(false);
     });
 
     it("DENY-ON-UNKNOWN: an agent with NO elevatedReply config at all denies an unmapped sender (schema-default external)", async () => {
@@ -345,6 +447,9 @@ describe("buildReflectionCronDeps", () => {
       const sources = await bundle.buildSourceTrajectories("profile", "agent-1", "t");
       expect(sources[0].trustedOrigin).toBe(true);
       expect(sources[0].sourceTrustExternal).toBe(false);
+      // The high-trust corpus (system/learned tiers, trust-gated at admission) is explicitly
+      // trusted — a profile of the one owner can corroborate by repetition in single_owner mode.
+      expect(sources[0].explicitlyTrusted).toBe(true);
     });
 
     it("a PROFILE/TOPIC build returns empty when no memoryApi read surface is wired (fail-closed, no fabricated sources)", async () => {

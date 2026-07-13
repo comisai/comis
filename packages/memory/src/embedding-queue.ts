@@ -16,6 +16,7 @@ import PQueue from "p-queue";
 import { suppressError } from "@comis/shared";
 import { isVecAvailable } from "./schema.js";
 import { truncateForEmbedding } from "./embedding-batch-indexer.js";
+import { isVecDimensionMismatch } from "./vec-dimension.js";
 
 /**
  * EmbeddingQueue provides fire-and-forget embedding generation.
@@ -72,17 +73,7 @@ export function createEmbeddingQueue(
         queue.add(async () => {
           const result = await embeddingPort.embed(truncateForEmbedding(content));
 
-          if (result.ok) {
-            const float32 = new Float32Array(result.value);
-
-            if (isVecAvailable()) {
-              db.prepare(
-                "INSERT OR REPLACE INTO vec_memories(memory_id, embedding) VALUES (?, ?)",
-              ).run(entryId, float32);
-            }
-
-            db.prepare("UPDATE memories SET has_embedding = 1 WHERE id = ?").run(entryId);
-          } else {
+          if (!result.ok) {
             // Entry stays without embedding -- FTS5 still works
             logger?.warn(
               {
@@ -92,6 +83,38 @@ export function createEmbeddingQueue(
                 errorKind: "dependency" as const,
               },
               "Embedding generation failed",
+            );
+            return;
+          }
+
+          // The store step gets its own catch: a throw here would otherwise
+          // escape into the fire-and-forget suppressError wrapper and vanish —
+          // rows stayed permanently unembedded with zero log lines (observed
+          // live: a vec-dimension mismatch left every store silently
+          // vector-less while FTS kept answering).
+          try {
+            const float32 = new Float32Array(result.value);
+
+            if (isVecAvailable()) {
+              db.prepare(
+                "INSERT OR REPLACE INTO vec_memories(memory_id, embedding) VALUES (?, ?)",
+              ).run(entryId, float32);
+            }
+
+            db.prepare("UPDATE memories SET has_embedding = 1 WHERE id = ?").run(entryId);
+          } catch (e: unknown) {
+            const dimensionMismatch = isVecDimensionMismatch(e);
+            logger?.warn(
+              {
+                entryId,
+                err: String(e),
+                dimensions: result.value.length,
+                hint: dimensionMismatch
+                  ? "generated embedding dimensions do not match the vec_memories table — the embedder changed while the daemon was running; restart the daemon (the vec tables rebuild to the configured dimensions at boot); entry remains searchable via FTS5 only"
+                  : "storing the generated embedding failed; entry remains searchable via FTS5 only",
+                errorKind: dimensionMismatch ? ("config" as const) : ("internal" as const),
+              },
+              "Embedding store failed",
             );
           }
         }),

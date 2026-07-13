@@ -39,6 +39,28 @@ vi.mock("@comis/core", async (importOriginal) => {
   };
 });
 
+vi.mock("@comis/observability", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/observability")>();
+  return {
+    ...actual,
+    // The config-audit seam: base/finalize are stubbed (their real bodies
+    // hash/stat the config file, which the node:fs mock above breaks) so the
+    // tests assert THIS step's wiring — build base before the write, finalize
+    // + append after the rename.
+    createConfigWriteAuditRecordBase: vi.fn((params: { source: string; configPath: string }) => ({
+      callerSource: params.source,
+      configPath: params.configPath,
+    })),
+    finalizeConfigWriteAuditRecord: vi.fn((base: Record<string, unknown>, params: { result: string }) => ({
+      ...base,
+      event: "config.write",
+      result: params.result,
+    })),
+    appendConfigAuditRecordSync: vi.fn(() => ({ ok: true, value: { totalBytes: 1 } })),
+    ensureConfigAuditParentDir: vi.fn(),
+  };
+});
+
 vi.mock("../../util/offline-secrets-store.js", () => ({
   offlineSecretSet: vi.fn(() => ({ ok: true, value: undefined })),
 }));
@@ -462,6 +484,60 @@ describe("writeConfigStep", () => {
     expect(configContent.integrations.media.videoGeneration.provider).toBe("google");
   });
 
+  it("emits embedding.* (local bge-m3 + multilingual) when recallProvider is a multilingual on-device choice", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      recallProvider: {
+        multilingual: true,
+        provider: "local",
+        modelUri: "hf:gpustack/bge-m3-GGUF:bge-m3-Q8_0.gguf",
+      },
+    };
+    await writeConfigStep.execute(state, createMockPrompter());
+
+    const configWriteCall = vi.mocked(writeFileSync).mock.calls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    const config = JSON.parse(configWriteCall![1] as string);
+    expect(config.embedding).toEqual({
+      provider: "local",
+      multilingual: true,
+      local: { modelUri: "hf:gpustack/bge-m3-GGUF:bge-m3-Q8_0.gguf" },
+    });
+  });
+
+  it("emits embedding.openai (text-embedding-3-small) when recallProvider is a multilingual OpenAI choice", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      recallProvider: { multilingual: true, provider: "openai", model: "text-embedding-3-small", dimensions: 1536 },
+    };
+    await writeConfigStep.execute(state, createMockPrompter());
+
+    const configWriteCall = vi.mocked(writeFileSync).mock.calls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    const config = JSON.parse(configWriteCall![1] as string);
+    expect(config.embedding).toEqual({
+      provider: "openai",
+      multilingual: true,
+      openai: { model: "text-embedding-3-small", dimensions: 1536 },
+    });
+  });
+
+  it("writes NO embedding block for the English default (multilingual:false) — the daemon keeps nomic", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      recallProvider: { multilingual: false, provider: "local" },
+    };
+    await writeConfigStep.execute(state, createMockPrompter());
+
+    const configWriteCall = vi.mocked(writeFileSync).mock.calls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    const config = JSON.parse(configWriteCall![1] as string);
+    expect(config.embedding).toBeUndefined();
+  });
+
   it("writes the FAL_KEY image credential to .env when imageProvider is fal", async () => {
     const state: WizardState = {
       ...populatedState(),
@@ -477,6 +553,20 @@ describe("writeConfigStep", () => {
     );
     const envContent = envWriteCall![1] as string;
     expect(envContent).toContain("FAL_KEY=fal-img-secret-7890");
+  });
+
+  it("writes the standalone OPENAI_API_KEY to .env when recallProvider is openai with its own key (non-openai main)", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      provider: { id: "anthropic", apiKey: "sk-ant-main-123456" },
+      recallProvider: { multilingual: true, provider: "openai", model: "text-embedding-3-small", dimensions: 1536, apiKey: "sk-standalone-embed-7890" },
+    };
+    await writeConfigStep.execute(state, createMockPrompter());
+
+    const envWriteCall = vi.mocked(writeFileSync).mock.calls.find(
+      ([path]) => typeof path === "string" && path.includes(".env"),
+    );
+    expect(envWriteCall![1] as string).toContain("OPENAI_API_KEY=sk-standalone-embed-7890");
   });
 
   it("emits transcription + tts providers and the deepgram/elevenlabs keys", async () => {
@@ -828,5 +918,54 @@ describe("writeConfigStep", () => {
         "MSTEAMS_APP_PASSWORD=teams-client-secret-value-xyz",
       );
     });
+  });
+});
+
+describe("config-audit provenance for the wizard write", () => {
+  // Live incident: `comis init` rewrote config.yaml (the embedding block that
+  // broke recall) with NO config.write row in config-audit.jsonl — only
+  // daemon-process config-io writes were audited, so the change between boots
+  // was unattributable. The wizard write must land in the SAME audit trail.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(existsSync).mockReturnValue(false);
+  });
+
+  it("appends a cli-init config.write audit record after the atomic rename", async () => {
+    const { appendConfigAuditRecordSync, createConfigWriteAuditRecordBase } = await import(
+      "@comis/observability"
+    );
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(populatedState(), prompter);
+
+    expect(vi.mocked(createConfigWriteAuditRecordBase)).toHaveBeenCalledTimes(1);
+    const baseParams = vi.mocked(createConfigWriteAuditRecordBase).mock.calls[0]![0] as {
+      source: string;
+      configPath: string;
+    };
+    expect(baseParams.source).toBe("cli-init");
+    expect(baseParams.configPath).toContain("config.yaml");
+
+    expect(vi.mocked(appendConfigAuditRecordSync)).toHaveBeenCalledTimes(1);
+    const appendParams = vi.mocked(appendConfigAuditRecordSync).mock.calls[0]![0] as {
+      filePath: string;
+      record: { result: string; callerSource: string };
+    };
+    expect(appendParams.filePath).toContain("config-audit.jsonl");
+    expect(appendParams.record.result).toBe("rename");
+    expect(appendParams.record.callerSource).toBe("cli-init");
+  });
+
+  it("never fails the wizard when the audit append itself throws (best-effort provenance)", async () => {
+    const { appendConfigAuditRecordSync } = await import("@comis/observability");
+    vi.mocked(appendConfigAuditRecordSync).mockImplementationOnce(() => {
+      throw new Error("audit disk full");
+    });
+    const prompter = createMockPrompter();
+
+    const result = await writeConfigStep.execute(populatedState(), prompter);
+
+    expect(result.kind).not.toBe("error");
   });
 });

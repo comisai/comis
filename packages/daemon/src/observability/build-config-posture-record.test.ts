@@ -7,8 +7,12 @@ import {
   buildConfigPostureRecord,
   countImportedNonAllowlisted,
   countPricingGaps,
+  countUnresolvedModels,
+  countMediaCredentialGaps,
+  anyAgentTerminalUnsafeDisableSandbox,
   isLoopbackHost,
 } from "./build-config-posture-record.js";
+import { unresolvedModelFromRow } from "../api/obs-handlers/fleet-findings-extractors.js";
 
 describe("isLoopbackHost (TLS-off is benign on a loopback bind)", () => {
   it("treats 127.0.0.1 / ::1 / localhost / 127.x as loopback (TLS-off suppressed)", () => {
@@ -82,10 +86,14 @@ describe("buildConfigPostureRecord", () => {
       canaryFallbackActive: true,
       servedBelowConfiguredCount: 0,
       chimericModelCount: 0, // always present (0 default), count-only
+      unresolvedModelCount: 0, // always present (0 default), count-only
       pricingGapCount: 0, // always present (0 default), count-only
       sandboxNoDowngradeDisabled: false, // always present (false default)
       importedSkillCount: 0, // always present (0 default), count-only
       importedNonAllowlistedRegistryCount: 0, // always present (0 default), count-only
+      browserNoSandbox: false, // always present (false default)
+      terminalUnsafeDisableSandbox: false, // always present (false default)
+      mediaCredentialGapCount: 0, // always present (0 default), count-only
     });
     // SECURITY: the stranded entry is a {label, count} — no value-bearing key.
     const strandedJson = JSON.stringify(details["stranded"]);
@@ -118,10 +126,14 @@ describe("buildConfigPostureRecord", () => {
       canaryFallbackActive: false,
       servedBelowConfiguredCount: 0,
       chimericModelCount: 0,
+      unresolvedModelCount: 0,
       pricingGapCount: 0,
       sandboxNoDowngradeDisabled: false,
       importedSkillCount: 0,
       importedNonAllowlistedRegistryCount: 0,
+      browserNoSandbox: false,
+      terminalUnsafeDisableSandbox: false,
+      mediaCredentialGapCount: 0,
     });
   });
 
@@ -168,6 +180,57 @@ describe("buildConfigPostureRecord", () => {
     expect(row.severity).toBe("warning");
     const details = JSON.parse(row.details ?? "{}") as { sandboxNoDowngradeDisabled?: boolean };
     expect(details.sandboxNoDowngradeDisabled).toBe(true);
+  });
+
+  it("RELAX-SURFACE: flips severity to warning and surfaces the flag when browser.noSandbox is on", () => {
+    // browser.noSandbox:true runs Chromium WITHOUT its sandbox while the browser
+    // tool processes untrusted web content — a RELAXED security default the
+    // Track-M floor sweep wants SURFACED at boot. Pre-fix there was no signal
+    // (the config-posture builder checked agentToAgent.sandboxNoDowngrade but not
+    // browser.noSandbox), so a fleet-visible `browser.noSandbox (Chromium sandbox
+    // off)` never appeared — the live friction this campaign hit.
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    const clock = createFakeClock(9);
+    buildConfigPostureRecord(
+      obsStore,
+      {
+        tlsOff: false,
+        allowInsecureHttp: false,
+        strandedFindings: [],
+        canaryFallbackActive: false,
+        servedBelowConfiguredCount: 0,
+        browserNoSandbox: true,
+      },
+      clock,
+    );
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    expect(row.severity).toBe("warning");
+    const details = JSON.parse(row.details ?? "{}") as { browserNoSandbox?: boolean };
+    expect(details.browserNoSandbox).toBe(true);
+  });
+
+  it("RELAX-SURFACE: flips severity to warning and surfaces the flag when skills.terminal.unsafeDisableSandbox is on", () => {
+    // unsafeDisableSandbox:true runs a driven coding CLI WITHOUT the bwrap jail — a RELAXED security
+    // default (no filesystem/network/uid confinement) that must SURFACE at boot, not stay silent,
+    // exactly like browser.noSandbox. Distinct from browserNoSandbox and sandboxNoDowngradeDisabled.
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    const clock = createFakeClock(11);
+    buildConfigPostureRecord(
+      obsStore,
+      {
+        tlsOff: false,
+        allowInsecureHttp: false,
+        strandedFindings: [],
+        canaryFallbackActive: false,
+        servedBelowConfiguredCount: 0,
+        terminalUnsafeDisableSandbox: true,
+      },
+      clock,
+    );
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    expect(row.severity).toBe("warning");
+    const details = JSON.parse(row.details ?? "{}") as { terminalUnsafeDisableSandbox?: boolean };
+    expect(details.terminalUnsafeDisableSandbox).toBe(true);
   });
 
   it("flips severity to warning when ANY single posture issue is present", () => {
@@ -447,6 +510,52 @@ describe("buildConfigPostureRecord", () => {
 // shipped 3-state `resolvePricingState`, never a catalog-presence boolean.
 // ---------------------------------------------------------------------------
 
+describe("countUnresolvedModels — boot count of agents whose model id does NOT resolve (fail-closed-to-nano)", () => {
+  it("counts an unresolved model id on a registered provider (the live gpt-5.6 case)", () => {
+    // openai-codex has NO bare 'gpt-5.6' (real ids: gpt-5.6-terra/luna/sol). Neither
+    // the chimeric nor the pricing detector catches this (openai-codex resolves 'free').
+    const agents = { a: { provider: "openai-codex", model: "gpt-5.6" } };
+    expect(countUnresolvedModels(agents, undefined)).toBe(1);
+  });
+
+  it("does NOT count a resolved catalog model id", () => {
+    const agents = {
+      sol: { provider: "openai-codex", model: "gpt-5.6-sol" },
+      g54: { provider: "openai-codex", model: "gpt-5.4" },
+    };
+    expect(countUnresolvedModels(agents, undefined)).toBe(0);
+  });
+
+  it("EXEMPTS an operator-declared custom model (providers.entries.<p>.models) — no false-flag", () => {
+    const agents = { a: { provider: "my-ollama", model: "qwen3.6:35b" } };
+    const providers = { "my-ollama": { models: [{ id: "qwen3.6:35b" }] } };
+    // Without the exemption this would count (not in the static catalog); with it → 0.
+    expect(countUnresolvedModels(agents, providers)).toBe(0);
+    // And a DIFFERENT model on that custom provider (not declared) still counts.
+    expect(countUnresolvedModels({ a: { provider: "my-ollama", model: "not-declared" } }, providers)).toBe(1);
+  });
+
+  it("counts only the unresolved agents in a mixed fleet", () => {
+    const agents = {
+      ok: { provider: "openai-codex", model: "gpt-5.6-sol" }, // resolves
+      bad1: { provider: "openai-codex", model: "gpt-5.6" }, // unresolved
+      bad2: { provider: "anthropic", model: "totally-made-up-model-xyz" }, // unresolved
+    };
+    expect(countUnresolvedModels(agents, undefined)).toBe(2);
+  });
+
+  it("ignores an agent missing provider or model", () => {
+    expect(countUnresolvedModels({ noModel: { provider: "openai-codex" }, noProvider: { model: "x" }, empty: {} }, undefined)).toBe(0);
+  });
+
+  it("unresolvedModelFromRow parses the count from a config_posture row (fleet surfacing)", () => {
+    expect(unresolvedModelFromRow({ details: JSON.stringify({ unresolvedModelCount: 2 }) } as never)).toBe(2);
+    expect(unresolvedModelFromRow({ details: JSON.stringify({ unresolvedModelCount: 0 }) } as never)).toBe(0);
+    expect(unresolvedModelFromRow({ details: "not json" } as never)).toBe(0);
+    expect(unresolvedModelFromRow({ details: undefined } as never)).toBe(0);
+  });
+});
+
 describe("countPricingGaps — boot count of remote-unknown-priced agents (resolvePricingState == 'unknown')", () => {
   it("counts a NATIVE provider + an off-catalog model (the unknown-pricing case)", () => {
     // anthropic is a native single-family provider; a non-claude model id has no
@@ -620,5 +729,80 @@ describe("countImportedNonAllowlisted — per-record allowlist-drift producer (s
     const out = countImportedNonAllowlisted(store, agents, "default");
     expect(out.total).toBe(4);
     expect(out.drift).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// countMediaCredentialGaps — a configured media provider whose credential is
+// absent will FAIL at first use, but the chimeric/credential detector only
+// watched the main completion pipeline, so the media gap was invisible to
+// `comis fleet` (the incident-day image-gen unavailability, 2026-07-08). This
+// makes it a boot-time posture COUNT.
+// ---------------------------------------------------------------------------
+describe("countMediaCredentialGaps — configured media provider missing its credential", () => {
+  const hasNone = () => false;
+  const hasAll = () => true;
+
+  it("flags an env-key media provider whose key is absent (per pipeline)", () => {
+    const media = {
+      imageGeneration: { provider: "openai" },
+      transcription: { provider: "groq" },
+      tts: { provider: "elevenlabs" },
+      videoGeneration: { provider: "xai" },
+    };
+    expect(countMediaCredentialGaps(media, hasNone, false)).toBe(4);
+    expect(countMediaCredentialGaps(media, hasAll, true)).toBe(0);
+  });
+
+  it("checks the RIGHT env key per provider", () => {
+    const present = new Set(["OPENAI_API_KEY"]); // only openai present
+    const has = (k: string) => present.has(k);
+    // image openai (present) → ok; tts elevenlabs (absent) → gap.
+    expect(countMediaCredentialGaps(
+      { imageGeneration: { provider: "openai" }, tts: { provider: "elevenlabs" } },
+      has, false,
+    )).toBe(1);
+  });
+
+  it("openai-codex uses the store-aware image availability, not an env key", () => {
+    const media = { imageGeneration: { provider: "openai-codex" } };
+    expect(countMediaCredentialGaps(media, hasNone, /* imageCodexAvailable */ true)).toBe(0);
+    expect(countMediaCredentialGaps(media, hasNone, /* imageCodexAvailable */ false)).toBe(1);
+  });
+
+  it("keyless / follow-main providers never count (auto, local, edge, piper)", () => {
+    const media = {
+      imageGeneration: { provider: "auto" },
+      transcription: { provider: "local" },
+      tts: { provider: "edge" },
+      videoGeneration: { provider: "auto" },
+    };
+    expect(countMediaCredentialGaps(media, hasNone, false)).toBe(0);
+  });
+
+  it("undefined media / unknown provider is a safe zero (no false flag)", () => {
+    expect(countMediaCredentialGaps(undefined, hasNone, false)).toBe(0);
+    expect(countMediaCredentialGaps({ tts: { provider: "piper" } }, hasNone, false)).toBe(0);
+  });
+});
+
+describe("anyAgentTerminalUnsafeDisableSandbox — boot signal that a driven CLI runs unsandboxed", () => {
+  it("true when ANY agent set skills.terminal.unsafeDisableSandbox: true", () => {
+    expect(
+      anyAgentTerminalUnsafeDisableSandbox({
+        default: { skills: { terminal: { unsafeDisableSandbox: false } } },
+        ci: { skills: { terminal: { unsafeDisableSandbox: true } } },
+      }),
+    ).toBe(true);
+  });
+
+  it("false when no agent opts out (the jail stays on everywhere)", () => {
+    expect(
+      anyAgentTerminalUnsafeDisableSandbox({
+        default: { skills: { terminal: { unsafeDisableSandbox: false } } },
+        other: { skills: {} },
+        bare: {},
+      }),
+    ).toBe(false);
   });
 });

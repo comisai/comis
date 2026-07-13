@@ -127,8 +127,10 @@ describe("the nightly review sees DAG conversations, not just the near-empty dae
 
     expect(getMessages).toHaveBeenCalledWith({ conversationId: "t:u:c", tenantId: TENANT, agentId: AGENT, sessionKey: "t:u:c" });
     expect(data!.messages).toEqual([
-      { role: "user", content: "my dog is Biscuit" },
-      { role: "assistant", content: "noted!" },
+      // `createdAt` (the LCD row timestamp) rides through so the reflection
+      // skill-source builder can window a session's rows PER TURN.
+      { role: "user", content: "my dog is Biscuit", createdAt: 101 },
+      { role: "assistant", content: "noted!", createdAt: 103 },
     ]);
   });
 

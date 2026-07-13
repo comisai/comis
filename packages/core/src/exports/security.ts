@@ -2,6 +2,8 @@
 // @comis/core exports — Security utilities
 
 export { safePath, PathTraversalError } from "../security/index.js";
+// Loopback bind detection — shared by the gateway boot log + fleet config-posture.
+export { isLoopbackHost } from "../security/index.js";
 // Bind-mount validator — consumed by the bwrap sandbox provider.
 export { validateBindMount } from "../security/index.js";
 // Master-key file helpers (daemon-free `secrets init` body)
@@ -62,7 +64,13 @@ export type {
 export { validateUrl, validateLocalServerUrl, BLOCKED_RANGES, CLOUD_METADATA_IPS, setSsrfBlockHook } from "../security/index.js";
 export type { SsrfBlockReason } from "../security/index.js";
 export type { ValidatedUrl } from "../security/index.js";
-export { wrapExternalContent, wrapWebContent, detectSuspiciousPatterns, EXTERNAL_CONTENT_WARNING } from "../security/index.js";
+export {
+  wrapExternalContent,
+  unwrapExternalContent,
+  wrapWebContent,
+  detectSuspiciousPatterns,
+  EXTERNAL_CONTENT_WARNING,
+} from "../security/index.js";
 export type { ExternalContentSource, WrapExternalContentOptions } from "../security/index.js";
 export { createOutputGuard } from "../security/index.js";
 export { generateCanaryToken, detectCanaryLeakage } from "../security/index.js";

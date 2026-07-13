@@ -94,6 +94,15 @@ export interface IncidentSignals {
    *  (a producing drive that was idle-reaped). Lets the terminal_drive_evicted verdict name a
    *  reaper-killed autonomous drive. Absent (never `{}`) when no eviction fired. */
   terminalDriveEvicted?: { reason: string; idleMs: number; wasProducing: boolean };
+  /** Set when a sub-agent run was force-killed during the session — folded from
+   *  `subagent.killed` trajectory records (bridged from the `subagent:killed`
+   *  event, emitted at the runner's kill chokepoint). `killedBy` is the closed
+   *  attribution union (`parent` | `health_monitor` | `operator` | `system`),
+   *  last-wins; the numbers are the kill telemetry (idle/threshold present on
+   *  health-monitor kills only). Lets the subagent_stuck_killed verdict name an
+   *  autonomous stuck-kill — the child's own rollup can still read success when
+   *  the kill races completion. Absent (never `{}`) when no kill fired. */
+  subagentKilled?: { killedBy: string; runtimeMs?: number; idleMs?: number; thresholdMs?: number };
   failures: IncidentFailure[]; // normalized, newest-first
   breakerEvents: Array<{
     seq: number;
@@ -207,10 +216,12 @@ export interface IncidentSignals {
    */
   promptTimeout?: IncidentPromptTimeout;
   /**
-   * Memory-recall outcome aggregated over the session's
-   * `memory.recalled` trajectory records. Lets the `recall_miss` heuristic name a
-   * zero-hit recall on a degraded session. Counts/booleans
-   * only. Absent ⇒ no recall records in the trajectory (omitted from the report).
+   * Memory-recall outcome aggregated over the session's `memory.recalled` +
+   * `memory.recall_degraded` trajectory records. Lets the `recall_miss`
+   * heuristic name a zero-hit recall on a degraded session, and surfaces a
+   * DEAD/DEGRADED recall (lane or whole-split failure) with the last closed
+   * scope/ErrorKind labels. Counts/booleans only. Absent ⇒ no recall records
+   * in the trajectory (omitted from the report).
    */
   recall?: {
     recalls: number;
@@ -218,6 +229,14 @@ export interface IncidentSignals {
     lastLanes: number;
     lastFinalCount: number;
     rerankerAvailable: boolean;
+    /** Recalls that injected ≥1 memory scoped to a different user than the conversation
+     *  (the cross-sender privacy signal). Optional/additive (absent on pre-fix trajectories). */
+    crossUserRecalls?: number;
+    /** The terminal recall's cross-user injected count. Counts only — never ids/bodies. */
+    lastCrossUserCount?: number;
+    degraded?: number;
+    lastDegradedScope?: string;
+    lastDegradedErrorKind?: string;
   };
   /**
    * Cache breaks folded per-reason from the session's
@@ -257,6 +276,13 @@ export interface IncidentSignals {
     reason?: string;
     reclassified: boolean;
   };
+  /**
+   * Session-wide finalize tally: turns that painted a kept failure pill and
+   * turns that finalized as recovered successes. The last-wins `turnFinalized`
+   * snapshot above cannot answer "which turn wore the pill" mid-session.
+   * Absent ⇒ no finalize records.
+   */
+  turnFinalizeCounts?: { failure: number; recovered: number };
   /**
    * Σ over the session's `delivery.aborted` records — aborted-delivery events
    * and the blocks they left unsent (chunksNotSent = Σ(totalChunks −

@@ -165,6 +165,21 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       acc.terminalDriveEvictedMs = asNumber(data.durationMs) ?? acc.terminalDriveEvictedMs;
       return;
     }
+    case "subagent.killed": {
+      // An attributed sub-agent kill (bridged from subagent:killed, the
+      // runner's kill chokepoint). Keep the LAST kill's closed attribution +
+      // telemetry for the subagent_stuck_killed verdict — the child's own
+      // rollup can still read success when the kill races completion, so this
+      // record is the kill's authoritative explain-side evidence.
+      const killedBy = asString(data.killedBy);
+      if (killedBy !== undefined) {
+        acc.subagentKilledBy = killedBy;
+        acc.subagentKilledRuntimeMs = asNumber(data.runtimeMs);
+        acc.subagentKilledIdleMs = asNumber(data.idleMs);
+        acc.subagentKilledThresholdMs = asNumber(data.thresholdMs);
+      }
+      return;
+    }
     case "tool.result": {
       if (!tool) return;
       // Dedupe by toolCallId — the live ctx_search counted twice when its
@@ -347,10 +362,15 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       acc.recallCount += 1;
       const finalCount = asNumber(data.finalCount) ?? 0;
       if (finalCount === 0) acc.recallZeroHits += 1;
+      // crossUserCount > 0 ⇒ agent-scoped recall injected another sender's memory into
+      // this turn (the cross-sender privacy signal). Absent on pre-fix trajectories ⇒ 0.
+      const crossUserCount = asNumber(data.crossUserCount) ?? 0;
+      if (crossUserCount > 0) acc.crossUserRecalls += 1;
       acc.lastRecall = {
         lanes: asNumber(data.lanes) ?? 0,
         finalCount,
         rerankerAvailable: data.rerankerAvailable === true,
+        crossUserCount,
       };
       return;
     }
@@ -382,7 +402,26 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
           ...(asString(data.reason) !== undefined ? { reason: asString(data.reason) } : {}),
           reclassified: data.reclassified === true,
         };
+        // Session-wide finalize tally (the last-wins snapshot above hid a
+        // mid-session failure paint behind a later success — reading the raw
+        // trajectory was the only way to find which turn wore the pill).
+        const counts = acc.turnFinalizeCounts ?? { failure: 0, recovered: 0 };
+        if (outcome === "failure") counts.failure += 1;
+        if (outcome === "success_with_recovered_failures") counts.recovered += 1;
+        acc.turnFinalizeCounts = counts;
       }
+      return;
+    }
+    case "memory.recall_degraded": {
+      // A recall lane (or the whole lane split) failed this session — the
+      // counted section that answers "did this session run without memory?"
+      // from `explain` alone (previously a daemon.log-grep discovery).
+      const prev = acc.recallDegraded ?? { count: 0, lastScope: "", lastErrorKind: "" };
+      acc.recallDegraded = {
+        count: prev.count + 1,
+        lastScope: asString(data.scope) ?? prev.lastScope,
+        lastErrorKind: asString(data.errorKind) ?? prev.lastErrorKind,
+      };
       return;
     }
     case "delivery.aborted": {
@@ -546,6 +585,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     turnTraceIds: new Set(),
     recallCount: 0,
     recallZeroHits: 0,
+    crossUserRecalls: 0,
     contextBudgetHistory: [],
     cacheBreaksByReason: new Map(),
     learning: emptyLearningFold(),
@@ -673,14 +713,29 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.toolSchemaUnsupported !== undefined
       ? { toolSchemaUnsupported: acc.toolSchemaUnsupported }
       : {}),
-    ...(acc.recallCount > 0 && acc.lastRecall !== undefined
+    // Present when the session issued recalls OR a recall degraded — a
+    // degraded-ONLY session (the whole lane split failed, so no
+    // memory.recalled ever fired) must still surface the recall section
+    // with honest zero counts + the degradation tally.
+    ...((acc.recallCount > 0 && acc.lastRecall !== undefined) || acc.recallDegraded !== undefined
       ? {
           recall: {
             recalls: acc.recallCount,
             zeroHits: acc.recallZeroHits,
-            lastLanes: acc.lastRecall.lanes,
-            lastFinalCount: acc.lastRecall.finalCount,
-            rerankerAvailable: acc.lastRecall.rerankerAvailable,
+            lastLanes: acc.lastRecall?.lanes ?? 0,
+            lastFinalCount: acc.lastRecall?.finalCount ?? 0,
+            rerankerAvailable: acc.lastRecall?.rerankerAvailable ?? false,
+            // Cross-sender recall injection — surfaced so "did another sender's memory
+            // reach this turn?" is answerable from `comis explain` alone (not a raw-session read).
+            ...(acc.crossUserRecalls > 0 ? { crossUserRecalls: acc.crossUserRecalls } : {}),
+            ...(acc.lastRecall !== undefined ? { lastCrossUserCount: acc.lastRecall.crossUserCount } : {}),
+            ...(acc.recallDegraded !== undefined
+              ? {
+                  degraded: acc.recallDegraded.count,
+                  lastDegradedScope: acc.recallDegraded.lastScope,
+                  lastDegradedErrorKind: acc.recallDegraded.lastErrorKind,
+                }
+              : {}),
           },
         }
       : {}),
@@ -709,6 +764,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.summaryTurnCount !== undefined ? { summaryTurnCount: acc.summaryTurnCount } : {}),
     ...(acc.modelTokens !== undefined ? { modelTokens: acc.modelTokens } : {}),
     ...(acc.turnFinalized !== undefined ? { turnFinalized: acc.turnFinalized } : {}),
+    ...(acc.turnFinalizeCounts !== undefined ? { turnFinalizeCounts: acc.turnFinalizeCounts } : {}),
     ...(acc.deliveryAborts !== undefined ? { deliveryAborts: acc.deliveryAborts } : {}),
     ...(acc.recoveries !== undefined ? { recoveries: acc.recoveries } : {}),
     ...(acc.abortReason !== undefined ? { abortReason: acc.abortReason } : {}),
@@ -741,6 +797,18 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
             reason: acc.terminalDriveEvictedReason,
             idleMs: acc.terminalDriveEvictedMs ?? 0,
             wasProducing: acc.terminalDrivePromotedReason === "producing",
+          },
+        }
+      : {}),
+    // Surface an attributed sub-agent kill ONLY when one fired (undefined,
+    // never {}). Idle/threshold ride only when present (health-monitor kills).
+    ...(acc.subagentKilledBy !== undefined
+      ? {
+          subagentKilled: {
+            killedBy: acc.subagentKilledBy,
+            ...(acc.subagentKilledRuntimeMs !== undefined ? { runtimeMs: acc.subagentKilledRuntimeMs } : {}),
+            ...(acc.subagentKilledIdleMs !== undefined ? { idleMs: acc.subagentKilledIdleMs } : {}),
+            ...(acc.subagentKilledThresholdMs !== undefined ? { thresholdMs: acc.subagentKilledThresholdMs } : {}),
           },
         }
       : {}),

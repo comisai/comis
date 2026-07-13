@@ -17,7 +17,7 @@ import {
 } from "@comis/core";
 import type { ImageGenerationPort, OAuthTokenManager, ClockPort, VideoGenerationPort, SessionKey } from "@comis/core";
 import { createChannelHealthMonitor } from "@comis/channels";
-import { createImageGenRateLimiter } from "@comis/skills";
+import { createImageGenRateLimiter, readProvenanceStore } from "@comis/skills";
 import { createLeaseManager, type LeaseManager } from "@comis/infra";
 import type { BoundedAutonomyBudgetHolder } from "@comis/agent";
 import { createRootRunIdResolver } from "./setup-capability-endpoint-boot.js";
@@ -47,6 +47,11 @@ import { createImageCostLimiter, type ImageCostLimiter } from "../api/image-cost
 import { createVideoCostLimiter, type VideoCostLimiter } from "../api/video-cost-limiter.js";
 import type { LoggingResult } from "./setup-logging.js";
 import type { BootContext } from "../daemon-types.js";
+// The boot config-posture snapshot (recordBootConfigPosture) — the count
+// helpers live beside the record builder in observability/; the wiring here
+// only derives inputs from the booted container and hands them over.
+import { buildConfigPostureRecord, countChimericModels, countUnresolvedModels, countImportedNonAllowlisted, countPricingGaps, countMediaCredentialGaps, anyAgentTerminalUnsafeDisableSandbox, isLoopbackHost } from "../observability/build-config-posture-record.js";
+import type { StrandedFinding } from "./setup-storage-mismatch-warn.js";
 // Sibling-direct imports (not via the wiring barrel) to keep main-helpers free
 // of a barrel import edge — these are the image-gen bundle's collaborators.
 import { createImageGenGetter } from "./setup-media.js";
@@ -796,4 +801,77 @@ export function buildMediaVisionBundle(deps: {
     logger: skillsLogger,
   });
   return { capability, resolveMainModelId: (agentId: string) => resolveMain(agentId).modelId || undefined };
+}
+
+/**
+ * Record the boot-time config-posture SNAPSHOT (one-shot `config_posture`
+ * obs_diagnostics row, NOT an event) — the log-file-only posture findings
+ * (TLS-off, stranded-secret COUNTS, canary-fallback) plus the boot-derived
+ * counts/booleans, so the fleet lens can query a daemon's posture without
+ * grepping daemon.log. Extracted from `bootShutdown` to keep daemon.ts under
+ * its 3000-line cap; see `buildConfigPostureRecord` for the row contract
+ * (counts/booleans/closed labels only — never a secret value or free text).
+ *
+ * TLS-off is CONFIG-DERIVED here, not read from the gateway's own TLS
+ * decision: `gateway.{tls,allowInsecureHttp}` is the INPUT the gateway acts
+ * on, but the gateway's resolved `tls ? https : http` branch (hono-server.ts)
+ * is internal and NOT exposed on GatewayServerHandle, and threading it back
+ * out would be deep cross-package plumbing. This recompute matches the
+ * listener's posture; it only diverges if the gateway gains a TLS path that
+ * bypasses config (an injected cert / env override) — a future change should
+ * thread the gateway's resolved boolean here. TLS-off is a posture concern
+ * only on a NON-loopback bind: a loopback gateway has no off-host exposure,
+ * so flagging it would make `fleet` headline `config_posture` (TLS-off) on a
+ * clean dev/loopback box — noise. The gate matches the gateway-exposure
+ * security check (only 0.0.0.0-without-TLS is critical). `gateway.host`
+ * defaults to 127.0.0.1, so a default daemon stays benign; an operator-set
+ * 0.0.0.0/routable host WITHOUT TLS still flags.
+ *
+ * canaryFallbackActive is a daemon-global presence proxy: CANARY_SECRET is
+ * folded into `boot.env`/mergedEnv store-wins (buildMergedEnv), so this env
+ * read already honors an encrypted/file secret-store entry — the same source
+ * the per-agent path resolves (setup-agents-runtime.ts). True ⇒ no secret set
+ * ⇒ every agent uses the deterministic fallback. No deep per-agent plumbing.
+ */
+export function recordBootConfigPosture(
+  boot: BootContext,
+  defaultAgentId: string,
+  strandedFindings: StrandedFinding[],
+): void {
+  const container = boot.container;
+  const tlsOff =
+    container.config.gateway.tls === undefined &&
+    container.config.gateway.allowInsecureHttp !== true &&
+    !isLoopbackHost(container.config.gateway.host);
+  const allowInsecureHttp = container.config.gateway.allowInsecureHttp === true;
+  const canaryFallbackActive = !boot.env.get("CANARY_SECRET");
+  // Derived from the SAME boot comparisons the served-window WARN used (no second comparison).
+  const servedBelowConfiguredCount = [...(boot.servedWindowComparisons?.values() ?? [])].filter((c) => c.belowConfigured).length;
+  // Surface the relaxed no-downgrade sandbox default at boot.
+  // The typed field defaults to true (schema-security.ts); === false is the relaxation.
+  const sandboxNoDowngradeDisabled = container.config.security.agentToAgent.sandboxNoDowngrade === false;
+  // Imported-skill posture: total imported + how many carry a recorded registry no
+  // longer in its applicable allowlist (allowlist drift after the fact). Reads the
+  // SAME boot dataDir the orphan-import sweep reads (readProvenanceStore is fail-safe
+  // — a missing/corrupt store yields {} and never blocks boot). Per-record allowlist
+  // resolution (shared→default agent, local→record.agentId); counts only.
+  const importedPosture = countImportedNonAllowlisted(readProvenanceStore(boot.dataDir), container.config.agents, defaultAgentId);
+  // browser.noSandbox: true runs Chromium without its sandbox — a relaxed
+  // security default that must SURFACE in the config-posture snapshot, not stay
+  // silent (the browser tool processes untrusted web content).
+  const browserNoSandbox = container.config.browser?.noSandbox === true;
+  // skills.terminal.unsafeDisableSandbox: true runs a driven coding CLI WITHOUT the bwrap jail — a
+  // relaxed security default that must SURFACE in the config-posture snapshot, not stay silent.
+  const terminalUnsafeDisableSandbox = anyAgentTerminalUnsafeDisableSandbox(container.config.agents);
+  // Media credential gap: a PINNED media provider whose credential is absent
+  // (image/transcription/tts/video) — invisible to the main-pipeline chimeric
+  // detector. `imageGenProvider.isAvailable()` is the store-aware image-codex
+  // signal (openai-codex is OAuth, image-only); env-key providers check the
+  // secret manager.
+  const mediaCredentialGapCount = countMediaCredentialGaps(
+    container.config.integrations.media,
+    (key) => container.secretManager.has(key),
+    boot.imageGenProvider?.isAvailable() ?? false,
+  );
+  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount: countChimericModels(container.config.agents), unresolvedModelCount: countUnresolvedModels(container.config.agents, container.config.providers?.entries), pricingGapCount: countPricingGaps(container.config.agents), importedSkillCount: importedPosture.total, importedNonAllowlistedRegistryCount: importedPosture.drift, sandboxNoDowngradeDisabled, browserNoSandbox, terminalUnsafeDisableSandbox, mediaCredentialGapCount }, boot.clock);
 }

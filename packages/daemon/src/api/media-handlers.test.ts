@@ -855,6 +855,46 @@ describe("createMediaHandlers", () => {
       ).rejects.toThrow("TTS not configured");
     });
 
+    it("auto-delivers the synthesized audio to the caller channel via sendAttachment", async () => {
+      // ISSUE-4 (chief-of-staff live campaign): tts_synthesize must auto-deliver the
+      // audio to the current channel (mirroring image_generate) so the agent cannot
+      // claim it "sent a voice message" while nothing reached the channel (a false success).
+      const sendAttachment = vi.fn(async () => ({ ok: true as const, value: "msg-1" }));
+      const deps = makeDeps({
+        getChannelAdapter: vi.fn(() => ({ sendAttachment })) as never,
+      });
+      const handlers = createMediaHandlers(deps);
+
+      const result = (await handlers["tts.synthesize"]!({
+        text: "שלום",
+        _callerChannelType: "telegram",
+        _callerChannelId: "678314278",
+      })) as { filePath: string; delivered?: boolean };
+
+      expect(sendAttachment).toHaveBeenCalledWith(
+        "678314278",
+        expect.objectContaining({ type: "audio", url: result.filePath }),
+      );
+      expect(result.delivered).toBe(true);
+    });
+
+    it("returns the filePath WITHOUT channel delivery when there is no caller-channel context (orchestrate/cron)", async () => {
+      const sendAttachment = vi.fn(async () => ({ ok: true as const, value: "msg-1" }));
+      const deps = makeDeps({
+        getChannelAdapter: vi.fn(() => ({ sendAttachment })) as never,
+      });
+      const handlers = createMediaHandlers(deps);
+
+      const result = (await handlers["tts.synthesize"]!({ text: "hi" })) as {
+        filePath: string;
+        delivered?: boolean;
+      };
+
+      expect(sendAttachment).not.toHaveBeenCalled();
+      expect(result.delivered).toBeFalsy();
+      expect(result.filePath).toBeTruthy();
+    });
+
     it("creates output directory via fs.mkdir", async () => {
       const deps = makeDeps();
       const handlers = createMediaHandlers(deps);

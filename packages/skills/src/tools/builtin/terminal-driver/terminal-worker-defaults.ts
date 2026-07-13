@@ -62,14 +62,15 @@ export function defaultLoadPty(): PtyModuleLike {
   return localRequire("node-pty") as PtyModuleLike;
 }
 
-/** The production pipe-backend spawner: `child_process.spawn` with stdio pipes (mirrors exec-background.ts). */
+/** The production pipe-backend spawner: `child_process.spawn` with stdio pipes (mirrors exec-background.ts). `cwd` is set ONLY on the unsandboxed direct-spawn path (bwrap owns the jailed path's cwd). */
 export function defaultSpawnPipe(
   bin: string,
   argv: string[],
-  opts: { env: NodeJS.ProcessEnv },
+  opts: { env: NodeJS.ProcessEnv; cwd?: string },
 ): PipeChildLike {
   return childSpawn(bin, argv, {
     env: opts.env,
+    ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
     stdio: ["pipe", "pipe", "pipe"],
   }) as unknown as PipeChildLike;
 }

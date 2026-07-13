@@ -17,7 +17,7 @@ import { cacheBreakEventToRow } from "./observability-mutations.js";
 
 /** A catalog-priced model — resolveModelPricing(...).cacheRead is non-zero (3e-7). */
 const PRICED_PROVIDER = "anthropic";
-const PRICED_MODEL = "claude-3-5-sonnet-20241022";
+const PRICED_MODEL = "claude-sonnet-4-5-20250929";
 /** A native provider with no catalog entry → ZERO_COST.cacheRead === 0 (the unknown/chimera case). */
 const UNKNOWN_PROVIDER = "anthropic";
 const UNKNOWN_MODEL = "totally-fake-model-xyz";

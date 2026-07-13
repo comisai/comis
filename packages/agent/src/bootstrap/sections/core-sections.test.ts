@@ -45,6 +45,19 @@ describe("buildSafetySection", () => {
     expect(joined).toContain("Constitutional Principles");
     expect(joined).toContain("Operational Safety");
   });
+
+  // A model was observed running a confirmation flow ("reply YES to
+  // immobilize") for an action it has no tool for — implying a capability it
+  // lacks without ever fabricating a result. The general honesty principle did
+  // not stop the *pre-affirmation*; this operational rule names the exact
+  // trigger (act-on-request verbs) and the required disclosure order.
+  it("instructs disclosing missing capability BEFORE affirming an action request", () => {
+    const joined = buildSafetySection(false).join("\n");
+    // Must name the action-request trigger and require capability-check-first.
+    expect(joined).toMatch(/before (you )?(affirm|confirm|promis)/i);
+    expect(joined).toMatch(/create, set, send/i);
+    expect(joined).toContain("do not imply you can perform an action you cannot");
+  });
 });
 
 // ---------------------------------------------------------------------------

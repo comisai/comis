@@ -30,7 +30,7 @@ import { formatViolations } from "../support/architecture-helpers.js";
 
 const DESIGN_REF = "named autonomy profiles never over-grant (resolveAutonomy in @comis/core)";
 
-// The nine FLOOR-CONTAINED orchestration caps `standard` turns on. Hardcoded
+// The ten FLOOR-CONTAINED orchestration caps `standard` turns on. Hardcoded
 // here as the independent source of truth: the resolver must stay a subset of
 // these. `orch:message` IS a member: the standard profile turns ON
 // origin-channel messaging. The ORIGIN-vs-new-channel scoping rides
@@ -39,7 +39,9 @@ const DESIGN_REF = "named autonomy profiles never over-grant (resolveAutonomy in
 // the message config + the per-target grant, NOT by removing the cap. So the
 // cap-literal is floor-contained + `autoApprovable:true`; only the non-origin
 // target escalates (asserted via ALWAYS_ESCALATE below, which `orch:message` is
-// NOT a member of).
+// NOT a member of). `orch:mcp` IS a member (floor-granted like orch:write) — the
+// reachability gate is the per-server `autonomy.mcp.allow` allowlist (default {} ⇒
+// deny by absence), NOT the cap grant, so floor-holding it opens no MCP server.
 const FLOOR_CONTAINED: ReadonlySet<AgentCapability> = new Set<AgentCapability>([
   "orch:read",
   "orch:web",
@@ -50,6 +52,7 @@ const FLOOR_CONTAINED: ReadonlySet<AgentCapability> = new Set<AgentCapability>([
   "orch:cron",
   "orch:skill",
   "orch:message",
+  "orch:mcp",
 ]);
 
 // The caps that are `autoApprovable:false` in EVERY profile forever

@@ -120,7 +120,10 @@ export function createCronScheduler(deps: CronSchedulerDeps): CronScheduler {
       if (result.status === "ok") {
         job.consecutiveErrors = 0;
         job.lastRunAtMs = endTime;
-        job.nextRunAtMs = computeNextRunAtMs(job.schedule, endTime);
+        // createdAtMs anchors the "in" one-shot: its fire time is absolute
+        // (creation + N), so this post-completion recompute TERMINATES a fired
+        // one-shot (undefined) instead of re-arming it another N seconds out.
+        job.nextRunAtMs = computeNextRunAtMs(job.schedule, endTime, job.createdAtMs);
         // A system_event payload is FIRE-AND-FORGET — executeJob
         // dispatches the event and returns in ms while the real work (e.g. the ~20s __REFLECT__
         // run) proceeds async. Logging "Job completed durationMs:15" reads as "finished in 15ms"
@@ -203,11 +206,14 @@ export function createCronScheduler(deps: CronSchedulerDeps): CronScheduler {
   return {
     async start(): Promise<void> {
       jobs = await store.load();
-      // Compute nextRunAtMs for any jobs that don't have it
+      // Compute nextRunAtMs for any jobs that don't have it. createdAtMs anchors
+      // the "in" one-shot: a stale fired reminder stays terminated across a
+      // restart (it must NOT re-arm N seconds after every boot), while an
+      // unfired one re-arms at its ORIGINAL absolute fire time.
       const now = getNow();
       for (const job of jobs) {
         if (job.nextRunAtMs === undefined && job.enabled) {
-          job.nextRunAtMs = computeNextRunAtMs(job.schedule, now);
+          job.nextRunAtMs = computeNextRunAtMs(job.schedule, now, job.createdAtMs);
         }
       }
       armTimer();
@@ -230,7 +236,8 @@ export function createCronScheduler(deps: CronSchedulerDeps): CronScheduler {
         );
       }
       if (job.nextRunAtMs === undefined && job.enabled) {
-        job.nextRunAtMs = computeNextRunAtMs(job.schedule, getNow());
+        // createdAtMs anchors the "in" one-shot's absolute fire time (creation + N).
+        job.nextRunAtMs = computeNextRunAtMs(job.schedule, getNow(), job.createdAtMs);
       }
       await store.addJob(job);
       jobs.push(job);

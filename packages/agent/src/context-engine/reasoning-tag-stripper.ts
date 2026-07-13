@@ -112,47 +112,109 @@ export function createReasoningTagStripper(
 // ---------------------------------------------------------------------------
 
 /**
- * Validate role attribution in a message array from buildSessionContext().
+ * Validate role attribution in the assembled message array from
+ * `buildSessionContext()`, AFTER `repairOrphanedMessages()` has run.
  *
- * Scans for unexpected role patterns (consecutive user-user or assistant-assistant
- * without tool results between) and emits a WARN log when an anomaly is detected.
+ * Scans for consecutive same-role messages (user-user or assistant-assistant;
+ * tool results break alternation) and classifies the FIRST one by whether the
+ * RAW session tree still carries it:
  *
- * This is a diagnostic assertion only -- no repair is performed. Repair is handled
- * by `repairOrphanedMessages()` which runs before this check.
+ *   - `rawTreeHasUnrepairedAnomaly === true` — the repair ran and the raw
+ *     session tree STILL has a consecutive-role anomaly. That is genuine,
+ *     unrepaired corruption (the repair did not resolve it) → WARN.
+ *   - `rawTreeHasUnrepairedAnomaly === false` — the raw tree is well-formed
+ *     (the repair correctly made no change), so the adjacency exists only in
+ *     the assembled/merged view. The provider adapter normalizes consecutive
+ *     same-role turns, so this is BENIGN → DEBUG (once per turn).
  *
- * @param messages - Message array from buildSessionContext()
+ * This is a diagnostic assertion — no repair is performed here.
+ *
+ * Rationale (live incident 2026-07-08): the old unconditional WARN fired
+ * `errorKind:"internal"` on ~every turn (index 47, 30× over 2 days) for a
+ * benign, provider-normalized adjacency on a session whose raw tree was clean
+ * and every request succeeded. Worse, its hint ("repairOrphanedMessages may
+ * not have run") was FALSE — the repair ran every turn — and sent the operator
+ * the wrong way. The severity now tracks whether the raw tree is genuinely
+ * unrepaired, and the hint states what actually happened.
+ *
+ * @param messages - Assembled message array from buildSessionContext()
+ * @param rawTreeHasUnrepairedAnomaly - Whether the raw session tree (getBranch)
+ *   still carries a consecutive-role anomaly after the repair pass ran.
  * @param logger - Structured logger for emitting diagnostics
  */
-export function validateRoleAttribution(messages: AgentMessage[], logger: ComisLogger): void {
+export function validateRoleAttribution(
+  messages: AgentMessage[],
+  rawTreeHasUnrepairedAnomaly: boolean,
+  logger: ComisLogger,
+): void {
   if (messages.length < 2) return;
 
   for (let i = 1; i < messages.length; i++) {
-    const prev = messages[i - 1] as { role: string };
-    const curr = messages[i] as { role: string };
+    const prevRole = (messages[i - 1] as { role: string }).role;
+    const currRole = (messages[i] as { role: string }).role;
 
-    // Allow tool results to follow assistant messages (normal pattern)
-    // Also allow assistant messages after tool results
-    const prevRole = prev.role;
-    const currRole = curr.role;
-
-    // Check for consecutive same-role messages (user-user or assistant-assistant)
-    // Tool results ("tool", "toolResult") are expected to break alternation
+    // Consecutive same-role (user-user or assistant-assistant). Tool results
+    // ("tool"/"toolResult") have their own role and break alternation.
     if (
       (prevRole === "user" && currRole === "user") ||
       (prevRole === "assistant" && currRole === "assistant")
     ) {
-      logger.warn(
-        {
-          anomalyIndex: i,
-          expectedRole: prevRole === "user" ? "assistant" : "user",
-          actualRole: currRole,
-          hint: "Session role attribution anomaly detected; repairOrphanedMessages may not have run",
-          errorKind: "internal" as const,
-        },
-        "Post-load role validation anomaly",
-      );
-      // Report only the first anomaly to avoid log noise
+      const fields = {
+        anomalyIndex: i,
+        expectedRole: prevRole === "user" ? "assistant" : "user",
+        actualRole: currRole,
+      };
+      if (rawTreeHasUnrepairedAnomaly) {
+        logger.warn(
+          {
+            ...fields,
+            hint: "The raw session tree still carries a consecutive-role anomaly after repairOrphanedMessages ran — the repair did not resolve it. Inspect the session for an orphaned/interrupted turn.",
+            errorKind: "internal" as const,
+          },
+          "Unrepaired session role anomaly",
+        );
+      } else {
+        // Benign: the raw tree is well-formed; the adjacency is only in the
+        // assembled/merged view and the provider adapter normalizes it.
+        logger.debug(
+          {
+            ...fields,
+            hint: "Consecutive same-role messages in the assembled context; the raw session tree is well-formed (repair correctly made no change) and the provider adapter normalizes consecutive same-role turns — no repair needed.",
+          },
+          "Assembled-context role adjacency (benign)",
+        );
+      }
+      // Report only the first anomaly to avoid log noise.
       return;
     }
   }
+}
+
+/**
+ * Does the RAW session tree (getBranch message entries) carry a consecutive
+ * same-role anomaly? This is the SAME scan `repairMidSessionAnomalies` uses to
+ * decide whether there is anything to repair — so a `true` here after the
+ * repair ran means the repair failed to resolve it. Pure (no I/O), so the
+ * caller (pi-executor) passes the result into `validateRoleAttribution` for
+ * severity classification.
+ */
+export function sessionTreeHasSameRoleAnomaly(sessionManager: {
+  getBranch?: () => ReadonlyArray<{ type: string; message?: { role?: string } }>;
+}): boolean {
+  // Defensive: a session manager without getBranch (test harnesses / minimal
+  // shapes) yields the safe default — no detectable raw-tree anomaly, so the
+  // detector treats any assembled adjacency as benign (DEBUG, never a false WARN).
+  if (typeof sessionManager?.getBranch !== "function") return false;
+  const roles = sessionManager
+    .getBranch()
+    .filter((e) => e.type === "message")
+    .map((e) => e.message?.role);
+  for (let i = 1; i < roles.length; i++) {
+    const a = roles[i - 1];
+    const b = roles[i];
+    if ((a === "user" && b === "user") || (a === "assistant" && b === "assistant")) {
+      return true;
+    }
+  }
+  return false;
 }

@@ -23,6 +23,7 @@ import {
   sandboxDowngradeRefusedEventToRow,
   deliveryDeadletteredEventToRow,
   nodeBudgetExceededEventToRow,
+  subagentKilledEventToRow,
 } from "./obs-orchestration-rows.js";
 // The four autonomy/durable lifecycle row-builders, in a
 // sibling module for the 800-line cap (mirroring obs-orchestration-rows);
@@ -47,6 +48,8 @@ import {
   sessionSummaryEventToRow,
   dagDegradedEventToRow,
   healthBudgetExceededEventToRow,
+  recallDegradedEventToRow,
+  prefixUnstableEventToRow,
   channelInboundSilentEventToRow,
   channelIngressAuthRejectedEventToRow,
   reflectFunnelEventToRow,
@@ -128,6 +131,8 @@ export {
   sessionSummaryEventToRow,
   dagDegradedEventToRow,
   healthBudgetExceededEventToRow,
+  recallDegradedEventToRow,
+  prefixUnstableEventToRow,
   channelInboundSilentEventToRow,
   channelIngressAuthRejectedEventToRow,
   reflectFunnelEventToRow,
@@ -151,6 +156,7 @@ export {
   sandboxDowngradeRefusedEventToRow,
   deliveryDeadletteredEventToRow,
   nodeBudgetExceededEventToRow,
+  subagentKilledEventToRow,
 };
 
 // The four autonomy/durable lifecycle row-builders live in
@@ -337,6 +343,19 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   eventBus.on("health:budget_exceeded", (payload) => {
     diagnosticBuffer.push(healthBudgetExceededEventToRow(payload));
   });
+  // A degraded/failed recall lane → a health_signal row (fleet finding
+  // `health_signal:recall_degraded`) — dead recall must be a fleet finding,
+  // not a daemon.log-grep discovery.
+  eventBus.on("memory:recall_degraded", (payload) => {
+    diagnosticBuffer.push(recallDegradedEventToRow(payload));
+  });
+  // A recurring cached-prefix collapse (wasted Anthropic cache writes) → a
+  // health_signal row, so the churn is a fleet finding
+  // (health_signal:cache_prefix_churn) instead of a daemon.log-grep discovery
+  // (the comis-harel fleet-blindness incident, 2026-07-12).
+  eventBus.on("agent:prefix_unstable", (payload) => {
+    diagnosticBuffer.push(prefixUnstableEventToRow(payload));
+  });
   // A silently-dead webhook ingress (past its missed-inbound threshold) → a
   // health_signal row, so the fleet lens surfaces it (health_signal:channel_ingress_silent)
   // the moment the liveness timer fires. Content-free (channelType + counts only).
@@ -420,6 +439,13 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   });
   eventBus.on("subagent:budget_exceeded", (payload) => {
     diagnosticBuffer.push(nodeBudgetExceededEventToRow(payload));
+  });
+  // The attributed sub-agent kill → a health_signal row (warning ONLY for the
+  // autonomous health-monitor kill; parent/operator/system kills are info —
+  // deliberate orchestration). The fleet lens rolls the warning rows into the
+  // dedicated subagent_stuck_killed finding.
+  eventBus.on("subagent:killed", (payload) => {
+    diagnosticBuffer.push(subagentKilledEventToRow(payload));
   });
 
   // The four autonomy/durable lifecycle signals →

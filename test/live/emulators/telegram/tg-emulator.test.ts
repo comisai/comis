@@ -861,6 +861,23 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base", () => {
       expect(editRecord!.messageId).toBe(4242);
       expect(editRecord!.text).toBe("edited body");
     });
+
+    it("deleteMessage records a RecordedOutbound (method:deleteMessage) AND returns result:true (the EditPlace pill-cleanup lifecycle)", async () => {
+      // Caps declare outbound.deletes:true, but the route used to fall to the
+      // silent default-case absorb — the daemon's activity-pill delete after a
+      // delivered turn was unprovable on the oracle (observed live: a recovered
+      // turn's "✓ done" pill looked KEPT when the product had deleted it).
+      const env = await callMethod(apiRoot, "deleteMessage", {
+        chat_id: CHAT_ID,
+        message_id: 4243,
+      });
+      expect(env.ok).toBe(true);
+      expect(env.result).toBe(true);
+
+      const deleteRecord = emu.outbound({ chatId: CHAT_ID }).find((r) => r.method === "deleteMessage");
+      expect(deleteRecord).toBeDefined();
+      expect(deleteRecord!.messageId).toBe(4243);
+    });
   });
 
   // -------------------------------------------------------------------------
