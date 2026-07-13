@@ -71,10 +71,11 @@ export const FleetHealthReportSchema = z.object({
      * runs et al. that key their token usage to a synthetic `__PREFIX__`
      * session with NO session_summary, so it is ABSENT from `costUsd` (the
      * session-summary rollup). The operator's full provider bill is
-     * `costUsd + offSessionUsd`; the two never double-count. Defaulted `0` so a
-     * report from a store without the query (or with no background spend) parses.
+     * `costUsd + offSessionUsd`; the two never double-count. The assembler
+     * always sets it (0 when no background spend); `optional` so a report from
+     * an older producer without the field still parses. Consumers read `?? 0`.
      */
-    offSessionUsd: z.number().default(0),
+    offSessionUsd: z.number().optional(),
   }),
   activity: z.object({
     activeAgents: z.array(z.string()),
