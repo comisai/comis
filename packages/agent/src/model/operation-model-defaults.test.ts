@@ -26,6 +26,30 @@ function totalCost(m: { cost?: { input?: number; output?: number } }): number {
   return (m.cost?.input ?? 0) + (m.cost?.output ?? 0);
 }
 
+/** Mirror of production's family key: trailing digit-leading segments stripped. */
+function familyKey(id: string): string {
+  const segs = id.split("-");
+  while (segs.length > 1 && /^\d/.test(segs[segs.length - 1]!)) segs.pop();
+  return segs.join("-");
+}
+
+/** Mirror of production's supersession prune: drop models with a same-family,
+ *  lex-greater (newer), not-pricier sibling. */
+function pruneSuperseded<T extends { id: string; cost?: { input?: number; output?: number } }>(
+  models: readonly T[],
+): T[] {
+  return models.filter(
+    (m) =>
+      !models.some(
+        (n) =>
+          n.id !== m.id &&
+          familyKey(n.id) === familyKey(m.id) &&
+          n.id.localeCompare(m.id) > 0 &&
+          totalCost(n) <= totalCost(m),
+      ),
+  );
+}
+
 describe("resolveOperationDefaults", () => {
   it("returns {} for unknown (non-native) providers", () => {
     expect(resolveOperationDefaults("not-a-real-provider")).toEqual({});
@@ -152,15 +176,43 @@ describe("resolveOperationDefaults", () => {
 // ---------------------------------------------------------------------------
 
 describe("resolveOperationDefaults — top-of-cohort selection", () => {
-  it("anthropic mid lands in the Sonnet $18 cohort and picks the lex-greatest Sonnet", () => {
+  it("anthropic mid resolves the current Sonnet generation, never a superseded legacy Sonnet", () => {
     const result = resolveOperationDefaults("anthropic");
     expect(result.mid).toBeDefined();
     expect(result.mid!).toMatch(/^claude-sonnet-/);
-    // The bug was that mid resolved to claude-sonnet-4-5 by accident of catalog
-    // enumeration order. Top-of-cohort must pick the lex-greatest Sonnet in the
-    // mid cohort, which is strictly greater than claude-sonnet-4-5 in any catalog
-    // that ships Sonnet 4.6+. Loose assertion to survive future pi-ai bumps.
-    expect(result.mid!.localeCompare("claude-sonnet-4-5")).toBeGreaterThan(0);
+    // A newer Sonnet at an equal-or-lower price supersedes the legacy Sonnet
+    // rung entirely — mid must land strictly above claude-sonnet-4-6 in any
+    // catalog that ships Sonnet 5+. Loose assertion to survive future pi-ai bumps.
+    expect(result.mid!.localeCompare("claude-sonnet-4-6")).toBeGreaterThan(0);
+  });
+
+  it("never picks a family-superseded model (a lex-newer, not-pricier same-family sibling exists)", () => {
+    // A provider's catalog keeps superseded generations listed at legacy prices.
+    // The tier picker must never resolve one of those: for every picked id there
+    // must be NO same-family model that is both lex-greater (newer) and priced
+    // at or below it.
+    for (const provider of ["anthropic", "openai", "google", "openrouter", "xai", "mistral"] as const) {
+      const result = resolveOperationDefaults(provider);
+      const priced = getModels(provider).filter(
+        (m) => m.input?.includes("text") && totalCost(m) > 0 && !m.id.endsWith("-latest"),
+      );
+      for (const picked of [result.fast, result.mid]) {
+        if (picked === undefined) continue;
+        const pickedModel = priced.find((m) => m.id === picked);
+        expect(pickedModel, `${provider} picked ${picked} not in priced catalog`).toBeDefined();
+        const superseder = priced.find(
+          (n) =>
+            n.id !== picked &&
+            familyKey(n.id) === familyKey(picked) &&
+            n.id.localeCompare(picked) > 0 &&
+            totalCost(n) <= totalCost(pickedModel!),
+        );
+        expect(
+          superseder,
+          `${provider} picked ${picked}, superseded by ${superseder?.id}`,
+        ).toBeUndefined();
+      }
+    }
   });
 
   it("within a cost-tied cohort, picks the lex-greatest model ID for both fast and mid", () => {
@@ -171,10 +223,11 @@ describe("resolveOperationDefaults — top-of-cohort selection", () => {
       const all = getModels(provider);
       // Mirror production: operation-tier picks exclude floating `-latest` aliases
       // (so anthropic fast now resolves the pinned `claude-haiku-4-5-20251001`, not the
-      // retired `claude-3-5-haiku-latest` alias that 404'd live on 2026-06-18).
-      const priced = all
-        .filter((m) => m.input?.includes("text") && totalCost(m) > 0 && !m.id.endsWith("-latest"))
-        .sort((a, b) => totalCost(a) - totalCost(b));
+      // retired `claude-3-5-haiku-latest` alias that 404'd live on 2026-06-18) and
+      // drop family-superseded listings before building the ladder.
+      const priced = pruneSuperseded(
+        all.filter((m) => m.input?.includes("text") && totalCost(m) > 0 && !m.id.endsWith("-latest")),
+      ).sort((a, b) => totalCost(a) - totalCost(b));
       if (priced.length === 0) continue;
       const ladder = [...new Set(priced.map(totalCost))];
       for (const [tier, pct] of [
@@ -224,16 +277,16 @@ describe("resolveOperationDefaults — top-of-cohort selection", () => {
   });
 
   it("multi-cost cohort: fast and mid each select lex-greatest within their respective cost cohorts", () => {
-    // Anthropic's catalog has multiple distinct cost rungs (e.g. $6, $12, $18, $30, $60, $90).
-    // Verifies that fast and mid land in *different* cohorts (when they differ)
-    // and each picks lex-greatest within its own cohort — i.e. cross-cohort
-    // contamination cannot happen.
+    // Anthropic's catalog has multiple distinct cost rungs even after the
+    // supersession prune. Verifies that fast and mid land in *different*
+    // cohorts (when they differ) and each picks lex-greatest within its own
+    // cohort — i.e. cross-cohort contamination cannot happen.
     const result = resolveOperationDefaults("anthropic");
     const all = getModels("anthropic");
-    // Mirror production: operation-tier picks exclude floating `-latest` aliases.
-    const priced = all
-      .filter((m) => m.input?.includes("text") && totalCost(m) > 0 && !m.id.endsWith("-latest"))
-      .sort((a, b) => totalCost(a) - totalCost(b));
+    // Mirror production: exclude `-latest` aliases + drop superseded listings.
+    const priced = pruneSuperseded(
+      all.filter((m) => m.input?.includes("text") && totalCost(m) > 0 && !m.id.endsWith("-latest")),
+    ).sort((a, b) => totalCost(a) - totalCost(b));
     const ladder = [...new Set(priced.map(totalCost))];
     const fastCohortCost = ladder[Math.min(ladder.length - 1, Math.floor((ladder.length - 1) * 0.1))]!;
     const midCohortCost = ladder[Math.min(ladder.length - 1, Math.floor((ladder.length - 1) * 0.5))]!;
