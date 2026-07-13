@@ -152,9 +152,16 @@ export function registerFleetCommand(program: Command): void {
           report.cost.totalTokens === 0 &&
           report.cost.costUsd > 0 &&
           (report.coverage?.sessionIndex.daysMissing ?? 0) > 0;
+        // Off-session (reflection/background) spend — a DISTINCT figure the
+        // operator adds to costUsd for the full provider bill (it is absent from
+        // costUsd because those runs have no session_summary). Shown only when
+        // non-zero so the common case stays uncluttered.
+        const offSession = report.cost.offSessionUsd ?? 0;
+        const offSessionSuffix =
+          offSession > 0 ? ` + $${offSession} off-session (reflection/background)` : "";
         if (tokensDegraded) {
           info(
-            `Cost:       $${report.cost.costUsd} (tokens unavailable: ${report.coverage?.sessionIndex.daysMissing ?? 0} day(s) of session-index missing)`,
+            `Cost:       $${report.cost.costUsd} (tokens unavailable: ${report.coverage?.sessionIndex.daysMissing ?? 0} day(s) of session-index missing)${offSessionSuffix}`,
           );
         } else {
           info(
@@ -162,7 +169,7 @@ export function registerFleetCommand(program: Command): void {
             // input+output sum (NO cache), so it is far smaller than explain's
             // cache-inclusive per-call ledger — labeling both keeps the two
             // lenses from reading as the same "tok" (comis-daniel 2026-07-09).
-            `Cost:       $${report.cost.costUsd} · ${report.cost.totalTokens} tok (input+output, excl cache)`,
+            `Cost:       $${report.cost.costUsd} · ${report.cost.totalTokens} tok (input+output, excl cache)${offSessionSuffix}`,
           );
         }
         for (const f of report.findings) {

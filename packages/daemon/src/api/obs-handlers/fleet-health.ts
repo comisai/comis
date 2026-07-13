@@ -381,6 +381,12 @@ export async function assembleFleetHealthReport(
   // reader's own default excludes synthetic rows (no opt-in plumbed).
   const activity = readSessionIndexWindow(deps.dataDir, sinceMs, nowMs);
 
+  // Off-session (background-job) LLM spend — reflection cron runs et al. key
+  // their token usage to a synthetic `__PREFIX__` session with NO
+  // session_summary, so their cost is absent from `fleet.costUsd` (the
+  // session-summary rollup). Surface it as a DISTINCT figure so the operator's
+  // full provider bill = costUsd + offSessionUsd, without double-counting.
+  const offSessionUsd = deps.obsStore?.offSessionCostSince(sinceMs) ?? 0;
   // Diagnostics — windowed health_signal; latest model_health / config_posture.
   const healthSignals = deps.obsStore?.queryDiagnostics({ category: "health_signal", sinceMs }) ?? [];
   const modelHealth = deps.obsStore?.queryDiagnostics({ category: "model_health", sinceMs }) ?? [];
@@ -514,7 +520,7 @@ export async function assembleFleetHealthReport(
     // figure as `activity.tokenTotal` (a single source of truth — no second
     // aggregate); consumers cross-reference `coverage` before trusting a 0. The
     // `comis fleet` table render drops the misleading "· 0 tok" in that case.
-    cost: { costUsd: fleet.costUsd, totalTokens: activity.tokenTotal },
+    cost: { costUsd: fleet.costUsd, totalTokens: activity.tokenTotal, offSessionUsd },
     activity: {
       activeAgents: activity.activeAgents,
       activeChannels: activity.activeChannels,

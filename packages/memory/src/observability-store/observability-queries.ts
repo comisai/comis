@@ -54,6 +54,7 @@ export type ObservabilityQueries = Pick<
   | "queryDelivery"
   | "deliveryStats"
   | "queryDiagnostics"
+  | "offSessionCostSince"
   | "latestChannelSnapshots"
   | "latestSystemPromptReport"
   | "listSystemPromptReports"
@@ -135,6 +136,18 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
   const aggBySessionSinceStmt = db.prepare(`
     SELECT session_key, SUM(cost_total) as total_cost, SUM(total_tokens) as total_tokens, COUNT(*) as call_count, COALESCE(SUM(cache_saved), 0) as total_cache_saved
     FROM obs_token_usage WHERE session_key = ? AND timestamp >= ? GROUP BY session_key
+  `);
+
+  // Off-session (background-job) spend: token usage keyed to a synthetic
+  // `__PREFIX__` session sentinel (e.g. `__REFLECT__:<agentId>`) rather than a
+  // real `tenant:user:channel:...` session. These runs have NO session_summary
+  // row, so their cost is absent from the fleet's session_summary rollup — an
+  // operator reconciling against the provider bill saw it as unexplained drift.
+  // The `\_` ESCAPE is load-bearing: SQLite LIKE treats a bare `_` as a
+  // single-char wildcard, so an unescaped `'__%'` would match EVERY session key.
+  const offSessionCostSinceStmt = db.prepare(`
+    SELECT COALESCE(SUM(cost_total), 0) as total_cost
+    FROM obs_token_usage WHERE timestamp >= ? AND session_key LIKE '\\_\\_%' ESCAPE '\\'
   `);
 
   const aggHourlyAllStmt = db.prepare(`
@@ -441,6 +454,18 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     return rows.map(diagnosticFromRow);
   }
 
+  /**
+   * Total USD cost of OFF-SESSION (background-job) LLM spend since `sinceMs` —
+   * token usage under a synthetic `__PREFIX__` session sentinel (reflection,
+   * and any future background job that keys its spend that way). Distinct from
+   * the per-session `session_summary` cost the fleet rollup sums, so the two
+   * add to the operator's full provider bill without double-counting.
+   */
+  function offSessionCostSince(sinceMs: number): number {
+    const row = offSessionCostSinceStmt.get(sinceMs) as { total_cost: number } | undefined;
+    return row?.total_cost ?? 0;
+  }
+
   function latestChannelSnapshots(): ChannelSnapshotRow[] {
     const parsed = channelSnapshotMapper.parseRows(latestSnapshotsStmt.all());
     // Degrade-on-validation-error: observability snapshot -> empty result.
@@ -489,6 +514,7 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     queryDelivery,
     deliveryStats,
     queryDiagnostics,
+    offSessionCostSince,
     latestChannelSnapshots,
     latestSystemPromptReport,
     listSystemPromptReports,
