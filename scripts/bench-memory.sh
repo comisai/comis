@@ -114,13 +114,16 @@ require_answer_judge_env() {
 
 # POST-RUN SECRET SWEEP. Belt-and-suspenders over the harnesses' in-test
 # JSON.stringify omission gate (mirrors the redaction double-sweep): grep the tier's
-# committed report dir for credential SHAPES only — sk-…{16,} / Bearer … / apiKey — and FAIL
-# the run on any match. Anchored to credential shapes, NEVER the bare word `token` (a field
-# like answerTokensPerQuery must not false-positive). A missing dir is a no-op.
+# committed report dir for credential SHAPES only — sk-…{16,} / Bearer … / an apiKey
+# key-value ASSIGNMENT (mirrors test/live/judge.ts) — and FAIL the run on any match.
+# Anchored to credential shapes, NEVER the bare word `token` (a field like
+# answerTokensPerQuery must not false-positive) and NEVER a bare `apiKey` mention in
+# report prose (e.g. "the apiKey is resolved by name" or a quoted `apiKey: ""`) —
+# only apiKey followed by a non-empty quoted value. A missing dir is a no-op.
 sweep_tier_report() {
   local tier="$1" dir="$ROOT/benchmarks/results/$1"
   [ -d "$dir" ] || return 0
-  if grep -REn 'sk-[A-Za-z0-9_-]{16,}|Bearer [A-Za-z0-9._-]+|apiKey' "$dir" 2>/dev/null; then
+  if grep -REn 'sk-[A-Za-z0-9_-]{16,}|Bearer [A-Za-z0-9._-]+|"?apiKey"?[[:space:]]*[=:][[:space:]]*["'\''][^"'\'']{4,}' "$dir" 2>/dev/null; then
     echo "✗ SECRET LEAK in benchmarks/results/$tier — failing the run." >&2
     exit 1
   fi
@@ -130,11 +133,12 @@ sweep_tier_report() {
 # gate modes let the operator override the output dir (COMIS_PROVE_REPORT_DIR);
 # this sweeps the dir that was ACTUALLY written rather than a desynced hardcoded
 # tier name, so the belt-and-suspenders sweep never skips the live dir. Same shapes
-# (sk-…{16,} / Bearer … / apiKey), same FAIL-on-match. A missing dir is a no-op.
+# (sk-…{16,} / Bearer … / apiKey key-value assignment), same FAIL-on-match. A missing
+# dir is a no-op.
 sweep_dir() {
   local dir="$1"
   [ -d "$dir" ] || return 0
-  if grep -REn 'sk-[A-Za-z0-9_-]{16,}|Bearer [A-Za-z0-9._-]+|apiKey' "$dir" 2>/dev/null; then
+  if grep -REn 'sk-[A-Za-z0-9_-]{16,}|Bearer [A-Za-z0-9._-]+|"?apiKey"?[[:space:]]*[=:][[:space:]]*["'\''][^"'\'']{4,}' "$dir" 2>/dev/null; then
     echo "✗ SECRET LEAK in $dir — failing the run." >&2
     exit 1
   fi
