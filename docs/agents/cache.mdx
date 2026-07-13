@@ -164,9 +164,9 @@ The cache fence is part of the **Anthropic** `cache_control` path. OpenAI uses a
 Microcompaction runs at **write time** — the moment a tool result is appended to the session file, not at the start of the next turn. This is different from the LLM compaction layer, which runs during context assembly.
 
 When a tool result exceeds the per-tool inline threshold, Comis:
-1. Saves the full result to a JSON file on disk.
-2. Writes a compact reference into the session in its place: `[Tool result offloaded to disk: ...]` with a head/tail preview (1,500 and 500 characters respectively).
-3. The agent can recover the full content at any time using the `read` tool with the disk path.
+1. Saves the **clean payload** to `tool-results/<toolCallId>.json` in the session directory. External-origin results (MCP tools, web fetches — anything that arrived wrapped as untrusted content) are unwrapped before the write, so the file holds parseable payload bytes — an offloaded MCP JSON result is valid JSON on disk. The external origin is recorded in a `<toolCallId>.origin.json` sidecar.
+2. Writes a compact reference into the session in its place: `[Tool result offloaded to disk: ...]` with a head/tail preview (1,500 and 500 characters respectively) cut from the clean payload, plus a recovery example that is verified against the written bytes (a `json.load` example only when the file actually parses as JSON; text-tool guidance otherwise). For external-origin results the preview is re-wrapped with the untrusted-content boundary — the security envelope is presentation-layer, not storage-layer.
+3. The agent can recover the full content at any time: the `read` tool works for any offloaded file (recovery reads of `tool-results/` files are exempt from re-offload up to the hard cap), and `exec` with python/jq keeps only the extracted data in context. When a recovery read targets an external-origin file, the content re-enters context re-wrapped as untrusted (keyed by the origin sidecar).
 
 Per-tool inline thresholds:
 
@@ -177,7 +177,7 @@ Per-tool inline thresholds:
 | `read` (file read) | 15,000 chars |
 | Hard cap (any tool) | 100,000 chars |
 
-Results below the threshold are never offloaded. Results that are already-offloaded are skipped on subsequent passes. The observation masker recognizes the `[Tool result offloaded to disk:` prefix and also skips those entries.
+Results below the threshold are never offloaded. Above the hard cap, the clean payload is truncated to 100,000 chars on disk and the inline reference says so. Results that are already-offloaded are skipped on subsequent passes. The observation masker recognizes the `[Tool result offloaded to disk:` prefix and also skips those entries.
 
 ---
 

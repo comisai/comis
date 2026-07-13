@@ -97,8 +97,14 @@ export type {
 } from "./redact-value.js";
 
 // External content security wrapping
-export { wrapExternalContent, wrapWebContent, detectSuspiciousPatterns, EXTERNAL_CONTENT_WARNING } from "./external-content.js";
-export type { ExternalContentSource, WrapExternalContentOptions } from "./external-content.js";
+export {
+  wrapExternalContent,
+  unwrapExternalContent,
+  wrapWebContent,
+  detectSuspiciousPatterns,
+  EXTERNAL_CONTENT_WARNING,
+} from "./external-content.js";
+export type { ExternalContentSource, WrapExternalContentOptions, UnwrappedExternalContent } from "./external-content.js";
 
 // Output guard adapter
 export { createOutputGuard } from "./output-guard.js";
