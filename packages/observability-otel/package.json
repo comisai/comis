@@ -1,7 +1,7 @@
 {
   "name": "@comis/observability-otel",
   "private": true,
-  "version": "1.0.52",
+  "version": "1.0.53",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "OTLP + Prometheus telemetry export for Comis (opt-in extension)",
