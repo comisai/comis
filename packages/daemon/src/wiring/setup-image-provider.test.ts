@@ -500,6 +500,113 @@ describe("createImageProviderSelector codex routing", () => {
     // The request used the agent's CHAT model — NOT the 400-causing gpt-image-1.
     expect(capturedModelId).toBe("gpt-5.5");
   });
+
+  it("Test J (the cross-provider-pin fix): an explicit codex pin on a NON-codex main never leaks the foreign chat model", async () => {
+    // VERIFIED LIVE: an anthropic-main agent with imageGeneration.provider
+    // pinned to "openai-codex" sent model:"claude-opus-4-8" to the ChatGPT
+    // backend → HTTP 400 "not supported when using Codex with a ChatGPT
+    // account". The threaded chat model is only valid when the MAIN provider
+    // IS openai-codex; otherwise the request must use the codex chat default.
+    let capturedModelId: string | undefined;
+    registerImagesApiProvider({
+      api: "openai-codex-images",
+      generateImages: async (model) => {
+        capturedModelId = model.id;
+        return {
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          output: [{ type: "image", data: Buffer.from("PNG").toString("base64"), mimeType: "image/png" }],
+          stopReason: "stop",
+          timestamp: 0,
+        } as unknown as AssistantImages;
+      },
+    } as never);
+    const selector = createImageProviderSelector({
+      imageGenConfig: makeConfig({ provider: "openai-codex" }),
+      secretManager: mockSecretManager({}),
+      mainProviderId: "anthropic",
+      legacyGetter: () => legacyAdapter(),
+      logger: createMockLogger() as never,
+      oauthManager: mockOauthManager({ hasCredentials: vi.fn().mockReturnValue(true) }),
+      oauthProfiles: { "openai-codex": "default" },
+      codexCredentialsAvailable: true,
+      codexChatModelId: "claude-opus-4-8", // the main agent's chat model — foreign to codex
+    });
+
+    const provider = selector();
+    expect(provider!.id).toBe("openai-codex");
+    await provider!.execute({ prompt: "x" });
+    expect(capturedModelId).toBe("gpt-5.5"); // the codex chat default — never the anthropic model
+  });
+
+  it("Test K: the operator's imageGeneration.model override wins on the codex branch", async () => {
+    // The openai/google branches honor sel.model; the codex branch ignored it —
+    // an operator could not steer the codex request model at all.
+    let capturedModelId: string | undefined;
+    registerImagesApiProvider({
+      api: "openai-codex-images",
+      generateImages: async (model) => {
+        capturedModelId = model.id;
+        return {
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          output: [{ type: "image", data: Buffer.from("PNG").toString("base64"), mimeType: "image/png" }],
+          stopReason: "stop",
+          timestamp: 0,
+        } as unknown as AssistantImages;
+      },
+    } as never);
+    const selector = createImageProviderSelector({
+      imageGenConfig: makeConfig({ provider: "openai-codex", model: "gpt-5.1-codex-max" }),
+      secretManager: mockSecretManager({}),
+      mainProviderId: "openai-codex",
+      legacyGetter: () => legacyAdapter(),
+      logger: createMockLogger() as never,
+      oauthManager: mockOauthManager({ hasCredentials: vi.fn().mockReturnValue(true) }),
+      oauthProfiles: { "openai-codex": "default" },
+      codexCredentialsAvailable: true,
+      codexChatModelId: "gpt-5.5",
+    });
+
+    const provider = selector();
+    await provider!.execute({ prompt: "x" });
+    expect(capturedModelId).toBe("gpt-5.1-codex-max");
+  });
+
+  it("Test L: no chat model threaded → the codex CHAT default, never the 400-causing gpt-image-1", async () => {
+    let capturedModelId: string | undefined;
+    registerImagesApiProvider({
+      api: "openai-codex-images",
+      generateImages: async (model) => {
+        capturedModelId = model.id;
+        return {
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          output: [{ type: "image", data: Buffer.from("PNG").toString("base64"), mimeType: "image/png" }],
+          stopReason: "stop",
+          timestamp: 0,
+        } as unknown as AssistantImages;
+      },
+    } as never);
+    const selector = createImageProviderSelector({
+      imageGenConfig: makeConfig({ provider: "auto" }),
+      secretManager: mockSecretManager({}),
+      mainProviderId: "openai-codex",
+      legacyGetter: () => legacyAdapter(),
+      logger: createMockLogger() as never,
+      oauthManager: mockOauthManager({ hasCredentials: vi.fn().mockReturnValue(true) }),
+      oauthProfiles: { "openai-codex": "default" },
+      codexCredentialsAvailable: true,
+      // codexChatModelId deliberately absent
+    });
+
+    const provider = selector();
+    await provider!.execute({ prompt: "x" });
+    expect(capturedModelId).toBe("gpt-5.5");
+  });
 });
 
 /**

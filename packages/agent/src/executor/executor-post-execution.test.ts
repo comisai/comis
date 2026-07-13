@@ -672,10 +672,10 @@ describe("Execution-complete log — costCorrectionDeltaUsd", () => {
 //   - When finishReason ∈ {stop, end_turn} AND failedTools is non-empty, the
 //     session metadata endReason MUST be "completed_with_tool_errors" — this
 //     override is UNCONDITIONAL, independent of model acknowledgement.
-//   - A failure notice ("\n[tool failure] <toolName> reported an error (see
-//     session log for details)") is appended to result.response ONLY when the
-//     model did not already acknowledge the failure (modelAcknowledgedFailure)
-//     AND the response is not a silent sentinel (isSilentResponse).
+//   - A failure notice ("\n[tool failure] <toolName> reported an error") is
+//     appended to result.response ONLY when the model did not already
+//     acknowledge the failure (modelAcknowledgedFailure) AND the response is
+//     not a silent sentinel (isSilentResponse).
 //   - endReason="success" when finishReason="stop" and failedTools is empty
 //     (baseline unchanged).
 // ---------------------------------------------------------------------------

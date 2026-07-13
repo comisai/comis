@@ -17,6 +17,12 @@ import { existsSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from "no
 import { homedir } from "node:os";
 import { stringify, parse } from "yaml";
 import { safePath, loadEnvFile } from "@comis/core";
+import {
+  appendConfigAuditRecordSync,
+  createConfigWriteAuditRecordBase,
+  finalizeConfigWriteAuditRecord,
+  ensureConfigAuditParentDir,
+} from "@comis/observability";
 import type {
   WizardState,
   WizardStep,
@@ -250,6 +256,19 @@ function buildConfigObject(state: WizardState): Record<string, unknown> {
     config.integrations = { media };
   }
 
+  // Embedding section — the semantic-recall embedder chosen in step 08g. Only a
+  // multilingual choice is written (English keeps the daemon's nomic default, so
+  // there is nothing to emit). Writes the AUTHORITATIVE `embedding.*` surface,
+  // NOT the legacy `memory.recall.embeddingModel` field. `multilingual: true` is
+  // the advisory flag that reconciles the `comis fleet` model-health line.
+  if (state.recallProvider?.multilingual === true) {
+    const rp = state.recallProvider;
+    config.embedding =
+      rp.provider === "openai"
+        ? { provider: "openai", multilingual: true, openai: { model: rp.model, dimensions: rp.dimensions } }
+        : { provider: "local", multilingual: true, local: { modelUri: rp.modelUri } };
+  }
+
   return config;
 }
 
@@ -362,6 +381,13 @@ function collectManagedSecrets(state: WizardState): Map<string, string> {
     if (envKey) managed.set(envKey, state.ttsProvider.apiKey);
   }
 
+  // Embedding credential (step 08g). Only the OpenAI embedder needs a key, and
+  // only when the main provider is NOT openai (else it is already in the map
+  // from the provider section). Set() is idempotent.
+  if (state.recallProvider?.apiKey) {
+    managed.set("OPENAI_API_KEY", state.recallProvider.apiKey);
+  }
+
   // Gateway credentials -- token is the only supported gateway auth method.
   if (state.gateway?.token) {
     managed.set("COMIS_GATEWAY_TOKEN", state.gateway.token);
@@ -455,6 +481,29 @@ export const writeConfigStep: WizardStep = {
     // Always assigned before the (post-try) return — the catch always rethrows.
     let unresolvedSecretRefs: string[];
 
+    // Config-audit provenance: the wizard's write must land in the SAME
+    // config-audit.jsonl the daemon's config-io writes do — a config.yaml
+    // that changes between boots with NO config.write row is unattributable
+    // (observed live: an embedder switch that broke recall arrived with no
+    // audit trail). Base is built BEFORE the write so the record captures the
+    // previous file state; best-effort throughout — audit failure never
+    // fails init.
+    let auditBase: ReturnType<typeof createConfigWriteAuditRecordBase> | undefined;
+    try {
+      auditBase = createConfigWriteAuditRecordBase({
+        source: "cli-init",
+        configPath,
+        pid: process.pid,
+        ppid: process.ppid,
+        argv: process.argv,
+        cwd: process.cwd(),
+        execArgv: process.execArgv,
+        watchMode: false,
+      });
+    } catch {
+      // Best-effort provenance — never block the wizard on audit plumbing.
+    }
+
     try {
       // 7. Create config directory
       mkdirSync(configDir, { recursive: true, mode: 0o700 });
@@ -485,6 +534,23 @@ export const writeConfigStep: WizardStep = {
       // Atomic rename (POSIX guarantees atomicity)
       renameSync(tempPath, configPath);
       spinner.update("config.yaml written");
+
+      // Append the config.write audit record (result: rename — same closed
+      // vocabulary as the daemon's atomic config-io writes). Confined to the
+      // config dir itself so custom --config-dir installs audit too.
+      if (auditBase !== undefined) {
+        try {
+          const auditPath = safePath(configDir, "logs", "config-audit.jsonl");
+          ensureConfigAuditParentDir(auditPath);
+          appendConfigAuditRecordSync({
+            filePath: auditPath,
+            record: finalizeConfigWriteAuditRecord(auditBase, { result: "rename" }),
+            confinedBaseDir: configDir,
+          });
+        } catch {
+          // Best-effort provenance — never block the wizard on audit plumbing.
+        }
+      }
 
       // 9. Write .env file
       // Load existing .env to preserve keys the wizard doesn't manage

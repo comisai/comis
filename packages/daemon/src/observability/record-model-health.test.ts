@@ -209,3 +209,97 @@ describe("recordModelHealth", () => {
     expect(row.timestamp).toBe(50);
   });
 });
+
+describe("recordModelHealth vec rebuild reporting", () => {
+  it("includes the boot vec-dimension rebuilds in details so the fleet drill-down confirms the heal ran", () => {
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    const clock = createFakeClock(2000);
+
+    recordModelHealth(
+      obsStore,
+      {
+        embeddingAvailable: true,
+        rerankerModelPresent: false,
+        rerankerBuilt: false,
+        embeddingMultilingual: true,
+        rerankerMultilingual: "unknown",
+        vecRebuilt: [{ table: "vec_memories", fromDimensions: 768, toDimensions: 1536 }],
+      },
+      clock,
+    );
+
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details.vecRebuilt).toEqual([
+      { table: "vec_memories", fromDimensions: 768, toDimensions: 1536 },
+    ]);
+  });
+
+  it("omits the vecRebuilt key entirely when no rebuild happened this boot", () => {
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    const clock = createFakeClock(2000);
+
+    recordModelHealth(
+      obsStore,
+      {
+        embeddingAvailable: true,
+        rerankerModelPresent: false,
+        rerankerBuilt: false,
+        embeddingMultilingual: true,
+        rerankerMultilingual: "unknown",
+      },
+      clock,
+    );
+
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect("vecRebuilt" in details).toBe(false);
+  });
+});
+
+describe("recordModelHealth embedding backlog", () => {
+  it("includes unembeddedCount in details when provided so the fleet drill-down sees the boot backlog", () => {
+    // Live incident: rows sat unembedded for hours with zero signal anywhere —
+    // the boot snapshot now carries the backlog so a stuck queue is one look away.
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    const clock = createFakeClock(3000);
+
+    recordModelHealth(
+      obsStore,
+      {
+        embeddingAvailable: true,
+        rerankerModelPresent: false,
+        rerankerBuilt: false,
+        embeddingMultilingual: true,
+        rerankerMultilingual: "unknown",
+        unembeddedCount: 9,
+      },
+      clock,
+    );
+
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details.unembeddedCount).toBe(9);
+  });
+
+  it("omits the unembeddedCount key when the boot-time count is unavailable", () => {
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    const clock = createFakeClock(3000);
+
+    recordModelHealth(
+      obsStore,
+      {
+        embeddingAvailable: true,
+        rerankerModelPresent: false,
+        rerankerBuilt: false,
+        embeddingMultilingual: true,
+        rerankerMultilingual: "unknown",
+      },
+      clock,
+    );
+
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect("unembeddedCount" in details).toBe(false);
+  });
+});

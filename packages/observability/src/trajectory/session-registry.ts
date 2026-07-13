@@ -172,6 +172,10 @@ export function createSessionTrajectoryHandleRegistry(): SessionTrajectoryHandle
         unsubscribe = attachTrajectoryToEventBus({
           eventBus,
           recorder,
+          // Session-scope the subscription to THIS session — every open
+          // recorder shares one bus, and an unscoped bridge ingests every
+          // other session's events (stamped with this session's id).
+          ownerSessionKey: formattedKey,
           ...(filter !== undefined ? { filter } : {}),
         });
       }

@@ -43,6 +43,33 @@ describe("mapEmailToNormalized", () => {
     expect(result.senderId).toBe("sender@example.com");
   });
 
+  it("sets channelId to the sender address (reply target), not the adapter's own account identity", async () => {
+    // Reply-addressing regression (chief-of-staff live campaign ISSUE-1): the reply
+    // must go back to the sender, so channelId (the conversation / reply target
+    // threaded to adapter.sendMessage) must be the SENDER's address — mirroring
+    // Telegram chatId, WhatsApp remoteJid, iMessage chatId. Email was the sole
+    // adapter that put its OWN `email-<address>` identity here, so every reply was
+    // addressed To the literal internal channelId string and never reached the
+    // sender (yet was logged delivered+acked — a false success).
+    const parsed: EmailParsedInput = {
+      text: "please reply",
+      html: undefined,
+      from: { value: [{ address: "owner@home.test", name: "Owner" }] },
+      messageId: "<m1@home.test>",
+      subject: "hi",
+      inReplyTo: undefined,
+      references: undefined,
+      date: new Date("2026-01-01T00:00:00Z"),
+      attachments: [],
+    };
+    // 2nd arg is the adapter's OWN identity (email-<agent-address>); it must NOT
+    // become the reply target.
+    const result = await mapEmailToNormalized(parsed, "email-agent@home.test", tmpDir);
+    expect(result.senderId).toBe("owner@home.test");
+    expect(result.channelId).toBe("owner@home.test");
+    expect(result.channelId).not.toBe("email-agent@home.test");
+  });
+
   it("extracts text fallback from HTML when text body absent", async () => {
     const parsed: EmailParsedInput = {
       text: undefined,

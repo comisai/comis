@@ -119,6 +119,14 @@ export const DEFAULT_SCROLLBACK = 1000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
 /** Registry dependencies — all injectable for unit tests; production defaults provided. Extends {@link ReaperCaps}: the daemon threads the reaper caps + eviction hooks flat (see `wireRegistryReaper`). */
+// @optional-field-count: 13 — composition-root deps bag with a single daemon
+// construction site; every `?` seam is injectable-for-tests with a production
+// default (clock/timers), a daemon-bound obs hook (onSpawnFailed/onTerminalEvent),
+// or genuinely config-conditional (bwrapPath, unsafeDisableSandbox — the jail
+// seam pair forwarded onto the create frame; currentTmuxSocket; egressControl).
+// The durability seams are already bundled into ONE nested object
+// ({@link TerminalDurabilityDeps}) — the remaining fields describe distinct
+// wiring chokepoints and are not a further cluster-split candidate.
 export interface TerminalSessionRegistryDeps extends ReaperCaps {
   /**
    * Spawn the supervised worker child. Default (production):
@@ -149,6 +157,8 @@ export interface TerminalSessionRegistryDeps extends ReaperCaps {
   clearTimer?: (handle: unknown) => void;
   /** Daemon-resolved bwrap path (the jail seam): a STRING, forwarded onto the create frame for the worker's fail-closed branch (undefined ⇒ the worker rejects). */
   bwrapPath?: string;
+  /** Operator jail opt-out (`skills.terminal.unsafeDisableSandbox`) — forwarded onto the create frame. `true` ⇒ the worker spawns the CLI DIRECTLY (no bwrap), env-scrub preserved, forced non-durable PTY. A security downgrade for bwrap-less hosts, surfaced in config_posture; default/absent ⇒ the fail-closed jail. */
+  unsafeDisableSandbox?: boolean;
   /** This daemon generation's PER-BOOT tmux `-S` socket — stamped on a durable
    *  session's handle + descriptor at create so a restart re-attaches it from its OWN server while
    *  new sessions get a fresh per-boot server in the live mount namespace. MUST equal the worker's
@@ -504,6 +514,9 @@ export function createTerminalSessionRegistry(
       cwd,
       // The daemon-resolved bwrap path rides the frame for the worker's fail-closed branch (undefined ⇒ no spawn, lost).
       bwrapPath: deps.bwrapPath,
+      // The operator jail opt-out rides the frame like bwrapPath (true ⇒ the worker spawns the CLI
+      // directly, env-scrub preserved, forced non-durable PTY — see setup-terminal-tools wiring).
+      ...(deps.unsafeDisableSandbox ? { unsafeDisableSandbox: true } : {}),
       ...(req.durable ? { backend: "tmux" } : {}), // A durable drive selects the tmux backend (terminal-worker-entry.ts reads p["backend"]).
     });
     pending.set(`${sessionId}:${createFrame.requestId}`, (reply) => {

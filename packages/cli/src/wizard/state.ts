@@ -203,6 +203,7 @@ export const FLOW_STEPS: Record<FlowType, readonly WizardStepId[]> = {
     "video-providers",
     "transcription",
     "tts",
+    "recall",
     "review",
     "write-config",
     "daemon-start",
@@ -249,6 +250,7 @@ const STATE_DEPENDENCIES: Partial<
   "video-providers": [],
   transcription: [],
   tts: [],
+  recall: [],
 };
 
 // ---------- Core State Functions ----------

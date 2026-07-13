@@ -6,40 +6,39 @@ import { OrchestrationConfigSchema } from "./schema-orchestration.js";
 /**
  * The orchestration.authoring gate.
  *
- * The load-bearing invariant: every authoring flag ships
- * `.default(false)`, so an empty config yields the inert all-false section and
- * behavior stays byte-identical to a build without the feature. The operator
- * flips a flag only on real telemetry — the schema never defaults one on.
+ * Full-capability-by-default: every authoring flag ships `.default(true)`, so an
+ * empty config yields all-on authoring (small-model-authorable DAGs available
+ * out of the box). An operator flips a flag to `false` to opt a specific aid out.
  */
-describe("OrchestrationConfigSchema authoring gate (ships gated-off)", () => {
-  it("defaults every authoring flag to false on an empty config", () => {
+describe("OrchestrationConfigSchema authoring gate (ships enabled by default)", () => {
+  it("defaults every authoring flag to true on an empty config", () => {
     const parsed = OrchestrationConfigSchema.parse({});
     expect(parsed).toStrictEqual({
       authoring: {
-        intentAction: false,
-        repairProducer: false,
-        gbnfConstrain: false,
+        intentAction: true,
+        repairProducer: true,
+        gbnfConstrain: true,
       },
     });
   });
 
-  it("defaults the nested authoring flags when authoring is an empty object", () => {
+  it("defaults the nested authoring flags to true when authoring is an empty object", () => {
     const parsed = OrchestrationConfigSchema.parse({ authoring: {} });
     expect(parsed.authoring).toStrictEqual({
-      intentAction: false,
-      repairProducer: false,
-      gbnfConstrain: false,
+      intentAction: true,
+      repairProducer: true,
+      gbnfConstrain: true,
     });
   });
 
-  it("keeps the other two flags false when only repairProducer is enabled", () => {
+  it("honors an explicit false while the other two stay at their true default", () => {
     const parsed = OrchestrationConfigSchema.parse({
-      authoring: { repairProducer: true },
+      authoring: { repairProducer: false },
     });
     expect(parsed.authoring).toStrictEqual({
-      intentAction: false,
-      repairProducer: true,
-      gbnfConstrain: false,
+      intentAction: true,
+      repairProducer: false,
+      gbnfConstrain: true,
     });
   });
 

@@ -73,6 +73,7 @@ import type { ComisSessionManager } from "../../session/comis-session-manager.js
 import type { RunHandle } from "../active-run-registry.js";
 import { repairOrphanedMessages, scrubPoisonedThinkingBlocks } from "../../session/orphaned-message-repair.js";
 import { scrubRedactedToolCalls } from "../../session/scrub-redacted-tool-calls.js";
+import { scrubForgedContextMarkers } from "../../session/forged-context-markers.js";
 import { createPiEventBridge } from "../../bridge/pi-event-bridge.js";
 import { assertThinkingBlocksUnchanged, restoreCanonicalThinkingBlocks } from "../../bridge/thinking-block-hash-invariant.js";
 import type { AdaptiveCacheRetention } from "../adaptive-cache-retention.js";
@@ -104,13 +105,14 @@ import {
 import { normalizeModelCompat } from "../../provider/model-compat.js";
 import { normalizeModelId } from "../../provider/model-id-normalize.js";
 import { resolveModelProfile } from "../model-profile.js";
+import { diagnoseUnresolvedModel } from "../model-resolution-hint.js";
 import { observedModelId } from "../observed-model-id.js";
 import type { ModelProfile } from "../model-profile.js";
 import { resolveEffectiveContextWindow } from "../../model/effective-context-window.js";
 import { DEFAULT_EFFECTIVE_CAP_BY_CLASS } from "../../context-engine/budget-capacity-cap.js";
 import { isAnthropicFamily, isGoogleFamily, resolveProviderCapabilities } from "../../provider/capabilities.js";
 import { detectOnboardingState } from "../../workspace/onboarding-detector.js";
-import { validateRoleAttribution } from "../../context-engine/index.js";
+import { validateRoleAttribution, sessionTreeHasSameRoleAnomaly } from "../../context-engine/index.js";
 import type { TokenAnchor, WindowProvenance } from "../../context-engine/types.js";
 import { getElapsedSinceLastResponse } from "../ttl-guard.js";
 import { clearSessionBlockStability } from "../block-stability-tracker.js";
@@ -257,11 +259,11 @@ export function createPiExecutor(
       // rename a custom provider entry to its built-in pi name.
       let resolvedProviderKey = config.provider;
       let resolvedModel = deps.modelRegistry.find(config.provider, normalizedPrimary.modelId);
-      if (!resolvedModel && deps.providerAliases) {
-        const builtInName = deps.providerAliases.get(config.provider);
-        if (builtInName) {
-          resolvedModel = deps.modelRegistry.find(builtInName, normalizedPrimary.modelId);
-        }
+      // Hoisted so the unresolved-model diagnostic below can list the alias
+      // target's ids too (the second lookup find() tries).
+      const aliasBuiltInName = deps.providerAliases?.get(config.provider);
+      if (!resolvedModel && aliasBuiltInName) {
+        resolvedModel = deps.modelRegistry.find(aliasBuiltInName, normalizedPrimary.modelId);
       }
       if (normalizedPrimary.normalized) {
         deps.logger.debug(
@@ -272,12 +274,31 @@ export function createPiExecutor(
       if (!resolvedModel
         && config.provider.toLowerCase() !== "default"
         && config.model.toLowerCase() !== "default") {
+        // Distinguish "provider unregistered" from "provider OK, model id unknown"
+        // (the far more common typo/alias case — e.g. `gpt-5.6` where the real
+        // openai-codex ids are gpt-5.6-terra/luna/sol). The old hint blamed
+        // providers.entries unconditionally and misdirected; the model-id class
+        // needs the available ids + the fail-closed-nano cause of the downstream
+        // context_exhausted. availableForProvider spans config.provider AND its
+        // built-in alias (the same two lookups find() tried above).
+        const availableForProvider = [
+          ...new Set(
+            deps.modelRegistry
+              .getAll()
+              .filter(m => m.provider === config.provider
+                || (aliasBuiltInName !== undefined && m.provider === aliasBuiltInName))
+              .map(m => m.id),
+          ),
+        ];
+        const diag = diagnoseUnresolvedModel(config.provider, normalizedPrimary.modelId, availableForProvider);
         deps.logger.warn(
           {
             agentId,
             configuredProvider: config.provider,
             configuredModel: normalizedPrimary.modelId,
-            hint: "Provider not registered in pi ModelRegistry. Check providers.entries.<name> in config.yaml has type/baseUrl/apiKeyName set, the API key resolves via SecretManager, and the provider is enabled. Without a match, pi-coding-agent silently falls back to whatever built-in provider has env-var credentials.",
+            unresolvedReason: diag.reason,
+            availableModelCount: availableForProvider.length,
+            hint: diag.hint,
             errorKind: "config" as ErrorKind,
           },
           "Configured provider/model not found in registry; pi-coding-agent will fall back",
@@ -562,15 +583,6 @@ async function runSessionLocked(
   const adaptiveRetentionClear = () => { adaptiveRetentionRef.set(undefined); };
   const executionMinTokensOverrideClear = () => { minTokensOverrideRef.set(undefined); };
 
-  // Repair orphaned messages
-  const repairResult = repairOrphanedMessages(sm);
-  if (repairResult.repaired) {
-    deps.logger.info(
-      { reason: repairResult.reason },
-      "Repaired orphaned message",
-    );
-  }
-
   // One-time scrub for sessions poisoned by an earlier on-disk thinking-signature stripper.
   // Must run before buildSessionContext so the context pipeline sees the clean fileEntries.
   const scrubResult = scrubPoisonedThinkingBlocks(sm);
@@ -597,13 +609,52 @@ async function runSessionLocked(
     );
   }
 
+  // Repair orphaned messages — runs AFTER the scrubs so it validates the SAME
+  // post-scrub tree the detector (validateRoleAttribution below) checks. When
+  // repair ran BEFORE the scrubs, a scrub-induced anomaly was left unrepaired
+  // while the detector flagged it every turn forever (the idx-47 incident).
+  const repairResult = repairOrphanedMessages(sm);
+  if (repairResult.repaired) {
+    deps.logger.info(
+      { reason: repairResult.reason },
+      "Repaired orphaned message",
+    );
+  }
+
+  // Neutralize any forged context-boundary markers the model emitted in its OWN
+  // prior output ([System context]/[End system context] wrappers, or a line-start
+  // [<channel>] <id> (<time>): inbound header) before buildSessionContext replays
+  // them — so a self-forged "user turn" can never re-enter the SDK replay path as
+  // real history (the comis-daniel 2026-07-09 incident; the LCD replay path is
+  // guarded symmetrically at executor/lcd-ingest.ts). In-memory only + idempotent
+  // (mirrors scrubRedactedToolCalls): the on-disk JSONL keeps the raw record for
+  // forensics; the replayed prefix stays byte-stable.
+  const forgedScrub = scrubForgedContextMarkers(sm);
+  if (forgedScrub.scrubbed) {
+    deps.logger.warn(
+      {
+        messagesRewritten: forgedScrub.messagesRewritten,
+        markersStripped: forgedScrub.markersStripped,
+        errorKind: "validation" as ErrorKind,
+        hint: "assistant replay context contained self-emitted context-boundary markers — neutralized before buildSessionContext to prevent a fabricated turn re-entering history",
+      },
+      "Scrubbed forged context markers from replay context",
+    );
+  }
+
   // Detect first message in session for BOOT.md injection
   const sessionContext = sm.buildSessionContext();
 
-  // Diagnostic assertion -- detect role attribution anomalies
-  // in continued sessions. Fires WARN log only; repair is handled by
-  // repairOrphanedMessages() above.
-  validateRoleAttribution(sessionContext.messages, deps.logger);
+  // Diagnostic assertion — classify any consecutive same-role adjacency in the
+  // assembled context by whether the RAW tree still carries it after repair: a
+  // still-anomalous raw tree is genuine unrepaired corruption (WARN); a
+  // well-formed raw tree means the adjacency is an assembled/merged-view
+  // artifact the provider adapter normalizes (benign DEBUG). No repair here.
+  validateRoleAttribution(
+    sessionContext.messages,
+    sessionTreeHasSameRoleAnomaly(sm),
+    deps.logger,
+  );
 
   const isFirstMessageInSession = sessionContext.messages.length === 0;
 
@@ -803,6 +854,9 @@ async function runSessionLocked(
         trajectoryUnsubscribe = attachTrajectoryToEventBus({
           eventBus: deps.eventBus,
           recorder: trajectoryRecorder,
+          // Session-scope the per-turn subscription too — same
+          // cross-session-contamination guard the registry path applies.
+          ownerSessionKey: formattedKey,
           ...(eventTypesFilter !== undefined
             ? {
                 filter:

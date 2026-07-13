@@ -4,6 +4,7 @@ export {
   createModelCatalog,
   resolveModelPricing,
   resolvePricingState,
+  modelResolvesInCatalog,
   ZERO_COST,
 } from "../model/model-catalog.js";
 export type {

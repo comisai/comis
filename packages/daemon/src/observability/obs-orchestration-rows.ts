@@ -100,3 +100,35 @@ export function nodeBudgetExceededEventToRow(
     traceId: undefined,
   };
 }
+
+/**
+ * Map a `subagent:killed` event to a `health_signal` diagnostic row. An
+ * autonomous health-monitor stuck-kill had NO fleet surface — a live incident
+ * needed a raw daemon-log grep to learn a run was killed at all. Severity
+ * TRACKS the attribution: `health_monitor` is operator-visible degradation
+ * (`warning`); a parent/operator/system kill is deliberate orchestration
+ * (`info` — the BENIGN_DAG_DEGRADED severity discipline, so it never inflates
+ * the fleet degrade count and never surfaces as a finding). `details` carries
+ * the closed `signal` label + the closed `killedBy` union ONLY — NEVER the
+ * runtime/idle NUMBERS (per-incident: the `subagent.killed` trajectory record,
+ * the failure record, `comis explain`), never the free-text reason (AGENTS.md
+ * §2.7). `sessionKey` is the CHILD's key so the finding's hint can point
+ * `comis explain` at the killed child.
+ */
+export function subagentKilledEventToRow(
+  payload: EventMap["subagent:killed"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: payload.killedBy === "health_monitor" ? "warning" : "info",
+    agentId: payload.agentId,
+    sessionKey: payload.sessionKey,
+    message: "subagent:killed",
+    details: JSON.stringify({
+      signal: "subagent_killed",
+      killedBy: payload.killedBy,
+    }),
+    traceId: undefined,
+  };
+}

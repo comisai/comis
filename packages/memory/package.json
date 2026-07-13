@@ -1,7 +1,7 @@
 {
   "name": "@comis/memory",
   "private": true,
-  "version": "1.0.47",
+  "version": "1.0.52",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "SQLite memory, embeddings, and RAG storage for Comis agents",
@@ -34,7 +34,7 @@
     "@comis/core": "workspace:*",
     "@comis/observability": "workspace:*",
     "@comis/shared": "workspace:*",
-    "@earendil-works/pi-ai": "0.80.3",
+    "@earendil-works/pi-ai": "0.80.6",
     "better-sqlite3": "12.10.0",
     "lru-cache": "11.5.1",
     "node-llama-cpp": "3.18.1",

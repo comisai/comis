@@ -69,7 +69,7 @@ export { createContextEngine } from "./context-engine.js";
 export { createThinkingBlockCleaner } from "./thinking-block-cleaner.js";
 
 // Reasoning tag stripper layer
-export { createReasoningTagStripper, validateRoleAttribution } from "./reasoning-tag-stripper.js";
+export { createReasoningTagStripper, validateRoleAttribution, sessionTreeHasSameRoleAnomaly } from "./reasoning-tag-stripper.js";
 
 // Microcompaction guard
 export { installMicrocompactionGuard } from "./microcompaction-guard.js";

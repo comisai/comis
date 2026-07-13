@@ -172,6 +172,8 @@ export interface TerminalWorkerDeps {
   egressControl?: EgressControlPort;
   /** Resolved bwrap path (daemon-detected once). NO default — `undefined` ⇒ fail-closed: no spawn, create reply `ok:false`, session `lost`; never an unjailed fallback. */
   bwrapPath?: string;
+  /** Operator opt-out of the jail (`skills.terminal.unsafeDisableSandbox`, daemon-resolved). `true` ⇒ the child spawns DIRECTLY (no bwrap), env-scrub preserved, forced non-durable PTY. NO default — the frame `unsafeDisableSandbox` overrides. A security downgrade for bwrap-less hosts; see {@link SpawnPlanComposers.unsafeDisableSandbox}. */
+  unsafeDisableSandbox?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -258,6 +260,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     buildEgressRelayLaunch: deps.buildEgressRelayLaunch ?? defaultBuildEgressRelayLaunch,
     egressControl: deps.egressControl,
     bwrapPath: deps.bwrapPath,
+    unsafeDisableSandbox: deps.unsafeDisableSandbox,
   };
 
   // appendRing (ring + emulator feed + settle ring-change notify) and markExited (not-alive
@@ -416,12 +419,15 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     // registry flips it lost); NOTHING spawns. The frame's bwrapPath (registry-threaded
     // from the daemon) overrides the factory default.
     const frameBwrapPath = typeof p["bwrapPath"] === "string" ? p["bwrapPath"] : spawnComposers.bwrapPath;
+    // The operator jail opt-out, frame-threaded from the daemon (registry-stamped) like bwrapPath.
+    const frameUnsafeDisableSandbox =
+      typeof p["unsafeDisableSandbox"] === "boolean" ? p["unsafeDisableSandbox"] : spawnComposers.unsafeDisableSandbox;
     let plan;
     try {
       plan = await planSpawnFromCreateFrame(
         { bin, argv, scope, workspace, cwd },
         envSnapshot(),
-        { ...spawnComposers, bwrapPath: frameBwrapPath },
+        { ...spawnComposers, bwrapPath: frameBwrapPath, unsafeDisableSandbox: frameUnsafeDisableSandbox },
       );
     } catch (err) {
       sessions.delete(sessionId); // fail-closed: no backend attaches; surface ok:false
@@ -438,7 +444,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     // node-pty → pipe path (attachBackend decides).
     const requestedBackend: WorkerBackend | undefined = p["backend"] === "tmux" ? "tmux" : undefined;
     attachBackend({
-      plan: { bin: plan.bin, argv: plan.argv, env: plan.env },
+      plan: { bin: plan.bin, argv: plan.argv, env: plan.env, cwd: plan.cwd, unsandboxed: plan.unsandboxed },
       cols,
       rows,
       state,

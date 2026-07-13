@@ -29,9 +29,9 @@ describe("BudgetConfigSchema", () => {
 
   it("applies correct defaults for empty object", () => {
     const result = BudgetConfigSchema.parse({});
-    expect(result.perExecution).toBe(2_000_000);
-    expect(result.perHour).toBe(10_000_000);
-    expect(result.perDay).toBe(100_000_000);
+    expect(result.perExecution).toBe(5_000_000);
+    expect(result.perHour).toBe(50_000_000);
+    expect(result.perDay).toBe(300_000_000);
   });
 
   it("rejects negative values", () => {

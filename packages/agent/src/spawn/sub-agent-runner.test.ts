@@ -975,14 +975,16 @@ describe("createSubAgentRunner", () => {
 
     runner.killRun(runId);
 
-    // Find the kill log call
+    // Find the kill log call — the message is attributed via the killedBy
+    // field (a health-monitor kill must not read as a parent kill).
     const killCall = logger.info.mock.calls.find(
-      (call: [Record<string, unknown>, string]) => call[1] === "Sub-agent run killed by parent",
+      (call: [Record<string, unknown>, string]) => call[1] === "Sub-agent run killed",
     );
     expect(killCall).toBeDefined();
     expect(killCall![0]).toEqual(
       expect.objectContaining({
         runId,
+        killedBy: "parent",
         durationMs: expect.any(Number),
         task: expect.stringContaining("long running task"),
       }),
@@ -5076,5 +5078,202 @@ describe("coordinator-child attenuated lease + own jailed workspace (no escalati
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// killRun attribution, notification, and trajectory teardown.
+// A daemon health-monitor kill must be attributed to the health monitor (not
+// "Killed by parent agent"), must notify the announce channel (the parent
+// only learns of a parent-initiated kill because it issued it), and every
+// terminal path must release the session's trajectory recorder so a dead
+// child stops ingesting other sessions' events.
+// ---------------------------------------------------------------------------
+
+describe("killRun attribution + notification + trajectory teardown", () => {
+  function runningDeps(): SubAgentRunnerDeps {
+    const localDeps = createMockDeps();
+    localDeps.logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    vi.mocked(localDeps.executeAgent).mockReturnValue(new Promise(() => {}));
+    return localDeps;
+  }
+
+  it("health-monitor kill records killedBy + reason on the run and the failure record", async () => {
+    const killDir = await mkdtemp(join(tmpdir(), "stuck-kill-attrib-"));
+    const localDeps = runningDeps();
+    localDeps.dataDir = killDir;
+    const runner = createSubAgentRunner(localDeps);
+    const runId = runner.spawn({ task: "long task", agentId: "default" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const reason = "no sub-agent activity for 200000ms (security.agentToAgent.subagentContext.stuckKillThresholdMs=180000)";
+    const result = runner.killRun(runId, {
+      killedBy: "health_monitor",
+      reason,
+      idleMs: 200_000,
+      thresholdMs: 180_000,
+    });
+    expect(result.killed).toBe(true);
+    expect(runner.getRunStatus(runId)!.error).toBe(reason);
+
+    await new Promise((r) => setTimeout(r, 200));
+    const resultsDir = join(killDir, "subagent-results");
+    const sessionDirs = await readdir(resultsDir);
+    const files = await readdir(join(resultsDir, sessionDirs[0]!));
+    const content = JSON.parse(
+      await readFile(join(resultsDir, sessionDirs[0]!, files[0]!), "utf-8"),
+    );
+    expect(content.error).toBe(reason);
+    expect(content.killedBy).toBe("health_monitor");
+    expect(content.endReason).toBe("killed");
+
+    fs.rmSync(killDir, { recursive: true, force: true });
+  });
+
+  it("default kill keeps parent attribution (back-compat)", async () => {
+    const localDeps = runningDeps();
+    const runner = createSubAgentRunner(localDeps);
+    const runId = runner.spawn({ task: "t", agentId: "default" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(runner.killRun(runId).killed).toBe(true);
+    expect(runner.getRunStatus(runId)!.error).toBe("Killed by parent agent");
+  });
+
+  it("kill emits subagent:killed with a content-free telemetry payload", async () => {
+    const localDeps = runningDeps();
+    const runner = createSubAgentRunner(localDeps);
+    const runId = runner.spawn({ task: "t", agentId: "default" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    runner.killRun(runId, {
+      killedBy: "health_monitor",
+      reason: "no sub-agent activity for 200000ms",
+      idleMs: 200_000,
+      thresholdMs: 180_000,
+    });
+
+    const emit = vi.mocked(localDeps.eventBus.emit);
+    const killedCall = emit.mock.calls.find((c) => c[0] === "subagent:killed");
+    expect(killedCall).toBeDefined();
+    const payload = killedCall![1] as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      runId,
+      agentId: "default",
+      killedBy: "health_monitor",
+      idleMs: 200_000,
+      thresholdMs: 180_000,
+    });
+    expect(typeof payload.sessionKey).toBe("string");
+    expect(typeof payload.runtimeMs).toBe("number");
+    // Free-text reason stays on the run/failure-record/log — never the bus.
+    expect("reason" in payload).toBe(false);
+  });
+
+  it("parent kill emits killedBy parent and delivers NO notification", async () => {
+    const localDeps = runningDeps();
+    const runner = createSubAgentRunner(localDeps);
+    const runId = runner.spawn({
+      task: "t",
+      agentId: "default",
+      announceChannelType: "telegram",
+      announceChannelId: "42",
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    runner.killRun(runId);
+    await new Promise((r) => setTimeout(r, 100));
+
+    const emit = vi.mocked(localDeps.eventBus.emit);
+    const killedCall = emit.mock.calls.find((c) => c[0] === "subagent:killed");
+    expect((killedCall![1] as Record<string, unknown>).killedBy).toBe("parent");
+    expect(localDeps.sendToChannel).not.toHaveBeenCalled();
+  });
+
+  it("health-monitor kill delivers an LLM-free failure notification to the announce channel", async () => {
+    const localDeps = runningDeps();
+    const runner = createSubAgentRunner(localDeps);
+    const runId = runner.spawn({
+      task: "rank all fleet drivers",
+      agentId: "default",
+      announceChannelType: "telegram",
+      announceChannelId: "42",
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    runner.killRun(runId, {
+      killedBy: "health_monitor",
+      reason: "no sub-agent activity for 200000ms",
+      idleMs: 200_000,
+      thresholdMs: 180_000,
+    });
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(localDeps.sendToChannel).toHaveBeenCalledTimes(1);
+    const [channelType, channelId, text] = vi.mocked(localDeps.sendToChannel).mock.calls[0]!;
+    expect(channelType).toBe("telegram");
+    expect(channelId).toBe("42");
+    expect(text).toContain("health monitor");
+    expect(text).toContain("rank all fleet drivers");
+  });
+
+  it("closeTrajectory fires once when a killed execution settles (not at kill time)", async () => {
+    const localDeps = createMockDeps();
+    localDeps.logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    let resolveExec: ((v: unknown) => void) | undefined;
+    vi.mocked(localDeps.executeAgent).mockReturnValue(
+      new Promise((r) => { resolveExec = r; }) as never,
+    );
+    const closeTrajectory = vi.fn().mockResolvedValue(undefined);
+    localDeps.closeTrajectory = closeTrajectory;
+
+    const runner = createSubAgentRunner(localDeps);
+    const runId = runner.spawn({ task: "t", agentId: "default" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    runner.killRun(runId, { killedBy: "health_monitor", reason: "stuck" });
+    // The recorder must survive until the in-flight execution settles so its
+    // final records (session.summary) still land.
+    expect(closeTrajectory).not.toHaveBeenCalled();
+
+    resolveExec!({
+      response: "late result",
+      tokensUsed: { total: 1 },
+      cost: { total: 0 },
+      finishReason: "stop",
+      stepsExecuted: 1,
+    });
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(closeTrajectory).toHaveBeenCalledTimes(1);
+    expect(closeTrajectory).toHaveBeenCalledWith(runner.getRunStatus(runId)!.sessionKey);
+  });
+
+  it("closeTrajectory fires once after a successful completion", async () => {
+    const localDeps = createMockDeps();
+    localDeps.logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    const closeTrajectory = vi.fn().mockResolvedValue(undefined);
+    localDeps.closeTrajectory = closeTrajectory;
+
+    const runner = createSubAgentRunner(localDeps);
+    const runId = runner.spawn({ task: "t", agentId: "default" });
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(closeTrajectory).toHaveBeenCalledTimes(1);
+    expect(closeTrajectory).toHaveBeenCalledWith(runner.getRunStatus(runId)!.sessionKey);
+  });
+
+  it("closeTrajectory fires once after a natural failure", async () => {
+    const localDeps = createMockDeps();
+    localDeps.logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    vi.mocked(localDeps.executeAgent).mockRejectedValue(new Error("execution crashed"));
+    const closeTrajectory = vi.fn().mockResolvedValue(undefined);
+    localDeps.closeTrajectory = closeTrajectory;
+
+    const runner = createSubAgentRunner(localDeps);
+    runner.spawn({ task: "t", agentId: "default" });
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(closeTrajectory).toHaveBeenCalledTimes(1);
   });
 });

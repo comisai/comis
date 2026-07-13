@@ -139,14 +139,20 @@ const McpServerInfoSchema = z.object({
 /**
  * MCP tool-definition shape returned by the SDK after connect. Mirrors
  * `McpToolDefinition` in mcp-client/mcp-client-types.ts. The response side
- * for `mcp.status` projects to the 3 user-facing fields the handler
- * exposes (line 64-68): `name`, `qualifiedName`, `description`.
+ * for `mcp.status` projects the user-facing fields the handler exposes.
  * `inputSchema` is intentionally omitted from the wire response shape —
- * the handler does NOT serialize it (mcp-handlers.ts:64-68).
+ * the handler does NOT serialize it.
+ *
+ * `callableName` is the name the agent must actually INVOKE the tool by
+ * (`mcp__<server>--<tool>`), which differs from the advisory `qualifiedName`
+ * (`mcp:<server>/<tool>`). Advertising it closes the naming mismatch that made
+ * an agent copy the non-callable `qualifiedName` into a tool call and fail
+ * (comis-daniel 2026-07-09).
  */
 const McpToolProjectionSchema = z.object({
   name: z.string(),
   qualifiedName: z.string(),
+  callableName: z.string(),
   description: z.string().optional(),
 });
 

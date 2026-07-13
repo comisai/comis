@@ -131,6 +131,9 @@ agents:
         promoteAtProofCount: 3       # verified-success count at which a doc promotes candidate → active
         maxDocsPerRun: 100           # finite DoS bound, set high so it does not throttle learning
         maxProcedureDocsSurfaced: 10 # per-agent cap on orchestrate-derived procedure docs in <available_skills> (the scaling guard)
+        corroboration:               # HOW a topic must corroborate before it can seed a learned doc
+          mode: single_owner         # default: learn from one explicitly-trusted owner's repetition. "distinct_sessions" = the stricter ≥2-distinct-(session,sender) gate (see below)
+          minObservations: 2         # single_owner ONLY: min distinct successful repetitions by the owner (≥2; a single success never corroborates)
       forget:                        # the wrongness-based soft-eviction policy (the __LIFECYCLE__ sweep reads these)
         maxDormantDays: 365          # best-out-of-box: remember ~a year (forget pure-disuse less)
         failureEvictionFloor: 3      # corroborated failure_count at/above which a non-exempt memory is soft-evicted
@@ -176,6 +179,9 @@ agents:
         promoteAtProofCount: 3 # candidate → active after this many attributed successes
         maxDocsPerRun: 25      # per-run cost bound
         maxProcedureDocsSurfaced: 10 # per-agent surface cap on procedure docs (default 10)
+        corroboration:
+          mode: distinct_sessions # OVERRIDE the single_owner default with the stricter ≥2-distinct-sessions gate (multi-user box)
+          minObservations: 2   # (single_owner only) the owner must succeed at the same task ≥2 times before it seeds a skill
       forget:
         maxDormantDays: 90
         failureEvictionFloor: 3
@@ -183,8 +189,8 @@ agents:
 ```
 
 - **Reflection (`learning.reflect.*`)** — the `__REFLECT__` cron clusters trusted-origin
-  **successful** trajectories (by distinct `(session, sender)` — N near-identical successes from
-  one sender count once) and distils them into Mental Model docs at `trust=learned`. A learned
+  **successful** trajectories and distils them into Mental Model docs at `trust=learned`. A doc
+  seeds only once its topic **corroborates** (`learning.reflect.corroboration.mode`, below). A learned
   doc is **advisory** (no executable column — the agent reads it and acts through its own
   already-permissioned tools); it can **never** exceed `learned` trust (a DB `CHECK` makes
   `system` structurally impossible). An admitted `candidate` **promotes to `active`** once its
@@ -220,6 +226,41 @@ agents:
 
 Recall **ranking** itself is the **fixed `rag.scoring`** fusion (deterministic RRF + the
 cross-encoder reranker) — there is no learned recall weight.
+
+### Corroboration: single-owner (default) vs distinct-sessions (`learning.reflect.corroboration`)
+
+Before a topic can seed a learned doc it must **corroborate**. The mode governs what counts as
+corroboration:
+
+- **`mode: single_owner`** (**default**) — **repetition-as-corroboration**, tuned for the primary
+  Comis use case: a **single-owner deployment** (one trusted DM). One stable session means the
+  distinct-sessions gate below is structurally unreachable (cardinality is always 1), so it would
+  never learn anything. In `single_owner` mode the engine counts an **explicitly-trusted owner's
+  repeated successes**: when the owner succeeds at the same task **≥`minObservations`** times
+  (default `2`, never one-shot), the topic corroborates. The distinct-sessions gate still applies
+  as a superset, so a box with **two or more** explicitly-trusted senders is handled the
+  multi-user way automatically.
+- **`mode: distinct_sessions`** — the classic **anti-domination** gate: a topic needs **≥2 distinct
+  `(session, sender)`** successful observations. N near-identical successes from one sender in one
+  session count **once**. Set this explicitly on a multi-user box that wants to **require**
+  independent sessions even from its single trusted owner (the stricter posture).
+
+<Note>
+  **`single_owner` is safe by construction as a default**, even on a multi-user box. Repetition is
+  counted **only** among senders the operator **explicitly named** in
+  [`elevatedReply.senderTrustMap`](/reference/config-yaml) (resolving to a non-external tier) — a
+  sender trusted merely by a promiscuous `defaultTrustLevel`, or an unknown sender, can ride past
+  the success filter yet **never** self-corroborate by repetition. It also requires a **single**
+  distinct owner, so a box with **≥2** explicitly-trusted senders falls back to the
+  distinct-sessions gate. The only behavior change versus `distinct_sessions` is for a box with
+  **exactly one** explicitly-trusted owner: it learns from that owner's repetition (one session)
+  instead of requiring two sessions. Choose `distinct_sessions` if you want to forbid even that.
+</Note>
+
+The `reflect:funnel` telemetry carries a `singleOwnerCorroborated` count (how many topics
+corroborated via repetition this run), so [`comis explain`](/reference/cli#comis-explain) and
+[`comis fleet`](/reference/cli#comis-fleet) show the mode is active — an `admitted > 0` run with
+`maxClusterCardinality: 1` reads as single-owner learning, not a contradiction.
 
 See [`learning` in config-yaml](/reference/config-yaml#learning-agents-learning) for every key
 and default, the [`mental_models`](/operations/data-directory#learned-skills-verified-learning)

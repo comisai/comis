@@ -88,6 +88,22 @@ export function wrapWithAudit(tool: AgentTool<any>, eventBus: TypedEventBus, age
           errorKind = "dependency";
         }
 
+        // Detect RPC FAILURE ENVELOPES from tools that never throw (the media/
+        // messaging RPC-dispatch tools): a failed call returns
+        // jsonResult({ success:false, error }) — the envelope rides
+        // result.details. Without this branch the audit logged
+        // "Tool audit: image_generate succeeded (120023ms)" for a timed-out
+        // generation — a false success on the obs lens (live incident). The
+        // envelope's errorKind (when a closed-union member) and error string ride
+        // the event; a success:true envelope stays the success path.
+        if (details && details.success === false) {
+          success = false;
+          errorKind ??= asErrorKind(details.errorKind);
+          if (errorMessage === undefined && typeof details.error === "string" && details.error.length > 0) {
+            errorMessage = details.error.slice(0, 1500);
+          }
+        }
+
         return result;
       } catch (error: unknown) {
         success = false;

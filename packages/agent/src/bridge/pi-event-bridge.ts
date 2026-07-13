@@ -916,13 +916,21 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // successful terminal_session_status as success:false / classifiedFailureBy:exit_code).
           if (toolSuccess && endEvent.result != null && toolMeta?.exitCodeIsDrivenSession !== true) {
             const details = (endEvent.result as Record<string, unknown>)?.details;
-            if (
-              details != null &&
-              typeof (details as Record<string, unknown>).exitCode === "number" &&
-              (details as Record<string, unknown>).exitCode !== 0
-            ) {
+            const exitCode =
+              details != null && typeof (details as Record<string, unknown>).exitCode === "number"
+                ? ((details as Record<string, unknown>).exitCode as number)
+                : undefined;
+            if (exitCode !== undefined && exitCode !== 0) {
               toolSuccess = false;
-              toolErrorKind = "dependency";
+              // A command that RAN and exited non-zero is the command's OWN
+              // failure → `internal`, NOT `dependency` (which is reserved for an
+              // external/MCP/transport failure — see classifyToolError). The one
+              // genuinely-missing-dependency exit is 127 (command/binary not
+              // found), where the "check the package is installed" hint is right.
+              // Live 2026-07-10 (fleet-marathon): a python script exiting 1 on its
+              // own JSONDecodeError was mislabeled `dependency`, sending diagnosis
+              // at a phantom missing interpreter.
+              toolErrorKind = exitCode === 127 ? "dependency" : "internal";
               classifiedFailureBy = "exit_code"; // exec non-zero exit — call returned, content failed
             }
           }

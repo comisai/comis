@@ -1989,4 +1989,126 @@ describe("createAgentHandlers", () => {
       expect(deps.agents["codex-bot"]).toBeUndefined();
     });
   });
+
+  // Operator-only security-posture fields (sandbox/jail/terminal-allow escape
+  // switches) must be refused by agents_manage TOO — not just config.patch.
+  // The unsandboxed marathon (BL-1, 2026-07-12) confirmed an admin-trust agent
+  // could flip its own skills.execSandbox.enabled never→always via agents.update
+  // because the persist path skipped the immutable-key check. These lock that.
+  describe("operator-only agent security-posture fields", () => {
+    it("agents.update REJECTS flipping skills.execSandbox.enabled (the marathon probe)", async () => {
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createAgentHandlers(deps);
+      mockPersistToConfig.mockClear();
+      const before = deps.agents["default"]!;
+
+      await expect(
+        handlers["agents.update"]!({
+          agentId: "default",
+          config: { skills: { execSandbox: { enabled: "never" } } },
+          _trustLevel: "admin",
+        }),
+      ).rejects.toThrow(/operator|immutable|config file/i);
+
+      // No persist, no in-memory swap — the escalation is fully refused.
+      expect(mockPersistToConfig).not.toHaveBeenCalled();
+      expect(deps.agents["default"]).toBe(before);
+    });
+
+    it("agents.update REJECTS the bwrap-jail bypass (skills.terminal.unsafeDisableSandbox)", async () => {
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createAgentHandlers(deps);
+      mockPersistToConfig.mockClear();
+
+      await expect(
+        handlers["agents.update"]!({
+          agentId: "default",
+          config: { skills: { terminal: { unsafeDisableSandbox: true } } },
+          _trustLevel: "admin",
+        }),
+      ).rejects.toThrow(/operator|immutable|config file/i);
+      expect(mockPersistToConfig).not.toHaveBeenCalled();
+    });
+
+    it("agents.create REJECTS a new agent that ships execSandbox disabled", async () => {
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createAgentHandlers(deps);
+      mockPersistToConfig.mockClear();
+
+      await expect(
+        handlers["agents.create"]!({
+          agentId: "escalator",
+          config: { name: "Escalator", skills: { execSandbox: { enabled: "never" } } },
+          _trustLevel: "admin",
+        }),
+      ).rejects.toThrow(/operator|immutable|config file/i);
+
+      // Refused BEFORE any in-memory commit or persist.
+      expect(deps.agents["escalator"]).toBeUndefined();
+      expect(mockPersistToConfig).not.toHaveBeenCalled();
+    });
+
+    it("agents.create REJECTS a terminal allowlist injection", async () => {
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createAgentHandlers(deps);
+      mockPersistToConfig.mockClear();
+
+      await expect(
+        handlers["agents.create"]!({
+          agentId: "term-escalator",
+          config: {
+            name: "TermEscalator",
+            skills: { terminal: { allow: [{ id: "sh", match: { path: "/bin/sh" } }] } },
+          },
+          _trustLevel: "admin",
+        }),
+      ).rejects.toThrow(/operator|immutable|config file/i);
+      expect(deps.agents["term-escalator"]).toBeUndefined();
+    });
+
+    it("dryRun does NOT bypass the operator-only guard (rejects before the dry-run short-circuit)", async () => {
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createAgentHandlers(deps);
+
+      await expect(
+        handlers["agents.update"]!({
+          agentId: "default",
+          config: { skills: { execSandbox: { enabled: "never" } } },
+          dryRun: true,
+          _trustLevel: "admin",
+        }),
+      ).rejects.toThrow(/operator|immutable|config file/i);
+    });
+
+    it("still ALLOWS a benign agents.update (model change) — no false positive", async () => {
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createAgentHandlers(deps);
+
+      const result = (await handlers["agents.update"]!({
+        agentId: "default",
+        config: { model: "gpt-4o" },
+        _trustLevel: "admin",
+      })) as { updated: boolean };
+      expect(result.updated).toBe(true);
+    });
+
+    it("still ALLOWS toggling a benign skills field (builtinTools) — the guard is narrow", async () => {
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createAgentHandlers(deps);
+
+      const result = (await handlers["agents.update"]!({
+        agentId: "default",
+        config: { skills: { builtinTools: { webSearch: true } } },
+        _trustLevel: "admin",
+      })) as { updated: boolean };
+      expect(result.updated).toBe(true);
+    });
+  });
 });

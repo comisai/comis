@@ -100,10 +100,12 @@ describe("createSessionTrajectoryHandleRegistry — handle lifecycle", () => {
     );
     expect(recorder).not.toBeNull();
 
-    // Drive one event through the bus → bridge → recorder.
+    // Drive one event through the bus → bridge → recorder. The payload
+    // sessionKey matches the registry key (as production bridge emits do) —
+    // the owner-scoping filter drops foreign-session payloads.
     bus.emit("session:started", {
       agentId: "a",
-      sessionKey: "sk",
+      sessionKey: "k1",
       channelType: "telegram",
       channelId: "c1",
       traceId: "t1",
@@ -120,7 +122,7 @@ describe("createSessionTrajectoryHandleRegistry — handle lifecycle", () => {
 
     bus.emit("session:started", {
       agentId: "a",
-      sessionKey: "sk",
+      sessionKey: "k1",
       channelType: "telegram",
       channelId: "c1",
       traceId: "t1",
@@ -285,10 +287,11 @@ describe("createSessionTrajectoryHandleRegistry — monotonic seq + single sessi
     );
     expect(recorder).not.toBeNull();
 
-    // Turn 1 — emit session:started (one).
+    // Turn 1 — emit session:started (one). Payload sessionKey matches the
+    // registry key (production emits do) — the owner filter requires it.
     bus.emit("session:started", {
       agentId: "a",
-      sessionKey: "sk",
+      sessionKey: "k-life",
       channelType: "telegram",
       channelId: "c1",
       traceId: "t1",

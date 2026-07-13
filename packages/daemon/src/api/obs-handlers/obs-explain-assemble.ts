@@ -39,6 +39,13 @@ import type { IncidentReport, IncidentSignals } from "@comis/core";
 // ---------------------------------------------------------------------------
 
 /**
+ * The co-located trajectory-record file suffix on the raw session `.jsonl` path
+ * (`<session>.jsonl` → `<session>.jsonl.trajectory.jsonl`). Used to derive the
+ * PROVENANCE path from the resolved VALUES path for `coverage.sources`.
+ */
+const TRAJECTORY_JSONL_SUFFIX = ".trajectory.jsonl";
+
+/**
  * Hard-failure endReasons → `severity: "failed"`. These are also degraded by
  * construction (a hard failure is never "ok"). String-literal closed set.
  */
@@ -243,6 +250,21 @@ export function assembleIncidentReport(
   rollup: Record<string, unknown> | null,
   sessionKey: string,
   recordCount: number,
+  /**
+   * The closest REAL session keys, populated by the async caller ONLY on a
+   * 0-record miss (a lossy/partial key). Surfaced on `coverage.candidateSessionKeys`
+   * so a silent empty report becomes a "did you mean …?". Defaults to `[]` (the
+   * common resolved-record path adds no field). Stays PURE — the caller does the I/O.
+   */
+  candidateSessionKeys: readonly string[] = [],
+  /**
+   * The resolved on-disk raw session `.jsonl` path, populated by the async caller
+   * (which does the fs resolution via `resolveSessionFilePath`) ONLY when the session
+   * resolved to real artifacts. Surfaced on `coverage.sources` so a numeric/value
+   * reconciliation knows to read the raw session (VALUES) vs the trajectory (PROVENANCE).
+   * Stays PURE here — the caller does the I/O. Undefined ⇒ the field is omitted.
+   */
+  sessionSourcePath?: string,
 ): IncidentReport {
   const sessionEnd = sessionEndOf(metadata);
   const rollupPayload = rollupPayloadOf(rollup);
@@ -397,6 +419,15 @@ export function assembleIncidentReport(
     rollup: { present: sessionEnd !== undefined },
     offloads: { pointersResolved: offloadsResolved, pointersTotal: offloads.length },
     toolStats: toolStatsReconciliation,
+    // "did you mean …?" — only when the request resolved nothing AND the caller
+    // found closer real keys (a lossy/partial key). Omitted otherwise.
+    ...(candidateSessionKeys.length > 0 ? { candidateSessionKeys: [...candidateSessionKeys] } : {}),
+    // Source PATHS (pointers, not bodies): the raw session `.jsonl` holds tool-result
+    // VALUES (reconcile numbers here); the co-located `.trajectory.jsonl` holds
+    // PROVENANCE. Present only when the caller resolved real on-disk artifacts.
+    ...(sessionSourcePath !== undefined
+      ? { sources: { session: sessionSourcePath, trajectory: `${sessionSourcePath}${TRAJECTORY_JSONL_SUFFIX}` } }
+      : {}),
   };
 
   return {
@@ -458,7 +489,21 @@ export function assembleIncidentReport(
     // painted, and whether a failed event reclassified the outcome) + the
     // blocks an aborted delivery left unsent — together they answer "what did
     // the user's chat actually show this turn" from the trajectory alone.
-    ...(signals.turnFinalized !== undefined ? { activityFinalize: signals.turnFinalized } : {}),
+    ...(signals.turnFinalized !== undefined
+      ? {
+          activityFinalize: {
+            ...signals.turnFinalized,
+            // Session-wide finalize tally: a mid-session failure paint is
+            // visible even when a later success is the last-wins snapshot.
+            ...(signals.turnFinalizeCounts !== undefined
+              ? {
+                  failedTurnCount: signals.turnFinalizeCounts.failure,
+                  recoveredTurnCount: signals.turnFinalizeCounts.recovered,
+                }
+              : {}),
+          },
+        }
+      : {}),
     ...(signals.deliveryAborts !== undefined
       ? { deliverySkipped: { events: signals.deliveryAborts.events, chunksNotSent: signals.deliveryAborts.chunksNotSent } }
       : {}),

@@ -267,9 +267,12 @@ export async function executeAndDeliver(
   // Capability-driven config lookup (falls back to hardcoded maps)
   const caps = deps.channelRegistry?.getCapabilities(adapter.channelType);
   const metaKey = caps?.replyToMetaKey;
-  // In DMs, skip reply-to -- quoting the user's own message adds noise in 1-on-1 chats.
+  // In DMs, skip reply-to for visible-quote channels -- quoting the user's own
+  // message adds noise in 1-on-1 chats. Channels that thread via invisible
+  // headers (email: In-Reply-To/References) declare threadReplyInDm so a 1:1
+  // reply still threads instead of starting a fresh thread each time.
   const replyTo =
-    isGroupMessage(originalMsg) && metaKey && originalMsg.metadata?.[metaKey]
+    (isGroupMessage(originalMsg) || caps?.threadReplyInDm) && metaKey && originalMsg.metadata?.[metaKey]
       ? String(originalMsg.metadata[metaKey])
       : undefined;
 

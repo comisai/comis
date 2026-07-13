@@ -141,6 +141,10 @@ vi.mock("@comis/core", async () => {
     createNoOpDeliveryQueue: vi.fn(() => ({})),
     systemNowMs: () => Date.now(),
     systemNowDate: () => new Date(),
+    // isInQuietHours (via the cron quiet-hours gate) converts an epoch ms to a
+    // Date through this helper; the partial mock must provide it or the gate
+    // throws and fails open. Delegates to the real from-value Date construction.
+    systemDateFrom: (v: number | string) => new Date(v),
     // setupChannels resolves the default agent's activity.theme →
     // themeForName(name).markers for the activity renderers. The fake
     // returns the default-theme marker bundle so the resolved markers stay
@@ -207,6 +211,10 @@ function makeContainer(): { container: AppContainer; eventHandlers: EventHandler
       autoReplyEngine: {},
       sendPolicy: {},
       lifecycleReactions: { enabled: false, emojiTier: "unicode", timing: { debounceMs: 700, holdDoneMs: 3000, holdErrorMs: 5000, stallSoftMs: 15000, stallHardMs: 30000 }, perChannel: {} },
+      // The cron delivery listener reads scheduler.quietHours to gate off-hours
+      // pings. Disabled here so delivery proceeds normally in these tests (the schema
+      // always provides this block in production via SchedulerConfigSchema.default).
+      scheduler: { quietHours: { enabled: false, start: "22:00", end: "07:00", timezone: "UTC", criticalBypass: false } },
     },
     secretManager: { get: vi.fn(() => { throw new Error("not found"); }) },
     eventBus: {
@@ -280,6 +288,48 @@ describe("setupChannels", () => {
       });
 
       expect(mockAdapter.sendMessage).toHaveBeenCalledWith("chat123", "Scheduled message content");
+    });
+
+    it("SUPPRESSES the systemEvent delivery when quiet hours are active (job ran, off-hours ping withheld)", async () => {
+      // The wiring proof for the quiet-hours cron gate: the REAL listener must
+      // read container.config.scheduler.quietHours and withhold the channel
+      // delivery in-window (the job still ran). Time is pinned deterministically
+      // so the 22:00-07:00 window is in-window regardless of when CI runs.
+      mockAdaptersByType.set("telegram", mockAdapter);
+      const { container, eventHandlers } = makeContainer();
+      (container.config as unknown as { scheduler: { quietHours: unknown } }).scheduler.quietHours = {
+        enabled: true,
+        start: "22:00",
+        end: "07:00",
+        timezone: "UTC",
+        criticalBypass: false,
+      };
+      const deps = makeDeps({ container });
+      await setupChannels(deps);
+
+      const cronHandler = eventHandlers.find((h) => h.event === "scheduler:job_result")?.callback;
+      expect(cronHandler).toBeDefined();
+
+      vi.useFakeTimers();
+      vi.setSystemTime(Date.parse("2026-07-11T03:00:00Z")); // 03:00 UTC — inside 22:00-07:00
+      try {
+        await cronHandler!({
+          deliveryTarget: { channelType: "telegram", channelId: "chat123", tenantId: "t1", userId: "u1" },
+          result: "Overnight status ping",
+          jobName: "nightly-report",
+          payloadKind: undefined,
+          jobId: "jq",
+          agentId: "agent1",
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+
+      expect(mockAdapter.sendMessage).not.toHaveBeenCalled();
+      expect(deps.logger.info).toHaveBeenCalledWith(
+        expect.objectContaining({ quietHours: true, step: "quiet-hours" }),
+        expect.stringContaining("suppressed (quiet hours)"),
+      );
     });
 
     it("warns and skips when deliveryTarget has no channelType", async () => {

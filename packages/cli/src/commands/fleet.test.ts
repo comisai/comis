@@ -191,6 +191,9 @@ describe("comis fleet (defaults) uses --since 24 --format table", () => {
     expect(output).toContain("Sessions");
     expect(output).toContain("Breaker");
     expect(output).toContain("Cost");
+    // The token figure names its basis (session-index input+output, no cache) so
+    // it doesn't read as the same "tok" as explain's cache-inclusive ledger.
+    expect(output).toContain("735800 tok (input+output, excl cache)");
     // findings + root-cause + next-steps lines.
     expect(output).toContain("fleet_recurring_health_signal");
     expect(output).toContain("fleet_high_degraded_rate");

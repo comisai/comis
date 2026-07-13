@@ -310,7 +310,7 @@ When a sub-agent's lifecycle ends, one of six end reasons is recorded:
 |--------|-------------|
 | `completed` | The sub-agent finished its task normally |
 | `failed` | An unrecoverable error occurred during execution |
-| `killed` | The sub-agent was explicitly terminated by the parent agent or a budget guard |
+| `killed` | The sub-agent was force-terminated. The kill is attributed via `killedBy` (`parent` \| `health_monitor` \| `operator` \| `system`) on the failure record, the `subagent:killed` event, and the run status the parent polls -- a daemon health-monitor stuck-kill (no observed tool/LLM progress past `stuckKillThresholdMs`) never reads as a parent kill, and it delivers an LLM-free failure notification to the announce channel |
 | `swept` | The sub-agent's result files were removed by the retention sweep after `resultRetentionMs` expired |
 | `watchdog_timeout` | The sub-agent exceeded its wall-clock timeout and was force-failed by the watchdog timer. See [Resilience](/agents/resilience#sub-agent-watchdog). |
 | `ghost_sweep` | The sub-agent was stuck in "running" state past the grace period and was force-failed by the periodic ghost sweep. See [Resilience](/agents/resilience#ghost-sweep). |

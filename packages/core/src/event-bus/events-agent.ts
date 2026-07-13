@@ -621,9 +621,71 @@ export interface AgentEvents {
     entityCandidates: number;
     /** Size of the final ranked set returned to the prompt (0 ⇒ no hit). */
     finalCount: number;
+    /**
+     * Count of final-set memories scoped to a DIFFERENT user than the current
+     * conversation (`entry.userId !== sessionKey.userId`). `> 0` means agent-scoped
+     * recall injected another sender's memory into THIS turn — the cross-sender/privacy
+     * signal a recall or privacy audit needs from the ALWAYS-ON event, so "was
+     * cross-sender data injected into this turn's context?" is answerable without the
+     * opt-in `diagnostics.recallTrace` artifact having been pre-enabled. A COUNT only —
+     * never the user-ids or memory bodies (§2.7); the per-row detail stays in the trace.
+     */
+    crossUserCount: number;
+    /**
+     * Count of DISTINCT authors (`source.who`) among the final ranked set — a breadth
+     * signal (several senders' memories fused into one turn). A COUNT only (§2.7).
+     */
+    distinctSources: number;
     /** Whether the cross-encoder reranker was available for this recall. */
     rerankerAvailable: boolean;
     durationMs: number;
+    timestamp: number;
+  };
+
+  /**
+   * A recall retrieval lane (or the whole lane split) FAILED and recall
+   * degraded rather than silently vanishing. MINIMAL payload — a closed scope
+   * tag + the closed ErrorKind string ONLY, never query text or error bodies
+   * (§2.7). `scope:"vector_lane"` = the vector lane returned empty while FTS
+   * still served (e.g. a vec-table/embedder dimension drift); `scope:"lanes"`
+   * = the whole searchLanes call failed and the turn ran with NO recall.
+   * Bridged to the trajectory and persisted as a `health_signal` obs row so a
+   * recurring recall failure is a fleet finding, not a log-grep discovery
+   * (observed live: hours of per-turn failures with zero fleet signal).
+   * Emit site: `createMemoryRecall` (memory-recall.ts), via the same
+   * deferred-emit path as `memory:recalled`.
+   */
+  "memory:recall_degraded": {
+    agentId: string;
+    sessionKey?: string;
+    traceId: string;
+    /** Which layer degraded: one lane ("vector_lane") or the whole split ("lanes"). */
+    scope: "vector_lane" | "lanes";
+    /** The closed LogFields.ErrorKind string from the failing layer. */
+    errorKind: string;
+    timestamp: number;
+  };
+
+  /**
+   * A cached-prefix message MUTATED across turns (Anthropic prompt-cache
+   * collapse) on THRESHOLD+ calls within a recent window — a wasted-cache-write
+   * signal. MINIMAL payload — the divergent index + a windowed mutation count +
+   * the closed mutation-class label ONLY, NEVER message text (§2.7). Emitted
+   * alongside the "Unstable prefix detected" WARN so the churn surfaces as a
+   * `comis fleet` `cache_prefix_churn` health signal instead of being visible
+   * only as a daemon.log WARN (the fleet-blindness incident, comis-harel
+   * 2026-07-12). `mutationClass` is the classifier's label
+   * (structural-shift / datetime-preamble / thinking-cleared / …).
+   */
+  "agent:prefix_unstable": {
+    agentId?: string;
+    sessionKey: string;
+    /** Index of the first cached-region message that diverged from the prior turn. */
+    firstDivergentIndex: number;
+    /** Windowed count of cached-region mutations that crossed the WARN threshold. */
+    cacheRegionMutations: number;
+    /** Closed classifier label for what changed (no message text). */
+    mutationClass: string;
     timestamp: number;
   };
 

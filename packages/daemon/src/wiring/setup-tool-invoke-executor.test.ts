@@ -314,17 +314,16 @@ describe("createToolInvokeExecutor — file builtins run workspace-scoped", () =
   });
 
   // -------------------------------------------------------------------------
-  // MUT-02 / NG2 — the write SURFACE is default-OFF. orch:write is a FLOOR cap
-  // (held by every standard/unattended/max agent), but the TYPED write surface
-  // requires an explicit per-agent opt-in (autonomy.write:true), resolved at boot
-  // into the executor's `writeSurfaceEnabled(agentId)` predicate. So a default
-  // standard agent — which HOLDS orch:write — still cannot reach the write tool
-  // without the surface toggle: a content-free deny that NEVER reaches the core.
-  // This restores the read-only-by-default posture the persistent-write footgun
-  // had eroded (a floor-cap-default-on persistent write into skills/).
+  // MUT-02 / NG2 — the executor fail-CLOSES when no `writeSurfaceEnabled` predicate
+  // is wired (defense-in-depth). orch:write is a FLOOR cap, and the boot wiring
+  // now resolves the write surface default-ON (`autonomy.write !== false`, full
+  // capability out of the box) — but the EXECUTOR must still deny when the predicate
+  // dep is genuinely ABSENT (a mis-wire), mirroring the MCP allowlist's deny-by-
+  // absence: a content-free deny that NEVER reaches the core. (Production always
+  // wires the predicate; this guards the mis-wire path.)
   // -------------------------------------------------------------------------
 
-  it("DENIES write when the write surface is not enabled — even though orch:write is held (default-off, fail-closed)", async () => {
+  it("DENIES write when NO writeSurfaceEnabled predicate is wired — even though orch:write is held (fail-closed on absent dep)", async () => {
     // No writeSurfaceEnabled dep ⇒ fail-closed (absent ⇒ deny), mirroring the MCP
     // allowlist's deny-by-absence. The lease HOLDS orch:write (the floor cap).
     const deps = makeDeps();

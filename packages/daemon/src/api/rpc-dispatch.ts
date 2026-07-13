@@ -191,6 +191,19 @@ const ADMIN_METHODS: ReadonlySet<string> = new Set(
   API_CONTRACTS_ORDERED.filter((c) => c.scopes.includes("admin")).map((c) => c.method),
 );
 
+/**
+ * Admin-gated, READ-ONLY obs methods whose operator CLI (`comis explain` /
+ * `comis fleet`) probes the RPC then falls back to offline assembly from the
+ * local data dir. An admin-trust denial here is a ROUTINE control flow, so the
+ * dispatch logs it at DEBUG (not WARN) — otherwise every `comis explain` run
+ * spams the daemon log the operator is reviewing. Mirrors the same set in the
+ * @comis/gateway method-router trace wrapper (the two log layers, one policy).
+ */
+const OFFLINE_FALLBACK_OBS_METHODS: ReadonlySet<string> = new Set([
+  "obs.explain",
+  "obs.fleet.health",
+]);
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -793,17 +806,28 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
         for (const key of BINARY_PARAM_KEYS) delete rest[key];
         safeParams = rest;
       }
-      deps.logger[classified.level](
+      // A routine operator flow — an admin-trust denial on a read-only obs
+      // method the CLI probes-then-falls-back-offline (obs.explain /
+      // obs.fleet.health) — logs at DEBUG, not WARN: otherwise every `comis
+      // explain` / `comis fleet` run spams the daemon log the operator is
+      // reviewing. The @comis/gateway method-router trace wrapper applies the
+      // SAME narrowing on its own layer. A denial on any other method keeps its
+      // classified level.
+      const effectiveLevel: "debug" | "warn" | "error" =
+        classified.errorKind === "auth" && OFFLINE_FALLBACK_OBS_METHODS.has(method)
+          ? "debug"
+          : classified.level;
+      deps.logger[effectiveLevel](
         {
           method,
           params: safeParams,
           // An expected typed refusal (auth/validation/precondition — level
-          // "warn") logs its MESSAGE only: passing the Error object makes the
-          // serializer emit the full stack, and a routine operator flow (every
+          // "warn"/"debug") logs its MESSAGE only: passing the Error object makes
+          // the serializer emit the full stack, and a routine operator flow (every
           // `comis explain` run probes the admin-gated obs.explain before
           // falling back offline) then reads as a fault in the daemon log.
-          // Stack traces are DEBUG-only; unclassified internal errors keep the
-          // full err (the stack IS the diagnostic there).
+          // Stack traces are for internal errors only; unclassified internal
+          // errors keep the full err (the stack IS the diagnostic there).
           err: classified.level === "warn" ? (err instanceof Error ? err.message : String(err)) : err,
           hint: classified.hint,
           errorKind: classified.errorKind,

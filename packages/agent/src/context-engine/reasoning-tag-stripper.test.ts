@@ -244,14 +244,21 @@ describe("createReasoningTagStripper", () => {
 // ---------------------------------------------------------------------------
 
 describe("validateRoleAttribution", () => {
-  it("logs WARN for consecutive same-role messages (user-user)", () => {
+  // The detector runs on the ASSEMBLED context (buildSessionContext().messages)
+  // AFTER repairOrphanedMessages has run. It escalates to WARN ONLY when the
+  // raw session tree STILL carries a consecutive-role anomaly (the repair ran
+  // and did not resolve it — genuine unrepaired corruption). A same-role
+  // adjacency that exists only in the assembled/merged view while the raw tree
+  // is well-formed is BENIGN — the provider adapter normalizes consecutive
+  // same-role turns — so it is a once-per-turn DEBUG, not a scary WARN with a
+  // false "repair may not have run" hint (live incident 2026-07-08: index 47
+  // WARNed 30× over 2 days on a session whose raw tree was clean and every
+  // session succeeded).
+  it("WARNs when the raw tree STILL has the anomaly after repair (genuine unrepaired)", () => {
     const logger = createMockLogger();
-    const messages: AgentMessage[] = [
-      makeUserMsg("hello"),
-      makeUserMsg("world"),
-    ];
+    const messages: AgentMessage[] = [makeUserMsg("hello"), makeUserMsg("world")];
 
-    validateRoleAttribution(messages, logger);
+    validateRoleAttribution(messages, /* rawTreeHasUnrepairedAnomaly */ true, logger);
 
     expect(logger.warn).toHaveBeenCalledTimes(1);
     expect(logger.warn).toHaveBeenCalledWith(
@@ -259,34 +266,45 @@ describe("validateRoleAttribution", () => {
         anomalyIndex: 1,
         expectedRole: "assistant",
         actualRole: "user",
-        hint: "Session role attribution anomaly detected; repairOrphanedMessages may not have run",
         errorKind: "internal",
       }),
-      "Post-load role validation anomaly",
+      expect.stringMatching(/nrepaired/),
+    );
+    // The false "repairOrphanedMessages may not have run" hint is gone — the
+    // repair DID run; the hint now names the real situation.
+    const warnArg = (logger.warn as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]![0] as { hint: string };
+    expect(warnArg.hint).not.toContain("may not have run");
+    expect(logger.debug).not.toHaveBeenCalled();
+  });
+
+  it("DEBUGs (not WARN) a benign assembled-only adjacency when the raw tree is well-formed", () => {
+    const logger = createMockLogger();
+    const messages: AgentMessage[] = [makeUserMsg("hello"), makeUserMsg("world")];
+
+    validateRoleAttribution(messages, /* rawTreeHasUnrepairedAnomaly */ false, logger);
+
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(logger.debug).toHaveBeenCalledTimes(1);
+    expect(logger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ anomalyIndex: 1, actualRole: "user" }),
+      expect.any(String),
     );
   });
 
-  it("logs WARN for consecutive assistant-assistant messages", () => {
+  it("classifies assistant-assistant the same way (WARN when unrepaired)", () => {
     const logger = createMockLogger();
     const messages: AgentMessage[] = [
       makeAssistantMsg([makeTextBlock("first")]),
       makeAssistantMsg([makeTextBlock("second")]),
     ];
-
-    validateRoleAttribution(messages, logger);
-
-    expect(logger.warn).toHaveBeenCalledTimes(1);
+    validateRoleAttribution(messages, true, logger);
     expect(logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        anomalyIndex: 1,
-        expectedRole: "user",
-        actualRole: "assistant",
-      }),
-      "Post-load role validation anomaly",
+      expect.objectContaining({ anomalyIndex: 1, expectedRole: "user", actualRole: "assistant" }),
+      expect.any(String),
     );
   });
 
-  it("does not warn for valid alternation", () => {
+  it("does not warn or debug for valid alternation", () => {
     const logger = createMockLogger();
     const messages: AgentMessage[] = [
       makeUserMsg("hello"),
@@ -294,33 +312,23 @@ describe("validateRoleAttribution", () => {
       makeUserMsg("question"),
       makeAssistantMsg([makeTextBlock("answer")]),
     ];
-
-    validateRoleAttribution(messages, logger);
-
+    validateRoleAttribution(messages, false, logger);
     expect(logger.warn).not.toHaveBeenCalled();
+    expect(logger.debug).not.toHaveBeenCalled();
   });
 
   it("does not warn for empty or single message arrays", () => {
     const logger = createMockLogger();
-
-    validateRoleAttribution([], logger);
+    validateRoleAttribution([], false, logger);
+    validateRoleAttribution([makeUserMsg("solo")], true, logger);
     expect(logger.warn).not.toHaveBeenCalled();
-
-    validateRoleAttribution([makeUserMsg("solo")], logger);
-    expect(logger.warn).not.toHaveBeenCalled();
+    expect(logger.debug).not.toHaveBeenCalled();
   });
 
   it("reports only the first anomaly", () => {
     const logger = createMockLogger();
-    const messages: AgentMessage[] = [
-      makeUserMsg("one"),
-      makeUserMsg("two"),
-      makeUserMsg("three"),
-    ];
-
-    validateRoleAttribution(messages, logger);
-
-    // Should only fire once despite multiple anomalies
+    const messages: AgentMessage[] = [makeUserMsg("one"), makeUserMsg("two"), makeUserMsg("three")];
+    validateRoleAttribution(messages, true, logger);
     expect(logger.warn).toHaveBeenCalledTimes(1);
   });
 });

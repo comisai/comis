@@ -93,7 +93,7 @@ the full list.
     Expected output (version number — yours may differ):
 
     ```
-    1.0.47
+    1.0.52
     ```
 
     <Tip>
@@ -161,29 +161,53 @@ the full list.
   </Step>
 </Steps>
 
-## Browser tool provisioning (optional)
+## Browser tool provisioning
 
-Three flags ship the agent browser tool inline with the install. Off by default; mix and match as your use case demands.
+The agent browser tool ships **enabled by default**, so the installer provisions its
+runtime by default too: **stock Chrome + headless shared libs, plus Xvfb + a headed
+companion unit**. Provisioning is **strictly best-effort** — if Chromium or Xvfb can't
+install on this host (arm64, locked-down apt, rootless), the install never aborts; the
+browser tool simply falls back to what's available (see the fallback note below). Opt
+out for a minimal footprint, or add the stealth variant, with these flags:
 
-| Flag | Adds | Use when |
+| Flag | Effect | Use when |
 |---|---|---|
-| `--with-browser` | Google Chrome + headless shared libs + a widened systemd sandbox so the daemon can launch a browser. Handles Ubuntu 24.04's t64-renamed libs and falls back to Google's official apt repo when the `chromium` deb isn't available. | You want the browser tool to work on a fresh host without manually `apt install`ing dependencies. |
-| `--with-xvfb` | Implies `--with-browser`. Adds Xvfb and a `comis-xvfb.service` companion unit that runs a virtual display on `:99`; the main unit's `JoinsNamespaceOf=comis-xvfb.service` lets the daemon reach the X11 socket despite `PrivateTmp=yes`. Seeds `headless: false` in `config.yaml`. | Hitting sites that detect headless mode itself (BrowserScan, Cloudflare managed, DataDome). |
-| `--with-cloakbrowser` | Implies `--with-browser`. Installs CloakBrowser (stealth Chromium with source-level fingerprint patches) instead of stock Chrome; the daemon auto-detects and uses the cloak binary via `findChrome()`. Tighter sandbox than the Chrome variant. | Bypassing Cloudflare Turnstile, FingerprintJS, BrowserScan, and Reddit's secondary fingerprint check. See [agent-tools/browser](/agent-tools/browser#stealth-mode-anti-bot-detection) for verified outcomes. |
+| `--with-browser` | **On by default.** Google Chrome + headless shared libs + a widened systemd sandbox so the daemon can launch a browser. Handles Ubuntu 24.04's t64-renamed libs and falls back to Google's official apt repo when the `chromium` deb isn't available. | Kept on unless you opt out — the browser tool needs a Chrome binary to launch. |
+| `--without-browser` | Opt out of the **whole** browser stack (skips Chromium, headless libs, and the Xvfb unit) for a minimal footprint. The browser tool stays enabled in config but fails honestly at use for lack of a runtime. Same as `COMIS_WITH_BROWSER=0`. | You don't use the browser tool and want the smallest install. |
+| `--with-xvfb` | **On by default (implies `--with-browser`).** Adds Xvfb and a `comis-xvfb.service` companion unit that runs a virtual display on `:99`; both units bind a shared `/run/comis-x11` dir onto `/tmp/.X11-unix` so the daemon reaches the X11 socket despite `PrivateTmp=yes`. Seeds `headless: false` in `config.yaml` **only when Xvfb actually installed**. | Kept on unless you opt out — needed for sites that detect headless mode itself (BrowserScan, Cloudflare managed, DataDome). |
+| `--without-xvfb` | Keep the (default) headless browser but drop the heavier Xvfb headed stack + companion unit. Same as `COMIS_WITH_XVFB=0`. | You want the browser tool but not headed mode / the extra unit. |
+| `--with-cloakbrowser` | **Opt-in (implies `--with-browser`).** Installs CloakBrowser (stealth Chromium with source-level fingerprint patches) instead of stock Chrome; the daemon auto-detects and uses the cloak binary via `findChrome()`. Tighter sandbox than the Chrome variant. | Bypassing Cloudflare Turnstile, FingerprintJS, BrowserScan, and Reddit's secondary fingerprint check. See [agent-tools/browser](/agent-tools/browser#stealth-mode-anti-bot-detection) for verified outcomes. |
 
 ```bash
-# Bare baseline (no browser)
+# Default install — browser tool + headed (Xvfb) stack provisioned best-effort
 curl -fsSL https://comis.ai/install.sh | bash
 
-# Stock Chrome — needed for any agent that uses the browser tool
-curl -fsSL https://comis.ai/install.sh | bash -s -- --with-browser
+# Minimal footprint — no browser runtime at all
+curl -fsSL https://comis.ai/install.sh | bash -s -- --without-browser
+
+# Headless-only — keep the browser tool, drop the heavier headed Xvfb stack
+curl -fsSL https://comis.ai/install.sh | bash -s -- --without-xvfb
 
 # Cloakbrowser (stealth Chromium) — recommended for fingerprint-tier sites
 curl -fsSL https://comis.ai/install.sh | bash -s -- --with-cloakbrowser
-
-# Full stack: stealth + headed via Xvfb (for the hardest anti-bot sites)
-curl -fsSL https://comis.ai/install.sh | bash -s -- --with-cloakbrowser --with-xvfb
 ```
+
+<Note>
+**Headed provisioning degrades gracefully to headless.** Chromium always installs
+*before* Xvfb, and the headed decision keys off ground truth — whether the `Xvfb`
+binary is actually present — not the flag. So if the Xvfb package or its companion
+unit can't install (e.g. a rootless install can't register a system unit), the
+installer downshifts to headless: it skips the companion unit and seeds
+`headless: true`, and the browser tool works on the installed Chromium. You never
+end up configured headed against a display that isn't there.
+</Note>
+
+<Info>
+Run as a regular user, these one-liners ask to re-run themselves with `sudo`
+and install under a dedicated `comis` system user -- the secure default on
+Linux. Pass `--no-user` (or set `COMIS_NO_USER=1`) for a current-user install;
+non-interactive runs without root require one of the two choices explicitly.
+</Info>
 
 <Warning>
 **Datacenter IPs (AWS, DigitalOcean, Hetzner, Hostinger, …) are pre-blocked by Reddit, X/Twitter, LinkedIn, and many anti-bot services at the network layer** — regardless of browser fingerprint. CloakBrowser does not include a proxy. If your daemon runs on a datacenter VPS, pair the stealth flag with a residential proxy. Self-hosted on a home/office network: stealth alone usually works.
@@ -191,7 +215,7 @@ curl -fsSL https://comis.ai/install.sh | bash -s -- --with-cloakbrowser --with-x
 CloakBrowser's compiled binary is under a separate license — free for self-hosted use; bundling into a service distributed to third-party customers requires an OEM license from CloakHQ. See the [binary license](https://github.com/CloakHQ/CloakBrowser/blob/main/BINARY-LICENSE.md).
 </Warning>
 
-The corresponding environment variables (`COMIS_WITH_BROWSER`, `COMIS_WITH_XVFB`, `COMIS_WITH_CLOAKBROWSER`) work too, useful in CI / non-interactive flows. The installer pre-creates browser profile dirs, seeds a `browser:` block in `config.yaml`, and (for `--with-xvfb`) enables + starts the companion unit before the main daemon — no manual systemd surgery needed.
+The corresponding environment variables work too, useful in CI / non-interactive flows: `COMIS_WITH_BROWSER=0|1` and `COMIS_WITH_XVFB=0|1` (both default `1` — set `0` for the opt-outs above), and `COMIS_WITH_CLOAKBROWSER=1`. The installer pre-creates browser profile dirs, seeds a `browser:` block in `config.yaml`, and (when Xvfb installed) enables + starts the companion unit before the main daemon — no manual systemd surgery needed.
 
 ## Non-Interactive Install
 

@@ -271,7 +271,9 @@ describe("setupSchedulers", () => {
     const result = await executeJob(job);
 
     expect(result.status).toBe("ok");
-    expect(result.summary).toBe("No delivery target (event emitted)");
+    // Reads as the SUCCESS it is (a background/system-event job whose work rode
+    // the emitted event), not a failure-looking "No delivery target" in a log review.
+    expect(result.summary).toBe("Background event emitted (no chat delivery target)");
   });
 
   // -------------------------------------------------------------------------

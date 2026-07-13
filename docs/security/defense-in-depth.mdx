@@ -528,6 +528,27 @@ someone gains access to your server's file system.
     operations.
   </Accordion>
 
+  <Accordion title="Forged Context-Marker Neutralization" icon="user-secret">
+    **What it does:** Before an assistant turn becomes replayable history,
+    strips any context-boundary markers the model emitted in its *own* output --
+    the `[System context]` / `[End system context]` wrapper and line-start
+    inbound-envelope headers (`[telegram] <id> (<time>):`). Applied on every
+    replay path (LCD store ingest, the assembler's fresh-tail slice, and the SDK
+    replay context) and scoped to assistant content only, so real inbound turns
+    are never touched.
+
+    **Why it matters:** The inbound-message format is plain, reproducible text
+    (unlike external content, which is fenced with an unforgeable per-session
+    nonce). Without this, a model can fabricate a "next user turn" in its reply;
+    the fabrication is persisted verbatim and replayed as genuine history, so on
+    the following turn the agent reads its own forgery as a real user message and
+    acts on it -- a self-reinforcing hallucination. Neutralizing the framing makes
+    that impossible. Each occurrence is logged (a counts-only WARN naming
+    `forgedMarkersStripped`) so the attempt is observable.
+
+    **Do I need to configure it?** No. Always active on every replay path.
+  </Accordion>
+
   <Accordion title="Encrypted Secrets (SecretsCrypto)" icon="lock">
     **What it does:** Encrypts your API keys and passwords with AES-256-GCM
     using HKDF-SHA256 key derivation. Each encryption uses a fresh 32-byte
@@ -660,6 +681,7 @@ walkthrough.
 | Exec 13-gate denylist + bwrap sandbox | Exec security layer | Shell command injection and filesystem escape |
 | Canary token | Per-session canary | Exfiltration detection (canary in output → blocked) |
 | Input security guard | `InputSecurityGuard` | Prompt injection patterns in inbound messages |
+| Forged context-marker neutralization | Assistant-output replay guard | A model fabricating a `[System context]` / inbound-envelope turn in its own reply and re-reading it as real history |
 
 A live security matrix confirmed this empirically: **injection-resisted=100%, secret-leaked=0%, over-refused=0%** across all 8 qwen3.6 batches (fair and bare prompts, 27b through 35b, GGUF and MLX). A platform-level control held by `OutputGuard`, `FROZEN_TRUST_PATHS`, and the exec sandbox does not depend on the model's instruction-following quality.
 

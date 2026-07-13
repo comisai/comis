@@ -63,7 +63,9 @@ export interface PtyModuleLike {
   spawn(
     bin: string,
     argv: string[],
-    opts: { cols: number; rows: number; env: NodeJS.ProcessEnv },
+    // `cwd` is set ONLY on the unsandboxed direct-spawn path (the jailed path bakes cwd into the
+    // bwrap `--chdir` arg, so bwrap owns it). Absent ⇒ node-pty's default (the worker's cwd).
+    opts: { cols: number; rows: number; env: NodeJS.ProcessEnv; cwd?: string },
   ): FakePtyLike;
 }
 

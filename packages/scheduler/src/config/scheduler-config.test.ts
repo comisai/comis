@@ -37,8 +37,8 @@ describe("SchedulerConfigSchema", () => {
     expect(cfg.execution.maxLogBytes).toBe(2_000_000);
     expect(cfg.execution.keepLines).toBe(2_000);
 
-    // Tasks defaults
-    expect(cfg.tasks.enabled).toBe(false);
+    // Tasks defaults — task extraction is ON by default (agent fully capable out of the box)
+    expect(cfg.tasks.enabled).toBe(true);
     expect(cfg.tasks.confidenceThreshold).toBe(0.8);
     expect(cfg.tasks.storeDir).toBe("./data/scheduler/tasks");
 

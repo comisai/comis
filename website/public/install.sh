@@ -498,35 +498,44 @@ is_shell_function() {
     [[ -n "$name" ]] && declare -F "$name" >/dev/null 2>&1
 }
 
-is_gum_raw_mode_failure() {
-    local err_log="$1"
-    [[ -s "$err_log" ]] || return 1
-    grep -Eiq 'setrawmode' "$err_log"
-}
-
 run_with_spinner() {
     local title="$1"
     shift
 
     if [[ -n "$GUM" ]] && gum_is_tty && ! is_shell_function "${1:-}"; then
-        local gum_err
+        local gum_err rc_file cmd_quoted rc_quoted gum_status wrapped_rc
         gum_err="$(mktempfile)"
-        if "$GUM" spin --spinner dot --title "$title" -- "$@" 2>"$gum_err"; then
-            return 0
+        rc_file="$(mktempfile)"
+        rm -f "$rc_file"
+        printf -v cmd_quoted '%q ' "$@"
+        printf -v rc_quoted '%q' "$rc_file"
+        gum_status=0
+        "$GUM" spin --spinner dot --title "$title" -- \
+            bash -c "${cmd_quoted}; printf %s \$? >${rc_quoted}" 2>"$gum_err" || gum_status=$?
+        # The sentinel is the ground truth for the step's outcome — gum's own
+        # exit code is not. A gum that cannot drive the terminal can exit 0
+        # without running the command at all, and a swallowed non-zero here
+        # turns a failed step into a green checkmark.
+        wrapped_rc="$(cat "$rc_file" 2>/dev/null || true)"
+        rm -f "$rc_file" 2>/dev/null || true
+        if [[ "$wrapped_rc" =~ ^[0-9]+$ ]]; then
+            return "$wrapped_rc"
         fi
-        local gum_status=$?
-        if is_gum_raw_mode_failure "$gum_err"; then
-            GUM=""
-            GUM_STATUS="skipped"
-            GUM_REASON="gum raw mode unavailable"
-            ui_warn "Spinner unavailable in this terminal; continuing without spinner"
-            "$@"
-            return $?
+        if [[ "$gum_status" -eq 130 || "$gum_status" -eq 143 ]]; then
+            # Interrupted (SIGINT/SIGTERM) — don't rerun the command
+            return "$gum_status"
         fi
+        # No sentinel: gum never ran the command (raw mode / ioctl / TTY init
+        # failure). Disable it for the rest of the install and run spinner-less.
+        GUM=""
+        GUM_STATUS="skipped"
+        GUM_REASON="gum could not run in this terminal"
         if [[ -s "$gum_err" ]]; then
             cat "$gum_err" >&2
         fi
-        return "$gum_status"
+        ui_warn "Spinner unavailable in this terminal; continuing without spinner"
+        "$@"
+        return $?
     fi
 
     "$@"
@@ -745,11 +754,37 @@ install_build_tools_linux() {
     return 1
 }
 
+# xvfb_present
+# ------------
+# GROUND TRUTH for "can we run headed?": is the Xvfb binary actually installed?
+# The companion unit's ExecStart hard-codes /usr/bin/Xvfb, so headed mode is
+# impossible without it. Everything that decides headed-vs-headless keys off THIS,
+# not the WITH_XVFB *intent* flag — so a failed Xvfb install falls back to headless
+# Chromium consistently across every install path (root, rootless, --service none),
+# regardless of the order deps/unit/config-seed happen to run in.
+xvfb_present() {
+    [[ -x /usr/bin/Xvfb ]] || command -v Xvfb >/dev/null 2>&1
+}
+
+# install_xvfb_pkg <install-cmd...>
+# --------------------------------
+# Install the Xvfb package for HEADED mode. Best-effort UPGRADE, never a hard
+# requirement: if the install fails (or the binary still isn't present after),
+# downshift WITH_XVFB=0 so the rest of the install treats this as a headless
+# browser — the browser tool then works with the Chromium installed just above,
+# just without headed mode. Called only when WITH_XVFB is set.
+install_xvfb_pkg() {
+    [[ "$WITH_XVFB" == "1" ]] || return 0
+    run_quiet_step "Installing Xvfb (headed mode)" "$@" && xvfb_present && return 0
+    WITH_XVFB=0
+    ui_warn "Xvfb install failed — falling back to headless Chromium (browser tool still works; headed mode disabled)"
+}
+
 # install_browser_deps_linux
 # --------------------------
 # Install the Chromium runtime that packages/skills/src/tools/browser uses.
 # Idempotent — apt/dnf/yum/apk skip already-installed packages. The browser is
-# off-by-default; only runs when --with-browser is set.
+# on-by-default (the browser tool ships enabled); only skipped by --without-browser.
 #
 # Stock-Chromium path. If you adopt CloakBrowser instead, swap the Chromium
 # package out for `cloakbrowser` (npm/pip) — the shared libs below are still
@@ -809,10 +844,7 @@ install_browser_deps_linux() {
         # if requested.
         if [[ "$WITH_CLOAKBROWSER" == "1" ]]; then
             ui_info "CloakBrowser mode — Chrome install skipped (binary comes via npm later)"
-            if [[ "$WITH_XVFB" == "1" ]]; then
-                run_quiet_step "Installing Xvfb" $sudo_cmd apt-get install -y -qq xvfb || \
-                    ui_warn "Xvfb install failed — headed mode will not work"
-            fi
+            install_xvfb_pkg $sudo_cmd apt-get install -y -qq xvfb
             return 0
         fi
 
@@ -855,10 +887,7 @@ install_browser_deps_linux() {
         if [[ ! -x /usr/bin/chromium && -x /usr/bin/chromium-browser ]]; then
             $sudo_cmd ln -sf /usr/bin/chromium-browser /usr/bin/chromium || true
         fi
-        if [[ "$WITH_XVFB" == "1" ]]; then
-            run_quiet_step "Installing Xvfb" $sudo_cmd apt-get install -y -qq xvfb || \
-                ui_warn "Xvfb install failed — headed mode will not work"
-        fi
+        install_xvfb_pkg $sudo_cmd apt-get install -y -qq xvfb
         return 0
     fi
 
@@ -868,8 +897,7 @@ install_browser_deps_linux() {
             libxkbcommon mesa-libgbm pango cairo alsa-lib liberation-fonts \
             google-noto-emoji-color-fonts || \
             ui_warn "Browser dep install had errors"
-        [[ "$WITH_XVFB" == "1" ]] && run_quiet_step "Installing Xvfb" \
-            $sudo_cmd dnf install -y xorg-x11-server-Xvfb
+        install_xvfb_pkg $sudo_cmd dnf install -y xorg-x11-server-Xvfb
         return 0
     fi
 
@@ -878,8 +906,7 @@ install_browser_deps_linux() {
             chromium nss nspr atk at-spi2-atk at-spi2-core cups-libs libdrm \
             libxkbcommon mesa-libgbm pango cairo alsa-lib liberation-fonts || \
             ui_warn "Browser dep install had errors"
-        [[ "$WITH_XVFB" == "1" ]] && run_quiet_step "Installing Xvfb" \
-            $sudo_cmd yum install -y xorg-x11-server-Xvfb
+        install_xvfb_pkg $sudo_cmd yum install -y xorg-x11-server-Xvfb
         return 0
     fi
 
@@ -887,8 +914,7 @@ install_browser_deps_linux() {
         run_quiet_step "Installing browser runtime" $sudo_cmd apk add --no-cache \
             chromium nss freetype harfbuzz ca-certificates ttf-freefont \
             font-noto-emoji || ui_warn "Browser dep install had errors"
-        [[ "$WITH_XVFB" == "1" ]] && run_quiet_step "Installing Xvfb" \
-            $sudo_cmd apk add --no-cache xvfb
+        install_xvfb_pkg $sudo_cmd apk add --no-cache xvfb
         return 0
     fi
 
@@ -1629,6 +1655,10 @@ TAGLINE="$DEFAULT_TAGLINE"
 
 NO_INIT=${COMIS_NO_INIT:-0}
 NO_PROMPT=${COMIS_NO_PROMPT:-0}
+# Skip the dedicated 'comis' user and install for the invoking user instead
+NO_USER="${COMIS_NO_USER:-0}"
+# Original CLI args, captured before parsing — replayed verbatim by the sudo re-exec
+ORIGINAL_ARGS=()
 DRY_RUN=${COMIS_DRY_RUN:-0}
 INSTALL_METHOD=${COMIS_INSTALL_METHOD:-}
 COMIS_VERSION=${COMIS_VERSION:-latest}
@@ -1655,11 +1685,20 @@ NO_AUTOSTART="${COMIS_NO_AUTOSTART:-0}"
 # Install + enable but do not start the service yet
 NO_SERVICE_START="${COMIS_NO_SERVICE_START:-0}"
 
-# Browser-tool provisioning (optional — disabled by default to keep the
-# minimal-VPS footprint small). WITH_XVFB and WITH_CLOAKBROWSER imply
-# WITH_BROWSER (both share the headless shared-libs install).
-WITH_BROWSER="${COMIS_WITH_BROWSER:-0}"
-WITH_XVFB="${COMIS_WITH_XVFB:-0}"
+# Browser-tool provisioning. ON by default — the browser tool ships enabled
+# (full capability out of the box), so a fresh install provisions Chromium + the
+# headless shared libs, plus Xvfb + a virtual-display companion unit so the tool
+# can also run HEADED for sites that detect headless (DataDome / Kasada / Turnstile).
+# STRICTLY best-effort: the call sites guard it (`install_browser_deps_linux || true`,
+# `render_xvfb_unit || ui_warn`), so a box where Chromium/Xvfb can't install — or a
+# rootless install that can't register the unit — still gets a fully working daemon
+# (the browser tool then fails honestly at use). Opt out of the whole stack with
+# `--without-browser` / `COMIS_WITH_BROWSER=0`, or keep headless-only (drop the Xvfb
+# headed stack) with `--without-xvfb` / `COMIS_WITH_XVFB=0`, for a minimal footprint.
+# CloakBrowser stays opt-in (`--with-cloakbrowser`) — it swaps Chrome for a specialized
+# stealth build, not an additive capability. WITH_XVFB / WITH_CLOAKBROWSER imply WITH_BROWSER.
+WITH_BROWSER="${COMIS_WITH_BROWSER:-1}"
+WITH_XVFB="${COMIS_WITH_XVFB:-1}"
 WITH_CLOAKBROWSER="${COMIS_WITH_CLOAKBROWSER:-0}"
 [[ "$WITH_XVFB" == "1" ]] && WITH_BROWSER=1
 [[ "$WITH_CLOAKBROWSER" == "1" ]] && WITH_BROWSER=1
@@ -1703,8 +1742,9 @@ Install options:
   --tarball <path>                     Install from a local .tgz (bypasses npm registry)
   --git-dir, --dir <path>              Checkout directory (default: ~/comis)
   --no-git-update                      Skip git pull for existing checkout
-  --user <name>                        Dedicated Linux user (default: comis, created if root)
-  --no-user                            Install as current user even when root (skip user creation)
+  --user <name>                        Dedicated Linux user (default: comis)
+  --no-user                            Install for the invoking user (skip the dedicated user;
+                                       non-root Linux installs otherwise offer to re-run with sudo)
   --no-init                            Skip interactive init (non-interactive)
   --no-prompt                          Disable prompts (required in CI/automation)
   --dry-run                            Print what would happen (no changes)
@@ -1720,14 +1760,25 @@ Service options (how to run the daemon):
                                        pm2 startup). Useful when you lack admin rights.
   --no-service-start                   Register + enable but do not start the daemon yet.
 
-Browser tool (optional):
+Browser tool:
   --with-browser                       Install Chromium + headless shared libs and widen
                                        the systemd sandbox so the agent browser tool can
-                                       run on this host. Off by default.
+                                       run on this host. ON by default (the browser tool
+                                       ships enabled); best-effort, so a host where Chromium
+                                       can't install still gets a working daemon.
+  --without-browser                    Opt out of the default browser provisioning for a
+                                       minimal footprint (skips Chromium + headless libs).
+                                       The browser tool stays enabled but fails at use for
+                                       lack of a runtime. Same as COMIS_WITH_BROWSER=0.
   --with-xvfb                          Implies --with-browser. Also installs Xvfb and
                                        registers a virtual-display companion unit so the
                                        browser tool can run headed for sites that detect
                                        headless (DataDome, Kasada, Turnstile managed).
+                                       ON by default; best-effort (rootless installs skip
+                                       the companion unit with a warning, never abort).
+  --without-xvfb                       Keep the default headless browser but drop the
+                                       heavier Xvfb headed stack + companion unit.
+                                       Same as COMIS_WITH_XVFB=0.
   --with-cloakbrowser                  Implies --with-browser. Installs CloakBrowser
                                        (stealth Chromium with source-level fingerprint
                                        patches) instead of Google Chrome. Bypasses
@@ -1747,7 +1798,7 @@ Browser tool (optional):
 
 Uninstall:
   --uninstall                          Remove Comis (keeps data by default)
-  --purge                              With --uninstall: also delete ~/.comis, /etc/comis, /var/log/comis
+  --purge                              With --uninstall: also delete ~/.comis, /etc/comis, /var/log/comis, and the COMIS_EGRESS iptables chain
   --remove-user                        Linux+root only: also delete the comis system user (implies --purge)
   --yes                                Skip interactive confirmation prompts
 
@@ -1758,12 +1809,13 @@ Environment variables:
   COMIS_TARBALL=/path/to/comisai.tgz
   COMIS_GIT_DIR=...
   COMIS_GIT_UPDATE=0|1
-  COMIS_USER=comis                    Default user for Linux root installs
+  COMIS_USER=comis                    Dedicated user for Linux installs
+  COMIS_NO_USER=0|1                   Skip the dedicated user (install for the invoking user)
   COMIS_SERVICE=auto|systemd|systemd-user|pm2|none
   COMIS_NO_AUTOSTART=1
   COMIS_NO_SERVICE_START=1
-  COMIS_WITH_BROWSER=0|1
-  COMIS_WITH_XVFB=0|1
+  COMIS_WITH_BROWSER=0|1               (default 1 — set 0 for a minimal footprint)
+  COMIS_WITH_XVFB=0|1                   (default 1 — set 0 to keep headless-only)
   COMIS_WITH_CLOAKBROWSER=0|1
   COMIS_PURGE=1
   COMIS_REMOVE_USER=1
@@ -1842,7 +1894,7 @@ parse_args() {
                 shift 2
                 ;;
             --no-user)
-                COMIS_REEXEC=1
+                NO_USER=1
                 shift
                 ;;
             --tarball)
@@ -1873,6 +1925,24 @@ parse_args() {
                 ;;
             --with-browser)
                 WITH_BROWSER=1
+                shift
+                ;;
+            --without-browser)
+                # Opt out of the entire default browser stack (minimal footprint —
+                # skips Chromium, the headless shared libs, and the Xvfb headed unit).
+                # The browser TOOL stays enabled in config but fails honestly at use
+                # for lack of a runtime. Must also zero WITH_XVFB / WITH_CLOAKBROWSER
+                # so the pre-parse `WITH_XVFB=1 ⟹ WITH_BROWSER=1` implication can't
+                # silently re-enable the stack.
+                WITH_BROWSER=0
+                WITH_XVFB=0
+                WITH_CLOAKBROWSER=0
+                shift
+                ;;
+            --without-xvfb)
+                # Keep the (default) headless browser but drop the heavier Xvfb headed
+                # stack + its companion unit. Same as COMIS_WITH_XVFB=0.
+                WITH_XVFB=0
                 shift
                 ;;
             --with-xvfb)
@@ -2531,16 +2601,111 @@ is_root() {
     [[ "$(id -u)" -eq 0 ]]
 }
 
+has_sudo() {
+    command -v sudo >/dev/null 2>&1
+}
+
 COMIS_USER="${COMIS_USER:-comis}"
 COMIS_REEXEC="${COMIS_REEXEC:-0}"
 
 should_create_dedicated_user() {
-    # Only on Linux, only when running as root, not re-exec'd, and only when
-    # we're actually going to register a system-scope systemd service that
-    # benefits from a dedicated user. For --service none, systemd-user, or pm2,
-    # install as the invoking user so `comis` is immediately on their PATH.
+    # Only on Linux, only when running as root, not re-exec'd, not opted out
+    # via --no-user, and only when we're actually going to register a
+    # system-scope systemd service that benefits from a dedicated user. For
+    # --service none, systemd-user, or pm2, install as the invoking user so
+    # `comis` is immediately on their PATH.
     [[ "$OS" == "linux" ]] && is_root && [[ "$COMIS_REEXEC" != "1" ]] \
+        && [[ "$NO_USER" != "1" ]] \
         && [[ "$RESOLVED_SERVICE_MANAGER" == "systemd" ]]
+}
+
+# Decide how a Linux non-root install proceeds. The dedicated-user layout is
+# the default — the daemon should not run as the login user (whose ~/.ssh and
+# ~/.aws stay readable to it) just because the installer wasn't run as root.
+# Prints exactly one strategy token:
+#   dedicated-prompt — ask for consent, then re-run the installer under sudo
+#   current-user     — proceed as the invoking user (opt-out or not applicable)
+#   refuse-no-prompt — cannot ask (no TTY / --no-prompt): explicit choice required
+#   refuse-no-sudo   — cannot elevate: needs root or an explicit opt-out
+nonroot_install_strategy() {
+    if [[ "$OS" != "linux" ]] || is_root || [[ "$COMIS_REEXEC" == "1" ]] \
+        || [[ "$NO_USER" == "1" ]] || [[ "$SERVICE_MANAGER" != "auto" ]] \
+        || ! has_working_systemd; then
+        echo "current-user"
+        return 0
+    fi
+    if ! has_sudo; then
+        echo "refuse-no-sudo"
+        return 0
+    fi
+    if is_promptable; then
+        echo "dedicated-prompt"
+    else
+        echo "refuse-no-prompt"
+    fi
+}
+
+prompt_dedicated_user_consent() {
+    local answer=""
+    answer="$(prompt_choice "Comis installs under a dedicated '${COMIS_USER}' system user (recommended).\nContinue with sudo? [Y/n] ")" || return 1
+    case "$answer" in
+        ""|y|Y|yes|Yes|YES) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+elevate_install_to_root() {
+    local script_copy rc=0
+    script_copy="$(mktempfile)"
+    stage_install_script "$script_copy"
+    ui_info "Re-running the installer with sudo"
+    sudo bash "$script_copy" ${ORIGINAL_ARGS[@]+"${ORIGINAL_ARGS[@]}"} || rc=$?
+    exit "$rc"
+}
+
+enforce_dedicated_user_default() {
+    local strategy
+    strategy="$(nonroot_install_strategy)"
+    if [[ "$strategy" == "current-user" ]]; then
+        return 0
+    fi
+
+    if [[ "$DRY_RUN" == "1" ]]; then
+        case "$strategy" in
+            dedicated-prompt)
+                ui_info "Dry run: would offer to re-run with sudo and install under the dedicated '${COMIS_USER}' user (--no-user opts out)"
+                ;;
+            *)
+                ui_info "Dry run: a real run would stop here — a non-root install needs sudo (dedicated '${COMIS_USER}' user) or an explicit --no-user"
+                ;;
+        esac
+        return 0
+    fi
+
+    case "$strategy" in
+        dedicated-prompt)
+            if prompt_dedicated_user_consent; then
+                elevate_install_to_root
+                # Unreachable: elevate_install_to_root exits with the re-run's status
+                exit 1
+            fi
+            ui_info "Installing for the current user instead (config under \$HOME/.comis)"
+            NO_USER=1
+            return 0
+            ;;
+        refuse-no-sudo)
+            ui_error "Comis installs under a dedicated '${COMIS_USER}' system user by default, and sudo is not available to elevate."
+            echo "  Recommended:  re-run this installer as root"
+            echo "  Alternative:  add --no-user (or COMIS_NO_USER=1) to install for the current user"
+            exit 2
+            ;;
+        refuse-no-prompt)
+            ui_error "A non-root install needs an explicit choice when prompts are unavailable."
+            echo "  Recommended (dedicated '${COMIS_USER}' user):  re-run with sudo"
+            echo "  Current-user install:                        add --no-user (or COMIS_NO_USER=1)"
+            exit 2
+            ;;
+    esac
 }
 
 comis_user_exists() {
@@ -2600,6 +2765,23 @@ install_system_deps_as_root() {
     ui_success "System dependencies ready"
 }
 
+# Materialize the currently-running script at $dest — works for a file-based
+# invocation ($0) and for a curl|bash pipe (bash's script fd, else re-download).
+stage_install_script() {
+    local dest="$1"
+    if [[ -f "$0" ]]; then
+        cp "$0" "$dest"
+    else
+        if [[ -f "/proc/self/fd/255" ]]; then
+            cp /proc/self/fd/255 "$dest" 2>/dev/null || true
+        fi
+        if [[ ! -s "$dest" ]]; then
+            download_file "https://comis.ai/install.sh" "$dest"
+        fi
+    fi
+    chmod +x "$dest"
+}
+
 reexec_as_comis_user() {
     local comis_home
     comis_home="$(eval echo "~$COMIS_USER")"
@@ -2640,23 +2822,7 @@ reexec_as_comis_user() {
 
     # Copy the install script to a location the comis user can read
     local script_copy="${comis_home}/.comis-install.sh"
-    if [[ -f "$0" ]]; then
-        cp "$0" "$script_copy"
-    else
-        # Piped via curl — save stdin copy
-        local self_tmp
-        self_tmp="$(mktemp)"
-        TMPFILES+=("$self_tmp")
-        # The script is already running, so we need the original file.
-        # Fall back to re-downloading if we can't find ourselves.
-        if [[ -f "/proc/self/fd/255" ]]; then
-            cp /proc/self/fd/255 "$script_copy" 2>/dev/null || true
-        fi
-        if [[ ! -s "$script_copy" ]]; then
-            download_file "https://comis.ai/install.sh" "$script_copy"
-        fi
-    fi
-    chmod +x "$script_copy"
+    stage_install_script "$script_copy"
     chown "$COMIS_USER:$COMIS_USER" "$script_copy"
 
     ui_info "Handing off to user '$COMIS_USER'"
@@ -3487,8 +3653,9 @@ resolve_service_template_vars() {
         fi
     fi
 
-    # Target service user
-    if [[ "$RESOLVED_SERVICE_MANAGER" == "systemd" ]] && is_root && [[ -n "${COMIS_USER:-}" ]] && comis_user_exists; then
+    # Target service user (--no-user pins the service to the invoking user even
+    # when a comis user is left over from an earlier dedicated-user install)
+    if [[ "$RESOLVED_SERVICE_MANAGER" == "systemd" ]] && is_root && [[ "$NO_USER" != "1" ]] && [[ -n "${COMIS_USER:-}" ]] && comis_user_exists; then
         COMIS_SVC_USER="$COMIS_USER"
         COMIS_SVC_GROUP="$COMIS_USER"
     else
@@ -3585,6 +3752,14 @@ resolve_service_template_vars() {
 # The header lets us detect user edits on upgrade without clobbering them.
 render_xvfb_unit() {
     [[ "$WITH_XVFB" == "1" ]] || return 0
+    # Ground truth: don't register a companion unit whose ExecStart points at an
+    # Xvfb binary that isn't installed (headed install failed) — that would just
+    # crash-loop the unit. Fall back silently to headless (the browser tool still
+    # works; only headed mode is unavailable).
+    if ! xvfb_present; then
+        ui_warn "Xvfb binary not found — skipping headed companion unit (browser runs headless)"
+        return 0
+    fi
     # User-scope systemd-user installs can't write to /etc/systemd/system; in
     # that case the operator owns Xvfb (or runs --with-xvfb under --service systemd).
     # Skip and warn rather than mis-installing a system unit from a non-root run.
@@ -3593,6 +3768,14 @@ render_xvfb_unit() {
         ui_info "Start Xvfb manually: Xvfb :99 -screen 0 1920x1080x24 -ac -nolisten tcp &"
         return 0
     fi
+
+    # Shared X-socket dir that both comis-xvfb.service (read-write) and
+    # comis.service (read-only) bind onto their PrivateTmp /tmp/.X11-unix, so the
+    # X99 socket Xvfb creates is reachable from the daemon. Create it now for the
+    # immediate start AND via tmpfiles so it is recreated on reboot before the
+    # units mount it (BindPaths fails if the source is missing).
+    install -d -m 1777 /run/comis-x11 2>/dev/null || true
+    printf 'd /run/comis-x11 1777 root root -\n' > /etc/tmpfiles.d/comis-x11.conf 2>/dev/null || true
 
     local target="/etc/systemd/system/comis-xvfb.service"
     if [[ -f "$target" ]] && ! unit_is_managed "$target"; then
@@ -3613,14 +3796,18 @@ User=${COMIS_SVC_USER}
 Group=${COMIS_SVC_GROUP}
 # -ac disables host-based access control; safe because -nolisten tcp keeps
 # the X server on a Unix-domain socket only. /tmp/.X11-unix/X99 is owned by
-# COMIS_SVC_USER, so only the comis daemon (running as the same user, joined
-# to the /tmp namespace of this service) can connect.
+# COMIS_SVC_USER, so only the comis daemon (running as the same user, sharing
+# the /run/comis-x11 socket dir via BindPaths) can connect.
 ExecStart=/usr/bin/Xvfb :99 -screen 0 1920x1080x24 -ac -nolisten tcp
 Restart=on-failure
 RestartSec=2s
 # Xvfb needs almost nothing.
 NoNewPrivileges=yes
 PrivateTmp=yes
+# Bind the shared host X-socket dir onto /tmp/.X11-unix so the socket Xvfb
+# creates here (X99) is visible to the daemon, which read-only-binds the same
+# /run/comis-x11 (JoinsNamespaceOf does not share PrivateTmp content on systemd 255).
+BindPaths=/run/comis-x11:/tmp/.X11-unix
 ProtectSystem=strict
 ProtectHome=yes
 ProtectKernelTunables=yes
@@ -3682,10 +3869,27 @@ render_systemd_unit() {
     local COMIS_BROWSER_FS_WRITE_FLAGS=""
     local COMIS_BROWSER_RW_PATHS=""
     local COMIS_BROWSER_ENV_LINES=""
+    local COMIS_BROWSER_SYSCALL_LINE=""
     local COMIS_XVFB_AFTER=""
     local COMIS_XVFB_WANTS=""
     local COMIS_PRIVATE_TMP_LINE="PrivateTmp=yes"
     if [[ "$WITH_BROWSER" == "1" ]]; then
+        # Chrome needs syscalls outside `@system-service @mount setns` or the
+        # kernel SIGSYS-kills it (status=31/SYS) BEFORE it opens the CDP socket —
+        # so the browser tool's every navigate fails `connectOverCDP ECONNREFUSED`.
+        # Determined by seccomp audit (type=1326) on a clean install, iterated to
+        # convergence (launches + serves CDP + renders a real page, zero further
+        # denials): pkey_* (330 — V8 memory-protection keys), landlock_* (444 —
+        # Chrome's own self-sandbox), and — once a renderer spins up — ptrace (101)
+        # + seccomp (317). systemd unions multiple SystemCallFilter= lines.
+        # Security posture: seccomp + landlock are RESTRICTION-ONLY (a process can
+        # only ADD limits to itself, never escape), pkey_* is memory-protection —
+        # all safe. ptrace is the one real relaxation, but with NoNewPrivileges +
+        # empty CapabilityBoundingSet (no CAP_SYS_PTRACE) + default YAMA it is
+        # limited to same-uid children (Chrome tracing its own crash handler).
+        # Only added when a browser is provisioned (--without-browser keeps the
+        # tighter set).
+        COMIS_BROWSER_SYSCALL_LINE="SystemCallFilter=pkey_alloc pkey_free pkey_mprotect landlock_create_ruleset landlock_add_rule landlock_restrict_self ptrace seccomp"
         # chrome-detection.ts:154 resolves the profile dir to
         # $XDG_CONFIG_HOME/comis/browser/<profile>/user-data. Allow the daemon
         # to write there at both the Node permission layer (--allow-fs-write)
@@ -3713,14 +3917,18 @@ render_systemd_unit() {
         fi
     fi
     if [[ "$WITH_XVFB" == "1" ]]; then
-        # comis-xvfb.service owns the virtual display. JoinsNamespaceOf= shares
-        # /tmp with that service so the X11 socket at /tmp/.X11-unix/X99 is
-        # reachable from the daemon despite PrivateTmp=yes still being on.
+        # comis-xvfb.service owns the virtual display at :99. The X11 socket must
+        # be reachable from the daemon despite BOTH units running PrivateTmp=yes.
+        # JoinsNamespaceOf= was tried but does NOT share the PrivateTmp /tmp CONTENT
+        # on systemd 255 (the daemon's ns gets an empty /tmp/.X11-unix). Instead,
+        # both units bind a SHARED host dir (/run/comis-x11, created by tmpfiles)
+        # onto /tmp/.X11-unix: Xvfb writes X99 there (read-write bind), the daemon
+        # reads it (read-only bind). PrivateTmp stays on for everything else.
         COMIS_BROWSER_ENV_LINES="Environment=DISPLAY=:99"
         COMIS_XVFB_AFTER=" comis-xvfb.service"
         COMIS_XVFB_WANTS=" comis-xvfb.service"
         COMIS_PRIVATE_TMP_LINE="PrivateTmp=yes
-JoinsNamespaceOf=comis-xvfb.service"
+BindReadOnlyPaths=/run/comis-x11:/tmp/.X11-unix"
     fi
 
     local body
@@ -3834,6 +4042,7 @@ CapabilityBoundingSet=
 # Without them, bwrap dies with SIGSYS (exit code 159) on seccomp violation.
 SystemCallFilter=@system-service @mount
 SystemCallFilter=setns
+${COMIS_BROWSER_SYSCALL_LINE}
 SystemCallArchitectures=native
 PrivateDevices=yes
 # ProtectKernelTunables / ProtectKernelLogs / ProtectHostname are intentionally
@@ -3981,9 +4190,15 @@ maybe_seed_browser_config() {
     local headless_value="true"
     local source_flag="--with-browser"
     [[ "$WITH_CLOAKBROWSER" == "1" ]] && source_flag="--with-cloakbrowser"
-    if [[ "$WITH_XVFB" == "1" ]]; then
+    # Seed headless=false (headed) ONLY when Xvfb is actually present — ground truth,
+    # not the WITH_XVFB intent flag. If the headed install failed, seeding headless=false
+    # would launch Chrome against a display that isn't there; fall back to headless so
+    # the browser tool works on the Chromium installed above.
+    if [[ "$WITH_XVFB" == "1" ]] && xvfb_present; then
         headless_value="false"
         source_flag="${source_flag} --with-xvfb"
+    elif [[ "$WITH_XVFB" == "1" ]]; then
+        ui_warn "Xvfb not present — seeding headless browser config (headed mode unavailable)"
     fi
 
     local block
@@ -4030,6 +4245,12 @@ YAML
 }
 
 # Poll the gateway health endpoint after service start.
+#
+# A cold first boot downloads the local embedding model (~146MB GGUF) into
+# ~/.comis/models/ and loads it before the gateway binds — ~30s on a small
+# 2-vCPU instance — so the window must comfortably outlast that. Override
+# with COMIS_GATEWAY_WAIT_SECS. Sets GATEWAY_WAIT_SECS_USED so callers can
+# report the window they actually waited.
 wait_for_daemon_ready() {
     local host="localhost"
     local port=4766
@@ -4043,7 +4264,15 @@ wait_for_daemon_ready() {
         [[ -n "$cfg_port" ]] && port="$cfg_port"
     fi
 
-    local deadline=$((SECONDS + 20))
+    local wait_secs="${COMIS_GATEWAY_WAIT_SECS:-90}"
+    GATEWAY_WAIT_SECS_USED="$wait_secs"
+    local deadline=$((SECONDS + wait_secs))
+    # Partway through (capped at 15s in), reassure the operator: a slow first
+    # boot is the embedding-model download, not a hang.
+    local progress_delay=$((wait_secs / 2))
+    [[ $progress_delay -gt 15 ]] && progress_delay=15
+    local progress_at=$((SECONDS + progress_delay))
+    local progress_shown=0
     while [[ $SECONDS -lt $deadline ]]; do
         if command -v curl >/dev/null 2>&1; then
             if curl -fsS --max-time 2 "http://${host}:${port}/health" >/dev/null 2>&1; then
@@ -4053,6 +4282,10 @@ wait_for_daemon_ready() {
             if wget -q --timeout=2 -O /dev/null "http://${host}:${port}/health" 2>/dev/null; then
                 return 0
             fi
+        fi
+        if [[ $progress_shown -eq 0 && $SECONDS -ge $progress_at ]]; then
+            ui_info "Still waiting — a first boot downloads the local embedding model (~146MB) before the gateway listens"
+            progress_shown=1
         fi
         sleep 1
     done
@@ -4173,7 +4406,7 @@ SUDOERS
     if wait_for_daemon_ready; then
         ui_success "Daemon is responding on the gateway port"
     else
-        ui_warn "Service is active but the gateway didn't respond within 20s"
+        ui_warn "Service is active but the gateway didn't respond within ${GATEWAY_WAIT_SECS_USED:-90}s"
         ui_info "Tail logs with: journalctl -u comis.service -f"
     fi
 }
@@ -4254,7 +4487,7 @@ ENV
     if wait_for_daemon_ready; then
         ui_success "Daemon is responding on the gateway port"
     else
-        ui_warn "Service is active but the gateway didn't respond within 20s"
+        ui_warn "Service is active but the gateway didn't respond within ${GATEWAY_WAIT_SECS_USED:-90}s"
         ui_info "Tail logs with: journalctl --user -u comis.service -f"
     fi
 
@@ -4340,7 +4573,7 @@ register_service_pm2() {
     if wait_for_daemon_ready; then
         ui_success "Daemon is responding on the gateway port"
     else
-        ui_warn "Daemon started but gateway didn't respond within 20s"
+        ui_warn "Daemon started but gateway didn't respond within ${GATEWAY_WAIT_SECS_USED:-90}s"
         ui_info "Tail logs with: pm2 logs comis"
     fi
 
@@ -4748,6 +4981,48 @@ uninstall_purge_data() {
     done
 }
 
+# uninstall_egress_chain
+# ----------------------
+# Reverse install_egress_logging(): drop the uid-scoped OUTPUT jump(s), then
+# flush and delete the COMIS_EGRESS chain. Runs on the purge path BEFORE the
+# comis user is removed — the OUTPUT rule is uid-scoped, and deleting by rule
+# number keeps this working even when the uid no longer resolves to a name.
+# Idempotent and non-fatal: silently skipped when iptables is unavailable or
+# the chain does not exist.
+uninstall_egress_chain() {
+    [[ "$OS" == "linux" ]] || return 0
+    command -v iptables >/dev/null 2>&1 || return 0
+
+    local sudo_prefix=""
+    if ! is_root; then
+        sudo_prefix="sudo "
+    fi
+
+    $sudo_prefix iptables -L COMIS_EGRESS -n >/dev/null 2>&1 || return 0
+
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[dry-run] would: remove COMIS_EGRESS iptables chain (OUTPUT jump, flush, delete)"
+        return 0
+    fi
+
+    # Unhook every OUTPUT jump into the chain, highest rule number first so
+    # earlier deletions don't renumber the ones still pending.
+    local jump_nums
+    jump_nums="$($sudo_prefix iptables -L OUTPUT --line-numbers -n 2>/dev/null | awk '$2 == "COMIS_EGRESS" {print $1}' | sort -rn)"
+    local n
+    for n in $jump_nums; do
+        $sudo_prefix iptables -D OUTPUT "$n" 2>/dev/null || true
+    done
+
+    $sudo_prefix iptables -F COMIS_EGRESS 2>/dev/null || true
+    if $sudo_prefix iptables -X COMIS_EGRESS 2>/dev/null; then
+        ui_success "Removed COMIS_EGRESS iptables chain"
+    else
+        ui_warn "Could not delete COMIS_EGRESS chain — remove manually: iptables -X COMIS_EGRESS"
+    fi
+    return 0
+}
+
 uninstall_remove_user() {
     [[ "$REMOVE_USER_FLAG" == "1" ]] || return 0
     if [[ "$OS" != "linux" ]]; then
@@ -4808,6 +5083,7 @@ uninstall_main() {
     if [[ "$PURGE" == "1" || "$REMOVE_USER_FLAG" == "1" ]]; then
         ui_stage "Purging data"
         uninstall_purge_data
+        uninstall_egress_chain
     fi
 
     if [[ "$REMOVE_USER_FLAG" == "1" ]]; then
@@ -4856,6 +5132,11 @@ main() {
         print_gum_status
         detect_os_or_die
     fi
+
+    # Linux non-root: the dedicated-user layout is the default. Ask to elevate
+    # (or require an explicit --no-user) before any other prompt runs, so the
+    # sudo re-run owns the rest of the interactive flow.
+    enforce_dedicated_user_default
 
     local detected_checkout=""
     detected_checkout="$(detect_comis_checkout "$PWD" || true)"
@@ -5143,6 +5424,7 @@ main() {
 }
 
 if [[ "${COMIS_INSTALL_SH_NO_RUN:-0}" != "1" ]]; then
+    ORIGINAL_ARGS=("$@")
     parse_args "$@"
     configure_verbose
     main

@@ -68,30 +68,35 @@ export interface ReflectionDepsInput {
 const UNTRUSTED_TRUST_TIER = "external";
 
 /**
- * Derive whether a session-source sender is a TRUSTED origin, reading
- * the per-agent `elevatedReply.senderTrustMap` (senderId -> trust-tier name) with
- * the configured `defaultTrustLevel` (schema default `"external"`) for an unmapped
- * sender. A sender resolving to the `"external"` tier is NOT trusted.
+ * Derive the two origin-trust signals for a session-source sender, reading the
+ * per-agent `elevatedReply.senderTrustMap` (senderId -> trust-tier name) with the
+ * configured `defaultTrustLevel` (schema default `"external"`) for an unmapped sender:
  *
- * DENY-ON-UNKNOWN: when trust CANNOT be positively established — no
- * sender id, no `senderTrustMap` entry, and the default is the `"external"` tier —
- * the result is `false`. NEVER default to trusted: an untrusted/unknown-origin
- * success must seed nothing (a deny-default merely UNDER-seeds — under-learning is
- * benign; an allow-default would silently weaken this invariant by letting a planted
- * unknown-origin success corroborate a doc). The JOB enforces the filter
- * (reflection-job.ts SELECT); this is the daemon
- * DERIVATION that feeds it.
+ *  - `trustedOrigin` (ANTI-POISON AXIS 1): trusted iff the resolved tier is NOT the
+ *    `"external"` tier. DENY-ON-UNKNOWN — no sender id, no `senderTrustMap` entry with
+ *    an external default ⇒ `false`. NEVER default to trusted: a deny-default merely
+ *    UNDER-seeds (benign), an allow-default would let a planted unknown-origin success
+ *    corroborate a doc. The JOB enforces the filter (reflection-job.ts SELECT).
+ *  - `explicitlyTrusted` (the SINGLE-OWNER belt): true iff the sender was found via an
+ *    EXPLICIT `senderTrustMap` entry (the operator NAMED it) AND resolves to a non-external
+ *    tier — NOT via a promiscuous `defaultTrustLevel`, NOT an unknown sender. Only an
+ *    explicitly-trusted owner's repetition may corroborate a topic in `single_owner` mode,
+ *    so a promiscuous-default success (trustedOrigin:true, explicitlyTrusted:false) can ride
+ *    past SELECT yet NEVER self-corroborate by repetition.
  */
-function deriveTrustedOrigin(
+function deriveOriginTrust(
   sender: string,
   senderTrustMap: Record<string, string>,
   defaultTrustLevel: string,
-): boolean {
-  // No sender id ⇒ cannot establish trust ⇒ deny-on-unknown.
-  if (sender.length === 0) return false;
+): { trustedOrigin: boolean; explicitlyTrusted: boolean } {
+  // No sender id ⇒ cannot establish trust ⇒ deny-on-unknown (both axes false).
+  if (sender.length === 0) return { trustedOrigin: false, explicitlyTrusted: false };
+  const explicitEntry = Object.prototype.hasOwnProperty.call(senderTrustMap, sender);
   const tier = senderTrustMap[sender] ?? defaultTrustLevel;
-  // Trusted iff the resolved tier is NOT the untrusted/external tier.
-  return tier !== UNTRUSTED_TRUST_TIER;
+  const trustedOrigin = tier !== UNTRUSTED_TRUST_TIER;
+  // Explicitly trusted ONLY when the operator NAMED this sender (an explicit map entry)
+  // AND that entry resolves to a trusted tier — a promiscuous default never qualifies.
+  return { trustedOrigin, explicitlyTrusted: explicitEntry && trustedOrigin };
 }
 
 /**
@@ -164,8 +169,7 @@ async function buildSkillSources(
   const senderTrustMap: Record<string, string> = elevatedReply?.senderTrustMap ?? {};
   const defaultTrustLevel: string = elevatedReply?.defaultTrustLevel ?? UNTRUSTED_TRUST_TIER;
 
-  // sessionKey → { full transcript (the reflect input), task signature (the
-  // topicKey group-by input) }, loaded at most once per session.
+  // sessionKey → the loaded message rows, loaded at most once per session.
   const contentOf = (m: unknown): string => {
     const c = (m as { content?: unknown }).content;
     return typeof c === "string" ? c : "";
@@ -174,36 +178,75 @@ async function buildSkillSources(
     const r = (m as { role?: unknown }).role;
     return typeof r === "string" ? r : "";
   };
-  const textCache = new Map<string, { text: string; signature: string } | undefined>();
-  const sessionTexts = (sessionKey: string): { text: string; signature: string } | undefined => {
-    if (textCache.has(sessionKey)) return textCache.get(sessionKey);
+  const createdAtOf = (m: unknown): number | undefined => {
+    const c = (m as { createdAt?: unknown }).createdAt;
+    return typeof c === "number" ? c : undefined;
+  };
+  const rowsCache = new Map<string, unknown[] | undefined>();
+  const sessionRows = (sessionKey: string): unknown[] | undefined => {
+    if (rowsCache.has(sessionKey)) return rowsCache.get(sessionKey);
     const loaded = source.loadByFormattedKey(sessionKey);
-    let val: { text: string; signature: string } | undefined;
-    if (loaded !== undefined) {
-      const text = loaded.messages.map(contentOf).filter((t) => t.length > 0).join("\n");
-      // The topicKey signature = the user-role messages (the task INTENT the user
-      // controls), which is stable across the agent's response wording. The JOB
-      // normalizes it via normalizeOpeningRequest (topic-key.ts) — which also
-      // strips the volatile executor envelope (the [System context] header),
-      // so identical requests at different times collapse to the same topicKey.
-      // Fall back to the full text when a session has no user message (so the
-      // signature is never empty).
-      const userText = loaded.messages
-        .filter((m) => roleOf(m) === "user")
-        .map((m) => contentOf(m))
-        .filter((t) => t.length > 0)
-        .join("\n");
-      const signature = userText.length > 0 ? userText : text;
-      val = text.length > 0 ? { text, signature } : undefined;
-    }
-    textCache.set(sessionKey, val);
+    const rows = loaded?.messages.filter((m) => contentOf(m).length > 0);
+    const val = rows !== undefined && rows.length > 0 ? rows : undefined;
+    rowsCache.set(sessionKey, val);
     return val;
   };
+  // Derive { text, signature } for ONE turn. When BOTH the turn's `observedAt` (the
+  // outcome ledger window key) AND per-row `createdAt` timestamps are available (the
+  // LCD/DAG default), the turn's rows are the session rows with
+  // `createdAt ∈ (prevObservedAt, observedAt]` — its signature is THAT turn's
+  // user text and its text THAT turn's exchange, so a single long DM yields
+  // PER-TURN topics instead of one whole-session mega-topic (live incident:
+  // 42 selected → distinctTopicKeys 1 → one mega-doc). A windowed turn whose
+  // slice holds no user text (e.g. a severed LCD) is SKIPPED (under-learning is
+  // benign). Without timestamps (pipeline-mode daemon store / a non-sqlite
+  // outcome store), fall back to the v1 whole-session texts — unchanged behavior.
+  const turnTexts = (
+    rows: unknown[],
+    windowed: boolean,
+    prevObservedAt: number,
+    observedAt: number,
+  ): { text: string; signature: string } | undefined => {
+    const turnRows = windowed
+      ? rows.filter((m) => {
+          const at = createdAtOf(m);
+          return at !== undefined && at > prevObservedAt && at <= observedAt;
+        })
+      : rows;
+    if (turnRows.length === 0) return undefined;
+    const text = turnRows.map(contentOf).filter((t) => t.length > 0).join("\n");
+    // The topicKey signature = the user-role messages (the task INTENT the user
+    // controls), which is stable across the agent's response wording. The JOB
+    // normalizes it via normalizeOpeningRequest (topic-key.ts) — which also
+    // strips the volatile executor envelope (the [System context] header),
+    // so identical requests at different times collapse to the same topicKey.
+    const userText = turnRows
+      .filter((m) => roleOf(m) === "user")
+      .map((m) => contentOf(m))
+      .filter((t) => t.length > 0)
+      .join("\n");
+    // A WINDOWED turn with no user text never seeds (a per-turn topic must be the
+    // user's intent); the un-windowed fallback keeps the v1 full-text fallback.
+    if (userText.length === 0 && windowed) return undefined;
+    const signature = userText.length > 0 ? userText : text;
+    return text.length > 0 ? { text, signature } : undefined;
+  };
+
+  // Per-session ascending order by observedAt so each turn's window is
+  // (previous turn's observedAt, this turn's observedAt].
+  const ids = [...idsRes.value].sort((a, b) => (a.observedAt ?? 0) - (b.observedAt ?? 0));
+  const prevObservedBySession = new Map<string, number>();
 
   const out: ReflectionSourceTrajectory[] = [];
-  for (const { trajectoryId, sessionId, procedureDescriptor: descriptor } of idsRes.value) {
-    const texts = sessionTexts(sessionId);
-    if (texts === undefined) continue; // no transcript for this turn's session → skip
+  for (const { trajectoryId, sessionId, observedAt, procedureDescriptor: descriptor } of ids) {
+    const rows = sessionRows(sessionId);
+    if (rows === undefined) continue; // no transcript for this turn's session → skip
+    // Windowing needs BOTH the ledger observedAt AND at least one timestamped row.
+    const windowed = typeof observedAt === "number" && rows.some((m) => createdAtOf(m) !== undefined);
+    const prevObservedAt = prevObservedBySession.get(sessionId) ?? Number.NEGATIVE_INFINITY;
+    if (typeof observedAt === "number") prevObservedBySession.set(sessionId, observedAt);
+    const texts = turnTexts(rows, windowed, prevObservedAt, typeof observedAt === "number" ? observedAt : Number.POSITIVE_INFINITY);
+    if (texts === undefined) continue; // empty window (severed LCD / no user text) → skip
     const sender = senderBySession.get(sessionId) ?? "";
     // The content-free procedure descriptor read back from listTrajectoryIds (the ordered
     // tool-NAME sequence + counts). The KEY is the ordered sequence JOINED — order + repeats
@@ -212,15 +255,18 @@ async function buildSkillSources(
     // byte-identical keys collide). The tool method names never contain `>`, so the separator
     // is injective. Absent (empty) ⇒ omit — the turn ran no cap-mapped tool call sites.
     const sequence = descriptor ?? [];
+    // Trust axis 1 (trustedOrigin) + the single-owner belt (explicitlyTrusted), both
+    // derived DAEMON-SIDE (deny-on-unknown). The job filters on axis 1 and counts
+    // repetition only among explicitlyTrusted members.
+    const originTrust = deriveOriginTrust(sender, senderTrustMap, defaultTrustLevel);
     out.push({
       trajectoryId,
       sessionId,
       sender,
       text: texts.text,
       signature: texts.signature,
-      // Trust axis 1: derive SESSION-origin trust DAEMON-SIDE
-      // (deny-on-unknown). The job filters on it.
-      trustedOrigin: deriveTrustedOrigin(sender, senderTrustMap, defaultTrustLevel),
+      trustedOrigin: originTrust.trustedOrigin,
+      explicitlyTrusted: originTrust.explicitlyTrusted,
       // Trust axis 2: the per-MEMORY source-trust axis is always
       // false for kind:skill — a skill source is an OUTCOME trajectory (a finished
       // session), NOT a source memory carrying a per-memory trustLevel.
@@ -296,6 +342,11 @@ function buildMemorySources(
         // The high-trust source corpus is the trusted origin (the old user-rep semantics);
         // axis 2 below is the per-memory firewall.
         trustedOrigin: true,
+        // The single-owner belt: the profile/topic corpus is read ONLY from the high-trust
+        // system/learned tiers (trust-gated at admission), so it is explicitly trusted — a
+        // single owner's profile/topic may corroborate by repetition in single_owner mode.
+        // An `external` row (defence-in-depth) is still excluded by axis 2 regardless.
+        explicitlyTrusted: true,
         // Trust axis 2 (the old layer-1 firewall, memory-user-representation-job.ts:322):
         // an `external`-trust source memory NEVER seeds a doc — the job SELECT excludes it.
         sourceTrustExternal: rowTrust === "external",

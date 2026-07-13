@@ -69,11 +69,11 @@ During a conversation, your agent might notice follow-up work — "I should chec
 # config.yaml
 scheduler:
   tasks:
-    enabled: false              # Off by default
+    enabled: true               # On by default — the agent proactively follows up
     confidenceThreshold: 0.8    # Minimum confidence (0-1) to schedule a task
 ```
 
-<Info>Task extraction is disabled by default because it requires the agent to make judgment calls about what to schedule. Enable it once you are comfortable with how your agents behave and want them to proactively follow up on conversations.</Info>
+<Info>Task extraction is **on by default** — the agent is fully capable out of the box and proactively schedules follow-ups it notices in conversation (only above `confidenceThreshold`). Set `enabled: false` to opt out if you prefer the agent never self-schedules.</Info>
 
 ## Quiet Hours
 

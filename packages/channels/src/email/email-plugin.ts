@@ -33,6 +33,9 @@ const EMAIL_CAPABILITIES: ChannelCapability = {
     maxMessageChars: 100_000,
   },
   replyToMetaKey: "emailMessageId",
+  // Email threads via invisible In-Reply-To/References headers, so reply-to must
+  // be set even on 1:1 replies (unlike visible-quote channels that skip DM reply-to).
+  threadReplyInDm: true,
 };
 
 // ---------------------------------------------------------------------------

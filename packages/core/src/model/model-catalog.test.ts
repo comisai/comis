@@ -30,7 +30,7 @@ describe("ModelCatalog", () => {
       expect(entry!.provider).toBe("anthropic");
       expect(entry!.modelId).toBe("claude-sonnet-4-5-20250929");
       expect(entry!.displayName).toBe("Claude Sonnet 4.5");
-      expect(entry!.contextWindow).toBe(200000);
+      expect(entry!.contextWindow).toBe(1000000);
       expect(entry!.input).toContain("text");
       expect(entry!.input).toContain("image");
       expect(entry!.reasoning).toBe(true);

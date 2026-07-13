@@ -112,6 +112,15 @@ export function registerExplainCommand(program: Command): void {
           // Table view — concise key fields (kept small; the test exercises both
           // this branch and the json branch to hold the coverage floor).
           info(`Session:    ${report.sessionKey}`);
+          // "Did you mean …?" — the request resolved ZERO records and the
+          // assembler found closer REAL keys (a lossy/partial key like
+          // `telegram:<chatId>`). Surface them so the operator copies the right
+          // key instead of hand-joining the session index.
+          const candidates = report.coverage?.candidateSessionKeys ?? [];
+          if (candidates.length > 0) {
+            info(`Did you mean (no records for '${report.sessionKey}'):`);
+            for (const c of candidates) info(`  ${c}`);
+          }
           // Obs honesty: a defaulted "unknown" endReason with NO session-end rollup
           // is an UNRESOLVED outcome, not a finding — caveat it so the operator does
           // not read the "unknown" (or the cost/tools the session-index still supplies)
@@ -124,7 +133,11 @@ export function registerExplainCommand(program: Command): void {
             `Outcome:    ${report.outcome.severity} (endReason=${endReasonLabel}, degraded=${report.outcome.degraded})`,
           );
           info(
-            `Cost:       $${report.cost.costUsd} · ${report.cost.totalTokens} tok`,
+            // Name the token basis: explain sums the full per-LLM-call ledger
+            // (input+output+cacheRead+cacheCreation), so it is much larger than
+            // fleet's cache-excluding session-index total — labeling both prevents
+            // the two lenses reading as the same "tok" (comis-daniel 2026-07-09).
+            `Cost:       $${report.cost.costUsd} · ${report.cost.totalTokens} tok (incl cache reads)`,
           );
           info(
             `Timing:     ${report.timing.durationMs} ms · ${report.timing.turnCount} turns`,

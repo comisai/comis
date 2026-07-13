@@ -163,7 +163,7 @@ describe("mcp-domain contracts", () => {
         status: "connected",
         toolCount: 1,
         tools: [
-          { name: "search", qualifiedName: "mcp:ctx7/search", description: "Search docs" },
+          { name: "search", qualifiedName: "mcp:ctx7/search", callableName: "mcp__ctx7--search", description: "Search docs" },
         ],
         lastHealthCheck: 1_700_000_000_000,
         reconnectAttempt: 0,

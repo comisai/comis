@@ -21,12 +21,17 @@ describe("MIN_CACHEABLE_TOKENS", () => {
     expect(MIN_CACHEABLE_TOKENS["claude-haiku-4-5"]).toBe(4096);
   });
 
+  it("claude-sonnet-5 minimum is 2048", () => {
+    expect(MIN_CACHEABLE_TOKENS["claude-sonnet-5"]).toBe(2048);
+  });
+
   it("all known model families have entries", () => {
     const expectedFamilies = [
       "claude-opus-4-6",
       "claude-opus-4-5",
       "claude-opus-4-1",
       "claude-opus-4-",
+      "claude-sonnet-5",
       "claude-sonnet-4-6",
       "claude-sonnet-4-5",
       "claude-sonnet-4-",

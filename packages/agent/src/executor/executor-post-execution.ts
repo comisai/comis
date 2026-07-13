@@ -59,6 +59,7 @@ import {
   clearSessionPromptSkillSurfacedCensus,
   getSessionPromptMemoryInjected,
   clearSessionPromptMemoryInjected,
+  drainSessionPromptRecallEvents,
 } from "./prompt-assembly.js";
 // Import directly from the leaf module (not the barrel) to keep the cycle
 // detector happy — pi-executor.ts imports executor-post-execution.ts in the
@@ -1333,8 +1334,11 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     !isSilentResponse(result.response ?? "")
   ) {
     const failedToolName = unrecoveredFailed[0];
+    // No "(see session log)" pointer: the recipient is the CHAT user, who has
+    // no session log to see — the operator's lens is `comis explain` (the
+    // failure rides the trajectory + IncidentReport.failures already).
     result.response = (result.response ?? "") +
-      `\n[tool failure] ${failedToolName} reported an error (see session log for details)`;
+      `\n[tool failure] ${failedToolName} reported an error`;
   }
 
   // Degrade loudly — deliver an honest user-facing reply for named degraded causes.
@@ -1908,6 +1912,21 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       });
     } catch {
       // Injection-telemetry emit is non-fatal — it must never fail the turn.
+    }
+  }
+
+  // memory:recalled / memory:reranked / memory:recall_degraded: flush the
+  // recall emits deferred during assembly — same pre-bridge timing reason as
+  // memory:injected above (an inline emit fired to no trajectory listener, so
+  // memory.recalled never appeared in any trajectory).
+  const deferredRecallEvents = drainSessionPromptRecallEvents(formattedKey);
+  if (deferredRecallEvents !== undefined) {
+    for (const flush of deferredRecallEvents) {
+      try {
+        flush(deps.eventBus);
+      } catch {
+        // Recall-telemetry emit is non-fatal — it must never fail the turn.
+      }
     }
   }
 

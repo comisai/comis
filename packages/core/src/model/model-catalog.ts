@@ -277,3 +277,32 @@ export function resolvePricingState(
   //    provider↔model chimera: a phantom $0 that must NOT be reported as free).
   return "unknown";
 }
+
+/**
+ * Whether a (provider, modelId) resolves to a REAL entry in the model catalog
+ * (the built-in static registry + any merged scanned/custom entries).
+ *
+ * Distinct from {@link resolveModelPricing} / {@link resolvePricingState}: those
+ * return ZERO_COST / `"free"` for BOTH an uncosted-but-cataloged model AND an
+ * unknown one, so they cannot detect an UNRESOLVED model id — the fail-closed-to-
+ * nano class where `modelRegistry.find()` returns undefined and the whole
+ * ModelProfile collapses to the nano/8192 profile (e.g. `openai-codex:gpt-5.6`
+ * where the real ids are `gpt-5.6-terra`/`-luna`/`-sol`). Notably a non-native
+ * provider like `openai-codex` resolves `"free"` for an unknown model (it is not
+ * in NATIVE_PROVIDER_FAMILY), so neither the pricing nor the chimeric detector
+ * flags it — a boot config-posture count uses THIS predicate instead.
+ *
+ * Callers should still exempt operator-declared custom models
+ * (`providers.entries.<p>.models`) which are legitimately absent from the static
+ * registry — this predicate only knows the static + scanned catalog.
+ */
+export function modelResolvesInCatalog(provider: string, modelId: string, catalog?: ModelCatalog): boolean {
+  const source = catalog ?? (() => {
+    if (!_pricingSingleton) {
+      _pricingSingleton = createModelCatalog();
+      _pricingSingleton.loadStatic();
+    }
+    return _pricingSingleton;
+  })();
+  return source.get(provider, modelId) !== undefined;
+}

@@ -995,7 +995,7 @@ When the daemon is running, the commands fetch via the `models.list` RPC. When t
 | `-c, --config <path>` | `string` | Auto-detected | Config file path |
 
 ```bash
-# List all available models (~1,029 entries across 35 providers as of pi-ai 0.80.3)
+# List all available models (~1,057 entries across 35 providers as of pi-ai 0.80.6)
 comis models list
 
 # Filter by provider
@@ -1502,7 +1502,7 @@ comis cost export --provider openai --model gpt-4o-mini
 
 ### `comis explain`
 
-Assemble an `IncidentReport` for a single agent session — a bounded, causal post-mortem (outcome, cost, per-tool stats, normalized failures, circuit-breaker timeline, large-result offloads, and a deterministic likely root cause). The report is derived from log evidence only; no LLM is invoked, so the same session always yields the same verdict. Backed by `ObsExplainContract` (`obs.explain`).
+Assemble an `IncidentReport` for a single agent session — a bounded, causal post-mortem (outcome, cost, per-tool stats, normalized failures, circuit-breaker timeline, large-result offloads, recall health — including degraded/failed recall lanes — session-wide activity-finalize tallies, and a deterministic likely root cause). The report is derived from log evidence only; no LLM is invoked, so the same session always yields the same verdict. Backed by `ObsExplainContract` (`obs.explain`).
 
 The positional argument is routed automatically by shape: a **`root-` run id** (an autonomy run's `rootRunId` — the synthetic in-process `root-session-<sessionKey>` or a real spawned-run lease id; checked **first** because a synthetic root contains `:` but must route as a run id, not a session key) is passed as `rootRunId`; otherwise a **session key** (`tenant:user:channel:ts`, contains `:`) is passed as `sessionKey`; otherwise a **trace ID** (a UUID, no `:`) is passed as `traceId`. The daemon canonicalizes a trace ID *or* a `rootRunId` to its session key first, so all three forms produce the identical report. A `rootRunId` is the **`comis fleet` → `comis explain` drill-down target**: paste the `worstRootRunId` that [`comis fleet`](#comis-fleet)'s autonomy block names straight in, and the report renders that run's `spawnTree` (an unresolvable id surfaces an honest `session_not_found`, never a clean-looking empty report).
 
@@ -1574,11 +1574,21 @@ comis orchestrate replay orch-abc123 --format json
 
 Assemble a `FleetHealthReport` — a bounded, **cross-session** triage over a recent window: the session count and degradation rate, the **degraded-by-cause breakdown** (degraded sessions bucketed by named `endReason` cause, e.g. `context_exhausted` / `output_starved`), the recurring `WARN` findings (recurring `lcd_divergence` / model / config-posture signals, counts + hints only), the total circuit-breaker trips, the window cost, and a deterministic likely root cause. Like `comis explain`, the report is derived from log + diagnostics evidence only; no LLM is invoked, so the same window yields the same verdict. Backed by `ObsFleetHealthContract` (`obs.fleet.health`).
 
+`cost.costUsd` is the per-session spend (the session-summary rollup). `cost.offSessionUsd` is the **background-job** spend in the window — reflection/learning cron runs et al. that key their token usage to a synthetic `__PREFIX__` session with no session_summary, so their cost is **absent** from `costUsd`. The two are distinct and never double-count: the operator's full provider bill is `costUsd + offSessionUsd`. The table view appends `+ $Z off-session (reflection/background)` only when it is non-zero. This closes a reconciliation gap where reflection spend hit the provider console but was invisible to the fleet lens.
+
 The table view prints the degraded-by-cause spread as a `Degraded by cause: context_exhausted=13, output_starved=9` line (sorted highest-count first; counts + closed-set labels only, no raw bodies) — omitted when no degraded session carried a named cause. The full per-cause map is also on the `--format json` output (`degradedByCause`).
+
+A `health_signal:cache_prefix_churn` finding fires when a session's Anthropic prompt-cache prefix **collapsed** on a recurring basis — a cached-region message mutated across turns on 3+ calls within a recent window, wasting the cache write (up to hundreds of thousands of cache-creation tokens over a session). The finding names the recurring **mutation class** (`structural-shift` = a message index shifted below the cache fence, e.g. from LCD condense/re-admit; `datetime-preamble` / `thinking-cleared` / `content-cleared` = an in-place edit). This closes a fleet-blindness gap where the churn was visible only as a daemon.log `Unstable prefix detected` WARN. Counts + the closed class label only — never message text.
 
 A dedicated `config_posture:served_below_configured` finding fires when an Ollama provider serves a smaller `num_ctx` than the configured `contextWindow` — the agents on that provider silently run with the smaller window. The count is the number of providers affected at the **latest** boot (posture is standing state, not cumulative — a healthy restart clears it). Fix by raising the served window (`OLLAMA_CONTEXT_LENGTH=<configured> ollama serve`, or Modelfile `PARAMETER num_ctx <configured>` — see the [served-window section](/reference/config-yaml#local-model-context-window) for the VRAM caveat), then run `comis explain` on a served-bound session for the numbers-backed budget verdict — and see the [Local models playbook](/operations/local-models) for the full local-deployment triage map.
 
+A dedicated `config_posture:media_credential_gap` finding fires when a configured media pipeline (`imageGeneration` / `transcription` / `tts` / `videoGeneration`) has a **pinned** provider whose credential is absent — the pipeline authenticates fine for the main completion path but fails at first media use, so it was previously invisible to the fleet lens (you had to hit it or grep the log). The count is the number of affected pipelines at the **latest** boot (standing state; a login/key + restart clears it). Fix by setting the provider's credential (`OPENAI_API_KEY` / `GOOGLE_API_KEY` / `FAL_KEY` / …), logging in for `openai-codex` (`comis auth login --provider openai-codex`), or switching the pipeline's `provider` to one whose credential is present (or `auto` to follow the main provider). Counts only — never a provider name or credential value.
+
+A dedicated `config_posture:unresolved_model` finding fires when one or more agents are configured with a `model` id that does **not** resolve in the model catalog for its provider (and is not an operator-declared custom model under `providers.entries.<provider>.models`) — e.g. `openai-codex: gpt-5.6` when the real ids are `gpt-5.6-terra` / `-luna` / `-sol`. An unresolved model collapses the whole model profile to the **fail-closed nano profile** (an ~8K-token window), so every non-trivial turn context-exhausts — and neither the `chimeric_model` nor the `pricing_gap` finding catches it (a non-native provider resolves `"free"` for an unknown model, and the model family still parses). The count is the number of affected agents at the **latest** boot (standing state; a valid model id + restart clears it). Fix by setting `agents.<id>.model` to a valid catalog id for its provider — the `daemon.log` unresolved-model WARN names the provider's available ids — or declare the model under `providers.entries.<provider>.models`. Counts only — never a model id in the finding body.
+
 A `voice_health` finding fires when transcriptions/syntheses degraded across the window: the count of degraded STT/TTS turns and the dominant voice `errorKind` (e.g. `model_load_failed` → check the local whisper model cache, `auth_required` → set the provider's audio key). Counts + a closed errorKind label + a static hint only — no raw provider body or secret, safe to paste. Drill into the worst voice session it points at with `comis explain`. See [Voice → Observability and cost](/media/voice#observability-and-cost).
+
+The acute-degradation root cause (`fleet_acute_degradation`) names the **worst degraded session's key** inline (`worst: <sessionKey>`) and in its suggested next step (`comis explain <sessionKey>`), so you paste it straight in rather than hunting for "the worst session".
 
 When the daemon runs **unattended/durable** runs, the report carries an `autonomy` block: the cross-run run count + degraded rate (sourced from the **crash-surviving** `durable_runs` table, so it survives a hard crash), the `orphaned` / `resumed` / `revoked` / `killed` counts (`killed` is separable from `revoked` because a hard `run.kill` and a cooperative `lease.revoke` emit distinct events), the autonomy breaker-trip + budget-breach counts, the window cost, and the worst degraded run's `worstRootRunId` (orphaned > killed > revoked) so you can paste it straight into `comis explain` for its spawn-tree. The orphaned/revoked/killed counts also surface as dedicated `durable_orphaned` / `autonomy_revoked` / `autonomy_killed` findings, and a degraded autonomy run drives the top-ranked `fleet_autonomy_degradation` root cause. Counts + the worst run's id only — never a lease bearer, an orphan-reason body, or a secret; safe to paste. The block is **absent** under `--offline` (the daemon-less CLI has no durable-store edge) or on a non-durability boot — an honest coverage degradation, not a silent zero.
 
@@ -1614,6 +1624,47 @@ comis fleet --since 24 --offline
 ```
 
 Requires an admin-scoped gateway token (same as `comis explain` / `comis trace`) — unless `--offline`. Unreachable-gateway calls fall back to the offline assembly automatically; a token rejection surfaces the auth error (with the `--offline` tip) instead of masking the misconfiguration.
+
+---
+
+### `comis messages`
+
+Extract the **inbound messages users typed**, per channel, from the local session logs — the conversation-export lens. It reads the raw session `.jsonl` message logs under every agent workspace tree (`<dataDir>/workspace[-<agentId>]/sessions/...`) and parses each user turn's inbound envelope (`[<channelType>] <senderId> (<time>):`), so one command answers "what did users send us on Telegram yesterday" without hand-joining session files.
+
+The command runs **fully offline and has no RPC sibling — on purpose**. Unlike `comis explain` / `comis fleet` (bounded digests, counts + hints only), its output is **content-bearing**: message bodies are the payload. The obs network surfaces stay content-free, so this read never crosses the gateway — it only reads local files the operator already owns.
+
+Internal dispatch turns are excluded by default and **counted, not hidden**: cron, sub-agent, and heartbeat sessions plus the reserved `system` sender are agent-/scheduler-authored prompts, not humans — a summary note reports how many were excluded, and `--include-internal` shows them tagged `origin: "internal"`. Two more honest-coverage notes: user turns with **no parsable envelope** (e.g. `envelope.showProvider: false` produces headerless turns) are counted instead of silently dropped, and when `--limit` cuts the result the **latest N** are kept and the truncation is announced.
+
+`<when>` values for `--since` / `--until` accept **epoch ms** (`1783900800000`), **relative-ago** (`30m`, `24h`, `7d`), or an **ISO date/datetime** (`2026-07-12`, `2026-07-12T10:00:00Z`). An unparsable bound is an **error naming the accepted forms** — never a silent widen-to-everything. `--date` is one-UTC-day sugar and cannot be combined with `--since`/`--until`.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--channel <type>` | `string` | — | Filter by channel type (`telegram`, `discord`, ...) |
+| `--chat <id>` | `string` | — | Filter by chat/conversation id |
+| `--sender <id>` | `string` | — | Filter by sender id |
+| `--agent <id>` | `string` | — | Filter by agent id (`default`, or the `workspace-<agentId>` suffix) |
+| `--since <when>` | `string` | — | Lower bound (inclusive) |
+| `--until <when>` | `string` | — | Upper bound (exclusive) |
+| `--date <YYYY-MM-DD>` | `string` | — | One UTC day (sugar for `--since <day> --until <next day>`) |
+| `--limit <n>` | `number` | `500` | Max messages returned (the latest N are kept) |
+| `--include-internal` | `boolean` | `false` | Include cron/sub-agent/heartbeat/`system` dispatch messages |
+| `--format <format>` | `table` \| `text` \| `json` \| `jsonl` | `table` | `table` previews the first line; `text` is the full chat log; `json`/`jsonl` carry the full records |
+
+```bash
+# Everything users sent, newest window last (first-line preview table)
+comis messages
+
+# All Telegram messages from one chat on a specific day, as a readable chat log
+comis messages --channel telegram --chat 5177964605 --date 2026-07-12 --format text
+
+# The last 24h across every channel, machine-readable (one JSON record per line)
+comis messages --since 24h --format jsonl > messages.jsonl
+
+# A precise time frame
+comis messages --since 2026-07-12T10:00:00Z --until 2026-07-12T18:00:00Z
+```
+
+Reads `COMIS_DATA_DIR` (falling back to `~/.comis`) like the other offline commands — run it as the daemon's user, or point `COMIS_DATA_DIR` at the daemon's data dir.
 
 ---
 
@@ -1739,7 +1790,7 @@ Remove Comis from the host. Re-invokes `install.sh --uninstall` (downloaded from
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--purge` | `boolean` | `false` | Also delete `~/.comis`, `/etc/comis`, and (if `--with-cloakbrowser` was used to install) `~/.cloakbrowser` + `~/.cloakbrowser-wrapper` |
+| `--purge` | `boolean` | `false` | Also delete `~/.comis`, `/etc/comis`, the `COMIS_EGRESS` egress-logging iptables chain, and (if `--with-cloakbrowser` was used to install) `~/.cloakbrowser` + `~/.cloakbrowser-wrapper` |
 | `--remove-user` | `boolean` | `false` | Linux+root only: also delete the `comis` system user (implies `--purge`) |
 | `--yes` | `boolean` | `false` | Skip confirmation prompt |
 | `--dry-run` | `boolean` | `false` | Print actions without performing them |
@@ -1753,7 +1804,7 @@ comis uninstall
 comis uninstall --purge --yes
 ```
 
-The uninstaller cleans up everything the installer wrote: the main `comis.service` systemd unit, the optional `comis-xvfb.service` companion (if `--with-xvfb` was used), the CLI binary, and — when `--purge` is set — the data dir plus the CloakBrowser binary cache (which can be 200–500 MB depending on cached versions). On `--remove-user` the `comis` system user is dropped too. Sudoers rules, AppArmor profile, and the egress-logging iptables chain are left in place; remove those manually if you're decommissioning the host.
+The uninstaller cleans up everything the installer wrote: the main `comis.service` systemd unit, the optional `comis-xvfb.service` companion (if `--with-xvfb` was used), the CLI binary, and — when `--purge` is set — the data dir, the CloakBrowser binary cache (which can be 200–500 MB depending on cached versions), and the `COMIS_EGRESS` egress-logging iptables chain (the uid-scoped `OUTPUT` jump is unhooked before the chain is flushed and deleted). On `--remove-user` the `comis` system user is dropped too. Sudoers rules and the AppArmor profile are left in place; remove those manually if you're decommissioning the host.
 
 ---
 

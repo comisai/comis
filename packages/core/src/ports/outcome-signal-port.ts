@@ -164,8 +164,14 @@ export interface OutcomeSignalPort {
    * the stored value was corrupt — it degrades to absent, never throws). The reflection
    * source attaches it onto each `ReflectionSourceTrajectory` so procedure information
    * reaches the reflection engine (whose string transcript drops tool_use/tool_result blocks).
+   *
+   * `observedAt` is the turn's ledger timestamp (MAX `observed_at` across the turn's
+   * source rows, epoch ms) — the PER-TURN WINDOW KEY the reflection source builder
+   * slices a session's transcript by ((prevObservedAt, observedAt] bounds one turn's
+   * messages), so each turn gets its own topic signature. Without it, every turn of a
+   * single long DM collapses into one whole-session mega-topic.
    */
   listTrajectoryIds?(
     scope: LearningScope,
-  ): Promise<Result<Array<{ trajectoryId: string; sessionId: string; procedureDescriptor?: ReadonlyArray<string> }>, Error>>;
+  ): Promise<Result<Array<{ trajectoryId: string; sessionId: string; observedAt: number; procedureDescriptor?: ReadonlyArray<string> }>, Error>>;
 }

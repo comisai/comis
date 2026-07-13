@@ -29,6 +29,7 @@ import type {
   ImageProviderConfig,
   TranscriptionProviderConfig,
   TtsProviderConfig,
+  RecallProviderConfig,
 } from "./types.js";
 import {
   SUPPORTED_VIDEO_PROVIDERS,
@@ -40,6 +41,7 @@ import {
   SUPPORTED_TTS_PROVIDERS,
   TTS_PROVIDER_ENV_KEYS,
   PROVIDER_ENV_KEYS,
+  EMBED_BGE_M3_MODEL_URI,
 } from "./types.js";
 import type {
   WizardPrompter,
@@ -102,6 +104,10 @@ export type NonInteractiveOptions = {
   sttApiKey?: string;
   ttsProvider?: string;
   ttsApiKey?: string;
+  // Semantic-recall embedder (step 08g)
+  embeddingMultilingual?: boolean;
+  embeddingProvider?: string;
+  embeddingApiKey?: string;
   // Paths
   dataDir?: string;
   configDir?: string;
@@ -279,6 +285,24 @@ export function validateNonInteractiveOptions(
       throw new NonInteractiveError(
         `--tts-provider must be one of: ${known.join(", ")}`,
         "ttsProvider",
+      );
+    }
+  }
+  if (opts.embeddingProvider !== undefined && !["local", "openai"].includes(opts.embeddingProvider)) {
+    throw new NonInteractiveError(
+      `--embedding-provider must be one of: local, openai`,
+      "embeddingProvider",
+    );
+  }
+  // OpenAI embeddings need a key: reuse an openai main (--provider openai
+  // --api-key) or pass --embedding-api-key. Fail fast rather than write a
+  // config the daemon can't embed with.
+  if (opts.embeddingMultilingual === true && opts.embeddingProvider === "openai") {
+    const mainOpenai = opts.provider === "openai" && opts.apiKey !== undefined;
+    if (!mainOpenai && opts.embeddingApiKey === undefined) {
+      throw new NonInteractiveError(
+        "--embedding-provider openai needs an OpenAI key: pass --embedding-api-key, or use --provider openai --api-key",
+        "embeddingApiKey",
       );
     }
   }
@@ -639,6 +663,27 @@ export function buildNonInteractiveState(
     }
   }
 
+  // Recall / embedding (step 08g). Default (no --embedding-multilingual): leave
+  // recallProvider undefined → the daemon keeps its nomic default (no 2GB pull
+  // on an unattended install). --embedding-multilingual opts into a multilingual
+  // embedder: local bge-m3 (default) or OpenAI (key reused from an openai main,
+  // else --embedding-api-key; validated above).
+  let recallProvider: RecallProviderConfig | undefined;
+  if (opts.embeddingMultilingual === true) {
+    if ((opts.embeddingProvider ?? "local") === "openai") {
+      const reuse = opts.provider === "openai" && opts.apiKey !== undefined;
+      recallProvider = {
+        multilingual: true,
+        provider: "openai",
+        model: "text-embedding-3-small",
+        dimensions: 1536,
+        ...(reuse ? {} : { apiKey: opts.embeddingApiKey! }),
+      };
+    } else {
+      recallProvider = { multilingual: true, provider: "local", modelUri: EMBED_BGE_M3_MODEL_URI };
+    }
+  }
+
   // Gateway config — token is the only supported gateway auth method.
   // Auto-generate a 48-char hex token when none provided (same as step 07).
   const gatewayToken = opts.gatewayToken ?? randomBytes(24).toString("hex");
@@ -689,6 +734,11 @@ export function buildNonInteractiveState(
     "video-providers",
     "transcription",
     "tts",
+    // recall (08g) is skipped in non-interactive mode → the embedder keeps the
+    // daemon default (nomic). A future --embedding-multilingual / --embedding-provider
+    // flag pair would set it here; for now mark it complete so the runner does not
+    // hit the interactive confirm() prompt.
+    "recall",
     "review",
   ];
 
@@ -706,6 +756,7 @@ export function buildNonInteractiveState(
     ...(videoProvider !== undefined && { videoProvider }),
     ...(transcriptionProvider !== undefined && { transcriptionProvider }),
     ...(ttsProvider !== undefined && { ttsProvider }),
+    ...(recallProvider !== undefined && { recallProvider }),
     gateway,
     dataDir,
     skipHealth: opts.skipHealth ?? false,

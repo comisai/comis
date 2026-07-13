@@ -150,6 +150,16 @@ describe("TerminalDriverConfigSchema -- closed allow-set", () => {
     expect(result.success).toBe(false);
   });
 
+  it("defaults unsafeDisableSandbox to false (the jail stays ON — a bwrap opt-out is opt-IN only)", () => {
+    const parsed = TerminalDriverConfigSchema.parse(validCfg); // validCfg omits the field
+    expect(parsed.unsafeDisableSandbox).toBe(false);
+  });
+
+  it("accepts unsafeDisableSandbox: true (the operator opt-out of the bwrap jail)", () => {
+    const parsed = TerminalDriverConfigSchema.parse({ ...validCfg, unsafeDisableSandbox: true });
+    expect(parsed.unsafeDisableSandbox).toBe(true);
+  });
+
   it("rejects an unknown NESTED key (scope strictObject is closed too)", () => {
     const withNestedUnknown = structuredClone(validCfg) as Record<string, unknown>;
     // allow[0].scope.extra is not a member of the closed scope schema.
@@ -193,6 +203,63 @@ describe("TerminalDriverConfigSchema -- closed allow-set", () => {
     expect(withEntryDefaults.allow[0]!.scope.filesystem).toBe("workspace");
     expect(withEntryDefaults.allow[0]!.scope.network).toBe("none");
     expect(withEntryDefaults.allow[0]!.hardening).toBe("none");
+  });
+});
+
+describe("TerminalDriverConfigSchema -- partial-block ergonomics (per-field defaults)", () => {
+  // The friction this fixes (unsandboxed-marathon live-test, 2026-07-12): an operator on a
+  // bwrap-less host who only wants the jail opt-out had to hand-write the ENTIRE
+  // worker/defaults/redactSecrets/audit boilerplate, because those fields were required with
+  // no defaults -- so `terminal: { unsafeDisableSandbox: true }` failed config validation with
+  // "expected boolean/object, received undefined". Each field now carries a production default
+  // (worker/emulator values mirror the runtime constants) so a minimal terminal block parses.
+  it("parses a MINIMAL terminal block (just unsafeDisableSandbox) -- the one-liner opt-out", () => {
+    const parsed = TerminalDriverConfigSchema.parse({ unsafeDisableSandbox: true });
+    expect(parsed.unsafeDisableSandbox).toBe(true);
+    expect(parsed.enabled).toBe(true);
+    expect(parsed.redactSecrets).toBe(true);
+    expect(parsed.audit.enabled).toBe(true);
+    expect(parsed.allow).toEqual([]);
+    expect(parsed.worker).toEqual({
+      maxSessions: 8,
+      idleTtlMs: 900_000,
+      ringBytes: 262_144,
+      stuckMs: 30_000,
+      maxConcurrentAttentionTurns: 4,
+    });
+    expect(parsed.defaults).toEqual({ cols: 80, rows: 24, scrollback: 1000 });
+  });
+
+  it("an EMPTY terminal block parses to the safe defaults -- the jail stays ON (unsafeDisableSandbox:false)", () => {
+    const parsed = TerminalDriverConfigSchema.parse({});
+    expect(parsed.unsafeDisableSandbox).toBe(false);
+    expect(parsed.enabled).toBe(true);
+    expect(parsed.redactSecrets).toBe(true);
+    expect(parsed.audit.enabled).toBe(true);
+  });
+
+  it("allows a PARTIAL worker override, defaulting the sibling fields", () => {
+    const parsed = TerminalDriverConfigSchema.parse({ worker: { maxSessions: 16 } });
+    expect(parsed.worker.maxSessions).toBe(16);
+    expect(parsed.worker.idleTtlMs).toBe(900_000);
+    expect(parsed.worker.stuckMs).toBe(30_000);
+  });
+
+  it("a partial block still REJECTS an unknown terminal key (defaults do not loosen the strictObject)", () => {
+    const result = TerminalDriverConfigSchema.safeParse({ unsafeDisableSandbox: true, bogusKnob: 1 });
+    expect(result.success).toBe(false);
+  });
+
+  it("still REJECTS an unknown worker key on a partial worker (strictObject preserved after extraction)", () => {
+    const result = TerminalDriverConfigSchema.safeParse({ worker: { maxSessions: 4, bogusWorkerKnob: 1 } });
+    expect(result.success).toBe(false);
+  });
+
+  it("the parent SkillsConfigSchema accepts a partial terminal block (the real config.yaml shape)", () => {
+    const parsed = SkillsConfigSchema.parse({ terminal: { unsafeDisableSandbox: true } });
+    expect(parsed.terminal?.unsafeDisableSandbox).toBe(true);
+    expect(parsed.terminal?.worker.maxSessions).toBe(8);
+    expect(parsed.terminal?.redactSecrets).toBe(true);
   });
 });
 

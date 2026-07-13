@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { GatewayConfig, TypedEventBus } from "@comis/core";
-import { tryGetContext, systemNowDate } from "@comis/core";
+import { tryGetContext, systemNowDate, isLoopbackHost } from "@comis/core";
 import type { WSContext, WSEvents } from "hono/ws";
 import type { JSONRPCServer } from "json-rpc-2.0";
 import { serve } from "@hono/node-server";
@@ -349,13 +349,18 @@ export function createGatewayServer(deps: GatewayServerDeps): GatewayServerHandl
         `Gateway listening on https://${host}:${port} (mTLS: ${tls.requireClientCert ? "required" : "optional"})`,
       );
     } else {
-      // Warn when running without TLS unless explicitly allowed
-      if (!config.allowInsecureHttp) {
+      // Plain HTTP on a LOOPBACK bind has no off-host exposure — the default
+      // install posture, benign per the same judgment the fleet `tlsOff`
+      // config-posture finding and the gateway-exposure security check apply
+      // (both flag only non-loopback binds). Warn ONLY when the listener is
+      // actually reachable off-host.
+      const loopback = isLoopbackHost(host);
+      if (!config.allowInsecureHttp && !loopback) {
         logger.warn(
           { host, port, hint: "Set gateway.tls for production or gateway.allowInsecureHttp: true to suppress this warning", errorKind: "config" as const },
           "Gateway running without TLS -- configure gateway.tls for production",
         );
-      } else {
+      } else if (config.allowInsecureHttp) {
         logger.info(
           { host, port },
           "Gateway starting in dev mode (plain HTTP) -- allowInsecureHttp is set",
@@ -380,7 +385,7 @@ export function createGatewayServer(deps: GatewayServerDeps): GatewayServerHandl
       }
       logger.debug("HTTP socket timeout disabled for WebSocket longevity");
 
-      logger.info({ host, port }, `Gateway listening on http://${host}:${port} (dev mode)`);
+      logger.info({ host, port }, `Gateway listening on http://${host}:${port} (${loopback ? "plain HTTP, loopback-only" : "plain HTTP"})`);
     }
   }
 

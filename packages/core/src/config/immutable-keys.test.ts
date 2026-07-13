@@ -6,6 +6,8 @@ import {
   isImmutableConfigPath,
   matchesOverridePattern,
   getMutableOverridesForSection,
+  OPERATOR_ONLY_AGENT_SUBPATHS,
+  findOperatorOnlyAgentPaths,
 } from "./immutable-keys.js";
 
 describe("IMMUTABLE_CONFIG_PREFIXES", () => {
@@ -267,6 +269,14 @@ describe("isImmutableConfigPath", () => {
   // prefix wins and these paths are rejected.
   it("rejects agents.default.persona (no such per-agent field; not a mutable override)", () => {
     expect(isImmutableConfigPath("agents", "default.persona")).toBe(true);
+  });
+
+  // Security lock: an agent must NEVER be able to disable its own terminal-driver sandbox via
+  // config.patch. `skills.terminal.unsafeDisableSandbox` lives under `agents.*` (an immutable
+  // prefix), so it is operator-config/env only — the same guarantee browser.noSandbox gets
+  // top-level. A prompt-injected agent cannot self-remove the bwrap jail.
+  it("rejects agents.default.skills.terminal.unsafeDisableSandbox (sandbox opt-out is operator-only)", () => {
+    expect(isImmutableConfigPath("agents", "default.skills.terminal.unsafeDisableSandbox")).toBe(true);
   });
 
   // Mutable overrides: promptTimeout runtime tuning
@@ -567,5 +577,89 @@ describe("contextEngine.version is operator-only (immutable to config.patch)", (
     for (const p of paths) {
       expect(p).not.toMatch(/contextEngine/);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Operator-only per-agent security-posture sub-paths.
+//
+// The whole `agents` section is immutable to config.patch (which STEERS callers
+// to the dedicated agents_manage tool), but agents_manage LEGITIMATELY writes
+// agent config (name/provider/model/budgets/…). A small deny-list of
+// sandbox/jail/terminal-escape switches must be refused by agents_manage TOO —
+// the asymmetry that let an admin-trust agent flip its own
+// skills.execSandbox.enabled never→always at runtime (unsandboxed marathon
+// BL-1, 2026-07-12). These are operator-file-only.
+// ---------------------------------------------------------------------------
+
+describe("OPERATOR_ONLY_AGENT_SUBPATHS", () => {
+  it("locks the exec OS-sandbox switch (skills.execSandbox)", () => {
+    expect(OPERATOR_ONLY_AGENT_SUBPATHS).toContain("skills.execSandbox");
+  });
+
+  it("locks the bwrap-jail bypass (skills.terminal.unsafeDisableSandbox)", () => {
+    expect(OPERATOR_ONLY_AGENT_SUBPATHS).toContain("skills.terminal.unsafeDisableSandbox");
+  });
+
+  it("locks the terminal command allowlist (skills.terminal.allow — never agent-extensible)", () => {
+    expect(OPERATOR_ONLY_AGENT_SUBPATHS).toContain("skills.terminal.allow");
+  });
+
+  it("paths are agent-relative (no agents.<id> prefix) so they apply to any agent id", () => {
+    for (const p of OPERATOR_ONLY_AGENT_SUBPATHS) {
+      expect(p.startsWith("agents.")).toBe(false);
+    }
+  });
+});
+
+describe("findOperatorOnlyAgentPaths", () => {
+  it("flags a nested skills.execSandbox.enabled patch (the marathon probe)", () => {
+    const hits = findOperatorOnlyAgentPaths({ skills: { execSandbox: { enabled: "never" } } });
+    expect(hits).toContain("skills.execSandbox");
+  });
+
+  it("flags the bwrap-jail bypass", () => {
+    const hits = findOperatorOnlyAgentPaths({ skills: { terminal: { unsafeDisableSandbox: true } } });
+    expect(hits).toContain("skills.terminal.unsafeDisableSandbox");
+  });
+
+  it("flags a terminal allowlist injection", () => {
+    const hits = findOperatorOnlyAgentPaths({
+      skills: { terminal: { allow: [{ id: "x", match: { path: "/bin/sh" } }] } },
+    });
+    expect(hits).toContain("skills.terminal.allow");
+  });
+
+  it("flags the operator-only path even when the sub-object is present but empty (fail-closed on presence)", () => {
+    expect(findOperatorOnlyAgentPaths({ skills: { execSandbox: {} } })).toContain("skills.execSandbox");
+  });
+
+  it("returns [] for a benign model/budget/name update (the common case — no false positive)", () => {
+    expect(findOperatorOnlyAgentPaths({ name: "Bot", model: "gpt-5.6", provider: "openai-codex" })).toEqual([]);
+    expect(findOperatorOnlyAgentPaths({ autonomy: { write: true } })).toEqual([]);
+  });
+
+  it("does NOT flag other skills fields (builtinTools, watchEnabled)", () => {
+    expect(
+      findOperatorOnlyAgentPaths({ skills: { builtinTools: { exec: true }, watchEnabled: false } }),
+    ).toEqual([]);
+  });
+
+  it("does NOT flag benign terminal sub-fields (worker caps) — only the escape switches", () => {
+    expect(findOperatorOnlyAgentPaths({ skills: { terminal: { worker: { stuckMs: 1000 } } } })).toEqual([]);
+  });
+
+  it("returns multiple hits when several operator-only paths are set at once", () => {
+    const hits = findOperatorOnlyAgentPaths({
+      skills: { execSandbox: { enabled: "never" }, terminal: { unsafeDisableSandbox: true } },
+    });
+    expect(hits).toContain("skills.execSandbox");
+    expect(hits).toContain("skills.terminal.unsafeDisableSandbox");
+  });
+
+  it("returns [] for non-object input (null / array / primitive)", () => {
+    expect(findOperatorOnlyAgentPaths(null)).toEqual([]);
+    expect(findOperatorOnlyAgentPaths([1, 2])).toEqual([]);
+    expect(findOperatorOnlyAgentPaths("skills.execSandbox")).toEqual([]);
   });
 });

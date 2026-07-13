@@ -22,6 +22,43 @@
 import { z } from "zod";
 
 /**
+ * CorroborationConfigSchema: how a reflection topic must corroborate before it can
+ * seed a learned doc — the knob that turns the anti-domination gate into a
+ * single-owner learning mode.
+ *
+ * - `mode: "single_owner"` (DEFAULT): repetition-as-corroboration — a single
+ *   EXPLICITLY-trusted owner (a sender the operator NAMED in
+ *   `elevatedReply.senderTrustMap`, never a promiscuous default or an unknown sender)
+ *   who repeats the same successful task ≥`minObservations` times corroborates it. This
+ *   is the default because single-owner deployments are the primary Comis use case, and
+ *   for one stable DM the distinct-sessions gate is structurally unreachable (cardinality
+ *   always 1 ⇒ nothing is ever learned). Safe by construction on a multi-user box: the
+ *   `explicitlyTrusted` belt (daemon-derived) keeps a promiscuous-default or unknown-origin
+ *   success from self-corroborating, and the single-owner path requires exactly ONE
+ *   distinct owner — a box with ≥2 explicitly-trusted senders AUTO-FALLS-BACK to the
+ *   distinct-sessions gate below.
+ * - `mode: "distinct_sessions"`: the classic anti-domination gate — a topic needs ≥2
+ *   distinct `(sessionId, sender)` observations. One actor flooding a topic stays
+ *   cardinality 1 and can never self-corroborate. Set this explicitly on a multi-user
+ *   box that wants to REQUIRE independent sessions even from its single trusted owner
+ *   (the stricter posture).
+ * - `minObservations`: single_owner ONLY — the minimum distinct successful repetitions
+ *   by the owner. Integer ≥2 (a single success NEVER corroborates). Ignored in
+ *   distinct_sessions mode.
+ *
+ * `z.strictObject` — an unknown sub-key is REJECTED at parse (the security control the
+ * whole learning schema uses).
+ */
+export const CorroborationConfigSchema = z
+  .strictObject({
+    mode: z.enum(["distinct_sessions", "single_owner"]).default("single_owner"),
+    minObservations: z.number().int().min(2).default(2),
+  })
+  .default(() => ({ mode: "single_owner" as const, minObservations: 2 }));
+
+export type CorroborationConfig = z.infer<typeof CorroborationConfigSchema>;
+
+/**
  * LearningConfigSchema: the one learning-layer schema.
  *
  * Fields:
@@ -65,6 +102,9 @@ export const LearningConfigSchema = z.strictObject({
        *  otherwise bloat every prompt. Caps that subset only (oldest-first); user-intent skills +
        *  topic docs are UNAFFECTED. Positive integer, default 10. */
       maxProcedureDocsSurfaced: z.number().int().positive().default(10),
+      /** Corroboration policy — HOW a topic must corroborate before it can seed a learned doc.
+       *  Its own `.default()` so a partial config fills it in. */
+      corroboration: CorroborationConfigSchema,
     })
     .default(() => ({
       schedule: "0 */3 * * *",
@@ -74,6 +114,7 @@ export const LearningConfigSchema = z.strictObject({
       // MUST mirror the field default — a ZodDefault returns this object as-is (no per-field
       // re-parse), so an omitted key here would be dropped on an empty/partial config parse.
       maxProcedureDocsSurfaced: 10,
+      corroboration: { mode: "single_owner" as const, minObservations: 2 },
     })),
   /** Forgetting sub-policy. Has its own `.default()` so a partial config fills it in. */
   forget: z

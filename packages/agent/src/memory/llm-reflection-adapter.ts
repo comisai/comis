@@ -88,6 +88,25 @@ export interface LlmReflectionAdapterDeps {
   source?: ExternalContentSource;
   /** Structural logger (counts/ids/step only — never doc bodies). */
   logger: ReflectionAdapterLogger;
+  /**
+   * Optional per-call usage sink. A background reflection run spends real
+   * tokens with no executor in the loop — without this hook the spend hits
+   * the provider bill with ZERO obs rows (invisible to fleet/billing). The
+   * daemon wiring forwards it as an `observability:token_usage` event under
+   * the synthetic `__REFLECT__` session key. Best-effort: a throwing sink
+   * never fails the reflect call.
+   */
+  onUsage?: (usage: ReflectionLlmUsage) => void;
+}
+
+/** Content-free LLM usage from ONE reflection call (SDK usage passthrough). */
+export interface ReflectionLlmUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  cost: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
+  durationMs: number;
 }
 
 /** One reflection request: the untrusted transcript + the doc's CURRENT sections (trusted). */
@@ -179,6 +198,7 @@ export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): Refl
 
     const controller = new AbortController();
     const timer = systemSetTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
+    const callStartMs = clock.now();
 
     const responseResult = await fromPromise(
       completeSimple(
@@ -213,6 +233,39 @@ export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): Refl
           `Reflection LLM call failed: ${responseResult.error instanceof Error ? responseResult.error.message : String(responseResult.error)}`,
         ),
       );
+    }
+
+    // Usage attribution — BEFORE the stopReason guard: an error-stop response
+    // still spent tokens, and unattributed spend is exactly the gap this hook
+    // closes. Best-effort: absent usage (older providers) skips silently and a
+    // throwing sink never fails the reflect call.
+    if (deps.onUsage !== undefined) {
+      try {
+        const usage = (responseResult.value as {
+          usage?: {
+            input?: number; output?: number; cacheRead?: number; cacheWrite?: number;
+            cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; total?: number };
+          };
+        }).usage;
+        if (usage !== undefined) {
+          deps.onUsage({
+            inputTokens: usage.input ?? 0,
+            outputTokens: usage.output ?? 0,
+            cacheReadTokens: usage.cacheRead ?? 0,
+            cacheWriteTokens: usage.cacheWrite ?? 0,
+            cost: {
+              input: usage.cost?.input ?? 0,
+              output: usage.cost?.output ?? 0,
+              cacheRead: usage.cost?.cacheRead ?? 0,
+              cacheWrite: usage.cost?.cacheWrite ?? 0,
+              total: usage.cost?.total ?? 0,
+            },
+            durationMs: clock.now() - callStartMs,
+          });
+        }
+      } catch {
+        // Usage attribution is best-effort — never fail the reflect call.
+      }
     }
 
     // A pi-ai API error does NOT throw — it RETURNS `{stopReason:"error", content:[],

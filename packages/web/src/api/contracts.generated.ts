@@ -4874,13 +4874,17 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               "qualifiedName": {
                 "type": "string"
               },
+              "callableName": {
+                "type": "string"
+              },
               "description": {
                 "type": "string"
               }
             },
             "required": [
               "name",
-              "qualifiedName"
+              "qualifiedName",
+              "callableName"
             ],
             "additionalProperties": false
           }
@@ -8378,6 +8382,21 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             },
             "rerankerAvailable": {
               "type": "boolean"
+            },
+            "crossUserRecalls": {
+              "type": "number"
+            },
+            "lastCrossUserCount": {
+              "type": "number"
+            },
+            "degraded": {
+              "type": "number"
+            },
+            "lastDegradedScope": {
+              "type": "string"
+            },
+            "lastDegradedErrorKind": {
+              "type": "string"
             }
           },
           "required": [
@@ -8747,6 +8766,12 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             },
             "reclassified": {
               "type": "boolean"
+            },
+            "failedTurnCount": {
+              "type": "number"
+            },
+            "recoveredTurnCount": {
+              "type": "number"
             }
           },
           "required": [
@@ -8975,6 +9000,28 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
                 "divergentTools"
               ],
               "additionalProperties": false
+            },
+            "candidateSessionKeys": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "sources": {
+              "type": "object",
+              "properties": {
+                "session": {
+                  "type": "string"
+                },
+                "trajectory": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "session",
+                "trajectory"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -9042,6 +9089,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               "type": "number"
             },
             "degradedRate": {
+              "type": "number"
+            },
+            "deliveredWithToolErrors": {
               "type": "number"
             }
           },
@@ -9112,6 +9162,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               "type": "number"
             },
             "totalTokens": {
+              "type": "number"
+            },
+            "offSessionUsd": {
               "type": "number"
             }
           },
@@ -12118,6 +12171,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "sizeBytes": {
           "type": "number"
+        },
+        "delivered": {
+          "type": "boolean"
         }
       },
       "required": [

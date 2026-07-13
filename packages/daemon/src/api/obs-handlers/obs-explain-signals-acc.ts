@@ -86,7 +86,10 @@ export interface Acc {
    *  how many returned zero injected memories, and the TERMINAL recall's shape. */
   recallCount: number;
   recallZeroHits: number;
-  lastRecall?: { lanes: number; finalCount: number; rerankerAvailable: boolean };
+  /** Recalls that injected ≥1 memory scoped to a DIFFERENT user than the conversation
+   *  (`crossUserCount > 0`) — the cross-sender privacy signal aggregated for the report. */
+  crossUserRecalls: number;
+  lastRecall?: { lanes: number; finalCount: number; rerankerAvailable: boolean; crossUserCount: number };
   /** Cache breaks folded per-reason from `cache.break` records
    *  — `{count, estCostUsd}` summed per closed reason. Counts + a number
    *  ONLY (never the changed tool names — the trajectory carries only the digest). */
@@ -105,6 +108,14 @@ export interface Acc {
   /** The LAST `activity.turn_finalized` record — the terminal user-surface
    *  state (strategy + effective outcome + reclassified flag). Content-free. */
   turnFinalized?: { strategy: string; outcome: string; errorKind?: string; reason?: string; reclassified: boolean };
+  /** Session-wide finalize tally: how many turns painted a kept failure pill
+   *  and how many finalized as recovered successes — the last-wins snapshot
+   *  above cannot answer "which turn wore the pill" mid-session. */
+  turnFinalizeCounts?: { failure: number; recovered: number };
+  /** Σ over `memory.recall_degraded` records: how many recalls this session
+   *  degraded (a lane or the whole split failed) + the last closed scope /
+   *  ErrorKind labels. Content-free. */
+  recallDegraded?: { count: number; lastScope: string; lastErrorKind: string };
   /** Σ over `delivery.aborted` records: events + blocks never sent. */
   deliveryAborts?: { events: number; chunksNotSent: number };
   /** Recovery-attempt fold from `execution.recovery_attempted` records:
@@ -169,4 +180,11 @@ export interface Acc {
    *  `terminalDriveEvicted`; `wasProducing` is derived from `terminalDrivePromotedReason`. */
   terminalDriveEvictedReason?: string;
   terminalDriveEvictedMs?: number;
+  /** The LAST `subagent.killed` record's closed attribution + kill telemetry
+   *  (runtime always; idle/threshold on health-monitor kills). Folded into
+   *  `subagentKilled` for the subagent_stuck_killed verdict. */
+  subagentKilledBy?: string;
+  subagentKilledRuntimeMs?: number;
+  subagentKilledIdleMs?: number;
+  subagentKilledThresholdMs?: number;
 }

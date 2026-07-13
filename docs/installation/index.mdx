@@ -20,6 +20,12 @@ curl -fsSL https://comis.ai/install.sh | bash
 This is the same script used by the [VPS guide](/installation/install-vps) and
 works on macOS and Linux.
 
+On Linux the dedicated `comis` user is the default: run as root, the installer
+creates it directly; run as a regular user, it offers to re-run itself with
+`sudo`. Pass `--no-user` (or set `COMIS_NO_USER=1`) to install for the current
+user instead. Non-interactive non-root runs (no TTY, or `--no-prompt`) stop
+and ask you to pick one of the two explicitly.
+
 ## Choose Your Setup Method
 
 <CardGroup cols={2}>

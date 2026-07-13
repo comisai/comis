@@ -6,32 +6,41 @@
  * Tool results stored raw in the JSONL session file are replayed into every
  * subsequent LLM call. A 50K-char bash output persisted to disk becomes a
  * permanent context burden. The microcompaction guard saves oversized results
- * to disk as JSON files and writes a compact reference into the session,
- * reducing per-turn context cost while preserving recoverability via the read tool.
+ * to disk and writes a compact reference into the session, reducing per-turn
+ * context cost while preserving recoverability via the read tool.
+ *
+ * Offload files hold CLEAN payload bytes: external-wrapped results (MCP,
+ * web fetch — anything `wrapExternalContent`-wrapped upstream) are unwrapped
+ * before the disk write, with the origin recorded in a `.origin.json`
+ * sidecar. The taint boundary is presentation-layer and is re-applied at the
+ * two places external bytes re-enter context: the inline reference's preview
+ * and the read-tool recovery path (wrap-on-read, keyed by the sidecar).
  *
  * Per-tool inline thresholds:
  * - Default tools: 8K chars (MAX_INLINE_TOOL_RESULT_CHARS)
  * - MCP tools (mcp__*): 15K chars (MAX_INLINE_MCP_TOOL_RESULT_CHARS)
  * - read (file read): 15K chars (MAX_INLINE_FILE_READ_RESULT_CHARS)
  *
- * Hard cap: 100K chars (TOOL_RESULT_HARD_CAP_CHARS) -- truncated before offload.
+ * Hard cap: 100K chars (TOOL_RESULT_HARD_CAP_CHARS) -- the clean payload is
+ * truncated to the cap before the disk write.
  *
- * - Tool results exceeding inline threshold saved to disk
+ * - Tool results exceeding inline threshold saved to disk (clean payload)
  * - Per-tool thresholds applied (8K/15K/15K)
  * - Hard cap (100K) truncation applied before disk offload
- * - Inline reference contains disk path for read tool recovery
+ * - Inline reference carries the disk path + a recovery example verified
+ *   against the written bytes (json.load only when the file parses)
  *
  * @module
  */
 
 import type { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { Message, ToolResultMessage } from "@earendil-works/pi-ai";
-import type { ComisLogger, ErrorKind } from "@comis/core";
-import { safePath } from "@comis/core";
+import type { ComisLogger, ErrorKind, ExternalContentSource } from "@comis/core";
+import { safePath, wrapExternalContent, unwrapExternalContent } from "@comis/core";
 import { ensureContainedDir, writeRegularFile } from "@comis/observability";
+import { readFileSync, statSync } from "node:fs";
 import { dirname, relative } from "node:path";
 import { estimateMessageChars } from "../safety/token-estimator.js";
-import { createToolResultSizeGuard, type ContentBlock } from "../safety/tool-result-size-guard.js";
 import {
   MAX_INLINE_TOOL_RESULT_CHARS,
   MAX_INLINE_MCP_TOOL_RESULT_CHARS,
@@ -63,11 +72,50 @@ export function getInlineThreshold(toolName: string): number {
 // ---------------------------------------------------------------------------
 
 /**
- * Save tool result content to disk as raw concatenated text.
+ * The clean (unwrapped) text of a tool result plus its external origin.
  *
- * Agents read offloaded files expecting raw content matching the head/tail
- * previews shown in the inline reference. Writing a JSON envelope would cause
- * parse failures for agents that assume raw text on disk.
+ * External-wrapped blocks (MCP results, web fetches — anything that went
+ * through `wrapExternalContent` upstream) are unwrapped PER BLOCK back to
+ * their payload; never-wrapped blocks pass through unchanged. `external` is
+ * the first unwrapped block's source, `null` when nothing was wrapped.
+ */
+interface CleanToolResultText {
+  cleanText: string;
+  external: { source: ExternalContentSource } | null;
+}
+
+/** Unwrap each text block of a tool result to its clean payload. */
+function unwrapToolResultText(content: ToolResultMessage["content"]): CleanToolResultText {
+  let cleanText = "";
+  let external: { source: ExternalContentSource } | null = null;
+  for (const block of content) {
+    if (block && typeof block === "object" && "type" in block && block.type === "text" && "text" in block && typeof block.text === "string") {
+      const unwrapped = unwrapExternalContent(block.text);
+      if (unwrapped) {
+        cleanText += unwrapped.content;
+        external ??= { source: unwrapped.source };
+      } else {
+        cleanText += block.text;
+      }
+    }
+  }
+  return { cleanText, external };
+}
+
+/**
+ * Save a tool result's CLEAN payload to disk.
+ *
+ * The offload file is a storage artifact: it holds payload bytes only — the
+ * `wrapExternalContent` security envelope is presentation-layer and is
+ * re-applied at the boundaries instead (the inline reference's preview and
+ * the read-tool recovery path). Before this, the envelope was baked into the
+ * `.json` file at rest and the marker's own `json.load` recovery example
+ * failed on every offloaded MCP result (live incident 2026-07-12).
+ *
+ * External-origin offloads additionally get a `<toolCallId>.origin.json`
+ * sidecar recording the source, so the recovery-read path can restore the
+ * taint boundary. The main pointer format (`tool-results/<toolCallId>.json`)
+ * is unchanged.
  *
  * Uses synchronous file I/O because `appendMessage()` is synchronous.
  * Path construction uses `safePath()` to prevent traversal attacks.
@@ -83,9 +131,9 @@ function saveToDisk(
   sessionDir: string,
   dataDir: string,
   toolCallId: string,
-  _toolName: string,
-  _originalChars: number,
-  content: ToolResultMessage["content"],
+  diskText: string,
+  origin: { source: ExternalContentSource; truncated: boolean; originalChars: number } | null,
+  logger: ComisLogger,
 ): { diskPath: string; written: boolean } {
   const diskPath = safePath(sessionDir, "tool-results", `${toolCallId}.json`);
   // Parent dir at 0o700 via the fs-safe substrate (file-mode invariant).
@@ -95,16 +143,53 @@ function saveToDisk(
   // suppresses the offload event.
   const dirResult = ensureContainedDir({ dir: dirname(diskPath), mode: 0o700, confinedBaseDir: dataDir });
 
-  // Concatenate all text blocks into a single raw string (same logic as extractPreview)
-  let rawText = "";
-  for (const block of content) {
-    if (block && typeof block === "object" && "type" in block && block.type === "text" && "text" in block && typeof block.text === "string") {
-      rawText += block.text;
+  const writeResult = writeRegularFile({ path: diskPath, content: diskText, confinedBaseDir: dataDir });
+
+  if (origin) {
+    const sidecarPath = diskPath.slice(0, -".json".length) + ".origin.json";
+    const sidecarBody = JSON.stringify({
+      source: origin.source,
+      ...(origin.truncated ? { truncated: true, originalChars: origin.originalChars } : {}),
+    });
+    const sidecarResult = writeRegularFile({ path: sidecarPath, content: `${sidecarBody}\n`, confinedBaseDir: dataDir });
+    if (!sidecarResult.ok) {
+      // Best-effort: without the sidecar a later recovery read is delivered
+      // without its taint boundary — visible, not fatal (the inline preview
+      // stays wrapped either way).
+      logger.warn(
+        {
+          toolCallId,
+          sidecarPath,
+          hint: "Origin sidecar write failed; a read-tool recovery of this offload will not restore the external-content taint boundary. Check data-dir confinement and filesystem permissions.",
+          errorKind: "resource" as ErrorKind,
+        },
+        "Offload origin sidecar write failed",
+      );
     }
   }
 
-  const writeResult = writeRegularFile({ path: diskPath, content: rawText, confinedBaseDir: dataDir });
   return { diskPath, written: dirResult.ok && writeResult.ok };
+}
+
+/**
+ * External source recorded for an offloaded file, from its origin sidecar.
+ * `null` for internal-origin offloads (no sidecar) and on any read/parse
+ * failure — fail-open to the internal (unwrapped) treatment, which matches
+ * the pre-sidecar behavior for those files.
+ */
+function readOffloadOrigin(filePath: string): ExternalContentSource | null {
+  if (!filePath.endsWith(".json")) return null;
+  const sidecarPath = filePath.slice(0, -".json".length) + ".origin.json";
+  try {
+    const st = statSync(sidecarPath);
+    if (!st.isFile() || st.size > 4096) return null;
+    const parsed = JSON.parse(readFileSync(sidecarPath, "utf8")) as { source?: unknown };
+    return typeof parsed.source === "string" && parsed.source.length > 0 && parsed.source.length < 64
+      ? (parsed.source as ExternalContentSource)
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -112,25 +197,12 @@ function saveToDisk(
 // ---------------------------------------------------------------------------
 
 /**
- * Extract head + tail text preview from tool result content blocks.
- * Concatenates all text blocks, then slices head and tail.
+ * Head + tail preview slices of the CLEAN payload text.
  * Tail is empty if content fits entirely within head chars.
  */
-function extractPreview(
-  content: ToolResultMessage["content"],
-  headChars: number,
-  tailChars: number,
-): { head: string; tail: string } {
-  let fullText = "";
-  for (const block of content) {
-    if (block && typeof block === "object" && "type" in block && block.type === "text" && "text" in block && typeof block.text === "string") {
-      fullText += block.text;
-    }
-  }
-  const head = fullText.slice(0, headChars);
-  const tail = fullText.length > headChars + tailChars
-    ? fullText.slice(-tailChars)
-    : "";
+function slicePreview(cleanText: string, headChars: number, tailChars: number): { head: string; tail: string } {
+  const head = cleanText.slice(0, headChars);
+  const tail = cleanText.length > headChars + tailChars ? cleanText.slice(-tailChars) : "";
   return { head, tail };
 }
 
@@ -139,8 +211,47 @@ function extractPreview(
 // ---------------------------------------------------------------------------
 
 /**
+ * Recovery guidance that is TRUE for the bytes just written: the `json.load`
+ * example is emitted only when the disk payload actually parses as JSON
+ * (verified right here, at write time), a truncated disk copy says so instead
+ * of promising a parse that must fail, and plain text gets text tooling. The
+ * old unconditional `json.load` example failed on every non-JSON offload —
+ * and, before clean-at-rest offloads, on every security-wrapped MCP result.
+ */
+function recoveryGuidance(diskText: string, diskPath: string, diskTruncated: boolean): string {
+  // The read tool is exempt from re-offload for tool-results recovery reads
+  // (and disk copies are capped at the hard cap), so reading the whole file
+  // back always works — exec just keeps only the extracted data in context.
+  let guidance =
+    `To recover specific data: use exec with python/jq to parse the file (the read tool also works for this file; exec keeps only the extracted data in context).\n`;
+  if (diskTruncated) {
+    guidance +=
+      `NOTE: the disk copy was truncated at ${TOOL_RESULT_HARD_CAP_CHARS} chars — structured parsing may fail; inspect with text tools (grep/head).\n`;
+    return guidance;
+  }
+  let parsesAsJson = false;
+  try {
+    JSON.parse(diskText);
+    parsesAsJson = true;
+  } catch {
+    // not JSON — fall through to the text guidance
+  }
+  if (parsesAsJson) {
+    guidance += `The file is valid JSON. Example: exec python3 -c "import json; data=json.load(open('${diskPath}')); print(type(data).__name__, list(data)[:20] if isinstance(data, dict) else len(data))"\n`;
+  } else {
+    guidance += `The file is plain text (not JSON) — use text tools, e.g.: exec grep -n '<term>' '${diskPath}' | head\n`;
+  }
+  return guidance;
+}
+
+/**
  * Create a lightweight inline reference message replacing the original
- * tool result content with a head+tail preview.
+ * tool result content with a head+tail preview of the CLEAN payload.
+ *
+ * For external-origin content the preview section is re-wrapped with
+ * `wrapExternalContent` so external bytes never sit in context without their
+ * taint boundary (the disk file holds clean payload; the boundary is a
+ * presentation concern and this is the presentation).
  *
  * Preserves `toolCallId`, `toolName`, `isError`, and `timestamp` so SDK
  * tool_use/tool_result pairing remains valid. The `[Tool result offloaded
@@ -150,32 +261,33 @@ function createInlineReference(
   original: ToolResultMessage,
   totalChars: number,
   diskPath: string,
+  diskText: string,
+  external: { source: ExternalContentSource } | null,
+  diskTruncated: boolean,
 ): ToolResultMessage {
-  const { head, tail } = extractPreview(original.content, PREVIEW_HEAD_CHARS, PREVIEW_TAIL_CHARS);
+  const { head, tail } = slicePreview(diskText, PREVIEW_HEAD_CHARS, PREVIEW_TAIL_CHARS);
 
   // Recovery instruction is placed BEFORE head/tail preview so the LLM sees
   // how to recover the data before seeing the (potentially misleading) preview.
   let referenceText =
     `[Tool result offloaded to disk: ${original.toolName} returned ${totalChars} chars. hasMore=true\n`;
 
-  // For large results (>= 15K chars), suggest exec with python/jq
-  // instead of the read tool, because read itself produces a toolResult that will
-  // re-trigger offload (creating an unresolvable re-offload loop). The exec tool
-  // returns only stdout (typically small extracted data), breaking the loop.
+  // For large results (>= 15K chars), lead with exec/python extraction — it
+  // keeps only the extracted data in context, where a read tool recovery
+  // re-enters the whole file.
   if (totalChars >= MAX_INLINE_FILE_READ_RESULT_CHARS) {
-    referenceText +=
-      `Full content saved at: ${diskPath}\n` +
-      `To recover specific data: use exec with python/jq to parse the file (the read tool will re-offload results this large).\n` +
-      `Example: exec python3 -c "import json; data=json.load(open('${diskPath}')); print(data['key'])"\n`;
+    referenceText += `Full content saved at: ${diskPath}\n` + recoveryGuidance(diskText, diskPath, diskTruncated);
   } else {
     referenceText += `Full content saved — use the read tool to re-access: ${diskPath}\n`;
   }
 
-  referenceText += `--- head (${head.length} chars) ---\n${head}\n`;
-
+  let previewSection = `--- head (${head.length} chars) ---\n${head}\n`;
   if (tail) {
-    referenceText += `--- tail (${tail.length} chars) ---\n${tail}\n`;
+    previewSection += `--- tail (${tail.length} chars) ---\n${tail}\n`;
   }
+  // External payload previews carry the taint boundary; internal previews
+  // stay bare (wrapping internal output would mislabel trusted data).
+  referenceText += external ? `${wrapExternalContent(previewSection, { source: external.source })}\n` : previewSection;
 
   referenceText += `]`;
 
@@ -220,7 +332,6 @@ export function installMicrocompactionGuard(
   onOffloaded?: (toolName: string, originalChars: number, toolCallId: string, diskPathRel: string) => void,
 ): void {
   const originalAppend = sm.appendMessage.bind(sm);
-  const guard = createToolResultSizeGuard();
 
   sm.appendMessage = (message: Parameters<SessionManager["appendMessage"]>[0]): string => {
     // Only guard toolResult messages
@@ -303,31 +414,46 @@ export function installMicrocompactionGuard(
         && readFilePath.includes("/tool-results/");
 
     if (isRecoveryRead && totalChars <= TOOL_RESULT_HARD_CAP_CHARS) {
+      // Offload files hold CLEAN payload bytes; the taint boundary is a
+      // presentation concern. A recovery read of an EXTERNAL-origin offload
+      // (origin sidecar present) re-enters context re-wrapped so the
+      // security notice still rides along; internal-origin files pass
+      // through bare exactly as before.
+      const originSource = readOffloadOrigin(readFilePath);
+      if (originSource) {
+        for (const block of toolResultMsg.content) {
+          if (block && typeof block === "object" && "type" in block && block.type === "text" && "text" in block && typeof block.text === "string") {
+            block.text = wrapExternalContent(block.text, { source: originSource });
+          }
+        }
+      }
       logger.debug(
-        { toolName: toolResultMsg.toolName, totalChars, filePath: readFilePath },
+        { toolName: toolResultMsg.toolName, totalChars, filePath: readFilePath, rewrappedAs: originSource ?? undefined },
         "Recovery read of offloaded file -- skipping re-offload",
       );
       return originalAppend(message);
     }
 
-    // Case 1: Hard cap exceeded -- truncate THEN offload
-    if (totalChars > TOOL_RESULT_HARD_CAP_CHARS) {
-      const result = guard.truncateIfNeeded(
-        toolResultMsg.content as ContentBlock[],
-        TOOL_RESULT_HARD_CAP_CHARS,
-      );
+    // Unwrap once for the offload paths: the disk artifact, the previews, and
+    // the recovery example are all derived from the CLEAN payload (the
+    // security envelope is re-applied at the presentation boundaries instead
+    // of stored at rest). Under-threshold results never pay this.
+    const { cleanText, external } = totalChars > threshold
+      ? unwrapToolResultText(toolResultMsg.content)
+      : { cleanText: "", external: null };
 
-      const truncatedContent = result.truncated
-        ? (result.content as typeof toolResultMsg.content)
-        : toolResultMsg.content;
+    // Case 1: Hard cap exceeded -- truncate the CLEAN payload THEN offload
+    if (totalChars > TOOL_RESULT_HARD_CAP_CHARS) {
+      const diskTruncated = cleanText.length > TOOL_RESULT_HARD_CAP_CHARS;
+      const diskText = diskTruncated ? cleanText.slice(0, TOOL_RESULT_HARD_CAP_CHARS) : cleanText;
 
       const { diskPath, written } = saveToDisk(
         sessionDir,
         dataDir,
         toolResultMsg.toolCallId,
-        toolResultMsg.toolName,
-        totalChars,
-        truncatedContent,
+        diskText,
+        external ? { source: external.source, truncated: diskTruncated, originalChars: totalChars } : null,
+        logger,
       );
 
       logger.warn(
@@ -342,8 +468,7 @@ export function installMicrocompactionGuard(
         "Tool result exceeded hard cap -- truncated and offloaded",
       );
 
-      const truncatedMsg = { ...toolResultMsg, content: truncatedContent };
-      const reference = createInlineReference(truncatedMsg, totalChars, diskPath);
+      const reference = createInlineReference(toolResultMsg, totalChars, diskPath, diskText, external, diskTruncated);
       // Pass only a WORKSPACE-RELATIVE pointer (sessionDir-relative) — the
       // absolute diskPath leaks the host filesystem layout and is
       // not a stable drill-down target. This guard holds no event bus and no
@@ -382,18 +507,18 @@ export function installMicrocompactionGuard(
       return originalAppend(reference);
     }
 
-    // Case 2: Exceeds per-tool threshold -- offload full content
+    // Case 2: Exceeds per-tool threshold -- offload the full clean payload
     if (totalChars > threshold) {
       const { diskPath, written } = saveToDisk(
         sessionDir,
         dataDir,
         toolResultMsg.toolCallId,
-        toolResultMsg.toolName,
-        totalChars,
-        toolResultMsg.content,
+        cleanText,
+        external ? { source: external.source, truncated: false, originalChars: totalChars } : null,
+        logger,
       );
 
-      const reference = createInlineReference(toolResultMsg, totalChars, diskPath);
+      const reference = createInlineReference(toolResultMsg, totalChars, diskPath, cleanText, external, false);
 
       // Compute reference size and compression ratio for observability
       const refContent = reference.content[0];

@@ -82,6 +82,21 @@ export function chimericModelFromRow(row: DiagnosticRow): number {
   }
 }
 
+/** unresolvedModelCount from a config_posture row's details JSON — configured
+ *  agents whose (provider, model) does NOT resolve in the catalog (and is not a
+ *  custom model) → fail-closed-to-nano. Defensive parse — malformed/missing folds
+ *  to 0 (the chimericModelFromRow clone; counts only, never a model id). */
+export function unresolvedModelFromRow(row: DiagnosticRow): number {
+  if (row.details === undefined) return 0;
+  try {
+    const parsed = JSON.parse(row.details) as { unresolvedModelCount?: unknown };
+    const n = parsed.unresolvedModelCount;
+    return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
 /** pricingGapCount from a config_posture row's details JSON — configured
  *  agents burning tokens on remote-unknown-priced models (resolvePricingState ==
  *  "unknown"). Defensive parse — malformed/missing folds to 0 (the chimericModelFromRow
@@ -91,6 +106,23 @@ export function pricingGapFromRow(row: DiagnosticRow): number {
   try {
     const parsed = JSON.parse(row.details) as { pricingGapCount?: unknown };
     const n = parsed.pricingGapCount;
+    return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** mediaCredentialGapCount from a config_posture row's details JSON —
+ *  configured media pipelines (image/transcription/tts/video) whose pinned
+ *  provider's credential is absent (the pipeline fails at first use; the
+ *  incident-day image-gen unavailability). Defensive parse cloning
+ *  pricingGapFromRow — malformed/missing folds to 0 (counts only, never a
+ *  provider name / credential body). */
+export function mediaCredentialGapFromRow(row: DiagnosticRow): number {
+  if (row.details === undefined) return 0;
+  try {
+    const parsed = JSON.parse(row.details) as { mediaCredentialGapCount?: unknown };
+    const n = parsed.mediaCredentialGapCount;
     return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : 0;
   } catch {
     return 0;
@@ -110,6 +142,8 @@ export function flaggedPostureKeys(row: DiagnosticRow): string[] {
       canaryFallbackActive?: unknown;
       strandedFindings?: unknown;
       sandboxNoDowngradeDisabled?: unknown;
+      browserNoSandbox?: unknown;
+      terminalUnsafeDisableSandbox?: unknown;
     };
     const keys: string[] = [];
     if (d.tlsOff === true) keys.push("gateway.tls (off)");
@@ -121,6 +155,19 @@ export function flaggedPostureKeys(row: DiagnosticRow): string[] {
     // a weaker posture than its parent) — NAME the exact knob, not "a flagged key".
     if (d.sandboxNoDowngradeDisabled === true) {
       keys.push("security.agentToAgent.sandboxNoDowngrade (off)");
+    }
+    // Chromium runs without its sandbox while the browser tool handles untrusted
+    // web content — NAME the exact knob (the live friction was a relaxed browser
+    // sandbox that never surfaced in fleet).
+    if (d.browserNoSandbox === true) {
+      keys.push("browser.noSandbox (Chromium sandbox off)");
+    }
+    // The terminal-driver bwrap jail is opted out (a coding-CLI drive runs directly,
+    // no jail) — NAME the exact knob. The boot config_posture row already carries this
+    // and flips to `warning`, but the fleet lens omitted it, so an operator triaging via
+    // `comis fleet` saw the browser + no-downgrade relaxations named and this one silent.
+    if (d.terminalUnsafeDisableSandbox === true) {
+      keys.push("skills.terminal.unsafeDisableSandbox (bwrap jail off)");
     }
     return keys;
   } catch {
@@ -188,6 +235,12 @@ export const DEDICATED_SCRIPT_SIGNALS: ReadonlySet<string> = new Set([
   "sandbox_downgrade_refused",
   "delivery_deadlettered",
   "node_budget_exceeded",
+  // subagent_killed gets the dedicated subagent_stuck_killed finding below
+  // (warning rows = health-monitor kills only; parent/operator/system kills are
+  // severity:info by construction and surface nowhere). Excluded here so a
+  // stuck-kill is not ALSO counted as a generic `health_signal:subagent_killed`
+  // finding — finding + entry MOVE TOGETHER.
+  "subagent_killed",
   // The four persisted autonomy/durable-run signals
   // are EXCLUDED from the generic `health_signal:<label>` rollup.
   // durable_orphaned / autonomy_revoked / autonomy_killed each get a dedicated
@@ -339,6 +392,24 @@ export function nodeBudgetExceededFromRow(row: DiagnosticRow): { capSource: stri
     const capSource =
       typeof parsed.capSource === "string" && parsed.capSource.length > 0 ? parsed.capSource : "unknown";
     return { capSource };
+  } catch {
+    return null;
+  }
+}
+
+/** The closed `killedBy` attribution from a `subagent_killed` row's details
+ *  JSON. Defensive parse cloning `nodeBudgetExceededFromRow` — a non-kill /
+ *  malformed / missing row folds to `null` (ignored). Only warning-severity
+ *  rows reach the dedicated finding (the row-builder stamps deliberate
+ *  parent/operator/system kills severity:"info"). */
+export function subagentKilledFromRow(row: DiagnosticRow): { killedBy: string } | null {
+  if (row.details === undefined) return null;
+  try {
+    const parsed = JSON.parse(row.details) as { signal?: unknown; killedBy?: unknown };
+    if (parsed.signal !== "subagent_killed") return null;
+    const killedBy =
+      typeof parsed.killedBy === "string" && parsed.killedBy.length > 0 ? parsed.killedBy : "unknown";
+    return { killedBy };
   } catch {
     return null;
   }

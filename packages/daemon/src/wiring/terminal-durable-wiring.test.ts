@@ -22,6 +22,24 @@ import {
   recreateStrandedTmuxServerOnBoot,
 } from "./terminal-durable-wiring.js";
 
+// Recorded execFileSync invocations from the module's DEFAULT probes (every
+// other test injects its exec seam; only the default-probe tests reach this).
+// The fake always throws the clean-first-boot fault shape — the tmux client
+// failing because the durable socket does not exist yet.
+const execFileSyncCalls = vi.hoisted(
+  () => [] as Array<{ file: string; args: readonly string[]; options: Record<string, unknown> | undefined }>,
+);
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    execFileSync: ((file: string, args: readonly string[], options?: Record<string, unknown>) => {
+      execFileSyncCalls.push({ file, args, options });
+      throw new Error("error connecting to /data/.comis/terminal-worker/tmux.sock (No such file or directory)");
+    }) as typeof actual.execFileSync,
+  };
+});
+
 function makeLogger() {
   return { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn(), child: vi.fn(function (this: unknown) { return this; }) };
 }
@@ -364,5 +382,32 @@ describe("recreateStrandedTmuxServerOnBoot — kill the stranded server so new s
     );
     expect(r.killed).toBe(false);
     expect(killServer).not.toHaveBeenCalled();
+  });
+});
+
+// On a clean first boot the durable socket does not exist, so the DEFAULT
+// one-shot `tmux -S <socket> display-message -p '#{pid}'` probe fails. Pre-fix
+// the exec inherited the child's stderr, so the tmux client's raw
+// "error connecting to <socket> (No such file or directory)" landed
+// UNSTRUCTURED in the daemon's stderr/journald between Pino JSON lines on
+// every fresh install. Contract: the probe's stderr is piped/ignored — never
+// inherited — and the probe fault stays the silent-safe `undefined`.
+describe("recreateStrandedTmuxServerOnBoot — the DEFAULT server-pid probe must not inherit the tmux client's stderr", () => {
+  it("configures the probe exec with a piped/ignored stderr so a socketless first boot leaks no raw tmux error line", () => {
+    execFileSyncCalls.length = 0;
+    const r = recreateStrandedTmuxServerOnBoot({
+      socketPath: "/data/.comis/terminal-worker/tmux.sock",
+      tmuxPath: "/usr/bin/tmux",
+      logger: makeLogger(),
+      readDaemonMntNs: () => "mnt:[4026532302]",
+    });
+    // The failing probe stays the SAFE direction: unknown ns, nothing stranded.
+    expect(r).toEqual({ stranded: false, killed: false });
+
+    const probe = execFileSyncCalls.find((c) => c.args.includes("display-message"));
+    expect(probe).toBeDefined();
+    const stdio = probe!.options?.stdio;
+    const stderrCfg = Array.isArray(stdio) ? stdio[2] : stdio;
+    expect(["pipe", "ignore"]).toContain(stderrCfg);
   });
 });

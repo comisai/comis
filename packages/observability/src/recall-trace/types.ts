@@ -75,6 +75,7 @@ export type RecallIncludeReason = (typeof RECALL_INCLUDE_REASONS)[number];
  */
 export const RECALL_DEGRADATION_KINDS = [
   "vec_unavailable",
+  "vec_lane_failed",
   "reranker_unavailable",
   "rerank_timeout",
   "missing_embedding",

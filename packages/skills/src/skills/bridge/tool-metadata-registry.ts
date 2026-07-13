@@ -264,13 +264,19 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("mcp_manage", {
     validActions: ["list", "status", "connect", "disconnect", "reconnect"],
     validKeys: ["action", "server_name", "transport", "command", "args", "url", "headers", "auth", "env"],
-    // connect requires [server_name, transport]; command (stdio) / url (sse|http) are
-    // transport-conditional and validated downstream by the handler. `auth`
-    // ("headers" | "oauth") is the OAuth opt-in — must be in validKeys
-    // so the bridge schema-validator doesn't reject before execute() runs.
+    // connect requires only [server_name] at this pre-flight gate. `transport` is
+    // INFERABLE (stdio from `command`, http from `url`) and the real "command OR
+    // url" requirement is transport-conditional — neither can be expressed as a
+    // flat required-list entry, so both are validated downstream by the handler
+    // (validateConnectParams + transport inference, mcp-manage-tool.ts). Listing
+    // `transport` here HARD-FAILED a valid stdio connect before the handler could
+    // infer it (comis-daniel 2026-07-09: `connect(server_name, command:"npx",
+    // args:[...])` → "[invalid_value] missing … transport"). `auth` ("headers" |
+    // "oauth") is the OAuth opt-in — must be in validKeys so the bridge
+    // schema-validator doesn't reject before execute() runs.
     requiredByAction: {
       status:     ["server_name"],
-      connect:    ["server_name", "transport"],
+      connect:    ["server_name"],
       disconnect: ["server_name"],
       reconnect:  ["server_name"],
     },

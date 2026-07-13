@@ -321,6 +321,43 @@ describe("bindObsExplainHandlers", () => {
     expect(r.failures).toEqual([]);
   });
 
+  it("a lossy ref that misroutes to a traceId-miss STILL seeds the 'did you mean' scan with the ORIGINAL ref (not the resolved empty key)", async () => {
+    // The live friction: `comis explain 678314278` (a bare chatId) and the
+    // tilde-form `678314278~peer~678314278` lack ':' → the CLI routes them to
+    // {traceId} → resolveTraceToSession misses → sessionKey collapses to "".
+    // The candidate scan must run against the ORIGINAL ref so the ranker can
+    // surface the real key — scanning the empty "" silently returned [] (the
+    // "did you mean" list no-op'd for the exact case it exists to serve).
+    let scannedSeed: string | undefined;
+    const reader: IncidentSourceReader = {
+      readSessionRecords: async () => [],
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => null,
+      readDiagnosticsRollup: async () => null,
+      listCandidateSessionKeys: async (requested: string) => {
+        scannedSeed = requested;
+        // A faithful ranker stand-in: only a NON-empty seed yields a match.
+        return requested.length > 0 ? ["default:678314278:678314278:peer:678314278"] : [];
+      },
+    };
+    // Empty dataDir → no session-index → the traceId lookup misses (sessionKey "").
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-lossy-"));
+    const handlers = bindObsExplainHandlers(makeDeps({ dataDir, incidentReader: reader }));
+    const r = (await handlers["obs.explain"]!({
+      traceId: "678314278",
+      _trustLevel: "admin",
+    })) as IncidentReport;
+
+    // The scan was seeded with the ORIGINAL ref, never the resolved "".
+    expect(scannedSeed).toBe("678314278");
+    // …so the closest real key is surfaced for the operator to copy.
+    expect(r.coverage?.candidateSessionKeys).toContain("default:678314278:678314278:peer:678314278");
+    // …and the not-found detail points at the candidates, not the misdirecting
+    // "typo/expired" hint.
+    expect(r.likelyRootCause?.code).toBe("session_not_found");
+    expect(r.likelyRootCause?.detail).toMatch(/lossy|candidate|partial/i);
+  });
+
   it("an EMPTY but RESOLVED session keeps the no-throw, null-rootCause behavior (only the UNRESOLVED case is marked)", async () => {
     // A real sessionKey that simply has no telemetry on disk must NOT be tagged
     // session_not_found — it resolved fine; it is just empty. Only the
