@@ -91,6 +91,12 @@ export interface MemoryPort {
    * MUST fall back to {@link search} (the single-lane path) — this is a
    * graceful-degrade, not a compatibility toggle.
    *
+   * Lane isolation: a vector-lane failure (e.g. a vec-table/embedder drift)
+   * MUST NOT fail the whole call — the implementer returns the FTS lane with an
+   * empty `vector` lane plus `vectorLaneDegraded` naming the failure class, so
+   * text recall survives a broken vector backend and the caller can surface the
+   * degradation. Only a failure that breaks BOTH lanes returns `err`.
+   *
    * @param sessionKey - Session context to scope the search (tenant isolation)
    * @param query - Text query or embedding vector
    * @param options - Search filters and limits (minScore is IGNORED here)
@@ -100,7 +106,18 @@ export interface MemoryPort {
     sessionKey: SessionKey,
     query: string | number[],
     options?: MemorySearchOptions,
-  ): Promise<Result<{ fts: MemorySearchResult[]; vector: MemorySearchResult[] }, Error>>;
+  ): Promise<
+    Result<
+      {
+        fts: MemorySearchResult[];
+        vector: MemorySearchResult[];
+        /** Present when the vector lane failed and was degraded to empty
+         *  (the FTS lane above is still authoritative). */
+        vectorLaneDegraded?: { errorKind: string };
+      },
+      Error
+    >
+  >;
 
   /**
    * Delete a memory entry by its ID.

@@ -8,15 +8,17 @@
  * with every field `.default()`-ed and `strictObject` as the typo guard
  * (fails-closed).
  *
- * GATING: `enabled` defaults to FALSE. The
+ * GATING: `enabled` defaults to TRUE (durable runs out of the box). The
  * daemon constructs the durable stores + resume engine + watchdog ONLY when this
- * is true AND an autonomy-bearing agent is configured — so a default install is
- * byte-identical (no new timer, no boot recovery work), mirroring the
- * `cap.sock`-only-when-autonomy-configured gate (data-directory.mdx).
+ * is true AND an autonomy-bearing agent is configured — an install with no
+ * autonomy-bearing agent is byte-identical (no new timer, no boot recovery
+ * work), mirroring the `cap.sock`-only-when-autonomy-configured gate
+ * (data-directory.mdx).
  *
  * `schema-agent-autonomy.ts` wires this into `AutonomyConfigSchema` as
  * `durability: DurabilityConfigSchema.default({})`, so a fully-omitted block
- * resolves to `{ enabled:false, ... }` (default-off).
+ * resolves to `{ enabled:true, ... }` (an operator sets `enabled:false` to opt
+ * out).
  *
  * Pure schema leaf — imports only `zod`. No `process.env` / `Date.now` /
  * `path.join` (AGENTS §2.2).
@@ -35,12 +37,12 @@ import { z } from "zod";
  */
 export const DurabilityConfigSchema = z.strictObject({
   /**
-   * Master gate (default FALSE). Off ⇒ no durable stores, no boot recovery, no
-   * watchdog timer — a default install is byte-identical (no autonomy → no
-   * engine). An operator turns this ON for an autonomy-bearing agent that must
-   * survive a daemon restart mid-run.
+   * Master gate (default TRUE — durable runs out of the box). On ⇒ durable
+   * stores + boot recovery + watchdog so an autonomy-bearing run survives a
+   * daemon restart mid-run. An operator can set false to opt out (no durable
+   * stores, no boot recovery).
    */
-  enabled: z.boolean().default(false),
+  enabled: z.boolean().default(true),
   /**
    * The lapsed-heartbeat threshold (ms) — a `running` run whose last heartbeat is
    * older than this is treated as crashed and orphan-swept by the watchdog.
@@ -66,16 +68,15 @@ export const DurabilityConfigSchema = z.strictObject({
   recoveryBudgetMs: z.number().int().positive().default(30_000),
   /**
    * The single gate every resumable-orchestrate behavior nests under
-   * (default FALSE). Off ⇒ an `orchestrate` run that times out is SIGKILL'd +
-   * rejected as today (no resumable durable row written, no checkpoint
-   * survival). On ⇒ a durable-registered `orchestrate` timeout records a
-   * resumable `{scriptRef, checkpointRef}` row so `orchestrate({resumeRunId})`
-   * can re-spawn the PINNED original script and `resume()` yields the last
-   * checkpoint. Nested INSIDE this block (not a flat toggle) so it inherits the
-   * durability posture's deny-by-absence: an omitted block resolves it to
-   * false, and the per-agent surface predicate fails closed on absent config.
+   * (default TRUE — resumable orchestrate out of the box). On ⇒ a durable-
+   * registered `orchestrate` timeout records a resumable `{scriptRef,
+   * checkpointRef}` row so `orchestrate({resumeRunId})` can re-spawn the PINNED
+   * original script and `resume()` yields the last checkpoint. Off ⇒ a timed-out
+   * `orchestrate` run is SIGKILL'd + rejected as today (no resumable row). Nested
+   * INSIDE this block so it inherits the durability posture; the per-agent surface
+   * predicate fails closed on absent config.
    */
-  orchestrateResume: z.boolean().default(false),
+  orchestrateResume: z.boolean().default(true),
 });
 
 export type DurabilityConfig = z.infer<typeof DurabilityConfigSchema>;

@@ -95,6 +95,8 @@ agents:
             limits: { wallClockMs: 7200000, maxInteractions: 800 }
         redactSecrets: true
         audit: { enabled: true }
+        # unsafeDisableSandbox: false   # DANGEROUS opt-out of the bwrap jail (see Security model).
+                                        # Only for hosts that cannot run bwrap; leave false otherwise.
         drive:                          # autonomous-drive policy (optional; omit ⇒ today's behavior)
           mode: auto                    # auto (default) | attached (never promote) | detached (promote at first wait)
           readMode: digest              # digest (default) | diff | full — the woken-turn read shape
@@ -104,6 +106,10 @@ agents:
           notify: terminal              # which outcomes reach you: terminal (default) | all (reserved; today == terminal) | none — see Notifications
           heartbeatNotifyMs: 3600000    # user "still working" heartbeat for a long drive (default 1h; 0 = terminal-only)
 ```
+
+<Tip>
+**Minimal config.** `enabled`, `worker`, `defaults`, `redactSecrets`, and `audit` all carry defaults -- the example above sets them explicitly for illustration, but you may omit any of them. On a bwrap-less host the jail opt-out is a one-liner: `terminal: { unsafeDisableSandbox: true, allow: [ … ] }`. Omitted worker caps default to `maxSessions: 8` / `idleTtlMs: 900000` / `ringBytes: 262144` / `stuckMs: 30000` / `maxConcurrentAttentionTurns: 4`, the emulator to `cols: 80` / `rows: 24` / `scrollback: 1000`, and `redactSecrets` / `audit.enabled` to `true`. You still need `allow` entries to launch anything (an empty allow-set fails closed), and an **absent** `terminal:` block leaves the driver unconfigured.
+</Tip>
 
 The whole `drive:` block is **optional** and additive: a config with no `drive` block behaves **exactly as before** (no auto-promotion change, the digest read is already the effective default). An unknown key under `drive:` (a typo) is rejected at config load, like every other terminal key.
 
@@ -141,7 +147,8 @@ Every driven session runs in a bwrap jail materializing the entry's `scope`:
 | `uid` | `dedicated` / `daemon` | `dedicated` |
 
 - **`~/.comis` carve-out (non-dialable):** the daemon data dir (master key, secret store) is masked with a tmpfs in **every** jail, even at `filesystem: full`. A driven child can never read Comis's secrets.
-- **Fail-closed:** if the declared scope cannot be materialized (no bwrap), `session_create` is rejected -- never degraded to an unsandboxed child.
+- **Fail-closed:** if the declared scope cannot be materialized (no bwrap), `session_create` is rejected -- never degraded to an unsandboxed child. The one operator override is `unsafeDisableSandbox` (below).
+- **`unsafeDisableSandbox` (default `false`, DANGEROUS):** the operator opt-out of the jail — the peer of `browser.noSandbox`, for constrained hosts that genuinely cannot run bwrap (a container without unprivileged user-namespaces, a locked-down CI box). When `true`, `session_create` runs the driven CLI **directly** instead of failing closed, with **no filesystem / network / uid confinement** (the `scope` dimensions are unenforceable without the jail). Two protections are still enforced and never optional: the **env-scrub still strips daemon secrets** (gateway token / master key) from the child env, and a **durable `backend: "tmux"` drive is force-downgraded to the non-durable PTY backend** (a tmux server would inherit env the jail's per-session `--unsetenv` normally strips). It is surfaced at boot in `comis fleet` config-posture (`terminalUnsafeDisableSandbox`), and it is **operator-file-only**: no runtime RPC can set it — neither `config.patch` (the whole `agents.*` prefix is immutable there) **nor** `agents_manage` / `agents.update` (which otherwise writes agent config) — so an admin-trust agent can never self-enable it; only editing the config file and restarting the daemon can. The same file-only rule covers `skills.execSandbox` (the exec OS-sandbox switch) and `skills.terminal.allow` (the command allowlist). Leave it `false` on any host where bwrap is available.
 - **The binary must be in scope:** the jail can only exec a `match.path` that its `filesystem` scope binds. A binary under `/usr` rides the system RO base; a **home-installed** binary (e.g. `~/.local/bin/claude`, the standard install) is reachable only at `filesystem: home` (or `listed-paths` including its dir) — `filesystem: workspace` cannot exec it.
 - **Env-scrub:** interpreter-control vars (`NODE_OPTIONS`, `BASH_ENV`, `PYTHONSTARTUP`, function-export) and nested-CLI markers (`CLAUDE_CODE_*`, `CLAUDECODE`) are stripped.
 - **Untrusted output:** `terminal_session_read` redacts secrets and wraps the screen as untrusted external content -- a driven AI CLI can render attacker text, so the screen is treated as a prompt-injection vector, not trusted input.

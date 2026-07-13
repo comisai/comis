@@ -36,6 +36,7 @@ export type RecallRerankOutcome = "ran" | "fell_back" | "timed_out";
 /** Closed union of degradation kinds (mirrors RECALL_DEGRADATION_KINDS). */
 export type RecallDegradationKind =
   | "vec_unavailable"
+  | "vec_lane_failed"
   | "reranker_unavailable"
   | "rerank_timeout"
   | "missing_embedding";

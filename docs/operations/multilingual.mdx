@@ -199,10 +199,15 @@ recall *coverage*; an English-only reranker silently degrades non-Latin recall *
 gates anything — the FTS trigram floor carries recall regardless — but Comis names the degradation
 in `comis fleet` so it is not silently absent.
 
-- **Embedder** — for non-Latin deployments, a multilingual embedding model: `bge-m3` or
-  `multilingual-e5`. Declare it explicitly with `embedding.multilingual: true`, or let the
-  advisory infer it from the model id (`bge-m3` / `multilingual-e5` / LaBSE / E5 read as
-  multilingual; otherwise `"unknown"`).
+- **Embedder** — for non-Latin deployments, select a multilingual embedding model: set
+  `embedding.local.modelUri` to a `bge-m3` GGUF (on-device, e.g.
+  `hf:gpustack/bge-m3-GGUF:bge-m3-Q8_0.gguf`) or `embedding.provider: openai`
+  (`text-embedding-3-small`, hosted). The `comis init` wizard asks about this at install and
+  writes the block for you (`--embedding-multilingual` / `--embedding-provider` non-interactively).
+  `embedding.multilingual: true` is the **advisory** flag for the fleet health line — it selects
+  nothing itself; declare it (or let the advisory infer it from the model id: `bge-m3` /
+  `multilingual-e5` / LaBSE / E5 read as multilingual, otherwise `"unknown"`). See
+  [Embeddings](/agents/embeddings#multilingual-deployments).
 - **Reranker** — `bge-reranker-v2-m3` is the multilingual cross-encoder; it is inferred from the
   model id (no separate config flag).
 

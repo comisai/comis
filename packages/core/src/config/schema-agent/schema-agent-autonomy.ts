@@ -76,7 +76,7 @@ import { AUTONOMY_ROLES, resolveCoordinatorToolGroups, type AutonomyRole } from 
 import { capIsAutoApprovable } from "./schema-agent-autonomy-escalate.js";
 
 /**
- * The nine FLOOR-CONTAINED orchestration caps the `standard` profile turns on.
+ * The ten FLOOR-CONTAINED orchestration caps the `standard` profile turns on.
  * A profile MAY auto-allow these because the non-removable structural floor
  * (deny-by-origin, secrets/host unreachability, the always-on
  * budget/rate/spawn-ceiling, live revoke) bounds their blast radius.
@@ -91,9 +91,8 @@ import { capIsAutoApprovable } from "./schema-agent-autonomy-escalate.js";
  * `autoApprovable:false` floor item enforced by the message config + the
  * per-target grant — NOT by removing the cap from the held set. The
  * cap-literal `orch:message` is therefore floor-contained +
- * `autoApprovable:true` (origin); only its non-origin TARGET escalates.
- * (The cap covers the genuinely-outward subset send/reply/react
- * ONLY — edit/delete/fetch/attach stay admin-only and are not part of it.)
+ * `autoApprovable:true` (origin); only its non-origin TARGET escalates. The cap
+ * covers send/reply/react ONLY — edit/delete/fetch/attach stay admin-only.
  */
 export const STANDARD_FLOOR_CAPABILITIES = [
   "orch:read",
@@ -105,6 +104,7 @@ export const STANDARD_FLOOR_CAPABILITIES = [
   "orch:cron",
   "orch:skill",
   "orch:message",
+  "orch:mcp", // FLOOR cap like orch:write; reachability gate is `autonomy.mcp.allow` (default {} ⇒ deny), not the cap
 ] as const satisfies readonly AgentCapability[];
 
 // ── The autonomy config schema (knob surface + defaulting) ──────────────────
@@ -224,7 +224,7 @@ export const AutonomyConfigSchema = z.strictObject({
   web: z.boolean().optional(),
   /** orch:analyze — cost-bearing media analysis (behind the aggregate budget). */
   analyze: z.boolean().optional(),
-  /** orch:write — workspace mutation (jailed + reversible-ish). */
+  /** orch:write — workspace mutation. Optional (no cap-toggle default ⇒ never unions orch:write into a degraded posture); the WRITE SURFACE defaults ON via `writeSurfaceEnabled` (`autonomy.write !== false`). */
   write: z.boolean().optional(),
   /** orch:browse — browser; OUTWARD/semi-irreversible. OFF in every default profile. */
   browse: z.boolean().optional(),
@@ -247,7 +247,7 @@ const SURFACE_TOGGLE_TO_CAP = {
   analyze: "orch:analyze",
   write: "orch:write",
   browse: "orch:browse",
-  // orch:mcp — MCP tools in the jailed SDK; grant gated on autonomy.mcp.enabled.
+  // orch:mcp — jailed-SDK MCP tools; a FLOOR cap on standard+, this toggle also grants `assistant`. Reachability gate: `autonomy.mcp.allow`.
   mcp: "orch:mcp",
 } as const satisfies Record<string, AgentCapability>;
 

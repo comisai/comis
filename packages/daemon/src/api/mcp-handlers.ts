@@ -210,6 +210,10 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         tools: conn.tools.map((t) => ({
           name: t.name,
           qualifiedName: t.qualifiedName,
+          // The name the agent must INVOKE the tool by (mcp__<server>--<tool>) —
+          // distinct from the advisory qualifiedName (mcp:<server>/<tool>). See
+          // McpToolProjectionSchema (comis-daniel 2026-07-09 naming-mismatch fix).
+          callableName: `mcp__${conn.name}--${t.name}`,
           description: t.description,
         })),
         lastHealthCheck: conn.lastHealthCheck,

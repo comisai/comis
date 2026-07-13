@@ -44,6 +44,8 @@ export {
   SUPPORTED_IMAGE_PROVIDERS,
   SUPPORTED_TRANSCRIPTION_PROVIDERS,
   SUPPORTED_TTS_PROVIDERS,
+  EMBED_NOMIC_MODEL_URI,
+  EMBED_BGE_M3_MODEL_URI,
   PROVIDER_ENV_KEYS,
   CHANNEL_ENV_KEYS,
   TOOL_PROVIDER_ENV_KEYS,
@@ -127,6 +129,7 @@ export { videoProvidersStep } from "./steps/08c-video-providers.js";
 export { imageProvidersStep } from "./steps/08d-image-providers.js";
 export { transcriptionStep } from "./steps/08e-transcription.js";
 export { ttsStep } from "./steps/08f-tts.js";
+export { recallStep } from "./steps/08g-recall.js";
 export { reviewStep } from "./steps/09-review.js";
 export { writeConfigStep } from "./steps/10-write-config.js";
 export { daemonStartStep } from "./steps/11-daemon-start.js";

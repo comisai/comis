@@ -41,6 +41,7 @@ import type {
   ComisLogger,
   TripleStorePort,
 } from "@comis/core";
+import { formatSessionKey } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 import { describe, it, expect, vi } from "vitest";
 import { fuse } from "./fuse.js";
@@ -93,16 +94,26 @@ function makeResult(
     /** source.sessionKey — the conversation a memory was written from. Used by the
      *  post-fusion provenance pass to find same-conversation paired rows. */
     sessionKey?: string;
+    /** entry.userId — the user SCOPE the memory was stored under. Default "user_a";
+     *  set a different value to exercise the cross-user recall-injection signal. */
+    userId?: string;
+    /** source.who — the AUTHOR (sender) that wrote the memory. Default follows userId
+     *  (a memory a sender wrote is scoped to that sender), else "agent". */
+    sourceWho?: string;
   } = {},
 ): MemorySearchResult {
+  const who = opts.sourceWho ?? opts.userId;
   const entry: Record<string, unknown> = {
     id,
     tenantId: "default",
     agentId: "default",
-    userId: "user_a",
+    userId: opts.userId ?? "user_a",
     content: opts.content ?? `content for ${id}`,
     trustLevel: opts.trustLevel ?? "learned",
-    source: opts.sessionKey !== undefined ? { who: "agent", sessionKey: opts.sessionKey } : { who: "agent" },
+    source:
+      opts.sessionKey !== undefined
+        ? { who: who ?? "agent", sessionKey: opts.sessionKey }
+        : { who: who ?? "agent" },
     tags: opts.tags ?? [],
     createdAt: opts.createdAt ?? NOW,
     // The temporal lane seeds on entry.occurredAt — set it only when provided so the
@@ -1510,6 +1521,49 @@ describe("createMemoryRecall — memory:recalled / memory:reranked emit", () => 
     const serialized = JSON.stringify(p);
     expect(serialized).not.toContain("the raw query");
     expect(serialized).not.toContain("sensitive body text");
+  });
+
+  it("emits crossUserCount + distinctSources so a privacy audit sees cross-USER recall injection from the always-on event alone (counts, not ids)", async () => {
+    // Agent-scoped recall for user_a's turn surfaces memories authored by OTHER users
+    // (the leak surface: one shared agent → sender A's memory injected into sender B's turn).
+    const input = [
+      makeResult("own", { base: 0.95, userId: "user_a", sourceWho: "user_a" }),
+      makeResult("foreignB1", { base: 0.9, userId: "user_b", sourceWho: "user_b" }),
+      makeResult("foreignB2", { base: 0.85, userId: "user_b", sourceWho: "user_b" }),
+      makeResult("foreignC", { base: 0.8, userId: "user_c", sourceWho: "user_c" }),
+    ];
+    const { eventBus, emits } = recordingEventBus();
+    const recall = recallWithObs(
+      { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger, eventBus },
+      // include every trust level so the foreign rows are not trust-filtered out of the final set.
+      baseConfig({ includeTrustLevels: ["learned", "system", "external", "verified", "user"] as TrustLevel[] }),
+    );
+    // Requester = SESSION_KEY_OBJ (userId "user_a"); 3 of the 4 final rows belong to a different user.
+    await recall.recall("q", SESSION_KEY_OBJ, "agent_z");
+    const p = emits.filter((e) => e.event === "memory:recalled")[0]?.payload as Record<string, unknown>;
+    expect(p).toBeDefined();
+    // The signal that answers "was cross-sender data injected into this turn?" from the event alone.
+    expect(p.crossUserCount).toBe(3);
+    // distinct authors among the final set: user_a, user_b, user_c.
+    expect(p.distinctSources).toBe(3);
+    // still content-free: the raw user-ids / memory bodies never leave as content.
+    expect(JSON.stringify(p)).not.toContain("content for");
+  });
+
+  it("crossUserCount is 0 when every recalled memory belongs to the requesting user (no cross-user injection)", async () => {
+    const input = [
+      makeResult("a", { base: 0.9, userId: "user_a", sourceWho: "user_a" }),
+      makeResult("b", { base: 0.6, userId: "user_a", sourceWho: "user_a" }),
+    ];
+    const { eventBus, emits } = recordingEventBus();
+    const recall = recallWithObs(
+      { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger, eventBus },
+      baseConfig(),
+    );
+    await recall.recall("q", SESSION_KEY_OBJ, "agent_z");
+    const p = emits.filter((e) => e.event === "memory:recalled")[0]?.payload as Record<string, unknown>;
+    expect(p.crossUserCount).toBe(0);
+    expect(p.distinctSources).toBe(1);
   });
 
   it("emits memory:reranked with timedOut/fellBack reflecting the outcome when reranking runs", async () => {
@@ -4173,3 +4227,105 @@ async function runReference(input: MemorySearchResult[]): Promise<MemorySearchRe
   const allowed = new Set<TrustLevel>(cfg.includeTrustLevels);
   return deduplicateResults(scored.filter((r) => allowed.has(r.entry.trustLevel)));
 }
+
+describe("createMemoryRecall — degraded-lane visibility (memory:recall_degraded)", () => {
+  /** A MemoryPort whose searchLanes reports a degraded vector lane (FTS still serves). */
+  function degradedLanesPort(results: MemorySearchResult[]): MemoryPort {
+    return {
+      async search() {
+        return ok(results);
+      },
+      async searchLanes() {
+        return ok({ fts: results, vector: [], vectorLaneDegraded: { errorKind: "config" } });
+      },
+    } as unknown as MemoryPort;
+  }
+
+  it("emits memory:recall_degraded scope vector_lane and still returns FTS results when the vector lane degrades", async () => {
+    const input = [makeResult("a", { base: 0.9, trustLevel: "learned", createdAt: NOW })];
+    const { eventBus, emits } = recordingEventBus();
+    const { recallTrace, records } = recordingRecallTrace();
+    const recall = recallWithObs(
+      { memoryPort: degradedLanesPort(input), clock: fixedClock, logger: noopLogger, eventBus, recallTrace },
+      baseConfig(),
+    );
+
+    const got = await recall.recall("what is the plan", SESSION_KEY, "agent_z");
+
+    // Recall SUCCEEDS on the surviving FTS lane (live incident: the old
+    // whole-call err meant zero recall for hours while FTS was healthy).
+    expect(got.ok).toBe(true);
+    if (!got.ok) throw new Error("expected ok");
+    expect(got.value.map((r) => r.entry.id)).toContain("a");
+
+    const degraded = emits.filter((e) => e.event === "memory:recall_degraded");
+    expect(degraded).toHaveLength(1);
+    expect(degraded[0]!.payload["scope"]).toBe("vector_lane");
+    expect(degraded[0]!.payload["errorKind"]).toBe("config");
+    // The counts-only recalled event still fires for the successful recall.
+    expect(emits.some((e) => e.event === "memory:recalled")).toBe(true);
+    // The recall-trace record carries the queryable degradation entry.
+    const rec = records[0] as { degradations?: Array<{ kind?: string }> };
+    expect((rec.degradations ?? []).some((d) => d.kind === "vec_lane_failed")).toBe(true);
+  });
+
+  it("emits memory:recall_degraded scope lanes when the whole searchLanes call fails (the turn ran with no recall)", async () => {
+    const { eventBus, emits } = recordingEventBus();
+    const port = {
+      async search() {
+        return ok([]);
+      },
+      async searchLanes() {
+        return err(new Error("lanes exploded"));
+      },
+    } as unknown as MemoryPort;
+    const recall = recallWithObs(
+      { memoryPort: port, clock: fixedClock, logger: noopLogger, eventBus },
+      baseConfig(),
+    );
+
+    const got = await recall.recall("what is the plan", SESSION_KEY, "agent_z");
+
+    expect(got.ok).toBe(false);
+    const degraded = emits.filter((e) => e.event === "memory:recall_degraded");
+    expect(degraded).toHaveLength(1);
+    expect(degraded[0]!.payload["scope"]).toBe("lanes");
+    expect(typeof degraded[0]!.payload["errorKind"]).toBe("string");
+  });
+});
+
+describe("recall event payloads carry the CANONICAL formatted sessionKey", () => {
+  // The per-session trajectory bridge drops any payload whose sessionKey does
+  // not EQUAL the owner recorder's formatSessionKey(...) key. The old local
+  // formatter produced "tenant:channel:user" (wrong order, no peer/guild/
+  // thread parts), so memory:recalled / memory:reranked NEVER matched and
+  // were silently filtered from every per-session trajectory — recall was
+  // invisible to `comis explain` on every turn (observed live).
+  it("memory:recalled and memory:recall_degraded carry formatSessionKey(sessionKey) so the session-scoped bridge keeps them", async () => {
+    const input = [makeResult("a", { base: 0.9, trustLevel: "learned", createdAt: NOW })];
+    const { eventBus, emits } = recordingEventBus();
+    const port = {
+      async search() {
+        return ok(input);
+      },
+      async searchLanes() {
+        return ok({ fts: input, vector: [], vectorLaneDegraded: { errorKind: "config" } });
+      },
+    } as unknown as MemoryPort;
+    const recall = recallWithObs(
+      { memoryPort: port, clock: fixedClock, logger: noopLogger, eventBus },
+      baseConfig(),
+    );
+
+    const got = await recall.recall("what is the plan", SESSION_KEY_OBJ, "agent_z");
+
+    expect(got.ok).toBe(true);
+    const expectedKey = formatSessionKey(SESSION_KEY_OBJ);
+    const recalled = emits.find((e) => e.event === "memory:recalled");
+    expect(recalled).toBeDefined();
+    expect(recalled!.payload["sessionKey"]).toBe(expectedKey);
+    const degraded = emits.find((e) => e.event === "memory:recall_degraded");
+    expect(degraded).toBeDefined();
+    expect(degraded!.payload["sessionKey"]).toBe(expectedKey);
+  });
+});

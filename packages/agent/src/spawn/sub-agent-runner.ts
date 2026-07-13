@@ -445,6 +445,18 @@ export interface SubAgentRunnerDeps {
     content: string,
     ctx: { runId: string; nowMs: number; agentId: string },
   ) => Promise<ResultRef | { error: string } | undefined>;
+  /**
+   * Release the child session's trajectory recorder (flush + unsubscribe from
+   * the shared event bus). Called EXACTLY ONCE per run, when the in-flight
+   * execution settles — after the child's final records (session.summary)
+   * have landed, on every terminal path (completion, failure, kill,
+   * watchdog). Production wiring binds this to
+   * `SessionTrajectoryHandleRegistry.close`; absent ⇒ no-op (older test
+   * wiring). Without it a terminal child's recorder stays subscribed for the
+   * daemon's lifetime and keeps ingesting other sessions' events into the
+   * dead child's trajectory file.
+   */
+  closeTrajectory?: (formattedSessionKey: string) => Promise<void>;
 }
 
 export interface SpawnParams {
@@ -2226,6 +2238,20 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             }, "Lifecycle hook onEnded failed");
           }
         }
+      } finally {
+        // Release the child's trajectory recorder on EVERY terminal settle —
+        // completion, natural failure, kill, and watchdog all flow through
+        // this promise. Without it the dead child's recorder stays subscribed
+        // to the shared event bus for the daemon's lifetime and keeps
+        // ingesting other sessions' events into its trajectory file (stamped
+        // with the dead child's sessionId).
+        if (deps.closeTrajectory) {
+          try {
+            await deps.closeTrajectory(run.sessionKey);
+          } catch (closeErr) {
+            deps.logger?.debug({ runId, err: closeErr }, "Sub-agent trajectory close best-effort failed");
+          }
+        }
       }
     })();
 
@@ -2434,11 +2460,29 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   /**
    * Kill a running sub-agent by marking it as failed.
    * The in-flight executeAgent promise will eventually complete (or error)
-   * and find the run already marked -- it skips its completion logic.
+   * and find the run already marked -- it skips its completion logic (the
+   * trajectory teardown in its finally still runs).
+   *
+   * Attribution: `opts.killedBy` names WHO initiated the kill (closed union;
+   * defaults to "parent" — the historical caller). A daemon health-monitor
+   * kill must never masquerade as a parent kill: the misattributed
+   * "Killed by parent agent" status is what the parent agent relays to the
+   * user, so it must carry the real cause. Non-parent kills additionally
+   * deliver the LLM-free failure notification to the announce channel —
+   * a parent knows about its own kill, but nobody is watching for an
+   * autonomous one (the watchdog-timeout path's notification precedent).
+   *
    * @param runId - The run ID to kill
+   * @param opts - Attribution: who killed the run, the operator-facing
+   *   reason (free text — stays OFF the bus), and idle/threshold telemetry.
    * @returns Result indicating success or failure with error message
    */
-  function killRun(runId: string): { killed: boolean; error?: string } {
+  function killRun(runId: string, opts?: {
+    killedBy?: "parent" | "health_monitor" | "operator" | "system";
+    reason?: string;
+    idleMs?: number;
+    thresholdMs?: number;
+  }): { killed: boolean; error?: string } {
     const run = runs.get(runId);
     if (!run) {
       return { killed: false, error: `Unknown run ID: ${runId}` };
@@ -2447,10 +2491,13 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       return { killed: false, error: `Run ${runId} is not running (status: ${run.status})` };
     }
 
+    const killedBy = opts?.killedBy ?? "parent";
     run.status = "failed";
     run.completedAt = clock.now();
     removeDedupEntry(run);
-    run.error = "Killed by parent agent";
+    run.error = opts?.reason
+      ?? (killedBy === "parent" ? "Killed by parent agent" : `Killed by ${killedBy}`);
+    const killRuntimeMs = run.completedAt! - run.startedAt;
 
     // Persist failure record for killed runs (fire-and-forget, belt-defense)
     if (deps.dataDir) {
@@ -2462,11 +2509,26 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           task: run.task,
           error: run.error!,
           endReason: "killed",
-          runtimeMs: run.completedAt! - run.startedAt,
+          runtimeMs: killRuntimeMs,
+          killedBy,
         }, deps.logger),
         "kill-failure-record",
       );
     }
+
+    // Attributed kill telemetry — content-free (ids/enum/numbers; the
+    // free-text reason stays on the failure record + WARN log). The child
+    // sessionKey routes the trajectory record into the killed child's file.
+    deps.eventBus.emit("subagent:killed", {
+      runId,
+      agentId: run.agentId,
+      sessionKey: run.sessionKey,
+      killedBy,
+      runtimeMs: killRuntimeMs,
+      ...(opts?.idleMs !== undefined ? { idleMs: opts.idleMs } : {}),
+      ...(opts?.thresholdMs !== undefined ? { thresholdMs: opts.thresholdMs } : {}),
+      timestamp: run.completedAt!,
+    });
 
     // Abort the in-flight SDK session via composite-key resolver
     // (best-effort).
@@ -2504,11 +2566,31 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     // Stop proxy typing on kill
     emitProxyStop(run, runId, "killed");
 
+    // Non-parent kills notify the announce channel (LLM-free, dedup-keyed) —
+    // the parent only knows about a kill it issued itself; an autonomous
+    // health-monitor kill would otherwise be silent until the user asks.
+    if (killedBy !== "parent" && run.announceChannelType && run.announceChannelId) {
+      deliverFailureNotification({
+        channelType: run.announceChannelType,
+        channelId: run.announceChannelId,
+        task: run.task,
+        runtimeMs: killRuntimeMs,
+        runId,
+        callerSessionKey: run.callerSessionKey,  // shared dedup key
+        detail: killedBy === "health_monitor"
+          ? `The background task was stopped by the daemon health monitor${opts?.idleMs !== undefined ? ` after ${Math.round(opts.idleMs / 1000)}s without progress` : ""}${opts?.thresholdMs !== undefined ? ` (security.agentToAgent.subagentContext.stuckKillThresholdMs=${opts.thresholdMs})` : ""}.`
+          : `The background task was stopped (${killedBy}).`,
+      // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
+      }, deps).catch(() => { /* deliverFailureNotification already handles errors internally */ });
+    }
+
     deps.logger?.info({
-      runId, agentId: run.agentId,
-      durationMs: run.completedAt! - run.startedAt,
+      runId, agentId: run.agentId, killedBy,
+      durationMs: killRuntimeMs,
+      ...(opts?.idleMs !== undefined ? { idleMs: opts.idleMs } : {}),
+      ...(opts?.thresholdMs !== undefined ? { thresholdMs: opts.thresholdMs } : {}),
       task: run.task.slice(0, 200),
-    }, "Sub-agent run killed by parent");
+    }, "Sub-agent run killed");
 
     // Lifecycle hook - onEnded (kill path, fire-and-forget)
     if (deps.lifecycleHooks) {
@@ -2545,14 +2627,14 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
    * daemon-side `run.kill` RPC handler (the @allow-throw boundary)
    * drives; this helper itself raises nothing (the raw-throw.test.ts gate).
    */
-  function killByRootRun(rootRunId: string): { killed: number } {
+  function killByRootRun(rootRunId: string, opts?: Parameters<typeof killRun>[1]): { killed: number } {
     let killed = 0;
     for (const run of runs.values()) {
       if (
         run.rootRunId === rootRunId &&
         (run.status === "running" || run.status === "queued")
       ) {
-        if (killRun(run.runId).killed) killed++;
+        if (killRun(run.runId, opts).killed) killed++;
       }
     }
     return { killed };

@@ -174,6 +174,20 @@ export { resolveSessionFilePath } from "./api/obs-handlers/obs-explain-readers.j
 // Consumer: test/live/scenarios/prove/fleet-reprove.test.ts
 export { assembleFleetHealthReport } from "./api/obs-handlers/fleet-health.js";
 
+// Offline inbound-message extraction (`comis messages`) — CONTENT-BEARING by
+// design (message bodies are the payload), so it has NO RPC/MCP surface: the
+// obs network surfaces stay digest-only/content-free, and the CLI reads local
+// files the operator already owns through the single bounded cli→daemon seam
+// (`packages/cli/src/util/offline-obs.ts`, the cost-export precedent).
+// Consumer: packages/cli/src/util/offline-obs.ts (extractSessionMessagesOffline)
+export { extractSessionMessages } from "./api/obs-handlers/session-messages.js";
+export type {
+  SessionMessagesFilter,
+  ExtractedChannelMessage,
+  SessionMessagesCoverage,
+  SessionMessagesResult,
+} from "./api/obs-handlers/session-messages.js";
+
 // pi-ai image shim: `createPiImageAdapter` +
 // `registerComisImageProviders` + `resolveImageApiKey` + the typed cross-plan
 // `ImageGenError` live in `./api/pi-image-adapter.js`. They are daemon-internal

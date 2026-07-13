@@ -129,6 +129,35 @@ export interface OrchestrationEvents {
   };
 
   /**
+   * A sub-agent run was force-killed before it settled — by its parent agent,
+   * by the daemon health monitor (stuck sweep), or by an operator/system
+   * cascade. Emitted at the runner's kill chokepoint (sub-agent-runner.ts
+   * killRun), so EVERY kill caller produces one attributed record. Counts/ids/
+   * closed-enum ONLY — the free-text kill reason stays on the run's failure
+   * record and the WARN log, NEVER the bus (AGENTS.md §2.7). `sessionKey` is
+   * the CHILD's formatted key so the trajectory bridge lands the record in the
+   * killed child's own trajectory. `killedBy` is the closed attribution union
+   * (§2.8): a health-monitor kill must never masquerade as a parent kill.
+   */
+  "subagent:killed": {
+    /** The killed run id. */
+    runId: string;
+    /** The owning agent. */
+    agentId: string;
+    /** The CHILD session's formatted key (trajectory routing + explain join). */
+    sessionKey: string;
+    /** CLOSED union — who initiated the kill (§2.8). */
+    killedBy: "parent" | "health_monitor" | "operator" | "system";
+    /** Wall-clock runtime at kill time. */
+    runtimeMs: number;
+    /** Idle time since last observed progress (health-monitor kills). */
+    idleMs?: number;
+    /** The threshold that tripped (health-monitor kills). */
+    thresholdMs?: number;
+    timestamp: number;
+  };
+
+  /**
    * A running sub-agent was steered IN-FLIGHT —
    * a high-priority message injected at the child's next step boundary
    * (transcript + progress preserved) instead of a kill+respawn. Emitted

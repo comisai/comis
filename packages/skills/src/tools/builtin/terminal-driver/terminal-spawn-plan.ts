@@ -93,6 +93,18 @@ export interface SpawnPlanComposers {
   egressControl?: EgressControlPort;
   /** The resolved bwrap binary path. `undefined` ⇒ {@link buildSpawnPlan} rejects (fail-closed). */
   bwrapPath?: string;
+  /**
+   * The operator opt-out of the jail (`skills.terminal.unsafeDisableSandbox`). When `true`,
+   * {@link buildSpawnPlan} runs the driven CLI DIRECTLY (no bwrap) instead of failing closed —
+   * for constrained hosts that cannot run bwrap (a container without user-namespaces, a CI box).
+   * This provides NO filesystem/network/uid confinement (the scope is unenforceable without the
+   * jail), so it is a genuine security downgrade — operator-only, immutable, surfaced in
+   * config_posture. The env-scrub is STILL applied, so daemon secrets never reach the child, and
+   * the backend forces the non-durable PTY path (a tmux server would bypass the scrub without the
+   * jail's per-session `--unsetenv`). Takes precedence over `bwrapPath` (unsandboxed even when
+   * bwrap is available — the `browser.noSandbox` precedent). Default/absent ⇒ the fail-closed jail.
+   */
+  unsafeDisableSandbox?: boolean;
 }
 
 /** The session geometry + identity the plan needs (off the create frame). */
@@ -123,12 +135,26 @@ export interface SpawnPlanInput {
 
 /** The composed spawn arguments + the egress handle to dispose on teardown. */
 export interface SpawnPlan {
-  /** arg0 — the bwrap binary. */
+  /** arg0 — the bwrap binary (or, when {@link unsandboxed}, the driven CLI itself). */
   bin: string;
-  /** `[...scopeArgs after bwrapPath, [relayArgv], childBin, ...childArgv]`. */
+  /** `[...scopeArgs after bwrapPath, [relayArgv], childBin, ...childArgv]` (or just the CLI argv when {@link unsandboxed}). */
   argv: string[];
   /** The scrubbed (+ proxyEnv for listed-hosts) child env. */
   env: NodeJS.ProcessEnv;
+  /**
+   * The child working directory to set on a DIRECT spawn — present ONLY on the
+   * {@link unsandboxed} path (the jailed path bakes cwd into the bwrap `--chdir` arg instead).
+   * The worker passes it to `pty.spawn`/`spawnPipe` so the unsandboxed CLI still runs in the
+   * session workspace/project dir.
+   */
+  cwd?: string;
+  /**
+   * `true` when the jail was bypassed via `unsafeDisableSandbox` — the child runs DIRECTLY with
+   * no bwrap. The worker reads this to FORCE the non-durable PTY backend (a tmux server would
+   * inherit — and leak — daemon env that the jail's per-session `--unsetenv` normally strips), and
+   * it is surfaced in `config_posture`. Absent/false ⇒ the fail-closed jail (the default).
+   */
+  unsandboxed?: boolean;
   /**
    * The egress materialization for `network: listed-hosts` — the worker stores it
    * on the session and calls `dispose()` once on teardown (socket cleanup). Absent
@@ -235,12 +261,32 @@ export async function buildSpawnPlan(
   input: SpawnPlanInput,
   composers: SpawnPlanComposers,
 ): Promise<SpawnPlan> {
+  const scrubChildEnv = composers.scrubChildEnv ?? defaultScrubChildEnv;
+
+  // Operator opt-out of the jail (`skills.terminal.unsafeDisableSandbox`). For constrained hosts
+  // that cannot run bwrap: run the driven CLI DIRECTLY. NO filesystem/network/uid confinement (the
+  // scope is unenforceable without the jail) — a genuine security downgrade, surfaced in
+  // config_posture. But the env-scrub STILL runs, so daemon secrets (gateway token / master key)
+  // never reach the child, and `unsandboxed:true` forces the non-durable PTY backend (a tmux server
+  // would inherit — and leak — daemon env that the jail's per-session `--unsetenv` normally strips).
+  // Takes precedence over `bwrapPath` (unsandboxed even when bwrap is available — the
+  // `browser.noSandbox` precedent). Do NOT inject CLAUDE_CODE_BUBBLEWRAP: we are NOT bubblewrapped,
+  // so a sandbox-aware CLI must stay free to nest its own sandbox.
+  if (composers.unsafeDisableSandbox === true) {
+    return {
+      bin: input.bin,
+      argv: input.argv,
+      env: scrubChildEnv(input.env),
+      cwd: input.cwd,
+      unsandboxed: true,
+    };
+  }
+
   // No provider => no jail => no spawn. Reject BEFORE any materialization.
   if (composers.bwrapPath === undefined) {
     throw new JailUnavailableError();
   }
   const buildScopeArgs = composers.buildScopeArgs ?? defaultBuildScopeArgs;
-  const scrubChildEnv = composers.scrubChildEnv ?? defaultScrubChildEnv;
   const buildEgressRelayLaunch =
     composers.buildEgressRelayLaunch ?? defaultBuildEgressRelayLaunch;
 

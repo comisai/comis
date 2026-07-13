@@ -16,6 +16,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | visionRegistry | optional | media.analyze-image / vision-scope checks find zero providers; image-analysis RPCs return "no vision provider configured" | packages/daemon/src/api/types.ts:370 |
 | mediaConfig | required | — | packages/daemon/src/api/types.ts:371 |
 | ttsAdapter | optional | media.tts RPC fails with "TTS provider not configured"; TTS auto-mode tag matching is bypassed in outbound message rendering | packages/daemon/src/api/types.ts:387 |
+| getChannelAdapter | optional | tts.synthesize cannot auto-deliver synthesized audio to the caller's channel; it returns only the file path and the agent must send it via the message tool (the ISSUE-4 false-success regression risk) | packages/daemon/src/api/types.ts:389 |
 | linkRunner | required | — | packages/daemon/src/api/types.ts:388 |
 | resolveAttachment | optional | on-demand media tool handlers cannot fetch attachment payloads by URL; tool calls that depend on attachment bytes fail with "attachment not retrievable" | packages/daemon/src/api/types.ts:390 |
 | transcriber | optional | media.transcribe RPC fails with "speech-to-text provider not configured"; voice messages flow through to the agent untranscribed | packages/daemon/src/api/types.ts:392 |

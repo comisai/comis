@@ -81,12 +81,16 @@ function stripHtml(html: string): string {
  * do not fail the entire message conversion.
  *
  * @param parsed - Structurally-typed parsed email (mailparser output)
- * @param channelId - Channel identifier for the email channel
+ * @param _channelId - The adapter's OWN account identity (`email-<address>`).
+ *   Intentionally NOT used as the NormalizedMessage.channelId: for a DM the
+ *   channelId is the conversation / reply target (the sender), like every other
+ *   adapter (Telegram chatId, WhatsApp remoteJid, iMessage chatId). Kept only
+ *   for signature stability with the caller.
  * @param attachmentDir - Base directory for writing attachment files
  */
 export async function mapEmailToNormalized(
   parsed: EmailParsedInput,
-  channelId: string,
+  _channelId: string,
   attachmentDir: string,
 ): Promise<NormalizedMessage> {
   const id = randomUUID();
@@ -145,7 +149,10 @@ export async function mapEmailToNormalized(
 
   return {
     id,
-    channelId,
+    // Reply target = the sender's address (DM conversation identity), NOT the
+    // adapter's own `email-<address>` identity — otherwise the agent's reply is
+    // addressed To the internal channelId string and never reaches the sender.
+    channelId: senderId,
     channelType: "email",
     senderId,
     text,

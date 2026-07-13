@@ -25,6 +25,7 @@ import { applyToolPolicy } from "@comis/skills";
 import { buildReviewSessionSource } from "./review-session-source.js";
 import { filterResponse } from "@comis/channels";
 import type { ExecutionLogEntry } from "@comis/scheduler";
+import { cronDeliverySuppressedByQuietHoursLogged } from "./cron-delivery-quiet-hours.js";
 import { handleMemoryCronSentinel } from "./setup-channels-memory-crons.js";
 import { buildReflectionCronDeps } from "./setup-channels-skill-synthesis-deps.js";
 import { resolveMemoryOpsCapability } from "./resolve-memory-ops-capability.js";
@@ -119,6 +120,8 @@ export interface CronEventListenerDeps {
  *      - else (systemEvent) → deliver raw text
  *   2. `scheduler:job_suspended` — notify the channel when a cron job is
  *      auto-suspended after consecutive failures.
+ *
+ * The quiet-hours delivery gate lives in `./cron-delivery-quiet-hours.js`.
  */
 export function registerCronEventListeners(deps: CronEventListenerDeps): void {
   const {
@@ -495,6 +498,12 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
           return;
         }
 
+        // Quiet-hours suppresses the user-facing cron delivery (the job RAN;
+        // its output does not ping the channel off-hours). Throw-safe → deliver.
+        if (cronDeliverySuppressedByQuietHoursLogged(container.config.scheduler.quietHours, systemNowMs(), logger, jobName, "agentTurn")) {
+          return;
+        }
+
         const sendResult = await deliveryService.deliverToChannel(adapter, deliveryTarget.channelId, filtered.cleanedText, undefined);
         if (!sendResult.ok || !sendResult.value.ok) {
           logger.error(
@@ -525,6 +534,11 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
     }
 
     // --- systemEvent (or undefined): send raw text (existing behavior) ---
+    // Quiet-hours suppresses the user-facing system_event cron delivery too.
+    if (cronDeliverySuppressedByQuietHoursLogged(container.config.scheduler.quietHours, systemNowMs(), logger, jobName, "system_event")) {
+      payload.onComplete?.({ status: "ok" });
+      return;
+    }
     const sendResult = await deliveryService.deliverToChannel(adapter, deliveryTarget.channelId, resultText, undefined);
     if (!sendResult.ok || !sendResult.value.ok) {
       logger.error(

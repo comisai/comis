@@ -166,3 +166,69 @@ export function isImmutableConfigPath(section: string, key?: string): boolean {
     (prefix) => fullPath === prefix || fullPath.startsWith(prefix + "."),
   );
 }
+
+/**
+ * Security-posture sub-paths WITHIN a single agent's config that are
+ * OPERATOR-ONLY: no runtime RPC may set them — not `config.patch`, and not
+ * `agents_manage` / `agents.create` / `agents.update`. They gate sandbox and
+ * bwrap-jail escape and terminal command allowlisting, and can only change by
+ * editing the config file directly.
+ *
+ * WHY a SEPARATE list from {@link IMMUTABLE_CONFIG_PREFIXES}: the whole
+ * `agents` section is immutable to `config.patch` (which STEERS callers to the
+ * dedicated `agents_manage` tool via the redirect hint), but `agents_manage`
+ * LEGITIMATELY writes agent config — name, provider, model, budgets, autonomy
+ * tuning, tool toggles, … That asymmetry is intentional for those fields; it is
+ * NOT intentional for the sandbox/jail escape switches. An admin-trust agent
+ * flipped its own `skills.execSandbox.enabled` never→always through
+ * `agents.update` precisely because the persist path applied NO immutability
+ * check (unsandboxed marathon BL-1, 2026-07-12). These sub-paths are the narrow
+ * deny-list `agents_manage` must ALSO refuse.
+ *
+ * Paths are AGENT-RELATIVE (no `agents.<id>` prefix) so they apply to every
+ * agent id. A match is exact-or-child: listing `skills.terminal.allow` also
+ * blocks `skills.terminal.allow.0.match.path`.
+ */
+export const OPERATOR_ONLY_AGENT_SUBPATHS: readonly string[] = [
+  "skills.execSandbox",                    // exec OS-level sandbox switch (enabled: always|never) + its scope
+  "skills.terminal.unsafeDisableSandbox",  // bwrap-jail bypass for the terminal driver
+  "skills.terminal.allow",                 // terminal command allowlist — operator config only, never agent-extensible
+] as const;
+
+/**
+ * Return whether a dot-separated path is PRESENT (as a set key) in a nested
+ * object, regardless of the leaf value. Presence — not truthiness — is the
+ * signal: sending an operator-only key at all in a runtime patch is the
+ * operator-only action, so `{ skills: { execSandbox: {} } }` still matches
+ * (fail-closed on presence).
+ */
+function objectPathIsPresent(obj: Record<string, unknown>, segments: string[]): boolean {
+  let cursor: unknown = obj;
+  for (const seg of segments) {
+    if (cursor === null || typeof cursor !== "object" || Array.isArray(cursor)) return false;
+    // eslint-disable-next-line security/detect-object-injection -- seg is a literal from OPERATOR_ONLY_AGENT_SUBPATHS, not user-controlled
+    if (!(seg in (cursor as Record<string, unknown>))) return false;
+    // eslint-disable-next-line security/detect-object-injection -- same
+    cursor = (cursor as Record<string, unknown>)[seg];
+  }
+  return true;
+}
+
+/**
+ * Walk a PARTIAL per-agent config object (the user's supplied `config`, before
+ * schema defaults are applied) and return the {@link OPERATOR_ONLY_AGENT_SUBPATHS}
+ * it would SET. Empty for the common case (name/model/budget/tool-toggle
+ * updates touch none). The `agents.create` / `agents.update` handlers reject a
+ * non-empty result as a runtime attempt to set an operator-only field.
+ *
+ * Checks the RAW user input, not the defaulted config — every parsed agent
+ * carries a defaulted `skills.execSandbox`, so scanning the post-parse config
+ * would flag every create.
+ */
+export function findOperatorOnlyAgentPaths(agentConfig: unknown): string[] {
+  if (agentConfig === null || typeof agentConfig !== "object" || Array.isArray(agentConfig)) {
+    return [];
+  }
+  const obj = agentConfig as Record<string, unknown>;
+  return OPERATOR_ONLY_AGENT_SUBPATHS.filter((subpath) => objectPathIsPresent(obj, subpath.split(".")));
+}

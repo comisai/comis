@@ -73,7 +73,7 @@ const outcomeRowMapper = createRowMapper(OutcomeEventRowSchema);
 // no `as Foo[]` cast, per untyped-sqlite.test.ts). `d` is the per-turn
 // procedure_descriptor read back (the content-free JSON tool-NAME array; NULL when no
 // procedure ran — SQLite NULL ≠ undefined → `.nullable()`).
-const trajectoryIdRowMapper = createRowMapper(z.object({ t: z.string(), s: z.string(), d: z.string().nullable() }));
+const trajectoryIdRowMapper = createRowMapper(z.object({ t: z.string(), s: z.string(), ts: z.number(), d: z.string().nullable() }));
 
 // Lenient JSON-string[] parser for the recalled_ids/used_skill_ids columns:
 // corrupt/non-array JSON degrades to [] (never a throw that breaks resolve()).
@@ -402,7 +402,7 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
     // (never a shared/global pool).
     async listTrajectoryIds(
       scope: LearningScope,
-    ): Promise<Result<Array<{ trajectoryId: string; sessionId: string; procedureDescriptor?: ReadonlyArray<string> }>, Error>> {
+    ): Promise<Result<Array<{ trajectoryId: string; sessionId: string; observedAt: number; procedureDescriptor?: ReadonlyArray<string> }>, Error>> {
       const { tenantId, agentId } = scope;
       if (tenantId === "" || agentId === "") {
         return err(new Error("outcome listTrajectoryIds requires a resolved (tenant, agent) scope"));
@@ -419,6 +419,9 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
             return {
               trajectoryId: r.t,
               sessionId: r.s,
+              // The turn's ledger timestamp (MAX observed_at across its source rows) — the
+              // per-turn window key the reflection source builder slices transcripts by.
+              observedAt: r.ts,
               ...(descriptor.length > 0 ? { procedureDescriptor: descriptor } : {}),
             };
           }),

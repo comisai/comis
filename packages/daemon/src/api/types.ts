@@ -566,6 +566,12 @@ export interface MediaApiDeps {
     };
   };
   ttsAdapter?: TTSPort;
+  /** Resolve a channel adapter by type for direct media delivery — TTS
+   *  auto-delivery of synthesized audio to the caller's channel, mirroring
+   *  `imageHandlerDeps.getChannelAdapter`. Optional: absent installs (or
+   *  orchestrate/cron callers with no channel origin) skip delivery and return
+   *  only the file path. */
+  getChannelAdapter?: (channelType: string) => Pick<import("@comis/core").ChannelPort, "sendAttachment"> | undefined;
   linkRunner: LinkRunner;
   /** Attachment URL resolver for on-demand media tool RPC handlers. */
   resolveAttachment?: (url: string) => Promise<Buffer | null>;

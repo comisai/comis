@@ -364,9 +364,10 @@ export interface ChannelEvents {
    * "❌ {errorKind}" pill, the deleted scaffold, the silent no-op). Content-free:
    * a closed outcome kind + the closed ErrorKind + a fixed named-constant
    * `reason` + the strategy name. `reclassified` marks the failed-event
-   * reclassify (a success outcome flipped to failure because a tool step
-   * failed mid-turn) so a stale-looking pill label is explainable from the
-   * trajectory alone instead of coordinator source-reading.
+   * reclassify (a delivered success flipped to success_with_recovered_failures
+   * because a tool step failed mid-turn but the answer still landed) so the
+   * pill's terminal fate is explainable from the trajectory alone instead of
+   * coordinator source-reading.
    */
   "activity:turn_finalized": {
     sessionKey: string;
@@ -379,7 +380,8 @@ export interface ChannelEvents {
     errorKind?: string;
     /** The fixed one-line human reason for a resource abort, when present. */
     reason?: string;
-    /** True when a non-failure outcome was flipped to failure by an observed failed event. */
+    /** True when an observed failed event flipped a delivered success to
+     *  success_with_recovered_failures. */
     reclassified: boolean;
     /** How many observed events had status "failed" during the turn. */
     failedEventCount: number;

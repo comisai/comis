@@ -1,7 +1,7 @@
 {
   "name": "@comis/orchestrator",
   "private": true,
-  "version": "1.0.47",
+  "version": "1.0.52",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Inbound orchestration: channel-manager lifecycle, inbound pipeline, execute-and-deliver coordination, command queue, message routing",

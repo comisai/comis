@@ -425,6 +425,18 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
         cacheWriteTimestamp: executionOverrides?.spawnPacket?.cacheSafeParams?.cacheWriteTimestamp,
         parentCacheRetention: executionOverrides?.spawnPacket?.cacheSafeParams?.cacheRetention,
         getCacheFenceIndex: () => getBreakpointIndex(formattedKey) ?? -1,
+        // Surface a recurring cached-prefix collapse to the fleet lens (the
+        // content-free WARN payload → agent:prefix_unstable → cache_prefix_churn
+        // health signal). The diagnostic still logs its WARN regardless.
+        onPrefixUnstable: (signal) =>
+          deps.eventBus.emit("agent:prefix_unstable", {
+            agentId: deps.agentId,
+            sessionKey: signal.sessionKey,
+            firstDivergentIndex: signal.firstDivergentIndex,
+            cacheRegionMutations: signal.cacheRegionMutations,
+            mutationClass: signal.mutationClass,
+            timestamp: deps.clock.now(),
+          }),
         getElapsedSinceLastResponse: () => getElapsedSinceLastResponse(formattedKey, deps.clock),
         getLastResponseTs: () => getLastResponseTs(formattedKey),
         promoteRecentZoneOnSlowCadence:

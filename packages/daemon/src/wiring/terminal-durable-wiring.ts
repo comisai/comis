@@ -212,8 +212,11 @@ export interface RecreateStrandedTmuxDeps {
  *  ANY fault (no server / unreadable) — the SAFE direction (never assert a strand we cannot confirm). */
 function defaultReadServerMntNs(socketPath: string, tmuxPath: string): string | undefined {
   try {
+    // stderr is PIPED (never inherited): on a socketless first boot the tmux client prints
+    // "error connecting to <socket> (No such file or directory)" — inherited, that lands raw
+    // and unstructured in the daemon's stderr/journald between the Pino lines.
     // eslint-disable-next-line no-restricted-syntax -- one-shot bounded server-pid probe at daemon boot (recover-on-boot strand check)
-    const pid = execFileSync(tmuxPath, ["-S", socketPath, "display-message", "-p", "#{pid}"], { encoding: "utf8" }).trim();
+    const pid = execFileSync(tmuxPath, ["-S", socketPath, "display-message", "-p", "#{pid}"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
     if (pid === "") return undefined;
     return readlinkSync(`/proc/${pid}/ns/mnt`);
   } catch {

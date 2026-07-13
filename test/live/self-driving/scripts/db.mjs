@@ -15,10 +15,19 @@
 import { rig, requireCodeRoot } from './_rig.mjs';
 const Database = requireCodeRoot('better-sqlite3');
 const dbpath = process.env.COMIS_DB_PATH || rig.dataDir + '/memory.db';
+// Load sqlite-vec so vec0 virtual tables (vec_memories / vec_mental_models) are
+// queryable — without it every vec read dies "no such module: vec0" and the
+// oracle is blind to the vector store (live friction: had to prove a vec heal
+// via has_embedding sums instead of reading the table). Best-effort: a host
+// without the extension still serves the plain tables.
+function loadVec(db) {
+  try { requireCodeRoot('sqlite-vec').load(db); } catch { /* degrade: plain tables only */ }
+  return db;
+}
 const [cmd, a, b, c, d, e] = process.argv.slice(2);
 const ident = (s) => { if (!/^[A-Za-z0-9_,]+$/.test(s || '')) throw new Error('bad identifier: ' + s); return s; };
 try {
-  const db = new Database(dbpath, { readonly: true, fileMustExist: true });
+  const db = loadVec(new Database(dbpath, { readonly: true, fileMustExist: true }));
   let sql;
   switch (cmd) {
     case 'tables': sql = "select name from sqlite_master where type='table' order by name"; break;

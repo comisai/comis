@@ -70,26 +70,55 @@ export async function processAudioAttachment(
 
     if (result.ok) {
       const durationMs = systemNowMs() - sttStart;
+      const text = result.value.text ?? "";
+      const transcriptChars = text.trim().length;
+
+      // Empty transcript despite ok:true — a silent gap the operator MUST see
+      // (comis-daniel 2026-07-09: an 18KB ogg logged "transcribed" success but
+      // produced no text, so the agent had nothing and the incident was invisible
+      // in the logs — no transcriptChars/empty marker anywhere). Surface it as a
+      // WARN carrying transcriptChars:0 + audioBytes, and hand the agent an HONEST
+      // hint instead of an empty [Voice message transcription]: block (which would
+      // also cross-contaminate paired memory with a blank transcription row).
+      if (transcriptChars === 0) {
+        deps.logger.warn(
+          {
+            url: att.url,
+            language: result.value.language,
+            durationMs,
+            audioBytes: buffer.byteLength,
+            transcriptChars: 0,
+            hint: "STT returned success but the transcript was empty — the audio may be too short/quiet or its language unsupported by the configured provider; the voice message will not be transcribed",
+            errorKind: "dependency" as const,
+          },
+          "Audio transcription empty",
+        );
+        return {
+          textPrefix:
+            "[Voice message received but the transcription came back empty — ask the user to resend it more clearly or to type the message]",
+        };
+      }
+
       // INFO completion: carry the voice fields THIS skills tier can
-      // see — durationMs (wall-clock) + audioBytes (inbound buffer length) —
-      // alongside the existing language. provider/keyless/model are NOT visible
-      // here (the handler receives a bare TranscriptionPort, not its resolved
-      // config); the daemon RPC path owns the full field set
-      // on the trajectory. Omit the unknown fields rather than log undefined.
+      // see — durationMs (wall-clock) + audioBytes (inbound buffer length) +
+      // transcriptChars (output length) — alongside the existing language.
+      // provider/keyless/model are NOT visible here (the handler receives a bare
+      // TranscriptionPort, not its resolved config); the daemon RPC path owns the
+      // full field set on the trajectory. Omit the unknown fields rather than log undefined.
       deps.logger.info(
-        { url: att.url, language: result.value.language, durationMs, audioBytes: buffer.byteLength },
+        { url: att.url, language: result.value.language, durationMs, audioBytes: buffer.byteLength, transcriptChars },
         "Audio attachment transcribed",
       );
       deps.logger.debug?.({ url: att.url, mimeType: att.mimeType, reason: "stt", durationMs }, "Audio attachment transcribed");
       const wrapped = wrapExternalContent(
-        `[Voice message transcription]: ${result.value.text}`,
+        `[Voice message transcription]: ${text}`,
         { source: "voice_transcription", onSuspiciousContent: deps.onSuspiciousContent },
       );
       return {
         textPrefix: wrapped,
         transcription: {
           attachmentUrl: att.url,
-          text: result.value.text,
+          text,
           language: result.value.language,
         },
       };

@@ -237,6 +237,42 @@ describe("createDynamicMethodRouter trace logging", () => {
     expect((calls.warn[0]![0] as { errorKind: string }).errorKind).toBe("auth");
   });
 
+  it("logs an admin-trust denial on a read-only obs method at DEBUG, not WARN (the CLI probe-then-offline-fallback flow)", async () => {
+    // `comis explain` / `comis fleet` hit the admin-gated obs.explain /
+    // obs.fleet.health RPC, then fall back to offline assembly from the local
+    // data dir. The daemon-side denial is a ROUTINE operator flow — logging it
+    // WARN spams the very log the operator is reviewing (live incident).
+    for (const method of ["obs.explain", "obs.fleet.health"]) {
+      const { logger, calls } = makeLogger();
+      const router = createDynamicMethodRouter(undefined, logger);
+      router.registerMethod(method, "rpc", () => {
+        throw new Error(`Admin access required for ${method}`);
+      });
+      await router.server.receive(
+        { jsonrpc: "2.0", method, params: {}, id: 111 },
+        RPC_CTX,
+      );
+      // The auth denial is logged, but at debug (routine), never warn.
+      expect(calls.warn.length, `${method} should not warn`).toBe(0);
+      const denyDebug = calls.debug.find(
+        (c) => (c[0] as { errorKind?: string })?.errorKind === "auth",
+      );
+      expect(denyDebug, `${method} should log the auth denial at debug`).toBeDefined();
+    }
+  });
+
+  it("still WARNs an admin-trust denial on a non-obs method (only the offline-fallback obs reads are quieted)", async () => {
+    const { logger, calls } = makeLogger();
+    const router = createDynamicMethodRouter(undefined, logger);
+    router.registerMethod("agents.create", "rpc", () => { throw new Error("Admin access required"); });
+    await router.server.receive(
+      { jsonrpc: "2.0", method: "agents.create", params: {}, id: 112 },
+      RPC_CTX,
+    );
+    expect(calls.warn.length).toBe(1);
+    expect((calls.warn[0]![0] as { errorKind: string }).errorKind).toBe("auth");
+  });
+
   it("logs a typed refusal (AuthorizationError) message-only — no stack rides the warn (expected flow, not a fault)", async () => {
     const { logger, calls } = makeLogger();
     const router = createDynamicMethodRouter(undefined, logger);

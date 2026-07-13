@@ -43,6 +43,9 @@ describe("LearningConfigSchema — the collapsed ~10-key learning layer", () => 
         maxDocsPerRun: 100,
         // The per-agent procedure-doc surface budget (the scaling guard).
         maxProcedureDocsSurfaced: 10,
+        // Corroboration default: single_owner (the primary Comis use case) — a multi-trusted-sender
+        // box auto-falls-back to the distinct-sessions gate (single_owner needs one distinct owner).
+        corroboration: { mode: "single_owner", minObservations: 2 },
       },
       forget: {
         maxDormantDays: 365, // best-out-of-box: remember ~a year (forget less aggressively)
@@ -62,6 +65,7 @@ describe("LearningConfigSchema — the collapsed ~10-key learning layer", () => 
       promoteAtProofCount: 3,
       maxDocsPerRun: 100,
       maxProcedureDocsSurfaced: 10,
+      corroboration: { mode: "single_owner", minObservations: 2 },
     });
     expect(parsed.forget).toEqual({ maxDormantDays: 365, failureEvictionFloor: 3, highProofFloor: 5 });
   });
@@ -77,6 +81,7 @@ describe("LearningConfigSchema — the collapsed ~10-key learning layer", () => 
       promoteAtProofCount: 3,
       maxDocsPerRun: 100,
       maxProcedureDocsSurfaced: 10,
+      corroboration: { mode: "single_owner", minObservations: 2 },
     });
   });
 
@@ -107,6 +112,42 @@ describe("LearningConfigSchema — the collapsed ~10-key learning layer", () => 
     expect(() => LearningConfigSchema.parse({ reflect: { maxDocsPerRun: 0 } })).toThrow();
     expect(() => LearningConfigSchema.parse({ forget: { maxDormantDays: -1 } })).toThrow();
     expect(LearningConfigSchema.parse({ reflect: { minConfidence: 0 } }).reflect.minConfidence).toBe(0);
+  });
+
+  // ── reflect.corroboration: the single-owner learning mode ──
+  it("reflect.corroboration defaults to single_owner/minObservations 2 (the primary Comis use case)", () => {
+    // Default is single_owner: single-owner deployments are the primary use case, and the
+    // distinct-sessions gate is structurally unreachable for one stable DM. A multi-trusted-sender
+    // box auto-falls-back to distinct-sessions (single_owner needs exactly one distinct owner).
+    const parsed = LearningConfigSchema.parse({});
+    expect(parsed.reflect.corroboration).toEqual({ mode: "single_owner", minObservations: 2 });
+  });
+
+  it("reflect.corroboration accepts an explicit distinct_sessions mode with a custom minObservations", () => {
+    const parsed = LearningConfigSchema.parse({
+      reflect: { corroboration: { mode: "distinct_sessions", minObservations: 3 } },
+    });
+    expect(parsed.reflect.corroboration.mode).toBe("distinct_sessions");
+    expect(parsed.reflect.corroboration.minObservations).toBe(3);
+  });
+
+  it("reflect.corroboration.minObservations is an integer >= 2 (a single success never corroborates)", () => {
+    expect(() => LearningConfigSchema.parse({ reflect: { corroboration: { minObservations: 1 } } })).toThrow();
+    expect(() => LearningConfigSchema.parse({ reflect: { corroboration: { minObservations: 0 } } })).toThrow();
+    expect(() => LearningConfigSchema.parse({ reflect: { corroboration: { minObservations: 2.5 } } })).toThrow();
+    expect(
+      LearningConfigSchema.parse({ reflect: { corroboration: { minObservations: 2 } } }).reflect.corroboration.minObservations,
+    ).toBe(2);
+  });
+
+  it("reflect.corroboration rejects an unknown mode and is strict on unknown sub-keys", () => {
+    expect(() => LearningConfigSchema.parse({ reflect: { corroboration: { mode: "trust_everyone" } } })).toThrow();
+    expect(() => LearningConfigSchema.parse({ reflect: { corroboration: { bogus: 1 } } })).toThrow();
+  });
+
+  it("a bare corroboration object fills BOTH fields from their per-field defaults", () => {
+    const parsed = LearningConfigSchema.parse({ reflect: { corroboration: {} } });
+    expect(parsed.reflect.corroboration).toEqual({ mode: "single_owner", minObservations: 2 });
   });
 });
 

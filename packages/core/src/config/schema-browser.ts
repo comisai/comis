@@ -18,8 +18,10 @@ const ViewportSchema = z.strictObject({
   });
 
 export const BrowserConfigSchema = z.strictObject({
-    /** Enable browser automation (default: false) */
-    enabled: z.boolean().default(false),
+    /** Enable browser automation (default: true — full capability out of the box;
+     * the browser stays SANDBOXED (`noSandbox` default false) and `orch:browse`
+     * still routes through the approval/escalation floor). */
+    enabled: z.boolean().default(true),
     /** Path to Chrome/Chromium binary (auto-detected if omitted) */
     chromePath: z.string().optional(),
     /** CDP (Chrome DevTools Protocol) debug port (default: 9222) */

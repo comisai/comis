@@ -169,6 +169,50 @@ describe("wrapWithAudit", () => {
     expect(events[0]!.errorKind).toBe("dependency");
   });
 
+  it("reports success=false when the tool returns an RPC failure ENVELOPE ({ success:false } in details) — live-incident regression", async () => {
+    // The media/messaging RPC-dispatch tools NEVER throw: a failed call returns
+    // jsonResult({ success:false, error }) — the envelope rides result.details.
+    // Live incident: a 120s image-generation timeout was audited as
+    // "Tool audit: image_generate succeeded (120023ms)" — a false success on the
+    // obs lens for every envelope-failing tool.
+    const eventBus = new TypedEventBus();
+    const events: EventMap["tool:executed"][] = [];
+    eventBus.on("tool:executed", (payload) => events.push(payload));
+
+    const tool = createMockTool(vi.fn().mockResolvedValue({
+      content: [{ type: "text" as const, text: '{"success":false,"error":"Image generation timed out"}' }],
+      details: { success: false, error: "Image generation timed out" },
+    }));
+    const wrapped = wrapWithAudit(tool, eventBus);
+
+    const result = await wrapped.execute("call-1", {});
+
+    // The envelope is returned to the model unchanged (not thrown).
+    expect((result.details as { success: boolean }).success).toBe(false);
+
+    expect(events).toHaveLength(1);
+    expect(events[0]!.success).toBe(false);
+    expect(events[0]!.errorMessage).toBe("Image generation timed out");
+  });
+
+  it("reports success=true when the tool returns an RPC SUCCESS envelope ({ success:true })", async () => {
+    const eventBus = new TypedEventBus();
+    const events: EventMap["tool:executed"][] = [];
+    eventBus.on("tool:executed", (payload) => events.push(payload));
+
+    const tool = createMockTool(vi.fn().mockResolvedValue({
+      content: [{ type: "text" as const, text: '{"success":true}' }],
+      details: { success: true, imagePath: "~/x.png" },
+    }));
+    const wrapped = wrapWithAudit(tool, eventBus);
+
+    await wrapped.execute("call-1", {});
+
+    expect(events).toHaveLength(1);
+    expect(events[0]!.success).toBe(true);
+    expect(events[0]!.errorKind).toBeUndefined();
+  });
+
   it("reports success=true when tool returns exitCode 0", async () => {
     const eventBus = new TypedEventBus();
     const events: EventMap["tool:executed"][] = [];

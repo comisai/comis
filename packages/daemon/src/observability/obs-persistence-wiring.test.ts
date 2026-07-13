@@ -6,6 +6,8 @@ import {
   diagnosticEventToRow,
   sessionSummaryEventToRow,
   dagDegradedEventToRow,
+  recallDegradedEventToRow,
+  prefixUnstableEventToRow,
   healthBudgetExceededEventToRow,
   channelInboundSilentEventToRow,
   channelIngressAuthRejectedEventToRow,
@@ -22,6 +24,7 @@ import {
   sandboxDowngradeRefusedEventToRow,
   deliveryDeadletteredEventToRow,
   nodeBudgetExceededEventToRow,
+  subagentKilledEventToRow,
   durableOrphanedEventToRow,
   durableResumedEventToRow,
   autonomyRevokedEventToRow,
@@ -127,7 +130,7 @@ describe("tokenUsageEventToRow", () => {
       channelId: "chan-1",
       executionId: "exec-1",
       provider: "anthropic",
-      model: "claude-3-5-sonnet-20241022",
+      model: "claude-sonnet-4-5-20250929",
       tokens: { prompt: 100, completion: 50, total: 150 },
       cost: { input: 0.01, output: 0.005, cacheRead: 0.001, cacheWrite: 0.002, total: 0.015 },
       latencyMs: 200,
@@ -193,7 +196,7 @@ describe("tokenUsageEventToRow", () => {
       channelId: "chan-1",
       executionId: "exec-1",
       provider: "anthropic",
-      model: "claude-3-5-sonnet-20241022",
+      model: "claude-sonnet-4-5-20250929",
       tokens: { prompt: 100, completion: 50, total: 150 },
       cost: { input: 0.01, output: 0.005, cacheRead: 0.001, cacheWrite: 0.002, total: 0.015 },
       latencyMs: 200,
@@ -216,7 +219,7 @@ describe("tokenUsageEventToRow", () => {
       channelId: "",
       executionId: "",
       provider: "anthropic",
-      model: "claude-3-5-sonnet-20241022",
+      model: "claude-sonnet-4-5-20250929",
       tokens: { prompt: 0, completion: 0, total: 0 },
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       latencyMs: 0,
@@ -238,7 +241,7 @@ describe("tokenUsageEventToRow", () => {
       channelId: "",
       executionId: "",
       provider: "anthropic",
-      model: "claude-3-5-sonnet-20241022",
+      model: "claude-sonnet-4-5-20250929",
       tokens: { prompt: 0, completion: 0, total: 0 },
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       latencyMs: 0,
@@ -700,6 +703,7 @@ describe("reflectFunnelEventToRow", () => {
       validated: 1,
       admitted: 1,
       maxClusterCardinality: 2,
+      singleOwnerCorroborated: 1,
       distinctTopicKeys: 1,
       untrustedDrops: 0,
       nameLengthRejections: 0,
@@ -721,6 +725,7 @@ describe("reflectFunnelEventToRow", () => {
     expect(d.untrustedDrops).toBe(0);
     expect(d.sourceTrajectoryCount).toBe(2);
     expect(d.distinctTopicKeys).toBe(1); // the under-merge discriminator rides the persisted row
+    expect(d.singleOwnerCorroborated).toBe(1); // the single-owner repetition count rides the persisted row
     // Counts + the closed enum only — never a reflected doc body.
     expect(row.details).not.toMatch(/procedure|markdown|##/);
   });
@@ -2579,6 +2584,29 @@ describe("wireAuditSink — a logger missing the custom .audit() level", () => {
     expect(jsonl).toContain("file.delete");
   });
 
+  it("does NOT persist a routine not_found secret READ (non-event), but keeps success + denied (comis-daniel 2026-07-09 audit-noise)", () => {
+    const logger = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), trace: vi.fn(), fatal: vi.fn(),
+      audit: vi.fn(), child: vi.fn(function (this: unknown) { return logger; }),
+    } as unknown as ComisLogger;
+    const { bus, emit } = makeBus();
+    wireAuditSink({ eventBus: bus, auditBuffer: makeRealAuditBuffer(), logger, dataDir, logRotation: { maxSizeBytes: 10_000_000, maxFiles: 5 } });
+
+    // A not_found READ accessed nothing — a per-turn optional-key probe, 60/69 of
+    // the comis-daniel rows. It must not enter the trail (unauthorized probing is
+    // covered by `denied`, which stays).
+    emit("secret:accessed", { secretName: "OAUTH_ANTHROPIC", agentId: "default", outcome: "not_found", timestamp: 1000 });
+    expect(store.queryAuditEvents({ kind: "secret_access" })).toHaveLength(0);
+
+    // A success READ (a secret WAS accessed) and a denied (security signal) are the
+    // meaningful access trail — kept.
+    emit("secret:accessed", { secretName: "ANTHROPIC_API_KEY", agentId: "default", outcome: "success", timestamp: 1001 });
+    emit("secret:accessed", { secretName: "SECRETS_MASTER_KEY", agentId: "default", outcome: "denied", timestamp: 1002 });
+    const rows = store.queryAuditEvents({ kind: "secret_access" });
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.outcome).sort()).toEqual(["denied", "success"]);
+  });
+
   it("STILL invokes .audit() on a full logger that implements the custom level (healthy path unchanged)", () => {
     const auditLines: Array<Record<string, unknown>> = [];
     const fullLogger = {
@@ -2665,7 +2693,7 @@ describe("setupObsPersistence — cache break + token-usage persistence (real st
       timestamp: 1000,
       toolsAdded: ["a"], toolsRemoved: [], toolsSchemaChanged: [],
       systemCharDelta: 10,
-      model: "claude-3-5-sonnet-20241022",
+      model: "claude-sonnet-4-5-20250929",
       ...overrides,
     };
   }
@@ -2699,7 +2727,7 @@ describe("setupObsPersistence — cache break + token-usage persistence (real st
     const result = setupObsPersistence(deps as never);
     eventBus.emit("observability:token_usage", {
       timestamp: 1000, traceId: "t", agentId: "a1", channelId: "c1", executionId: "e1",
-      provider: "anthropic", model: "claude-3-5-sonnet-20241022",
+      provider: "anthropic", model: "claude-sonnet-4-5-20250929",
       tokens: { prompt: 100, completion: 50, total: 150 },
       cost: { input: 0.01, output: 0.005, cacheRead: 0.001, cacheWrite: 0.002, total: 0.015 },
       latencyMs: 200, cacheReadTokens: 0, cacheWriteTokens: 100, sessionKey: "sk",
@@ -2722,7 +2750,7 @@ describe("setupObsPersistence — cache break + token-usage persistence (real st
     const result = setupObsPersistence(deps as never);
     eventBus.emit("observability:token_usage", {
       timestamp: 1000, traceId: "t", agentId: "a1", channelId: "c1", executionId: "e1",
-      provider: "anthropic", model: "claude-3-5-sonnet-20241022",
+      provider: "anthropic", model: "claude-sonnet-4-5-20250929",
       tokens: { prompt: 1, completion: 1, total: 2 },
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       latencyMs: 1, cacheReadTokens: 0, cacheWriteTokens: 0, sessionKey: "sk",
@@ -2770,5 +2798,168 @@ describe("setupObsPersistence — cache break + token-usage persistence (real st
     result.drainAll();
     // Gated off → no cache_break row persisted.
     expect(queryCacheBreakRateByReason(db, {})).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// subagentKilledEventToRow — the attributed sub-agent kill → health_signal row.
+// A health-monitor stuck-kill is fleet-visible degradation (warning); a
+// parent/operator/system kill is deliberate orchestration (info — the
+// BENIGN_DAG_DEGRADED severity discipline, so it never inflates the fleet
+// degrade count). Content-free: closed signal + closed killedBy ONLY — the
+// runtime/idle numbers stay per-incident (trajectory record + failure record).
+// ---------------------------------------------------------------------------
+
+describe("subagentKilledEventToRow", () => {
+  it("maps a health-monitor kill to a warning health_signal row (closed labels only)", () => {
+    const row = subagentKilledEventToRow({
+      runId: "run-k",
+      agentId: "default",
+      sessionKey: "default:sub-agent-k:sub-agent:k",
+      killedBy: "health_monitor",
+      runtimeMs: 186_592,
+      idleMs: 186_592,
+      thresholdMs: 180_000,
+      timestamp: 9_000,
+    });
+
+    expect(row.timestamp).toBe(9_000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.agentId).toBe("default");
+    expect(row.sessionKey).toBe("default:sub-agent-k:sub-agent:k");
+    expect(row.message).toBe("subagent:killed");
+    expect(row.traceId).toBeUndefined();
+
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details.signal).toBe("subagent_killed");
+    expect(details.killedBy).toBe("health_monitor");
+  });
+
+  it("maps a parent kill to severity info (deliberate orchestration, not degradation)", () => {
+    const row = subagentKilledEventToRow({
+      runId: "run-p",
+      agentId: "default",
+      sessionKey: "default:sub-agent-p:sub-agent:p",
+      killedBy: "parent",
+      runtimeMs: 1_000,
+      timestamp: 1,
+    });
+    expect(row.severity).toBe("info");
+    expect(JSON.parse(row.details ?? "{}").killedBy).toBe("parent");
+  });
+
+  it("NO-LEAK (§2.7): details carry the closed labels ONLY — no numbers, no reason text", () => {
+    const row = subagentKilledEventToRow({
+      runId: "run-k",
+      agentId: "default",
+      sessionKey: "default:sub-agent-k:sub-agent:k",
+      killedBy: "health_monitor",
+      runtimeMs: 186_592,
+      idleMs: 186_592,
+      thresholdMs: 180_000,
+      timestamp: 1,
+    });
+    expect(Object.keys(JSON.parse(row.details ?? "{}"))).toEqual(["signal", "killedBy"]);
+    expect(row.details).not.toContain("186592");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// recallDegradedEventToRow (degraded recall → health_signal)
+// ---------------------------------------------------------------------------
+
+describe("recallDegradedEventToRow", () => {
+  it("maps a memory:recall_degraded payload to a health_signal row the fleet rollup groups on (signal:recall_degraded)", () => {
+    // Live incident: hours of per-turn recall failures were daemon.log-only —
+    // this row is what turns them into a counted `comis fleet` finding.
+    const row = recallDegradedEventToRow({
+      agentId: "a1",
+      sessionKey: "sk-1",
+      traceId: "t-1",
+      scope: "vector_lane",
+      errorKind: "config",
+      timestamp: 2000,
+    });
+
+    expect(row.timestamp).toBe(2000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.agentId).toBe("a1");
+    expect(row.sessionKey).toBe("sk-1");
+    expect(row.message).toBe("memory:recall_degraded");
+    expect(row.traceId).toBe("t-1");
+
+    // details: closed labels only — exactly {signal, scope, errorKind}.
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details).toEqual({
+      signal: "recall_degraded",
+      scope: "vector_lane",
+      errorKind: "config",
+    });
+  });
+
+  it("omits the sessionKey column when the payload carries none (whole-lanes failure outside a session scope)", () => {
+    const row = recallDegradedEventToRow({
+      agentId: "a1",
+      traceId: "t-2",
+      scope: "lanes",
+      errorKind: "internal",
+      timestamp: 3000,
+    });
+    expect(row.sessionKey).toBeUndefined();
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details["scope"]).toBe("lanes");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// prefixUnstableEventToRow (cache-prefix churn → health_signal)
+// ---------------------------------------------------------------------------
+
+describe("prefixUnstableEventToRow", () => {
+  it("maps an agent:prefix_unstable payload to a health_signal row the fleet rollup groups on (signal:cache_prefix_churn)", () => {
+    // Live incident (comis-harel 2026-07-12): ~328k wasted cache-write tokens
+    // in one session were visible only as daemon.log WARNs — this row turns a
+    // recurring churn into a counted `comis fleet` finding.
+    const row = prefixUnstableEventToRow({
+      agentId: "default",
+      sessionKey: "default:5177:5177:peer:5177",
+      firstDivergentIndex: 20,
+      cacheRegionMutations: 3,
+      mutationClass: "structural-shift",
+      timestamp: 5000,
+    });
+
+    expect(row.timestamp).toBe(5000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.agentId).toBe("default");
+    expect(row.sessionKey).toBe("default:5177:5177:peer:5177");
+    expect(row.message).toBe("agent:prefix_unstable");
+
+    // details: closed labels + counts only — the signal label the fleet rollup
+    // groups on, and the mutationClass under `reason` so the finding names it.
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details["signal"]).toBe("cache_prefix_churn");
+    expect(details["reason"]).toBe("structural-shift");
+    expect(details["firstDivergentIndex"]).toBe(20);
+    expect(details["cacheRegionMutations"]).toBe(3);
+    // Content-free: no message text ever.
+    expect(row.details).not.toContain("Current Date");
+  });
+
+  it("omits the agentId column when the payload carries none (daemon-global emit)", () => {
+    const row = prefixUnstableEventToRow({
+      sessionKey: "sk-x",
+      firstDivergentIndex: 5,
+      cacheRegionMutations: 4,
+      mutationClass: "datetime-preamble",
+      timestamp: 6000,
+    });
+    expect(row.agentId).toBeUndefined();
+    expect(row.sessionKey).toBe("sk-x");
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details["reason"]).toBe("datetime-preamble");
   });
 });

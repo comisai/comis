@@ -51,6 +51,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | durableRunFacts | optional | the checkpoint records empty caps/leaseIds + zero budget (a safe degrade — a resume re-mints the persisted caps verbatim, so empty is zero-authority, never an over-grant; deps.durableRunFacts?.(...) optional-chain in startDurableCheckpoint) | packages/agent/src/spawn/sub-agent-runner.ts:404 |
 | lifecycleHooks | optional | spawn rollback hooks + onEnded hooks disabled for non-graph-coordinator paths (line 575 `if (deps.lifecycleHooks)` guard) | packages/agent/src/spawn/sub-agent-runner.ts:269 |
 | materializeFullOutput | optional | the child's full output is NOT materialized to a ResultRef — the announcement embeds the condensed summary + diskPath only (today's behavior; the daemon wires a `createResultRefStore`-backed impl targeting the child's jailed workspace, guard `if (condensedResult && deps.materializeFullOutput)`) | packages/agent/src/spawn/sub-agent-runner.ts:432 |
+| closeTrajectory | optional | the child session's trajectory recorder is NOT released on terminal settle — it stays bus-subscribed until daemon shutdown (older test wiring; the daemon binds SessionTrajectoryHandleRegistry.close, guard `if (deps.closeTrajectory)` in the execute finally) | packages/agent/src/spawn/sub-agent-runner.ts:449 |
 
 ## Removed Fields (stale-fallback)
 
@@ -60,7 +61,7 @@ The candidate stale-fallback field `activeRunRegistry` was retained as `optional
 
 ## Summary
 
-- **Final count:** 26 (7 required + 19 optional)
+- **Final count:** 27 (7 required + 20 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 

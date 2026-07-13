@@ -178,8 +178,9 @@ export const IncidentReportSchema = z.object({
    *  so a `context_exhausted` abort shows the tightening (assembled-input growth + eviction) in one
    *  `explain` field instead of the terminal fit-check alone. Optional + additive (schemaVersion 1). */
   contextBudgetHistory: z.array(IncidentContextBudgetHistoryEntrySchema).optional(),
-  /** Memory-recall outcome aggregated over the session's `memory.recalled`
-   *  trajectory records, so recall behavior is diagnosable from the report alone.
+  /** Memory-recall outcome aggregated over the session's `memory.recalled` +
+   *  `memory.recall_degraded` trajectory records, so recall behavior — and a
+   *  DEAD/DEGRADED recall — is diagnosable from the report alone.
    *  Counts/booleans ONLY — never query text or memory bodies.
    *  Optional + additive (present only when the trajectory carries recall records). */
   recall: z
@@ -192,6 +193,21 @@ export const IncidentReportSchema = z.object({
       lastLanes: z.number(),
       lastFinalCount: z.number(),
       rerankerAvailable: z.boolean(),
+      /** How many recalls injected ≥1 memory scoped to a DIFFERENT user than the
+       *  conversation (agent-scoped recall crossing a sender boundary) — the cross-sender
+       *  privacy signal, answerable from the report alone. Optional/additive: absent on
+       *  pre-fix trajectories that predate the crossUserCount event field. */
+      crossUserRecalls: z.number().optional(),
+      /** The terminal recall's cross-user injected count (`> 0` ⇒ another sender's
+       *  memory reached this turn's context). Counts only — never the ids/bodies. */
+      lastCrossUserCount: z.number().optional(),
+      /** Count of degraded recalls (a retrieval lane — or the whole lane
+       *  split — failed; previously a daemon.log-grep-only discovery). */
+      degraded: z.number().optional(),
+      /** The last degradation's scope: "vector_lane" (FTS still served) or "lanes" (no recall ran). */
+      lastDegradedScope: z.string().optional(),
+      /** The last degradation's closed ErrorKind string. */
+      lastDegradedErrorKind: z.string().optional(),
     })
     .optional(),
   /** The image-generation turn reconstructed from the
@@ -479,8 +495,14 @@ export const IncidentReportSchema = z.object({
       errorKind: z.string().optional(),
       /** The fixed one-line resource-abort reason, when present. */
       reason: z.string().optional(),
-      /** True when a failed event flipped a non-failure outcome to failure. */
+      /** True when a failed event flipped a delivered success to
+       *  success_with_recovered_failures. */
       reclassified: z.boolean(),
+      /** Session-wide count of turns that finalized as kept failure pills —
+       *  the last-wins snapshot above cannot show a mid-session failure paint. */
+      failedTurnCount: z.number().optional(),
+      /** Session-wide count of turns that finalized as recovered successes. */
+      recoveredTurnCount: z.number().optional(),
     })
     .optional(),
   /** Silent-failure recovery attempts folded from the session's
@@ -572,6 +594,37 @@ export const IncidentReportSchema = z.object({
               trajectory: z.object({ ok: z.number(), failed: z.number() }),
             }),
           ),
+        })
+        .optional(),
+      /**
+       * The closest REAL session keys when the requested key resolved ZERO records
+       * (a lossy/partial key — e.g. `telegram:<chatId>` instead of the formatted
+       * `<agent>:<chatId>:<chatId>:peer:<chatId>`). Populated only on a 0-record miss,
+       * from the on-disk trajectory pointers whose formatted `sessionId` shares a
+       * segment with the request, ranked most-relevant-first + capped. Turns a silent
+       * empty report into a "did you mean …?" so the operator copies the right key
+       * instead of hand-joining the session index. Content-free (keys are ids, already
+       * in the trajectory path layout). Absent when the key resolved records OR no
+       * candidate matched.
+       */
+      candidateSessionKeys: z.array(z.string()).optional(),
+      /**
+       * On-disk source PATHS the report was built from — a POINTER, never the content.
+       * The distinction is load-bearing for numeric/value reconciliation: the
+       * `.trajectory.jsonl` carries tool-call PROVENANCE only (toolName/success/
+       * durationMs — the result body is kept OUT of the event stream for secret-egress
+       * safety, §2.7), while the co-located raw session `.jsonl` carries the tool-result
+       * VALUES the model actually saw (wrapExternalContent-wrapped). So to RECONCILE a
+       * reported figure to the tool result that produced it, read `session` (values),
+       * NOT `trajectory` (provenance). Large results additionally offload to disk (see
+       * `offloads[].diskPathRel`). Paths only — never bodies; ids in the path mirror
+       * `candidateSessionKeys` (already in the trajectory layout). Present only when the
+       * session resolved to real on-disk artifacts.
+       */
+      sources: z
+        .object({
+          session: z.string(),
+          trajectory: z.string(),
         })
         .optional(),
     })

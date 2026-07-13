@@ -114,6 +114,12 @@ interface FleetSignals {
   sessionCount: number;
   /** Count of degraded sessions in the window (acute events). */
   degradedCount: number;
+  /** Degraded sessions that finished `completed_with_tool_errors` — the model
+   *  DELIVERED a final answer despite a (recovered/acknowledged) tool error. A
+   *  SUBSET of `degradedCount`; broken out so the degradation findings fire on the
+   *  HARD count (`degradedCount − deliveredWithToolErrorsCount`) — the sessions
+   *  that actually failed the user — and never false-alarm on self-healed hiccups. */
+  deliveredWithToolErrorsCount: number;
   /** The dominant named endReason cause among degraded sessions
    *  (highest count; ties broken lexicographically for determinism). */
   topDegradedCause?: string;
@@ -126,6 +132,29 @@ interface FleetSignals {
   /** The worst autonomy run's rootRunId (an id the operator pastes into
    *  `comis explain`). Undefined when no autonomy row carried one. */
   worstRootRunId?: string;
+  /** The worst degraded session's sessionKey (the one carrying the dominant
+   *  cause, most-recent tiebreak) — so the acute-degradation verdict names the
+   *  exact session to paste into `comis explain` instead of "the worst session".
+   *  Undefined when no degraded runtime session is in the window. */
+  worstDegradedSessionKey?: string;
+}
+
+/**
+ * Pick the worst degraded session's key: prefer a session whose named
+ * `endReason` matches the dominant cause; among matches (or, if none match,
+ * across all degraded runtime sessions) take the MOST RECENT (`lastTs`). Pure,
+ * deterministic. Returns undefined when no degraded runtime session exists.
+ */
+export function pickWorstDegradedSessionKey(
+  rows: readonly { sessionKey: string; degraded: boolean; endReason: string; lastTs: number; source: string }[],
+  topCause: string | undefined,
+): string | undefined {
+  const degraded = rows.filter((r) => r.source === "runtime" && r.degraded && r.sessionKey.length > 0);
+  if (degraded.length === 0) return undefined;
+  const matching = topCause !== undefined ? degraded.filter((r) => r.endReason === topCause) : [];
+  const pool = matching.length > 0 ? matching : degraded;
+  // Most-recent tiebreak (deterministic: lastTs desc, then sessionKey asc).
+  return [...pool].sort((a, b) => b.lastTs - a.lastTs || a.sessionKey.localeCompare(b.sessionKey))[0]!.sessionKey;
 }
 
 /**
@@ -157,14 +186,24 @@ const FLEET_HEURISTICS: ReadonlyArray<(s: FleetSignals) => FleetRootCause | null
       ],
     };
   },
-  // 1) High fleet degradation — most sessions in the window degraded.
+  // 1) High fleet degradation — most sessions in the window HARD-degraded (the
+  //    user got a degraded/no reply). Fires on the HARD rate: `completed_with_
+  //    tool_errors` sessions (a final answer WAS delivered despite a tool error)
+  //    are excluded so a fleet of self-healed hiccups does not false-alarm.
   (s) => {
-    if (s.sessionCount === 0 || s.degradedRate < HIGH_DEGRADED_RATE) return null;
-    const pct = Math.round(s.degradedRate * 100);
+    if (s.sessionCount === 0) return null;
+    const hardDegraded = s.degradedCount - s.deliveredWithToolErrorsCount;
+    const hardRate = hardDegraded / s.sessionCount;
+    if (hardRate < HIGH_DEGRADED_RATE) return null;
+    const pct = Math.round(hardRate * 100);
     const kind = s.topErrorKind ?? "the top error kind";
+    const deliveredNote =
+      s.deliveredWithToolErrorsCount > 0
+        ? ` (excludes ${s.deliveredWithToolErrorsCount} delivered-with-tool-errors — the user still got a reply)`
+        : "";
     return {
       code: "fleet_high_degraded_rate",
-      detail: `${pct}% of ${s.sessionCount} sessions degraded over the window (dominant errorKind: ${kind})`,
+      detail: `${pct}% of ${s.sessionCount} sessions HARD-degraded over the window (dominant errorKind: ${kind})${deliveredNote}`,
       suggestedNextSteps: [
         "run `comis explain` on the worst session to localize the failure",
         `inspect the upstream provider/transport for ${kind}`,
@@ -178,13 +217,28 @@ const FLEET_HEURISTICS: ReadonlyArray<(s: FleetSignals) => FleetRootCause | null
   //    first. The live fleet verdict pointed at TLS-off (chronic, known) while
   //    1 of 3 sessions had aborted on context_exhausted (acute, actionable).
   (s) => {
-    if (s.degradedCount === 0) return null;
+    // Fire on the HARD degraded count — a session that merely delivered-with-
+    // tool-errors is not an acute event (the user got a reply). A window whose
+    // ONLY "degradation" is self-healed tool hiccups produces no acute verdict.
+    const hardDegraded = s.degradedCount - s.deliveredWithToolErrorsCount;
+    if (hardDegraded === 0) return null;
     const cause = s.topDegradedCause ?? "a named cause";
+    // Name the exact session to explain when we resolved one — "the worst
+    // session" with no key made the operator hunt for it (live incident).
+    const explainStep = s.worstDegradedSessionKey !== undefined
+      ? `run \`comis explain ${s.worstDegradedSessionKey}\` for the per-session verdict`
+      : "run `comis explain <sessionKey>` on the worst degraded session for the per-session verdict";
+    const deliveredNote =
+      s.deliveredWithToolErrorsCount > 0
+        ? ` (+${s.deliveredWithToolErrorsCount} delivered-with-tool-errors — the user still got a reply)`
+        : "";
     return {
       code: "fleet_acute_degradation",
-      detail: `${s.degradedCount} of ${s.sessionCount} session(s) degraded over the window (top cause: ${cause})`,
+      detail: s.worstDegradedSessionKey !== undefined
+        ? `${hardDegraded} of ${s.sessionCount} session(s) HARD-degraded over the window (top cause: ${cause}; worst: ${s.worstDegradedSessionKey})${deliveredNote}`
+        : `${hardDegraded} of ${s.sessionCount} session(s) HARD-degraded over the window (top cause: ${cause})${deliveredNote}`,
       suggestedNextSteps: [
-        "run `comis explain` on the worst degraded session for the per-session verdict",
+        explainStep,
         `address the dominant degradation cause (${cause}) before the chronic posture findings`,
       ],
     };
@@ -327,6 +381,12 @@ export async function assembleFleetHealthReport(
   // reader's own default excludes synthetic rows (no opt-in plumbed).
   const activity = readSessionIndexWindow(deps.dataDir, sinceMs, nowMs);
 
+  // Off-session (background-job) LLM spend — reflection cron runs et al. key
+  // their token usage to a synthetic `__PREFIX__` session with NO
+  // session_summary, so their cost is absent from `fleet.costUsd` (the
+  // session-summary rollup). Surface it as a DISTINCT figure so the operator's
+  // full provider bill = costUsd + offSessionUsd, without double-counting.
+  const offSessionUsd = deps.obsStore?.offSessionCostSince(sinceMs) ?? 0;
   // Diagnostics — windowed health_signal; latest model_health / config_posture.
   const healthSignals = deps.obsStore?.queryDiagnostics({ category: "health_signal", sinceMs }) ?? [];
   const modelHealth = deps.obsStore?.queryDiagnostics({ category: "model_health", sinceMs }) ?? [];
@@ -395,14 +455,18 @@ export async function assembleFleetHealthReport(
   const cronWakeGateSlice = computeCronWakeGateSlice(cronWakeGate);
 
   // The deterministic verdict (PURE, ordered first-match-wins).
-  // Dominant named degradation cause (highest count; lexicographic tiebreak).
-  const topDegradedCause = Object.entries(fleet.degradedByCause).sort(
-    (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
-  )[0]?.[0];
+  // Dominant named HARD degradation cause (highest count; lexicographic tiebreak).
+  // EXCLUDE `completed_with_tool_errors` — the hard-degradation findings key on this,
+  // so naming a soft delivered-with-tool-errors cause there would contradict the
+  // "HARD-degraded" detail. The full breakdown still rides `degradedByCause`.
+  const topDegradedCause = Object.entries(fleet.degradedByCause)
+    .filter(([cause]) => cause !== "completed_with_tool_errors")
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0];
   const likelyRootCause = fleetRootCause({
     degradedRate: fleet.degradedRate,
     sessionCount: fleet.sessionCount,
     degradedCount: degraded,
+    deliveredWithToolErrorsCount: fleet.deliveredWithToolErrorsCount,
     ...(topDegradedCause !== undefined ? { topDegradedCause } : {}),
     // Count only degraded (warning+) rows: the ingest layer stamps benign
     // reasons (session_rebase / serialized_wait) severity "info", and counting
@@ -412,6 +476,11 @@ export async function assembleFleetHealthReport(
     healthSignalCount: healthSignals.filter((r) => r.severity !== "info").length,
     configPostureCount: configPosture.length,
     topErrorKind: topErrorKinds[0]?.kind,
+    // Name the exact worst degraded session so the acute-degradation verdict
+    // pastes straight into `comis explain` (undefined-safe spread).
+    ...(pickWorstDegradedSessionKey(rows, topDegradedCause) !== undefined
+      ? { worstDegradedSessionKey: pickWorstDegradedSessionKey(rows, topDegradedCause) }
+      : {}),
     // The autonomy verdict keys on the DEGRADED autonomy run count +
     // the worst rootRunId (both from the slice above) — undefined-safe spread.
     // A denial-breaker-aborted run lands in durable status 'completed'
@@ -434,7 +503,7 @@ export async function assembleFleetHealthReport(
   return {
     schemaVersion: 1,
     windowHours,
-    sessions: { total: fleet.sessionCount, degraded, degradedRate: fleet.degradedRate },
+    sessions: { total: fleet.sessionCount, degraded, degradedRate: fleet.degradedRate, deliveredWithToolErrors: fleet.deliveredWithToolErrorsCount },
     topErrorKinds,
     // The fleet-level degradation detector: degraded counts by named
     // endReason cause, computed by reduceFleetWindow from the per-session rows
@@ -451,7 +520,7 @@ export async function assembleFleetHealthReport(
     // figure as `activity.tokenTotal` (a single source of truth — no second
     // aggregate); consumers cross-reference `coverage` before trusting a 0. The
     // `comis fleet` table render drops the misleading "· 0 tok" in that case.
-    cost: { costUsd: fleet.costUsd, totalTokens: activity.tokenTotal },
+    cost: { costUsd: fleet.costUsd, totalTokens: activity.tokenTotal, offSessionUsd },
     activity: {
       activeAgents: activity.activeAgents,
       activeChannels: activity.activeChannels,

@@ -138,10 +138,37 @@ while (Date.now() - start < maxMs) {
   }
   if (sawAnswer && Date.now() - lastNew >= quiesceMs) break;
 }
-const reason = turnEnded ? 'turn-ended(trajectory)' : sawAnswer ? 'answer+quiesce' : 'TIMEOUT';
+// A 0-outbound "timeout" is often NOT a wedge: an unauthorized sender (FROMUSER
+// not in the agent's allowFrom list) is rejected at the auth layer BEFORE any
+// agent turn, so there is correctly no reply. Distinguish that from a real hang
+// by checking the daemon log for the block naming THIS sender — else the driver
+// reports a misleading "[TIMEOUT] — NO SUBSTANTIVE ANSWER" on a correct security
+// block (which briefly read as a wedge-finding during the fleet-marathon SE-H4 drive).
+const detectAllowFromBlock = () => {
+  if (seen.length > 0 || sawAnswer || turnEnded || !DATA) return null;
+  try {
+    const logDir = `${DATA}/logs`;
+    const logs = readdirSync(logDir)
+      .filter((f) => f.startsWith('daemon') && f.endsWith('.log'))
+      .map((f) => `${logDir}/${f}`)
+      .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+    for (const lf of logs.slice(0, 3)) {
+      const tail = readFileSync(lf, 'utf8').split('\n').slice(-400);
+      for (let i = tail.length - 1; i >= 0; i--) {
+        const line = tail[i];
+        if (line.includes('Sender blocked by allowFrom filter') && line.includes(`"senderId":"${fromUser}"`)) {
+          return `BLOCKED (allowFrom) — sender ${fromUser} not authorized; rejected at the auth layer, no agent turn (this is a correct security block, NOT a wedge)`;
+        }
+      }
+    }
+  } catch { /* no log access — fall through to the timeout reason */ }
+  return null;
+};
+const allowFromBlock = detectAllowFromBlock();
+const reason = turnEnded ? 'turn-ended(trajectory)' : sawAnswer ? 'answer+quiesce' : allowFromBlock ? 'BLOCKED(allowFrom)' : 'TIMEOUT';
 console.log(`=== ALL OUTBOUND (${seen.length}) in ${Math.round((Date.now() - start) / 1000)}s [${reason}]${sawAnswer ? '' : ' — NO SUBSTANTIVE ANSWER'} ===`);
 for (const o of seen) console.log(`[${o.method} ${o.messageId}] ${JSON.stringify((o.text || '').slice(0, 600))}`);
 console.log('=== SUBSTANTIVE ANSWER ===');
 let any = false;
 for (const o of seen) if (o.method === 'sendMessage' && !isProgress(o.text)) { console.log(o.text); any = true; }
-if (!any) console.log(`[NO SUBSTANTIVE ANSWER — ${turnEnded ? 'turn ended with no chat delivery (empty-final/abort?) — read the trajectory' : 'timed out'}]`);
+if (!any) console.log(`[NO SUBSTANTIVE ANSWER — ${allowFromBlock ? allowFromBlock : turnEnded ? 'turn ended with no chat delivery (empty-final/abort?) — read the trajectory' : 'timed out'}]`);

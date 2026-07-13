@@ -52,6 +52,15 @@ const FLEET_TOP_ERROR_KINDS_CAP = 3;
  */
 const FLEET_DEGRADED_BY_CAUSE_CAP = 10;
 
+/**
+ * The `endReason` of a DELIVERED-with-tool-errors finish: the model stopped
+ * cleanly with a final answer but ≥1 tool errored (recovered or acknowledged).
+ * The user GOT a reply — softer than a hard failure — so it is broken out of the
+ * hard degraded rate. Mirrors the `completed_with_tool_errors` literal in
+ * `END_REASON_MAP` (executor-post-execution.ts); a rename there must update this.
+ */
+const DELIVERED_WITH_TOOL_ERRORS_CAUSE = "completed_with_tool_errors";
+
 /** The stable bucket for a degraded row whose endReason is missing/blank. */
 const UNKNOWN_CAUSE = "unknown";
 
@@ -90,6 +99,18 @@ export interface FleetWindowRollup {
    * top-count-first with name-asc tie-break (deterministic, DoS-bounded).
    */
   degradedByCause: Record<string, number>;
+  /**
+   * How many degraded sessions finished `completed_with_tool_errors` — a clean
+   * model stop that DELIVERED a final answer despite a (recovered or acknowledged)
+   * tool error. A SUBSET of {@link degradedCount} (also bucketed in
+   * {@link degradedByCause}), broken out so the fleet detector can report the HARD
+   * degraded rate — the sessions that actually FAILED the user (`degradedCount −
+   * deliveredWithToolErrorsCount`) — instead of lumping self-healed tool hiccups
+   * with real failures (a fleet of delivered-with-tool-errors turns otherwise reads
+   * as a false "N% degraded" alarm). The per-session row + `degradedByCause` are
+   * unchanged (a tool DID error — it stays a warning for drill-down).
+   */
+  deliveredWithToolErrorsCount: number;
   /** Sum of per-session breaker-trip counts. */
   breakerTripTotal: number;
   /** Per-tool {ok, failed} summed across sessions; keys bounded by the tool set. */
@@ -116,6 +137,7 @@ export function reduceFleetWindow(
   const kept = opts.excludeSynthetic ? rows.filter((r) => r.source === "runtime") : rows;
 
   let degradedCount = 0;
+  let deliveredWithToolErrorsCount = 0;
   let breakerTripTotal = 0;
   let costUsd = 0;
   const mergedKinds = new Map<string, number>();
@@ -133,6 +155,9 @@ export function reduceFleetWindow(
       const cause =
         typeof r.endReason === "string" && r.endReason.length > 0 ? r.endReason : UNKNOWN_CAUSE;
       causeCounts.set(cause, (causeCounts.get(cause) ?? 0) + 1);
+      // A DELIVERED-with-tool-errors finish (clean stop + tool error) — softer
+      // than a hard failure; broken out so the fleet detector reports the hard rate.
+      if (cause === DELIVERED_WITH_TOOL_ERRORS_CAUSE) deliveredWithToolErrorsCount += 1;
     }
     breakerTripTotal += r.breakerTripCount;
     costUsd += r.costUsd;
@@ -182,6 +207,7 @@ export function reduceFleetWindow(
     // population with `total`/`degradedRate` instead of counting unfiltered rows.
     degradedCount,
     degradedRate: sessionCount === 0 ? 0 : degradedCount / sessionCount,
+    deliveredWithToolErrorsCount,
     topErrorKinds,
     degradedByCause,
     breakerTripTotal,

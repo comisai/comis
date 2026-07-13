@@ -4768,13 +4768,17 @@
               "qualifiedName": {
                 "type": "string"
               },
+              "callableName": {
+                "type": "string"
+              },
               "description": {
                 "type": "string"
               }
             },
             "required": [
               "name",
-              "qualifiedName"
+              "qualifiedName",
+              "callableName"
             ],
             "additionalProperties": false
           }
@@ -8272,6 +8276,21 @@
             },
             "rerankerAvailable": {
               "type": "boolean"
+            },
+            "crossUserRecalls": {
+              "type": "number"
+            },
+            "lastCrossUserCount": {
+              "type": "number"
+            },
+            "degraded": {
+              "type": "number"
+            },
+            "lastDegradedScope": {
+              "type": "string"
+            },
+            "lastDegradedErrorKind": {
+              "type": "string"
             }
           },
           "required": [
@@ -8641,6 +8660,12 @@
             },
             "reclassified": {
               "type": "boolean"
+            },
+            "failedTurnCount": {
+              "type": "number"
+            },
+            "recoveredTurnCount": {
+              "type": "number"
             }
           },
           "required": [
@@ -8869,6 +8894,28 @@
                 "divergentTools"
               ],
               "additionalProperties": false
+            },
+            "candidateSessionKeys": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "sources": {
+              "type": "object",
+              "properties": {
+                "session": {
+                  "type": "string"
+                },
+                "trajectory": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "session",
+                "trajectory"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -8936,6 +8983,9 @@
               "type": "number"
             },
             "degradedRate": {
+              "type": "number"
+            },
+            "deliveredWithToolErrors": {
               "type": "number"
             }
           },
@@ -9006,6 +9056,9 @@
               "type": "number"
             },
             "totalTokens": {
+              "type": "number"
+            },
+            "offSessionUsd": {
               "type": "number"
             }
           },
@@ -12012,6 +12065,9 @@
         },
         "sizeBytes": {
           "type": "number"
+        },
+        "delivered": {
+          "type": "boolean"
         }
       },
       "required": [

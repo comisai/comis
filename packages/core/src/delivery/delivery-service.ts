@@ -393,6 +393,13 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
             sendOpts.threadId = options.threadId;
           }
 
+          // subject: all chunks (email forms a "Re: <subject>" reply subject so
+          // the reply threads and never shows an empty subject line; channels
+          // without a subject concept ignore it).
+          if (options?.subject) {
+            sendOpts.subject = options.subject;
+          }
+
           // extra: dual-purpose pass-through for both platform-specific metadata
           // (telegramThreadScope) and rich SendMessageOptions (buttons, cards, effects).
           // Spread known top-level SendMessageOptions keys, preserve remainder as extra.

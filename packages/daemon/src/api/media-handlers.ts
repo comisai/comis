@@ -340,10 +340,47 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
       // fs-safe-allowed: per-agent workspace media output (`<agentDir>/media/tts/<file>`); not ~/.comis/ directly
       await fs.writeFile(filePath, synthResult.value.audio);
 
+      // Auto-deliver the audio to the caller's channel — mirroring image.generate
+      // (image-handlers.ts) — so a synthesized voice message actually REACHES the
+      // user instead of only returning a file path the agent must remember to send.
+      // Without this the agent can report "sent a voice message" while nothing was
+      // delivered (a false success). Context-aware: only when an interactive channel
+      // origin is present (absent for orchestrate/cron/non-channel callers, which
+      // just get the path). Capability-driven: sendAttachment is optional on
+      // ChannelPort — never call an undefined method.
+      let delivered = false;
+      const callerChannelType = rawParams._callerChannelType as string | undefined;
+      const callerChannelId = rawParams._callerChannelId as string | undefined;
+      if (callerChannelType && callerChannelId && deps.getChannelAdapter) {
+        const adapter = deps.getChannelAdapter(callerChannelType);
+        if (adapter && typeof adapter.sendAttachment === "function") {
+          const sendResult = await adapter.sendAttachment(callerChannelId, {
+            type: "audio",
+            url: filePath,
+            mimeType: synthResult.value.mimeType,
+            fileName,
+          });
+          if (sendResult.ok) {
+            delivered = true;
+          } else {
+            deps.logger.warn(
+              {
+                channelType: callerChannelType,
+                err: sendResult.error,
+                hint: "TTS audio synthesized but channel delivery failed; the file path is still returned so the agent can retry via the message tool",
+                errorKind: "network" as const,
+              },
+              "TTS channel delivery failed",
+            );
+          }
+        }
+      }
+
       const result = {
         filePath,
         mimeType: synthResult.value.mimeType,
         sizeBytes: synthResult.value.audio.byteLength,
+        ...(delivered ? { delivered: true } : {}),
       };
       if (systemGetEnv("NODE_ENV") !== "production") {
         TtsSynthesizeContract.response.parse(result);

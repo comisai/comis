@@ -52,8 +52,8 @@
   "devDependencies": {
     "@agentclientprotocol/sdk": "0.22.1",
     "@comis/core": "workspace:*",
-    "@earendil-works/pi-agent-core": "0.80.3",
-    "@earendil-works/pi-ai": "0.80.3",
+    "@earendil-works/pi-agent-core": "0.80.6",
+    "@earendil-works/pi-ai": "0.80.6",
     "@eslint/js": "10.0.1",
     "@line/bot-sdk": "10.8.0",
     "@matrix-org/matrix-sdk-crypto-wasm": "18.3.1",

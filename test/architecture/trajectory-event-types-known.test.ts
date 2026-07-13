@@ -257,6 +257,13 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "context:compaction_routed",
   "context:pipeline:cache",
   "context:dag_degraded",
+  // agent:prefix_unstable: a recurring Anthropic prompt-cache-prefix collapse
+  //   (a cached-region message mutated across turns on THRESHOLD+ calls) →
+  //   content-free health_signal row (signal:cache_prefix_churn) surfaced by
+  //   `comis fleet`. A wasted-cache-write health signal fed to observability
+  //   snapshots, NOT a turn-level trajectory step — same class as
+  //   context:dag_degraded above.
+  "agent:prefix_unstable",
   // context:arbitrated: margin-arbiter allocation signal —
   //   per-tier kept counts + discretionary-pool tokens + relevanceFirst boolean,
   //   ids/counts only, content-free. A counts-only internal-health signal (same

@@ -415,6 +415,26 @@ describe("createRpcDispatch", () => {
     expect(String(payload.err)).not.toMatch(/\n\s+at /);
   });
 
+  it("logs an admin-trust denial on obs.explain at DEBUG, not WARN (the routine CLI probe-then-offline flow)", async () => {
+    const { createObsHandlers } = await import("./obs-handlers/index.js");
+    (createObsHandlers as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+      "obs.explain": vi.fn(async () => {
+        const e = new Error("Admin access required for obs.explain (admin-trust only)");
+        e.name = "AuthorizationError";
+        throw e;
+      }),
+    });
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    const dispatch = createRpcDispatch(mockDeps);
+
+    await expect(dispatch("obs.explain", {})).rejects.toThrow(/Admin access required/);
+    expect(mockLogger.warn).not.toHaveBeenCalled();
+    const denyDebug = mockLogger.debug.mock.calls.find(
+      (c) => (c[0] as { errorKind?: string })?.errorKind === "auth",
+    );
+    expect(denyDebug, "the obs.explain auth denial should log at debug").toBeDefined();
+  });
+
   it("logs unmatched handler errors through Pino at ERROR level", async () => {
     const { createCronHandlers } = await import("./cron-handlers.js");
     (createCronHandlers as ReturnType<typeof vi.fn>).mockReturnValueOnce({

@@ -218,6 +218,9 @@ export async function persistFailureRecord(params: {
   parentTraceId?: string;
   /** Token/cost usage consumed before failure. */
   usage?: { totalTokens: number; costUsd: number; cacheReadTokens?: number; cacheWriteTokens?: number; cacheSavedUsd?: number };
+  /** Who initiated a kill (endReason "killed") — a health-monitor kill must
+   *  not read as a parent kill on the record the parent later polls. */
+  killedBy?: "parent" | "health_monitor" | "operator" | "system";
 }, logger?: SubAgentRunnerLogger): Promise<void> {
   try {
     const sanitizedKey = params.sessionKey.replace(/:/g, "_");
@@ -225,8 +228,9 @@ export async function persistFailureRecord(params: {
     // fs-safe-allowed: sub-agent error-spill dir (`<dataDir>/subagent-results/<key>/`); follow-up plan should migrate to ensureContainedDir + writeRegularFile
     await mkdir(dirname(diskPath), { recursive: true });
 
-    // Classify error for structured context
-    const errorContext = classifyErrorContext(params.error, params.endReason);
+    // Classify error for structured context (killedBy keeps the structured
+    // errorType consistent with the attributed error string).
+    const errorContext = classifyErrorContext(params.error, params.endReason, params.killedBy);
 
     // fs-safe-allowed: sub-agent error-spill writer (`<dataDir>/subagent-results/...`); follow-up plan should migrate to writeRegularFile
     await writeFile(
@@ -242,6 +246,8 @@ export async function persistFailureRecord(params: {
         runtimeMs: params.runtimeMs,
         // Structured error context
         errorContext,
+        // Kill attribution (endReason "killed" only)
+        ...(params.killedBy ? { killedBy: params.killedBy } : {}),
         // Parent trace correlation (shared with success records)
         ...(params.parentTraceId ? { parentTraceId: params.parentTraceId } : {}),
         ...(params.usage ? { usage: params.usage } : {}),
@@ -299,6 +305,7 @@ const TRANSIENT_TRANSPORT_TOKENS = [
 export function classifyErrorContext(
   errorMessage: string,
   endReason: "failed" | "killed" | "watchdog_timeout" | "ghost_sweep",
+  killedBy?: "parent" | "health_monitor" | "operator" | "system",
 ): {
   errorType: string;
   retryable: boolean;
@@ -320,7 +327,13 @@ export function classifyErrorContext(
       retryable = true;
       break;
     case "killed":
-      errorType = "KilledByParent";
+      // The structured twin of the attributed error string — a
+      // health-monitor stuck-kill must never read as a parent kill.
+      errorType =
+        killedBy === "health_monitor" ? "StuckKilledByHealthMonitor"
+        : killedBy === "operator" ? "KilledByOperator"
+        : killedBy === "system" ? "KilledBySystem"
+        : "KilledByParent";
       retryable = false;
       break;
     default: {
@@ -668,6 +681,9 @@ export async function deliverFailureNotification(
     runId: string;
     /** Formatted caller session key — needed to build the shared announceKey. */
     callerSessionKey?: string;
+    /** Cause line replacing the generic "encountered an error" sentence —
+     *  used by attributed kills so the user learns WHY the task stopped. */
+    detail?: string;
   },
   deps: Pick<SubAgentRunnerDeps, "sendToChannel" | "logger" | "batcher"> & {
     /**
@@ -685,7 +701,7 @@ export async function deliverFailureNotification(
 
   const message = [
     `Task failed: ${taskPreview}`,
-    "The task encountered an error and could not complete.",
+    params.detail ?? "The task encountered an error and could not complete.",
     `Runtime: ${(params.runtimeMs / 1000).toFixed(1)}s`,
   ].join("\n");
 

@@ -488,6 +488,12 @@ export function buildAbortRedirectMessage(
 ): string {
   if (plan === undefined) {
     const fallback = msgTextFallback ?? "";
+    // Omit the request echo entirely when there is no text to show — a
+    // background-continuation re-entry turn carries no user message, so
+    // echoing `Your request was: ''` is pure noise (live incident 2026-07-08).
+    if (fallback.length === 0) {
+      return `[Stopped: ${finishReason}] Please try again.`;
+    }
     return `[Stopped: ${finishReason}] Your request was: '${fallback}'. Please try again.`;
   }
 

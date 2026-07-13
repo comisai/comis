@@ -56,7 +56,7 @@ export function createTTSTool(rpcCall: RpcCall): AgentTool<typeof TTSToolParams>
     name: "tts_synthesize",
     label: "Text-to-Speech",
     description:
-      "Generate speech audio from text. Returns a file path to the audio file that can be sent as an attachment via the message tool.",
+      "Generate speech audio from text. In a chat turn the audio is AUTOMATICALLY delivered to the current channel as a voice/audio message (do NOT also send it via the message tool, and do not claim you sent it unless this tool ran). Also returns the audio file path (for orchestrate/cron or non-channel callers, which must send it themselves).",
     parameters: TTSToolParams,
 
     async execute(

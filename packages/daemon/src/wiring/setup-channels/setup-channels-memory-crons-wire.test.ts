@@ -19,7 +19,7 @@ const mockReasonSeam = vi.hoisted(() => vi.fn(async () => ({ deductive: [], indu
 const mockCreateReasoningSeam = vi.hoisted(() => vi.fn(() => mockReasonSeam));
 const mockResolveOperationModel = vi.hoisted(() => vi.fn(() => ({ provider: "anthropic", modelId: "anthropic:claude-haiku", model: "anthropic:claude-haiku", timeoutMs: 60_000, source: "default" })));
 // The reflection job + adapter the __REFLECT__ handler injects/calls.
-const mockRunReflection = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { admissionOutcome: "admitted" as const, selected: 2, admitted: 1, maxTopicCardinality: 2, distinctTopicKeys: 1, skipped: 1, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } })));
+const mockRunReflection = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { admissionOutcome: "admitted" as const, selected: 2, admitted: 1, maxTopicCardinality: 2, singleOwnerCorroborated: 0, distinctTopicKeys: 1, skipped: 1, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } })));
 const mockCreateLlmReflectionAdapter = vi.hoisted(() => vi.fn(() => ({ reflect: vi.fn() })));
 
 vi.mock("@comis/agent", async (importOriginal) => ({
@@ -81,7 +81,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockResolveOperationModel.mockReturnValue({ provider: "anthropic", modelId: "anthropic:claude-haiku", model: "anthropic:claude-haiku", timeoutMs: 60_000, source: "default" } as any);
   mockCreateReasoningSeam.mockReturnValue(mockReasonSeam);
-  mockRunReflection.mockResolvedValue({ ok: true as const, value: { admissionOutcome: "admitted" as const, selected: 2, admitted: 1, maxTopicCardinality: 2, distinctTopicKeys: 1, skipped: 1, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } });
+  mockRunReflection.mockResolvedValue({ ok: true as const, value: { admissionOutcome: "admitted" as const, selected: 2, admitted: 1, maxTopicCardinality: 2, singleOwnerCorroborated: 0, distinctTopicKeys: 1, skipped: 1, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } });
   mockCreateLlmReflectionAdapter.mockReturnValue({ reflect: vi.fn() });
 });
 
@@ -97,7 +97,7 @@ function makeReflectionBundle(over: Partial<MemoryCronContext["reflection"]> = {
     } as any,
     outcomeSignal: { resolve: vi.fn(async () => ({ ok: true as const, value: { outcome: "unknown", confidence: 0, sources: [], recalledIds: [], usedSkillIds: [] } })) } as any,
     buildSourceTrajectories: vi.fn(async (_kind: "skill" | "profile" | "topic") => [
-      { trajectoryId: "t1", sessionId: "s1", sender: "u1", text: "did X then Y", signature: "do X", trustedOrigin: true, sourceTrustExternal: false },
+      { trajectoryId: "t1", sessionId: "s1", sender: "u1", text: "did X then Y", signature: "do X", trustedOrigin: true, explicitlyTrusted: true, sourceTrustExternal: false },
     ]) as any,
     ...over,
   };

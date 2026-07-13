@@ -252,6 +252,35 @@ async function isChromeReachable(
  * @returns A RunningChrome handle for process management.
  * @throws If no browser executable is found or Chrome fails to start.
  */
+/**
+ * Build the environment for the spawned Chrome subprocess.
+ *
+ * Starts from the daemon's FILTERED subprocess env (the daemon deliberately
+ * never hands raw process.env to children) plus HOME. When Chrome runs HEADED
+ * (`headless:false` — the default once the installer provisions Xvfb), it also
+ * needs DISPLAY (and XAUTHORITY) to reach the X server; the filtered env strips
+ * those, so pull them from the daemon's own environment when present. Without
+ * this, headed Chrome cannot open the Xvfb virtual display, exits immediately,
+ * and the browser tool's navigate fails `connectOverCDP ECONNREFUSED :<cdpPort>`.
+ * Never injected for headless Chrome; the exec tool's separate filtered env is
+ * unaffected, so untrusted subprocesses still never receive DISPLAY.
+ */
+export function buildChromeEnv(
+  spawnEnv: Record<string, string> | undefined,
+  headed: boolean,
+): Record<string, string> {
+  const env: Record<string, string> = spawnEnv
+    ? { ...spawnEnv, HOME: os.homedir() }
+    : { PATH: systemGetEnv("PATH") ?? "", HOME: os.homedir() };
+  if (headed) {
+    const display = systemGetEnv("DISPLAY");
+    if (display) env["DISPLAY"] = display;
+    const xauthority = systemGetEnv("XAUTHORITY");
+    if (xauthority) env["XAUTHORITY"] = xauthority;
+  }
+  return env;
+}
+
 export async function launchChrome(
   config: BrowserConfig,
   spawnEnv?: Record<string, string>,  // filtered env for Chrome subprocess
@@ -305,14 +334,25 @@ export async function launchChrome(
 
   const startedAt = systemNowMs();
 
-  // Use filtered env instead of raw process.env
-  const chromeEnv = spawnEnv
-    ? { ...spawnEnv, HOME: os.homedir() }
-    : { PATH: systemGetEnv("PATH") ?? "", HOME: os.homedir() };
+  // Filtered env (never raw process.env) + DISPLAY passthrough when headed.
+  const chromeEnv = buildChromeEnv(spawnEnv, config.headless === false);
 
   const proc = spawn(exe.path, args, {
     stdio: "pipe",
     env: chromeEnv,
+  });
+
+  // Capture Chrome's own diagnostics so a launch failure is explainable from the
+  // tool result alone. Otherwise a silent Chrome death (e.g. a seccomp SIGSYS
+  // under a hardened systemd sandbox, or a missing shared lib) surfaces only as an
+  // opaque downstream "connectOverCDP ECONNREFUSED" and needs hand-reproduction.
+  let stderrTail = "";
+  proc.stderr?.on("data", (chunk: Buffer) => {
+    stderrTail = (stderrTail + chunk.toString()).slice(-2000);
+  });
+  let exitInfo = "";
+  proc.on("exit", (code, signal) => {
+    exitInfo = signal ? `killed by signal ${signal}` : `exited with code ${code}`;
   });
 
   // Wait for CDP to become reachable.
@@ -331,8 +371,14 @@ export async function launchChrome(
     } catch {
       // ignore
     }
+    const diag = [
+      exitInfo ? `chrome ${exitInfo}` : "chrome process alive but CDP never became reachable",
+      stderrTail.trim() ? `stderr: ${stderrTail.trim().split("\n").slice(-4).join(" ⏎ ")}` : "",
+    ]
+      .filter(Boolean)
+      .join("; ");
     throw new Error(
-      `Failed to start Chrome CDP on port ${cdpPort} for profile "${profileName}".`,
+      `Failed to start Chrome CDP on port ${cdpPort} for profile "${profileName}" — ${diag}`,
     );
   }
 

@@ -115,6 +115,16 @@ Each agent's memories are isolated by tenant ID, which means if you run
 multiple agents, they each have their own separate memory space. An agent
 cannot accidentally access another agent's memories.
 
+Recall is scoped to `(tenant, agent)` — memory is **agent-scoped**, not
+per-user. An agent has one shared memory across every conversation it holds
+within a tenant, so the same agent recalls a fact regardless of which chat or
+sender it was learned from (the per-memory sender is provenance, not a recall
+filter). This is the intended behavior for a single-owner deployment (you talk
+to your agent from several chats and share one memory). If you run **one agent
+for multiple distinct people** under a single tenant, be aware that a personal
+fact learned from one person is recallable when talking to another — give each
+person their own agent (or tenant) if their memories must stay private.
+
 The database uses WAL mode (write-ahead logging) by default, which allows
 your agent to read memories quickly even while new ones are being written.
 

@@ -70,6 +70,50 @@ describe("createGatewayServer", () => {
     });
   });
 
+  // Plain-HTTP boot posture: the default install (loopback bind, no TLS, no
+  // config.yaml) must NOT warn about itself — a loopback listener has no
+  // off-host exposure, matching the fleet `tlsOff` posture finding and the
+  // gateway-exposure security check (both flag only non-loopback binds). The
+  // WARN is reserved for the bind that IS reachable off-host.
+  describe("plain-HTTP boot posture (loopback vs non-loopback)", () => {
+    it("start() on the default loopback bind logs NO without-TLS warning and no dev-mode label", async () => {
+      const logger = createMockLogger();
+      // port 0 → ephemeral bind; host stays the schema default 127.0.0.1
+      const config = { ...defaultConfig(), port: 0 };
+      const handle = createGatewayServer(createServerDeps({ logger, config }));
+      await handle.start();
+      try {
+        const warnMsgs = (logger.warn as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => String(c[1] ?? c[0]));
+        expect(warnMsgs.filter((m) => m.includes("without TLS"))).toEqual([]);
+
+        const infoMsgs = (logger.info as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => String(c[1] ?? c[0]));
+        const listenLine = infoMsgs.find((m) => m.includes("Gateway listening on http://"));
+        expect(listenLine).toBeDefined();
+        // A production loopback install is not "dev mode" — the label must state
+        // the actual posture (plain HTTP, loopback-only bind).
+        expect(listenLine).not.toContain("(dev mode)");
+        expect(listenLine).toContain("loopback");
+      } finally {
+        await handle.stop();
+      }
+    });
+
+    it("start() on a non-loopback bind without TLS still warns (off-host exposure)", async () => {
+      const logger = createMockLogger();
+      const config = { ...defaultConfig(), host: "0.0.0.0", port: 0 };
+      const handle = createGatewayServer(createServerDeps({ logger, config }));
+      await handle.start();
+      try {
+        expect(logger.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ errorKind: "config" }),
+          "Gateway running without TLS -- configure gateway.tls for production",
+        );
+      } finally {
+        await handle.stop();
+      }
+    });
+  });
+
   describe("HTTP logging middleware", () => {
     it("logs Request completed for non-health requests", async () => {
       const logger = createMockLogger();

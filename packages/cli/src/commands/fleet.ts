@@ -90,8 +90,17 @@ export function registerFleetCommand(program: Command): void {
         // Table view — concise key fields (kept small; the test exercises both
         // this branch and the json branch to hold the coverage floor).
         info(`Window:     last ${report.windowHours}h`);
+        // Split the degraded count into HARD failures (user got a degraded/no
+        // reply) vs delivered-with-tool-errors (a final answer WAS delivered
+        // despite a recovered/acknowledged tool error) so a fleet of self-healed
+        // hiccups is not misread as a high failure rate.
+        const delivered = report.sessions.deliveredWithToolErrors ?? 0;
+        const hardDegraded = report.sessions.degraded - delivered;
+        const hardPct = report.sessions.total > 0 ? Math.round((hardDegraded / report.sessions.total) * 100) : 0;
         info(
-          `Sessions:   ${report.sessions.total} (${report.sessions.degraded} degraded, ${(report.sessions.degradedRate * 100).toFixed(0)}%)`,
+          delivered > 0
+            ? `Sessions:   ${report.sessions.total} (${hardDegraded} hard-degraded, ${hardPct}%; +${delivered} delivered-with-tool-errors — user still got a reply)`
+            : `Sessions:   ${report.sessions.total} (${report.sessions.degraded} degraded, ${(report.sessions.degradedRate * 100).toFixed(0)}%)`,
         );
         // The fleet-level degradation detector: degraded counts by
         // named endReason cause. Surface it in the TABLE view (not only via
@@ -143,13 +152,24 @@ export function registerFleetCommand(program: Command): void {
           report.cost.totalTokens === 0 &&
           report.cost.costUsd > 0 &&
           (report.coverage?.sessionIndex.daysMissing ?? 0) > 0;
+        // Off-session (reflection/background) spend — a DISTINCT figure the
+        // operator adds to costUsd for the full provider bill (it is absent from
+        // costUsd because those runs have no session_summary). Shown only when
+        // non-zero so the common case stays uncluttered.
+        const offSession = report.cost.offSessionUsd ?? 0;
+        const offSessionSuffix =
+          offSession > 0 ? ` + $${offSession} off-session (reflection/background)` : "";
         if (tokensDegraded) {
           info(
-            `Cost:       $${report.cost.costUsd} (tokens unavailable: ${report.coverage?.sessionIndex.daysMissing ?? 0} day(s) of session-index missing)`,
+            `Cost:       $${report.cost.costUsd} (tokens unavailable: ${report.coverage?.sessionIndex.daysMissing ?? 0} day(s) of session-index missing)${offSessionSuffix}`,
           );
         } else {
           info(
-            `Cost:       $${report.cost.costUsd} · ${report.cost.totalTokens} tok`,
+            // Name the token basis: fleet's total is the session-index
+            // input+output sum (NO cache), so it is far smaller than explain's
+            // cache-inclusive per-call ledger — labeling both keeps the two
+            // lenses from reading as the same "tok" (comis-daniel 2026-07-09).
+            `Cost:       $${report.cost.costUsd} · ${report.cost.totalTokens} tok (input+output, excl cache)${offSessionSuffix}`,
           );
         }
         for (const f of report.findings) {

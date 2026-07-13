@@ -45,7 +45,7 @@ const ZERO_PRICE_MODEL = "zzz-nonexistent-model-xyz"; // no catalog entry → "u
 const FREE_PROVIDER = "ollama";
 const FREE_MODEL = "llama3";
 const PRICED_PROVIDER = "anthropic";
-const PRICED_MODEL = "claude-3-5-sonnet-20241022"; // catalog-priced
+const PRICED_MODEL = "claude-sonnet-4-5-20250929"; // catalog-priced
 
 /** Build the SUT with sane caps; each test overrides the limb it exercises. */
 function makeBudget(

@@ -2507,6 +2507,24 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // pointer resolution the daemon /export-trajectory closure already uses).
       // Consumer: packages/cli/src/util/offline-obs.ts (resolveSessionFileOffline)
       "resolveSessionFilePath",
+      // Offline inbound-message extractor (`comis messages`) — re-exported from
+      // the TOP-LEVEL daemon barrel so the CLI offline seam
+      // (extractSessionMessagesOffline in packages/cli/src/util/offline-obs.ts)
+      // parses the session logs WITHOUT importing the agent package's
+      // pathToSessionKey/envelope grammar (the cli-no-agent arch ban). Exact
+      // analog of resolveSessionFilePath above: the CLI consumes it via the
+      // DYNAMIC loadDaemonAssemblers() import, invisible to the
+      // public-export-consumers AST walker (it scans only static @comis/daemon
+      // import/export-from declarations), so this orphan list is the canonical
+      // place to record the consumer. (The companion SessionMessagesFilter /
+      // SessionMessagesResult types ARE statically type-imported by
+      // offline-obs.ts, so they carry no entry.) SECURITY: content-BEARING
+      // read of the local session logs — which is exactly why it is exported
+      // ONLY for the offline CLI seam and has NO RPC/MCP surface (the obs
+      // network surfaces stay digest-only/content-free); it grants no authority
+      // beyond the files the local operator already owns.
+      // Consumer: packages/cli/src/util/offline-obs.ts (extractSessionMessagesOffline)
+      "extractSessionMessages",
       // Outward-send crash-injection seam — re-exported
       // from the daemon barrel so the exactly-once chaos test can arm/disarm a
       // REAL mid-send crash (BETWEEN markUnknown and commit) and assert the

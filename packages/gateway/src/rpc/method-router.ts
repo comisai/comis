@@ -144,6 +144,21 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
   ]);
 
   /**
+   * Admin-gated, READ-ONLY obs methods whose operator CLI (`comis explain` /
+   * `comis fleet`) probes the RPC then falls back to offline assembly from the
+   * local data dir. An admin-trust denial here is a ROUTINE control flow — the
+   * CLI expects it and recovers — so it logs at DEBUG, not WARN: otherwise
+   * every `comis explain` an operator runs spams an `errorKind:auth` WARN into
+   * the very daemon log they are investigating (live incident 2026-07-08). A
+   * denial on any OTHER method (a mutation / genuine unauthorized probe) still
+   * WARNs.
+   */
+  const OFFLINE_FALLBACK_OBS_METHODS: ReadonlySet<string> = new Set([
+    "obs.explain",
+    "obs.fleet.health",
+  ]);
+
+  /**
    * Wrap an RPC handler with debug trace logging.
    * Logs method name, clientId, duration on success, and err on failure.
    * Polling methods in SUPPRESS_LOG_METHODS skip trace logging entirely.
@@ -164,7 +179,18 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
       } catch (err) {
         const durationMs = Math.round(performance.now() - startMs);
         const classified = classifyRpcMethodError(err);
-        const logFn = classified.errorKind === "internal" ? logger.error.bind(logger) : logger.warn.bind(logger);
+        // A routine operator flow — an admin-trust denial on a read-only obs
+        // method the CLI probes-then-falls-back-offline — logs at DEBUG so
+        // `comis explain` / `comis fleet` do not spam WARNs into the log an
+        // operator is reviewing. Internal errors → error; every other
+        // non-internal refusal (incl. denials on other methods) → warn.
+        const isRoutineObsDeny =
+          classified.errorKind === "auth" && OFFLINE_FALLBACK_OBS_METHODS.has(name);
+        const logFn = classified.errorKind === "internal"
+          ? logger.error.bind(logger)
+          : isRoutineObsDeny
+            ? logger.debug.bind(logger)
+            : logger.warn.bind(logger);
         logFn(
           {
             method: name,

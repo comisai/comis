@@ -25,11 +25,11 @@ import { z } from "zod";
 
 export const BudgetConfigSchema = z.strictObject({
     /** Max tokens per single execution */
-    perExecution: z.number().int().positive().default(2_000_000),
+    perExecution: z.number().int().positive().default(5_000_000),
     /** Max tokens per hour (rolling window) */
-    perHour: z.number().int().positive().default(10_000_000),
+    perHour: z.number().int().positive().default(50_000_000),
     /** Max tokens per day (rolling window) */
-    perDay: z.number().int().positive().default(100_000_000),
+    perDay: z.number().int().positive().default(300_000_000),
   });
 
 export const CircuitBreakerConfigSchema = z.strictObject({

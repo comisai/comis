@@ -447,6 +447,43 @@ describe("repairOrphanedMessages", () => {
       expect(result.repaired).toBe(false);
     });
 
+    it("repairs BOTH a mid-session anomaly AND a trailing anomaly in one pass", () => {
+      // Live-verified gap (2026-07-08): a session with a mid-session user-user
+      // AND a trailing user used to have the tail fix (Case 1) `return` before
+      // the mid-session fix (Case 4) ran, leaving the mid-session anomaly
+      // unrepaired — the detector then WARNed it every turn forever.
+      const sm = createTestSession();
+      // user, assistant, user, user  →  mid-session user-user at [2,3] AND
+      // trailing user (Case 1) simultaneously.
+      appendUser(sm, "u1");
+      appendAssistant(sm, "a1");
+      appendUser(sm, "u2");
+      appendUser(sm, "u3"); // both the mid-session anomaly and the orphaned tail
+
+      const result = repairOrphanedMessages(sm);
+      expect(result.repaired).toBe(true);
+      // Both repairs are reported.
+      expect(result.reason).toContain("trailing user");
+      expect(result.reason).toContain("mid-session");
+
+      // The assembled context is now fully well-formed: no consecutive
+      // same-role anywhere, and it ends on an assistant.
+      const ctx = sm.buildSessionContext();
+      assertStrictAlternation(ctx.messages as { role: string }[]);
+      expect(ctx.messages[ctx.messages.length - 1]!.role).toBe("assistant");
+    });
+
+    it("a repaired both-anomaly session is idempotent on a second pass", () => {
+      const sm = createTestSession();
+      appendUser(sm, "u1");
+      appendAssistant(sm, "a1");
+      appendUser(sm, "u2");
+      appendUser(sm, "u3");
+
+      expect(repairOrphanedMessages(sm).repaired).toBe(true);
+      expect(repairOrphanedMessages(sm).repaired).toBe(false);
+    });
+
     it("repairs mid-session anomaly when tail is clean", () => {
       const sm = createTestSession();
       // anomaly in middle, tail is clean (ends with assistant)

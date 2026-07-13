@@ -103,6 +103,7 @@ const VERB_FORMS: ReadonlySet<string> = new Set([
   // Core action verbs (with common inflections — s, es, ed, ing):
   "return","returns","returned","returning",
   "reject","rejects","rejected","rejecting",
+  "neutralize","neutralizes","neutralized","neutralizing",
   "apply","applies","applied","applying",
   "dispatch","dispatches","dispatched","dispatching",
   "propagate","propagates","propagated","propagating",

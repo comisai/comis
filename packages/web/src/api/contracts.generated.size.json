@@ -1,6 +1,6 @@
 {
-  "totalMinified": 135933,
-  "totalGzipped": 13866,
+  "totalMinified": 136510,
+  "totalGzipped": 13977,
   "budget": {
     "minified": 138000,
     "gzipped": 38912
@@ -98,7 +98,7 @@
     "mcp.oauth_login": 681,
     "mcp.oauth_logout": 407,
     "mcp.reconnect": 927,
-    "mcp.status": 1423,
+    "mcp.status": 1471,
     "mcp.test": 1172,
     "media.describe_video": 461,
     "media.extract_document": 554,
@@ -155,8 +155,8 @@
     "obs.delivery.recent": 462,
     "obs.delivery.stats": 414,
     "obs.diagnostics": 596,
-    "obs.explain": 12657,
-    "obs.fleet.health": 5105,
+    "obs.explain": 13150,
+    "obs.fleet.health": 5183,
     "obs.getCacheStats": 358,
     "obs.reset": 571,
     "obs.reset.table": 483,
@@ -209,7 +209,7 @@
     "tokens.revoke": 422,
     "tokens.rotate": 555,
     "tts.auto_check": 508,
-    "tts.synthesize": 469,
+    "tts.synthesize": 500,
     "video.generate": 516,
     "video.status": 480,
     "whatsapp.action": 268,

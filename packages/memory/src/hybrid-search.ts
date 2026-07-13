@@ -342,6 +342,18 @@ export interface HybridSearchOptions {
   trustLevel?: string;
   memoryType?: string;
   tenantId?: string;
+  /**
+   * Recall is scoped by (tenant_id, agent_id) — AGENT-scoped BY DESIGN, NOT by
+   * user_id. An agent has ONE shared memory across every conversation it holds
+   * within a tenant; the per-row `user_id`/`source_who` is PROVENANCE (who said
+   * it), never a recall filter. This is correct for the single-owner model (the
+   * owner talks to their agent from multiple chats and shares one memory). NOTE
+   * for a MULTI-USER deployment (distinct real people under one tenant+agent): a
+   * personal fact from user A is recallable for user B — a privacy consideration
+   * if personal facts should be user-private. Making recall user-scoped is a
+   * deliberate future memory-model change (the adapter already supports a
+   * user_id predicate for get/delete — sqlite-memory-adapter.ts), NOT a bug.
+   */
   agentId?: string;
   /**
    * Read-side NL temporal-range filter. Epoch ms. ANDed onto the
