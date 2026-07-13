@@ -82,6 +82,7 @@ import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
 import { createMockLogger } from "../../../../../test/support/mock-logger.js";
 // Core types (type-only).
 import type { MemoryConfig, MemoryEntry, MemorySearchResult } from "@comis/core";
+import { MemoryConfigSchema } from "@comis/core";
 import { mkdtempSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -117,14 +118,13 @@ const BENCH_SESSION_KEY = { tenantId: BENCH_TENANT, userId: BENCH_USER, channelI
 
 /** The bench store config (mirrors the sibling harnesses; tiny local embedding dims). */
 function makeBenchConfig(dbPath: string): MemoryConfig {
-  return {
+  return MemoryConfigSchema.parse({
     dbPath,
     walMode: false,
-    embeddingModel: "local",
-    embeddingDimensions: 4,
+    recall: { embeddingModel: "local", embeddingDimensions: 4 },
     compaction: { enabled: false, threshold: 1000, targetSize: 500 },
     retention: { maxAgeDays: 0 },
-  } as MemoryConfig;
+  });
 }
 
 /** Resolve the committable report dir (created if absent) or an ephemeral tmp dir. */

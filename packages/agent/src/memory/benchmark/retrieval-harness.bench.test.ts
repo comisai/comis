@@ -72,6 +72,7 @@ import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
 import { createMockLogger } from "../../../../../test/support/mock-logger.js";
 // Core types (type-only — no @comis/core value import needed).
 import type { MemoryConfig, MemorySearchResult, SessionKey } from "@comis/core";
+import { MemoryConfigSchema } from "@comis/core";
 import { randomUUID } from "node:crypto";
 import { readFileSync, mkdtempSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -92,19 +93,18 @@ const HARNESS_VERSION = "phase-89-v1";
 
 /**
  * The bench store config (mirrors the roundtrip template makeTestConfig at
- * memory-persistence-roundtrip.test.ts:26-35). `as MemoryConfig` like the template:
- * the adapter reads the fields it needs; `dims` = the probed embedding dimensions
+ * memory-persistence-roundtrip.test.ts:26-35). built through `MemoryConfigSchema.parse` so schema
+ * drift fails loudly here instead of at adapter runtime; `dims` = the probed embedding dimensions
  * (or 4 for the FTS-only honest fallback).
  */
 function makeBenchConfig(dbPath: string, dims: number): MemoryConfig {
-  return {
+  return MemoryConfigSchema.parse({
     dbPath,
     walMode: false,
-    embeddingModel: "local",
-    embeddingDimensions: dims,
+    recall: { embeddingModel: "local", embeddingDimensions: dims },
     compaction: { enabled: false, threshold: 1000, targetSize: 500 },
     retention: { maxAgeDays: 0 },
-  } as MemoryConfig;
+  });
 }
 
 /** The bench recall scope — neutral placeholders, isolated from any live session. */
