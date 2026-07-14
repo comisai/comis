@@ -67,8 +67,10 @@ services:
       - COMIS_GATEWAY_HOST=0.0.0.0
       - COMIS_GATEWAY_PORT=4766
 
-      # Secrets — injected via env vars or .env file mount
-      - SECRETS_MASTER_KEY=${SECRETS_MASTER_KEY:-}
+      # The encrypted-store master key is intentionally not projected through
+      # Compose. On first boot the daemon generates it in the mounted data-dir
+      # .env file. To provide your own key, write a non-empty value to the file
+      # mounted at /home/comis/.comis/.env before starting the service.
 
       # LLM Provider Keys (pass-through from host .env)
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
@@ -179,6 +181,10 @@ services:
     volumes:
       - ${COMIS_DATA_DIR:-~/.comis}:/home/comis/.comis
       - ${COMIS_CONFIG_DIR:-~/.comis}:/etc/comis
+      # Match the daemon's explicit env-file source when COMIS_ENV_FILE points
+      # outside COMIS_DATA_DIR. The CLI entrypoint normalizes blank Compose
+      # overrides before the CLI loads this mounted file.
+      - ${COMIS_ENV_FILE:-~/.comis/.env}:/home/comis/.comis/.env
 
     environment:
       - NODE_ENV=production
@@ -190,7 +196,7 @@ services:
     stdin_open: true
     tty: true
 
-    entrypoint: ["node", "packages/cli/dist/cli.js"]
+    entrypoint: ["/usr/local/bin/comis-entrypoint.sh", "node", "packages/cli/dist/cli.js"]
 
     depends_on:
       comis-daemon:

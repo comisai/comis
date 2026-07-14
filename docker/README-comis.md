@@ -1,8 +1,10 @@
-# Comis — Daemon + Gateway
+# Comis
 
-Security-first AI agent platform connecting agents to chat channels (Discord, Telegram, Slack, WhatsApp, iMessage, Signal, IRC, LINE, Email).
+An open-source, security-first platform for AI agent teams.
 
-This image runs the **Comis daemon** — gateway, channels, agents, scheduler, and memory — as a single container.
+This image runs the Comis daemon, gateway, agents, scheduler, memory, and messaging adapters—including Microsoft Teams, Email, Discord, Telegram, Slack, WhatsApp, Signal, iMessage, LINE, and IRC—in one container.
+
+> **Development status:** Comis is under active development and does not support backward compatibility. Evaluate the exact provider, channel, tool, storage, and isolation configuration you need before using it for critical workloads.
 
 - **Source:** https://github.com/comisai/comis
 - **Docs:** https://docs.comis.ai
@@ -18,8 +20,8 @@ This image runs the **Comis daemon** — gateway, channels, agents, scheduler, a
 
 | Variant | Base image | When to use |
 |---------|------------|-------------|
-| `latest` (default) | `node:22-bookworm` | Includes extra debugging tools. |
-| `latest-slim` | `node:22-bookworm-slim` | Smaller image, reduced attack surface. **Recommended for production.** |
+| `latest` (default) | `node:22-bookworm` | Full Debian runtime base. |
+| `latest-slim` | `node:22-bookworm-slim` | Smaller Debian runtime base. |
 
 ## Tag strategy
 
@@ -27,14 +29,14 @@ Every release pushes the following tags automatically:
 
 | Pattern | Example | Notes |
 |---------|---------|-------|
-| `{version}` | `1.0.53` | Immutable — pin this in production |
-| `{major}.{minor}` | `1.0` | Tracks the latest patch |
+| `{version}` | `X.Y.Z` | Immutable release tag |
+| `{major}.{minor}` | `X.Y` | Tracks the latest patch |
 | `latest` | `latest` | Default variant, latest release |
-| `{version}-slim` | `1.0.53-slim` | Slim variant, immutable |
-| `{major}.{minor}-slim` | `1.0-slim` | Slim variant, latest patch |
+| `{version}-slim` | `X.Y.Z-slim` | Slim variant, immutable |
+| `{major}.{minor}-slim` | `X.Y-slim` | Slim variant, latest patch |
 | `latest-slim` | `latest-slim` | Slim variant, latest release |
 
-> **Tip:** Pin to an immutable version tag in production (e.g. `comisai/comis:1.0.53`) rather than `latest`.
+For repeatable deployments, replace the moving `latest` tag with an immutable release tag such as `comisai/comis:X.Y.Z-slim`.
 
 ---
 
@@ -52,13 +54,15 @@ docker run -d \
   comisai/comis:latest-slim
 ```
 
-The `--restart unless-stopped` flag is required — the wizard and any agent-initiated config change (`gateway.restart`, `gateway.env_set`, `gateway.patch`) signal the daemon to reload, and Docker's restart policy is what brings the container back with the new config.
+The `--restart unless-stopped` policy lets Docker relaunch the daemon after `gateway.restart` or a configuration write triggers a graceful restart. Secret writes through `env_set` are live-applied and do not trigger a restart.
 
 Verify:
 
 ```bash
 curl http://127.0.0.1:4766/health
 ```
+
+This example is for initial evaluation. Pin an immutable release tag, configure gateway authentication, and review the [threat model](https://github.com/comisai/comis/blob/main/THREAT_MODEL.md) before exposing the service beyond localhost.
 
 > **Already running Comis on the host?** Don't bind-mount your existing `~/.comis` into the container — the host's `config.yaml` may reference env vars that aren't set in the container, and both daemons would race on the SQLite databases. Use a Docker named volume (as above) or a separate host directory (e.g. `~/.comis-docker`).
 
@@ -82,13 +86,12 @@ services:
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
       - COMIS_GATEWAY_HOST=0.0.0.0
       - COMIS_GATEWAY_PORT=4766
-      # Auto-generated on first boot. Back up ~/.comis/.env (contains SECRETS_MASTER_KEY).
-      # To opt out: set COMIS_DISABLE_ENCRYPTED_SECRETS=1
-      - SECRETS_MASTER_KEY=${SECRETS_MASTER_KEY:-}
 
 volumes:
   comis-data:
 ```
+
+With the default encrypted storage mode, the daemon generates `SECRETS_MASTER_KEY` in the mounted data directory's `.env` on first boot. Back up that file, and do not add an empty `SECRETS_MASTER_KEY` entry to the container environment: it would override the generated value and prevent the encrypted store from opening.
 
 A full `docker-compose.yml` (with the optional `comis-web` dashboard and `comis-cli` profiles, plus a host-bind variant) ships in the [GitHub repo](https://github.com/comisai/comis/blob/main/docker-compose.yml).
 
@@ -122,79 +125,46 @@ A full `docker-compose.yml` (with the optional `comis-web` dashboard and `comis-
 | `COMIS_GATEWAY_HOST` | Bind address **inside the container** (separate from the host-side `-p` mapping). Defaults to `0.0.0.0` in the image so Docker port-forwarding can reach the daemon. |
 | `COMIS_GATEWAY_PORT` | Gateway port (default `4766`) |
 | `COMIS_GATEWAY_TOKEN` | Optional bearer token for gateway auth |
-| `SECRETS_MASTER_KEY` | Auto-generated on first boot and written to `~/.comis/.env` (mode 0600). Back up this file — losing the key makes `secrets.db` permanently unreadable. Providing this variable explicitly overrides the auto-generated value. See [Secrets management](https://docs.comis.ai/operations/docker#secrets-management). |
-| `COMIS_DISABLE_ENCRYPTED_SECRETS` | **Optional.** Set to `1` to skip auto-init and run in envfile-only mode. Emits a startup WARN. Use only if you need to manage secrets manually in `.env`. |
+| `SECRETS_MASTER_KEY` | Auto-generated on first boot and written to `~/.comis/.env` (mode 0600). Back up this file — losing the key makes `secrets.db` permanently unreadable. To provide your own key, write a non-empty value to the mounted `.env` before first boot. A blank mounted-file entry suppresses generation; an empty container value overrides the generated value. See [Secrets management](https://docs.comis.ai/operations/docker#secrets-management). |
 
 Secrets are auto-redacted in Comis logs (3 levels deep) — but never log them yourself.
 
 ---
 
-## Browser tool (optional)
+## Browser runtime (optional)
 
-Off by default. Three build args mirror the bare-VPS `install.sh` flags:
+Browser dependencies are disabled in the standard image. Build arguments enable the runtime needed by browser tools:
 
 | Build arg | What it adds |
 |---|---|
-| `COMIS_WITH_BROWSER=1` | Google Chrome + Chromium shared libs. Headless by default. |
-| `COMIS_WITH_XVFB=1` | Implies `COMIS_WITH_BROWSER`. Adds Xvfb so the daemon can run headed against a virtual display (needed for sites that detect headless mode). Entrypoint starts Xvfb on `:99` before the daemon. Seeds `headless: false` in the default config. |
-| `COMIS_WITH_CLOAKBROWSER=1` | Implies `COMIS_WITH_BROWSER`. Installs CloakBrowser (stealth Chromium with source-level fingerprint patches) instead of Google Chrome. `findChrome()` auto-picks the cloak binary. |
+| `COMIS_WITH_BROWSER=1` | Google Chrome and its shared libraries; headless by default. |
+| `COMIS_WITH_XVFB=1` | Implies browser support and adds Xvfb for a headed browser on a virtual display. |
+| `COMIS_WITH_CLOAKBROWSER=1` | Implies browser support and uses CloakBrowser instead of Google Chrome. Review its separate license before redistribution. |
 
-Build a stealth-capable image:
+Build an image with the browser runtime you require:
 
 ```bash
-# Stock Chrome — works for most sites
+# Headless Chrome
 docker build \
   --build-arg COMIS_WITH_BROWSER=1 \
   -t comisai/comis:browser .
 
-# Headed via Xvfb — pass BrowserScan/bot.incolumitas
+# Headed Chrome through Xvfb
 docker build \
   --build-arg COMIS_WITH_XVFB=1 \
   -t comisai/comis:xvfb .
 
-# Stealth Chromium — bypass Cloudflare Turnstile, FingerprintJS,
-# Reddit's secondary fingerprint check on non-datacenter IPs
+# Alternative Chromium distribution
 docker build \
   --build-arg COMIS_WITH_CLOAKBROWSER=1 \
-  -t comisai/comis:cloak .
-
-# Full stack — stealth Chromium + headed for the hardest tier
-docker build \
-  --build-arg COMIS_WITH_CLOAKBROWSER=1 \
-  --build-arg COMIS_WITH_XVFB=1 \
-  -t comisai/comis:cloak-xvfb .
+  -t comisai/comis:cloakbrowser .
 ```
 
-Run identically to the no-browser image; the daemon detects the binary at startup and uses it via CDP. No env vars needed.
-
-```bash
-docker run -d \
-  --name comis \
-  --restart unless-stopped \
-  -p 127.0.0.1:4766:4766 \
-  -v comis-data:/home/comis/.comis \
-  -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
-  comisai/comis:cloak-xvfb
-```
-
-**Image-size impact:**
-
-| Image | Approx size |
-|---|---|
-| Base (no browser) | 700 MB (slim) / 1 GB (default) |
-| `+browser`  (Google Chrome) | +400 MB |
-| `+xvfb` | +15 MB on top of `+browser` |
-| `+cloakbrowser` | +500 MB (CloakBrowser binary cache, two versions kept for auto-rollback) |
-
-**Caveats:**
-
-- **Datacenter IPs (AWS, DigitalOcean, Hetzner, Hostinger, …)** are pre-blocked by Reddit and many social sites regardless of browser fingerprint. CloakBrowser does not provide a proxy. If your container runs on a datacenter ASN, you'll also need a residential proxy.
-- **CloakBrowser license:** free for self-hosted use. Bundling into a hosted service distributed to third-party customers requires an OEM license from CloakHQ. See [BINARY-LICENSE.md](https://github.com/CloakHQ/CloakBrowser/blob/main/BINARY-LICENSE.md).
-- **Xvfb** runs as the same `comis` user, inside the container's own namespace — no host-level X server is involved.
+When `browser.start` runs, Comis discovers the installed browser, launches it with a local CDP endpoint, and connects Playwright. Xvfb starts before the daemon when the image was built with `COMIS_WITH_XVFB=1`; it runs as the container's `comis` user and does not use a host X server. Browser automation remains subject to each site's terms and access controls.
 
 ### Installer-built image (alternative path)
 
-The repo also ships `Dockerfile.install` — a fresh Ubuntu 24.04 image that runs `install.sh` end-to-end inside the container. Same flags, same end state, but exercises the bare-VPS install path verbatim. Useful for CI testing the installer or for operators who want strict parity with their VPS deploy:
+The repo also ships `Dockerfile.install`. It packs the local workspace and runs the non-interactive, non-root package-install path of `install.sh` inside Ubuntu 24.04. It exercises package installation and selected browser-provisioning branches, but deliberately skips interactive setup, initialization, service registration, service start, dedicated-user creation, and the public-registry download path. It is an installer validation image, not a host-parity deployment image:
 
 ```bash
 docker build -f Dockerfile.install \
@@ -203,7 +173,7 @@ docker build -f Dockerfile.install \
   -t comis-installed:cloak-xvfb .
 ```
 
-The main `Dockerfile` is the production-grade path (multi-stage, smaller). `Dockerfile.install` is the validation path.
+The main `Dockerfile` is the primary multi-stage image path. `Dockerfile.install` exists to validate the managed-host installer in a container.
 
 ---
 
@@ -212,7 +182,7 @@ The main `Dockerfile` is the production-grade path (multi-stage, smaller). `Dock
 - Runs as non-root user `comis` (UID/GID 1000)
 - `dumb-init` as PID 1 for proper signal handling
 - Built-in `HEALTHCHECK` against `/health`
-- Multi-stage build — no build tools or source in the runtime image
+- Multi-stage build — Comis TypeScript source and development dependencies are removed from the runtime image
 - Pino auto-redacts credentials (`apiKey`, `token`, `password`, `secret`, `authorization`, `botToken`, `privateKey`, `cookie`, `webhookSecret`)
 
 ---

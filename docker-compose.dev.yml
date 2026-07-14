@@ -1,6 +1,7 @@
 # =============================================================================
 # Development Overrides
-# Activated automatically when docker-compose.override.yml exists
+# Opt in explicitly:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 # =============================================================================
 
 services:
@@ -9,7 +10,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        COMIS_VARIANT: default  # Full image with debugging tools
+        COMIS_VARIANT: default  # Full Node Debian base
 
     # Bind to all interfaces for development access.
     # `!override` replaces the base file's `127.0.0.1:4766:4766` mapping
@@ -21,11 +22,6 @@ services:
     environment:
       - NODE_ENV=development
 
-    # Mount source for hot-reload (requires rebuild)
-    volumes:
-      - .:/app/src:ro
-      - ${COMIS_DATA_DIR:-~/.comis}:/home/comis/.comis
-
     deploy:
       resources:
         limits:
@@ -36,4 +32,5 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.web
-    profiles: []  # Always start in dev
+    # Replace the base `web` profile so the dashboard starts with this overlay.
+    profiles: !override []
