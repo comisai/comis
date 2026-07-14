@@ -164,17 +164,19 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
    * Polling methods in SUPPRESS_LOG_METHODS skip trace logging entirely.
    */
   function wrapWithTrace(name: string, handler: RpcMethodHandler): RpcMethodHandler {
-    if (!logger) return handler;
-    // Skip trace wrapper for high-frequency polling methods
-    if (SUPPRESS_LOG_METHODS.has(name)) return handler;
+    const suppressSuccessTrace = SUPPRESS_LOG_METHODS.has(name);
     return async (params, context) => {
       const startMs = performance.now();
-      logger.debug({ method: name, clientId: context.clientId, ...(context.connectionId ? { connectionId: context.connectionId } : {}) }, `RPC call: ${name}`);
+      if (logger && !suppressSuccessTrace) {
+        logger.debug({ method: name, clientId: context.clientId, ...(context.connectionId ? { connectionId: context.connectionId } : {}) }, `RPC call: ${name}`);
+      }
       try {
         const result = await handler(params, context);
-        const durationMs = Math.round(performance.now() - startMs);
-        const traceId = tryGetContext()?.traceId;
-        logger.debug({ method: name, durationMs, clientId: context.clientId, ...(traceId && { traceId }), ...(context.connectionId ? { connectionId: context.connectionId } : {}) }, `RPC call completed: ${name}`);
+        if (logger && !suppressSuccessTrace) {
+          const durationMs = Math.round(performance.now() - startMs);
+          const traceId = tryGetContext()?.traceId;
+          logger.debug({ method: name, durationMs, clientId: context.clientId, ...(traceId && { traceId }), ...(context.connectionId ? { connectionId: context.connectionId } : {}) }, `RPC call completed: ${name}`);
+        }
         return result;
       } catch (err) {
         const durationMs = Math.round(performance.now() - startMs);
@@ -186,29 +188,48 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
         // non-internal refusal (incl. denials on other methods) → warn.
         const isRoutineObsDeny =
           classified.errorKind === "auth" && OFFLINE_FALLBACK_OBS_METHODS.has(name);
-        const logFn = classified.errorKind === "internal"
-          ? logger.error.bind(logger)
-          : isRoutineObsDeny
-            ? logger.debug.bind(logger)
-            : logger.warn.bind(logger);
-        logFn(
-          {
-            method: name,
-            // An expected classified refusal (non-internal → warn) logs its
-            // MESSAGE only: the Error object serializes with its full stack,
-            // and a routine operator flow (the CLI probing an admin-gated obs
-            // method before its offline fallback) then reads as a fault.
-            // Stack traces are DEBUG-only; internal errors keep the full err.
-            err: classified.errorKind === "internal" ? err : (err instanceof Error ? err.message : String(err)),
-            durationMs,
-            clientId: context.clientId,
-            hint: classified.hint,
-            errorKind: classified.errorKind,
-            ...(context.connectionId ? { connectionId: context.connectionId } : {}),
-          },
-          `RPC call failed: ${name}`,
-        );
-        throw err;
+        if (logger) {
+          const logFn = classified.errorKind === "internal"
+            ? logger.error.bind(logger)
+            : isRoutineObsDeny
+              ? logger.debug.bind(logger)
+              : logger.warn.bind(logger);
+          logFn(
+            {
+              method: name,
+              // Expected refusals and internal failures log a bounded message at
+              // this level. Full Error stacks belong on DEBUG-only diagnostics.
+              err: err instanceof Error ? err.message : String(err),
+              durationMs,
+              clientId: context.clientId,
+              hint: classified.hint,
+              errorKind: classified.errorKind,
+              ...(context.connectionId ? { connectionId: context.connectionId } : {}),
+            },
+            `RPC call failed: ${name}`,
+          );
+        }
+
+        if (err instanceof JSONRPCErrorException) throw err;
+
+        const traceId = tryGetContext()?.traceId;
+        const typed = classifyTypedRpcError(err);
+        const data = traceId ? { traceId } : undefined;
+
+        if (typed && err instanceof Error) {
+          throw new JSONRPCErrorException(err.message, -32602, data);
+        }
+
+        const publicMessage = classified.errorKind === "config"
+          ? "Configuration change requires a daemon restart"
+          : classified.errorKind === "auth"
+            ? "Request is not authorized"
+            : classified.errorKind === "validation"
+              ? "Invalid request"
+              : classified.errorKind === "precondition"
+                ? "Request precondition not met"
+                : "Internal server error";
+        throw new JSONRPCErrorException(publicMessage, -32603, data);
       }
     };
   }
