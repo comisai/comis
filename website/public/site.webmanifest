@@ -1,7 +1,7 @@
 {
   "name": "Comis",
   "short_name": "Comis",
-  "description": "Self-hosted infrastructure for auditable AI-agent teams.",
+  "description": "An open-source, security-first platform for AI agent teams.",
   "start_url": "/",
   "scope": "/",
   "icons": [

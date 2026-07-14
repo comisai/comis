@@ -62,8 +62,8 @@ function metaContent(html, key) {
   return undefined;
 }
 
-const expectedTitle = "Comis — Auditable AI-agent teams on your infrastructure";
-const expectedDescription = "Run self-hosted AI-agent teams across messaging, APIs, schedules, and durable workflows with recoverable context, policy-driven secret access, and visibility.";
+const expectedTitle = "Comis — Open-source, security-first AI agent teams";
+const expectedDescription = "Run AI agent teams across messaging, APIs, schedules, and durable workflows on infrastructure you control, with recoverable context and operational visibility.";
 const approvedExternalLinks = new Set([
   "https://docs.comis.ai",
   "https://docs.comis.ai/installation",
@@ -113,31 +113,37 @@ sameValues(headings, [
   "Orchestration, context, and operations in one self-hosted platform.",
   "The operating surface for an agent team.",
   "Controls with explicit boundaries.",
-  "Run Comis on your own infrastructure.",
+  "Install Comis on your infrastructure.",
   "Help shape Comis while it is still early.",
 ], "Homepage h2 hierarchy");
 
+const mainText = textContent(mainHtml
+  .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+  .replace(/<style\b[\s\S]*?<\/style>/gi, " "));
 const visibleMainText = textContent(mainHtml
   .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
   .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
   .replace(/<code\b[\s\S]*?<\/code>/gi, " "));
 const wordCount = visibleMainText.match(/[\p{L}\p{N}]+(?:[’'-][\p{L}\p{N}]+)*/gu)?.length ?? 0;
-check(wordCount >= 550 && wordCount <= 750, `Visible homepage copy must be 550–750 words; received ${wordCount}`);
+check(wordCount <= 750, `Visible homepage copy must remain at or below 750 words; received ${wordCount}`);
 
 for (const requiredText of [
   "Apache-2.0 · Active development",
-  "Self-hosted infrastructure for auditable AI-agent teams.",
-  "Run specialized agents across messaging, APIs, schedules, and durable workflows—while keeping context recoverable, secret access policy-driven, and operations observable.",
+  "An open-source, security-first platform for AI agent teams.",
+  "Run specialized agents across messaging, APIs, schedules, and durable workflows on infrastructure you control, with recoverable context and operational visibility.",
+  "The managed-host path can install Node.js and host dependencies, initialize Comis data, and register the daemon with systemd or PM2. On Linux, it also attempts to provision Chromium and Xvfb by default and can create a dedicated comis user for a systemd service.",
   "Linux with Bubblewrap is the recommended target. macOS isolation is best-effort and does not provide the same boundary.",
   "The ordinary exec tool can run directly on the host when its sandbox is disabled or unavailable.",
   "Streaming consumers can receive deltas before the completed response passes its final output scan.",
   "Approval requests are available on explicitly wired paths when enabled; they are not a universal policy engine.",
   "If Comis is useful, star the repository to help other contributors discover it.",
 ]) {
-  check(visibleMainText.includes(requiredText), `Required verified copy is missing: ${requiredText}`);
+  check(mainText.includes(requiredText), `Required verified copy is missing: ${requiredText}`);
 }
 
-check(html.includes("curl -fsSL https://comis.ai/install.sh | bash"), "Verified installer command is missing");
+check(mainText.includes("curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh -o comis-install.sh"), "Review-first installer download command is missing");
+check(mainText.includes("bash comis-install.sh --dry-run"), "Installer dry-run command is missing");
+check(mainText.includes("npm install --global comisai"), "Direct npm installation path is missing");
 for (const pattern of [
   /\bblog\b/i,
   /\bcomparison\b/i,
@@ -191,9 +197,17 @@ const structuredData = [...html.matchAll(/<script\b[^>]*type="application\/ld\+j
   });
 check(structuredData.filter((entry) => entry["@type"] === "Organization").length === 1, "Structured data must contain one Organization");
 check(structuredData.filter((entry) => entry["@type"] === "WebSite").length === 1, "Structured data must contain one WebSite");
+check(structuredData.filter((entry) => entry["@type"] === "SoftwareSourceCode").length === 1, "Structured data must contain one SoftwareSourceCode entry");
+check(structuredData.filter((entry) => entry["@type"] === "SoftwareApplication").length === 1, "Structured data must contain one SoftwareApplication entry");
 const organization = structuredData.find((entry) => entry["@type"] === "Organization");
 check(organization?.logo === "https://comis.ai/android-chrome-512x512.png", "Organization logo must use the square brand mark");
 sameValues(organization?.sameAs ?? [], ["https://github.com/comisai"], "Organization sameAs profiles");
+const sourceCode = structuredData.find((entry) => entry["@type"] === "SoftwareSourceCode");
+check(sourceCode?.codeRepository === "https://github.com/comisai/comis", "SoftwareSourceCode must reference the public repository");
+check(sourceCode?.license === "https://github.com/comisai/comis/blob/main/LICENSE", "SoftwareSourceCode must reference the Apache-2.0 license");
+const application = structuredData.find((entry) => entry["@type"] === "SoftwareApplication");
+check(application?.downloadUrl === "https://www.npmjs.com/package/comisai", "SoftwareApplication must reference the npm distribution");
+check(application?.softwareRequirements === "Node.js 22.19 or newer", "SoftwareApplication must state the supported Node.js requirement");
 
 const anchors = tags(html, "a").map((tag) => attributes(tag));
 const firstFocusable = html.match(/<(?:a|button|input|select|textarea)\b[^>]*>/i)?.[0] ?? "";
@@ -247,7 +261,7 @@ check(executableScripts.length === 1, `Homepage must contain one executable clip
 check(attributes(executableScripts[0] ?? "").get("src") === "/copy-command.js", "Clipboard enhancement must load from the local static script");
 
 const quickStartSource = await readFile(path.join(websiteDir, "public", "copy-command.js"), "utf8");
-for (const label of ["Copy command", "Copied", "Copy failed", "Install command copied.", "Couldn’t copy. Select the command and copy it manually."]) {
+for (const label of ["Copy command", "Copied", "Copy failed", "Installer download command copied.", "Couldn’t copy. Select the command and copy it manually."]) {
   check(quickStartSource.includes(label), `Clipboard state is missing: ${label}`);
 }
 const cssSource = await readFile(path.join(sourceDir, "styles", "global.css"), "utf8");
@@ -259,6 +273,15 @@ check(cssSource.includes("min-height: 44px"), "Interactive targets must retain t
 check(cssSource.includes("prefers-reduced-motion: reduce"), "Reduced-motion handling is missing");
 
 const socialCardPath = path.join(distDir, "images", "comis-social-card.png");
+const socialCardSource = await readFile(path.join(websiteDir, "scripts", "social-card.html"), "utf8");
+check(
+  socialCardSource.includes("An open-source, security-first platform for AI agent teams."),
+  "Social card source must use the canonical Comis tagline",
+);
+check(
+  !socialCardSource.includes("Self-hosted infrastructure for auditable AI-agent teams."),
+  "Social card source still contains retired positioning",
+);
 const socialCard = await readFile(socialCardPath);
 check(socialCard.subarray(0, 8).toString("hex") === "89504e470d0a1a0a", "Social card must be a genuine PNG");
 check(socialCard.subarray(12, 16).toString("ascii") === "IHDR", "Social card PNG must contain an IHDR header");

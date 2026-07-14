@@ -32,6 +32,30 @@ const structuredData = {
       description: SITE.description,
       publisher: { "@id": `${SITE.url}/#organization` },
     },
+    {
+      "@type": "SoftwareSourceCode",
+      "@id": `${SITE.url}/#source`,
+      name: "Comis source code",
+      description: SITE.positioning,
+      codeRepository: SITE.github,
+      license: SITE.license,
+      programmingLanguage: ["TypeScript", "Shell"],
+      runtimePlatform: "Node.js 22.19 or newer",
+      publisher: { "@id": `${SITE.url}/#organization` },
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": `${SITE.url}/#application`,
+      name: SITE.name,
+      description: SITE.description,
+      applicationCategory: "DeveloperApplication",
+      operatingSystem: "Linux, macOS",
+      downloadUrl: SITE.npm,
+      softwareRequirements: "Node.js 22.19 or newer",
+      isAccessibleForFree: true,
+      license: SITE.license,
+      publisher: { "@id": `${SITE.url}/#organization` },
+    },
   ],
 };
 ---
@@ -58,13 +82,13 @@ const structuredData = {
     <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Comis — self-hosted infrastructure for auditable AI-agent teams" />
+    <meta property="og:image:alt" content="Comis — an open-source, security-first platform for AI agent teams" />
 
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={socialImageUrl.href} />
-    <meta name="twitter:image:alt" content="Comis — self-hosted infrastructure for auditable AI-agent teams" />
+    <meta name="twitter:image:alt" content="Comis — an open-source, security-first platform for AI agent teams" />
 
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
