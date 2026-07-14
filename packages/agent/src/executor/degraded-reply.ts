@@ -12,8 +12,8 @@
  * `degraded-reply-i18n.ts` — the single source of the phrase strings. With no
  * `language` (or "en") the canonical English reply is returned byte-identical:
  * the i18n `en` row IS today's literals, so there is no duplicate and no
- * drift. The knob path, the `(0 = uncapped)` hint, the incident ref, and the
- * warning marker stay verbatim across languages.
+ * drift. Raw configuration paths stay internal; the incident ref and warning
+ * marker stay verbatim across languages.
  *
  * @module
  */
@@ -25,14 +25,14 @@ import {
   selectLoopDetectedReply,
 } from "./degraded-reply-i18n.js";
 
-// CAP_KNOB_BY_CLASS lives in degraded-reply-i18n.ts (the single home — it is
-// interpolated into every language's advice). Re-exported here for the existing
-// import path; no copy, no alias.
+// CAP_KNOB_BY_CLASS lives in degraded-reply-i18n.ts as an internal diagnostic
+// mapping. Re-exported here for callers that need to associate capability
+// classes with operator settings; user-facing replies do not interpolate it.
 export { CAP_KNOB_BY_CLASS } from "./degraded-reply-i18n.js";
 
 /** Optional context for the synthesized context-exhausted reply. */
 export interface ContextExhaustedReplyOpts {
-  /** The model's capabilityClass — "small"/"nano" name the exact cap knob to raise. */
+  /** The model's capability class, used to select profile-aware recovery advice. */
   capabilityClass?: string;
   /** The turn's traceId — appended as an incident ref so the operator (or an LLM
    *  agent) can run `comis explain <traceId>` directly from the chat message. */
