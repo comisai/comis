@@ -131,7 +131,11 @@ export { compareServedWindowForProvider, resetServedWindowWarnForTest, type Serv
 export { collectAgentBootWindowInfo, evaluateViableFloorForAgent, type AgentBootWindowInfo, type MinViableEquation } from "./context-engine/viable-floor.js";
 
 // OAuth token manager (runtime stays in agent due to chokidar + pi-ai/oauth deps)
-export { createOAuthTokenManager } from "./model/oauth-token-manager.js";
+export {
+  createOAuthTokenManager,
+  isValidOAuthEnvSeed,
+  oauthEnvSecretKey,
+} from "./model/oauth-token-manager.js";
 
 // Per-LLM-call OAuth dispatch helper — shared helper used by PiExecutor.execute()
 // pre-hook and the two compaction getApiKey callbacks. Re-exported so the

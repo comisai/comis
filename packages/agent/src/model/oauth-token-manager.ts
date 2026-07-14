@@ -216,7 +216,7 @@ const SCHEMA_VERSION = 1 as const;
  * Convert a provider ID to an uppercase SecretManager key.
  * "github-copilot" -> "OAUTH_GITHUB_COPILOT" (with default prefix).
  */
-function toSecretKey(providerId: string, prefix: string): string {
+export function oauthEnvSecretKey(providerId: string, prefix = "OAUTH_"): string {
   const upper = providerId.toUpperCase().replace(/-/g, "_");
   return `${prefix}${upper}`;
 }
@@ -268,6 +268,11 @@ function parseEnvCredentials(raw: string | undefined): OAuthCredentials | undefi
   } catch {
     return undefined;
   }
+}
+
+/** Return whether a secret value can seed the runtime OAuth bootstrap path. */
+export function isValidOAuthEnvSeed(raw: string | undefined): boolean {
+  return parseEnvCredentials(raw) !== undefined;
 }
 
 /**
@@ -685,7 +690,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
     profileId: string;
     envSeed: OAuthCredentials | undefined;
   }> {
-    const envRaw = secretManager.get(toSecretKey(providerId, keyPrefix));
+    const envRaw = secretManager.get(oauthEnvSecretKey(providerId, keyPrefix));
     const envSeed = parseEnvCredentials(envRaw);
 
     // Prefer existing stored profile (list discovery).
@@ -1331,7 +1336,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
         if (firstProfile) {
           // Conflict detection on the picked profile — env var may diverge
           // from stored refresh (maybeWarnEnvConflict decides silent vs WARN).
-          const envRawForC = secretManager.get(toSecretKey(providerId, keyPrefix));
+          const envRawForC = secretManager.get(oauthEnvSecretKey(providerId, keyPrefix));
           const envSeedForC = parseEnvCredentials(envRawForC);
           maybeWarnEnvConflict(providerId, firstProfile, envSeedForC);
           logger.debug(
@@ -1429,7 +1434,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
       // Async store/list checks live in getApiKey + hasStoredCredentials.
       const cached = Array.from(cache.values()).some((p) => p.provider === providerId);
       if (cached) return true;
-      const secretKey = toSecretKey(providerId, keyPrefix);
+      const secretKey = oauthEnvSecretKey(providerId, keyPrefix);
       return secretManager.has(secretKey);
     },
 
@@ -1444,7 +1449,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
       // unavailable for the daemon's life even though the SAME OAuth credential
       // answered its text completions.
       if (Array.from(cache.values()).some((p) => p.provider === providerId)) return true;
-      if (secretManager.has(toSecretKey(providerId, keyPrefix))) return true;
+      if (secretManager.has(oauthEnvSecretKey(providerId, keyPrefix))) return true;
       const listResult = await credentialStore.list({ provider: providerId });
       return listResult.ok && listResult.value.length > 0;
     },

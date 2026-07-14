@@ -448,6 +448,17 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
             'Invalid profile ID: expected "<provider>:<identity>" format (use validateProfileId from @comis/core to verify).',
         }),
     )
+    .superRefine((profiles, ctx) => {
+      for (const [provider, profileId] of Object.entries(profiles)) {
+        const validation = validateProfileId(profileId);
+        if (!validation.ok || validation.value.provider === provider) continue;
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [provider],
+          message: `OAuth profile provider "${validation.value.provider}" must match map key "${provider}".`,
+        });
+      }
+    })
     .optional(),
 });
 
