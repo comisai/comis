@@ -321,6 +321,42 @@ describe("IcDashboard", () => {
   // =========================================================================
 
   describe("RPC data fetching", () => {
+    it("loads the initial dashboard RPC dataset once when both clients arrive together", async () => {
+      const agent = {
+        id: "agent-alpha",
+        name: "Agent Alpha",
+        provider: "anthropic",
+        model: "claude",
+        status: "active",
+      };
+      const mockApi = createMockApiClient({
+        getAgents: vi.fn().mockResolvedValue([agent]),
+      });
+      const mockRpc = createMockRpcClient();
+
+      priv(el).apiClient = mockApi;
+      priv(el).rpcClient = mockRpc;
+      document.body.appendChild(el);
+      await el.updateComplete;
+
+      await vi.waitFor(() => {
+        expect(priv(el)._loadState).toBe("loaded");
+        expect(
+          vi.mocked(mockRpc.call).mock.calls.filter(
+            ([method]) => method === "obs.billing.byAgent",
+          ),
+        ).not.toHaveLength(0);
+      });
+
+      const rpcCalls = vi.mocked(mockRpc.call).mock.calls;
+      expect(rpcCalls.filter(([method]) => method === "gateway.status")).toHaveLength(1);
+      expect(rpcCalls.filter(([method]) => method === "obs.billing.total")).toHaveLength(9);
+      expect(
+        rpcCalls.filter(([method]) => method === "obs.billing.byAgent"),
+      ).toEqual([["obs.billing.byAgent", { agentId: "agent-alpha" }]]);
+      expect(rpcCalls).toHaveLength(16);
+    });
+
     it("rpcClient.call invoked for gateway.status", async () => {
       const mockRpc = createMockRpcClient();
       priv(el).rpcClient = mockRpc;
