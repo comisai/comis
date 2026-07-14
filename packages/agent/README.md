@@ -10,7 +10,7 @@ AI agent executor, safety controls, budget management, and session lifecycle for
 
 ### Context Engine
 
-Multi-layer context assembly that scales conversations without degradation:
+Multi-layer context assembly for long-running conversations:
 
 | Layer | What it does |
 |-------|--------------|
@@ -18,14 +18,14 @@ Multi-layer context assembly that scales conversations without degradation:
 | History Window | Caps to last N turns per channel |
 | Dead Content Evictor | Replaces superseded file reads with placeholders |
 | Observation Masker | Three-tier masking with hysteresis |
-| LLM Compaction | Summarizes 50+ messages into structured sections |
+| LLM Compaction | Summarizes long histories into structured sections |
 | Rehydration | Re-injects workspace state post-compaction |
 
 DAG reconciliation syncs the JSONL conversation log to a directed acyclic graph for efficient compaction and integrity checks.
 
 ### Safety
 
-- **Circuit breakers** -- Per-provider, per-tool, and per-context-window state machines (closed -> open -> half-open) preventing failure cascading
+- **Failure containment** -- A three-state per-agent LLM circuit breaker, cross-agent provider health monitoring, per-execution tool retry guards, and session-scoped context-layer breakers contain different failure modes
 - **Tool output sanitization** -- NFKC normalization, invisible character stripping, size limits
 - **Response safety** -- Secret leak detection, content filtering, schema normalization per provider
 - **Context truncation recovery** -- Detects and recovers from context overflow
@@ -54,7 +54,6 @@ DAG reconciliation syncs the JSONL conversation log to a directed acyclic graph 
 - **`SpawnPacketBuilder`** -- Constructs sub-agent execution packets with isolated sessions, budgets, and tool policies
 - **Result condensing** -- Summarizes sub-agent output for parent context
 - **Result processor** -- Reads sub-agent result files and feeds them back into the parent session
-- **Spawn staggering** -- 4-second delays between concurrent sub-agents for prompt cache sharing
 - **Lifecycle hooks + narrative caster** -- Per-spawn observability events; parent-side summary generation
 
 ### Prompt Caching
@@ -66,7 +65,7 @@ DAG reconciliation syncs the JSONL conversation log to a directed acyclic graph 
 
 ## Part of Comis
 
-This package is part of the [Comis](https://github.com/comisai/comis) monorepo -- a security-first AI agent platform connecting agents to Discord, Telegram, Slack, WhatsApp, and more.
+This package is part of [Comis](https://github.com/comisai/comis), an open-source, security-first platform for AI agent teams.
 
 ```bash
 npm install comisai

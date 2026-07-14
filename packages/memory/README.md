@@ -8,12 +8,13 @@ SQLite-backed storage layer for the [Comis](https://github.com/comisai/comis) pl
 
 - **`SqliteMemoryAdapter`** -- `MemoryPort` implementation with trust-partitioned storage (system/learned/external), FTS5 full-text search, and vector similarity search via `sqlite-vec`
 - **`createSessionStore()`** -- Per-agent session state persistence
-- **`createContextStore()`** -- DAG-based conversation context storage for the context engine
+- **`createLcdStore()`** -- DAG-based conversation context storage implementing `ContextStorePort`
 
 ### Embedding Stack
 
 - **`createEmbeddingProvider()`** -- Auto-selecting factory (OpenAI remote or local GGUF via `node-llama-cpp`)
-- **`createCachedEmbeddingPort()`** -- Two-tier caching: LRU in-memory (L1) + SQLite persistent (L2)
+- **`createCachedEmbeddingPort()`** -- In-memory LRU content-hash cache decorator
+- **`createSqliteEmbeddingCache()`** -- Persistent SQLite embedding cache decorator
 - **`createEmbeddingQueue()`** -- Async background embedding with `p-queue`
 - **`createBatchIndexer()`** -- Bulk re-indexing when embedding providers change
 - **`createFingerprintManager()`** -- Detects provider changes that invalidate cached embeddings
@@ -40,7 +41,7 @@ SQLite-backed storage layer for the [Comis](https://github.com/comisai/comis) pl
 
 ## Part of Comis
 
-This package is part of the [Comis](https://github.com/comisai/comis) monorepo -- a security-first AI agent platform connecting agents to Discord, Telegram, Slack, WhatsApp, and more.
+This package is part of [Comis](https://github.com/comisai/comis), an open-source, security-first platform for AI agent teams.
 
 ```bash
 npm install comisai

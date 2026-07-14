@@ -1,8 +1,8 @@
 # @comis/observability
 
-Diagnostics substrate for the [Comis](https://github.com/comisai/comis) platform. Provides the low-level primitives that every diagnostics artifact written under `~/.comis` flows through: queued append-only writers, payload bounding, secret redaction, symlink-safe path guards, and the four diagnostic record streams (trajectory, system-prompt-report, cache-trace, config-audit).
+Diagnostics substrate for the [Comis](https://github.com/comisai/comis) platform. It provides queued append-only writers, payload bounding, secret redaction, symlink-safe path guards, and record streams for trajectories, system-prompt reports, cache traces, and configuration audits.
 
-Depends only on `@comis/core` and `@comis/shared`. Architecture-test enforced: must not import `@comis/agent`, `@comis/daemon`, `@comis/cli`, or `@comis/orchestrator`.
+Its only Comis package dependencies are `@comis/core` and `@comis/shared`. Architecture tests prevent imports from `@comis/agent`, `@comis/daemon`, `@comis/cli`, or `@comis/orchestrator`.
 
 ## What's Inside
 
@@ -21,7 +21,7 @@ Depends only on `@comis/core` and `@comis/shared`. Architecture-test enforced: m
 - **`maskToken()` / `maskPemBlock()`** -- Edge-keeping mask with `U+2026` ellipsis
 - **`redactIdentifier()`** -- sha256-prefix opaque-id helper
 - **`replacePatternBounded()`** -- ReDoS-guarded chunked regex replace
-- **`getDefaultRedactPatterns()`** -- 32-pattern default set (Slack/Discord/HMAC + Comis-prefix tokens)
+- **`getDefaultRedactPatterns()`** -- Default patterns for supported credential and token formats
 - **`redactSecretsInText()` / `redactSecrets()` / `sanitizeForPersistence()`** -- Text + structured-walker redactors
 - **`pinoRedactTransport`** -- Pino transport factory that replaces Pino's `[REDACTED]` censor with the masked-edge form
 
@@ -33,7 +33,7 @@ Depends only on `@comis/core` and `@comis/shared`. Architecture-test enforced: m
 | `system-prompt-report/` | `buildSystemPromptReport`, `persistSystemPromptReport`, `SystemPromptReportSchema` | sha256-digested snapshot of the assembled system prompt, persisted via `ObservabilityStore` |
 | `cache-trace/` | `createCacheTrace`, `buildCacheTraceWrapper`, `attachCacheTraceToEventBus`, `CacheTraceEventSchema` | Per-stage prompt-cache hit/miss trace, JSONL persisted |
 | `cache-stats/` | `aggregateCacheStats`, `parseSince` | Window-rolled cache-hit aggregation backing the `obs.cacheStats.window` RPC |
-| `config-audit/` | `ConfigWriteAuditRecordSchema`, argv-redactor (39 flags + suffix heuristic), suspicious-heuristics detector, append + scrub | Tamper-evident audit of every config write path |
+| `config-audit/` | `ConfigWriteAuditRecordSchema`, argument redaction, suspicious-write heuristics, append + scrub | Redacted configuration write/observe records with caller provenance and before/after file hashes |
 
 ## Usage
 
@@ -59,7 +59,7 @@ maskToken("sk-abc1234567890def", { keepStart: 4, keepEnd: 4 });
 
 ## Part of Comis
 
-This package is part of the [Comis](https://github.com/comisai/comis) monorepo -- a security-first AI agent platform connecting agents to Discord, Telegram, Slack, WhatsApp, and more.
+This package is part of [Comis](https://github.com/comisai/comis), an open-source, security-first platform for AI agent teams.
 
 ```bash
 npm install comisai

@@ -4,8 +4,8 @@
   "version": "1.0.53",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
-  "description": "Chat platform adapters — Discord, Telegram, Slack, WhatsApp, Signal, iMessage, IRC, LINE",
-  "keywords": ["comis", "ai", "agent", "discord", "telegram", "slack", "whatsapp", "signal", "irc"],
+  "description": "Messaging adapters for Comis AI agent teams, including Microsoft Teams, Email, Discord, Telegram, Slack, and more.",
+  "keywords": ["comis", "ai-agents", "messaging", "discord", "telegram", "slack", "whatsapp", "signal", "imessage", "line", "irc", "email", "microsoft-teams"],
   "engines": { "node": ">=22.19.0" },
   "files": ["dist"],
   "type": "module",
@@ -16,7 +16,7 @@
     "url": "https://github.com/comisai/comis.git",
     "directory": "packages/channels"
   },
-  "homepage": "https://github.com/comisai/comis#readme",
+  "homepage": "https://docs.comis.ai/channels",
   "bugs": {
     "url": "https://github.com/comisai/comis/issues"
   },

@@ -6,10 +6,10 @@ Background daemon and service orchestrator for the [Comis](https://github.com/co
 
 ### Orchestration
 
-The daemon's `main()` function calls 30+ `setupXxx()` factory functions in sequence to wire the full application:
+The daemon's `main()` function coordinates setup factories that wire the full application:
 
 1. **Logging** -- Pino structured logging with rotation
-2. **Secrets** -- AES-256-GCM encrypted secret store initialization
+2. **Credential storage** -- Selects encrypted, file-backed, or read-only environment storage from `security.storage`; encrypted storage is the default and uses AES-256-GCM
 3. **Memory** -- SQLite databases, embedding providers, vector search
 4. **Agents** -- Executor, session lifecycle, context engine, budget guards
 5. **Schedulers** -- Cron engine, heartbeat runners, task extraction
@@ -21,7 +21,7 @@ The daemon's `main()` function calls 30+ `setupXxx()` factory functions in seque
 
 ### RPC Handlers
 
-55+ RPC handler implementations for context management, agent operations, session queries, config updates, and system administration.
+RPC handlers cover context management, agent operations, session queries, configuration updates, diagnostics, and system administration.
 
 ### Process Management
 
@@ -31,18 +31,18 @@ The daemon's `main()` function calls 30+ `setupXxx()` factory functions in seque
 ## Running
 
 ```bash
-# Via PM2 (recommended)
-npm install -g pm2
-node packages/cli/dist/cli.js pm2 setup
-node packages/cli/dist/cli.js pm2 start
+# Installed CLI
+comis daemon start
+comis daemon status
+comis daemon logs
 
-# Direct
+# Direct development run
 COMIS_CONFIG_PATHS="$HOME/.comis/config.yaml" node packages/daemon/dist/daemon.js
 ```
 
 ## Part of Comis
 
-This package is part of the [Comis](https://github.com/comisai/comis) monorepo -- a security-first AI agent platform connecting agents to Discord, Telegram, Slack, WhatsApp, and more.
+This package is part of [Comis](https://github.com/comisai/comis), an open-source, security-first platform for AI agent teams.
 
 ```bash
 npm install comisai

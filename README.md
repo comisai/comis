@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="assets/comis-readme-banner.png?v=1.0.53" alt="Comis: self-hosted AI agents you can audit" width="100%" />
+  <img src="assets/comis-readme-banner.png" alt="Comis — an open-source, security-first platform for AI agent teams" width="100%" />
 </p>
 
 <p align="center">
-  <strong>Self-hosted infrastructure for operating auditable AI-agent teams.</strong>
+  <strong>An open-source, security-first platform for AI agent teams.</strong>
   <br />
-  <sub>Messaging, multi-agent workflows, lossless context, scoped secrets, and built-in operations.</sub>
+  <sub>Messaging, durable workflows, recoverable context, scoped secrets, and operational visibility.</sub>
 </p>
 
 <p align="center">
@@ -35,21 +35,25 @@ Comis runs on infrastructure you control. Network access depends on the models, 
 
 ## Quick Start
 
-The installer provisions Comis and its system dependencies on macOS or Linux:
+Install the CLI with Node.js **22.19+**, then run the setup wizard:
 
 ```bash
-curl -fsSL https://comis.ai/install.sh | bash
-```
-
-Or install from npm with Node.js **22.19+**:
-
-```bash
-npm install -g comisai
+npm install --global comisai
 comis init
-comis daemon start
 ```
 
-Open `http://127.0.0.1:4766`, or connect a messaging channel during setup. Verify the daemon with:
+For a managed macOS or Linux host setup, download and inspect the installer before running it:
+
+```bash
+curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh -o comis-install.sh
+less comis-install.sh
+bash comis-install.sh --dry-run
+bash comis-install.sh
+```
+
+The managed-host installer can install Node.js and host dependencies, initialize Comis data, and register the daemon with systemd or PM2. On Linux, it also attempts to provision Chromium and Xvfb by default and can create a dedicated `comis` user for a systemd service. Use `bash comis-install.sh --help` to review opt-outs and service choices. Direct npm installation does not make those host-level changes.
+
+Complete the setup wizard and start the daemon when prompted. If you choose to start it later, run `comis daemon start`. Then open `http://127.0.0.1:4766`, or connect a messaging channel during setup. Verify the daemon with:
 
 ```bash
 curl http://127.0.0.1:4766/health
@@ -62,7 +66,7 @@ For containers and production hosts, see the [installation guides](https://docs.
 | Capability | What it provides |
 | --- | --- |
 | **Auditable multi-agent workflows** | Persistent DAGs with parallel nodes, barriers, retries, budgets, approval nodes, debate, voting, refinement, and map-reduce. |
-| **Lossless context** | Canonical messages and tool results remain recoverable through DAG-backed summaries and `ctx_search`, `ctx_inspect`, and `ctx_expand`. |
+| **Recoverable context** | Canonical messages and tool results can be recovered through DAG-backed summaries and `ctx_search`, `ctx_inspect`, and `ctx_expand`. |
 | **Outcome-gated learning** | Trust-aware learning can distill corroborated successful strategies into reusable Mental Models with source-trajectory provenance; profile and topic revisions retain prior bodies. |
 | **Scoped operation** | Agent-facing memory and context are tenant- and agent-scoped; agents can have separate models, budgets, tool policies, and configurable secret allowlists, while global routing bindings direct traffic to them. |
 | **Operational visibility** | Traces, incident reports, delivery health, cache diagnostics, provider usage and cost accounting with 1-hour cache-write correction, best-effort tool attribution, opt-in spend ceilings, security audit records, and optional OpenTelemetry/Prometheus export. |
@@ -96,7 +100,7 @@ Read [THREAT_MODEL.md](THREAT_MODEL.md) before enabling shell, browser, network,
 
 - Code extensions currently require source changes through ports, adapters, hooks, and tools. Prompt skills can be uploaded or imported, but Comis does not yet provide a stable third-party code-plugin ecosystem.
 - Deterministic tests cover the core runtime extensively, but not every provider, channel, model, or deployment combination is validated live.
-- Backward compatibility is not guaranteed during active development.
+- Backward compatibility is not supported during active development; releases may include breaking API or configuration changes.
 
 ## Architecture
 

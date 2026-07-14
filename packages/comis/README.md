@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/comisai/comis/main/assets/comis-readme-banner.png" alt="Comis: self-hosted AI agents you can audit" width="100%" />
+  <img src="https://raw.githubusercontent.com/comisai/comis/main/assets/comis-readme-banner.png" alt="Comis — an open-source, security-first platform for AI agent teams" width="100%" />
 </p>
 
 <p align="center">
-  <strong>Self-hosted infrastructure for auditable AI-agent teams.</strong>
+  <strong>An open-source, security-first platform for AI agent teams.</strong>
   <br />
-  <sub>Messaging, multi-agent workflows, recoverable context, scoped secrets, and built-in operations.</sub>
+  <sub>Messaging, durable workflows, recoverable context, scoped secrets, and operational visibility.</sub>
 </p>
 
 <p align="center">
@@ -51,11 +51,16 @@ comis daemon start
 
 Open `http://127.0.0.1:4766`, or connect a messaging channel during setup. Check the installation with `comis status` and `comis health`.
 
-Direct npm installation provides the CLI and runtime; it does not configure a Comis workspace, install host tools, or register a system service. On macOS or Linux, the installer provisions supported prerequisites where it can and can register the daemon with an available service manager:
+Direct npm installation provides the CLI and runtime; it does not install host tools, create a service account, or register a system service. For a managed macOS or Linux host setup, download and inspect the installer first:
 
 ```bash
-curl -fsSL https://comis.ai/install.sh | bash
+curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh -o comis-install.sh
+less comis-install.sh
+bash comis-install.sh --dry-run
+bash comis-install.sh
 ```
+
+The managed-host installer can install Node.js and host dependencies, initialize Comis data, and register the daemon with systemd or PM2. On Linux, it also attempts to provision Chromium and Xvfb by default and can create a dedicated `comis` user for a systemd service. Run `bash comis-install.sh --help` for the available opt-outs.
 
 See the [installation guide](https://docs.comis.ai/installation) for supported hosts, containers, services, and isolation prerequisites.
 
@@ -94,7 +99,6 @@ Run `comis --help` for the complete command reference. Common operational comman
 comis status
 comis doctor
 comis security audit
-comis configure --section channels
 comis channel status
 ```
 
@@ -111,7 +115,7 @@ Public subpaths cover the core runtime, infrastructure, memory, gateway, skills,
 
 - Code extensions currently require source changes through ports, adapters, hooks, and tools. Prompt skills can be uploaded or imported, but Comis does not yet provide a stable third-party code-plugin ecosystem.
 - Deterministic tests cover the core runtime extensively, but not every provider, channel, model, or deployment combination is validated live.
-- Backward compatibility is not guaranteed during active development.
+- Backward compatibility is not supported during active development; releases may include breaking API or configuration changes.
 
 ## Project Links
 

@@ -16,9 +16,9 @@ HTTP, JSON-RPC, and WebSocket gateway for the [Comis](https://github.com/comisai
 - **mTLS** -- Mutual TLS with Common Name extraction for service-to-service auth
 - **Token store** -- Runtime token management with scope enforcement
 
-### API Compatibility
+### OpenAI-shaped API
 
-- **OpenAI-compatible endpoints** -- `/v1/chat/completions`, `/v1/models`, `/v1/embeddings` for drop-in compatibility with OpenAI client libraries
+- **Experimental endpoints** -- `/v1/chat/completions`, `/v1/models`, `/v1/embeddings`, and `/v1/responses` use OpenAI-shaped or OpenResponses request and response formats; this is not a general client-compatibility guarantee
 - **Response streaming** -- Server-sent events for streaming completions
 
 ### Webhooks
@@ -34,7 +34,7 @@ HTTP, JSON-RPC, and WebSocket gateway for the [Comis](https://github.com/comisai
 
 ## Part of Comis
 
-This package is part of the [Comis](https://github.com/comisai/comis) monorepo -- a security-first AI agent platform connecting agents to Discord, Telegram, Slack, WhatsApp, and more.
+This package is part of [Comis](https://github.com/comisai/comis), an open-source, security-first platform for AI agent teams.
 
 ```bash
 npm install comisai
