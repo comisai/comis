@@ -1,51 +1,47 @@
 ---
 title: "Welcome to Comis"
-description: "Open-source AI agent fleet that lives in your messaging apps"
+description: "An open-source, security-first platform for AI agent teams"
 icon: "hand-wave"
 ---
 
-Comis _(Latin: friendly, courteous)_ is an open-source platform that puts AI agents directly inside the messaging apps you already use -- Telegram, Discord, Slack, WhatsApp, Signal, iMessage, IRC, LINE, and Email. Instead of switching to yet another tool, your AI assistants live right where your conversations happen, ready to help at any moment.
+Comis is an open-source, security-first platform for AI agent teams. It runs on
+infrastructure you control and connects agents to a web dashboard and ten
+documented messaging adapters: Discord, Telegram, Slack, WhatsApp, Signal,
+iMessage, LINE, IRC, Email, and Microsoft Teams.
 
-Most AI tools are chatbots trapped in a browser tab. Comis is different. It is a full operations center that lets you run a fleet of specialized agents, each with their own memory, tools, and personality. They work around the clock, even while you sleep.
+Comis is under active development. Start with one agent and one interaction
+surface, verify the security posture for your host, and expand only after the
+basic path is working.
 
-## Who is Comis for?
-
-- **Community managers** running Discord or Telegram groups who need an AI moderator,
-  FAQ bot, or engagement assistant that actually remembers past conversations.
-- **Small business owners** who want AI-powered customer support inside WhatsApp
-  or Slack without hiring a developer or learning to code.
-- **Developers** building AI-powered automation, custom tools, or multi-agent
-  workflows with full control over the source code.
-- **Teams** that need multiple specialized AI agents working together -- one for
-  research, one for writing, one for scheduling -- all coordinated through a
-  single platform.
-
-## What can it do?
+## What Comis provides
 
 <CardGroup cols={2}>
-  <Card title="Lives Where You Are" icon="messages" href="/channels/index">
-    Connect to 9 messaging platforms at once. Your agents appear in your existing chats -- no new apps to install.
+  <Card title="Agent Teams" icon="robot" href="/agents/index">
+    Run multiple agents with separate identities, workspaces, model settings,
+    memory scopes, and tool policies.
   </Card>
-  <Card title="A Team of Specialists" icon="robot" href="/agents/index">
-    Run multiple AI agents, each with their own personality, knowledge, and tools. An analyst, a writer, an ops bot -- all working together.
+  <Card title="Messaging Channels" icon="messages" href="/channels/index">
+    Receive and deliver messages through ten platform adapters with a common
+    channel interface.
   </Card>
-  <Card title="Remembers Everything" icon="brain" href="/agents/memory">
-    Your agents build lasting memory across conversations. They recall your preferences, your projects, and your past requests.
+  <Card title="Memory and Context" icon="brain" href="/agents/memory">
+    Store and retrieve selected conversation knowledge with trust-aware recall,
+    configurable retention, and explicit reset controls.
   </Card>
-  <Card title="Endlessly Extensible" icon="puzzle-piece" href="/skills/index">
-    Add new abilities with skills and tools. Connect to thousands of external services through the MCP protocol.
+  <Card title="Tools and Skills" icon="puzzle-piece" href="/skills/index">
+    Use built-in tools, Markdown skills, and configured MCP integrations within
+    the permissions and runtime boundaries you select.
   </Card>
-  <Card title="Works While You Sleep" icon="clock" href="/agent-tools/scheduling">
-    Schedule tasks, set reminders, and run recurring automations. Your agents keep working even when you are away.
+  <Card title="Automation" icon="clock" href="/agent-tools/scheduling">
+    Configure scheduled jobs, heartbeats, and multi-agent execution workflows.
   </Card>
-  <Card title="Keeps You Safe" icon="shield-check" href="/get-started/security">
-    Encrypted secrets, injection protection, approval gates for sensitive actions, and audit logging -- security is built in from day one.
+  <Card title="Security Controls" icon="shield-check" href="/get-started/security">
+    Combine encrypted credential storage, content guards, audit events,
+    capability gates, optional approvals, and platform-dependent isolation.
   </Card>
 </CardGroup>
 
-## Quick example
-
-Install Comis globally, run the setup wizard, and start the daemon -- three commands is all it takes:
+## Start here
 
 ```bash
 npm install -g comisai
@@ -53,29 +49,23 @@ comis init
 comis daemon start
 ```
 
-That's it -- your first agent is running. Open `http://localhost:4766` in your
-browser to start chatting. See the full [Quickstart](/get-started/quickstart)
-for the complete walkthrough.
+The setup wizard has several stages and optional integrations. It defaults to
+encrypted credential storage; back up the generated master key. Follow the
+[Quickstart](/get-started/quickstart) for the complete, verified workflow.
 
-## Explore the Docs
+## Explore the documentation
 
-<CardGroup cols={3}>
+<CardGroup cols={2}>
   <Card title="Quickstart" icon="rocket" href="/get-started/quickstart">
-    Zero to first message in under 5 minutes.
+    Install, configure, start, and verify Comis.
   </Card>
   <Card title="How It Works" icon="diagram-project" href="/get-started/how-it-works">
-    Understand the architecture in plain language.
+    Understand message routing, agent execution, and delivery.
   </Card>
-  <Card title="Channels" icon="messages" href="/channels/index">
-    Connect Discord, Telegram, Slack, and more.
+  <Card title="Security Boundaries" icon="shield-check" href="/get-started/security">
+    Review defaults, opt-in controls, and known limitations.
   </Card>
-  <Card title="Agents" icon="robot" href="/agents/index">
-    Configure your AI agents and their behavior.
-  </Card>
-  <Card title="Skills" icon="puzzle-piece" href="/skills/index">
-    Add tools and abilities to your agents.
-  </Card>
-  <Card title="Security" icon="shield-check" href="/get-started/security">
-    Learn how Comis keeps your data safe.
+  <Card title="Operations" icon="gauge" href="/operations/index">
+    Deploy, monitor, back up, and troubleshoot the daemon.
   </Card>
 </CardGroup>

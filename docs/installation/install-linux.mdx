@@ -15,15 +15,15 @@ import NonTechnicalNote from '/snippets/non-technical-note.mdx';
 <Snippet file="invocation-modes.mdx" />
 
 <Warning>
-Make sure you have Node.js 22+, build tools, and an AI provider API key ready
-before starting. See the [Requirements](/installation/requirements) page for
-the full list.
+Make sure you have Node.js 22.19.0 or newer, Python 3, and native build tools.
+You also need a provider API credential, a supported OAuth login, or a running
+local model. See [Requirements](/installation/requirements).
 </Warning>
 
 ## Installation
 
 <Steps>
-  <Step title="Install Node.js 22">
+  <Step title="Install Node.js 22.19.0 or newer">
     <Tabs>
       <Tab title="Ubuntu / Debian">
         ```bash
@@ -50,11 +50,7 @@ the full list.
     node --version
     ```
 
-    Expected output:
-
-    ```
-    v22.x.x
-    ```
+    Confirm that the reported version is at least `v22.19.0`.
   </Step>
 
   <Step title="Install build tools">
@@ -90,11 +86,7 @@ the full list.
     comis --version
     ```
 
-    Expected output (version number — yours may differ):
-
-    ```
-    1.0.53
-    ```
+    The command prints the installed package version.
 
     <Tip>
     If you get an `EACCES` permission error, see the "Permission denied during
@@ -107,21 +99,18 @@ the full list.
     comis init
     ```
 
-    The wizard walks you through three questions:
+    The staged wizard detects existing state, lets you choose storage and model
+    authentication, configures the agent, channels, gateway, workspace, tools,
+    media and recall, then shows a review before writing files and optionally
+    starting the daemon.
 
-    1. **Which AI provider?** -- Choose from Anthropic (Claude), OpenAI (GPT),
-       Google (Gemini), and 8 others. Pick whichever provider you have an API
-       key for.
-    2. **Your API key** -- Paste the API key from your chosen provider. The
-       wizard stores it securely in `~/.comis/.env` and never displays it again.
-    3. **A name for your agent** -- Give your agent a name (like "Atlas" or
-       "Helper"), or press Enter to accept the default.
+    New installations default to encrypted credential storage:
 
-    When the wizard finishes, it creates two files:
+    - `~/.comis/config.yaml` contains non-secret configuration;
+    - `~/.comis/secrets.db` contains encrypted credentials; and
+    - `~/.comis/.env` contains `SECRETS_MASTER_KEY`.
 
-    - `~/.comis/config.yaml` -- Your agent's configuration (name, provider,
-      model, gateway settings)
-    - `~/.comis/.env` -- Your API key, stored separately for security
+    Back up the master key securely. It is required to recover `secrets.db`.
   </Step>
 
   <Step title="Start the daemon">
@@ -129,18 +118,8 @@ the full list.
     comis daemon start
     ```
 
-    You should see output similar to:
-
-    ```
-    Comis daemon started
-      Agent:    Atlas
-      Provider: anthropic (claude-sonnet-4-5-20250929)
-      Gateway:  http://localhost:4766
-      Status:   ready
-    ```
-
-    The daemon runs in the background. It manages your agents, handles incoming
-    messages, and serves the web dashboard.
+    Confirm the result with `comis status`. The daemon manages configured agents,
+    channels, and the local gateway.
 
     <Tip>
     You can close this terminal and the daemon will keep running. To stop it
@@ -174,9 +153,9 @@ out for a minimal footprint, or add the stealth variant, with these flags:
 |---|---|---|
 | `--with-browser` | **On by default.** Google Chrome + headless shared libs + a widened systemd sandbox so the daemon can launch a browser. Handles Ubuntu 24.04's t64-renamed libs and falls back to Google's official apt repo when the `chromium` deb isn't available. | Kept on unless you opt out — the browser tool needs a Chrome binary to launch. |
 | `--without-browser` | Opt out of the **whole** browser stack (skips Chromium, headless libs, and the Xvfb unit) for a minimal footprint. The browser tool stays enabled in config but fails honestly at use for lack of a runtime. Same as `COMIS_WITH_BROWSER=0`. | You don't use the browser tool and want the smallest install. |
-| `--with-xvfb` | **On by default (implies `--with-browser`).** Adds Xvfb and a `comis-xvfb.service` companion unit that runs a virtual display on `:99`; both units bind a shared `/run/comis-x11` dir onto `/tmp/.X11-unix` so the daemon reaches the X11 socket despite `PrivateTmp=yes`. Seeds `headless: false` in `config.yaml` **only when Xvfb actually installed**. | Kept on unless you opt out — needed for sites that detect headless mode itself (BrowserScan, Cloudflare managed, DataDome). |
+| `--with-xvfb` | **On by default (implies `--with-browser`).** Adds Xvfb and a `comis-xvfb.service` companion unit that runs a virtual display on `:99`; both units bind a shared `/run/comis-x11` dir onto `/tmp/.X11-unix` so the daemon reaches the X11 socket despite `PrivateTmp=yes`. Seeds `headless: false` in `config.yaml` **only when Xvfb actually installed**. | Use when a workflow requires a headed browser session. Site compatibility is not guaranteed. |
 | `--without-xvfb` | Keep the (default) headless browser but drop the heavier Xvfb headed stack + companion unit. Same as `COMIS_WITH_XVFB=0`. | You want the browser tool but not headed mode / the extra unit. |
-| `--with-cloakbrowser` | **Opt-in (implies `--with-browser`).** Installs CloakBrowser (stealth Chromium with source-level fingerprint patches) instead of stock Chrome; the daemon auto-detects and uses the cloak binary via `findChrome()`. Tighter sandbox than the Chrome variant. | Bypassing Cloudflare Turnstile, FingerprintJS, BrowserScan, and Reddit's secondary fingerprint check. See [agent-tools/browser](/agent-tools/browser#stealth-mode-anti-bot-detection) for verified outcomes. |
+| `--with-cloakbrowser` | **Opt-in (implies `--with-browser`).** Installs CloakBrowser instead of stock Chrome; the daemon auto-detects the binary. | Use only after reviewing its separate binary license and your target sites' terms. It does not guarantee access or change IP reputation. |
 
 ```bash
 # Default install — browser tool + headed (Xvfb) stack provisioned best-effort
@@ -188,7 +167,7 @@ curl -fsSL https://comis.ai/install.sh | bash -s -- --without-browser
 # Headless-only — keep the browser tool, drop the heavier headed Xvfb stack
 curl -fsSL https://comis.ai/install.sh | bash -s -- --without-xvfb
 
-# Cloakbrowser (stealth Chromium) — recommended for fingerprint-tier sites
+# Optional CloakBrowser runtime
 curl -fsSL https://comis.ai/install.sh | bash -s -- --with-cloakbrowser
 ```
 
@@ -210,9 +189,11 @@ non-interactive runs without root require one of the two choices explicitly.
 </Info>
 
 <Warning>
-**Datacenter IPs (AWS, DigitalOcean, Hetzner, Hostinger, …) are pre-blocked by Reddit, X/Twitter, LinkedIn, and many anti-bot services at the network layer** — regardless of browser fingerprint. CloakBrowser does not include a proxy. If your daemon runs on a datacenter VPS, pair the stealth flag with a residential proxy. Self-hosted on a home/office network: stealth alone usually works.
-
-CloakBrowser's compiled binary is under a separate license — free for self-hosted use; bundling into a service distributed to third-party customers requires an OEM license from CloakHQ. See the [binary license](https://github.com/CloakHQ/CloakBrowser/blob/main/BINARY-LICENSE.md).
+CloakBrowser does not include a proxy and cannot change a host's IP reputation.
+Website policies and detection behavior change over time; do not describe this
+option as a bypass guarantee. Its compiled binary has a separate license. Review
+the [binary license](https://github.com/CloakHQ/CloakBrowser/blob/main/BINARY-LICENSE.md)
+and the target site's terms before use.
 </Warning>
 
 The corresponding environment variables work too, useful in CI / non-interactive flows: `COMIS_WITH_BROWSER=0|1` and `COMIS_WITH_XVFB=0|1` (both default `1` — set `0` for the opt-outs above), and `COMIS_WITH_CLOAKBROWSER=1`. The installer pre-creates browser profile dirs, seeds a `browser:` block in `config.yaml`, and (when Xvfb installed) enables + starts the companion unit before the main daemon — no manual systemd surgery needed.
@@ -229,15 +210,15 @@ comis init --non-interactive --accept-risk \
   --agent-name "Atlas"
 ```
 
-This creates the same `~/.comis/config.yaml` and `~/.comis/.env` files without
-prompting for input. Replace `anthropic` with your provider of choice and set
-the `ANTHROPIC_API_KEY` environment variable (or substitute the appropriate
-variable for your provider) before running.
+This writes the same configuration and encrypted storage layout without
+prompting. Replace `anthropic` with your API-key provider and set the matching
+protected environment variable first.
 
 <Info>
-The `--accept-risk` flag acknowledges that you are providing an API key on the
-command line rather than through the interactive prompt. See `comis init --help`
-for all 27 available flags.
+`--accept-risk` acknowledges that the expanded `--api-key` value can be exposed
+through process inspection, shell history, or CI logs. Prefer the interactive
+wizard or tightly controlled automation, and never paste a literal key into a
+saved command. Run `comis init --help` for the current flags.
 </Info>
 
 <Tip>
@@ -251,7 +232,7 @@ comis auth login --provider openai-codex --method device-code
 
 The CLI prints a short code and the URL `https://auth.openai.com/codex/device`.
 Open that URL on a phone or laptop browser, sign into ChatGPT, and enter the code.
-The CLI polls every 5 seconds and completes when the code is accepted (15-minute timeout).
+The CLI waits for the authorization flow to complete or expire.
 For the full walkthrough including multi-account profiles, see
 [Install on a VPS](/installation/install-vps#codex-oauth-on-headless-hosts).
 </Tip>

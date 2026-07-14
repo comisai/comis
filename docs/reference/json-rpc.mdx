@@ -1,6 +1,6 @@
 ---
 title: "JSON-RPC Methods Reference"
-description: "Complete reference for all 170 JSON-RPC methods across 41 namespaces"
+description: "Reference for the JSON-RPC methods exposed by the daemon"
 icon: "code"
 ---
 
@@ -1466,7 +1466,7 @@ Get the run history for a cron job — the timestamp, duration, and outcome of e
 | **Parameters** | `{ jobName: string, limit?: number, agentId?: string }` |
 | **Returns** | `{ runs: Array<{ ts: number, jobId: string, status: "ok" \| "error" \| "skipped", durationMs: number, summary?: string, error?: string, toolCalls?: number, estTurnsSaved?: number, rootRunId?: string }> }` |
 
-Each entry's `status` is `ok` (the payload ran), `error` (it failed — `error` carries the message), or `skipped` (a wake-gate decided not to invoke the model — `summary` reads `wake-gate: skipped`). On a skip, `toolCalls` is the gate's own cap-call count, `estTurnsSaved` is the model turn it avoided (`1` per skip), and `rootRunId` is the gate fire's `root-wakegate-…` root: when the gate made cap-calls before skipping (a skip-after-fetch, `toolCalls > 0`), reconstruct them from the durable audit trail with [`security audit-log`](/reference/cli#comis-security-audit-log) filtered on that root. The cross-job skip-rate rollup is on [`obs.fleet.health`](#obs-fleet-health)'s `cronWakeGate` block.
+Each entry's `status` is `ok` (the payload ran), `error` (it failed — `error` carries the message), or `skipped` (a wake-gate decided not to invoke the model — `summary` reads `wake-gate: skipped`). On a skip, `toolCalls` is the gate's own cap-call count, `estTurnsSaved` is the model turn it avoided (`1` per skip), and `rootRunId` is the gate fire's `root-wakegate-…` root: when the gate made cap-calls before skipping (a skip-after-fetch, `toolCalls > 0`), reconstruct them from the durable audit trail with [`security audit-log`](/reference/cli#security-audit-log) filtered on that root. The cross-job skip-rate rollup is on [`obs.fleet.health`](#obs-fleet-health)'s `cronWakeGate` block.
 
 <CodeGroup>
 ```json Request

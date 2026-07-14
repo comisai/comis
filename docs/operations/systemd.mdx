@@ -81,21 +81,24 @@ Before setting up the systemd service, make sure you have:
     sudo chmod 600 /etc/comis/config.yaml
     ```
 
-    Create the environment file at `/etc/comis/env` with your API keys and config path:
+    Create the environment file at `/etc/comis/env` with the config path. If
+    the wizard initialized encrypted storage, also provide its master key to
+    the service through your system secret-provisioning mechanism:
 
     ```bash
     sudo tee /etc/comis/env > /dev/null << 'EOF'
     COMIS_CONFIG_PATHS=/etc/comis/config.yaml
-    ANTHROPIC_API_KEY=your-api-key-here
+    SECRETS_MASTER_KEY=<copy-from-the-secure-backup-created-during-setup>
     EOF
     sudo chmod 600 /etc/comis/env
     sudo chown comis:comis /etc/comis/env
     ```
 
     <Tip>
-    Keep API keys in the environment file rather than in config.yaml. The environment
-    file has strict permissions (readable only by the comis user) and is not tracked
-    in version control.
+    The default encrypted backend keeps provider and channel credentials in
+    `secrets.db`; the service still needs the master key. An owner-readable
+    environment file reduces casual exposure but is not an encrypted secret
+    manager. Never put credentials directly in `config.yaml`.
     </Tip>
   </Step>
 
@@ -324,7 +327,7 @@ model-cache write path is already in scope.
 
 ### EnvironmentFile=-/etc/comis/env
 
-Loads environment variables (like API keys and `COMIS_CONFIG_PATHS`) from the
+Loads environment variables (such as `SECRETS_MASTER_KEY` and `COMIS_CONFIG_PATHS`) from the
 specified file. The `-` prefix means systemd will not fail if the file is missing --
 it simply skips loading it.
 

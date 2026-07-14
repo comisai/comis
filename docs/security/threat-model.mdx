@@ -1,110 +1,94 @@
 ---
 title: "Threat Model"
-description: "Trust boundaries, what Comis defends and does not defend against, and known limitations"
+description: "Trust boundaries, defended threats, and residual risks"
 icon: "shield-halved"
 ---
 
-Comis is a **headless, multi-agent daemon** that connects autonomous AI agents to chat channels (Discord, Telegram, Slack, WhatsApp, iMessage, Signal, IRC, LINE, Email). It runs on a single trusted host, is mTLS/token-gated, and binds to loopback (`127.0.0.1:4766`) by default.
+The canonical threat model is
+[`THREAT_MODEL.md`](https://github.com/comisai/comis/blob/main/THREAT_MODEL.md).
+This page summarizes the boundaries operators need when configuring a Comis
+deployment.
 
-<Note>
-  The canonical, version-controlled threat model is [`THREAT_MODEL.md`](https://github.com/comisai/comis/blob/main/THREAT_MODEL.md) in the repository root — this page mirrors it. Vulnerability reporting and the disclosure SLA live in [`SECURITY.md`](https://github.com/comisai/comis/blob/main/SECURITY.md).
-</Note>
-
-The defining assumption is load-bearing: **the LLM agent is treated as a potential adversary.** A model can be steered by prompt injection embedded in any content it reads — an inbound message, a fetched web page, an email, a transcript, an MCP tool result. The architecture is built to contain what a *steered* agent can do, not merely to authenticate the humans talking to it.
+Comis treats the model as potentially steered by untrusted content. Inbound
+messages, fetched pages, email, transcripts, MCP output, and tool results can
+contain prompt injection. Controls therefore constrain what an agent can do
+after authentication rather than trusting model intent.
 
 ## Trust boundaries
 
-| Zone / principal | Trust | Rationale |
-| --- | --- | --- |
-| Operator + host OS | **Trusted** | Holds the master key, config, and SQLite DB. |
-| Gateway / RPC / WS clients | **Authenticated** | mTLS and/or scoped, constant-time bearer tokens. No human passwords — identity is cryptographic. |
-| LLM agent + model provider | **Semi-trusted** | Output and tool requests are constrained, classified, and filtered. |
-| Tools / skills | **Confined** | Kernel sandbox with broker-mediated egress; risk-classified. |
-| External content | **Untrusted** | Wrapped as data before reaching a prompt; never placed in the system role. |
-| Other agents in the fleet | **Mutually isolated** | Per-agent scoped secrets, config, workspace, and budgets. |
+| Principal | Treatment |
+|---|---|
+| Operator and host OS | Trusted; host compromise is out of scope |
+| Gateway clients | Authenticated by scoped token and optionally mTLS |
+| Model and agent output | Semi-trusted; subject to policy and completed-response scanning |
+| External content | Untrusted; wrapped as data on guarded ingestion paths |
+| Exec child process | OS-confined only when a supported sandbox provider is active |
+| MCP stdio server | Third-party process outside the exec sandbox |
+| Other agents | Logically scoped inside the shared trusted daemon/host |
+| Providers and chat platforms | External recipients selected by the operator |
 
-## What Comis defends against
+## Default posture
 
-| Threat | Primary control(s) |
-| --- | --- |
-| Prompt-injection to tool/shell abuse | Kernel sandbox, action classification (destructive requires confirmation), broker-only egress, output scanning |
-| Secret exfiltration | No-enumeration `SecretManager`, the credential broker (agent holds only a placeholder), Pino redaction, output guard, memory-write validation |
-| Unauthorized gateway/RPC access | mTLS + scoped, `timingSafeEqual` tokens; loopback-by-default bind |
-| SSRF from web tools | `validateUrl()` (blocks private/loopback/link-local + cloud-metadata ranges) plus kernel broker-only egress |
-| SSRF via MCP server redirects | The in-process MCP client `validateUrl()`-checks every cross-host redirect target before following it (same-host redirects stay on the operator-configured server); a malicious server cannot bounce the daemon to metadata/localhost/RFC-1918 |
-| Memory poisoning | `validateMemoryWrite()` (block / downgrade-to-`external` / store) and trust-ranked recall |
-| Sandbox downgrade by delegation (a confined agent spawning a less-confined child) | Fail-closed **no-downgrade invariant** on the sub-agent spawn path -- a child spawn is refused *before any run or session is created* if its resolved posture is less confined than its spawner's on any dimension (`comparePosture` ranks exec / filesystem / network / uid; missing config folds to the most-confined value). Controlled by `security.agentToAgent.sandboxNoDowngrade` (default on) and audited via the `security:sandbox_downgrade_refused` event |
-| Runaway self-spawn (a `for(;;) spawn()` fork-bomb) | **Tree-wide spawn ceiling** consulted at the spawn convergence point (`subAgentRunner.spawn` — which `session.spawn`, `graph.*`, and the in-process agent loop all hit), keyed on a tree-stable `rootRunId`: `autonomy.spawn.{maxConcurrentSelfAgents, maxSpawnDepth, maxChildrenPerAgent}` bound concurrency/depth/fan-out tree-wide; over-cap denies. `run.kill {rootRunId}` is the operator hard stop |
-| Agent cron-storm / cron impersonation | The cap endpoint **rate-limits** every orchestrate call (per-root + per-socket, `autonomy.rate.*`) and **caps connection churn**, and enforces **cron self-ownership** — an agent-scheduled cron is forced to the lease's own `agentId`, `payload_kind:"system_event"` is rejected, a forged `agentId:"*"`/cross-agent id is neutralized, and the agent-authored cron count is capped at `autonomy.cronSelfMax` (the operator gateway's cron management is unaffected — the constraint lands only at the agent's lease boundary) |
-| Zero-price budget burn (a subscription/unknown-priced model looping unmetered) | **Per-root budget meter** with three independent limbs (`autonomy.budget.{aggregateUsd, tokens, wallClockMs}`): the token + wall-clock limbs bite even when the $ limb reads the model as free (unknown pricing is uncountable, never silently $0 — the fail-closed pricing gate). The cost-bearing web tools (`orch:web`) are metered per root run |
-| Agent mass-DM / outward exfiltration to new channels | **Outward quota** on every agent-initiated `orch:message` send/reply/react: origin-channel-only by default (`autonomy.outward.originOnly`), a new target needs an explicit `autonomy.outward.perTargetGrants` entry, plus a per-hour quota (`autonomy.message.maxPerHour`) and a per-send `autonomy.outward.volumeCap` (a high-volume reversible mass-send is still gated) |
-| Agent bypassing a revoke (re-leasing / continuing after stop) | `lease.revoke` / `run.kill` are **admin-scoped and deny-by-origin** — a **non-admin** agent-origin call is rejected at the dispatch chokepoint, so a jailed/runaway (non-admin) agent can neither revoke others nor invoke these at all. The non-bypassability of a revoke does NOT rely on that deny: a revoked lease's `validate` AND `renew` are both denied regardless of origin/trust (no unbounded re-lease — there is no "un-revoke" method to call), and `run.kill` cascades to grandchildren via `parentLeaseId`. An admin-trust agent (an explicit operator grant) may invoke these as the admin operating the control plane |
-| Restart-resend / double outward send (a daemon restart mid-pipeline re-DMing / re-posting a message it already sent) | **Durable three-state outward ledger** (`send_attempt_started` → `unknown_after_send` → `committed`) idempotency-keyed on `(rootRunId, step-index)`; on recovery an `unknown_after_send` entry is reconciled via the owning channel's per-channel `reconcileSend` (`sent` → acknowledge once / `not_sent` → replay once / `unresolved` → park + escalate to the operator), **never blind-replayed** — the exactly-once outward-send invariant. Enabled via [`autonomy.durability.enabled`](/agents/autonomy#durability-resume) (on by default; set false to opt out). Covers the `message.*` send path and the sub-agent completion-announcement path alike |
-| Resume resurrecting a killed run's pre-revoke capabilities (a restart re-minting authority a revoke had stopped) | A `lease.revoke` / `run.kill` **invalidates the persisted run record** (flips it to `revoked`); on the next boot a revoked record is **orphaned, never re-minted**, and a resumed run rehydrates its lease from the **persisted, already-attenuated** capability envelope — **never a superset** and never re-attenuated from a (possibly broader) live parent |
-| Malicious or vulnerable MCP servers | OSV pre-spawn scan, sandboxed spawn, circuit breakers; default-deny MCP server endpoint; cross-host redirect SSRF guard (above) |
-| Supply-chain tampering | Exact-pinned deps, bundled private packages, sigstore provenance, `pnpm audit`, CodeQL |
-| Path traversal / symlink escape | `safePath()` (raw `path.join` is ESLint-banned) |
+- encrypted credential storage, with the master key in `~/.comis/.env`;
+- loopback gateway bind;
+- log redaction and security audit events enabled;
+- approval workflow **disabled**;
+- `full` tool-policy profile;
+- exec sandbox requested, with an unsandboxed fallback for ordinary `exec`
+  when no provider is available;
+- Node permission model disabled.
 
-## What Comis does not defend against
+## Primary controls and limits
 
-<Warning>
-  Stated plainly, in the spirit of an honest threat model.
-</Warning>
+| Threat | Controls | Limit |
+|---|---|---|
+| Prompt injection to tool abuse | content wrapping, capability gates, tool policy, action classification, optional approvals | default tools are broad and approvals are opt-in |
+| Credential leakage | encrypted store, scoped secret access, redaction, memory/output guards, optional broker | host access to both database and master key defeats at-rest encryption |
+| Unauthorized gateway access | loopback bind, scoped bearer tokens, optional mTLS | publicly exposed bearer traffic requires TLS |
+| SSRF and path escape | guarded URL validation and safe-path checks | unsandboxed shell and separately implemented integrations have different boundaries |
+| Memory poisoning | write validation and trust-ranked recall | validation is heuristic, not truth verification |
+| MCP compromise | filtering, result sanitization, circuit breakers, advisory checks | stdio servers run with the daemon account outside the exec sandbox |
+| Secret leakage in output | completed-response output guard | live streaming deltas can be emitted before the final scan |
 
-- **A compromised host or malicious operator** — the operator holds the master key, config, and DB.
-- **Full kernel sandboxing on non-Linux hosts** — `bwrap` is Linux-only; macOS uses best-effort `sandbox-exec`; Docker-Desktop/Windows run the exec/terminal tools unsandboxed.
-- **The `exec` tool on a host with no sandbox provider** — it currently fails open.
-- **A fully adversarial model provider** beyond what injection-wrapping and the output guard catch.
-- **Brokering OAuth / subscription-token CLIs** — only header/query API-key and bearer injection is brokered today.
-- **Resource exhaustion / DoS from the operator's own agents, across a daemon restart (default config)** — the [bounded-autonomy](/agents/autonomy) guards (spawn ceiling, per-root budget, call-rate limit, outward quota) are real hard bounds *within* a daemon run, and with durability **off (the default)** their state is **in-memory**: the counters/meters reset on restart, so they bound a single live run, not cumulative spend across restarts. Opting into [`autonomy.durability.enabled`](/agents/autonomy#durability-resume) closes the most dangerous half of this — the run's **checkpoint + consumed budget + outward-send ledger are persisted**, so a restart resumes the run (re-seeding budget from the record) and never re-sends a message (the exactly-once outward ledger). The transient **rate-limit and quota windows** still reset on restart even with durability on (only run state and outward sends are durable); cumulative cross-restart *rate* limiting remains future work.
-- **Confidentiality of data the operator deliberately routes to third-party providers or chat platforms.**
-- **Physical access, side channels, and compromise of Node.js or the OS itself.**
+## Process isolation
 
-## Agent action classification
+Linux with working Bubblewrap is the supported production boundary. macOS
+`sandbox-exec` is best effort and deprecated. Docker Desktop on macOS or
+Windows is not equivalent to a Linux host. The exec sandbox covers the `exec`
+tool, not every tool, browser process, or MCP server. Its default network mode
+is open; broker-only isolation is used only by specific driven workflows.
 
-Every agent-driven action is classified by `ActionClassifier`. **Unknown actions default to `destructive` (fail-closed)**, and the registry is locked after bootstrap so a malicious plugin cannot downgrade a classification at runtime.
+## Approvals
 
-| Class | Disposition | Examples |
-| --- | --- | --- |
-| `read` | No side effects — auto-approved | `file.read`, `web.fetch`, `memory.search`, `channels.list` |
-| `mutate` | Reversible side effects — logged, auto-approved | `file.write`, `message.send`, `memory.store`, `browser.navigate` |
-| `destructive` | Irreversible / high-risk — **requires confirmation** | `file.delete`, `memory.clear`, `system.exec`, `tokens.revoke`, `agents.delete` |
+Unknown actions default to the destructive classification, but classification
+does not itself pause execution. Human confirmation runs only when
+`approvals.enabled: true` and the applicable rule/default mode requires it.
+The shipped default is disabled with unmatched actions set to `auto`.
 
-Confirmation gating is covered in [Approvals](/security/approvals); classified actions are recorded per [Audit Logging](/security/audit).
+## Streaming
 
-## Defense in depth
+The output guard can sanitize a completed response. Streaming HTTP/SSE deltas
+may already have reached the client before that scan, so the final guard cannot
+retract them. Disable streaming or add buffering when this disclosure window is
+unacceptable.
 
-| Layer | Controls |
-| --- | --- |
-| Compile-time / CI | `eslint-plugin-security` + custom rules (ban `eval`, raw `path.join`, direct `process.env`); architecture tests including a secret-residency walker; CodeQL; `pnpm audit --prod` |
-| Runtime | Kernel sandbox + broker-only egress; `ActionClassifier` (fail-closed, locked registry); no-enumeration `SecretManager`; `validateUrl` SSRF guard; output guard + canary tokens; `validateMemoryWrite`; Node `--permission` model |
-| Supply chain | Exact pins, bundled private packages, sigstore provenance, MCP OSV scan |
+## Out of scope
 
-See [Defense in Depth](/security/defense-in-depth), [Skill Sandboxing](/security/sandbox), [Exec Sandbox](/security/exec-sandbox), and the [Credential Broker](/security/credential-broker).
+- malicious operators, root access, or a compromised host;
+- data intentionally sent to configured external providers and platforms;
+- perfect prompt-injection detection or model correctness;
+- Linux-equivalent process isolation on unsupported hosts;
+- compromise of Node.js, the OS, container runtime, or hardware.
 
-## Known limitations
+## Deployment checklist
 
-Severity is the impact *if* the precondition is met.
+1. Use Linux and verify Bubblewrap at startup.
+2. Narrow the default `full` tool profile.
+3. Enable and test approvals if your policy requires human confirmation.
+4. Protect network exposure with scoped authentication and TLS.
+5. Back up the master key separately and restrict the daemon account.
+6. Review each MCP server as third-party code.
+7. Disable streaming on confidentiality-sensitive surfaces.
 
-| Gap | Severity | Status / mitigation |
-| --- | --- | --- |
-| Kernel sandbox is Linux-only | High (non-Linux) | Linux is the supported production target; treat tool execution as unconfined elsewhere |
-| `exec` tool fails open when no sandbox provider is present | High (misconfigured host) | Tracked; defense-in-depth (command firewall, secret scrubber, `SecretManager`) still applies |
-| Credential broker does not broker OAuth / subscription CLIs | Medium | Only header/query API-key + bearer injection today |
-| DNS-rebinding TOCTOU window in `validateUrl` | Low–Medium | Broker-only egress eliminates it for sandboxed tools |
-| File-size governance debt | Low | Tracked via the shrink-only `fileSizeAllowlist` |
-| No-downgrade invariant does not yet cover the terminal-driver `session_create` path | Low | Sub-agent spawns are enforced (above); the terminal `session_create` posture check is a scoped follow-up (the skills layer cannot reach the spawner's posture cleanly). Terminal scope is operator-declared per allow-entry and the create path is already fail-closed on the sandbox provider + consent gate, so there is no direct terminal analogue of the spawn-path escalation today |
-
-Self-reported benchmark figures (memory accuracy, cache savings) are self-authored, small-N, and LLM-judged — directional, not independent guarantees.
-
-<Note>
-  **Per-channel coverage of the exactly-once outward guarantee is uneven — by design, not a gap.** The restart-resend defense reconciles a crashed-mid-send by asking the channel "did this actually send?". **Discord** and **Slack** can be queried (recent history + bot-author + content-digest match), so a crashed-mid-send there resolves automatically to *sent* (acknowledge once) or *not-sent* (replay once). **iMessage, IRC, and Email cannot** be queried for their sent history — so a crashed-mid-send on those resolves to **`unresolved`**, which Comis handles by **parking the send and escalating to the operator**, never by guessing. That is the safe, surfaced outcome on both sides: never a silent double-send, and never a silent drop. The guarantee is therefore *full and automatic* on queryable channels and *parked-and-surfaced* on the ones that cannot answer — the honest representation of where the exactly-once guarantee is complete versus operator-decided.
-</Note>
-
-<Note>
-  **No-downgrade posture model.** The invariant is enforced over the four config-derived confinement dimensions — exec, filesystem, network, uid. For the sub-agent spawn path today the **exec sandbox** dimension is the active one (exec `always` is more confined than exec `never`); filesystem/network/uid are present in the comparator but inert until the deferred terminal path lands. The design's "broker-only parent → open child" phrasing refers to a *runtime* sandbox network mode, not an operator config field (no `broker-only`/`open` config key exists); in operator config the same escalation is expressed as a more-confined parent (e.g. exec `always`) spawning a less-confined child (exec `never`), which is what `comparePosture` refuses.
-</Note>
-
-## Reporting a vulnerability
-
-Do **not** open public issues for vulnerabilities. Use the private reporting channel and follow the coordinated-disclosure process documented in [`SECURITY.md`](https://github.com/comisai/comis/blob/main/SECURITY.md).
+See [Security](/security/index), [Hardening](/security/hardening),
+[Approvals](/security/approvals), and [Exec Sandbox](/security/exec-sandbox).

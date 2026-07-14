@@ -1,179 +1,153 @@
 # Comis Threat Model
 
-> **Status:** Living document. Last reviewed 2026-06-04.
-> **Companion docs:** vulnerability reporting and disclosure live in [`SECURITY.md`](./SECURITY.md); deeper mechanism docs live under [`docs/security/`](./docs/security/). This file is the canonical statement of *what Comis defends, what it does not, and where the residual risk is.*
+This document defines the security boundaries Comis intends to enforce and the
+risks an operator must still manage. It describes the current implementation,
+not a guarantee that every deployment is secure.
 
-Comis is a **headless, multi-agent daemon** that connects autonomous AI agents to chat channels (Discord, Telegram, Slack, WhatsApp, iMessage, Signal, IRC, LINE, Email). It runs on a single trusted host, is mTLS/token-gated, binds to loopback by default, and is designed so that an operator can run *multiple agents and multiple operators* against one install with isolated memory, budgets, and tool policies per agent.
+Comis is a self-hosted, multi-agent daemon. Its agent runtime uses the
+`@earendil-works/pi-coding-agent` SDK while Comis owns its domain contracts,
+ports, policy, storage, channel adapters, and orchestration layers.
 
-The defining assumption of this threat model is unusual and load-bearing: **the LLM agent is treated as a potential adversary.** A model can be steered by prompt injection embedded in any content it reads (an inbound chat message, a fetched web page, an email, a transcript, an MCP tool result). So the security architecture is built to contain what a *steered* agent can do — not merely to authenticate the humans talking to it.
+The central assumption is that **the model can be steered by untrusted
+content**. Inbound messages, fetched pages, email, transcripts, tool results,
+and MCP output can contain prompt injection. Authentication alone does not
+contain a steered agent, so Comis layers authorization, validation, credential
+handling, auditing, and process isolation.
 
----
+## Assets
 
-## 1. System & deployment model
+- provider, channel, gateway, OAuth, and integration credentials;
+- message history, memory, workspace files, and generated artifacts;
+- gateway and administrative control-plane access;
+- host filesystem, network access, and compute budget;
+- agent identity, configuration, capabilities, and cross-agent boundaries.
 
-| Deployment | How it runs | Notes |
-|---|---|---|
-| **Direct / systemd (production)** | `node --permission …/daemon.js` with `COMIS_CONFIG_PATHS` set | The Node permission model restricts filesystem/network at the runtime level; the published install and VPS path use this. |
-| **Docker** | Non-root `USER comis` (uid 1000), exact-pinned image | Kernel sandbox (bubblewrap) availability depends on the host/container config. |
-| **pm2 (development only)** | Convenience wrapper | Not a production path. |
+## Trust boundaries
 
-Data lives in `~/.comis` (config, SQLite memory DB, the master key in `~/.comis/.env` at mode `0600`, OAuth/session state). The gateway defaults to **`127.0.0.1:4766`** (secure-by-default; `0.0.0.0` is an explicit opt-in).
-
----
-
-## 2. Trust boundaries
-
-| Zone / principal | Trust | Rationale |
-|---|---|---|
-| **Operator + host OS** | **Trusted** | Holds the master key, config, and the SQLite DB. Comis does not defend against a malicious operator or a compromised host. |
-| **Gateway / RPC / WS clients** (CLI, web dashboard, MCP clients) | **Authenticated** | mTLS and/or scoped, constant-time bearer tokens. No human passwords — identity is cryptographic. |
-| **The LLM agent + model provider** | **Semi-trusted / potentially steered** | Treated as a confused-deputy risk: its *output and tool requests* are constrained, classified, and filtered. |
-| **Tools / skills executing agent intent** | **Confined** | Run under a kernel sandbox with broker-mediated egress; classified by risk; destructive actions gated. |
-| **External content** (inbound messages, web-fetch, email, transcripts, MCP results) | **Untrusted** | Wrapped as data before reaching a prompt; never placed in the system role. |
-| **Upstream APIs** (model providers, channel platforms, web) | **External** | Reached only through the credential broker (for keyed APIs) or validated URLs. |
-| **Other agents in the fleet** | **Mutually isolated** | Per-agent scoped secrets, config, workspace, and budgets. |
-
----
-
-## 3. What Comis defends against (in scope)
-
-For each threat, the primary control(s):
-
-| Threat | Primary control(s) |
+| Principal or zone | Treatment |
 |---|---|
-| **Prompt-injection → tool/shell abuse** | Kernel sandbox (`bwrap` / `sandbox-exec`), runtime **action classification** (destructive ⇒ confirmation), broker-only network egress, `OutputGuard` on responses |
-| **Secret exfiltration** (to the model, into logs, over the wire, into memory) | `SecretManager` (no-enumeration), the **credential broker** (the agent only ever holds a placeholder), Pino auto-redaction, `OutputGuard` + secret-egress scrubber, `MemoryWriteValidator` |
-| **Unauthorized gateway / RPC access** | mTLS (`mtls-verifier`) + scoped, `timingSafeEqual` tokens (`token-auth`), loopback-by-default bind |
-| **SSRF from agent web tools** | `validateUrl()` (blocks private/loopback/link-local + cloud-metadata ranges) **and** kernel broker-only egress |
-| **Memory poisoning** | `validateMemoryWrite()` — `clean` ⇒ store, `warn` ⇒ store at downgraded `external` trust, `critical` ⇒ block; trust-ranked recall |
-| **Malicious / vulnerable MCP servers** | OSV (`MAL-*`) pre-spawn scan, sandboxed spawn, circuit breakers, resource probes; the MCP **server** endpoint is default-deny with per-client allowlists + rate limits |
-| **Supply-chain tampering** | Exact-pinned deps (no `^`/`~`), bundled `private` workspace packages, **sigstore provenance** (GitHub OIDC), `pnpm audit --prod`, CodeQL |
-| **Cross-agent interference** | `ScopedSecretManager` + per-agent config/workspace/budgets; `secret:accessed` audit events |
-| **Path traversal / symlink escape** | `safePath()` (ESLint-enforced; raw `path.join` is banned) |
-| **Credential leakage via logs** | "never log secrets" rule + Pino redaction (`apiKey`, `token`, `password`, `secret`, `authorization`, `botToken`, `privateKey`, `cookie`, `webhookSecret`, 3 levels deep) |
+| Operator and host OS | Trusted. A malicious operator, root process, or compromised host is out of scope. |
+| Gateway clients | Authenticated by scoped bearer token and, when configured, mTLS. The gateway binds to loopback by default. |
+| Model and agent output | Semi-trusted. Tool requests and completed responses pass through policy/guard layers. |
+| External content | Untrusted. Guarded ingestion paths wrap it as data before prompt assembly. |
+| Built-in tools | Authorized per agent and constrained by the relevant tool implementation. Not every tool is an OS-sandboxed process. |
+| Exec child process | Confined only when a supported sandbox provider is available and active. |
+| MCP stdio server | Separate third-party process outside the exec sandbox. Its executable and host privileges are operator-controlled. |
+| Other agents | Logically scoped by agent/tenant configuration, storage queries, workspaces, and capabilities. The shared host remains trusted. |
+| Upstream providers and chat platforms | External systems that receive data the operator deliberately routes to them. |
 
----
+## Default posture
 
-## 4. What Comis explicitly does NOT defend against (out of scope)
+- `security.storage` defaults to `encrypted`.
+- The gateway binds to `127.0.0.1` unless explicitly changed.
+- log redaction and security audit events are enabled.
+- the approval workflow defaults to **disabled** with unmatched actions in
+  `auto` mode.
+- the default agent tool-policy profile is **`full`**.
+- exec sandbox configuration defaults to `always`, but ordinary `exec`
+  currently falls back to unsandboxed execution if no provider is available.
+- the Node.js permission model is disabled by default.
 
-Stated plainly, in the spirit of an honest threat model:
+Operators must not describe destructive actions as human-approved unless they
+have enabled, configured, and tested the approval workflow. Operators must not
+describe a process as sandboxed based only on configuration; the runtime
+provider must be verified on the deployed host.
 
-- **A compromised host or malicious operator.** The operator holds the master key, config, and DB. Root-on-the-box ends the game.
-- **Full kernel sandboxing on non-Linux hosts.** The kernel sandbox (`bwrap`) is **Linux-only**. macOS uses `sandbox-exec` (best-effort SBPL); Docker-Desktop/Windows run the `exec`/`terminal` tools **unsandboxed**. See §8.
-- **The `exec` tool on a host with no sandbox provider** — it currently **fails open** (runs `/bin/bash -c` directly). See §8.
-- **A fully adversarial model provider** beyond what injection-wrapping and the output guard catch. Provider output is semi-trusted, not zero-trusted.
-- **Brokering OAuth / subscription-token CLIs.** The credential broker injects header/query API-key and bearer credentials for configured host+path bindings; OAuth-flow CLIs are not yet brokered. See §8.
-- **Resource exhaustion / DoS from the operator's own agents.** Per-agent budgets exist as a cost/safety aid, not a hard security boundary.
-- **Confidentiality of data the operator deliberately routes to third-party model providers or chat platforms.** That is an operator policy choice.
-- **Physical access, side channels, and compromise of Node.js / the OS itself.**
+## Defended threats
 
----
-
-## 5. Threat model by surface
-
-### 5.1 Agent action classification (the runtime risk tier)
-
-Every agent-driven action is classified by `ActionClassifier` into one of three tiers. **Unknown actions default to `destructive` (fail-closed).** The registry is **locked after bootstrap** so a malicious plugin cannot downgrade a classification at runtime.
-
-| Class | Disposition | Examples |
+| Threat | Primary controls | Residual risk |
 |---|---|---|
-| `read` | No side effects — auto-approved | `file.read`, `web.fetch`, `web.search`, `memory.search`, `session.history`, `channels.list` |
-| `mutate` | Reversible side effects — logged, auto-approved | `file.write`, `message.send`, `memory.store`, `browser.navigate`, `model.switch`, `discord.pin` |
-| `destructive` | Irreversible / high-risk — **requires confirmation** | `file.delete`, `memory.clear`, `system.exec`, `system.shutdown`, `tokens.revoke`, `channels.disable`, `agents.delete`, `discord.ban` |
+| Prompt injection leading to tool abuse | external-content wrapping, tool policy, capabilities, action classification, optional approvals, tool-specific validation | default tool policy is broad; approvals are opt-in; models can still choose harmful actions within granted authority |
+| Secret leakage in config, logs, memory, or completed output | encrypted store, secret references, scoped secret access, structured redaction, memory-write validation, output guard | host compromise defeats at-rest encryption when the host can read both key and database; streaming deltas can precede final scanning |
+| Unauthorized gateway access | loopback default, scoped tokens, timing-safe comparison, optional mTLS | network exposure without TLS can disclose bearer tokens; operator configuration controls reachability |
+| SSRF on guarded web-fetch paths | URL validation for private, loopback, link-local, and metadata ranges; broker network modes on applicable jailed paths | not every network-capable integration shares the same fetch path; DNS and upstream behavior remain part of the threat surface |
+| Path traversal through Comis file tools | `safePath`, symlink-aware validation, workspace scoping | unsandboxed shell commands do not inherit file-tool path restrictions |
+| Memory poisoning | memory-write validation, trust labels, trust-ranked recall | validation is heuristic; stored external content can still be wrong |
+| Cross-agent confused-deputy calls | capability gates, origin/trust checks, scoped stores and workspaces | all agents share the trusted daemon and host; configuration mistakes can grant excessive capability |
+| Vulnerable MCP integrations | opt-in configuration, manifest/tool filtering, eligibility checks, result sanitization, circuit breakers, malware advisory checks for supported stdio paths | MCP stdio processes run outside the exec sandbox with the daemon account's host privileges |
+| Dependency tampering | exact version pins, automated audits, CodeQL, release provenance, bundled workspace packages | upstream dependency and build-system compromise cannot be eliminated |
 
-Confirmation gating for `destructive` actions is described in [`docs/security/approvals.mdx`](./docs/security/approvals.mdx). Classified `audit:event` actions and the security-decision events (secret access, injection detection, injection-rate breach, canary leaks, implied-tool-call isolation, command blocks, and sandbox-downgrade refusals) are persisted to a durable, queryable audit — the `obs_audit_events` SQLite table plus the `0600` `security-audit.jsonl` — and surfaced via `comis security audit-log` / `obs.audit.query` (`docs/security/audit.mdx`).
+## Process-isolation boundary
 
-### 5.2 Tool / shell execution confinement
+### Ordinary exec
 
-| Layer | Control | Residual risk |
-|---|---|---|
-| Kernel isolation | Linux `bwrap --unshare-all` (mount/PID/user/cgroup/IPC/net namespaces), `--die-with-parent`, `--new-session`, `--proc`/`--dev`, tmpfs `/tmp`; macOS `sandbox-exec` (deny-default SBPL) | Non-Linux is best-effort; absent provider ⇒ `exec` fails open (§8) |
-| Network egress | `broker-only` mode: `--unshare-net` + bind-mount **only** the broker unix socket — egress is kernel-impossible except through the broker | — |
-| Filesystem | Workspace bind is the only general RW; system paths read-only; `~/.ssh`/`~/.gnupg` never mounted | `bash` in an unsandboxed deployment bypasses path confinement (§8) |
-| Command firewall | `exec-security`: shell-quote state machine, compound-command splitting, `SAFE_ENV_VARS` allowlist (fail-closed), protected-path + redirect-target guards | String-parsing heuristics are defense-in-depth behind the sandbox, not a sole control |
+The exec sandbox covers shell commands launched through the `exec` tool. On
+Linux, a working Bubblewrap provider creates the strongest supported boundary.
+On macOS, `sandbox-exec` is deprecated and treated as best effort. If the
+provider is missing or unavailable, ordinary `exec` currently uses the command
+validator and then runs without OS-level isolation.
 
-See [`docs/security/sandbox.mdx`](./docs/security/sandbox.mdx) and [`docs/security/exec-sandbox.mdx`](./docs/security/exec-sandbox.mdx).
+The default exec network mode is open. Broker-only or no-network modes apply
+only to specific daemon-launched workflows that request those modes. Do not
+generalize broker-mediated egress to every shell or tool call.
 
-### 5.3 Secrets — at rest and in transit
+### Terminal and durable orchestration paths
 
-- **At rest:** `SecretsCrypto` uses **AES-256-GCM** with a per-encryption random salt and **HKDF-SHA256** key derivation; the 32-byte master key lives in `~/.comis/.env` at `0600`, written atomically.
-- **No enumeration:** `SecretManager` exposes `get`/`has`/`require`/`keys` only — there is no `getAll()`. `ScopedSecretManager` glob-filters keys per agent and emits `secret:accessed` audit events. Platform secrets are never resolvable through user-facing secret-ref tools.
-- **In transit (the credential broker):** driven CLIs receive a **placeholder** key. The broker (`NodeMitmBroker`) terminates the CONNECT tunnel with its own CA, matches host+path against a binding allow-list, swaps the placeholder for the real secret resolved from `SecretManager`, and forwards. It **fails closed** (407/403/502 with the client socket destroyed *before* any upstream connection — zero upstream bytes on a gate failure), caps headers at 8 KB (request-smuggling defense), and never passes the secret to a logger or event payload (`broker:injected`/`broker:denied`/`broker:egressBlocked` carry `ruleKind`+`host`, never the secret).
+Some terminal and orchestration surfaces require a Linux jail and fail closed
+or downshift when that jail cannot be established. Their stronger behavior
+does not change the ordinary exec fallback described above.
 
-See [`docs/security/secrets.mdx`](./docs/security/secrets.mdx) and [`docs/security/credential-broker.mdx`](./docs/security/credential-broker.mdx).
+### MCP and in-process tools
 
-### 5.4 Gateway / RPC / network
+MCP stdio servers, in-process Node tools, and browser processes are not wrapped
+by the exec sandbox. They have separate validation and authorization controls,
+but no claim that "all tools are sandboxed" is accurate.
 
-- **mTLS** (`mtls-verifier`): cert/key/CA PEM + X.509 expiry validated at startup (fail-fast).
-- **Scoped tokens** (`token-auth`): compared with `timingSafeEqual`; scopes `rpc` / `ws` / `admin` / `mcp-client`; no-enumeration `TokenStore.verify`.
-- **Secure-by-default bind:** `127.0.0.1:4766`.
-- **MCP server endpoint:** default-deny tool exposure, per-client allowlists, `admin`+`mcp-client` co-issuance blocked (schema *and* endpoint — defense-in-depth), 30 calls/min/tool.
+## Credential boundary
 
-See [`docs/security/hardening.mdx`](./docs/security/hardening.mdx).
+The encrypted store uses AES-256-GCM and a master key held in
+`~/.comis/.env`. This protects a copied `secrets.db` when the attacker does not
+also possess the master key. It does not protect against a compromised host or
+daemon account that can read both. Losing the key makes the encrypted database
+unrecoverable because Comis has no key escrow.
 
-### 5.5 Prompt injection & untrusted content
+The credential broker keeps configured API keys out of selected driven-CLI
+processes and injects them only for matching upstream bindings. It does not
+broker every provider, OAuth/subscription CLI, MCP server, or network request.
 
-- **Input:** `wrapExternalContent()` wraps every external text flow (chat, email, web-fetch, transcripts, MCP results) as delimited *data* (using a per-request `contentDelimiter` carried on the request context) — never placed in the system role.
-- **Pattern library:** a 70+ entry injection-pattern set (invisible characters, jailbreak phrasings, role-markers, prompt-extraction, dangerous commands) feeds the input-side guards and `validateMemoryWrite`; an injection rate-limiter throttles repeated attempts.
-- **Output:** `OutputGuard` scans model output for secret formats (AWS/GitHub/Slack/Anthropic/OpenAI/Telegram/Discord/Google keys, JWTs, DB connection strings), redacts criticals, detects canary leakage, and flags prompt-extraction attempts.
-- **Canary:** `CanaryToken` issues a deterministic HMAC-SHA256 per-session canary that survives context compaction; leakage is detected by the output guard and redacted.
+## Approval and action-classification boundary
 
-### 5.6 Memory poisoning
+Unknown actions default to the destructive classification. Classification is
+an input to policy and audit; it is not itself a pause. The human approval gate
+runs only when `approvals.enabled: true`, and its ordered rules/default mode
+require approval or denial for the action. The shipped default is disabled and
+`auto`.
 
-`validateMemoryWrite()` runs before every agent-visible memory store: a secret-egress scan (redaction ⇒ `critical` ⇒ blocked), then suspicious-pattern detection (`critical` ⇒ blocked; jailbreak patterns ⇒ stored at downgraded `external` trust). Recall is trust-ranked (`system > learned > external`), and `external`-trust content cannot be written into the user-representation/relationship tables.
+## Output and streaming boundary
 
-### 5.7 MCP (client + server)
+The output guard scans a completed response and can sanitize the final value.
+Non-streaming delivery can use that sanitized value. Streaming HTTP/SSE token
+deltas are emitted while the model is generating, before the completed scan;
+already-emitted deltas cannot be retracted. Sensitive deployments should
+disable streaming or place a buffering/filtering boundary in front of it.
 
-- **As client:** pre-spawn OSV vulnerability scan (`MAL-*` advisories), sandboxed subprocess spawn with resource probes, circuit breakers, redirect policy, result sanitization, and a full OAuth subsystem (device-flow / browser-callback / token-store).
-- **As server:** the gateway MCP endpoint is default-deny (§5.4).
+## Explicitly out of scope
 
-### 5.8 Supply chain
+- a malicious operator, root access, or compromised host/daemon account;
+- confidentiality for data intentionally sent to a model provider, messaging
+  platform, MCP server, or other configured integration;
+- perfect prompt-injection detection or correctness of model output;
+- full Linux-equivalent isolation on macOS, Windows, or Docker Desktop;
+- denial of service by an operator-authorized workload beyond configured
+  runtime budgets and resource controls;
+- compromise of Node.js, the OS kernel, container runtime, or hardware;
+- physical attacks, side channels, and upstream service compromise.
 
-The supply chain *is* part of the threat model. All `dependencies`/`devDependencies` are **exact-pinned** (no `^`/`~`); `@comis/*` workspace packages are `private` and bundled via `bundledDependencies` (no runtime `npm install` of plugins); releases are **sigstore-attested via GitHub OIDC** (`pnpm publish --provenance`); `pnpm audit --prod` and CodeQL run in CI. **Accurate dependency posture:** Comis owns its *domain types* (e.g. `NormalizedMessage`, `ChannelPort`, `ExecutionGraph`) in-tree, but the agent **runtime** is built on the pi-mono SDK (`@earendil-works/pi-coding-agent` and siblings) and depends on provider/channel SDKs (`openai`, `@google/genai`, `discord.js`, `@slack/*`, …). These are exact-pinned and bundled — *part of* the threat model, not something Comis is independent of (see §8).
+## Operator verification
 
----
+Before accepting untrusted input:
 
-## 6. Defense-in-depth summary
+1. run on a supported Linux host and verify Bubblewrap in daemon logs;
+2. narrow the default `full` tool policy;
+3. enable and test approval rules if human confirmation is required;
+4. keep the gateway on loopback or add scoped authentication and TLS;
+5. back up and restrict the master key separately from the encrypted database;
+6. review each MCP server as third-party process code;
+7. disable streaming where pre-scan disclosure is unacceptable;
+8. run `comis doctor`, `comis security audit`, and
+   `comis secrets audit --check` after configuration or host changes.
 
-| Layer | Controls |
-|---|---|
-| **Compile-time / CI** | `eslint-plugin-security` + custom rules (ban `eval`/`Function()`, raw `path.join`, direct `process.env`, empty `.catch`, `"[REDACTED]"` literal); ~70 architecture tests incl. a TypeChecker **secret-residency** walker (proves RPC handlers don't retain plaintext secrets); CodeQL; `pnpm audit --prod` |
-| **Runtime** | Kernel sandbox + broker-only egress; `ActionClassifier` (fail-closed, locked registry); `SecretManager` no-enumeration; `validateUrl` SSRF guard; `OutputGuard` + `CanaryToken`; `validateMemoryWrite`; Pino redaction; Node `--permission` model |
-| **Supply chain** | Exact pins, bundled private packages, sigstore provenance, MCP OSV scan |
+## Reporting vulnerabilities
 
-The engineering **Risk Tiers** (AGENTS.md §4) escalate review for changes under `core/src/security/*`, `core/src/ports/*`, `gateway/*`, `daemon/*`, `core/src/config/`, `core/src/domain/`, and `injection-patterns.ts` — these are **High** tier and require boundary + failure-mode tests and downstream-consumer review.
-
----
-
-## 7. Known limitations & gaps (honest)
-
-Severity is the impact *if* the precondition is met.
-
-| # | Gap | Severity | Status / mitigation |
-|---|---|---|---|
-| G1 | **Kernel sandbox is Linux-only.** macOS uses best-effort `sandbox-exec`; Docker-Desktop/Windows run `exec`/`terminal` tools unsandboxed. | High (non-Linux) | Documented; Linux is the supported production target. Operators on other platforms should treat tool execution as unconfined. Known gap — not yet tracked as a standalone issue; Linux is the documented production target. |
-| G2 | **`exec` tool fails *open* when no sandbox provider is detected** (runs `/bin/bash -c` directly), unlike the `terminal` driver which fails closed. | High (misconfigured host) | Make `exec` fail closed to match the terminal driver. Defense-in-depth (command firewall, secret-egress scrubber, `SecretManager`) still applies. Known gap — not yet tracked as a standalone issue. |
-| G3 | **Credential broker does not broker OAuth / subscription-token CLIs** — only header/query API-key + bearer injection for configured bindings. | Medium | OAuth CLIs run with their own token handling outside the broker's per-request injection. Known gap — not yet tracked; the credential broker's scope is defined in AGENTS.md §3.4. |
-| G4 | **DNS-rebinding TOCTOU window** in `validateUrl` (resolve-then-fetch). | Low–Medium | Broker-only egress eliminates it for sandboxed tools; non-sandboxed fetch paths retain a narrow window. Known gap — not yet tracked; broker-only egress mitigates for sandboxed tool paths. |
-| G5 | **File-size governance debt** — a number of `deferred` allowlist entries exceed the 800-line cap (e.g. the daemon composition root). | Low | Tracked via `test/architecture/file-size.test.ts` fileSizeAllowlist (shrink-only entries marked `deferred`). |
-| G6 | **Documentation accuracy.** Two public claims are easy to overstate and are pinned by a CI guard (`security-doc-claims.test.ts`): skills are sandboxed by OS-level `bwrap`/`sandbox-exec` (not `isolated-vm`), and the agent runtime is built on `@earendil-works/pi-coding-agent` (Comis is not SDK-free). This file is the source of truth for both. | — | CI-guarded against regression. |
-
-Self-reported benchmark figures (memory accuracy, cache savings) are **self-authored, small-N, and LLM-judged** — directional, not independent guarantees; see the project's `known-limitations` reference.
-
----
-
-## 8. Reporting a vulnerability
-
-Do **not** open public issues for vulnerabilities. Use the private reporting channel and follow the coordinated-disclosure process and response SLA documented in [`SECURITY.md`](./SECURITY.md).
-
----
-
-## 9. References
-
-- [`SECURITY.md`](./SECURITY.md) — reporting & disclosure policy
-- [`docs/security/index.mdx`](./docs/security/index.mdx) — security overview
-- [`docs/security/defense-in-depth.mdx`](./docs/security/defense-in-depth.mdx)
-- [`docs/security/sandbox.mdx`](./docs/security/sandbox.mdx) · [`exec-sandbox.mdx`](./docs/security/exec-sandbox.mdx)
-- [`docs/security/credential-broker.mdx`](./docs/security/credential-broker.mdx) · [`secrets.mdx`](./docs/security/secrets.mdx) · [`oauth.mdx`](./docs/security/oauth.mdx)
-- [`docs/security/approvals.mdx`](./docs/security/approvals.mdx) · [`audit.mdx`](./docs/security/audit.mdx) · [`hardening.mdx`](./docs/security/hardening.mdx)
-- `AGENTS.md` §2.2 (ESLint-enforced security), §4 (Risk Tiers) — engineering protocol
+Do not open a public issue. Follow the private reporting instructions in
+[`SECURITY.md`](./SECURITY.md).

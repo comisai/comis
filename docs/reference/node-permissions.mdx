@@ -12,7 +12,9 @@ Comis integrates with the Node.js `--permission` flag to provide OS-level sandbo
 
 ## Overview
 
-The Node.js permission model (available in Node.js 22+) restricts what a child process can access at the operating system level. This provides a defense layer beneath application-level controls like tool policies and content scanning.
+The Node.js permission model available in the supported Node.js runtime can
+restrict what a process accesses. Comis requires Node.js 22.19.0 or newer, but
+the permission model remains opt-in and is not enabled by Comis automatically.
 
 **Key distinction:** Node.js's permission model is a process-level boundary. To enforce restrictions on child processes spawned during tool execution, the daemon process itself must be launched with `--permission` (children inherit via `NODE_OPTIONS`). Comis does not auto-inject these flags from config -- they must be supplied on the daemon command line. See "How It Works" below for the operator-driven flow and the MCP exception that strips `NODE_OPTIONS` for compatibility.
 
@@ -49,7 +51,7 @@ security:
 that was launched with the `--permission` flag (and any children that
 inherit it via `NODE_OPTIONS`). To enforce these restrictions you must:
 
-1. Launch the daemon under Node.js 22+ with `node --permission --allow-fs-read=... --allow-fs-write=... --allow-net=... packages/daemon/dist/daemon.js`.
+1. Launch the daemon under Node.js 22.19.0 or newer with `node --permission --allow-fs-read=... --allow-fs-write=... --allow-net=... packages/daemon/dist/daemon.js`.
 2. Mirror the same paths/hosts in `security.permission.allowedFsPaths` and `allowedNetHosts` so audit/security checks (e.g. the SSRF surface check in `packages/cli/src/security/checks/ssrf-surface.ts`) report the surface accurately.
 
 Setting `enableNodePermissions: true` alone does NOT pass `--permission`
@@ -85,7 +87,7 @@ When the daemon process is launched with `--permission`:
   The Node.js permission model has several limitations to be aware of before enabling it.
 </Warning>
 
-- **Node.js 22+ required:** The `--permission` flag is not available in older Node.js versions. Comis requires Node.js 22+, so this is satisfied by default.
+- **Node.js 22.19.0 or newer required:** This is also Comis's package-engine requirement.
 - **Third-party module compatibility:** Some npm packages that perform unrestricted file system or network operations will fail when permissions are enabled. Test thoroughly before enabling in production.
 - **No per-tool granularity:** Permissions apply to the entire child process. You cannot grant different file system paths to different tools within the same execution.
 - **Path resolution:** Paths in `allowedFsPaths` should be absolute. Relative paths may not resolve as expected in the child process context.

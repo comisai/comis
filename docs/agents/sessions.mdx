@@ -50,7 +50,8 @@ is 4 AM) and which timezone to use. For a community support bot, daily resets
 keep each day's questions organized.
 
 **none** -- Sessions last until you manually reset with `/new` or `/reset`.
-Your agent remembers everything from the entire conversation history.
+The retained transcript remains available to the session, subject to context
+compaction and the configured storage policy.
 
 **idle** -- Resets after a period of inactivity. If nobody sends a message for
 a while (default 4 hours), the next message starts a new session. Good for

@@ -1,298 +1,130 @@
 ---
 title: "Prompt Skills"
-description: "Create custom Markdown instruction files that teach your agents new behaviors"
+description: "Create discoverable Markdown procedures that agents can select and read"
 icon: "file-lines"
 ---
 
-Prompt skills are Markdown files that teach your agents new behaviors. You write
-instructions in plain English, and your agent follows them when the skill is invoked.
-Think of them as custom training documents -- except they take effect immediately.
+Prompt skills are `SKILL.md` files containing reusable instructions. Comis
+discovers eligible skills and exposes their name, description, and location to
+the agent's capability index. The model can then select a relevant skill and
+read its instructions with its existing file tools.
 
-## How prompt skills work
+<Warning>
+The current daemon does not wire `/skill:name` to direct skill loading. Do not
+build user workflows or scheduled messages around that syntax. Ask the agent in
+ordinary language to use a named skill, or describe the task so the model can
+select it from the capability index.
+</Warning>
 
-The lifecycle of a prompt skill is straightforward:
-
-1. **You create a SKILL.md file** with a frontmatter header and an instruction body
-2. **Comis discovers it** from your skills directory on startup (or via file watching)
-3. **Users invoke it** with `/skill:name` in chat, or the agent picks it up automatically when relevant
-4. **Instructions are injected** into the agent's context for that conversation turn
-
-The agent reads your instructions and follows them just like a human would follow
-a checklist. There is no compilation, no deployment step -- save the file and the
-skill is live.
-
-## Creating your first prompt skill
+## Create a skill
 
 <Steps>
-  <Step title="Create the skill file">
-    Create a file called `SKILL.md` in a new directory under your skills path:
+  <Step title="Create the directory">
+    For a shared local skill, create:
 
-    ```
+    ```text
     ~/.comis/skills/greeting/SKILL.md
     ```
 
-    The directory name does not matter -- Comis uses the `name` field inside the
-    file to identify the skill.
+    Named agents also receive a workspace-specific `skills/` directory, which
+    takes precedence over shared discovery paths.
   </Step>
 
-  <Step title="Add the frontmatter">
-    Open the file and add a YAML frontmatter block at the top:
-
-    ```yaml
-    ---
-    name: greeting
-    description: "A friendly greeting skill that welcomes new users"
-    ---
-    ```
-
-    Only two fields are required:
-
-    - **`name`** -- A lowercase identifier using letters, numbers, and hyphens (1-64 characters). This is what users type after `/skill:`.
-    - **`description`** -- A short explanation of what the skill does (up to 1024 characters). The agent uses this to decide when to apply the skill automatically.
-  </Step>
-
-  <Step title="Write the instructions">
-    Below the frontmatter, write your instructions in plain Markdown:
+  <Step title="Add frontmatter">
+    A prompt skill needs a stable name and a description the model can use for
+    selection:
 
     ```markdown
+    ---
+    name: greeting
+    description: "Welcome a new user and explain how the agent can help"
+    ---
+
     When greeting a new user:
 
-    1. Welcome them warmly by name if provided
-    2. Briefly explain what you can help with
-    3. Ask what they'd like to do first
-    4. Keep the tone friendly and encouraging
+    1. Use their name when it is available.
+    2. Briefly explain the agent's scope.
+    3. Ask what they want to do first.
     ```
-
-    You can use any Markdown formatting -- headings, lists, bold, code blocks.
-    The agent receives the entire body as part of its context.
   </Step>
 
-  <Step title="Test it">
-    Send a message in chat to invoke the skill:
+  <Step title="Verify discovery">
+    Restart or reload the skill registry as appropriate, then inspect the
+    available skills through the CLI, API, or dashboard. In chat, use an
+    ordinary-language request such as:
 
-    ```
-    /skill:greeting
+    ```text
+    Use the greeting skill to welcome Moshe.
     ```
 
-    The agent will follow your greeting instructions for that conversation turn.
-    If the skill has `userInvocable: true` (the default), the agent may also
-    pick it up automatically when a greeting seems appropriate.
+    Model selection is probabilistic. Check traces when you need to confirm
+    whether the model actually read and followed the skill.
   </Step>
 </Steps>
 
-## Template variables
+## Discovery order
 
-Skill bodies support template substitution, so you can create reusable skills
-that accept different inputs each time they are invoked.
+Comis discovers root Markdown files and recursive `SKILL.md` files from the
+configured `skills.discoveryPaths`. A named agent's workspace
+skills directory is prepended, so an agent-specific skill wins when duplicate
+names are encountered. Eligibility filters can exclude a skill by name,
+operating system, required binary, or required environment name.
 
-### Named placeholders
+<Note>
+Replacing `discoveryPaths` replaces the default shared pool unless you include
+it again. Use absolute, reviewed paths in production.
+</Note>
 
-Use curly braces to define named placeholders. They are mapped by position when
-invoking the skill:
+## Selection controls
 
-```markdown
----
-name: review
-description: "Code review skill"
-argumentHint: "[language] [focus-area]"
----
-Review the code for {language} best practices.
-Focus especially on: {focus-area}
-```
+| Field | Current effect |
+|---|---|
+| `description` | Helps the model understand when the skill is relevant |
+| `disableModelInvocation: true` | Hides the skill from the model-facing capability index |
+| `userInvocable` | Parsed and exposed by the registry, but direct chat invocation is not wired |
+| `argumentHint` | Metadata for invocation-capable consumers; it does not enable chat dispatch |
+| `allowedTools` | Parsed restriction metadata for consumers; do not treat it as an OS sandbox |
+| `comis.requires` | Filters skills whose OS, binaries, or named environment requirements are unavailable |
 
-Invoke it with:
+If `disableModelInvocation` is true, the current chat path has no deterministic
+`/skill:name` fallback. Such a skill needs another integration that explicitly
+loads it.
 
-```
-/skill:review python error-handling
-```
+## Security boundaries
 
-The agent receives: "Review the code for python best practices. Focus especially on: error-handling."
+- Skill content is untrusted input. Content scanning and sanitization reduce
+  common risks but cannot prove a skill safe.
+- The default agent tool-policy profile is `full`. Configure a narrower policy
+  independently of the skill manifest.
+- `allowedTools` and manifest `permissions` are not kernel isolation.
+- `system.exec` has a separate optional OS sandbox; MCP stdio servers and
+  in-process tools run outside it.
+- Dynamic content or executable dependencies should be enabled only for skill
+  sources you review and trust.
 
-### Positional placeholders
+See [Skill Sandboxing](/security/sandbox), [Tool Policy](/skills/tool-policy),
+and [Security Scanning](/skills/security-scanning) for the boundaries.
 
-You can also use numbered positions directly:
+## Writing effective skills
 
-- **`$1`**, **`$2`**, **`$3`** -- Individual arguments (1-indexed)
-- **`$@`** or **`$ARGUMENTS`** -- All arguments as a single string
-- **`${@:2}`** -- All arguments from position 2 onwards
-
-```markdown
----
-name: translate
-description: "Translate text to a target language"
-argumentHint: "[language] [text to translate]"
----
-Translate the following text to $1:
-
-${@:2}
-```
-
-Invoke it with:
-
-```
-/skill:translate Spanish Hello, how are you today?
-```
-
-<Tip>
-Use `argumentHint` in the frontmatter to show users what inputs your skill expects.
-This hint appears in help listings and auto-complete suggestions.
-</Tip>
-
-## Skill discovery
-
-Comis finds skills by scanning directories on startup and (optionally) watching
-for file changes.
-
-### Where Comis looks
-
-- **Default path:** `./skills` (configurable via the `discoveryPaths` setting in your config). For named agents, Comis automatically prepends the agent's workspace skills directory (`~/.comis/workspace-{agentId}/skills/`) at startup.
-- **Root `.md` files** in the skills directory (e.g., `skills/my-skill.md`)
-- **`SKILL.md` files** in subdirectories (searched recursively, e.g., `skills/greeting/SKILL.md`)
-
-### Source categories
-
-Each discovered skill is tagged with a source category derived from its position in the resolved `discoveryPaths` list:
-
-| Category | When assigned | Typical location |
-|----------|---------------|------------------|
-| **bundled** | First entry in `discoveryPaths` (highest priority) | The agent's workspace skills directory, prepended automatically (`~/.comis/workspace-{agentId}/skills/`, or `~/.comis/workspace/skills/` for the default agent) |
-| **workspace** | Any middle entry (when there are 3+ paths) | Custom discovery paths added in your config |
-| **local** | Last entry (when there are 2+ paths) | The configured `./skills` path (resolves to `~/.comis/skills/` by default) |
-
-If two skills have the same name, the first one loaded wins. Because the agent's own workspace skills directory is prepended to `discoveryPaths` at startup, it takes precedence over `~/.comis/skills/` and any other discovery path.
-
-<Info>
-The "shared" pool at `~/.comis/skills/` is not a built-in concept -- it exists because the default `discoveryPaths` is `["./skills"]`, and `./skills` resolves against `~/.comis`. Replacing `discoveryPaths` removes that pool unless you add it back explicitly.
-</Info>
-
-### File watching
-
-By default, Comis watches your skill directories for changes. When you save a
-SKILL.md file, the skill reloads automatically within a few hundred milliseconds.
-You can disable this with the `watchEnabled` config setting.
-
-### Per-agent skill discovery
-
-When you configure multiple agents, each named agent automatically gets its own
-skills directory inside its workspace folder. You do not need to set this up
-manually -- Comis creates it at startup.
-
-For example, an agent named `researcher` looks for skills in:
-
-1. `~/.comis/workspace-researcher/skills/` (agent workspace -- private to this agent)
-2. `~/.comis/skills/` (shared -- visible to all agents)
-3. Any paths listed in `discoveryPaths` in the agent's config
-
-The default agent (set via `routing.defaultAgentId`) uses `~/.comis/workspace/skills/`
-as its workspace directory instead of a named one.
-
-### Skill scoping
-
-Skill mutations (upload, import, delete) use a **scope** parameter that controls
-where the skill is written:
-
-- **`"local"`** (default) -- writes to the calling agent's workspace skills directory
-- **`"shared"`** -- writes to the shared skills directory (`~/.comis/skills/`), making the skill visible to all agents
-
-<Warning>
-Only the default agent (configured via `routing.defaultAgentId`) can use `scope: "shared"`.
-Non-default agents that attempt shared mutations receive an error.
-</Warning>
-
-Here is a multi-agent configuration example with skill isolation:
-
-```yaml
-agents:
-  coordinator:
-    provider: anthropic
-    model: claude-sonnet-4-5-20250929
-    skills:
-      discoveryPaths: ["./skills"]
-      toolPolicy:
-        profile: supervisor
-
-  researcher:
-    provider: anthropic
-    model: claude-sonnet-4-5-20250929
-    skills:
-      discoveryPaths: ["./skills"]
-      toolPolicy:
-        profile: coding
-
-routing:
-  defaultAgentId: coordinator
-  rules:
-    - channelType: telegram
-      agentId: coordinator
-    - channelType: discord
-      agentId: researcher
-```
-
-In this setup, the `coordinator` agent sees skills from `~/.comis/workspace/skills/`
-(as the default agent) plus `~/.comis/skills/`. The `researcher` agent sees skills from
-`~/.comis/workspace-researcher/skills/` plus `~/.comis/skills/`. Neither agent sees the
-other's workspace skills.
-
-<Tip>
-You can manage skills per agent from the [web dashboard](/web-dashboard/index) using the
-agent selector and scope toggle in the Skills view.
-</Tip>
-
-## Skills shipped with Comis
-
-Comis comes with seven prompt skills out of the box, in the `/skills/`
-directory at the repo root. They double as working reference manifests --
-copy any of them as a starting point for your own skill. Each declares the
-external prerequisites it needs via `comis.requires`, so the loader skips
-them gracefully when those bins or env vars are missing.
-
-| Skill | What it does | Requires |
-|-------|--------------|----------|
-| `chart-visualization` | Generate 26 chart types (bar, line, pie, sankey, treemap, mind maps...) via a bundled Node script | `bins: [node]` |
-| `deep-research` | Multi-phase web research methodology -- broad exploration, deep dive, source validation | None (uses `web_search` + `web_fetch`) |
-| `find-skills` | Discover and install skills from the open `skills.sh` ecosystem | `bins: [git]` |
-| `image-generation` | Image generation via Gemini (structured prompts, optional reference images, aspect-ratio control) | `bins: [python3]`, `env: [GEMINI_API_KEY]` |
-| `log-troubleshooting` | Parse and summarise NDJSON daemon logs from `~/.comis/logs/` | `bins: [python3]` |
-| `podcast-generation` | Two-host conversational podcast audio via VolcEngine TTS | `bins: [python3]`, `env: [VOLCENGINE_TTS_APPID, VOLCENGINE_TTS_ACCESS_TOKEN]` |
-| `video-generation` | Video generation via Gemini Video API | `bins: [python3]`, `env: [GEMINI_API_KEY]` |
-
-<Tip>
-The fastest way to learn the SKILL.md format is to read one of these. They
-are short, real, and exercised by every Comis install. See
-[Examples](/skills/examples) for a walkthrough that builds on
-`log-troubleshooting`.
-</Tip>
-
-## Advanced options
-
-Once you are comfortable with the basics, these options give you more control:
-
-- **Tool restrictions:** Use `allowedTools` in the frontmatter to limit which tools the agent can use while this skill is active. For example, a research skill might only allow `web_search` and `web_fetch`. See [Manifest Reference](/skills/manifest) for the full field list.
-
-- **Input validation:** Use `inputSchema` to define a JSON Schema that validates arguments before the skill runs. Invalid input is rejected with a clear error message. See [Manifest Reference](/skills/manifest) for details.
-
-- **Dynamic context:** Enable the `promptSkills.enableDynamicContext` config option to allow shell commands embedded in skill bodies. This lets skills pull in live data (like git status or system info) at invocation time.
-
-  <Warning>
-  Dynamic context executes shell commands from skill files. Only enable this if
-  you trust all skill sources. See [Security Scanning](/skills/security-scanning)
-  for what gets scanned and blocked.
-  </Warning>
-
-- **Auto-injection:** Skills can be automatically injected into conversations without explicit invocation. The agent selects relevant skills based on their descriptions. You can control how many are injected per request with the `maxAutoInject` config setting (default: 3).
-
-- **Model invocation control:** Set `disableModelInvocation: true` in the frontmatter to hide a skill from the agent's automatic selection. The skill can still be invoked explicitly with `/skill:name`.
-
-## Related
+- Give the skill a narrow purpose and an accurate description.
+- Write explicit steps, inputs, stop conditions, and expected output.
+- Name the tools the procedure expects, but also enforce access in the agent's
+  tool policy.
+- Treat external text the skill retrieves as untrusted.
+- Test with representative prompts and inspect whether the skill was selected.
 
 <CardGroup cols={2}>
   <Card title="Manifest Reference" icon="file-code" href="/skills/manifest">
-    All SKILL.md frontmatter fields explained
-  </Card>
-  <Card title="Security Scanning" icon="shield-check" href="/skills/security-scanning">
-    What gets scanned and blocked in skill files
+    Supported frontmatter and metadata
   </Card>
   <Card title="Examples" icon="lightbulb" href="/skills/examples">
-    Complete skill walkthroughs you can follow step by step
+    Complete skill files to adapt
+  </Card>
+  <Card title="Tool Policy" icon="toolbox" href="/skills/tool-policy">
+    Enforce agent-level tool restrictions
+  </Card>
+  <Card title="Security Scanning" icon="shield-check" href="/skills/security-scanning">
+    Understand content checks and their limits
   </Card>
 </CardGroup>

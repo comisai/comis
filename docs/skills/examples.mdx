@@ -111,20 +111,18 @@ You are a customer support representative for our company.
 
 **How it works:**
 
-- The `allowedTools` restriction ensures the agent only uses messaging and memory
-  tools while this skill is active -- it cannot run shell commands, browse the web,
-  or access other tools
-- The `userInvocable: true` setting (which is the default) means anyone in the chat
-  can activate it with `/skill:customer-support`
+- `allowedTools` records the intended restriction for invocation-capable
+  consumers. Enforce the same restriction in the agent's tool policy; the
+  manifest field alone is not an OS sandbox.
+- The `userInvocable: true` setting is retained as registry metadata. The current
+  daemon does not route `/skill:name` messages directly.
 - The agent follows the tone, escalation, and response format rules for every reply
 
 **Test it:**
 
-```
-/skill:customer-support
-```
-
-Then send a message like: "I ordered a product last week and it still has not arrived."
+Send an ordinary-language message such as: "Use the customer-support skill. I
+ordered a product last week and it still has not arrived." Verify selection in
+the execution trace when deterministic confirmation matters.
 
 ## Daily briefing
 
@@ -161,11 +159,7 @@ Format as a clean, readable message suitable for a chat channel.
 - The `disableModelInvocation: false` setting (the default) means the agent can
   also decide to use this skill on its own when relevant
 
-**Test it manually:**
-
-```
-/skill:daily-briefing US/Eastern
-```
+**Test it manually:** Ask: "Use the daily-briefing skill for US/Eastern."
 
 **Automate it with scheduling:**
 
@@ -178,10 +172,11 @@ schedule_kind: cron
 schedule_expr: "0 9 * * *"
 timezone: America/New_York
 payload_kind: agent_turn
-payload_text: "/skill:daily-briefing US/Eastern"
+payload_text: "Use the daily-briefing skill to prepare the morning briefing for US/Eastern."
 ```
 
-This tells the agent to invoke the daily briefing skill every day at 9:00 AM Eastern.
+This asks the model to select the daily briefing skill on the schedule. Selection
+is model-driven, so inspect traces before relying on it for a critical workflow.
 
 ## Code review checklist
 
@@ -227,15 +222,15 @@ Report findings with pass/fail for each item.
 **How it works:**
 
 - The `$1` placeholder is replaced with the file path the user provides
-- The `allowedTools` restriction limits the agent to read-only file tools -- it
-  cannot modify files, run commands, or access the network during the review
+- `allowedTools` documents the intended read-only set. Mirror it in the agent's
+  tool policy before treating this workflow as read-only.
 - The `comis.requires.bins` field ensures `git` is installed on the system before
   the skill is loaded. If git is missing, the skill is marked as ineligible.
 
 **Test it:**
 
-```
-/skill:code-review src/api/handler.ts
+```text
+Use the code-review skill on src/api/handler.ts.
 ```
 
 The agent reads the file, checks each item on the checklist, and reports its findings.
@@ -270,16 +265,16 @@ Rules:
 
 **How it works:**
 
-- The `permissions.fsRead` field grants the skill read access to CSV files in the
-  `./data/` directory -- and only that directory
-- The skill cannot read files outside of `./data/*.csv`, write any files, or
-  access the network
+- `permissions.fsRead` declares the expected CSV path for review and custom
+  consumers; it does not enforce kernel access by itself
+- Use agent tool policy, safe-path controls, and host permissions to enforce the
+  actual file boundary
 - The `argumentHint` shows users what input to provide
 
 **Test it:**
 
-```
-/skill:csv-formatter ./data/report.csv
+```text
+Use the csv-formatter skill on ./data/report.csv.
 ```
 
 The agent reads the CSV file, parses the contents, and returns a neatly formatted

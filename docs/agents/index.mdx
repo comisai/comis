@@ -75,11 +75,12 @@ instructions that start with `/`. For example:
 
 - `/think high` -- Tell your agent to think harder about the next response
 - `/status` -- See session info, token usage, and model details
-- `/model switch openai gpt-4o` -- Switch to a different AI model mid-conversation
+- `/model openai/gpt-4o` -- Switch to a different AI model for the session
 - `/new` -- Start a fresh conversation
 
-There are 17 built-in commands plus user-defined `/skill:name` invocations.
-See the full list on the [Slash Commands](/agents/slash-commands) page.
+The supported surface includes session, model, budget, export, configuration,
+and conditional approval commands. Direct `/skill:name` dispatch is not wired in
+the current daemon. See [Slash Commands](/agents/slash-commands).
 
 ## Running multiple agents
 

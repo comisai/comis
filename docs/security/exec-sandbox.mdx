@@ -1,10 +1,10 @@
 ---
 title: "Exec Sandbox"
-description: "OS-level filesystem isolation for the system.exec tool using bubblewrap (Linux) and sandbox-exec (macOS)"
+description: "Optional OS-level filesystem isolation for system.exec on supported hosts"
 icon: "box"
 ---
 
-File tools like `read`, `write`, and `edit` are protected by [Safe Path](/reference/safe-path) validation -- every path parameter is checked before the operation proceeds. But the `system.exec` tool spawns a full shell that can access any file on the host filesystem. The exec sandbox closes this gap with kernel-enforced filesystem isolation, ensuring that shell commands run inside a restricted namespace where only approved paths are visible.
+File tools like `read`, `write`, and `edit` are protected by [Safe Path](/reference/safe-path) validation. The `system.exec` tool spawns a shell, so Comis attempts to add OS-level filesystem isolation with bubblewrap on Linux or `sandbox-exec` on macOS. If the provider is unavailable, the current adapter warns and runs the command without that OS isolation.
 
 <Warning>
 **Scope is critical.** The exec sandbox protects **only the `system.exec`
@@ -21,8 +21,9 @@ tool**. It does not sandbox:
 - **Arbitrary agent code** -- if you give an agent Python, Node, or other
   language tooling outside `system.exec`, that code runs unsandboxed.
 
-The single guarantee here is: when the `system.exec` tool is invoked, the
-shell process it spawns sees only approved paths.
+When isolation is active, the shell sees only approved paths. Verify the
+provider on the target host; configuration alone does not make this a
+fail-closed boundary.
 </Warning>
 
 ## Two-Stage Protection: Validator + Sandbox
@@ -70,7 +71,9 @@ command: "cat /etc/passwd"
 # With sandbox:    DENIED -- /etc/passwd is not mounted inside the namespace
 ```
 
-The exec sandbox prevents this by making unauthorized paths invisible to the shell process at the OS level. The process cannot read, write, or even see that those paths exist.
+When the OS provider is active, the exec sandbox makes unauthorized paths
+invisible to the shell process. When it is unavailable or disabled, the
+command validator remains but host filesystem isolation does not.
 
 ## How It Works
 
@@ -220,7 +223,7 @@ When an agent runs inside an [execution graph](/agents/execution-graphs) pipelin
 
 <CardGroup cols={2}>
   <Card title="Defense in Depth" icon="shield-halved" href="/security/defense-in-depth">
-    How the exec sandbox fits into the 22 categorical security layers
+    How the exec sandbox fits into the wider security model
   </Card>
   <Card title="Safe Path" icon="folder-closed" href="/reference/safe-path">
     Path validation for file tools (read, write, edit)

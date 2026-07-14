@@ -280,7 +280,8 @@ surfaced in the per-line JSON objects.
 
 > A user reports: "I asked the bot a question 10 minutes ago and it never replied."
 
-The target — under 5 minutes from complaint to bundle.
+The workflow uses three commands to move from a complaint to an exportable
+incident bundle.
 
 **Command 1 — Find sessions with recent errors:**
 
@@ -313,7 +314,8 @@ node packages/cli/dist/cli.js trace export <sessionId>
 
 Output: `Bundle written to: <path>`. Compress, share with engineer per [Incident Bundle](/operations/incident-bundle).
 
-Three commands. Under 5 minutes from complaint to bundle.
+Three commands produce the bundle; runtime depends on session size and storage
+performance.
 
 ---
 

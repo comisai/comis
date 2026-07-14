@@ -1,149 +1,130 @@
 ---
-title: "How Comis Keeps You Safe"
-description: "An overview of Comis security protections in plain language"
+title: "Security Boundaries"
+description: "What Comis protects, what requires configuration, and what remains your responsibility"
 icon: "shield-check"
 ---
 
-Comis is designed with security as a priority. Every message, every tool call, and every stored piece of data is protected by multiple layers of defense -- most of which work automatically without any configuration.
+Comis treats model output and external content as potentially hostile. Its
+security model combines validation, least-privilege controls, audit signals,
+credential handling, and optional operating-system isolation. No single layer
+makes an autonomous agent safe in every deployment.
 
 import NonTechnicalNote from '/snippets/non-technical-note.mdx';
 
 <NonTechnicalNote />
 
-<Info>
-**Plain-language summary:** Comis assumes someone will eventually try to trick
-your agent. To make that hard, every message, response, tool call, and saved
-memory passes through 22 independent checks. If any one check is wrong, the
-others still hold. Most of them are on by default -- you don't have to do
-anything.
-</Info>
+## Defaults to understand
 
-## Security at a Glance
+| Control | Default | What that means |
+|---|---|---|
+| Credential storage | `encrypted` | Credentials are stored in `secrets.db`; the master key is in `~/.comis/.env` and must be backed up separately. |
+| Gateway bind | Loopback | The daemon listens on `127.0.0.1` unless you explicitly expose it. |
+| Log redaction and audit events | Enabled | Security-relevant decisions are recorded without intentionally storing secret values or message bodies. This is not a record of every agent action. |
+| Approval workflow | **Disabled** | Destructive classification alone does not create a human approval step. Set `approvals.enabled: true` and configure rules. |
+| Tool-policy profile | `full` | Agents receive the broadest available tool set unless you choose a narrower profile or deny tools. |
+| Exec sandbox | Requested (`always`) | Linux uses Bubblewrap when available; macOS uses best-effort `sandbox-exec`. If no provider is available, ordinary `exec` currently falls back to unsandboxed execution. |
+| Node permission model | Disabled | Enable and test it explicitly for a hardened Linux deployment. |
 
-Comis uses a **defense-in-depth** approach to security. 22 independent protections
-work together, so if one layer ever fails, the others still keep you safe. Think
-of it like a castle with walls, a moat, guards, and locked doors -- no single
-protection is the only thing standing between you and a threat.
+<Warning>
+Before connecting untrusted users, replace the default `full` tool profile,
+enable and test approvals if you rely on human confirmation, and verify the
+actual sandbox provider in daemon logs. Configuration intent is not proof that
+the host enforced the boundary.
+</Warning>
 
-<AccordionGroup>
-  <Accordion title="Encrypted Secrets" icon="lock">
-    **What it does:** Stores your API keys and passwords with AES-256 encryption so they never appear in plain text on disk.
+## Protections that apply broadly
 
-    **Why it matters:** If someone gains access to your config files, they still cannot read your secrets without the encryption key.
+- external content is delimited and treated as data before prompt assembly;
+- URL validation blocks known private, loopback, link-local, and metadata
+  targets on guarded fetch paths;
+- memory writes are scanned and may be blocked or stored at reduced trust;
+- completed agent responses are scanned for secret-shaped content and canary
+  leakage;
+- logs use structured redaction and security decisions emit audit events;
+- gateway tokens are scoped, and the gateway binds to loopback by default;
+- unknown action classifications fail closed to the destructive class;
+- paths handled through Comis file tools are constrained by safe-path checks.
 
-    **Do I need to configure it?** Yes -- run the setup wizard to initialize your secrets vault. See [Secrets Management](/security/secrets) for details.
-  </Accordion>
+These controls reduce risk; they do not prove that model output is correct or
+that all external content is harmless.
 
-  <Accordion title="Injection Defense" icon="shield">
-    **What it does:** Scans incoming messages for attempts to trick your agent into ignoring its instructions. This includes detecting hidden commands, role-switching attacks, and other manipulation techniques.
+## Important boundaries
 
-    **Why it matters:** Bad actors can craft messages designed to hijack your agent -- making it reveal private data or behave in unintended ways. Injection defense catches these attempts before they reach your agent.
+### Approvals are opt-in
 
-    **Do I need to configure it?** No -- it is on by default. No action needed.
-  </Accordion>
+`security.actionConfirmation` classifies actions, but the human approval
+workflow is disabled by default. Enable `approvals.enabled` and add rules before
+claiming that destructive actions require operator confirmation. Test the
+approval path from the same channel and tool surface you plan to use.
 
-  <Accordion title="Budget Protection" icon="wallet">
-    **What it does:** Sets spending limits per conversation and per day so your agent cannot run up unexpected costs with AI provider API calls.
+### Tool access starts broad
 
-    **Why it matters:** AI API calls cost money. Without budget limits, a runaway conversation or a malicious user could drain your account. Budget protection is your financial safety net.
+The default tool-policy profile is `full`. Use `minimal`, `coding`,
+`messaging`, or another appropriate profile, then apply explicit allow and deny
+rules. Tool policy is one control; it does not sandbox code by itself.
 
-    **Do I need to configure it?** Yes -- set your preferred limits in the agent configuration. See [Agent Safety](/agents/safety) for details.
-  </Accordion>
+### Shell isolation depends on the host
 
-  <Accordion title="Approval Gates" icon="check-to-slot">
-    **What it does:** Requires your sign-off before agents take high-impact actions like deleting files, sending messages to other channels, or modifying system configuration.
+The exec sandbox applies to shell commands launched through the `exec` tool.
+It does not wrap every in-process tool, browser process, or MCP server.
 
-    **Why it matters:** Some actions are too important to let an AI decide alone. Approval gates give you a human-in-the-loop for anything you consider high-risk.
+- Linux with working Bubblewrap provides the strongest supported isolation.
+- macOS `sandbox-exec` is deprecated and treated as best effort.
+- Docker Desktop on macOS or Windows does not provide the documented Linux
+  production boundary.
+- when the configured sandbox provider is unavailable, ordinary `exec`
+  currently runs with the command validator but without OS-level isolation.
 
-    **Do I need to configure it?** No -- approval gates are on by default for destructive actions. See [Approvals](/security/approvals) to customize which actions require approval.
-  </Accordion>
+Use Linux for production, install Bubblewrap, and verify the provider at boot.
 
-  <Accordion title="Network Protection" icon="globe-shield">
-    **What it does:** Prevents your agents from accessing internal network resources or private servers when fetching web content. This blocks a class of attacks known as Server-Side Request Forgery, where a crafted message tricks the system into reaching your internal infrastructure.
+### MCP has a separate trust boundary
 
-    **Why it matters:** If your agent can fetch URLs, an attacker might try to make it access internal services (like databases or admin panels) that should never be reachable from the outside.
+MCP stdio servers are separate processes and are **not** wrapped by the exec
+sandbox. Comis applies manifest/tool filtering, eligibility checks, result
+sanitization, and configured tool policy, but operators must still trust and
+review each server, its executable, permissions, and network access.
 
-    **Do I need to configure it?** No -- it is on by default. No action needed.
-  </Accordion>
+### Streaming can precede the final scan
 
-  <Accordion title="Audit Logging" icon="clipboard-list">
-    **What it does:** Records every security-relevant action in structured logs -- including tool calls, approval decisions, secret access, and configuration changes.
+The output guard scans the completed response. Non-streaming delivery receives
+that sanitized result. Streaming HTTP/SSE token deltas may already have been
+emitted before the final response scan completes, so do not treat the final
+guard as a confidentiality boundary for live streaming. Disable streaming on
+sensitive surfaces or add a buffering/filtering layer before exposing them.
 
-    **Why it matters:** You can review exactly what your agents did and when, providing accountability and making troubleshooting straightforward.
+### Encryption does not defeat host compromise
 
-    **Do I need to configure it?** No -- audit logging is on by default. See [Audit](/security/audit) to learn how to review your logs.
-  </Accordion>
+The encrypted store protects a copied `secrets.db` when the attacker does not
+also have the master key. A process or operator that can read both
+`secrets.db` and `~/.comis/.env` can decrypt the credentials. Losing the master
+key makes the database unreadable because Comis has no recovery service.
 
-  <Accordion title="Canary Tokens" icon="bird">
-    **What it does:** Embeds invisible tracking markers in your agent's instructions. If an attacker tries to extract the system prompt, the canary triggers an alert so you know an attempt was made.
+## Baseline hardening
 
-    **Why it matters:** System prompt extraction is a common attack against AI agents. Canary tokens turn a silent theft into a detectable event.
+1. Keep the gateway on loopback, or put it behind authentication and TLS.
+2. Back up `~/.comis/.env` separately from `secrets.db` and restrict both to
+   the daemon account.
+3. Replace the `full` tool policy with the narrowest practical profile.
+4. Enable approval rules if your operating model depends on human review.
+5. Verify Bubblewrap on a Linux host; do not assume an unavailable provider
+   fails closed for ordinary `exec`.
+6. Review every MCP server as third-party code with its own process privileges.
+7. Disable live streaming where pre-scan token disclosure is unacceptable.
+8. Run `comis security audit`, `comis secrets audit --check`, and `comis doctor`.
 
-    **Do I need to configure it?** No -- canary tokens are inserted automatically. No action needed.
-  </Accordion>
-
-  <Accordion title="Output Scanning" icon="magnifying-glass">
-    **What it does:** Checks every agent response for accidentally leaked secrets or sensitive data before the message is sent to the chat.
-
-    **Why it matters:** Even if something goes wrong internally, your API keys, passwords, and other sensitive data will not reach the conversation. Output scanning is your last line of defense.
-
-    **Do I need to configure it?** No -- it is on by default. No action needed.
-  </Accordion>
-
-  <Accordion title="Memory Protection" icon="brain">
-    **What it does:** Validates and sanitizes everything written to your agent's long-term memory, assigning trust levels based on the source. System-provided knowledge is trusted more than user-provided messages.
-
-    **Why it matters:** An attacker could try to poison your agent's knowledge by crafting messages designed to be remembered and later recalled as facts. Memory protection prevents this by tagging and validating every memory entry.
-
-    **Do I need to configure it?** No -- memory protection is automatic. Trust levels are assigned by source.
-  </Accordion>
-
-  <Accordion title="Exec Sandbox" icon="box-archive">
-    **What it does:** Runs every shell command your agent issues inside a kernel-enforced sandbox. On Linux it uses Bubblewrap with full namespace isolation; on macOS it uses Apple's `sandbox-exec`. The sandbox limits what files the command can read or write and blocks network access by default.
-
-    **Why it matters:** Tool-using agents sometimes need to run commands. A sandbox makes sure that even if the agent is fooled into running something unwanted, the damage stays inside a small isolated playground.
-
-    **Do I need to configure it?** No -- the sandbox is automatic on supported platforms. See [Sandbox Reference](/reference/sandbox) to customize allowed paths.
-  </Accordion>
-
-  <Accordion title="Credential Broker" icon="key">
-    **What it does:** Drives API-key CLIs (Claude Code included) with the real key kept entirely out of the sandbox. The key stays in the daemon's encrypted store and is injected at the network boundary -- so `cat /proc/self/environ` inside the sandbox shows only a placeholder, never the real credential.
-
-    **Why it matters:** Even a sandboxed process can read its own environment variables. The credential broker removes the key from the environment entirely, so prompt injection or a sandbox escape cannot extract the real API key from inside the namespace.
-
-    **Do I need to configure it?** Yes -- add an `executor.broker.bindings` entry for each CLI you want to drive. Two built-in presets are available today: `anthropic` and `finnhub`. [Credential Broker →](/security/credential-broker)
-  </Accordion>
-
-  <Accordion title="Gateway Authentication" icon="key">
-    **What it does:** Protects the gateway -- the front door to your daemon -- with bearer-token authentication and optional mutual TLS (mTLS) for production deployments. Comparisons are timing-safe so attackers cannot guess tokens by measuring response time.
-
-    **Why it matters:** The gateway is how the CLI, web dashboard, and external integrations talk to Comis. Without authentication, anyone who can reach the port could run commands on your agents.
-
-    **Do I need to configure it?** Recommended for any non-localhost setup. The setup wizard generates a token automatically. See [Hardening](/security/hardening) to enable mTLS.
-  </Accordion>
-
-  <Accordion title="Runtime Safeguards" icon="shield-halved">
-    **What it does:** Adds three runtime guards that catch problems as they happen: a **circuit breaker** that pauses calls to a failing AI provider, a **step counter** that limits how many tool calls one message can trigger, and a **tool output sanitizer** that scrubs any leaked credentials from tool results before they reach the model.
-
-    **Why it matters:** Stops cascading failures, prevents runaway loops, and keeps secrets from leaking through chained tools.
-
-    **Do I need to configure it?** No -- runtime safeguards are on by default. See [Agent Safety](/agents/safety) to tune limits.
-  </Accordion>
-</AccordionGroup>
-
-## Want the Full Picture?
+## Read the complete model
 
 <CardGroup cols={2}>
-  <Card title="Defense in Depth" icon="layer-group" href="/security/defense-in-depth">
-    All 22 defense layers explained in detail
+  <Card title="Threat Model" icon="shield-halved" href="/security/threat-model">
+    Trust boundaries, defended threats, and residual risks.
   </Card>
-  <Card title="Secrets Management" icon="key" href="/security/secrets">
-    Managing your API keys and passwords safely
+  <Card title="Hardening" icon="lock" href="/security/hardening">
+    Deployment controls and verification steps.
   </Card>
-  <Card title="Hardening Guide" icon="lock" href="/security/hardening">
-    Maximize your security posture
+  <Card title="Approvals" icon="clipboard-check" href="/security/approvals">
+    Enable and test human-in-the-loop decisions.
   </Card>
-  <Card title="Security Reference" icon="book" href="/reference/security-model">
-    Technical security documentation
+  <Card title="Secrets" icon="key" href="/security/secrets">
+    Storage modes, backup obligations, and credential scope.
   </Card>
 </CardGroup>

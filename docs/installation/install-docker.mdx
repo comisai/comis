@@ -33,11 +33,12 @@ trade-off:
 - ✅ **Dev/testing UX on Mac and Windows:** the agent runs end-to-end. You
   can drive `exec` commands, run scripts in the workspace, and exercise
   every feature that depends on shell execution.
-- ❌ **Security guarantees inside the container are dropped on Docker
-  Desktop.** With the sandbox off, agent-issued shell commands can read
+- ❌ **The documented exec-isolation boundary is absent on Docker
+  Desktop.** With the sandbox off, agent-issued shell commands may read
   `/home/comis/.comis/.env`, the encrypted `secrets.db`, `/etc/comis/config.yaml`,
   channel tokens, the `SECRETS_MASTER_KEY`, and anything else the daemon
-  user owns. A single prompt injection exfiltrates everything.
+  user owns. Treat prompt-driven shell execution as host-equivalent authority
+  within the container account.
 
 This is fine for **development and local testing only**. For production,
 deploy to a real Linux host (bare metal, VPS, or any Linux cloud VM)
@@ -136,8 +137,7 @@ docker build \
   --build-arg COMIS_WITH_XVFB=1 \
   -t comisai/comis:xvfb .
 
-# Stealth Chromium (CloakBrowser, +500 MB) — bypasses Cloudflare Turnstile,
-# FingerprintJS, BrowserScan, and Reddit's secondary fingerprint check
+# Optional CloakBrowser runtime (+500 MB)
 docker build \
   --build-arg COMIS_WITH_CLOAKBROWSER=1 \
   -t comisai/comis:cloak .
@@ -176,12 +176,13 @@ docker build -f Dockerfile.install \
 The main `Dockerfile` is the production path (multi-stage, smaller, faster). `Dockerfile.install` is the validation/parity path.
 
 <Warning>
-**Datacenter IPs (AWS, DigitalOcean, Hetzner, Hostinger, …) are pre-blocked by Reddit, X/Twitter, LinkedIn, and many anti-bot services at the network layer** — independent of browser fingerprint. The browser flags fix fingerprint detection, not IP reputation. If your container runs on a datacenter ASN and you need Reddit/social scraping, pair `--with-cloakbrowser` with a residential proxy.
-
-CloakBrowser's binary is free for self-hosted use; bundling into a service distributed to third-party customers requires an OEM license from CloakHQ. See the [binary license](https://github.com/CloakHQ/CloakBrowser/blob/main/BINARY-LICENSE.md).
+CloakBrowser does not include a proxy, change IP reputation, or guarantee access
+to any site. Review the target site's terms and the
+[binary license](https://github.com/CloakHQ/CloakBrowser/blob/main/BINARY-LICENSE.md)
+before enabling it.
 </Warning>
 
-See [agent-tools/browser](/agent-tools/browser#stealth-mode-anti-bot-detection) for the full flag matrix, verified detection-evasion outcomes, and security model.
+See [agent-tools/browser](/agent-tools/browser) for the browser-tool security model.
 
 ## Optional services
 
@@ -278,7 +279,7 @@ but you **must** combine three controls:
    ```
 3. **TLS.** Without TLS, the bearer token crosses the wire in cleartext.
    Either run with `gateway.tls.cert` configured (see
-   [Configuration: TLS](/installation/configuration#tls)) or front it
+   [HTTP gateway: mTLS](/reference/http-gateway#mtls) or front it
    with a reverse proxy that does TLS for you (in which case use the
    recommended posture above instead).
 

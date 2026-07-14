@@ -1,6 +1,6 @@
 ---
 title: "Memory Recall (RAG)"
-description: "How your agent remembers past conversations when answering new questions"
+description: "How relevant stored context can be recalled for a new request"
 icon: "brain"
 ---
 
@@ -140,7 +140,7 @@ your agent explicitly stores them.
 | `rag.maxContextChars` | number | `4000` | Maximum characters of memory context to add |
 | `rag.minScore` | number | `0.1` | Minimum relevance score (0-1) for a memory to be included |
 | `rag.includeTrustLevels` | array | `["system", "learned"]` | Which trust levels to include in recall |
-| `rag.rerank.enabled` | boolean | `false` | Opt-in cross-encoder reranking (see [Memory](/agents/memory#reranking-opt-in)) |
+| `rag.rerank.enabled` | boolean | `false` | Cross-encoder reranking control (see [Memory](/agents/memory#reranking-locally-gated-default-on)) |
 | `rag.rerank.maxCandidates` | number | `40` | Max candidates re-scored when rerank is enabled |
 | `rag.rerank.timeoutMs` | number | `800` | Rerank wall-clock budget; on timeout falls back to fusion order |
 | `rag.scoring.recencyAlpha` | number | `0.2` | Recency (record-time) boost weight |

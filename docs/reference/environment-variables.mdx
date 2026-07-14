@@ -411,9 +411,10 @@ export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"
 
 Opts into the latest (pre-stable `Development`) GenAI semantic convention. Set it
 to `gen_ai_latest_experimental` alongside `observability.otel.genaiSemconv: true`.
-The convention will churn until it stabilizes. Content never leaks regardless — the
-exporter re-redacts independently and the message-content attributes are omitted
-unless `otel.captureContent` is separately enabled.
+The convention may change while it remains pre-stable. The exporter applies
+redaction independently, and message-content attributes are omitted unless
+`otel.captureContent` is separately enabled. Enabling content capture increases
+the amount of sensitive data that can reach your collector.
 
 ```bash
 export OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental

@@ -1,172 +1,95 @@
 ---
-title: "How Comis Keeps You Safe"
-description: "An overview of the security protections built into Comis"
+title: "Security"
+description: "Security controls, deployment boundaries, and operator responsibilities"
 icon: "shield-check"
 ---
 
-**Comis assumes the LLM will be attacked.** Every message your agent reads
-could contain a hidden instruction. Every web page it fetches could carry an
-injected payload. Every tool call could be a step toward exfiltration or
-destruction. Comis is built around that assumption: 22 categorical defenses
-(24 distinct security primitives in the code) work together so no single
-failure compromises your system. Most of these protections work automatically
--- you benefit from them without configuring anything. This page introduces
-the security model, explains what happens behind the scenes, and points you to
-the detailed guides for each security feature.
+Comis assumes that external content can contain prompt injection and that a
+model can request unsafe actions. The runtime therefore layers content guards,
+capability checks, tool policy, credential handling, audit events, and
+platform-dependent process isolation.
 
-## Security Philosophy
+Security depends on deployment choices. The default configuration is suitable
+for local evaluation, not an assurance that every high-impact action is
+human-approved or every tool process is kernel-confined.
 
-Comis follows three core principles that shape every security decision in the
-platform. Understanding these principles helps you make sense of how the
-various security features work together and why they are designed the way they
-are.
+## Current default posture
 
-### Defense in Depth
+| Area | Default posture | Operator action |
+|---|---|---|
+| Secrets | Encrypted store; master key in `~/.comis/.env` | Back up and protect the key separately |
+| Gateway | Loopback bind | Add authentication and TLS before network exposure |
+| Approvals | Disabled; unmatched mode `auto` | Enable and define rules if confirmation is required |
+| Tool policy | `full` profile | Select a narrower profile and explicit denies |
+| Exec isolation | Enabled when a provider is available | Use Linux + Bubblewrap and verify startup logs |
+| MCP stdio | Outside the exec sandbox | Review each server as third-party process code |
+| Node permissions | Disabled | Enable only after testing required paths and hosts |
+| Output guard | Completed-response scan | Do not rely on it to retract previously emitted streaming deltas |
 
-No single layer is expected to catch everything. Multiple overlapping
-protections mean that if one layer misses something, the next layer catches it.
-Your messages pass through input validation, jailbreak detection, output
-scanning, and more -- each layer operating independently. Think of it like a
-castle with walls, a moat, guards, and locked doors -- no single protection is
-the only thing keeping you safe. The platform groups its protections into
-**eight defensive categories** -- perimeter, secrets, network, process
-isolation, access control, memory, detection, transport -- spanning **22
-categorical layers** (or 24 distinct primitives, depending on how you count).
-For the full catalog of every security layer and how they connect, see
-[Defense in Depth](/security/defense-in-depth).
+<Warning>
+Ordinary `exec` currently falls back to unsandboxed execution when the sandbox
+provider is unavailable. macOS isolation is best effort, and Docker Desktop is
+not the Linux production boundary. Treat the daemon host and operator account
+as trusted.
+</Warning>
 
-### Secure by Default
+## Control layers
 
-Comis ships with sensible security defaults. Audit logging is on, destructive
-action confirmation is required, log redaction prevents credential leaks, and
-content scanning blocks dangerous skills. You do not need to be a security
-expert to run a safe setup. The majority of protections listed below are active
-the moment you start Comis -- no configuration file edits required.
+- **Input and external-content handling:** validates inbound data and wraps
+  untrusted text before prompt assembly.
+- **URL and path controls:** guarded fetch paths reject known local/private
+  targets; file tools use traversal- and symlink-aware path checks.
+- **Tool authorization:** profiles and allow/deny lists determine which tools
+  are available. The default profile is intentionally broad.
+- **Action classification:** read, mutate, and destructive labels support
+  policy and auditing. The human approval workflow is a separate opt-in layer.
+- **Credential handling:** encrypted storage, scoped resolution, redaction, and
+  optional broker injection reduce plaintext exposure.
+- **Output and memory guards:** completed responses and memory writes are
+  scanned for secret-shaped or suspicious content.
+- **Audit and diagnostics:** content-free security-decision events and operator
+  checks help reconstruct and verify the active posture.
+- **OS isolation:** Bubblewrap or `sandbox-exec` confines supported exec paths;
+  scope and availability are documented rather than assumed.
 
-### Fail Closed
-
-When something unexpected happens, Comis errs on the side of caution. Unknown
-actions are treated as destructive. Unrecognized content patterns trigger
-warnings. Timeouts result in denial, not approval. If Comis is unsure whether
-something is safe, it assumes it is not. This means new tools and new action
-types are restricted by default until you explicitly allow them.
-
-## What Works Automatically
-
-These protections are active out of the box with zero configuration. They
-protect you from the moment you start Comis. You do not need to enable them,
-configure them, or even know they exist -- they just work.
-
-- **Input validation** catches malformed or oversized messages before they
-  reach your agent
-- **Jailbreak detection** scans for manipulation attempts using 65 distinct
-  injection patterns across 8 categories (jailbreak phrasing, role markers,
-  dangerous commands, secret formats, prompt extraction, credential logging,
-  invisible characters, content scanner)
-- **Injection rate limiting** detects persistent manipulation attempts from the
-  same user over time
-- **External content wrapping** isolates fetched web pages and emails so hidden
-  instructions cannot hijack your agent
-- **Content scanning** checks custom skill content for dangerous patterns before
-  loading
-- **Output scanning** checks every response for leaked secrets and redacts them
-  before they reach the user
-- **Canary tokens** detect prompt extraction attacks by embedding invisible
-  trackers in system prompts
-- **SSRF protection** blocks requests to internal networks and cloud metadata
-  endpoints (AWS/GCP/Azure 169.254.169.254, AWS ECS 169.254.170.2, Alibaba
-  100.100.100.200)
-- **Path traversal prevention** blocks file system escape attempts (../,
-  URL-encoded, null byte, symlink escapes)
-- **Exec sandbox** wraps every shell command in an OS-level filesystem
-  namespace (bubblewrap on Linux, sandbox-exec on macOS) so the `system.exec`
-  tool cannot bypass file-tool path checks
-- **Memory write validation** prevents memory poisoning by scanning content
-  before storage
-- **Log sanitization** scrubs 18 credential patterns from log output
-- **Config redaction** hides secrets from API responses and dashboard views
-- **Email sender filter** rejects messages from non-allowlisted senders and
-  auto-detects bulk/automated mail (RFC 3834 Auto-Submitted, Precedence,
-  List-Unsubscribe headers)
-
-<Info>
-All of the above are active with zero configuration. They protect you from the
-moment you start Comis.
-</Info>
-
-## What You Configure
-
-While automatic protections handle most threats, a few security features need
-setup or explicit enablement to match your specific deployment requirements.
-These are optional but recommended for production environments.
-
-- **Encrypted secrets store** -- Protect your API keys with AES-256 encryption
-  at rest. See [Secrets](/security/secrets).
-- **Approval workflow** -- Require human approval before agents perform
-  destructive actions. See [Approvals](/security/approvals).
-- **Tool policy** -- Restrict which tools each agent can use based on its role.
-  See [Tool Policy](/skills/tool-policy).
-- **Hardening checklist** -- Tighten file permissions, gateway security, and
-  more for production deployments. See [Hardening](/security/hardening).
-- **Audit logging** -- Already enabled by default, but review what is captured
-  and how to access it. See [Audit](/security/audit).
-
-<Tip>
-If you are just getting started, you do not need to configure any of these
-right away. The automatic protections provide strong baseline security. Come
-back to this section when you are ready to prepare for production.
-</Tip>
-
-## Quick Security Check
-
-Not sure how your installation stacks up? Comis includes a built-in security
-audit that checks your configuration against recommended practices.
+## Verify a deployment
 
 ```bash
 comis doctor
+comis security audit
+comis secrets audit --check
+comis daemon logs
 ```
 
-The audit examines configuration, daemon, gateway, channel, and workspace
-health across all check categories -- then tells you exactly what to fix and how
-to fix it. See [Hardening](/security/hardening) for the full checklist and
-walkthrough.
+Confirm the gateway bind, token/TLS settings, credential storage mode, approval
+configuration, effective tool policy, and reported sandbox provider. Repeat
+verification after host, container, or configuration changes.
 
-## Explore Security
+## Security documentation
 
 <CardGroup cols={2}>
-  <Card title="Defense in Depth" icon="shield-halved" href="/security/defense-in-depth">
-    All 22 layers (24 primitives) explained
+  <Card title="Threat Model" icon="shield-halved" href="/security/threat-model">
+    Assets, trust boundaries, defended threats, and out-of-scope risks.
+  </Card>
+  <Card title="Defense in Depth" icon="layer-group" href="/security/defense-in-depth">
+    How the individual controls compose.
   </Card>
   <Card title="Secrets" icon="key" href="/security/secrets">
-    Managing API keys and passwords safely
-  </Card>
-  <Card title="OAuth" icon="shield-check" href="/security/oauth">
-    Subscription-based authentication for Codex
+    Credential storage, scoping, backup, and rotation.
   </Card>
   <Card title="Approvals" icon="clipboard-check" href="/security/approvals">
-    Human-in-the-loop action approval
+    Enable and configure the opt-in approval workflow.
   </Card>
-  <Card title="Audit" icon="scroll" href="/security/audit">
-    Audit logging and compliance
-  </Card>
-  <Card title="Skill Sandbox" icon="box" href="/security/sandbox">
-    Multi-layer protection for custom skills
+  <Card title="Tool Policy" icon="toolbox" href="/skills/tool-policy">
+    Replace the default unrestricted tool profile.
   </Card>
   <Card title="Exec Sandbox" icon="cube" href="/security/exec-sandbox">
-    OS-level isolation for the exec tool
+    Platform support, fallback behavior, and limitations.
+  </Card>
+  <Card title="Audit" icon="scroll" href="/security/audit">
+    Review recorded security-decision events.
   </Card>
   <Card title="Hardening" icon="lock" href="/security/hardening">
-    Production hardening checklist
-  </Card>
-</CardGroup>
-
-## Related
-
-<CardGroup cols={2}>
-  <Card title="Security Quick Overview" icon="bolt" href="/get-started/security">
-    The 2-minute security overview
-  </Card>
-  <Card title="Agent Safety" icon="helmet-safety" href="/agents/safety">
-    Budget limits and circuit breaker
+    Prepare a Linux deployment for untrusted input.
   </Card>
 </CardGroup>

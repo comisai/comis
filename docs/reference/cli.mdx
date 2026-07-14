@@ -6,7 +6,9 @@ icon: "terminal"
 
 **What this is for:** the `comis` command is how you set up your daemon, manage agents and channels, browse memory, audit security, and operate the running system from the terminal. **Who it's for:** operators and developers running Comis on their own machine or a server.
 
-Comis ships **24 command groups** (verified against `packages/cli/src/cli.ts`). The CLI talks to the running daemon over JSON-RPC; offline-only commands such as `secrets` operate directly on local files. Run any command with `--help` to see its full flag list — every flag below is also documented inline in the binary.
+Comis currently ships **30 top-level command groups**. Some commands call the
+running daemon over JSON-RPC; others inspect or update local state. The built-in
+`--help` output is authoritative for the installed version.
 
 <Snippet file="invocation-modes.mdx" />
 
@@ -20,7 +22,9 @@ A complete first-time setup, end to end. Each step is one command.
 
 <Steps>
   <Step title="Initialize the workspace">
-    `comis init` walks you through provider keys, the first agent, and at least one channel. Use `--non-interactive` with flags for CI/Docker.
+    `comis init` walks through storage, model authentication, the first agent,
+    optional channels, gateway, workspace, tools, media, recall, review, and
+    daemon startup. Use `--non-interactive` with explicit flags for automation.
     ```bash
     comis init
     ```
@@ -50,9 +54,11 @@ A complete first-time setup, end to end. Each step is one command.
     ```
   </Step>
   <Step title="Wire a channel">
-    Channels are added with `comis configure --section channels` (interactive) or by editing `~/.comis/config.yaml` directly. Token values are pulled from `~/.comis/.env` via `${VAR_NAME}` substitution.
+    Re-run `comis init` to add a channel through the supported wizard, or follow
+    the platform guide and validate a manual config change. Store channel
+    credentials in the active secret backend.
     ```bash
-    comis configure --section channels
+    comis init
     ```
   </Step>
   <Step title="Store secrets safely">
@@ -93,6 +99,7 @@ Agent management commands for listing, creating, updating, and deleting agent co
 | `agent list` | List all configured agents |
 | `agent create <name>` | Create a new agent configuration |
 | `agent configure <name>` | Update an existing agent's settings |
+| `agent set-oauth-profile <agentId> <profileId>` | Set an agent's preferred OAuth profile |
 | `agent delete <name>` | Delete an agent configuration |
 | `agent models <agentId>` | Show operation model resolutions for an agent |
 
@@ -121,6 +128,12 @@ Agent management commands for listing, creating, updating, and deleting agent co
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `-y, --yes` | `boolean` | `false` | Skip confirmation prompt |
+
+#### `agent set-oauth-profile <agentId> <profileId>`
+
+Derives the provider from a profile ID such as
+`openai-codex:user@example.com` and stores that agent preference. Use `comis
+auth list` to obtain the exact profile ID.
 
 #### `agent models <agentId>`
 
@@ -296,6 +309,7 @@ Configuration management commands for validating, viewing, modifying, and versio
 
 | Subcommand | Description |
 |------------|-------------|
+| `config audit` | Inspect or scrub the daemon-wide config-audit log |
 | `config validate` | Validate configuration files against the schema |
 | `config show [section]` | Display current configuration (optionally filtered to a section) |
 | `config set <path> <value>` | Modify a config value via the daemon (triggers restart) |
@@ -304,6 +318,12 @@ Configuration management commands for validating, viewing, modifying, and versio
 | `config rollback <sha>` | Restore config from a previous commit |
 | `config sync-tooling` | Discover MCPs/skills and sync the `tooling:` config block |
 | `config tooling-fill [hint]` | Fill `description` + `replacesPackages` on a tooling hint via the live agent |
+
+#### `config audit`
+
+`config audit show` lists recent config-audit records. `config audit scrub`
+re-runs the redactor over the stored audit log. Run either nested command with
+`--help` for its filters and output options.
 
 #### `config validate`
 
@@ -621,6 +641,7 @@ Interactive setup wizard for first-time configuration. Supports three modes: int
 |------|------|---------|-------------|
 | `--provider <id>` | `string` | - | LLM provider (e.g. `anthropic`, `openai`) |
 | `--api-key <key>` | `string` | - | Provider API key |
+| `--api-key-stdin` | `boolean` | `false` | Read the main provider key from stdin in non-interactive mode |
 | `--agent-name <name>` | `string` | `comis-agent` | Agent identifier |
 | `--model <id>` | `string` | - | Model identifier |
 
@@ -643,6 +664,10 @@ Interactive setup wizard for first-time configuration. Supports three modes: int
 | `--slack-app-token <tok>` | `string` | - | Slack app token |
 | `--line-token <tok>` | `string` | - | LINE channel token |
 | `--line-secret <sec>` | `string` | - | LINE channel secret |
+| `--msteams-app-id <id>` | `string` | - | Microsoft Teams bot application ID |
+| `--msteams-app-password <pw>` | `string` | - | Microsoft Teams client secret |
+| `--msteams-tenant-id <id>` | `string` | - | Microsoft Teams tenant ID |
+| `--msteams-auth-mode <mode>` | `secret` \| `certificate` \| `managedIdentity` | - | Microsoft Teams authentication mode |
 
 #### Media Generation and Processing
 
@@ -654,19 +679,28 @@ The interactive **advanced** flow includes dedicated steps that offer every supp
 | `--image-api-key <key>` | `string` | - | Image provider credential (e.g. `FAL_KEY`) |
 | `--video-provider <id>` | `auto` \| `fal` \| `google` \| `xai` | `auto` | Video generation provider |
 | `--video-api-key <key>` | `string` | - | Video provider credential (e.g. `FAL_KEY`) |
-| `--stt-provider <id>` | `openai` \| `groq` \| `deepgram` | `openai` | Voice transcription provider |
+| `--stt-provider <id>` | `auto` \| `local` \| `openai` \| `groq` \| `deepgram` | - | Voice transcription provider |
 | `--stt-api-key <key>` | `string` | - | Transcription provider credential (e.g. `DEEPGRAM_API_KEY`) |
-| `--tts-provider <id>` | `openai` \| `elevenlabs` \| `edge` | `openai` | Text-to-speech provider |
+| `--tts-provider <id>` | `edge` \| `openai` \| `elevenlabs` \| `local` | - | Text-to-speech provider |
 | `--tts-api-key <key>` | `string` | - | TTS provider credential (e.g. `ELEVENLABS_API_KEY`) |
 
 Credentials follow the provider-following model: `auto` (image/video) reuses the agent's main provider key; `openai`/`google`/`openrouter`/`xai`/`groq` reuse `OPENAI_API_KEY`/`GOOGLE_API_KEY`/`OPENROUTER_API_KEY`/`XAI_API_KEY`/`GROQ_API_KEY` when the main provider already supplies them; `openai-codex` (image) uses your Codex OAuth login; and `edge` (TTS) is free. So the `--*-api-key` flags are only needed for a dedicated backend (`fal`, `deepgram`, `elevenlabs`) or a cross-provider static-key choice. See [Environment Variables](/reference/environment-variables#llm-provider-keys) for the key reuse rules.
+
+#### Semantic recall
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--embedding-multilingual` | `boolean` | `false` | Select multilingual semantic recall |
+| `--embedding-provider <id>` | `local` \| `openai` | - | Use local BGE-M3 or OpenAI embeddings |
+| `--embedding-api-key <key>` | `string` | - | Dedicated OpenAI embedding credential when the main provider cannot be reused |
 
 #### Paths and Behavior
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--data-dir <path>` | `string` | `~/.comis` | Workspace directory |
+| `--data-dir <path>` | `string` | - | Workspace/data directory override |
 | `--config-dir <dir>` | `string` | - | Override config directory |
+| `--storage <mode>` | `encrypted` \| `file` | `encrypted` | Credential storage mode for the generated config |
 | `--start-daemon` | `boolean` | `false` | Auto-start daemon after config |
 | `--skip-health` | `boolean` | `false` | Skip post-setup health check |
 | `--skip-validation` | `boolean` | `false` | Skip API key validation |
@@ -674,6 +708,13 @@ Credentials follow the provider-following model: `auto` (image/video) reuses the
 | `--reset-scope <scope>` | `config` \| `config+creds` \| `full` | `config` | Reset scope |
 
 <Tip>Run `comis init --help` for the complete list of all flags.</Tip>
+
+<Warning>
+Prefer the interactive prompt or `--api-key-stdin`. An expanded value supplied
+to `--api-key` (or any other secret-valued flag) can be visible through process
+inspection, shell history, or CI logs. Never paste literal credentials into
+saved command examples.
+</Warning>
 
 ```bash
 # Interactive setup wizard
@@ -694,16 +735,21 @@ comis init --non-interactive --accept-risk \
 For headless / CI environments, you have three options:
 
 1. Run `comis init` interactively (in a TTY).
-2. Run `comis init --non-interactive` with a different provider, then run [`comis auth login --method device-code`](#comis-auth) afterwards to add the Codex profile.
+2. Bootstrap with a valid API-key or local provider, then run [`comis auth
+   login --method device-code`](#comis-auth), switch the agent to
+   `openai-codex`, and attach the returned profile ID.
 3. Pre-seed the OAuth credential via the [`OAUTH_OPENAI_CODEX`](/reference/environment-variables#oauth_openai_codex) environment variable on the daemon's first start. The daemon's env-var bootstrap path is read once when the credential store is empty for that provider; subsequent drift triggers a one-shot WARN.
 
 ```bash
 # Wrong — exits non-zero with the error above
 comis init --non-interactive --provider openai-codex
 
-# Right — drop --provider and add the profile interactively afterward
-comis init --non-interactive
+# Valid bootstrap path — local Ollama must already be running
+comis init --non-interactive --accept-risk --provider ollama --model llama3 --start-daemon
 comis auth login --provider openai-codex --method device-code
+comis auth list --provider openai-codex
+comis agent configure comis-agent --provider openai-codex --model gpt-5.1
+comis agent set-oauth-profile comis-agent openai-codex:user@example.com
 ```
 
 ---
@@ -1318,6 +1364,7 @@ Session management commands for listing, inspecting, and deleting conversation s
 | `sessions delete <key>` | Delete a session |
 | `sessions reset <sessionKey>` | Reset a conversation to a clean slate: clears LCD history + working session transcript |
 | `sessions backup` | Create a timestamped backup of `memory.db` |
+| `sessions report` | Inspect stored SystemPromptReport records for a session |
 
 #### `sessions list`
 
@@ -1402,6 +1449,12 @@ The backup filename includes an ISO timestamp: `memory.db.backup.20260610T120000
 Run `comis sessions backup` before schema migrations or destructive operations. To restore,
 copy the backup file back to `memory.db` while the daemon is stopped.
 </Note>
+
+#### `sessions report`
+
+Use `sessions report show <sessionId>` for the latest SystemPromptReport or
+`sessions report list <sessionId>` for recent reports. Run each subcommand with
+`--help` for its output and data-directory flags.
 
 ---
 

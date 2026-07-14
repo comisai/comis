@@ -36,10 +36,10 @@ These fields give you more control over how the skill behaves:
 | `type` | string | `"prompt"` | Always "prompt" for Markdown instruction skills. |
 | `version` | string | -- | Semver version string (e.g., "1.0.0"). Useful for tracking changes to your skill over time. |
 | `license` | string | -- | SPDX license identifier (e.g., "MIT", "Apache-2.0"). Declares the license for shared skills. |
-| `userInvocable` | boolean | `true` | Whether users can invoke this skill with `/skill:name` in chat. Set to `false` for background-only skills. |
-| `disableModelInvocation` | boolean | `false` | When `true`, the agent cannot select this skill on its own -- it must be invoked explicitly by a user or another skill. |
-| `allowedTools` | string[] | `[]` | Tools the agent can use while this skill is active. An empty list means no tool restriction is applied. |
-| `argumentHint` | string | -- | Hint text shown to users when invoking the skill (e.g., "[name] [language]"). |
+| `userInvocable` | boolean | `true` | Registry metadata for invocation-capable consumers. The current chat daemon does not wire `/skill:name` dispatch. |
+| `disableModelInvocation` | boolean | `false` | When `true`, hides the skill from the model-facing capability index. |
+| `allowedTools` | string[] | `[]` | Restriction metadata returned with loaded skill content. Enforce agent access separately with tool policy; this field is not an OS sandbox. |
+| `argumentHint` | string | -- | Input hint metadata for invocation-capable consumers. It does not enable chat dispatch. |
 | `inputSchema` | object | -- | A JSON Schema that validates the input parameters passed to this skill. Useful for skills that expect structured input. |
 | `metadata` | object | -- | Arbitrary key-value pairs for your own use. Comis does not interpret these -- they are available for custom tooling or organizational tags. |
 
@@ -66,7 +66,10 @@ Translate the following text to {target-language}:
 
 ## Permissions
 
-The `permissions` block declares what system resources this skill needs access to. By default, skills have no access to the filesystem, network, or environment variables. Each permission you add opens a specific door.
+The `permissions` block declares resources a skill expects. The manifest parser
+preserves these values, but the block is not a kernel permission boundary and
+does not, by itself, grant or deny the daemon's access. Enforce filesystem,
+network, environment, and tool access through the relevant runtime controls.
 
 | Permission | Type | Description |
 |------------|------|-------------|
@@ -84,7 +87,9 @@ permissions:
 ```
 
 <Tip>
-Only grant the permissions your skill actually needs. Start with none and add them one at a time as required. This follows the **principle of least privilege** -- the less access a skill has, the less damage a bug or malicious skill can cause.
+Keep declarations accurate for review and custom consumers, then mirror the
+least-privilege decision in agent tool policy, safe paths, exec isolation, and
+host permissions.
 </Tip>
 
 ## Comis Namespace

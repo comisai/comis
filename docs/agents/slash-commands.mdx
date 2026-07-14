@@ -1,276 +1,89 @@
 ---
 title: "Slash Commands"
-description: "All the commands you can type to control your agent"
+description: "Verified chat commands for sessions, models, execution, and approvals"
 icon: "terminal"
 ---
 
-Slash commands let you control your agent directly from the chat. Type a
-command starting with `/` and your agent will act on it instead of treating
-it as a regular message.
-
-## Quick reference
-
-Here is the complete list of all 17 commands:
-
-| Command | What it does | Example |
-|---------|-------------|---------|
-| `/think [level]` | Set reasoning depth (off, minimal, low, medium, high, xhigh) | `/think high` |
-| `/verbose [on\|off]` | Toggle detailed output | `/verbose on` |
-| `/reasoning [on\|off]` | Show or hide the reasoning process | `/reasoning on` |
-| `/context` | Show context window usage and file sizes | `/context` |
-| `/status` | Show session info, message count, model, tokens used, cost | `/status` |
-| `/usage` | Show per-provider token and cost breakdown | `/usage` |
-| `/config` | Show current agent configuration | `/config` |
-| `/model list\|switch\|cycle` | List available models, switch model, or cycle through them | `/model switch anthropic claude-sonnet-4-5-20250929` |
-| `/new` | Start a fresh conversation (new session) | `/new` |
-| `/reset` | Reset current session (clear history) | `/reset` |
-| `/compact [verbose] [instructions]` | Manually trigger context compaction | `/compact` |
-| `/export [path]` | Export session to HTML file | `/export ~/chat.html` |
-| `/export-trajectory` | Export a trajectory bundle for the current session (trace, context, and artifact snapshot) | `/export-trajectory` |
-| `/stop` | Cancel current agent execution | `/stop` |
-| `/fork` | Fork conversation at your latest message | `/fork` |
-| `/branch [list\|target-id]` | List branch points or navigate to one | `/branch list` |
-| `/budget [amount]` | Set per-execution token budget for the next message (`Nk` or `Nm`) | `/budget 500k` |
-| `/skill:name [args]` | Invoke a prompt skill by name | `/skill:weather London` |
-
-## Command categories
-
-### Thinking controls
-
-**Commands:** `/think`, `/verbose`, `/reasoning`
-
-These are *directive* commands -- they modify how your agent processes your
-message rather than being separate actions. When you use a directive, the
-command is stripped from your text before your agent sees it. Your agent never
-sees the `/think` part -- it just receives your message with the thinking level
-already adjusted.
-
-#### /think
-
-Controls how deeply your agent reasons about its response. Higher levels mean
-more thorough thinking, which can improve answer quality for complex questions
-but uses more tokens.
-
-| Level | What it means |
-|-------|--------------|
-| `off` | No extended thinking -- fastest, cheapest |
-| `minimal` | Light reasoning for simple tasks |
-| `low` | Basic reasoning for straightforward questions |
-| `medium` | Balanced reasoning for most tasks |
-| `high` | Deep reasoning for complex problems |
-| `xhigh` | Maximum reasoning depth for the hardest problems |
-
-Without an argument, `/think` toggles thinking on or off.
-
-#### /verbose
-
-Toggles detailed output. When enabled, your agent includes more information
-in its responses -- useful for debugging or understanding its decision-making.
-
-#### /reasoning
-
-Shows or hides the reasoning process. When enabled, you can see how your
-agent arrived at its answer, including its internal thought steps.
-
-### Information
-
-**Commands:** `/context`, `/status`, `/usage`, `/config`
-
-Read-only commands that show you what is happening. None of these change
-anything -- they just report on the current state.
-
-#### /context
-
-Shows how much of the context window your agent is using. This includes the
-sizes of workspace files, tool definitions, and conversation history. Useful
-for understanding why your agent might be forgetting earlier parts of a long
-conversation.
-
-#### /status
-
-Shows session details: how many messages have been exchanged, which model is
-active, how many tokens have been used, and the estimated cost so far.
-
-#### /usage
-
-Shows a breakdown of token usage and costs per provider. If you are using
-multiple models or providers, this helps you understand where your budget is
-going.
-
-#### /config
-
-Displays the current agent configuration: name, model, provider, max steps,
-and other active settings.
-
-### Model switching
-
-**Commands:** `/model`
-
-The `/model` command has three sub-commands:
-
-| Sub-command | What it does | Example |
-|------------|-------------|---------|
-| `list` | Shows all available models and providers | `/model list` |
-| `switch` | Changes the model for this session | `/model switch anthropic claude-sonnet-4-5-20250929` |
-| `cycle` | Rotates through configured models | `/model cycle` |
-
-The `switch` sub-command takes two arguments: the provider name and the model
-identifier. The change applies only to the current session -- it does not
-modify your configuration file.
-
-### Session management
-
-**Commands:** `/new`, `/reset`, `/compact`, `/export`
-
-These commands manage your conversation state:
-
-#### /new
-
-Starts a completely fresh conversation. Your agent gets a new session with
-no history. This is useful when you want to change topics entirely or start
-from a clean slate.
-
-#### /reset
-
-Clears the history of the current session but keeps the same session
-identifier. Your agent forgets what was said in this conversation but stays
-in the same session context.
-
-#### /compact
-
-Manually triggers the context engine's LLM compaction step. When your
-conversation gets long, this command summarizes older messages to free up space
-in the context window. Normally, the context engine manages conversation length
-automatically through multiple optimization steps (see
-[Compaction](/agents/compaction)), but you can trigger the summarization step
-directly if you want to reclaim space sooner.
-
-Optional arguments:
-- `verbose` -- Include detailed output about what was compacted
-- Any additional text is used as instructions for the compaction summary
-
-#### /export
-
-Exports the current session to an HTML file. Optionally specify a file path
-(defaults to a generated path in your home directory).
-
-### Execution control
-
-**Commands:** `/stop`
-
-Cancels the current agent execution. If your agent is taking too long, going
-in the wrong direction, or stuck in a tool loop, `/stop` immediately halts
-the current run. The session remains intact -- you can continue chatting
-normally after stopping.
-
-### Branching
-
-**Commands:** `/fork`, `/branch`
-
-These commands let you explore different conversation paths, like a "what if"
-feature for your chats.
-
-#### /fork
-
-Creates a copy of your conversation at your latest message. This lets you
-try a different approach without losing the original conversation. Think of it
-as going back to the last thing you said and asking for a different response.
-
-#### /branch
-
-Navigates between conversation branches.
-
-| Usage | What it does |
-|-------|-------------|
-| `/branch list` | Shows all available branch points in your conversation |
-| `/branch [target-id]` | Jumps to a specific branch point |
-
-After forking, you can use `/branch list` to see all the points where you
-branched off, and `/branch [id]` to jump back to any of them.
-
-### Budget control
-
-**Command:** `/budget`
-
-The `/budget` command sets a per-execution token budget for the next agent run. The amount must be a number with a `k` (thousands) or `m` (millions) suffix; bare integers are not accepted. Valid range is 10k to 10m tokens.
-
-| Usage | Effect |
-|-------|--------|
-| `/budget 500k` | Set the next execution to use at most 500,000 tokens |
-| `/budget 2m` | Set the next execution to use at most 2,000,000 tokens |
-| `/budget` | Show usage help and the configured range |
-
-You can also use the inline form `+500k` or `+2m` at the start or end of a message (e.g., `+500k research the topic`).
-
-Like `/think` and `/verbose`, `/budget` is a *directive* command -- it modifies how your agent processes the next message rather than being a separate action.
-
-### Skills
-
-**Commands:** `/skill:name`
-
-Custom prompt skills can be invoked directly from the chat using the
-`/skill:skillname` syntax. The skill name comes after the colon, and any
-text after the name is passed as arguments.
-
-For example, if you have a prompt skill called `weather`:
-
+Comis recognizes commands only at the start of a message. Unknown commands pass
+through as ordinary message text.
+
+## Available commands
+
+| Command | Behavior |
+|---|---|
+| `/think [off|minimal|low|medium|high|xhigh]` | Sets the reasoning level for the execution; without a level it uses `high` |
+| `/context` | Shows available bootstrap-file and tool-schema context information |
+| `/status` | Shows session, message, token, context, and budget information when available |
+| `/usage` | Shows recorded usage by provider and model |
+| `/config [show [section]|set <section.key> <value>|history]` | Reads or changes runtime configuration; requires admin trust |
+| `/model [status|list|cycle|next|prev|previous|<provider>/<model>]` | Inspects or changes the session model |
+| `/new [provider/model]` | Destroys the current conversation and creates a new session |
+| `/reset` | Clears the current conversation state |
+| `/compact [verbose|-v] [instructions]` | Requests context compaction |
+| `/export [path]` | Requests an HTML session export |
+| `/export-trajectory` | Sends an owner-gated trajectory bundle for the current session |
+| `/stop` | Aborts the active execution, if one exists |
+| `/fork` | Forks the live conversation at the latest user message |
+| `/branch [target-id]` | With no target, lists branch points; with an ID, navigates to it |
+| `/budget <Nk|Nm> [message]` | Applies a token budget to an execution; accepted range is 10k–10m |
+
+Examples:
+
+```text
+/think high
+/model openai/gpt-4o
+/branch
+/budget 500k Research this repository and summarize the risks.
 ```
-/skill:weather London
-```
-
-This invokes the `weather` skill with "London" as the argument. The skill's
-prompt template is expanded and used to guide your agent's response.
-
-See [Prompt Skills](/skills/prompt-skills) for how to create and manage
-custom skills.
-
-## Combining directives with messages
-
-<Tip>
-  Directive commands (`/think`, `/verbose`, `/reasoning`) can be combined with
-  a regular message. For example:
-
-  `/think high Tell me about quantum computing`
-
-  This sets reasoning to high AND sends the message "Tell me about quantum
-  computing" to your agent. The directive is stripped before your agent sees
-  the text.
-</Tip>
-
-This works because directives modify the *processing* of your message, not the
-message itself. Other commands (like `/status` or `/new`) are standalone -- they
-do not accept additional message text.
-
-## How commands are recognized
-
-Slash commands are only recognized when your message *starts* with the `/`
-character. If you write a `/` in the middle of a sentence, it is treated as
-regular text. This means you can safely type things like "I need help with
-my /home directory" without triggering a command.
-
-Commands are not case-sensitive for the `/skill:` prefix (`/Skill:weather` and
-`/skill:Weather` both work), but the built-in command names must be lowercase
-(`/think`, not `/Think`).
-
-If you type an unrecognized command (for example, `/hello`), it is treated as
-a regular message and passed to your agent as-is. Only the 17 built-in
-commands and the `/skill:name` prefix have special behavior.
 
 <Note>
-  Slash commands work on every platform -- Discord, Telegram, Slack, WhatsApp,
-  the web dashboard, and all other connected channels. They are processed by
-  Comis before reaching your agent, so the platform does not need to support
-  slash commands natively.
+The available thinking levels depend on the model SDK. A provider can ignore a
+level that its model does not support. Cost and context fields also display only
+when the runtime exposes those measurements.
 </Note>
+
+## Conditional control commands
+
+These commands are handled before the general command dispatcher:
+
+| Command | Availability |
+|---|---|
+| `/approve [short-id|all]` | Resolves a pending approval when the approval gate is enabled and wired |
+| `/deny [short-id|all]` | Denies a pending approval under the same conditions |
+| `/send on|off|inherit` | Lets the session owner override the runtime send policy for that session |
+
+Approvals are disabled by default. Enable and configure them before relying on
+`/approve` or `/deny`; see [Approvals](/security/approvals).
+
+## Prompt skills are not slash commands
+
+The current daemon does not wire `/skill:name` to direct skill loading. A string
+such as `/skill:weather` is ordinary text and may be interpreted by the model,
+but it is not a deterministic command. Prompt skills are discovered and offered
+to the agent for model-selected use. See [Prompt Skills](/skills/prompt-skills).
+
+Likewise, `/verbose` and `/reasoning` are parsed internally but their directives
+are not currently consumed by the agent execution path. They are intentionally
+omitted from the supported command table.
+
+## Scope and delivery
+
+Commands are processed by Comis, not by a messaging platform's native slash
+command system. Availability can still depend on daemon wiring, sender trust,
+session ownership, and whether a live SDK session exists. A command that needs a
+live execution surface reports that it is unavailable when the surface is absent.
 
 <CardGroup cols={2}>
   <Card title="Sessions" icon="comments" href="/agents/sessions">
-    How conversations are tracked and managed.
+    How conversations are stored and managed
   </Card>
   <Card title="Models" icon="microchip" href="/agents/models">
-    Choosing AI providers and switching models.
+    Configure providers and model selection
   </Card>
   <Card title="Prompt Skills" icon="wand-magic-sparkles" href="/skills/prompt-skills">
-    Create custom skills your agent can invoke.
+    Create model-selected reusable instructions
+  </Card>
+  <Card title="Approvals" icon="clipboard-check" href="/security/approvals">
+    Enable human approval for selected actions
   </Card>
 </CardGroup>

@@ -1,342 +1,202 @@
 ---
 title: "Quickstart"
-description: "Get your first Comis agent running in under 5 minutes"
+description: "Install Comis, configure an agent, and verify your first conversation"
 icon: "rocket"
 ---
 
-This guide takes you from zero to a working AI agent. By the end, you will have
-Comis installed, configured with your AI provider, and chatting with your first
-agent through the web dashboard.
+This guide installs Comis, walks through the current setup wizard, and verifies
+that the daemon and web dashboard work.
 
 import NonTechnicalNote from '/snippets/non-technical-note.mdx';
 
 <NonTechnicalNote />
 
-## Prerequisites
+## Before you begin
+
+Choose one runtime:
+
+- **npm:** macOS or Linux with Node.js **22.19.0 or newer**, npm, Python 3,
+  and native build tools.
+- **Docker:** Docker Engine 24 or newer with Docker Compose v2. Use a Linux
+  Docker host for production; Docker Desktop on macOS or Windows does not
+  provide the same shell-isolation boundary.
+
+Choose one model-provider path:
+
+- an API key for a supported provider;
+- an OAuth login for a subscription-backed provider such as `openai-codex`; or
+- a supported local provider such as Ollama, which requires no hosted-provider
+  credential.
+
+See [Requirements](/installation/requirements) for platform details.
+
+## Install with npm
+
+<Steps>
+  <Step title="Install and verify the CLI">
+    ```bash
+    npm install -g comisai
+    comis --version
+    ```
+
+    The second command prints the version you installed.
+  </Step>
+
+  <Step title="Run the setup wizard">
+    ```bash
+    comis init
+    ```
+
+    The wizard is staged rather than a three-question prompt. Depending on the
+    flow and provider you choose, it covers:
+
+    1. quick or advanced setup;
+    2. credential storage;
+    3. model provider and API-key, OAuth, or local-provider setup;
+    4. agent identity and model;
+    5. optional messaging channels;
+    6. gateway access and workspace settings;
+    7. optional web-search, media, voice, and recall providers;
+    8. a review screen, configuration write, and optional daemon start.
+
+    You can skip optional integrations and add them later.
+  </Step>
+
+  <Step title="Back up the master key">
+    New setups default to `security.storage: encrypted`. The wizard stores
+    collected credentials in `~/.comis/secrets.db` and writes the
+    `SECRETS_MASTER_KEY` to `~/.comis/.env` with owner-only permissions.
+
+    Back up `~/.comis/.env` to a secure location. Comis has no key escrow:
+    losing the master key makes the encrypted credential database unreadable.
+    Encryption protects a copied database from someone who does not also have
+    the key; it does not protect against a compromised host that can read both.
+  </Step>
+
+  <Step title="Start and verify the daemon">
+    If you did not start it from the wizard, run:
+
+    ```bash
+    comis daemon start
+    comis doctor
+    comis status
+    ```
+
+    `doctor` reports configuration and runtime checks. Treat configured but
+    untested integrations as unverified until their platform-specific check
+    succeeds.
+  </Step>
+
+  <Step title="Open the dashboard">
+    Open `http://localhost:4766` on the same machine and send a test message.
+    The gateway binds to loopback by default; do not expose it publicly without
+    authentication and TLS. See [Hardening](/security/hardening).
+  </Step>
+</Steps>
+
+## Provider choices
+
+### API-key providers
+
+Choose the provider in the wizard and enter the key at the hidden prompt. The
+encrypted-store default keeps the provider key out of `config.yaml` and out of
+plaintext `.env` entries.
+
+### OpenAI Codex OAuth
+
+Choose `openai-codex` for ChatGPT/Codex subscription authentication. On a local
+desktop, use the browser flow. On an SSH or headless host, use device code:
+
+```bash
+comis auth login --provider openai-codex --method device-code
+```
+
+If you skip login during setup, run that command before starting the agent.
+OAuth login is interactive and therefore is not a valid
+`comis init --non-interactive` provider path.
+
+### Local providers
+
+Choose a supported local provider such as Ollama and make sure its service is
+running before validation. No hosted-provider API key is required.
+
+## Non-interactive setup
+
+For automation, pass non-secret settings as arguments and source secret values
+from protected environment variables:
+
+```bash
+comis init --non-interactive --accept-risk \
+  --provider anthropic \
+  --api-key "$ANTHROPIC_API_KEY" \
+  --agent-name "assistant" \
+  --storage encrypted
+```
 
 <Warning>
-Before you begin, make sure you have:
-
-- **An API key** from an AI provider (Anthropic, OpenAI, or Google). You will need
-  this during setup.
-- **A terminal** (command line) -- Terminal on macOS, or any Linux shell.
-- **One of:**
-  - **Node.js 22 or later** -- check with `node --version`. Install at
-    [nodejs.org](https://nodejs.org). Pick this if you want to install Comis
-    directly on your machine or extend it from source.
-  - **Docker Engine 20.10 or later** -- check with `docker --version`. Install at
-    [docker.com/get-started](https://www.docker.com/get-started/). Pick this if
-    you would rather not install Node.js or you are running on a server.
+Command-line arguments can be visible in shell history and process listings.
+Even when the value comes from an environment variable, `--api-key` places the
+expanded value in the process arguments. Prefer the interactive wizard for
+human-operated hosts. Use non-interactive secret flags only in a controlled
+automation environment with protected logs and process access.
 </Warning>
 
-## Install and run
-
-<Tabs>
-  <Tab title="npm (recommended)">
-    Run Comis directly on your machine. Best if you already have Node.js or
-    plan to develop against the source.
-
-    <Snippet file="invocation-modes.mdx" />
-
-    <Steps>
-      <Step title="Install Comis">
-        Open your terminal and install Comis globally with npm:
-
-        ```bash
-        npm install -g comisai
-        ```
-
-        Once the installation finishes, verify it worked:
-
-        ```bash
-        comis --version
-        ```
-
-        You should see the installed version, for example:
-
-        ```
-        1.0.53
-        ```
-
-        <Tip>
-        If you get a "permission denied" error, you may need to run
-        `sudo npm install -g comisai` or configure npm to use a different directory.
-        See [Installation Details](/installation/index) for alternatives.
-        </Tip>
-      </Step>
-
-      <Step title="Run the setup wizard">
-        Run the interactive setup wizard:
-
-        ```bash
-        comis init
-        ```
-
-        The wizard walks you through three simple questions:
-
-        1. **Which AI provider?** -- Choose from Anthropic (Claude), OpenAI (GPT), Google
-           (Gemini), and others. Pick whichever provider you have an API key for.
-        2. **Your API key** -- Paste the API key from your chosen provider. The wizard
-           stores it securely and never displays it again.
-        3. **A name for your agent** -- Give your agent a name (like "Atlas" or
-           "Helper"), or press Enter to accept the default.
-
-        When the wizard finishes, it creates two files in your home directory:
-
-        - `~/.comis/config.yaml` -- Your agent's configuration (name, provider, settings)
-        - `~/.comis/.env` -- Your API key, stored separately for security
-
-        #### Picking an OpenAI provider: `openai` vs `openai-codex`
-
-        On the first wizard question, two OpenAI options appear:
-
-        | Provider id | Label | Cost model | When to pick |
-        |-------------|-------|------------|--------------|
-        | `openai` | **OpenAI (GPT)** -- "GPT-4o, o1, o3 -- API key (pay per token)" | Pay per request | You have an OpenAI API key from `platform.openai.com` and want GPT-4o / o1 / o3. |
-        | `openai-codex` | **OpenAI Codex** -- "ChatGPT/Codex subscription -- OAuth login" | Flat ChatGPT subscription | You already pay for ChatGPT Plus / Team / Enterprise and want Codex (gpt-5.1 family). No API key needed; the wizard runs an OAuth login. |
-
-        **If you pick `openai`,** the wizard prompts for an API key as usual.
-
-        **If you pick `openai-codex`,** the wizard prints:
-
-        > OpenAI Codex uses your ChatGPT/Codex subscription -- no API key needed. Choose how you want to sign in.
-
-        ...followed by a four-option login picker:
-
-        | Option | Picker label | Use when |
-        |--------|--------------|----------|
-        | Browser (auto-open) | `Browser (auto-open)` -- "Local desktop, opens default browser" | You're on a desktop or laptop with a graphical browser; the wizard opens a tab and waits for the OAuth callback on `127.0.0.1:1455`. |
-        | Browser (manual paste) | `Browser (manual paste)` -- "VPS, you paste callback URL after sign-in" | The host has a browser elsewhere (e.g., your laptop), but the daemon runs on a VPS without a default browser. The wizard prints the auth URL; you paste the callback URL back after sign-in. |
-        | Device code (phone) | `Device code (phone)` -- "SSH/headless, type a short code on a phone" | SSH session, no clipboard, no scrollback. The wizard prints a short code and a verification URL; you open the URL on your phone and type the code. |
-        | Skip for now | `Skip for now` -- "finish wizard, run `comis auth login` later" | You want to finish the rest of the wizard now and add the OAuth profile in a later step (see below). |
-
-        <Tip>
-        The wizard auto-defaults to `Device code (phone)` on remote/headless hosts (when `SSH_CLIENT`, `SSH_TTY` is set or `DISPLAY` is unset) and to `Browser (auto-open)` on local desktops. You can always pick a different option from the menu.
-        </Tip>
-
-        **What `Skip for now` does:** the wizard finishes without writing an OAuth profile. The agent config marks `openai-codex` as not-yet-validated. Before starting the daemon, run:
-
-        ```bash
-        comis auth login --provider openai-codex
-        ```
-
-        The CLI runs the same login flow (browser auto, browser manual, or device-code via `--method device-code`) and writes the resulting profile into the OAuth credential store. See [`comis auth login` reference](/reference/cli#comis-auth) for all flags.
-
-        **VPS / SSH hint:** For headless deployments (Hostinger, DigitalOcean, Hetzner, Render, etc.), pick `Device code (phone)`. The browser-based options assume a graphical environment that VPS hosts typically lack. Full VPS walkthrough: [Install on a VPS](/installation/install-vps).
-
-        For the full picture -- PKCE flow shape, multi-account profiles, the wizard-vs-CLI parity matrix, and the threat model -- see [OAuth concepts](/security/oauth).
-
-        <Accordion title="Non-interactive alternative">
-          If you prefer to skip the wizard (for example, in a CI pipeline or Docker
-          container), you can pass everything on the command line:
-
-          ```bash
-          comis init --non-interactive --accept-risk --provider anthropic --api-key sk-ant-your-key-here
-          ```
-
-          This creates the same configuration files without prompting for input.
-        </Accordion>
-      </Step>
-
-      <Step title="Start the daemon">
-        Start the Comis daemon -- the background process that keeps your agents running:
-
-        ```bash
-        comis daemon start
-        ```
-
-        You should see output similar to:
-
-        ```
-        Comis daemon started
-          Agent:    Atlas
-          Provider: anthropic (claude-sonnet-4-5-20250929)
-          Gateway:  http://localhost:4766
-          Status:   ready
-        ```
-
-        The daemon is now running. It manages your agents, handles incoming messages,
-        and serves the web dashboard.
-
-        <Tip>
-        The daemon runs in the background. You can close this terminal window and
-        it will keep running. To stop it later, run `comis daemon stop`.
-        </Tip>
-      </Step>
-
-      <Step title="Talk to your agent">
-        When the daemon starts, it also launches a built-in web dashboard. Open your
-        browser and go to:
-
-        ```
-        http://localhost:4766
-        ```
-
-        The web dashboard provides a chat interface where you can talk directly to
-        your agent. Type a message and press Enter:
-
-        ```
-        You:   Hello! What can you do?
-        Agent: Hi! I'm Atlas, your AI assistant. I can help you with
-               questions, research, writing, scheduling, and more.
-               What would you like to work on?
-        ```
-
-        The dashboard also shows your agent's status, memory, and configuration.
-        You can monitor everything from this single page.
-
-        <Info>
-        The web dashboard is the recommended way to interact with your agent when
-        getting started. For programmatic access, Comis also provides a JSON-RPC
-        gateway and an OpenAI-compatible API at the same address.
-        </Info>
-      </Step>
-
-      <Step title="Connect a messaging channel (optional)">
-        Your agent is running and you can chat through the web dashboard. But the real
-        power of Comis is putting your agent inside the messaging apps your community
-        already uses.
-
-        To add a messaging channel like Discord, Telegram, or Slack, re-run the
-        setup wizard:
-
-        ```bash
-        comis init
-        ```
-
-        The wizard detects your existing configuration and offers to add channels.
-        Each channel has its own setup -- typically you will need a bot token from
-        the platform.
-
-        See the [Channels](/channels/index) section for step-by-step guides for each
-        platform.
-      </Step>
-    </Steps>
-  </Tab>
-
-  <Tab title="Docker (no Node.js required)">
-    Run Comis as a container. Best if you would rather not install Node.js or
-    you are deploying to a server.
-
-    <Steps>
-      <Step title="Start the container">
-        Pull and run the slim image. This starts the daemon, exposes the web
-        dashboard on port 4766, and stores configuration and data in a named
-        Docker volume so they survive restarts:
-
-        ```bash
-        docker run -d --name comis --restart unless-stopped -p 4766:4766 -v comis-data:/home/comis/.comis comisai/comis:latest-slim
-        ```
-
-        The `--restart unless-stopped` flag is required — the wizard and any agent-initiated config change (`gateway.restart`, `gateway.env_set`, `gateway.patch`) signal the daemon to reload, and Docker's restart policy is what brings the container back with the new config.
-
-        Once running, verify the daemon is up:
-
-        ```bash
-        curl http://localhost:4766/health
-        ```
-
-        You should see:
-
-        ```json
-        {"status":"ok"}
-        ```
-      </Step>
-
-      <Step title="Run the setup wizard">
-        Configure your provider and channels by running the wizard inside the
-        container:
-
-        ```bash
-        docker exec -it comis comis init
-        ```
-
-        The wizard walks you through selecting a provider, adding channel tokens
-        (Telegram, Discord, Slack, etc.), and connecting your first agent. The
-        same three questions apply: which provider, your API key, and a name
-        for your agent.
-
-        Configuration is written to `/home/comis/.comis/config.yaml` and
-        `/home/comis/.comis/.env` inside the container, which map to the
-        `comis-data` Docker volume. Your keys survive `docker rm` and
-        `docker pull` as long as the volume sticks around.
-      </Step>
-
-      <Step title="Talk to your agent">
-        After the wizard finishes, the daemon picks up the new configuration
-        automatically. Open the web dashboard in your browser:
-
-        ```
-        http://localhost:4766
-        ```
-
-        Type a message in the chat panel and press Enter to chat with your agent.
-
-        <Tip>
-        Stream the daemon's logs with `docker logs -f comis`. Stop the daemon
-        with `docker stop comis` and start it again with `docker start comis` --
-        your data and configuration persist in the `comis-data` volume.
-        </Tip>
-      </Step>
-    </Steps>
-
-    <Info>
-    For production Docker deployments -- pinned version tags, custom networks,
-    `docker-compose`, the separate `comisai/comis-web` image -- see the full
-    [Docker installation guide](/installation/install-docker) and the
-    [Docker Hub reference](/operations/docker-hub).
-    </Info>
-  </Tab>
-</Tabs>
-
-## What just happened?
-
-Here is what happened behind the scenes when you sent that first message:
-
-1. You typed a message in the web dashboard and pressed Enter.
-2. The Comis gateway received your message and looked at the routing rules to
-   figure out which agent should handle it.
-3. Your agent received the message, checked its memory for any relevant context
-   from past conversations, and built a prompt combining your message with its
-   instructions.
-4. The prompt was sent to your AI provider (Anthropic, OpenAI, or Google), which
-   generated a response.
-5. The agent sent the reply back through the gateway to your browser, where it
-   appeared in the chat.
-
-All of this happened in a few seconds. As you keep chatting, your agent builds
-up memory and gets better at helping you over time.
+Run `comis init --help` for the authoritative list of non-interactive flags.
+`openai-codex` cannot be initialized non-interactively; initialize with another
+provider or local configuration, then complete OAuth from a TTY.
+
+## Docker quick path
+
+The published image can run without host Node.js:
+
+```bash
+docker run -d \
+  --name comis \
+  --restart unless-stopped \
+  -p 127.0.0.1:4766:4766 \
+  -v comis-data:/home/comis/.comis \
+  comisai/comis:latest-slim
+
+docker exec -it comis comis init
+curl http://127.0.0.1:4766/health
+```
+
+Use a pinned release tag, a Linux host, persistent storage, gateway
+authentication, and TLS for a production deployment. See
+[Install with Docker](/installation/install-docker) for the complete setup.
+
+## Add a channel
+
+The web dashboard works without a messaging channel. To add one later, re-run
+`comis init` and choose the channel stage, or follow the relevant
+[channel guide](/channels/index). Comis documents ten channel adapters:
+Discord, Telegram, Slack, WhatsApp, Signal, iMessage, LINE, IRC, Email, and
+Microsoft Teams.
 
 ## Useful commands
 
-Now that your agent is running, here are a few commands you will use regularly:
-
-| Command | What it does |
+| Command | Purpose |
 |---|---|
-| `comis daemon start` | Start the daemon (agents, gateway, dashboard) |
-| `comis daemon stop` | Stop the daemon and all agents |
-| `comis daemon status` | Check if the daemon is running |
-| `comis daemon logs` | View the daemon's log output |
-| `comis init` | Re-run the setup wizard to add channels or change settings |
-
-<Tip>
-After editing `~/.comis/config.yaml` by hand, stop and restart the daemon to
-pick up the changes: `comis daemon stop` followed by `comis daemon start`.
-</Tip>
+| `comis daemon status` | Check the daemon process |
+| `comis daemon logs -f` | Follow daemon logs |
+| `comis doctor` | Diagnose configuration and runtime subsystems |
+| `comis status` | Show the current system overview |
+| `comis security audit` | Review security findings |
+| `comis secrets audit --check` | Detect plaintext credential exposure |
 
 ## Next steps
 
 <CardGroup cols={2}>
   <Card title="Connect a Channel" icon="messages" href="/channels/index">
-    Add Discord, Telegram, Slack, WhatsApp, or any of the 10 supported platforms.
+    Configure one of the ten documented messaging adapters.
   </Card>
-  <Card title="How It Works" icon="diagram-project" href="/get-started/how-it-works">
-    Understand how Comis processes messages and connects your agents.
+  <Card title="Security Boundaries" icon="shield-check" href="/get-started/security">
+    Understand defaults, optional controls, and deployment limitations.
   </Card>
-  <Card title="Use Cases" icon="lightbulb" href="/get-started/use-cases">
-    See real-world scenarios and what you can build with Comis.
+  <Card title="Operations" icon="gauge" href="/operations/index">
+    Run, monitor, back up, and troubleshoot the daemon.
   </Card>
-  <Card title="Installation Details" icon="download" href="/installation/index">
-    Docker setup, Linux packages, requirements, and advanced configuration.
+  <Card title="CLI Reference" icon="terminal" href="/reference/cli">
+    Review every current command group and flag.
   </Card>
 </CardGroup>

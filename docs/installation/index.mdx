@@ -1,120 +1,93 @@
 ---
 title: "Installation"
-description: "Choose your setup method and install Comis"
+description: "Choose a supported way to install and operate Comis"
 icon: "download"
 ---
 
-This section walks you through installing Comis on your server or development
-machine. There are five ways to get started -- pick the one that fits your
-workflow best.
+Choose the path that matches the host and the amount of infrastructure you
+want to manage. Linux is the primary production platform; macOS is supported
+for development and local evaluation.
 
-## Quick Install
+## Choose a setup method
 
-One-liner -- installs Node.js, system dependencies, a dedicated `comis` user,
-and registers the daemon as a systemd service:
+<CardGroup cols={2}>
+  <Card title="npm on Linux or macOS" icon="terminal" href="/installation/install-linux">
+    Install the CLI with Node.js 22.19.0 or newer, then run the setup wizard.
+  </Card>
+  <Card title="Linux VPS" icon="server" href="/installation/install-vps">
+    Use the Linux installer to create a dedicated service account and systemd unit.
+  </Card>
+  <Card title="Docker on Linux" icon="docker" href="/installation/install-docker">
+    Run the published image with persistent volumes and explicit network controls.
+  </Card>
+  <Card title="Render" icon="cloud" href="/installation/install-render">
+    Deploy the Linux container image on a managed service with persistent storage.
+  </Card>
+</CardGroup>
+
+| Method | Recommended use | Important boundary |
+|---|---|---|
+| npm | Development, evaluation, or a host you manage | Requires Node.js 22.19.0+, Python 3, and native build tools |
+| Linux installer | A Linux server managed with systemd | The script may create users, packages, and services; review it before running |
+| Docker | Reproducible Linux deployment | Docker Desktop on macOS/Windows is for development, not the documented production boundary |
+| Render | Managed container hosting | Persist `~/.comis` and configure authentication before exposing the gateway |
+
+## Linux server installer
+
+The hosted installer is intended for supported Linux server distributions. It
+can install system dependencies, create a dedicated `comis` user, and register
+a systemd service:
 
 ```bash
 curl -fsSL https://comis.ai/install.sh | bash
 ```
 
-This is the same script used by the [VPS guide](/installation/install-vps) and
-works on macOS and Linux.
+<Warning>
+Piping a remote script to a shell grants it host-level authority. Review
+`https://comis.ai/install.sh` first and use the [npm guide](/installation/install-linux)
+for a user-scoped installation. On macOS, use the npm path; systemd and the
+dedicated Linux service-user flow do not apply.
+</Warning>
 
-On Linux the dedicated `comis` user is the default: run as root, the installer
-creates it directly; run as a regular user, it offers to re-run itself with
-`sudo`. Pass `--no-user` (or set `COMIS_NO_USER=1`) to install for the current
-user instead. Non-interactive non-root runs (no TTY, or `--no-prompt`) stop
-and ask you to pick one of the two explicitly.
+## What setup creates
 
-## Choose Your Setup Method
+A normal setup contains:
 
-<CardGroup cols={2}>
-  <Card title="Linux Install" icon="linux" href="/installation/install-linux">
-    Recommended for most users. Step-by-step procedure with `npm install -g comisai`,
-    setup wizard, and `comis daemon start`.
-  </Card>
-  <Card title="VPS Install" icon="server" href="/installation/install-vps">
-    Deploy on Hostinger, DigitalOcean, Hetzner, or any Ubuntu VPS in under 10 minutes
-    using the one-line installer.
-  </Card>
-  <Card title="Docker" icon="docker" href="/installation/install-docker">
-    Run Comis in a container. No system-level Node.js installation needed --
-    everything runs inside Docker.
-  </Card>
-  <Card title="Render.com" icon="cloud" href="/installation/install-render">
-    Deploy from Docker Hub to Render in ~5 minutes. Managed Linux host,
-    automatic HTTPS, persistent disk, public URL. No server to provision.
-  </Card>
-  <Card title="Manual Configuration" icon="gear" href="/installation/configuration">
-    Full control over every setting. For experienced users who want to build
-    their config.yaml from scratch.
-  </Card>
-</CardGroup>
+- the `comis` CLI and daemon;
+- `~/.comis/config.yaml` for non-secret configuration;
+- `~/.comis/secrets.db` for encrypted credentials by default;
+- `~/.comis/.env`, which contains the encrypted store's master key; and
+- local databases and workspace data under `~/.comis`.
 
-## Comparison
+Back up the master key securely. Losing it makes encrypted credentials
+unrecoverable. Encryption at rest does not protect a running daemon or a host
+where both the database and key are compromised.
 
-| Method | Best for | Time estimate |
-|---|---|---|
-| Linux Install | First-time local install | ~5 minutes |
-| VPS Install | Production server with systemd + dedicated user | ~10 minutes |
-| Docker | Container-based workflows, isolation | ~10 minutes |
-| Render.com | Hosted deploy from Docker Hub, no server admin | ~5 minutes |
-| Manual | Custom setups, advanced users | ~15 minutes |
+## Authentication requirement
 
-All four methods produce the same result: a running Comis daemon with a web
-dashboard at `http://localhost:4766`. The difference is how much the tooling
-handles for you versus how much you configure by hand.
+Comis needs access to at least one model. Use one of:
 
-### What Gets Installed
+- a supported provider API credential;
+- a supported OAuth flow, such as OpenAI Codex device-code login; or
+- a local provider such as Ollama.
 
-Regardless of which method you choose, Comis sets up:
+API credentials are not required for a working local model. See
+[Requirements](/installation/requirements) and the [Quickstart](/get-started/quickstart)
+before installing.
 
-- **The `comis` CLI** -- a command-line tool for managing your agents, running
-  diagnostics, and controlling the daemon.
-- **A background daemon** -- the process that keeps your agents running, serves
-  the web dashboard, and handles incoming messages from connected channels.
-- **A configuration directory** at `~/.comis/` containing your config file,
-  environment secrets, and local database.
-
-The setup wizard creates sensible defaults for all of these. The manual path
-lets you customize each one individually.
-
-<Info>
-**Already installed?** If Comis is already running and you want to check that
-everything is healthy, skip ahead to the [Verification](/installation/verify)
-page for diagnostic steps.
-</Info>
-
-## Before You Begin
-
-Make sure your system meets the minimum requirements before starting any
-installation method. The [Requirements](/installation/requirements) page lists
-everything you need -- hardware specs, software versions, and AI provider
-accounts. Most users only need Node.js 22+, basic build tools, and an API key
-from one AI provider.
-
-## Explore the Installation Guides
+## Continue
 
 <CardGroup cols={2}>
   <Card title="Requirements" icon="clipboard-check" href="/installation/requirements">
-    Hardware, software, and account prerequisites.
-  </Card>
-  <Card title="Install on Linux" icon="linux" href="/installation/install-linux">
-    Step-by-step procedure for Ubuntu, Fedora, and Arch.
-  </Card>
-  <Card title="Install on a VPS" icon="server" href="/installation/install-vps">
-    One-line installer for Hostinger, DigitalOcean, Hetzner, and others.
-  </Card>
-  <Card title="Install with Docker" icon="docker" href="/installation/install-docker">
-    Container-based setup with Docker Compose.
-  </Card>
-  <Card title="Deploy on Render.com" icon="cloud" href="/installation/install-render">
-    Hosted deploy from Docker Hub with persistent disk and HTTPS.
+    Check platform, runtime, and provider prerequisites.
   </Card>
   <Card title="Configuration" icon="gear" href="/installation/configuration">
-    Customize `config.yaml` and connect channels.
+    Understand config, credential storage, and channels.
   </Card>
   <Card title="Verification" icon="circle-check" href="/installation/verify">
-    Confirm your installation is healthy.
+    Check the daemon and its configured integrations.
+  </Card>
+  <Card title="Production hardening" icon="shield" href="/security/hardening">
+    Restrict tools, enable approvals where needed, and secure the gateway.
   </Card>
 </CardGroup>

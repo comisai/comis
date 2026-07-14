@@ -1,6 +1,6 @@
 ---
 title: "Install on a VPS"
-description: "Deploy Comis on Hostinger, DigitalOcean, Hetzner, or any Ubuntu VPS in under 10 minutes"
+description: "Deploy Comis as a systemd service on a supported Ubuntu VPS"
 icon: "server"
 ---
 
@@ -26,7 +26,7 @@ Before you start, have these ready:
 |---|---|
 | A VPS running **Ubuntu 22.04+** with at least 1 GB RAM | Your hosting provider's dashboard |
 | **Root SSH access** to the server | Your provider sends credentials after purchase |
-| An **AI provider API key** (Anthropic, OpenAI, or Google) | [Anthropic Console](https://console.anthropic.com), [OpenAI Platform](https://platform.openai.com), or [Google AI Studio](https://aistudio.google.com) |
+| A model path: **provider API credential**, supported OAuth account, or local provider | Provider account or a model service you operate |
 | A **chat channel bot token** (optional) | See the [Channels](/channels/index) section for setup guides |
 
 <Tip>
@@ -61,11 +61,12 @@ dedicated `comis` user, systemd service, and the Comis package itself.
 curl -fsSL https://comis.ai/install.sh | bash
 ```
 
-The installer takes 2-3 minutes. You will see a progress log like this:
+The installer reports each system, package, user, and service step. Review any
+warning before continuing; duration depends on the host and package mirrors.
 
 ```
   COMIS Installer
-  Friendly by nature. Powerful by design.
+  An open-source, security-first platform for AI agent teams.
 
   [1/4] Preparing system (as root)
   ✓ Node.js v22 installed
@@ -79,7 +80,7 @@ The installer takes 2-3 minutes. You will see a progress log like this:
   ✓ comis.service started
   ✓ Daemon is responding on the gateway port
 
-  Comis installed successfully (1.0.53)!
+  Comis installed successfully!
 ```
 
 <Warning>
@@ -103,15 +104,14 @@ curl -fsSL https://comis.ai/install.sh | bash
 # Minimal footprint — skip the browser runtime entirely
 curl -fsSL https://comis.ai/install.sh | bash -s -- --without-browser
 
-# Stealth Chromium — bypasses Cloudflare Turnstile, FingerprintJS,
-# BrowserScan, and Reddit's secondary fingerprint check
+# Optional CloakBrowser runtime
 curl -fsSL https://comis.ai/install.sh | bash -s -- --with-cloakbrowser
 ```
 
 <Warning>
-**VPS providers are pre-blocked by Reddit, X/Twitter, LinkedIn, and many anti-bot services at the IP layer.** Hostinger, DigitalOcean, AWS, Hetzner — all flagged regardless of which browser you run. CloakBrowser does not include a proxy: it fixes browser-fingerprint detection, not IP reputation. If you want Reddit/social scraping from a VPS, pair `--with-cloakbrowser` with a residential proxy. If you only need to hit Cloudflare-protected sites that don't blocklist VPS ranges, the stealth flag alone is enough.
-
-Sites verified bypassed on a Hostinger VPS with `--with-cloakbrowser`: bot.incolumitas.com (1 fail vs 4 for stock Chrome), browserscan.net (`Normal` vs `Robot`). Reddit and X stayed blocked due to IP filtering, not fingerprint detection.
+CloakBrowser does not include a proxy and cannot change a VPS's IP reputation.
+It is an optional compatibility runtime, not a guarantee of access. Review its
+separate binary license and every target site's terms before enabling it.
 </Warning>
 
 See [agent-tools/browser](/agent-tools/browser#stealth-mode-anti-bot-detection) for the full flag matrix, sandbox details, and license terms (CloakBrowser's binary is free for self-hosted use; OEM license needed for redistributing to third-party customers).
@@ -157,44 +157,41 @@ Verify the installation:
 comis --version
 ```
 
-Expected output (version number — yours may differ):
-
-```
-1.0.53
-```
+The command prints the installed package version.
 
 ## Step 4: Run the setup wizard
 
-The interactive wizard configures your AI provider, generates a gateway token,
-and (optionally) connects a chat channel.
+The interactive wizard configures storage, model access, the agent, optional
+channels, gateway, workspace, tools, media, and recall. It shows a review before
+writing files or starting the daemon.
 
 ```bash
 comis init
 ```
 
-The wizard walks you through:
-
-1. **AI Provider** -- choose Anthropic, OpenAI, or Google and paste your API key
-2. **Agent name** -- give your agent a personality
-3. **Channels** -- connect Telegram, Discord, or others (you can skip and add later)
-4. **Gateway security** -- auto-generates an authentication token
-5. **Start daemon** -- restarts the daemon with your new configuration
+New installations default to encrypted credential storage. Credentials are
+written to `~/.comis/secrets.db`; the master key is stored as
+`SECRETS_MASTER_KEY` in the owner-readable `~/.comis/.env`. Back up that key in
+a secure credential manager. Losing it makes the encrypted store unrecoverable.
 
 <Tip>
 When the wizard asks to restart the daemon, choose **Restart (recommended)**.
-This ensures the daemon picks up your API key and gateway token immediately.
+This ensures the daemon reads the new configuration and credentials.
 </Tip>
 
 ### Codex OAuth on headless hosts
 
 If you pick `openai-codex` as your provider on a VPS, the wizard's auto-default for the login method is `Device code (phone)` -- the recommended path on headless hosts. This is because VPS images typically lack a default browser, and SSH sessions usually have no clipboard or scrollback that the browser-paste flow relies on.
 
-The wizard detects headless hosts via standard environment variables:
+The wizard detects headless hosts using standard environment signals:
 
 - `SSH_CLIENT` or `SSH_TTY` set, **or**
 - `DISPLAY` unset
 
-When detected, the picker pre-selects `Device code (phone)`. You confirm by pressing Enter; the wizard prints a short code and a verification URL like `https://chat.openai.com/oauth/device`. Open that URL on your phone or laptop browser, sign into ChatGPT, and type the code. The wizard polls every 5 seconds and continues once the code is accepted.
+When detected, the picker pre-selects `Device code (phone)`. The wizard prints
+a short code and `https://auth.openai.com/codex/device`. Open it on another
+device, sign in, enter the code, and return to the terminal when authorization
+completes.
 
 <Tip>
 You can re-run the OAuth login at any time, with or without finishing the wizard. From a TTY:
@@ -206,7 +203,8 @@ comis auth login --provider openai-codex --method device-code
 This is the same flow the wizard runs and writes to the same OAuth credential store. Use it if you picked `Skip for now` in the wizard or want to add a second ChatGPT account (multi-account is supported -- see [OAuth concepts -> Multi-account profiles](/security/oauth#multi-account-profiles)).
 </Tip>
 
-For the wizard's full 4-option picker walkthrough -- including the local-desktop and browser-manual-paste options -- see the [Quickstart](/get-started/quickstart#picking-an-openai-provider-openai-vs-openai-codex). For the OAuth threat model and storage backends, see [OAuth concepts](/security/oauth).
+For the supported Codex path, see [Quickstart: OpenAI Codex OAuth](/get-started/quickstart#openai-codex-oauth).
+For the OAuth threat model and storage backends, see [OAuth concepts](/security/oauth).
 
 ## Step 5: Verify everything works
 

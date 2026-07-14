@@ -1,6 +1,6 @@
 ---
 title: "Browser"
-description: "Headless browser automation with 16 actions for navigation, interaction, and screenshots"
+description: "Browser automation for navigation, interaction, and screenshots"
 icon: "window-maximize"
 ---
 
@@ -185,31 +185,25 @@ Use the `profiles` action to create, list, and switch between browser profiles.
 
 ## Stealth mode (anti-bot detection)
 
-The default install provisions **stock Chrome running headed via Xvfb** (both `--with-browser` and `--with-xvfb` are on by default) — headed already clears the low tier of headless-detection (BrowserScan flips `Robot` → `Normal`). Still flagged by fingerprint-tier services (Cloudflare Turnstile, FingerprintJS, reCAPTCHA v3 scoring, Reddit's secondary fingerprint check); for those, add `--with-cloakbrowser`. A `--without-xvfb` install runs plain headless Chrome; `--without-browser` skips the runtime entirely.
+The Linux installer provisions **stock Chrome running headed via Xvfb** when
+`--with-browser` and `--with-xvfb` are enabled (both are installer defaults).
+Use `--with-cloakbrowser` to opt into the alternative browser runtime. A
+`--without-xvfb` install runs Chrome headless; `--without-browser` skips the
+browser runtime entirely. No runtime guarantees access to sites with bot
+detection, authentication challenges, or IP-reputation controls.
 
 The install-time flags compose. They're available in both the bare-metal installer (`install.sh`) and the Docker image (build args):
 
 | Flag | What it adds | Default |
 |---|---|---|
 | `--with-browser` | Stock Google Chrome + headless shared libs. Sandbox `ReadWritePaths` widened for Chrome's out-of-profile writes (`~/.config/google-chrome`, `~/.local/share/applications`). | **On** (opt out with `--without-browser`). The browser tool needs a Chrome binary to launch. |
-| `--with-xvfb` | Adds Xvfb + a `comis-xvfb.service` systemd companion that runs a virtual display on `:99`. The main daemon unit joins its `/tmp` namespace so the X11 socket is reachable. Config seeded with `headless: false` **only when Xvfb actually installed** (else it downshifts to headless — see [install-linux](/installation/install-linux#browser-tool-provisioning)). | **On** (opt out with `--without-xvfb`). Clears headless-detection (BrowserScan `Robot` → `Normal`). |
-| `--with-cloakbrowser` | Installs CloakBrowser — a stealth Chromium fork with source-level fingerprint patches at the C++ level (canvas, WebGL, audio, fonts, GPU, screen, WebRTC, hardware reporting). `findChrome()` auto-detects and prefers it over stock Chrome. Sandbox paths are tighter than the Chrome variant. | **Opt-in.** Sites that fingerprint visitors — verified bypass on Cloudflare Turnstile (non-interactive), FingerprintJS, BrowserScan, bot.incolumitas (1 fail vs 4 for stock Chrome — only the irreducible W3C WebDriver-spec leak remains), and Reddit's secondary fingerprint check on non-datacenter IPs. |
-
-### Verified results (Ubuntu 24.04 VPS, head-to-head against the same probes)
-
-| Config | bot.incolumitas detection-tests | browserscan.net verdict |
-|---|---|---|
-| Stock Chrome, headless | 4 fails (UA leak, HEADCHR_UA, WEBDRIVER, CHR_MEMORY) | `Robot` |
-| Stock Chrome, headed via Xvfb | 1 fail (WEBDRIVER spec only) | `Normal` |
-| CloakBrowser, headless | 1 fail (WEBDRIVER spec only) | `Normal` |
-| CloakBrowser + Xvfb, headed | 1 fail (WEBDRIVER spec only) | `Normal` |
-
-The `WEBDRIVER` fail is unavoidable for any CDP-connected browser — it's a W3C-spec observable side effect, not a fingerprint defect. CloakBrowser's own documentation calls this out as the single irreducible cost.
+| `--with-xvfb` | Adds Xvfb + a `comis-xvfb.service` systemd companion that runs a virtual display on `:99`. The main daemon unit joins its `/tmp` namespace so the X11 socket is reachable. Config is seeded with `headless: false` **only when Xvfb actually installed** (otherwise it uses headless mode — see [install-linux](/installation/install-linux#browser-tool-provisioning)). | **On** (opt out with `--without-xvfb`). |
+| `--with-cloakbrowser` | Installs the optional CloakBrowser Chromium runtime. `findChrome()` probes it before the stock Chrome paths. | **Opt-in.** Compatibility and detection outcomes vary by site and network. |
 
 <Warning>
-**Datacenter IPs are pre-blocked regardless of fingerprint.** Reddit, X/Twitter, LinkedIn, and many anti-bot services blocklist datacenter ASNs (AWS, DigitalOcean, Hetzner, Hostinger, …) at the network layer before any browser fingerprint check runs. CloakBrowser does not include a proxy. If your daemon runs on a datacenter VPS, pair the stealth flag with a residential proxy.
-
-Concretely measured this session: stock Chrome and CloakBrowser produced identical 403 "blocked by network security" responses on Reddit from a Hostinger VPS. From a residential ISP, stock Chrome still got blocked but CloakBrowser bypassed Reddit's secondary fingerprint check and returned the actual subreddit content.
+Sites may block automated browsers or datacenter networks independently of the
+browser fingerprint. CloakBrowser does not include a proxy and does not bypass
+site access controls. Follow each site's terms and automation policies.
 </Warning>
 
 ### Install examples
@@ -242,7 +236,10 @@ CloakBrowser's wrapper is MIT-licensed; the compiled binary is under a separate 
 
 The browser includes built-in security protections:
 
-- **SSRF validation** -- The `navigate` and `open` actions validate URLs before loading them. The browser cannot access localhost, internal IP addresses (like `10.x.x.x` or `192.168.x.x`), or cloud metadata endpoints (like `169.254.169.254`). This prevents attacks where a crafted message tricks the browser into accessing your internal network.
+- **SSRF validation** -- The `navigate` and `open` actions reject URLs that
+  resolve to known localhost, private-network, or cloud-metadata destinations
+  before loading them. Treat this as one defense layer and keep the browser
+  isolated from sensitive internal networks.
 - **Screenshot sanitization** -- Screenshots are processed and sanitized before being stored or sent.
 
 For more details on network security protections, see [Security](/get-started/security).

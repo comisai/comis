@@ -1,17 +1,19 @@
 ---
-title: "OpenAI-Compatible API"
-description: "Complete request/response schema reference for /v1/chat/completions, /v1/models, and /v1/embeddings"
+title: "Experimental OpenAI-Shaped API"
+description: "Implemented request and response shapes for the experimental /v1/chat/completions, /v1/models, and /v1/embeddings routes"
 icon: "code"
 ---
 
-**What this is for:** point any OpenAI-API-compatible client at Comis and have it talk to your local agents. **Who it's for:** developers integrating Comis into existing OpenAI-shaped tooling (LangChain, custom GPTs, third-party UIs).
+**What this is for:** build a custom integration against the selected `/v1`
+request and response shapes Comis implements. **Who it's for:** developers who
+can validate and adapt their client to this documented subset.
 
-Comis exposes an OpenAI-compatible REST API at the `/v1/` prefix. Any client
-library, proxy, or tool that speaks the OpenAI Chat Completions protocol can
-connect to Comis without modification. The API supports chat completions
-(streaming and non-streaming), model listing, embeddings, and the OpenAI
-Responses API. Authentication uses the same gateway bearer tokens as JSON-RPC,
-so a token with `rpc` or `api` scope works.
+Comis mounts experimental OpenAI-shaped routes at the `/v1/` prefix. The shapes
+are intentionally limited, unknown request fields are rejected, and Comis's
+agent and session semantics differ from the upstream APIs. This is **not** a
+general compatibility guarantee for OpenAI SDKs, proxies, or third-party tools.
+Test the exact client and fields you intend to use. Authentication uses gateway
+bearer tokens with `rpc`, `api`, or wildcard scope.
 
 ## Endpoints
 
@@ -22,7 +24,10 @@ so a token with `rpc` or `api` scope works.
 | `GET` | `/v1/models/:id` | Retrieve a single model by ID |
 | `POST` | `/v1/embeddings` | Generate text embeddings |
 
-The gateway also mounts `POST /v1/responses` (OpenAI Responses API). It is listed in the [HTTP Gateway routes](/reference/http-gateway#openai-compatible-endpoints) reference but is intentionally not described here because the OpenAI Responses spec is separate from the Chat Completions spec.
+The gateway also mounts the experimental `POST /v1/responses` route. It is
+listed in the [HTTP Gateway routes](/reference/http-gateway#experimental-openai-shaped-endpoints)
+reference but is intentionally not described here because it has a separate
+schema and event model.
 
 ## Authentication
 
@@ -214,7 +219,7 @@ Source: `ChatCompletionChunk` interface in `packages/gateway/src/openai/openai-t
 
 ### Finish Reason Mapping
 
-Comis maps its internal finish reasons to OpenAI-compatible values. Unknown
+Comis maps its internal finish reasons to the implemented OpenAI-shaped values. Unknown
 reasons default to `"stop"`.
 
 | Comis Reason | OpenAI Reason | Description |
@@ -233,7 +238,8 @@ Source: `FINISH_REASON_MAP` in `packages/gateway/src/openai/openai-types.ts`
 
 ### Session Key
 
-Each OpenAI API request creates an ephemeral session with an auto-generated key:
+Each request to `/v1/chat/completions` creates an ephemeral session with an
+auto-generated key:
 
 ```json
 {
@@ -470,7 +476,7 @@ Source: `STATUS_TO_ERROR_TYPE` and `createOpenAIError()` in `packages/gateway/sr
 
 ## Configuration
 
-The OpenAI-compatible API is enabled automatically when the gateway is running.
+The experimental OpenAI-shaped routes are mounted when the gateway is running.
 Relevant configuration fields:
 
 ```yaml

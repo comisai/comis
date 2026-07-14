@@ -1,10 +1,14 @@
 ---
 title: "Hardening"
-description: "A step-by-step checklist to maximize the security of your Comis installation"
+description: "A practical checklist for reducing deployment risk"
 icon: "lock"
 ---
 
-Comis is secure by default -- audit logging, input scanning, output guarding, and many other protections are active from the moment you start the daemon. But you can make your installation even stronger by following this hardening checklist. Each item below addresses a specific security concern, ordered by priority so you tackle the most important changes first.
+Comis enables several defensive controls by default, but the default deployment
+is intentionally usable rather than maximally restrictive: approvals are off,
+the tool policy is `full`, and exec isolation can fall back to ordinary host
+execution. Use this checklist before exposing Comis to untrusted users or a
+network.
 
 ## Quick Check: Run the Security Audit
 
@@ -14,7 +18,8 @@ Before working through the checklist manually, run the built-in security audit t
 comis doctor
 ```
 
-This command checks 5 security categories and reports findings with severity levels (critical, warning, info) and specific remediation advice. Each finding tells you exactly what to fix and how. Run it again after making changes to verify your progress.
+This command checks installation and security posture and reports findings with
+severity levels and remediation advice. Run it again after making changes.
 
 <Tip>
 The security audit can automatically fix some findings. Follow the suggested remediation commands in the output.
@@ -47,7 +52,7 @@ These items address the most significant security risks. Complete them before ex
     # Bad: plaintext secret in config
     providers:
       openai:
-        apiKey: sk-abc123...
+        apiKey: <literal-provider-key>
 
     # Good: reference an environment variable
     providers:
@@ -423,7 +428,7 @@ Comis can scan file writes for secret-shaped values and warn or block before a l
 
 <CardGroup cols={2}>
   <Card title="Defense in Depth" icon="shield-halved" href="/security/defense-in-depth">
-    All 22 categorical layers (24 primitives) explained
+    How the security controls work together
   </Card>
   <Card title="Secrets" icon="key" href="/security/secrets">
     Set up the encrypted secrets store
