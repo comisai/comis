@@ -504,13 +504,16 @@ export class IcDashboard extends LitElement {
   }
 
   override updated(changed: Map<string, unknown>): void {
-    if (changed.has("apiClient") && this.apiClient) {
+    const loadsRpcAfterRest = changed.has("apiClient") && this.apiClient !== null;
+    if (loadsRpcAfterRest) {
       this._loadData();
     }
     if (changed.has("rpcClient")) {
       this._stopRpcRefresh();
       this._startRpcRefresh();
-      this._loadRpcData();
+      if (!loadsRpcAfterRest) {
+        this._loadRpcData();
+      }
       // Track RPC status so render() can show "---" placeholders when disconnected.
       this._rpcStatusUnsub?.();
       this._rpcStatusUnsub = null;
