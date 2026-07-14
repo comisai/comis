@@ -75,6 +75,7 @@ import { createFakeClock } from "../../../../../test/support/fake-clock.js";
 import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
 import { createMockLogger } from "../../../../../test/support/mock-logger.js";
 import type { MemoryConfig, MemorySearchResult, SessionKey } from "@comis/core";
+import { MemoryConfigSchema } from "@comis/core";
 import { randomUUID, createHash } from "node:crypto";
 import { readFileSync, mkdtempSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -193,14 +194,13 @@ const COMIS_SYSTEMS: ComisSystem[] = [
 ];
 
 function makeBenchConfig(dbPath: string, dims: number): MemoryConfig {
-  return {
+  return MemoryConfigSchema.parse({
     dbPath,
     walMode: false,
-    embeddingModel: "local",
-    embeddingDimensions: dims,
+    recall: { embeddingModel: "local", embeddingDimensions: dims },
     compaction: { enabled: false, threshold: 1000, targetSize: 500 },
     retention: { maxAgeDays: 0 },
-  } as MemoryConfig;
+  });
 }
 
 function extractResponseText(response: { content?: unknown[] }): string {
