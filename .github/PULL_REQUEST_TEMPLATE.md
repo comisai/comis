@@ -16,11 +16,12 @@ Fixes #
 
 ## Checklist
 
-- [ ] Tests pass (`pnpm test`)
-- [ ] Linting passes (`pnpm lint:security`)
+- [ ] Full repository validation passes (`pnpm validate`)
+- [ ] New or changed behavior has a test that demonstrated the RED state before the production change
 - [ ] Documentation updated (if applicable)
 - [ ] No secrets or credentials committed
 - [ ] Security implications considered
+- [ ] The change is focused on one concern and links the related issue
 
 ## RED Test Proof
 

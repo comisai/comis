@@ -8,24 +8,26 @@ This project follows a Code of Conduct to ensure a welcoming and inclusive envir
 
 ## Getting Started
 
+Prerequisites: Git, Node.js **22.19 or newer**, and pnpm **10.34.4** (the version pinned in `package.json`).
+
 1. **Fork** the repository on GitHub
 2. **Clone** your fork locally:
    ```bash
    git clone https://github.com/<your-username>/comis.git
    cd comis
    ```
-3. **Install dependencies** using pnpm:
+3. **Activate the pinned pnpm version** and install dependencies:
    ```bash
+   corepack enable
+   corepack prepare pnpm@10.34.4 --activate
    pnpm install
    ```
-4. **Build** all packages:
+4. **Run the repository validation suite**:
    ```bash
-   pnpm build
+   pnpm validate
    ```
-5. **Run tests** to verify everything works:
-   ```bash
-   pnpm test
-   ```
+
+The Astro marketing site is a separate npm project. For website changes, also run `npm ci` and `npm run validate` from `website/`.
 
 ## Development Workflow
 
@@ -89,9 +91,7 @@ pnpm validate
 ```
 
 This runs: `docs:check && build:clean && cycles && cycles:refs && lint:security && test:coverage`.
-All gates must pass. Use `git push --no-verify` only for pure-docs, formatting, or
-build-tooling pushes where running the full validate suite adds no value — for all
-code changes it must pass before pushing.
+All gates must pass before a code change is submitted.
 
 **Allowlists are shrink-only.** If a PR adds a new entry to any architecture allowlist
 (`test/support/architecture-allowlist.ts`, lint suppression comments, etc.), it will
@@ -133,7 +133,7 @@ Use the [Bug Report](https://github.com/comisai/comis/issues/new?template=bug_re
 - A clear description of the bug
 - Steps to reproduce the issue
 - Expected vs. actual behavior
-- Your environment details (Linux distro, Node.js version, Comis version)
+- Your environment details (operating system, installation method, Node.js version, and Comis version)
 - Relevant logs or screenshots (redact any sensitive information)
 
 ## Requesting Features
@@ -143,7 +143,7 @@ Use the [Feature Request](https://github.com/comisai/comis/issues/new?template=f
 - The problem your feature would solve
 - Your proposed solution
 - Alternatives you have considered
-- Which package(s) would be affected
+- Which user-facing area would be affected
 
 ## Security Vulnerabilities
 
@@ -151,7 +151,7 @@ Do **not** open public GitHub issues for security vulnerabilities. Instead, foll
 
 ## Project Structure
 
-Comis is a pnpm monorepo with 15 packages in the `packages/` directory. Each package has its own `package.json`, source code, and tests. See the [Developer Guide](https://docs.comis.ai/developer-guide) for detailed architecture documentation and package descriptions.
+Comis is a pnpm monorepo with 16 packages in the `packages/` directory. Each package has its own `package.json`, source code, and tests. See the [Developer Guide](https://docs.comis.ai/developer-guide) for detailed architecture documentation and package descriptions.
 
 ```
 comis/
@@ -159,7 +159,7 @@ comis/
     core/          # Core domain logic, event bus, ports
     shared/        # Shared types, utilities, constants
     cli/           # Command-line interface
-    agent/         # AI agent lifecycle and routing
+    agent/         # AI execution, models, sessions, and safety
     memory/        # Storage, embeddings, RAG
     channels/      # Chat platform adapters
     skills/        # Skill system and sandbox
@@ -169,8 +169,9 @@ comis/
     infra/         # Infrastructure utilities
     web/           # Web UI
     comis/         # Umbrella published package (bundles all @comis/* deps)
-    observability/ # Telemetry, tracing, metrics
-    orchestrator/  # Execution-graph orchestration
+    observability/      # Diagnostics and trace persistence
+    observability-otel/ # Optional OpenTelemetry and Prometheus exporters
+    orchestrator/       # Inbound and execution coordination
 ```
 
 ## License

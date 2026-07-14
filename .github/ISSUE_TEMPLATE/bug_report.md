@@ -26,14 +26,21 @@ What actually happened.
 
 ## Environment
 
-- **Linux distro/version:**
+- **Operating system and version:**
+- **Installation method:** <!-- npm, managed-host installer, Docker, source checkout, other -->
 - **Node.js version:**
 - **Comis version:**
-- **Channel adapter (if relevant):**
+- **Deployment/isolation mode:** <!-- Linux + Bubblewrap, macOS best-effort, container, no sandbox, unknown -->
+- **Provider/model (if relevant):**
+- **Messaging channel (if relevant):**
+
+## Configuration
+
+Share the smallest relevant configuration excerpt. Remove API keys, tokens, passwords, private URLs, message content, and other sensitive data.
 
 ## Logs / Screenshots
 
-Paste any relevant log output or screenshots below. **Redact any sensitive information** (tokens, keys, passwords).
+Paste relevant output from `comis doctor`, `comis status`, or daemon logs. **Remove tokens, keys, passwords, message content, private URLs, and filesystem paths that identify users.**
 
 ```
 (paste logs here)
