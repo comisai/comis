@@ -111,40 +111,47 @@ describe("buildContextExhaustedReply — vocabulary + security invariants", () =
 });
 
 // ---------------------------------------------------------------------------
-// The reply must name the exact cap knob for
-// small/nano models and carry an incident ref. Without them the reply says only
-// "raise the agent's context engine settings" — no knob, no pointer — so
-// root-causing starts from a chat message with zero handles.
+// Failed turns must give users actionable recovery guidance without exposing
+// internal configuration paths. Incident references remain available for
+// operator correlation.
 // ---------------------------------------------------------------------------
 
-describe("buildContextExhaustedReply — knob naming + incident ref", () => {
-  it("small capability class names the small cap knob with the 0-uncapped hint", () => {
+describe("buildContextExhaustedReply — recovery guidance + incident ref", () => {
+  it("uses user-facing recovery guidance without raw configuration paths", () => {
     const reply = buildContextExhaustedReply({ capabilityClass: "small" });
-    expect(reply).toContain("contextEngine.budget.effectiveContextCapSmall");
-    expect(reply).toContain("0 = uncapped");
+    expect(reply).not.toContain("contextEngine.");
+    expect(reply).not.toContain("0 = uncapped");
+    expect(reply).not.toContain("context engine settings");
+    expect(reply).toMatch(/disable tools|larger context window|new session/i);
+  });
+
+  it("small capability class keeps internal tuning details out of chat", () => {
+    const reply = buildContextExhaustedReply({ capabilityClass: "small" });
+    expect(reply).not.toContain("contextEngine.");
+    expect(reply).not.toContain("uncapped");
     expect(reply.toLowerCase()).toContain("context window");
+    expect(reply.toLowerCase()).toContain("disable tools");
     expect(reply).not.toContain("[Stopped:");
     expect(reply.toLowerCase()).not.toContain("too large");
-    expect(reply.toLowerCase()).not.toContain("session reset");
   });
 
-  it("nano capability class names the nano cap knob", () => {
+  it("nano capability class also uses user-facing recovery guidance", () => {
     const reply = buildContextExhaustedReply({ capabilityClass: "nano" });
-    expect(reply).toContain("contextEngine.budget.effectiveContextCapNano");
+    expect(reply).not.toContain("effectiveContextCap");
+    expect(reply).toContain("larger context window");
   });
 
-  it("frontier class keeps the generic settings wording without naming a cap knob", () => {
+  it("frontier class uses the same user-facing vocabulary", () => {
     const reply = buildContextExhaustedReply({ capabilityClass: "frontier" });
     expect(reply).not.toContain("effectiveContextCap");
     expect(reply.toLowerCase()).toContain("context window");
   });
 
-  it("a no-opts call returns the unchanged base reply (callers without profile context)", () => {
+  it("a no-opts call returns the canonical user-facing reply", () => {
     const reply = buildContextExhaustedReply();
     expect(reply).toBe(
-      "I was unable to process your request — the context window was exhausted " +
-        "before the model could run. Try raising the agent's context engine settings " +
-        "or narrowing the ask.",
+      "I couldn't complete that request because this conversation exceeded the model's context limit. " +
+        "Try a more focused request, disable tools this agent does not need, or choose a model with a larger context window.",
     );
   });
 
@@ -154,12 +161,12 @@ describe("buildContextExhaustedReply — knob naming + incident ref", () => {
     expect(reply.toLowerCase()).toContain("incident");
   });
 
-  it("buildDegradedReply threads knob + incident opts through for context_exhausted", () => {
+  it("buildDegradedReply threads the incident reference without leaking profile tuning", () => {
     const reply = buildDegradedReply("context_exhausted", {
       capabilityClass: "small",
       traceId: "abc-123",
     });
-    expect(reply).toContain("effectiveContextCapSmall");
+    expect(reply).not.toContain("effectiveContextCapSmall");
     expect(reply).toContain("abc-123");
   });
 
@@ -170,8 +177,8 @@ describe("buildContextExhaustedReply — knob naming + incident ref", () => {
   describe("cause-branched advice (the remedy names the actual offender)", () => {
     it("oversized_input: tells the user their MESSAGE is too large — shortening/splitting applies", () => {
       const reply = buildContextExhaustedReply({ capabilityClass: "small", cause: "oversized_input" });
-      expect(reply.toLowerCase()).toContain("your message");
-      expect(reply.toLowerCase()).toContain("shorter");
+      expect(reply.toLowerCase()).toContain("this message");
+      expect(reply.toLowerCase()).toContain("shorten");
     });
 
     it("oversized_history_message: names the persisted history message + reset remedy, and does NOT say 'narrowing the ask'", () => {
@@ -179,19 +186,16 @@ describe("buildContextExhaustedReply — knob naming + incident ref", () => {
         capabilityClass: "small",
         cause: "oversized_history_message",
       });
-      expect(reply.toLowerCase()).toContain("previous message");
-      expect(reply.toLowerCase()).toContain("reset the session");
-      // The misleading narrow-the-ask clause must be gone for this cause.
-      expect(reply.toLowerCase()).not.toContain("narrow");
-      // The knob is still named as the alternative lever.
-      expect(reply).toContain("effectiveContextCapSmall");
+      expect(reply.toLowerCase()).toContain("earlier message");
+      expect(reply.toLowerCase()).toContain("start a new session");
+      expect(reply).not.toContain("effectiveContextCapSmall");
     });
 
     it("aggregate / omitted cause: byte-identical to the baseline reply", () => {
       const explicit = buildContextExhaustedReply({ capabilityClass: "small", cause: "aggregate" });
       const omitted = buildContextExhaustedReply({ capabilityClass: "small" });
       expect(explicit).toBe(omitted);
-      expect(omitted).toContain("narrowing the ask");
+      expect(omitted).toContain("more focused request");
     });
 
     it("the three causes produce three DISTINCT replies", () => {
@@ -203,11 +207,11 @@ describe("buildContextExhaustedReply — knob naming + incident ref", () => {
       expect(replies.size).toBe(3);
     });
 
-    it("cause-branched replies keep the security guards (no '[Stopped:', no 'too large')", () => {
+    it("cause-branched replies keep internal stop and configuration details out of chat", () => {
       for (const cause of ["oversized_input", "oversized_history_message"] as const) {
         const reply = buildContextExhaustedReply({ cause });
         expect(reply).not.toContain("[Stopped:");
-        expect(reply.toLowerCase()).not.toContain("too large");
+        expect(reply).not.toContain("contextEngine.");
       }
     });
   });
@@ -263,18 +267,17 @@ describe("builders consume the resolved language tag (delegate to i18n)", () => 
     );
   });
 
-  it("a he context-exhausted reply still names the cap knob path + (0 = uncapped) verbatim", () => {
+  it("a Hebrew context-exhausted reply also omits raw configuration paths", () => {
     const reply = buildContextExhaustedReply({ capabilityClass: "small", language: "he" });
-    expect(reply).toContain("contextEngine.budget.effectiveContextCapSmall");
-    expect(reply).toContain("(0 = uncapped)");
+    expect(reply).not.toContain("contextEngine.");
+    expect(reply).not.toContain("uncapped");
   });
 
   it("no language arg returns the English string byte-identical — context_exhausted", () => {
     // The canonical English reply, pinned literally (the byte-identical guard).
     expect(buildContextExhaustedReply()).toBe(
-      "I was unable to process your request — the context window was exhausted " +
-        "before the model could run. Try raising the agent's context engine settings " +
-        "or narrowing the ask.",
+      "I couldn't complete that request because this conversation exceeded the model's context limit. " +
+        "Try a more focused request, disable tools this agent does not need, or choose a model with a larger context window.",
     );
     // …and equals the en selector (single-sourced).
     expect(buildContextExhaustedReply()).toBe(selectContextExhaustedReply("en", {}));
