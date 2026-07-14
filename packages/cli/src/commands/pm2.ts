@@ -191,7 +191,8 @@ async function handleStatus(): Promise<void> {
     const { stdout } = await exec("pm2", ["describe", "comis"]);
     console.log(stdout);
   } catch {
-    warn("Daemon not managed by pm2. Run `comis pm2 setup && comis pm2 start` first.");
+    error("Daemon is not managed by pm2. Run `comis pm2 setup && comis pm2 start` first.");
+    process.exit(1);
   }
 }
 

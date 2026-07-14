@@ -1,286 +1,173 @@
 ---
 title: "MCP Integration"
-description: "Connect external tools to your agents using the Model Context Protocol"
+description: "Connect external tool servers to Comis with the Model Context Protocol"
 icon: "plug"
 ---
 
-MCP (Model Context Protocol) lets you connect external tool servers to your Comis agents. Instead of building tools from scratch, you can plug in existing MCP servers that provide database access, third-party APIs, or specialized capabilities. Your agents discover and use these tools just like built-in ones.
+MCP (Model Context Protocol) lets Comis agents use tools exposed by external
+servers. Comis does not bundle MCP servers; you choose, configure, and operate
+the servers your agents may access.
 
-## How MCP Works
+<Warning>
+A stdio MCP server runs as a local process and is not a security boundary. Vet
+the server and its installation command, grant only the credentials it needs,
+and prefer a pinned package or executable from its publisher.
+</Warning>
 
-MCP is an open protocol that standardizes how AI agents communicate with tool servers. Here is how it fits into Comis:
+## How MCP works in Comis
 
-- **MCP servers** are external programs that expose tools over the protocol. The wider ecosystem includes 50+ community and Anthropic-maintained servers for databases, APIs, file systems, GitHub, and more. **Comis itself does not bundle any MCP servers** -- you connect to whichever ones you want via configuration.
-- **Comis connects** to MCP servers using one of three transport methods: **stdio** (for local servers running on the same machine), **SSE** (for legacy remote servers using Server-Sent Events), or **HTTP** (for remote servers using Streamable HTTP).
-- **Tool namespacing** prevents name collisions. Tools from MCP servers appear as `mcp:serverName/toolName` -- so a tool called `query` from a server called `my-database` becomes `mcp:my-database/query`.
-- **Auto-discovery** means you do not have to list every tool manually. When Comis connects to an MCP server, it automatically discovers all available tools using the MCP SDK.
-- **Auto-reconnect** handles transient failures. When an MCP connection drops involuntarily, Comis retries up to **5 times with exponential backoff** (starting at 1s, capped at 30s, doubling each attempt) before marking the server as errored. Configurable per server.
+- Comis connects to enabled servers when the daemon starts. One failed server
+  does not prevent the daemon or other MCP servers from starting.
+- Tools are discovered from each connected server. Comis tracks them as
+  `mcp:server-name/tool-name` and exposes the LLM-safe callable name
+  `mcp__server-name--tool-name` to agents.
+- Only tools from currently connected servers enter the agent tool set. They
+  disappear while a server reconnects and return after discovery succeeds.
+- An involuntary disconnect, keepalive failure, or repeated client error starts
+  automatic reconnection. The default is up to five attempts with jittered
+  exponential backoff; an explicit disconnect is not retried.
 
-## Worked Example: Connecting to the GitHub MCP Server
-
-Here is a complete walkthrough using the official GitHub MCP server -- one of
-the most popular community servers and a good template for any stdio-based
-integration.
-
-**1. Add the server to `~/.comis/config.yaml`:**
-
-```yaml
-integrations:
-  mcp:
-    servers:
-      github:
-        transport: stdio
-        command: npx
-        args: ["-y", "@modelcontextprotocol/server-github"]
-        env:
-          GITHUB_PERSONAL_ACCESS_TOKEN: "{{secret:github-token}}"
-        enabled: true
-```
-
-**2. Store the token in the secret manager:**
-
-```bash
-node packages/cli/dist/cli.js secrets set github-token ghp_yourTokenHere
-```
-
-The `{{secret:github-token}}` placeholder in the YAML is replaced at runtime
-with this value -- the raw token never lives in the config file.
-
-**3. Restart Comis and verify:**
-
-```bash
-pm2 flush && pm2 restart comis
-sleep 5 && pm2 logs comis --lines 20 --nostream | grep -i mcp
-```
-
-You should see a log line confirming the connection and listing the tools
-discovered (e.g. `mcp:github/list_repos`, `mcp:github/create_issue`,
-`mcp:github/search_code`, ...). Your agent can now call them just like any
-built-in tool.
-
-## Setting Up an MCP Server
+## Configure a server
 
 <Steps>
-  <Step title="Add the server to your config">
-    Open your [configuration file](/reference/config-yaml) and add an entry under `integrations.mcp.servers`:
+  <Step title="Store any required credential">
+    Secret names must start with an uppercase letter and otherwise use only
+    uppercase letters, digits, and underscores. This command opens a hidden
+    prompt and stores the value in the configured credential backend, which is
+    encrypted by default:
+
+    ```bash
+    comis secrets set MCP_SERVICE_TOKEN
+    ```
+
+    See [Secrets Management](/security/secrets) for non-interactive input and
+    storage modes.
+  </Step>
+
+  <Step title="Add an array entry to config.yaml">
+    `integrations.mcp.servers` is an array. Every entry needs a unique `name`
+    and the fields required by its transport.
 
     ```yaml
     integrations:
       mcp:
         servers:
-          my-database:
+          - name: local-tools
             transport: stdio
-            command: npx
-            args: ["-y", "@modelcontextprotocol/server-sqlite"]
+            command: node
+            args:
+              - /absolute/path/to/mcp-server.js
             env:
-              DB_PATH: "/path/to/database.db"
+              SERVICE_TOKEN: ${MCP_SERVICE_TOKEN}
             enabled: true
     ```
 
-    Each server needs a unique name (here: `my-database`). The `transport` field selects one of three protocols: `stdio` (local process), `sse` (legacy remote), or `http` (Streamable HTTP remote). The `command` and `args` fields are used only for stdio transport.
+    Replace the command and arguments with the server publisher's instructions.
+    Comis resolves `${MCP_SERVICE_TOKEN}` through its secret manager when loading
+    the configuration; the secret value does not need to appear in the YAML.
   </Step>
 
-  <Step title="Restart Comis">
-    Comis connects to MCP servers at startup, so you need to restart after changing the configuration. Use whichever entry point matches your deployment:
+  <Step title="Restart and verify">
+    Configuration-file entries are loaded at daemon startup.
 
     ```bash
-    # pm2 (recommended)
-    pm2 restart comis
-
-    # Direct CLI (if `comis` is on PATH)
-    comis daemon stop && comis daemon start
+    comis daemon stop
+    comis daemon start
+    comis mcp list
+    comis mcp status local-tools
     ```
 
-    Comis will launch the MCP server process and discover its tools automatically. Check the logs for a message confirming the connection.
-  </Step>
-
-  <Step title="Verify the connection">
-    Your agent can use the `mcp_manage` tool to check that the server is connected and its tools are available:
-
-    ```
-    mcp_manage action: list
-    mcp_manage action: status server: my-database
-    ```
-
-    The `list` action shows all configured MCP servers and their connection status. The `status` action shows detailed information for a specific server, including the tools it provides.
+    You can also inspect servers in the web UI under **MCP Servers**.
   </Step>
 </Steps>
 
-## Transport Types
+## Transports
 
-Comis supports three ways to connect to MCP servers:
+| Transport | Use | Required field | Default concurrency |
+|-----------|-----|----------------|---------------------|
+| `stdio` | Local process started by Comis | `command` | 1 |
+| `http` | Remote Streamable HTTP server | `url` | 4 |
+| `sse` | Remote server that only supports legacy SSE | `url` | 4 |
 
-### stdio (Local Process)
+`maxConcurrency` overrides the transport default. For stdio, keep the default
+unless the server explicitly supports parallel tool calls. Comis can infer
+`stdio` from `command` or `http` from `url` when `transport` is omitted, but
+setting it explicitly makes shared configuration easier to review.
 
-The stdio transport runs the MCP server as a local subprocess on the same machine as Comis. Comis starts the process and communicates with it through standard input/output.
+### Remote server example
 
-**Best for:** npm-packaged MCP servers, local tools, development setups.
-
-```yaml
-my-server:
-  transport: stdio
-  command: npx
-  args: ["-y", "@some/mcp-server"]
-  env:
-    SOME_CONFIG: "value"
-  enabled: true
-```
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `transport` | Yes | Must be `stdio` |
-| `command` | Yes | The command to run (e.g., `npx`, `node`, `python`) |
-| `args` | No | Command-line arguments as an array |
-| `env` | No | Environment variables passed to the subprocess |
-| `cwd` | No | Working directory for the subprocess (overrides default workspace CWD) |
-| `maxConcurrency` | No | Maximum concurrent tool calls to this server (default: 1 for stdio) |
-| `enabled` | No | Whether to connect on startup (default: `true`) |
-
-### SSE (Legacy Remote Server)
-
-The SSE transport connects to a remote MCP server using Server-Sent Events for server-to-client streaming. This is the legacy remote transport from earlier versions of the MCP specification. The server must already be running and accessible at the given URL.
-
-**Best for:** older MCP servers that only support the SSE protocol.
-
-```yaml
-my-sse-server:
-  transport: sse
-  url: "http://localhost:3000/sse"
-  headers:
-    Authorization: "Bearer {{secret:sse-token}}"
-  enabled: true
-```
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `transport` | Yes | Must be `sse` |
-| `url` | Yes | The full URL of the remote MCP SSE endpoint |
-| `headers` | No | Custom HTTP headers sent with requests (e.g., authentication) |
-| `maxConcurrency` | No | Maximum concurrent tool calls to this server (default: 4 for remote) |
-| `enabled` | No | Whether to connect on startup (default: `true`) |
-
-### HTTP (Streamable HTTP Remote Server)
-
-The HTTP transport connects to a remote MCP server using Streamable HTTP, the current standard for remote MCP communication. The server must already be running and accessible at the given URL.
-
-**Best for:** modern MCP servers, shared servers, cloud-hosted tools, servers running on other machines.
-
-```yaml
-my-remote:
-  transport: http
-  url: "https://mcp.example.com/mcp"
-  headers:
-    Authorization: "Bearer {{secret:api-token}}"
-  enabled: true
-```
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `transport` | Yes | Must be `http` |
-| `url` | Yes | The full URL of the remote MCP server |
-| `headers` | No | Custom HTTP headers sent with requests (e.g., authentication) |
-| `maxConcurrency` | No | Maximum concurrent tool calls to this server (default: 4 for remote) |
-| `enabled` | No | Whether to connect on startup (default: `true`) |
-
-## Using Secrets in MCP Config
-
-If your MCP server needs API keys or other sensitive values, use the `{{secret:name}}` syntax instead of putting secrets directly in the config file:
+Use `http` for current remote servers. Custom headers are supported by `http`
+and `sse`; they are ignored for `stdio`.
 
 ```yaml
 integrations:
   mcp:
     servers:
-      my-api:
-        transport: stdio
-        command: npx
-        args: ["-y", "@some/api-server"]
-        env:
-          API_KEY: "{{secret:my-api-key}}"
-```
-
-The `{{secret:my-api-key}}` placeholder is replaced at runtime with the value stored in the Comis secret manager. See [Secrets Management](/security/secrets) for how to store and manage your secrets.
-
-## Managing MCP Connections
-
-The `mcp_manage` tool lets your agents (and you, through the dashboard) check and control MCP server connections at runtime:
-
-| Action | Description |
-|--------|-------------|
-| `list` | Show all configured MCP servers and their connection status |
-| `status` | Check the connection health and available tools for a specific server |
-| `connect` | Manually connect to a server that is configured but not yet connected |
-| `disconnect` | Disconnect from a running server (its tools become unavailable) |
-| `reconnect` | Disconnect and reconnect to a server (useful after server-side changes) |
-
-<Info>
-The same actions are also exposed through the web dashboard. You do not need to invoke the agent to manage MCP connections -- but the `skills_manage` tool only handles prompt skills, not MCP servers.
-</Info>
-
-## Health Monitoring
-
-Comis periodically checks the health of connected MCP servers. If a server becomes unreachable:
-
-- Its tools are **temporarily removed** from the agent's available tool list
-- The agent **continues working** with all other tools -- a single failed MCP server does not affect the rest of the system
-- Comis **retries the connection** automatically at the configured health check interval
-- When the server comes back online, its tools are **automatically restored**
-
-This means your agents are resilient to MCP server outages. If a database MCP server goes down, the agent loses database tools but keeps everything else.
-
-## Multiple MCP Servers
-
-You can connect as many MCP servers as you need. Each server gets its own namespace, so tools from different servers never conflict:
-
-```yaml
-integrations:
-  mcp:
-    servers:
-      sqlite-db:
-        transport: stdio
-        command: npx
-        args: ["-y", "@modelcontextprotocol/server-sqlite"]
-        env:
-          DB_PATH: "/data/app.db"
-      github:
-        transport: stdio
-        command: npx
-        args: ["-y", "@modelcontextprotocol/server-github"]
-        env:
-          GITHUB_TOKEN: "{{secret:github-token}}"
-      analytics:
+      - name: remote-tools
         transport: http
-        url: "https://analytics.internal/mcp"
+        url: https://mcp.example.com/mcp
+        headers:
+          Authorization: "Bearer ${MCP_SERVICE_TOKEN}"
+        enabled: true
 ```
 
-Your agent would see tools like `mcp:sqlite-db/query`, `mcp:github/list_repos`, and `mcp:analytics/run_report` -- each clearly indicating which server provides it.
+Use `sse` only when the server requires the legacy transport:
 
-## Telling the agent when to prefer this MCP
+```yaml
+integrations:
+  mcp:
+    servers:
+      - name: legacy-tools
+        transport: sse
+        url: https://legacy.example.com/sse
+        enabled: true
+```
 
-Connecting an MCP server makes its tools discoverable, but the agent will still reach for `pip install <X>` when the model thinks it needs a Python lib that overlaps with what the MCP already provides. To close that gap, declare a **capability hint** under `tooling.mcp.capabilityHints.<server-name>` listing the packages this MCP supersedes. The install-detour subsystem then refuses (or warns about) `pip install <X>` / `npm install <X>` for any matching package and routes the agent to the connected MCP instead.
+## Secret references
 
-Two CLI commands automate this:
+Use `${UPPERCASE_NAME}` anywhere an MCP `env` or `headers` string needs a
+stored value. The same syntax can be embedded in a larger string, such as the
+`Authorization` header above. A missing reference is reported instead of
+starting the server with an unresolved placeholder.
+
+For stdio servers, Comis passes a scrubbed baseline environment plus the
+explicit `env` entries in the server configuration. It does not copy every
+daemon environment variable into the child process.
+
+## Operate connections
+
+The CLI exposes the live MCP connection state:
 
 ```bash
-# 1. Materialize stub hints from connected MCPs + installed skills
-systemctl stop comis && comis config sync-tooling --write && systemctl start comis
-
-# 2. Fill description + replacesPackages on each stub via the live agent
-comis config tooling-fill --all --yes --restart
+comis mcp list
+comis mcp status remote-tools
+comis mcp reconnect remote-tools
 ```
 
-See the [Tool-First Capability Layer](/skills/tooling-layer) guide for the full workflow, idempotency contract, and operator-edit preservation rules.
+Additional lifecycle commands are intentionally distinct:
 
-<CardGroup cols={2}>
-  <Card title="Tool-First Capability Layer" icon="compass" href="/skills/tooling-layer">
-    `sync-tooling` + `tooling-fill` operator workflow
+| Command | Effect |
+|---------|--------|
+| `comis mcp test <name> ...` | Probe a command or URL without persisting it |
+| `comis mcp connect <name> ...` | Connect and persist a simple command- or URL-based entry |
+| `comis mcp disconnect <name>` | Disconnect and remove the persisted entry |
+
+Agents with admin trust can use `mcp_manage` for `list`, `status`, `connect`,
+`disconnect`, and `reconnect`. Connection-changing actions pass through the
+approval gate. A newly connected server's tools become callable on the next
+message because the active tool set is fixed for the current turn.
+
+See the [configuration reference](/reference/config-yaml) for MCP's place in
+the broader Comis configuration.
+
+<CardGroup cols={3}>
+  <Card title="Config Reference" icon="file-code" href="/reference/config-yaml">
+    MCP configuration structure and core fields
   </Card>
-  <Card title="Skills Overview" icon="wand-magic-sparkles" href="/skills/index">
-    Understanding the three types of skills
+  <Card title="Secrets Management" icon="key" href="/security/secrets">
+    Store and reference credentials
   </Card>
   <Card title="Tool Policy" icon="shield-halved" href="/skills/tool-policy">
-    Control which tools your agents can use
-  </Card>
-  <Card title="Config Reference" icon="file-code" href="/reference/config-yaml">
-    Full configuration reference including MCP settings
+    Control which tools agents may use
   </Card>
 </CardGroup>

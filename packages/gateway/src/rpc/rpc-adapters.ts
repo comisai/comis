@@ -26,6 +26,7 @@ export interface RpcAdapterDeps {
     message: string;
     agentId?: string;
     sessionKey?: { userId: string; channelId: string; peerId: string };
+    clientId?: string;
     connectionId?: string;
     scopes?: readonly string[];
     onDelta?: (delta: string) => void;
@@ -110,7 +111,7 @@ export interface RpcAdapterDeps {
 async function handleAgentRequest(
   deps: RpcAdapterDeps,
   params: unknown,
-  context: { connectionId?: string; scopes?: readonly string[] },
+  context: { clientId: string; connectionId?: string; scopes?: readonly string[] },
   methodName: string,
 ): Promise<{ response: string; tokensUsed: { input: number; output: number; total: number }; finishReason: string } | { error: string }> {
   try {
@@ -138,6 +139,7 @@ async function handleAgentRequest(
       message: p.message as string,
       agentId,
       sessionKey,
+      clientId: context.clientId,
       connectionId: context?.connectionId,
       scopes: context?.scopes,
       directives: cmdResult?.directives,
@@ -186,7 +188,7 @@ export function createRpcAdapters(
 
   return {
     "agent.execute": async (params, context) => {
-      return handleAgentRequest(deps, params, { connectionId: context.connectionId, scopes: context.scopes }, "agent.execute");
+      return handleAgentRequest(deps, params, { clientId: context.clientId, connectionId: context.connectionId, scopes: context.scopes }, "agent.execute");
     },
 
     "agent.stream": async (params, context) => {
@@ -195,7 +197,7 @@ export function createRpcAdapters(
         { method: "agent.stream" },
         "agent.stream: streaming not yet available via RPC, falling back to non-streaming",
       );
-      return handleAgentRequest(deps, params, { connectionId: context.connectionId, scopes: context.scopes }, "agent.stream");
+      return handleAgentRequest(deps, params, { clientId: context.clientId, connectionId: context.connectionId, scopes: context.scopes }, "agent.stream");
     },
 
     "memory.search": async (params) => {

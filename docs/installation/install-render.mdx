@@ -7,17 +7,16 @@ icon: "cloud"
 import SecretWarning from '/snippets/secret-warning.mdx';
 import NonTechnicalNote from '/snippets/non-technical-note.mdx';
 
-This guide deploys Comis to [Render.com](https://render.com) using the prebuilt
-Docker Hub image. You get a managed Linux host (so the exec sandbox is fully
-active — unlike Docker Desktop on macOS), automatic HTTPS, a persistent volume
-for memory and configuration, and a public URL within ~5 minutes. No Docker
-installed locally, no server to provision, no kernel to manage.
+This guide deploys Comis to [Render.com](https://render.com) using the published
+Docker image. Render provides a managed Linux container, HTTPS endpoint, and
+optional persistent storage. Do not assume the exec sandbox is active merely
+because the host is Linux: confirm the startup diagnostics and sandbox provider
+on the deployed service.
 
 <NonTechnicalNote />
 
 <Tip>
-**Why Render specifically:** It's the simplest "click-deploy a Docker Hub image
-with a persistent disk and an HTTPS endpoint" PaaS. The same general pattern
+The same general pattern
 works on Fly.io, Railway, DigitalOcean App Platform, and AWS ECS — adjust the
 service-creation flow but keep the environment variables and disk mount the same.
 </Tip>
@@ -26,23 +25,24 @@ service-creation flow but keep the environment variables and disk mount the same
 
 | Need | How to get it |
 |---|---|
-| **Render account** | [Sign up](https://render.com) (free, takes 1 minute) |
-| **Anthropic API key** | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
+| **Render account** | [Sign up](https://render.com) |
+| **Hosted model credential** | Obtain one from a supported provider; interactive OAuth/local providers are better suited to a host you can access directly |
 | **Channel tokens** *(optional)* | Telegram BotFather, Discord Developer Portal, Slack app, etc. |
 | **A 32-byte hex string** | Run `openssl rand -hex 32` locally — you'll use this as the gateway bearer token |
-| **Credit card on Render** | Required for the Starter plan ($7/mo). The free plan **does not work** for Comis — see [Plan choice](#plan-choice) below. |
+| **A Render plan with persistent disk and always-on service** | Check Render's current plan limits before creating the service |
 
 You **don't** need Docker, Node.js, or anything else installed on your machine.
 Render pulls the image directly from Docker Hub.
 
 <Warning>
-**Plan choice.** Render's free plan has no persistent disk and sleeps after
-15 minutes of inactivity. Comis needs both — without a disk every restart
-wipes your agent's memory and conversations; without always-on the agent
-can't respond to channel events. **Use the $7/mo Starter plan or higher.**
+**Plan choice.** Select a current Render plan that provides persistent storage
+and the availability your channels require. Without a disk, redeploys can lose
+configuration, credentials, memory, and sessions. A sleeping service cannot
+respond to channel events while suspended. Render's pricing and limits can
+change; verify them in the Render dashboard.
 </Warning>
 
-## Quick deploy (dashboard, ~5 minutes)
+## Deploy from the dashboard
 
 <Steps>
   <Step title="Create a new Web Service">
@@ -63,7 +63,7 @@ can't respond to channel events. **Use the $7/mo Starter plan or higher.**
     For production, pin to an immutable version tag instead of `latest-slim` so
     your service doesn't update under you. Find the latest version on the
     [Comis Docker Hub page](https://hub.docker.com/r/comisai/comis/tags) and use
-    e.g. `docker.io/comisai/comis:1.0.53-slim`.
+    a tag such as `docker.io/comisai/comis:<version>-slim`.
     </Tip>
 
     Click **Connect** (or "Next" depending on your Render UI version).
@@ -76,7 +76,7 @@ can't respond to channel events. **Use the $7/mo Starter plan or higher.**
     |---|---|
     | **Name** | `comis` (or anything you like — becomes part of your URL) |
     | **Region** | Pick the one closest to you/your users |
-    | **Instance Type** | **Starter** ($7/mo) — Free won't work, see warning above |
+    | **Instance Type** | A plan with persistent disk and suitable availability |
     | **Branch / Tag** | leave blank (we're using a tag-pinned image) |
     | **Dockerfile Path** | leave blank |
     | **Docker Build Context Directory** | leave blank |
@@ -95,16 +95,16 @@ can't respond to channel events. **Use the $7/mo Starter plan or higher.**
     COMIS_GATEWAY_HOST=0.0.0.0
     COMIS_GATEWAY_PORT=4766
     COMIS_GATEWAY_TOKEN=<paste the openssl rand -hex 32 output here>
-    ANTHROPIC_API_KEY=sk-ant-api03-...
+    ANTHROPIC_API_KEY=<your-provider-key>
     ```
 
     **Optional channel tokens** — add only those you'll use:
 
     ```bash
-    TELEGRAM_BOT_TOKEN=1234567890:ABC...
-    DISCORD_BOT_TOKEN=...
-    SLACK_BOT_TOKEN=xoxb-...
-    OPENAI_API_KEY=sk-...
+    TELEGRAM_BOT_TOKEN=<your-bot-token>
+    DISCORD_BOT_TOKEN=<your-bot-token>
+    SLACK_BOT_TOKEN=<your-bot-token>
+    OPENAI_API_KEY=<your-provider-key>
     ```
 
     <SecretWarning />
@@ -112,8 +112,8 @@ can't respond to channel events. **Use the $7/mo Starter plan or higher.**
     <Tip>
     The encrypted secrets store is **enabled by default**. On first boot, Comis
     auto-generates a master key and writes it to `~/.comis/.env` (mode 0600).
-    **Back up this file** — losing `SECRETS_MASTER_KEY` makes `secrets.db`
-    permanently unreadable. To disable the encrypted store, set
+    Back up `SECRETS_MASTER_KEY` separately in a secure credential manager —
+    losing it makes `secrets.db` permanently unreadable. To disable the encrypted store, set
     `security.storage: env` (or `file`) in `config.yaml`.
     </Tip>
   </Step>
@@ -146,9 +146,8 @@ can't respond to channel events. **Use the $7/mo Starter plan or higher.**
 
   <Step title="Deploy">
     Click **Create Web Service** at the bottom. Render starts pulling the
-    image, attaching the disk, and starting the container. The deploy takes
-    about 2–3 minutes for the first time (image pull + initial filesystem
-    setup).
+    image, attaching the disk, and starting the container. Deployment duration
+    depends on image-pull and platform capacity.
 
     Watch the **Logs** tab — you should eventually see:
 
@@ -236,7 +235,7 @@ services:
     name: comis
     runtime: image
     image:
-      url: docker.io/comisai/comis:1.0.53-slim   # pin to an immutable tag
+      url: docker.io/comisai/comis:<version>-slim   # replace with an immutable tag
     plan: starter                                  # $7/mo, has persistent disk
     region: oregon                                 # closest to your users
     healthCheckPath: /health
@@ -335,7 +334,7 @@ seed it on Render rather than configure through the dashboard:
 
 ## Updating to a new Comis version
 
-If you pinned a version tag (recommended), updating is a 30-second job:
+If you pinned a version tag, update it deliberately after reviewing the release:
 
 <Steps>
   <Step title="Find the latest version">
@@ -345,15 +344,15 @@ If you pinned a version tag (recommended), updating is a 30-second job:
 
   <Step title="Update the image URL">
     On Render → your service → **Settings** → scroll to **Image URL** → change
-    `comisai/comis:1.0.53-slim` to the new version → **Save Changes**.
+    the existing immutable tag to the new version → **Save Changes**.
 
     (Or, if you used `render.yaml`, edit the file in your repo and push — Render
     picks up the change.)
   </Step>
 
   <Step title="Render redeploys automatically">
-    The service goes through a brief downtime (~30s) while Render pulls the
-    new image, runs the health check, and switches traffic over. Your
+    The service may be unavailable while Render pulls the new image, runs the
+    health check, and switches traffic over. Your
     persistent disk is reattached unchanged, so all memory and config carry over.
   </Step>
 </Steps>
@@ -375,7 +374,7 @@ your own domain:
   <Step title="Set the DNS record">
     At your DNS provider, create a CNAME record pointing
     `comis.example.com` → the Render-provided target. Wait for DNS to
-    propagate (usually a few minutes).
+    propagate.
   </Step>
 
   <Step title="Render provisions TLS">

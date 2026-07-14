@@ -324,7 +324,9 @@ function handleStatus(deps: CommandHandlerDeps, sessionKey: SessionKey): Command
   lines.push(`Max steps: ${config.maxSteps}`);
   const budgetInfo = deps.getBudgetInfo?.();
   if (budgetInfo) {
-    lines.push(`Budget caps: $${budgetInfo.perExecution.toFixed(2)}/exec, $${budgetInfo.perHour.toFixed(2)}/hr, $${budgetInfo.perDay.toFixed(2)}/day`);
+    lines.push(
+      `Token caps: ${formatTokenCount(budgetInfo.perExecution)}/execution, ${formatTokenCount(budgetInfo.perHour)}/hour, ${formatTokenCount(budgetInfo.perDay)}/day`,
+    );
   }
 
   // -- Activity section --

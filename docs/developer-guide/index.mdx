@@ -38,24 +38,31 @@ Each node in the graph runs an agent with a specific task. Nodes can depend on o
 
 All domain logic lives in `@comis/core`. Port interfaces define boundaries -- what the system needs. Adapter packages implement those boundaries -- how it's done. The composition root in `core/src/bootstrap.ts` wires everything together at startup, returning an `AppContainer` with the fully configured event bus, plugin registry, and hook runner.
 
-Every function returns `Result<T, E>` -- no thrown exceptions. This pattern is enforced by ESLint and used across all 15 packages. Core utilities like `ok()`, `err()`, `tryCatch()`, and `fromPromise()` from `@comis/shared` make error handling explicit, typed, and composable.
+Domain and service operations return `Result<T, E>` so callers handle failures
+explicitly. Narrow boundary wrappers and caught CLI or web entry flows may
+throw with a local rationale. Core utilities such as `ok()`, `err()`,
+`tryCatch()`, and `fromPromise()` from `@comis/shared` keep the normal path
+typed and composable across all 16 packages.
 
 ```typescript
-import { ok, err, type Result } from "@comis/shared";
+import { err, fromPromise, type Result } from "@comis/shared";
 
 async function fetchData(id: string): Promise<Result<Data, Error>> {
   if (!id) return err(new Error("ID required"));
-  return ok(await loadFromDb(id));
+  return fromPromise(loadFromDb(id));
 }
 ```
 
-The codebase spans 15 packages, ~1185 source files, and ~944 test files. There are 19 port interfaces, typed events across 5 domain subsystems, and lifecycle hooks for plugin integration.
+The codebase spans 16 focused packages, with port contracts, typed events, and
+lifecycle hooks providing the main extension boundaries.
 
 ## Key Patterns
 
 A few patterns appear throughout the codebase and are important to understand before diving in:
 
-- **`Result<T, E>`** -- Every function returns a `Result` discriminated union instead of throwing exceptions. Use `ok()` for success and `err()` for failure. This pattern is ESLint-enforced.
+- **`Result<T, E>`** -- Domain and service control flow uses the `Result`
+  discriminated union. Use `ok()` for success and `err()` for failure; reserve
+  throws for the narrow boundary cases described in the engineering protocol.
 - **Factory functions** -- Prefer `createXxx()` factory functions returning typed interfaces over direct class instantiation (e.g., `createCircuitBreaker()` returns `CircuitBreaker`).
 - **`TypedEventBus`** -- The inter-module communication layer. Packages subscribe to typed events instead of importing each other directly. The `EventMap` interface provides compile-time safety for all typed events.
 - **`AsyncLocalStorage`** -- Request-scoped context is available via `runWithContext()` and `getContext()` in `core/src/context/`, providing trace IDs and agent context without passing them through every function call.
@@ -86,7 +93,7 @@ The primary validation command before any commit is `pnpm validate` (expands to 
     Hexagonal pattern, ports, adapters, and the composition root
   </Card>
   <Card title="Packages" icon="cubes" href="/developer-guide/packages">
-    All 15 packages with roles and dependency graph
+    All 16 packages with roles and dependency graph
   </Card>
   <Card title="Event Bus" icon="tower-broadcast" href="/developer-guide/event-bus">
     Typed events across 5 domain subsystems (Messaging, Agent, Channel, Infra, Terminal)

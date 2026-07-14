@@ -4,7 +4,8 @@ description: "Trace correlation, bridge events, lifecycle envelopes, dedup detec
 icon: "chart-line"
 ---
 
-A fleet-wide bug must be diagnosable from one structured artifact with one command in under five minutes.
+Comis correlates structured events, traces, and diagnostic artifacts so an
+operator can investigate a fleet-wide failure from one workflow.
 
 This page documents the observability foundations. It covers the trajectory layer, the 66-entry bridge mapping, lifecycle envelopes, forensic INFO promotions, the dedup detector, boot invariants, the alert budget, `step:` discipline, log rotation, the memory & recall diagnostics (recall-trace artifact, recall events, degradation signals), and the bundle export entry point. If you are new to Comis observability, start here; then follow the cross-links for operator workflows.
 
@@ -366,9 +367,10 @@ jq 'select(.event == "health:budget_exceeded")' ~/.comis/logs/daemon.log
 
 ---
 
-## 14. Worked Example — 2026-05-24 Incident Replay
+## 14. Worked example — duplicate adapter registration
 
-This section shows how the four observability signals surface the 2026-05-24 duplicate-adapter bug in under five minutes.
+This section shows how four observability signals surface duplicate adapter
+registration.
 
 **Setup:** fresh daemon, `setup-channels-runtime.ts:217` regression re-introduced (the same Telegram adapter passed into both `deps.adapters` and `deps.channelRegistry`). Boot the daemon, send one Telegram message.
 
@@ -431,7 +433,9 @@ node packages/cli/dist/cli.js trace --message-id d9f5e08e
 06:02:03.616  channel     outbound         msgId=5785
 ```
 
-All four signals — in a single terminal session. Time from user complaint to identified root cause: **under 5 minutes**.
+All four signals are available in a single terminal workflow. Actual
+investigation time depends on retention, deployment size, and the available
+identifiers.
 
 ---
 

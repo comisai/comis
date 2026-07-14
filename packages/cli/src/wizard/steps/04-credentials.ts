@@ -7,12 +7,13 @@
  * Three branches handle different provider types:
  *
  * - **Ollama**: no key needed, skip straight through
- * - **Custom endpoint**: collect base URL, compat mode, optional key, model ID
+ * - **Custom endpoint**: collect base URL, compat mode, key, model ID
  * - **Standard provider**: show help URL, format pre-check, live API validation,
  *   retry/continue-anyway/skip recovery on failure
  *
- * Live validation uses a lightweight GET /models request with a 5-second
- * timeout. Network failures warn but allow proceeding (air-gapped scenario).
+ * Live validation uses a provider-specific models endpoint with a 5-second
+ * timeout. Providers without a verified endpoint contract are saved as
+ * unverified instead of being probed with a guessed path.
  *
  * @module
  */
@@ -23,6 +24,7 @@ import type {
   ProviderConfig,
   AuthMethod,
 } from "../types.js";
+import { MULTI_VALUE_PROVIDER_CREDENTIAL_NAMES } from "../types.js";
 import type { WizardPrompter } from "../prompter.js";
 import { updateState } from "../state.js";
 import { sectionSeparator, info } from "../theme.js";
@@ -104,12 +106,8 @@ const AUTH_METHOD_PROVIDERS: Record<
  * beats clever (auto-detection of duplicated path segments could mask
  * legitimate future shape changes).
  *
- * Excluded: `together` and `ollama` are NOT in pi-ai 0.71.0's catalog
- * (`getModels(p)[0]?.baseUrl` returns undefined for both). The line-130
- * fallback (`if (!entry) return { valid: true };`) handles them by
- * skipping live validation entirely. Live validation against
- * api.together.xyz is skipped; users can still target Together via the
- * synthetic `custom` endpoint route.
+ * Providers absent from this table are deliberately not probed. A guessed
+ * path can both reject a valid credential and send it to the wrong endpoint.
  */
 const PROVIDER_VALIDATION_PATHS: Record<string, string> = {
   // Catalog baseUrl is HOST-ONLY for these providers -> path needs the /v1 prefix.
@@ -128,21 +126,20 @@ const PROVIDER_VALIDATION_PATHS: Record<string, string> = {
 };
 
 /**
- * Resolve the validation endpoint for a provider by reading the catalog
- * baseUrl from pi-ai (precedent: builtin-provider-guard.ts:45) and
- * combining it with a known path from PROVIDER_VALIDATION_PATHS.
+ * Resolve the validation endpoint from pi-ai's catalog base URL and an
+ * explicitly reviewed path in PROVIDER_VALIDATION_PATHS.
  *
- * Returns `undefined` for providers not in the catalog (or providers
- * with no models, e.g., ollama with no remote endpoint) -- callers
- * skip live validation in that case.
+ * Returns `undefined` when either half is absent. Callers save the credential
+ * as unverified in that case.
  */
 function getValidationEndpoint(
   provider: string,
 ): { baseUrl: string; path: string } | undefined {
+  // eslint-disable-next-line security/detect-object-injection -- read of static const map indexed by validated provider string
+  const path = PROVIDER_VALIDATION_PATHS[provider];
+  if (!path) return undefined;
   const baseUrl = getModels(provider as KnownProvider)[0]?.baseUrl;
   if (!baseUrl) return undefined;
-  // eslint-disable-next-line security/detect-object-injection -- read of static const map indexed by validated provider string
-  const path = PROVIDER_VALIDATION_PATHS[provider] ?? "/v1/models";
   return { baseUrl, path };
 }
 
@@ -151,27 +148,37 @@ function getValidationEndpoint(
 /**
  * Validate an API key against the provider's /models endpoint.
  *
- * Returns { valid: true } on HTTP 200, or a descriptive error
- * on auth failures, HTTP errors, and network/timeout errors.
- * Unknown providers skip validation (return valid).
+ * Returns a distinct status for a successful check, a failed check, or an
+ * intentionally skipped check. Callers must never present `skipped` as proof
+ * that a credential is valid.
  *
- * @param authMethod - When "oauth", forces Bearer auth for Anthropic
+ * @param authMethod - OAuth tokens are saved without a guessed live check.
  */
 async function validateKeyLive(
   provider: string,
   apiKey: string,
   authMethod?: AuthMethod,
-): Promise<{ valid: boolean; error?: string }> {
+): Promise<
+  | { status: "valid" }
+  | { status: "invalid"; error: string }
+  | { status: "skipped"; reason: string }
+> {
   // OAuth tokens cannot be validated against /models endpoints --
   // Anthropic's /v1/models rejects OAuth Bearer tokens with 401.
   // Skip live validation and trust the format check.
   if (authMethod === "oauth") {
-    return { valid: true };
+    return {
+      status: "skipped",
+      reason: "OAuth token saved but not live-validated; it will be checked on the first model request.",
+    };
   }
 
   const entry = getValidationEndpoint(provider);
   if (!entry) {
-    return { valid: true };
+    return {
+      status: "skipped",
+      reason: `${provider} credential saved but not live-validated because no verified validation endpoint is configured. It will be checked on the first model request.`,
+    };
   }
 
   let url = `${entry.baseUrl}${entry.path}`;
@@ -179,12 +186,7 @@ async function validateKeyLive(
 
   // Provider-specific auth header schemes
   if (provider === "anthropic") {
-    // OAuth tokens (sk-ant-oat01-*) use Bearer auth; regular keys use x-api-key
-    if (apiKey.startsWith("sk-ant-oat01-")) {
-      headers["Authorization"] = `Bearer ${apiKey}`;
-    } else {
-      headers["x-api-key"] = apiKey;
-    }
+    headers["x-api-key"] = apiKey;
     headers["anthropic-version"] = "2023-06-01";
   } else if (provider === "google") {
     url += `?key=${apiKey}`;
@@ -204,16 +206,16 @@ async function validateKeyLive(
     });
 
     if (response.ok) {
-      return { valid: true };
+      return { status: "valid" };
     }
 
     if (response.status === 401 || response.status === 403) {
-      return { valid: false, error: `Invalid API key (${response.status})` };
+      return { status: "invalid", error: `Invalid API key (${response.status})` };
     }
 
-    return { valid: false, error: `API returned ${response.status}` };
+    return { status: "invalid", error: `API returned ${response.status}` };
   } catch {
-    return { valid: false, error: "Could not reach provider (network error or timeout)" };
+    return { status: "invalid", error: "Could not reach provider (network error or timeout)" };
   } finally {
     systemClearTimeout(timeout);
   }
@@ -235,7 +237,7 @@ async function handleOllama(
 }
 
 /**
- * Branch B: Custom endpoint -- collect base URL, compat mode, optional key, model ID.
+ * Branch B: Custom endpoint -- collect base URL, compat mode, key, and model ID.
  */
 async function handleCustomEndpoint(
   state: WizardState,
@@ -263,8 +265,21 @@ async function handleCustomEndpoint(
   });
 
   const key = await prompter.password({
-    message: "API key (leave blank if none required)",
+    message: "API key",
+    validate: (v: string) => {
+      if (typeof v !== "string") return undefined;
+      if (!v.trim()) {
+        return "API key is required. Configure Ollama or LM Studio directly for a keyless endpoint.";
+      }
+      return undefined;
+    },
   });
+  const apiKey = key.trim();
+  if (!apiKey) {
+    throw new Error(
+      "API key is required for custom endpoints. Configure Ollama or LM Studio directly for a keyless endpoint.",
+    );
+  }
 
   const modelId = await prompter.text({
     message: "Model ID",
@@ -276,13 +291,17 @@ async function handleCustomEndpoint(
     },
   });
 
+  prompter.log.info(
+    "Custom endpoint credential saved but not live-validated; it will be checked on the first model request.",
+  );
+
   return updateState(state, {
     provider: {
       id: "custom",
       customEndpoint: baseUrl.trim(),
       compatMode,
-      apiKey: key || undefined,
-      validated: true,
+      apiKey,
+      validated: false,
     } as ProviderConfig,
     model: modelId.trim(),
   });
@@ -358,7 +377,7 @@ async function handleStandardProvider(
     spin.start(`Validating ${credLabel}...`);
     const result = await validateKeyLive(providerId, key, authMethod);
 
-    if (result.valid) {
+    if (result.status === "valid") {
       spin.stop(`${authMethod === "oauth" ? "OAuth token accepted" : "API key validated"}`);
       return updateState(state, {
         provider: {
@@ -370,9 +389,22 @@ async function handleStandardProvider(
       });
     }
 
+    if (result.status === "skipped") {
+      spin.stop(`${credLabel} saved without live validation`);
+      prompter.log.info(result.reason);
+      return updateState(state, {
+        provider: {
+          id: providerId,
+          apiKey: key,
+          authMethod,
+          validated: false,
+        } as ProviderConfig,
+      });
+    }
+
     // Validation failed
     spin.stop("Validation failed");
-    prompter.log.warn(result.error ?? "Unknown validation error");
+    prompter.log.warn(result.error);
 
     // Build recovery options -- retry only available if attempts remain
     const isLastAttempt = attempt === maxRetries;
@@ -451,6 +483,30 @@ export const credentialsStep: WizardStep = {
     // hoist so openai-codex never sees the apikey/oauth select prompt.
     if (providerId === "openai-codex") {
       return handleCodexOAuth(state, prompter);
+    }
+
+    // Bedrock discovers credentials through the standard AWS provider chain;
+    // asking for one opaque API key would create a configuration that cannot
+    // authenticate.
+    if (providerId === "amazon-bedrock") {
+      prompter.note(
+        info("Comis will use the ambient AWS credential chain and region configuration."),
+        "Amazon Bedrock credentials",
+      );
+      return updateState(state, {
+        provider: { id: providerId, validated: false } as ProviderConfig,
+      });
+    }
+
+    // The current wizard credential shape stores one entered value. Abort with
+    // exact recovery names for providers that require routing identifiers too.
+    // eslint-disable-next-line security/detect-object-injection -- static credential map indexed by a catalog provider id
+    const multiValueNames = MULTI_VALUE_PROVIDER_CREDENTIAL_NAMES[providerId];
+    if (multiValueNames) {
+      throw new Error(
+        `${providerId} requires multiple credential values: ${multiValueNames.join(", ")}. ` +
+        "Complete init with a single-key provider, store each value with `comis secrets set <NAME>`, then configure this provider.",
+      );
     }
 
     // Hoisted auth-method select runs UP FRONT for providers in

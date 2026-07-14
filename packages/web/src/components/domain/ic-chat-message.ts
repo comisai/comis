@@ -10,6 +10,8 @@ import { systemDateFrom } from "@comis/core";
 import "./ic-code-block.js";
 import "../display/ic-icon.js";
 
+const PROTECTED_MEDIA_URL_PATTERN = /^\/media\/([\p{L}\p{N}._-]{1,200})$/u;
+
 /**
  * Escape HTML special characters.
  */
@@ -82,7 +84,7 @@ function parseTable(lines: string[]): string {
 /**
  * Render an attachment marker into inline HTML (image, audio, video, or download link).
  */
-function renderAttachment(json: string, token: string): string {
+function renderAttachment(json: string): string {
   try {
     const { url, type, fileName } = JSON.parse(json) as {
       url: string;
@@ -90,21 +92,26 @@ function renderAttachment(json: string, token: string): string {
       mimeType: string;
       fileName: string;
     };
-    // Append auth token to relative /media/ URLs only (never external URLs)
-    const authedUrl = (token && url.startsWith("/media/"))
-      ? `${url}${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`
-      : url;
-    const safeUrl = escapeHtml(authedUrl);
+    const protectedMediaMatch = PROTECTED_MEDIA_URL_PATTERN.exec(url);
+    if (
+      protectedMediaMatch === null ||
+      protectedMediaMatch[1] === "." ||
+      protectedMediaMatch[1] === ".."
+    ) {
+      return "";
+    }
+    const escapedUrl = escapeHtml(url);
+    const sourceAttribute = `data-media-url="${escapedUrl}"`;
     const safeName = escapeHtml(fileName);
     switch (type) {
       case "image":
-        return `<img src="${safeUrl}" alt="${safeName}" style="max-width:100%;border-radius:8px;margin:4px 0" loading="lazy" />`;
+        return `<img ${sourceAttribute} alt="${safeName}" style="max-width:100%;border-radius:8px;margin:4px 0" loading="lazy" />`;
       case "audio":
-        return `<audio controls src="${safeUrl}" style="width:100%;margin:4px 0"></audio>`;
+        return `<audio controls ${sourceAttribute} style="width:100%;margin:4px 0"></audio>`;
       case "video":
-        return `<video controls src="${safeUrl}" style="max-width:100%;border-radius:8px;margin:4px 0"></video>`;
+        return `<video controls ${sourceAttribute} style="max-width:100%;border-radius:8px;margin:4px 0"></video>`;
       default:
-        return `<a href="${safeUrl}" download="${safeName}" target="_blank" rel="noopener" class="md-link">${safeName}</a>`;
+        return `<a data-media-url="${escapedUrl}" download="${safeName}" class="md-link">${safeName}</a>`;
     }
   } catch {
     return "";
@@ -116,7 +123,7 @@ function renderAttachment(json: string, token: string): string {
  * Handles code fences, inline code, bold, italic, links, headings,
  * lists, tables, and line breaks.
  */
-function renderMarkdown(text: string, token = ""): string {
+function renderMarkdown(text: string): string {
   // SECURITY: this renderer emits ONLY the fixed set of tags it generates from
   // markdown syntax — raw HTML from the (untrusted) message is NEVER passed
   // through to the unsafeHTML sink. Trusted/structured markers (attachment
@@ -126,14 +133,14 @@ function renderMarkdown(text: string, token = ""): string {
   // replaces the old single-pass denylist that a nested-tag payload
   // (`<ifr<iframe>ame …>`) could defeat to smuggle a live `<iframe>` through.
 
-  // 1. Attachment markers -> placeholders. renderAttachment escapes url +
-  //    fileName, so this is safe whether the marker is server-generated or
-  //    forged in the message body. The placeholder uses no markdown-significant
-  //    chars so later inline transforms leave it intact.
+  // 1. Attachment markers -> placeholders. renderAttachment accepts only the
+  //    protected same-origin media route and escapes the file name, so a forged
+  //    marker cannot trigger a third-party request. The placeholder uses no
+  //    markdown-significant chars so later inline transforms leave it intact.
   const attachmentBlocks: string[] = [];
   let sanitized = text.replace(/<!-- attachment:(.*?) -->/g, (_, json) => {
     const placeholder = `\x00ATTACH${attachmentBlocks.length}\x00`;
-    attachmentBlocks.push(renderAttachment(json, token));
+    attachmentBlocks.push(renderAttachment(json));
     return placeholder;
   });
 
@@ -512,7 +519,8 @@ export class IcChatMessage extends LitElement {
         left: 0;
       }
 
-      .wrapper:hover .message-actions {
+      .wrapper:hover .message-actions,
+      .wrapper:focus-within .message-actions {
         opacity: 1;
         pointer-events: auto;
       }
@@ -551,8 +559,86 @@ export class IcChatMessage extends LitElement {
   /** Whether to show hover action buttons. */
   @property({ type: Boolean }) showActions = true;
 
-  /** Auth token appended to relative /media/ URLs for authenticated media loading. */
+  /** Bearer token used only in headers when retrieving protected media. */
   @property() mediaToken = "";
+
+  private _mediaLoadController: AbortController | null = null;
+  private readonly _mediaObjectUrls = new Set<string>();
+
+  override disconnectedCallback(): void {
+    this._resetMediaResources();
+    super.disconnectedCallback();
+  }
+
+  override updated(changed: Map<string, unknown>): void {
+    if (changed.has("content") || changed.has("mediaToken") || changed.has("role")) {
+      void this._loadProtectedMedia();
+    }
+  }
+
+  private _resetMediaResources(): void {
+    this._mediaLoadController?.abort();
+    this._mediaLoadController = null;
+    for (const objectUrl of this._mediaObjectUrls) {
+      URL.revokeObjectURL(objectUrl);
+    }
+    this._mediaObjectUrls.clear();
+  }
+
+  private async _loadProtectedMedia(): Promise<void> {
+    this._resetMediaResources();
+    const elements = Array.from(
+      this.shadowRoot?.querySelectorAll<HTMLElement>("[data-media-url]") ?? [],
+    );
+    if (elements.length === 0) return;
+
+    const controller = new AbortController();
+    this._mediaLoadController = controller;
+    await Promise.all(elements.map((element) => this._loadMediaElement(element, controller)));
+  }
+
+  private async _loadMediaElement(
+    element: HTMLElement,
+    controller: AbortController,
+  ): Promise<void> {
+    const mediaUrl = element.dataset.mediaUrl;
+    if (!mediaUrl) return;
+
+    const request: RequestInit = { signal: controller.signal };
+    if (this.mediaToken) {
+      request.headers = { Authorization: `Bearer ${this.mediaToken}` };
+    }
+
+    try {
+      const response = await fetch(mediaUrl, request);
+      if (!response.ok || controller.signal.aborted) {
+        element.dataset.mediaError = response.ok ? "cancelled" : "unavailable";
+        return;
+      }
+      const blob = await response.blob();
+      if (controller.signal.aborted) return;
+
+      const objectUrl = URL.createObjectURL(blob);
+      if (controller.signal.aborted || !element.isConnected) {
+        URL.revokeObjectURL(objectUrl);
+        return;
+      }
+      this._mediaObjectUrls.add(objectUrl);
+      if (element instanceof HTMLAnchorElement) {
+        element.href = objectUrl;
+      } else if (
+        element instanceof HTMLImageElement ||
+        element instanceof HTMLAudioElement ||
+        element instanceof HTMLVideoElement
+      ) {
+        element.src = objectUrl;
+      }
+    } catch {
+      if (!controller.signal.aborted) {
+        element.dataset.mediaError = "unavailable";
+      }
+    }
+  }
 
   private _handleCopy(): void {
     navigator.clipboard.writeText(this.content).then(() => {
@@ -591,7 +677,7 @@ export class IcChatMessage extends LitElement {
       return this.content;
     }
     // Markdown rendering for assistant, error, system
-    const rendered = renderMarkdown(this.content, this.mediaToken);
+    const rendered = renderMarkdown(this.content);
     return unsafeHTML(rendered);
   }
 

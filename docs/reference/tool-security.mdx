@@ -352,7 +352,11 @@ interface SanitizeResult {
 
 ## Audit Wrapper
 
-Tool executions generate audit events through the `TypedEventBus`. Each tool call emits an `audit:event` with the action type, classification (from the [Action Classifier](/reference/action-classifier)), outcome, and timing metadata. This provides a complete audit trail of all agent actions.
+Classified tool executions can generate audit events through the
+`TypedEventBus`, including action type, classification (from the [Action
+Classifier](/reference/action-classifier)), outcome, and timing metadata. These
+events support investigation of covered tool paths; they are not a complete
+record of every model decision or external side effect.
 
 The audit event structure:
 

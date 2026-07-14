@@ -442,6 +442,10 @@ describe("models set validates model exists in catalog", () => {
     const output = getSpyOutput(consoleSpy.log);
     expect(output).toContain("Model updated");
     expect(output).toContain("assistant");
+    expect(output).toContain("Restart the daemon to apply the change");
+    expect(output).toContain("comis daemon stop");
+    expect(output).toContain("comis daemon start");
+    expect(output).not.toContain("Daemon will restart");
   });
 });
 

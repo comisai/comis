@@ -18,22 +18,22 @@ How you would like this to work.
 
 Other approaches you have thought about.
 
-## Which Package(s)
+## Affected Area
 
-Which of the Comis packages would this affect?
+Select the user-facing area that best matches the request. It is fine to choose “Not sure.”
 
-- [ ] `@comis/core`
-- [ ] `@comis/shared`
-- [ ] `@comis/cli`
-- [ ] `@comis/agent`
-- [ ] `@comis/memory`
-- [ ] `@comis/channels`
-- [ ] `@comis/skills`
-- [ ] `@comis/gateway`
-- [ ] `@comis/daemon`
-- [ ] `@comis/scheduler`
-- [ ] `@comis/infra`
-- [ ] `@comis/web`
+- [ ] Agent behavior or workflows
+- [ ] Messaging channel
+- [ ] Models, tools, MCP, or media
+- [ ] CLI or dashboard
+- [ ] Installation, deployment, or operations
+- [ ] Security or privacy
+- [ ] Documentation or contributor experience
+- [ ] Not sure
+
+## Success Criteria
+
+What observable behavior would tell you that this request is complete?
 
 ## Additional Context
 

@@ -5,30 +5,30 @@ Command-line interface for the [Comis](https://github.com/comisai/comis) AI agen
 ## Install
 
 ```bash
-npm install -g comisai
+npm install --global comisai
 ```
 
-## Commands
+## Common Commands
 
 | Command | Description |
 |---------|-------------|
 | `comis init` | Initialize a new Comis installation |
-| `comis configure` | Interactive setup wizard for channels, providers, and agents |
+| `comis configure` | Interactively manage supported configuration sections |
 | `comis daemon start\|stop\|status\|logs` | Manage the background daemon |
 | `comis pm2 setup\|start\|stop` | PM2 process management integration |
 | `comis status` | Show daemon and channel status |
-| `comis health` | Run health checks |
-| `comis doctor` | Diagnose configuration and connectivity issues |
-| `comis agent list\|info\|...` | Manage agents |
+| `comis health` | Show current system health issues |
+| `comis doctor` | Diagnose configuration, runtime, channel, credential, and storage issues |
+| `comis agent list\|create\|configure\|delete` | Manage agents |
 | `comis auth login\|list\|...` | Manage OAuth provider credentials |
-| `comis channel list\|info\|...` | Manage channel connections |
+| `comis channel status` | Show channel connection status |
 | `comis sessions list\|inspect\|...` | Browse and manage sessions |
-| `comis memory search\|info\|...` | Query agent memory |
-| `comis config get\|set\|...` | View and modify configuration |
-| `comis models` | List available LLM models |
-| `comis providers list\|...` | Manage LLM provider profiles |
-| `comis secrets` | Manage encrypted credentials |
-| `comis security` | Run security checks |
+| `comis memory search\|inspect\|stats\|...` | Query and manage agent memory |
+| `comis config validate\|show\|set\|...` | Validate, view, and modify configuration |
+| `comis models list\|set` | List models or set an agent model |
+| `comis providers list` | List provider profiles |
+| `comis secrets init\|set\|list\|...` | Manage encrypted credentials |
+| `comis security audit\|fix\|audit-log` | Audit security controls and review decisions |
 | `comis reset` | Reset agent state |
 | `comis signal-setup` | Signal messenger setup helper |
 | `comis uninstall` | Remove the Comis installation |
@@ -46,11 +46,9 @@ npm install -g comisai
 ```bash
 # First-time setup
 comis init
-comis configure
 
 # Start the daemon
-comis pm2 setup    # one-time
-comis pm2 start
+comis daemon start
 
 # Check status
 comis status
@@ -58,12 +56,14 @@ comis health
 
 # Manage agents
 comis agent list
-comis agent info my-agent
+comis agent configure my-agent
 ```
 
 ## Part of Comis
 
-This package is part of the [Comis](https://github.com/comisai/comis) monorepo -- a security-first AI agent platform connecting agents to Discord, Telegram, Slack, WhatsApp, and more.
+Run `comis --help` or `comis <command> --help` for the authoritative command surface.
+
+This package is part of [Comis](https://github.com/comisai/comis), an open-source, security-first platform for AI agent teams.
 
 ## License
 

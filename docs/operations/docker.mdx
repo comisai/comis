@@ -1,6 +1,6 @@
 ---
 title: "Docker"
-description: "Running Comis in a Docker container for production"
+description: "Running Comis in Docker, including Linux production boundaries"
 icon: "docker"
 ---
 
@@ -17,9 +17,10 @@ service architecture.
 
 ## Production Dockerfile
 
-The repository includes a 4-stage `Dockerfile` that produces a minimal production
-image. Source code, build tools, and development dependencies are discarded after
-compilation.
+The repository includes a 4-stage `Dockerfile` that separates application
+compilation from the runtime image. Comis TypeScript source and development
+dependencies are removed after compilation; runtime language toolchains and
+agent utilities are installed deliberately in the final stage.
 
 ### Build architecture
 
@@ -33,16 +34,17 @@ remaining source files (`src/`, `test/`, `tsconfig*.json`, `vitest.config.*`)
 so only `dist/` and `node_modules` remain.
 
 **Stage 3 -- base variant selection:** Two base image options are defined:
-- `base-default` -- full `node:22-bookworm` (includes debugging tools)
-- `base-slim` -- minimal `node:22-bookworm-slim`
+- `base-default` -- full `node:22-bookworm` Debian base
+- `base-slim` -- smaller `node:22-bookworm-slim` Debian base
 
 The `COMIS_VARIANT` build arg selects which base to use (default: `slim`).
 
-**Stage 4 -- final:** Installs runtime dependencies (`procps`, `curl`,
-`ca-certificates`, `dumb-init`, `git`), creates a non-root `comis` user
-(UID/GID 1000), copies from runtime-assets, creates a `comis` CLI symlink at
-`/usr/local/bin/comis`, and configures dumb-init as PID 1. Exposes port 4766
-with a health check (60s interval, 10s timeout, 30s start period, 3 retries).
+**Stage 4 -- final:** Installs the system, media, sandbox, and language tools
+used at runtime (including Git, Python/pipx, ffmpeg, bubblewrap, Go, DuckDB,
+uv, and Rust), creates a non-root `comis` user (UID/GID 1000), copies the
+compiled application, and creates the `comis` CLI symlink. `dumb-init` runs as
+PID 1. Port 4766 has a health check with a 60s interval, 10s timeout, 30s start
+period, and 3 retries.
 
 ### Build args
 
@@ -66,16 +68,16 @@ ARG COMIS_WITH_CLOAKBROWSER=0
   system packages into the final image.
 - **Browser tool** -- three independent flags mirror the bare-VPS installer:
   `COMIS_WITH_BROWSER=1` installs Google Chrome + headless shared libs;
-  `COMIS_WITH_XVFB=1` adds Xvfb (entrypoint shim starts it on `:99` before the
-  daemon); `COMIS_WITH_CLOAKBROWSER=1` installs CloakBrowser (stealth Chromium)
-  instead of stock Chrome. All implications and the datacenter-IP caveat are
-  documented in [agent-tools/browser](/agent-tools/browser#stealth-mode-anti-bot-detection).
+  `COMIS_WITH_XVFB=1` adds Xvfb (the entrypoint verifies its `:99` socket before
+  starting the daemon and exits if the display fails); `COMIS_WITH_CLOAKBROWSER=1` installs CloakBrowser as an alternative
+  Chromium runtime instead of stock Chrome. Runtime limitations and licensing are
+  documented in [Browser runtime options](/agent-tools/browser#browser-runtime-options).
 
 ### Installer-built variant (`Dockerfile.install`)
 
-The repo ships a second Dockerfile that runs `install.sh` end-to-end inside
-the container instead of doing the multi-stage TypeScript build. Same build
-args, same final image shape, but exercises the bare-VPS installer code path:
+The repo ships a second Dockerfile that packs the local workspace and invokes
+`install.sh` inside Ubuntu rather than copying the main multi-stage build
+output directly:
 
 ```bash
 docker build -f Dockerfile.install \
@@ -83,14 +85,17 @@ docker build -f Dockerfile.install \
   -t comis-installed:cloak .
 ```
 
-Use this for CI validation of `install.sh` changes, or when you want strict
-parity with a bare-VPS deploy. The main `Dockerfile` remains the production
-path (smaller, faster, no apt repo activity in the final layer).
+Use this to exercise the installer's non-interactive package-install and
+browser-provisioning branches in CI. It skips interactive setup, initialization,
+service management, dedicated-user creation, and the public-registry download
+path, so it is not a parity image for a managed host. The main `Dockerfile`
+remains the primary multi-stage image path.
 
 <Tip>
-The multi-stage build keeps the final image small. Only compiled JavaScript,
-production dependencies, and minimal system tools are included. The full
-`Dockerfile` is in the repository root.
+The multi-stage build removes Comis TypeScript source and development
+dependencies from the final image. The configured runtime tools and language
+toolchains remain available to agents. The full `Dockerfile` is in the
+repository root.
 </Tip>
 
 ## Docker Compose
@@ -104,7 +109,8 @@ a profile-based activation model.
 - Gateway port binding via `COMIS_GATEWAY_HOST` and `COMIS_GATEWAY_PORT` env vars
   (default: `127.0.0.1:4766`)
 - Volumes for `/home/comis/.comis` (persistent data) and `/etc/comis` (config); both bind-mount the same host dir (`~/.comis` by default)
-- Environment variable pass-through for secrets, provider keys, and channel tokens
+- A mounted `COMIS_ENV_FILE` for persistent credentials, plus explicit
+  pass-through for a small set of optional non-empty provider/channel overrides
 - Health check: `curl -sf http://127.0.0.1:4766/health` (60s interval, 10s
   timeout, 30s start period, 3 retries)
 - Resource limits: 2G memory / 2 CPU (limit), 256M / 0.5 CPU (reservation)
@@ -185,9 +191,11 @@ The daemon uses two mount points inside the container:
 | `.env` | Runtime environment (token, network settings) |
 
 <Warning>
-If you do not mount a volume for `/home/comis/.comis`, you will **lose all agent memory and
-configuration** when the container restarts. The Compose file mounts
-`COMIS_DATA_DIR` (default `~/.comis`) to `/home/comis/.comis` to ensure persistence.
+Use an explicit volume or bind mount for `/home/comis/.comis`. The image
+declares this path as a volume, so Docker may create an anonymous volume when
+you omit `-v`; that state is easy to orphan when replacing the container. The
+Compose file binds `COMIS_DATA_DIR` (default `~/.comis`) so the location and
+backup lifecycle are explicit.
 </Warning>
 
 ### Backup
@@ -423,29 +431,6 @@ docker compose exec comis-daemon bwrap \
   /bin/sh -c 'cat /home/comis/.comis/.env'
 ```
 
-#### Opting out (not recommended)
-
-If you have a deployment where the agent processes only trusted input and
-you want a smaller image or different isolation strategy, you can rebuild
-without bubblewrap:
-
-```yaml
-# docker-compose.override.yml
-services:
-  comis-daemon:
-    build:
-      args:
-        # Override the apt list — note the daemon will log a startup INFO
-        # noting the sandbox is absent, and `exec` runs unsandboxed.
-        COMIS_DOCKER_APT_PACKAGES: ""
-    security_opt: !override
-      - no-new-privileges:true
-```
-
-You also need to disable the `exec` skill in your agent config, or accept
-that prompt-injected commands can read all daemon state inside the
-container. There is no middle ground.
-
 ### Secrets management
 
 Comis supports three credential-storage modes, selected via `security.storage`
@@ -456,39 +441,34 @@ opt out, set `security.storage: env` (or `file`).
 | Mode (`security.storage`) | When to use | How it works |
 |---|---|---|
 | **`encrypted` (default)** | All deployments. The encrypted store is active immediately on first boot — no manual key generation required. | On first boot with no `SECRETS_MASTER_KEY` present, the daemon auto-generates a 32-byte master key, writes it to `<data dir>/.env` (mode 0600), and opens `secrets.db` on the same boot. **Back up `~/.comis/.env`** — losing `SECRETS_MASTER_KEY` makes `secrets.db` permanently unreadable (AES-256-GCM, no key escrow). All three credential families — named secrets, OAuth profiles, and **MCP OAuth tokens** — live in `secrets.db` (the `secrets`, `oauth_profiles`, and `mcp_credentials` tables); no plaintext `mcp-tokens/` directory is written. |
-| **`env` / `file` (opt-out)** | Single-tenant deployments where you want to manage credentials exclusively via env vars (`env`) or plaintext-at-0600 files (`file`) and do not need the encrypted store. | Set `security.storage: env` (or `file`). The daemon boots in that mode and emits a startup WARN. Provider keys and channel tokens come from compose's `environment:` pass-through and from `<data dir>/.env`. In `file` mode MCP OAuth tokens are written to the plaintext `mcp-tokens/` directory (0600), matching `secrets.json` / `auth-profiles.json`. In `env` mode the daemon does **not** create `secrets.db`, and MCP OAuth login is unavailable (no writable token store — `comis mcp login` fails with an actionable storage-mode error). |
+| **`env` / `file` (explicit opt-out)** | Deployments whose operator deliberately accepts environment-only (`env`) or plaintext-at-0600 file storage (`file`). | Set `security.storage: env` or `file` in `config.yaml`; an empty master-key value does not select either mode. `env` is read-only and does not support MCP OAuth login. `file` uses the daemon's 0600 plaintext credential files, including `mcp-tokens/`. |
 
 #### Important caveat about `secrets.db` inside Docker
 
-Storing both the encrypted database (`/home/comis/.comis/secrets.db`) and the master
-key (`SECRETS_MASTER_KEY` env var) inside the same container provides
-**no additional protection** against an in-container compromise -- anyone
-who can read `/proc/<daemon-pid>/environ` or your compose config can
-recover the key and decrypt the DB. The encryption pays off only when:
-
-- You inject `SECRETS_MASTER_KEY` from a host-level secret manager
-  (HashiCorp Vault, AWS Secrets Manager, Docker secrets backed by a
-  tmpfs mount) so it never lives on disk in the container, AND
-- You can rely on the bwrap exec sandbox (see above) to keep the key
-  out of agent-issued processes.
-
-For most Docker deployments, the flat `.env` mode is both simpler and
-no less secure than running `secrets.db` with a co-located key.
+The default Docker layout keeps `secrets.db` and its master key in the same
+mounted data directory. Encryption protects the database at rest when the key
+is separated from a copied database, but it does not protect against a process
+or account that can read both files. Keep the mount private, verify the exec
+sandbox is active, and back up `secrets.db` together with `COMIS_ENV_FILE`.
+Do not interpret this limitation as a reason to switch silently to plaintext
+file storage; that mode is an explicit operator choice.
 
 #### Adding a credential
 
 ```bash
-# Envfile-only mode: add to your repo .env (for compose pass-through)
-# OR to the data dir's .env file (read by the daemon at startup)
+# Persistent first-boot source (default COMIS_ENV_FILE)
 echo "TELEGRAM_BOT_TOKEN=12345:abc..." >> ~/.comis/.env
 
-# Then restart the daemon to reload the file
+# Restart after editing the mounted file directly
 docker compose restart comis-daemon
 ```
 
-The daemon prefers values already in `process.env` (set by compose) over
-values from `<data dir>/.env`, so per-deployment overrides via compose's
-`environment:` block always win.
+For the exact credential names projected by the base Compose file, its
+entrypoint removes blank values before Comis loads `COMIS_ENV_FILE`. Explicit
+non-empty container values retain precedence over the mounted file at load
+time. In encrypted mode, a value already stored in `secrets.db` is authoritative
+over both sources. After setup, prefer `comis secrets set <NAME>` for encrypted,
+live-applied updates.
 
 ### Environment file
 
@@ -498,20 +478,22 @@ Copy `.env.docker.example` from the repository root as your starting point:
 cp .env.docker.example .env
 ```
 
-This template includes all configurable variables: image selection, data/config
-paths, network binding, gateway token, secrets master key, LLM provider keys,
-and channel tokens. See the comments in `.env.docker.example` for details.
+This template contains Compose image, path, and network settings plus blank
+explicit overrides for Anthropic, OpenAI, Telegram, Discord, Slack, and the
+gateway token. It deliberately does not define `SECRETS_MASTER_KEY`; encrypted
+first boot writes that key to `COMIS_ENV_FILE`. Put other persistent provider
+and channel credentials in `COMIS_ENV_FILE` as well.
 
 <Tip>
-Pass API keys via environment variables (using `.env` or docker compose environment
-section), not in the config file mounted into the container. Environment variables
-are not written to the image layers.
+Keep API keys out of `config.yaml`. Use the mounted `COMIS_ENV_FILE` for
+first-boot credentials, then the encrypted secret store for managed updates.
 </Tip>
 
 ## Development overrides
 
-The repository includes a `docker-compose.override.yml` that Docker Compose
-activates automatically when the file exists alongside `docker-compose.yml`.
+The repository includes `docker-compose.dev.yml` as an explicit development
+overlay. Compose does not load it automatically, so plain `docker compose up`
+keeps the base file's loopback-only host bindings and production settings.
 
 Development overrides change the following:
 
@@ -523,12 +505,16 @@ Development overrides change the following:
 | Resource limits | 2G / 2 CPU | 4G / 4 CPU |
 | Web dashboard | Requires `--profile web` | Starts automatically (no profile needed) |
 
-To use production settings without overrides, either rename or remove
-`docker-compose.override.yml`:
+Opt in only when you want the broader development posture:
 
 ```bash
-mv docker-compose.override.yml docker-compose.override.yml.bak
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 ```
+
+The development overlay binds the gateway to `0.0.0.0:4766`, sets
+`NODE_ENV=development`, uses the full image variant, and starts the web
+dashboard without a profile. Do not use it unintentionally on an untrusted
+network. Its `!override` tags require Docker Compose 2.24.4 or newer.
 
 ## Web dashboard
 
@@ -564,8 +550,8 @@ The repository ships two automated Docker workflows:
 
 Both workflows build multi-arch manifests (`linux/amd64` + `linux/arm64`) and
 produce both `default` and `slim` variants. The Docker Hub workflow version tags
-are derived directly from the git tag — pushing `v1.0.26` produces
-`comisai/comis:1.0.26`, `comisai/comis:1.0`, and `comisai/comis:latest`
+are derived directly from the git tag — pushing `vX.Y.Z` produces
+`comisai/comis:X.Y.Z`, `comisai/comis:X.Y`, and `comisai/comis:latest`
 (plus the matching `-slim` variants).
 
 For full details on image tags, required secrets, and manual publishing, see the

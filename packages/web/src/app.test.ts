@@ -79,6 +79,7 @@ function priv(el: IcApp) {
     _pendingApprovals: number;
     _errorCount: number;
     _sidebarOpen: boolean;
+    _shortcutsHelpOpen: boolean;
     _apiClient: ApiClient | null;
     _router: { stop: () => void; start: () => void; navigate: (r: string) => void } | null;
     _rpcClient: { disconnect: () => void; connect: (url: string, token: string) => void } | null;
@@ -142,6 +143,34 @@ describe("IcApp", () => {
 
     it("starts with null router", () => {
       expect(priv(el)._router).toBeNull();
+    });
+  });
+
+  describe("authentication screen", () => {
+    it("associates the gateway-token label and live error with the input", async () => {
+      priv(el)._authError = "Please enter a token";
+      document.body.appendChild(el);
+      await el.updateComplete;
+
+      const label = el.shadowRoot?.querySelector("label") as HTMLLabelElement;
+      const input = el.shadowRoot?.querySelector(".auth-input") as HTMLInputElement;
+      const error = el.shadowRoot?.querySelector(".auth-error") as HTMLElement;
+      expect(label.htmlFor).toBe(input.id);
+      expect(input.getAttribute("aria-invalid")).toBe("true");
+      expect(input.getAttribute("aria-describedby")).toBe(error.id);
+      expect(error.getAttribute("role")).toBe("alert");
+    });
+
+    it("marks the keyboard shortcuts overlay as a named modal dialog", async () => {
+      priv(el)._authenticated = true;
+      priv(el)._shortcutsHelpOpen = true;
+      document.body.appendChild(el);
+      await el.updateComplete;
+
+      const dialog = el.shadowRoot?.querySelector(".shortcuts-panel");
+      expect(dialog?.getAttribute("aria-modal")).toBe("true");
+      expect(dialog?.getAttribute("aria-labelledby")).toBe("shortcuts-title");
+      expect(el.shadowRoot?.querySelector("#shortcuts-title")?.textContent).toContain("Keyboard Shortcuts");
     });
   });
 

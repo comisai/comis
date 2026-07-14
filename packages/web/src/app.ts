@@ -45,7 +45,6 @@ const VIEW_LOADERS: Record<string, () => Promise<unknown>> = {
   "ic-subagents-view": () => import("./views/subagents.js"),
   "ic-security-view": () => import("./views/security.js"),
   "ic-config-editor": () => import("./views/config-editor.js"),
-  "ic-setup-wizard": () => import("./views/setup-wizard.js"),
   "ic-pipeline-list": () => import("./views/pipelines/pipeline-list.js"),
   "ic-pipeline-builder": () => import("./views/pipelines/pipeline-builder.js"),
   "ic-pipeline-monitor": () => import("./views/pipelines/pipeline-monitor.js"),
@@ -61,7 +60,7 @@ const VIEW_LOADERS: Record<string, () => Promise<unknown>> = {
  *
  * Handles authentication, routing, and provides the API client
  * to child views via property passing. Uses sidebar + topbar shell
- * layout with 23 navigation items and 38 parameterized routes.
+ * layout with grouped navigation and parameterized routes.
  *
  * Auth + polling + global-state + keyboard + command-palette
  * orchestration is owned by `app-controller.ts` (createAppController).
@@ -110,6 +109,14 @@ export class IcApp extends LitElement implements AppHost {
       color: var(--ic-text-muted, #9ca3af);
       margin-bottom: 1.5rem;
       font-size: 0.875rem;
+    }
+
+    .auth-label {
+      display: block;
+      margin-bottom: 0.375rem;
+      color: var(--ic-text-muted, #9ca3af);
+      font-size: 0.8125rem;
+      font-weight: 500;
     }
 
     .auth-input {
@@ -208,6 +215,7 @@ export class IcApp extends LitElement implements AppHost {
     }
 
     .shortcuts-panel {
+      position: relative;
       background: var(--ic-surface, #111827);
       border: 1px solid var(--ic-border, #374151);
       border-radius: var(--ic-radius-lg, 0.75rem);
@@ -215,6 +223,18 @@ export class IcApp extends LitElement implements AppHost {
       max-width: 400px;
       width: 90%;
       box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4);
+    }
+
+    .shortcuts-close {
+      position: absolute;
+      top: 0.75rem;
+      right: 0.75rem;
+      border: 0;
+      background: transparent;
+      color: var(--ic-text-muted, #9ca3af);
+      cursor: pointer;
+      font-size: 1.25rem;
+      line-height: 1;
     }
 
     .shortcuts-title {
@@ -381,13 +401,20 @@ export class IcApp extends LitElement implements AppHost {
           <div class="auth-title">Comis</div>
           <div class="auth-subtitle">Enter your gateway token to continue</div>
           <form @submit=${this._handleLogin}>
+            <label class="auth-label" for="gateway-token">Gateway token</label>
             <input
+              id="gateway-token"
+              name="gateway-token"
               class="auth-input"
               type="password"
               placeholder="Gateway bearer token"
-              autocomplete="off"
+              autocomplete="current-password"
+              aria-invalid=${this._authError ? "true" : "false"}
+              aria-describedby=${this._authError ? "gateway-token-error" : nothing}
             />
-            ${this._authError ? html`<div class="auth-error">${this._authError}</div>` : nothing}
+            ${this._authError
+              ? html`<div id="gateway-token-error" class="auth-error" role="alert" aria-live="assertive">${this._authError}</div>`
+              : nothing}
             <button class="auth-btn" type="submit">Connect</button>
           </form>
         </div>
@@ -417,7 +444,6 @@ export class IcApp extends LitElement implements AppHost {
           <ic-topbar
             .connectionStatus=${this._connectionStatus}
             .notificationCount=${this._pendingApprovals}
-            .tokenId=${this._token}
             @toggle-sidebar=${() => { this._sidebarOpen = !this._sidebarOpen; }}
             @navigate=${(e: CustomEvent<string>) => { this._router?.navigate(e.detail); }}
             @logout=${() => this._handleLogout()}
@@ -445,8 +471,9 @@ export class IcApp extends LitElement implements AppHost {
   private _renderShortcutsHelp() {
     return html`
       <div class="shortcuts-backdrop" @click=${(e: MouseEvent) => { if ((e.target as HTMLElement).classList.contains("shortcuts-backdrop")) this._shortcutsHelpOpen = false; }}>
-        <div class="shortcuts-panel" role="dialog" aria-label="Keyboard shortcuts">
-          <div class="shortcuts-title">Keyboard Shortcuts</div>
+        <div class="shortcuts-panel" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title">
+          <button class="shortcuts-close" type="button" aria-label="Close keyboard shortcuts" @click=${() => { this._shortcutsHelpOpen = false; }}>&times;</button>
+          <div class="shortcuts-title" id="shortcuts-title">Keyboard Shortcuts</div>
           <table class="shortcuts-table">
             <tbody>
               <tr><td><kbd>Ctrl</kbd>+<kbd>K</kbd></td><td>Command Palette</td></tr>
@@ -579,8 +606,6 @@ export class IcApp extends LitElement implements AppHost {
         return html`<ic-security-view .rpcClient=${this._rpcClient} .apiClient=${this._apiClient} .eventDispatcher=${this._eventDispatcher} .initialTab=${this._routeQuery["tab"] ?? "events"}></ic-security-view>`;
       case "ic-config-editor":
         return html`<ic-config-editor .rpcClient=${this._rpcClient}></ic-config-editor>`;
-      case "ic-setup-wizard":
-        return html`<ic-setup-wizard .rpcClient=${this._rpcClient}></ic-setup-wizard>`;
       case "ic-observe-dashboard":
         return html`<ic-observe-view .rpcClient=${this._rpcClient} .eventDispatcher=${this._eventDispatcher} .initialTab=${"overview"}></ic-observe-view>`;
       case "ic-context-engine-view":

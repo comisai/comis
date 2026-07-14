@@ -9,7 +9,7 @@ import type { RpcAdapterDeps } from "../rpc/rpc-adapters.js";
 import { extractBearerToken, checkScope } from "../auth/token-auth.js";
 
 interface SseEnv extends Env {
-  Variables: { clientScopes: string[] };
+  Variables: { clientScopes: string[]; clientId: string };
 }
 
 /**
@@ -123,7 +123,8 @@ export function createSseEndpoint(deps: SseEndpointDeps): Hono<SseEnv> {
       return c.json({ error: "Forbidden: insufficient scope" }, 403);
     }
 
-    // Store client scopes on context for downstream handlers
+    // Store authenticated identity and scopes for downstream handlers.
+    c.set("clientId", client.id);
     c.set("clientScopes", client.scopes as string[]);
 
     return next();
@@ -210,9 +211,11 @@ export function createSseEndpoint(deps: SseEndpointDeps): Hono<SseEnv> {
 
       try {
         const scopes = c.get("clientScopes") as readonly string[] | undefined;
+        const clientId = c.get("clientId");
         const result = await rpcAdapterDeps.executeAgent({
           message,
           agentId: agentId ?? undefined,
+          clientId,
           scopes,
           onDelta,
         });

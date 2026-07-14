@@ -1,23 +1,18 @@
-// Installer guard — the browser tool ships ENABLED by default (full capability
-// out of the box), so the installer must PROVISION the browser runtime by
-// default. Before this, the browser tool's config default was off AND the
-// installer's Chromium provisioning was off (`--with-browser` opt-in) — consistent.
-// Now the tool is default-ON (browser.enabled + skills.builtinTools.browser), so
-// a fresh install must install Chromium + the headless shared libs by default,
-// AND the Xvfb headed stack (so headless-detecting sites work), or the default-ON
-// tool is crippled at first use for lack of a runtime.
+// The browser tool is enabled by default, so the installer provisions Chromium
+// and its headless shared libraries by default. Xvfb is requested where a system
+// service can own the companion unit; systemd-user installs downshift explicitly.
 //
 // The contract under test:
-//   1. WITH_BROWSER and WITH_XVFB both default to 1 (Chromium + headed stack
-//      provisioned by default), overridable down via COMIS_WITH_BROWSER / _XVFB.
+//   1. WITH_BROWSER and WITH_XVFB both default to 1 (Chromium provisioned and
+//      headed mode requested), overridable via COMIS_WITH_BROWSER / _XVFB.
 //   2. --without-browser opts out of the WHOLE stack (must also zero WITH_XVFB /
 //      WITH_CLOAKBROWSER, else the pre-parse `WITH_XVFB=1 ⟹ WITH_BROWSER=1`
 //      implication silently re-enables it); --without-xvfb keeps headless-only.
 //   3. Provisioning stays STRICTLY best-effort — the install_browser_deps_linux
 //      call sites guard with `|| true` and the render_xvfb_unit call guards with
 //      `|| ...`, so a box where Chromium/Xvfb can't install (arm64 / locked-down
-//      apt / rootless) still gets a fully working daemon (the browser tool then
-//      fails honestly at use, never aborting the install).
+//      apt / rootless) still gets a working daemon; unavailable browser modes
+//      fail honestly at use and never abort the install.
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -42,14 +37,14 @@ function fnBody(name: string): string {
   return end === -1 ? "" : lines.slice(start, end + 1).join("\n");
 }
 
-describe("install.sh browser + xvfb provisioning is on by default (full capability out of the box)", () => {
+describe("install.sh provisions the browser runtime with explicit Xvfb fallback", () => {
   it("WITH_BROWSER defaults to 1, overridable down via COMIS_WITH_BROWSER", () => {
     const m = installSh.match(/WITH_BROWSER="\$\{COMIS_WITH_BROWSER:-(\d)\}"/);
     expect(m, "WITH_BROWSER must read COMIS_WITH_BROWSER with a default").not.toBeNull();
     expect(m?.[1], "browser provisioning must default ON (matches the default-ON browser tool)").toBe("1");
   });
 
-  it("WITH_XVFB defaults to 1 (headed stack on by default), overridable down via COMIS_WITH_XVFB", () => {
+  it("WITH_XVFB defaults to 1 (headed mode requested), overridable via COMIS_WITH_XVFB", () => {
     const m = installSh.match(/WITH_XVFB="\$\{COMIS_WITH_XVFB:-(\d)\}"/);
     expect(m, "WITH_XVFB must read COMIS_WITH_XVFB with a default").not.toBeNull();
     expect(m?.[1], "xvfb headed provisioning must default ON").toBe("1");
@@ -70,6 +65,15 @@ describe("install.sh browser + xvfb provisioning is on by default (full capabili
     expect(branch, "a --without-xvfb flag must exist").not.toBe("");
     expect(branch, "--without-xvfb must zero WITH_XVFB").toMatch(/WITH_XVFB=0/);
     expect(branch, "--without-xvfb must NOT touch WITH_BROWSER (headless stays)").not.toMatch(/WITH_BROWSER=/);
+  });
+
+  it("the CloakBrowser help makes no access or network-reputation guarantee", () => {
+    const usage = fnBody("print_usage");
+    expect(usage, "installer usage text must exist").not.toBe("");
+    expect(usage).not.toMatch(/Bypasses Cloudflare|pre-blocked|residential proxy/i);
+    expect(usage).toMatch(/does not guarantee[\s\S]{0,40}access/i);
+    expect(usage).toMatch(/review[\s\S]{0,80}binary license/i);
+    expect(usage).toMatch(/target sites[\s\S]{0,100}terms/i);
   });
 
   it("every install_browser_deps_linux call site is best-effort (|| true) — never aborts the install", () => {
@@ -99,9 +103,8 @@ describe("install.sh browser + xvfb provisioning is on by default (full capabili
   // Xvfb (headed) is a best-effort UPGRADE over headless Chromium — never a hard
   // requirement. If the Xvfb stack fails to install, the daemon must fall back to
   // the (already-installed) headless Chromium instead of a headed-but-broken tool.
-  // The authoritative signal is GROUND TRUTH — is the Xvfb binary actually present
-  // — not the WITH_XVFB intent flag, so the fallback holds across all install paths
-  // regardless of ordering.
+  // Within a service mode that can own the companion, actual Xvfb availability
+  // determines headed support. Service-manager capability is tested separately.
   it("defines an xvfb_present ground-truth check against the real Xvfb binary", () => {
     const body = fnBody("xvfb_present");
     expect(body, "an xvfb_present() ground-truth helper must exist").not.toBe("");
@@ -130,8 +133,18 @@ describe("install.sh browser + xvfb provisioning is on by default (full capabili
     expect(installSh, "the Xvfb unit must rw-bind the shared socket dir").toContain("BindPaths=/run/comis-x11:/tmp/.X11-unix");
     // Daemon unit: read-only bind so it can connect to the socket.
     expect(installSh, "the daemon unit must ro-bind the shared socket dir").toContain("BindReadOnlyPaths=/run/comis-x11:/tmp/.X11-unix");
-    // The shared dir must be created (immediately + via tmpfiles for reboot).
-    expect(installSh, "the shared X-socket dir must be created").toMatch(/install -d -m 1777 \/run\/comis-x11/);
+    // The shared dir must be private to the dedicated service account. Xvfb
+    // runs with access control disabled, so a world-traversable socket directory
+    // would let unrelated local users connect to the display.
+    expect(installSh, "the shared X-socket dir must not be world-accessible").not.toMatch(
+      /install -d -m 1777 \/run\/comis-x11/,
+    );
+    expect(installSh, "the shared X-socket dir must be owned by the service account").toMatch(
+      /install -d -m 0700 -o "?\$\{COMIS_SVC_USER\}"? -g "?\$\{COMIS_SVC_GROUP\}"? \/run\/comis-x11/,
+    );
+    expect(installSh, "tmpfiles must recreate the private service-owned directory").toMatch(
+      /printf 'd \/run\/comis-x11 0700 %s %s -\\n' "\$\{COMIS_SVC_USER\}" "\$\{COMIS_SVC_GROUP\}"/,
+    );
     expect(installSh, "a tmpfiles entry must recreate the dir on reboot").toMatch(/tmpfiles\.d\/comis-x11\.conf/);
   });
 
@@ -141,6 +154,9 @@ describe("install.sh browser + xvfb provisioning is on by default (full capabili
     // ExecStart (which it always does). A guarded early-return keeps a stale unit
     // off a box where the Xvfb package failed to install.
     expect(body, "render_xvfb_unit must gate on xvfb_present, not just WITH_XVFB").toMatch(/xvfb_present/);
+    expect(body, "an absent Xvfb binary must downshift every later rendering decision").toMatch(
+      /if ! xvfb_present; then[\s\S]{0,400}WITH_XVFB=0/,
+    );
   });
 
   it("grants Chrome's extra syscalls (pkey + landlock) in the systemd SystemCallFilter when the browser is provisioned", () => {
@@ -184,5 +200,45 @@ describe("install.sh browser + xvfb provisioning is on by default (full capabili
       /headless_value="false"[\s\S]*/,
     );
     expect(body, "the headed decision must consult xvfb_present (ground truth)").toMatch(/xvfb_present/);
+  });
+
+  it("service managers without an Xvfb owner downshift to headless before the install plan", () => {
+    const helper = fnBody("downshift_xvfb_for_service_manager");
+    expect(helper, "an Xvfb service-manager downshift helper must exist").not.toBe("");
+    expect(helper, "only a system service may own the installer-managed companion").toMatch(
+      /RESOLVED_SERVICE_MANAGER[^\n]*systemd/,
+    );
+    expect(helper, "the downshift must disable the unowned Xvfb companion").toMatch(/WITH_XVFB=0/);
+    expect(helper, "the warning must tell operators how to select managed headed mode").toContain(
+      "--service systemd",
+    );
+
+    const mainStart = installSh.indexOf("\nmain() {");
+    const mainEnd = installSh.indexOf('\nif [[ "${COMIS_INSTALL_SH_NO_RUN:-0}"', mainStart);
+    const mainBody = installSh.slice(mainStart, mainEnd);
+    const resolveIndex = mainBody.indexOf("resolve_service_manager");
+    const downshiftIndex = mainBody.indexOf("downshift_xvfb_for_service_manager");
+    const planIndex = mainBody.indexOf("show_install_plan");
+    expect(resolveIndex, "main must resolve the service manager").toBeGreaterThanOrEqual(0);
+    expect(downshiftIndex, "main must normalize headed-mode support").toBeGreaterThan(resolveIndex);
+    expect(planIndex, "the install plan must be rendered after the downshift").toBeGreaterThan(downshiftIndex);
+  });
+
+  it("the installer exercise declares its external Xvfb entrypoint before using service none", () => {
+    const dockerInstaller = readFileSync(join(repoRoot, "Dockerfile.install"), "utf8");
+    expect(dockerInstaller).toMatch(
+      /COMIS_XVFB_EXTERNAL_RUNTIME=\$\{COMIS_WITH_XVFB\}[\s\S]{0,180}bash \/tmp\/install\.sh/,
+    );
+  });
+
+  it("the renderer never adds the system Xvfb companion to a user unit", () => {
+    const start = installSh.indexOf("render_systemd_unit() {");
+    const end = installSh.indexOf("\nunit_is_managed() {", start);
+    const renderer = installSh.slice(start, end);
+
+    expect(renderer, "the unit renderer must exist").not.toBe("");
+    expect(renderer, "Xvfb unit dependencies must be limited to system scope").toMatch(
+      /if \[\[ "\$WITH_XVFB" == "1" && "\$scope" == "system" \]\]; then/,
+    );
   });
 });

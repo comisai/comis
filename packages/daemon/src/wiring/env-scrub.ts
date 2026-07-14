@@ -15,6 +15,7 @@
  */
 
 import type { CredentialStorageMode, SecretStorePort } from "@comis/core";
+import { PROVIDER_SECRET_KEYS } from "@comis/agent";
 
 /**
  * Sensitive environment variable prefixes to remove from process.env after
@@ -28,25 +29,47 @@ export const SENSITIVE_PREFIXES = [
   "DISCORD_",
   "SLACK_",
   "WHATSAPP_",
+  "LINE_",
+  "MSTEAMS_",
+  "IRC_",
+  "EMAIL_",
   "GOOGLE_",
   "GROQ_",
   "MISTRAL_",
+  "DEEPSEEK_",
+  "XAI_",
+  "TOGETHER_",
+  "CEREBRAS_",
+  "OPENROUTER_",
   "DEEPGRAM_",
   "ELEVENLABS_",
+  "SEARCH_",
+  "BRAVE_",
+  "PERPLEXITY_",
+  "TAVILY_",
+  "EXA_",
+  "JINA_",
+  "OAUTH_",
   "SENDGRID_",
   "STRIPE_",
 ] as const;
 
 /** Individual keys to scrub that don't match prefix patterns. */
 export const SENSITIVE_EXACT_KEYS = new Set([
+  ...Object.values(PROVIDER_SECRET_KEYS).flat(),
   "SECRETS_MASTER_KEY",
+  "CANARY_SECRET",
+  "FAL_KEY",
+  "AZURE_OPENAI_API_KEY",
+  "COMIS_GATEWAY_TOKEN",
 ]);
 
 /**
  * Stage-1 scrub: remove sensitive env vars from process.env (ALL storage modes).
- * Preserves COMIS_* (filesystem-layout pointers, not credentials — kept for
- * subprocess path resolution; per-spawn-site envSubset() excludes them from
- * untrusted-child envs). Preserves PATH, HOME, NODE_ENV, etc.
+ * Preserves non-secret COMIS_* operational variables for subprocess path and
+ * endpoint resolution, while scrubbing the COMIS_GATEWAY_TOKEN bearer by exact
+ * name. Per-spawn-site envSubset() further limits untrusted-child envs.
+ * Preserves PATH, HOME, NODE_ENV, etc.
  */
 function scrubProcessEnv(): void {
   for (const key of Object.keys(process.env)) {

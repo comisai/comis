@@ -26,11 +26,11 @@ Each card shows:
 - **Name** -- a friendly label
 - **Base URL** -- the endpoint the SDK calls
 - **API key env name** -- which environment variable holds the key (e.g., `ANTHROPIC_API_KEY`)
-- **Status** -- a connection dot (green = key present and ping succeeded; red = missing or failing)
+- **Status** -- the provider's catalog and configuration status
 - **Timeout / Max retries** -- per-provider transport tuning
 - **Enable toggle** -- soft-disable a provider without removing it
 
-A **Test** button on each card calls `models.test` to run a connectivity check and (when supported) lists which models the provider currently exposes plus which agents are using it.
+A **Check** action calls `models.test` to inspect local catalog/configuration state and list which agents use the provider. It does not send a request to the provider.
 
 <Note>
 The daemon includes a guard that **rejects redundant custom entries** for built-in providers — if you try to create `providers.entries.openrouter` with the catalog's default `baseUrl`, the daemon returns an actionable error directing you to use `gateway env_set OPENROUTER_API_KEY=<key>` + `agents_manage update --provider openrouter` instead. Custom entries are only needed for proxies (different baseUrl) or non-catalog providers.
@@ -76,10 +76,10 @@ Use this tab when you want to swap one agent to a faster/cheaper model without t
 
 <Steps>
   <Step title="Add a new provider">
-    Click **Add Provider** on the Providers tab. Pick the type (e.g., `groq`), set a name, paste the API key into your environment file or use the secrets manager, then click **Test** to verify connectivity.
+    Click **Add Provider** on the Providers tab. Custom entries are for proxies or non-catalog OpenAI-compatible endpoints; configure their base URL and secret reference, then save the entry.
   </Step>
   <Step title="Find which agents use Claude Sonnet">
-    On the Providers tab, click **Test** on the Anthropic card. The test result lists every agent currently using an Anthropic model.
+    Run the provider check for Anthropic. The result lists every agent currently configured with that provider.
   </Step>
   <Step title="Create a 'fast' alias">
     On the Aliases tab, click **Add Alias**. Enter `fast` as the alias, pick `groq` as provider, and `llama-3.3-70b-versatile` as the model id. Save. Now any agent with `model: fast` resolves to that combination.

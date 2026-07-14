@@ -4,11 +4,17 @@ description: "Complete reference for all HTTP endpoints, authentication, and rat
 icon: "globe"
 ---
 
-**What this is for:** every HTTP route the daemon exposes — JSON-RPC, REST API for the dashboard, OpenAI-compatible endpoints, webhooks, media, and SSE. **Who it's for:** anyone integrating an external system with Comis or building tools on top of the daemon.
+**What this is for:** every HTTP route the daemon exposes — JSON-RPC, REST API
+for the dashboard, experimental OpenAI-shaped endpoints, webhooks, media, and
+SSE. **Who it's for:** anyone integrating an external system with Comis or
+building tools on top of the daemon.
 
 Complete reference for the Comis HTTP gateway. The gateway serves HTTP endpoints, WebSocket connections, and optionally a web dashboard. Default port: `4766`. All endpoints require authentication unless noted otherwise.
 
-The gateway is implemented with [Hono](https://hono.dev) and lives in `packages/gateway/src/server/hono-server.ts`. Companion routes are wired in `packages/daemon/src/wiring/setup-gateway-routes.ts` (OpenAI-compatible APIs, media, webhook mappings).
+The gateway is implemented with [Hono](https://hono.dev) and lives in
+`packages/gateway/src/server/hono-server.ts`. Companion routes are wired in
+`packages/daemon/src/wiring/setup-gateway-routes.ts` (experimental `/v1`
+routes, media, and webhook mappings).
 
 ## Authentication
 
@@ -181,9 +187,12 @@ event: done
 data: {"response": "Hello world", "tokensUsed": {...}, "finishReason": "stop"}
 ```
 
-## OpenAI-Compatible Endpoints
+## Experimental OpenAI-shaped endpoints
 
-The gateway exposes an OpenAI-compatible API for drop-in integration with tools and libraries that support the OpenAI API format.
+These routes implement selected request and response shapes associated with
+OpenAI endpoints. They are experimental and are **not** a general OpenAI client,
+SDK, or drop-in compatibility guarantee. Validate the exact fields and behavior
+your integration needs against the endpoint reference.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
@@ -194,7 +203,7 @@ The gateway exposes an OpenAI-compatible API for drop-in integration with tools 
 | POST | `/v1/responses` | Bearer | OpenResponses format (streaming and non-streaming). |
 
 <Info>
-For detailed OpenAI-compatible API documentation, see [OpenAI API Reference](/reference/openai-api).
+For the implemented subset, see [Experimental OpenAI-shaped API](/reference/openai-api).
 </Info>
 
 ## Media Routes
@@ -225,8 +234,8 @@ When the web dashboard is enabled and a `webDistPath` is configured, the gateway
   <Card title="WebSocket Protocol" icon="plug" href="/reference/websocket">
     WebSocket connection protocol, heartbeat, and error handling
   </Card>
-  <Card title="OpenAI API" icon="sparkles" href="/reference/openai-api">
-    OpenAI-compatible endpoint reference
+  <Card title="Experimental OpenAI-Shaped API" icon="sparkles" href="/reference/openai-api">
+    Implemented request and response shapes for the experimental /v1 routes
   </Card>
   <Card title="Rate Limiting" icon="gauge" href="/reference/rate-limiting">
     Rate limiting configuration and behavior

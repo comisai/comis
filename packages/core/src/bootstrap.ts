@@ -136,11 +136,11 @@ export interface AppContainer {
   /** Centralized credential access */
   readonly secretManager: SecretManager;
   /**
-   * Names of secrets referenced by the daemon config (`${VAR}` substitutions).
-   * These are platform-managed — the exec tool's `secretRefs` parameter
-   * refuses them so agents can't exfiltrate credentials the daemon itself
-   * uses to talk to providers (ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, etc.).
-   * User-stored secrets NOT in this set are user-task and flow through.
+   * Names of secrets used by the daemon config, including `${VAR}`
+   * substitutions and provider `apiKeyName` references. These are
+   * platform-managed — the exec tool's `secretRefs` parameter refuses them so
+   * agents cannot exfiltrate credentials the daemon uses. User-task secrets
+   * not in this set can still flow through the secret-ref boundary.
    */
   readonly platformSecretNames: ReadonlySet<string>;
   /** Plugin registration and hook storage */
@@ -168,9 +168,9 @@ export function bootstrap(options: BootstrapOptions): Result<AppContainer, Confi
   const secretManager = options.secretManager ?? createSecretManager(env);
 
   // 2. Load layered config (with env var substitution via SecretManager).
-  // Wrap getSecret to record every name referenced by the config — the set
-  // becomes container.platformSecretNames and is used by the exec tool to
-  // refuse secretRefs access to platform-managed credentials.
+  // Wrap getSecret to record every substitution referenced by the config. The
+  // set also receives provider apiKeyName values after parsing, then becomes
+  // container.platformSecretNames for secret-ref denial and env scrubbing.
   // envLayer projects operational env vars (COMIS_GATEWAY_HOST/PORT) into
   // the config layer stack at lower priority than YAML files, so explicit
   // user config wins over env — see config/env-layer.ts.
@@ -197,6 +197,14 @@ export function bootstrap(options: BootstrapOptions): Result<AppContainer, Confi
 
   // Resolve runtime paths
   const config = resolveConfigPaths(configResult.value, env);
+
+  // Provider entries name secrets indirectly through apiKeyName rather than
+  // `${VAR}` substitution. They are still platform credentials and must share
+  // the same deny surface used by child-process inheritance and secret-ref
+  // tools.
+  for (const entry of Object.values(config.providers.entries)) {
+    if (entry.apiKeyName.length > 0) referencedNames.add(entry.apiKeyName);
+  }
 
   // Derive the raw per-agent rerank signal once, from the captured merged tree.
   const rawAgentRerankEnabled = deriveRawAgentRerankEnabled(rawMergedOut.value);

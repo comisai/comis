@@ -1,10 +1,13 @@
 ---
 title: "Packages"
-description: "All 15 packages with roles, key exports, and dependency relationships"
+description: "Package roles, key exports, and dependency relationships"
 icon: "cubes"
 ---
 
-Comis is structured as a monorepo with 15 TypeScript packages under `packages/`. Each package has a single responsibility, exports a public API via `dist/index.js`, and follows strict dependency rules -- always importing inward toward `@comis/core`, never across sibling packages' internals.
+Comis is structured as a monorepo with 16 TypeScript packages under `packages/`.
+Each package has a focused responsibility and exports a public API through its
+package entry point. Cross-package consumers use those public exports rather
+than another package's internal source paths.
 
 All packages use ES modules (`"type": "module"`), strict TypeScript with `composite: true` project references, and ES2023 as the compilation target.
 
@@ -16,7 +19,7 @@ All packages use ES modules (`"type": "module"`), strict TypeScript with `compos
 | core | `@comis/core` | Domain types, ports, event bus, security, config, plugins | Ports, domain types, `EventMap`, config schemas, security utils |
 | infra | `@comis/infra` | Pino structured logging | Logger factory, log level manager |
 | memory | `@comis/memory` | SQLite + FTS5 + sqlite-vec vector search | `SqliteMemoryAdapter` (implements `MemoryPort`) |
-| gateway | `@comis/gateway` | Hono HTTP, JSON-RPC, WebSocket, mTLS, OpenAI-compatible API | HTTP server, RPC dispatch, WebSocket handler |
+| gateway | `@comis/gateway` | Hono HTTP, JSON-RPC, WebSocket, mTLS, experimental OpenAI-shaped endpoints | HTTP server, RPC dispatch, WebSocket handler |
 | skills | `@comis/skills` | Skill manifest, prompt skills, MCP, built-in tools, media processing | `SkillRegistry`, media preprocessor, STT/TTS/vision adapters |
 | scheduler | `@comis/scheduler` | Cron jobs, heartbeat checks, task extraction | Cron engine, heartbeat monitor, task extractor |
 | agent | `@comis/agent` | Executor, budget, circuit breaker, RAG, sessions, context engine | `PiExecutor`, session manager, budget tracker |
@@ -24,6 +27,7 @@ All packages use ES modules (`"type": "module"`), strict TypeScript with `compos
 | cli | `@comis/cli` | Commander.js CLI, JSON-RPC client | CLI commands, RPC client |
 | daemon | `@comis/daemon` | Orchestrator, observability, graph coordinator | `DaemonInstance`, wiring, graph coordinator |
 | observability | `@comis/observability` | Diagnostics substrate: queued writer, payload bounding, sanitization, cache-trace runtime, EventBus bridge, cache-stats aggregation and RPC | Diagnostics runtime, cache-trace recorder, stats aggregator |
+| observability-otel | `@comis/observability-otel` | Opt-in OpenTelemetry and Prometheus export extension | OTLP signals, Prometheus metrics exporter |
 | orchestrator | `@comis/orchestrator` | Inbound pipeline, execution coordination, channel-manager, command queue, routing, and cross-session messaging | Pipeline coordinator, channel manager, command router |
 | comis | `comisai` | Umbrella package (namespace re-exports) and `comis` CLI bin | Namespace re-exports of all sub-packages |
 | web | `@comis/web` | Lit + Vite + Tailwind standalone SPA | Web dashboard views and components |
@@ -32,13 +36,20 @@ All packages use ES modules (`"type": "module"`), strict TypeScript with `compos
 
 **`@comis/shared`** is the foundation. It defines the `Result<T, E>` discriminated union and its utility functions. Every other package depends on `shared`, but `shared` depends on nothing. This makes it safe to import anywhere without creating circular dependencies.
 
-**`@comis/core`** is the heart of the hexagonal architecture. It defines all 19 port interfaces in `src/ports/`, all domain types as Zod schemas in `src/domain/`, the `TypedEventBus` for inter-module communication, security primitives (`SafePath`, `SecretManager`, `ActionClassifier`), 22+ config schemas, and the plugin infrastructure (`PluginRegistry`, `HookRunner`). The composition root `bootstrap()` function lives here and returns an `AppContainer`.
+**`@comis/core`** is the heart of the hexagonal architecture. It defines port
+interfaces in `src/ports/`, Zod-validated domain types, the `TypedEventBus`,
+security primitives, configuration schemas, and plugin infrastructure. The
+`bootstrap()` function returns the core `AppContainer`.
 
-**`@comis/agent`** is the execution engine. It contains the `PiExecutor` that orchestrates LLM calls, tool execution, and response generation. It also manages sessions (conversation state), budgets (token/cost limits), circuit breakers (automatic failure recovery), and RAG (retrieval-augmented generation from memory). It also contains the context engine -- a 10-layer pipeline that manages token budgets and conversation length before each AI call.
+**`@comis/agent`** is the execution engine. It contains the `PiExecutor` that
+orchestrates LLM calls, tool execution, and response generation. It also manages
+sessions, budgets, circuit breakers, RAG, and context preparation.
 
 **`@comis/channels`** contains the 11 platform adapters. Each adapter lives in its own directory (e.g., `src/telegram/`, `src/discord/`) with a standard file set: adapter, message mapper, media handler, credential validator, media resolver, voice sender, and plugin wrapper.
 
-**`@comis/daemon`** is the top-level orchestrator. It wires all packages together using the composition root, manages the process lifecycle (startup, shutdown, signal handling), runs the graph coordinator for multi-agent pipelines, and provides observability metrics. This is the only package that depends on all other packages.
+**`@comis/daemon`** is the runtime composition root. It wires the agent,
+channels, gateway, persistence, skills, scheduler, orchestration, logging, and
+observability packages; it also manages startup, shutdown, and signals.
 
 **`@comis/web`** is a standalone single-page application built with Lit web components, Vite for bundling, and Tailwind CSS for styling. It communicates with the daemon exclusively through the gateway's HTTP and WebSocket APIs.
 
@@ -46,61 +57,24 @@ All packages use ES modules (`"type": "module"`), strict TypeScript with `compos
 The published umbrella package is named `comisai` on npm (the directory is `packages/comis/`). It bundles all `@comis/*` workspace packages and exposes a `comis` CLI binary. Subpath imports such as `comisai/core` or `comisai/agent` are exposed via the umbrella's `exports` map.
 </Note>
 
-## Dependency Graph
+## Dependency relationships
 
-The dependency graph flows inward -- adapters depend on ports (in core), never on each other. The `daemon` package sits at the top as the composition root that wires all packages together.
+Package manifests and TypeScript project references are the authoritative
+dependency graph. At a high level:
 
-```mermaid
-graph TD
-    shared["@comis/shared<br/>Result type, utilities"]
-    core["@comis/core<br/>Domain, ports, events, security"]
-    infra["@comis/infra<br/>Pino logging"]
-    memory["@comis/memory<br/>SQLite + vector search"]
-    gateway["@comis/gateway<br/>HTTP, RPC, WebSocket"]
-    skills["@comis/skills<br/>Tools, media, MCP"]
-    scheduler["@comis/scheduler<br/>Cron, heartbeat"]
-    agent["@comis/agent<br/>Executor, sessions, RAG"]
-    channels["@comis/channels<br/>Platform adapters"]
-    cli["@comis/cli<br/>CLI commands"]
-    daemon["@comis/daemon<br/>Orchestrator"]
-
-    shared --> core
-    core --> infra
-    core --> memory
-    core --> gateway
-    core --> skills
-    core --> scheduler
-    core --> agent
-    infra --> agent
-    memory --> agent
-    scheduler --> agent
-    core --> channels
-    agent --> channels
-    infra --> channels
-    core --> cli
-    memory --> cli
-    agent --> cli
-    core --> daemon
-    infra --> daemon
-    agent --> daemon
-    channels --> daemon
-    gateway --> daemon
-    skills --> daemon
-    scheduler --> daemon
-    memory --> daemon
-```
-
-### Layer Summary
-
-- **`shared`** is the leaf -- zero runtime dependencies, imported by everything. Defines the `Result<T, E>` type and utility functions (`ok`, `err`, `tryCatch`, `fromPromise`).
-- **`core`** depends only on `shared` -- defines all 19 port interfaces, domain types, typed events, security primitives, and config schemas.
-- **Mid-tier packages** (`infra`, `memory`, `gateway`, `skills`, `scheduler`) each depend on `core` and implement specific port interfaces or provide infrastructure services.
-- **`agent`** depends on `core`, `infra`, `memory`, and `scheduler` -- orchestrates execution, sessions, RAG, budgets, and circuit breakers.
-- **`channels`** depends on `core`, `agent`, and `infra` -- platform adapters that receive messages and route them to agents.
-- **`cli`** depends on `core`, `memory`, and `agent` -- the command-line interface for managing the daemon via JSON-RPC. (Note: `@comis/agent` is a runtime dependency via package.json but not a tsconfig reference.)
-- **`daemon`** depends on all packages -- it is the composition root that wires everything together at startup and manages the process lifecycle.
-- **`comis`** is the umbrella package that re-exports all other packages under a single namespace.
-- **`web`** is a standalone SPA (Lit + Vite + Tailwind) that communicates with the daemon via the gateway HTTP API.
+- `shared` has no Comis runtime dependency; `core` depends on `shared`.
+- `gateway`, `channels`, `scheduler`, and `observability` build on `core` and
+  `shared`.
+- `memory` and `infra` also use the observability substrate.
+- `agent` uses `core`, `observability`, and `scheduler`; `orchestrator` composes
+  `agent`, `channels`, and `core`.
+- `skills` uses the agent and observability contracts needed by its tools and
+  integrations.
+- `daemon` is the runtime composition root. `cli` uses the daemon client surface
+  plus the core, memory, and observability APIs.
+- `observability-otel` is the opt-in telemetry extension; `web` is the
+  standalone SPA; `comisai` is the umbrella package that re-exports the
+  workspace packages.
 
 ## Package Boundary Rules
 
@@ -119,9 +93,12 @@ import { ok, err, type Result } from "@comis/shared";
 // import { something } from "@comis/core/src/internal/helper";
 ```
 
-### Dependency Direction Is Always Inward
+### Keep contracts inward
 
-Adapters depend on ports (in core), never on each other. `channels` never imports from `gateway`. `skills` never imports from `agent`. If two sibling packages need to communicate, they do so through the `TypedEventBus` or through shared domain types defined in `core`.
+Core owns shared contracts and ports; runtime packages provide implementations.
+Cross-package imports must use declared dependencies and public exports.
+Cross-package lifecycle signals use `TypedEventBus` where an event is the
+appropriate contract.
 
 ### Inject Logger via Deps Interface
 
@@ -175,18 +152,12 @@ pnpm vitest run src/path/to/file.test.ts
 Integration tests in `test/integration/` require `pnpm build` first because they import from `dist/`, not from source. Run them with `pnpm test:integration`.
 </Info>
 
-## Scale
+## Explore the repository
 
-The Comis monorepo contains approximately:
-
-- **~1185 source files** across 15 packages
-- **~944 test files** co-located with source code
-- **19 port interfaces** defining the hexagonal architecture boundaries
-- **183 typed events** across 5 domain subsystems (Messaging, Agent, Channel, Infra, Terminal) — see [Event Bus](/developer-guide/event-bus) for the full per-subsystem breakdown
-- **13 lifecycle hooks** for plugin integration (5 modifying, 8 void)
-- **11 channel adapters** connecting to real-world chat platforms
-
-The codebase is large but well-structured -- each package has a focused responsibility and a clear public API. The [architecture page](/developer-guide/architecture) explains how these packages connect through ports and adapters.
+Each package has a focused responsibility and a public entry point. The
+[architecture page](/developer-guide/architecture) explains how packages
+connect through ports and adapters, while the [event bus](/developer-guide/event-bus)
+documents cross-package lifecycle signals.
 
 <Tip>
 To explore the codebase structure, start with `packages/core/src/ports/` for all port interface definitions, `packages/core/src/domain/` for Zod-validated domain types, and `packages/core/src/bootstrap.ts` for the composition root.

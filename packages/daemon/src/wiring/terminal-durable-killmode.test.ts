@@ -4,30 +4,13 @@
  *
  * A durable terminal drive (`drive.durable:true`) runs its child inside a DETACHED
  * `tmux new-session -d -s comis-<id>` server so the session OUTLIVES a daemon restart
- * (so it can be re-attached by name after a restart). The tmux server
- * daemonizes (reparented to init) BUT remains a member of the daemon's systemd cgroup —
- * cgroup membership is inherited at fork and a daemonize/`setsid` does NOT change it, and
- * the daemon can't move it out (`ProtectControlGroups=yes`, non-root `comis` user, no
- * user bus for `systemd-run --user --scope`).
+ * and can be re-attached by name. The tmux server daemonizes but remains a member of
+ * the daemon's systemd cgroup because cgroup membership is inherited at fork.
  *
- * So with systemd's DEFAULT `KillMode=control-group`, every `systemctl restart` (and the
- * failure-cleanup after a crash) SIGKILLs the ENTIRE cgroup — including the daemonized
- * tmux server. The durable session dies. Observed on a live host:
- * `systemctl show comis -p KillMode` → `control-group`, and the
- * `comis-<id>` tmux server was gone after a `systemctl restart comis`.
- *
- * The fix is `KillMode=process`: systemd signals ONLY the main daemon process on stop,
- * leaving the rest of the cgroup alone. The durable tmux server (daemonized, independent
- * of the worker) then survives; non-durable sessions are still reaped because (a) graceful
- * shutdown runs the registry cleanup and (b) the Terminal Worker self-exits on its stdin
- * EOF when the daemon dies (terminal-worker-main.ts), and its non-durable bwrap children
- * carry `--die-with-parent` (terminal-scope-args.ts). This test pins `KillMode=process`
- * on EVERY deployed unit definition so the survival contract cannot silently regress
- * (the install.sh heredoc is what actually reaches a VPS; the template is the canonical
- * unit-of-record).
- *
- * This is the macOS-runnable half of the survival proof; the live half is the
- * VPS reproduction (durable session → `systemctl restart` → `tmux has-session` still 0).
+ * systemd's default `KillMode=control-group` would kill that detached server during
+ * restart. `KillMode=process` signals only the daemon; graceful shutdown and the
+ * terminal worker's stdin lifecycle still reap non-durable children. The public
+ * installer is the sole deployed systemd-unit renderer, so this test reads it directly.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -47,21 +30,25 @@ function repoRoot(): string {
 
 const KILLMODE_PROCESS = /^KillMode=process\s*$/m;
 
+function readDeployedDaemonUnit(): string {
+  const installSh = readFileSync(resolve(repoRoot(), "website/public/install.sh"), "utf8");
+  const start = installSh.indexOf("Description=Comis AI Agent Daemon");
+  expect(start).toBeGreaterThanOrEqual(0);
+  const installIndex = installSh.indexOf("[Install]", start);
+  return installSh.slice(start, installIndex >= 0 ? installIndex : undefined);
+}
+
 describe("durable terminal sessions survive a daemon restart (KillMode=process)", () => {
-  it("the canonical comis.service.template sets KillMode=process", () => {
-    const content = readFileSync(resolve(repoRoot(), "packages/daemon/systemd/comis.service.template"), "utf8");
-    expect(content).toMatch(KILLMODE_PROCESS);
+  it("the deployed install.sh daemon unit sets KillMode=process", () => {
+    expect(readDeployedDaemonUnit()).toMatch(KILLMODE_PROCESS);
   });
 
-  it("the deployed install.sh daemon unit sets KillMode=process", () => {
-    const installSh = readFileSync(resolve(repoRoot(), "website/public/install.sh"), "utf8");
-    // install.sh emits TWO units (an Xvfb helper + the daemon). Scope the assertion to the
-    // DAEMON unit block so an unrelated KillMode elsewhere can't falsely satisfy it.
-    const start = installSh.indexOf("Description=Comis AI Agent Daemon");
-    expect(start).toBeGreaterThanOrEqual(0);
-    const installIdx = installSh.indexOf("[Install]", start);
-    const daemonUnit = installSh.slice(start, installIdx >= 0 ? installIdx : undefined);
-    expect(daemonUnit).toMatch(KILLMODE_PROCESS);
+  it("the deployed daemon unit uses Type=exec without a systemd watchdog", () => {
+    const daemonUnit = readDeployedDaemonUnit();
+    expect(daemonUnit).toMatch(/^Type=exec\s*$/m);
+    expect(daemonUnit).not.toMatch(/^Type=notify\s*$/m);
+    expect(daemonUnit).not.toMatch(/^WatchdogSec=/m);
+    expect(daemonUnit).not.toMatch(/^NotifyAccess=/m);
   });
 });
 
@@ -76,16 +63,9 @@ describe("the unit grants the service HOME read-write so driven CLIs persist sta
   // The home as a STANDALONE ReadWritePaths entry (not just `<home>/.npm` subdirs) — so a driven
   // CLI's own state dirs (`~/.claude`, `~/.codex`, …) are writable. The negative lookahead `(?!/)`
   // rejects the old subdir-only form (`@SVC_HOME@/.npm`), which left `~/.claude` read-only.
-  it("the canonical comis.service.template ReadWritePaths includes the whole service home", () => {
-    const content = readFileSync(resolve(repoRoot(), "packages/daemon/systemd/comis.service.template"), "utf8");
-    expect(content).toMatch(/ReadWritePaths=[^\n]*@SVC_HOME@(?!\/)/);
-  });
-
   it("the deployed install.sh daemon unit ReadWritePaths includes the whole service home", () => {
-    const installSh = readFileSync(resolve(repoRoot(), "website/public/install.sh"), "utf8");
-    const start = installSh.indexOf("Description=Comis AI Agent Daemon");
-    const installIdx = installSh.indexOf("[Install]", start);
-    const daemonUnit = installSh.slice(start, installIdx >= 0 ? installIdx : undefined);
-    expect(daemonUnit).toMatch(/ReadWritePaths=[^\n]*\$\{COMIS_SVC_HOME\}(?!\/)/);
+    expect(readDeployedDaemonUnit()).toMatch(
+      /ReadWritePaths=[^\n]*\$\{COMIS_SVC_HOME\}(?!\/)/,
+    );
   });
 });

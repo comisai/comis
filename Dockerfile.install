@@ -1,26 +1,26 @@
 # ============================================================================
-# Dockerfile.install — Comis container built via the bare-metal installer
+# Dockerfile.install — container exercise for the Comis installer
 # ============================================================================
 #
-# Builds a Comis image by running website/public/install.sh inside a fresh
-# Ubuntu 24.04 base — the exact same code path operators hit on a VPS via
-#   curl -fsSL https://comis.ai/install.sh | bash
-# This validates the installer end-to-end in CI and gives operators a
-# reproducible "what would install.sh do on my VPS" container.
+# Packs the local workspace, then runs website/public/install.sh against that
+# tarball inside an Ubuntu 24.04 container. This exercises the installer's
+# non-interactive, non-root package-install path and browser branches.
+# It is not a host-parity image: the container pre-creates the service user and
+# skips interactive setup, initialization, service registration, service start,
+# and the public-registry download path.
 #
 # Differs from the main Dockerfile:
-#   * Source of truth is install.sh (not the multi-stage TS build).
-#     Any installer bug surfaces here first.
-#   * Browser/Xvfb/cloak provisioning runs through install.sh's logic
-#     (apt repo setup, t64 transition handling, cloakbrowser pre-pull) — so
-#     we exercise the bare-VPS code path verbatim.
+#   * Application installation runs through install.sh rather than copying the
+#     multi-stage build output directly.
+#   * Browser/Xvfb/CloakBrowser provisioning runs through install.sh's package
+#     and download helpers where the selected build arguments request it.
 #
-# Build args mirror the install.sh CLI flags 1:1:
+# Build args request the corresponding positive install.sh CLI flags:
 #
 #   docker build -f Dockerfile.install \
 #     --build-arg COMIS_WITH_BROWSER=1                  \  # stock Chrome
 #     --build-arg COMIS_WITH_XVFB=1                     \  # + headed via Xvfb
-#     --build-arg COMIS_WITH_CLOAKBROWSER=1             \  # stealth Chromium
+#     --build-arg COMIS_WITH_CLOAKBROWSER=1             \  # alternative Chromium runtime
 #     -t comis-installed:dev .
 
 # Global ARGs — declared before any FROM so they can be used in FROM lines.
@@ -28,12 +28,13 @@ ARG COMIS_INSTALL_NODE_IMAGE="node:22-bookworm@sha256:c601a46abb4d2ab80a9dc3da20
 ARG COMIS_INSTALL_BASE_IMAGE="ubuntu:24.04@sha256:786a8b558f7be160c6c8c4a54f9a57274f3b4fb1491cf65146521ae77ff1dc54"
 
 # ── Stage 1: build the comisai npm tarball ────────────────────────────────
-# Same node version as the main Dockerfile so the workspace build is
-# byte-identical to a release-time pack.
+# Same Node image as the main Dockerfile so both builders use the supported
+# runtime family. The resulting tarball is local build output, not a published
+# package artifact.
 FROM ${COMIS_INSTALL_NODE_IMAGE} AS packer
 
 WORKDIR /build
-RUN corepack enable && corepack prepare pnpm@10.7.1 --activate
+RUN corepack enable && corepack prepare pnpm@10.34.4 --activate
 
 # Workspace manifests first (layer caching)
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
@@ -92,8 +93,8 @@ RUN export DEBIAN_FRONTEND=noninteractive && \
 # image). install.sh normally creates this user inside its
 # should_create_dedicated_user branch — but that branch requires systemd,
 # which Docker doesn't run. Creating the user here and running the installer
-# as them gives us the same end state (Comis + cloakbrowser binaries land
-# under /home/comis/) without standing up systemd.
+# as them places the package and browser artifacts under /home/comis while
+# deliberately bypassing the installer's systemd-only user-creation branch.
 #
 # Ubuntu 24.04 ships a default `ubuntu` user at UID/GID 1000 — rename it to
 # `comis` if present; create from scratch otherwise.
@@ -138,7 +139,7 @@ RUN set -eux; \
     [ "${COMIS_WITH_XVFB}" = "1" ] && INSTALLER_ARGS="${INSTALLER_ARGS} --with-xvfb"; \
     [ "${COMIS_WITH_CLOAKBROWSER}" = "1" ] && INSTALLER_ARGS="${INSTALLER_ARGS} --with-cloakbrowser"; \
     echo "+ install.sh ${INSTALLER_ARGS}"; \
-    su - comis -c "bash /tmp/install.sh ${INSTALLER_ARGS}"
+    su - comis -c "COMIS_XVFB_EXTERNAL_RUNTIME=${COMIS_WITH_XVFB} bash /tmp/install.sh ${INSTALLER_ARGS}"
 
 # Strip the temporary sudo grant — the runtime container should not have
 # escalation paths. The daemon runs as the unprivileged comis user.
@@ -181,6 +182,6 @@ CMD ["node", "/home/comis/.npm-global/lib/node_modules/comisai/node_modules/@com
 
 LABEL org.opencontainers.image.source="https://github.com/comisai/comis" \
       org.opencontainers.image.title="Comis (installer-built)" \
-      org.opencontainers.image.description="Comis container built via install.sh — same code path as a bare VPS install" \
+      org.opencontainers.image.description="Container exercise of the non-interactive Comis installer path" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.vendor="Comis"

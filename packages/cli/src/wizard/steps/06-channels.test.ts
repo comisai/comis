@@ -162,6 +162,11 @@ describe("channelsStep", () => {
     expect(prompter.password).not.toHaveBeenCalled();
     // Note displayed with guidance
     expect(prompter.note).toHaveBeenCalled();
+    const guidance = vi.mocked(prompter.note).mock.calls
+      .map(([message]) => String(message))
+      .join("\n");
+    expect(guidance).toContain("comis daemon logs --follow");
+    expect(guidance).not.toContain("whatsapp-pair");
   });
 
   it("adds IRC directly with no prompts", async () => {

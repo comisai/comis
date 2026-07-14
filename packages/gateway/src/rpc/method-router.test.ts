@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
+import { runWithContext } from "@comis/core";
 import type { RpcContext, RpcMethodMap, RpcMethodName } from "./method-router.js";
 import { createDynamicMethodRouter } from "./method-router.js";
 
@@ -209,6 +210,35 @@ describe("createDynamicMethodRouter trace logging", () => {
     );
     // Handler error -> classified as "internal" -> error logger
     expect(calls.error.length).toBe(1);
+  });
+
+  it("returns a stable public error and trace ID for an unclassified internal exception", async () => {
+    const { logger } = makeLogger();
+    const router = createDynamicMethodRouter(undefined, logger);
+    const privateMessage = "Failed to read /Users/operator/.comis/secrets.db";
+    router.registerMethod("cron.privatefailure", "rpc", () => {
+      throw new Error(privateMessage);
+    });
+
+    const traceId = "de305d54-75b4-431b-adb2-eb6b9e546014";
+    const response = await runWithContext(
+      {
+        tenantId: "default",
+        traceId,
+        startedAt: 1,
+        trustLevel: "admin",
+      },
+      () => router.server.receive(
+        { jsonrpc: "2.0", method: "cron.privatefailure", params: {}, id: 107 },
+        RPC_CTX,
+      ),
+    );
+
+    expect(response).not.toBeNull();
+    expect(response!.error).toBeDefined();
+    expect(response!.error!.message).toBe("Internal server error");
+    expect(response!.error!.message).not.toContain(privateMessage);
+    expect(response!.error!.data).toEqual({ traceId });
   });
 
   it("classifies immutable-config errors as config errorKind and emits warn-level log entry", async () => {

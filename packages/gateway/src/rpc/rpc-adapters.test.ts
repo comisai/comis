@@ -41,8 +41,10 @@ describe("createRpcAdapters", () => {
         message: "Hello",
         agentId: undefined,
         sessionKey: undefined,
+        clientId: "c1",
         connectionId: undefined,
         scopes: ["rpc"],
+        directives: undefined,
       });
       expect(result).toEqual({
         response: "Hello from agent",
@@ -90,7 +92,7 @@ describe("createRpcAdapters", () => {
     });
 
     it("surfaces a client-facing error message verbatim (e.g. unknown agent)", async () => {
-      // Live finding F-1 follow-through (2026-06-12): the unknown-agentId guard
+      // The unknown-agent-id guard
       // throws a clientFacing error; it must reach the caller as its real message,
       // not be flattened to the generic "Internal error" (a diagnosability gap —
       // the caller could not tell a typo'd agentId from a provider outage).

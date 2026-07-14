@@ -519,6 +519,25 @@ describe("IcChannelDetail", () => {
   });
 
   describe("shared sections rendering", () => {
+    it("media processing checkboxes have visible focus and descriptive labels", async () => {
+      const mockRpc = createDispatchRpcClient(TELEGRAM_CONFIG);
+      const el = await createElement({
+        rpcClient: mockRpc,
+        channelType: "telegram",
+      });
+      await priv(el)._loadData();
+      await el.updateComplete;
+
+      const checkbox = el.shadowRoot?.querySelector(".toggle-switch input") as HTMLInputElement;
+      expect(checkbox).not.toBeNull();
+      expect(checkbox.tabIndex).toBe(0);
+      expect(checkbox.getAttribute("aria-labelledby")).toBeTruthy();
+      expect(checkbox.getAttribute("aria-describedby")).toBeTruthy();
+      expect(IcChannelDetail.styles.toString()).toContain(
+        ".toggle-switch input:focus-visible + .toggle-slider",
+      );
+    });
+
     it("renders streaming config when present", async () => {
       const configWithStreaming = {
         ...TELEGRAM_CONFIG,

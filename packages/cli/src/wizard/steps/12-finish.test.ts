@@ -3,7 +3,7 @@
  * Tests for finish step (step 12).
  *
  * Verifies quick-reference card display, gateway access info,
- * shell completion offer, and branded outro message.
+ * accurate access guidance and branded outro message.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -80,39 +80,16 @@ describe("finishStep", () => {
     expect(referenceCard).toContain("comis status");
     expect(referenceCard).toContain("comis doctor");
     expect(referenceCard).toContain("comis --help");
+    expect(referenceCard).toContain("comis init");
+    expect(referenceCard).not.toContain("configure --section channels");
   });
 
-  it("shell completion offer declined by default", async () => {
-    const prompter = createMockPrompter({
-      confirm: [false],
-    });
+  it("does not offer shell completion when no completion command exists", async () => {
+    const prompter = createMockPrompter();
 
     await finishStep.execute(baseState(), prompter);
 
-    expect(prompter.confirm).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: "Enable shell completions for comis?",
-      }),
-    );
-
-    // When declined, should NOT show completion info
-    const infoCalls = vi.mocked(prompter.log.info).mock.calls;
-    const completionCalls = infoCalls.filter(
-      ([msg]) => typeof msg === "string" && msg.includes("shell completion"),
-    );
-    expect(completionCalls).toHaveLength(0);
-  });
-
-  it("shell completion offer accepted shows info", async () => {
-    const prompter = createMockPrompter({
-      confirm: [true],
-    });
-
-    await finishStep.execute(baseState(), prompter);
-
-    expect(prompter.log.info).toHaveBeenCalledWith(
-      expect.stringContaining("comis --help"),
-    );
+    expect(prompter.confirm).not.toHaveBeenCalled();
   });
 
   it("displays gateway info when state.gateway exists", async () => {
@@ -175,6 +152,53 @@ describe("finishStep", () => {
     // Warning + password-manager hint make it clear this is sensitive
     expect(tokenNote![0]).toMatch(/keep it secret/i);
     expect(tokenNote![0]).toMatch(/password manager/i);
+    expect(tokenNote![0].split(fullToken)).toHaveLength(2);
+  });
+
+  it("access token block describes encrypted storage without claiming the token is in .env", async () => {
+    const state: WizardState = {
+      completedSteps: [],
+      storageMode: "encrypted",
+      gateway: {
+        port: 4766,
+        bindMode: "loopback",
+        token: "test-token",
+        webEnabled: true,
+      },
+    };
+    const prompter = createMockPrompter();
+
+    await finishStep.execute(state, prompter);
+
+    const tokenNote = vi.mocked(prompter.note).mock.calls.find(
+      ([message]) => String(message).includes("test-token"),
+    );
+    expect(tokenNote?.[0]).toContain("encrypted secrets database");
+    expect(tokenNote?.[0]).toContain("decryption key");
+    expect(tokenNote?.[0]).not.toContain("It is also stored at ~/.comis/.env");
+  });
+
+  it("access token block names .env only when file storage was selected", async () => {
+    const state: WizardState = {
+      completedSteps: [],
+      storageMode: "file",
+      gateway: {
+        port: 4766,
+        bindMode: "loopback",
+        token: "test-token",
+        webEnabled: true,
+      },
+    };
+    const prompter = createMockPrompter();
+
+    await finishStep.execute(state, prompter);
+
+    const tokenNote = vi.mocked(prompter.note).mock.calls.find(
+      ([message]) => String(message).includes("test-token"),
+    );
+    expect(tokenNote?.[0]).toContain("~/.comis/.env");
+    expect(tokenNote?.[0]).toContain("0600");
+    expect(tokenNote?.[0]).not.toContain("encrypted secrets database");
   });
 
   it("shows copy-paste SSH tunnel recipe when gateway is loopback-only", async () => {
@@ -219,6 +243,28 @@ describe("finishStep", () => {
       ([msg]) => typeof msg === "string" && msg.includes("ssh -N -L"),
     );
     expect(tunnelNote).toBeUndefined();
+  });
+
+  it("LAN gateway access uses a reachable local URL and explains remote LAN access", async () => {
+    const state: WizardState = {
+      completedSteps: [],
+      gateway: {
+        port: 4766,
+        bindMode: "lan",
+        token: "test-token",
+        webEnabled: true,
+      },
+    };
+    const prompter = createMockPrompter();
+
+    await finishStep.execute(state, prompter);
+
+    const gatewayNote = vi.mocked(prompter.note).mock.calls.find(
+      ([message]) => String(message).includes("Dashboard:"),
+    );
+    expect(gatewayNote?.[0]).toContain("http://127.0.0.1:4766/app/");
+    expect(gatewayNote?.[0]).toContain("LAN IP or hostname");
+    expect(gatewayNote?.[0]).not.toContain("0.0.0.0");
   });
 
   it("outro() called with completion message", async () => {

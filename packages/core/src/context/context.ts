@@ -47,6 +47,8 @@ export const RequestContextSchema = z.strictObject({
     sessionKey: z.string().min(1).optional(),
     /** Resolved agent id for the turn — populated at the executor entry (optional, not known at channel ingress, like sessionKey). Read per-call by the ctx_* tools to scope LCD reads by agent. */
     agentId: z.string().min(1).optional(),
+    /** Authenticated gateway client identity for request-scoped, client-targeted delivery. */
+    clientId: z.string().min(1).optional(),
     traceId: z.guid(),
     startedAt: z.number().int().positive(),
     trustLevel: UserTrustLevelSchema.default("admin"),

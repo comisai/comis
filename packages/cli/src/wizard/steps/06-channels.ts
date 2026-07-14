@@ -517,7 +517,9 @@ async function handleMsTeams(
  */
 function handleWhatsApp(prompter: WizardPrompter): ChannelConfig {
   prompter.note(
-    info("WhatsApp will be configured after setup.\nRun `comis channel whatsapp-pair` to scan the QR code."),
+    info(
+      "WhatsApp is enabled. On the first daemon start, follow the QR prompt in `comis daemon logs --follow` to pair your phone.",
+    ),
     "WhatsApp",
   );
   return { type: "whatsapp", validated: false };

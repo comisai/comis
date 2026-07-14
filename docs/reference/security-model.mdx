@@ -519,8 +519,10 @@ union + `checkCapability` / `requireCapability` / `CapabilityDeniedError`;
 
 ## Output Layer
 
-The output layer scans agent responses before they reach the user, catching
-leaked secrets, canary tokens, and prompt extraction attempts.
+The output layer scans completed agent responses for leaked-secret patterns,
+canary tokens, and prompt-extraction attempts. A streaming transport can emit
+deltas before the completed response reaches this guard; those deltas cannot be
+retracted. Use non-streaming delivery where this boundary is unacceptable.
 
 ### Output Guard
 

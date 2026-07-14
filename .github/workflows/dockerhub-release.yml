@@ -13,6 +13,21 @@ concurrency:
 #   DOCKERHUB_TOKEN   — Docker Hub access token (Read/Write/Delete)
 
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22.19.0
+
+      - name: Verify release tag matches package version
+        run: node .github/scripts/verify-release-tag.mjs "${GITHUB_REF_NAME}"
+
   # ---------------------------------------------------------------------------
   # Build per-platform digests for the daemon image.
   # Each platform runs natively on its own runner (no QEMU emulation) — the
@@ -22,6 +37,7 @@ jobs:
   # stage layers are cached and the second variant is near-instant.
   # ---------------------------------------------------------------------------
   build:
+    needs: preflight
     strategy:
       fail-fast: true
       matrix:
@@ -126,9 +142,13 @@ jobs:
       - name: Create and push multi-arch manifest
         working-directory: /tmp/digests/default
         run: |
-          docker buildx imagetools create \
-            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< '${{ steps.meta.outputs.json }}') \
-            $(printf 'comisai/comis@sha256:%s ' *)
+          mapfile -t tags < <(jq -r '.tags[]' <<< '${{ steps.meta.outputs.json }}')
+          mapfile -t digests < <(printf 'comisai/comis@sha256:%s\n' *)
+          tag_args=()
+          for tag in "${tags[@]}"; do
+            tag_args+=("-t" "${tag}")
+          done
+          docker buildx imagetools create "${tag_args[@]}" "${digests[@]}"
 
   # ---------------------------------------------------------------------------
   # Merge per-platform digests into a multi-arch manifest — slim variant
@@ -166,15 +186,20 @@ jobs:
       - name: Create and push multi-arch manifest
         working-directory: /tmp/digests/slim
         run: |
-          docker buildx imagetools create \
-            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< '${{ steps.meta.outputs.json }}') \
-            $(printf 'comisai/comis@sha256:%s ' *)
+          mapfile -t tags < <(jq -r '.tags[]' <<< '${{ steps.meta.outputs.json }}')
+          mapfile -t digests < <(printf 'comisai/comis@sha256:%s\n' *)
+          tag_args=()
+          for tag in "${tags[@]}"; do
+            tag_args+=("-t" "${tag}")
+          done
+          docker buildx imagetools create "${tag_args[@]}" "${digests[@]}"
 
   # ---------------------------------------------------------------------------
   # Build and push web dashboard image (multi-arch, single buildx step)
   # Tags: X.Y.Z · X.Y · latest
   # ---------------------------------------------------------------------------
   build-web:
+    needs: preflight
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -210,3 +235,55 @@ jobs:
           labels: ${{ steps.web-meta.outputs.labels }}
           cache-from: type=gha,scope=dh-web
           cache-to: type=gha,mode=max,scope=dh-web
+
+  # Publish the community-facing GitHub release only after every Docker image
+  # is available and the independent npm workflow for the same commit succeeds.
+  github-release:
+    needs: [merge-default, merge-slim, build-web]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Wait for successful npm publish and GHCR workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          wait_for_workflow() {
+            local workflow="$1"
+            local label="$2"
+            for attempt in $(seq 1 120); do
+              response="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/runs?head_sha=${GITHUB_SHA}&event=push&per_page=10")"
+              run="$(jq -c --arg ref "${GITHUB_REF_NAME}" \
+                '[.workflow_runs[] | select(.head_branch == $ref)] | first // {}' \
+                <<<"${response}")"
+              status="$(jq -r '.status // "missing"' <<<"${run}")"
+              conclusion="$(jq -r '.conclusion // "pending"' <<<"${run}")"
+              url="$(jq -r '.html_url // ""' <<<"${run}")"
+              if [[ "${status}" == "completed" ]]; then
+                if [[ "${conclusion}" == "success" ]]; then
+                  echo "${label} succeeded: ${url}"
+                  return 0
+                fi
+                echo "${label} finished with ${conclusion}: ${url}" >&2
+                return 1
+              fi
+              echo "Waiting for ${label} (${status}, attempt ${attempt}/120)"
+              sleep 15
+            done
+            echo "Timed out waiting for ${workflow} for ${GITHUB_REF_NAME} at ${GITHUB_SHA}" >&2
+            return 1
+          }
+          wait_for_workflow npm-publish.yml "npm publish workflow"
+          wait_for_workflow docker-release.yml "GHCR workflow"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3
+        with:
+          generate_release_notes: true

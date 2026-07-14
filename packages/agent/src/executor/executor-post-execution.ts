@@ -1791,7 +1791,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       const deferred = store.runOnConversation(conversationId, () =>
         runDeferredPasses(deferredSummarizerGetter),
       );
-      suppressError(deferred, "deferred LCD compaction (R3 serializer)");
+      suppressError(deferred, "postExecution deferred LCD compaction");
     } else {
       // INLINE: await the passes (the deterministic path retained for
       // tests). Non-fatal — never surfaces an error to the live turn. Reads the

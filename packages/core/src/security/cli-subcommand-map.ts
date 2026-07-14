@@ -130,7 +130,7 @@ export function assertCliSubcommandMapSoundness(
       if (!(target.tool in toolMap)) {
         throw new Error(
           `CLI_SUBCOMMAND_MAP invariant violated: "${sub}" → tool "${target.tool}" is not a ` +
-            `TOOL_CAPABILITY_MAP key — every subcommand must resolve 1:1 to an existing cap-mapped tool (CLI-01).`,
+            `TOOL_CAPABILITY_MAP key — every subcommand must resolve 1:1 to an existing cap-mapped tool.`,
         );
       }
       continue;
@@ -140,13 +140,13 @@ export function assertCliSubcommandMapSoundness(
     if (classification === undefined) {
       throw new Error(
         `CLI_SUBCOMMAND_MAP invariant violated: "${sub}" → method "${target.method}" is not a ` +
-          `HANDLER_CAPABILITY_MAP key — every subcommand must resolve 1:1 to an existing cap-mapped method (CLI-01).`,
+          `HANDLER_CAPABILITY_MAP key — every subcommand must resolve 1:1 to an existing cap-mapped method.`,
       );
     }
     if (classification === "deny-by-origin") {
       throw new Error(
         `CLI_SUBCOMMAND_MAP invariant violated: "${sub}" → method "${target.method}" is ` +
-          `deny-by-origin (an admin/control-plane method an agent origin cannot reach) — it must never be a CLI target (CLI-03).`,
+          `deny-by-origin (an admin/control-plane method an agent origin cannot reach) — it must never be a CLI target.`,
       );
     }
     const isOrchCap = classification.startsWith("orch:");

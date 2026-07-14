@@ -1,26 +1,16 @@
 ---
 title: "Defense in Depth"
-description: "How 22 categorical security layers (24 implementation primitives) work together to protect your agents and data"
+description: "How Comis combines independent controls across the request lifecycle"
 icon: "shield-halved"
 ---
 
-Defense in depth means no single security measure is expected to catch
-everything. Instead, Comis layers multiple protections at every stage of
-message processing. If a manipulation attempt slips past input validation, the
-jailbreak detector catches it. If a secret leaks into an agent's response, the
-output guard redacts it before it reaches the user. This page catalogs every
-security layer and explains what it does, why it matters, and whether you need
-to configure it.
-
-<Note>
-**Two ways to count.** Comis groups its protections into **22 categorical
-layers** spanning 8 defensive categories (the headline number you will see in
-marketing material). When you enumerate every distinct security primitive in
-the source tree, the count is **24 implementation primitives** plus 1
-build-time enforcement layer (ESLint security rules). Both numbers refer to
-the same defenses; they just slice them at different abstraction levels. This
-page presents all 24 primitives grouped by request-lifecycle checkpoint.
-</Note>
+Defense in depth means no single control is expected to catch everything.
+Comis combines validation, content handling, authorization, isolation,
+redaction, and audit controls at different request-lifecycle checkpoints. Their
+coverage depends on configuration and on the execution path: approvals are
+disabled by default, the default tool policy is broad, MCP servers run outside
+the exec sandbox, and the output guard scans completed responses rather than
+retracting already-streamed deltas.
 
 ## How the Layers Work Together
 
@@ -35,11 +25,12 @@ compromise the others.
    rate-limited, and (for email) sender-filtered before your agent sees it
 3. **When skills load** -- Skill content is scanned for threats and sanitized
    before it can influence your agent
-4. **When the agent acts** -- Actions are classified, restricted by tool
-   policy, may require approval, shell commands are inspected for substitution,
-   and the exec tool runs inside an OS-level filesystem sandbox
-5. **When a response is sent** -- Output is scanned for leaked secrets and
-   canary token extraction before the user sees it
+4. **When the agent acts** -- Actions are classified, restricted by the
+   configured tool policy, may require approval, and `system.exec` commands are
+   inspected before the exec adapter attempts OS-level isolation
+5. **When a response completes** -- Output is scanned for leaked secrets and
+   canary token extraction; streaming transports can emit deltas before this
+   completed-response check
 6. **When data is stored** -- Memory writes are validated, secrets are
    encrypted, and config is redacted
 
@@ -609,9 +600,8 @@ someone gains access to your server's file system.
 
 ## Build-Time Enforcement
 
-In addition to the 24 runtime primitives above, Comis enforces **four
-security rules at lint time** (`pnpm lint:security`). CI fails if any of them
-trip:
+Comis also enforces security-oriented source rules at lint time
+(`pnpm lint:security`). CI fails when a rule is violated, including:
 
 1. **No `eval()`** -- via `security/detect-eval-with-expression`
 2. **No `Function()` constructor** -- equivalent to `eval`, banned via
@@ -621,42 +611,42 @@ trip:
 4. **No direct `process.env`** -- forces every credential access through
    [`SecretManager`](/reference/secret-manager)
 
-These four rules prevent whole classes of vulnerability from ever shipping.
+These rules catch common unsafe implementation patterns before release.
 
 ## Putting It All Together
 
-With **22 categorical layers** (24 runtime primitives plus 4 build-time
-ESLint rules) working across 6 checkpoints, the security model ensures that
-threats are caught at multiple stages. Even in the worst case -- where
-several layers fail simultaneously -- the remaining layers still provide
-meaningful protection.
+The controls work at independent checkpoints so one failure does not
+automatically disable every other defense. Their effectiveness still depends
+on deployment configuration, platform support, and the authority granted to
+the daemon and its integrations.
 
-Most of the layers listed above are automatic and require no configuration.
-The ones that do need setup -- gateway tokens, mTLS, encrypted secrets,
-approval workflows, tool policy, email allowlist -- are covered in their own
-dedicated guides. You can verify that all layers are properly configured by
-running `comis doctor`, which checks your installation against recommended
-security practices. See [Hardening](/security/hardening) for the full
-walkthrough.
+Some controls are automatic, while gateway tokens, mTLS, approvals, tool
+policy, and channel restrictions need operator configuration. Run `comis
+doctor` to inspect the current posture, then follow [Hardening](/security/hardening).
 
 ## Local Model Security Posture
 
-### The Model-Independent Guarantee
+### Model-independent platform controls
 
-**The Comis security guarantee is a property of the platform, not the model.** When you configure a local or quantized model (e.g., qwen3.6:27b, qwen3.6:35b-mlx), the following platform controls are enforced regardless of which model is configured:
+When you configure a local or quantized model, the following controls are
+implemented by the platform rather than by the model. They reduce exposure but
+do not create an unconditional security guarantee:
 
 | Control | Enforced by | What it prevents |
 |---------|-------------|-----------------|
-| Output redaction | `OutputGuard` | Credential and canary token leak in agent responses |
+| Completed-response redaction | `OutputGuard` | Credential and canary token patterns in the completed agent response |
 | Memory recall trust-filter | `FROZEN_TRUST_PATHS` | Injected or fabricated memories from elevating trust level |
 | Untrusted content wrapping | `wrapExternalContent` | Tool results, image inputs, and external content treated as untrusted |
 | Memory write validation | `MemoryWriteValidator` | Unauthorized memory writes or privilege-escalation via memory injection |
-| Exec 13-gate denylist + bwrap sandbox | Exec security layer | Shell command injection and filesystem escape |
+| Exec validation and optional OS isolation | Exec security layer | Common shell-command and filesystem risks for `system.exec` |
 | Canary token | Per-session canary | Exfiltration detection (canary in output → blocked) |
 | Input security guard | `InputSecurityGuard` | Prompt injection patterns in inbound messages |
 | Forged context-marker neutralization | Assistant-output replay guard | A model fabricating a `[System context]` / inbound-envelope turn in its own reply and re-reading it as real history |
 
-A live security matrix confirmed this empirically: **injection-resisted=100%, secret-leaked=0%, over-refused=0%** across all 8 qwen3.6 batches (fair and bare prompts, 27b through 35b, GGUF and MLX). A platform-level control held by `OutputGuard`, `FROZEN_TRUST_PATHS`, and the exec sandbox does not depend on the model's instruction-following quality.
+The controls are useful even when model instruction-following is weak. They
+still have explicit boundaries: OS isolation can fall back to ordinary command
+execution when unavailable, MCP and in-process tools are outside that sandbox,
+and streaming output cannot be recalled after transmission.
 
 ### `securityLevel` Scales Inversely with `capabilityClass`
 
@@ -674,11 +664,14 @@ A weaker model receives **more** platform scaffolding, not less. The compact-sec
 
 ### Egress Governance Posture
 
-**Local-only egress is the default.** When running Comis with a local model (Ollama), no model inference data leaves the device. This is the documented and recommended posture for privacy-sensitive deployments.
+When a local provider is configured and no networked tools or channels are
+used, model-inference requests can remain local. Tools, channels, telemetry,
+and integrations may still create network traffic, so verify the whole
+deployment rather than inferring local-only operation from the model provider.
 
 Off-device escalation to a cloud model is **not built**. If it is ever implemented, it will require:
 - Explicit operator opt-in
-- `OutputGuard` redaction of all payloads before off-device transmission
+- completed-payload redaction before off-device transmission
 - Payload scope-limit (no full context exfiltration)
 - Canary token in escalated payload (exfiltration detection)
 

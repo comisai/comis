@@ -163,7 +163,7 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
             const bt = block.type as string;
             if ((bt === "toolCall" || bt === "tool_use") && block.name === "message") {
               const args = (block.arguments ?? block.input) as Record<string, unknown> | undefined;
-              if (args?.action === "attach") {
+              if (args?.action === "attach" && args.channel_type === "gateway") {
                 attachMeta.set(block.id as string, {
                   type: (args.attachment_type as string) ?? "file",
                   mimeType: (args.mime_type as string) ?? "application/octet-stream",
@@ -174,7 +174,12 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
             }
           }
         }
-        if ((role === "toolResult" || role === "tool") && attachMeta.has(m.tool_use_id as string)) {
+        const resultToolCallId = typeof m.toolCallId === "string"
+          ? m.toolCallId
+          : typeof m.tool_use_id === "string"
+            ? m.tool_use_id
+            : undefined;
+        if ((role === "toolResult" || role === "tool") && resultToolCallId && attachMeta.has(resultToolCallId)) {
           let resultText = "";
           if (typeof m.content === "string") {
             resultText = m.content;
@@ -186,7 +191,7 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
           try {
             const parsedResult = JSON.parse(resultText) as Record<string, unknown>;
             if (typeof parsedResult.messageId === "string") {
-              attachMedia.set(m.tool_use_id as string, `/media/${parsedResult.messageId}`);
+              attachMedia.set(resultToolCallId, `/media/${parsedResult.messageId}`);
             }
           } catch { /* skip unparseable tool results */ }
         }

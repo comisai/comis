@@ -1,70 +1,35 @@
-# READINESS.md
+# Release Readiness and Limitations
 
-Generated: 2026-07-02T17:02:27.886Z
+Comis is under active development. This page describes the evidence available in the repository and the checks operators must perform for their own deployment; it is not a production certification.
 
-## Category Verdicts
+## Repository Validation
 
-| Category | Verdict |
-|----------|---------|
-| A | PARTIAL |
-| B | PARTIAL |
-| C | PARTIAL |
-| D | PARTIAL |
-| E | PARTIAL |
-| F | PARTIAL |
-| G | PARTIAL |
-| H | PARTIAL |
-| I | PARTIAL |
-| J | PARTIAL |
-| K | PARTIAL |
-| L | PARTIAL |
-| M | PARTIAL |
-| N | PARTIAL |
-| O | PARTIAL |
-| P | PARTIAL |
-| Q | PARTIAL |
-| R | PARTIAL |
-| S | PARTIAL |
-| T | SKIPPED(linux/bwrap) |
-| U | PARTIAL |
-| V | PARTIAL |
-| Story US-01-RESEARCH-RECALL | SKIPPED(no-live) |
-| Story US-02-VOICE-CONCIERGE | SKIPPED(no-live) |
-| Story US-03-MULTIMODAL | SKIPPED(no-live) |
-| Story US-04-MULTI-AGENT-DAG | SKIPPED(no-live) |
-| Story US-05-LONG-AUTONOMOUS | SKIPPED(no-live) |
-| Story US-06-SCHEDULED-PROACTIVE | SKIPPED(no-live) |
-| Story US-07-TERMINAL-DRIVEN | SKIPPED(no-live) |
-| Story US-08-CROSS-CHANNEL-BROADCAST | SKIPPED(no-live) |
+The standard validation command is:
 
-## Reasons
+```bash
+pnpm validate
+```
 
-| Category | Reason |
-|----------|--------|
-| A (Core conversation loop) | deterministic Stage-A/B certified green; real-provider Stage-C deferred to an operator live run (pnpm test:live all with COMIS_LIVE + keys on Linux); NOTE: the pi-event-bridge writes session-index to ~/.comis ignoring COMIS_DATA_DIR (a known packages/agent product bug) — the deterministic obs-meta + soak assert what IS deterministic and skip/document the daemon-written-index parts; no assertion weakened |
-| B (LLM providers / model layer) | deterministic Stage-A/B certified green; real-provider Stage-C deferred to an operator live run (pnpm test:live all with COMIS_LIVE + keys on Linux) |
-| C (LLM provider cache) | deterministic Stage-A/B certified green; real-provider Stage-C deferred to an operator live run (pnpm test:live all with COMIS_LIVE + keys on Linux) |
-| D (Context engine) | deterministic Stage-A/B certified green; real-provider Stage-C deferred to an operator live run (pnpm test:live all with COMIS_LIVE + keys on Linux) |
-| E (Long-term memory / recall) | deterministic Stage-A/B certified green; real-provider Stage-C deferred to an operator live run (pnpm test:live all with COMIS_LIVE + keys on Linux) |
-| F (Tools subsystem) | deterministic Stage-A/B certified green; real-provider Stage-C deferred to an operator live run (pnpm test:live all with COMIS_LIVE + keys on Linux) |
-| G (MCP) | deterministic Stage-A/B certified green; real-provider Stage-C deferred to an operator live run (pnpm test:live all with COMIS_LIVE + keys on Linux) |
-| H (Subagents & DAG pipelines) | deterministic Stage-A/B certified green; real-provider Stage-C deferred to an operator live run (pnpm test:live all with COMIS_LIVE + keys on Linux) |
-| I (Multi-agent & routing) | deterministic Stage-A/B certified green; real-provider Stage-C deferred to an operator live run (pnpm test:live all with COMIS_LIVE + keys on Linux) |
-| J (Sessions & persistence) | deterministic Stage-A/B certified green; real-provider Stage-C deferred to an operator live run (pnpm test:live all with COMIS_LIVE + keys on Linux); NOTE: the pi-event-bridge writes session-index to ~/.comis ignoring COMIS_DATA_DIR (a known packages/agent product bug) — the deterministic obs-meta + soak assert what IS deterministic and skip/document the daemon-written-index parts; no assertion weakened |
-| K (Channels) | channel surface Stage-B certified: group/forum + addressing + the four outbound fallbacks + error classification + Tier-3 platformActions + slash-commands + the forum-service negative + reconfigure/trigger deterministic green (the harness drives the real adapter/product seams); real-keyless Stage-C (full-daemon group reply, the VL A→B loop, the DAG pipeline, the injection-gauntlet residency sweep) operator-gated (COMIS_LIVE + keyless ollama). NOT a faked CERTIFIED — the keyless build is honest-by-construction (the !isLive gate) |
-| L (Media — voice) | deterministic Stage-A/B certified green; real-provider Stage-C deferred to an operator live run (pnpm test:live all with COMIS_LIVE + keys on Linux) |
-| M (Media — vision & image-gen) | deterministic Stage-A/B certified green; real-provider Stage-C deferred to an operator live run (pnpm test:live all with COMIS_LIVE + keys on Linux) |
-| N (Search / web / docs) | deterministic Stage-A/B certified green; real-provider Stage-C deferred to an operator live run (pnpm test:live all with COMIS_LIVE + keys on Linux) |
-| O (Security) | deterministic Stage-A/B certified green; real-provider Stage-C deferred to an operator live run (pnpm test:live all with COMIS_LIVE + keys on Linux) |
-| P (Observability (meta)) | deterministic Stage-A/B certified green; real-provider Stage-C deferred to an operator live run (pnpm test:live all with COMIS_LIVE + keys on Linux) |
-| Q (Config system) | deterministic Stage-A/B certified green; real-provider Stage-C deferred to an operator live run (pnpm test:live all with COMIS_LIVE + keys on Linux) |
-| R (Scheduler) | deterministic Stage-A/B certified green; real-provider Stage-C deferred to an operator live run (pnpm test:live all with COMIS_LIVE + keys on Linux) |
-| S (Delivery & streaming) | deterministic Stage-A/B certified green; real-provider Stage-C deferred to an operator live run (pnpm test:live all with COMIS_LIVE + keys on Linux) |
-| T (Interactive terminal driver (Linux+bwrap)) | Linux+bwrap only; the interactive terminal driver cannot run on this macOS host (operator: a Linux+bwrap run) |
-| U (Install / cold-start / packaging) | deterministic Stage-A/B certified green; real-provider Stage-C deferred to an operator live run (pnpm test:live all with COMIS_LIVE + keys on Linux) |
-| V (Gateway / RPC / web) | deterministic Stage-A/B certified green; real-provider Stage-C deferred to an operator live run (pnpm test:live all with COMIS_LIVE + keys on Linux) |
+It checks documentation syntax, performs a clean build, verifies dependency cycles and project references, runs the security-focused linter, and executes the test suite with coverage gates. Integration, packaging, end-to-end, and live-provider checks are separate commands because they require additional host capabilities, services, or credentials.
 
-> Honest sandbox reality: COMIS_LIVE is unset and no real provider keys are present, so most
-> categories are PARTIAL — the deterministic Stage-A/B layers are certified green; the
-> real-provider Stage-C is deferred to an operator live run. This PARTIAL-with-reason state
-> is the honest sandbox outcome — NO category is faked CERTIFIED.
+## Environment-Dependent Validation
+
+Before relying on Comis, verify the exact combination you plan to operate:
+
+- Model and media providers with your selected models, account permissions, limits, and fallback configuration.
+- Messaging adapters with the platform permissions, webhook or socket configuration, media types, and interaction features you need.
+- Linux tool isolation with Bubblewrap. macOS isolation is best-effort and does not provide the same boundary.
+- Container networking, persistent volumes, encrypted-secret backup and recovery, gateway authentication, and service restart behavior.
+- Browser, speech, image, video, document, vector-search, and MCP dependencies enabled for your deployment.
+
+## Current Limitations
+
+- Backward compatibility is not supported during active development; releases may include breaking API or configuration changes.
+- Not every provider, channel, model, operating system, and deployment combination is exercised by live tests in CI.
+- The OpenAI-shaped HTTP endpoints are experimental and are not a general compatibility guarantee.
+- Code extensions require source changes through ports, adapters, hooks, or tools; prompt skills are the supported content-level extension surface.
+- Approval requests cover explicitly wired paths when enabled; they are not a universal policy engine.
+- Streaming consumers can receive response deltas before the completed response passes its final output scan.
+- The ordinary `exec` tool can run on the host when its sandbox is disabled or unavailable.
+
+Read the [threat model](THREAT_MODEL.md) before enabling shell, browser, network, or third-party integrations. For installation and operation guidance, use the [documentation](https://docs.comis.ai).

@@ -36,7 +36,8 @@ Later files override values from earlier ones.
 
 ## Minimal working config
 
-This is the absolute minimum YAML that produces a working agent:
+This is a minimal agent definition. It still needs a usable credential, OAuth
+profile, or local provider:
 
 ```yaml
 agents:
@@ -47,10 +48,10 @@ agents:
 ```
 
 <Info>
-Everything else has sensible defaults. The gateway starts automatically on port
-4766, logging is set to `info` level, and memory uses a local SQLite database.
-The API key is read from the `.env` file in your data directory -- see
-[Secrets and API Keys](#secrets-and-api-keys) below.
+The schema supplies defaults for the other sections. Logging defaults to
+`debug`; the gateway defaults to loopback port `4766`; local state uses SQLite.
+Credentials are resolved through `SecretManager`, whose default writable
+backend is the encrypted store.
 </Info>
 
 ## Required: Agent configuration
@@ -77,7 +78,8 @@ Every agent needs three fields:
         model: "claude-sonnet-4-5-20250929"
     ```
 
-    Set `ANTHROPIC_API_KEY` in your `.env` file.
+    Store the credential with `comis secrets set ANTHROPIC_API_KEY`, or provide
+    it through a protected environment variable.
   </Tab>
   <Tab title="OpenAI">
     ```yaml
@@ -88,7 +90,8 @@ Every agent needs three fields:
         model: "gpt-4o"
     ```
 
-    Set `OPENAI_API_KEY` in your `.env` file.
+    Store the credential with `comis secrets set OPENAI_API_KEY`, or provide it
+    through a protected environment variable.
   </Tab>
   <Tab title="Google">
     ```yaml
@@ -99,7 +102,8 @@ Every agent needs three fields:
         model: "gemini-2.0-flash"
     ```
 
-    Set `GOOGLE_API_KEY` in your `.env` file.
+    Store the credential with `comis secrets set GOOGLE_API_KEY`, or provide it
+    through a protected environment variable.
   </Tab>
   <Tab title="Ollama (local)">
     ```yaml
@@ -161,7 +165,8 @@ channels:
     botToken: "${TELEGRAM_BOT_TOKEN}"
 ```
 
-Set `TELEGRAM_BOT_TOKEN` in your `.env` file with the token from
+Store `TELEGRAM_BOT_TOKEN` with `comis secrets set TELEGRAM_BOT_TOKEN`, or
+provide it through a protected environment variable, using the token from
 [@BotFather](https://t.me/BotFather).
 
 <Info>
@@ -189,20 +194,16 @@ tenantId: "default"
 
 ## Secrets and API keys
 
-Comis resolves `${VAR_NAME}` references in config values from environment
-variables or from the `.env` file in your data directory (`~/.comis/.env` by
-default).
+Comis resolves `${VAR_NAME}` references through `SecretManager`. New wizard
+setups use `security.storage: encrypted`, place credential ciphertext in
+`~/.comis/secrets.db`, and keep `SECRETS_MASTER_KEY` in the owner-readable
+`~/.comis/.env` file. Back up that key separately; losing it makes the database
+unrecoverable.
 
-The setup wizard generates config with `${VAR}` references and puts the actual
-values in `.env`. Here is a typical `.env` file:
+Plain environment variables and the `file` storage mode are explicit
+alternatives. They do not provide the encrypted store's at-rest protection.
 
-```
-ANTHROPIC_API_KEY=sk-ant-...
-TELEGRAM_BOT_TOKEN=123456:ABC...
-COMIS_GATEWAY_TOKEN=your-gateway-secret-at-least-32-characters-long
-```
-
-Each provider has a standard environment variable name:
+Common static-key providers use these names. See [Environment Variables](/reference/environment-variables#llm-provider-keys) for the complete catalog, aliases, and multi-value provider requirements.
 
 | Provider | Environment Variable |
 |----------|---------------------|
@@ -218,8 +219,9 @@ Each provider has a standard environment variable name:
 | OpenRouter | `OPENROUTER_API_KEY` |
 | Ollama | Not needed |
 
-For encrypted secret storage, run `comis secrets init` to set up the secrets
-vault. See [Secrets Management](/security/secrets) for details.
+The wizard initializes encrypted storage automatically. For a manual setup, run
+`comis secrets init`, back up the generated master key, then add values with
+`comis secrets set <NAME>`. See [Secrets Management](/security/secrets).
 
 <SecretWarning />
 

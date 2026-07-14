@@ -3,6 +3,8 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
 
+let nextSelectId = 0;
+
 /**
  * Styled dropdown select component.
  *
@@ -80,6 +82,8 @@ export class IcSelect extends LitElement {
   /** Whether the select is disabled. */
   @property({ type: Boolean }) disabled = false;
 
+  private readonly _selectId = `ic-select-${++nextSelectId}`;
+
   private _onChange(e: Event): void {
     const selected = (e.target as HTMLSelectElement).value;
     this.dispatchEvent(
@@ -91,9 +95,10 @@ export class IcSelect extends LitElement {
     return html`
       <div class="select-wrapper">
         ${this.label
-          ? html`<label>${this.label}</label>`
+          ? html`<label for=${this._selectId}>${this.label}</label>`
           : nothing}
         <select
+          id=${this._selectId}
           .value=${this.value}
           ?disabled=${this.disabled}
           aria-label=${this.label || nothing}

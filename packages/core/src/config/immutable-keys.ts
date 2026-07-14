@@ -180,10 +180,9 @@ export function isImmutableConfigPath(section: string, key?: string): boolean {
  * LEGITIMATELY writes agent config — name, provider, model, budgets, autonomy
  * tuning, tool toggles, … That asymmetry is intentional for those fields; it is
  * NOT intentional for the sandbox/jail escape switches. An admin-trust agent
- * flipped its own `skills.execSandbox.enabled` never→always through
- * `agents.update` precisely because the persist path applied NO immutability
- * check (unsandboxed marathon BL-1, 2026-07-12). These sub-paths are the narrow
- * deny-list `agents_manage` must ALSO refuse.
+ * must never be able to flip its own `skills.execSandbox.enabled` from `never`
+ * to `always` through `agents.update`. These sub-paths are the narrow deny-list
+ * that `agents_manage` must also refuse.
  *
  * Paths are AGENT-RELATIVE (no `agents.<id>` prefix) so they apply to every
  * agent id. A match is exact-or-child: listing `skills.terminal.allow` also

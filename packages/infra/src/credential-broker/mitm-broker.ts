@@ -430,7 +430,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
         );
         emitRequest(deps.eventBus, { sessionId, host, path, method, timestamp: deps.clock.now() });
 
-        // ── Step 3.5: WebSocket upgrade guard ───────────────────────────
+        // ── WebSocket upgrade guard ─────────────────────────────────────
         // Fail closed on WS upgrade (support is not yet implemented). Split the
         // comma-joined multi-value Upgrade header so duplicate headers cannot
         // shadow "websocket".
@@ -444,9 +444,9 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
               agentId,
               host,
               errorKind: "precondition" as const,
-              hint: "WebSocket upgrade rejected; use REST equivalents via HTTPS. WS-01 future.",
+              hint: "WebSocket upgrades are not supported; use an HTTPS REST endpoint instead.",
             },
-            "WebSocket upgrade rejected (EGRESS-04)",
+            "WebSocket upgrade rejected by credential broker",
           );
           emitDenied(deps.eventBus, { sessionId, host, reason: "ws_upgrade_not_supported", statusCode: 501, timestamp: deps.clock.now() });
           emitSessionClosedOnce("error");

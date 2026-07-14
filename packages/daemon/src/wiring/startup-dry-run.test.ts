@@ -112,6 +112,24 @@ describe("logOperationModelDryRun", () => {
     expect(warnObj.resolvedProvider).toBe("openai");
   });
 
+  it("accepts a configured provider-key alias for cross-provider resolution", () => {
+    mockSecretManager.has.mockImplementation((key: string) => key === "GEMINI_API_KEY");
+
+    logOperationModelDryRun({
+      agents: {
+        myAgent: {
+          provider: "anthropic",
+          model: "claude-sonnet-4-20250514",
+          operationModels: { cron: { model: "google:gemini-2.5-flash" } },
+        },
+      },
+      secretManager: mockSecretManager,
+      logger: mockLogger,
+    });
+
+    expect(mockLogger.warn).not.toHaveBeenCalled();
+  });
+
   // Interactive has tieringActive=false, family_default sources have tieringActive=true
   it("marks interactive as tieringActive=false and family defaults as tieringActive=true", () => {
     logOperationModelDryRun({

@@ -381,7 +381,13 @@ export type { PiEventBridgeDeps, PiEventBridgeResult, BoundedAutonomyBudgetHolde
 // ---------------------------------------------------------------------------
 
 // Auth storage adapter (SecretManager to pi-coding-agent AuthStorage)
-export { createAuthStorageAdapter, DEFAULT_PROVIDER_KEYS } from "./model/auth-storage-adapter.js";
+export {
+  createAuthStorageAdapter,
+  getMissingProviderCredentialNames,
+  getProviderSecretNames,
+  PROVIDER_SECRET_KEYS,
+  syncCredentialsForSecretChange,
+} from "./model/auth-storage-adapter.js";
 export type { AuthStorage, AuthStorageAdapterOptions } from "./model/auth-storage-adapter.js";
 
 // Model registry adapter (ModelRegistry creation + initial model resolution)

@@ -246,6 +246,26 @@ describe("daemonStartStep", () => {
     );
   });
 
+  it("post-start verification distinguishes live checks from configured but unverified subsystems", async () => {
+    const prompter = createMockPrompter({ select: ["yes"] });
+    const state: WizardState = {
+      ...stateWithGateway(),
+      provider: { id: "anthropic", validated: false },
+      channels: [{ type: "telegram", validated: false }],
+    };
+
+    await daemonStartStep.execute(state, prompter);
+
+    const output = vi.mocked(prompter.log.info).mock.calls
+      .map(([message]) => String(message))
+      .join("\n");
+    expect(output).toContain("Gateway: responding");
+    expect(output).toContain("API provider: anthropic (configured; live access not verified)");
+    expect(output).toContain("telegram: configured; connection not verified");
+    expect(output).toContain("Data directory:");
+    expect(output).not.toContain("comis configure --section provider");
+  });
+
   it("health check fails -> warning shown with log guidance", async () => {
     // Make fetch fail consistently (simulate health endpoint not responding)
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("ECONNREFUSED")));
@@ -295,7 +315,7 @@ describe("daemonStartStep", () => {
     // We verify by checking that the detailed health results are NOT logged.
     const infoCalls = vi.mocked(prompter.log.info).mock.calls;
     const healthResultCalls = infoCalls.filter(
-      ([msg]) => typeof msg === "string" && msg.includes("Health check results"),
+      ([msg]) => typeof msg === "string" && msg.includes("Setup verification"),
     );
     expect(healthResultCalls).toHaveLength(0);
   });

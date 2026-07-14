@@ -15,12 +15,14 @@ note to sending a spoken reply -- can be fully automatic.
 
 ## Keyless by Default
 
-Voice works with **zero credentials out of the box**. Speech-to-text defaults to
-`auto` (keyless-first: a local whisper engine when one is available, otherwise an
-honest "not available" hint) and text-to-speech defaults to `edge` (Microsoft Edge
-TTS — free, no API key). A keyed cloud provider (OpenAI, Groq, Deepgram, ElevenLabs)
-is used **only** when you set it explicitly **or** your agent's main provider already
-supplies a usable audio key.
+Voice can run without provider credentials, but the keyless paths still depend on
+their runtime requirements. Speech-to-text defaults to `auto`: it tries the local
+Whisper engine when its model and ffmpeg are available, then returns an actionable
+"not available" result if no provider can serve the request. Text-to-speech defaults
+to `edge`, which needs no API key but does require network access to Microsoft's
+endpoint. A keyed cloud provider (OpenAI, Groq, Deepgram, ElevenLabs) is used only
+when you set it explicitly or your agent's main provider already supplies a usable
+audio key.
 
 <Warning>
 A **Codex / ChatGPT-subscription (OAuth) login cannot drive OpenAI audio endpoints.**
@@ -180,19 +182,19 @@ choice depends on voice quality, budget, and whether you need an API key.
 | `elevenlabs` | eleven_multilingual_v2 | Rachel | `ELEVENLABS_API_KEY` | Paid (explicit opt-in) |
 
 <Note>
-**Keyless default:** TTS defaults to `edge`. Edge
-needs no key, so auto-reply works out of the box. A Codex/OAuth-only main also
-resolves to `edge`. Set `provider: openai` or `provider: elevenlabs` explicitly
-(with the matching key) for the paid providers.
+**Keyless default:** TTS defaults to `edge`. Edge needs no key, so a
+Codex/OAuth-only main can also resolve to it when the endpoint is reachable. Set
+`provider: openai` or `provider: elevenlabs` explicitly (with the matching key)
+for the paid providers.
 </Note>
 
 <AccordionGroup>
   <Accordion title="Edge TTS (default, keyless)">
     The default. Microsoft Edge text-to-speech — free, no API key required. Default
-    voice is en-US-AvaMultilingualNeural. Works out of the box for every install
-    (including Codex/OAuth-only mains). Limited customization compared to OpenAI and
-    ElevenLabs, but a great zero-config baseline. Network-dependent (it calls a
-    Microsoft Edge endpoint); for a fully offline voice, use `local`/`piper` below.
+    voice is en-US-AvaMultilingualNeural. It is attempted without credential setup,
+    including for Codex/OAuth-only mains, but requires a reachable Microsoft Edge
+    endpoint. It offers less customization than OpenAI and ElevenLabs. For offline
+    synthesis after the model is downloaded, use `local`/`piper` below.
   </Accordion>
 
   <Accordion title="Local / Piper (offline, keyless)">
@@ -377,8 +379,9 @@ a keyed TTS provider without its key, the resolution is honest-unavailable and t
 replies are sent as text regardless of `autoMode`; the agent can still use
 [tts_synthesize](/agent-tools/media) if a provider key is available.
 
-This means voice works out of the box with zero credentials — add a keyed cloud
-provider later only if you want one.
+These defaults avoid requiring a cloud-provider key, but availability still depends
+on the local model/runtime or the Edge endpoint. Configure a keyed cloud provider
+when you need its quality, latency, or reliability characteristics.
 
 ## Walkthrough: voice → transcript → reply → TTS
 

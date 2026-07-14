@@ -20,8 +20,8 @@ function createMockContainer(
   return {
     eventBus,
     config: { tenantId: "test-tenant", security: { storage: storageMode } },
-    // has() returns false by default (new key) so pre-existing tests stay green;
-    // additive-restart tests override via createSecretManagerWithMutableHandle for full behavior.
+    // has() returns false by default; live-application tests override this
+    // through createSecretManagerWithMutableHandle.
     secretManager: { get: vi.fn(), has: vi.fn(() => false) },
   } as unknown as AppContainer;
 }
@@ -55,7 +55,7 @@ function makeDeps(overrides: Partial<EnvHandlerDeps> = {}): EnvHandlerDeps {
     envFilePath: "/tmp/test-nonexistent/.env",
     container: createMockContainer(),
     logger: createMockLogger(),
-    // Default mutableSecretManager (no-op stubs); additive-restart tests use real handles.
+    // Default mutableSecretManager (no-op stubs); live-application tests use real handles.
     mutableSecretManager: { upsert: vi.fn(), remove: vi.fn(() => false) },
     ...overrides,
   };
@@ -220,9 +220,9 @@ describe("env.set handler", () => {
     const deps = makeDeps({ secretStore });
     const handlers = createEnvHandlers(deps);
 
-    const result = await handlers["env.set"]!({ key: "OPENAI_API_KEY", value: "sk-abc123", _trustLevel: "admin" });
+    const result = await handlers["env.set"]!({ key: "OPENAI_API_KEY", value: "test-key", _trustLevel: "admin" });
 
-    expect(secretStore.set).toHaveBeenCalledWith("OPENAI_API_KEY", "sk-abc123");
+    expect(secretStore.set).toHaveBeenCalledWith("OPENAI_API_KEY", "test-key");
     // restarting depends on has(): mock returns false (new key) → restarting:false
     expect(result).toEqual(
       expect.objectContaining({ set: true, key: "OPENAI_API_KEY", storage: "encrypted", restarting: false }),
@@ -232,12 +232,19 @@ describe("env.set handler", () => {
   it("throws when secret store returns error", async () => {
     const secretStore = createMockSecretStore();
     (secretStore.set as ReturnType<typeof vi.fn>).mockReturnValue(err(new Error("Encryption failed")));
-    const deps = makeDeps({ secretStore });
+    const logger = createMockLogger();
+    const deps = makeDeps({ secretStore, logger });
     const handlers = createEnvHandlers(deps);
 
     await expect(
       handlers["env.set"]!({ key: "MY_KEY", value: "secret", _trustLevel: "admin" }),
     ).rejects.toThrow("Secret store write failed: Encryption failed");
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hint: "Check active secret storage configuration and file permissions",
+      }),
+      "Env set failed",
+    );
   });
 
   // -----------------------------------------------------------------------
@@ -722,7 +729,7 @@ describe("env.list handler", () => {
 // Additive restart rule (a new key never schedules a restart)
 // ---------------------------------------------------------------------------
 
-describe("additive restart rule (env.set)", () => {
+describe("env.set live application", () => {
   let killSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {

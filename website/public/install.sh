@@ -2,7 +2,8 @@
 set -euo pipefail
 
 # Comis Installer for macOS and Linux
-# Usage: curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash
+# Usage: curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh -o comis-install.sh
+#        bash comis-install.sh --dry-run
 
 BOLD='\033[1m'
 ACCENT='\033[38;2;255;107;74m'       # coral         #FF6B4A
@@ -15,7 +16,18 @@ ERROR='\033[38;2;229;89;58m'         # coral-dark    #E5593A
 MUTED='\033[38;2;100;116;139m'       # slate         #64748B
 NC='\033[0m' # No Color
 
-DEFAULT_TAGLINE="Friendly by nature. Powerful by design."
+DEFAULT_TAGLINE="An open-source, security-first platform for AI agent teams."
+MIN_NODE_VERSION="22.19.0"
+NODE_STANDALONE_VERSION="22.19.0"
+NODESOURCE_DEB_SETUP_SHA256="575583bbac2fccc0b5edd0dbc03e222d9f9dc8d724da996d22754d6411104fd1"
+NODESOURCE_RPM_SETUP_SHA256="b0ed2b9b66002e7ee802e8777cf3a92b25f1ecc0129812dc6f59a43a536810cc"
+HOMEBREW_INSTALL_COMMIT="c7952e40b7957268f61643152f4db725379b292e"
+HOMEBREW_INSTALL_SHA256="99287f194a8b3c9e6b0203a11a5fa54518be57209343e6bb954dec4635796d9d"
+UV_VERSION="0.11.8"
+RUSTUP_VERSION="1.28.2"
+RUST_TOOLCHAIN_VERSION="1.95.0"
+CLOAKBROWSER_NPM_VERSION="0.4.10"
+PLAYWRIGHT_CORE_NPM_VERSION="1.61.1"
 
 ORIGINAL_PATH="${PATH:-}"
 
@@ -94,14 +106,6 @@ download_file() {
     wget -q --https-only --secure-protocol=TLSv1_2 --tries=3 --timeout=20 -O "$output" "$url"
 }
 
-run_remote_bash() {
-    local url="$1"
-    local tmp
-    tmp="$(mktempfile)"
-    download_file "$url" "$tmp"
-    /bin/bash "$tmp"
-}
-
 GUM_VERSION="${COMIS_GUM_VERSION:-0.17.0}"
 GUM=""
 GUM_STATUS="skipped"
@@ -164,6 +168,20 @@ verify_sha256sum_file() {
         return $?
     fi
     return 1
+}
+
+verify_file_sha256() {
+    local file="$1"
+    local expected="$2"
+    local actual=""
+    if command -v sha256sum >/dev/null 2>&1; then
+        actual="$(sha256sum "$file" | awk '{print $1}')"
+    elif command -v shasum >/dev/null 2>&1; then
+        actual="$(shasum -a 256 "$file" | awk '{print $1}')"
+    else
+        return 1
+    fi
+    [[ "$actual" == "$expected" ]]
 }
 
 bootstrap_gum_temp() {
@@ -275,7 +293,7 @@ print_installer_banner() {
 
     echo ""
     echo -e "  ${BOLD}${SUCCESS}C${ACCENT}O${SUCCESS}M${ACCENT}I${SUCCESS}S${NC} ${MUTED}Installer${NC}"
-    echo -e "  ${SUCCESS}Friendly${NC} by nature. ${ACCENT}Powerful${NC} by design."
+    echo -e "  ${MUTED}${TAGLINE}${NC}"
     echo ""
 }
 
@@ -295,7 +313,7 @@ detect_os_or_die() {
     elif [[ "$OSTYPE" == cygwin* ]] || [[ "$OSTYPE" == msys* ]] || [[ "$OSTYPE" == mingw* ]]; then
         ui_error "Windows detected"
         echo "This installer is for macOS and Linux."
-        echo "On Windows, install Node.js 22+ from https://nodejs.org, then run:"
+        echo "On Windows, install Node.js >=${MIN_NODE_VERSION} from https://nodejs.org, then run:"
         echo "  npm install -g comisai"
         exit 1
     fi
@@ -390,21 +408,35 @@ ui_panel() {
 
 show_install_plan() {
     local detected_checkout="$1"
+    local package_target=""
+    local browser_runtime="disabled"
+    local egress_logging="disabled (no iptables changes; opt in with COMIS_ENABLE_EGRESS_LOGGING=1)"
 
     ui_section "Install plan"
     ui_kv "OS" "$OS"
     ui_kv "Install method" "$INSTALL_METHOD"
     if [[ -n "$COMIS_TARBALL" ]]; then
-        ui_kv "Tarball" "$COMIS_TARBALL"
+        package_target="local tarball: ${COMIS_TARBALL}"
+    elif [[ "$INSTALL_METHOD" == "npm" && "$USE_BETA" == "1" ]]; then
+        package_target="comisai@beta (falls back to comisai@latest)"
+    elif [[ "$INSTALL_METHOD" == "npm" ]]; then
+        package_target="comisai@${COMIS_VERSION}"
+    elif [[ -n "$detected_checkout" ]]; then
+        package_target="local source checkout: ${detected_checkout}"
     else
-        ui_kv "Requested version" "$COMIS_VERSION"
+        package_target="https://github.com/comisai/comis.git -> ${GIT_DIR}"
     fi
+    ui_kv "Package target" "$package_target"
+    ui_kv "Node.js requirement" ">=${MIN_NODE_VERSION}"
     if [[ "$USE_BETA" == "1" ]]; then
         ui_kv "Beta channel" "enabled"
     fi
     if [[ "$INSTALL_METHOD" == "git" ]]; then
         ui_kv "Git directory" "$GIT_DIR"
         ui_kv "Git update" "$GIT_UPDATE"
+        if [[ "$GIT_UPDATE" == "1" ]]; then
+            ui_kv "Local changes" "auto-stashed before pull, then restored"
+        fi
     fi
     if [[ -n "$detected_checkout" ]]; then
         ui_kv "Detected checkout" "$detected_checkout"
@@ -415,6 +447,25 @@ show_install_plan() {
     if [[ -n "${RESOLVED_SERVICE_MANAGER:-}" ]]; then
         ui_kv "Service manager" "$RESOLVED_SERVICE_MANAGER"
     fi
+    if [[ "$WITH_BROWSER" == "1" && "$WITH_CLOAKBROWSER" == "1" ]]; then
+        browser_runtime="CloakBrowser"
+    elif [[ "$WITH_BROWSER" == "1" && "$WITH_XVFB" == "1" ]]; then
+        browser_runtime="Chromium + Xvfb headed runtime"
+    elif [[ "$WITH_BROWSER" == "1" ]]; then
+        browser_runtime="Chromium headless runtime"
+    fi
+    ui_kv "Browser runtime" "$browser_runtime"
+    if [[ "$ENABLE_EGRESS_LOGGING" == "1" ]]; then
+        if should_create_dedicated_user; then
+            egress_logging="enabled (rate-limited iptables LOG+ACCEPT; outbound packet metadata enters kernel logs)"
+        else
+            egress_logging="requested (applies only to Linux systemd with a dedicated user)"
+        fi
+    fi
+    ui_kv "Egress logging" "$egress_logging"
+    ui_kv "Data directory" "${HOME}/.comis"
+    ui_kv "Host changes" "CLI, dependencies, runtime, and selected service as needed"
+    ui_kv "Downloads" "npm/GitHub and OS/runtime package sources as needed"
     if [[ "$NO_AUTOSTART" == "1" ]]; then
         ui_kv "Boot persistence" "disabled (--no-autostart)"
     fi
@@ -424,6 +475,7 @@ show_install_plan() {
     if [[ "$NO_INIT" == "1" ]]; then
         ui_kv "Init" "skipped"
     fi
+    ui_info "No installation changes have been made. Use --dry-run to stop after this plan."
 }
 
 show_footer_links() {
@@ -756,12 +808,10 @@ install_build_tools_linux() {
 
 # xvfb_present
 # ------------
-# GROUND TRUTH for "can we run headed?": is the Xvfb binary actually installed?
-# The companion unit's ExecStart hard-codes /usr/bin/Xvfb, so headed mode is
-# impossible without it. Everything that decides headed-vs-headless keys off THIS,
-# not the WITH_XVFB *intent* flag — so a failed Xvfb install falls back to headless
-# Chromium consistently across every install path (root, rootless, --service none),
-# regardless of the order deps/unit/config-seed happen to run in.
+# Ground truth for whether the Xvfb runtime exists. The companion unit's
+# ExecStart uses /usr/bin/Xvfb, so managed headed mode is impossible without it.
+# Service-manager capability is checked separately: systemd-user cannot own the
+# system companion and downshifts even when the binary is present.
 xvfb_present() {
     [[ -x /usr/bin/Xvfb ]] || command -v Xvfb >/dev/null 2>&1
 }
@@ -924,7 +974,7 @@ install_browser_deps_linux() {
 
 # install_cloakbrowser
 # --------------------
-# Install the CloakBrowser npm wrapper + stealth Chromium binary into the
+# Install the CloakBrowser npm wrapper + alternative Chromium runtime into the
 # current user's $HOME. Only meaningful when --with-cloakbrowser is set.
 # Must run AS the user the daemon will run as so the cache lands at the
 # right ~/.cloakbrowser/ path that chrome-detection.ts probes.
@@ -947,7 +997,7 @@ install_cloakbrowser() {
     if is_root; then
         local target_user="${COMIS_USER:-comis}"
         if getent passwd "$target_user" >/dev/null 2>&1; then
-            ui_info "CloakBrowser install deferred to '${target_user}' user phase"
+            ui_info "CloakBrowser install deferred until the installer continues as '${target_user}'"
             return 0
         fi
         # No target user — root install is fine (rare path: --no-user).
@@ -977,8 +1027,9 @@ JSON
     fi
     local cloak_log
     cloak_log="$(mktempfile)"
-    if ! (cd "$cloak_pkg_dir" && npm install --no-audit --no-fund --silent \
-              cloakbrowser playwright-core >"$cloak_log" 2>&1); then
+    if ! (cd "$cloak_pkg_dir" && npm install --no-audit --no-fund --silent --save-exact \
+              "cloakbrowser@${CLOAKBROWSER_NPM_VERSION}" \
+              "playwright-core@${PLAYWRIGHT_CORE_NPM_VERSION}" >"$cloak_log" 2>&1); then
         ui_warn "CloakBrowser npm install failed"
         if [[ "$VERBOSE" == "1" ]]; then
             tail -n 20 "$cloak_log" >&2 || true
@@ -987,7 +1038,7 @@ JSON
     fi
     ui_success "CloakBrowser npm wrapper installed at ${cloak_pkg_dir}"
 
-    # Pre-pull the stealth Chromium binary (~140-210 MB). Lands at
+    # Pre-pull the alternative Chromium runtime (~140-210 MB). Lands at
     # $HOME/.cloakbrowser/chromium-<version>/. Filter the verbose download
     # progress lines so the install output stays readable.
     local cloak_bin="${cloak_pkg_dir}/node_modules/.bin/cloakbrowser"
@@ -1060,7 +1111,7 @@ PROFILE
 
 # install_egress_logging
 # ----------------------
-# Phase 1 of the network egress allowlist.
+# Optional logging-only preparation for a network egress allowlist.
 #
 # The agent's exec sandbox runs with bwrap --share-net (full host network
 # access) because the daemon's regex command filter cannot inspect the contents
@@ -1071,34 +1122,29 @@ PROFILE
 # allowlist (or seccomp BPF filter on connect()) — this function lays the
 # groundwork.
 #
-# Phase 1 (this function): create the COMIS_EGRESS chain in LOG-only mode and
-# wire every outbound packet from the comis uid through it. ACCEPT continues
-# unchanged so nothing breaks. The kernel logs every connection to
-# /var/log/kern.log (or `journalctl -k`) tagged "comis-egress: " so the
-# operator can enumerate the legitimate destinations over 24-48 hours of
-# normal use.
+# When COMIS_ENABLE_EGRESS_LOGGING=1 is set, this function creates the
+# COMIS_EGRESS chain in logging-only mode and wires outbound traffic from the
+# comis uid through it. ACCEPT continues unchanged so nothing is blocked. The
+# rate-limited LOG rule records packet metadata in the kernel journal under the
+# "comis-egress: " prefix, which can reveal remote destinations.
 #
-# Phase 2 (operator, not automated): after the observation window, the
-# operator replaces the catch-all ACCEPT with destination-specific ACCEPTs
-# (api.anthropic.com, api.telegram.org, etc.) followed by a final DROP.
+# Enforcement remains an explicit operator action: after the observation
+# window, replace the catch-all ACCEPT with destination-specific ACCEPTs
+# followed by a final DROP.
 #
-# Idempotent: skipped if the chain already exists. Skipped silently if
-# iptables is unavailable, the comis user does not yet exist, or
-# COMIS_NO_EGRESS_LOG=1 is set. Non-fatal — failures degrade gracefully so
-# they cannot block the rest of the install.
+# Disabled by default. Idempotent when enabled: skipped if the chain already
+# exists. Also skipped if iptables is unavailable or the comis user does not
+# yet exist. Non-fatal — failures cannot block the rest of the install.
 install_egress_logging() {
-    [ "${COMIS_NO_EGRESS_LOG:-}" = "1" ] && {
-        ui_info "Egress logging skipped (COMIS_NO_EGRESS_LOG=1)"
-        return 0
-    }
+    [[ "$ENABLE_EGRESS_LOGGING" == "1" ]] || return 0
 
     if ! command -v iptables >/dev/null 2>&1; then
-        ui_warn "iptables not available — skipping egress-logging primer"
+        ui_warn "iptables not available — skipping egress logging"
         return 0
     fi
 
     if ! id "$COMIS_USER" >/dev/null 2>&1; then
-        ui_warn "Skipping egress-logging primer (user '$COMIS_USER' does not exist yet)"
+        ui_warn "Skipping egress logging (user '$COMIS_USER' does not exist yet)"
         return 0
     fi
 
@@ -1114,31 +1160,44 @@ install_egress_logging() {
     fi
 
     if ! $sudo_prefix iptables -N COMIS_EGRESS 2>/dev/null; then
-        ui_warn "Could not create COMIS_EGRESS chain — skipping egress-logging primer"
+        ui_warn "Could not create COMIS_EGRESS chain — skipping egress logging"
         return 0
     fi
 
-    # LOG every packet, then ACCEPT unchanged (Phase 1 — no enforcement yet).
-    # Log level 6 (informational) so it lands in journald without flooding syslog.
-    $sudo_prefix iptables -A COMIS_EGRESS -j LOG --log-prefix "comis-egress: " --log-level 6 2>/dev/null \
-        || ui_warn "Could not add LOG rule to COMIS_EGRESS"
-    $sudo_prefix iptables -A COMIS_EGRESS -j ACCEPT 2>/dev/null \
-        || ui_warn "Could not add ACCEPT rule to COMIS_EGRESS"
+    # Bound diagnostic log volume, then accept traffic unchanged. This mode
+    # observes destinations but does not enforce policy.
+    if ! $sudo_prefix iptables -A COMIS_EGRESS -m limit --limit 10/minute --limit-burst 20 \
+        -j LOG --log-prefix "comis-egress: " --log-level 6 2>/dev/null; then
+        ui_warn "Could not add the rate-limited LOG rule — egress logging remains disabled"
+        $sudo_prefix iptables -F COMIS_EGRESS 2>/dev/null || true
+        $sudo_prefix iptables -X COMIS_EGRESS 2>/dev/null || true
+        return 0
+    fi
+    if ! $sudo_prefix iptables -A COMIS_EGRESS -j ACCEPT 2>/dev/null; then
+        ui_warn "Could not add the ACCEPT rule — egress logging remains disabled"
+        $sudo_prefix iptables -F COMIS_EGRESS 2>/dev/null || true
+        $sudo_prefix iptables -X COMIS_EGRESS 2>/dev/null || true
+        return 0
+    fi
 
     # Hook the chain into OUTPUT, scoped to the comis uid only.
-    $sudo_prefix iptables -A OUTPUT -m owner --uid-owner "$COMIS_USER" -j COMIS_EGRESS 2>/dev/null \
-        || { ui_warn "Could not wire COMIS_EGRESS into OUTPUT — egress-logging primer skipped"; return 0; }
+    if ! $sudo_prefix iptables -A OUTPUT -m owner --uid-owner "$COMIS_USER" -j COMIS_EGRESS 2>/dev/null; then
+        ui_warn "Could not wire COMIS_EGRESS into OUTPUT — egress logging remains disabled"
+        $sudo_prefix iptables -F COMIS_EGRESS 2>/dev/null || true
+        $sudo_prefix iptables -X COMIS_EGRESS 2>/dev/null || true
+        return 0
+    fi
 
-    ui_success "Egress logging enabled (LOG mode) for user '$COMIS_USER'"
+    ui_success "Egress logging enabled by COMIS_ENABLE_EGRESS_LOGGING=1 for user '$COMIS_USER'"
     ui_info "  Review captured destinations:  journalctl -k | grep 'comis-egress:'"
-    ui_info "  After 24-48h, flip to enforced allowlist — replace ACCEPT with destination-specific rules + final DROP"
-    ui_info "  Disable next install with:     COMIS_NO_EGRESS_LOG=1"
+    ui_info "  This diagnostic chain does not enforce an allowlist; design and test firewall policy separately"
+    ui_info "  Remove installer-created rules: bash comis-install.sh --uninstall --purge"
     return 0
 }
 
 install_uv() {
     # uv/uvx: Python package runner used by MCP servers that distribute via PyPI
-    # (e.g. nanobanana). Installed system-wide via the official Astral script so
+    # (e.g. nanobanana). Installed system-wide from a pinned release archive so
     # the service user picks up uvx on PATH without shell-profile modifications.
     # Non-fatal: Python-based MCP servers are optional; a failure here shouldn't
     # block the rest of the install.
@@ -1147,24 +1206,65 @@ install_uv() {
         return 0
     fi
 
-    local tmp
-    tmp="$(mktempfile)"
-    if ! download_file "https://astral.sh/uv/install.sh" "$tmp"; then
-        ui_warn "Could not download uv installer — skipping (Python-based MCP servers will be unavailable)"
+    local uv_target uv_sha256
+    local libc="gnu"
+    if [[ -f /etc/alpine-release ]] || ls /lib/ld-musl-*.so.1 >/dev/null 2>&1; then
+        libc="musl"
+    fi
+    case "$(uname -m)-${libc}" in
+        x86_64-gnu|amd64-gnu)
+            uv_target="x86_64-unknown-linux-gnu"
+            uv_sha256="56dd1b66701ecb62fe896abb919444e4b83c5e8645cca953e6ddd496ff8a0feb"
+            ;;
+        aarch64-gnu|arm64-gnu)
+            uv_target="aarch64-unknown-linux-gnu"
+            uv_sha256="eee8dd658d20e5ac85fec9c2326b6cbc9d83a1eef09ef07433e58698ac849591"
+            ;;
+        x86_64-musl|amd64-musl)
+            uv_target="x86_64-unknown-linux-musl"
+            uv_sha256="de82507d12e31cfc86c1c776238f7c248e48e40d996dedc812d64fdd31c6ed12"
+            ;;
+        aarch64-musl|arm64-musl)
+            uv_target="aarch64-unknown-linux-musl"
+            uv_sha256="29418befb64f926a2dba3473e8e69acd00b36fb845d85344ef11321a993ad8f5"
+            ;;
+        *)
+            ui_warn "No verified uv artifact for $(uname -m) — Python-based MCP servers will be unavailable"
+            return 0
+            ;;
+    esac
+
+    local uv_tmpdir uv_archive uv_url
+    uv_tmpdir="$(mktemp -d)"
+    TMPFILES+=("$uv_tmpdir")
+    uv_archive="${uv_tmpdir}/uv.tar.gz"
+    uv_url="https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${uv_target}.tar.gz"
+    if ! download_file "$uv_url" "$uv_archive"; then
+        ui_warn "Could not download uv ${UV_VERSION} — Python-based MCP servers will be unavailable"
+        return 0
+    fi
+    if ! verify_file_sha256 "$uv_archive" "$uv_sha256"; then
+        ui_warn "uv ${UV_VERSION} checksum verification failed — refusing to install"
+        return 0
+    fi
+    if ! tar -xzf "$uv_archive" -C "$uv_tmpdir"; then
+        ui_warn "uv ${UV_VERSION} archive extraction failed"
         return 0
     fi
 
-    # UV_UNMANAGED_INSTALL=/usr/local/bin: system-wide install so the daemon service
-    # user picks up uvx on PATH. The "unmanaged" mode also disables the self-updater
-    # (system package manager or this installer owns updates) and skips shell-profile
-    # modification (not needed for system install).
+    local uv_bin="${uv_tmpdir}/uv-${uv_target}/uv"
+    local uvx_bin="${uv_tmpdir}/uv-${uv_target}/uvx"
+    if [[ ! -x "$uv_bin" || ! -x "$uvx_bin" ]]; then
+        ui_warn "uv ${UV_VERSION} archive did not contain uv and uvx"
+        return 0
+    fi
     if is_root; then
         run_quiet_step "Installing uv (for Python-based MCP servers)" \
-            env UV_UNMANAGED_INSTALL=/usr/local/bin sh "$tmp" \
+            install -m 0755 "$uv_bin" "$uvx_bin" /usr/local/bin/ \
             || ui_warn "uv install failed — Python-based MCP servers will be unavailable"
     else
         run_quiet_step "Installing uv (for Python-based MCP servers)" \
-            sudo env UV_UNMANAGED_INSTALL=/usr/local/bin sh "$tmp" \
+            sudo install -m 0755 "$uv_bin" "$uvx_bin" /usr/local/bin/ \
             || ui_warn "uv install failed — Python-based MCP servers will be unavailable"
     fi
     return 0
@@ -1172,7 +1272,7 @@ install_uv() {
 
 install_rust() {
     # cargo/rustc: Rust toolchain used by agent exec sandbox for `cargo install`
-    # of Rust CLIs. Installed system-wide via the official rustup script so the
+    # of Rust CLIs. Installed system-wide from a pinned rustup binary so the
     # service user picks up cargo on PATH without shell-profile modifications.
     # Non-fatal: Rust-based tools are optional; a failure here shouldn't block
     # the rest of the install.
@@ -1181,22 +1281,56 @@ install_rust() {
         return 0
     fi
 
-    local tmp
-    tmp="$(mktempfile)"
-    if ! download_file "https://sh.rustup.rs" "$tmp"; then
-        ui_warn "Could not download rustup installer — skipping (Rust-based tools will be unavailable)"
+    local rustup_target rustup_sha256
+    local libc="gnu"
+    if [[ -f /etc/alpine-release ]] || ls /lib/ld-musl-*.so.1 >/dev/null 2>&1; then
+        libc="musl"
+    fi
+    case "$(uname -m)-${libc}" in
+        x86_64-gnu|amd64-gnu)
+            rustup_target="x86_64-unknown-linux-gnu"
+            rustup_sha256="20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c"
+            ;;
+        aarch64-gnu|arm64-gnu)
+            rustup_target="aarch64-unknown-linux-gnu"
+            rustup_sha256="e3853c5a252fca15252d07cb23a1bdd9377a8c6f3efa01531109281ae47f841c"
+            ;;
+        x86_64-musl|amd64-musl)
+            rustup_target="x86_64-unknown-linux-musl"
+            rustup_sha256="e6599a1c7be58a2d8eaca66a80e0dc006d87bbcf780a58b7343d6e14c1605cb2"
+            ;;
+        aarch64-musl|arm64-musl)
+            rustup_target="aarch64-unknown-linux-musl"
+            rustup_sha256="a97c8f56d7462908695348dd8c71ea6740c138ce303715793a690503a94fc9a9"
+            ;;
+        *)
+            ui_warn "No verified rustup artifact for $(uname -m) — Rust-based tools will be unavailable"
+            return 0
+            ;;
+    esac
+
+    local rustup_bin rustup_url
+    rustup_bin="$(mktempfile)"
+    rustup_url="https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${rustup_target}/rustup-init"
+    if ! download_file "$rustup_url" "$rustup_bin"; then
+        ui_warn "Could not download rustup ${RUSTUP_VERSION} — Rust-based tools will be unavailable"
         return 0
     fi
+    if ! verify_file_sha256 "$rustup_bin" "$rustup_sha256"; then
+        ui_warn "rustup ${RUSTUP_VERSION} checksum verification failed — refusing to install"
+        return 0
+    fi
+    chmod 0755 "$rustup_bin"
 
     # CARGO_HOME=/usr/local/cargo + RUSTUP_HOME=/usr/local/rustup: system-wide
     # install so the daemon service user picks up cargo on PATH. --profile minimal
     # keeps the install lean (no docs, no extra components). --no-modify-path
     # skips shell-profile mutation (we symlink into /usr/local/bin instead, so
     # cargo is reachable inside bwrap which binds /usr RO).
-    local rustup_args="--profile minimal --no-modify-path --default-toolchain stable -y"
+    local rustup_args=(--profile minimal --no-modify-path --default-toolchain "$RUST_TOOLCHAIN_VERSION" -y)
     if is_root; then
         run_quiet_step "Installing rust (for cargo-based tools)" \
-            env CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup sh "$tmp" $rustup_args \
+            env CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup "$rustup_bin" "${rustup_args[@]}" \
             || { ui_warn "rustup install failed — Rust-based tools will be unavailable"; return 0; }
         # Symlink toolchain binaries into /usr/local/bin so they're on PATH inside
         # bwrap (which binds /usr RO via SYSTEM_RO_PATHS). The CARGO_HOME/bin dir
@@ -1207,7 +1341,7 @@ install_rust() {
         write_rustup_profile_d
     else
         run_quiet_step "Installing rust (for cargo-based tools)" \
-            sudo env CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup sh "$tmp" $rustup_args \
+            sudo env CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup "$rustup_bin" "${rustup_args[@]}" \
             || { ui_warn "rustup install failed — Rust-based tools will be unavailable"; return 0; }
         for bin in cargo rustc rustup; do
             sudo ln -sf "/usr/local/cargo/bin/$bin" "/usr/local/bin/$bin" 2>/dev/null || true
@@ -1684,22 +1818,28 @@ SERVICE_MANAGER="${COMIS_SERVICE:-auto}"
 NO_AUTOSTART="${COMIS_NO_AUTOSTART:-0}"
 # Install + enable but do not start the service yet
 NO_SERVICE_START="${COMIS_NO_SERVICE_START:-0}"
+# Optional Linux packet-metadata logging. Exact opt-in only: any value other
+# than 1 leaves iptables unchanged.
+ENABLE_EGRESS_LOGGING="${COMIS_ENABLE_EGRESS_LOGGING:-0}"
 
-# Browser-tool provisioning. ON by default — the browser tool ships enabled
-# (full capability out of the box), so a fresh install provisions Chromium + the
-# headless shared libs, plus Xvfb + a virtual-display companion unit so the tool
-# can also run HEADED for sites that detect headless (DataDome / Kasada / Turnstile).
+# Browser-tool provisioning is on by default because the browser tool ships
+# enabled. A fresh install provisions Chromium and its headless shared libraries.
+# System-service installs also request Xvfb and a virtual-display companion unit;
+# systemd-user installs downshift to headless before the install plan is shown.
 # STRICTLY best-effort: the call sites guard it (`install_browser_deps_linux || true`,
 # `render_xvfb_unit || ui_warn`), so a box where Chromium/Xvfb can't install — or a
-# rootless install that can't register the unit — still gets a fully working daemon
-# (the browser tool then fails honestly at use). Opt out of the whole stack with
+# rootless install — still gets a working daemon. An unavailable browser runtime
+# fails honestly at use. Opt out of the whole stack with
 # `--without-browser` / `COMIS_WITH_BROWSER=0`, or keep headless-only (drop the Xvfb
 # headed stack) with `--without-xvfb` / `COMIS_WITH_XVFB=0`, for a minimal footprint.
-# CloakBrowser stays opt-in (`--with-cloakbrowser`) — it swaps Chrome for a specialized
-# stealth build, not an additive capability. WITH_XVFB / WITH_CLOAKBROWSER imply WITH_BROWSER.
+# CloakBrowser stays opt-in (`--with-cloakbrowser`) — it swaps Chrome for an alternative
+# Chromium runtime, not an additive capability. WITH_XVFB / WITH_CLOAKBROWSER imply WITH_BROWSER.
 WITH_BROWSER="${COMIS_WITH_BROWSER:-1}"
 WITH_XVFB="${COMIS_WITH_XVFB:-1}"
 WITH_CLOAKBROWSER="${COMIS_WITH_CLOAKBROWSER:-0}"
+# Internal integration seam for containers that start Xvfb in their entrypoint.
+# Ordinary host installs leave this off and require the managed system unit.
+XVFB_EXTERNAL_RUNTIME="${COMIS_XVFB_EXTERNAL_RUNTIME:-0}"
 [[ "$WITH_XVFB" == "1" ]] && WITH_BROWSER=1
 [[ "$WITH_CLOAKBROWSER" == "1" ]] && WITH_BROWSER=1
 
@@ -1708,14 +1848,13 @@ UNINSTALL=0
 PURGE="${COMIS_PURGE:-0}"
 REMOVE_USER_FLAG="${COMIS_REMOVE_USER:-0}"
 ASSUME_YES=0
+UNINSTALL_TARGET_USER=""
+UNINSTALL_TARGET_HOME=""
+UNINSTALL_TARGET_IS_DEDICATED=0
 
 # Populated by resolve_service_template_vars
 COMIS_NODE_BIN=""
 COMIS_DAEMON_JS=""
-COMIS_DAEMON_DIR=""
-# Read-root granted to Node's --permission model. Wider than DAEMON_DIR because
-# the daemon imports sibling @comis/* packages from node_modules/.
-COMIS_READ_ROOT=""
 COMIS_SVC_USER=""
 COMIS_SVC_GROUP=""
 COMIS_SVC_HOME=""
@@ -1731,7 +1870,12 @@ print_usage() {
 Comis installer (macOS + Linux)
 
 Usage:
-  curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash -s -- [options]
+  curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh -o comis-install.sh
+  bash comis-install.sh [options]
+
+Review before installing:
+  less comis-install.sh
+  bash comis-install.sh --dry-run
 
 Install options:
   --install-method, --method npm|git   Install via npm (default) or from a git checkout
@@ -1772,29 +1916,26 @@ Browser tool:
                                        lack of a runtime. Same as COMIS_WITH_BROWSER=0.
   --with-xvfb                          Implies --with-browser. Also installs Xvfb and
                                        registers a virtual-display companion unit so the
-                                       browser tool can run headed for sites that detect
-                                       headless (DataDome, Kasada, Turnstile managed).
-                                       ON by default; best-effort (rootless installs skip
-                                       the companion unit with a warning, never abort).
+                                       browser tool can run workflows that require a
+                                       visible display server.
+                                       ON by default; best-effort. systemd-user installs
+                                       downshift to headless mode with a warning.
   --without-xvfb                       Keep the default headless browser but drop the
                                        heavier Xvfb headed stack + companion unit.
                                        Same as COMIS_WITH_XVFB=0.
-  --with-cloakbrowser                  Implies --with-browser. Installs CloakBrowser
-                                       (stealth Chromium with source-level fingerprint
-                                       patches) instead of Google Chrome. Bypasses
-                                       Cloudflare Turnstile, FingerprintJS, BrowserScan,
-                                       and Reddit's secondary fingerprint check on non-
-                                       datacenter IPs.
-                                       Caveat: datacenter IPs (AWS, DigitalOcean,
-                                       Hetzner, Hostinger, etc.) are pre-blocked by
-                                       Reddit/X/LinkedIn at the IP layer regardless of
-                                       browser fingerprint. CloakBrowser does not
-                                       provide a proxy — pair it with a residential
-                                       proxy if your host is on a datacenter ASN.
-                                       License: free for self-hosted use. Bundling
-                                       into a service distributed to third parties
-                                       requires an OEM license from CloakHQ. See
+  --with-cloakbrowser                  Implies --with-browser. Installs an optional
+                                       alternative Chromium runtime. It does not guarantee
+                                       access, fingerprint evasion, or IP reputation. Review
+                                       its separate binary license and your target sites'
+                                       terms before use. See
                                        https://github.com/CloakHQ/CloakBrowser/blob/main/BINARY-LICENSE.md
+
+Network diagnostics (Linux systemd with a dedicated user):
+  COMIS_ENABLE_EGRESS_LOGGING=0|1      Disabled by default. Set to 1 to create a
+                                       uid-scoped iptables LOG+ACCEPT chain. It logs
+                                       outbound packet metadata to the kernel journal,
+                                       limited to 10 entries per minute with a burst of 20.
+                                       It does not restrict traffic. --purge removes the chain.
 
 Uninstall:
   --uninstall                          Remove Comis (keeps data by default)
@@ -1817,6 +1958,7 @@ Environment variables:
   COMIS_WITH_BROWSER=0|1               (default 1 — set 0 for a minimal footprint)
   COMIS_WITH_XVFB=0|1                   (default 1 — set 0 to keep headless-only)
   COMIS_WITH_CLOAKBROWSER=0|1
+  COMIS_ENABLE_EGRESS_LOGGING=0|1       Default: 0 (disabled)
   COMIS_PURGE=1
   COMIS_REMOVE_USER=1
   COMIS_NO_PROMPT=1
@@ -1827,11 +1969,21 @@ Environment variables:
   SHARP_IGNORE_GLOBAL_LIBVIPS=0|1    Default: 1
 
 Examples:
-  curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash
-  curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash -s -- --no-init
-  curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash -s -- --service none
-  curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash -s -- --uninstall --purge --yes
+  bash comis-install.sh --dry-run
+  bash comis-install.sh --no-init
+  bash comis-install.sh --service none
+  bash comis-install.sh --uninstall --purge --yes
 EOF
+}
+
+require_option_value() {
+    local option="$1"
+    local value="${2:-}"
+    if [[ -z "$value" || "$value" == --* ]]; then
+        ui_error "Missing value for ${option}"
+        echo "Run: bash comis-install.sh --help"
+        exit 2
+    fi
 }
 
 parse_args() {
@@ -1862,10 +2014,12 @@ parse_args() {
                 shift
                 ;;
             --install-method|--method)
+                require_option_value "$1" "${2:-}"
                 INSTALL_METHOD="$2"
                 shift 2
                 ;;
             --version)
+                require_option_value "$1" "${2:-}"
                 COMIS_VERSION="$2"
                 shift 2
                 ;;
@@ -1882,6 +2036,7 @@ parse_args() {
                 shift
                 ;;
             --git-dir|--dir)
+                require_option_value "$1" "${2:-}"
                 GIT_DIR="$2"
                 shift 2
                 ;;
@@ -1890,6 +2045,7 @@ parse_args() {
                 shift
                 ;;
             --user)
+                require_option_value "$1" "${2:-}"
                 COMIS_USER="$2"
                 shift 2
                 ;;
@@ -1898,6 +2054,7 @@ parse_args() {
                 shift
                 ;;
             --tarball)
+                require_option_value "$1" "${2:-}"
                 COMIS_TARBALL="$2"
                 INSTALL_METHOD="npm"
                 shift 2
@@ -1908,6 +2065,7 @@ parse_args() {
                 shift
                 ;;
             --service)
+                require_option_value "$1" "${2:-}"
                 SERVICE_MANAGER="$2"
                 shift 2
                 ;;
@@ -1973,7 +2131,9 @@ parse_args() {
                 shift
                 ;;
             *)
-                shift
+                ui_error "Unknown option: $1"
+                echo "Run: bash comis-install.sh --help"
+                exit 2
                 ;;
         esac
     done
@@ -2100,7 +2260,9 @@ print_homebrew_admin_fix() {
     echo "  2) Ask an Administrator to grant admin rights, then sign out/in:"
     echo "     sudo dseditgroup -o edit -a ${current_user} -t user admin"
     echo "Then retry:"
-    echo "  curl -fsSL https://comis.ai/install.sh | bash"
+    echo "  curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh -o comis-install.sh"
+    echo "  bash comis-install.sh --dry-run"
+    echo "  bash comis-install.sh"
 }
 
 install_homebrew() {
@@ -2113,7 +2275,17 @@ install_homebrew() {
                 exit 1
             fi
             ui_info "Homebrew not found, installing"
-            run_quiet_step "Installing Homebrew" run_remote_bash "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh"
+            local homebrew_installer
+            homebrew_installer="$(mktempfile)"
+            if ! download_file "https://raw.githubusercontent.com/Homebrew/install/${HOMEBREW_INSTALL_COMMIT}/install.sh" "$homebrew_installer"; then
+                ui_error "Could not download the pinned Homebrew installer"
+                exit 1
+            fi
+            if ! verify_file_sha256 "$homebrew_installer" "$HOMEBREW_INSTALL_SHA256"; then
+                ui_error "Homebrew installer checksum verification failed"
+                exit 1
+            fi
+            run_quiet_step "Installing Homebrew" /bin/bash "$homebrew_installer"
 
             if ! activate_brew_for_session; then
                 ui_warn "Homebrew install completed but brew is still unavailable in this shell"
@@ -2126,19 +2298,33 @@ install_homebrew() {
     fi
 }
 
-node_major_version() {
-    if ! command -v node &> /dev/null; then
+node_version_is_supported() {
+    local version="${1:-}"
+    version="${version#v}"
+    if [[ ! "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)([-+].*)?$ ]]; then
         return 1
     fi
-    local version major
-    version="$(node -v 2>/dev/null || true)"
-    major="${version#v}"
-    major="${major%%.*}"
-    if [[ "$major" =~ ^[0-9]+$ ]]; then
-        echo "$major"
-        return 0
+
+    local major="${BASH_REMATCH[1]}"
+    local minor="${BASH_REMATCH[2]}"
+    local patch="${BASH_REMATCH[3]}"
+    local suffix="${BASH_REMATCH[4]:-}"
+    local min_major min_minor min_patch
+    IFS=. read -r min_major min_minor min_patch <<<"$MIN_NODE_VERSION"
+
+    if (( 10#$major != 10#$min_major )); then
+        (( 10#$major > 10#$min_major ))
+        return $?
     fi
-    return 1
+    if (( 10#$minor != 10#$min_minor )); then
+        (( 10#$minor > 10#$min_minor ))
+        return $?
+    fi
+    if (( 10#$patch != 10#$min_patch )); then
+        (( 10#$patch > 10#$min_patch ))
+        return $?
+    fi
+    [[ "$suffix" != -* ]]
 }
 
 print_active_node_paths() {
@@ -2175,9 +2361,7 @@ ensure_macos_node22_active() {
         fi
     fi
 
-    local major=""
-    major="$(node_major_version || true)"
-    if [[ -n "$major" && "$major" -ge 22 ]]; then
+    if has_supported_node; then
         return 0
     fi
 
@@ -2185,7 +2369,7 @@ ensure_macos_node22_active() {
     active_path="$(command -v node 2>/dev/null || echo "not found")"
     active_version="$(node -v 2>/dev/null || echo "missing")"
 
-    ui_error "Node.js v22 was installed but this shell is using ${active_version} (${active_path})"
+    ui_error "Node.js >=${MIN_NODE_VERSION} is required, but this shell is using ${active_version} (${active_path})"
     if [[ -n "$brew_node_prefix" ]]; then
         echo "Add this to your shell profile and restart shell:"
         echo "  export PATH=\"${brew_node_prefix}/bin:\$PATH\""
@@ -2197,41 +2381,41 @@ ensure_macos_node22_active() {
 
 check_node() {
     if command -v node &> /dev/null; then
-        NODE_VERSION="$(node_major_version || true)"
-        if [[ -n "$NODE_VERSION" && "$NODE_VERSION" -ge 22 ]]; then
-            ui_success "Node.js v$(node -v | cut -d'v' -f2) found"
+        local active_version=""
+        active_version="$(node -v 2>/dev/null || true)"
+        if has_supported_node; then
+            ui_success "Node.js ${active_version} found"
             print_active_node_paths || true
             return 0
-        else
-            if [[ -n "$NODE_VERSION" ]]; then
-                ui_info "Node.js $(node -v) found, upgrading to v22+"
-            else
-                ui_info "Node.js found but version could not be parsed; reinstalling v22+"
-            fi
-            return 1
         fi
+        if [[ -n "$active_version" ]]; then
+            ui_info "Node.js ${active_version} found; Comis requires >=${MIN_NODE_VERSION}"
+        else
+            ui_info "Node.js version could not be parsed; installing >=${MIN_NODE_VERSION}"
+        fi
+        return 1
     else
         ui_info "Node.js not found, installing it now"
         return 1
     fi
 }
 
-node_major_from_binary() {
+node_version_from_binary() {
     local node_bin="$1"
     if [[ -z "$node_bin" || ! -x "$node_bin" ]]; then
         return 1
     fi
-    "$node_bin" -p 'process.versions.node.split(".")[0]' 2>/dev/null || true
+    "$node_bin" -p 'process.versions.node' 2>/dev/null || true
 }
 
 node_is_supported_binary() {
     local node_bin="$1"
-    local major=""
-    major="$(node_major_from_binary "$node_bin")"
-    if [[ ! "$major" =~ ^[0-9]+$ ]]; then
+    local version=""
+    version="$(node_version_from_binary "$node_bin")"
+    if [[ -z "$version" ]]; then
         return 1
     fi
-    [[ "$major" -ge 22 ]]
+    node_version_is_supported "$version"
 }
 
 has_supported_node() {
@@ -2364,13 +2548,13 @@ exec "$node_bin" "$entry_path" "\$@"
 EOF
     chmod +x "$shim_path"
     refresh_shell_command_cache
-    ui_warn "Configured comis shim at ${shim_path} for Node $("$node_bin" -v 2>/dev/null || echo '22+')"
+    ui_warn "Configured comis shim at ${shim_path} for Node $("$node_bin" -v 2>/dev/null || echo ">=${MIN_NODE_VERSION}")"
     return 0
 }
 
 install_node_standalone() {
-    # Download Node.js directly from nodejs.org - no sudo, no package manager.
-    # Installs to ~/.comis/node/ and symlinks into ~/.local/bin/.
+    # Download a pinned Node.js archive directly from nodejs.org and verify its
+    # embedded release checksum before extraction.
     local arch
     arch="$(uname -m)"
     local node_arch
@@ -2391,25 +2575,21 @@ install_node_standalone() {
         *) return 1 ;;
     esac
 
-    local index_url="https://nodejs.org/dist/latest-v22.x/"
-    local tarball_name=""
-    local index_tmp
-    index_tmp="$(mktempfile)"
-    if ! download_file "$index_url" "$index_tmp"; then
-        ui_warn "Could not fetch Node.js release index"
-        return 1
-    fi
+    local node_sha256=""
+    case "${node_os}-${node_arch}" in
+        linux-x64) node_sha256="c0649af18e6a24f6fe5535a3e86b341dd49a8e71117c8b68bde973ef834f16f2" ;;
+        linux-arm64) node_sha256="0b2d9f564b6594222a62c82e1df2efe119dd4a4aff29644f4dd325bf360b6bcc" ;;
+        linux-armv7l) node_sha256="91ea7b35edf17d351177da671ea8b40ee8e42d83f6397ab1b66767e50c7d87a9" ;;
+        darwin-x64) node_sha256="41796082f45db51738d1902cae84fa4f699ff6d2550321361424e8bfe6ea1939" ;;
+        darwin-arm64) node_sha256="1c3a9e78da501bbc1f0c99fbbb69bb7c722bc7a9bf30128b21ea502f3905892a" ;;
+        *)
+            ui_warn "No verified Node.js archive for ${node_os}-${node_arch}"
+            return 1
+            ;;
+    esac
 
-    tarball_name="$(grep -oE "node-v22\.[0-9]+\.[0-9]+-${node_os}-${node_arch}\.tar\.xz" "$index_tmp" | head -1 || true)"
-    if [[ -z "$tarball_name" ]]; then
-        tarball_name="$(grep -oE "node-v22\.[0-9]+\.[0-9]+-${node_os}-${node_arch}\.tar\.gz" "$index_tmp" | head -1 || true)"
-    fi
-    if [[ -z "$tarball_name" ]]; then
-        ui_warn "Could not find Node.js 22 binary for ${node_os}-${node_arch}"
-        return 1
-    fi
-
-    local download_url="${index_url}${tarball_name}"
+    local tarball_name="node-v${NODE_STANDALONE_VERSION}-${node_os}-${node_arch}.tar.xz"
+    local download_url="https://nodejs.org/dist/v${NODE_STANDALONE_VERSION}/${tarball_name}"
     local tmp_dir
     tmp_dir="$(mktemp -d)"
     TMPFILES+=("$tmp_dir")
@@ -2419,11 +2599,13 @@ install_node_standalone() {
         ui_warn "Node.js download failed"
         return 1
     fi
-
-    if [[ "$tarball_name" == *.tar.xz ]]; then
-        tar xf "$tmp_dir/$tarball_name" -C "$tmp_dir" >/dev/null 2>&1
-    else
-        tar xzf "$tmp_dir/$tarball_name" -C "$tmp_dir" >/dev/null 2>&1
+    if ! verify_file_sha256 "$tmp_dir/$tarball_name" "$node_sha256"; then
+        ui_warn "Node.js ${NODE_STANDALONE_VERSION} checksum verification failed"
+        return 1
+    fi
+    if ! tar xf "$tmp_dir/$tarball_name" -C "$tmp_dir" >/dev/null 2>&1; then
+        ui_warn "Node.js archive extraction failed"
+        return 1
     fi
 
     local extracted_dir=""
@@ -2433,21 +2615,29 @@ install_node_standalone() {
         return 1
     fi
 
-    local comis_node_dir="$HOME/.comis/node"
+    local comis_node_dir bin_dir
+    if is_root; then
+        comis_node_dir="/usr/local/lib/comis-node"
+        bin_dir="/usr/local/bin"
+    else
+        comis_node_dir="$HOME/.comis/node"
+        bin_dir="$HOME/.local/bin"
+        ensure_user_local_bin_on_path
+    fi
     rm -rf "$comis_node_dir"
-    mkdir -p "$HOME/.comis"
+    mkdir -p "$(dirname "$comis_node_dir")" "$bin_dir"
     mv "$extracted_dir" "$comis_node_dir"
 
-    ensure_user_local_bin_on_path
-    ln -sf "$comis_node_dir/bin/node" "$HOME/.local/bin/node"
-    ln -sf "$comis_node_dir/bin/npm" "$HOME/.local/bin/npm"
-    ln -sf "$comis_node_dir/bin/npx" "$HOME/.local/bin/npx"
+    ln -sf "$comis_node_dir/bin/node" "$bin_dir/node"
+    ln -sf "$comis_node_dir/bin/npm" "$bin_dir/npm"
+    ln -sf "$comis_node_dir/bin/npx" "$bin_dir/npx"
+    ln -sf "$comis_node_dir/bin/corepack" "$bin_dir/corepack"
     export PATH="$comis_node_dir/bin:$PATH"
     refresh_shell_command_cache
 
     local installed_ver=""
     installed_ver="$("$comis_node_dir/bin/node" --version 2>/dev/null || true)"
-    ui_success "Node.js ${installed_ver} installed to ~/.comis/node/ (no sudo required)"
+    ui_success "Node.js ${installed_ver} installed to ${comis_node_dir}"
     return 0
 }
 
@@ -2463,7 +2653,7 @@ install_node() {
                 ui_warn "Homebrew node@22 not active; trying standalone download from nodejs.org"
                 if ! install_node_standalone; then
                     ui_error "Could not install Node.js"
-                    echo "Please install Node.js 22+ manually: https://nodejs.org"
+                    echo "Please install Node.js >=${MIN_NODE_VERSION} manually: https://nodejs.org"
                     exit 1
                 fi
             fi
@@ -2471,7 +2661,7 @@ install_node() {
             ui_warn "Homebrew install failed; trying standalone download from nodejs.org"
             if ! install_node_standalone; then
                 ui_error "Could not install Node.js"
-                echo "Please install Node.js 22+ manually: https://nodejs.org"
+                echo "Please install Node.js >=${MIN_NODE_VERSION} manually: https://nodejs.org"
                 exit 1
             fi
         fi
@@ -2494,7 +2684,8 @@ install_node() {
                 wait_for_apt_lock
                 local tmp
                 tmp="$(mktempfile)"
-                if download_file "https://deb.nodesource.com/setup_22.x" "$tmp"; then
+                if download_file "https://deb.nodesource.com/setup_22.x" "$tmp" \
+                    && verify_file_sha256 "$tmp" "$NODESOURCE_DEB_SETUP_SHA256"; then
                     if is_root; then
                         run_quiet_step "Configuring NodeSource repository" bash "$tmp" && \
                         run_quiet_step "Installing Node.js" apt-get install -y -qq nodejs && \
@@ -2508,7 +2699,8 @@ install_node() {
             elif command -v dnf &> /dev/null; then
                 local tmp
                 tmp="$(mktempfile)"
-                if download_file "https://rpm.nodesource.com/setup_22.x" "$tmp"; then
+                if download_file "https://rpm.nodesource.com/setup_22.x" "$tmp" \
+                    && verify_file_sha256 "$tmp" "$NODESOURCE_RPM_SETUP_SHA256"; then
                     if is_root; then
                         run_quiet_step "Configuring NodeSource repository" bash "$tmp" && \
                         run_quiet_step "Installing Node.js" dnf install -y nodejs && \
@@ -2522,7 +2714,8 @@ install_node() {
             elif command -v yum &> /dev/null; then
                 local tmp
                 tmp="$(mktempfile)"
-                if download_file "https://rpm.nodesource.com/setup_22.x" "$tmp"; then
+                if download_file "https://rpm.nodesource.com/setup_22.x" "$tmp" \
+                    && verify_file_sha256 "$tmp" "$NODESOURCE_RPM_SETUP_SHA256"; then
                     if is_root; then
                         run_quiet_step "Configuring NodeSource repository" bash "$tmp" && \
                         run_quiet_step "Installing Node.js" yum install -y nodejs && \
@@ -2544,7 +2737,7 @@ install_node() {
             ui_warn "NodeSource install unavailable or failed; trying standalone download from nodejs.org"
             if ! install_node_standalone; then
                 ui_error "Could not install Node.js"
-                echo "Please install Node.js 22+ manually: https://nodejs.org"
+                echo "Please install Node.js >=${MIN_NODE_VERSION} manually: https://nodejs.org"
                 exit 1
             fi
         fi
@@ -2569,13 +2762,11 @@ detect_nvm_and_warn() {
     if [[ -n "$node_path" && "$node_path" == *".nvm"* ]]; then
         local current_version
         current_version="$(node -v 2>/dev/null || true)"
-        local major="${current_version#v}"
-        major="${major%%.*}"
 
-        if [[ -n "$major" && "$major" -lt 22 ]]; then
+        if ! node_version_is_supported "$current_version"; then
             ui_warn ""
             ui_warn "NVM detected with old default Node version"
-            ui_warn "   Your shell is using NVM's Node ${current_version}, but Comis requires Node 22+"
+            ui_warn "   Your shell is using NVM's Node ${current_version}, but Comis requires >=${MIN_NODE_VERSION}"
             ui_warn ""
             ui_info "To fix this, run:"
             ui_info "  nvm install 22"
@@ -2659,7 +2850,8 @@ elevate_install_to_root() {
     script_copy="$(mktempfile)"
     stage_install_script "$script_copy"
     ui_info "Re-running the installer with sudo"
-    sudo bash "$script_copy" ${ORIGINAL_ARGS[@]+"${ORIGINAL_ARGS[@]}"} || rc=$?
+    sudo env COMIS_ENABLE_EGRESS_LOGGING="$ENABLE_EGRESS_LOGGING" \
+        bash "$script_copy" ${ORIGINAL_ARGS[@]+"${ORIGINAL_ARGS[@]}"} || rc=$?
     exit "$rc"
 }
 
@@ -3272,25 +3464,47 @@ install_comis_from_git() {
         local porcelain=""
         porcelain="$(git -C "$repo_dir" status --porcelain 2>/dev/null || true)"
         if [[ -z "$porcelain" ]]; then
-            run_quiet_step "Updating repository" git -C "$repo_dir" pull --rebase || true
+            if ! run_quiet_step "Updating repository" git -C "$repo_dir" pull --rebase; then
+                git -C "$repo_dir" rebase --abort >/dev/null 2>&1 || true
+                ui_error "Could not update the source checkout; installation stopped"
+                return 1
+            fi
         else
             # Auto-stash local changes, pull, then restore
-            local stash_name="comis-install-autostash-$(date -u +%Y%m%d-%H%M%S)"
+            local stash_name=""
+            stash_name="comis-install-autostash-$(date -u +%Y%m%d-%H%M%S)"
+            local previous_stash=""
+            previous_stash="$(git -C "$repo_dir" rev-parse --verify refs/stash 2>/dev/null || true)"
             ui_info "Local changes detected; stashing before update"
-            git -C "$repo_dir" stash push --include-untracked -m "$stash_name" >/dev/null 2>&1 || true
+            if ! git -C "$repo_dir" stash push --include-untracked -m "$stash_name" >/dev/null 2>&1; then
+                ui_error "Could not preserve local changes; refusing to update the checkout"
+                return 1
+            fi
             local stash_ref=""
             stash_ref="$(git -C "$repo_dir" rev-parse --verify refs/stash 2>/dev/null || true)"
+            if [[ -z "$stash_ref" || "$stash_ref" == "$previous_stash" ]]; then
+                ui_error "Git did not create the expected safety stash; refusing to update the checkout"
+                return 1
+            fi
 
-            run_quiet_step "Updating repository" git -C "$repo_dir" pull --rebase || true
+            local update_rc=0
+            if ! run_quiet_step "Updating repository" git -C "$repo_dir" pull --rebase; then
+                update_rc=1
+                git -C "$repo_dir" rebase --abort >/dev/null 2>&1 || true
+            fi
 
-            if [[ -n "$stash_ref" ]]; then
-                ui_info "Restoring stashed local changes"
-                if git -C "$repo_dir" stash pop >/dev/null 2>&1; then
-                    ui_success "Local changes restored"
-                else
-                    ui_warn "Could not auto-restore local changes (conflict?)"
-                    ui_info "Your changes are preserved in: git -C ${repo_dir} stash list"
-                fi
+            ui_info "Restoring stashed local changes"
+            if git -C "$repo_dir" stash pop --index 'stash@{0}' >/dev/null 2>&1; then
+                ui_success "Local changes restored"
+            else
+                ui_error "Could not restore local changes cleanly; installation stopped"
+                ui_info "Your safety stash is preserved in: git -C ${repo_dir} stash list"
+                return 1
+            fi
+
+            if [[ "$update_rc" -ne 0 ]]; then
+                ui_error "Could not update the source checkout; local changes were restored"
+                return 1
             fi
         fi
     fi
@@ -3591,6 +3805,23 @@ resolve_service_manager() {
     RESOLVED_SERVICE_MANAGER="none"
 }
 
+# The installer provisions comis-xvfb.service only as a system unit. Other
+# service modes cannot assume DISPLAY=:99 exists unless a container entrypoint
+# explicitly owns it. Keep Chromium available and downshift those modes to the
+# supported headless fallback before the install plan is shown.
+downshift_xvfb_for_service_manager() {
+    if [[ "$WITH_XVFB" != "1" ]]; then
+        return 0
+    fi
+    if [[ "$RESOLVED_SERVICE_MANAGER" == "systemd" || "$XVFB_EXTERNAL_RUNTIME" == "1" ]]; then
+        return 0
+    fi
+
+    WITH_XVFB=0
+    ui_warn "${RESOLVED_SERVICE_MANAGER} does not manage comis-xvfb.service; using headless browser mode"
+    ui_info "For installer-managed headed mode, rerun as root with: sudo bash comis-install.sh --service systemd"
+}
+
 # Stop a direct-spawn daemon and remove its stale PID file before handing
 # ownership to a service manager.
 cleanup_legacy_daemon_state() {
@@ -3599,6 +3830,8 @@ cleanup_legacy_daemon_state() {
     local target_home="${HOME:-}"
     if [[ -n "${COMIS_SVC_HOME:-}" ]]; then
         target_home="$COMIS_SVC_HOME"
+    elif [[ -n "${UNINSTALL_TARGET_HOME:-}" ]]; then
+        target_home="$UNINSTALL_TARGET_HOME"
     fi
     pid_file="${target_home}/.comis/daemon.pid"
 
@@ -3729,22 +3962,6 @@ resolve_service_template_vars() {
         fi
     fi
 
-    COMIS_DAEMON_DIR="$(dirname "$COMIS_DAEMON_JS")"
-
-    # Determine read-root for Node's --permission model. The daemon imports
-    # bundled sibling packages under node_modules/@comis/*, so the read grant
-    # must cover the whole install root, not just the daemon's dist/ dir.
-    if [[ "$COMIS_DAEMON_JS" == */node_modules/@comis/daemon/dist/daemon.js ]]; then
-        # npm install: grant read on the `comisai/` package root
-        COMIS_READ_ROOT="${COMIS_DAEMON_JS%/node_modules/@comis/daemon/dist/daemon.js}"
-    elif [[ "$COMIS_DAEMON_JS" == */packages/daemon/dist/daemon.js ]]; then
-        # git checkout: grant read on the repo root (covers all packages + node_modules)
-        COMIS_READ_ROOT="${COMIS_DAEMON_JS%/packages/daemon/dist/daemon.js}"
-    else
-        # Unknown layout — grant read on the daemon's grandparent (best-effort)
-        COMIS_READ_ROOT="$(dirname "$(dirname "$COMIS_DAEMON_DIR")")"
-    fi
-
     return 0
 }
 
@@ -3757,15 +3974,15 @@ render_xvfb_unit() {
     # crash-loop the unit. Fall back silently to headless (the browser tool still
     # works; only headed mode is unavailable).
     if ! xvfb_present; then
+        WITH_XVFB=0
         ui_warn "Xvfb binary not found — skipping headed companion unit (browser runs headless)"
         return 0
     fi
-    # User-scope systemd-user installs can't write to /etc/systemd/system; in
-    # that case the operator owns Xvfb (or runs --with-xvfb under --service systemd).
-    # Skip and warn rather than mis-installing a system unit from a non-root run.
+    # Defensive guard: the normal systemd-user path already downshifts to
+    # headless. Never mis-install a system unit if this helper is called directly.
     if ! is_root; then
-        ui_warn "--with-xvfb requires root to register comis-xvfb.service; skipping"
-        ui_info "Start Xvfb manually: Xvfb :99 -screen 0 1920x1080x24 -ac -nolisten tcp &"
+        WITH_XVFB=0
+        ui_warn "comis-xvfb.service requires a root system-service install; using headless browser mode"
         return 0
     fi
 
@@ -3774,8 +3991,16 @@ render_xvfb_unit() {
     # X99 socket Xvfb creates is reachable from the daemon. Create it now for the
     # immediate start AND via tmpfiles so it is recreated on reboot before the
     # units mount it (BindPaths fails if the source is missing).
-    install -d -m 1777 /run/comis-x11 2>/dev/null || true
-    printf 'd /run/comis-x11 1777 root root -\n' > /etc/tmpfiles.d/comis-x11.conf 2>/dev/null || true
+    if ! install -d -m 0700 -o "${COMIS_SVC_USER}" -g "${COMIS_SVC_GROUP}" /run/comis-x11; then
+        WITH_XVFB=0
+        ui_warn "Could not create the private Xvfb socket directory; using headless browser mode"
+        return 1
+    fi
+    if ! printf 'd /run/comis-x11 0700 %s %s -\n' "${COMIS_SVC_USER}" "${COMIS_SVC_GROUP}" > /etc/tmpfiles.d/comis-x11.conf; then
+        WITH_XVFB=0
+        ui_warn "Could not register the Xvfb socket directory for reboot; using headless browser mode"
+        return 1
+    fi
 
     local target="/etc/systemd/system/comis-xvfb.service"
     if [[ -f "$target" ]] && ! unit_is_managed "$target"; then
@@ -3794,10 +4019,9 @@ After=network.target
 Type=simple
 User=${COMIS_SVC_USER}
 Group=${COMIS_SVC_GROUP}
-# -ac disables host-based access control; safe because -nolisten tcp keeps
-# the X server on a Unix-domain socket only. /tmp/.X11-unix/X99 is owned by
-# COMIS_SVC_USER, so only the comis daemon (running as the same user, sharing
-# the /run/comis-x11 socket dir via BindPaths) can connect.
+# -ac disables X11 host-based access control. The server listens only on its
+# Unix-domain socket, which lives inside the mode-0700, service-owned
+# /run/comis-x11 directory shared with the daemon unit.
 ExecStart=/usr/bin/Xvfb :99 -screen 0 1920x1080x24 -ac -nolisten tcp
 Restart=on-failure
 RestartSec=2s
@@ -3838,14 +4062,26 @@ XVFB
 HDR
     printf '%s\n' "$xvfb_body" >> "$tmp"
 
-    maybe_sudo install -m 0644 "$tmp" "$target"
+    if ! maybe_sudo install -m 0644 "$tmp" "$target"; then
+        WITH_XVFB=0
+        ui_warn "Could not install comis-xvfb.service; using headless browser mode"
+        return 1
+    fi
 
-    maybe_sudo systemctl daemon-reload
+    if ! maybe_sudo systemctl daemon-reload; then
+        WITH_XVFB=0
+        ui_warn "Could not reload systemd after installing Xvfb; using headless browser mode"
+        return 1
+    fi
     if [[ "$NO_AUTOSTART" != "1" ]]; then
         run_quiet_step "Enabling comis-xvfb.service" maybe_sudo systemctl enable comis-xvfb.service
     fi
     if [[ "$NO_SERVICE_START" != "1" ]]; then
-        run_quiet_step "Starting comis-xvfb.service" maybe_sudo systemctl start comis-xvfb.service
+        if ! run_quiet_step "Starting comis-xvfb.service" maybe_sudo systemctl start comis-xvfb.service; then
+            WITH_XVFB=0
+            ui_warn "comis-xvfb.service did not start; using headless browser mode"
+            return 1
+        fi
     fi
     ui_success "Xvfb companion unit installed"
 }
@@ -3916,8 +4152,9 @@ render_systemd_unit() {
             COMIS_BROWSER_RW_PATHS=" ${COMIS_SVC_HOME}/.config/comis/browser ${COMIS_SVC_HOME}/.config/google-chrome ${COMIS_SVC_HOME}/.local/share/applications"
         fi
     fi
-    if [[ "$WITH_XVFB" == "1" ]]; then
-        # comis-xvfb.service owns the virtual display at :99. The X11 socket must
+    if [[ "$WITH_XVFB" == "1" && "$scope" == "system" ]]; then
+        # The system-scope comis-xvfb.service owns the virtual display at :99.
+        # The X11 socket must
         # be reachable from the daemon despite BOTH units running PrivateTmp=yes.
         # JoinsNamespaceOf= was tried but does NOT share the PrivateTmp /tmp CONTENT
         # on systemd 255 (the daemon's ns gets an empty /tmp/.X11-unix). Instead,
@@ -3938,11 +4175,9 @@ Description=Comis AI Agent Daemon
 Documentation=https://docs.comis.ai/operations/systemd
 After=network-online.target${COMIS_XVFB_AFTER}
 Wants=network-online.target${COMIS_XVFB_WANTS}
-# StartLimit: after 3 restarts in 60s, enter 'failed' state instead of the
-# 9+ restart cascade seen in F1 (2026-04-19) when a broken native dep made
-# every boot attempt crash. Paired with the preflight doctor that exits 78
-# on a missing bindings/better-sqlite3 native addon, operators now get a
-# single loud failure + actionable hint instead of silent crash-looping.
+# StartLimit: after 3 restarts in 60s, enter 'failed' state. Paired with the
+# preflight doctor that exits 78 on a missing native addon, this produces one
+# actionable failure instead of an unbounded crash loop.
 # Clear with: systemctl reset-failed comis
 StartLimitBurst=3
 StartLimitIntervalSec=60
@@ -4252,16 +4487,65 @@ YAML
 # with COMIS_GATEWAY_WAIT_SECS. Sets GATEWAY_WAIT_SECS_USED so callers can
 # report the window they actually waited.
 wait_for_daemon_ready() {
-    local host="localhost"
+    local host="${COMIS_GATEWAY_HOST:-127.0.0.1}"
     local port=4766
+    if [[ "${COMIS_GATEWAY_PORT:-}" =~ ^[0-9]+$ ]] \
+        && (( 10#${COMIS_GATEWAY_PORT} >= 1 && 10#${COMIS_GATEWAY_PORT} <= 65535 )); then
+        port="${COMIS_GATEWAY_PORT}"
+    fi
 
-    # Read gateway settings from the config if present
+    # Read only direct children of the top-level gateway section. A generic
+    # `host:`/`port:` search can accidentally select observability or provider
+    # settings and turn a healthy service start into a false timeout.
     if [[ -f "$COMIS_CONFIG_FILE" ]]; then
         local cfg_host cfg_port
-        cfg_host="$(grep -E '^\s*host:' "$COMIS_CONFIG_FILE" 2>/dev/null | head -n1 | awk '{print $2}' || true)"
-        cfg_port="$(grep -E '^\s*port:' "$COMIS_CONFIG_FILE" 2>/dev/null | head -n1 | awk '{print $2}' || true)"
-        [[ -n "$cfg_host" && "$cfg_host" != "0.0.0.0" ]] && host="$cfg_host"
-        [[ -n "$cfg_port" ]] && port="$cfg_port"
+        while IFS='=' read -r key value; do
+            case "$key" in
+                host) cfg_host="$value" ;;
+                port) cfg_port="$value" ;;
+            esac
+        done < <(awk '
+            function indent_of(line, copy) { copy=line; sub(/[^ \t].*$/, "", copy); gsub(/\t/, "        ", copy); return length(copy) }
+            function trim(value) { sub(/^[[:space:]]+/, "", value); sub(/[[:space:]]+$/, "", value); return value }
+            function scalar(value, first, last) {
+                sub(/^[^:]*:[[:space:]]*/, "", value)
+                sub(/[[:space:]]+#.*$/, "", value)
+                value=trim(value)
+                first=substr(value, 1, 1); last=substr(value, length(value), 1)
+                if (length(value) >= 2 && ((first == "\"" && last == "\"") || (first == "\047" && last == "\047"))) value=substr(value, 2, length(value)-2)
+                return value
+            }
+            /^[[:space:]]*(#|$)/ { next }
+            {
+                raw=$0; indent=indent_of(raw); line=trim(raw)
+                if (!inside) {
+                    if (indent == 0 && line ~ /^gateway:[[:space:]]*(#.*)?$/) { inside=1; gateway_indent=indent; child_indent=-1 }
+                    next
+                }
+                if (indent <= gateway_indent) { inside=0; next }
+                if (child_indent < 0) child_indent=indent
+                if (indent != child_indent) next
+                if (line ~ /^host[[:space:]]*:/) host=scalar(line)
+                if (line ~ /^port[[:space:]]*:/) port=scalar(line)
+            }
+            END {
+                if (host != "") print "host=" host
+                if (port != "") print "port=" port
+            }
+        ' "$COMIS_CONFIG_FILE" 2>/dev/null)
+        [[ -n "${cfg_host:-}" ]] && host="$cfg_host"
+        if [[ "${cfg_port:-}" =~ ^[0-9]+$ ]] \
+            && (( 10#$cfg_port >= 1 && 10#$cfg_port <= 65535 )); then
+            port="$cfg_port"
+        fi
+    fi
+
+    case "$host" in
+        0.0.0.0|"*") host="127.0.0.1" ;;
+        "[::]"|"::") host="[::1]" ;;
+    esac
+    if [[ "$host" == *:* && "$host" != \[*\] ]]; then
+        host="[${host}]"
     fi
 
     local wait_secs="${COMIS_GATEWAY_WAIT_SECS:-90}"
@@ -4406,8 +4690,9 @@ SUDOERS
     if wait_for_daemon_ready; then
         ui_success "Daemon is responding on the gateway port"
     else
-        ui_warn "Service is active but the gateway didn't respond within ${GATEWAY_WAIT_SECS_USED:-90}s"
+        ui_error "Service is active but the gateway didn't respond within ${GATEWAY_WAIT_SECS_USED:-90}s"
         ui_info "Tail logs with: journalctl -u comis.service -f"
+        return 1
     fi
 }
 
@@ -4416,6 +4701,7 @@ register_service_systemd_user() {
     local unit_path="${HOME}/.config/systemd/user/comis.service"
 
     cleanup_legacy_daemon_state
+    downshift_xvfb_for_service_manager
 
     # User scope: env file lives under ~/.comis (not /etc/comis), and the
     # data dir must exist before rendering the unit (so render sees a valid
@@ -4487,8 +4773,9 @@ ENV
     if wait_for_daemon_ready; then
         ui_success "Daemon is responding on the gateway port"
     else
-        ui_warn "Service is active but the gateway didn't respond within ${GATEWAY_WAIT_SECS_USED:-90}s"
+        ui_error "Service is active but the gateway didn't respond within ${GATEWAY_WAIT_SECS_USED:-90}s"
         ui_info "Tail logs with: journalctl --user -u comis.service -f"
+        return 1
     fi
 
     ui_info "Note: user services stop when you log out."
@@ -4550,7 +4837,7 @@ register_service_pm2() {
         return 1
     fi
 
-    # Phase A — no sudo required
+    # Configure and start PM2 without elevation.
     run_quiet_step "Generating pm2 ecosystem config" "$comis_bin" pm2 setup
     if [[ "$NO_SERVICE_START" == "1" ]]; then
         ui_info "Skipping pm2 start (--no-service-start)"
@@ -4562,6 +4849,14 @@ register_service_pm2() {
             "$comis_bin" pm2 status 2>&1 | tail -n 20 || true
             return 1
         fi
+
+        if wait_for_daemon_ready; then
+            ui_success "Daemon is responding on the gateway port"
+        else
+            ui_error "Daemon started but the gateway didn't respond within ${GATEWAY_WAIT_SECS_USED:-90}s"
+            ui_info "Tail logs with: pm2 logs comis"
+            return 1
+        fi
     fi
 
     if run_quiet_step "Saving pm2 process list" pm2 save; then
@@ -4570,14 +4865,7 @@ register_service_pm2() {
         ui_warn "pm2 save failed; the daemon will not restart automatically on reboot"
     fi
 
-    if wait_for_daemon_ready; then
-        ui_success "Daemon is responding on the gateway port"
-    else
-        ui_warn "Daemon started but gateway didn't respond within ${GATEWAY_WAIT_SECS_USED:-90}s"
-        ui_info "Tail logs with: pm2 logs comis"
-    fi
-
-    # Phase B — boot persistence (needs sudo)
+    # Configure boot persistence with elevation when available.
     if [[ "$NO_AUTOSTART" == "1" ]]; then
         ui_info "Skipping boot persistence (--no-autostart)"
         ui_info "To enable later: comis pm2 setup --enable-boot"
@@ -4739,6 +5027,50 @@ restart_service_if_running() {
 # Uninstall subsystem
 # ---------------------------------------------------------------------------
 
+dedicated_user_install_detected() {
+    local target_home="$1"
+    local unit_path="/etc/systemd/system/comis.service"
+
+    if [[ -f "$unit_path" ]] && unit_is_managed "$unit_path" \
+        && grep -Fxq "User=${COMIS_USER}" "$unit_path" 2>/dev/null; then
+        return 0
+    fi
+
+    [[ -e "${target_home}/.npm-global/lib/node_modules/comisai" ]] \
+        || [[ -e "${target_home}/.npm-global/bin/comis" ]] \
+        || [[ -e "${target_home}/.local/bin/comis" ]]
+}
+
+resolve_uninstall_target() {
+    UNINSTALL_TARGET_USER="$(id -un)"
+    UNINSTALL_TARGET_HOME="$HOME"
+    UNINSTALL_TARGET_IS_DEDICATED=0
+
+    if [[ "$OS" != "linux" ]] || ! is_root || [[ "$NO_USER" == "1" ]] \
+        || ! id "$COMIS_USER" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    local candidate_home=""
+    candidate_home="$(getent passwd "$COMIS_USER" 2>/dev/null | cut -d: -f6)"
+    if [[ "$candidate_home" != /* || "$candidate_home" == "/" ]]; then
+        return 0
+    fi
+    if ! dedicated_user_install_detected "$candidate_home"; then
+        return 0
+    fi
+
+    UNINSTALL_TARGET_USER="$COMIS_USER"
+    UNINSTALL_TARGET_HOME="$candidate_home"
+    UNINSTALL_TARGET_IS_DEDICATED=1
+}
+
+show_preserved_data_location() {
+    local data_dir="${UNINSTALL_TARGET_HOME:-$HOME}/.comis"
+    ui_info "Data preserved under ${data_dir}. To delete manually:"
+    echo "  rm -rf ${data_dir}"
+}
+
 confirm_uninstall() {
     if [[ "$ASSUME_YES" == "1" ]]; then
         return 0
@@ -4752,14 +5084,15 @@ confirm_uninstall() {
     ui_warn "About to uninstall Comis from this machine."
     echo "  - Service registration (systemd/pm2) will be removed"
     echo "  - CLI binary will be uninstalled"
+    local data_dir="${UNINSTALL_TARGET_HOME:-$HOME}/.comis"
     if [[ "$PURGE" == "1" ]]; then
-        echo "  - Data directory (~/.comis) will be DELETED"
+        echo "  - Data directory (${data_dir}) will be DELETED"
         echo "  - /etc/comis and /var/log/comis will be DELETED"
     else
-        echo "  - Data directory (~/.comis) will be PRESERVED"
+        echo "  - Data directory (${data_dir}) will be PRESERVED"
     fi
     if [[ "$REMOVE_USER_FLAG" == "1" ]]; then
-        echo "  - The comis system user will be DELETED"
+        echo "  - The ${COMIS_USER} system user will be DELETED"
     fi
     echo ""
     local ans
@@ -4875,7 +5208,7 @@ uninstall_pm2() {
 }
 
 uninstall_direct_daemon() {
-    local pid_file="${HOME}/.comis/daemon.pid"
+    local pid_file="${UNINSTALL_TARGET_HOME:-$HOME}/.comis/daemon.pid"
     [[ -f "$pid_file" ]] || return 0
     if [[ "$DRY_RUN" == "1" ]]; then
         ui_info "[dry-run] would: stop direct-spawn daemon and remove ${pid_file}"
@@ -4885,60 +5218,74 @@ uninstall_direct_daemon() {
 }
 
 uninstall_binary() {
+    local target_home="${UNINSTALL_TARGET_HOME:-$HOME}"
     if [[ "$DRY_RUN" == "1" ]]; then
-        ui_info "[dry-run] would: npm uninstall -g comisai OR rm ~/.local/bin/comis"
+        if [[ "$UNINSTALL_TARGET_IS_DEDICATED" == "1" ]]; then
+            ui_info "[dry-run] would: uninstall comisai from ${target_home}/.npm-global as ${UNINSTALL_TARGET_USER}"
+        else
+            ui_info "[dry-run] would: npm uninstall -g comisai OR rm ${target_home}/.local/bin/comis"
+        fi
         return 0
     fi
 
     # Remove the ~/.local/bin/comis wrapper (git install)
-    if [[ -L "${HOME}/.local/bin/comis" ]] || [[ -f "${HOME}/.local/bin/comis" ]]; then
-        rm -f "${HOME}/.local/bin/comis"
-        ui_info "Removed ${HOME}/.local/bin/comis"
+    if [[ -L "${target_home}/.local/bin/comis" ]] || [[ -f "${target_home}/.local/bin/comis" ]]; then
+        rm -f "${target_home}/.local/bin/comis"
+        ui_info "Removed ${target_home}/.local/bin/comis"
+    fi
+
+    if [[ "$UNINSTALL_TARGET_IS_DEDICATED" == "1" ]]; then
+        local npm_list_cmd='npm --prefix "$HOME/.npm-global" list -g comisai'
+        local npm_uninstall_cmd='npm --prefix "$HOME/.npm-global" uninstall -g comisai'
+        if su - "$UNINSTALL_TARGET_USER" -c "$npm_list_cmd" >/dev/null 2>&1; then
+            if ! su - "$UNINSTALL_TARGET_USER" -c "$npm_uninstall_cmd" >/dev/null 2>&1; then
+                ui_warn "Could not remove comisai from ${target_home}/.npm-global"
+                ui_info "Run manually: su - ${UNINSTALL_TARGET_USER} -c '${npm_uninstall_cmd}'"
+                return 1
+            fi
+            ui_info "Removed comisai from ${target_home}/.npm-global"
+        fi
+        ui_success "CLI removal complete"
+        return 0
     fi
 
     # Remove the npm global package
     if npm list -g comisai >/dev/null 2>&1; then
         if [[ "$OS" == "linux" ]] && ! is_root && ! [[ -w "$(npm root -g 2>/dev/null || echo /)" ]]; then
-            sudo npm uninstall -g comisai 2>/dev/null || true
+            if ! sudo npm uninstall -g comisai 2>/dev/null; then
+                ui_warn "Could not remove the global comisai package"
+                return 1
+            fi
         else
-            npm uninstall -g comisai 2>/dev/null || true
+            if ! npm uninstall -g comisai 2>/dev/null; then
+                ui_warn "Could not remove the global comisai package"
+                return 1
+            fi
         fi
         ui_info "npm uninstall -g comisai"
     fi
-    ui_success "Binary removed"
+    ui_success "CLI removal complete"
 }
 
 uninstall_purge_data() {
     [[ "$PURGE" == "1" ]] || return 0
 
-    local data_dir="${HOME}/.comis"
-    # If running as root for a service user, also clean ~comis/.comis (and the
-    # cloakbrowser cache + wrapper, both written by install_cloakbrowser()).
-    local comis_user_home=""
-    if is_root && id "$COMIS_USER" &>/dev/null; then
-        comis_user_home="$(getent passwd "$COMIS_USER" | cut -d: -f6)"
-    fi
+    local target_home="${UNINSTALL_TARGET_HOME:-$HOME}"
+    local data_dir="${target_home}/.comis"
 
     # Cloakbrowser artifacts (created by --with-cloakbrowser installs):
-    #   .cloakbrowser/           — stealth Chromium binary cache (~200MB per
+    #   .cloakbrowser/           — alternative Chromium runtime cache (~200MB per
     #                              version, auto-update may keep ≥1 version)
     #   .cloakbrowser-wrapper/   — installer-managed npm wrapper dir
     # Both belong to the daemon's user; safe to purge with the rest of the
     # daemon's data when --purge is set.
     local cloak_paths=(
-        "${HOME}/.cloakbrowser"
-        "${HOME}/.cloakbrowser-wrapper"
+        "${target_home}/.cloakbrowser"
+        "${target_home}/.cloakbrowser-wrapper"
     )
-    if [[ -n "$comis_user_home" ]]; then
-        cloak_paths+=(
-            "${comis_user_home}/.cloakbrowser"
-            "${comis_user_home}/.cloakbrowser-wrapper"
-        )
-    fi
 
     if [[ "$DRY_RUN" == "1" ]]; then
         ui_info "[dry-run] would: rm -rf ${data_dir}"
-        [[ -n "$comis_user_home" ]] && ui_info "[dry-run] would: rm -rf ${comis_user_home}/.comis"
         ui_info "[dry-run] would: rm -rf /etc/comis /var/log/comis"
         for p in "${cloak_paths[@]}"; do
             [[ -d "$p" ]] && ui_info "[dry-run] would: rm -rf ${p}"
@@ -4946,14 +5293,15 @@ uninstall_purge_data() {
         return 0
     fi
 
-    if [[ -d "$data_dir" ]] && [[ "$(stat -c %u "$data_dir" 2>/dev/null || stat -f %u "$data_dir" 2>/dev/null)" == "$(id -u)" ]]; then
-        rm -rf "$data_dir"
+    if [[ -d "$data_dir" ]]; then
+        local data_owner_uid=""
+        data_owner_uid="$(stat -c %u "$data_dir" 2>/dev/null || stat -f %u "$data_dir" 2>/dev/null || echo "")"
+        if [[ "$data_owner_uid" == "$(id -u)" ]]; then
+            rm -rf "$data_dir"
+        else
+            maybe_sudo rm -rf "$data_dir"
+        fi
         ui_success "Removed ${data_dir}"
-    fi
-
-    if [[ -n "$comis_user_home" && -d "${comis_user_home}/.comis" ]]; then
-        maybe_sudo rm -rf "${comis_user_home}/.comis"
-        ui_success "Removed ${comis_user_home}/.comis"
     fi
 
     if [[ -d /etc/comis ]]; then
@@ -5056,17 +5404,26 @@ uninstall_remove_user() {
 }
 
 uninstall_main() {
-    bootstrap_gum_temp || true
     print_installer_banner
     detect_os_or_die
+    resolve_uninstall_target
 
     ui_section "Uninstall plan"
     ui_kv "Mode" "uninstall"
+    ui_kv "CLI user" "$UNINSTALL_TARGET_USER"
+    ui_kv "Data directory" "${UNINSTALL_TARGET_HOME}/.comis"
     [[ "$PURGE" == "1" ]] && ui_kv "Purge data" "yes"
     [[ "$REMOVE_USER_FLAG" == "1" ]] && ui_kv "Remove user" "yes"
     [[ "$DRY_RUN" == "1" ]] && ui_kv "Dry run" "yes"
 
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_success "Dry run complete (no changes made)"
+        return 0
+    fi
+
     confirm_uninstall
+    bootstrap_gum_temp || true
+    print_gum_status
 
     ui_stage "Stopping and unregistering services"
 
@@ -5095,8 +5452,7 @@ uninstall_main() {
 
     if [[ "$PURGE" != "1" ]]; then
         echo ""
-        ui_info "Data preserved under ~/.comis. To delete manually:"
-        echo "  rm -rf ${HOME}/.comis"
+        show_preserved_data_location
     fi
 
     if [[ "$OS" == "macos" ]] && command -v pm2 >/dev/null 2>&1; then
@@ -5119,7 +5475,6 @@ main() {
         return $?
     fi
 
-    bootstrap_gum_temp || true
     if [[ "$COMIS_REEXEC" == "1" ]]; then
         detect_os_or_die
         echo ""
@@ -5129,7 +5484,6 @@ main() {
         SERVICE_MANAGER="none"
     else
         print_installer_banner
-        print_gum_status
         detect_os_or_die
     fi
 
@@ -5172,6 +5526,7 @@ main() {
 
     # Resolve which service manager we'll use (validates --service flag early)
     resolve_service_manager
+    downshift_xvfb_for_service_manager
 
     if [[ "$COMIS_REEXEC" != "1" ]]; then
         show_install_plan "$detected_checkout"
@@ -5185,15 +5540,18 @@ main() {
         return 0
     fi
 
+    bootstrap_gum_temp || true
+    print_gum_status
+
     # On Linux as root: install system deps, create dedicated user, install CLI
     # as comis user (re-exec), then return here (still root) and register the
     # systemd system-scope service pointing at the comis user's install.
     if should_create_dedicated_user; then
         install_system_deps_as_root
         create_comis_user
-        # Egress-logging primer for the comis user — Phase 1 of the network
-        # allowlist. LOG-only mode, no enforcement yet, idempotent.
-        # Non-fatal — failures don't block the install.
+        # Optional egress logging for the comis user. The function is an exact
+        # opt-in gate and makes no iptables changes by default. Non-fatal when
+        # enabled so diagnostics cannot block the install.
         install_egress_logging || true
         reexec_as_comis_user
         local user_rc=$?
@@ -5203,7 +5561,11 @@ main() {
         fi
 
         # Still root. Register the service on the parent's behalf.
-        register_service || ui_warn "Service registration encountered errors (see above)"
+        if ! register_service; then
+            ui_error "Comis CLI was installed, but service setup failed"
+            ui_info "Review the error above, then rerun the installer or use --service none"
+            return 1
+        fi
 
         # Resolve version from the comis user's install (root can't see their PATH)
         local installed_version=""
@@ -5252,11 +5614,18 @@ main() {
     fi
     ensure_supported_node_on_path || true
     if ! has_supported_node; then
-        ui_error "Node.js v22+ is required but could not be activated on PATH"
+        ui_error "Node.js >=${MIN_NODE_VERSION} is required but could not be activated on PATH"
         echo "Detected node: $(command -v node 2>/dev/null || echo '(not found)')"
         echo "Current version: $(node -v 2>/dev/null || echo 'unknown')"
-        echo "Install Node.js 22+ manually: https://nodejs.org"
+        echo "Install Node.js >=${MIN_NODE_VERSION} manually: https://nodejs.org"
         exit 1
+    fi
+
+    # Keep optional package-runner toolchains available on ordinary Linux
+    # installs too. The dedicated system-user path installs them before re-exec.
+    if [[ "$OS" == "linux" && "$COMIS_REEXEC" != "1" ]]; then
+        install_uv
+        install_rust
     fi
 
     ui_stage "Installing Comis"
@@ -5300,6 +5669,18 @@ main() {
     ui_stage "Finalizing setup"
 
     COMIS_BIN="$(resolve_comis_bin || true)"
+    if [[ -z "$COMIS_BIN" ]]; then
+        ui_error "Comis installation finished without an executable CLI on PATH"
+        ui_info "Review the npm output above and rerun with --verbose"
+        return 1
+    fi
+    local verified_cli_version=""
+    verified_cli_version="$("$COMIS_BIN" --version 2>/dev/null | head -n 1 | tr -d '\r' || true)"
+    if [[ -z "$verified_cli_version" ]]; then
+        ui_error "The installed Comis CLI could not start"
+        ui_info "Rerun with --verbose and inspect the package installation errors above"
+        return 1
+    fi
 
     # Restart daemon if already running under any manager
     restart_service_if_running
@@ -5345,7 +5726,11 @@ main() {
         if [[ "$OS" == "linux" ]]; then
             install_browser_deps_linux || true
         fi
-        register_service || ui_warn "Service registration encountered errors (see above)"
+        if ! register_service; then
+            ui_error "Comis CLI was installed, but service setup failed"
+            ui_info "Review the error above, then rerun the installer or use --service none"
+            return 1
+        fi
     fi
 
     # Re-exec'd children exit here — the root parent handles the success
@@ -5355,8 +5740,8 @@ main() {
         return 0
     fi
 
-    local installed_version
-    installed_version=$(resolve_comis_version)
+    local installed_version=""
+    installed_version="$verified_cli_version"
 
     echo ""
     if [[ -n "$installed_version" ]]; then

@@ -36,7 +36,7 @@ import {
   createComisSessionManager,
   cleanupStaleLocks,
   createAuthStorageAdapter,
-  DEFAULT_PROVIDER_KEYS,
+  syncCredentialsForSecretChange,
   createModelRegistryAdapter,
   registerCustomProviders,
   createAuthProfileManager,
@@ -180,16 +180,13 @@ export async function setupSingleAgent(
   });
 
   // Hot-swap provider API keys on secret rotation (no restart).
-  container.eventBus.on("secret:changed", ({ name, action }) => {
-    const entry = Object.entries(DEFAULT_PROVIDER_KEYS).find(([, k]) => k === name);
-    if (!entry) return;
-    const [provider] = entry;
-    if (action === "upserted") {
-      const newKey = container.secretManager.get(name);
-      if (newKey) piAuthStorage.setRuntimeApiKey(provider, newKey);
-    } else if (action === "removed") {
-      piAuthStorage.removeRuntimeApiKey(provider);
-    }
+  container.eventBus.on("secret:changed", ({ name }) => {
+    syncCredentialsForSecretChange(
+      piAuthStorage,
+      scopedManager,
+      name,
+      customProviderEntries,
+    );
   });
 
   // FIRST daemon-side OAuth wiring — see setup-agents-oauth.ts for the full
@@ -559,6 +556,8 @@ export async function setupSingleAgent(
     // Resolver form (config is runtime-mutable / per-exec variable): providers
     // switch mid-agent + authoring flips via config.write. getGbnfConstrain off-default ⇒ FLAGS-OFF identical.
     getProviderType: (p: string) => container.config.providers?.entries?.[p]?.type,
+    getProviderApiKeyName: (p: string) =>
+      container.config.providers?.entries?.[p]?.apiKeyName || undefined,
     getModelCompat: (p: string, id: string) =>
       container.config.providers?.entries?.[p]?.models?.find((m) => m.id === id)?.comisCompat,
     getGbnfConstrain: () => container.config.orchestration?.authoring?.gbnfConstrain ?? false,

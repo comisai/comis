@@ -39,7 +39,7 @@ import {
   resolveOperationModel,
   resolveProviderFamily,
   OPERATION_TIER_MAP,
-  DEFAULT_PROVIDER_KEYS,
+  getProviderSecretNames,
 } from "@comis/agent";
 import { resolveWorkspaceDir } from "@comis/core";
 
@@ -84,9 +84,9 @@ export type { AgentHandlerDeps };
  *
  * The authoritative layer for agent-config policy. `config.patch` already
  * rejects the whole `agents` section and redirects to `agents_manage`; without
- * this, `agents_manage` itself applied NO immutability check, so an admin-trust
- * agent could flip its own `skills.execSandbox.enabled` never→always at runtime
- * (unsandboxed marathon BL-1, 2026-07-12). These fields are operator-file-only.
+ * this, `agents_manage` itself could let an admin-trust agent flip its own
+ * `skills.execSandbox.enabled` from `never` to `always` at runtime. These fields
+ * are operator-file-only.
  *
  * `userConfig` is the RAW user-supplied partial (before schema defaults) — the
  * defaulted config always carries `skills.execSandbox`, so scanning post-parse
@@ -702,10 +702,11 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
 
         const resolvedFamily = resolveProviderFamily(resolution.provider);
         const crossProvider = resolvedFamily !== providerFamily;
-        const keyName = DEFAULT_PROVIDER_KEYS[resolvedFamily];
-        const apiKeyConfigured = keyName == null
+        const secretNames = getProviderSecretNames(resolvedFamily);
+        const secretManager = deps.secretManager;
+        const apiKeyConfigured = secretNames.length === 0
           ? true  // Unknown provider -- cannot validate, assume OK
-          : (deps.secretManager?.has(keyName) ?? true);
+          : (secretManager ? secretNames.some((name) => secretManager.has(name)) : true);
 
         return {
           operationType: resolution.operationType,

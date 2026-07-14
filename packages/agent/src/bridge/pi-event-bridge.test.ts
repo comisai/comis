@@ -6057,11 +6057,11 @@ describe("session-index emit sites", () => {
       expect(toolFailWarn![0].errorText).not.toContain("Re-spawn with tool_groups");
     });
 
-    // F-13 (live 2026-06-12): a small model hallucinated `mcp__memory_manage--delete`
+    // A small model may hallucinate `mcp__memory_manage--delete`
     // for the builtin `memory_manage`, hit "Tool not found", and looped. With allToolNames
     // available, the error must suggest the closest real tool — for TOP-LEVEL agents too
     // (no activeToolGroups), which is exactly where the live failure happened.
-    it("'Tool mcp__memory_manage--delete not found' suggests the real builtin (top-level, F-13)", () => {
+    it("'Tool mcp__memory_manage--delete not found' suggests the real builtin at the top level", () => {
       const enrichedDeps = createMockDeps({
         allToolNames: ["memory_manage", "memory_search", "web_search", "exec"],
       } as unknown as Partial<PiEventBridgeDeps>);
@@ -6078,7 +6078,7 @@ describe("session-index emit sites", () => {
       expect(toolFailWarn![0].errorText).toContain('Did you mean "memory_manage"');
     });
 
-    it("'Tool launch_rockets not found' gets NO suggestion when nothing is close (no false steer, F-13)", () => {
+    it("'Tool launch_rockets not found' gets no suggestion when nothing is close", () => {
       const enrichedDeps = createMockDeps({
         allToolNames: ["memory_manage", "memory_search", "web_search", "exec"],
       } as unknown as Partial<PiEventBridgeDeps>);

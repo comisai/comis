@@ -7,20 +7,20 @@
  * fail-loud with an actionable error if no source resolves.
  *
  * Resolution chain (matches pi-coding-agent runtime semantics):
- *   1. KEYLESS_PROVIDER_TYPES.has(entry.type) — ollama / lm-studio
- *   2. providers.entries.<provider>.apiKeyName → secretManager.has(...)
+ *   1. providers.entries.<provider>.apiKeyName → secretManager.has(...)
+ *   2. KEYLESS_PROVIDER_TYPES.has(entry.type) — ollama / lm-studio without an
+ *      explicit apiKeyName
  *   3. Comis OAuth profiles — agent.oauthProfiles[provider] resolved against an
  *      injected oauthProfileLoader (the OAuthCredentialStorePort handle held by
  *      the daemon, adapted to a synchronous has-check at the call site).
- *   4. Secret-store canonical key — for the DEFAULT_PROVIDER_KEYS providers
- *      (anthropic/openai/google/groq/mistral), secretManager.has(canonicalKey).
- *      This mirrors the runtime: createAuthStorageAdapter hydrates exactly these
- *      providers into AuthStorage via secretManager.get(canonicalKey), so a bare
- *      `provider: anthropic` agent (no providers.entries block) works in
+ *   4. Secret-store static keys — for providers in PROVIDER_SECRET_KEYS,
+ *      any configured alias is accepted. This mirrors the runtime:
+ *      createAuthStorageAdapter hydrates the same map into AuthStorage, so a
+ *      bare built-in provider agent works in
  *      `security.storage: encrypted` mode where the key is NOT in process.env.
  *   5. pi-ai's getEnvApiKey(provider) — canonical env vars (incl. ANTHROPIC_OAUTH_TOKEN
  *      and AWS/ADC special-cases). Does NOT cover comis-managed OAuth profiles in
- *      ~/.comis/auth-profiles.json (e.g. openai-codex).
+ *      the configured OAuth credential store (e.g. openai-codex).
  *
  * Note on synchronous loader facade: `OAuthCredentialStorePort.has`
  * is async (returns Promise<Result<boolean, Error>>). To avoid an async cascade
@@ -35,7 +35,10 @@
 import { type KnownProvider } from "@earendil-works/pi-ai";
 import { getEnvApiKey, getProviders, getModels } from "@earendil-works/pi-ai/compat";
 import { KEYLESS_PROVIDER_TYPES, type ProviderEntry } from "@comis/core";
-import { DEFAULT_PROVIDER_KEYS } from "@comis/agent";
+import {
+  getMissingProviderCredentialNames,
+  getProviderSecretNames,
+} from "@comis/agent";
 
 export interface CredentialResolverDeps {
   /** Provider-entry map from comis config (providers.entries). */
@@ -119,19 +122,27 @@ export function resolveProviderCredential(
   // eslint-disable-next-line security/detect-object-injection -- typed Record<string, ProviderEntry> read; effectiveProvider validated above
   const entry = deps.providerEntries?.[effectiveProvider];
 
-  // 1. Keyless types
+  // 1. Source A: providers.entries with an explicit apiKeyName. The configured
+  // name is authoritative: if it is absent, reject instead of silently using a
+  // canonical alias or OAuth credential that the operator did not select.
+  if (entry?.apiKeyName) {
+    if (deps.secretManager?.has(entry.apiKeyName)) {
+      return { ok: true, source: "providers_entry", resolvedProvider: effectiveProvider };
+    }
+    return {
+      ok: false,
+      reason: buildRejectionMessage(effectiveProvider, entry, undefined),
+    };
+  }
+
+  // 2. Keyless types are keyless only when no explicit credential was chosen.
   if (entry && KEYLESS_PROVIDER_TYPES.has(entry.type)) {
     return { ok: true, source: "keyless", resolvedProvider: effectiveProvider };
   }
 
-  // 2. Source A: providers.entries with secret-manager-resolvable apiKeyName
-  if (entry?.apiKeyName && deps.secretManager?.has(entry.apiKeyName)) {
-    return { ok: true, source: "providers_entry", resolvedProvider: effectiveProvider };
-  }
-
   // 3. Source C: comis OAuth profile (per-agent agents.<id>.oauthProfiles).
   //    Covers OAuth-only providers like openai-codex whose tokens live in
-  //    ~/.comis/auth-profiles.json — pi-ai's getEnvApiKey does NOT see them.
+  //    the Comis OAuth credential store — pi-ai's getEnvApiKey does not see them.
   //    Inserted before Source B so OAuth profiles win over env-canonical when
   //    both would resolve (the operator explicitly configured the profile).
   // eslint-disable-next-line security/detect-object-injection -- typed Record<string, string> read; effectiveProvider validated above
@@ -140,20 +151,21 @@ export function resolveProviderCredential(
     return { ok: true, source: "oauth_profile", resolvedProvider: effectiveProvider };
   }
 
-  // 4. Source D: secret-store canonical key for the DEFAULT_PROVIDER_KEYS
-  //    providers. In `security.storage: encrypted` mode the canonical key
-  //    (ANTHROPIC_API_KEY, etc.) lives in the encrypted secret store, NOT
-  //    process.env — so getEnvApiKey (Source B below) misses it. The runtime
-  //    hydrates exactly these providers from secretManager.get(canonicalKey)
-  //    via createAuthStorageAdapter, so a bare `provider: anthropic` agent
-  //    (no providers.entries block) resolves at runtime; this source keeps the
-  //    pre-write check faithful to that. Scoped to DEFAULT_PROVIDER_KEYS (not
-  //    the broader canonicalEnvKeyHint map) precisely because those are the
-  //    only providers the runtime auto-hydrates from the store without an
-  //    explicit providers.entries.apiKeyName mapping (which is Source A).
-  // eslint-disable-next-line security/detect-object-injection -- read of static const Record<string,string> indexed by validated provider string
-  const canonicalSecretKey = DEFAULT_PROVIDER_KEYS[effectiveProvider];
-  if (canonicalSecretKey && deps.secretManager?.has(canonicalSecretKey)) {
+  // 4. Source D: static key or alias held by SecretManager. In encrypted
+  //    storage mode these values are intentionally absent from process.env,
+  //    so the runtime and this validator share one authoritative mapping.
+  const providerSecretNames = getProviderSecretNames(effectiveProvider);
+  if (providerSecretNames.some((name) => deps.secretManager?.has(name) === true)) {
+    const missingNames = getMissingProviderCredentialNames(
+      effectiveProvider,
+      (name) => deps.secretManager?.has(name) === true,
+    );
+    if (missingNames.length > 0) {
+      return {
+        ok: false,
+        reason: buildIncompleteCredentialMessage(effectiveProvider, missingNames),
+      };
+    }
     return { ok: true, source: "secret_store_canonical", resolvedProvider: effectiveProvider };
   }
 
@@ -163,6 +175,14 @@ export function resolveProviderCredential(
   }
 
   return { ok: false, reason: buildRejectionMessage(effectiveProvider, entry, configuredProfileId) };
+}
+
+function buildIncompleteCredentialMessage(provider: string, missingNames: readonly string[]): string {
+  return [
+    `Cannot set agent provider to "${provider}": the stored provider credentials are incomplete.`,
+    `Missing required values: ${missingNames.join(", ")}.`,
+    "Store each missing value with `comis secrets set <NAME>`, then retry this change.",
+  ].join("\n");
 }
 
 function buildRejectionMessage(
@@ -177,7 +197,7 @@ function buildRejectionMessage(
   if (configuredProfileId) {
     const lines: string[] = [];
     lines.push(
-      `Cannot set agent provider to "${targetProvider}": OAuth profile "${configuredProfileId}" is configured but not found in the OAuth credential store (~/.comis/auth-profiles.json).`,
+      `Cannot set agent provider to "${targetProvider}": OAuth profile "${configuredProfileId}" is configured but not found in the active OAuth credential store.`,
     );
     lines.push(`Recovery:`);
     lines.push(
@@ -188,10 +208,10 @@ function buildRejectionMessage(
   }
 
   const lines: string[] = [];
-  lines.push(`Cannot set agent provider to "${targetProvider}": no API key found.`);
+  lines.push(`Cannot set agent provider to "${targetProvider}": no usable provider credential was found.`);
   if (entry?.apiKeyName) {
     lines.push(
-      `The configured providers.entries.${targetProvider}.apiKeyName is "${entry.apiKeyName}", but that name is not in env.`,
+      `The configured providers.entries.${targetProvider}.apiKeyName is "${entry.apiKeyName}", but that name is not available in the active credential store.`,
     );
     lines.push(`Recovery:`);
     lines.push(
@@ -201,9 +221,9 @@ function buildRejectionMessage(
       `  Run gateway({action:"env_list", filter:"${targetProvider.toUpperCase()}*"}) to see what's already configured.`,
     );
   } else {
-    const canonical = canonicalEnvKeyHint(targetProvider);
+    const canonical = getProviderSecretNames(targetProvider)[0];
     lines.push(
-      `No providers.entries.${targetProvider} exists, and the canonical env key${canonical ? ` (${canonical})` : ""} is not set.`,
+      `No providers.entries.${targetProvider} exists, and no recognized credential${canonical ? ` (preferred name: ${canonical})` : ""} is available.`,
     );
     lines.push(`Recovery options (pick one):`);
     lines.push(
@@ -212,49 +232,11 @@ function buildRejectionMessage(
         : `  (a) Run gateway({action:"env_list", filter:"${targetProvider.toUpperCase()}*"}) to find the env name, then env_set it.`,
     );
     lines.push(
-      `  (b) Run providers_manage({action:"create", provider_id:"${targetProvider}", config:{apiKeyName:"<KEY_NAME>", models:[{id:"<model_id>"}]}}) referencing an apiKeyName that already exists in env.`,
+      `  (b) Run providers_manage({action:"create", provider_id:"${targetProvider}", config:{apiKeyName:"<KEY_NAME>", models:[{id:"<model_id>"}]}}) referencing an apiKeyName that already exists in the credential store.`,
     );
     lines.push(
-      `Always run gateway({action:"env_list", filter:"${targetProvider.toUpperCase()}*"}) FIRST to check before asking the user.`,
+      `Run gateway({action:"env_list", filter:"${targetProvider.toUpperCase()}*"}) first to check available names before asking the user.`,
     );
   }
   return lines.join("\n");
-}
-
-/**
- * Best-effort hint at the canonical env key name for a provider, for use in
- * error messages. Returns undefined when pi-ai doesn't have a canonical
- * mapping (custom providers must use providers.entries).
- *
- * SA5 note: `findEnvKeys(provider)` from @earendil-works/pi-ai was evaluated
- * as the dedup target, but it only returns env-var names that are CURRENTLY SET
- * in process.env — not canonical names for an unknown-credential error message.
- * `canonicalEnvKeyHint` is called precisely in the no-credential error path
- * (Source B failed, env var NOT set), so `findEnvKeys` would always return
- * undefined here. The local map is retained: it is MESSAGING-ONLY and never
- * used for resolution; the actual check uses getEnvApiKey() which always wins.
- * Acceptable to be slightly out-of-sync with pi-ai upgrades: hint quality only,
- * never load-bearing.
- */
-function canonicalEnvKeyHint(provider: string): string | undefined {
-  const knownMap: Record<string, string> = {
-    openai: "OPENAI_API_KEY",
-    "azure-openai-responses": "AZURE_OPENAI_API_KEY",
-    google: "GEMINI_API_KEY",
-    groq: "GROQ_API_KEY",
-    cerebras: "CEREBRAS_API_KEY",
-    xai: "XAI_API_KEY",
-    openrouter: "OPENROUTER_API_KEY",
-    "vercel-ai-gateway": "AI_GATEWAY_API_KEY",
-    zai: "ZAI_API_KEY",
-    mistral: "MISTRAL_API_KEY",
-    minimax: "MINIMAX_API_KEY",
-    "minimax-cn": "MINIMAX_CN_API_KEY",
-    huggingface: "HF_TOKEN",
-    opencode: "OPENCODE_API_KEY",
-    "kimi-coding": "KIMI_API_KEY",
-    anthropic: "ANTHROPIC_API_KEY",
-  };
-  // eslint-disable-next-line security/detect-object-injection -- read of static const map indexed by validated provider string
-  return knownMap[provider];
 }

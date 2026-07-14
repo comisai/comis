@@ -195,13 +195,47 @@ describe("credentialsStep", () => {
     expect(prompter.log.info).toHaveBeenCalled();
   });
 
+  it("guides Amazon Bedrock users to the ambient AWS credential chain", async () => {
+    const prompter = createMockPrompter();
+    const state: WizardState = {
+      ...INITIAL_STATE,
+      provider: { id: "amazon-bedrock" } as ProviderConfig,
+    };
+
+    const result = await credentialsStep.execute(state, prompter);
+
+    expect(result.provider).toEqual({ id: "amazon-bedrock", validated: false });
+    expect(prompter.password).not.toHaveBeenCalled();
+    expect(prompter.note).toHaveBeenCalledWith(
+      expect.stringContaining("AWS credential chain"),
+      expect.stringContaining("Amazon Bedrock"),
+    );
+  });
+
+  it.each([
+    ["cloudflare-workers-ai", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_KEY"],
+    ["cloudflare-ai-gateway", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_GATEWAY_ID"],
+  ])(
+    "fails clearly when %s needs multiple credential values",
+    async (providerId, firstRequiredName, secondRequiredName) => {
+      const prompter = createMockPrompter({ password: "test-key" });
+      const state: WizardState = {
+        ...INITIAL_STATE,
+        provider: { id: providerId } as ProviderConfig,
+      };
+
+      await expect(credentialsStep.execute(state, prompter)).rejects.toThrow(firstRequiredName);
+      await expect(credentialsStep.execute(state, prompter)).rejects.toThrow(secondRequiredName);
+    },
+  );
+
   it("collects custom endpoint details for custom provider", async () => {
     const prompter = createMockPrompter();
     vi.mocked(prompter.text)
       .mockResolvedValueOnce("https://my-llm.internal/v1") // base URL
       .mockResolvedValueOnce("my-custom-model"); // model ID
     vi.mocked(prompter.select).mockResolvedValueOnce("openai"); // compat mode
-    vi.mocked(prompter.password).mockResolvedValueOnce("my-key-123"); // optional key
+    vi.mocked(prompter.password).mockResolvedValueOnce("my-key-123");
 
     const state: WizardState = {
       ...INITIAL_STATE,
@@ -214,7 +248,7 @@ describe("credentialsStep", () => {
     expect(result.provider?.customEndpoint).toBe("https://my-llm.internal/v1");
     expect(result.provider?.compatMode).toBe("openai");
     expect(result.provider?.apiKey).toBe("my-key-123");
-    expect(result.provider?.validated).toBe(true);
+    expect(result.provider?.validated).toBe(false);
     expect(result.model).toBe("my-custom-model");
   });
 
@@ -394,7 +428,7 @@ describe("credentialsStep", () => {
 
     const result = await credentialsStep.execute(state, prompter);
 
-    expect(result.provider?.validated).toBe(true);
+    expect(result.provider?.validated).toBe(false);
     expect(result.provider?.authMethod).toBe("oauth");
     expect(result.provider?.apiKey).toBe(
       "sk-ant-oat01-someOAuthTokenValueThatIsLongEnoughToPass",
@@ -468,11 +502,11 @@ describe("credentialsStep", () => {
 
     // OAuth skips live validation entirely -- no fetch call
     expect(globalThis.fetch).not.toHaveBeenCalled();
-    expect(result.provider?.validated).toBe(true);
+    expect(result.provider?.validated).toBe(false);
     expect(result.provider?.authMethod).toBe("oauth");
   });
 
-  it("custom endpoint with empty key sets apiKey to undefined", async () => {
+  it("rejects a custom endpoint when its required API key is empty", async () => {
     const prompter = createMockPrompter();
     vi.mocked(prompter.text)
       .mockResolvedValueOnce("https://internal-api.local/v1")
@@ -485,9 +519,9 @@ describe("credentialsStep", () => {
       provider: { id: "custom" } as ProviderConfig,
     };
 
-    const result = await credentialsStep.execute(state, prompter);
-
-    expect(result.provider?.apiKey).toBeUndefined();
+    await expect(credentialsStep.execute(state, prompter)).rejects.toThrow(
+      "API key is required for custom endpoints",
+    );
   });
 
   // ---------- catalog-driven validation regression tests ----------
@@ -522,9 +556,8 @@ describe("credentialsStep", () => {
     expect(fetchUrl).toContain("/v1/models");
   });
 
-  it("provider with no catalog baseUrl skips live validation (returns valid)", async () => {
-    // No baseUrl in catalog -> getValidationEndpoint returns undefined
-    // -> the line-130 fallback short-circuits and returns valid=true.
+  it("marks credentials unverified when the catalog has no validation base URL", async () => {
+    // No baseUrl means the wizard cannot make an accurate provider request.
     vi.mocked(getModels).mockReturnValue([] as never);
 
     const prompter = createMockPrompter();
@@ -542,7 +575,31 @@ describe("credentialsStep", () => {
 
     // Live validation skipped -- no fetch call
     expect(globalThis.fetch).not.toHaveBeenCalled();
-    expect(result.provider?.validated).toBe(true);
+    expect(result.provider?.validated).toBe(false);
+    expect(prompter.log.info).toHaveBeenCalledWith(
+      expect.stringContaining("not live-validated"),
+    );
+  });
+
+  it("does not guess a models path for providers without an explicit validation contract", async () => {
+    vi.mocked(getModels).mockReturnValue([
+      { baseUrl: "https://integrate.api.nvidia.com/v1" },
+    ] as never);
+
+    const prompter = createMockPrompter();
+    vi.mocked(prompter.password).mockResolvedValueOnce("nvapi-test-key");
+    const state: WizardState = {
+      ...INITIAL_STATE,
+      provider: { id: "nvidia" } as ProviderConfig,
+    };
+
+    const result = await credentialsStep.execute(state, prompter);
+
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(result.provider?.validated).toBe(false);
+    expect(prompter.log.info).toHaveBeenCalledWith(
+      expect.stringContaining("not live-validated"),
+    );
   });
 
   it("anthropic OAuth tokens still skip live validation entirely (regression pin)", async () => {
@@ -566,7 +623,7 @@ describe("credentialsStep", () => {
     const result = await credentialsStep.execute(state, prompter);
 
     expect(globalThis.fetch).not.toHaveBeenCalled();
-    expect(result.provider?.validated).toBe(true);
+    expect(result.provider?.validated).toBe(false);
     expect(result.provider?.authMethod).toBe("oauth");
   });
 
@@ -588,7 +645,7 @@ describe("credentialsStep", () => {
   // (no validate-hook invocation), so any non-empty string passes through.
   async function captureComposedUrl(providerId: string): Promise<string> {
     // Restore the real catalog for this composition so the URL reflects
-    // the actual pi-ai 0.71.0 baseUrl shape (vs the per-test sentinel).
+    // the installed pi-ai catalog's baseUrl shape (vs the per-test sentinel).
     vi.mocked(getModels).mockImplementation(actualGetModels);
 
     const prompter = createMockPrompter();
@@ -702,14 +759,14 @@ describe("credentialsStep", () => {
     }
   });
 
-  it("getValidationEndpoint returns undefined (skips live validation) for catalog-absent providers", async () => {
+  it("keeps catalog-absent provider credentials explicitly unverified", async () => {
     // Catalog returns no models for these providers -> getValidationEndpoint
-    // returns undefined -> validateKeyLive's line-130 fallback short-circuits
-    // and reports valid=true with no fetch call.
+    // returns undefined, so the wizard saves the credential without claiming
+    // it passed a live provider check.
     // Note: ollama is handled by Branch A (handleOllama) BEFORE
     // getValidationEndpoint is ever consulted -- separate code path,
     // covered by the existing "skips API key entirely for ollama provider"
-    // test. Together is also catalog-absent in pi-ai 0.71.0.
+    // test. Together is also absent from the installed catalog.
     for (const provider of ["together", "nonexistent-provider-foo"]) {
       vi.clearAllMocks();
       vi.stubGlobal(
@@ -729,7 +786,10 @@ describe("credentialsStep", () => {
       const result = await credentialsStep.execute(state, prompter);
 
       expect(globalThis.fetch, `${provider}: should not call fetch`).not.toHaveBeenCalled();
-      expect(result.provider?.validated).toBe(true);
+      expect(result.provider?.validated).toBe(false);
+      expect(prompter.log.info).toHaveBeenCalledWith(
+        expect.stringContaining("not live-validated"),
+      );
       vi.unstubAllGlobals();
     }
   });

@@ -397,7 +397,17 @@ export class IcChatConsole extends LitElement {
   private _handleNotificationAttachment(params: unknown): void {
     const p = params as Record<string, unknown> | undefined;
     const url = typeof p?.url === "string" ? p.url : "";
-    if (!url) return;
+    const channelId = typeof p?.channelId === "string" ? p.channelId : "";
+    const notificationSessionKey = typeof p?.sessionKey === "string" ? p.sessionKey : "";
+    const activeSession = parseSessionKeyString(this._activeSession);
+    const notifiedSession = parseSessionKeyString(notificationSessionKey);
+    const isActiveSession = notificationSessionKey === this._activeSession
+      || (activeSession !== undefined
+        && notifiedSession !== undefined
+        && activeSession.tenantId === "web"
+        && activeSession.userId === notifiedSession.userId
+        && activeSession.channelId === notifiedSession.channelId);
+    if (!url || !channelId || !isActiveSession || notifiedSession?.channelId !== channelId) return;
     console.debug("[chat] notification.attachment received:", p?.type, p?.fileName);
     const type = (p?.type as string) ?? "file";
     const fileName = (p?.fileName as string) ?? "attachment";
@@ -1017,6 +1027,7 @@ export class IcChatConsole extends LitElement {
         </button>
         <select
           class="agent-select"
+          aria-label="Agent"
           .value=${this._selectedAgent}
           @change=${(e: Event) => { this._selectedAgent = (e.target as HTMLSelectElement).value; }}
         >
@@ -1103,6 +1114,7 @@ export class IcChatConsole extends LitElement {
           ${this._renderVoiceButton()}
           <textarea
             class="input-textarea"
+            aria-label="Message"
             placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
             maxlength="10000"
             .value=${this._inputValue}

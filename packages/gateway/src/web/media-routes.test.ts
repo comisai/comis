@@ -167,15 +167,15 @@ describe("createMediaRoutes - bearer token auth", () => {
     expect(body).toBe("secret-data");
   });
 
-  it("returns 200 with valid token in query parameter", async () => {
+  it("rejects a valid bearer token passed in a query parameter", async () => {
     const app = createMediaRoutes({ mediaDir: tmpDir, tokenStore });
     const id = "auth-test-file-4";
     await saveTestFile(id, "query-data", "text/plain");
 
     const res = await app.request(`/${id}?token=${TOKEN_SECRET}`);
-    expect(res.status).toBe(200);
-    const body = await res.text();
-    expect(body).toBe("query-data");
+    expect(res.status).toBe(401);
+    const json = await res.json();
+    expect(json.error).toBe("Unauthorized");
   });
 
   it("returns 401 on /meta route without auth", async () => {

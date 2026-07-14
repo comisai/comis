@@ -47,22 +47,16 @@ describe("IcSidebar", () => {
     expect(labels).toEqual(["Home", "Operate", "Observe", "Configure"]);
   });
 
-  it("renders nav items grouped under sections (22 total: 1+7+6+8) plus 1 Setup = 23", async () => {
+  it("renders the 22 supported navigation items without an unsafe setup entry", async () => {
     const el = await createElement<IcSidebar>("ic-sidebar");
     const navItems = el.shadowRoot?.querySelectorAll("nav .nav-item");
-    // 1 (Home) + 7 (Operate: Agents, Channels, Messages, Chat, Sessions, Sub-Agents, Pipelines) + 6 (Observe: Overview, Context Engine, Context DAG, Billing, Delivery, Diagnostics) + 8 (Configure: Skills, MCP Servers, Models, Memory, Scheduler, Security, Media, Config — Approvals removed) + 1 (Setup) = 23
-    expect(navItems?.length).toBe(23);
+    expect(navItems?.length).toBe(22);
   });
 
-  it("renders Setup item below divider", async () => {
+  it("does not expose the unsupported browser setup wizard", async () => {
     const el = await createElement<IcSidebar>("ic-sidebar");
-    const divider = el.shadowRoot?.querySelector(".divider");
-    expect(divider).toBeTruthy();
-
-    // The divider should exist, and Setup should come after it
     const navItems = el.shadowRoot?.querySelectorAll("nav .nav-item");
-    const lastNavItem = navItems?.[navItems.length - 1];
-    expect(lastNavItem?.textContent).toContain("Setup");
+    expect(Array.from(navItems ?? []).some((item) => item.textContent?.includes("Setup"))).toBe(false);
   });
 
   it("highlights active item based on currentRoute property (aria-current='page')", async () => {

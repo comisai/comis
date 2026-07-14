@@ -1,0 +1,36 @@
+# =============================================================================
+# Development Overrides
+# Opt in explicitly:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# =============================================================================
+
+services:
+  comis-daemon:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        COMIS_VARIANT: default  # Full Node Debian base
+
+    # Bind to all interfaces for development access.
+    # `!override` replaces the base file's `127.0.0.1:4766:4766` mapping
+    # instead of appending — without it Compose keeps both bindings and
+    # they collide on the same host port.
+    ports: !override
+      - "0.0.0.0:4766:4766"
+
+    environment:
+      - NODE_ENV=development
+
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+          cpus: "4.0"
+
+  comis-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    # Replace the base `web` profile so the dashboard starts with this overlay.
+    profiles: !override []

@@ -11,24 +11,23 @@ manifests for `linux/amd64` and `linux/arm64`.
 
 ## Available images
 
-| Image | Description |
-|-------|-------------|
-| `comisai/comis` | Daemon + gateway (production, slim base) |
-| `comisai/comis` with `-slim` suffix | Same image, explicit slim variant |
-| `comisai/comis` with no suffix (default variant) | Full `node:22-bookworm` base with debugging tools |
-| `comisai/comis-web` | Nginx-served web dashboard SPA |
+| Image reference | Description |
+|-----------------|-------------|
+| `comisai/comis:X.Y.Z` | Daemon + gateway, full `node:22-bookworm` base |
+| `comisai/comis:X.Y.Z-slim` | Daemon + gateway, smaller `node:22-bookworm-slim` base |
+| `comisai/comis-web:X.Y.Z` | Nginx-served web dashboard SPA |
 
 ## Tag strategy
 
-Every release tag (`v1.0.19`) produces the following tags automatically:
+For a release tag such as `vX.Y.Z`, the Docker workflow produces:
 
 | Tag pattern | Example | Notes |
 |-------------|---------|-------|
-| `{{version}}` | `1.0.19` | Immutable — never changes after push |
-| `{{major}}.{{minor}}` | `1.0` | Moves forward to the latest patch |
+| `{{version}}` | `X.Y.Z` | Version-specific daemon image |
+| `{{major}}.{{minor}}` | `X.Y` | Moves forward to the latest patch |
 | `latest` | `latest` | Default variant, latest release |
-| `{{version}}-slim` | `1.0.19-slim` | Slim variant, immutable |
-| `{{major}}.{{minor}}-slim` | `1.0-slim` | Slim variant, latest patch |
+| `{{version}}-slim` | `X.Y.Z-slim` | Version-specific slim variant |
+| `{{major}}.{{minor}}-slim` | `X.Y-slim` | Slim variant, latest patch |
 | `latest-slim` | `latest-slim` | Slim variant, latest release |
 
 **Variants:**
@@ -39,8 +38,8 @@ Every release tag (`v1.0.19`) produces the following tags automatically:
   Smaller image with a reduced attack surface. Recommended for most deployments.
 
 <Tip>
-Pin to an immutable version tag in production (e.g. `comisai/comis:1.0.19`)
-rather than `latest` to avoid unexpected updates.
+Pin a deployment to an exact version tag (for example,
+`comisai/comis:X.Y.Z`) rather than `latest` to avoid unexpected updates.
 </Tip>
 
 ## Pulling images
@@ -50,7 +49,7 @@ rather than `latest` to avoid unexpected updates.
 docker pull comisai/comis:latest-slim
 
 # Specific version
-docker pull comisai/comis:1.0.19
+docker pull comisai/comis:X.Y.Z
 
 # Web dashboard
 docker pull comisai/comis-web:latest
@@ -74,24 +73,27 @@ COMIS_WEB_IMAGE=comisai/comis-web:latest
 ## Automated releases via GitHub Actions
 
 The workflow `.github/workflows/dockerhub-release.yml` runs on every `v*` tag
-push. It builds multi-arch images for both `linux/amd64` and `linux/arm64` using
+push after verifying that the tag exactly matches the `comisai` package version.
+It builds multi-arch images for both `linux/amd64` and `linux/arm64` using
 per-platform runners that merge into a single manifest — no QEMU emulation for
 the daemon, which keeps build times fast.
 
 ### Workflow structure
 
 ```
-push tag v* ─┬─► build (amd64) ─┬─► merge-default ──► comisai/comis:x.y.z
-              │                  │                       comisai/comis:x.y
-              │                  │                       comisai/comis:latest
-              │   build (arm64) ─┤
-              │                  └─► merge-slim ────► comisai/comis:x.y.z-slim
-              │                                       comisai/comis:x.y-slim
-              │                                       comisai/comis:latest-slim
-              │
-              └─► build-web ──────────────────────► comisai/comis-web:x.y.z
-                                                     comisai/comis-web:x.y
-                                                     comisai/comis-web:latest
+push tag v* ─► version preflight ─┬─► build (amd64) ─┬─► merge-default ──► comisai/comis:x.y.z
+                                  │                   │                       comisai/comis:x.y
+                                  │                   │                       comisai/comis:latest
+                                  │   build (arm64) ─┤
+                                  │                   └─► merge-slim ────► comisai/comis:x.y.z-slim
+                                  │                                        comisai/comis:x.y-slim
+                                  │                                        comisai/comis:latest-slim
+                                  │
+                                  └─► build-web ──────────────────────► comisai/comis-web:x.y.z
+                                                                          comisai/comis-web:x.y
+                                                                          comisai/comis-web:latest
+
+all Docker Hub outputs + successful npm and GHCR publishes ─────────► GitHub Release
 ```
 
 Each `build` job compiles both the default and slim variants. Because the two
@@ -112,16 +114,19 @@ tokens → Generate new token.
 
 ### Triggering a release
 
-Pushing a `v*` tag fires the Docker Hub workflow alongside `release.yml`
-(GitHub Release) and `npm-publish.yml` (npm packages) in parallel:
+Pushing a `v*` tag starts the Docker Hub and npm publishing workflows in
+parallel:
 
 ```bash
-git tag v1.0.19
-git push origin v1.0.19
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
-The Docker Hub, GitHub Release, and npm publish all complete from a single
-tag push.
+The GitHub Release is the final coordinated step in the Docker Hub workflow. It
+is created only after the Docker Hub default, slim, and web images are
+published, and the npm and GitHub Container Registry workflows for the same
+commit report success. A failed artifact build therefore does not create a
+community-facing release that points to incomplete packages.
 
 ### Caching
 
@@ -144,11 +149,12 @@ time significantly after the first run.
 To build and push manually from the repository root:
 
 ```bash
-VERSION=1.0.19
+VERSION=X.Y.Z
 USER=comisai
 
 # Daemon — default variant
-docker build -t $USER/comis:$VERSION -t $USER/comis:latest -f Dockerfile .
+docker build --build-arg COMIS_VARIANT=default \
+  -t $USER/comis:$VERSION -t $USER/comis:latest -f Dockerfile .
 docker push $USER/comis:$VERSION
 docker push $USER/comis:latest
 
@@ -170,6 +176,7 @@ For multi-arch builds locally (requires `docker buildx`):
 docker buildx create --use --name comis-builder   # one-time
 
 docker buildx build --platform linux/amd64,linux/arm64 \
+  --build-arg COMIS_VARIANT=default \
   -t $USER/comis:$VERSION -t $USER/comis:latest \
   -f Dockerfile --push .
 ```

@@ -18,6 +18,7 @@
  */
 import { describe, it, expect } from "vitest";
 import {
+  assertCliSubcommandMapSoundness,
   CLI_SUBCOMMAND_MAP,
   type CliCallTarget,
   type CliSubcommand,
@@ -139,5 +140,30 @@ describe("CLI_SUBCOMMAND_MAP", () => {
   it("types CliSubcommand as the table's keys", () => {
     const sub: CliSubcommand = "whoami";
     expect(sub in CLI_SUBCOMMAND_MAP).toBe(true);
+  });
+});
+
+describe("assertCliSubcommandMapSoundness diagnostics", () => {
+  it("explains a missing tool target without a private planning label", () => {
+    const map = { broken: { kind: "tool", tool: "read" } } as const;
+    expect(() => assertCliSubcommandMapSoundness(map, {}, {})).toThrow(
+      'CLI_SUBCOMMAND_MAP invariant violated: "broken" → tool "read" is not a TOOL_CAPABILITY_MAP key — every subcommand must resolve 1:1 to an existing cap-mapped tool.',
+    );
+  });
+
+  it("explains a missing method target without a private planning label", () => {
+    const map = { broken: { kind: "method", method: "session.status" } } as const;
+    expect(() => assertCliSubcommandMapSoundness(map, {}, {})).toThrow(
+      'CLI_SUBCOMMAND_MAP invariant violated: "broken" → method "session.status" is not a HANDLER_CAPABILITY_MAP key — every subcommand must resolve 1:1 to an existing cap-mapped method.',
+    );
+  });
+
+  it("explains a denied control-plane target without a private planning label", () => {
+    const map = { broken: { kind: "method", method: "session.status" } } as const;
+    expect(() =>
+      assertCliSubcommandMapSoundness(map, {}, { "session.status": "deny-by-origin" }),
+    ).toThrow(
+      'CLI_SUBCOMMAND_MAP invariant violated: "broken" → method "session.status" is deny-by-origin (an admin/control-plane method an agent origin cannot reach) — it must never be a CLI target.',
+    );
   });
 });

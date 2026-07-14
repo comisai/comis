@@ -1,152 +1,92 @@
 ---
-title: "pm2"
-description: "Running Comis with the pm2 process manager"
+title: "PM2"
+description: "Run Comis with PM2 on macOS, WSL, or Linux without systemd"
 icon: "rotate"
 ---
 
-pm2 is a process manager that keeps Comis running in the background, restarts it
-if it crashes, and provides easy log viewing. It works on both Linux and macOS,
-making it the recommended choice for most users.
+PM2 is an optional process supervisor that keeps the Comis daemon running in
+the background and provides restart, status, and log commands. The managed Linux
+installer uses systemd by default; PM2 is useful on macOS, WSL, or Linux systems
+where systemd is unavailable.
 
 ## Prerequisites
 
-Before setting up pm2, make sure you have:
-
-- **Node.js 22 or newer** installed
-- **Comis built** -- run `pnpm build` in the Comis directory
-- **pm2 installed globally:**
+- Node.js 22.19.0 or newer
+- Comis installed and initialized
+- PM2 available on `PATH`:
 
 ```bash
-npm install -g pm2
+npm install --global pm2
 ```
 
-## Setup
+<Note>
+When working from a source checkout, run `pnpm build` before PM2 setup. Published
+Comis packages already include the built daemon.
+</Note>
+
+## Set up and start
 
 <Steps>
-  <Step title="Generate the config file">
-    Run the setup command to generate the pm2 ecosystem config:
-
+  <Step title="Generate the process definition">
     ```bash
-    node packages/cli/dist/cli.js pm2 setup
+    comis pm2 setup
     ```
 
-    Expected output:
-
-    ```
-    ✔ Ecosystem file written to /home/user/.comis/ecosystem.config.js
-    ℹ Start with: comis pm2 start
-    ```
-
-    This creates `~/.comis/ecosystem.config.js` with the correct paths to your
-    daemon binary and configuration file. You do not need to edit this file.
-
-    <Tip>
-    The generated ecosystem config automatically sets `COMIS_CONFIG_PATHS` so you
-    do not need to manage environment variables manually. This avoids the common
-    pitfall of environment variables not propagating to background processes.
-    </Tip>
+    This writes `~/.comis/ecosystem.config.js` with the installed daemon path,
+    the active `COMIS_CONFIG_PATHS` value, a 512 MiB Node.js heap limit, and the
+    restart policy.
   </Step>
-
-  <Step title="Start Comis">
-    Start the daemon through pm2:
-
+  <Step title="Start the daemon">
     ```bash
-    node packages/cli/dist/cli.js pm2 start
-    ```
-
-    Expected output:
-
-    ```
-    ✔ Daemon started via pm2
+    comis pm2 start
     ```
   </Step>
-
-  <Step title="Verify it is running">
-    Check the process status:
-
+  <Step title="Verify status and logs">
     ```bash
-    pm2 status comis
+    comis pm2 status
+    comis pm2 logs --lines 50
     ```
-
-    You should see a table with `status: online`:
-
-    ```
-    ┌────┬──────┬────────┬───┬─────┬───────────┐
-    │ id │ name │ status │ ↺ │ cpu │ memory    │
-    ├────┼──────┼────────┼───┼─────┼───────────┤
-    │ 0  │ comis│ online │ 0 │ 0%  │ 120.0 MB  │
-    └────┴──────┴────────┴───┴─────┴───────────┘
-    ```
-
-    Then check the logs to confirm the daemon started successfully:
-
-    ```bash
-    pm2 logs comis --lines 10 --nostream
-    ```
-
-    Look for `"Comis daemon started"` in the output.
   </Step>
 </Steps>
 
-## Common commands
+## Commands
 
-| Command | What it does |
-|---------|-------------|
-| `node packages/cli/dist/cli.js pm2 start` | Start the daemon |
-| `node packages/cli/dist/cli.js pm2 stop` | Stop the daemon |
-| `node packages/cli/dist/cli.js pm2 restart` | Restart the daemon |
-| `pm2 status comis` | Check if the daemon is running |
-| `pm2 logs comis` | View live logs (streaming) |
-| `pm2 logs comis --lines 50 --nostream` | View the last 50 log lines and exit |
+| Command | Purpose |
+|---------|---------|
+| `comis pm2 setup` | Generate `~/.comis/ecosystem.config.js` |
+| `comis pm2 start` | Start Comis from the generated definition |
+| `comis pm2 stop` | Stop the managed process |
+| `comis pm2 restart` | Restart the managed process |
+| `comis pm2 status` | Show PM2's process details; exits nonzero if Comis is not managed |
+| `comis pm2 logs --lines 50` | Stream recent daemon output |
 
-<Info>
-After rebuilding Comis (`pnpm build`), always restart the daemon to pick up the
-new code:
+After upgrading or rebuilding Comis, run `comis pm2 setup` again if the installed
+daemon path changed, then run `comis pm2 restart`.
 
-```bash
-pm2 restart comis
-```
-</Info>
+## Start at boot
 
-## Auto-start on boot
-
-By default, pm2 processes stop when the server reboots. To make Comis start
-automatically on boot:
-
-**1. Generate the startup script:**
+To have PM2 restore Comis after reboot, run:
 
 ```bash
-pm2 startup
+comis pm2 setup --enable-boot
 ```
 
-This prints a command that you need to run with `sudo`. Copy and run the
-exact command it shows you. For example:
+PM2 may request `sudo` to register with launchd or systemd. If automatic
+registration cannot complete, the command prints the manual PM2 step to run.
 
-```
-[PM2] To setup the Startup Script, copy/paste the following command:
-sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u youruser --hp /home/youruser
-```
+## Generated configuration
 
-**2. Save the current process list:**
-
-```bash
-pm2 save
-```
-
-Now pm2 will restore the Comis process automatically on every reboot.
-
-## Ecosystem config
-
-The `pm2 setup` command generates a config file at `~/.comis/ecosystem.config.js`.
-Here is what it contains:
+The generated file is owned by the current user and written with mode `0600`.
+Its shape is:
 
 ```javascript
 module.exports = {
   apps: [{
     name: "comis",
-    script: "/path/to/packages/daemon/dist/daemon.js",
+    script: "/absolute/path/to/packages/daemon/dist/daemon.js",
+    node_args: ["--max-old-space-size=512"],
     env: {
-      COMIS_CONFIG_PATHS: "~/.comis/config.yaml",
+      COMIS_CONFIG_PATHS: "/home/user/.comis/config.yaml",
     },
     restart_delay: 2000,
     kill_timeout: 10000,
@@ -156,68 +96,29 @@ module.exports = {
 };
 ```
 
-Here is what each field does:
+Do not rely on a separately exported `COMIS_CONFIG_PATHS`; the generated PM2
+definition carries the value into the background process.
 
-| Field | Value | What it means |
-|-------|-------|-------------|
-| `name` | `"comis"` | The process name used in all pm2 commands |
-| `script` | Path to daemon.js | The Node.js file to run |
-| `COMIS_CONFIG_PATHS` | Config file path | Tells the daemon where to find config.yaml |
-| `restart_delay` | `2000` | Wait 2 seconds between restart attempts |
-| `kill_timeout` | `10000` | Wait 10 seconds for the daemon to shut down gracefully |
-| `max_restarts` | `10` | Give up after 10 consecutive crashes (prevents restart loops) |
-| `autorestart` | `true` | Automatically restart if the daemon crashes |
+## Logs
 
-## Log management
-
-pm2 stores its logs in `~/.pm2/logs/`, not in `~/.comis/`. You will find two files:
-
-- `comis-out.log` -- standard output (normal log messages)
-- `comis-error.log` -- standard error (error messages)
-
-**Clear old logs:**
-
-```bash
-pm2 flush comis
-```
-
-**Set up automatic log rotation:**
-
-```bash
-pm2 install pm2-logrotate
-```
-
-This prevents log files from growing indefinitely. The default rotation keeps
-logs under 10 MB per file.
-
-<Info>
-The daemon also supports its own file logging with rotation. See
-[Logging](/operations/logging) for details on configuring the daemon's built-in
-log rotation.
-</Info>
-
-<Warning>
-Do **not** use `export COMIS_CONFIG_PATHS=...` separately from the start command.
-The ecosystem config handles this for you. Setting it separately may not propagate
-to the background process, causing a "Config file not found" error.
-</Warning>
+`comis pm2 logs` streams PM2 output. PM2 also stores its own log files under
+`~/.pm2/logs/`. To control PM2 log retention, install and configure
+`pm2-logrotate`; Comis's structured file logs have separate rotation settings in
+[Logging](/operations/logging).
 
 ## Related pages
 
 <CardGroup cols={2}>
-  <Card title="Daemon" icon="server" href="/operations/daemon">
-    How the daemon starts, runs, and shuts down.
-  </Card>
   <Card title="systemd" icon="linux" href="/operations/systemd">
-    Run Comis as a systemd service on Linux.
+    The default managed-service path on Linux.
   </Card>
-  <Card title="Docker" icon="docker" href="/operations/docker">
-    Run Comis in a Docker container.
+  <Card title="Daemon" icon="server" href="/operations/daemon">
+    Daemon lifecycle and health checks.
   </Card>
   <Card title="Logging" icon="file-lines" href="/operations/logging">
-    Configure log levels, rotation, and structured output.
+    Configure structured daemon logs and rotation.
   </Card>
   <Card title="Troubleshooting" icon="wrench" href="/operations/troubleshooting">
-    Solutions to common issues.
+    Diagnose startup and supervisor issues.
   </Card>
 </CardGroup>

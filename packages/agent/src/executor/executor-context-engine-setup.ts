@@ -75,6 +75,8 @@ export interface ContextEngineSetupDeps {
    * with fallthrough to authStorage for non-OAuth providers.
    */
   oauthManager?: OAuthTokenManager;
+  /** Resolve an explicit provider-entry credential selection for each model. */
+  getProviderApiKeyName?: (provider: string) => string | undefined;
   /** Wall-clock + monotonic time reads. */
   clock: import("@comis/core").ClockPort;
   /** Optional LCD context store (dag-mode assembly). Threaded into
@@ -412,6 +414,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
         authStorage: deps.authStorage,
         oauthManager: deps.oauthManager,
         agentConfig: config,
+        configuredApiKeyName: deps.getProviderApiKeyName?.(config.provider),
       }),
     // The served window binding the PRIMARY (getRealModel) summarizer.
     // windowProvenance.served is the boot-probe pair ALREADY provider-gated by
@@ -458,6 +461,9 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
                     authStorage: deps.authStorage,
                     oauthManager: deps.oauthManager,
                     agentConfig: config,
+                    configuredApiKeyName: deps.getProviderApiKeyName?.(
+                      compactionResolution.provider,
+                    ),
                   }),
                 ...(overrideServedWindow !== undefined && {
                   servedWindow: overrideServedWindow,
@@ -511,6 +517,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
                 authStorage: deps.authStorage,
                 oauthManager: deps.oauthManager,
                 agentConfig: config,
+                configuredApiKeyName: deps.getProviderApiKeyName?.(provider),
               }),
             overrideModel: undefined,
           });

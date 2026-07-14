@@ -51,22 +51,22 @@ function buildSummary(state: WizardState): string {
 
   // Gateway section
   if (state.gateway) {
-    let bindAddress: string;
+    let gatewayLocation: string;
     switch (state.gateway.bindMode) {
       case "loopback":
-        bindAddress = "127.0.0.1";
+        gatewayLocation = `ws://127.0.0.1:${state.gateway.port}`;
         break;
       case "lan":
-        bindAddress = "0.0.0.0";
+        gatewayLocation = `all network interfaces, port ${state.gateway.port}`;
         break;
       case "custom":
-        bindAddress = state.gateway.customIp ?? "127.0.0.1";
+        gatewayLocation = `ws://${state.gateway.customIp ?? "127.0.0.1"}:${state.gateway.port}`;
         break;
       default:
-        bindAddress = "127.0.0.1";
+        gatewayLocation = `ws://127.0.0.1:${state.gateway.port}`;
     }
     lines.push("");
-    lines.push(`Gateway:    ws://${bindAddress}:${state.gateway.port} (token auth)`);
+    lines.push(`Gateway:    ${gatewayLocation} (token auth)`);
   }
 
   // Channels section

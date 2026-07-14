@@ -7,7 +7,7 @@ Task scheduling, cron management, and background job infrastructure for the [Com
 ### Cron Engine
 
 - **`createCronScheduler()`** -- Cron expression parsing and job scheduling via [croner](https://github.com/hexagon/croner)
-- **`createCronStore()`** -- Persistent cron job storage with next-run computation
+- **`createCronStore()`** -- Schema-validated JSON job persistence with atomic saves, backups, and serialized file-locked mutations
 
 ### Heartbeat
 
@@ -22,7 +22,7 @@ Task scheduling, cron management, and background job infrastructure for the [Com
 ### System Events
 
 - **`createSystemEventQueue()`** -- Internal event queue for cross-system coordination
-- **`createExecutionTracker()`** -- Tracks execution state to prevent duplicate runs
+- **`createExecutionTracker()`** -- Appends scheduled-run metrics to bounded JSONL history and detects duration anomalies from successful-run medians
 
 ### Quiet Hours
 
@@ -30,7 +30,7 @@ Task scheduling, cron management, and background job infrastructure for the [Com
 
 ## Part of Comis
 
-This package is part of the [Comis](https://github.com/comisai/comis) monorepo -- a security-first AI agent platform connecting agents to Discord, Telegram, Slack, WhatsApp, and more.
+This package is part of [Comis](https://github.com/comisai/comis), an open-source, security-first platform for AI agent teams.
 
 ```bash
 npm install comisai

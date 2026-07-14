@@ -49,10 +49,30 @@ interface ModelAlias {
 }
 
 interface TestResult {
-  status: string;
+  status: "available" | "not_configured" | "no_models" | "error";
   modelsAvailable?: number;
   validatedModels?: number;
+  modelsInCatalog?: number;
   agentsUsing?: Array<{ agentId: string; model: string }>;
+}
+
+type ToastVariant = "success" | "error" | "warning" | "info";
+
+function providerStatusMessage(name: string, status: TestResult["status"]): [string, ToastVariant] {
+  switch (status) {
+    case "available":
+      return [`Provider "${name}" is available`, "success"];
+    case "not_configured":
+      return [`Provider "${name}" is not assigned to an agent`, "info"];
+    case "no_models":
+      return [`Provider "${name}" has no available models`, "warning"];
+    case "error":
+      return [`Provider "${name}" status check failed`, "error"];
+    default: {
+      const _exhaustive: never = status;
+      return _exhaustive;
+    }
+  }
 }
 
 interface AgentOverride {
@@ -688,7 +708,8 @@ export class IcModelsView extends LitElement {
       const newResults = new Map(this._providerTestResults);
       newResults.set(name, result);
       this._providerTestResults = newResults;
-      IcToast.show(`Provider "${name}" test: ${result.status}`, result.status === "ok" ? "success" : "warning");
+      const [message, variant] = providerStatusMessage(name, result.status);
+      IcToast.show(message, variant);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Test failed";
       const newResults = new Map(this._providerTestResults);
@@ -776,8 +797,9 @@ export class IcModelsView extends LitElement {
       <div class="editor-form">
         <div class="editor-title">${isNew ? "Add Provider" : `Edit: ${this._editingProvider}`}</div>
         <div class="form-field">
-          <label class="form-label">Provider Name</label>
+          <label class="form-label" for="provider-name">Provider Name</label>
           <input
+            id="provider-name"
             class="form-input"
             type="text"
             .value=${this._editForm.name}
@@ -789,8 +811,9 @@ export class IcModelsView extends LitElement {
           />
         </div>
         <div class="form-field">
-          <label class="form-label">Type</label>
+          <label class="form-label" for="provider-type">Type</label>
           <input
+            id="provider-type"
             class="form-input"
             type="text"
             .value=${this._editForm.type}
@@ -801,8 +824,9 @@ export class IcModelsView extends LitElement {
           />
         </div>
         <div class="form-field">
-          <label class="form-label">Base URL (optional)</label>
+          <label class="form-label" for="provider-base-url">Base URL (optional)</label>
           <input
+            id="provider-base-url"
             class="form-input"
             type="text"
             .value=${this._editForm.baseUrl}
@@ -813,8 +837,9 @@ export class IcModelsView extends LitElement {
           />
         </div>
         <div class="form-field">
-          <label class="form-label">API Key Name (SecretManager ref)</label>
+          <label class="form-label" for="provider-api-key-name">API Key Name (SecretManager ref)</label>
           <input
+            id="provider-api-key-name"
             class="form-input"
             type="text"
             .value=${this._editForm.apiKeyName}
@@ -1038,8 +1063,9 @@ export class IcModelsView extends LitElement {
     return html`
       <div class="alias-form">
         <div class="form-field">
-          <label class="form-label">Alias</label>
+          <label class="form-label" for="model-alias">Alias</label>
           <input
+            id="model-alias"
             class="form-input"
             type="text"
             .value=${this._aliasForm.alias}
@@ -1050,8 +1076,9 @@ export class IcModelsView extends LitElement {
           />
         </div>
         <div class="form-field">
-          <label class="form-label">Provider</label>
+          <label class="form-label" for="alias-provider">Provider</label>
           <input
+            id="alias-provider"
             class="form-input"
             type="text"
             .value=${this._aliasForm.provider}
@@ -1062,8 +1089,9 @@ export class IcModelsView extends LitElement {
           />
         </div>
         <div class="form-field">
-          <label class="form-label">Model ID</label>
+          <label class="form-label" for="alias-model-id">Model ID</label>
           <input
+            id="alias-model-id"
             class="form-input"
             type="text"
             .value=${this._aliasForm.modelId}
@@ -1335,8 +1363,9 @@ export class IcModelsView extends LitElement {
     return html`
       <div class="defaults-section">
         <div class="form-field">
-          <label class="form-label">Default Provider</label>
+          <label class="form-label" for="default-provider">Default Provider</label>
           <select
+            id="default-provider"
             class="defaults-select"
             .value=${this._defaultProvider}
             @change=${(e: Event) => {
@@ -1348,8 +1377,9 @@ export class IcModelsView extends LitElement {
         </div>
 
         <div class="form-field">
-          <label class="form-label">Default Model</label>
+          <label class="form-label" for="default-model">Default Model</label>
           <select
+            id="default-model"
             class="defaults-select"
             .value=${this._defaultModel}
             @change=${(e: Event) => {

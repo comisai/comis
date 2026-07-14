@@ -84,6 +84,7 @@ function rendererQueryAll(el: IcChatConsole, selector: string): NodeListOf<Eleme
 
 afterEach(() => {
   document.body.innerHTML = "";
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -564,6 +565,129 @@ describe("IcChatConsole", () => {
     const textarea = el.shadowRoot?.querySelector(".input-textarea") as HTMLTextAreaElement;
     expect(textarea).toBeTruthy();
     expect(textarea?.placeholder).toContain("Type a message");
+  });
+
+  it("agent selector and message composer have persistent accessible names", async () => {
+    const el = await createElement<IcChatConsole>("ic-chat-console", {
+      rpcClient: createMockRpcClient(),
+      apiClient: createMockApiClient(),
+      eventDispatcher: createMockEventDispatcher(),
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    (el as any)._activeSession = "test-session";
+    (el as any)._loading = false;
+    await (el as any).updateComplete;
+
+    const agentSelect = el.shadowRoot?.querySelector(".agent-select");
+    const textarea = el.shadowRoot?.querySelector(".input-textarea");
+    expect(agentSelect?.getAttribute("aria-label")).toBe("Agent");
+    expect(textarea?.getAttribute("aria-label")).toBe("Message");
+  });
+
+  it("retrieves conversation media with header authentication through the renderer chain", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(new Blob(["image-data"], { type: "image/png" }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: vi.fn().mockReturnValue("blob:conversation-media"),
+      revokeObjectURL: vi.fn(),
+    });
+    const attachment = JSON.stringify({
+      url: "/media/history-image",
+      type: "image",
+      mimeType: "image/png",
+      fileName: "history.png",
+    });
+    const el = await createElement<IcChatConsole>("ic-chat-console", {
+      rpcClient: createMockRpcClient(),
+      apiClient: createMockApiClient(),
+      eventDispatcher: createMockEventDispatcher(),
+      authToken: "test-media-token",
+    });
+    (el as any)._activeSession = "test-session";
+    (el as any)._loading = false;
+    (el as any)._messages = [{
+      id: "message-with-media",
+      role: "assistant",
+      content: `<!-- attachment:${attachment} -->`,
+      timestamp: Date.now(),
+    }];
+    await (el as any).updateComplete;
+
+    const renderer = el.shadowRoot?.querySelector("ic-message-renderer") as any;
+    await renderer?.updateComplete;
+    const message = renderer?.shadowRoot?.querySelector("ic-chat-message") as any;
+    await message?.updateComplete;
+    await vi.waitFor(() => {
+      expect(message?.shadowRoot?.querySelector("img")?.getAttribute("src"))
+        .toBe("blob:conversation-media");
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith("/media/history-image", {
+      headers: { Authorization: "Bearer test-media-token" },
+      signal: expect.any(AbortSignal),
+    });
+    expect(message?.shadowRoot?.innerHTML).not.toContain("test-media-token");
+  });
+
+  it("appends attachment notifications only for the active gateway session", async () => {
+    let notificationHandler: ((method: string, params: unknown) => void) | undefined;
+    const rpc = createMockRpcClient();
+    (rpc.onNotification as ReturnType<typeof vi.fn>).mockImplementation((handler) => {
+      notificationHandler = handler;
+      return vi.fn();
+    });
+    const el = await createElement<IcChatConsole>("ic-chat-console", {
+      rpcClient: rpc,
+      apiClient: createMockApiClient(),
+      eventDispatcher: createMockEventDispatcher(),
+    });
+    (el as any)._activeSession = "tenant-a:user_a:active-chat";
+    (el as any)._messages = [];
+
+    notificationHandler?.("notification.attachment", {
+      sessionKey: "tenant-a:user_a:other-chat",
+      channelId: "other-chat",
+      url: "/media/other.png",
+      type: "image",
+      mimeType: "image/png",
+      fileName: "other.png",
+    });
+    expect((el as any)._messages).toHaveLength(0);
+
+    notificationHandler?.("notification.attachment", {
+      sessionKey: "tenant-a:other-user:active-chat",
+      channelId: "active-chat",
+      url: "/media/wrong-user.png",
+      type: "image",
+      mimeType: "image/png",
+      fileName: "wrong-user.png",
+    });
+    expect((el as any)._messages).toHaveLength(0);
+
+    notificationHandler?.("notification.attachment", {
+      sessionKey: "tenant-b:user_a:active-chat",
+      channelId: "active-chat",
+      url: "/media/wrong-tenant.png",
+      type: "image",
+      mimeType: "image/png",
+      fileName: "wrong-tenant.png",
+    });
+    expect((el as any)._messages).toHaveLength(0);
+
+    notificationHandler?.("notification.attachment", {
+      sessionKey: "tenant-a:user_a:active-chat",
+      channelId: "active-chat",
+      url: "/media/active.png",
+      type: "image",
+      mimeType: "image/png",
+      fileName: "active.png",
+    });
+    expect((el as any)._messages).toEqual([
+      expect.objectContaining({ content: expect.stringContaining("/media/active.png") }),
+    ]);
   });
 
   it("Enter key triggers _sendMessage (calls apiClient.chat)", async () => {

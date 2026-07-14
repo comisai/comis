@@ -1,7 +1,7 @@
 {
   "name": "comis-workspace",
   "private": true,
-  "description": "Security-first AI agent platform — connects AI agents to real-time chat channels",
+  "description": "An open-source, security-first platform for AI agent teams.",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "type": "module",
@@ -13,7 +13,22 @@
     "type": "git",
     "url": "https://github.com/comisai/comis.git"
   },
-  "homepage": "https://github.com/comisai/comis#readme",
+  "homepage": "https://comis.ai",
+  "keywords": [
+    "ai",
+    "agent",
+    "ai-agents",
+    "agentic-ai",
+    "agent-orchestration",
+    "multi-agent",
+    "security",
+    "self-hosted",
+    "open-source",
+    "chatops",
+    "automation",
+    "mcp",
+    "observability"
+  ],
   "bugs": {
     "url": "https://github.com/comisai/comis/issues"
   },
@@ -28,7 +43,7 @@
     "cycles:refs": "tsc -b --dry packages/comis",
     "lint:security": "eslint --config eslint.config.js",
     "lint:fixtures": "bash scripts/check-fixture-diff.sh",
-    "docs:check": "node scripts/check-mdx.mjs",
+    "docs:check": "tsx scripts/check-mcp-doc-examples.ts && node scripts/check-mdx.mjs",
     "test": "vitest",
     "test:coverage": "vitest run --coverage",
     "validate": "pnpm docs:check && pnpm build:clean && pnpm cycles && pnpm cycles:refs && pnpm lint:security && pnpm test:coverage",

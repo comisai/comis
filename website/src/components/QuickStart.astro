@@ -1,168 +1,39 @@
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 ---
+// SPDX-License-Identifier: Apache-2.0
+import { SITE } from "../data/site";
 ---
 
-<section class="px-6 pt-4 pb-20 md:pt-6 md:pb-28" id="quick-start">
-  <div class="max-w-3xl mx-auto text-center">
-    <h2 class="sr-only">Quick Start</h2>
+<section id="install" class="install-section" data-section="install" aria-labelledby="install-heading">
+  <div class="reading-container centered-section">
+    <p class="eyebrow">Quick start</p>
+    <h2 id="install-heading">Install Comis on your infrastructure.</h2>
+    <p class="lead">For a managed macOS or Linux host setup, download the installer before you run it.</p>
 
-    <!-- Terminal window -->
-    <div class="bg-navy-light border border-white/10 rounded-xl overflow-hidden text-left shadow-2xl shadow-coral/5">
-
-      <!-- Title bar: traffic lights + method tabs + platform pill -->
-      <div class="flex items-center justify-between px-4 py-3 border-b border-white/5">
-        <div class="flex items-center gap-4">
-          <!-- Traffic lights -->
-          <div class="flex items-center gap-1.5">
-            <div class="w-3 h-3 rounded-full bg-red-500/60"></div>
-            <div class="w-3 h-3 rounded-full bg-yellow-500/60"></div>
-            <div class="w-3 h-3 rounded-full bg-green-500/60"></div>
-          </div>
-          <!-- Method tabs -->
-          <div class="flex items-center gap-1 font-mono text-xs">
-            <button
-              data-tab="oneliner"
-              class="tab-btn px-3 py-1 rounded border border-coral text-coral font-semibold"
-            >One-liner</button>
-            <button
-              data-tab="npm"
-              class="tab-btn px-3 py-1 rounded border border-transparent text-muted hover:text-white transition-colors"
-            >npm</button>
-            <button
-              data-tab="docker"
-              class="tab-btn px-3 py-1 rounded border border-transparent text-muted hover:text-white transition-colors"
-            >Docker</button>
-            <button
-              data-tab="source"
-              class="tab-btn px-3 py-1 rounded border border-transparent text-muted hover:text-white transition-colors"
-            >From source</button>
-          </div>
-        </div>
-        <!-- Platform pill -->
-        <div class="hidden sm:flex items-center gap-1 font-mono text-xs">
-          <span class="px-3 py-1 rounded border border-coral text-coral font-semibold">macOS/Linux</span>
-        </div>
+    <div class="command-panel">
+      <div class="command-line" role="region" tabindex="0" aria-label="Download installer command">
+        <span class="prompt" aria-hidden="true">$</span>
+        <code id="install-command" data-install-command>{SITE.installCommand}</code>
       </div>
-
-      <!-- Tab content: One-liner -->
-      <div data-content="oneliner" class="tab-content relative" data-copy="curl -fsSL https://comis.ai/install.sh | bash">
-        <pre class="p-6 pr-14 text-sm md:text-base font-mono leading-relaxed overflow-x-auto"><code><span class="text-muted-light"># One-liner installs Node.js and everything else (macOS & Linux)</span>
-
-<span class="text-coral">$</span> <span class="text-teal">curl -fsSL https://comis.ai/install.sh | bash</span></code></pre>
-        <button class="copy-btn absolute bottom-6 right-4 flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-muted hover:text-white hover:bg-white/10 transition-all" aria-label="Copy to clipboard">
-          <svg class="copy-icon w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke-width="2"/></svg>
-          <svg class="check-icon w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-          <span class="copied-label hidden text-xs font-mono font-semibold">Copied!</span>
-        </button>
-      </div>
-
-      <!-- Tab content: npm -->
-      <div data-content="npm" class="tab-content hidden relative" data-copy="npm install -g comisai&#10;comis init&#10;comis daemon start">
-        <pre class="p-6 pr-14 text-sm md:text-base font-mono leading-relaxed overflow-x-auto"><code><span class="text-muted-light"># Requires Node.js 22.19+</span>
-
-<span class="text-coral">$</span> <span class="text-teal">npm install -g comisai</span>
-<span class="text-coral">$</span> <span class="text-teal">comis init</span>
-<span class="text-coral">$</span> <span class="text-teal">comis daemon start</span></code></pre>
-        <button class="copy-btn absolute bottom-6 right-4 flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-muted hover:text-white hover:bg-white/10 transition-all" aria-label="Copy to clipboard">
-          <svg class="copy-icon w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke-width="2"/></svg>
-          <svg class="check-icon w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-          <span class="copied-label hidden text-xs font-mono font-semibold">Copied!</span>
-        </button>
-      </div>
-
-      <!-- Tab content: Docker -->
-      <div data-content="docker" class="tab-content hidden relative" data-copy="docker run -d --name comis --restart unless-stopped \&#10;  -p 127.0.0.1:4766:4766 \&#10;  -v comis-data:/home/comis/.comis \&#10;  comisai/comis:latest-slim&#10;docker exec -it comis comis init">
-        <pre class="p-6 pr-14 text-sm md:text-base font-mono leading-relaxed overflow-x-auto"><code><span class="text-muted-light"># Best production sandbox support is on a Linux host</span>
-
-<span class="text-coral">$</span> <span class="text-teal">docker run -d --name comis --restart unless-stopped \</span>
-<span class="text-teal">    -p 127.0.0.1:4766:4766 \</span>
-<span class="text-teal">    -v comis-data:/home/comis/.comis \</span>
-<span class="text-teal">    comisai/comis:latest-slim</span>
-<span class="text-coral">$</span> <span class="text-teal">docker exec -it comis comis init</span></code></pre>
-        <button class="copy-btn absolute bottom-6 right-4 flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-muted hover:text-white hover:bg-white/10 transition-all" aria-label="Copy to clipboard">
-          <svg class="copy-icon w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke-width="2"/></svg>
-          <svg class="check-icon w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-          <span class="copied-label hidden text-xs font-mono font-semibold">Copied!</span>
-        </button>
-      </div>
-
-      <!-- Tab content: From source -->
-      <div data-content="source" class="tab-content hidden relative" data-copy="git clone https://github.com/comisai/comis.git&#10;cd comis && pnpm install && pnpm build&#10;node packages/cli/dist/cli.js init my-agent">
-        <pre class="p-6 pr-14 text-sm md:text-base font-mono leading-relaxed overflow-x-auto"><code><span class="text-muted-light"># Requires Node.js 22.19+, pnpm</span>
-
-<span class="text-coral">$</span> <span class="text-teal">git clone https://github.com/comisai/comis.git</span>
-<span class="text-coral">$</span> <span class="text-teal">cd comis && pnpm install && pnpm build</span>
-<span class="text-coral">$</span> <span class="text-teal">node packages/cli/dist/cli.js init my-agent</span></code></pre>
-        <button class="copy-btn absolute bottom-6 right-4 flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-muted hover:text-white hover:bg-white/10 transition-all" aria-label="Copy to clipboard">
-          <svg class="copy-icon w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke-width="2"/></svg>
-          <svg class="check-icon w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-          <span class="copied-label hidden text-xs font-mono font-semibold">Copied!</span>
-        </button>
-      </div>
-
+      <button class="copy-button" type="button" data-copy-button hidden>
+        <span data-copy-label>Copy command</span>
+      </button>
+      <p class="visually-hidden" aria-live="polite" data-copy-status></p>
     </div>
 
-    <p class="text-muted mt-8 text-lg">
-      Works on macOS &amp; Linux. The one-liner installs Node.js and everything else for you.
+    <p>
+      Review it with <code>less comis-install.sh</code>, preview changes with <code>bash comis-install.sh --dry-run</code>, then run <code>bash comis-install.sh</code> when ready.
     </p>
-
-    <p class="text-muted-light mt-3 text-sm font-mono">
-      Verify with <span class="text-teal">curl http://127.0.0.1:4766/health</span>, then message your agent on any connected channel.
+    <p>
+      The managed-host path can install Node.js and host dependencies, initialize Comis data, and register the daemon with systemd or PM2. On Linux, it also attempts to provision Chromium and Xvfb by default and can create a dedicated <code>comis</code> user for a systemd service. Run <code>bash comis-install.sh --help</code> to review opt-outs.
     </p>
-
-    <a
-      href="https://docs.comis.ai"
-      rel="noopener noreferrer"
-      target="_blank"
-      class="inline-flex items-center gap-2 mt-6 text-coral hover:text-coral-dark font-medium transition-colors"
-    >
-      Read the docs &rarr;
-    </a>
+    <p>
+      Prefer a smaller footprint? With Node.js 22.19 or newer, run <code>npm install --global comisai</code>, followed by <code>comis init</code>. The npm path does not install host tools, create a service account, or register a service.
+    </p>
+    <p>
+      Complete setup, start the daemon if prompted, then open <code>http://127.0.0.1:4766</code>. Linux with Bubblewrap is the recommended deployment target for isolated tool execution.
+    </p>
+    <a class="text-link standalone-link" href={SITE.installationDocs}>View all installation options</a>
   </div>
 </section>
 
-<script>
-  // Tab switching
-  document.querySelectorAll<HTMLButtonElement>(".tab-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const target = btn.dataset.tab;
-
-      document.querySelectorAll<HTMLButtonElement>(".tab-btn").forEach((b) => {
-        b.classList.remove("border-coral", "text-coral", "font-semibold");
-        b.classList.add("border-transparent", "text-muted");
-      });
-      btn.classList.remove("border-transparent", "text-muted");
-      btn.classList.add("border-coral", "text-coral", "font-semibold");
-
-      document.querySelectorAll<HTMLElement>(".tab-content").forEach((c) => {
-        c.classList.toggle("hidden", c.dataset.content !== target);
-      });
-    });
-  });
-
-  // Copy buttons
-  document.querySelectorAll<HTMLButtonElement>(".copy-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const panel = btn.closest<HTMLElement>(".tab-content");
-      if (!panel?.dataset.copy) return;
-
-      navigator.clipboard.writeText(panel.dataset.copy);
-
-      const copyIcon = btn.querySelector(".copy-icon") as HTMLElement;
-      const checkIcon = btn.querySelector(".check-icon") as HTMLElement;
-      const label = btn.querySelector(".copied-label") as HTMLElement;
-
-      copyIcon.classList.add("hidden");
-      checkIcon.classList.remove("hidden");
-      label.classList.remove("hidden");
-      btn.classList.add("text-teal");
-
-      setTimeout(() => {
-        checkIcon.classList.add("hidden");
-        label.classList.add("hidden");
-        copyIcon.classList.remove("hidden");
-        btn.classList.remove("text-teal");
-      }, 2000);
-    });
-  });
-</script>
+<script is:inline type="module" src="/copy-command.js"></script>

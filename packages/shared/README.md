@@ -4,16 +4,16 @@ Foundation layer for the [Comis](https://github.com/comisai/comis) platform. Pro
 
 ## What's Inside
 
-- **`Result<T, E>`** -- Discriminated union for explicit error handling (no thrown exceptions)
+- **`Result<T, E>`** -- Discriminated union for explicit error handling in domain and internal code
 - **`ok(value)` / `err(error)`** -- Result constructors
 - **`tryCatch(fn)`** -- Wraps synchronous functions into `Result<T, Error>`
 - **`fromPromise(promise)`** -- Wraps promises into `Promise<Result<T, Error>>`
 - **`suppressError(promise, reason)`** -- Suppresses promise rejections with structured debug logging
-- **`withTimeout(promise, ms)`** -- Races a promise against a wall-clock deadline
+- **`withTimeout(promise, ms, scheduleTimeout, label?)`** -- Races a promise against a wall-clock deadline using a caller-supplied timer scheduler
 - **`checkAborted(signal)`** -- Checks `AbortSignal` status, returns `Result`
 - **`createTTLCache(opts)`** -- Factory for TTL-based in-memory cache with lazy expiry and FIFO eviction
 
-Every package in the Comis monorepo depends on `@comis/shared` for `Result`-based error handling.
+Comis runtime packages use `@comis/shared` for `Result`-based error handling and common async utilities.
 
 ## Usage
 
@@ -30,12 +30,19 @@ if (!result.ok) {
 const parsed = tryCatch(() => JSON.parse(raw));
 
 // Hard deadline for async work
-const response = await withTimeout(longRunningTask(), 5000, "llm-call");
+const response = await withTimeout(
+  longRunningTask(),
+  5000,
+  scheduleTimeout,
+  "llm-call",
+);
 ```
+
+`scheduleTimeout` is supplied by the consuming application and returns a function that cancels the scheduled callback.
 
 ## Part of Comis
 
-This package is part of the [Comis](https://github.com/comisai/comis) monorepo -- a security-first AI agent platform connecting agents to Discord, Telegram, Slack, WhatsApp, and more.
+This package is part of [Comis](https://github.com/comisai/comis), an open-source, security-first platform for AI agent teams.
 
 ```bash
 npm install comisai

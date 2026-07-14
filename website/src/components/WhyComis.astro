@@ -1,0 +1,44 @@
+---
+// SPDX-License-Identifier: Apache-2.0
+const differentiators = [
+  {
+    title: "Auditable workflows",
+    body: "Run persistent execution graphs with parallel nodes, barriers, retries, budgets, approval nodes, debate, voting, refinement, and map-reduce.",
+  },
+  {
+    title: "Recoverable context",
+    body: "Keep canonical messages and tool results recoverable through DAG-backed summaries and ctx_search, ctx_inspect, and ctx_expand.",
+    technical: true,
+  },
+  {
+    title: "Scoped operation",
+    body: "Scope agent-facing memory and context by tenant and agent. Configure separate models, budgets, tool policies, and secret allowlists.",
+  },
+] as const;
+---
+
+<section data-section="why-comis" aria-labelledby="why-heading">
+  <div class="container">
+    <div class="section-intro">
+      <p class="eyebrow">Why Comis</p>
+      <h2 id="why-heading">Orchestration, context, and operations in one self-hosted platform.</h2>
+      <p class="lead">
+        Comis combines the infrastructure needed to coordinate agent teams without hiding how work was routed, executed, or delivered.
+      </p>
+    </div>
+
+    <div class="editorial-grid editorial-grid-three">
+      {differentiators.map((item, index) => (
+        <article class="editorial-item">
+          <p class="technical-label">0{index + 1}</p>
+          <h3>{item.title}</h3>
+          {item.technical ? (
+            <p>Keep canonical messages and tool results recoverable through DAG-backed summaries and <code>ctx_search</code>, <code>ctx_inspect</code>, and <code>ctx_expand</code>.</p>
+          ) : (
+            <p>{item.body}</p>
+          )}
+        </article>
+      ))}
+    </div>
+  </div>
+</section>

@@ -111,6 +111,14 @@ Dependency direction: inward to `core`. `daemon` depends on everything; `shared`
 
 **Contract vs implementation.** `ComisLogger`, `LogFields`, and `ErrorKind` are **structural type contracts** that live in `@comis/core/src/logging/log-fields.ts`. The Pino-backed runtime implementation lives in `@comis/infra` and is assignable to the contract (`expectTypeOf<PinoComisLogger>().toExtend<ComisLogger>()` proves this in `packages/infra/src/logging/__tests__/logger-contract.test.ts`). Type-only consumers (agent, channels, gateway, skills, scheduler) import the contract from `@comis/core`. Only the daemon (composition root) and infra itself import the Pino runtime. Pino's auto-redaction (`apiKey`, `token`, `password`, etc., 3 levels deep) is a runtime feature of the Pino implementation; the structural contract does not (and cannot) enforce redaction.
 
+#### User-authored channel message retrieval
+
+When asked to retrieve prompts or messages sent by users through a channel, use the offline `comis messages` CLI instead of grepping daemon or session logs manually. For Telegram:
+
+`comis messages --channel telegram --limit 10000 --format json`
+
+Run it on the target host as the Comis service user. The command excludes internal cron, sub-agent, heartbeat, and system dispatches by default. Treat its session-record timestamps as authoritative and redact credentials before displaying output.
+
 ### 2.8 Source Rules (architecture tests — shrink-only allowlists)
 
 Eight allowlist arrays live in `test/support/architecture-allowlist.ts` and are enforced by `test/architecture/*.test.ts`. The arrays are **shrink-only** (`allowlist-shrink.test.ts` gates a base..head git-ref comparison) and entries carry a `removedIn: "phase-X" | "permanent" | "deferred"` template-literal tag that fails `tsc` if stale.

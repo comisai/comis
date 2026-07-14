@@ -7,8 +7,7 @@
  *
  * The two handler-factory files share a single contract file because they
  * consume the same `ConfigApiDeps` cluster slice and form one logical
- * domain (config management + env-secret management both gate the same
- * on-disk YAML / .env files + both trigger SIGUSR2 restarts).
+ * domain: configuration management and administrator-only secret management.
  *
  * Combined surface (12 methods total):
  *
@@ -48,9 +47,9 @@
  *
  *   From env-handlers.ts (2 env.* methods):
  *
- *   - `env.set`         (admin) — write a secret to the encrypted
- *                                  SecretStorePort OR the plaintext
- *                                  .env file. Triggers SIGUSR2 restart.
+ *   - `env.set`         (admin) — write through the active writable
+ *                                  SecretStorePort and live-apply the value
+ *                                  without restarting the daemon.
  *   - `env.list`        (admin) — enumerate secret NAMES (with optional
  *                                  glob filter). Values are NEVER
  *                                  returned — the response schema
@@ -508,8 +507,9 @@ export const GatewayStatusContract = defineContract({
  * Request: `{}`.
  *
  * Response: `{ restarting: true, systemd, warning? }` (handler:1033).
- * `systemd` is `true` when `NOTIFY_SOCKET` env var is set; `warning`
- * carries a non-systemd hint otherwise.
+ * `systemd` is `true` when systemd's `INVOCATION_ID` is present, or when a
+ * custom notify unit provides `NOTIFY_SOCKET`; `warning` carries a
+ * non-systemd hint otherwise.
  */
 export const GatewayRestartContract = defineContract({
   method: "gateway.restart",
@@ -528,8 +528,8 @@ export const GatewayRestartContract = defineContract({
 
 /**
  * `env.set` — write a secret to the active writable SecretStorePort.
- * Admin-only. Rate-limited (5/min — env-handlers.ts:90).
- * Triggers SIGUSR2 restart on success (env-handlers.ts:191).
+ * Admin-only. Rate-limited to five writes per minute.
+ * Successful writes update the daemon's in-memory secret view without restart.
  *
  * Request: `{ key, value }`. `key` is a uppercase + digits +
  * underscores identifier (env-handlers.ts:75 pattern); `value` is
@@ -543,9 +543,8 @@ export const GatewayRestartContract = defineContract({
  * 0600 `secrets.json`). Rejected in `env` mode with an actionable
  * error — `env` is not a member of the storage enum, and the
  * preflight in `gateway-tool.ts` blocks the call before it reaches
- * the handler. `restarting` is a boolean (secret writes still trigger
- * a restart for now; the TYPE widens now so a later change can flip the
- * value without a schema change).
+ * the handler. `restarting` remains a boolean in the wire contract; the
+ * current handler returns `false`.
  *
  * **Residency canary.** The contract response schema deliberately
  * omits a `value` field — env.set NEVER returns the secret value

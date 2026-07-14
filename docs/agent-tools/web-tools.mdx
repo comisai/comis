@@ -1,6 +1,6 @@
 ---
 title: "Web Tools"
-description: "Web search with 8 providers and web page content fetching"
+description: "Web search and validated web-page fetching"
 icon: "globe"
 ---
 
@@ -168,7 +168,10 @@ The `web_fetch` tool retrieves content from a URL and extracts the readable text
 
 ### Important Notes
 
-- **SSRF protection** -- `web_fetch` cannot access internal network addresses (localhost, private IPs like `10.x.x.x` or `192.168.x.x`, or cloud metadata endpoints like `169.254.169.254`). This prevents attacks where a crafted URL tricks the tool into reaching your internal services.
+- **SSRF protection** -- `web_fetch` rejects URLs that resolve to known
+  localhost, private-network, or cloud-metadata destinations before fetching.
+  Keep the daemon isolated from sensitive internal networks as an additional
+  control.
 - **Content truncation** -- Very large pages are truncated to prevent overwhelming the agent's context window. The tool returns the most important content within the size limit.
 - **Clean output** -- The Readability extraction removes navigation menus, sidebars, ads, and other non-content elements. The result is clean, readable text similar to what you see in a browser's "Reader Mode."
 
@@ -233,7 +236,11 @@ Both `web_fetch` and `web_search` validate URLs against the SSRF guard before se
 - Link-local (`169.254.0.0/16`) including AWS / GCP / Azure metadata endpoints
 - IPv6 unique-local (`fc00::/7`) and link-local (`fe80::/10`)
 
-The browser tool applies the same guard on `navigate` and `open`. Comis treats SSRF as a defense-in-depth concern: the network layer and the URL validator both enforce it, so a misconfiguration in one does not bypass the other. See [Security](/get-started/security) for the full picture.
+The browser tool applies destination checks to guarded HTTP(S) requests and
+redirects, and disables page APIs whose traffic cannot pass through that
+validator. These application controls are not a host firewall, so keep browser
+automation isolated from sensitive internal networks. See
+[Browser security](/agent-tools/browser#security) for the exact boundary.
 
 ## Related
 

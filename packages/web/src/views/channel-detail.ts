@@ -510,9 +510,14 @@ export class IcChannelDetail extends LitElement {
       }
 
       .toggle-switch input {
+        position: absolute;
+        inset: 0;
         opacity: 0;
-        width: 0;
-        height: 0;
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        cursor: pointer;
+        z-index: 1;
       }
 
       .toggle-slider {
@@ -542,6 +547,11 @@ export class IcChannelDetail extends LitElement {
 
       .toggle-switch input:checked + .toggle-slider::before {
         transform: translateX(16px);
+      }
+
+      .toggle-switch input:focus-visible + .toggle-slider {
+        outline: 2px solid var(--ic-accent, #3b82f6);
+        outline-offset: 2px;
       }
 
       .toggle-switch input:disabled + .toggle-slider {
@@ -792,12 +802,14 @@ export class IcChannelDetail extends LitElement {
             (f) => html`
               <div class="media-toggle-item">
                 <div class="media-toggle-info">
-                  <span class="media-toggle-label">${f.label}</span>
-                  <span class="media-toggle-desc">${f.description}</span>
+                  <span id=${`media-${f.key}-label`} class="media-toggle-label">${f.label}</span>
+                  <span id=${`media-${f.key}-description`} class="media-toggle-desc">${f.description}</span>
                 </div>
                 <label class="toggle-switch">
                   <input
                     type="checkbox"
+                    aria-labelledby=${`media-${f.key}-label`}
+                    aria-describedby=${`media-${f.key}-description`}
                     .checked=${this._mediaProcessing[f.key] ?? true}
                     ?disabled=${this._actionPending}
                     @change=${(e: Event) => {
@@ -805,7 +817,7 @@ export class IcChannelDetail extends LitElement {
                       void this._handleMediaToggle(f.key, checked);
                     }}
                   />
-                  <span class="toggle-slider"></span>
+                  <span class="toggle-slider" aria-hidden="true"></span>
                 </label>
               </div>
             `,

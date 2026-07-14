@@ -86,7 +86,7 @@ describe("IcProviderCard", () => {
     const el = await createElement({
       name: "test",
       type: "test",
-      testResult: { status: "ok", modelsAvailable: 5, validatedModels: 3 },
+      testResult: { status: "available", modelsAvailable: 5, validatedModels: 3 },
     });
 
     const testResult = el.shadowRoot?.querySelector(".test-result");
@@ -97,9 +97,33 @@ describe("IcProviderCard", () => {
     expect(lines!.length).toBeGreaterThanOrEqual(2);
 
     const allText = testResult?.textContent ?? "";
-    expect(allText).toContain("Connection OK");
+    expect(allText).toContain("Provider available");
     expect(allText).toContain("5");
     expect(allText).toContain("3");
+  });
+
+  it("explains when a provider is not assigned to an agent", async () => {
+    const el = await createElement({
+      name: "test",
+      type: "test",
+      testResult: { status: "not_configured", modelsInCatalog: 4 },
+    });
+
+    const resultText = el.shadowRoot?.querySelector(".test-result")?.textContent ?? "";
+    expect(resultText).toContain("Not used by an agent");
+    expect(resultText).toContain("Models in catalog: 4");
+  });
+
+  it("reports an empty provider catalog without calling it a connection failure", async () => {
+    const el = await createElement({
+      name: "test",
+      type: "test",
+      testResult: { status: "no_models", modelsAvailable: 0 },
+    });
+
+    const resultText = el.shadowRoot?.querySelector(".test-result")?.textContent ?? "";
+    expect(resultText).toContain("No models available");
+    expect(resultText).not.toContain("Connection");
   });
 
   it("fires edit-provider event on edit button click", async () => {
@@ -143,6 +167,6 @@ describe("IcProviderCard", () => {
 
     const testBtn = el.shadowRoot?.querySelector(".btn-test") as HTMLButtonElement;
     expect(testBtn?.disabled).toBe(false);
-    expect(testBtn?.textContent?.trim()).toBe("Test");
+    expect(testBtn?.textContent?.trim()).toBe("Check status");
   });
 });

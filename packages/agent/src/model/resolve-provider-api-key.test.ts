@@ -71,6 +71,43 @@ describe("resolveProviderApiKey", () => {
     expect(authStorage.getApiKey).not.toHaveBeenCalled();
   });
 
+  it("uses an explicitly configured provider credential before automatic OAuth discovery", async () => {
+    mockGetOAuthProvider.mockReturnValue(makeFakeOAuthProvider("anthropic"));
+    const authStorage = makeAuthStorage();
+    (authStorage.getApiKey as ReturnType<typeof vi.fn>).mockResolvedValue("SELECTED_STATIC_KEY");
+    const manager = makeOAuthManager();
+    (manager.getApiKey as ReturnType<typeof vi.fn>).mockResolvedValue(ok("UNSELECTED_OAUTH_TOKEN"));
+
+    const token = await resolveProviderApiKey("anthropic", {
+      authStorage: authStorage as AuthStorage,
+      oauthManager: manager as OAuthTokenManager,
+      configuredApiKeyName: "ANTHROPIC_API_KEY",
+    });
+
+    expect(token).toBe("SELECTED_STATIC_KEY");
+    expect(authStorage.getApiKey).toHaveBeenCalledWith("anthropic", {
+      includeFallback: false,
+    });
+    expect(manager.getApiKey).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when an explicitly configured provider credential is unavailable", async () => {
+    mockGetOAuthProvider.mockReturnValue(makeFakeOAuthProvider("anthropic"));
+    const authStorage = makeAuthStorage();
+    (authStorage.getApiKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    const manager = makeOAuthManager();
+    (manager.getApiKey as ReturnType<typeof vi.fn>).mockResolvedValue(ok("UNSELECTED_OAUTH_TOKEN"));
+
+    await expect(
+      resolveProviderApiKey("anthropic", {
+        authStorage: authStorage as AuthStorage,
+        oauthManager: manager as OAuthTokenManager,
+        configuredApiKeyName: "ANTHROPIC_OAUTH_TOKEN",
+      }),
+    ).rejects.toThrow("ANTHROPIC_OAUTH_TOKEN");
+    expect(manager.getApiKey).not.toHaveBeenCalled();
+  });
+
   it("throws on OAuthError without writing runtime override", async () => {
     mockGetOAuthProvider.mockReturnValue(makeFakeOAuthProvider("openai-codex"));
     const authStorage = makeAuthStorage();

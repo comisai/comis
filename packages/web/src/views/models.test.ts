@@ -106,7 +106,7 @@ function createMockRpcClient(callImpl?: (...args: unknown[]) => unknown): RpcCli
       (async (method: string) => {
         if (method === "config.read") return { config: structuredClone(MOCK_CONFIG), sections: ["providers", "models"] };
         if (method === "models.list") return structuredClone(MOCK_MODELS_LIST);
-        if (method === "models.test") return { status: "ok", modelsAvailable: 3, validatedModels: 2 };
+        if (method === "models.test") return { status: "available", modelsAvailable: 3, validatedModels: 2 };
         if (method === "config.patch") return { ok: true };
         return {};
       }),
@@ -264,6 +264,8 @@ describe("IcModelsView", () => {
       const calls = (mockRpc.call as ReturnType<typeof vi.fn>).mock.calls;
       const testCall = calls.find((c: unknown[]) => c[0] === "models.test");
       expect(testCall).toBeTruthy();
+      await el.updateComplete;
+      expect(cards![0].shadowRoot?.textContent).toContain("Provider available");
     });
 
     it("Add Provider button shows editor form", async () => {
@@ -277,6 +279,13 @@ describe("IcModelsView", () => {
 
       const title = editor?.querySelector(".editor-title");
       expect(title?.textContent).toContain("Add Provider");
+
+      const labels = Array.from(editor?.querySelectorAll("label") ?? []) as HTMLLabelElement[];
+      expect(labels.length).toBeGreaterThan(0);
+      for (const label of labels) {
+        expect(label.htmlFor).not.toBe("");
+        expect(el.shadowRoot?.getElementById(label.htmlFor)).not.toBeNull();
+      }
     });
   });
 
@@ -344,6 +353,21 @@ describe("IcModelsView", () => {
       expect(html).toContain("claude-sonnet-4-5-20250929");
     });
 
+    it("associates alias editor labels with their inputs", async () => {
+      const addButton = Array.from(el.shadowRoot?.querySelectorAll("button") ?? [])
+        .find((button) => button.textContent?.trim() === "Add Alias") as HTMLButtonElement;
+      addButton.click();
+      await el.updateComplete;
+
+      const form = el.shadowRoot?.querySelector(".alias-form");
+      const labels = Array.from(form?.querySelectorAll("label") ?? []) as HTMLLabelElement[];
+      expect(labels.length).toBe(3);
+      for (const label of labels) {
+        expect(label.htmlFor).not.toBe("");
+        expect(el.shadowRoot?.getElementById(label.htmlFor)).not.toBeNull();
+      }
+    });
+
     it("delete calls config.patch", async () => {
       const deleteBtn = el.shadowRoot?.querySelector('.btn-danger[aria-label*="Delete"]') as HTMLButtonElement;
       expect(deleteBtn).not.toBeNull();
@@ -399,6 +423,12 @@ describe("IcModelsView", () => {
       expect(summary).not.toBeNull();
       expect(summary?.textContent).toContain("anthropic");
       expect(summary?.textContent).toContain("claude-sonnet-4-5-20250929");
+
+      const labels = Array.from(el.shadowRoot?.querySelectorAll(".defaults-section label") ?? []) as HTMLLabelElement[];
+      expect(labels.slice(0, 2).map((label) => label.htmlFor)).toEqual([
+        "default-provider",
+        "default-model",
+      ]);
     });
 
     it("change fires config.patch", async () => {

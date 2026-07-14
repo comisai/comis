@@ -1,0 +1,341 @@
+// SPDX-License-Identifier: Apache-2.0
+import { readFile, readdir, stat } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const websiteDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const distDir = path.join(websiteDir, "dist");
+const sourceDir = path.join(websiteDir, "src");
+const failures = [];
+
+function check(condition, message) {
+  if (!condition) failures.push(message);
+}
+
+function sameValues(actual, expected, message) {
+  check(JSON.stringify(actual) === JSON.stringify(expected), `${message}: expected ${JSON.stringify(expected)}, received ${JSON.stringify(actual)}`);
+}
+
+async function listFiles(directory) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const nested = await Promise.all(entries.map(async (entry) => {
+    const entryPath = path.join(directory, entry.name);
+    return entry.isDirectory() ? listFiles(entryPath) : [entryPath];
+  }));
+  return nested.flat();
+}
+
+function attributes(tag) {
+  const result = new Map();
+  for (const match of tag.matchAll(/([:\w-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'))?/g)) {
+    result.set(match[1].toLowerCase(), match[2] ?? match[3] ?? "");
+  }
+  return result;
+}
+
+function tags(html, name) {
+  return [...html.matchAll(new RegExp(`<${name}\\b[^>]*>`, "gi"))].map((match) => match[0]);
+}
+
+function decodeHtml(value) {
+  return value
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([\da-f]+);/gi, (_, code) => String.fromCodePoint(Number.parseInt(code, 16)))
+    .replaceAll("&amp;", "&")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'")
+    .replaceAll("&apos;", "'")
+    .replaceAll("&nbsp;", " ");
+}
+
+function textContent(value) {
+  return decodeHtml(value.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
+}
+
+function metaContent(html, key) {
+  for (const tag of tags(html, "meta")) {
+    const attrs = attributes(tag);
+    if (attrs.get("name") === key || attrs.get("property") === key) return attrs.get("content");
+  }
+  return undefined;
+}
+
+const expectedTitle = "Comis — Open-source, security-first AI agent teams";
+const expectedDescription = "Run AI agent teams across messaging, APIs, schedules, and durable workflows on infrastructure you control, with recoverable context and operational visibility.";
+const approvedExternalLinks = new Set([
+  "https://docs.comis.ai",
+  "https://docs.comis.ai/installation",
+  "https://github.com/comisai/comis",
+  "https://github.com/comisai/comis/issues",
+  "https://github.com/comisai/comis/discussions",
+  "https://github.com/comisai/comis/blob/main/CONTRIBUTING.md",
+  "https://github.com/comisai/comis/security",
+  "https://github.com/comisai/comis/blob/main/THREAT_MODEL.md",
+  "https://github.com/comisai/comis/blob/main/LICENSE",
+]);
+
+const sourcePages = (await listFiles(path.join(sourceDir, "pages")))
+  .filter((file) => file.endsWith(".astro"))
+  .map((file) => path.relative(path.join(sourceDir, "pages"), file));
+sameValues(sourcePages, ["index.astro"], "Astro source routes");
+
+const distFiles = await listFiles(distDir);
+const htmlRoutes = distFiles
+  .filter((file) => file.endsWith(".html"))
+  .map((file) => path.relative(distDir, file));
+sameValues(htmlRoutes, ["index.html"], "Generated HTML routes");
+
+const html = await readFile(path.join(distDir, "index.html"), "utf8");
+const mainMatch = html.match(/<main\b[^>]*>[\s\S]*?<\/main>/i);
+check(Boolean(mainMatch), "Homepage must contain a main landmark");
+const mainHtml = mainMatch?.[0] ?? "";
+
+const sectionOrder = tags(mainHtml, "section").map((tag) => attributes(tag).get("data-section"));
+sameValues(sectionOrder, ["hero", "why-comis", "capabilities", "security", "install", "community"], "Homepage section order");
+
+check(tags(html, "header").length === 1, "Homepage must contain one header landmark");
+check(tags(html, "main").length === 1, "Homepage must contain one main landmark");
+check(tags(html, "footer").length === 1, "Homepage must contain one footer landmark");
+check(tags(html, "h1").length === 1, "Homepage must contain exactly one h1");
+
+const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
+check(new Set(ids).size === ids.length, "Homepage IDs must be unique");
+for (const section of tags(mainHtml, "section")) {
+  const labelledBy = attributes(section).get("aria-labelledby");
+  check(Boolean(labelledBy) && ids.includes(labelledBy), `Section ${attributes(section).get("data-section") ?? "unknown"} must reference an existing heading`);
+}
+
+const headings = [...html.matchAll(/<h2\b[^>]*>([\s\S]*?)<\/h2>/gi)].map((match) => textContent(match[1]));
+sameValues(headings, [
+  "From message to traceable result",
+  "Orchestration, context, and operations in one self-hosted platform.",
+  "The operating surface for an agent team.",
+  "Controls with explicit boundaries.",
+  "Install Comis on your infrastructure.",
+  "Help shape Comis while it is still early.",
+], "Homepage h2 hierarchy");
+
+const mainText = textContent(mainHtml
+  .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+  .replace(/<style\b[\s\S]*?<\/style>/gi, " "));
+const visibleMainText = textContent(mainHtml
+  .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+  .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+  .replace(/<code\b[\s\S]*?<\/code>/gi, " "));
+const wordCount = visibleMainText.match(/[\p{L}\p{N}]+(?:[’'-][\p{L}\p{N}]+)*/gu)?.length ?? 0;
+check(wordCount <= 750, `Visible homepage copy must remain at or below 750 words; received ${wordCount}`);
+
+for (const requiredText of [
+  "Apache-2.0 · Active development",
+  "An open-source, security-first platform for AI agent teams.",
+  "Run specialized agents across messaging, APIs, schedules, and durable workflows on infrastructure you control, with recoverable context and operational visibility.",
+  "The managed-host path can install Node.js and host dependencies, initialize Comis data, and register the daemon with systemd or PM2. On Linux, it also attempts to provision Chromium and Xvfb by default and can create a dedicated comis user for a systemd service.",
+  "Linux with Bubblewrap is the recommended target. macOS isolation is best-effort and does not provide the same boundary.",
+  "The ordinary exec tool can run directly on the host when its sandbox is disabled or unavailable.",
+  "Streaming consumers can receive deltas before the completed response passes its final output scan.",
+  "Approval requests are available on explicitly wired paths when enabled; they are not a universal policy engine.",
+  "If Comis is useful, star the repository to help other contributors discover it.",
+]) {
+  check(mainText.includes(requiredText), `Required verified copy is missing: ${requiredText}`);
+}
+
+check(mainText.includes("curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh -o comis-install.sh"), "Review-first installer download command is missing");
+check(mainText.includes("bash comis-install.sh --dry-run"), "Installer dry-run command is missing");
+check(mainText.includes("npm install --global comisai"), "Direct npm installation path is missing");
+for (const pattern of [
+  /\bblog\b/i,
+  /\bcomparison\b/i,
+  /\bcompetitor\b/i,
+  /\bpersona(?:s)?\b/i,
+  /cost savings/i,
+  /\bbenchmark(?:s)?\b/i,
+  /about the name/i,
+  /good first issue/i,
+  /discord\.gg/i,
+]) {
+  check(!pattern.test(visibleMainText), `Removed launch-stage content remains: ${pattern}`);
+}
+check(!/\b\d+(?:\.\d+)?%/.test(visibleMainText), "Unverified percentage claim remains in visible copy");
+
+check(textContent(html.match(/<title>([\s\S]*?)<\/title>/i)?.[1] ?? "") === expectedTitle, "Page title does not match the approved title");
+check(metaContent(html, "description") === expectedDescription, "Meta description does not match the approved description");
+check(expectedTitle.length <= 60, "Page title exceeds 60 characters");
+check(expectedDescription.length <= 160, "Meta description exceeds 160 characters");
+check(metaContent(html, "og:type") === "website", "Open Graph type must be website");
+check(metaContent(html, "og:title") === expectedTitle, "Open Graph title is incorrect");
+check(metaContent(html, "og:description") === expectedDescription, "Open Graph description is incorrect");
+check(metaContent(html, "og:url") === "https://comis.ai/", "Open Graph URL is incorrect");
+check(metaContent(html, "og:image") === "https://comis.ai/images/comis-social-card.png", "Open Graph image URL is incorrect");
+check(metaContent(html, "og:image:type") === "image/png", "Open Graph image type is incorrect");
+check(metaContent(html, "og:image:width") === "1200", "Open Graph image width is incorrect");
+check(metaContent(html, "og:image:height") === "630", "Open Graph image height is incorrect");
+check(Boolean(metaContent(html, "og:image:alt")), "Open Graph image alt text is missing");
+check(metaContent(html, "twitter:card") === "summary_large_image", "Twitter card type is incorrect");
+check(Boolean(metaContent(html, "twitter:image:alt")), "Twitter image alt text is missing");
+
+const canonical = tags(html, "link")
+  .map((tag) => attributes(tag))
+  .find((attrs) => attrs.get("rel") === "canonical")?.get("href");
+check(canonical === "https://comis.ai/", "Canonical URL is incorrect");
+check(attributes(tags(html, "html")[0] ?? "").get("lang") === "en", "Document language must be English");
+const remoteStylesheets = tags(html, "link")
+  .map((tag) => attributes(tag))
+  .filter((attrs) => attrs.get("rel") === "stylesheet" && /^https?:/.test(attrs.get("href") ?? ""));
+check(remoteStylesheets.length === 0, "Fonts and stylesheets must be self-hosted");
+
+const structuredData = [...html.matchAll(/<script\b[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi)]
+  .flatMap((match) => {
+    try {
+      const parsed = JSON.parse(match[1]);
+      return Array.isArray(parsed["@graph"]) ? parsed["@graph"] : [parsed];
+    } catch {
+      failures.push("Structured data must contain valid JSON");
+      return [];
+    }
+  });
+check(structuredData.filter((entry) => entry["@type"] === "Organization").length === 1, "Structured data must contain one Organization");
+check(structuredData.filter((entry) => entry["@type"] === "WebSite").length === 1, "Structured data must contain one WebSite");
+check(structuredData.filter((entry) => entry["@type"] === "SoftwareSourceCode").length === 1, "Structured data must contain one SoftwareSourceCode entry");
+check(structuredData.filter((entry) => entry["@type"] === "SoftwareApplication").length === 1, "Structured data must contain one SoftwareApplication entry");
+const organization = structuredData.find((entry) => entry["@type"] === "Organization");
+check(organization?.logo === "https://comis.ai/android-chrome-512x512.png", "Organization logo must use the square brand mark");
+sameValues(organization?.sameAs ?? [], ["https://github.com/comisai"], "Organization sameAs profiles");
+const sourceCode = structuredData.find((entry) => entry["@type"] === "SoftwareSourceCode");
+check(sourceCode?.codeRepository === "https://github.com/comisai/comis", "SoftwareSourceCode must reference the public repository");
+check(sourceCode?.license === "https://github.com/comisai/comis/blob/main/LICENSE", "SoftwareSourceCode must reference the Apache-2.0 license");
+const application = structuredData.find((entry) => entry["@type"] === "SoftwareApplication");
+check(application?.downloadUrl === "https://www.npmjs.com/package/comisai", "SoftwareApplication must reference the npm distribution");
+check(application?.softwareRequirements === "Node.js 22.19 or newer", "SoftwareApplication must state the supported Node.js requirement");
+
+const anchors = tags(html, "a").map((tag) => attributes(tag));
+const firstFocusable = html.match(/<(?:a|button|input|select|textarea)\b[^>]*>/i)?.[0] ?? "";
+const firstFocusableAttrs = attributes(firstFocusable);
+check(firstFocusableAttrs.get("href") === "#main-content" && textContent(html.slice(html.indexOf(firstFocusable), html.indexOf("</a>", html.indexOf(firstFocusable)) + 4)) === "Skip to main content", "Skip link must be the first focusable control");
+check(!anchors.some((attrs) => attrs.has("target")), "Links must open in the current tab");
+
+for (const attrs of anchors) {
+  const href = decodeHtml(attrs.get("href") ?? "");
+  if (href.startsWith("#")) {
+    check(ids.includes(href.slice(1)), `Fragment link does not resolve: ${href}`);
+  } else if (href.startsWith("http")) {
+    check(approvedExternalLinks.has(href), `Unapproved external link found: ${href}`);
+    try { new URL(href); } catch { failures.push(`Invalid external URL: ${href}`); }
+  } else {
+    check(href === "/", `Unapproved local route found: ${href}`);
+  }
+}
+for (const href of approvedExternalLinks) {
+  check(anchors.some((attrs) => decodeHtml(attrs.get("href") ?? "") === href), `Approved destination is missing: ${href}`);
+}
+
+const footerHtml = html.match(/<footer\b[\s\S]*?<\/footer>/i)?.[0] ?? "";
+const footerHrefs = tags(footerHtml, "a").map((tag) => attributes(tag).get("href"));
+sameValues(footerHrefs, [
+  "/",
+  "https://docs.comis.ai",
+  "https://github.com/comisai/comis",
+  "https://github.com/comisai/comis/issues",
+  "https://github.com/comisai/comis/security",
+  "https://github.com/comisai/comis/blob/main/LICENSE",
+], "Footer links");
+
+for (const image of tags(html, "img")) {
+  const attrs = attributes(image);
+  check(attrs.has("alt"), `Image is missing alt text: ${attrs.get("src") ?? "unknown"}`);
+  check(Number(attrs.get("width")) > 0 && Number(attrs.get("height")) > 0, `Image is missing intrinsic dimensions: ${attrs.get("src") ?? "unknown"}`);
+}
+check(tags(html, "img").every((tag) => attributes(tag).get("width") === "838" && attributes(tag).get("height") === "202"), "Logo dimensions must match the source image ratio");
+
+const workflowList = mainHtml.match(/<ol\b[^>]*class="[^"]*workflow-list[^"]*"[^>]*>[\s\S]*?<\/ol>/i)?.[0] ?? "";
+check(tags(workflowList, "li").length === 5, "Workflow must be an ordered list with five steps");
+check(!/\bautoplay\b/i.test(html), "Autoplay media is prohibited");
+check(!/\btarget="_blank"/i.test(html), "New-window links are prohibited");
+check(!/\btabindex="[1-9]/i.test(html), "Positive tabindex is prohibited");
+check(!/\bastro-island\b/i.test(html), "Client framework hydration is prohibited");
+check(/<button\b[^>]*data-copy-button[^>]*\bhidden\b/i.test(html), "Copy enhancement must be hidden without JavaScript");
+check(/aria-live="polite"/i.test(html), "Copy status must use a polite live region");
+const executableScripts = tags(html, "script").filter((tag) => attributes(tag).get("type") !== "application/ld+json");
+check(executableScripts.length === 1, `Homepage must contain one executable clipboard script; received ${executableScripts.length}`);
+check(attributes(executableScripts[0] ?? "").get("src") === "/copy-command.js", "Clipboard enhancement must load from the local static script");
+
+const quickStartSource = await readFile(path.join(websiteDir, "public", "copy-command.js"), "utf8");
+for (const label of ["Copy command", "Copied", "Copy failed", "Installer download command copied.", "Couldn’t copy. Select the command and copy it manually."]) {
+  check(quickStartSource.includes(label), `Clipboard state is missing: ${label}`);
+}
+const cssSource = await readFile(path.join(sourceDir, "styles", "global.css"), "utf8");
+check(cssSource.includes(":focus-visible"), "Visible focus styles are missing");
+check(cssSource.includes('[tabindex="0"]):focus-visible'), "Focusable command region must share the site focus treatment");
+check(cssSource.includes("outline: 3px solid var(--coral)"), "Focus outline must be three-pixel coral");
+check(cssSource.includes("outline-offset: 3px"), "Focus outline offset must be three pixels");
+check(cssSource.includes("min-height: 44px"), "Interactive targets must retain the 44-pixel minimum");
+check(cssSource.includes("prefers-reduced-motion: reduce"), "Reduced-motion handling is missing");
+
+const socialCardPath = path.join(distDir, "images", "comis-social-card.png");
+const socialCardSource = await readFile(path.join(websiteDir, "scripts", "social-card.html"), "utf8");
+check(
+  socialCardSource.includes("An open-source, security-first platform for AI agent teams."),
+  "Social card source must use the canonical Comis tagline",
+);
+check(
+  !socialCardSource.includes("Self-hosted infrastructure for auditable AI-agent teams."),
+  "Social card source still contains retired positioning",
+);
+const socialCard = await readFile(socialCardPath);
+check(socialCard.subarray(0, 8).toString("hex") === "89504e470d0a1a0a", "Social card must be a genuine PNG");
+check(socialCard.subarray(12, 16).toString("ascii") === "IHDR", "Social card PNG must contain an IHDR header");
+check(socialCard.readUInt32BE(16) === 1200 && socialCard.readUInt32BE(20) === 630, "Social card must be 1200×630");
+check((await stat(socialCardPath)).size < 250_000, "Social card must remain under 250 KB");
+
+const imageAssets = (await listFiles(path.join(distDir, "images"))).map((file) => path.basename(file)).sort();
+sameValues(imageAssets, ["comis-logo.png", "comis-social-card.png"], "Generated image assets");
+check(!distFiles.some((file) => /\.(?:jpe?g|mp4|webm)$/i.test(file)), "Removed image or video formats remain in the build");
+for (const requiredAsset of [
+  "favicon-16x16.png",
+  "favicon-32x32.png",
+  "favicon.ico",
+  "apple-touch-icon.png",
+  "android-chrome-192x192.png",
+  "android-chrome-512x512.png",
+  "site.webmanifest",
+  "install.sh",
+  "copy-command.js",
+  "robots.txt",
+  "_headers",
+  "fonts/inter-latin.woff2",
+  "fonts/jetbrains-mono-latin.woff2",
+  "sitemap-index.xml",
+  "sitemap-0.xml",
+]) {
+  check(distFiles.includes(path.join(distDir, requiredAsset)), `Required built asset is missing: ${requiredAsset}`);
+}
+
+const sitemapIndex = await readFile(path.join(distDir, "sitemap-index.xml"), "utf8");
+sameValues([...sitemapIndex.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => match[1]), ["https://comis.ai/sitemap-0.xml"], "Sitemap index entries");
+const sitemap = await readFile(path.join(distDir, "sitemap-0.xml"), "utf8");
+sameValues([...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => match[1]), ["https://comis.ai/"], "Sitemap routes");
+const robots = await readFile(path.join(distDir, "robots.txt"), "utf8");
+check(robots.includes("Sitemap: https://comis.ai/sitemap-index.xml"), "robots.txt must reference the sitemap index");
+
+const headers = await readFile(path.join(distDir, "_headers"), "utf8");
+for (const header of ["Content-Security-Policy", "Permissions-Policy", "Strict-Transport-Security", "X-Content-Type-Options", "X-Frame-Options"]) {
+  check(headers.includes(header), `Security header is missing: ${header}`);
+}
+check(!headers.includes("'unsafe-inline'"), "Content Security Policy must not allow inline scripts or styles");
+
+const deploymentWorkflow = await readFile(path.join(websiteDir, "..", ".github", "workflows", "deploy-website.yml"), "utf8");
+check(deploymentWorkflow.includes('wranglerVersion: "4.110.0"'), "Cloudflare deployment must pin the audited Wrangler release");
+
+const packageJson = JSON.parse(await readFile(path.join(websiteDir, "package.json"), "utf8"));
+sameValues(Object.keys(packageJson.dependencies).sort(), ["@astrojs/sitemap", "astro"], "Website runtime dependencies");
+sameValues(Object.keys(packageJson.devDependencies).sort(), ["@tailwindcss/vite", "tailwindcss"], "Website development dependencies");
+check(packageJson.dependencies.astro === "7.0.9", "Astro must stay on the audited release");
+
+if (failures.length > 0) {
+  console.error(`Website validation failed with ${failures.length} issue${failures.length === 1 ? "" : "s"}:`);
+  for (const failure of failures) console.error(`- ${failure}`);
+  process.exitCode = 1;
+} else {
+  console.log(`Website validation passed: one route, six sections, ${wordCount} visible words, verified metadata and assets.`);
+}

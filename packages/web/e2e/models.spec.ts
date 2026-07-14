@@ -96,7 +96,7 @@ const MODELS_RPC_HANDLERS: Record<string, unknown> = {
   "config.read": MODELS_CONFIG,
   "config.patch": { success: true },
   "models.list": MODELS_LIST,
-  "models.test": { status: "ok", modelsAvailable: 3, validatedModels: 2 },
+  "models.test": { status: "available", modelsAvailable: 3, validatedModels: 2 },
 };
 
 test.describe("Models view", () => {

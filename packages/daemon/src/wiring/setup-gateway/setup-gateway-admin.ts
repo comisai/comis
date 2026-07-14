@@ -82,12 +82,10 @@ export function deriveTrustLevel(scopes: readonly string[] | undefined): "admin"
  * `defaultAgentId` (intended); an explicit but UNKNOWN agentId is an ERROR, not a
  * silent fallback.
  *
- * Live finding (F-1, 2026-06-12): falling back to default on an unknown agentId
- * meant a request addressed to a local $0 model (e.g. "qwen35") was silently
- * answered — and billed — by the paid default provider, with no signal to the
- * caller (a routing-integrity hole + silent cross-provider spend). The thrown
- * error is `clientFacing` so the gateway surfaces its message verbatim instead of
- * the generic "Internal error" reserved for provider/internal faults.
+ * Falling back on an explicit unknown agent id could silently route a request to
+ * a paid default provider. The thrown error is `clientFacing` so the gateway
+ * surfaces its message verbatim instead of the generic "Internal error" reserved
+ * for provider and internal faults.
  */
 export function resolveExecAgentId(
   agents: Record<string, unknown>,

@@ -8,7 +8,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { tryGetContext, type SessionKey } from "@comis/core";
 import { createMockLogger } from "../../../../../test/support/mock-logger.js";
+import { createFakeClock } from "../../../../../test/support/fake-clock.js";
+import { createGatewayAttachmentPersister } from "../gateway-attachment-persistence.js";
 
 // Hoisted mocks for RPC bridge
 const mockCreateRpcDispatch = vi.hoisted(() => vi.fn());
@@ -297,7 +303,7 @@ describe("buildRpcAdapterDeps getConfig non-secret allowlist", () => {
 });
 
 describe("buildRpcAdapterDeps executeAgent unknown-agent guard", () => {
-  // Live finding (2026-06-12, 30-UC run, F-1): agent.execute with an explicit
+  // agent.execute with an explicit
   // but UNKNOWN agentId silently fell back to the default agent — so a request
   // addressed to a local $0 model (e.g. "qwen35") was answered by the paid
   // default provider with NO indication of the substitution. Silent cross-provider
@@ -355,6 +361,252 @@ describe("buildRpcAdapterDeps executeAgent unknown-agent guard", () => {
     const { executeAgent, getExecutor } = await makeExecDeps({ default: { name: "d" }, qwen35: { name: "q" } });
     await executeAgent({ ...baseParams, agentId: "qwen35" } as never);
     expect(getExecutor).toHaveBeenCalledWith("qwen35");
+  });
+});
+
+describe("buildRpcAdapterDeps attachment history bridge", () => {
+  it("persists the user before attachments and appends the response afterward", async () => {
+    const sessionKey: SessionKey = {
+      tenantId: "tenant-a",
+      userId: "user_a",
+      channelId: "history-channel",
+    };
+    const marker = '<!-- attachment:{"url":"/media/image.png","type":"image","mimeType":"image/png","fileName":"image.png"} -->';
+    let stored = {
+      messages: [] as Array<{ role: string; content: string; timestamp: number }>,
+      metadata: { label: "Pinned chat" },
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const sessionStore = {
+      load: vi.fn(() => stored),
+      save: vi.fn((_key: SessionKey, messages: unknown[], metadata?: Record<string, unknown>) => {
+        stored = {
+          ...stored,
+          messages: messages as typeof stored.messages,
+          metadata: metadata ?? {},
+        };
+      }),
+    };
+    const logger = createMockLogger();
+    const persistAttachment = createGatewayAttachmentPersister({
+      sessionStore: sessionStore as never,
+      clock: createFakeClock(1_700_000_000_000),
+      logger,
+      emitSystemError: vi.fn(),
+    });
+    const execute = vi.fn(async () => {
+      expect(stored.messages.map((message) => message.content)).toEqual(["Show the image"]);
+      expect(tryGetContext()?.clientId).toBe("dashboard-a");
+      persistAttachment(sessionKey, marker);
+      return {
+        response: "Done",
+        tokensUsed: { input: 1, output: 1, total: 2 },
+        finishReason: "stop",
+        cost: { total: 0 },
+        stepsExecuted: 1,
+        llmCalls: 1,
+      };
+    });
+    const mod = await import("./setup-gateway-rpc.js");
+    const deps = mod.buildRpcAdapterDeps({
+      container: {
+        config: { tenantId: "tenant-a" },
+        eventBus: { emit: vi.fn() },
+      } as unknown as Parameters<typeof mod.buildRpcAdapterDeps>[0]["container"],
+      gwConfig: {} as never,
+      agents: { default: { name: "Default" } } as never,
+      defaultAgentId: "default",
+      gatewayLogger: logger,
+      memoryApi: {} as never,
+      sessionStore: sessionStore as never,
+      getExecutor: (() => ({ execute })) as never,
+      assembleToolsForAgent: (async () => []) as never,
+      preprocessMessageText: (async (text: string) => text) as never,
+      rpcCall: (async () => ({})) as never,
+      costTrackers: new Map() as never,
+      workspaceDirs: new Map(),
+      activeExecutions: new Map() as never,
+    });
+
+    await deps.executeAgent({
+      message: "Show the image",
+      clientId: "dashboard-a",
+      sessionKey: { userId: "user_a", channelId: "history-channel", peerId: "user_a" },
+      scopes: ["rpc"],
+    });
+
+    expect(stored.messages.map((message) => message.content)).toEqual([
+      "Show the image",
+      marker,
+      "Done",
+    ]);
+    expect(stored.metadata).toEqual({ label: "Pinned chat" });
+  });
+
+  it("warns with recovery guidance when main history persistence fails", async () => {
+    const logger = createMockLogger();
+    const emit = vi.fn();
+    const sessionStore = {
+      load: vi.fn(() => undefined),
+      save: vi.fn(() => {
+        throw new Error("database is locked");
+      }),
+    };
+    const mod = await import("./setup-gateway-rpc.js");
+    const deps = mod.buildRpcAdapterDeps({
+      container: {
+        config: { tenantId: "tenant-a" },
+        eventBus: { emit },
+      } as unknown as Parameters<typeof mod.buildRpcAdapterDeps>[0]["container"],
+      gwConfig: {} as never,
+      agents: { default: { name: "Default" } } as never,
+      defaultAgentId: "default",
+      gatewayLogger: logger,
+      memoryApi: {} as never,
+      sessionStore: sessionStore as never,
+      getExecutor: (() => ({
+        execute: vi.fn(async () => ({
+          response: "Done",
+          tokensUsed: { input: 1, output: 1, total: 2 },
+          finishReason: "stop",
+          cost: { total: 0 },
+          stepsExecuted: 1,
+          llmCalls: 1,
+        })),
+      })) as never,
+      assembleToolsForAgent: (async () => []) as never,
+      preprocessMessageText: (async (text: string) => text) as never,
+      rpcCall: (async () => ({})) as never,
+      costTrackers: new Map() as never,
+      workspaceDirs: new Map(),
+      activeExecutions: new Map() as never,
+    });
+
+    await expect(deps.executeAgent({
+      message: "Continue",
+      sessionKey: { userId: "user_a", channelId: "history-channel", peerId: "user_a" },
+      scopes: ["rpc"],
+    })).resolves.toEqual(expect.objectContaining({ response: "Done" }));
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        err: expect.stringContaining("database is locked"),
+        sessionKey: "tenant-a:user_a:history-channel",
+        hint: expect.any(String),
+        errorKind: "resource",
+      }),
+      "Gateway session history persistence failed",
+    );
+    expect(emit).toHaveBeenCalledWith("system:error", {
+      error: expect.objectContaining({ message: "Gateway session history persistence failed" }),
+      source: "gateway-session-history",
+    });
+  });
+
+  it("preserves canonical attachment history without injecting a second marker format", async () => {
+    const workspaceDir = mkdtempSync(join(tmpdir(), "comis-attachment-history-"));
+    const channelId = "history-channel";
+    const jsonlDir = join(workspaceDir, "sessions", "default", channelId);
+    mkdirSync(jsonlDir, { recursive: true });
+
+    const historicalMediaId = "bbbbbbbbbbbbbbbb.jpg";
+    writeFileSync(join(jsonlDir, "default.jsonl"), [
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [{
+            type: "toolCall",
+            name: "message",
+            id: "tool-attachment",
+            arguments: {
+              action: "attach",
+              channel_type: "gateway",
+              attachment_type: "image",
+              mime_type: "image/jpeg",
+              file_name: "historical.jpg",
+            },
+          }],
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolCallId: "tool-attachment",
+          content: `Attachment delivered (mediaId: ${historicalMediaId})`,
+        },
+      }),
+    ].join("\n"));
+
+    const canonicalMediaId = "aaaaaaaaaaaaaaaa.png";
+    const canonicalMarker = `Current image\n\n<!-- attachment:${JSON.stringify({
+      url: `/media/${canonicalMediaId}`,
+      type: "image",
+      mimeType: "image/png",
+      fileName: "current.png",
+    })} -->`;
+    let stored = {
+      messages: [{ role: "assistant", content: canonicalMarker, timestamp: 1 }],
+      metadata: {},
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const sessionStore = {
+      load: vi.fn(() => stored),
+      save: vi.fn((_key: unknown, messages: unknown[]) => {
+        stored = { ...stored, messages: messages as typeof stored.messages };
+      }),
+    };
+
+    try {
+      const mod = await import("./setup-gateway-rpc.js");
+      const deps = mod.buildRpcAdapterDeps({
+        container: {
+          config: { tenantId: "tenant-a" },
+          eventBus: { emit: vi.fn() },
+        } as unknown as Parameters<typeof mod.buildRpcAdapterDeps>[0]["container"],
+        gwConfig: {} as never,
+        agents: { default: { name: "Default" } } as never,
+        defaultAgentId: "default",
+        gatewayLogger: createMockLogger() as never,
+        memoryApi: {} as never,
+        sessionStore: sessionStore as never,
+        getExecutor: (() => ({
+          execute: vi.fn(async () => ({
+            response: "Done",
+            tokensUsed: { input: 1, output: 1, total: 2 },
+            finishReason: "stop",
+            cost: { total: 0 },
+            stepsExecuted: 1,
+            llmCalls: 1,
+          })),
+        })) as never,
+        assembleToolsForAgent: (async () => []) as never,
+        preprocessMessageText: (async (text: string) => text) as never,
+        rpcCall: (async () => ({})) as never,
+        costTrackers: new Map() as never,
+        workspaceDirs: new Map([["default", workspaceDir]]),
+        activeExecutions: new Map() as never,
+      });
+
+      await deps.executeAgent({
+        message: "Continue",
+        sessionKey: { userId: "user_a", channelId, peerId: "user_a" },
+        scopes: ["rpc"],
+      });
+
+      const savedMessages = sessionStore.save.mock.calls.at(-1)?.[1] as Array<{ content?: string }>;
+      const attachmentMessages = savedMessages.filter((message) => message.content?.includes("<!-- attachment:"));
+      expect(attachmentMessages).toEqual([
+        expect.objectContaining({ content: canonicalMarker }),
+      ]);
+      expect(JSON.stringify(savedMessages)).not.toContain("attachment:type=");
+      expect(JSON.stringify(savedMessages)).not.toContain(`/media/${historicalMediaId.replace(".jpg", "")}`);
+    } finally {
+      rmSync(workspaceDir, { recursive: true, force: true });
+    }
   });
 });
 

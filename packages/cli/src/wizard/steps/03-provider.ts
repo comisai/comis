@@ -120,7 +120,7 @@ export const providerStep: WizardStep = {
     options.push({
       value: "custom",
       label: "Custom endpoint",
-      hint: "OpenAI-compatible API",
+      hint: "OpenAI- or Anthropic-compatible API",
     });
 
     const selectedId = await prompter.select<string>({

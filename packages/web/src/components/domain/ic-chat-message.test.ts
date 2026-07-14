@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, afterEach, vi } from "vitest";
-import type { IcChatMessage } from "./ic-chat-message.js";
-import { renderMarkdown } from "./ic-chat-message.js";
+import { IcChatMessage, renderMarkdown } from "./ic-chat-message.js";
 
 // Side-effect import to register custom element
 import "./ic-chat-message.js";
@@ -21,6 +20,7 @@ async function createElement<T extends HTMLElement>(
 
 afterEach(() => {
   document.body.innerHTML = "";
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -339,32 +339,157 @@ describe("IcChatMessage", () => {
     expect((handler.mock.calls[0][0] as CustomEvent).detail).toEqual({ messageId: "msg-99" });
   });
 
-  /* ==================== Media Attachment Auth Token Tests ==================== */
+  /* ==================== Secure Media Attachment Tests ==================== */
 
-  it("renderMarkdown appends ?token= to relative /media/ URLs in attachment markers", () => {
-    const json = JSON.stringify({ url: "/media/abc123", type: "image", mimeType: "image/png", fileName: "photo.png" });
-    const result = renderMarkdown(`<!-- attachment:${json} -->`, "my-secret-token");
-    expect(result).toContain('src="/media/abc123?token=my-secret-token"');
+  it("renderMarkdown defers relative media URLs instead of putting credentials in markup", () => {
+    const json = JSON.stringify({ url: "/media/abc123def4567890.png", type: "image", mimeType: "image/png", fileName: "photo.png" });
+    const result = renderMarkdown(`<!-- attachment:${json} -->`);
+    expect(result).toContain('data-media-url="/media/abc123def4567890.png"');
+    expect(result).toContain('alt="photo.png"');
+    expect(result).not.toContain("?token=");
   });
 
-  it("renderMarkdown does NOT append token to external URLs in attachment markers", () => {
+  it("rejects external attachment URLs to prevent automatic third-party requests", () => {
     const json = JSON.stringify({ url: "https://cdn.example.com/img.png", type: "image", mimeType: "image/png", fileName: "img.png" });
-    const result = renderMarkdown(`<!-- attachment:${json} -->`, "my-secret-token");
-    expect(result).toContain('src="https://cdn.example.com/img.png"');
-    expect(result).not.toContain("token=");
+    const result = renderMarkdown(`<!-- attachment:${json} -->`);
+    expect(result).toBe("");
   });
 
-  it("renderMarkdown does NOT append token when token is empty", () => {
+  it("loads relative media without an Authorization header when no token is configured", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(new Blob(["image-data"], { type: "image/png" }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: vi.fn().mockReturnValue("blob:unprotected-media"),
+      revokeObjectURL: vi.fn(),
+    });
     const json = JSON.stringify({ url: "/media/abc123", type: "image", mimeType: "image/png", fileName: "photo.png" });
-    const result = renderMarkdown(`<!-- attachment:${json} -->`, "");
-    expect(result).toContain('src="/media/abc123"');
-    expect(result).not.toContain("token=");
+    const el = await createElement<IcChatMessage>("ic-chat-message", {
+      role: "assistant",
+      content: `<!-- attachment:${json} -->`,
+    });
+    await vi.waitFor(() => {
+      expect(el.shadowRoot?.querySelector("img")?.getAttribute("src"))
+        .toBe("blob:unprotected-media");
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith("/media/abc123", {
+      signal: expect.any(AbortSignal),
+    });
   });
 
-  it("renderMarkdown appends token with & if URL already has query params", () => {
+  it("renderMarkdown rejects query parameters on protected media URLs", () => {
     const json = JSON.stringify({ url: "/media/abc123?format=webp", type: "image", mimeType: "image/webp", fileName: "photo.webp" });
-    const result = renderMarkdown(`<!-- attachment:${json} -->`, "tok");
-    expect(result).toContain("/media/abc123?format=webp&amp;token=tok");
+    const result = renderMarkdown(`<!-- attachment:${json} -->`);
+    expect(result).toBe("");
+  });
+
+  it("rejects noncanonical protected media paths before authenticated retrieval", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const json = JSON.stringify({
+      url: "/media/../api/agents",
+      type: "image",
+      mimeType: "image/png",
+      fileName: "photo.png",
+    });
+    const el = await createElement<IcChatMessage>("ic-chat-message", {
+      role: "assistant",
+      content: `<!-- attachment:${json} -->`,
+      mediaToken: "my-secret-token",
+    });
+    await Promise.resolve();
+
+    expect(el.shadowRoot?.querySelector("[data-media-url]")).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("loads protected media with an Authorization header and renders only a blob URL", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(new Blob(["image-data"], { type: "image/png" }), { status: 200 }),
+    );
+    const createObjectURL = vi.fn().mockReturnValue("blob:protected-media");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL });
+
+    const json = JSON.stringify({ url: "/media/abc123", type: "image", mimeType: "image/png", fileName: "photo.png" });
+    const el = await createElement<IcChatMessage>("ic-chat-message", {
+      role: "assistant",
+      content: `<!-- attachment:${json} -->`,
+      mediaToken: "my-secret-token",
+    });
+    await vi.waitFor(() => {
+      const image = el.shadowRoot?.querySelector("img");
+      expect(image?.getAttribute("src")).toBe("blob:protected-media");
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith("/media/abc123", {
+      headers: { Authorization: "Bearer my-secret-token" },
+      signal: expect.any(AbortSignal),
+    });
+    expect(el.shadowRoot?.innerHTML).not.toContain("my-secret-token");
+    expect(createObjectURL).toHaveBeenCalledOnce();
+  });
+
+  it("revokes protected media blob URLs when the message disconnects", async () => {
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(new Blob(["image-data"], { type: "image/png" }), { status: 200 }),
+    )));
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: vi.fn().mockReturnValue("blob:protected-media"),
+      revokeObjectURL,
+    });
+
+    const json = JSON.stringify({ url: "/media/abc123", type: "image", mimeType: "image/png", fileName: "photo.png" });
+    const el = await createElement<IcChatMessage>("ic-chat-message", {
+      role: "assistant",
+      content: `<!-- attachment:${json} -->`,
+      mediaToken: "my-secret-token",
+    });
+    await vi.waitFor(() => expect(el.shadowRoot?.querySelector("img")?.getAttribute("src")).toBe("blob:protected-media"));
+
+    el.remove();
+
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:protected-media");
+  });
+
+  it("revokes the previous blob URL before loading changed message content", async () => {
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(new Blob(["image-data"], { type: "image/png" }), { status: 200 }),
+    )));
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: vi.fn()
+        .mockReturnValueOnce("blob:first-media")
+        .mockReturnValueOnce("blob:second-media"),
+      revokeObjectURL,
+    });
+
+    const first = JSON.stringify({ url: "/media/first", type: "image", mimeType: "image/png", fileName: "first.png" });
+    const second = JSON.stringify({ url: "/media/second", type: "image", mimeType: "image/png", fileName: "second.png" });
+    const el = await createElement<IcChatMessage>("ic-chat-message", {
+      role: "assistant",
+      content: `<!-- attachment:${first} -->`,
+      mediaToken: "my-secret-token",
+    });
+    await vi.waitFor(() => expect(el.shadowRoot?.querySelector("img")?.getAttribute("src")).toBe("blob:first-media"));
+
+    el.content = `<!-- attachment:${second} -->`;
+    await el.updateComplete;
+    await vi.waitFor(() => expect(el.shadowRoot?.querySelector("img")?.getAttribute("src")).toBe("blob:second-media"));
+
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:first-media");
+  });
+
+  it("message actions become visible when keyboard focus enters the message", () => {
+    const styles = IcChatMessage.styles.toString();
+    expect(styles).toContain(".wrapper:focus-within .message-actions");
   });
 
   it("system messages do not show action buttons", async () => {

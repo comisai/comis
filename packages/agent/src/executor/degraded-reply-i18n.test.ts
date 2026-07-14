@@ -9,10 +9,9 @@
 //     degraded-reply.ts and asserting equality across the
 //     {cause x capabilityClass x traceId} matrix.
 //   - Per-language snapshots pin the authored he/ar/ru translations.
-//   - Verbatim across languages: the knob path, the (0 = uncapped) hint,
-//     the (incident <traceId>) ref, and the warning marker are interpolated
-//     verbatim and never translated.
-//   - cap-knob x cause variants mirror the live nested advice branching.
+//   - User-facing across languages: raw configuration paths are never exposed;
+//     the incident ref and warning marker remain verbatim for correlation.
+//   - Cause variants mirror the live nested advice branching.
 //   - Fallback contract: an unknown language returns the en string; never throws.
 //   - Gate-blocking security: NO phrase-table string contains a bidi
 //     control codepoint. The BIDI regex is built from NUMERIC codepoints via
@@ -108,34 +107,30 @@ describe("degraded-reply-i18n — en selectors are byte-identical to the live bu
   // not via a round-trip through the same code path.
   it("DEGRADED_REPLY_TABLE.en pins the canonical English literals (independent byte-identity anchor)", () => {
     expect(DEGRADED_REPLY_TABLE.en.contextExhaustedBase).toBe(
-      "I was unable to process your request — the context window was exhausted " +
-        "before the model could run. ",
+      "I couldn't complete that request because this conversation exceeded the model's context limit. ",
     );
     expect(DEGRADED_REPLY_TABLE.en.causeLead.oversized_input).toBe(
-      "Your message alone is larger than this model's context window — send a " +
-        "shorter message or split it into parts. ",
+      "This message is too large for the selected model. Shorten it or split it into smaller parts. ",
     );
     expect(DEGRADED_REPLY_TABLE.en.causeLead.oversized_history_message).toBe(
-      "A previous message in this session exceeds this model's context window, " +
-        "so every new turn overflows regardless of its size — reset the session " +
-        "to clear it. ",
+      "An earlier message is too large for the selected model. Start a new session, then try again. ",
     );
     expect(DEGRADED_REPLY_TABLE.en.causeLead.aggregate).toBe("");
     expect(DEGRADED_REPLY_TABLE.en.capKnobAdviceDefault).toBe(
-      "Try raising {knob} (0 = uncapped), reducing the agent's active tools, or narrowing the ask.",
+      "Try a more focused request, disable tools this agent does not need, or choose a model with a larger context window.",
     );
     expect(DEGRADED_REPLY_TABLE.en.capKnobAdviceHistory).toBe(
-      "Alternatively raise {knob} (0 = uncapped).",
+      "If this keeps happening, choose a model with a larger context window.",
     );
     expect(DEGRADED_REPLY_TABLE.en.genericAdviceDefault).toBe(
-      "Try raising the agent's context engine settings or narrowing the ask.",
+      "Try a more focused request, disable tools this agent does not need, or choose a model with a larger context window.",
     );
     expect(DEGRADED_REPLY_TABLE.en.genericAdviceHistory).toBe(
-      "Alternatively raise the agent's context engine settings.",
+      "If this keeps happening, choose a model with a larger context window.",
     );
     expect(DEGRADED_REPLY_TABLE.en.outputStarvedAnnotation).toBe(
-      "\n\n" + WARNING_MARKER + " My answer was cut off at the model's output limit — too many tools are " +
-        "loaded for this model's context window. Narrow the ask or raise the model's context size.",
+      "\n\n" + WARNING_MARKER + " My response was cut short by the model's output limit. " +
+        "Try a more focused request or choose a model with a larger output limit.",
     );
     expect(DEGRADED_REPLY_TABLE.en.loopDetected).toBe(
       "I stopped because I kept repeating an action that wasn't making progress " +
@@ -165,17 +160,18 @@ describe("degraded-reply-i18n — per-language snapshots pin the authored transl
   }
 });
 
-describe("degraded-reply-i18n — verbatim interpolation across languages", () => {
+describe("degraded-reply-i18n — safe user-facing interpolation across languages", () => {
   for (const lang of ["he", "ar", "ru"] as const) {
-    it(`${lang}: the small-class context-exhausted reply names the cap knob + (0 = uncapped) verbatim`, () => {
+    it(`${lang}: the small-class reply omits raw configuration paths`, () => {
       const reply = selectContextExhaustedReply(lang, { capabilityClass: "small" });
-      expect(reply).toContain("contextEngine.budget.effectiveContextCapSmall");
-      expect(reply).toContain("(0 = uncapped)");
+      expect(reply).not.toContain("contextEngine.");
+      expect(reply).not.toContain("uncapped");
     });
 
-    it(`${lang}: the nano-class context-exhausted reply names the nano cap knob verbatim`, () => {
+    it(`${lang}: the nano-class reply omits raw configuration paths`, () => {
       const reply = selectContextExhaustedReply(lang, { capabilityClass: "nano" });
-      expect(reply).toContain("contextEngine.budget.effectiveContextCapNano");
+      expect(reply).not.toContain("contextEngine.");
+      expect(reply).not.toContain("uncapped");
     });
 
     it(`${lang}: a traceId is appended verbatim as the incident ref`, () => {
@@ -193,9 +189,9 @@ describe("degraded-reply-i18n — verbatim interpolation across languages", () =
   });
 });
 
-describe("degraded-reply-i18n — cap-knob x cause variants mirror the live nested branching", () => {
+describe("degraded-reply-i18n — cause variants mirror the live nested branching", () => {
   for (const lang of ["he", "ar", "ru"] as const) {
-    it(`${lang}: oversized_history_message + knob uses the 'Alternatively raise {knob}' form and drops the narrow-the-ask clause`, () => {
+    it(`${lang}: oversized history gets distinct recovery advice without raw settings`, () => {
       const history = selectContextExhaustedReply(lang, {
         capabilityClass: "small",
         cause: "oversized_history_message",
@@ -204,10 +200,8 @@ describe("degraded-reply-i18n — cap-knob x cause variants mirror the live nest
         capabilityClass: "small",
         cause: "aggregate",
       });
-      // Both name the knob verbatim…
-      expect(history).toContain("contextEngine.budget.effectiveContextCapSmall");
-      expect(dflt).toContain("contextEngine.budget.effectiveContextCapSmall");
-      // …but the two advice forms differ (history vs default).
+      expect(history).not.toContain("contextEngine.");
+      expect(dflt).not.toContain("contextEngine.");
       expect(history).not.toBe(dflt);
     });
 
@@ -234,17 +228,16 @@ describe("degraded-reply-i18n — cap-knob x cause variants mirror the live nest
     const noKnob = selectContextExhaustedReply("en", {
       cause: "fixed_overhead_exceeds_window",
     });
-    // The lead names the fixed overhead and explicitly says message size is moot.
-    expect(withKnob).toContain("fixed overhead");
-    expect(withKnob).toContain("system prompt");
+    // The lead names the agent instructions and tools that exceed capacity.
+    expect(withKnob).toContain("instructions and tools");
     // It must NOT carry the oversized-message advice.
     expect(withKnob).not.toContain("shorter message");
     expect(withKnob).not.toContain("split it");
-    expect(withKnob).not.toContain("narrowing the ask");
-    expect(noKnob).not.toContain("narrowing the ask");
+    expect(withKnob).not.toContain("more focused request");
+    expect(noKnob).not.toContain("more focused request");
     // The remedy points at the model's context window / tools / a larger model.
     expect(withKnob).toContain("context window");
-    expect(withKnob).toContain("contextEngine.budget.effectiveContextCapSmall");
+    expect(withKnob).not.toContain("contextEngine.");
     expect(noKnob).toContain("larger context window");
   });
 });

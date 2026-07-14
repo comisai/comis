@@ -8,8 +8,8 @@
  * load-bearing `@state` (so the existing shadow-DOM tests stay green); the
  * controller never touches the DOM.
  *
- * Split mold: `setup-wizard-controller.ts` / `skills-controller.ts` — a factory
- * that owns RPC orchestration + data shapes, leaving the view to render.
+ * Uses the same controller pattern as the skills view: a factory owns RPC
+ * orchestration and data shapes, leaving the view to render.
  *
  * @module
  */

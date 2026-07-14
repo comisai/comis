@@ -37,7 +37,9 @@ import {
   CapabilityDeniedError,
   systemGetEnv,
   systemNowMs,
+  formatSessionKey,
   parseFormattedSessionKey,
+  tryGetContext,
 } from "@comis/core";
 import { ok } from "@comis/shared";
 import { stat } from "node:fs/promises";
@@ -383,15 +385,12 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       return result;
     },
 
-    // AUDIT(498): All text->channel paths verified. sendMessage uses deliverToChannel
-    // (formats internally). editMessage formats here. sendAttachment is binary-only.
+    // sendMessage formats through deliverToChannel, editMessage formats here,
+    // and sendAttachment carries binary content rather than channel text.
     [MessageEditContract.method]: async (rawParams) => {
-      // 210-GAP / §3.5: message.edit is admin-only (deny-by-origin), NOT part of
-      // orch:message. No in-handler cap gate — an agent origin is rejected at the
-      // rpc-dispatch chokepoint (scopes:["admin"]); a legitimate admin gateway
-      // caller (whose _capabilities is stripped at the boundary) must NOT be
-      // forced through a cap gate it can never satisfy. The §3.5 send subset
-      // (send/reply/react) keeps its orch:message gate; edit/delete/attach do not.
+      // message.edit is admin-only and outside the agent's orch:message
+      // capability. Agent origins are rejected by the admin-scope RPC gate;
+      // authenticated admin gateway callers do not carry agent capabilities.
       const channelType = rawParams.channel_type as string;
       assertCapability("message.edit", channelType, deps.channelPlugins);
       const channelId = rawParams.channel_id as string;
@@ -413,8 +412,8 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
     },
 
     [MessageDeleteContract.method]: async (rawParams) => {
-      // 210-GAP / §3.5: message.delete is admin-only (deny-by-origin), NOT part
-      // of orch:message — see message.edit. No in-handler cap gate.
+      // message.delete is admin-only and denied to non-admin request origins;
+      // it is intentionally outside the agent's orch:message capability.
       const channelType = rawParams.channel_type as string;
       assertCapability("message.delete", channelType, deps.channelPlugins);
       const channelId = rawParams.channel_id as string;
@@ -454,8 +453,8 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
     },
 
     [MessageAttachContract.method]: async (rawParams) => {
-      // 210-GAP / §3.5: message.attach is admin-only (deny-by-origin), NOT part
-      // of orch:message — see message.edit. No in-handler cap gate.
+      // message.attach is admin-only and denied to non-admin request origins;
+      // it is intentionally outside the agent's orch:message capability.
       const channelType = rawParams.channel_type as string;
       assertCapability("message.attach", channelType, deps.channelPlugins);
       const channelId = rawParams.channel_id as string;
@@ -531,18 +530,33 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
           JSON.stringify({ contentType: mimeType, savedAt: systemNowMs(), size: fileBuffer.length }),
         );
 
-        // Push notification to all gateway clients with attachment metadata
+        const requestContext = tryGetContext();
+        const sessionKey = requestContext?.sessionKey
+          ? parseFormattedSessionKey(requestContext.sessionKey)
+          : undefined;
+        const hasMatchingSession = sessionKey?.channelId === channelId;
+
         const attachmentType = (rawParams.attachment_type as string) ?? "file";
         const fileName = (rawParams.file_name as string | undefined) ?? basename(attachmentUrl);
         const caption = rawParams.caption as string | undefined;
-        deps.wsConnections.broadcast("notification.attachment", {
-          url: `/media/${mediaId}`,
-          type: attachmentType,
-          mimeType,
-          fileName,
-          caption,
-          timestamp: systemNowMs(),
-        });
+        if (hasMatchingSession && requestContext?.clientId && sessionKey) {
+          deps.wsConnections.sendToClientId(requestContext.clientId, "notification.attachment", {
+            sessionKey: formatSessionKey(sessionKey),
+            channelId,
+            url: `/media/${mediaId}`,
+            type: attachmentType,
+            mimeType,
+            fileName,
+            caption,
+            timestamp: systemNowMs(),
+          });
+        } else if (hasMatchingSession) {
+          deps.logger.warn({
+            channelId,
+            hint: "Use an authenticated gateway request so the attachment can be targeted to its client",
+            errorKind: "precondition" as const,
+          }, "Gateway attachment notification skipped without client identity");
+        }
 
         // Persist attachment marker to SQLite session so it survives page navigation
         if (deps.onGatewayAttachment) {
@@ -550,7 +564,15 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
           const marker = caption
             ? `${caption}\n\n<!-- attachment:${json} -->`
             : `<!-- attachment:${json} -->`;
-          deps.onGatewayAttachment(channelId, marker);
+          if (hasMatchingSession && sessionKey) {
+            deps.onGatewayAttachment(sessionKey, marker);
+          } else {
+            deps.logger.warn({
+              channelId,
+              hint: "Attach gateway media from the active gateway session so its history identity is available",
+              errorKind: "precondition" as const,
+            }, "Gateway attachment delivered without persistent session history");
+          }
         }
 
         const result = { messageId: mediaId, channelId };

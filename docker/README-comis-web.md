@@ -18,13 +18,13 @@ This image bundles the compiled SPA served by **Nginx** (`nginx:alpine`), with a
 
 | Pattern | Example | Notes |
 |---------|---------|-------|
-| `{version}` | `1.0.53` | Immutable — pin in production |
-| `{major}.{minor}` | `1.0` | Tracks the latest patch |
+| `{version}` | `X.Y.Z` | Immutable release tag |
+| `{major}.{minor}` | `X.Y` | Tracks the latest patch |
 | `latest` | `latest` | Latest release |
 
 Versions move in lockstep with [`comisai/comis`](https://hub.docker.com/r/comisai/comis) — match the tag to the daemon you're running.
 
-> **Tip:** Pin to an immutable version tag (e.g. `comisai/comis-web:1.0.53`) rather than `latest`.
+> **Tip:** For repeatable deployments, replace `latest` with an immutable release tag such as `comisai/comis-web:X.Y.Z`, and use the matching daemon tag.
 
 ---
 

@@ -138,6 +138,7 @@ export async function bootstrapSession(
     authStorage: deps.authStorage,
     oauthManager: deps.oauthManager,
     agentConfig: ctx.config,
+    configuredApiKeyName: deps.getProviderApiKeyName?.(ctx.config.provider),
   });
 
   // b. Initialize result

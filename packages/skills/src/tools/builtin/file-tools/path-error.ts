@@ -3,8 +3,8 @@
  * Shared "path outside workspace" error message for the builtin file tools
  * (read/write/edit/ls/grep/find/notebook).
  *
- * Live finding (F-10, 2026-06-12): a small model asked to "write report.md to
- * your workspace" emitted an absolute `~/Desktop/report.md`, hit the bare
+ * A model asked to "write report.md to your workspace" may emit an absolute
+ * `~/Desktop/report.md` path, hit the bare
  * `[path_traversal] Path outside workspace bounds: …` error, could not infer the
  * fix from it, and gave up (delivering content inline instead of a file). The
  * error said WHAT was wrong but not WHERE to write — so the model never retried

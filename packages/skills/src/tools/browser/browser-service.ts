@@ -14,6 +14,14 @@
  */
 
 import type { BrowserConfig } from "./config.js";
+import type {
+  BrowserContext,
+  CDPSession,
+  Page,
+  Route,
+  WebSocketRoute,
+} from "playwright-core";
+import { validateUrl } from "@comis/core";
 import { resolveBrowserConfig } from "./config.js";
 import {
   launchChrome,
@@ -99,8 +107,9 @@ export type ActParams = BrowserAction;
 /**
  * In-process browser control service interface.
  *
- * All methods return data objects -- they do not throw. Errors are
- * captured and returned as descriptive error fields.
+ * Methods resolve with data objects and reject when validation, browser, or
+ * Playwright operations fail. The RPC boundary maps those failures to JSON-RPC
+ * errors for callers.
  */
 export interface BrowserService {
   /** Get service status. */
@@ -134,11 +143,86 @@ export interface BrowserService {
 // ── Constants ────────────────────────────────────────────────────────
 
 /**
- * Allowed URL protocols for browser navigation.
- * Blocks file://, javascript:, data:, etc. at the service layer.
- * about: is allowed because about:blank is used as the default new-tab URL.
+ * Allowed URL protocols for browser navigation. HTTP(S) destinations receive
+ * DNS/IP-range validation; about:blank is the only local browser page callers
+ * may navigate to directly.
  */
 const ALLOWED_NAV_PROTOCOLS = new Set(["http:", "https:", "about:"]);
+const GUARDED_NETWORK_PROTOCOLS = new Set(["http:", "https:"]);
+const ALLOWED_INTERNAL_RESOURCE_PROTOCOLS = new Set(["about:", "blob:", "data:"]);
+
+type FetchRequestPausedEvent = {
+  requestId: string;
+  request: { url: string };
+};
+
+const BLOCKED_PAGE_NETWORK_CONSTRUCTORS = [
+  "Worker",
+  "SharedWorker",
+  "WebTransport",
+  "WebSocketStream",
+  "RTCPeerConnection",
+  "webkitRTCPeerConnection",
+] as const;
+
+/**
+ * Disable browser APIs whose traffic does not pass through Playwright's page
+ * routing or the page-target CDP Fetch interceptor. Workers are disabled as a
+ * unit because worker-created sockets otherwise bypass both controls.
+ */
+function createNetworkApiLockdownScript(blockWebSocket: boolean): string {
+  const constructorNames = blockWebSocket
+    ? [...BLOCKED_PAGE_NETWORK_CONSTRUCTORS, "WebSocket"]
+    : [...BLOCKED_PAGE_NETWORK_CONSTRUCTORS];
+  return `(() => {
+  const constructorNames = ${JSON.stringify(constructorNames)};
+  for (const name of constructorNames) {
+    const constructor = globalThis[name];
+    if (typeof constructor === "function" && constructor.prototype) {
+      try {
+        Object.defineProperty(constructor.prototype, "constructor", {
+          value: undefined,
+          writable: false,
+          configurable: false
+        });
+      } catch {}
+    }
+    try {
+      Object.defineProperty(globalThis, name, {
+        value: undefined,
+        writable: false,
+        configurable: false
+      });
+    } catch {}
+  }
+
+  const serviceWorker = globalThis.navigator?.serviceWorker;
+  if (serviceWorker) {
+    const rejectRegistration = () => Promise.reject(
+      new DOMException("Blocked by the browser network policy", "SecurityError")
+    );
+    for (const target of [serviceWorker, Object.getPrototypeOf(serviceWorker)]) {
+      if (!target) continue;
+      try {
+        Object.defineProperty(target, "register", {
+          value: rejectRegistration,
+          writable: false,
+          configurable: false
+        });
+      } catch {}
+    }
+  }
+
+  if (constructorNames.some((name) => typeof globalThis[name] !== "undefined")) {
+    throw new DOMException("Browser network policy could not be installed", "SecurityError");
+  }
+})();`;
+}
+
+const FUTURE_DOCUMENT_NETWORK_LOCKDOWN_SCRIPT = createNetworkApiLockdownScript(false);
+// Playwright cannot retrofit its WebSocket route into a document that already
+// loaded, so that document keeps WebSocket disabled until its next navigation.
+const CURRENT_DOCUMENT_NETWORK_LOCKDOWN_SCRIPT = createNetworkApiLockdownScript(true);
 
 // ── Implementation ───────────────────────────────────────────────────
 
@@ -155,9 +239,213 @@ export function createBrowserService(
   const config = resolveBrowserConfig(partialConfig);
   let running: RunningChrome | null = null;
   let lastTargetId: string | null = null;
+  const guardedContexts = new WeakMap<BrowserContext, Promise<void>>();
+  const guardedPages = new WeakMap<Page, Promise<void>>();
+  const activePageGuards = new WeakSet<Page>();
 
   function cdpUrl(): string {
     return `http://127.0.0.1:${config.cdpPort}`;
+  }
+
+  async function validateNavigationTarget(rawUrl: string): Promise<string> {
+    let parsed: URL;
+    try {
+      parsed = new URL(rawUrl);
+    } catch {
+      throw new Error("Invalid URL");
+    }
+    if (!ALLOWED_NAV_PROTOCOLS.has(parsed.protocol)) {
+      throw new Error(
+        `Blocked protocol: ${parsed.protocol} -- only http, https, and about:blank are allowed`,
+      );
+    }
+    if (parsed.protocol === "about:") {
+      if (parsed.href !== "about:blank") {
+        throw new Error("Blocked browser URL -- only about:blank is allowed");
+      }
+      return parsed.href;
+    }
+
+    const validation = await validateUrl(parsed.href);
+    if (!validation.ok) {
+      throw new Error(`SSRF blocked: ${validation.error.message}`);
+    }
+    return validation.value.url.toString();
+  }
+
+  async function handleGuardedRequest(route: Route): Promise<void> {
+    const requestUrl = route.request().url();
+    let parsed: URL;
+    try {
+      parsed = new URL(requestUrl);
+    } catch {
+      await route.abort("blockedbyclient");
+      return;
+    }
+
+    if (!GUARDED_NETWORK_PROTOCOLS.has(parsed.protocol)) {
+      if (ALLOWED_INTERNAL_RESOURCE_PROTOCOLS.has(parsed.protocol)) {
+        await route.continue();
+      } else {
+        await route.abort("blockedbyclient");
+      }
+      return;
+    }
+
+    // Playwright does not invoke BrowserContext.route() again for redirect
+    // hops. HTTP(S) requests without an active page-level CDP guard are
+    // therefore blocked instead of being allowed onto an unguarded target.
+    // This also fails closed for popup and service-worker requests whose frame
+    // is unavailable at interception time.
+    let guardedPage: boolean;
+    try {
+      guardedPage = activePageGuards.has(route.request().frame().page());
+    } catch {
+      guardedPage = false;
+    }
+    if (!guardedPage) {
+      await route.abort("blockedbyclient");
+      return;
+    }
+
+    const validation = await validateUrl(parsed.href);
+    if (!validation.ok) {
+      await route.abort("blockedbyclient");
+      return;
+    }
+
+    await route.continue({ url: validation.value.url.toString() });
+  }
+
+  async function failCdpRequest(session: CDPSession, requestId: string): Promise<void> {
+    try {
+      await session.send("Fetch.failRequest", {
+        requestId,
+        errorReason: "BlockedByClient",
+      });
+    } catch {
+      // The page or request may have closed while its asynchronous URL check
+      // was in flight. There is no live request left to release in that case.
+    }
+  }
+
+  async function handleCdpRequest(
+    session: CDPSession,
+    event: FetchRequestPausedEvent,
+  ): Promise<void> {
+    let parsed: URL;
+    try {
+      parsed = new URL(event.request.url);
+    } catch {
+      await failCdpRequest(session, event.requestId);
+      return;
+    }
+
+    if (!GUARDED_NETWORK_PROTOCOLS.has(parsed.protocol)) {
+      await failCdpRequest(session, event.requestId);
+      return;
+    }
+
+    let validation: Awaited<ReturnType<typeof validateUrl>>;
+    try {
+      validation = await validateUrl(parsed.href);
+    } catch {
+      await failCdpRequest(session, event.requestId);
+      return;
+    }
+    if (!validation.ok) {
+      await failCdpRequest(session, event.requestId);
+      return;
+    }
+
+    try {
+      await session.send("Fetch.continueRequest", {
+        requestId: event.requestId,
+        url: validation.value.url.toString(),
+      });
+    } catch {
+      await failCdpRequest(session, event.requestId);
+    }
+  }
+
+  async function ensurePageRequestGuard(page: Page): Promise<void> {
+    const existing = guardedPages.get(page);
+    if (existing) {
+      await existing;
+      return;
+    }
+
+    const installation = (async () => {
+      // Context init scripts cover future documents; evaluate the same policy
+      // in the current document before any browser action is allowed.
+      await page.evaluate(CURRENT_DOCUMENT_NETWORK_LOCKDOWN_SCRIPT);
+      const session = await page.context().newCDPSession(page);
+      session.on("Fetch.requestPaused", (event) => {
+        void handleCdpRequest(session, event as FetchRequestPausedEvent);
+      });
+      // Existing or externally managed Chrome profiles may already have an
+      // active service worker. Make page requests bypass it so the worker
+      // cannot issue network traffic outside this page's Fetch guard.
+      await session.send("Network.enable");
+      await session.send("Network.setBypassServiceWorker", { bypass: true });
+      await session.send("Fetch.enable", {
+        patterns: [
+          { urlPattern: "http://*", requestStage: "Request" },
+          { urlPattern: "https://*", requestStage: "Request" },
+        ],
+      });
+      activePageGuards.add(page);
+    })();
+    guardedPages.set(page, installation);
+    await installation;
+  }
+
+  async function handleGuardedWebSocket(socket: WebSocketRoute): Promise<void> {
+    let parsed: URL;
+    try {
+      parsed = new URL(socket.url());
+    } catch {
+      await socket.close({ code: 1008, reason: "Blocked by browser network policy" });
+      return;
+    }
+
+    if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") {
+      await socket.close({ code: 1008, reason: "Blocked by browser network policy" });
+      return;
+    }
+
+    parsed.protocol = parsed.protocol === "wss:" ? "https:" : "http:";
+    const validation = await validateUrl(parsed.href);
+    if (!validation.ok) {
+      await socket.close({ code: 1008, reason: "Blocked by browser network policy" });
+      return;
+    }
+
+    socket.connectToServer();
+  }
+
+  async function ensureRequestGuard(page: Page): Promise<void> {
+    const context = page.context();
+    const existing = guardedContexts.get(context);
+    if (existing) {
+      await existing;
+    } else {
+      const installation = Promise.all([
+        context.addInitScript({ content: FUTURE_DOCUMENT_NETWORK_LOCKDOWN_SCRIPT }),
+        context.route("**/*", handleGuardedRequest),
+        context.routeWebSocket("**/*", handleGuardedWebSocket),
+      ]).then(() => undefined);
+      guardedContexts.set(context, installation);
+      await installation;
+    }
+    await ensurePageRequestGuard(page);
+  }
+
+  async function getGuardedPage(targetId?: string): Promise<Page> {
+    const page = await getPage(cdpUrl(), targetId);
+    ensurePageState(page);
+    await ensureRequestGuard(page);
+    return page;
   }
 
   const service: BrowserService = {
@@ -191,9 +479,18 @@ export function createBrowserService(
       // Launch Chrome
       const chrome = await launchChrome(config, spawnEnv);
       running = chrome;
-
-      // Connect Playwright via CDP
-      await createSession(cdpUrl());
+      try {
+        // Connect Playwright via CDP
+        await createSession(cdpUrl());
+        // Install the page and context guards before browser actions can trigger
+        // network traffic. New targets without a page guard fail closed.
+        await getGuardedPage();
+      } catch (error) {
+        running = null;
+        await closeSession();
+        await stopChrome(chrome);
+        throw error;
+      }
     },
 
     async stop(): Promise<void> {
@@ -211,23 +508,13 @@ export function createBrowserService(
       const url = String(params.url ?? "").trim();
       if (!url) throw new Error("url is required");
 
-      // Defense-in-depth: validate URL protocol before page.goto().
-      // The browser-tool layer already validates via validateUrl(), but this
-      // guards against direct BrowserService.navigate() calls bypassing the tool.
-      let parsed: URL;
-      try {
-        parsed = new URL(url);
-      } catch {
-        throw new Error("Invalid URL");
-      }
-      if (!ALLOWED_NAV_PROTOCOLS.has(parsed.protocol)) {
-        throw new Error(`Blocked protocol: ${parsed.protocol} -- only http/https allowed`);
-      }
+      // Validate direct BrowserService callers as well as the outer platform
+      // tool. The persistent network guards independently validate actual
+      // HTTP(S) requests, including every redirect hop and subresources.
+      const validatedUrl = await validateNavigationTarget(url);
+      const page = await getGuardedPage(params.targetId);
 
-      const page = await getPage(cdpUrl(), params.targetId);
-      ensurePageState(page);
-
-      await page.goto(url, {
+      await page.goto(validatedUrl, {
         timeout: Math.max(1000, Math.min(120_000, config.timeoutMs ?? 20_000)),
       });
 
@@ -242,7 +529,7 @@ export function createBrowserService(
     },
 
     async snapshot(params): Promise<SnapshotResult> {
-      const page = await getPage(cdpUrl(), params.targetId);
+      const page = await getGuardedPage(params.targetId);
       return takeSnapshot(page, {
         interactive: params.interactive,
         maxDepth: params.maxDepth,
@@ -253,7 +540,7 @@ export function createBrowserService(
     },
 
     async screenshot(params): Promise<ScreenshotResult> {
-      const page = await getPage(cdpUrl(), params.targetId);
+      const page = await getGuardedPage(params.targetId);
       return takeScreenshot(page, {
         fullPage: params.fullPage,
         ref: params.ref,
@@ -264,12 +551,12 @@ export function createBrowserService(
     },
 
     async pdf(params): Promise<PdfResult> {
-      const page = await getPage(cdpUrl(), params.targetId);
+      const page = await getGuardedPage(params.targetId);
       return generatePdf(page);
     },
 
     async act(params): Promise<ActionResult> {
-      const page = await getPage(cdpUrl(), params.targetId);
+      const page = await getGuardedPage(params.targetId);
       return executeAction(page, params);
     },
 
@@ -289,7 +576,16 @@ export function createBrowserService(
 
     async openTab(params): Promise<TabInfo> {
       const url = String(params.url ?? "").trim() || "about:blank";
-      const { page, targetId } = await createNewPage(cdpUrl(), url);
+      const validatedUrl = await validateNavigationTarget(url);
+      // Create the tab without an external navigation so its context can be
+      // guarded before the first request or redirect leaves the browser.
+      const { page, targetId } = await createNewPage(cdpUrl(), "about:blank");
+      await ensureRequestGuard(page);
+      if (validatedUrl !== "about:blank") {
+        await page.goto(validatedUrl, {
+          timeout: Math.max(1000, Math.min(120_000, config.timeoutMs ?? 20_000)),
+        });
+      }
       if (targetId) lastTargetId = targetId;
       return {
         targetId: targetId ?? "",
@@ -300,7 +596,7 @@ export function createBrowserService(
     },
 
     async focusTab(params): Promise<void> {
-      const page = await getPage(cdpUrl(), params.targetId);
+      const page = await getGuardedPage(params.targetId);
       await page.bringToFront();
       lastTargetId = params.targetId;
     },
@@ -308,12 +604,12 @@ export function createBrowserService(
     async closeTab(params): Promise<void> {
       const targetId = params.targetId ?? lastTargetId;
       if (!targetId) throw new Error("No tab to close (no targetId)");
-      const page = await getPage(cdpUrl(), targetId);
+      const page = await getGuardedPage(targetId);
       await page.close();
     },
 
     async console(params): Promise<ConsoleEntry[]> {
-      const page = await getPage(cdpUrl(), params.targetId);
+      const page = await getGuardedPage(params.targetId);
       const state = ensurePageState(page);
       const entries = state.console;
       if (!params.level) return [...entries];

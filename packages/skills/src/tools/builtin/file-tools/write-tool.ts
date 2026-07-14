@@ -131,8 +131,8 @@ function resolveWritePath(
   filePath: string,
   sharedPaths: LazyPaths | undefined,
 ): string {
-  // F-10 (live 2026-06-12): a small model asked to write "to your Desktop" emits a
-  // home-relative path like `~/Desktop/report.md`. `~` means the user's home —
+  // A model asked to write "to your Desktop" may emit a home-relative path such
+  // as `~/Desktop/report.md`. `~` means the user's home —
   // unreachable from the sandbox — but `safePath` treats it as a literal segment and
   // would happily create `<workspace>/~/Desktop/report.md`: a junk directory the user
   // never finds, while the agent believes it satisfied the request. A leading `~/`

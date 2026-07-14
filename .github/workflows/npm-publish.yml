@@ -3,10 +3,12 @@ name: Publish to npm
 on:
   push:
     tags: ["v*"]
-  # Manual re-trigger: pnpm publish keys off the package.json version, not the
-  # tag, so this re-publishes the current version from any ref without having to
-  # move/recreate a release tag (which would needlessly re-run the Docker jobs).
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to publish (for example, v1.0.53)
+        required: true
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -16,27 +18,35 @@ jobs:
   publish:
     runs-on: ubuntu-latest
 
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
     permissions:
       contents: read
       id-token: write
 
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: 22
+          node-version: 22.19.0
           cache: pnpm
           registry-url: https://registry.npmjs.org/
 
+      - name: Verify release tag matches package version
+        run: node .github/scripts/verify-release-tag.mjs "${RELEASE_TAG}"
+
       - name: Install system dependencies (ffmpeg, bubblewrap)
-        # The release-gate `pnpm test` below runs the SAME suite as ci.yml,
-        # including the Linux-gated terminal-driver tests (*.linux.test.ts) that
+        # The release validation below includes the Linux-gated terminal-driver
+        # tests (*.linux.test.ts) that
         # shell out to `which bwrap` and FAIL — not skip — when bubblewrap is
-        # absent (resolveBwrapPath throws). ci.yml installs these deps for its
-        # test jobs; this gate must match or `pnpm test` fails before publish.
+        # absent (resolveBwrapPath throws). The CI test jobs install the same
+        # dependencies so the release gate exercises the same host capabilities.
         # ffmpeg/ffprobe likewise drive the media-conversion skill tests.
         run: sudo apt-get update && sudo apt-get install -y ffmpeg bubblewrap
 
@@ -49,11 +59,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build
-        run: pnpm build
-
-      - name: Test
-        run: pnpm test
+      - name: Run complete release validation
+        run: pnpm validate:full
 
       - name: Publish packages
         run: pnpm publish -r --access public --no-git-checks --provenance --config.node-linker=hoisted

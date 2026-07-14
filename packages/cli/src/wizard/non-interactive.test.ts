@@ -291,11 +291,13 @@ describe("validateNonInteractiveOptions", () => {
     }
   });
 
-  it("C3b: 'custom' provider passes silently (synthetic, never warns)", () => {
+  it("rejects custom providers that need interactive endpoint details", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const opts = validOpts({ provider: "custom" });
-      expect(() => validateNonInteractiveOptions(opts)).not.toThrow();
+      expect(() => validateNonInteractiveOptions(opts)).toThrow(
+        "Custom endpoints require interactive setup",
+      );
       expect(warnSpy).not.toHaveBeenCalled();
     } finally {
       warnSpy.mockRestore();
@@ -340,6 +342,24 @@ describe("validateNonInteractiveOptions", () => {
     };
     expect(() => validateNonInteractiveOptions(opts)).not.toThrow();
   });
+
+  it("rejects a static API key for Amazon Bedrock with AWS credential-chain guidance", () => {
+    const opts = validOpts({ provider: "amazon-bedrock", apiKey: "test-key" });
+
+    expect(() => validateNonInteractiveOptions(opts)).toThrow(/AWS credential chain/);
+  });
+
+  it.each([
+    ["cloudflare-workers-ai", "CLOUDFLARE_ACCOUNT_ID"],
+    ["cloudflare-ai-gateway", "CLOUDFLARE_GATEWAY_ID"],
+  ])(
+    "rejects non-interactive %s setup that cannot collect all required values",
+    (provider, requiredName) => {
+      const opts = validOpts({ provider, apiKey: "test-key" });
+
+      expect(() => validateNonInteractiveOptions(opts)).toThrow(requiredName);
+    },
+  );
 
   it("rejects an unknown --video-provider (closed config vocabulary)", () => {
     const opts = validOpts({ videoProvider: "runway" });
@@ -829,9 +849,9 @@ describe("buildNonInteractiveState", () => {
     expect(state.riskAccepted).toBe(true);
   });
 
-  it("sets provider validated based on skipValidation", () => {
+  it("never claims non-interactive provider credentials were validated without a live check", () => {
     const stateSkipped = buildNonInteractiveState(validOpts({ skipValidation: true }));
-    expect(stateSkipped.provider!.validated).toBe(true);
+    expect(stateSkipped.provider!.validated).toBe(false);
 
     const stateNotSkipped = buildNonInteractiveState(validOpts({ skipValidation: false }));
     expect(stateNotSkipped.provider!.validated).toBe(false);

@@ -6,7 +6,9 @@ icon: "hexagon"
 
 Comis follows hexagonal architecture (ports and adapters). The core domain defines port interfaces that describe what the system needs. Adapter packages implement those interfaces with platform-specific code. This separation means you can swap implementations (e.g., replace SQLite memory with PostgreSQL) without touching the core, and the core compiles without knowing which adapters exist.
 
-All 15 packages adhere to this pattern. The dependency direction is always inward -- adapters depend on ports, never on each other.
+All 16 packages follow this boundary model. Dependency direction is inward:
+runtime and adapter packages depend on core contracts, while core does not
+depend on their implementations.
 
 ## Hexagonal Pattern
 
@@ -41,7 +43,9 @@ This means any adapter can be replaced or added without modifying core. To add a
 
 ## Port Interfaces
 
-Comis defines 19 port interfaces organized into 4 categories. All ports live in `packages/core/src/ports/` and are exported from `@comis/core`.
+Comis defines its port interfaces in `packages/core/src/ports/` and exports them
+from `@comis/core`. The tables below show the main user-facing families; store,
+runtime, scheduling, and orchestration ports follow the same pattern.
 
 ### Core Ports
 
@@ -49,7 +53,7 @@ The foundational interfaces that define the primary system boundaries:
 
 | Port | File | Purpose | Adapters |
 |------|------|---------|----------|
-| `ChannelPort` | `ports/channel.ts` | Chat platform messaging boundary | 10 adapters (Discord, Telegram, Slack, WhatsApp, Signal, iMessage, LINE, IRC, Echo, Email) |
+| `ChannelPort` | `ports/channel.ts` | Chat platform messaging boundary | 11 adapters (Discord, Telegram, Slack, WhatsApp, Signal, iMessage, LINE, IRC, Echo, Email, Microsoft Teams) |
 | `ChannelPluginPort` | `ports/channel-plugin.ts` | Plugin wrapper for channel adapters | One per channel adapter |
 | `MemoryPort` | `ports/memory.ts` | Persistent memory with vector search | `SqliteMemoryAdapter` |
 | `SkillPort` | `ports/skill.ts` | Skill execution boundary | `SkillRegistry`, MCP client |
@@ -97,7 +101,7 @@ The most important port interface is `ChannelPort` -- the boundary between the p
 ```typescript
 // packages/core/src/ports/channel.ts
 import type { Result } from "@comis/shared";
-import type { NormalizedMessage, SendMessageOptions } from "@comis/core";
+import type { AttachmentPayload, MessageHandler, SendMessageOptions } from "@comis/core";
 
 export interface ChannelPort {
   readonly channelId: string;
@@ -112,37 +116,27 @@ export interface ChannelPort {
     options?: SendMessageOptions,
   ): Promise<Result<string, Error>>;
 
-  editMessage(
+  editMessage?(
     channelId: string,
     messageId: string,
     text: string,
+    options?: SendMessageOptions,
   ): Promise<Result<void, Error>>;
 
   onMessage(handler: MessageHandler): void;
 
-  reactToMessage(
+  reactToMessage?(
     channelId: string,
     messageId: string,
     emoji: string,
   ): Promise<Result<void, Error>>;
 
-  removeReaction(
-    channelId: string,
-    messageId: string,
-    emoji: string,
-  ): Promise<Result<void, Error>>;
-
-  deleteMessage(
+  deleteMessage?(
     channelId: string,
     messageId: string,
   ): Promise<Result<void, Error>>;
 
-  fetchMessages(
-    channelId: string,
-    options?: FetchMessagesOptions,
-  ): Promise<Result<FetchedMessage[], Error>>;
-
-  sendAttachment(
+  sendAttachment?(
     channelId: string,
     attachment: AttachmentPayload,
     options?: SendMessageOptions,
@@ -158,14 +152,21 @@ export interface ChannelPort {
 ```
 
 <Tip>
-Every method returns `Result<T, Error>` instead of throwing exceptions. See the Result Pattern section below for why this matters.
+Effectful asynchronous operations return `Result<T, Error>` instead of using
+exceptions for normal control flow. See the Result Pattern section below.
 </Tip>
 
-Notice the pattern: lifecycle methods (`start`, `stop`), messaging methods (`sendMessage`, `editMessage`, `deleteMessage`), media methods (`sendAttachment`), and an escape hatch (`platformAction`) for platform-specific operations not covered by the generic interface.
+The required surface covers lifecycle, inbound messages, outbound text, and a
+platform-specific action dispatcher. Edit, reaction, history, attachment,
+status, and reconciliation methods are optional capabilities implemented only
+where the platform supports them.
 
 ## Composition Root
 
-The `bootstrap()` function in `core/src/bootstrap.ts` is the composition root -- the single place where all concrete implementations are wired to port interfaces. It returns an `AppContainer` that holds the fully configured application.
+The `bootstrap()` function in `core/src/bootstrap.ts` builds the core
+`AppContainer`: resolved configuration, the event bus, secret manager, plugin
+registry, hook runner, and shutdown contract. The daemon's wiring modules then
+compose runtime adapters such as channels, persistence, tools, and the gateway.
 
 ```typescript
 import type { Result } from "@comis/shared";
@@ -198,12 +199,16 @@ The bootstrap flow creates these services in a specific order:
 The `bootstrap()` function returns `Result<AppContainer, ConfigError>` -- it never throws. If config loading fails or secrets are missing, you get an explicit error you can handle.
 
 <Info>
-The composition root is the ONLY place where concrete implementations are wired to port interfaces. If you're adding a new adapter, this is where it gets connected.
+When adding an adapter, define or reuse its core port, export the adapter from
+its package, and connect it in the relevant daemon wiring path.
 </Info>
 
 ## Result Pattern
 
-Every function in Comis returns `Result<T, E>` from `@comis/shared` -- no thrown exceptions anywhere in the codebase. This is enforced by ESLint rules that block `throw` statements.
+Domain and service operations use `Result<T, E>` from `@comis/shared` so callers
+handle failures explicitly. Narrow boundary wrappers, CLI or web entry flows,
+and tests may throw where the exception is immediately caught or asserted;
+architecture and lint checks constrain those exceptions.
 
 The `Result` type is a discriminated union:
 
@@ -247,66 +252,18 @@ const user = userResult.value; // TypeScript narrows to User
 ```
 
 <Warning>
-If you write code that throws instead of returning `Result`, it will fail ESLint security checks. Always use `ok()` and `err()` from `@comis/shared`.
+Use `ok()` and `err()` for domain control flow. A boundary throw needs a local
+rationale and an immediate translation to the repository's error contract.
 </Warning>
 
 ## Dependency Direction
 
-The dependency direction is always inward -- every package depends on `core` (and `shared`), but never on sibling packages. Adapters depend on ports, not on each other.
-
-```mermaid
-graph TD
-    shared["@comis/shared<br/>Result type, utilities"]
-    core["@comis/core<br/>Domain, ports, events, security"]
-    infra["@comis/infra<br/>Pino logging"]
-    memory["@comis/memory<br/>SQLite + vector search"]
-    gateway["@comis/gateway<br/>HTTP, RPC, WebSocket"]
-    skills["@comis/skills<br/>Tools, media, MCP"]
-    scheduler["@comis/scheduler<br/>Cron, heartbeat"]
-    agent["@comis/agent<br/>Executor, sessions, RAG"]
-    channels["@comis/channels<br/>Platform adapters"]
-    observability["@comis/observability<br/>Diagnostics, cache-trace, EventBus bridge"]
-    orchestrator["@comis/orchestrator<br/>Inbound pipeline, channel-manager, routing"]
-    cli["@comis/cli<br/>CLI commands"]
-    daemon["@comis/daemon<br/>Orchestrator"]
-
-    shared --> core
-    core --> infra
-    core --> memory
-    core --> gateway
-    core --> skills
-    core --> scheduler
-    core --> agent
-    infra --> agent
-    memory --> agent
-    scheduler --> agent
-    core --> channels
-    agent --> channels
-    infra --> channels
-    core --> observability
-    core --> orchestrator
-    agent --> orchestrator
-    channels --> orchestrator
-    orchestrator --> daemon
-    core --> cli
-    memory --> cli
-    agent --> cli
-    core --> daemon
-    infra --> daemon
-    agent --> daemon
-    channels --> daemon
-    gateway --> daemon
-    skills --> daemon
-    scheduler --> daemon
-    memory --> daemon
-```
-
-Key rules:
-
-- **`channels` never imports from `gateway`** -- they are sibling adapter packages at the same layer.
-- **`skills` never imports from `agent`** -- skills are a dependency of agent, not the other way around.
-- **Cross-module communication uses the `TypedEventBus`** -- if two sibling packages need to react to each other's actions, they do so through typed events, not direct imports.
-- **`daemon` depends on everything** -- as the composition root and process orchestrator, it wires all packages together at startup.
+Contracts point inward: `shared` provides dependency-free utilities, `core`
+owns domain and port contracts, and runtime packages implement or compose those
+contracts. Some higher-level packages have explicit sibling dependencies, so
+the package manifests and TypeScript project references are the authoritative
+graph. Cross-package imports use public exports; lifecycle signals use the
+typed event bus where an event is the appropriate boundary.
 
 For the full [package breakdown](/developer-guide/packages) including roles, exports, and boundary rules, see the Packages page.
 

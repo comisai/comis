@@ -6,7 +6,7 @@ icon: "key"
 
 **What this is for:** every environment variable Comis reads — provider API keys, channel tokens, encryption secrets, infrastructure paths. **Who it's for:** anyone wiring API keys, deploying to Docker, or running CI pipelines.
 
-Comis reads 40+ environment variables across encryption, LLM providers, voice/media, web search, channel credentials, and infrastructure. Most variables are **also referenceable from `config.yaml` via `${VAR_NAME}` substitution** — you typically pick one location per credential. The canonical templates are [`/.env.example`](https://github.com/comisai/comis/blob/main/.env.example) (host install) and [`/.env.docker.example`](https://github.com/comisai/comis/blob/main/.env.docker.example) (Docker Compose).
+Comis reads environment variables across encryption, LLM providers, voice/media, web search, channel credentials, and infrastructure. Most variables are **also referenceable from `config.yaml` via `${VAR_NAME}` substitution** — you typically pick one location per credential. The canonical templates are [`/.env.example`](https://github.com/comisai/comis/blob/main/.env.example) (host install) and [`/.env.docker.example`](https://github.com/comisai/comis/blob/main/.env.docker.example) (Docker Compose).
 
 <Tip>
 The interactive setup wizard (`comis init`, `comis configure`) populates the most common variables for you and writes them to `~/.comis/.env`. Manual editing is only needed for advanced or non-interactive setups.
@@ -411,9 +411,10 @@ export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"
 
 Opts into the latest (pre-stable `Development`) GenAI semantic convention. Set it
 to `gen_ai_latest_experimental` alongside `observability.otel.genaiSemconv: true`.
-The convention will churn until it stabilizes. Content never leaks regardless — the
-exporter re-redacts independently and the message-content attributes are omitted
-unless `otel.captureContent` is separately enabled.
+The convention may change while it remains pre-stable. The exporter applies
+redaction independently, and message-content attributes are omitted unless
+`otel.captureContent` is separately enabled. Enabling content capture increases
+the amount of sensitive data that can reach your collector.
 
 ```bash
 export OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental
@@ -570,20 +571,46 @@ export COMIS_LIVE_PROBES="search"
 
 ## LLM Provider Keys
 
-At least one provider key is required. Each provider is detected at startup; missing keys disable the matching provider gracefully. All keys can also be stored encrypted via [`comis secrets set`](/reference/cli#comis-secrets) instead of plaintext in `.env`.
+No provider key is universally required: an OAuth login or a local keyless provider can run without one. Set only the credentials used by your agents. Missing credentials disable the matching provider gracefully. Every static key below can be stored encrypted with [`comis secrets set`](/reference/cli#comis-secrets) instead of plaintext in `.env`; Comis loads it into `SecretManager` and removes the ambient value from `process.env`.
 
-| Variable | Provider | Reference |
-|----------|----------|-----------|
-| `ANTHROPIC_API_KEY` | Anthropic (Claude family; also `image_analyze` when an Anthropic model is the agent's vision-capable main, or via the vision registry fallback) | `sk-ant-...` |
-| `OPENAI_API_KEY` | OpenAI (GPT family, Whisper, embeddings; native `image_generate` via the OpenAI Images API for an `openai` main; also `image_analyze` when a GPT-4o-class model is the vision-capable main, or via the vision registry fallback) | `sk-...` |
-| `GOOGLE_API_KEY` | Google AI Studio (Gemini family; native `image_generate` via Gemini and native `video_generate` via Veo for a `google` main; also `image_analyze` for a Gemini vision-capable main and `describe_video` raw video, or via the vision registry fallback) | `AIza...` |
-| `GROQ_API_KEY` | Groq (Llama, Whisper) | `gsk_...` |
-| `MISTRAL_API_KEY` | Mistral AI | -- |
-| `DEEPSEEK_API_KEY` | DeepSeek | `sk-...` |
-| `XAI_API_KEY` | xAI (Grok, search; native `video_generate` via Grok Imagine for an `xai` main) | `xai-...` |
-| `TOGETHER_API_KEY` | Together AI | -- |
-| `CEREBRAS_API_KEY` | Cerebras | `csk-...` |
-| `OPENROUTER_API_KEY` | OpenRouter (multi-provider proxy; also the `image_generate` opt-in path) | `sk-or-...` |
+| Variable | Provider |
+|----------|----------|
+| `AI_GATEWAY_API_KEY` | Vercel AI Gateway |
+| `ANTHROPIC_API_KEY` | Anthropic; preferred static name |
+| `ANTHROPIC_OAUTH_TOKEN` | Anthropic static token alias; interactive OAuth is also supported |
+| `ANT_LING_API_KEY` | Ant Ling |
+| `AZURE_OPENAI_API_KEY` | Azure OpenAI Responses |
+| `CEREBRAS_API_KEY` | Cerebras |
+| `CLOUDFLARE_API_KEY` | Cloudflare Workers AI and AI Gateway |
+| `COPILOT_GITHUB_TOKEN` | GitHub Copilot |
+| `DEEPSEEK_API_KEY` | DeepSeek |
+| `FIREWORKS_API_KEY` | Fireworks AI |
+| `GEMINI_API_KEY` | Google AI Studio catalog alias for model calls |
+| `GOOGLE_API_KEY` | Google AI Studio; preferred Comis name and required by Google media tools |
+| `GOOGLE_CLOUD_API_KEY` | Google Vertex AI |
+| `GROQ_API_KEY` | Groq; also used by Groq Whisper |
+| `HF_TOKEN` | Hugging Face |
+| `KIMI_API_KEY` | Kimi Coding |
+| `MINIMAX_API_KEY` | MiniMax |
+| `MINIMAX_CN_API_KEY` | MiniMax China |
+| `MISTRAL_API_KEY` | Mistral AI |
+| `MOONSHOT_API_KEY` | Moonshot AI global and China endpoints |
+| `NVIDIA_API_KEY` | NVIDIA |
+| `OPENAI_API_KEY` | OpenAI; also used by OpenAI audio, embeddings, image, and vision paths |
+| `OPENCODE_API_KEY` | OpenCode and OpenCode Go |
+| `OPENROUTER_API_KEY` | OpenRouter; also used by its image-generation path |
+| `TOGETHER_API_KEY` | Together AI |
+| `XAI_API_KEY` | xAI; also used by Grok search and video generation |
+| `XIAOMI_API_KEY` | Xiaomi |
+| `XIAOMI_TOKEN_PLAN_CN_API_KEY` | Xiaomi Token Plan China |
+| `XIAOMI_TOKEN_PLAN_AMS_API_KEY` | Xiaomi Token Plan Americas |
+| `XIAOMI_TOKEN_PLAN_SGP_API_KEY` | Xiaomi Token Plan Singapore |
+| `ZAI_API_KEY` | Z.ai |
+| `ZAI_CODING_CN_API_KEY` | Z.ai Coding China |
+
+Cloudflare also requires `CLOUDFLARE_ACCOUNT_ID`; Cloudflare AI Gateway additionally requires `CLOUDFLARE_GATEWAY_ID`. Google Vertex AI static-key authentication requires `GOOGLE_CLOUD_PROJECT` (or `GCLOUD_PROJECT`) and `GOOGLE_CLOUD_LOCATION` alongside `GOOGLE_CLOUD_API_KEY`.
+
+Amazon Bedrock is the exception to the static-key table. It uses the host AWS credential chain (`AWS_PROFILE`, IAM access keys, a Bedrock bearer, ECS credentials, or web identity) and those values remain ambient for the AWS SDK. Google Vertex ADC-only authentication is not currently bridged through the daemon's scrubbed environment; use the explicit Vertex key path above.
 
 ```bash
 # .env example: pick the providers you actually use
@@ -593,7 +620,7 @@ OPENAI_API_KEY=sk-...
 
 Some providers reuse a parent key for sub-services: OpenAI Whisper STT and native `image_generate` (OpenAI Images API, default `gpt-image-1`) use `OPENAI_API_KEY`; a `google` main's native `image_generate` (Gemini, default `gemini-2.5-flash-image`) uses `GOOGLE_API_KEY`; Groq Whisper uses `GROQ_API_KEY`; Grok search uses `XAI_API_KEY`. See [Models](/agents/models) for the wired catalog.
 
-**Image generation reuses the main provider's key.** With the default `integrations.media.imageGeneration.provider: auto`, the `image_generate` tool follows the agent's main provider and reuses **its** credentials — so in the common case **no image-specific key is needed**. A key-auth **`openai`** main generates via the OpenAI Images API with `OPENAI_API_KEY`; a **`google`** main generates via Gemini with `GOOGLE_API_KEY` (the same key the completion path and vision use — **not** `GEMINI_API_KEY`). To opt in to OpenRouter for image generation, set `provider: openrouter` and supply `OPENROUTER_API_KEY`; `FAL_KEY` is still used for the explicit `provider: fal` path.
+**Image generation usually reuses the main provider's key.** With the default `integrations.media.imageGeneration.provider: auto`, the `image_generate` tool follows the agent's main provider and reuses its credentials when that provider's media endpoint accepts them. A key-auth **`openai`** main generates via the OpenAI Images API with `OPENAI_API_KEY`; a **`google`** main generates via Gemini with `GOOGLE_API_KEY`. A `google-vertex` main follows the Gemini media route but needs a separate `GOOGLE_API_KEY` — `GOOGLE_CLOUD_API_KEY` only authenticates its Vertex model calls. To opt in to OpenRouter for image generation, set `provider: openrouter` and supply `OPENROUTER_API_KEY`; `FAL_KEY` is still used for the explicit `provider: fal` path.
 
 With a **Codex (ChatGPT-login) main provider** and `provider: auto` (or explicit `provider: openai-codex`), `image_generate` reuses the agent's **OAuth bearer** — bootstrapped from [`OAUTH_OPENAI_CODEX`](#oauth-openai-codex) or `comis auth login --provider openai-codex` — so **no image-specific key** is needed; the token refreshes automatically per call. The bearer is an OAuth credential, never an `OPENAI_API_KEY`.
 

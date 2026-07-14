@@ -170,8 +170,8 @@ describe("isImmutableConfigPath", () => {
     expect(isImmutableConfigPath("daemon")).toBe(false);
   });
 
-  it("allows daemon.watchdogIntervalMs (not logging)", () => {
-    expect(isImmutableConfigPath("daemon", "watchdogIntervalMs")).toBe(false);
+  it("allows daemon.shutdownTimeoutMs (not logging)", () => {
+    expect(isImmutableConfigPath("daemon", "shutdownTimeoutMs")).toBe(false);
   });
 
   it("allows daemon.logLevels (mutable at runtime, not file logging)", () => {
@@ -589,7 +589,7 @@ describe("contextEngine.version is operator-only (immutable to config.patch)", (
 // sandbox/jail/terminal-escape switches must be refused by agents_manage TOO —
 // the asymmetry that let an admin-trust agent flip its own
 // skills.execSandbox.enabled never→always at runtime (unsandboxed marathon
-// BL-1, 2026-07-12). These are operator-file-only.
+// These settings are operator-file-only because they govern sandbox escape.
 // ---------------------------------------------------------------------------
 
 describe("OPERATOR_ONLY_AGENT_SUBPATHS", () => {

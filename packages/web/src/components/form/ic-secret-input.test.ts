@@ -29,6 +29,16 @@ describe("IcSecretInput", () => {
     expect(label!.textContent).toContain("API Key");
   });
 
+  it("associates its label and format hint with the input", async () => {
+    const el = await createElement({ label: "API Key" });
+    const label = el.shadowRoot?.querySelector("label") as HTMLLabelElement;
+    const input = el.shadowRoot?.querySelector("input") as HTMLInputElement;
+    const hint = el.shadowRoot?.querySelector(".hint") as HTMLElement;
+    expect(input.id).not.toBe("");
+    expect(label.htmlFor).toBe(input.id);
+    expect(input.getAttribute("aria-describedby")).toBe(hint.id);
+  });
+
   it("input type is password by default", async () => {
     const el = await createElement({});
     const input = el.shadowRoot?.querySelector("input") as HTMLInputElement;

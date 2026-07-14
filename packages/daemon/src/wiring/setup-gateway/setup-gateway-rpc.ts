@@ -2,8 +2,8 @@
 /**
  * Gateway RPC bridge + adapter wiring.
  * Hosts setupRpcBridge (deferred dispatch), buildRpcAdapterDeps (the 7-method
- * adapter struct consumed by createDynamicMethodRouter), extractAttachmentMarkers
- * (gateway JSONL → conversation history bridging), and buildDynamicRouterAndRegister.
+ * adapter struct consumed by createDynamicMethodRouter), and
+ * buildDynamicRouterAndRegister.
  * @module
  */
 
@@ -11,11 +11,10 @@ import type { NormalizedMessage, SessionKey, MemoryEntry, AppContainer, AppConfi
 import {
   formatSessionKey,
   runWithContext,
-  safePath,
   createDeliveryOrigin,
+  sanitizeLogString,
   systemNowMs,
 } from "@comis/core";
-import { existsSync, readFileSync } from "node:fs";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, CostTracker, GreetingGenerator } from "@comis/agent";
 import { parseSlashCommand } from "@comis/orchestrator";
@@ -101,99 +100,6 @@ export function setupRpcBridge(deps: {
   return { rpcCall, wireDispatch };
 }
 
-// Attachment marker extraction from pi-agent JSONL sessions ----------------
-
-interface AttachmentMarker {
-  content: string;
-  timestamp: number;
-}
-
-/**
- * Read the pi-agent JSONL session file and extract gateway attachment markers.
- * Returns `<!-- attachment:... -->` content strings for each successful
- * `message.attach` tool call targeting the gateway channel type.
- */
-export function extractAttachmentMarkers(
-  workspaceDir: string | undefined,
-  agentId: string,
-  channelId: string,
-  logger: { debug(obj: Record<string, unknown>, msg: string): void },
-): AttachmentMarker[] {
-  if (!workspaceDir) return [];
-  const jsonlPath = safePath(workspaceDir, "sessions", agentId, channelId, "default.jsonl");
-  if (!existsSync(jsonlPath)) return [];
-
-  try {
-    const raw = readFileSync(jsonlPath, "utf-8");
-    const lines = raw.split("\n").filter(Boolean);
-    const parsed = lines.map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
-
-    // Collect attachment tool calls (toolCall blocks with name "message", action "attach")
-    const attachCalls = new Map<string, { type: string; mimeType: string; fileName: string; caption: string }>();
-    const attachResults = new Map<string, string>(); // toolCallId → mediaId
-
-    for (const obj of parsed) {
-      if (obj.type !== "message") continue;
-      const msg = obj.message;
-      if (!msg) continue;
-
-      if (msg.role === "assistant" && Array.isArray(msg.content)) {
-        for (const block of msg.content) {
-          if ((block.type === "toolCall" || block.type === "tool_use") && block.name === "message") {
-            const args = block.arguments ?? block.input;
-            if (args?.action === "attach" && args?.channel_type === "gateway") {
-              attachCalls.set(block.id, {
-                type: (args.attachment_type as string) ?? "file",
-                mimeType: (args.mime_type as string) ?? "application/octet-stream",
-                fileName: (args.file_name as string) ?? "attachment",
-                caption: (args.caption as string) ?? "",
-              });
-            }
-          }
-        }
-      }
-
-      if (msg.role === "toolResult" || msg.role === "tool") {
-        const toolId = msg.toolCallId ?? msg.tool_use_id;
-        if (toolId && attachCalls.has(toolId)) {
-          let resultText = "";
-          if (typeof msg.content === "string") resultText = msg.content;
-          else if (Array.isArray(msg.content)) {
-            for (const part of msg.content) {
-              if (part.type === "text" && typeof part.text === "string") resultText += part.text;
-            }
-          }
-
-          // Result format: "Attachment delivered (mediaId: <uuid>)" or similar.
-          // Extract mediaId from the text. Match either "mediaId: xxx" or a bare UUID
-          // followed by ")" — covers both legacy and current formats.
-          const mediaIdMatch = resultText.match(/mediaId[:\s]+([a-f0-9-]+)/i) ??
-            resultText.match(/\b([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\b/i);
-          if (mediaIdMatch) attachResults.set(toolId, mediaIdMatch[1]);
-        }
-      }
-    }
-
-    // Build markers: for each successful attach, emit a `<!-- attachment:url -->` line
-    const markers: AttachmentMarker[] = [];
-    for (const [toolId, info] of attachCalls) {
-      const mediaId = attachResults.get(toolId);
-      if (!mediaId) continue;
-      const url = `/media/${mediaId}`;
-      const fileNameAttr = info.fileName ? ` fileName="${info.fileName.replace(/"/g, "\\\"")}"` : "";
-      const captionAttr = info.caption ? ` caption="${info.caption.replace(/"/g, "\\\"")}"` : "";
-      markers.push({
-        content: `<!-- attachment:type="${info.type}" mimeType="${info.mimeType}" url="${url}"${fileNameAttr}${captionAttr} -->`,
-        timestamp: systemNowMs(),
-      });
-    }
-    logger.debug({ agentId, channelId, markerCount: markers.length }, "Extracted attachment markers from JSONL");
-    return markers;
-  } catch {
-    return [];
-  }
-}
-
 // RPC adapter deps builder -------------------------------------------------
 
 /** Inputs the RPC adapter builder needs to wire each callback closure. */
@@ -266,7 +172,7 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
   return {
     isValidAgentId: (agentId: string) => !!agents[agentId],
     executeAgent: async (params) => {
-      // F-1: unknown agentId errors (clientFacing) vs silent paid-default fallback; absent defaults.
+      // An absent agent id defaults; an explicit unknown id must surface a client-facing error.
       const execAgentId = resolveExecAgentId(agents, (params as Record<string, unknown>).agentId as string | undefined, defaultAgentId);
       const connectionId = (params as Record<string, unknown>).connectionId as string | undefined;
 
@@ -305,98 +211,140 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
       };
 
       // Wrap in runWithContext so traceId propagates to all downstream logs
-      return runWithContext({
-        traceId: randomUUID(),
-        tenantId: sk.tenantId,
-        userId: sk.userId,
-        sessionKey: formatSessionKey(sk),
-        startedAt: systemNowMs(),
-        trustLevel,
-        deliveryOrigin: createDeliveryOrigin({
-          channelType: "gateway",
-          channelId: sk.channelId,
-          userId: sk.userId,
+      return runWithContext(
+        {
+          traceId: randomUUID(),
           tenantId: sk.tenantId,
-        }),
-      }, async () => {
-      // Assemble per-agent tools via three-tier pipeline (builtin + platform + skills)
-      const tools = await assembleToolsForAgent(execAgentId);
-      gatewayLogger.debug({ agentId: execAgentId, toolCount: tools.length, ...(connectionId && { connectionId }) }, "Tools assembled for agent");
-      const execStartMs = systemNowMs();
-      const execKey = msg.id;
-      activeExecutions.set(execKey, { agentId: execAgentId, startedAt: execStartMs });
-      let result;
-      try {
-      result = await getExecutor(execAgentId).execute(msg, sk, tools, params.onDelta, execAgentId, params.directives as CommandDirectives | undefined);
-      } finally {
-        activeExecutions.delete(execKey);
-      }
-      gatewayLogger.debug({
-        agentId: execAgentId,
-        durationMs: systemNowMs() - execStartMs,
-        tokensIn: result.tokensUsed.input,
-        tokensOut: result.tokensUsed.output,
-        tokensTotal: result.tokensUsed.total,
-        finishReason: result.finishReason,
-        responseLen: result.response?.length ?? 0,
-        toolCalls: result.stepsExecuted,
-        llmCalls: result.llmCalls,
-        sessionKey: formatSessionKey(sk),
-        estimatedCostUsd: result.cost.total,
-        ...(connectionId && { connectionId }),
-      }, "Agent execution complete");
+          userId: sk.userId,
+          sessionKey: formatSessionKey(sk),
+          ...(params.clientId && { clientId: params.clientId }),
+          startedAt: systemNowMs(),
+          trustLevel,
+          deliveryOrigin: createDeliveryOrigin({
+            channelType: "gateway",
+            channelId: sk.channelId,
+            userId: sk.userId,
+            tenantId: sk.tenantId,
+          }),
+        },
+        async () => {
+          // Assemble per-agent tools via three-tier pipeline (builtin + platform + skills)
+          const tools = await assembleToolsForAgent(execAgentId);
+          gatewayLogger.debug(
+            { agentId: execAgentId, toolCount: tools.length, ...(connectionId && { connectionId }) },
+            "Tools assembled for agent",
+          );
+          const userHistoryMessage = { role: "user", content: msg.text, timestamp: msg.timestamp };
+          let userHistoryPersisted = false;
+          try {
+            const existingSession = sessionStore.load(sk);
+            const messages: unknown[] = [...(existingSession?.messages ?? []), userHistoryMessage];
+            sessionStore.save(sk, messages, existingSession?.metadata);
+            userHistoryPersisted = true;
+            gatewayLogger.debug(
+              { agentId: execAgentId, sessionKey: formatSessionKey(sk), messageCount: messages.length },
+              "Gateway user history persisted",
+            );
+          } catch (error) {
+            gatewayLogger.warn({
+              err: sanitizeLogString(error instanceof Error ? error.message : String(error)),
+              sessionKey: formatSessionKey(sk),
+              step: "gateway-history-user",
+              hint: "Check SQLite session storage health and available disk space",
+              errorKind: "resource" as const,
+            }, "Gateway session history persistence failed");
+            container.eventBus.emit("system:error", {
+              error: new Error("Gateway session history persistence failed"),
+              source: "gateway-session-history",
+            });
+          }
+          const execStartMs = systemNowMs();
+          const execKey = msg.id;
+          activeExecutions.set(execKey, { agentId: execAgentId, startedAt: execStartMs });
+          let result;
+          try {
+            result = await getExecutor(execAgentId).execute(
+              msg,
+              sk,
+              tools,
+              params.onDelta,
+              execAgentId,
+              params.directives as CommandDirectives | undefined,
+            );
+          } finally {
+            activeExecutions.delete(execKey);
+          }
+          gatewayLogger.debug({
+            agentId: execAgentId,
+            durationMs: systemNowMs() - execStartMs,
+            tokensIn: result.tokensUsed.input,
+            tokensOut: result.tokensUsed.output,
+            tokensTotal: result.tokensUsed.total,
+            finishReason: result.finishReason,
+            responseLen: result.response?.length ?? 0,
+            toolCalls: result.stepsExecuted,
+            llmCalls: result.llmCalls,
+            sessionKey: formatSessionKey(sk),
+            estimatedCostUsd: result.cost.total,
+            ...(connectionId && { connectionId }),
+          }, "Agent execution complete");
 
-      // Bridge session history to SQLite (session.history RPC + /chat/history REST)
-      // and extract gateway attachment tool calls from the JSONL session so
-      // images/files persist across page navigations. Non-fatal on failure.
-      try {
-        const existingSession = sessionStore.load(sk);
-        const messages: unknown[] = existingSession?.messages ?? [];
-        messages.push({ role: "user", content: msg.text, timestamp: msg.timestamp });
-        const attachmentMarkers = extractAttachmentMarkers(
-          workspaceDirs.get(execAgentId),
-          execAgentId,
-          sk.channelId,
-          gatewayLogger,
-        );
-        // Deduplicate against existing /media/ URLs in session history
-        const existingText = messages.map((m) => (m as Record<string, unknown>).content ?? "").join("\n");
-        for (const marker of attachmentMarkers) {
-          const urlMatch = marker.content.match(/\/media\/[^"]+/);
-          if (urlMatch && (existingText as string).includes(urlMatch[0])) continue;
-          messages.push({ role: "assistant", content: marker.content, timestamp: marker.timestamp });
-        }
-        if (result.response) {
-          messages.push({ role: "assistant", content: result.response, timestamp: systemNowMs() });
-        }
-        sessionStore.save(sk, messages);
-        gatewayLogger.debug(
-          { agentId: execAgentId, sessionKey: formatSessionKey(sk), messageCount: messages.length, attachments: attachmentMarkers.length },
-          "Session history bridged to SQLite store",
-        );
-      } catch {
-        // Session history bridging is non-fatal
-      }
+          // Attachment delivery persists its marker during execution. Reloading
+          // here preserves the ordered user → attachment → response sequence.
+          if (result.response) {
+            try {
+              const existingSession = sessionStore.load(sk);
+              const messages: unknown[] = [...(existingSession?.messages ?? [])];
+              if (!userHistoryPersisted) {
+                const hasUserMessage = messages.some((message) => {
+                  const candidate = message as Partial<typeof userHistoryMessage>;
+                  return candidate.role === userHistoryMessage.role
+                    && candidate.content === userHistoryMessage.content
+                    && candidate.timestamp === userHistoryMessage.timestamp;
+                });
+                if (!hasUserMessage) messages.unshift(userHistoryMessage);
+              }
+              messages.push({ role: "assistant", content: result.response, timestamp: systemNowMs() });
+              sessionStore.save(sk, messages, existingSession?.metadata);
+              gatewayLogger.debug(
+                { agentId: execAgentId, sessionKey: formatSessionKey(sk), messageCount: messages.length },
+                "Gateway response history persisted",
+              );
+            } catch (error) {
+              gatewayLogger.warn({
+                err: sanitizeLogString(error instanceof Error ? error.message : String(error)),
+                sessionKey: formatSessionKey(sk),
+                step: "gateway-history-response",
+                hint: "Check SQLite session storage health and available disk space",
+                errorKind: "resource" as const,
+              }, "Gateway session history persistence failed");
+              container.eventBus.emit("system:error", {
+                error: new Error("Gateway session history persistence failed"),
+                source: "gateway-session-history",
+              });
+            }
+          }
 
-      // Token usage captured via PiEventBridge observability:token_usage → tokenTracker bus.
-      // Conversation memory persistence handled by PiExecutor.
-      // Emit message events for activity tracking (REST/WebSocket parity with channels).
-      container.eventBus.emit("message:received", { message: msg, sessionKey: sk });
-      if (result.response) {
-        container.eventBus.emit("message:sent", {
-          channelId: sk.channelId,
-          messageId: randomUUID(),
-          content: result.response,
-        });
-      }
+          // Token usage captured via PiEventBridge observability:token_usage → tokenTracker bus.
+          // Conversation memory persistence handled by PiExecutor.
+          // Emit message events for activity tracking (REST/WebSocket parity with channels).
+          container.eventBus.emit("message:received", { message: msg, sessionKey: sk });
+          if (result.response) {
+            container.eventBus.emit("message:sent", {
+              channelId: sk.channelId,
+              messageId: randomUUID(),
+              content: result.response,
+            });
+          }
 
-      return {
-        response: result.response,
-        tokensUsed: result.tokensUsed,
-        finishReason: result.finishReason,
-        sessionKey: params.sessionKey?.channelId ?? "gateway",
-      };
-      });
+          return {
+            response: result.response,
+            tokensUsed: result.tokensUsed,
+            finishReason: result.finishReason,
+            sessionKey: params.sessionKey?.channelId ?? "gateway",
+          };
+        },
+      );
     },
     searchMemory: async (params) => {
       const results = await memoryApi.search(params.query, {

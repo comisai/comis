@@ -4,14 +4,15 @@ description: "Manage security settings, audit logs, approval gates, and gateway 
 icon: "shield-check"
 ---
 
-The Security view is your command center for reviewing what your agents are doing and controlling what they are allowed to do. Approvals, audit, tokens, secrets, and policy all live on this single page -- the dedicated **Approvals** sidebar item now redirects here (the standalone approvals view has been merged in to keep approval rules and the pending queue side-by-side).
+The Security view is the dashboard for reviewing agent security events and controlling what agents may do. Approvals, audit, tokens, secrets, and policy live on this page.
 
 **Who it's for:** anyone responsible for "what can the agents see and do?" -- from rotating API tokens to approving a sensitive shell command.
 
 ## Routes
 
 - `/security` -- the Security view (default tab: Security Events)
-- `/approvals` -- redirects to the Pending Approvals tab on `/security`
+
+The notification bell opens this view on the Pending Approvals tab when action is required.
 
 ## Backing RPC
 
@@ -99,10 +100,6 @@ The Pending Approvals tab shows a queue of actions waiting for human approval. E
 
 Each pending item has **Approve** and **Deny** buttons for your decision.
 
-<Info>
-The Pending Approvals tab provides the same functionality as the **Approvals** sidebar item. Both routes lead to the same approval queue.
-</Info>
-
 ### Provider Health Tab
 
 The Provider Health tab shows the health status of your configured AI providers. It displays:
@@ -115,7 +112,7 @@ This tab is useful for diagnosing provider outages or degraded performance.
 
 ## Approvals
 
-When an agent wants to perform a sensitive or destructive action, it does not just go ahead -- it asks for permission first. The Approvals page (a separate item in the sidebar) is where you manage these permission requests. The **Pending Approvals** tab in the Security view provides the same approval queue functionality.
+When an agent requests permission for a sensitive or destructive action, manage it from the **Pending Approvals** tab in Security.
 
 ### Pending Queue
 
@@ -145,7 +142,7 @@ The Rules section lets you configure how the approval system behaves:
     Go to the **API Tokens** tab. Enter a name for the token, select the scopes it needs (rpc, ws, or admin), then click **Generate**. Copy the token immediately -- it will not be shown again.
   </Step>
   <Step title="Approve a pending action">
-    Click **Approvals** in the sidebar, or go to the **Pending Approvals** tab on the Security page. Review the pending request card to understand what the agent wants to do and why. Click **Approve** to allow it or **Deny** to block it.
+    Open **Security**, then select **Pending Approvals** (or use the notification bell). Review the request and click **Approve** or **Deny**.
   </Step>
 </Steps>
 

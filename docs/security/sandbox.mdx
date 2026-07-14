@@ -1,10 +1,13 @@
 ---
 title: "Skill Sandboxing"
-description: "How Comis isolates skills to prevent malicious or compromised code from causing harm"
+description: "Application-level checks for prompt skills and configured integrations"
 icon: "box"
 ---
 
-When you add custom skills to your agents -- prompt templates, MCP integrations, or third-party tools -- Comis runs them through multiple layers of protection. Before a skill loads, its content is scanned for threats. Before it executes, dangerous patterns are sanitized. During execution, tool access is restricted to only what the skill needs. This multi-layer approach means even a compromised skill cannot harm your system.
+Comis applies application-level checks to prompt skills and configured tool
+integrations. These controls reduce risk, but they are not an operating-system
+boundary and do not make untrusted code safe. The default tool-policy profile is
+`full`; choose a narrower profile before exposing an agent to untrusted input.
 
 <Note>
 **Two different sandboxes.** Comis has two distinct sandbox concepts that are
@@ -33,11 +36,14 @@ The sandboxing system is designed to catch a range of threats:
 - **Data exfiltration** -- A skill that tries to send your data to external servers
 - **Prompt injection via skills** -- A skill that contains hidden instructions to override agent behavior
 
-Even if you trust your skill sources today, the sandbox ensures that a future compromise -- whether from a supply chain attack or accidental misconfiguration -- does not put your system at risk.
+These controls limit common failure modes, but an MCP server or other executable
+integration must still be reviewed and operated as third-party code.
 
 ## How the Sandbox Works
 
-The sandboxing process is automatic. When an agent loads a skill, Comis runs it through a pipeline of checks before the skill can execute. You do not need to invoke the sandbox manually -- it is always active for all skills.
+Content scanning and sanitization run as skills are loaded. Tool access is then
+governed by the configured policy; because the default profile is `full`, a
+production deployment should select an explicit least-privilege profile.
 
 The key principle is defense in depth: each layer catches a different type of threat, so a skill must pass all of them to execute. A threat that slips past one layer is caught by the next.
 
@@ -223,13 +229,19 @@ A confined agent must not be able to escalate by *delegation* — spawning a sub
 
 ## MCP Server Sandboxing
 
-MCP (Model Context Protocol) integrations connect your agents to external tools and data sources. Because MCP servers run as separate processes, they receive the same sandboxing treatment as other skills:
+MCP (Model Context Protocol) integrations connect your agents to external tools
+and data sources. A stdio MCP server is a separate process and runs **outside**
+the `system.exec` OS sandbox, with the privileges of the daemon account. Comis
+can still apply application-level controls:
 
 - **Content scanning** applies to the MCP server manifest and tool descriptions
 - **Tool policy** controls which MCP tools your agents can use
-- **Execution constraints** apply to MCP tool calls just like built-in tool calls
+- **Eligibility and result checks** constrain which advertised tools are exposed
+  and sanitize returned content
 
-If an MCP server exposes a tool that your agent's policy does not allow, the tool is silently unavailable. The agent cannot discover or use it.
+If policy excludes an MCP tool, it is not exposed to the agent. Treat the server
+executable, its dependencies, and its host permissions as part of your trusted
+deployment surface.
 
 For MCP integration details, see [MCP](/skills/mcp).
 

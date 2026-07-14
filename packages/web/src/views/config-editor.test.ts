@@ -181,6 +181,8 @@ function priv(el: IcConfigEditor) {
     _applying: boolean;
     _expandedPaths: Set<string>;
     _expandedFormPaths: Set<string>;
+    _activeTab: string;
+    _gatewayConfig: Record<string, unknown> | null;
   };
 }
 
@@ -286,6 +288,15 @@ describe("parseYaml", () => {
 /* ------------------------------------------------------------------ */
 
 describe("IcConfigEditor - Section Navigation", () => {
+  it("does not expose the unsupported browser setup wizard", async () => {
+    const rpcClient = createConfigMockRpcClient();
+    const el = await createElement({ rpcClient });
+    await flush(el);
+
+    expect(el.shadowRoot?.textContent).not.toContain("Setup Wizard");
+    expect(el.shadowRoot?.querySelector(".wizard-btn")).toBeNull();
+  });
+
   it("renders section sidebar with section names", async () => {
     const rpcClient = createConfigMockRpcClient();
     const el = await createElement({ rpcClient });
@@ -334,16 +345,17 @@ describe("IcConfigEditor - Section Navigation", () => {
 /* ------------------------------------------------------------------ */
 
 describe("IcConfigEditor - Mode Tabs", () => {
-  it("renders 3 mode buttons", async () => {
+  it("offers only schema-backed configuration modes", async () => {
     const rpcClient = createConfigMockRpcClient();
     const el = await createElement({ rpcClient });
     await flush(el);
 
     const modeBtns = el.shadowRoot?.querySelectorAll(".mode-btn");
-    expect(modeBtns?.length).toBe(3);
-    expect(modeBtns?.[0]?.textContent?.trim()).toBe("Form");
-    expect(modeBtns?.[1]?.textContent?.trim()).toBe("YAML");
-    expect(modeBtns?.[2]?.textContent?.trim()).toBe("Schema");
+    expect(Array.from(modeBtns ?? []).map((button) => button.textContent?.trim())).toEqual([
+      "Form",
+      "Schema",
+    ]);
+    expect(el.shadowRoot?.querySelector(".yaml-textarea")).toBeNull();
   });
 
   it("form mode is active by default", async () => {
@@ -357,27 +369,13 @@ describe("IcConfigEditor - Mode Tabs", () => {
     expect(activeBtns?.[0]?.textContent?.trim()).toBe("Form");
   });
 
-  it("clicking YAML mode switches to YAML view", async () => {
-    const rpcClient = createConfigMockRpcClient();
-    const el = await createElement({ rpcClient });
-    await flush(el);
-
-    const modeBtns = el.shadowRoot?.querySelectorAll(".mode-btn");
-    (modeBtns?.[1] as HTMLElement)?.click();
-    await (el as any).updateComplete;
-
-    expect(priv(el)._mode).toBe("yaml");
-    const textarea = el.shadowRoot?.querySelector(".yaml-textarea");
-    expect(textarea).toBeTruthy();
-  });
-
   it("clicking Schema mode switches to schema tree view", async () => {
     const rpcClient = createConfigMockRpcClient();
     const el = await createElement({ rpcClient });
     await flush(el);
 
     const modeBtns = el.shadowRoot?.querySelectorAll(".mode-btn");
-    (modeBtns?.[2] as HTMLElement)?.click();
+    (modeBtns?.[1] as HTMLElement)?.click();
     await (el as any).updateComplete;
 
     expect(priv(el)._mode).toBe("schema");
@@ -391,6 +389,20 @@ describe("IcConfigEditor - Mode Tabs", () => {
 /* ------------------------------------------------------------------ */
 
 describe("IcConfigEditor - Form Mode", () => {
+  it("associates schema field labels with their controls", async () => {
+    const rpcClient = createConfigMockRpcClient();
+    const el = await createElement({ rpcClient });
+    await flush(el);
+
+    const form = el.shadowRoot?.querySelector("ic-schema-form");
+    const labels = Array.from(form?.shadowRoot?.querySelectorAll("label.form-label") ?? []) as HTMLLabelElement[];
+    expect(labels.length).toBeGreaterThan(0);
+    for (const label of labels) {
+      expect(label.htmlFor).not.toBe("");
+      expect(form?.shadowRoot?.getElementById(label.htmlFor)).not.toBeNull();
+    }
+  });
+
   it("renders text input for string schema properties", async () => {
     const rpcClient = createConfigMockRpcClient();
     const el = await createElement({ rpcClient });
@@ -452,68 +464,6 @@ describe("IcConfigEditor - Form Mode", () => {
       await (el as any).updateComplete;
       expect(priv(el)._dirty).toBe(true);
     }
-  });
-});
-
-/* ------------------------------------------------------------------ */
-/*  YAML Mode                                                          */
-/* ------------------------------------------------------------------ */
-
-describe("IcConfigEditor - YAML Mode", () => {
-  it("renders monospace textarea with YAML content", async () => {
-    const rpcClient = createConfigMockRpcClient();
-    const el = await createElement({ rpcClient });
-    await flush(el);
-
-    // Switch to YAML mode
-    priv(el)._mode = "yaml";
-    await (el as any).updateComplete;
-
-    const textarea = el.shadowRoot?.querySelector(".yaml-textarea") as HTMLTextAreaElement;
-    expect(textarea).toBeTruthy();
-    expect(textarea?.value?.length).toBeGreaterThan(0);
-  });
-
-  it("textarea contains serialized config for selected section", async () => {
-    const rpcClient = createConfigMockRpcClient();
-    const el = await createElement({ rpcClient });
-    await flush(el);
-
-    priv(el)._mode = "yaml";
-    await (el as any).updateComplete;
-
-    const textarea = el.shadowRoot?.querySelector(".yaml-textarea") as HTMLTextAreaElement;
-    // Should contain agents section data
-    expect(textarea?.value).toContain("id");
-    expect(textarea?.value).toContain("default");
-  });
-
-  it("invalid YAML shows parse error message", async () => {
-    const rpcClient = createConfigMockRpcClient();
-    const el = await createElement({ rpcClient });
-    await flush(el);
-
-    priv(el)._mode = "yaml";
-    priv(el)._yamlText = "invalid: [unclosed";
-    priv(el)._yamlErrors = ["Parse error"];
-    await (el as any).updateComplete;
-
-    const errorPanel = el.shadowRoot?.querySelector(".yaml-validation--error");
-    expect(errorPanel).toBeTruthy();
-  });
-
-  it("valid YAML shows success indicator", async () => {
-    const rpcClient = createConfigMockRpcClient();
-    const el = await createElement({ rpcClient });
-    await flush(el);
-
-    priv(el)._mode = "yaml";
-    priv(el)._yamlErrors = [];
-    await (el as any).updateComplete;
-
-    const successPanel = el.shadowRoot?.querySelector(".yaml-validation--valid");
-    expect(successPanel).toBeTruthy();
-    expect(successPanel?.textContent).toContain("Valid");
   });
 });
 
@@ -615,6 +565,7 @@ describe("IcConfigEditor - Apply", () => {
     await flush(el);
 
     expect(priv(el)._dirty).toBe(false);
+    expect(el.shadowRoot?.querySelector(".rollback-btn")).toBeNull();
   });
 
   it("failed apply shows error toast", async () => {
@@ -645,7 +596,7 @@ describe("IcConfigEditor - Apply", () => {
 /*  Import / Export                                                    */
 /* ------------------------------------------------------------------ */
 
-describe("IcConfigEditor - Import/Export", () => {
+describe("IcConfigEditor - Export", () => {
   it("export button triggers file download", async () => {
     const rpcClient = createConfigMockRpcClient();
     const el = await createElement({ rpcClient });
@@ -658,7 +609,8 @@ describe("IcConfigEditor - Import/Export", () => {
     URL.createObjectURL = vi.fn(() => mockUrl);
     URL.revokeObjectURL = vi.fn();
 
-    const exportBtn = el.shadowRoot?.querySelectorAll(".secondary-btn")?.[1] as HTMLButtonElement;
+    const exportBtn = Array.from(el.shadowRoot?.querySelectorAll(".secondary-btn") ?? [])
+      .find((button) => button.textContent?.trim() === "Export") as HTMLButtonElement | undefined;
     expect(exportBtn?.textContent?.trim()).toBe("Export");
 
     // Mock anchor click
@@ -683,20 +635,15 @@ describe("IcConfigEditor - Import/Export", () => {
     vi.restoreAllMocks();
   });
 
-  it("import button triggers file input click", async () => {
+  it("does not expose browser-side configuration import", async () => {
     const rpcClient = createConfigMockRpcClient();
     const el = await createElement({ rpcClient });
     await flush(el);
 
-    const hiddenInput = el.shadowRoot?.querySelector(".hidden-input") as HTMLInputElement;
-    const clickSpy = vi.fn();
-    hiddenInput.click = clickSpy;
-
-    const importBtn = el.shadowRoot?.querySelectorAll(".secondary-btn")?.[0] as HTMLButtonElement;
-    expect(importBtn?.textContent?.trim()).toBe("Import");
-
-    importBtn?.click();
-    expect(clickSpy).toHaveBeenCalled();
+    const actionLabels = Array.from(el.shadowRoot?.querySelectorAll("button") ?? [])
+      .map((button) => button.textContent?.trim());
+    expect(actionLabels).not.toContain("Import");
+    expect(el.shadowRoot?.querySelector(".hidden-input")).toBeNull();
   });
 });
 
@@ -740,5 +687,22 @@ describe("IcConfigEditor - Loading States", () => {
 
     const title = el.shadowRoot?.querySelector(".view-title");
     expect(title?.textContent).toContain("Settings");
+  });
+});
+
+describe("IcConfigEditor - Gateway accessibility", () => {
+  it("associates gateway labels with host and port controls", async () => {
+    const rpcClient = createConfigMockRpcClient();
+    const el = await createElement({ rpcClient });
+    await flush(el);
+    priv(el)._activeTab = "gateway";
+    priv(el)._gatewayConfig = { enabled: true, host: "127.0.0.1", port: 3000, cors: {}, tokens: [] };
+    await (el as any).updateComplete;
+
+    const labels = Array.from(el.shadowRoot?.querySelectorAll("label.gateway-label") ?? []) as HTMLLabelElement[];
+    expect(labels.map((label) => label.htmlFor)).toEqual(["gateway-host", "gateway-port"]);
+    for (const label of labels) {
+      expect(el.shadowRoot?.getElementById(label.htmlFor)).not.toBeNull();
+    }
   });
 });

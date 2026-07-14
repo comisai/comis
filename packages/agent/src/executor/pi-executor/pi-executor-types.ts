@@ -287,6 +287,9 @@ export interface PiExecutorDeps {
    *  Consumer: normalizeModelCompat auto-detection. Resolver form (not a static
    *  value) because per-execution model overrides can switch providers mid-agent. */
   getProviderType?: (provider: string) => string | undefined;
+  /** Resolve the explicit providers.entries credential name. Consumer:
+   *  resolveProviderApiKey, where it disables unrelated OAuth/env fallback. */
+  getProviderApiKeyName?: (provider: string) => string | undefined;
   /** Resolve a model's user-declared comisCompat from providers.entries.<provider>.models[].
    *  Consumer: normalizeModelCompat (closes the built-but-not-wired comisCompat gap). */
   getModelCompat?: (provider: string, modelId: string) => import("@comis/core").ModelCompatConfig | undefined;

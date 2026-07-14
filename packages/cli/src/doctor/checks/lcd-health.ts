@@ -171,16 +171,15 @@ function scanFtsDrift(db: Database.Database): DoctorFinding[] {
   ];
 }
 
-// ── Scan class 5: R4 scope anomalies ─────────────────────────────────────────
+// ── Scan class 5: tenant and agent scope integrity ───────────────────────────
 
 /**
  * Detect lcd_messages or lcd_summaries rows with NULL tenant_id or agent_id.
  *
- * These violate the R4 isolation scope invariant (every row must carry its
- * tenant/agent scope) — affected rows will be invisible to scope-filtered
- * queries and may leak across agent boundaries.
+ * Every row must carry its tenant and agent scope. Affected rows are invisible
+ * to scope-filtered queries and may leak across agent boundaries.
  */
-function scanR4Anomalies(db: Database.Database): DoctorFinding[] {
+function scanScopeAnomalies(db: Database.Database): DoctorFinding[] {
   const row = db
     .prepare(`
       SELECT
@@ -194,12 +193,15 @@ function scanR4Anomalies(db: Database.Database): DoctorFinding[] {
 
   if (msgNulls + sumNulls === 0) return [];
 
+  const messageLabel = msgNulls === 1 ? "message" : "messages";
+  const summaryLabel = sumNulls === 1 ? "summary" : "summaries";
+
   return [
     {
       category: CATEGORY,
-      check: "R4 scope anomalies",
+      check: "LCD scope integrity",
       status: "fail",
-      message: `R4 scope anomalies: ${msgNulls} messages + ${sumNulls} summaries with NULL tenant_id or agent_id`,
+      message: `LCD scope integrity failure: ${msgNulls} ${messageLabel} + ${sumNulls} ${summaryLabel} have a missing tenant_id or agent_id`,
       suggestion: "Investigate write paths that omit tenant_id/agent_id scoping",
       repairable: false,
     },
@@ -262,7 +264,7 @@ function scanCursorInconsistencies(db: Database.Database): DoctorFinding[] {
  *   2. Dangling context_item refs (ref_id points nowhere)
  *   3. Fallback-marker summaries (fallback=1, quality debt)
  *   4. FTS row-count drift (when FTS5 tables are present)
- *   5. R4 scope anomalies (NULL tenant_id or agent_id)
+ *   5. Tenant and agent scope integrity (NULL tenant_id or agent_id)
  *   6. lcd_ingest_cursor over-count (ingested_live_len > persisted msg count)
  *
  * Returns [] when memory.db is absent (new-install safe).
@@ -289,7 +291,7 @@ export const lcdHealthCheck: DoctorCheck = {
       findings.push(...scanDanglingRefs(db));
       findings.push(...scanFallbackMarkers(db));
       findings.push(...scanFtsDrift(db));
-      findings.push(...scanR4Anomalies(db));
+      findings.push(...scanScopeAnomalies(db));
       findings.push(...scanCursorInconsistencies(db));
 
       // If all six scan classes came back clean, report healthy

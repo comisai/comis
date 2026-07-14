@@ -346,8 +346,8 @@ describe("lcdHealthCheck", () => {
     }
   });
 
-  // Scan class 5 — R4 scope anomalies (NULL tenant_id or agent_id)
-  it("detects R4 scope anomalies — messages with NULL tenant_id produce a fail finding", async () => {
+  // Scope-integrity scan (NULL tenant_id or agent_id)
+  it("reports a clear scope-integrity failure when a message has no tenant id", async () => {
     const { dataDir, db } = makeTempDb();
     // The real schema declares tenant_id/agent_id NOT NULL, so a NULL scope
     // value cannot be inserted directly. Recreate the table without those
@@ -375,9 +375,12 @@ describe("lcdHealthCheck", () => {
     db.close();
 
     const findings = await lcdHealthCheck.run(makeCtx(dataDir));
-    const f = findings.find((x) => x.status === "fail" && (x.message.includes("R4") || x.message.includes("NULL") || x.message.includes("anomal")));
+    const f = findings.find((x) => x.check === "LCD scope integrity");
     expect(f).toBeDefined();
     expect(f!.status).toBe("fail");
+    expect(f!.message).toBe(
+      "LCD scope integrity failure: 1 message + 0 summaries have a missing tenant_id or agent_id",
+    );
     expect(f!.repairable).toBe(false);
   });
 

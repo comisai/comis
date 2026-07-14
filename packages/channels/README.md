@@ -1,6 +1,6 @@
 # @comis/channels
 
-Chat platform adapters for the [Comis](https://github.com/comisai/comis) platform. Connects agents to 9 messaging platforms with unified message handling.
+Messaging adapters for the [Comis](https://github.com/comisai/comis) platform. Ten user-facing platforms share normalized inbound messages and a common delivery pipeline; Echo is a local testing adapter.
 
 ## Supported Platforms
 
@@ -15,6 +15,7 @@ Chat platform adapters for the [Comis](https://github.com/comisai/comis) platfor
 | **iMessage** | AppleScript bridge | Text, images, files |
 | **IRC** | [irc-framework](https://github.com/kiwiirc/irc-framework) | Text, actions |
 | **Email** | [imapflow](https://github.com/postalsys/imapflow) + [nodemailer](https://nodemailer.com/) | Full email with threading, attachments, HTML |
+| **Microsoft Teams** | Microsoft Bot Framework APIs | Text, cards, reactions, files, replies, proactive delivery |
 | **Echo** | Mock adapter | Testing and development |
 
 ## What's Inside
@@ -45,7 +46,7 @@ Composable `createXxxPlugin()` factories enable runtime channel registration. Ea
 
 ## Part of Comis
 
-This package is part of the [Comis](https://github.com/comisai/comis) monorepo -- a security-first AI agent platform connecting agents to Discord, Telegram, Slack, WhatsApp, and more.
+This package is part of [Comis](https://github.com/comisai/comis), an open-source, security-first platform for AI agent teams.
 
 ```bash
 npm install comisai

@@ -13,7 +13,9 @@ is working.
 
 ## Quick health check
 
-Run these three commands in order. If all three pass, your installation is healthy.
+Run these checks in order. A passing gateway check does not prove that every
+provider, channel, or security control is configured; use `comis doctor` for the
+broader assessment.
 
 **Check 1 -- CLI health:**
 
@@ -21,13 +23,8 @@ Run these three commands in order. If all three pass, your installation is healt
 comis health
 ```
 
-Expected output when everything is working:
-
-```
-All checks passed
-```
-
-If there are issues, you will see them listed by category with suggested fixes.
+By default, this command shows health issues. Use `comis health --all` to include
+passing checks, or `--format json` for automation.
 
 **Check 2 -- System status:**
 
@@ -35,24 +32,8 @@ If there are issues, you will see them listed by category with suggested fixes.
 comis status
 ```
 
-Expected output:
-
-```
-  Daemon
-  Status    online
-  Uptime    2m 30s
-
-  Gateway
-  Status    online
-  Address   127.0.0.1:4766
-
-  Channels
-  No channels configured
-
-  Agents
-  Name      Provider    Model                        Bindings
-  default   anthropic   claude-sonnet-4-5-20250929     -
-```
+Confirm that the daemon and gateway are online and that the expected agents and
+channels are listed. Exact fields depend on the configuration.
 
 **Check 3 -- Gateway endpoint:**
 
@@ -67,7 +48,7 @@ Expected response:
 ```
 
 <Tip>
-If all three checks pass, your installation is healthy. Open
+If all three checks pass, the core local path is responding. Open
 `http://localhost:4766` in your browser to start chatting with your agent.
 </Tip>
 
@@ -79,38 +60,18 @@ For a comprehensive check across all subsystems, run the doctor command:
 comis doctor
 ```
 
-The doctor runs checks in five categories:
+The doctor currently covers ten subsystems:
 
 | Category | What it verifies |
 |----------|-----------------|
-| **Config** | YAML syntax, required fields, valid provider settings |
-| **Daemon** | Background process is running and responsive |
-| **Gateway** | HTTP server is listening on the configured port |
-| **Channel** | Connectivity for each configured channel |
-| **Workspace** | File permissions, data directory structure |
+| **Configuration and version skew** | Schema validity and package compatibility |
+| **Daemon and gateway** | Process and local API health |
+| **Channels and Teams** | General channel checks and Teams-specific health |
+| **Workspace and LCD** | Workspace plus lossless context/session storage |
+| **OAuth and secrets audit** | Credential-profile health and plaintext exposure |
 
-Expected output when all checks pass:
-
-```
-  Category     Status   Details
-  Config       pass     Configuration is valid
-  Daemon       pass     Daemon is running (PID: 12345)
-  Gateway      pass     Gateway listening on 127.0.0.1:4766
-  Channel      pass     No channels configured
-  Workspace    pass     Data directory OK
-```
-
-If a check fails, the output includes the specific error and a suggested fix:
-
-```
-  Category     Status   Details
-  Config       pass     Configuration is valid
-  Daemon       pass     Daemon is running (PID: 12345)
-  Gateway      fail     Gateway not responding on 127.0.0.1:4766
-                        → Check if port 4766 is available
-  Channel      pass     No channels configured
-  Workspace    pass     Data directory OK
-```
+Use `comis doctor --format json` for machine-readable output. A failing check
+includes a remediation hint.
 
 <Info>
 If doctor finds fixable issues, run `comis doctor --repair` to attempt
@@ -126,8 +87,7 @@ Run a security check to verify your installation follows best practices:
 comis security audit
 ```
 
-The audit runs all checks and reports findings by severity: critical, high,
-medium, and low.
+The audit reports findings at `critical`, `warning`, and `info` severity.
 
 <Info>
 For details on each security check and how to resolve findings, see
@@ -141,7 +101,7 @@ For details on each security check and how to resolve findings, see
 | Config | YAML syntax, required fields | Run `comis config validate` for details |
 | Daemon | Background process is running | Run `comis daemon start` |
 | Gateway | HTTP server listening on port | Check port 4766 availability |
-| Channel | Platform bot tokens are valid | Re-enter token in config or `.env` |
+| Channel | Platform configuration and connectivity | Update the named secret with `comis secrets set` or the configured external secret source |
 | Workspace | File permissions, data directory | Run `comis doctor --repair` |
 
 ## Common problems
@@ -177,7 +137,7 @@ For details on each security check and how to resolve findings, see
     1. Run `comis config validate` to see the exact error with line number
     2. Common YAML issues: incorrect indentation, missing quotes around special
        characters, tabs instead of spaces
-    3. Verify all `${VAR}` references have matching entries in your `.env` file
+    3. Verify all `${VAR}` references resolve through `comis secrets list` or the configured external secret source
   </Accordion>
 
   <Accordion title="Channel disconnected">
@@ -185,7 +145,7 @@ For details on each security check and how to resolve findings, see
 
     **Fix:**
 
-    1. Verify the bot token is correct in your `.env` file
+    1. Verify the named bot token is available through the active secret backend
     2. Check that the bot has not been deactivated on the platform
     3. Confirm network connectivity to the platform API
     4. For Telegram: make sure the bot token is from [@BotFather](https://t.me/BotFather)

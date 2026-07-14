@@ -1055,7 +1055,7 @@ describe("buildFindings — summary_language_mismatch dedicated finding", () => 
 });
 
 describe("buildFindings — generation_quality dedicated finding", () => {
-  it("rolls up the memory-generation passes to one count whose hint names the memory-ops capability override", async () => {
+  it("rolls up memory-generation passes and names the provider capability class setting", async () => {
     const now = systemNowMs();
     const store = makeStore();
     // Mixed passes + issue flags — all roll into the one generation_quality count.
@@ -1082,8 +1082,9 @@ describe("buildFindings — generation_quality dedicated finding", () => {
     const finding = report.findings.find((f) => f.code === "generation_quality");
     expect(finding).toBeDefined();
     expect(finding?.count).toBe(3);
-    expect(finding?.hint).toMatch(/capabilityClass/);
-    expect(finding?.hint).toMatch(/memory/i);
+    expect(finding?.hint).toContain(
+      "pin providers.entries.<id>.capabilities.capabilityClass to frontier or mid for memory operations",
+    );
     // No double-report via the generic health_signal:<label> rollup.
     expect(report.findings.some((f) => f.code === "health_signal:generation_quality")).toBe(false);
   });

@@ -96,19 +96,14 @@ const ConfigWebhookSchema = z.strictObject({
 /**
  * Daemon process configuration schema.
  *
- * Controls watchdog heartbeat, graceful shutdown, metrics collection,
- * per-module log level overrides, and log file rotation for the
- * systemd-managed daemon.
+ * Controls graceful shutdown, metrics collection, per-module log level
+ * overrides, log file rotation, and config-change webhooks.
  */
 export const DaemonConfigSchema = z.strictObject({
-    /** WatchdogSec value in milliseconds (default: 30000, set 0 to disable) */
-    watchdogIntervalMs: z.number().int().nonnegative().default(30_000),
     /** Graceful shutdown timeout in milliseconds */
     shutdownTimeoutMs: z.number().int().positive().default(30_000),
     /** Process metrics collection interval in milliseconds */
     metricsIntervalMs: z.number().int().positive().default(30_000),
-    /** Event loop delay threshold in ms — skip watchdog ping if exceeded */
-    eventLoopDelayThresholdMs: z.number().positive().default(500),
     /** Per-module log level overrides (module name -> level) */
     logLevels: z
       .record(z.string(), z.enum(["trace", "debug", "info", "warn", "error", "fatal"]))

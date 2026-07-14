@@ -33,8 +33,8 @@ is happening inside your installation.
 These pages cover how to run Comis in production with different process managers
 and reverse proxies.
 
-- **[systemd](/operations/systemd)** -- Running Comis as a Linux system service with automatic restarts and watchdog monitoring.
-- **[Docker](/operations/docker)** -- Production-ready container setup with health checks and volume management.
+- **[systemd](/operations/systemd)** -- Running Comis as a Linux system service with automatic restarts and health checks.
+- **[Docker](/operations/docker)** -- Container deployment with health checks and persistent volumes.
 - **[Docker Hub](/operations/docker-hub)** -- Pull official images from Docker Hub and the multi-arch tag scheme.
 - **[pm2](/operations/pm2)** -- Using the pm2 process manager for easy start/stop/restart workflows.
 - **[Reverse Proxy](/operations/reverse-proxy)** -- Putting Comis behind Nginx or Caddy with TLS termination.
@@ -155,7 +155,7 @@ understand how the background process works. Then visit
     Running Comis as a Linux system service.
   </Card>
   <Card title="Docker" icon="docker" href="/operations/docker">
-    Production-ready container setup.
+    Container setup, health checks, and persistent data.
   </Card>
   <Card title="Docker Hub" icon="box-open" href="/operations/docker-hub">
     Pull official `comisai/comis` images.

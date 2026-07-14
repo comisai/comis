@@ -17,10 +17,10 @@
  * @module
  */
 
-/** Tools denied to ALL sub-agents — management operations that trigger
- *  SIGUSR2 daemon restart, destructive config mutations, or session purge. */
+/** Tools denied to ALL sub-agents because they expose control-plane changes,
+ * destructive mutations, credential flows, or data purges. */
 export const SUB_AGENT_TOOL_DENYLIST: ReadonlySet<string> = new Set([
-  "gateway",          // config.patch, gateway.restart, config.rollback, env.set -> SIGUSR2
+  "gateway",          // config changes, restart, rollback, and secret writes
   "channels_manage",  // channels.restart, config.patch -> SIGUSR2
   "agents_manage",    // agent create/delete -> config persistence -> SIGUSR2
   "models_manage",    // model config changes -> config persistence -> SIGUSR2

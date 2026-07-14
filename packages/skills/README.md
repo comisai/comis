@@ -6,11 +6,11 @@ Skill system, MCP integration, built-in tools, and media processing for [Comis](
 
 ### Skill Registry
 
-Modular prompt packages that give agents specialized knowledge, workflows, and persona traits. Skills are loaded from markdown files with runtime eligibility filtering, dynamic context injection, and file watching for live reload. Content scanning prevents injection attacks in skill definitions.
+Modular prompt packages give agents specialized knowledge and workflows. Skills are loaded from Markdown files with runtime eligibility filtering, dynamic context injection, and file watching for live reload. Content scanning checks skill definitions for prompt-injection patterns.
 
 ### MCP Client
 
-Full [Model Context Protocol](https://modelcontextprotocol.io/) integration with server configuration, connection management, tool translation, and credential injection.
+Outbound [Model Context Protocol](https://modelcontextprotocol.io/) client support for stdio, SSE, and Streamable HTTP servers, with connection management, tool/resource/prompt translation, filtering, OAuth, and credential injection.
 
 ### Built-in Tools
 
@@ -18,7 +18,7 @@ Full [Model Context Protocol](https://modelcontextprotocol.io/) integration with
 |----------|-------|
 | **Web** | Web search, web fetch |
 | **Files** | Read, write, patch, state tracking |
-| **Execution** | Sandboxed shell exec, process management |
+| **Execution** | Shell execution and process management with configurable host isolation |
 | **Memory** | Search, get, store (with trust partitioning) |
 | **Messaging** | Send messages, reply, react across channels |
 | **Scheduling** | Create/manage cron jobs |
@@ -37,11 +37,11 @@ Full [Model Context Protocol](https://modelcontextprotocol.io/) integration with
 
 ### Tool Policy
 
-5 named tool filtering profiles with per-agent allow/deny lists and progressive disclosure -- lean tool definitions are always present, detailed usage guides inject on first use.
+Named tool-filtering profiles combine per-agent allow/deny lists with progressive disclosure: compact tool definitions remain available while detailed usage guides are injected on demand.
 
 ## Part of Comis
 
-This package is part of the [Comis](https://github.com/comisai/comis) monorepo -- a security-first AI agent platform connecting agents to Discord, Telegram, Slack, WhatsApp, and more.
+This package is part of [Comis](https://github.com/comisai/comis), an open-source, security-first platform for AI agent teams.
 
 ```bash
 npm install comisai

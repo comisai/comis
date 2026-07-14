@@ -340,7 +340,7 @@ export class IcBillingView extends LitElement {
       this._loadState = "loaded";
       return;
     }
-    // Create the controller once the rpcClient is present (the setup-wizard mold).
+    // Create the controller once the RPC client is available.
     if (!this._controller) {
       this._controller = createBillingViewController(this.rpcClient);
     }

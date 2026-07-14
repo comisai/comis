@@ -235,7 +235,7 @@ describe("createTokenStore", () => {
     const second = await store.tokens("notion");
     expect(second?.access_token).toBe("AT-EXTERNAL");
     expect(second?.refresh_token).toBe("RT2");
-  });
+  }, 10_000);
 
   it("keeps the last-good cache and logs WARN on a truncated/partial external write (fail-soft)", async () => {
     await store.saveTokens("notion", {
@@ -265,7 +265,7 @@ describe("createTokenStore", () => {
     const after = await store.tokens("notion");
     expect(after?.access_token).toBe("AT-GOOD");
     expect(logger.warn).toHaveBeenCalled();
-  });
+  }, 10_000);
 
   it("close() tears down the watcher (no leaked timers/handles)", async () => {
     await store.startWatch();

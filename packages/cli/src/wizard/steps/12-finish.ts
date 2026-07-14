@@ -6,7 +6,7 @@
  * gateway access info (URLs), the full access token with a secure-storage
  * warning, and -- when the gateway binds loopback-only -- a copy-paste SSH
  * tunnel recipe so non-technical users can open the dashboard from another
- * computer. Ends with a shell-completion offer and a branded outro.
+ * computer. Ends with a concise branded outro.
  *
  * @module
  */
@@ -28,7 +28,7 @@ function buildReferenceCard(): string {
   const commands: [string, string][] = [
     ["Start daemon:", "comis daemon start"],
     ["Check status:", "comis status"],
-    ["Add channels:", "comis configure --section channels"],
+    ["Add channels:", "comis init"],
     ["Security audit:", "comis security audit"],
     ["Full diagnostics:", "comis doctor"],
     ["Get help:", "comis --help"],
@@ -45,7 +45,7 @@ function resolveHost(gateway: GatewayConfig): string {
     case "loopback":
       return "127.0.0.1";
     case "lan":
-      return "0.0.0.0";
+      return "127.0.0.1";
     case "custom":
       return gateway.customIp ?? "127.0.0.1";
   }
@@ -67,6 +67,9 @@ function buildGatewayInfo(state: WizardState): string | undefined {
     lines.push(`  Dashboard:  ${brand(`http://${host}:${port}/app/`)}`);
   }
   lines.push(`  WebSocket:  ${brand(`ws://${host}:${port}/ws`)}`);
+  if (state.gateway.bindMode === "lan") {
+    lines.push("  Other devices: replace 127.0.0.1 with this computer's LAN IP or hostname.");
+  }
   return lines.join("\n");
 }
 
@@ -80,6 +83,12 @@ function buildAccessTokenBlock(state: WizardState): string | undefined {
 
   if (!state.gateway.token) return undefined;
 
+  const storageGuidance = state.storageMode === "file"
+    ? info("Stored in ~/.comis/.env with file mode 0600; keep that file private.")
+    : info(
+        "Stored in the encrypted secrets database. Its decryption key is in ~/.comis/.env; keep both private.",
+      );
+
   return [
     "Copy this token now — you will need it to sign in to the dashboard:",
     "",
@@ -87,7 +96,7 @@ function buildAccessTokenBlock(state: WizardState): string | undefined {
     "",
     warning("Keep it secret. Anyone with this token can control your agents."),
     info("Save it in a password manager (1Password, Bitwarden, Apple Passwords)."),
-    info("It is also stored at ~/.comis/.env — keep that file private."),
+    storageGuidance,
   ].join("\n");
 }
 
@@ -156,22 +165,10 @@ export const finishStep: WizardStep = {
       prompter.note(tunnelBlock, sectionSeparator("Open the Dashboard from Another Computer"));
     }
 
-    // 5. Shell completion offer
-    const wantCompletions = await prompter.confirm({
-      message: "Enable shell completions for comis?",
-      initialValue: true,
-    });
-
-    if (wantCompletions) {
-      prompter.log.info(
-        "Run 'comis --help' to see available commands including shell completion setup",
-      );
-    }
-
-    // 6. Branded outro
+    // 5. Branded outro
     prompter.outro("Happy building! Run 'comis status' to see your system.");
 
-    // 7. Return state unchanged -- wizard complete
+    // 6. Return state unchanged -- wizard complete
     return updateState(state, {});
   },
 };

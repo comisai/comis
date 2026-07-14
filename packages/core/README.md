@@ -6,25 +6,7 @@ Core domain layer for the [Comis](https://github.com/comisai/comis) platform. De
 
 ### Port Interfaces
 
-Hexagonal architecture boundaries -- core defines the contracts, other packages implement adapters.
-
-| Port | Purpose |
-|------|---------|
-| `ChannelPort` | Messaging platform adapters |
-| `MemoryPort` | Session and context storage |
-| `SkillPort` | Tool and skill registration |
-| `EmbeddingPort` | Vector embedding providers |
-| `TranscriptionPort` | Speech-to-text adapters |
-| `TTSPort` | Text-to-speech adapters |
-| `VisionPort` | Image and video analysis |
-| `ImageGenerationPort` | Image generation providers |
-| `MediaResolverPort` | Platform-specific media resolution |
-| `FileExtractionPort` | Document text extraction |
-| `OutputGuardPort` | LLM output secret-leak scanning |
-| `SecretStorePort` | Encrypted credential storage |
-| `DeviceIdentityPort` | Cryptographic device identity |
-| `DeliveryQueuePort` | Message delivery queue |
-| `DeliveryMirrorPort` | Delivery deduplication |
+Hexagonal architecture boundaries: core defines contracts for channels, memory and context, sessions, skills and tools, model/media providers, secrets, delivery, execution plans, clocks, timers, environment access, and file locking. Adapter packages implement those ports.
 
 ### Domain Types
 
@@ -32,7 +14,7 @@ Zod-validated schemas and inferred TypeScript types for messages, agents, sessio
 
 ### Security
 
-Guards, crypto, and audit infrastructure: path traversal defense, secret management (AES-256-GCM), output guard, input validation, SSRF guards, rate limiting, content wrapping, and 40+ prompt injection detection patterns.
+Guards, crypto, and audit infrastructure: path traversal defense, secret management (AES-256-GCM), output guards, input validation, SSRF guards, rate limiting, external-content wrapping, and prompt-injection detection.
 
 ### Event Bus
 
@@ -40,7 +22,7 @@ Guards, crypto, and audit infrastructure: path traversal defense, secret managem
 
 ### Configuration
 
-100+ Zod schemas for layered config validation (defaults -> YAML -> env overrides). Covers agents, channels, security, integrations, gateway, and more.
+Zod schemas provide layered configuration validation across defaults, environment projection, and YAML files. The configuration covers agents, channels, security, integrations, the gateway, and runtime operations.
 
 ### Bootstrap
 
@@ -50,7 +32,7 @@ Composition root (`bootstrap()`) wires the application: creates `SecretManager` 
 
 ## Part of Comis
 
-This package is part of the [Comis](https://github.com/comisai/comis) monorepo -- a security-first AI agent platform connecting agents to Discord, Telegram, Slack, WhatsApp, and more.
+This package is part of [Comis](https://github.com/comisai/comis), an open-source, security-first platform for AI agent teams.
 
 ```bash
 npm install comisai

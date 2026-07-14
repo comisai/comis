@@ -16,7 +16,8 @@ Answers to the most common questions about running and using Comis.
   <Accordion title="Is Comis free?">
     Yes, Comis is fully open source under the Apache-2.0 license and free to use. There is no license fee, no usage cap, and no paid tier.
 
-    However, you will need API keys from AI providers (Anthropic, OpenAI, etc.) to power your agents. Those providers charge for API usage based on the number of tokens processed. Comis itself costs nothing.
+    Model providers and connected services may charge separately. A local model
+    can run without a hosted-provider API credential.
   </Accordion>
 
   <Accordion title="What AI providers does Comis support?">
@@ -30,9 +31,9 @@ Answers to the most common questions about running and using Comis.
   </Accordion>
 
   <Accordion title="Do I need an API key?">
-    Yes, you need at least one AI provider API key. Agents need an AI model to think and respond — without an API key, there is no model to call.
-
-    Most users start with an Anthropic API key for Claude or an OpenAI API key for GPT models. See the [Configuration](/installation/configuration) page for how to set up your API key.
+    You need a usable model, but not necessarily an API key. Choose a hosted
+    provider credential, a supported OAuth login, or a running local provider
+    such as Ollama. See [Configuration](/installation/configuration).
   </Accordion>
 </AccordionGroup>
 
@@ -42,27 +43,22 @@ Answers to the most common questions about running and using Comis.
   <Accordion title="How much does it cost to run?">
     Comis itself is free. Your costs come from AI provider API usage:
 
-    - **Simple conversations** typically cost a few cents per exchange
-    - **Complex agent executions** (using tools, multiple LLM calls) typically cost $3-10 per execution
-    - **Cron jobs and heartbeats** that involve LLM calls add incremental costs
+    Provider cost depends on model, tokens, tool loops, media generation, and
+    scheduled work. Comis cannot promise a per-message or per-execution price;
+    inspect your provider billing and use Comis's cost reports and budgets.
 
     Comis includes built-in budget controls to prevent unexpected spending. You can set per-agent token limits, cost caps, and circuit breakers that pause an agent if it exceeds your budget. See [Agent Safety](/agents/safety) for details.
   </Accordion>
 
   <Accordion title="What hardware do I need?">
-    Comis is lightweight. Minimum requirements:
-
-    - **OS**: Linux (production) or macOS (development)
-    - **CPU**: Any modern processor (1+ cores)
-    - **RAM**: 1 GB minimum, 2 GB recommended
-    - **Disk**: 500 MB for the application, plus space for the database and logs
-    - **Node.js**: Version 22 or newer
-
-    A $5/month VPS (like DigitalOcean, Hetzner, or Linode) is sufficient for personal use with a few agents. See the [Requirements](/installation/requirements) page for full details.
+    Use Linux for production or macOS for development. npm installations
+    require Node.js 22.19.0 or newer, Python 3, and native build tools. Capacity
+    depends heavily on browser/media features, local models, traffic, and data
+    retention. See [Requirements](/installation/requirements).
   </Accordion>
 
   <Accordion title="Can I run it on my laptop?">
-    Yes. macOS and Linux are both supported for development and personal use. Install Node.js 22+, clone the repository, build, and start.
+    Yes. macOS and Linux are supported for development and personal use. Install Node.js 22.19.0 or newer, clone the repository, build, and start.
 
     For always-on operation (agents responding 24/7), use a server or VPS so the agents keep running when your laptop is closed. See the [Installation](/installation) guide to get started.
   </Accordion>
@@ -123,15 +119,22 @@ Answers to the most common questions about running and using Comis.
 
 <AccordionGroup>
   <Accordion title="Is my data private?">
-    Yes. Comis runs entirely on your server. Conversations are stored locally in a SQLite database on your machine. The only external communication is with the AI provider API you configure (Anthropic, OpenAI, etc.) to process messages.
-
-    There is no telemetry, no analytics, no usage tracking, and no data sharing with anyone. Your data never leaves your server except for the API calls you explicitly configure.
+    Comis stores its primary state locally, but data can leave the host through
+    the model provider, chat channels, web/media tools, MCP servers, proxies,
+    and optional observability integrations you configure. A local model alone
+    does not make the whole deployment offline. Review each enabled integration
+    and its data policy.
   </Accordion>
 
   <Accordion title="Can agents access my files?">
-    Only if you explicitly enable file tools in the [tool policy](/skills/tool-policy). By default, agents have restricted file system access.
+    The default tool-policy profile is `full`, so do not assume least privilege.
+    Configure a narrower [tool policy](/skills/tool-policy) and review all
+    allowed paths before exposing an agent to untrusted input.
 
-    When running as a systemd service, the Node.js `--permission` flags provide an additional sandbox layer that restricts file access to specific directories. See the [Security](/security) documentation for details on all protection layers.
+    Node.js permissions are optional and off by default. `system.exec` attempts
+    a separate OS sandbox, but can fall back to ordinary execution when its
+    provider is unavailable. MCP and in-process tools are outside that exec
+    sandbox. See [Security](/security).
 
     When `security.permission.enableNodePermissions` is enabled, the Node.js permission model also disables fd-based fs APIs (`fsync`, `fchmod`, `fchown`) in the daemon process itself — credential file writes become best-effort durability and trace permissions are best-effort. This is Linux-only and off by default. See [Node Permissions — Production fd-API Disablement](/reference/node-permissions#production-fd-api-disablement-linux) for details.
   </Accordion>
@@ -142,9 +145,11 @@ Answers to the most common questions about running and using Comis.
     - **Budget limits** cap token usage and estimated cost per agent
     - **Circuit breakers** automatically pause agents that hit error thresholds
     - **Tool policies** restrict which tools each agent can use
-    - **Approval workflows** require human approval for sensitive actions
+    - **Approval workflows** can require human approval when explicitly enabled
 
-    If an agent exceeds its budget, it stops executing and logs a warning. You can configure all these limits in your `config.yaml`. See [Agent Safety](/agents/safety) for details.
+    Approvals are disabled by default and the default tool policy is broad.
+    Configure limits and permissions for your threat model; no control makes a
+    highly privileged agent risk-free. See [Agent Safety](/agents/safety).
   </Accordion>
 </AccordionGroup>
 

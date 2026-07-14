@@ -221,6 +221,34 @@ describe("RequestContext", () => {
       });
       expect(empty.success).toBe(false);
     });
+
+    it("RequestContext carries an authenticated gateway client identity when provided", () => {
+      const withClient = RequestContextSchema.parse({
+        userId: "u1",
+        sessionKey: "t1:u1:c1",
+        traceId: randomUUID(),
+        startedAt: Date.now(),
+        clientId: "dashboard-client",
+      });
+      expect(withClient.clientId).toBe("dashboard-client");
+
+      const withoutClient = RequestContextSchema.parse({
+        userId: "u1",
+        sessionKey: "t1:u1:c1",
+        traceId: randomUUID(),
+        startedAt: Date.now(),
+      });
+      expect(withoutClient.clientId).toBeUndefined();
+
+      const emptyClient = RequestContextSchema.safeParse({
+        userId: "u1",
+        sessionKey: "t1:u1:c1",
+        traceId: randomUUID(),
+        startedAt: Date.now(),
+        clientId: "",
+      });
+      expect(emptyClient.success).toBe(false);
+    });
   });
 
   // ---------------------------------------------------------------------------

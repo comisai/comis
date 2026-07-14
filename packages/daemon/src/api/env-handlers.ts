@@ -253,7 +253,7 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
         });
 
         deps.logger.warn(
-          { method: "env.set", key, durationMs, outcome: "failure", err: e, hint: "Check secret store or .env file permissions", errorKind: "config" as const },
+          { method: "env.set", key, durationMs, outcome: "failure", err: e, hint: "Check active secret storage configuration and file permissions", errorKind: "config" as const },
           "Env set failed",
         );
 

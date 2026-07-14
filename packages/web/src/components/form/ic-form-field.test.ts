@@ -41,6 +41,14 @@ describe("IcFormField", () => {
     expect(input?.type).toBe("email");
   });
 
+  it("associates the visible label with the input", async () => {
+    const el = await createElement<IcFormField>("ic-form-field", { label: "Email" });
+    const label = el.shadowRoot?.querySelector("label") as HTMLLabelElement;
+    const input = el.shadowRoot?.querySelector("input") as HTMLInputElement;
+    expect(input.id).not.toBe("");
+    expect(label.htmlFor).toBe(input.id);
+  });
+
   it("renders placeholder text", async () => {
     const el = await createElement<IcFormField>("ic-form-field", {
       label: "Name",
@@ -137,6 +145,7 @@ describe("IcFormField", () => {
     expect(options?.length).toBe(2);
     expect(options![0].textContent?.trim()).toBe("Option A");
     expect(options![1].textContent?.trim()).toBe("Option B");
+    expect(el.shadowRoot?.querySelector("label")?.getAttribute("for")).toBe(select?.id);
   });
 
   it("changing select dispatches field-change event", async () => {

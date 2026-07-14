@@ -1,153 +1,91 @@
 ---
 title: "Requirements"
-description: "Hardware, software, and account prerequisites for running Comis"
+description: "Platform, runtime, and model prerequisites for Comis"
 icon: "clipboard-check"
 ---
 
 import NonTechnicalNote from '/snippets/non-technical-note.mdx';
 
-Before installing Comis, make sure your system meets these requirements. Most
-of the software prerequisites can be installed in a few minutes.
-
 <NonTechnicalNote />
 
-## Platform Support
+## Supported deployment posture
 
-<Note>
-**Linux** is the primary deployment platform. Comis supports Ubuntu 22.04+,
-Debian 12+, Fedora 38+, RHEL 9+, and Arch Linux.
+- **Linux:** primary production platform. The installer targets common
+  systemd-based distributions.
+- **macOS:** development and local evaluation. Apple's `sandbox-exec` is
+  deprecated, so do not treat it as the Linux production isolation boundary.
+- **Docker:** use a Linux Docker host for production. Docker Desktop on macOS
+  or Windows is appropriate for development and testing.
 
-**macOS** (13+ with Apple Silicon or Intel) works for development and testing
-but is not the primary deployment target.
-</Note>
+## npm installation prerequisites
 
-## Hardware
+- Node.js **22.19.0 or newer**
+- npm
+- Python 3
+- a C/C++ build toolchain for native dependencies
+- outbound HTTPS for the package registry and any networked providers or tools
 
-| Component | Minimum | Recommended |
-|---|---|---|
-| CPU | 1 core | 2+ cores |
-| RAM | 512 MB | 1 GB+ |
-| Disk | 500 MB | 2 GB+ (includes ~260 MB for local embedding model) |
-| Network | Outbound HTTPS access | Stable broadband |
-
-Comis is lightweight by design. The main resource consumers are the local
-SQLite database (grows with conversation history) and the optional embedding
-model used for semantic memory search.
-
-## Software
-
-You need Node.js and a small set of build tools. The build tools are required
-because Comis includes native modules (better-sqlite3 for the local database,
-sharp for image processing) that compile during installation.
-
-<Tabs>
-  <Tab title="Ubuntu / Debian">
-    Install Node.js 22 from NodeSource:
-
-    ```bash
-    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-    sudo apt-get install -y nodejs
-    ```
-
-    Install build tools:
-
-    ```bash
-    sudo apt-get install -y build-essential python3
-    ```
-  </Tab>
-  <Tab title="Fedora / RHEL">
-    Install Node.js 22 from NodeSource:
-
-    ```bash
-    curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo -E bash -
-    sudo dnf install -y nodejs
-    ```
-
-    Install build tools:
-
-    ```bash
-    sudo dnf install -y gcc-c++ make python3
-    ```
-  </Tab>
-  <Tab title="Arch">
-    Install Node.js and npm from the official repositories:
-
-    ```bash
-    sudo pacman -S nodejs npm
-    ```
-
-    Install build tools:
-
-    ```bash
-    sudo pacman -S --needed base-devel python
-    ```
-  </Tab>
-</Tabs>
-
-<AccordionGroup>
-  <Accordion title="macOS Development Setup">
-    Install Xcode Command Line Tools (provides the C++ compiler):
-
-    ```bash
-    xcode-select --install
-    ```
-
-    Install Node.js 22 via Homebrew:
-
-    ```bash
-    brew install node@22
-    ```
-  </Accordion>
-</AccordionGroup>
-
-## AI Provider Account
-
-<Warning>
-You need an API key from at least one AI provider. The setup wizard will ask
-for this during installation.
-</Warning>
-
-| Provider | API key required | Notes |
-|---|---|---|
-| Anthropic (Claude) | Yes | Recommended default |
-| OpenAI (GPT) | Yes | |
-| Google (Gemini) | Yes | |
-| Groq | Yes | Fast inference |
-| Mistral | Yes | |
-| DeepSeek | Yes | |
-| xAI (Grok) | Yes | |
-| Together AI | Yes | |
-| Cerebras | Yes | Fast inference |
-| OpenRouter | Yes | Multi-provider gateway |
-| Ollama (local) | No | Local inference, no account needed |
-
-<Tip>
-You can add more providers later. Start with whichever one you already have an
-account with. If you are unsure, Anthropic or OpenAI are the most commonly
-used.
-</Tip>
-
-## Check Your Setup
-
-Run these commands to verify your system is ready:
+Install Node.js from your distribution or the [official Node.js download
+instructions](https://nodejs.org/en/download), then add the native build tools
+for your platform. On Debian or Ubuntu:
 
 ```bash
-node --version    # Should show v22.x.x or later
-npm --version     # Should show 10.x.x or later
-python3 --version # Should show 3.x.x
+sudo apt-get update
+sudo apt-get install -y build-essential python3
 ```
 
-If `node --version` shows a version below 22, follow the installation
-instructions in the Software section above to upgrade. If `python3` is not
-found, install it using your distribution's package manager.
+On Fedora or RHEL:
 
-## Next Steps
+```bash
+sudo dnf install -y gcc-c++ make python3
+```
+
+On macOS:
+
+```bash
+xcode-select --install
+brew install node@22
+```
+
+Confirm the actual Node.js patch version after installation:
+
+```bash
+node --version
+npm --version
+python3 --version
+```
+
+`node --version` must be at least `v22.19.0`.
+
+## Model access
+
+At least one usable model path is required:
+
+| Path | Credential requirement | Notes |
+|---|---|---|
+| Hosted API provider | Provider API credential | Store it through the wizard or `comis secrets set` |
+| Supported OAuth provider | Provider account and interactive/device login | Complete login from a TTY |
+| Local provider | No hosted API credential | Start the local provider before verification |
+
+Comis supports several hosted providers; availability, model names, and account
+terms are controlled by those providers. See [Models](/agents/models) and the
+[configuration reference](/reference/config-yaml) for the current surface.
+
+## Capacity
+
+Resource needs depend on traffic, enabled channels, browser/media tools,
+conversation retention, and whether models or embeddings run locally. Allow
+additional memory and disk for Chromium, local models, and growing SQLite data.
+Monitor the host under representative workload rather than relying on a single
+minimum specification.
+
+## Next steps
 
 <CardGroup cols={2}>
-  <Card title="Install on Linux" icon="linux" href="/installation/install-linux">
-    Step-by-step procedure for Ubuntu, Fedora, and Arch.
+  <Card title="Quickstart" icon="rocket" href="/get-started/quickstart">
+    Install and run the staged setup wizard.
   </Card>
-  <Card title="Install with Docker" icon="docker" href="/installation/install-docker">
-    Container-based setup with Docker Compose.
+  <Card title="Docker" icon="docker" href="/installation/install-docker">
+    Use the Linux container deployment path.
   </Card>
 </CardGroup>

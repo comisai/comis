@@ -472,7 +472,10 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
     seedAttempted.add(sessionId);
     if (deps.driveJournalStore?.load(agentId, sessionId) === undefined) return; // not a recovered drive.
     seedRecoveredDrive(sessionId, agentId);
-    log.info({ sessionId, agentId, step: "drive_resume_lazy_seed" }, "terminal drive lazy-seeded a recovered journal on first wake (BL-02)");
+    log.info(
+      { sessionId, agentId, step: "drive_resume_lazy_seed" },
+      "Terminal drive initialized a recovered journal on first wake",
+    );
   };
 
   // Stamp the per-session last-transition on EVERY inbound wake — the

@@ -7,23 +7,32 @@ Structured logging infrastructure for the [Comis](https://github.com/comisai/com
 - **`createLogger(options)`** -- Factory for creating structured JSON loggers
 - **Credential redaction** -- Automatic scrubbing of `apiKey`, `token`, `password`, `secret`, `authorization`, and other sensitive fields (nested to 3 levels)
 - **Custom log levels** -- Standard Pino levels plus `audit` for security events
-- **Error classification** -- 9 `ErrorKind` categories: `config`, `network`, `auth`, `validation`, `timeout`, `resource`, `dependency`, `internal`, `platform`
-- **Canonical field vocabulary** -- Consistent field names across all packages: `agentId`, `traceId`, `channelType`, `durationMs`, `toolName`, `method`, `err`, `hint`, `errorKind`, `module`
+- **Error classification** -- Closed `ErrorKind` union: `config`, `network`, `auth`, `validation`, `precondition`, `timeout`, `resource`, `dependency`, `internal`, `platform`, and `sandbox_unavailable`
+- **Canonical field vocabulary** -- Consistent structured fields such as `agentId`, `traceId`, `channelType`, `durationMs`, `toolName`, `method`, `err`, `hint`, `errorKind`, and `submodule`; composition-root child loggers bind their module name
 
 ## Usage
 
 ```typescript
 import { createLogger } from "@comis/infra";
 
-const logger = createLogger({ module: "my-adapter", level: "info" });
+const logger = createLogger({ name: "comis", level: "info" });
 
-logger.info({ agentId, durationMs: 42 }, "Execution complete");
-logger.error({ err, hint: "Check API key", errorKind: "auth" }, "Provider auth failed");
+logger.info({ agentId: "agent_a", durationMs: 42 }, "Execution complete");
+logger.error(
+  {
+    err: new Error("Provider authentication failed"),
+    hint: "Check the configured provider credential",
+    errorKind: "auth",
+  },
+  "Provider authentication failed",
+);
 ```
 
 ## Part of Comis
 
-This package is part of the [Comis](https://github.com/comisai/comis) monorepo -- a security-first AI agent platform connecting agents to Discord, Telegram, Slack, WhatsApp, and more.
+Application packages normally receive the structural `ComisLogger` contract through dependency injection; the daemon composition root owns the Pino runtime and subsystem child loggers.
+
+This package is part of [Comis](https://github.com/comisai/comis), an open-source, security-first platform for AI agent teams.
 
 ```bash
 npm install comisai

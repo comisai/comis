@@ -356,7 +356,6 @@ describe("file-size — per-file caps", () => {
     viewCap: number;
     controllerCap: number;
   }> = [
-    { file: "packages/web/src/views/setup-wizard.ts",          viewCap: 800, controllerCap: 900 },
     { file: "packages/web/src/views/skills.ts",                viewCap: 800, controllerCap: 900 },
     { file: "packages/web/src/views/chat-console.ts",          viewCap: 800, controllerCap: 900 },
     { file: "packages/web/src/views/message-center.ts",        viewCap: 800, controllerCap: 900 },

@@ -33,16 +33,18 @@ trade-off:
 - ✅ **Dev/testing UX on Mac and Windows:** the agent runs end-to-end. You
   can drive `exec` commands, run scripts in the workspace, and exercise
   every feature that depends on shell execution.
-- ❌ **Security guarantees inside the container are dropped on Docker
-  Desktop.** With the sandbox off, agent-issued shell commands can read
+- ❌ **The documented exec-isolation boundary is absent on Docker
+  Desktop.** With the sandbox off, agent-issued shell commands may read
   `/home/comis/.comis/.env`, the encrypted `secrets.db`, `/etc/comis/config.yaml`,
   channel tokens, the `SECRETS_MASTER_KEY`, and anything else the daemon
-  user owns. A single prompt injection exfiltrates everything.
+  user owns. Treat prompt-driven shell execution as host-equivalent authority
+  within the container account.
 
 This is fine for **development and local testing only**. For production,
-deploy to a real Linux host (bare metal, VPS, or any Linux cloud VM)
-where the kernel actually allows the sandbox to run — the same image and
-compose files Just Work, you don't need a code change.
+deploy to a real Linux host (bare metal, VPS, or a Linux cloud VM) and verify
+that bubblewrap is active after startup. Some Linux hosts restrict unprivileged
+user namespaces through AppArmor and require the host configuration described in
+[Operations: Docker → Per-command exec sandbox](/operations/docker#per-command-exec-sandbox-bubblewrap).
 
 See [Operations: Docker → Platform Support](/operations/docker#platform-support)
 for the full explanation, including local Linux-VM alternatives
@@ -64,27 +66,36 @@ recommended way to get started.
     ```
   </Step>
 
-  <Step title="Configure environment">
-    Copy the included environment template and add your API keys:
+  <Step title="Configure Compose and credentials">
+    Copy the included Compose settings template:
 
     ```bash
     cp .env.docker.example .env
     ```
 
-    Open `.env` in your editor and fill in at minimum:
+    Keep persistent credentials in the mounted daemon environment file (the
+    default `COMIS_ENV_FILE` is `~/.comis/.env`):
 
     ```bash
-    ANTHROPIC_API_KEY=your-key-here
-    # or
-    OPENAI_API_KEY=your-key-here
+    mkdir -p ~/.comis
+    chmod 700 ~/.comis
+    touch ~/.comis/.env
+    chmod 600 ~/.comis/.env
+    ${EDITOR:-vi} ~/.comis/.env
     ```
+
+    Add the credentials required by your chosen provider, for example
+    `ANTHROPIC_API_KEY=...` or `OPENAI_API_KEY=...`. OAuth and local keyless
+    providers do not need a static provider key. If you change `COMIS_ENV_FILE`
+    in the project-root `.env`, edit that target instead.
 
     <SecretWarning />
 
     <Tip>
-    The `.env.docker.example` file lists all available settings including
-    channel tokens (Telegram, Discord, Slack), network binding options, and
-    optional provider keys. See the comments in that file for details.
+    `.env.docker.example` contains image, path, and network settings plus a
+    small set of optional explicit credential overrides. Blank overrides are
+    removed by the container entrypoint, so they cannot hide non-empty values
+    from `COMIS_ENV_FILE`.
     </Tip>
   </Step>
 
@@ -95,15 +106,17 @@ recommended way to get started.
 
     The script performs these steps automatically:
 
-    1. Creates the data directory (`~/.comis`) with a `traces/` subdirectory
+    1. Creates the data and config directories (both `~/.comis` by default)
     2. Generates a gateway authentication token (or reuses an existing one)
-    3. Writes token and network settings to `~/.comis/.env`
-    4. Creates a default `config.yaml` with gateway, logging, and memory paths
+    3. Writes token and network settings to `COMIS_ENV_FILE`
+    4. Creates a schema-valid `config.yaml` with authenticated gateway, logging, and memory paths
     5. Builds the Docker image from the included `Dockerfile`
-    6. Fixes data directory ownership for the container's non-root user (UID 1000)
+    6. Prepares data and config ownership for the container's non-root user (UID 1000)
     7. Starts the `comis-daemon` service and waits for its health check to pass
 
-    When complete, the script prints the gateway URL and a truncated token.
+    The script prints the gateway URL and credential-file path only after the
+    daemon is healthy; it does not echo the token. On timeout it exits nonzero
+    and prints the logs command to run.
   </Step>
 
   <Step title="Verify">
@@ -131,13 +144,12 @@ docker build \
   --build-arg COMIS_WITH_BROWSER=1 \
   -t comisai/comis:browser .
 
-# Headed via Xvfb — for sites that detect headless mode (+15 MB on top)
+# Headed via Xvfb — for workflows that require a display server (+15 MB on top)
 docker build \
   --build-arg COMIS_WITH_XVFB=1 \
   -t comisai/comis:xvfb .
 
-# Stealth Chromium (CloakBrowser, +500 MB) — bypasses Cloudflare Turnstile,
-# FingerprintJS, BrowserScan, and Reddit's secondary fingerprint check
+# Optional CloakBrowser runtime (+500 MB)
 docker build \
   --build-arg COMIS_WITH_CLOAKBROWSER=1 \
   -t comisai/comis:cloak .
@@ -149,9 +161,9 @@ docker build \
   -t comisai/comis:cloak-xvfb .
 ```
 
-The entrypoint shim (`/usr/local/bin/comis-entrypoint.sh`) starts Xvfb on `:99` automatically when the image was built with `COMIS_WITH_XVFB=1`. The daemon's `findChrome()` probes `~/.cloakbrowser/chromium-*/chrome` first, so when the cloak binary is baked in it wins over stock Chrome with no config change.
+The entrypoint shim (`/usr/local/bin/comis-entrypoint.sh`) starts Xvfb on `:99` automatically when the image was built with `COMIS_WITH_XVFB=1`. It verifies the X11 socket before starting the daemon and exits if the virtual display cannot start. The daemon's `findChrome()` probes `~/.cloakbrowser/chromium-*/chrome` first, so when the cloak binary is baked in it wins over stock Chrome with no config change.
 
-Run the stealth image identically to the no-browser one — same volumes, same ports, same env vars:
+Run the CloakBrowser image identically to the no-browser one — same volumes, same ports, same environment variables:
 
 ```bash
 docker run -d \
@@ -165,7 +177,11 @@ docker run -d \
 
 ### Alternative: installer-based image
 
-The repo also ships `Dockerfile.install` — a fresh Ubuntu 24.04 base that runs `install.sh` end-to-end inside the container. Same build args, same end state, but exercises the installer code path verbatim. Useful for CI testing or when you want strict parity with a bare-VPS deploy.
+The repo also ships `Dockerfile.install`. It packs the local workspace and runs
+the installer's non-interactive, non-root package-install path inside Ubuntu
+24.04. This exercises package installation and selected browser-provisioning
+branches, but skips interactive setup, initialization, service management,
+dedicated-user creation, and the public-registry download path.
 
 ```bash
 docker build -f Dockerfile.install \
@@ -173,15 +189,18 @@ docker build -f Dockerfile.install \
   -t comis-installed:cloak .
 ```
 
-The main `Dockerfile` is the production path (multi-stage, smaller, faster). `Dockerfile.install` is the validation/parity path.
+The main `Dockerfile` is the primary multi-stage image path.
+`Dockerfile.install` is a focused installer validation image, not a parity image
+for a managed host.
 
 <Warning>
-**Datacenter IPs (AWS, DigitalOcean, Hetzner, Hostinger, …) are pre-blocked by Reddit, X/Twitter, LinkedIn, and many anti-bot services at the network layer** — independent of browser fingerprint. The browser flags fix fingerprint detection, not IP reputation. If your container runs on a datacenter ASN and you need Reddit/social scraping, pair `--with-cloakbrowser` with a residential proxy.
-
-CloakBrowser's binary is free for self-hosted use; bundling into a service distributed to third-party customers requires an OEM license from CloakHQ. See the [binary license](https://github.com/CloakHQ/CloakBrowser/blob/main/BINARY-LICENSE.md).
+CloakBrowser does not include a proxy, change IP reputation, or guarantee access
+to any site. Review the target site's terms and the
+[binary license](https://github.com/CloakHQ/CloakBrowser/blob/main/BINARY-LICENSE.md)
+before enabling it.
 </Warning>
 
-See [agent-tools/browser](/agent-tools/browser#stealth-mode-anti-bot-detection) for the full flag matrix, verified detection-evasion outcomes, and security model.
+See [agent-tools/browser](/agent-tools/browser) for the browser-tool security model.
 
 ## Optional services
 
@@ -222,10 +241,11 @@ gateway at `127.0.0.1:4766` without extra configuration.
 
 ## Deploying on a VPS
 
-The local-machine examples above use `-p 4766:4766` for convenience, which
-binds the gateway to `0.0.0.0:4766` on the host. **On a VPS that's the
-public internet** — anyone on the network can reach the gateway. Pick one
-of the two safer postures below.
+The supplied Compose file and quick-start examples bind the host port to
+`127.0.0.1` by default. If you omit the host address (`-p 4766:4766`) or set
+the host-side bind to `0.0.0.0`, a VPS may expose the gateway to the public
+internet. Choose an intentional posture below before changing the loopback
+default.
 
 <Warning>
 The wizard's "LAN mode" sets `gateway.host: 0.0.0.0` *inside the container*.
@@ -278,7 +298,7 @@ but you **must** combine three controls:
    ```
 3. **TLS.** Without TLS, the bearer token crosses the wire in cleartext.
    Either run with `gateway.tls.cert` configured (see
-   [Configuration: TLS](/installation/configuration#tls)) or front it
+   [HTTP gateway: mTLS](/reference/http-gateway#mtls) or front it
    with a reverse proxy that does TLS for you (in which case use the
    recommended posture above instead).
 
@@ -317,14 +337,14 @@ Use `ws://` only over a trusted network (VPN, SSH tunnel).
 
     **Fix:** Two distinct binds are involved — get them in the right place:
 
-    1. **Host-side bind (which interface the host listens on):** controlled by the left side of `-p` / Compose `ports:` (e.g. `127.0.0.1:4766:4766` vs `0.0.0.0:4766:4766`).
-    2. **Container-side bind (which interface the daemon listens on inside the container):** controlled by `COMIS_GATEWAY_HOST` in `.env`. **Must be `0.0.0.0`** so Docker port-forwarding can reach the daemon. Setting it to `127.0.0.1` is what produces the "connection reset" symptom — Docker forwards into the container's `eth0` IP, where nothing is listening. The image defaults to `0.0.0.0`.
+    1. **Host-side bind (which interface the host listens on):** controlled by `COMIS_GATEWAY_HOST` in the project-root Compose `.env`. The default is `127.0.0.1`; use `0.0.0.0` only when you intentionally want LAN exposure and have configured authentication and transport security.
+    2. **Container-side bind (which interface the daemon listens on inside the container):** the base Compose file sets this to `0.0.0.0` so port forwarding can reach the daemon. A mounted `config.yaml` has higher precedence; if it sets `gateway.host: 127.0.0.1`, change it to `0.0.0.0` or remove the field.
 
     Other things to check:
 
     - The container is running and healthy: `docker compose ps`
     - No firewall is blocking the port
-    - If you mount a `config.yaml` with `gateway.host: 127.0.0.1`, that overrides the env var. Set `gateway.host: 0.0.0.0` in the mounted config or remove the entry.
+    - Confirm no additional Compose file intentionally replaces the loopback host-port mapping.
   </Accordion>
 
   <Accordion title="Container exits immediately">
@@ -339,7 +359,7 @@ Use `ws://` only over a trusted network (VPN, SSH tunnel).
     Common causes:
 
     - **Invalid config.yaml** -- check YAML syntax and required fields. The daemon writes a recovery snapshot at `~/.comis/config.last-good.yaml`; run `cp ~/.comis/config.last-good.yaml ~/.comis/config.yaml` to restore the previous-known-good config, then `docker compose restart`.
-    - **Missing API key** -- verify the `.env` file has the correct variable name
+    - **Missing API key** -- verify `COMIS_ENV_FILE` (default `~/.comis/.env`) has the correct variable name
     - **Port already in use** -- another process is using port 4766 on the host
   </Accordion>
 
@@ -378,6 +398,6 @@ Use `ws://` only over a trusted network (VPN, SSH tunnel).
     Run diagnostic commands to confirm everything is working.
   </Card>
   <Card title="Operations: Docker" icon="docker" href="/operations/docker">
-    Production-ready Docker deployment with multi-stage builds and security hardening.
+    Docker deployment boundaries, multi-stage builds, and security hardening.
   </Card>
 </CardGroup>

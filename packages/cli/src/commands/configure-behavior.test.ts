@@ -44,6 +44,11 @@ vi.mock("@comis/core", () => ({
   validatePartial: vi.fn(() => ({ config: {}, validSections: [], errors: [] })),
   loadConfigFile: vi.fn(() => ({ ok: true, value: {} })),
   sanitizeLogString: vi.fn((s: string) => s),
+  safePath: vi.fn((base: string, ...segments: string[]) => [base, ...segments].join("/")),
+}));
+
+vi.mock("node:os", () => ({
+  homedir: vi.fn(() => "/home/test"),
 }));
 
 // Mock node:fs for config file operations
@@ -213,6 +218,27 @@ describe("configure reads existing config and presents sections", () => {
     expect(p.log.success).toHaveBeenCalledWith(
       expect.stringContaining("updated"),
     );
+    expect(p.log.success).toHaveBeenCalledWith(
+      expect.stringContaining("Restart the daemon"),
+    );
+    expect(p.log.success).not.toHaveBeenCalledWith(
+      expect.stringContaining("will restart"),
+    );
+  });
+
+  it("defaults to the same user config path created by comis init", async () => {
+    vi.mocked(core.loadConfigFile).mockReturnValue({
+      ok: true,
+      value: {},
+    } as ReturnType<typeof core.loadConfigFile>);
+    vi.mocked(core.getConfigSections).mockReturnValue(["gateway"]);
+    vi.mocked(core.getFieldMetadata).mockReturnValue([]);
+    vi.mocked(p.select).mockResolvedValueOnce("gateway");
+    vi.mocked(p.confirm).mockResolvedValueOnce(false);
+
+    await parseConfigure(["node", "test", "configure"]);
+
+    expect(core.loadConfigFile).toHaveBeenCalledWith("/home/test/.comis/config.yaml");
   });
 });
 

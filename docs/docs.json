@@ -2,7 +2,7 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "maple",
   "name": "Comis",
-  "description": "Documentation for Comis -- Open-source AI agent fleet for messaging apps",
+  "description": "An open-source, security-first platform for AI agent teams.",
   "colors": {
     "primary": "#4F46E5",
     "light": "#A78BFA",
@@ -30,98 +30,269 @@
   "navigation": {
     "tabs": [
       {
-        "tab": "Get Started",
+        "tab": "Start here",
         "groups": [
-          { "group": "Welcome", "pages": ["get-started/index", "get-started/quickstart", "get-started/use-cases"] },
-          { "group": "Concepts", "pages": ["get-started/how-it-works", "get-started/security", "get-started/glossary"] }
+          {
+            "group": "Understand Comis",
+            "pages": [
+              "get-started/index",
+              "get-started/quickstart",
+              "get-started/use-cases",
+              "get-started/how-it-works",
+              "get-started/security",
+              "get-started/glossary"
+            ]
+          },
+          {
+            "group": "Install",
+            "pages": [
+              "installation/index",
+              "installation/requirements",
+              "installation/install-linux",
+              "installation/install-vps",
+              "installation/install-docker",
+              "installation/install-render",
+              "installation/configuration",
+              "installation/verify"
+            ]
+          }
         ]
       },
       {
-        "tab": "Installation",
+        "tab": "Use Comis",
         "groups": [
-          { "group": "Setup", "pages": ["installation/index", "installation/requirements", "installation/install-linux", "installation/install-vps", "installation/install-docker", "installation/install-render", "installation/configuration", "installation/verify"] }
+          {
+            "group": "Agents",
+            "pages": [
+              "agents/index",
+              "agents/lifecycle",
+              "agents/identity",
+              "agents/autonomy",
+              "agents/routing",
+              "agents/slash-commands",
+              "agents/sessions",
+              "agents/subagent-lifecycle",
+              "agents/efficiency",
+              "agents/context-management",
+              "agents/compaction",
+              "agents/rag",
+              "agents/queue",
+              "agents/execution-graphs",
+              "agents/memory",
+              "agents/memory-config",
+              "agents/search",
+              "agents/embeddings",
+              "agents/memory-benchmarks",
+              "agents/models",
+              "agents/safety",
+              "agents/resilience",
+              "agents/cache"
+            ]
+          },
+          {
+            "group": "Channels",
+            "pages": [
+              "channels/index",
+              "channels/multi-user",
+              "channels/discord",
+              "channels/telegram",
+              "channels/slack",
+              "channels/whatsapp",
+              "channels/signal",
+              "channels/imessage",
+              "channels/line",
+              "channels/irc",
+              "channels/email",
+              "channels/msteams",
+              "channels/delivery"
+            ]
+          },
+          {
+            "group": "Skills and integrations",
+            "pages": [
+              "skills/index",
+              "skills/built-in-tools",
+              "skills/platform-tools",
+              "skills/prompt-skills",
+              "skills/examples",
+              "skills/manifest",
+              "skills/security-scanning",
+              "skills/tool-policy",
+              "skills/mcp",
+              "skills/tooling-layer"
+            ]
+          },
+          {
+            "group": "Agent tools",
+            "pages": [
+              "agent-tools/index",
+              "agent-tools/scheduling",
+              "agent-tools/messaging",
+              "agent-tools/sessions",
+              "agent-tools/pipelines",
+              "agent-tools/media",
+              "agent-tools/infrastructure",
+              "agent-tools/browser",
+              "agent-tools/terminal-driver",
+              "agent-tools/coding-clis",
+              "agent-tools/gsd-builder",
+              "agent-tools/web-tools",
+              "agent-tools/orchestrate",
+              "agent-tools/platform-actions"
+            ]
+          },
+          {
+            "group": "Media",
+            "pages": [
+              "media/index",
+              "media/vision",
+              "media/voice",
+              "media/documents",
+              "media/links",
+              "media/rich-messages"
+            ]
+          },
+          {
+            "group": "Web dashboard",
+            "pages": [
+              "web-dashboard/index",
+              "web-dashboard/chat",
+              "web-dashboard/agents-view",
+              "web-dashboard/workspace-view",
+              "web-dashboard/channels-view",
+              "web-dashboard/message-center",
+              "web-dashboard/sessions-view",
+              "web-dashboard/subagents",
+              "web-dashboard/pipelines",
+              "web-dashboard/observability",
+              "web-dashboard/skills",
+              "web-dashboard/mcp-management",
+              "web-dashboard/models",
+              "web-dashboard/memory-view",
+              "web-dashboard/scheduler-view",
+              "web-dashboard/security-view",
+              "web-dashboard/media",
+              "web-dashboard/config-editor"
+            ]
+          }
         ]
       },
       {
-        "tab": "Channels",
+        "tab": "Operate Comis",
         "groups": [
-          { "group": "Overview", "pages": ["channels/index", "channels/multi-user"] },
-          { "group": "Adapters", "pages": ["channels/discord", "channels/telegram", "channels/slack", "channels/whatsapp", "channels/signal", "channels/imessage", "channels/line", "channels/irc", "channels/email"] },
-          { "group": "Infrastructure", "pages": ["channels/delivery"] }
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/index",
+              "operations/daemon",
+              "operations/logging",
+              "operations/monitoring",
+              "operations/observability",
+              "operations/prometheus-grafana",
+              "operations/scheduler",
+              "operations/web-ui",
+              "operations/data-directory",
+              "operations/trace-cli",
+              "operations/incident-bundle",
+              "operations/local-models",
+              "operations/multilingual",
+              "operations/systemd",
+              "operations/docker",
+              "operations/docker-hub",
+              "operations/pm2",
+              "operations/reverse-proxy",
+              "operations/troubleshooting",
+              "operations/faq",
+              "operations/proxy"
+            ]
+          },
+          {
+            "group": "Security",
+            "pages": [
+              "security/index",
+              "security/threat-model",
+              "security/capability-model",
+              "security/defense-in-depth",
+              "security/secrets",
+              "security/oauth",
+              "security/approvals",
+              "security/audit",
+              "security/sandbox",
+              "security/exec-sandbox",
+              "security/credential-broker",
+              "security/hardening"
+            ]
+          }
         ]
       },
       {
-        "tab": "Agents",
+        "tab": "Extend Comis",
         "groups": [
-          { "group": "Core", "pages": ["agents/index", "agents/lifecycle", "agents/identity", "agents/autonomy", "agents/routing", "agents/slash-commands"] },
-          { "group": "Conversations", "pages": ["agents/sessions", "agents/subagent-lifecycle", "agents/efficiency", "agents/context-management", "agents/compaction", "agents/rag", "agents/queue"] },
-          { "group": "Orchestration", "pages": ["agents/execution-graphs"] },
-          { "group": "Memory", "pages": ["agents/memory", "agents/memory-config", "agents/search", "agents/embeddings", "agents/memory-benchmarks"] },
-          { "group": "Advanced", "pages": ["agents/models", "agents/safety", "agents/resilience", "agents/cache"] }
-        ]
-      },
-      {
-        "tab": "Skills",
-        "groups": [
-          { "group": "Overview", "pages": ["skills/index", "skills/built-in-tools", "skills/platform-tools"] },
-          { "group": "Custom Skills", "pages": ["skills/prompt-skills", "skills/examples"] },
-          { "group": "Building", "pages": ["skills/manifest", "skills/security-scanning", "skills/tool-policy"] },
-          { "group": "Integrations", "pages": ["skills/mcp", "skills/tooling-layer", "integrations/mcp-server"] }
-        ]
-      },
-      {
-        "tab": "Agent Tools",
-        "groups": [
-          { "group": "Overview", "pages": ["agent-tools/index"] },
-          { "group": "Tool Guides", "pages": ["agent-tools/scheduling", "agent-tools/messaging", "agent-tools/sessions", "agent-tools/pipelines", "agent-tools/media", "agent-tools/infrastructure", "agent-tools/browser", "agent-tools/terminal-driver", "agent-tools/coding-clis", "agent-tools/gsd-builder", "agent-tools/web-tools", "agent-tools/orchestrate"] },
-          { "group": "Platform Actions", "pages": ["agent-tools/platform-actions"] }
-        ]
-      },
-      {
-        "tab": "Media & Voice",
-        "groups": [
-          { "group": "Overview", "pages": ["media/index"] },
-          { "group": "Capabilities", "pages": ["media/vision", "media/voice", "media/documents", "media/links", "media/rich-messages"] }
-        ]
-      },
-      {
-        "tab": "Web Dashboard",
-        "groups": [
-          { "group": "Overview", "pages": ["web-dashboard/index"] },
-          { "group": "Operate", "pages": ["web-dashboard/chat", "web-dashboard/agents-view", "web-dashboard/workspace-view", "web-dashboard/channels-view", "web-dashboard/message-center", "web-dashboard/sessions-view", "web-dashboard/subagents", "web-dashboard/pipelines"] },
-          { "group": "Observe", "pages": ["web-dashboard/observability"] },
-          { "group": "Configure", "pages": ["web-dashboard/skills", "web-dashboard/mcp-management", "web-dashboard/models", "web-dashboard/memory-view", "web-dashboard/scheduler-view", "web-dashboard/security-view", "web-dashboard/media", "web-dashboard/config-editor", "web-dashboard/setup-wizard"] }
-        ]
-      },
-      {
-        "tab": "Operations",
-        "groups": [
-          { "group": "Management", "pages": ["operations/index", "operations/daemon", "operations/logging", "operations/monitoring", "operations/observability", "operations/prometheus-grafana", "operations/scheduler", "operations/web-ui", "operations/data-directory", "operations/trace-cli", "operations/incident-bundle", "operations/local-models", "operations/multilingual"] },
-          { "group": "Deployment", "pages": ["operations/systemd", "operations/docker", "operations/docker-hub", "operations/pm2", "operations/reverse-proxy"] },
-          { "group": "Help", "pages": ["operations/troubleshooting", "operations/faq", "operations/proxy"] }
-        ]
-      },
-      {
-        "tab": "Security",
-        "groups": [
-          { "group": "Overview", "pages": ["security/index", "security/threat-model", "security/capability-model", "security/defense-in-depth"] },
-          { "group": "Features", "pages": ["security/secrets", "security/oauth", "security/approvals", "security/audit", "security/sandbox", "security/exec-sandbox", "security/credential-broker", "security/hardening"] }
-        ]
-      },
-      {
-        "tab": "Developer Guide",
-        "groups": [
-          { "group": "Architecture", "pages": ["developer-guide/index", "developer-guide/architecture", "developer-guide/packages", "developer-guide/event-bus", "developer-guide/architecture/delivery-pipeline"] },
-          { "group": "Extending", "pages": ["developer-guide/custom-adapters", "developer-guide/plugins", "developer-guide/custom-skills", "developer-guide/pipelines", "developer-guide/channel-emulation-harness", "developer-guide/contributing"] }
+          {
+            "group": "Architecture",
+            "pages": [
+              "developer-guide/index",
+              "developer-guide/architecture",
+              "developer-guide/packages",
+              "developer-guide/event-bus",
+              "developer-guide/architecture/delivery-pipeline"
+            ]
+          },
+          {
+            "group": "Build extensions",
+            "pages": [
+              "developer-guide/custom-adapters",
+              "developer-guide/plugins",
+              "developer-guide/custom-skills",
+              "developer-guide/pipelines",
+              "developer-guide/channel-emulation-harness",
+              "developer-guide/contributing",
+              "integrations/mcp-server"
+            ]
+          }
         ]
       },
       {
         "tab": "Reference",
         "groups": [
-          { "group": "CLI", "pages": ["reference/index", "reference/cli", "reference/comis-agent-cli"] },
-          { "group": "Configuration", "pages": ["reference/config-yaml", "reference/environment-variables", "reference/hot-reload", "reference/secret-manager", "reference/configuration/delivery-queue"] },
-          { "group": "Security", "pages": ["reference/security-model", "reference/sandbox", "reference/safe-path", "reference/action-classifier", "reference/tool-security", "reference/node-permissions", "reference/known-limitations"] },
-          { "group": "Gateway", "pages": ["reference/http-gateway", "reference/json-rpc", "reference/websocket", "reference/openai-api", "reference/webhooks", "reference/rate-limiting", "reference/acp-server"] }
+          {
+            "group": "CLI",
+            "pages": ["reference/index", "reference/cli", "reference/comis-agent-cli"]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "reference/config-yaml",
+              "reference/environment-variables",
+              "reference/hot-reload",
+              "reference/secret-manager",
+              "reference/configuration/delivery-queue"
+            ]
+          },
+          {
+            "group": "Security",
+            "pages": [
+              "reference/security-model",
+              "reference/sandbox",
+              "reference/safe-path",
+              "reference/action-classifier",
+              "reference/tool-security",
+              "reference/node-permissions",
+              "reference/known-limitations"
+            ]
+          },
+          {
+            "group": "Gateway and APIs",
+            "pages": [
+              "reference/http-gateway",
+              "reference/json-rpc",
+              "reference/websocket",
+              "reference/openai-api",
+              "reference/webhooks",
+              "reference/rate-limiting",
+              "reference/acp-server"
+            ]
+          }
         ]
       }
     ],

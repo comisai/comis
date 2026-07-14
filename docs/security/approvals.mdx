@@ -4,11 +4,17 @@ description: "How to require human approval before agents perform high-risk acti
 icon: "clipboard-check"
 ---
 
-Some actions are too important to let an AI decide alone. Comis lets you
-require human approval before agents perform destructive or sensitive
-operations. When an agent tries to delete a file, modify a configuration, or
-take another high-risk action, execution pauses until you approve or deny the
-request.
+Comis can require human approval before agents perform destructive or
+sensitive operations. **The approval workflow is disabled by default.** Set
+`approvals.enabled: true` and configure the applicable rules before relying on
+it. Action classification continues while approvals are disabled, but it does
+not create a human-in-the-loop pause by itself.
+
+<Warning>
+The default unmatched mode is `auto`, and the default agent tool-policy profile
+is `full`. Enable and test approvals from the same agent, tool, and channel path
+you will expose to untrusted users.
+</Warning>
 
 ## How It Works
 
@@ -21,16 +27,14 @@ Here is what happens when an agent triggers the approval workflow:
   </Step>
 
   <Step title="Comis classifies the action">
-    Every action is automatically classified as read (safe), mutate
-    (modifying), or destructive (irreversible). 178 actions across 21
-    categories have specific classifications built in. Any action that is not
-    registered defaults to "destructive" -- Comis fails closed.
+    Actions are classified as read, mutate, or destructive. Registered actions
+    have explicit classifications; an unknown action defaults to destructive.
   </Step>
 
   <Step title="Confirmation is checked">
-    If the action's classification requires confirmation (destructive actions
-    do by default), the request enters the approval workflow. The confirmation
-    policy determines which classifications require human approval.
+    If approvals are enabled and the first matching approval rule requires
+    confirmation, the request enters the approval workflow. With approvals
+    disabled, no request is created.
   </Step>
 
   <Step title="Execution pauses">
@@ -188,14 +192,13 @@ classification drives the entire confirmation and approval system.
 | Mutate | Modifies something, reversible | Sending messages, writing files, updating settings |
 | Destructive | Irreversible or high-impact | Deleting files, dropping data, bulk operations |
 
-The action registry contains **178 registered actions across 21 categories**.
 Unknown actions that are not registered default to destructive -- Comis fails
 closed. This means new tools and custom actions are automatically treated as
 high-risk until they are explicitly classified. The registry is **locked**
 after bootstrap so plugins cannot downgrade classifications at runtime.
 
 <Tip>
-For the complete list of all 178 registered actions and their classifications,
+For the current registered actions and their classifications,
 see [Action Classifier Reference](/reference/action-classifier).
 </Tip>
 

@@ -38,7 +38,7 @@ export function detectShellSubstitutions(command: string): string | null {
 
     // Check BEFORE feeding to tracker so we can use current state
     if (!tracker.escaped && !tracker.isInSingleQuote()) {
-      // $( command substitution — but NOT $(( arithmetic (F-18; a nested $(cmd) is still caught at its own position).
+      // Detect $( command substitution but not $(( arithmetic; nested substitutions are caught later.
       if (
         ch === "$" &&
         i + 1 < command.length &&

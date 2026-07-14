@@ -137,7 +137,8 @@ The context engine and the prompt cache are two systems that have to cooperate o
 
 The compromise: the engine tracks a **cache fence index**. Layers 1-10 never modify content before the fence on a turn — they only edit content after it. That means the cached prefix stays stable across turns, and the parts of the prompt that change live entirely after the fence where the provider expects them to vary.
 
-For the full mechanics — adaptive TTL, sub-agent spawn staggering, two-phase break detection, the 15+ shipped optimizations — see [Cache](/agents/cache).
+For the full mechanics — adaptive TTL, sub-agent spawn staggering, two-phase
+break detection, and provider-specific behavior — see [Cache](/agents/cache).
 
 ## When something looks wrong
 

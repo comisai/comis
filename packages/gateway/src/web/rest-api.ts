@@ -9,7 +9,7 @@ import type { RpcAdapterDeps } from "../rpc/rpc-adapters.js";
 import { extractBearerToken, checkScope } from "../auth/token-auth.js";
 
 interface RestApiEnv extends Env {
-  Variables: { clientScopes: string[] };
+  Variables: { clientScopes: string[]; clientId: string };
 }
 
 /**
@@ -212,7 +212,8 @@ export function createRestApi(deps: RestApiDeps): Hono<RestApiEnv> {
       return c.json({ error: "Forbidden: insufficient scope" }, 403);
     }
 
-    // Store client scopes on context for downstream handlers
+    // Store authenticated identity and scopes for downstream handlers.
+    c.set("clientId", client.id);
     c.set("clientScopes", client.scopes as string[]);
 
     return next();
@@ -363,6 +364,7 @@ export function createRestApi(deps: RestApiDeps): Hono<RestApiEnv> {
     }
 
     const scopes = c.get("clientScopes") as readonly string[] | undefined;
+    const clientId = c.get("clientId");
 
     const cmdResult = await rpcAdapterDeps.handleSlashCommand?.({ message, agentId, scopes });
     if (cmdResult?.handled && cmdResult.response) {
@@ -370,7 +372,7 @@ export function createRestApi(deps: RestApiDeps): Hono<RestApiEnv> {
     }
 
     try {
-      const result = await rpcAdapterDeps.executeAgent({ message, agentId, sessionKey, scopes });
+      const result = await rpcAdapterDeps.executeAgent({ message, agentId, sessionKey, clientId, scopes });
       return c.json(result);
     } catch (err) {
       deps.logger?.error({ err, hint: "Check agent executor logs for details or verify LLM provider connectivity", errorKind: "internal" as const }, "POST /chat error");
