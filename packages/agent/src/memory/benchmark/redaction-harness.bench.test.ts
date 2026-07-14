@@ -98,6 +98,7 @@ import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
 import { createMockLogger } from "../../../../../test/support/mock-logger.js";
 // Core types (type-only).
 import type { MemoryConfig, MemorySearchResult, SessionKey, TrustLevel } from "@comis/core";
+import { MemoryConfigSchema } from "@comis/core";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -117,19 +118,19 @@ const BENCH_NOW = 1_700_000_000_000;
 const HARNESS_VERSION = "phase-99-v1";
 
 /**
- * The bench store config (mirrors the sibling harnesses). `as MemoryConfig`: the
- * adapter reads the fields it needs; `dims` = the probed embedding dimensions (or
- * 4 for the FTS-only honest fallback).
+ * The bench store config (mirrors the sibling harnesses). Built through
+ * `MemoryConfigSchema.parse` so schema drift fails loudly here instead of at
+ * adapter runtime; `dims` = the probed embedding dimensions (or 4 for the
+ * FTS-only honest fallback).
  */
 function makeBenchConfig(dbPath: string, dims: number): MemoryConfig {
-  return {
+  return MemoryConfigSchema.parse({
     dbPath,
     walMode: false,
-    embeddingModel: "local",
-    embeddingDimensions: dims,
+    recall: { embeddingModel: "local", embeddingDimensions: dims },
     compaction: { enabled: false, threshold: 1000, targetSize: 500 },
     retention: { maxAgeDays: 0 },
-  } as MemoryConfig;
+  });
 }
 
 /** The bench recall scope -- neutral placeholders, isolated from any live session. */

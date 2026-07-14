@@ -88,6 +88,7 @@ import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
 import { createMockLogger } from "../../../../../test/support/mock-logger.js";
 // Core types (type-only).
 import type { MemoryConfig, MemoryEmbeddingStore, MemorySearchResult, SessionKey } from "@comis/core";
+import { MemoryConfigSchema } from "@comis/core";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -114,14 +115,13 @@ const EMBED_DIMS = 4;
 
 /** The bench store config (mirrors the sibling harnesses). */
 function makeBenchConfig(dbPath: string): MemoryConfig {
-  return {
+  return MemoryConfigSchema.parse({
     dbPath,
     walMode: false,
-    embeddingModel: "local",
-    embeddingDimensions: EMBED_DIMS,
+    recall: { embeddingModel: "local", embeddingDimensions: EMBED_DIMS },
     compaction: { enabled: false, threshold: 1000, targetSize: 500 },
     retention: { maxAgeDays: 0 },
-  } as MemoryConfig;
+  });
 }
 
 /** The bench recall scope -- neutral placeholders, isolated from any live session. */

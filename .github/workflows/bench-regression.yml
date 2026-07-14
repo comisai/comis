@@ -150,10 +150,13 @@ jobs:
       - name: Assert no committed-results file leaked a credential shape
         # Belt-and-suspenders over the harnesses' in-test omission gate + the script's
         # own sweeps: fail the job if ANY committed benchmarks/results file matches a
-        # credential SHAPE (sk-…/Bearer …/apiKey). Never matches the bare word `token`.
+        # credential SHAPE (sk-…/Bearer …/an apiKey key-value assignment — mirrors
+        # test/live/judge.ts and scripts/bench-memory.sh). Never matches the bare word
+        # `token`, nor a bare `apiKey` mention in report prose or a quoted empty
+        # `apiKey: ""` — only apiKey followed by a non-empty quoted value.
         if: always()
         run: |
-          if grep -REn 'sk-[A-Za-z0-9_-]{16,}|Bearer [A-Za-z0-9._-]+|apiKey' benchmarks/results 2>/dev/null; then
+          if grep -REn 'sk-[A-Za-z0-9_-]{16,}|Bearer [A-Za-z0-9._-]+|"?apiKey"?[[:space:]]*[=:][[:space:]]*["'\''][^"'\'']{4,}' benchmarks/results 2>/dev/null; then
             echo "::error::credential shape found under benchmarks/results — failing the job"
             exit 1
           fi
