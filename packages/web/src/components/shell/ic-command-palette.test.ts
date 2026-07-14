@@ -116,6 +116,12 @@ describe("IcCommandPalette", () => {
     expect(input).toBeTruthy();
   });
 
+  it("announces the command palette as a modal dialog", async () => {
+    const el = await createElement<IcCommandPalette>("ic-command-palette", { open: true });
+    const dialog = el.shadowRoot?.querySelector('[role="dialog"]');
+    expect(dialog?.getAttribute("aria-modal")).toBe("true");
+  });
+
   it("has role=listbox on the results container", async () => {
     const el = await createElement<IcCommandPalette>("ic-command-palette", {
       open: true,

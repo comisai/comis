@@ -279,6 +279,13 @@ describe("IcModelsView", () => {
 
       const title = editor?.querySelector(".editor-title");
       expect(title?.textContent).toContain("Add Provider");
+
+      const labels = Array.from(editor?.querySelectorAll("label") ?? []) as HTMLLabelElement[];
+      expect(labels.length).toBeGreaterThan(0);
+      for (const label of labels) {
+        expect(label.htmlFor).not.toBe("");
+        expect(el.shadowRoot?.getElementById(label.htmlFor)).not.toBeNull();
+      }
     });
   });
 
@@ -346,6 +353,21 @@ describe("IcModelsView", () => {
       expect(html).toContain("claude-sonnet-4-5-20250929");
     });
 
+    it("associates alias editor labels with their inputs", async () => {
+      const addButton = Array.from(el.shadowRoot?.querySelectorAll("button") ?? [])
+        .find((button) => button.textContent?.trim() === "Add Alias") as HTMLButtonElement;
+      addButton.click();
+      await el.updateComplete;
+
+      const form = el.shadowRoot?.querySelector(".alias-form");
+      const labels = Array.from(form?.querySelectorAll("label") ?? []) as HTMLLabelElement[];
+      expect(labels.length).toBe(3);
+      for (const label of labels) {
+        expect(label.htmlFor).not.toBe("");
+        expect(el.shadowRoot?.getElementById(label.htmlFor)).not.toBeNull();
+      }
+    });
+
     it("delete calls config.patch", async () => {
       const deleteBtn = el.shadowRoot?.querySelector('.btn-danger[aria-label*="Delete"]') as HTMLButtonElement;
       expect(deleteBtn).not.toBeNull();
@@ -401,6 +423,12 @@ describe("IcModelsView", () => {
       expect(summary).not.toBeNull();
       expect(summary?.textContent).toContain("anthropic");
       expect(summary?.textContent).toContain("claude-sonnet-4-5-20250929");
+
+      const labels = Array.from(el.shadowRoot?.querySelectorAll(".defaults-section label") ?? []) as HTMLLabelElement[];
+      expect(labels.slice(0, 2).map((label) => label.htmlFor)).toEqual([
+        "default-provider",
+        "default-model",
+      ]);
     });
 
     it("change fires config.patch", async () => {

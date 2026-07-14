@@ -359,7 +359,7 @@ export class IcCommandPalette extends LitElement {
 
     return html`
       <div class="backdrop" @click=${this._handleBackdropClick}>
-        <div class="palette" role="dialog" aria-label="Command palette">
+        <div class="palette" role="dialog" aria-modal="true" aria-label="Command palette">
           <input
             class="search-input"
             type="text"

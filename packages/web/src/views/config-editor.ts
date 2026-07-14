@@ -892,8 +892,9 @@ export class IcConfigEditor extends LitElement {
         </div>
 
         <div class="gateway-field">
-          <label class="gateway-label">Host</label>
+          <label class="gateway-label" for="gateway-host">Host</label>
           <input
+            id="gateway-host"
             class="gateway-input"
             type="text"
             .value=${gw.host ?? "0.0.0.0"}
@@ -902,8 +903,9 @@ export class IcConfigEditor extends LitElement {
         </div>
 
         <div class="gateway-field">
-          <label class="gateway-label">Port</label>
+          <label class="gateway-label" for="gateway-port">Port</label>
           <input
+            id="gateway-port"
             class="gateway-input"
             type="number"
             .value=${String(gw.port ?? 3000)}

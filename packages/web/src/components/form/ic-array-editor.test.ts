@@ -29,6 +29,14 @@ describe("IcArrayEditor", () => {
     expect(label!.textContent).toContain("Origins");
   });
 
+  it("gives the add input an accessible name from the visible label", async () => {
+    const el = await createElement({ label: "Origins" });
+    const label = el.shadowRoot?.querySelector(".editor-label") as HTMLLabelElement;
+    const input = el.shadowRoot?.querySelector(".add-input") as HTMLInputElement;
+    expect(input.id).not.toBe("");
+    expect(label.htmlFor).toBe(input.id);
+  });
+
   it("displays existing items", async () => {
     const el = await createElement({ items: ["http://localhost", "https://example.com"] });
     const items = el.shadowRoot?.querySelectorAll(".item-text");

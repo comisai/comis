@@ -349,40 +349,55 @@ export class IcSchemaForm extends LitElement {
     this._onFormFieldChange(arrayPath, updated);
   }
 
+  private _controlId(path: string): string {
+    const safePath = `${this.sectionKey}-${path}`.replace(/[^a-zA-Z0-9_-]/g, "-");
+    return `config-field-${safePath}`;
+  }
+
   // --- Field renderers ---
 
   private _renderStringField(path: string, label: string, value: string, schema: SchemaProperty) {
     const useTextarea = (schema.maxLength !== undefined && schema.maxLength > 200) ||
       path.includes("prompt") || path.includes("template");
+    const controlId = this._controlId(path);
+    const errorId = `${controlId}-error`;
     return html`
       <div class="form-field">
-        <label class="form-label">${label}</label>
+        <label class="form-label" for=${controlId}>${label}</label>
         ${schema.description ? html`<span class="form-description">${schema.description}</span>` : nothing}
         ${useTextarea
-          ? html`<textarea class="form-textarea" .value=${value}
+          ? html`<textarea id=${controlId} class="form-textarea" .value=${value}
+              aria-invalid=${this._formErrors[path] ? "true" : "false"}
+              aria-describedby=${this._formErrors[path] ? errorId : nothing}
               @input=${(e: Event) => this._onFormFieldChange(path, (e.target as HTMLTextAreaElement).value)}
               @blur=${() => this._validateField(path, value, schema)}
             ></textarea>`
-          : html`<input class="form-input" type="text" .value=${value}
+          : html`<input id=${controlId} class="form-input" type="text" .value=${value}
+              aria-invalid=${this._formErrors[path] ? "true" : "false"}
+              aria-describedby=${this._formErrors[path] ? errorId : nothing}
               @input=${(e: Event) => this._onFormFieldChange(path, (e.target as HTMLInputElement).value)}
               @blur=${() => this._validateField(path, value, schema)}
             />`}
-        ${this._formErrors[path] ? html`<span class="form-error">${this._formErrors[path]}</span>` : nothing}
+        ${this._formErrors[path] ? html`<span class="form-error" id=${errorId} role="alert">${this._formErrors[path]}</span>` : nothing}
       </div>
     `;
   }
 
   private _renderNumberField(path: string, label: string, value: number, schema: SchemaProperty) {
+    const controlId = this._controlId(path);
+    const errorId = `${controlId}-error`;
     return html`
       <div class="form-field">
-        <label class="form-label">${label}</label>
+        <label class="form-label" for=${controlId}>${label}</label>
         ${schema.description ? html`<span class="form-description">${schema.description}</span>` : nothing}
-        <input class="form-input" type="number" .value=${String(value)}
+        <input id=${controlId} class="form-input" type="number" .value=${String(value)}
           min=${schema.minimum ?? nothing} max=${schema.maximum ?? nothing}
+          aria-invalid=${this._formErrors[path] ? "true" : "false"}
+          aria-describedby=${this._formErrors[path] ? errorId : nothing}
           @input=${(e: Event) => { const val = parseFloat((e.target as HTMLInputElement).value); if (!isNaN(val)) this._onFormFieldChange(path, val); }}
           @blur=${() => this._validateField(path, value, schema)}
         />
-        ${this._formErrors[path] ? html`<span class="form-error">${this._formErrors[path]}</span>` : nothing}
+        ${this._formErrors[path] ? html`<span class="form-error" id=${errorId} role="alert">${this._formErrors[path]}</span>` : nothing}
       </div>
     `;
   }
@@ -449,7 +464,7 @@ export class IcSchemaForm extends LitElement {
 
     return html`
       <div class="form-field">
-        <label class="form-label">${label}</label>
+        <div class="form-label">${label}</div>
         ${schema.description ? html`<span class="form-description">${schema.description}</span>` : nothing}
         <div class="array-cards">
           ${items.map((item, idx) => this._renderArrayObjectCard(path, idx, item, properties, requiredFields))}
@@ -480,12 +495,13 @@ export class IcSchemaForm extends LitElement {
           ${Object.entries(properties).map(([key, propSchema]) => {
             const fieldLabel = `${toTitleCase(key)}${requiredFields.includes(key) ? " *" : ""}`;
             const fieldValue = item[key];
+            const controlId = this._controlId(`${arrayPath}.${index}.${key}`);
 
             if (key === "secret") {
               return html`
                 <div class="form-field">
-                  <label class="form-label">${fieldLabel}</label>
-                  <input type="password" class="form-input"
+                  <label class="form-label" for=${controlId}>${fieldLabel}</label>
+                  <input id=${controlId} type="password" class="form-input"
                     .value=${typeof fieldValue === "string" ? fieldValue : ""}
                     placeholder="env:VAR_NAME or min 32 chars"
                     @input=${(e: Event) => { this._onArrayItemFieldChange(arrayPath, index, key, (e.target as HTMLInputElement).value); }}
@@ -499,8 +515,8 @@ export class IcSchemaForm extends LitElement {
                 const active = new Set(((fieldValue ?? []) as unknown[]).map(String));
                 return html`
                   <div class="form-field">
-                    <label class="form-label">${fieldLabel}</label>
-                    <div class="scope-chips">
+                    <div class="form-label">${fieldLabel}</div>
+                    <div class="scope-chips" role="group" aria-label=${fieldLabel}>
                       ${KNOWN_SCOPES.map((scope) => html`
                         <button class="scope-chip" ?data-active=${active.has(scope)}
                           @click=${() => {
@@ -526,8 +542,8 @@ export class IcSchemaForm extends LitElement {
             if (propSchema.type === "string") {
               return html`
                 <div class="form-field">
-                  <label class="form-label">${fieldLabel}</label>
-                  <input type="text" class="form-input" .value=${String(fieldValue ?? "")}
+                  <label class="form-label" for=${controlId}>${fieldLabel}</label>
+                  <input id=${controlId} type="text" class="form-input" .value=${String(fieldValue ?? "")}
                     @input=${(e: Event) => { this._onArrayItemFieldChange(arrayPath, index, key, (e.target as HTMLInputElement).value); }}
                   />
                 </div>
@@ -537,8 +553,8 @@ export class IcSchemaForm extends LitElement {
             if (propSchema.type === "number" || propSchema.type === "integer") {
               return html`
                 <div class="form-field">
-                  <label class="form-label">${fieldLabel}</label>
-                  <input type="number" class="form-input" .value=${String(fieldValue ?? 0)}
+                  <label class="form-label" for=${controlId}>${fieldLabel}</label>
+                  <input id=${controlId} type="number" class="form-input" .value=${String(fieldValue ?? 0)}
                     @input=${(e: Event) => { this._onArrayItemFieldChange(arrayPath, index, key, Number((e.target as HTMLInputElement).value)); }}
                   />
                 </div>
@@ -548,8 +564,7 @@ export class IcSchemaForm extends LitElement {
             if (propSchema.type === "boolean") {
               return html`
                 <div class="form-field">
-                  <label class="form-label">${fieldLabel}</label>
-                  <ic-toggle ?checked=${Boolean(fieldValue)}
+                  <ic-toggle label=${fieldLabel} ?checked=${Boolean(fieldValue)}
                     @change=${(e: CustomEvent<boolean>) => { this._onArrayItemFieldChange(arrayPath, index, key, e.detail); }}
                   ></ic-toggle>
                 </div>
@@ -558,8 +573,8 @@ export class IcSchemaForm extends LitElement {
 
             return html`
               <div class="form-field">
-                <label class="form-label">${fieldLabel}</label>
-                <input type="text" class="form-input" .value=${JSON.stringify(fieldValue ?? "")}
+                <label class="form-label" for=${controlId}>${fieldLabel}</label>
+                <input id=${controlId} type="text" class="form-input" .value=${JSON.stringify(fieldValue ?? "")}
                   @input=${(e: Event) => {
                     try { this._onArrayItemFieldChange(arrayPath, index, key, JSON.parse((e.target as HTMLInputElement).value)); } catch { /* ignore parse errors */ }
                   }}
@@ -602,11 +617,15 @@ export class IcSchemaForm extends LitElement {
 
   private _renderJsonFallback(path: string, label: string, value: unknown, schema: SchemaProperty) {
     const jsonStr = JSON.stringify(value ?? null, null, 2);
+    const controlId = this._controlId(path);
+    const errorId = `${controlId}-error`;
     return html`
       <div class="form-field">
-        <label class="form-label">${label}</label>
+        <label class="form-label" for=${controlId}>${label}</label>
         ${schema.description ? html`<span class="form-description">${schema.description}</span>` : nothing}
-        <textarea class="json-fallback-textarea" .value=${jsonStr}
+        <textarea id=${controlId} class="json-fallback-textarea" .value=${jsonStr}
+          aria-invalid=${this._formErrors[path] ? "true" : "false"}
+          aria-describedby=${this._formErrors[path] ? errorId : nothing}
           @input=${(e: Event) => {
             const text = (e.target as HTMLTextAreaElement).value;
             try {
@@ -616,7 +635,7 @@ export class IcSchemaForm extends LitElement {
             } catch { this._formErrors = { ...this._formErrors, [path]: "Invalid JSON" }; }
           }}
         ></textarea>
-        ${this._formErrors[path] ? html`<span class="form-error">${this._formErrors[path]}</span>` : nothing}
+        ${this._formErrors[path] ? html`<span class="form-error" id=${errorId} role="alert">${this._formErrors[path]}</span>` : nothing}
       </div>
     `;
   }

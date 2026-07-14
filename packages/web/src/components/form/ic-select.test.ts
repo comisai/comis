@@ -74,8 +74,11 @@ describe("IcSelect", () => {
 
   it("has ARIA label association", async () => {
     const el = await createElement({ label: "Pick one", options: OPTIONS });
+    const label = el.shadowRoot?.querySelector("label") as HTMLLabelElement;
     const select = el.shadowRoot?.querySelector("select") as HTMLSelectElement;
     expect(select.getAttribute("aria-label")).toBe("Pick one");
+    expect(select.id).not.toBe("");
+    expect(label.htmlFor).toBe(select.id);
   });
 
   it("renders empty select with no options", async () => {

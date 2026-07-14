@@ -111,6 +111,14 @@ export class IcApp extends LitElement implements AppHost {
       font-size: 0.875rem;
     }
 
+    .auth-label {
+      display: block;
+      margin-bottom: 0.375rem;
+      color: var(--ic-text-muted, #9ca3af);
+      font-size: 0.8125rem;
+      font-weight: 500;
+    }
+
     .auth-input {
       width: 100%;
       padding: 0.625rem 0.75rem;
@@ -207,6 +215,7 @@ export class IcApp extends LitElement implements AppHost {
     }
 
     .shortcuts-panel {
+      position: relative;
       background: var(--ic-surface, #111827);
       border: 1px solid var(--ic-border, #374151);
       border-radius: var(--ic-radius-lg, 0.75rem);
@@ -214,6 +223,18 @@ export class IcApp extends LitElement implements AppHost {
       max-width: 400px;
       width: 90%;
       box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4);
+    }
+
+    .shortcuts-close {
+      position: absolute;
+      top: 0.75rem;
+      right: 0.75rem;
+      border: 0;
+      background: transparent;
+      color: var(--ic-text-muted, #9ca3af);
+      cursor: pointer;
+      font-size: 1.25rem;
+      line-height: 1;
     }
 
     .shortcuts-title {
@@ -380,13 +401,20 @@ export class IcApp extends LitElement implements AppHost {
           <div class="auth-title">Comis</div>
           <div class="auth-subtitle">Enter your gateway token to continue</div>
           <form @submit=${this._handleLogin}>
+            <label class="auth-label" for="gateway-token">Gateway token</label>
             <input
+              id="gateway-token"
+              name="gateway-token"
               class="auth-input"
               type="password"
               placeholder="Gateway bearer token"
-              autocomplete="off"
+              autocomplete="current-password"
+              aria-invalid=${this._authError ? "true" : "false"}
+              aria-describedby=${this._authError ? "gateway-token-error" : nothing}
             />
-            ${this._authError ? html`<div class="auth-error">${this._authError}</div>` : nothing}
+            ${this._authError
+              ? html`<div id="gateway-token-error" class="auth-error" role="alert" aria-live="assertive">${this._authError}</div>`
+              : nothing}
             <button class="auth-btn" type="submit">Connect</button>
           </form>
         </div>
@@ -416,7 +444,6 @@ export class IcApp extends LitElement implements AppHost {
           <ic-topbar
             .connectionStatus=${this._connectionStatus}
             .notificationCount=${this._pendingApprovals}
-            .tokenId=${this._token}
             @toggle-sidebar=${() => { this._sidebarOpen = !this._sidebarOpen; }}
             @navigate=${(e: CustomEvent<string>) => { this._router?.navigate(e.detail); }}
             @logout=${() => this._handleLogout()}
@@ -444,8 +471,9 @@ export class IcApp extends LitElement implements AppHost {
   private _renderShortcutsHelp() {
     return html`
       <div class="shortcuts-backdrop" @click=${(e: MouseEvent) => { if ((e.target as HTMLElement).classList.contains("shortcuts-backdrop")) this._shortcutsHelpOpen = false; }}>
-        <div class="shortcuts-panel" role="dialog" aria-label="Keyboard shortcuts">
-          <div class="shortcuts-title">Keyboard Shortcuts</div>
+        <div class="shortcuts-panel" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title">
+          <button class="shortcuts-close" type="button" aria-label="Close keyboard shortcuts" @click=${() => { this._shortcutsHelpOpen = false; }}>&times;</button>
+          <div class="shortcuts-title" id="shortcuts-title">Keyboard Shortcuts</div>
           <table class="shortcuts-table">
             <tbody>
               <tr><td><kbd>Ctrl</kbd>+<kbd>K</kbd></td><td>Command Palette</td></tr>

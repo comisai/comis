@@ -247,9 +247,6 @@ export class IcTopbar extends LitElement {
   /** Whether the sidebar is collapsed (affects hamburger display logic) */
   @property({ type: Boolean }) sidebarCollapsed = false;
 
-  /** Token ID for user avatar (first 2 chars shown) */
-  @property() tokenId = "";
-
   /** Whether the user menu dropdown is open */
   @state() private _menuOpen = false;
 
@@ -296,9 +293,6 @@ export class IcTopbar extends LitElement {
   }
 
   private _getAvatarText(): string {
-    if (this.tokenId && this.tokenId.length >= 2) {
-      return this.tokenId.slice(0, 2).toUpperCase();
-    }
     return "OP";
   }
 
@@ -358,9 +352,7 @@ export class IcTopbar extends LitElement {
                 ? html`
                     <div class="dropdown">
                       <div class="dropdown-info">
-                        ${this.tokenId
-                          ? `${this.tokenId.slice(0, 6)}${"*".repeat(Math.min(8, Math.max(0, this.tokenId.length - 10)))}${this.tokenId.length > 10 ? this.tokenId.slice(-4) : ""}`
-                          : "Operator"}
+                        Operator
                       </div>
                       <div class="dropdown-divider"></div>
                       <button

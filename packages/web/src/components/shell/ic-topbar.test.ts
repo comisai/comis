@@ -139,6 +139,17 @@ describe("IcTopbar", () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
+  it("never renders bearer-token fragments as operator identity", async () => {
+    const secret = "super-secret-gateway-token";
+    const el = await createElement<IcTopbar>("ic-topbar", { tokenId: secret });
+    (el.shadowRoot?.querySelector(".avatar-btn") as HTMLButtonElement).click();
+    await el.updateComplete;
+
+    expect(el.shadowRoot?.textContent).toContain("Operator");
+    expect(el.shadowRoot?.textContent).not.toContain(secret.slice(0, 6));
+    expect(el.shadowRoot?.textContent).not.toContain(secret.slice(-4));
+  });
+
   it("shows brand text 'Comis'", async () => {
     const el = await createElement<IcTopbar>("ic-topbar");
     const brandImg = el.shadowRoot?.querySelector(".brand img.brand-icon") as HTMLImageElement;

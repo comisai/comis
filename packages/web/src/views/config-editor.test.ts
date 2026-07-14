@@ -181,6 +181,8 @@ function priv(el: IcConfigEditor) {
     _applying: boolean;
     _expandedPaths: Set<string>;
     _expandedFormPaths: Set<string>;
+    _activeTab: string;
+    _gatewayConfig: Record<string, unknown> | null;
   };
 }
 
@@ -387,6 +389,20 @@ describe("IcConfigEditor - Mode Tabs", () => {
 /* ------------------------------------------------------------------ */
 
 describe("IcConfigEditor - Form Mode", () => {
+  it("associates schema field labels with their controls", async () => {
+    const rpcClient = createConfigMockRpcClient();
+    const el = await createElement({ rpcClient });
+    await flush(el);
+
+    const form = el.shadowRoot?.querySelector("ic-schema-form");
+    const labels = Array.from(form?.shadowRoot?.querySelectorAll("label.form-label") ?? []) as HTMLLabelElement[];
+    expect(labels.length).toBeGreaterThan(0);
+    for (const label of labels) {
+      expect(label.htmlFor).not.toBe("");
+      expect(form?.shadowRoot?.getElementById(label.htmlFor)).not.toBeNull();
+    }
+  });
+
   it("renders text input for string schema properties", async () => {
     const rpcClient = createConfigMockRpcClient();
     const el = await createElement({ rpcClient });
@@ -671,5 +687,22 @@ describe("IcConfigEditor - Loading States", () => {
 
     const title = el.shadowRoot?.querySelector(".view-title");
     expect(title?.textContent).toContain("Settings");
+  });
+});
+
+describe("IcConfigEditor - Gateway accessibility", () => {
+  it("associates gateway labels with host and port controls", async () => {
+    const rpcClient = createConfigMockRpcClient();
+    const el = await createElement({ rpcClient });
+    await flush(el);
+    priv(el)._activeTab = "gateway";
+    priv(el)._gatewayConfig = { enabled: true, host: "127.0.0.1", port: 3000, cors: {}, tokens: [] };
+    await (el as any).updateComplete;
+
+    const labels = Array.from(el.shadowRoot?.querySelectorAll("label.gateway-label") ?? []) as HTMLLabelElement[];
+    expect(labels.map((label) => label.htmlFor)).toEqual(["gateway-host", "gateway-port"]);
+    for (const label of labels) {
+      expect(el.shadowRoot?.getElementById(label.htmlFor)).not.toBeNull();
+    }
   });
 });

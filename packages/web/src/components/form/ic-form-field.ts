@@ -3,6 +3,8 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
 
+let nextFormFieldId = 0;
+
 /**
  * Label + input + validation error component.
  *
@@ -120,6 +122,8 @@ export class IcFormField extends LitElement {
   /** Options for type="select" */
   @property({ type: Array }) options: Array<{ value: string; label: string }> = [];
 
+  private readonly _controlId = `ic-form-field-${++nextFormFieldId}`;
+
   private _handleInput(e: Event): void {
     const target = e.target as HTMLInputElement | HTMLSelectElement;
     this.dispatchEvent(
@@ -132,11 +136,11 @@ export class IcFormField extends LitElement {
 
   override render() {
     const hasError = this.error.length > 0;
-    const errorId = `error-${this.label.toLowerCase().replace(/\s+/g, "-")}`;
+    const errorId = `${this._controlId}-error`;
 
     return html`
       <div class="field-wrapper">
-        <label>
+        <label for=${this._controlId}>
           ${this.label}
           ${this.required
             ? html`<span class="required-indicator" aria-hidden="true">*</span>`
@@ -153,6 +157,7 @@ export class IcFormField extends LitElement {
   private _renderInput(hasError: boolean, errorId: string) {
     return html`
       <input
+        id=${this._controlId}
         type=${this.type}
         .value=${this.value}
         placeholder=${this.placeholder || nothing}
@@ -169,6 +174,7 @@ export class IcFormField extends LitElement {
   private _renderSelect(hasError: boolean, errorId: string) {
     return html`
       <select
+        id=${this._controlId}
         .value=${this.value}
         ?required=${this.required}
         ?disabled=${this.disabled}

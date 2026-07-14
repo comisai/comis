@@ -3,6 +3,8 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
 
+let nextSecretInputId = 0;
+
 /**
  * Masked input with SecretRef format hint.
  *
@@ -115,6 +117,8 @@ export class IcSecretInput extends LitElement {
 
   @state() private _visible = false;
 
+  private readonly _inputId = `ic-secret-input-${++nextSecretInputId}`;
+
   private _onInput(e: Event): void {
     const val = (e.target as HTMLInputElement).value;
     this.dispatchEvent(
@@ -130,24 +134,30 @@ export class IcSecretInput extends LitElement {
     return html`
       <div class="field-wrapper">
         ${this.label
-          ? html`<label>${this.label}</label>`
+          ? html`<label for=${this._inputId}>${this.label}</label>`
           : nothing}
         <div class="input-row">
           <input
+            id=${this._inputId}
             type=${this._visible ? "text" : "password"}
             .value=${this.value}
             placeholder=${this.placeholder}
             ?disabled=${this.disabled}
+            aria-describedby=${`${this._inputId}-hint`}
+            autocomplete="off"
+            spellcheck="false"
             @input=${this._onInput}
           />
           <button
             class="toggle-btn"
             type="button"
             aria-label=${this._visible ? "Hide value" : "Show value"}
+            aria-controls=${this._inputId}
+            ?disabled=${this.disabled}
             @click=${this._toggleVisibility}
           >${this._visible ? "\u{1F648}" : "\u{1F441}"}</button>
         </div>
-        <span class="hint">${
+        <span class="hint" id=${`${this._inputId}-hint`}>${
           this.storageMode === "env"
             ? "Format: env:VAR_NAME or file:/path/to/secret (env mode: store secrets in environment variables)"
             : "Format: env:VAR_NAME or file:/path/to/secret"

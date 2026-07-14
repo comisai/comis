@@ -3,6 +3,8 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
 
+let nextArrayEditorId = 0;
+
 /**
  * Array item editor with add/remove functionality.
  *
@@ -131,6 +133,8 @@ export class IcArrayEditor extends LitElement {
 
   @state() private _inputValue = "";
 
+  private readonly _inputId = `ic-array-editor-${++nextArrayEditorId}`;
+
   private _addItem(): void {
     const trimmed = this._inputValue.trim();
     if (!trimmed) return;
@@ -158,7 +162,7 @@ export class IcArrayEditor extends LitElement {
   override render() {
     return html`
       ${this.label
-        ? html`<div class="editor-label">${this.label}</div>`
+        ? html`<label class="editor-label" for=${this._inputId}>${this.label}</label>`
         : nothing}
       ${this.items.length > 0
         ? html`
@@ -180,14 +184,16 @@ export class IcArrayEditor extends LitElement {
         : nothing}
       <div class="add-row">
         <input
+          id=${this._inputId}
           class="add-input"
           type="text"
           placeholder=${this.placeholder}
           .value=${this._inputValue}
+          aria-label=${this.label || "New item"}
           @input=${(e: Event) => { this._inputValue = (e.target as HTMLInputElement).value; }}
           @keydown=${this._onKeyDown}
         />
-        <button class="add-btn" @click=${() => this._addItem()}>Add</button>
+        <button class="add-btn" type="button" @click=${() => this._addItem()}>Add</button>
       </div>
     `;
   }
