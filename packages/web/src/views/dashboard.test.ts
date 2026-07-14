@@ -698,6 +698,32 @@ describe("IcDashboard", () => {
       expect(priv(el)._agents[0]?.status).toBe("suspended");
     });
 
+    it("keeps a successful deletion when an older roster refresh finishes later", async () => {
+      let resolveRoster!: (agents: DashboardTestAgent[]) => void;
+      const pendingRoster = new Promise<DashboardTestAgent[]>((resolve) => {
+        resolveRoster = resolve;
+      });
+      priv(el).apiClient = createMockApiClient({
+        getAgents: vi.fn().mockReturnValue(pendingRoster),
+      });
+      priv(el).rpcClient = createMockRpcClient();
+      priv(el)._agents = [
+        { id: "agent-alpha", provider: "anthropic", model: "claude", status: "active" },
+        { id: "agent-beta", provider: "openai", model: "gpt-4", status: "active" },
+      ];
+      priv(el)._deleteTarget = priv(el)._agents[0] ?? null;
+
+      const rosterLoad = priv(el)._loadAgents();
+      await priv(el)._confirmAgentDelete();
+      resolveRoster([
+        { id: "agent-alpha", provider: "anthropic", model: "claude", status: "active" },
+        { id: "agent-beta", provider: "openai", model: "gpt-4", status: "active" },
+      ]);
+      await rosterLoad;
+
+      expect(priv(el)._agents.map((agent) => agent.id)).toEqual(["agent-beta"]);
+    });
+
     it("removes billing entries for agents missing from a lifecycle roster refresh", async () => {
       priv(el).apiClient = createMockApiClient({
         getAgents: vi.fn().mockResolvedValue([
@@ -1299,6 +1325,35 @@ describe("IcDashboard", () => {
       expect([...priv(el)._agentBilling.entries()]).toEqual([
         ["a2", { cost: 2, tokens: 20 }],
       ]);
+    });
+
+    it("keeps the newest billing refresh when overlapping requests resolve out of order", async () => {
+      let resolveFirst!: (value: { totalCost: number; totalTokens: number }) => void;
+      let resolveSecond!: (value: { totalCost: number; totalTokens: number }) => void;
+      const firstResult = new Promise<{ totalCost: number; totalTokens: number }>((resolve) => {
+        resolveFirst = resolve;
+      });
+      const secondResult = new Promise<{ totalCost: number; totalTokens: number }>((resolve) => {
+        resolveSecond = resolve;
+      });
+      const mockRpc = createMockRpcClient(undefined, {
+        call: vi.fn()
+          .mockReturnValueOnce(firstResult)
+          .mockReturnValueOnce(secondResult),
+      });
+      priv(el).rpcClient = mockRpc;
+      priv(el)._agents = [
+        { id: "a1", provider: "anthropic", model: "claude", status: "active" },
+      ];
+
+      const firstLoad = priv(el)._loadAgentBilling();
+      const secondLoad = priv(el)._loadAgentBilling();
+      resolveSecond({ totalCost: 2, totalTokens: 20 });
+      await secondLoad;
+      resolveFirst({ totalCost: 1, totalTokens: 10 });
+      await firstLoad;
+
+      expect(priv(el)._agentBilling.get("a1")).toEqual({ cost: 2, tokens: 20 });
     });
 
     it("_loadAgentBilling does nothing when agents array is empty", async () => {
