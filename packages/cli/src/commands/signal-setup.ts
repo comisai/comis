@@ -468,8 +468,7 @@ async function runSignalSetup(): Promise<void> {
   await verifySetup(phone);
 
   p.outro(
-    "Signal CLI configured! Add the Signal channel to your config with:\n" +
-    "  comis configure --section channels",
+    "Signal CLI configured. Run `comis init`, choose Update existing configuration, and add Signal when prompted.",
   );
 }
 

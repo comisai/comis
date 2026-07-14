@@ -172,6 +172,27 @@ describe("reviewStep", () => {
     expect(summaryCall).toBeDefined();
   });
 
+  it("summary describes a LAN bind without presenting 0.0.0.0 as a connection URL", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      gateway: {
+        port: 4766,
+        bindMode: "lan",
+        token: "test-token",
+        webEnabled: true,
+      },
+    };
+    const prompter = createMockPrompter({ select: ["confirm"] });
+
+    await reviewStep.execute(state, prompter);
+
+    const summary = vi.mocked(prompter.note).mock.calls
+      .map(([message]) => String(message))
+      .join("\n");
+    expect(summary).toContain("all network interfaces");
+    expect(summary).not.toContain("ws://0.0.0.0");
+  });
+
   it("summary includes channel info when channels are configured", async () => {
     const state = populatedState();
     const prompter = createMockPrompter({

@@ -252,7 +252,9 @@ export function registerModelsCommand(program: Command): void {
 
         success(`Model updated for agent "${agent}"`);
         console.log(`  ${chalk.gray(oldModelStr)} ${chalk.white("->")} ${chalk.cyan(entry.modelId)}`);
-        info("Daemon will restart to apply the change");
+        info(
+          "Restart the daemon to apply the change: `comis daemon stop`, then `comis daemon start`.",
+        );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         error(`Failed to set model: ${msg}`);

@@ -14,6 +14,7 @@
  */
 
 import type { Command } from "commander";
+import { readFileSync } from "node:fs";
 import type { WizardStepId, WizardState } from "../wizard/types.js";
 import type { StepRegistry } from "../wizard/state.js";
 import { runWizardFlow } from "../wizard/state.js";
@@ -46,6 +47,39 @@ import { reviewStep } from "../wizard/steps/09-review.js";
 import { writeConfigStep } from "../wizard/steps/10-write-config.js";
 import { daemonStartStep } from "../wizard/steps/11-daemon-start.js";
 import { finishStep } from "../wizard/steps/12-finish.js";
+
+/** Inputs that control provider API-key resolution for `comis init`. */
+interface ProviderApiKeyOptions {
+  nonInteractive?: unknown;
+  apiKey?: unknown;
+  apiKeyStdin?: unknown;
+}
+
+/**
+ * Resolve the main provider key without requiring it in the process argument
+ * list. Stdin mode is intentionally non-interactive: reading until EOF from a
+ * TTY would block the setup wizard and could echo input in the terminal.
+ */
+export function resolveProviderApiKey(
+  options: ProviderApiKeyOptions,
+  readStdin: () => string = () => readFileSync(0, "utf-8"),
+): string | undefined {
+  if (options.apiKeyStdin !== true) {
+    return typeof options.apiKey === "string" ? options.apiKey : undefined;
+  }
+  if (options.nonInteractive !== true) {
+    throw new Error("--api-key-stdin is available only with --non-interactive");
+  }
+  if (typeof options.apiKey === "string") {
+    throw new Error("--api-key and --api-key-stdin cannot be used together");
+  }
+
+  const value = readStdin().trim();
+  if (value.length === 0) {
+    throw new Error("--api-key-stdin received empty input");
+  }
+  return value;
+}
 
 // ---------- Step Registry ----------
 
@@ -177,6 +211,10 @@ export function registerInitCommand(program: Command): void {
     // Provider/credentials
     .option("--provider <id>", "LLM provider")
     .option("--api-key <key>", "Provider API key")
+    .option(
+      "--api-key-stdin",
+      "Read the provider API key from stdin (requires --non-interactive)",
+    )
     .option("--agent-name <name>", "Agent identifier (default: comis-agent)")
     .option("--model <id>", "Model identifier")
     // Gateway
@@ -239,6 +277,9 @@ export function registerInitCommand(program: Command): void {
       // ------------------------------------------------------------------
       if (options.nonInteractive) {
         try {
+          const apiKey = resolveProviderApiKey(options);
+          if (apiKey !== undefined) options.apiKey = apiKey;
+
           // Build NonInteractiveOptions from Commander parsed options
           const niOpts = buildNonInteractiveOptionsFromCommander(options);
 
@@ -298,6 +339,12 @@ export function registerInitCommand(program: Command): void {
           );
           process.exit(1);
         }
+        return;
+      }
+
+      if (options.apiKeyStdin) {
+        console.error("--api-key-stdin is available only with --non-interactive");
+        process.exit(1);
         return;
       }
 

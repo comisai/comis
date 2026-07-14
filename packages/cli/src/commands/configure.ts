@@ -13,17 +13,19 @@
 import type { Command } from "commander";
 import * as p from "@clack/prompts";
 import * as fs from "node:fs";
+import { homedir } from "node:os";
 import { Document, parseDocument } from "yaml";
 import {
   getConfigSections,
   getFieldMetadata,
   validatePartial,
   loadConfigFile,
+  safePath,
 } from "@comis/core";
 import type { FieldMetadata } from "@comis/core";
 
 /** Default config file path. */
-const DEFAULT_CONFIG_PATH = "/etc/comis/config.yaml";
+const DEFAULT_CONFIG_PATH = safePath(homedir(), ".comis", "config.yaml");
 
 /**
  * Get the current value from a config object at a dot-notation path.
@@ -287,7 +289,9 @@ export function registerConfigureCommand(program: Command): void {
               // Update in-memory config for subsequent edits
               currentConfig[selectedSection] = updatedSection;
 
-              p.log.success("Configuration updated. Daemon will restart to apply changes.");
+              p.log.success(
+                "Configuration updated. Restart the daemon to apply changes: `comis daemon stop`, then `comis daemon start`.",
+              );
             }
           } else {
             p.log.info("No changes made.");

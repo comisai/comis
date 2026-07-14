@@ -829,9 +829,9 @@ describe("buildNonInteractiveState", () => {
     expect(state.riskAccepted).toBe(true);
   });
 
-  it("sets provider validated based on skipValidation", () => {
+  it("never claims non-interactive provider credentials were validated without a live check", () => {
     const stateSkipped = buildNonInteractiveState(validOpts({ skipValidation: true }));
-    expect(stateSkipped.provider!.validated).toBe(true);
+    expect(stateSkipped.provider!.validated).toBe(false);
 
     const stateNotSkipped = buildNonInteractiveState(validOpts({ skipValidation: false }));
     expect(stateNotSkipped.provider!.validated).toBe(false);

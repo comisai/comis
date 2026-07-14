@@ -415,7 +415,9 @@ export function buildNonInteractiveState(
   const provider: ProviderConfig = {
     id: opts.provider!,
     ...(opts.apiKey !== undefined && { apiKey: opts.apiKey }),
-    validated: !!opts.skipValidation,
+    // The non-interactive path does not perform a live provider request. The
+    // presence of a key is configuration, not proof that the credential works.
+    validated: false,
   };
 
   // Model selection -- delegate to daemon when not specified.

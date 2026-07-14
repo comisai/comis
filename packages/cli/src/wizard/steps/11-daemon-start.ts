@@ -71,7 +71,7 @@ const READY_POLL_MS = 500;
 /** Result of a single health check. */
 type CheckResult = {
   name: string;
-  passed: boolean;
+  status: "verified" | "configured" | "failed";
   detail: string;
   fix?: string;
 };
@@ -196,13 +196,13 @@ async function runHealthCheck(
     if (res.ok) {
       checks.push({
         name: "Gateway",
-        passed: true,
+        status: "verified",
         detail: `responding on ${gatewayHost}:${gatewayPort}`,
       });
     } else {
       checks.push({
         name: "Gateway",
-        passed: false,
+        status: "failed",
         detail: `returned status ${res.status}`,
         fix: "Check gateway config in ~/.comis/config.yaml",
       });
@@ -210,82 +210,86 @@ async function runHealthCheck(
   } catch {
     checks.push({
       name: "Gateway",
-      passed: false,
+      status: "failed",
       detail: "not responding",
       fix: "Check gateway config in ~/.comis/config.yaml",
     });
   }
 
-  // 2. API provider check (trust daemon health -- it validates provider on startup)
+  // 2. Provider setup status. A healthy gateway does not prove that a provider
+  // credential can complete a model request, so report only what the wizard
+  // actually established.
   if (state.provider?.id) {
-    // If gateway responded OK, assume API provider is reachable
-    const gatewayPassed = checks[0]?.passed ?? false;
-    if (gatewayPassed) {
-      checks.push({
-        name: "API provider",
-        passed: true,
-        detail: state.provider.id,
-      });
-    } else {
-      checks.push({
-        name: "API provider",
-        passed: false,
-        detail: `${state.provider.id} (cannot verify -- gateway not responding)`,
-        fix: `Verify API key with 'comis configure --section provider'`,
-      });
-    }
+    const validationDetail = state.provider.validated === true
+      ? "credentials validated during setup; live model access not rechecked"
+      : "configured; live access not verified";
+    checks.push({
+      name: "API provider",
+      status: "configured",
+      detail: `${state.provider.id} (${validationDetail})`,
+    });
   }
 
-  // 3. Channel checks (cannot verify connections from outside daemon, report as configured)
+  // 3. Channel setup status. Credential validation is narrower than a live
+  // adapter connection, so neither state is presented as a health success.
   if (state.channels && state.channels.length > 0) {
     for (const channel of state.channels) {
       checks.push({
         name: channel.type,
-        passed: true,
-        detail: "configured",
+        status: "configured",
+        detail: channel.validated === true
+          ? "configured; credentials validated, connection not verified"
+          : "configured; connection not verified",
       });
     }
   }
 
-  // 4. Memory/data dir check
+  // 4. Data-directory check. Writability is verified here; database startup is
+  // covered by `comis doctor` after the daemon is running.
   const dataDir = state.dataDir ?? safePath(os.homedir(), ".comis", "data");
   try {
     if (existsSync(dataDir)) {
       accessSync(dataDir, fsConstants.W_OK);
       checks.push({
-        name: "Memory database",
-        passed: true,
-        detail: dataDir,
+        name: "Data directory",
+        status: "verified",
+        detail: `${dataDir} (writable; database startup not checked)`,
       });
     } else {
       // Directory will be created by the daemon on first run
       checks.push({
-        name: "Memory database",
-        passed: true,
-        detail: `${dataDir} (will be created)`,
+        name: "Data directory",
+        status: "configured",
+        detail: `${dataDir} (not created yet)`,
       });
     }
   } catch {
     checks.push({
-      name: "Memory database",
-      passed: false,
+      name: "Data directory",
+      status: "failed",
       detail: `${dataDir} is not writable`,
       fix: "Check data directory permissions",
     });
   }
 
   // Display results
-  prompter.log.info("Health check results:");
+  prompter.log.info("Setup verification:");
   const failures: CheckResult[] = [];
 
   for (const check of checks) {
-    if (check.passed) {
+    if (check.status === "verified") {
       prompter.log.info(themeSuccess(`${check.name}: ${check.detail}`));
-    } else {
+    } else if (check.status === "failed") {
       prompter.log.info(themeError(`${check.name}: ${check.detail}`));
       failures.push(check);
+    } else {
+      prompter.log.info(`${check.name}: ${check.detail}`);
     }
   }
+
+  prompter.log.info(
+    "Run 'comis doctor' for live provider, channel, and database checks.",
+  );
 
   // Show failure guidance
   if (failures.length > 0) {

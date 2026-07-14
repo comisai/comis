@@ -47,3 +47,12 @@ describe("signal-setup command injection prevention", () => {
     expect(source).not.toMatch(/(?:tryExec|execSync)\s*\(\s*`/);
   });
 });
+
+describe("signal-setup completion guidance", () => {
+  const source = readFileSync(new URL("./signal-setup.ts", import.meta.url), "utf-8");
+
+  it("routes users through the existing init update flow instead of the non-editable channels section", () => {
+    expect(source).toContain("comis init");
+    expect(source).not.toContain("comis configure --section channels");
+  });
+});

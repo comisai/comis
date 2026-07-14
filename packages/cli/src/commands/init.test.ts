@@ -21,7 +21,11 @@ vi.mock("../wizard/clack-adapter.js", () => ({
   createClackAdapter: vi.fn(() => ({})),
 }));
 
-import { registerInitCommand, buildStepRegistry } from "./init.js";
+import {
+  registerInitCommand,
+  buildStepRegistry,
+  resolveProviderApiKey,
+} from "./init.js";
 import { buildNonInteractiveState } from "../wizard/non-interactive.js";
 import type { WizardStepId } from "../wizard/types.js";
 
@@ -51,6 +55,7 @@ describe("registerInitCommand", () => {
     // Provider/credentials (4)
     expect(optionLongs).toContain("--provider");
     expect(optionLongs).toContain("--api-key");
+    expect(optionLongs).toContain("--api-key-stdin");
     expect(optionLongs).toContain("--agent-name");
     expect(optionLongs).toContain("--model");
 
@@ -99,11 +104,41 @@ describe("registerInitCommand", () => {
     expect(optionLongs).toContain("--reset-scope");
   });
 
-  it("has exactly 41 options", () => {
+  it("has exactly 42 options", () => {
     const program = new Command();
     registerInitCommand(program);
     const initCmd = program.commands.find((c) => c.name() === "init")!;
-    expect(initCmd.options).toHaveLength(41);
+    expect(initCmd.options).toHaveLength(42);
+  });
+
+  it("reads a provider API key from stdin without placing it in argv", () => {
+    const readStdin = vi.fn(() => "test-key-from-stdin\n");
+
+    expect(resolveProviderApiKey({
+      nonInteractive: true,
+      apiKeyStdin: true,
+    }, readStdin)).toBe("test-key-from-stdin");
+    expect(readStdin).toHaveBeenCalledOnce();
+  });
+
+  it("rejects conflicting or interactive uses of --api-key-stdin", () => {
+    expect(() => resolveProviderApiKey({
+      nonInteractive: true,
+      apiKey: "test-key",
+      apiKeyStdin: true,
+    }, () => "other-key")).toThrow(/cannot be used together/i);
+
+    expect(() => resolveProviderApiKey({
+      nonInteractive: false,
+      apiKeyStdin: true,
+    }, () => "test-key")).toThrow(/non-interactive/i);
+  });
+
+  it("rejects empty stdin input instead of silently configuring a missing key", () => {
+    expect(() => resolveProviderApiKey({
+      nonInteractive: true,
+      apiKeyStdin: true,
+    }, () => "\n")).toThrow(/empty/i);
   });
 
   it("parses --channels as comma-separated list", () => {
