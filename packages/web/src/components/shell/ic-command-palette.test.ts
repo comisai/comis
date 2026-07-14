@@ -144,6 +144,19 @@ describe("IcCommandPalette", () => {
     expect(labels.some((l) => l?.includes("Dashboard"))).toBe(true);
   });
 
+  it("does not offer the unsupported setup wizard as a command", async () => {
+    const el = await createElement<IcCommandPalette>("ic-command-palette", {
+      open: true,
+    });
+    const input = el.shadowRoot?.querySelector<HTMLInputElement>(".search-input");
+    expect(input).toBeTruthy();
+    input!.value = "Setup Wizard";
+    input!.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await (el as any).updateComplete;
+
+    expect(el.shadowRoot?.querySelectorAll('[role="option"]').length).toBe(0);
+  });
+
   it("arrow keys change activeIndex", async () => {
     const el = await createElement<IcCommandPalette>("ic-command-palette", {
       open: true,

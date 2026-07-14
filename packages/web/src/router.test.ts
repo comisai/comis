@@ -279,12 +279,12 @@ describe("createRouter", () => {
       });
     });
 
-    it("#/setup -> ic-setup-wizard, route 'setup', params {}", () => {
+    it("returns the dashboard for the unsupported browser setup route", () => {
       window.location.hash = "#/setup";
       const router = createRouter(onChange);
       expect(router.current()).toEqual({
-        view: "ic-setup-wizard",
-        route: "setup",
+        view: "ic-dashboard",
+        route: "dashboard",
         params: {},
         query: {},
       });

@@ -2,7 +2,7 @@
 /**
  * Hash-based router with parameterized route support for the Comis SPA.
  *
- * Supports 40 route patterns with named parameters (e.g., `:id`, `:type`).
+ * Supports named route parameters (e.g., `:id`, `:type`).
  * Routes are matched longest-first to ensure specific patterns like
  * `observe/billing` take priority over `observe` with a parameter.
  *
@@ -85,7 +85,6 @@ const ROUTE_TABLE: ReadonlyArray<{ pattern: string; view: string }> = [
   { pattern: "media/config", view: "ic-media-config-view" },
   { pattern: "security", view: "ic-security-view" },
   { pattern: "config", view: "ic-config-editor" },
-  { pattern: "setup", view: "ic-setup-wizard" },
   { pattern: "pipelines", view: "ic-pipeline-list" },
   { pattern: "pipelines/new", view: "ic-pipeline-builder" },
   { pattern: "pipelines/history", view: "ic-pipeline-history" },

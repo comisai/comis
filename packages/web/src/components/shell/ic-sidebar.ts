@@ -52,9 +52,6 @@ const NAV_SECTIONS: ReadonlyArray<NavSection> = [
   ]},
 ];
 
-/** Setup item below divider */
-const SETUP_ITEM: NavItem = { route: "setup", label: "Setup", icon: "\u25B6" };
-
 /** LocalStorage key for sidebar collapsed state */
 const COLLAPSE_KEY = "ic_sidebar_collapsed";
 
@@ -450,8 +447,6 @@ export class IcSidebar extends LitElement {
             </div>
             ${section.items.map((item) => this._renderNavItem(item))}
           `)}
-          <div class="divider"></div>
-          ${this._renderNavItem(SETUP_ITEM)}
         </nav>
         <div class="sidebar-footer">
           <button

@@ -40,10 +40,9 @@ type LoadState = "loading" | "loaded" | "error";
 
 /** Top-level tab definitions for the Settings view. */
 const TABS: TabDef[] = [
-  { id: "editor", label: "YAML Editor" },
+  { id: "editor", label: "Configuration" },
   { id: "gateway", label: "Gateway" },
   { id: "history", label: "History" },
-  { id: "wizard", label: "Setup Wizard" },
 ];
 
 /** Gateway configuration shape returned by config.read for the gateway section. */
@@ -56,7 +55,7 @@ interface GatewayConfig {
 }
 
 /** Editing mode for config sections. */
-type EditorMode = "form" | "yaml" | "schema";
+type EditorMode = "form" | "schema";
 
 // SchemaProperty imported from ./config-editor/schema-form.js
 
@@ -84,13 +83,12 @@ function setNestedValue(obj: Record<string, unknown>, path: string, value: unkno
 /* ------------------------------------------------------------------ */
 
 /**
- * Config editor view with section navigation sidebar, 3 editing modes
- * (Form, YAML, Schema), apply/import/export functionality.
+ * Config editor view with schema-backed form and reference modes.
  *
  * Loads configuration via config.read and config.schema RPCs.
  * Applies changes via config.apply RPC.
  *
- * Covers section navigation, form/YAML/schema editing modes, apply, import, and export.
+ * Covers section navigation, validated editing, change preview, history, and export.
  */
 @customElement("ic-config-editor")
 export class IcConfigEditor extends LitElement {
@@ -129,13 +127,6 @@ export class IcConfigEditor extends LitElement {
       .secondary-btn { padding: 0.5rem 1rem; background: var(--ic-surface-2); border: 1px solid var(--ic-border); border-radius: var(--ic-radius-md); color: var(--ic-text-muted); font-size: var(--ic-text-sm); font-family: inherit; cursor: pointer; }
       .secondary-btn:hover { background: var(--ic-border); }
       /* Form mode CSS extracted to ic-schema-form sub-component */
-      /* YAML mode */
-      .yaml-editor { display: flex; flex-direction: column; gap: var(--ic-space-sm); }
-      .yaml-textarea { width: 100%; min-height: 400px; padding: 1rem; background: var(--ic-surface-2); border: 1px solid var(--ic-border); border-radius: var(--ic-radius-md); color: var(--ic-text); font-family: var(--ic-font-mono, ui-monospace, monospace); font-size: var(--ic-text-sm); line-height: 1.5; tab-size: 2; white-space: pre; resize: vertical; }
-      .yaml-textarea:focus { outline: none; border-color: var(--ic-accent); }
-      .yaml-validation { padding: var(--ic-space-sm) var(--ic-space-md); border-radius: var(--ic-radius-md); font-size: var(--ic-text-sm); }
-      .yaml-validation--valid { background: color-mix(in srgb, var(--ic-success) 10%, transparent); color: var(--ic-success); border: 1px solid color-mix(in srgb, var(--ic-success) 30%, transparent); }
-      .yaml-validation--error { background: color-mix(in srgb, var(--ic-error) 10%, transparent); color: var(--ic-error); border: 1px solid color-mix(in srgb, var(--ic-error) 30%, transparent); }
       /* Schema mode */
       .schema-tree { display: flex; flex-direction: column; gap: 2px; }
       .schema-row { display: flex; align-items: baseline; gap: var(--ic-space-sm); padding: var(--ic-space-xs) 0; }
@@ -146,8 +137,6 @@ export class IcConfigEditor extends LitElement {
       .schema-constraints { font-size: var(--ic-text-xs); color: var(--ic-text-muted); font-style: italic; }
       .schema-children { padding-left: 1.5rem; }
       .required-marker { color: var(--ic-error); font-weight: 600; }
-      /* Hidden file input for import */
-      .hidden-input { display: none; }
       /* Spinner */
       .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255, 255, 255, 0.3); border-top-color: white; border-radius: 50%; animation: spin 0.6s linear infinite; }
       @keyframes spin {
@@ -157,9 +146,6 @@ export class IcConfigEditor extends LitElement {
       .diff-btn { padding: 0.5rem 1rem; background: var(--ic-surface-2); border: 1px solid var(--ic-border); border-radius: var(--ic-radius-md); color: var(--ic-text-muted); font-size: var(--ic-text-sm); font-family: inherit; cursor: pointer; }
       .diff-btn:hover { background: var(--ic-border); }
       .diff-btn[data-active] { background: var(--ic-accent); color: #fff; border-color: var(--ic-accent); }
-      /* Rollback button */
-      .rollback-btn { padding: 0.5rem 1rem; background: var(--ic-surface-2); border: 1px solid var(--ic-border); border-radius: var(--ic-radius-md); color: var(--ic-text-muted); font-size: var(--ic-text-sm); font-family: inherit; cursor: pointer; }
-      .rollback-btn:hover { border-color: var(--ic-error); color: var(--ic-error); }
       /* Diff viewer container */
       .diff-preview { margin-top: var(--ic-space-md); }
       /* Gateway tab */
@@ -175,11 +161,6 @@ export class IcConfigEditor extends LitElement {
       .gateway-token-id { font-family: var(--ic-font-mono, ui-monospace, monospace); font-size: var(--ic-text-xs); }
       .gateway-tokens-link { color: var(--ic-accent); font-size: var(--ic-text-sm); text-decoration: none; margin-top: var(--ic-space-sm); display: inline-block; cursor: pointer; }
       .gateway-tokens-link:hover { text-decoration: underline; }
-      /* Setup wizard tab */
-      .wizard-content { display: flex; flex-direction: column; align-items: center; gap: var(--ic-space-lg); padding: 3rem var(--ic-space-lg); text-align: center; }
-      .wizard-description { font-size: var(--ic-text-sm); color: var(--ic-text-muted); max-width: 32rem; line-height: 1.6; }
-      .wizard-btn { padding: 0.75rem 2rem; background: var(--ic-accent); color: #fff; border: none; border-radius: var(--ic-radius-md); font-size: var(--ic-text-sm); font-family: inherit; font-weight: 500; cursor: pointer; }
-      .wizard-btn:hover { filter: brightness(1.1); }
       /* History tab */
       .history-layout { display: grid; grid-template-columns: 350px 1fr; gap: var(--ic-space-md); min-height: 400px; }
       @media (max-width: 768px) {
@@ -219,8 +200,6 @@ export class IcConfigEditor extends LitElement {
   @state() private _mode: EditorMode = "form";
   @state() private _configData: Record<string, unknown> = {};
   @state() private _schemaData: Record<string, SchemaProperty> = {};
-  @state() private _yamlText = "";
-  @state() private _yamlErrors: string[] = [];
   @state() private _formState: Record<string, unknown> = {};
   @state() private _formErrors: Record<string, string> = {};
   @state() private _dirty = false;
@@ -231,10 +210,6 @@ export class IcConfigEditor extends LitElement {
   /* ---- Diff preview state ---- */
   @state() private _showDiff = false;
   @state() private _savedYaml = "";
-
-  /* ---- Rollback state ---- */
-  @state() private _rollbackSnapshot: Record<string, unknown> | null = null;
-  @state() private _confirmRollback = false;
 
   /* ---- Gateway tab state ---- */
   @state() private _gatewayConfig: GatewayConfig | null = null;
@@ -252,7 +227,6 @@ export class IcConfigEditor extends LitElement {
   @state() private _gcRunning = false;
 
   private _historyReloadTimer: ReturnType<typeof setTimeout> | null = null;
-  private _yamlDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private _rpcStatusUnsub: (() => void) | null = null;
   private _dataLoaded = false;
   private _configPatchedHandler: ((e: Event) => void) | null = null;
@@ -278,9 +252,6 @@ export class IcConfigEditor extends LitElement {
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
-    if (this._yamlDebounceTimer !== null) {
-      systemClearTimeout(this._yamlDebounceTimer);
-    }
     if (this._historyReloadTimer !== null) {
       systemClearTimeout(this._historyReloadTimer);
     }
@@ -353,13 +324,11 @@ export class IcConfigEditor extends LitElement {
     }
   }
 
-  /** Load form/YAML state for the currently selected section. */
+  /** Load editable state for the currently selected section. */
   private _loadSectionState(): void {
     const sectionData = this._configData[this._selectedSection] ?? {};
     this._formState = structuredClone(sectionData) as Record<string, unknown>;
-    this._yamlText = serializeToYaml(sectionData);
-    this._savedYaml = this._yamlText;
-    this._yamlErrors = [];
+    this._savedYaml = serializeToYaml(sectionData);
     this._formErrors = {};
     this._dirty = false;
     this._showDiff = false;
@@ -383,20 +352,6 @@ export class IcConfigEditor extends LitElement {
   /* ---------------------------------------------------------------- */
 
   private _onModeChange(mode: EditorMode): void {
-    if (mode === this._mode) return;
-
-    // Sync data between modes
-    if (this._mode === "form" && mode === "yaml") {
-      this._yamlText = serializeToYaml(this._formState);
-    } else if (this._mode === "yaml" && mode === "form") {
-      if (this._yamlErrors.length === 0) {
-        const parsed = parseYaml(this._yamlText);
-        if (!parsed.error && parsed.data && typeof parsed.data === "object") {
-          this._formState = parsed.data as Record<string, unknown>;
-        }
-      }
-    }
-
     this._mode = mode;
   }
 
@@ -423,57 +378,6 @@ export class IcConfigEditor extends LitElement {
           this._formErrors = newErrors;
         }}
       ></ic-schema-form>
-    `;
-  }
-
-  /* ---------------------------------------------------------------- */
-  /*  YAML mode                                                        */
-  /* ---------------------------------------------------------------- */
-
-  private _onYamlInput(e: Event): void {
-    this._yamlText = (e.target as HTMLTextAreaElement).value;
-    this._dirty = true;
-
-    // Debounced validation
-    if (this._yamlDebounceTimer !== null) {
-      systemClearTimeout(this._yamlDebounceTimer);
-    }
-    this._yamlDebounceTimer = systemSetTimeout(() => {
-      this._validateYaml();
-    }, 500);
-  }
-
-  private _validateYaml(): void {
-    const result = parseYaml(this._yamlText);
-    if (result.error) {
-      this._yamlErrors = [result.error];
-    } else {
-      this._yamlErrors = [];
-    }
-  }
-
-  private _renderYamlMode() {
-    return html`
-      <div class="yaml-editor">
-        <textarea
-          class="yaml-textarea"
-          .value=${this._yamlText}
-          @input=${(e: Event) => this._onYamlInput(e)}
-          spellcheck="false"
-          aria-label="YAML editor"
-        ></textarea>
-        ${this._yamlErrors.length > 0
-          ? html`
-              <div class="yaml-validation yaml-validation--error">
-                ${this._yamlErrors.map((err) => html`<div>${err}</div>`)}
-              </div>
-            `
-          : html`
-              <div class="yaml-validation yaml-validation--valid">
-                Valid configuration
-              </div>
-            `}
-      </div>
     `;
   }
 
@@ -585,27 +489,10 @@ export class IcConfigEditor extends LitElement {
     const rpc = this.rpcClient;
 
     this._applying = true;
-    let value: unknown;
-
-    if (this._mode === "yaml") {
-      const parsed = parseYaml(this._yamlText);
-      if (parsed.error) {
-        IcToast.show(parsed.error, "error");
-        this._applying = false;
-        return;
-      }
-      value = parsed.data;
-    } else {
-      value = this._formState;
-    }
-
-    // Snapshot current config before applying for rollback
-    this._rollbackSnapshot = structuredClone(this._configData) as Record<string, unknown>;
-
     try {
       await rpc.call("config.apply", {
         section: this._selectedSection,
-        value,
+        value: this._formState,
       });
       IcToast.show("Configuration applied", "success");
       this._dirty = false;
@@ -617,37 +504,8 @@ export class IcConfigEditor extends LitElement {
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to apply configuration";
       IcToast.show(msg, "error");
-      // Clear rollback snapshot on failure (nothing was applied)
-      this._rollbackSnapshot = null;
     } finally {
       this._applying = false;
-    }
-  }
-
-  /* ---------------------------------------------------------------- */
-  /*  Rollback                                                         */
-  /* ---------------------------------------------------------------- */
-
-  private async _onRollback(): Promise<void> {
-    if (!this.rpcClient || !this._rollbackSnapshot) return;
-    const rpc = this.rpcClient;
-
-    try {
-      await rpc.call("config.apply", {
-        config: this._rollbackSnapshot,
-      });
-      IcToast.show("Configuration rolled back", "success");
-
-      // Reload config data from server
-      const configResult = await rpc.call<{ config: Record<string, unknown>; sections: string[] }>("config.read");
-      this._configData = configResult.config;
-      this._rollbackSnapshot = null;
-      this._confirmRollback = false;
-      this._loadSectionState();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to rollback configuration";
-      IcToast.show(msg, "error");
-      this._confirmRollback = false;
     }
   }
 
@@ -886,7 +744,7 @@ export class IcConfigEditor extends LitElement {
   }
 
   /* ---------------------------------------------------------------- */
-  /*  Import / Export                                                  */
+  /*  Export                                                           */
   /* ---------------------------------------------------------------- */
 
   private _onExport(): void {
@@ -900,40 +758,6 @@ export class IcConfigEditor extends LitElement {
     URL.revokeObjectURL(url);
   }
 
-  private _onImportClick(): void {
-    const input = this.shadowRoot?.querySelector<HTMLInputElement>(".hidden-input");
-    input?.click();
-  }
-
-  private _onImportFile(e: Event): void {
-    const input = e.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      const text = reader.result as string;
-      const parsed = parseYaml(text);
-      if (parsed.error) {
-        IcToast.show(`Import failed: ${parsed.error}`, "error");
-        return;
-      }
-
-      if (parsed.data && typeof parsed.data === "object" && !Array.isArray(parsed.data)) {
-        this._configData = parsed.data as Record<string, unknown>;
-        this._loadSectionState();
-        this._dirty = true;
-        IcToast.show("Configuration imported", "info");
-      } else {
-        IcToast.show("Import failed: expected a YAML object", "error");
-      }
-    };
-    reader.readAsText(file);
-
-    // Reset the input so the same file can be re-imported
-    input.value = "";
-  }
-
   /* ---------------------------------------------------------------- */
   /*  Main render                                                      */
   /* ---------------------------------------------------------------- */
@@ -942,8 +766,6 @@ export class IcConfigEditor extends LitElement {
     switch (this._mode) {
       case "form":
         return this._renderFormMode();
-      case "yaml":
-        return this._renderYamlMode();
       case "schema":
         return this._renderSchemaMode();
       default:
@@ -991,11 +813,6 @@ export class IcConfigEditor extends LitElement {
               >Form</button>
               <button
                 class="mode-btn"
-                ?data-active=${this._mode === "yaml"}
-                @click=${() => this._onModeChange("yaml")}
-              >YAML</button>
-              <button
-                class="mode-btn"
                 ?data-active=${this._mode === "schema"}
                 @click=${() => this._onModeChange("schema")}
               >Schema</button>
@@ -1007,16 +824,6 @@ export class IcConfigEditor extends LitElement {
                 ?data-active=${this._showDiff}
                 @click=${() => { this._showDiff = !this._showDiff; }}
               >Show Diff</button>
-              ${this._rollbackSnapshot !== null
-                ? html`<button
-                    class="rollback-btn"
-                    @click=${() => { this._confirmRollback = true; }}
-                  >Rollback</button>`
-                : nothing}
-              <button
-                class="secondary-btn"
-                @click=${() => this._onImportClick()}
-              >Import</button>
               <button
                 class="secondary-btn"
                 @click=${() => this._onExport()}
@@ -1039,7 +846,7 @@ export class IcConfigEditor extends LitElement {
                 <div class="diff-preview">
                   <ic-diff-viewer
                     .oldText=${this._savedYaml}
-                    .newText=${this._mode === "yaml" ? this._yamlText : serializeToYaml(this._formState)}
+                    .newText=${serializeToYaml(this._formState)}
                     oldLabel="Current"
                     newLabel="Pending Changes"
                   ></ic-diff-viewer>
@@ -1049,21 +856,6 @@ export class IcConfigEditor extends LitElement {
         </div>
       </div>
 
-      <input
-        class="hidden-input"
-        type="file"
-        accept=".yaml,.yml"
-        @change=${(e: Event) => this._onImportFile(e)}
-      />
-
-      <ic-confirm-dialog
-        .open=${this._confirmRollback}
-        title="Rollback Configuration"
-        message="Restore previous configuration? This will revert all sections to the state before your last apply."
-        confirmLabel="Rollback"
-        @confirm=${() => this._onRollback()}
-        @cancel=${() => { this._confirmRollback = false; }}
-      ></ic-confirm-dialog>
     `;
   }
 
@@ -1155,22 +947,6 @@ export class IcConfigEditor extends LitElement {
     `;
   }
 
-  private _renderWizardTab() {
-    return html`
-      <div class="wizard-content">
-        <div class="wizard-description">
-          The setup wizard guides you through initial Comis configuration
-          including provider keys, agent creation, channel setup, and
-          security settings.
-        </div>
-        <button
-          class="wizard-btn"
-          @click=${() => { window.location.hash = "#setup"; }}
-        >Launch Setup Wizard</button>
-      </div>
-    `;
-  }
-
   override render() {
     return html`
       <div class="view-header">
@@ -1185,7 +961,6 @@ export class IcConfigEditor extends LitElement {
         <div slot="editor">${this._renderEditorTab()}</div>
         <div slot="gateway">${this._renderGatewayTab()}</div>
         <div slot="history">${this._renderHistoryTab()}</div>
-        <div slot="wizard">${this._renderWizardTab()}</div>
       </ic-tabs>
 
       <ic-confirm-dialog

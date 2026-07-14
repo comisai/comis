@@ -39,7 +39,6 @@ const VIEW_ITEMS: CommandItem[] = [
   { id: "v-context", label: "Context Engine", category: "view", icon: "layers", action: "observe/context" },
   { id: "v-security", label: "Security", category: "view", icon: "security", action: "security" },
   { id: "v-config", label: "Settings", category: "view", icon: "settings", action: "config" },
-  { id: "v-setup", label: "Setup Wizard", category: "view", icon: "setup", action: "setup" },
 ];
 
 /** Static command items. */
