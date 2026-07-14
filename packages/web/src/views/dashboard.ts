@@ -656,6 +656,36 @@ export class IcDashboard extends LitElement {
     }, delayMs);
   }
 
+  private _applyProcessMetrics(data: unknown): void {
+    if (data === null || typeof data !== "object") return;
+    const metrics = data as Record<string, unknown>;
+    const delay = metrics.eventLoopDelayMs;
+    if (delay === null || typeof delay !== "object") return;
+
+    const rssBytes = metrics.rssBytes;
+    const uptimeSeconds = metrics.uptimeSeconds;
+    const eventLoopP99Ms = (delay as Record<string, unknown>).p99;
+    if (
+      typeof rssBytes !== "number"
+      || !Number.isFinite(rssBytes)
+      || typeof uptimeSeconds !== "number"
+      || !Number.isFinite(uptimeSeconds)
+      || typeof eventLoopP99Ms !== "number"
+      || !Number.isFinite(eventLoopP99Ms)
+    ) {
+      return;
+    }
+
+    const current = this._systemHealth;
+    this._systemHealth = {
+      uptime: uptimeSeconds,
+      memoryUsage: rssBytes,
+      eventLoopDelay: eventLoopP99Ms,
+      nodeVersion: current?.nodeVersion ?? "---",
+      ...(current?.cpuUsage !== undefined ? { cpuUsage: current.cpuUsage } : {}),
+    };
+  }
+
   private _initSse(): void {
     if (!this.eventDispatcher || this._sse) return;
     this._sse = new SseController(this, this.eventDispatcher, {
@@ -670,7 +700,7 @@ export class IcDashboard extends LitElement {
       "agent:hot_removed": () => { void this._loadAgents(); },
       "channel:registered": () => { this._scheduleReload(); },
       "channel:deregistered": () => { this._scheduleReload(); },
-      "observability:metrics": () => { this._scheduleReload(500); },
+      "observability:metrics": (data) => { this._applyProcessMetrics(data); },
     });
   }
 

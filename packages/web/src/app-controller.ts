@@ -172,12 +172,13 @@ export function createAppController(
   const boundKeyHandler = (e: KeyboardEvent): void => controller.handleGlobalKeydown(e);
 
   /**
-   * Owned PollingController construction — follows the original app.ts
-   * order verbatim:
+   * Owned PollingController construction:
    *   1. rpcClient already exists (caller's responsibility).
    *   2. Construct `new PollingController(host, rpcClient, onData, 30_000)`.
-   *   3. Manually fire `hostConnected()` so the first poll runs (host is
-   *      already connected by the time this method runs).
+   *
+   * The constructor registers with Lit. When the host is connected, Lit
+   * invokes hostConnected immediately, so starting it again here would create
+   * a second interval whose handle cannot be cleaned up.
    */
   function startPolling(rpcClient: RpcClient): PollingController {
     const polling = new PollingController(
@@ -195,7 +196,6 @@ export function createAppController(
       },
       POLLING_INTERVAL_MS,
     );
-    polling.hostConnected();
     return polling;
   }
 
@@ -373,7 +373,9 @@ export function createAppController(
 
     cleanup(): void {
       if (host._pollingController) {
-        host._pollingController.hostDisconnected();
+        const polling = host._pollingController;
+        polling.hostDisconnected();
+        host.removeController(polling);
         host._pollingController = null;
       }
       host._rpcClient?.disconnect();

@@ -317,19 +317,10 @@ export class IcApp extends LitElement implements AppHost {
 
   override connectedCallback(): void {
     super.connectedCallback();
-    // Instantiate (or reuse if a test pre-instantiated via
-    // _ensureController) the app-controller. The shell retains
-    // router-host @state, render() + template helpers, VIEW_LOADERS.
-    // Manually fire hostConnected — the element is already connected and
-    // the controller needs to restore the session token + wire the global
-    // keyboard handler synchronously to match pre-extraction lifecycle.
-    this._ensureController().hostConnected();
-  }
-
-  override disconnectedCallback(): void {
-    super.disconnectedCallback();
-    this._appController?.hostDisconnected();
-    this._appController = null;
+    // Instantiate the controller if needed. Lit invokes hostConnected for a
+    // controller registered on an already-connected host; a controller that
+    // existed before this callback was invoked by super.connectedCallback().
+    this._ensureController();
   }
 
   // ---------------------------------------------------------------------
