@@ -612,6 +612,42 @@ describe("IcDashboard", () => {
       expect(priv(el)._sessionCount).toBe(8);
     });
 
+    it("applies process metrics without scheduling a full dashboard reload", async () => {
+      const mockDispatcher = createMockEventDispatcher();
+      priv(el).eventDispatcher = mockDispatcher;
+      priv(el)._systemHealth = {
+        uptime: 10,
+        memoryUsage: 20,
+        eventLoopDelay: 30,
+        nodeVersion: "v-test",
+      };
+      document.body.appendChild(el);
+      priv(el)._initSse();
+      const loadDataSpy = vi.spyOn(priv(el), "_loadData");
+
+      document.dispatchEvent(new CustomEvent("observability:metrics", {
+        detail: {
+          rssBytes: 512,
+          heapUsedBytes: 256,
+          heapTotalBytes: 384,
+          externalBytes: 64,
+          eventLoopDelayMs: { min: 1, max: 9, mean: 3, p50: 2, p99: 8 },
+          activeHandles: 12,
+          uptimeSeconds: 42,
+          timestamp: 1_000,
+        },
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 550));
+
+      expect(loadDataSpy).not.toHaveBeenCalled();
+      expect(priv(el)._systemHealth).toEqual({
+        uptime: 42,
+        memoryUsage: 512,
+        eventLoopDelay: 8,
+        nodeVersion: "v-test",
+      });
+    });
+
     it("refreshes only the agent roster for hot agent lifecycle events", async () => {
       const mockDispatcher = createMockEventDispatcher();
       const apiClient = createMockApiClient({

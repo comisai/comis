@@ -35,9 +35,11 @@ class MockWebSocket {
   static CLOSING = 2;
   static CLOSED = 3;
   static lastInstance: MockWebSocket | null = null;
+  static instances: MockWebSocket[] = [];
   constructor(url: string) {
     this.url = url;
     MockWebSocket.lastInstance = this;
+    MockWebSocket.instances.push(this);
     // Do NOT auto-fire onopen - tests control lifecycle explicitly
   }
 }
@@ -52,9 +54,11 @@ class MockEventSource {
   close = vi.fn();
   addEventListener = vi.fn();
   static lastInstance: MockEventSource | null = null;
+  static instances: MockEventSource[] = [];
   constructor(url: string) {
     this.url = url;
     MockEventSource.lastInstance = this;
+    MockEventSource.instances.push(this);
   }
 }
 vi.stubGlobal("EventSource", MockEventSource);
@@ -109,7 +113,9 @@ describe("IcApp", () => {
     mockFetch.mockReset();
     vi.clearAllMocks();
     MockWebSocket.lastInstance = null;
+    MockWebSocket.instances = [];
     MockEventSource.lastInstance = null;
+    MockEventSource.instances = [];
 
     el = document.createElement("ic-app") as IcApp;
   });
@@ -379,6 +385,22 @@ describe("IcApp", () => {
 
       expect(priv(el)._apiClient).toBeNull();
       expect(priv(el)._authenticated).toBe(false);
+    });
+
+    it("opens one RPC and event stream when restoring a saved token", async () => {
+      mockStorage["comis_token"] = "saved-token";
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ agents: [] }),
+      });
+
+      document.body.appendChild(el);
+
+      await vi.waitFor(() => {
+        expect(priv(el)._authenticated).toBe(true);
+      });
+      expect(MockWebSocket.instances).toHaveLength(1);
+      expect(MockEventSource.instances).toHaveLength(1);
     });
   });
 
