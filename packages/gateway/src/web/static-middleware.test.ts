@@ -25,6 +25,17 @@ describe("static-middleware security headers", () => {
     expect(csp).toContain("frame-ancestors 'none'");
   });
 
+  it("allows dashboard blob URLs only for rendered image and media content", async () => {
+    const app = createStaticMiddleware("/nonexistent/dist");
+
+    const res = await app.request("/app/index.html");
+    const csp = res.headers.get("content-security-policy");
+
+    expect(csp).toContain("img-src 'self' data: blob:");
+    expect(csp).toContain("media-src 'self' blob:");
+    expect(csp).not.toContain("script-src 'self' blob:");
+  });
+
   it("includes X-Frame-Options: DENY header", async () => {
     const app = createStaticMiddleware("/nonexistent/dist");
 

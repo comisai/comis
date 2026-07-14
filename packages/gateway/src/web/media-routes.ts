@@ -82,9 +82,7 @@ export function createMediaRoutes(deps: MediaRoutesDeps): Hono {
   // Bearer token auth middleware (when tokenStore is provided)
   if (tokenStore) {
     app.use("*", async (c, next) => {
-      const token =
-        extractBearerToken(c.req.header("authorization") ?? "") ??
-        (c.req.query("token") || null);
+      const token = extractBearerToken(c.req.header("authorization") ?? "");
       const client = token ? tokenStore.verify(token) : null;
       if (!client) {
         return c.json({ error: "Unauthorized" }, 401);

@@ -1017,6 +1017,7 @@ export class IcChatConsole extends LitElement {
         </button>
         <select
           class="agent-select"
+          aria-label="Agent"
           .value=${this._selectedAgent}
           @change=${(e: Event) => { this._selectedAgent = (e.target as HTMLSelectElement).value; }}
         >
@@ -1103,6 +1104,7 @@ export class IcChatConsole extends LitElement {
           ${this._renderVoiceButton()}
           <textarea
             class="input-textarea"
+            aria-label="Message"
             placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
             maxlength="10000"
             .value=${this._inputValue}

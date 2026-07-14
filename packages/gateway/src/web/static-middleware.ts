@@ -25,7 +25,8 @@ export function createStaticMiddleware(webDistPath: string, tlsEnabled?: boolean
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"], // Lit components use inline styles
-        imgSrc: ["'self'", "data:"],
+        imgSrc: ["'self'", "data:", "blob:"],
+        mediaSrc: ["'self'", "blob:"],
         connectSrc: ["'self'", "ws:", "wss:"], // WebSocket connections
         fontSrc: ["'self'"],
         objectSrc: ["'none'"],
