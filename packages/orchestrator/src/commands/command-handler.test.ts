@@ -728,9 +728,9 @@ describe("createCommandHandler", () => {
   it("/status shows budget info", () => {
     deps = makeDeps({
       getBudgetInfo: () => ({
-        perExecution: 0.50,
-        perHour: 2.00,
-        perDay: 10.00,
+        perExecution: 50_000,
+        perHour: 2_000_000,
+        perDay: 10_000_000,
       }),
       getSessionCost: () => ({ totalTokens: 5000, totalCost: 0.015 }),
     });
@@ -741,7 +741,10 @@ describe("createCommandHandler", () => {
 
     expect(result.handled).toBe(true);
     expect(result.response).toContain("**Budget**");
-    expect(result.response).toContain("Budget caps: $0.50/exec, $2.00/hr, $10.00/day");
+    expect(result.response).toContain(
+      "Token caps: 50k/execution, 2M/hour, 10M/day",
+    );
+    expect(result.response).not.toContain("Budget caps: $");
     expect(result.response).toContain("Est. cost: $0.0150");
   });
 
