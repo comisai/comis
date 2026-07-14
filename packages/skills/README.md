@@ -10,7 +10,7 @@ Modular prompt packages give agents specialized knowledge and workflows. Skills 
 
 ### MCP Client
 
-Outbound [Model Context Protocol](https://modelcontextprotocol.io/) client support for stdio, SSE, and Streamable HTTP servers, with connection management, tool/resource/prompt translation, filtering, OAuth, and credential injection. Comis' inbound MCP server endpoint is implemented by `@comis/gateway` and wired by `@comis/daemon`.
+Outbound [Model Context Protocol](https://modelcontextprotocol.io/) client support for stdio, SSE, and Streamable HTTP servers, with connection management, tool/resource/prompt translation, filtering, OAuth, and credential injection.
 
 ### Built-in Tools
 

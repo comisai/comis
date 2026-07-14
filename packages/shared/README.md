@@ -19,7 +19,6 @@ Comis runtime packages use `@comis/shared` for `Result`-based error handling and
 
 ```typescript
 import { ok, err, fromPromise, tryCatch, withTimeout } from "@comis/shared";
-import { systemScheduleTimeout } from "@comis/core";
 
 // Wrap async operations
 const result = await fromPromise(fetch("/api/data"));
@@ -34,10 +33,12 @@ const parsed = tryCatch(() => JSON.parse(raw));
 const response = await withTimeout(
   longRunningTask(),
   5000,
-  systemScheduleTimeout,
+  scheduleTimeout,
   "llm-call",
 );
 ```
+
+`scheduleTimeout` is supplied by the consuming application and returns a function that cancels the scheduled callback.
 
 ## Part of Comis
 

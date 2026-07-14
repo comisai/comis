@@ -116,7 +116,7 @@ describe("IcCommandPalette", () => {
     expect(input).toBeTruthy();
   });
 
-  it("announces the command palette as a modal dialog", async () => {
+  it("sets modal dialog semantics on the command palette", async () => {
     const el = await createElement<IcCommandPalette>("ic-command-palette", { open: true });
     const dialog = el.shadowRoot?.querySelector('[role="dialog"]');
     expect(dialog?.getAttribute("aria-modal")).toBe("true");
