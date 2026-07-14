@@ -18,6 +18,16 @@ import {
 // ---------------------------------------------------------------------------
 
 describe("DEFAULT_TEMPLATES workspace prose invariants (agent copy)", () => {
+  it("SOUL.md uses the canonical positioning without obsolete or absolute claims", () => {
+    const soulMd = DEFAULT_TEMPLATES["SOUL.md"];
+    expect(soulMd).toContain(
+      "Comis is an open-source, security-first platform for AI agent teams.",
+    );
+    expect(soulMd).not.toContain("Friendly by nature. Powerful by design.");
+    expect(soulMd).not.toContain("No cloud dependency");
+    expect(soulMd).not.toContain("You live in your human's messaging apps");
+  });
+
   it("AGENTS.md template must not advertise a pre-warmed venv that does not exist on disk", () => {
     const agentsMd = DEFAULT_TEMPLATES["AGENTS.md"];
     expect(agentsMd).not.toContain("Pre-warmed");
