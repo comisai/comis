@@ -581,6 +581,39 @@ describe("IcDashboard", () => {
       document.dispatchEvent(new CustomEvent("session:created"));
       expect(priv(el)._sessionCount).toBe(8);
     });
+
+    it("refreshes only the agent roster for hot agent lifecycle events", async () => {
+      const mockDispatcher = createMockEventDispatcher();
+      const apiClient = createMockApiClient({
+        getAgents: vi.fn().mockResolvedValue([
+          { id: "a1", provider: "openai", model: "gpt-4", status: "active" },
+        ]),
+      });
+      const rpcClient = createMockRpcClient();
+      priv(el).apiClient = apiClient;
+      priv(el).rpcClient = rpcClient;
+      priv(el).eventDispatcher = mockDispatcher;
+      document.body.appendChild(el);
+
+      await vi.waitFor(() => {
+        expect(rpcClient.call).toHaveBeenCalledWith("gateway.status");
+      });
+
+      for (const eventType of ["agent:hot_added", "agent:hot_removed"]) {
+        vi.mocked(apiClient.getAgents).mockClear();
+        vi.mocked(apiClient.getChannels).mockClear();
+        vi.mocked(apiClient.getActivity).mockClear();
+        vi.mocked(rpcClient.call).mockClear();
+
+        document.dispatchEvent(new CustomEvent(eventType));
+        await new Promise((resolve) => setTimeout(resolve, 350));
+
+        expect(apiClient.getAgents).toHaveBeenCalledTimes(1);
+        expect(apiClient.getChannels).not.toHaveBeenCalled();
+        expect(apiClient.getActivity).not.toHaveBeenCalled();
+        expect(rpcClient.call).not.toHaveBeenCalled();
+      }
+    });
   });
 
   // =========================================================================
@@ -961,8 +994,7 @@ describe("IcDashboard", () => {
 
       resolveDelete({});
       await vi.waitFor(() => {
-        const buttons = agentCard.shadowRoot?.querySelectorAll<HTMLButtonElement>(".action-btn");
-        expect(Array.from(buttons ?? []).every((button) => !button.disabled)).toBe(true);
+        expect(el.shadowRoot?.querySelector("ic-agent-card")).toBeNull();
       });
     });
 
