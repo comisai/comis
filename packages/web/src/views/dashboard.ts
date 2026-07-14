@@ -21,10 +21,13 @@ import "../components/data/ic-stat-card.js";
 import "../components/data/ic-sparkline.js";
 import "../components/data/ic-progress-bar.js";
 import "../components/data/ic-metric-gauge.js";
+import type { AgentCardActionDetail } from "../components/agent-card.js";
 import "../components/agent-card.js";
 import "../components/channel-badge.js";
 import "../components/activity-feed.js";
 import "../components/shell/ic-skeleton-view.js";
+import "../components/feedback/ic-confirm-dialog.js";
+import { IcToast } from "../components/feedback/ic-toast.js";
 
 type LoadState = "loading" | "loaded" | "error";
 
@@ -471,6 +474,8 @@ export class IcDashboard extends LitElement {
   @state() private _tokenSparklineData: number[] = [];
   @state() private _costSparklineData: number[] = [];
   @state() private _agentBilling: Map<string, { cost: number; tokens: number }> = new Map();
+  @state() private _deleteTarget: AgentInfo | null = null;
+  @state() private _agentActionPending = "";
   /** Mirrors rpcClient.status so render() can react to WS connect/disconnect. */
   @state() private _rpcStatus: "connected" | "reconnecting" | "disconnected" = "disconnected";
 
@@ -544,6 +549,72 @@ export class IcDashboard extends LitElement {
         this._navigate(route);
       }
     };
+  }
+
+  private _handleAgentAction(
+    e: CustomEvent<AgentCardActionDetail>,
+  ): void {
+    const { action, agentId } = e.detail;
+    switch (action) {
+      case "configure":
+        this._navigate(`agents/${agentId}/edit`);
+        return;
+      case "suspend":
+      case "resume":
+        void this._changeAgentStatus(action, agentId);
+        return;
+      case "delete":
+        if (this._agentActionPending) return;
+        this._deleteTarget = this._agents.find((agent) => agent.id === agentId) ?? null;
+        return;
+      default: {
+        const _exhaustive: never = action;
+        return _exhaustive;
+      }
+    }
+  }
+
+  private async _changeAgentStatus(
+    action: "suspend" | "resume",
+    agentId: string,
+  ): Promise<void> {
+    if (!this.rpcClient || this._agentActionPending) return;
+    this._agentActionPending = agentId;
+    try {
+      if (action === "resume") {
+        await this.rpcClient.call("agents.resume", { agentId });
+      } else {
+        await this.rpcClient.call("agents.suspend", { agentId });
+      }
+      IcToast.show(`Agent ${agentId} ${action === "resume" ? "resumed" : "suspended"}`, "success");
+      await this._loadData();
+    } catch (err) {
+      IcToast.show(
+        `Failed to ${action} agent: ${err instanceof Error ? err.message : "Unknown error"}`,
+        "error",
+      );
+    } finally {
+      this._agentActionPending = "";
+    }
+  }
+
+  private async _confirmAgentDelete(): Promise<void> {
+    if (!this.rpcClient || !this._deleteTarget || this._agentActionPending) return;
+    const agentId = this._deleteTarget.id;
+    this._deleteTarget = null;
+    this._agentActionPending = agentId;
+    try {
+      await this.rpcClient.call("agents.delete", { agentId });
+      IcToast.show(`Agent ${agentId} deleted`, "success");
+      await this._loadData();
+    } catch (err) {
+      IcToast.show(
+        `Failed to delete agent: ${err instanceof Error ? err.message : "Unknown error"}`,
+        "error",
+      );
+    } finally {
+      this._agentActionPending = "";
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1131,9 +1202,13 @@ export class IcDashboard extends LitElement {
                         .provider=${agent.provider}
                         .model=${agent.model}
                         .status=${agent.status}
+                        .suspended=${agent.status === "suspended"}
+                        .actionsDisabled=${Boolean(this._agentActionPending)}
                         .agentId=${agent.id}
                         .messagesToday=${agent.messagesToday ?? 0}
                         .tokenUsageToday=${agent.tokenUsageToday ?? 0}
+                        @agent-action=${(e: CustomEvent<AgentCardActionDetail>) =>
+                          this._handleAgentAction(e)}
                       ></ic-agent-card>
                       ${billing ? html`<div class="agent-cost-badge">${costFormatter.format(billing.cost)}</div>` : nothing}
                     </div>
@@ -1174,6 +1249,19 @@ export class IcDashboard extends LitElement {
           ></ic-activity-feed>
         </div>
       </div>
+      ${this._deleteTarget
+        ? html`
+            <ic-confirm-dialog
+              open
+              variant="danger"
+              title="Delete Agent"
+              message=${`Are you sure you want to delete agent ${this._deleteTarget.id}? This cannot be undone.`}
+              confirmLabel="Delete"
+              @confirm=${() => void this._confirmAgentDelete()}
+              @cancel=${() => { this._deleteTarget = null; }}
+            ></ic-confirm-dialog>
+          `
+        : nothing}
     `;
   }
 }

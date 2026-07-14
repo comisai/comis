@@ -12,6 +12,13 @@ const STATUS_COLORS: Record<string, string> = {
   unknown: "var(--ic-text-dim)",
 };
 
+export type AgentCardAction = "configure" | "suspend" | "resume" | "delete";
+
+export interface AgentCardActionDetail {
+  action: AgentCardAction;
+  agentId: string;
+}
+
 /** Currency formatter for USD display */
 const currencyFmt = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -169,15 +176,20 @@ export class IcAgentCard extends LitElement {
         transition: background 0.15s, color 0.15s, border-color 0.15s;
       }
 
-      .action-btn:hover {
+      .action-btn:not(:disabled):hover {
         background: var(--ic-surface-2, #1f2937);
         color: var(--ic-text);
         border-color: var(--ic-text-dim);
       }
 
-      .action-btn--danger:hover {
+      .action-btn--danger:not(:disabled):hover {
         color: var(--ic-error, #f87171);
         border-color: var(--ic-error, #f87171);
+      }
+
+      .action-btn:disabled {
+        cursor: not-allowed;
+        opacity: 0.5;
       }
     `,
   ];
@@ -192,6 +204,7 @@ export class IcAgentCard extends LitElement {
   @property({ type: Number }) costToday = 0;
   @property({ type: Number }) budgetUtilization = 0;
   @property({ type: Boolean }) suspended = false;
+  @property({ type: Boolean }) actionsDisabled = false;
 
   /** Format token count with abbreviation (e.g., 612000 -> "612K", 1200000 -> "1.2M"). */
   private _formatTokens(n: number): string {
@@ -233,10 +246,11 @@ export class IcAgentCard extends LitElement {
   }
 
   /** Dispatch agent-action event. Stops propagation to prevent card click. */
-  private _handleAction(action: string, e: Event): void {
+  private _handleAction(action: AgentCardAction, e: Event): void {
     e.stopPropagation();
+    if (this.actionsDisabled) return;
     this.dispatchEvent(
-      new CustomEvent("agent-action", {
+      new CustomEvent<AgentCardActionDetail>("agent-action", {
         detail: { action, agentId: this.agentId || this.name },
         bubbles: true,
         composed: true,
@@ -320,26 +334,30 @@ export class IcAgentCard extends LitElement {
             : nothing}
         </div>
 
-        <div class="card-actions">
+        <div class="card-actions" aria-busy=${this.actionsDisabled ? "true" : "false"}>
           <button
             class="action-btn"
             aria-label="Configure ${this.name || 'agent'}"
+            ?disabled=${this.actionsDisabled}
             @click=${(e: Event) => this._handleAction("configure", e)}
           >Configure</button>
           ${this.suspended
             ? html`<button
                 class="action-btn"
                 aria-label="Resume ${this.name || 'agent'}"
+                ?disabled=${this.actionsDisabled}
                 @click=${(e: Event) => this._handleAction("resume", e)}
               >Resume</button>`
             : html`<button
                 class="action-btn"
                 aria-label="Suspend ${this.name || 'agent'}"
+                ?disabled=${this.actionsDisabled}
                 @click=${(e: Event) => this._handleAction("suspend", e)}
               >Suspend</button>`}
           <button
             class="action-btn action-btn--danger"
             aria-label="Delete ${this.name || 'agent'}"
+            ?disabled=${this.actionsDisabled}
             @click=${(e: Event) => this._handleAction("delete", e)}
           >Delete</button>
         </div>

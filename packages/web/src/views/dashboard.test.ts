@@ -4,6 +4,7 @@ import type { ApiClient } from "../api/api-client.js";
 import type { RpcClient } from "../api/rpc-client.js";
 import type { ConnectionStatus } from "../api/types/index.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
+import { IcToast } from "../components/feedback/ic-toast.js";
 import "./dashboard.js";
 import { IcDashboard, formatUptime, formatNumber, formatTokens } from "./dashboard.js";
 import { createMockRpcClient } from "../test-support/mock-rpc-client.js";
@@ -96,11 +97,44 @@ function priv(el: IcDashboard) {
   };
 }
 
+interface DashboardTestAgent {
+  id: string;
+  name?: string;
+  provider: string;
+  model: string;
+  status: string;
+}
+
+async function renderDashboardAgentCard(
+  el: IcDashboard,
+  agent: DashboardTestAgent,
+  rpcClient: RpcClient | null = null,
+): Promise<HTMLElement & { updateComplete: Promise<boolean> }> {
+  priv(el)._agents = [agent];
+  priv(el)._loadState = "loaded";
+  priv(el).rpcClient = rpcClient;
+  document.body.appendChild(el);
+  await el.updateComplete;
+
+  const agentCard = el.shadowRoot?.querySelector("ic-agent-card") as
+    | (HTMLElement & { updateComplete: Promise<boolean> })
+    | null;
+  expect(agentCard).not.toBeNull();
+  await agentCard?.updateComplete;
+  expect(agentCard?.shadowRoot).not.toBeNull();
+  return agentCard!;
+}
+
 describe("IcDashboard", () => {
   let el: IcDashboard;
 
   beforeEach(() => {
     el = document.createElement("ic-dashboard") as IcDashboard;
+  });
+
+  afterEach(() => {
+    el.remove();
+    vi.restoreAllMocks();
   });
 
   // =========================================================================
@@ -602,6 +636,330 @@ describe("IcDashboard", () => {
       handler(new KeyboardEvent("keydown", { key: "Tab" }));
 
       expect(spy).not.toHaveBeenCalled();
+    });
+
+    it("routes dashboard configure action to the selected agent editor", async () => {
+      const navigateSpy = vi.fn();
+      el.addEventListener("navigate", navigateSpy);
+      const agentCard = await renderDashboardAgentCard(el, {
+        id: "agent-alpha",
+        name: "Agent Alpha",
+        provider: "anthropic",
+        model: "claude",
+        status: "active",
+      });
+
+      const configureButton = agentCard.shadowRoot?.querySelector<HTMLButtonElement>(
+        'button[aria-label="Configure Agent Alpha"]',
+      );
+      expect(configureButton).not.toBeNull();
+      configureButton?.click();
+
+      expect(navigateSpy).toHaveBeenCalledTimes(1);
+      expect((navigateSpy.mock.calls[0][0] as CustomEvent).detail).toBe(
+        "agents/agent-alpha/edit",
+      );
+    });
+
+    it("suspends an active agent from the dashboard card action", async () => {
+      const rpcClient = createMockRpcClient();
+      const agentCard = await renderDashboardAgentCard(
+        el,
+        {
+          id: "agent-alpha",
+          name: "Agent Alpha",
+          provider: "anthropic",
+          model: "claude",
+          status: "active",
+        },
+        rpcClient,
+      );
+
+      const suspendButton = agentCard.shadowRoot?.querySelector<HTMLButtonElement>(
+        'button[aria-label="Suspend Agent Alpha"]',
+      );
+      expect(suspendButton).not.toBeNull();
+      suspendButton?.click();
+
+      await vi.waitFor(() => {
+        expect(rpcClient.call).toHaveBeenCalledWith("agents.suspend", {
+          agentId: "agent-alpha",
+        });
+      });
+    });
+
+    it("refreshes the dashboard card after a successful suspend action", async () => {
+      const rpcClient = createMockRpcClient();
+      const toastSpy = vi.spyOn(IcToast, "show");
+      const agentCard = await renderDashboardAgentCard(
+        el,
+        {
+          id: "agent-alpha",
+          name: "Agent Alpha",
+          provider: "anthropic",
+          model: "claude",
+          status: "active",
+        },
+        rpcClient,
+      );
+      priv(el).apiClient = createMockApiClient({
+        getAgents: vi.fn().mockResolvedValue([
+          {
+            id: "agent-alpha",
+            name: "Agent Alpha",
+            provider: "anthropic",
+            model: "claude",
+            status: "suspended",
+          },
+        ]),
+      });
+
+      agentCard.shadowRoot
+        ?.querySelector<HTMLButtonElement>('button[aria-label="Suspend Agent Alpha"]')
+        ?.click();
+
+      await vi.waitFor(() => {
+        expect(toastSpy).toHaveBeenCalledWith("Agent agent-alpha suspended", "success");
+        const refreshedCard = el.shadowRoot?.querySelector("ic-agent-card");
+        expect(
+          refreshedCard?.shadowRoot?.querySelector(
+            'button[aria-label="Resume Agent Alpha"]',
+          ),
+        ).not.toBeNull();
+      });
+    });
+
+    it("resumes a suspended agent from the dashboard card action", async () => {
+      const rpcClient = createMockRpcClient();
+      const agentCard = await renderDashboardAgentCard(
+        el,
+        {
+          id: "agent-alpha",
+          name: "Agent Alpha",
+          provider: "anthropic",
+          model: "claude",
+          status: "suspended",
+        },
+        rpcClient,
+      );
+
+      const resumeButton = agentCard.shadowRoot?.querySelector<HTMLButtonElement>(
+        'button[aria-label="Resume Agent Alpha"]',
+      );
+      expect(resumeButton).not.toBeNull();
+      resumeButton?.click();
+
+      await vi.waitFor(() => {
+        expect(rpcClient.call).toHaveBeenCalledWith("agents.resume", {
+          agentId: "agent-alpha",
+        });
+      });
+    });
+
+    it("confirms dashboard agent deletion before calling the delete RPC", async () => {
+      const rpcClient = createMockRpcClient();
+      const agentCard = await renderDashboardAgentCard(
+        el,
+        {
+          id: "agent-alpha",
+          name: "Agent Alpha",
+          provider: "anthropic",
+          model: "claude",
+          status: "active",
+        },
+        rpcClient,
+      );
+
+      const deleteButton = agentCard.shadowRoot?.querySelector<HTMLButtonElement>(
+        'button[aria-label="Delete Agent Alpha"]',
+      );
+      expect(deleteButton).not.toBeNull();
+      deleteButton?.click();
+      await el.updateComplete;
+
+      expect(rpcClient.call).not.toHaveBeenCalledWith("agents.delete", {
+        agentId: "agent-alpha",
+      });
+      const dialog = el.shadowRoot?.querySelector("ic-confirm-dialog");
+      expect(dialog).not.toBeNull();
+      dialog?.dispatchEvent(new CustomEvent("confirm"));
+
+      await vi.waitFor(() => {
+        expect(rpcClient.call).toHaveBeenCalledWith("agents.delete", {
+          agentId: "agent-alpha",
+        });
+      });
+    });
+
+    it("locks dashboard agent actions while deletion is in flight", async () => {
+      let resolveDelete!: (value: unknown) => void;
+      const deletePromise = new Promise<unknown>((resolve) => {
+        resolveDelete = resolve;
+      });
+      const rpcClient = createMockRpcClient((method) =>
+        method === "agents.delete" ? deletePromise : Promise.resolve({}),
+      );
+      const agentCard = await renderDashboardAgentCard(
+        el,
+        {
+          id: "agent-alpha",
+          name: "Agent Alpha",
+          provider: "anthropic",
+          model: "claude",
+          status: "active",
+        },
+        rpcClient,
+      );
+
+      agentCard.shadowRoot
+        ?.querySelector<HTMLButtonElement>('button[aria-label="Delete Agent Alpha"]')
+        ?.click();
+      await el.updateComplete;
+      el.shadowRoot
+        ?.querySelector("ic-confirm-dialog")
+        ?.dispatchEvent(new CustomEvent("confirm"));
+
+      await vi.waitFor(() => {
+        expect(rpcClient.call).toHaveBeenCalledWith("agents.delete", {
+          agentId: "agent-alpha",
+        });
+      });
+      await el.updateComplete;
+      await agentCard.updateComplete;
+
+      const actionButtons = agentCard.shadowRoot?.querySelectorAll<HTMLButtonElement>(
+        ".action-btn",
+      );
+      expect(Array.from(actionButtons ?? []).every((button) => button.disabled)).toBe(true);
+      agentCard.shadowRoot
+        ?.querySelector<HTMLButtonElement>('button[aria-label="Suspend Agent Alpha"]')
+        ?.click();
+      expect(rpcClient.call).not.toHaveBeenCalledWith("agents.suspend", {
+        agentId: "agent-alpha",
+      });
+
+      resolveDelete({});
+      await vi.waitFor(() => {
+        const buttons = agentCard.shadowRoot?.querySelectorAll<HTMLButtonElement>(".action-btn");
+        expect(Array.from(buttons ?? []).every((button) => !button.disabled)).toBe(true);
+      });
+    });
+
+    it("cancels dashboard agent deletion without calling the delete RPC", async () => {
+      const rpcClient = createMockRpcClient();
+      const agentCard = await renderDashboardAgentCard(
+        el,
+        {
+          id: "agent-alpha",
+          name: "Agent Alpha",
+          provider: "anthropic",
+          model: "claude",
+          status: "active",
+        },
+        rpcClient,
+      );
+
+      const deleteButton = agentCard.shadowRoot?.querySelector<HTMLButtonElement>(
+        'button[aria-label="Delete Agent Alpha"]',
+      );
+      expect(deleteButton).not.toBeNull();
+      deleteButton?.click();
+      await el.updateComplete;
+
+      const dialog = el.shadowRoot?.querySelector("ic-confirm-dialog");
+      expect(dialog).not.toBeNull();
+      dialog?.dispatchEvent(new CustomEvent("cancel"));
+      await el.updateComplete;
+
+      expect(el.shadowRoot?.querySelector("ic-confirm-dialog")).toBeNull();
+      expect(rpcClient.call).not.toHaveBeenCalledWith("agents.delete", {
+        agentId: "agent-alpha",
+      });
+    });
+
+    it("reports dashboard suspend failures and allows the action to be retried", async () => {
+      const rpcClient = createMockRpcClient(
+        (method) => {
+          if (method === "agents.suspend") {
+            return Promise.reject(new Error("suspend denied"));
+          }
+          return Promise.resolve({});
+        },
+        { status: "disconnected" as ConnectionStatus },
+      );
+      const toastSpy = vi.spyOn(IcToast, "show");
+      const agentCard = await renderDashboardAgentCard(
+        el,
+        {
+          id: "agent-alpha",
+          name: "Agent Alpha",
+          provider: "anthropic",
+          model: "claude",
+          status: "active",
+        },
+        rpcClient,
+      );
+      const suspendButton = agentCard.shadowRoot?.querySelector<HTMLButtonElement>(
+        'button[aria-label="Suspend Agent Alpha"]',
+      );
+      expect(suspendButton).not.toBeNull();
+
+      suspendButton?.click();
+      await vi.waitFor(() => {
+        expect(toastSpy).toHaveBeenCalledWith(
+          "Failed to suspend agent: suspend denied",
+          "error",
+        );
+      });
+      suspendButton?.click();
+
+      await vi.waitFor(() => {
+        const suspendCalls = vi.mocked(rpcClient.call).mock.calls.filter(
+          ([method]) => method === "agents.suspend",
+        );
+        expect(suspendCalls).toHaveLength(2);
+      });
+    });
+
+    it("reports dashboard delete failures after confirmation", async () => {
+      const rpcClient = createMockRpcClient(
+        (method) => {
+          if (method === "agents.delete") {
+            return Promise.reject(new Error("delete denied"));
+          }
+          return Promise.resolve({});
+        },
+        { status: "disconnected" as ConnectionStatus },
+      );
+      const toastSpy = vi.spyOn(IcToast, "show");
+      const agentCard = await renderDashboardAgentCard(
+        el,
+        {
+          id: "agent-alpha",
+          name: "Agent Alpha",
+          provider: "anthropic",
+          model: "claude",
+          status: "active",
+        },
+        rpcClient,
+      );
+      const deleteButton = agentCard.shadowRoot?.querySelector<HTMLButtonElement>(
+        'button[aria-label="Delete Agent Alpha"]',
+      );
+      expect(deleteButton).not.toBeNull();
+      deleteButton?.click();
+      await el.updateComplete;
+
+      el.shadowRoot
+        ?.querySelector("ic-confirm-dialog")
+        ?.dispatchEvent(new CustomEvent("confirm"));
+
+      await vi.waitFor(() => {
+        expect(toastSpy).toHaveBeenCalledWith(
+          "Failed to delete agent: delete denied",
+          "error",
+        );
+      });
     });
   });
 
