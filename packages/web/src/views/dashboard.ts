@@ -589,8 +589,14 @@ export class IcDashboard extends LitElement {
       } else {
         await this.rpcClient.call("agents.suspend", { agentId });
       }
+      // The successful mutation is authoritative for the only agent field this
+      // action changes. A full dashboard reload fans out into many unrelated
+      // metric calls and can exhaust the per-connection WebSocket budget.
+      const status = action === "resume" ? "active" : "suspended";
+      this._agents = this._agents.map((agent) =>
+        agent.id === agentId ? { ...agent, status } : agent,
+      );
       IcToast.show(`Agent ${agentId} ${action === "resume" ? "resumed" : "suspended"}`, "success");
-      await this._loadData();
     } catch (err) {
       IcToast.show(
         `Failed to ${action} agent: ${err instanceof Error ? err.message : "Unknown error"}`,
@@ -608,8 +614,13 @@ export class IcDashboard extends LitElement {
     this._agentActionPending = agentId;
     try {
       await this.rpcClient.call("agents.delete", { agentId });
+      // Deletion only changes the fleet cards and their cached billing entry;
+      // the remaining dashboard datasets do not need to be reloaded.
+      this._agents = this._agents.filter((agent) => agent.id !== agentId);
+      const billing = new Map(this._agentBilling);
+      billing.delete(agentId);
+      this._agentBilling = billing;
       IcToast.show(`Agent ${agentId} deleted`, "success");
-      await this._loadData();
     } catch (err) {
       IcToast.show(
         `Failed to delete agent: ${err instanceof Error ? err.message : "Unknown error"}`,
@@ -642,12 +653,20 @@ export class IcDashboard extends LitElement {
       "observability:token_usage": () => { this._scheduleReload(); },
       "diagnostic:channel_health": () => { this._scheduleReload(500); },
       "diagnostic:billing_snapshot": () => { this._scheduleReload(); },
-      "agent:hot_added": () => { this._scheduleReload(); },
-      "agent:hot_removed": () => { this._scheduleReload(); },
+      "agent:hot_added": () => { void this._loadAgents(); },
+      "agent:hot_removed": () => { void this._loadAgents(); },
       "channel:registered": () => { this._scheduleReload(); },
       "channel:deregistered": () => { this._scheduleReload(); },
       "observability:metrics": () => { this._scheduleReload(500); },
     });
+  }
+
+  private async _loadAgents(): Promise<void> {
+    if (!this.apiClient) return;
+    // Keep the last known roster when the targeted refresh fails. A later
+    // lifecycle event or full dashboard refresh will retry the REST read.
+    const agents = await this.apiClient.getAgents().catch(() => null);
+    if (agents !== null) this._agents = agents;
   }
 
   // ---------------------------------------------------------------------------
