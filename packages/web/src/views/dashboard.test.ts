@@ -85,9 +85,12 @@ function priv(el: IcDashboard) {
     _loadRpcData(): Promise<void>;
     _loadSparklineData(): Promise<void>;
     _loadAgentBilling(): Promise<void>;
+    _changeAgentStatus(action: "suspend" | "resume", agentId: string): Promise<void>;
+    _confirmAgentDelete(): Promise<void>;
     _computeDelta(current: number, previous: number): { trend: string; trendValue: string };
     _navigate(route: string): void;
     _makeKeyHandler(route: string): (e: KeyboardEvent) => void;
+    _deleteTarget: DashboardTestAgent | null;
     _rpcRefreshInterval: ReturnType<typeof setInterval> | null;
     _sse: unknown;
     _initSse(): void;
@@ -765,6 +768,43 @@ describe("IcDashboard", () => {
       });
     });
 
+    it("updates dashboard agent status without reloading unrelated datasets", async () => {
+      const rpcClient = createMockRpcClient();
+      const apiClient = createMockApiClient({
+        getAgents: vi.fn().mockResolvedValue([
+          {
+            id: "agent-alpha",
+            name: "Agent Alpha",
+            provider: "anthropic",
+            model: "claude",
+            status: "suspended",
+          },
+        ]),
+      });
+      priv(el).rpcClient = rpcClient;
+      priv(el).apiClient = apiClient;
+      priv(el)._agents = [
+        {
+          id: "agent-alpha",
+          name: "Agent Alpha",
+          provider: "anthropic",
+          model: "claude",
+          status: "active",
+        },
+      ];
+
+      await priv(el)._changeAgentStatus("suspend", "agent-alpha");
+
+      expect(rpcClient.call).toHaveBeenCalledTimes(1);
+      expect(rpcClient.call).toHaveBeenCalledWith("agents.suspend", {
+        agentId: "agent-alpha",
+      });
+      expect(apiClient.getAgents).not.toHaveBeenCalled();
+      expect(apiClient.getChannels).not.toHaveBeenCalled();
+      expect(apiClient.getActivity).not.toHaveBeenCalled();
+      expect(priv(el)._agents[0]?.status).toBe("suspended");
+    });
+
     it("resumes a suspended agent from the dashboard card action", async () => {
       const rpcClient = createMockRpcClient();
       const agentCard = await renderDashboardAgentCard(
@@ -825,6 +865,51 @@ describe("IcDashboard", () => {
           agentId: "agent-alpha",
         });
       });
+    });
+
+    it("removes a deleted dashboard agent without reloading unrelated datasets", async () => {
+      const rpcClient = createMockRpcClient();
+      const apiClient = createMockApiClient({
+        getAgents: vi.fn().mockResolvedValue([
+          {
+            id: "agent-beta",
+            name: "Agent Beta",
+            provider: "openai",
+            model: "gpt-4",
+            status: "active",
+          },
+        ]),
+      });
+      priv(el).rpcClient = rpcClient;
+      priv(el).apiClient = apiClient;
+      priv(el)._agents = [
+        {
+          id: "agent-alpha",
+          name: "Agent Alpha",
+          provider: "anthropic",
+          model: "claude",
+          status: "active",
+        },
+        {
+          id: "agent-beta",
+          name: "Agent Beta",
+          provider: "openai",
+          model: "gpt-4",
+          status: "active",
+        },
+      ];
+      priv(el)._deleteTarget = priv(el)._agents[0] ?? null;
+
+      await priv(el)._confirmAgentDelete();
+
+      expect(rpcClient.call).toHaveBeenCalledTimes(1);
+      expect(rpcClient.call).toHaveBeenCalledWith("agents.delete", {
+        agentId: "agent-alpha",
+      });
+      expect(apiClient.getAgents).not.toHaveBeenCalled();
+      expect(apiClient.getChannels).not.toHaveBeenCalled();
+      expect(apiClient.getActivity).not.toHaveBeenCalled();
+      expect(priv(el)._agents.map((agent) => agent.id)).toEqual(["agent-beta"]);
     });
 
     it("locks dashboard agent actions while deletion is in flight", async () => {
