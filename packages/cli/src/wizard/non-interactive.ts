@@ -41,6 +41,7 @@ import {
   SUPPORTED_TTS_PROVIDERS,
   TTS_PROVIDER_ENV_KEYS,
   PROVIDER_ENV_KEYS,
+  MULTI_VALUE_PROVIDER_CREDENTIAL_NAMES,
   EMBED_BGE_M3_MODEL_URI,
 } from "./types.js";
 import type {
@@ -181,27 +182,46 @@ export function validateNonInteractiveOptions(
     );
   }
 
+  if (opts.provider === "custom") {
+    throw new NonInteractiveError(
+      "Custom endpoints require interactive setup so Comis can collect the base URL and compatibility mode; run `comis init` interactively.",
+      "provider",
+    );
+  }
+
+  if (opts.provider === "amazon-bedrock" && opts.apiKey !== undefined) {
+    throw new NonInteractiveError(
+      "amazon-bedrock uses the ambient AWS credential chain; remove --api-key and configure AWS credentials and region for this process.",
+      "apiKey",
+    );
+  }
+
+  const multiValueNames = MULTI_VALUE_PROVIDER_CREDENTIAL_NAMES[opts.provider];
+  if (multiValueNames) {
+    throw new NonInteractiveError(
+      `${opts.provider} requires multiple credential values (${multiValueNames.join(", ")}), which non-interactive init cannot collect. Complete init with a single-key provider, store each value with \`comis secrets set <NAME>\`, then configure this provider.`,
+      "provider",
+    );
+  }
+
   // Soft validation: warn for unknown providers but do not throw.
   // Daemon-side guards (credential-resolver, builtin-provider-guard)
   // catch genuinely-invalid providers downstream when the agent
   // attempts to use the config. This loosening enables forward compat
   // when a new pi-ai version adds a provider before comis releases.
-  // The "custom" provider is always allowed (synthetic).
-  if (opts.provider !== "custom") {
-    try {
-      const catalog = createModelCatalog();
-      catalog.loadStatic();
-      const known = new Set(catalog.getAll().map((e) => e.provider));
-      if (!known.has(opts.provider)) {
-        // Soft WARN to stderr -- do not throw, do not log credentials.
-        // Note: this path runs in CLI bootstrap; we use console.warn
-        // because this function may run before any prompter is wired.
-        console.warn(`  WARN: provider "${opts.provider}" is not in the pi-ai catalog. Continuing for forward compatibility -- daemon-side validation will catch invalid providers.`);
-      }
-    } catch {
-      // Catalog load failed (rare) -- skip the check entirely; let
-      // downstream daemon-side guards catch invalid providers.
+  try {
+    const catalog = createModelCatalog();
+    catalog.loadStatic();
+    const known = new Set(catalog.getAll().map((e) => e.provider));
+    if (!known.has(opts.provider)) {
+      // Soft WARN to stderr -- do not throw, do not log credentials.
+      // Note: this path runs in CLI bootstrap; we use console.warn
+      // because this function may run before any prompter is wired.
+      console.warn(`  WARN: provider "${opts.provider}" is not in the pi-ai catalog. Continuing for forward compatibility -- daemon-side validation will catch invalid providers.`);
     }
+  } catch {
+    // Catalog load failed (rare) -- skip the check entirely; let
+    // downstream daemon-side guards catch invalid providers.
   }
 
   // Validate gateway port if specified

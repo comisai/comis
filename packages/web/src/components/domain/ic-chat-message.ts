@@ -93,20 +93,15 @@ function renderAttachment(json: string): string {
       fileName: string;
     };
     const protectedMediaMatch = PROTECTED_MEDIA_URL_PATTERN.exec(url);
-    if (url.startsWith("/media/") && (
+    if (
       protectedMediaMatch === null ||
       protectedMediaMatch[1] === "." ||
       protectedMediaMatch[1] === ".."
-    )) {
+    ) {
       return "";
     }
     const escapedUrl = escapeHtml(url);
-    const safeUrl = sanitizeUrl(escapedUrl);
-    if (safeUrl === null) return "";
-    const isProtectedMedia = protectedMediaMatch !== null;
-    const sourceAttribute = isProtectedMedia
-      ? `data-media-url="${safeUrl}"`
-      : `src="${safeUrl}"`;
+    const sourceAttribute = `data-media-url="${escapedUrl}"`;
     const safeName = escapeHtml(fileName);
     switch (type) {
       case "image":
@@ -116,9 +111,7 @@ function renderAttachment(json: string): string {
       case "video":
         return `<video controls ${sourceAttribute} style="max-width:100%;border-radius:8px;margin:4px 0"></video>`;
       default:
-        return isProtectedMedia
-          ? `<a data-media-url="${safeUrl}" download="${safeName}" class="md-link">${safeName}</a>`
-          : `<a href="${safeUrl}" download="${safeName}" target="_blank" rel="noopener" class="md-link">${safeName}</a>`;
+        return `<a data-media-url="${escapedUrl}" download="${safeName}" class="md-link">${safeName}</a>`;
     }
   } catch {
     return "";
@@ -140,10 +133,10 @@ function renderMarkdown(text: string): string {
   // replaces the old single-pass denylist that a nested-tag payload
   // (`<ifr<iframe>ame …>`) could defeat to smuggle a live `<iframe>` through.
 
-  // 1. Attachment markers -> placeholders. renderAttachment escapes url +
-  //    fileName, so this is safe whether the marker is server-generated or
-  //    forged in the message body. The placeholder uses no markdown-significant
-  //    chars so later inline transforms leave it intact.
+  // 1. Attachment markers -> placeholders. renderAttachment accepts only the
+  //    protected same-origin media route and escapes the file name, so a forged
+  //    marker cannot trigger a third-party request. The placeholder uses no
+  //    markdown-significant chars so later inline transforms leave it intact.
   const attachmentBlocks: string[] = [];
   let sanitized = text.replace(/<!-- attachment:(.*?) -->/g, (_, json) => {
     const placeholder = `\x00ATTACH${attachmentBlocks.length}\x00`;

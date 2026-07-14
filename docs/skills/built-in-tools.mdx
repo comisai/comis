@@ -437,7 +437,7 @@ maxChars: 10000
 **Notes:**
 - Uses SSRF (Server-Side Request Forgery) validation to prevent access to
   internal network addresses -- agents cannot fetch `localhost` or private IPs
-- Uses Chrome TLS fingerprinting to avoid bot detection on most websites
+- Uses `impit` with a Chrome-like TLS and HTTP profile; websites can still block automated requests
 - Results are cached to reduce duplicate fetches
 - JSON responses are automatically pretty-printed
 

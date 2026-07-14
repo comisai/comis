@@ -1,459 +1,170 @@
 ---
 title: "systemd"
-description: "Running Comis as a systemd service on Linux"
+description: "Run and manage Comis as an installer-managed Linux service"
 icon: "linux"
 ---
 
-systemd is the standard way to run background services on Linux. Setting up Comis
-as a systemd service means it starts automatically when your server boots, restarts
-if it crashes, and integrates with standard Linux monitoring tools.
+Comis can run as a system or user systemd service on Linux. The managed-host
+installer is the source of truth for both unit types: it resolves the installed
+Node.js and daemon paths, writes the unit, and enables and starts it unless the
+corresponding installer opt-outs are selected.
 
 <Warning>
-systemd is **Linux only**. If you are on macOS, use [pm2](/operations/pm2) instead.
+systemd is Linux-only. Use [pm2](/operations/pm2) on macOS. Comis requires
+Node.js 22.19.0 or newer; service-managed installs require a system-installed
+Node binary rather than a version-manager shim.
 </Warning>
 
-## Two paths
+## Install safely
 
-You can get a systemd-managed Comis daemon two ways:
-
-**Recommended: the one-line installer.** The script at `https://comis.ai/install.sh`
-creates the `comis` system user, lays out `/etc/comis`, writes a managed
-`comis.service` unit, sets up sudoers rules so the service user can `start`/`stop`/`restart`
-its own daemon without root, and starts everything. This is the path the official
-[VPS install guide](/installation/install-vps) uses.
+Download the installer, inspect it, and preview its host changes before running
+it:
 
 ```bash
-curl -fsSL https://comis.ai/install.sh | bash
+curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh -o comis-install.sh
+less comis-install.sh
+bash comis-install.sh --dry-run
+bash comis-install.sh
 ```
 
-The installed unit file is checksum-tagged with `# managed-by: comis-installer`. If
-you edit it by hand, the installer will refuse to overwrite it on upgrade — so
-manual edits stick around.
+The default `--service auto` selection is:
 
-**Manual: the steps below.** Use this when you need a unit file under your own
-control (different paths, different hardening, different user). The rest of this
-page walks through that.
+| Context | Service mode | Unit path | Runtime identity |
+|---|---|---|---|
+| Linux as root | `systemd` | `/etc/systemd/system/comis.service` | Dedicated `comis` user by default |
+| Linux without root | `systemd-user` | `~/.config/systemd/user/comis.service` | Current user |
 
-## Prerequisites
+Select a mode explicitly with `--service systemd`, `--service systemd-user`, or
+`--service none`. Run `bash comis-install.sh --help` for the complete set of
+service, browser, and autostart options.
 
-Before setting up the systemd service, make sure you have:
-
-- **Node.js 22 or newer** installed on your server
-- **Comis built** -- run `pnpm build` in the Comis directory
-- **A dedicated system user** for running Comis (created in step 1 below)
-
-## Setup
-
-<Steps>
-  <Step title="Create a system user">
-    Create a dedicated `comis` user that has no login shell. This is a security
-    best practice -- the daemon runs under its own user with limited permissions.
-
-    ```bash
-    sudo useradd -r -s /sbin/nologin comis
-    ```
-
-    The `-r` flag creates a system user (no home directory, no login). The
-    `-s /sbin/nologin` flag prevents anyone from logging in as this user.
-  </Step>
-
-  <Step title="Install Comis">
-    Copy your built Comis files to a system directory and create the data directory:
-
-    ```bash
-    sudo mkdir -p /opt/comis
-    sudo cp -r . /opt/comis/
-    sudo mkdir -p /var/lib/comis
-    sudo chown -R comis:comis /opt/comis /var/lib/comis
-    ```
-
-    - `/opt/comis/` -- where the application code lives (read-only at runtime)
-    - `/var/lib/comis/` -- where the database, logs, and runtime data are stored (read-write)
-  </Step>
-
-  <Step title="Create the configuration">
-    Create a directory for the config file and environment variables:
-
-    ```bash
-    sudo mkdir -p /etc/comis
-    sudo cp ~/.comis/config.yaml /etc/comis/config.yaml
-    sudo chown comis:comis /etc/comis/config.yaml
-    sudo chmod 600 /etc/comis/config.yaml
-    ```
-
-    Create the environment file at `/etc/comis/env` with the config path. If
-    the wizard initialized encrypted storage, also provide its master key to
-    the service through your system secret-provisioning mechanism:
-
-    ```bash
-    sudo tee /etc/comis/env > /dev/null << 'EOF'
-    COMIS_CONFIG_PATHS=/etc/comis/config.yaml
-    SECRETS_MASTER_KEY=<copy-from-the-secure-backup-created-during-setup>
-    EOF
-    sudo chmod 600 /etc/comis/env
-    sudo chown comis:comis /etc/comis/env
-    ```
-
-    <Tip>
-    The default encrypted backend keeps provider and channel credentials in
-    `secrets.db`; the service still needs the master key. An owner-readable
-    environment file reduces casual exposure but is not an encrypted secret
-    manager. Never put credentials directly in `config.yaml`.
-    </Tip>
-  </Step>
-
-  <Step title="Install the service file">
-    Create the systemd unit file at `/etc/systemd/system/comis.service`:
-
-    ```ini
-    [Unit]
-    Description=Comis AI Agent Daemon
-    Documentation=https://github.com/comis/comis
-    After=network-online.target
-    Wants=network-online.target
-
-    [Service]
-    Type=exec
-    User=comis
-    Group=comis
-    WorkingDirectory=/opt/comis
-
-    # --jitless: Disable JIT to reduce attack surface (no W^X pages)
-    # --permission: Enable Node.js permission model for filesystem restrictions
-    ExecStart=/usr/bin/node --jitless --permission \
-      --allow-fs-read=/opt/comis \
-      --allow-fs-write=/var/lib/comis \
-      --allow-child-process dist/daemon.js
-
-    # Restart policy
-    Restart=on-failure
-    RestartSec=5s
-
-    # Shutdown: allow 45s for graceful shutdown (app timeout is 30s)
-    TimeoutStopSec=45
-
-    # On stop, signal only the main daemon process (not the whole cgroup) so a
-    # durable terminal session's detached tmux server survives a restart (see below).
-    KillMode=process
-
-    # Resource limits
-    MemoryMax=2G
-    TasksMax=100
-
-    # Standard output/error to journald for structured log collection
-    StandardOutput=journal
-    StandardError=journal
-    SyslogIdentifier=comis
-
-    # Environment
-    Environment=NODE_ENV=production
-    EnvironmentFile=-/etc/comis/env
-
-    # --- Security Hardening ---
-
-    # Filesystem protection
-    ProtectSystem=strict
-    ProtectHome=yes
-    PrivateTmp=yes
-    ReadWritePaths=/var/lib/comis /var/log/comis
-
-    # Memory protection
-    MemoryDenyWriteExecute=yes
-
-    # Privilege escalation prevention
-    NoNewPrivileges=yes
-
-    # Drop all capabilities
-    CapabilityBoundingSet=
-
-    # System call filtering: allow only standard service calls (the real
-    # installer also adds @mount + setns for bubblewrap's exec sandbox). When the
-    # browser tool is provisioned, Chrome needs a few more or the kernel
-    # SIGSYS-kills it before it opens its CDP socket, so the installer appends:
-    #   SystemCallFilter=pkey_alloc pkey_free pkey_mprotect \
-    #                    landlock_create_ruleset landlock_add_rule landlock_restrict_self \
-    #                    ptrace seccomp
-    # (pkey_* = V8 memory-protection keys; landlock_*/seccomp = Chrome's own
-    # restriction-only self-sandbox; ptrace is same-uid-limited under
-    # NoNewPrivileges + empty CapabilityBoundingSet). Omitted for --without-browser.
-    SystemCallFilter=@system-service
-    SystemCallArchitectures=native
-
-    # Kernel and device protection
-    PrivateDevices=yes
-    ProtectKernelTunables=yes
-    ProtectKernelModules=yes
-    ProtectKernelLogs=yes
-    ProtectControlGroups=yes
-    ProtectClock=yes
-    ProtectHostname=yes
-    RestrictRealtime=yes
-    RestrictSUIDSGID=yes
-    RestrictNamespaces=yes
-    LockPersonality=yes
-
-    [Install]
-    WantedBy=multi-user.target
-    ```
-
-    <Note>
-    `--permission` also disables fd-based fs APIs (`fsync`, `fchmod`, `fchown`) at the daemon-process level. Credential file writes are best-effort durability (no fsync) and file permissions are best-effort. This is guarded at all call sites — the daemon will not crash — but the tradeoff is documented in [Node Permissions — Production fd-API Disablement](/reference/node-permissions#production-fd-api-disablement-linux).
-    </Note>
-
-    Then reload systemd to pick up the new file:
-
-    ```bash
-    sudo systemctl daemon-reload
-    ```
-  </Step>
-
-  <Step title="Start the service">
-    Enable the service (so it starts on boot) and start it immediately:
-
-    ```bash
-    sudo systemctl enable --now comis
-    ```
-
-    Expected output:
-
-    ```
-    Created symlink /etc/systemd/system/multi-user.target.wants/comis.service -> /etc/systemd/system/comis.service.
-    ```
-  </Step>
-
-  <Step title="Verify it is running">
-    Check the service status:
-
-    ```bash
-    sudo systemctl status comis
-    ```
-
-    You should see output similar to:
-
-    ```
-    ● comis.service - Comis AI Agent Daemon
-         Loaded: loaded (/etc/systemd/system/comis.service; enabled)
-         Active: active (running) since ...
-       Main PID: 12345 (node)
-         Status: "Comis daemon started"
-          Tasks: 12 (limit: 100)
-         Memory: 150.0M (max: 2.0G)
-    ```
-
-    The key indicators are:
-    - **Active: active (running)** -- the daemon is running
-    - **Status: "Comis daemon started"** -- the daemon completed its startup sequence
-  </Step>
-</Steps>
-
-## Service file explained
-
-Here is what each important section of the unit file does:
-
-### Type=exec
-
-systemd considers the service started once `execve()` returns. In-process
-liveness is observed by Comis's `ProcessMonitor` (event loop delay tracking)
-and surfaced on the `/health` HTTP endpoint; crash recovery is handled by
-`Restart=on-failure` below. Comis does not participate in the systemd
-liveness-ping protocol — operators who require kernel-level watchdog
-integration can add it via a systemd drop-in.
-
-### Restart=on-failure + RestartSec=5s
-
-If the daemon crashes (exits with a non-zero code), systemd waits 5 seconds
-and then starts it again automatically. This covers unexpected errors, out-of-memory
-kills, and unhandled exceptions. Normal stops (via `systemctl stop`) do not trigger
-a restart.
-
-### KillMode=process
-
-On stop, systemd signals **only the main daemon process**, not the entire control
-group (the default `KillMode=control-group` would `SIGKILL` every process in the
-cgroup). This is required for **durable terminal drives**
-([`drive.durable`](/agent-tools/terminal-driver)): a durable session runs its child
-inside a detached `tmux` server that, although reparented to init, stays a member of
-the daemon's cgroup. Under the default `control-group` kill, every `systemctl restart`
-would destroy that tmux server and the session could never survive a restart. With
-`KillMode=process`, the detached tmux server is left running and a restarted daemon
-re-attaches to it by name.
-
-Non-durable sessions are still cleaned up on stop: graceful shutdown runs the daemon's
-own teardown, and the Terminal Worker exits as soon as its stdin closes (its sandboxed
-children carry `--die-with-parent`). The trade-off is that after a **hard** daemon crash
-(no graceful shutdown), other long-lived children such as MCP servers or the browser may
-linger for a few seconds until `Restart=on-failure` respawns the daemon.
-
-### MemoryMax=2G + TasksMax=100
-
-Resource limits prevent the daemon from consuming too many system resources. If memory
-exceeds 2 GB, systemd kills the process (which then triggers a restart). TasksMax
-limits the number of threads and processes the daemon can create.
-
-### Node.js --permission flags
-
-The `--permission` flag enables the Node.js permission model, which restricts what
-the daemon can access:
-
-- `--allow-fs-read=/opt/comis` -- can read application code only from `/opt/comis`
-- `--allow-fs-write=/var/lib/comis` -- can write data only to `/var/lib/comis`
-- `--allow-child-process` -- can spawn child processes (needed for some tools)
-
-This acts as a second layer of security, even if a vulnerability is exploited.
-
-The keyless **in-process local STT** engine caches its whisper model under the data
-dir at `<data-dir>/models/whisper/` (e.g. `/var/lib/comis/models/whisper/`), so the
-existing `--allow-fs-write=/var/lib/comis` and `ReadWritePaths=/var/lib/comis` already
-cover it — **no additional `--allow-fs-write` or `ReadWritePaths` entry is needed** for
-local STT.
+The system service normally keeps data and configuration under
+`/home/comis/.comis`; the exact service home is resolved from the selected user.
+Its environment file is `/etc/comis/env`. The user service uses `~/.comis` for
+data, configuration, and its environment file.
 
 <Note>
-See [Node Permissions — Production fd-API Disablement](/reference/node-permissions#production-fd-api-disablement-linux) for the impact of `--permission` on daemon-process fd-based APIs (`fsync`, `fchmod`, `fchown`), and [Keyless local STT (whisper) engine](/reference/node-permissions#keyless-local-stt-whisper-engine) for why local STT needs no new flag.
+The installer can provision an Xvfb companion only for a system service. A
+`systemd-user` install explicitly uses headless browser mode and does not render
+a `comis-xvfb.service` dependency or `DISPLAY=:99`. For installer-managed headed
+mode, use a root system-service install.
 </Note>
 
-<Warning>
-The reference unit above sets `--jitless` and `MemoryDenyWriteExecute=yes`, and does
-**not** pass `--allow-addons`. The keyless **in-process** whisper engine needs the
-opposite: `--allow-addons` (its ONNX Runtime is a native addon) and JIT / writable-exec
-memory for the WebAssembly ONNX fallback. The bundled `install.sh` unit therefore omits
-`--jitless`/`MemoryDenyWriteExecute` and includes `--allow-addons` for exactly this
-class of dependency (see [`website/public/install.sh`](https://github.com/comisai/comis/blob/main/website/public/install.sh)).
-If you harden a hand-written unit with `--jitless`/`MemoryDenyWriteExecute` and want
-local STT, either add `--allow-addons` and drop those two hardening flags, **or** keep
-the hardening and use a `transcription.local.baseUrl` whisper **server** instead (an
-out-of-process server is unaffected by the daemon's addon/JIT flags). Either way the
-model-cache write path is already in scope.
-</Warning>
+## Manage the service
 
-### EnvironmentFile=-/etc/comis/env
-
-Loads environment variables (such as `SECRETS_MASTER_KEY` and `COMIS_CONFIG_PATHS`) from the
-specified file. The `-` prefix means systemd will not fail if the file is missing --
-it simply skips loading it.
-
-### Security hardening directives
-
-The bottom section of the unit file locks down the service:
-
-| Directive | What it does |
-|-----------|-------------|
-| `ProtectSystem=strict` | Makes the entire filesystem read-only except explicitly allowed paths |
-| `ProtectHome=yes` | Hides all home directories from the service |
-| `NoNewPrivileges=yes` | Prevents the daemon from gaining elevated permissions |
-| `MemoryDenyWriteExecute=yes` | Blocks creating memory that is both writable and executable |
-| `SystemCallFilter=@system-service` | Only allows system calls needed for normal services |
-| `PrivateDevices=yes` | Hides physical devices from the service |
-
-### Browser tool wiring (when installed with `--with-browser` / `--with-xvfb` / `--with-cloakbrowser`)
-
-The browser-tool flags don't change the security posture — they widen specific write paths just enough for the chosen browser binary to launch:
-
-| Install flag | `ReadWritePaths` additions | `--allow-fs-write` additions |
-|---|---|---|
-| `--with-browser` (stock Chrome) | `~/.config/google-chrome`, `~/.local/share/applications`, `~/.config/comis/browser` | Same set; mirrored on the Node permission model |
-| `--with-cloakbrowser` (stealth Chromium) | `~/.cloakbrowser`, `~/.config/chromium`, `~/.config/comis/browser` | Same; tighter than the Chrome variant (no mimeapps write needed — CloakBrowser patches that out) |
-| `--with-xvfb` | (no extra paths — see companion unit below) | (no extra paths) |
-
-Every additional write path is named, scoped to the daemon's home, and matches what the binary actually writes. The Chrome variant needs `~/.local/share/applications` for `mimeapps.list` (Chrome's default-browser registration; no flag disables it). The cloak variant doesn't.
-
-### `comis-xvfb.service` companion (when installed with `--with-xvfb`)
-
-A second managed unit at `/etc/systemd/system/comis-xvfb.service` runs Xvfb on display `:99` as the same `comis` user:
-
-```
-[Service]
-ExecStart=/usr/bin/Xvfb :99 -screen 0 1920x1080x24 -ac -nolisten tcp
-```
-
-`-nolisten tcp` keeps the X server on a Unix socket only; `-ac` is safe because the socket is owned by the `comis` user. The companion unit also binds a shared host dir onto its `/tmp/.X11-unix` so the socket it creates is reachable from the daemon:
-
-```
-BindPaths=/run/comis-x11:/tmp/.X11-unix
-```
-
-The main `comis.service` unit picks up the display with:
-
-```
-After=network-online.target comis-xvfb.service
-Wants=network-online.target comis-xvfb.service
-Environment=DISPLAY=:99
-BindReadOnlyPaths=/run/comis-x11:/tmp/.X11-unix
-```
-
-The shared-bind pair is load-bearing — without it, `PrivateTmp=yes` on each unit gives the daemon its own `/tmp` and the X11 socket at `/tmp/.X11-unix/X99` is unreachable. (`JoinsNamespaceOf=` was tried first but does **not** share the `PrivateTmp` `/tmp` content on systemd 255 — the daemon's namespace gets an empty `/tmp/.X11-unix`.) `/run/comis-x11` is created with mode `1777` by `/etc/tmpfiles.d/comis-x11.conf` so it survives reboot before the units mount it.
-
-Manage the companion unit the same way as the main one:
+For a system service:
 
 ```bash
-sudo systemctl status comis-xvfb         # check it's running
-sudo systemctl restart comis-xvfb        # bounces both this and the daemon
-journalctl -u comis-xvfb --since "-1h"   # Xvfb startup logs
+sudo systemctl status comis.service --no-pager
+sudo systemctl restart comis.service
+sudo journalctl -u comis.service -f
 ```
 
-The companion is uninstalled together with the main service by `bash install.sh --uninstall` (no separate command needed).
-
-## Common commands
-
-| Command | What it does |
-|---------|-------------|
-| `sudo systemctl start comis` | Start the daemon |
-| `sudo systemctl stop comis` | Stop the daemon (waits up to 45 seconds for graceful shutdown) |
-| `sudo systemctl restart comis` | Stop and start the daemon |
-| `sudo systemctl status comis` | Show current status, PID, memory, and recent log lines |
-| `sudo systemctl enable comis` | Start automatically on boot |
-| `sudo systemctl disable comis` | Do not start on boot |
-
-## Viewing logs
-
-systemd sends all daemon output to the journal. Use `journalctl` to view logs:
-
-**Live logs** (follow mode):
+For a user service:
 
 ```bash
-journalctl -u comis -f
+systemctl --user status comis.service --no-pager
+systemctl --user restart comis.service
+journalctl --user -u comis.service -f
 ```
 
-**Recent logs** (last hour):
+User services normally stop after logout. Enable lingering if this service must
+continue without an active login session:
 
 ```bash
-journalctl -u comis --since "1 hour ago"
+sudo loginctl enable-linger "$(id -un)"
 ```
 
-**Logs since last boot:**
+Check application readiness independently of systemd's process state:
 
 ```bash
-journalctl -u comis -b
+curl -fsS http://127.0.0.1:4766/health
 ```
 
-**Only errors and warnings:**
+## Managed unit contract
+
+The installer renders one checksum-tagged `comis.service` unit. It refuses to
+overwrite a unit whose managed body was edited by hand.
+
+| Setting | Current behavior |
+|---|---|
+| `Type=exec` | systemd considers startup successful after `execve()`. Comis does not emit `sd_notify` readiness or watchdog messages. Use `/health` for readiness. |
+| `ExecStart` | Uses resolved absolute paths and Node's permission model, including `--allow-addons`, `--allow-worker`, and scoped write access. |
+| Restart policy | `Restart=on-failure` restarts crashes. Exit code 42 is classified as successful and explicitly forced to restart for Comis-initiated reloads. |
+| `KillMode=process` | Signals only the daemon during stop so detached durable terminal sessions are not killed with the whole cgroup. |
+| Filesystem boundary | `ProtectSystem=strict` and `ProtectHome=read-only` apply first; `ReadWritePaths` grants the selected service home and data directory. Agent commands receive narrower Bubblewrap mounts. |
+| Namespace policy | The unit permits the namespace and mount operations required for Bubblewrap rather than disabling namespaces globally. |
+| Memory execution | `MemoryDenyWriteExecute` and `--jitless` are intentionally absent because they break V8, WebAssembly, and supported native dependencies. |
+
+`KillMode=process` has a deliberate tradeoff: after a hard crash, another
+long-lived child can remain briefly until the daemon restarts. Graceful shutdown
+still cleans up registered children, and terminal sandbox children use their own
+parent-death behavior.
+
+When system-scope Xvfb provisioning succeeds, the installer also writes
+`/etc/systemd/system/comis-xvfb.service`. The two services share only the X11
+socket through `/run/comis-x11`; the daemon sees that socket read-only.
+
+## Configuration and overrides
+
+Prefer rerunning the reviewed installer when the installed binary path, service
+identity, browser mode, or hardening contract changes. A managed unit includes a
+checksum; if its body has been edited, the installer leaves it untouched and
+reports how to regenerate it.
+
+Use a systemd drop-in for an intentional local override instead of editing the
+managed unit:
 
 ```bash
-journalctl -u comis -p err
+sudo systemctl edit comis.service
+sudo systemctl daemon-reload
+sudo systemctl restart comis.service
 ```
 
-<Info>
-The daemon also writes logs to `~/.comis/logs/daemon.log` (resolved against the
-service user's home — `/var/lib/comis/.comis/logs/daemon.log` for an installer-managed
-service). See [Logging](/operations/logging) for details on configuring log
-levels and rotation.
-</Info>
+For a user service, use the corresponding `systemctl --user edit`,
+`daemon-reload`, and `restart` commands. Review overrides carefully: changing
+the service type, kill mode, namespace policy, or write paths can disable
+restart behavior, durable terminals, or command isolation.
+
+After changing `/etc/comis/env` for a system service or `~/.comis/env` for a
+user service, restart the matching unit. Do not place credentials in
+`config.yaml`; use Comis's secret-management flow.
+
+## Troubleshooting
+
+Inspect the rendered unit and recent logs before changing it:
+
+```bash
+sudo systemctl cat comis.service
+sudo systemctl status comis.service --no-pager --lines=30
+sudo journalctl -u comis.service -n 100 --no-pager
+```
+
+For a user service, add `--user` to `systemctl` and `journalctl` as shown above.
+If repeated startup failures reached the unit's start limit, fix the reported
+cause and clear the failed state:
+
+```bash
+sudo systemctl reset-failed comis.service
+sudo systemctl start comis.service
+```
+
+See [Logging](/operations/logging) for structured logs and
+[Troubleshooting](/operations/troubleshooting) for daemon and gateway checks.
 
 ## Related pages
 
 <CardGroup cols={2}>
-  <Card title="Daemon" icon="server" href="/operations/daemon">
-    How the daemon starts, runs, and shuts down.
+  <Card title="Linux installation" icon="linux" href="/installation/install-linux">
+    Install Comis and review Linux-specific dependencies.
   </Card>
-  <Card title="pm2" icon="rotate" href="/operations/pm2">
-    Alternative process manager for macOS and Linux.
+  <Card title="Daemon" icon="server" href="/operations/daemon">
+    Understand startup, health, and shutdown behavior.
+  </Card>
+  <Card title="Node permissions" icon="shield" href="/reference/node-permissions">
+    Review the runtime permission boundary and compatibility tradeoffs.
   </Card>
   <Card title="Docker" icon="docker" href="/operations/docker">
-    Run Comis in a Docker container.
-  </Card>
-  <Card title="Logging" icon="file-lines" href="/operations/logging">
-    Configure log levels, rotation, and structured output.
-  </Card>
-  <Card title="Troubleshooting" icon="wrench" href="/operations/troubleshooting">
-    Solutions to common issues.
+    Run Comis without a host systemd unit.
   </Card>
 </CardGroup>

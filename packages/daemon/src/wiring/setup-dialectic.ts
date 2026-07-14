@@ -227,7 +227,14 @@ export function dialecticWiringDepsFromBoot(c: DialecticBootSlice): DialecticWir
       // `mgr` is typed as @comis/core OAuthTokenManager; resolveProviderApiKey wants the agent-local
       // OAuthTokenManager (adds `invalidate`). The runtime object IS the full manager (authProvider.oauth),
       // so cast the deps to the param type — sound at runtime, only the static types are duplicated.
-      return () => resolveProviderApiKey(provider, { authStorage, oauthManager: mgr, agentConfig } as Parameters<typeof resolveProviderApiKey>[1]);
+      return () => resolveProviderApiKey(provider, {
+        authStorage,
+        oauthManager: mgr,
+        agentConfig,
+        configuredApiKeyName:
+          // eslint-disable-next-line security/detect-object-injection -- provider is a configured model provider id
+          c.container.config.providers?.entries?.[provider]?.apiKeyName || undefined,
+      } as Parameters<typeof resolveProviderApiKey>[1]);
     },
     providers: c.container.config.providers?.entries ?? {},
     stores: {

@@ -7,7 +7,7 @@
  *
  * Decomposition:
  *   - setup-gateway-admin.ts   ≤200L — deriveTrustLevel, handleConfigChatCommand, buildExecutionRequestedLogFields, buildGreetingGenerator
- *   - setup-gateway-rpc.ts     ≤500L — setupRpcBridge (deferred dispatch) + RPC adapter builder + extractAttachmentMarkers + dynamic router registration
+ *   - setup-gateway-rpc.ts     ≤500L — setupRpcBridge (deferred dispatch) + RPC adapter builder + dynamic router registration
  *   - setup-gateway-routes.ts  ≤300L — setupGateway orchestrator + GatewayDeps/GatewayResult + gateway server creation + mountGatewayRoutes call + start
  *
  * NOTE: The sibling top-level `packages/daemon/src/wiring/setup-gateway-routes.ts`

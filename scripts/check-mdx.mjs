@@ -135,6 +135,16 @@ for (const document of documents) {
 }
 
 for (const document of documents) {
+  if (
+    /(?:curl|wget)[^\n]*https:\/\/(?:www\.)?comis\.ai\/install\.sh[^\n]*\|\s*(?:sudo\s+)?(?:bash|sh)\b/i.test(
+      document.value,
+    )
+  ) {
+    addFailure(
+      `${relative(ROOT, document.file)} pipes the hosted installer directly to a shell; document download, inspection, --dry-run, then execution`,
+    );
+  }
+
   for (const rawLink of extractLocalLinks(document.value)) {
     let decoded;
     try {

@@ -156,6 +156,7 @@ describe("createSseEndpoint", () => {
       expect(deps.rpcAdapterDeps.executeAgent).toHaveBeenCalledWith({
         message: "hello",
         agentId: "bot-1",
+        clientId: "test-client",
         scopes: ["rpc", "admin"],
         onDelta: expect.any(Function),
       });

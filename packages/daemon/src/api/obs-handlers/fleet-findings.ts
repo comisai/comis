@@ -234,7 +234,7 @@ export function buildFindings(
       code: "generation_quality",
       detail: `${genQualityCount} memory-generation pass(es) whose output diverged from the source (non-Latin source → Latin output, empty, or unparseable)`,
       count: genQualityCount,
-      hint: "a memory-generation pass (consolidation/reasoning/user-representation) is producing low-quality output for non-Latin sources; the memory-pipeline model is too weak — configure a stronger memory model or pin providers.entries.<id>.capabilities.capabilityClass to frontier/mid (the R6 memory-ops override). Visibility only — not gated",
+      hint: "a memory-generation pass (consolidation/reasoning/user-representation) is producing low-quality output for non-Latin sources; configure a stronger memory model or pin providers.entries.<id>.capabilities.capabilityClass to frontier or mid for memory operations. Visibility only — not gated",
     });
   }
 

@@ -810,8 +810,8 @@ describe("createSessionHandlers - session management", () => {
                     },
                     {
                       role: "toolResult",
-                      tool_use_id: "tc-attach-1",
-                      content: [{ type: "text", text: '{"messageId":"abc123def456.png","channelId":"web:default"}' }],
+                      toolCallId: "tc-attach-1",
+                      content: [{ type: "text", text: '{"messageId":"abc123def4567890.png","channelId":"web:default"}' }],
                     },
                     { role: "assistant", content: "Let me know if you want any changes!" },
                   ],
@@ -837,9 +837,17 @@ describe("createSessionHandlers - session management", () => {
       );
       expect(assistantWithAttach).toBeDefined();
       expect(assistantWithAttach!.content).toContain("Here is your image:");
-      expect(assistantWithAttach!.content).toContain("/media/abc123def456.png");
+      expect(assistantWithAttach!.content).toContain("/media/abc123def4567890.png");
       expect(assistantWithAttach!.content).toContain('"type":"image"');
       expect(assistantWithAttach!.content).toContain('"fileName":"cat.png"');
+      const markerMatch = assistantWithAttach!.content.match(/<!-- attachment:(\{.*\}) -->/s);
+      expect(markerMatch).not.toBeNull();
+      expect(JSON.parse(markerMatch![1])).toEqual({
+        url: "/media/abc123def4567890.png",
+        type: "image",
+        mimeType: "image/png",
+        fileName: "cat.png",
+      });
     });
 
     it("handles tool_use format (Anthropic API) for attachment reconstruction", async () => {
@@ -899,6 +907,55 @@ describe("createSessionHandlers - session management", () => {
       expect(assistantMsg!.content).toContain("/media/ff99aa.pdf");
       expect(assistantMsg!.content).toContain("Your report");
       expect(assistantMsg!.content).toContain('"fileName":"report.pdf"');
+    });
+
+    it("does not map non-gateway attachment results onto the local media route", async () => {
+      const deps = makeDeps({
+        sessionStore: {
+          listDetailed: () => [],
+          loadByFormattedKey: (key: string) =>
+            key === "valid-session"
+              ? {
+                  messages: [
+                    {
+                      role: "assistant",
+                      content: [{
+                        type: "toolCall",
+                        name: "message",
+                        id: "tc-telegram-attachment",
+                        arguments: {
+                          action: "attach",
+                          channel_type: "telegram",
+                          attachment_type: "image",
+                          mime_type: "image/png",
+                          file_name: "remote.png",
+                        },
+                      }],
+                    },
+                    {
+                      role: "toolResult",
+                      tool_use_id: "tc-telegram-attachment",
+                      content: '{"messageId":"telegram-message-42","channelId":"chat-42"}',
+                    },
+                  ],
+                  metadata: {},
+                  createdAt: Date.now() - 60000,
+                  updatedAt: Date.now(),
+                }
+              : undefined,
+          deleteByFormattedKey: () => false,
+          saveByFormattedKey: vi.fn(),
+        },
+      });
+      const handlers = createSessionHandlers(deps);
+
+      const result = (await handlers["session.history"]!({
+        session_key: "valid-session",
+        limit: 50,
+      })) as { messages: Array<{ role: string; content: string }> };
+
+      expect(result.messages.some((message) => message.content.includes("<!-- attachment:"))).toBe(false);
+      expect(JSON.stringify(result.messages)).not.toContain("/media/telegram-message-42");
     });
 
     it("does not inject markers for non-attach tool calls", async () => {

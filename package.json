@@ -43,7 +43,7 @@
     "cycles:refs": "tsc -b --dry packages/comis",
     "lint:security": "eslint --config eslint.config.js",
     "lint:fixtures": "bash scripts/check-fixture-diff.sh",
-    "docs:check": "node scripts/check-mdx.mjs",
+    "docs:check": "tsx scripts/check-mcp-doc-examples.ts && node scripts/check-mdx.mjs",
     "test": "vitest",
     "test:coverage": "vitest run --coverage",
     "validate": "pnpm docs:check && pnpm build:clean && pnpm cycles && pnpm cycles:refs && pnpm lint:security && pnpm test:coverage",

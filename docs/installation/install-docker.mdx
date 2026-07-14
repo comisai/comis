@@ -41,9 +41,10 @@ trade-off:
   within the container account.
 
 This is fine for **development and local testing only**. For production,
-deploy to a real Linux host (bare metal, VPS, or any Linux cloud VM)
-where the kernel actually allows the sandbox to run — the same image and
-compose files Just Work, you don't need a code change.
+deploy to a real Linux host (bare metal, VPS, or a Linux cloud VM) and verify
+that bubblewrap is active after startup. Some Linux hosts restrict unprivileged
+user namespaces through AppArmor and require the host configuration described in
+[Operations: Docker → Per-command exec sandbox](/operations/docker#per-command-exec-sandbox-bubblewrap).
 
 See [Operations: Docker → Platform Support](/operations/docker#platform-support)
 for the full explanation, including local Linux-VM alternatives
@@ -83,9 +84,10 @@ recommended way to get started.
     ${EDITOR:-vi} ~/.comis/.env
     ```
 
-    Add at least one provider credential, for example
-    `ANTHROPIC_API_KEY=...` or `OPENAI_API_KEY=...`. If you change
-    `COMIS_ENV_FILE` in the project-root `.env`, edit that target instead.
+    Add the credentials required by your chosen provider, for example
+    `ANTHROPIC_API_KEY=...` or `OPENAI_API_KEY=...`. OAuth and local keyless
+    providers do not need a static provider key. If you change `COMIS_ENV_FILE`
+    in the project-root `.env`, edit that target instead.
 
     <SecretWarning />
 
@@ -142,7 +144,7 @@ docker build \
   --build-arg COMIS_WITH_BROWSER=1 \
   -t comisai/comis:browser .
 
-# Headed via Xvfb — for sites that detect headless mode (+15 MB on top)
+# Headed via Xvfb — for workflows that require a display server (+15 MB on top)
 docker build \
   --build-arg COMIS_WITH_XVFB=1 \
   -t comisai/comis:xvfb .
@@ -159,9 +161,9 @@ docker build \
   -t comisai/comis:cloak-xvfb .
 ```
 
-The entrypoint shim (`/usr/local/bin/comis-entrypoint.sh`) starts Xvfb on `:99` automatically when the image was built with `COMIS_WITH_XVFB=1`. The daemon's `findChrome()` probes `~/.cloakbrowser/chromium-*/chrome` first, so when the cloak binary is baked in it wins over stock Chrome with no config change.
+The entrypoint shim (`/usr/local/bin/comis-entrypoint.sh`) starts Xvfb on `:99` automatically when the image was built with `COMIS_WITH_XVFB=1`. It verifies the X11 socket before starting the daemon and exits if the virtual display cannot start. The daemon's `findChrome()` probes `~/.cloakbrowser/chromium-*/chrome` first, so when the cloak binary is baked in it wins over stock Chrome with no config change.
 
-Run the stealth image identically to the no-browser one — same volumes, same ports, same env vars:
+Run the CloakBrowser image identically to the no-browser one — same volumes, same ports, same environment variables:
 
 ```bash
 docker run -d \

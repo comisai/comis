@@ -1,25 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Helpers for spawning short-lived child processes from monitoring sources
- * without inheriting the daemon's systemd-watchdog env vars.
+ * without inheriting service-manager notification variables.
  *
- * Rationale: the daemon runs under `Type=notify` with `NotifyAccess=main`.
- * systemd sets NOTIFY_SOCKET + MAINPID + WATCHDOG_{PID,USEC} in the daemon's
- * environment. Child processes spawned via `execFile` inherit these by
- * default, and any child that is itself systemd-aware (apt-get, which
- * transitively invokes apt-listchanges / unattended-upgrades helpers on
- * Ubuntu) ends up sending a READY=/STATUS= datagram to NOTIFY_SOCKET. The
- * daemon then spams journal with:
- *
- *   systemd[1]: comis.service: Got notification message from PID X, but
- *   reception only permitted for main PID Y
- *
- * These messages are cosmetic but can mask legitimate denials and inflate
- * journal volume (one per 5-min heartbeat tick). Stripping the four env
- * vars in the monitoring-command env is the minimal, targeted fix; the
- * daemon's own sd-notify FD remains unaffected because sd-notify reads
- * NOTIFY_SOCKET from the *parent*'s process.env, not from the child env
- * we pass to execFile.
+ * The installer-generated unit uses `Type=exec`, so it does not provide a
+ * notify socket or watchdog interval. A custom `Type=notify` unit or another
+ * supervisor may still supply these variables. If a monitoring child inherits
+ * them, a systemd-aware executable can send status messages as though it were
+ * the daemon. Strip the variables only from the child environment; the
+ * daemon's process environment is unchanged.
  *
  * This only applies to monitoring sources. MCP children and exec-tool
  * sandbox children are out of scope — MCP children carry their own env
@@ -36,7 +25,7 @@ const SYSTEMD_NOTIFY_VARS = [
 ] as const;
 
 /**
- * Return a copy of `process.env` with systemd-watchdog vars removed.
+ * Return a copy of `process.env` with service-manager notify vars removed.
  * Use as the `env` option of execFile / spawn for monitoring commands.
  */
 export function envWithoutSystemdNotify(): NodeJS.ProcessEnv {

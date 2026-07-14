@@ -181,8 +181,8 @@ export function runAwsSigV4Finalizer(
   log: ComisLogger,
 ): FinalizerResult {
   log.debug(
-    { step: "finalizer_skipped", hint: "sigv4 deferred" },
-    "awsSigV4 finalizer: signing deferred to FINAL-02",
+    { step: "finalizer_skipped", hint: "AWS SigV4 request signing is unavailable" },
+    "AWS SigV4 finalizer skipped; request was not signed",
   );
   return { body, headers };
 }

@@ -148,7 +148,7 @@ function compareCloakVersionsDesc(a: string, b: string): number {
 /**
  * Find the CloakBrowser binary if installed.
  *
- * CloakBrowser ships its own stealth Chromium binary that auto-downloads
+ * CloakBrowser ships its own alternative Chromium runtime that auto-downloads
  * to ~/.cloakbrowser/chromium-<version>/ when `npx cloakbrowser install`
  * runs. We prefer it over stock Chrome when present — the user (or the
  * installer's --with-cloakbrowser flag) put it there deliberately.
@@ -189,8 +189,8 @@ function findCloakBrowser(): BrowserExecutable | null {
  *
  * Resolution order:
  *   1. Explicit chromePath from config (operator override).
- *   2. CloakBrowser binary at ~/.cloakbrowser/ if present (stealth wins
- *      when the user installed it deliberately).
+ *   2. CloakBrowser runtime at ~/.cloakbrowser/ when the user installed it
+ *      deliberately.
  *   3. Stock Chrome / Brave / Edge / Chromium per platform.
  *
  * Returns null if no browser is found.
@@ -306,6 +306,10 @@ export async function launchChrome(
     "--disable-sync",
     "--disable-background-networking",
     "--disable-component-update",
+    "--disable-quic",
+    "--disable-extensions",
+    "--dns-prefetch-disable",
+    "--disable-preconnect",
     "--disable-features=Translate,MediaRouter",
     "--disable-session-crashed-bubble",
     "--hide-crash-restore-bubble",

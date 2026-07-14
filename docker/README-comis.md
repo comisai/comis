@@ -160,7 +160,7 @@ docker build \
   -t comisai/comis:cloakbrowser .
 ```
 
-When `browser.start` runs, Comis discovers the installed browser, launches it with a local CDP endpoint, and connects Playwright. Xvfb starts before the daemon when the image was built with `COMIS_WITH_XVFB=1`; it runs as the container's `comis` user and does not use a host X server. Browser automation remains subject to each site's terms and access controls.
+When `browser.start` runs, Comis discovers the installed browser, launches it with a local CDP endpoint, and connects Playwright. Xvfb starts before the daemon when the image was built with `COMIS_WITH_XVFB=1`; the entrypoint verifies its local X11 socket and stops the container if the display cannot start. Xvfb runs as the container's `comis` user and does not use a host X server. Browser automation remains subject to each site's terms and access controls.
 
 ### Installer-built image (alternative path)
 

@@ -203,7 +203,11 @@ See [CLI Reference](/reference/cli#comis-sessions) for the full command referenc
 
 ### `secrets.db`
 
-An encrypted SQLite database for secrets managed with `comis secrets set`. Each value is encrypted with AES-256-GCM using the key in `SECRETS_MASTER_KEY`. Only created when that variable is set.
+An encrypted SQLite database for secrets managed with `comis secrets set`.
+Each value is encrypted with AES-256-GCM using the key in
+`SECRETS_MASTER_KEY`. Encrypted storage is the default; when the key is absent,
+first boot generates it and writes it to the owner-readable `~/.comis/.env`
+before opening this database.
 
 **Written by:** `comis secrets set` and the daemon on startup.
 **Safe to delete?** Only if you have not stored any secrets here, or you have them backed up elsewhere. Deleting it with a valid master key means those secrets are gone.

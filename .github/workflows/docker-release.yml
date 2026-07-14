@@ -20,6 +20,21 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+
+      - name: Verify release tag matches package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: node .github/scripts/verify-release-tag.mjs "${GITHUB_REF_NAME}"
+
   # -------------------------------------------------------------------------
   # Build per-platform digests
   # Each platform runs natively on its own runner — no QEMU emulation.
@@ -27,6 +42,7 @@ jobs:
   # layers are shared and cached, making the second variant near-instant.
   # -------------------------------------------------------------------------
   build:
+    needs: preflight
     strategy:
       fail-fast: true
       matrix:
@@ -144,9 +160,13 @@ jobs:
       - name: Create multi-arch manifest
         working-directory: /tmp/digests/default
         run: |
-          docker buildx imagetools create \
-            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< '${{ steps.meta.outputs.json }}') \
-            $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
+          mapfile -t tags < <(jq -r '.tags[]' <<< '${{ steps.meta.outputs.json }}')
+          mapfile -t digests < <(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s\n' *)
+          tag_args=()
+          for tag in "${tags[@]}"; do
+            tag_args+=("-t" "${tag}")
+          done
+          docker buildx imagetools create "${tag_args[@]}" "${digests[@]}"
 
   # -------------------------------------------------------------------------
   # Merge per-platform images into multi-arch manifest — slim
@@ -188,14 +208,19 @@ jobs:
       - name: Create multi-arch manifest
         working-directory: /tmp/digests/slim
         run: |
-          docker buildx imagetools create \
-            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< '${{ steps.meta.outputs.json }}') \
-            $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
+          mapfile -t tags < <(jq -r '.tags[]' <<< '${{ steps.meta.outputs.json }}')
+          mapfile -t digests < <(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s\n' *)
+          tag_args=()
+          for tag in "${tags[@]}"; do
+            tag_args+=("-t" "${tag}")
+          done
+          docker buildx imagetools create "${tag_args[@]}" "${digests[@]}"
 
   # -------------------------------------------------------------------------
   # Build web dashboard image (amd64 only — lightweight SPA)
   # -------------------------------------------------------------------------
   build-web:
+    needs: preflight
     runs-on: ubuntu-latest
     if: >-
       github.event_name == 'push' && (

@@ -74,6 +74,7 @@ import {
   setupShutdown,
   setupGateway,
   setupRpcBridge,
+  createGatewayAttachmentPersister,
   setupDeliveryQueue,
   setupDeliveryMirror,
   buildDurableStores,
@@ -1220,7 +1221,7 @@ async function bootFoundation(
   }
   const container = { ...initialContainer, config: refResult.value as unknown as typeof initialContainer.config };
 
-  // Stage-2 scrub: remove config-referenced SecretRef names from process.env; runs after config parse.
+  // Stage-2 scrub: remove config-managed secret names from process.env after config parsing.
   for (const name of container.platformSecretNames) {
     // eslint-disable-next-line no-restricted-syntax -- stage-2 scrub
     delete process.env[name];
@@ -2158,7 +2159,15 @@ async function bootChannels(boot: BootContext): Promise<void> {
     try {
       evaluateViableFloorForAgent({ info: bootInfo, tools: await assembleToolsForAgent(floorAgentId), logger: daemonLogger });
     } catch (err) {
-      daemonLogger.warn({ err, agentId: floorAgentId, errorKind: "internal" as const, hint: "viable-floor boot check failed — boot continues (fail-open); turn-time guards still apply (dag: CWF-02 preflight; pipeline: 85% compaction trigger + reactive classification)" }, "viable-floor boot evaluation threw — skipped for agent");
+      daemonLogger.warn(
+        {
+          err,
+          agentId: floorAgentId,
+          errorKind: "internal" as const,
+          hint: "viable-floor boot check failed — boot continues; turn-time DAG preflight and the regular pipeline's compaction and classification guards remain active",
+        },
+        "Viable-floor boot evaluation failed for agent",
+      );
     }
   }
 
@@ -2551,29 +2560,16 @@ async function bootGateway(
   if (defaultWorkspaceDir) {
     rpcDispatchDeps.mediaDir = safePath(defaultWorkspaceDir, "media");
   }
-  // Persist gateway attachment markers to SQLite session store so images
-  // survive page navigation (especially for sub-agent async deliveries).
-  rpcDispatchDeps.onGatewayAttachment = (channelId: string, marker: string) => {
-    try {
-      const sk: import("@comis/core").SessionKey = {
-        tenantId: container.config.tenantId,
-        userId: "default",
-        channelId,
-      };
-      const existing = sessionStore.load(sk);
-      const messages: unknown[] = existing?.messages ?? [];
-      // Deduplicate: skip if this media URL is already in the session
-      const urlMatch = marker.match(/\/media\/[^"]+/);
-      if (urlMatch) {
-        const existingText = messages.map((m) => String((m as Record<string, unknown>).content ?? "")).join("\n");
-        if (existingText.includes(urlMatch[0])) return;
-      }
-      messages.push({ role: "assistant", content: marker, timestamp: Date.now() });
-      sessionStore.save(sk, messages);
-    } catch {
-      // Non-fatal: attachment persistence failure should not break delivery
-    }
-  };
+  // Persist gateway attachment markers under the request's complete session
+  // identity so history navigation reopens the same tenant/user/channel row.
+  rpcDispatchDeps.onGatewayAttachment = createGatewayAttachmentPersister({
+    sessionStore,
+    clock: boot.clock,
+    logger: gatewayLogger,
+    emitSystemError: (payload) => {
+      container.eventBus.emit("system:error", payload);
+    },
+  });
 
   // 7.1. Wire deferred gateway send ref for sub-agent announcement delivery
   // channelId here is a session UUID (from announce_channel_id), not a clientId.

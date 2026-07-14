@@ -357,6 +357,7 @@ describe("createRestApi", () => {
         message: "Hello agent",
         agentId: undefined,
         sessionKey: undefined,
+        clientId: "test-client",
         scopes: ["rpc", "admin"],
       });
     });
@@ -375,6 +376,7 @@ describe("createRestApi", () => {
         message: "Hi",
         agentId: "agent-2",
         sessionKey: undefined,
+        clientId: "test-client",
         scopes: ["rpc", "admin"],
       });
     });

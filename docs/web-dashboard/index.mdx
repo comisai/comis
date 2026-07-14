@@ -36,8 +36,8 @@ The dashboard listens to an SSE stream at `/sse/subscriptions/<id>` for events t
 
 | Event | What you see |
 |-------|--------------|
-| `approval:requested` | The Approvals badge in the sidebar increments. A toast appears. |
-| `approval:resolved` | The badge decrements; the Pending Approvals queue updates. |
+| `approval:requested` | The notification count increments and the Security view's Pending Approvals queue updates. |
+| `approval:resolved` | The notification count decrements and the Pending Approvals queue updates. |
 | `system:error` | A red toast describing the failure (e.g., a channel disconnected). |
 | `metrics:update` | Stat cards on the Dashboard and Observability views refresh. |
 | `delivery:status` | The Delivery view's trace table updates as messages move through the queue. |
@@ -52,17 +52,15 @@ Once connected, the dashboard is organized into three main areas: a sidebar on t
 
 ### Sidebar
 
-The sidebar is your primary way to navigate between different views. It contains 23 items organized into four sections -- **Home** (1), **Operate** (7), **Observe** (6), and **Configure** (9) -- plus a **Setup** item and **Logout** button below a divider. Each section header is a non-clickable visual label that groups related items together.
+The sidebar is your primary way to navigate between views. It contains 22 items organized into four sections -- **Home** (1), **Operate** (7), **Observe** (6), and **Configure** (8) -- plus a **Logout** button. Each section header is a non-clickable label.
 
 <Info>
-The sidebar shows 23 items, but the underlying SPA actually serves a few more URLs:
+Several detail pages are reached from their parent views rather than listed separately:
 - **Agent detail / editor / workspace** are reachable from the **Agents** view (clicking an agent row).
 - **Channel detail** opens from a **Channels** card.
 - **Session detail** opens from a row in **Sessions**.
 - **Pipeline builder, monitor, history, history detail** are sub-views of **Pipelines**.
-- **Approvals** still has its own sidebar entry but the page now redirects to the **Security > Pending Approvals** tab (the canonical home for approvals).
-
-In total, 38 URL patterns route to 23 distinct view components. This page documents every component you can reach.
+- Pending approvals live under **Security**.
 </Info>
 
 #### Home
@@ -105,10 +103,7 @@ In total, 38 URL patterns route to 23 distinct view components. This page docume
 | **Scheduler** | | Manage cron jobs, view run history, and monitor heartbeats |
 | **Security** | | Audit log, token management, approval rules, and security events |
 | **Media** | | Test media processing (vision, TTS, STT, image generation) and configure providers |
-| **Approvals** | Pending approvals | Review and act on pending approval requests |
 | **Config** | | Edit your Comis configuration in real time |
-
-Below a divider, you will also find **Setup** -- the guided setup wizard for first-time configuration.
 
 In the sidebar footer, the **Logout** button ends the session and returns to the login screen.
 
@@ -134,7 +129,7 @@ If you see a red dot, the most common fix is to make sure the daemon is running.
 The main content area switches based on which item you select in the sidebar. Each view is documented in detail on its own page.
 
 <Info>
-The **Skills** view lets you browse installed skills per agent with a scope toggle (agent vs shared). It shows built-in tool descriptions, categories, and parameter hints. The **Models** view shows all configured AI models with their provider, status, context window, and pricing, plus model aliases and a connectivity test. The **Setup** wizard walks through initial configuration including provider API keys, channel setup, and first agent creation. For in-depth configuration, see [Skills](/skills/index), [Agents - Models](/agents/models), and [Installation](/installation/index).
+The **Skills** view lets you browse installed skills per agent with a scope toggle (agent vs shared). It shows built-in tool descriptions, categories, and parameter hints. The **Models** view shows catalog and configuration status for available models. Use `comis init` for guided first-time configuration. For details, see [Skills](/skills/index), [Agents - Models](/agents/models), and [Installation](/installation/index).
 </Info>
 
 ## Dashboard
@@ -178,7 +173,7 @@ The palette searches across four categories:
 
 | Category | Source | Examples |
 |----------|--------|---------|
-| **Views** | 24 navigable views from the sidebar and sub-views | Dashboard, Agents, Messages, Billing, Context Engine |
+| **Views** | 17 frequently used views | Dashboard, Agents, Billing, Context Engine, Security |
 | **Agents** | Dynamic list from polling | default, research-agent, support-bot |
 | **Sessions** | Dynamic list from polling | telegram:user123:chat456 |
 | **Commands** | Built-in actions | Refresh Data, Toggle Sidebar, Logout, Show Keyboard Shortcuts |
@@ -187,7 +182,7 @@ Use the arrow keys to navigate results, press <kbd>Enter</kbd> to select, and pr
 
 ## Navigation Guide
 
-Each card below links to its own page. The 23 distinct views are grouped by sidebar section.
+Each card below links to a dashboard feature or related detail view.
 
 ### Operate
 
@@ -267,8 +262,5 @@ Each card below links to its own page. The 23 distinct views are grouped by side
   </Card>
   <Card title="Config Editor" icon="gear" href="/web-dashboard/config-editor">
     Edit your Comis configuration -- changes save to disk and survive restart.
-  </Card>
-  <Card title="Setup Wizard" icon="rocket" href="/web-dashboard/setup-wizard">
-    Re-run the guided onboarding flow for first-time configuration.
   </Card>
 </CardGroup>

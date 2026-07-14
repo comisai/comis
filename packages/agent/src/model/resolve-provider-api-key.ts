@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: OAuth credential resolution: explicit-profile request that store cannot satisfy is security-critical hard fail per the inline comment (line 79-81); caller chain is PiExecutor.execute -> gateway routes which lift to user-facing error.
+// @allow-throw: Explicit credential selections fail closed; caller boundaries translate the error into a user-facing execution failure.
 /**
  * resolveProviderApiKey: shared dispatch helper that routes OAuth-eligible
  * providers through the OAuthTokenManager + AuthStorage.setRuntimeApiKey
@@ -15,7 +15,8 @@
  * throw-on-failure shape. On OAuthError the helper propagates a thrown Error —
  * no env-var fallback, no retry, no silent rotation. Outer callers
  * (PiExecutor.execute, gateway routes) surface the throw to the user via their
- * existing error-handling path.
+ * existing error-handling path. An explicit providers.entries apiKeyName also
+ * fails closed when unresolved, preventing ambient credentials from taking over.
  *
  * @module
  */
@@ -39,6 +40,9 @@ export interface ResolveProviderApiKeyDeps {
    *  manager's resolver chain (agent-config -> lastGood -> first available)
    *  observes per-agent profile preference on every call. */
   agentConfig?: PerAgentConfig;
+  /** Explicit providers.entries.<provider>.apiKeyName selection. When present,
+   *  AuthStorage is authoritative and ambient/OAuth discovery is disabled. */
+  configuredApiKeyName?: string;
 }
 
 /**
@@ -49,12 +53,24 @@ export interface ResolveProviderApiKeyDeps {
  * @param providerId - The provider id (e.g. "openai-codex", "anthropic").
  * @param deps - Dispatch dependencies (authStorage, optional oauthManager, optional agentConfig).
  * @returns The API key string.
- * @throws Error containing the OAuthError.message when manager.getApiKey returns err().
+ * @throws Error when an explicit credential is unavailable or OAuth resolution fails.
  */
 export async function resolveProviderApiKey(
   providerId: string,
   deps: ResolveProviderApiKeyDeps,
 ): Promise<string> {
+  if (deps.configuredApiKeyName) {
+    const configuredKey = await deps.authStorage.getApiKey(providerId, {
+      includeFallback: false,
+    });
+    if (!configuredKey) {
+      throw new Error(
+        `Configured credential "${deps.configuredApiKeyName}" for provider "${providerId}" is unavailable. Set it with comis secrets set ${deps.configuredApiKeyName}, then retry.`,
+      );
+    }
+    return configuredKey;
+  }
+
   const oauthProvider = getOAuthProvider(providerId);
   if (oauthProvider && deps.oauthManager) {
     const result = await deps.oauthManager.getApiKey(providerId, {

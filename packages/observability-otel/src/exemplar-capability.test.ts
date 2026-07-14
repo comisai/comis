@@ -56,4 +56,8 @@ describe("exemplar-capability", () => {
       true,
     );
   });
+
+  it("keeps the operator note self-contained without internal planning references", () => {
+    expect(EXEMPLAR_CAPABILITY_NOTE).not.toMatch(/\bplan\s+\d+\b/i);
+  });
 });

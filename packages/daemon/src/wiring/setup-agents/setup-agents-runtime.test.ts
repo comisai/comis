@@ -526,10 +526,9 @@ describe("setupSingleAgent rerank auto-on precedence", () => {
 // These tests assert the secret-rotation hot-swap subscription is present in
 // the wiring source (setup-agents-runtime.ts or setup-agents-registry.ts).
 //
-// Design: the subscription fires when secret:changed { action: "upserted" }
-// and the changed key maps to a known provider (e.g. ANTHROPIC_API_KEY →
-// "anthropic"). The handler calls:
-//   piAuthStorage.setRuntimeApiKey(provider, secretManager.get(name))
+// The subscription maps a changed credential name to every affected provider
+// and re-syncs each provider from the scoped SecretManager. Re-resolution is
+// required so deleting a preferred name can expose a configured alias.
 // A non-provider key (e.g. MY_DATABASE_URL) is a no-op.
 // ---------------------------------------------------------------------------
 
@@ -551,13 +550,16 @@ describe("AuthStorage secret:changed hot-swap wiring", () => {
     expect(runtimeContains || registryContains).toBe(true);
   });
 
-  it("setup-agents wiring calls setRuntimeApiKey in response to secret:changed upserted event", () => {
-    // When secret:changed fires for a provider key (e.g. ANTHROPIC_API_KEY),
-    // the wiring must call piAuthStorage.setRuntimeApiKey(provider, newValue).
-    // The composition-root subscription adds this at boot wiring;
-    // auth-rotation-adapter.ts also calls setRuntimeApiKey at runtime.
-    const runtimeContains = runtimeSrc.includes("secret:changed") && runtimeSrc.includes("setRuntimeApiKey");
-    const registryContains = registrySrc.includes("secret:changed") && registrySrc.includes("setRuntimeApiKey");
+  it("setup-agents wiring re-syncs provider credentials after secret changes", () => {
+    const runtimeContains = runtimeSrc.includes("secret:changed") && runtimeSrc.includes("syncCredentialsForSecretChange");
+    const registryContains = registrySrc.includes("secret:changed") && registrySrc.includes("syncCredentialsForSecretChange");
     expect(runtimeContains || registryContains).toBe(true);
+  });
+
+  it("setup-agents wiring includes custom provider entries in secret refreshes", () => {
+    expect(runtimeSrc).toContain("customProviderEntries");
+    expect(runtimeSrc).toMatch(
+      /syncCredentialsForSecretChange\([\s\S]*customProviderEntries[\s\S]*\)/,
+    );
   });
 });

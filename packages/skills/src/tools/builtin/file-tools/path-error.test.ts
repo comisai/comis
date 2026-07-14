@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the shared path-outside-workspace error message (F-10, live 2026-06-12).
+ * Tests for the shared path-outside-workspace error message.
  * @module
  */
 

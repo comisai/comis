@@ -16,14 +16,165 @@ import { KEYLESS_PROVIDER_TYPES, KEYLESS_API_KEY_SENTINEL, type SecretManager } 
  *  themselves — it is the return type of `createAuthStorageAdapter` below. */
 export type { AuthStorage } from "@earendil-works/pi-coding-agent";
 
-/** Default provider-to-env-var mapping for known LLM providers. */
-export const DEFAULT_PROVIDER_KEYS: Record<string, string> = {
-  anthropic: "ANTHROPIC_API_KEY",
-  openai: "OPENAI_API_KEY",
-  google: "GOOGLE_API_KEY",
-  groq: "GROQ_API_KEY",
-  mistral: "MISTRAL_API_KEY",
+/**
+ * Static provider credentials copied from SecretManager into pi AuthStorage.
+ *
+ * Values are ordered: the first configured name wins. Comis's established
+ * names stay first while catalog aliases remain accepted (for example,
+ * GOOGLE_API_KEY before GEMINI_API_KEY).
+ */
+export const PROVIDER_SECRET_KEYS: Readonly<Record<string, readonly string[]>> = {
+  "github-copilot": ["COPILOT_GITHUB_TOKEN"],
+  anthropic: ["ANTHROPIC_API_KEY", "ANTHROPIC_OAUTH_TOKEN"],
+  "ant-ling": ["ANT_LING_API_KEY"],
+  openai: ["OPENAI_API_KEY"],
+  "azure-openai-responses": ["AZURE_OPENAI_API_KEY"],
+  nvidia: ["NVIDIA_API_KEY"],
+  deepseek: ["DEEPSEEK_API_KEY"],
+  google: ["GOOGLE_API_KEY", "GEMINI_API_KEY"],
+  "google-vertex": ["GOOGLE_CLOUD_API_KEY"],
+  groq: ["GROQ_API_KEY"],
+  cerebras: ["CEREBRAS_API_KEY"],
+  xai: ["XAI_API_KEY"],
+  openrouter: ["OPENROUTER_API_KEY"],
+  "vercel-ai-gateway": ["AI_GATEWAY_API_KEY"],
+  zai: ["ZAI_API_KEY"],
+  "zai-coding-cn": ["ZAI_CODING_CN_API_KEY"],
+  mistral: ["MISTRAL_API_KEY"],
+  minimax: ["MINIMAX_API_KEY"],
+  "minimax-cn": ["MINIMAX_CN_API_KEY"],
+  moonshotai: ["MOONSHOT_API_KEY"],
+  "moonshotai-cn": ["MOONSHOT_API_KEY"],
+  huggingface: ["HF_TOKEN"],
+  fireworks: ["FIREWORKS_API_KEY"],
+  together: ["TOGETHER_API_KEY"],
+  opencode: ["OPENCODE_API_KEY"],
+  "opencode-go": ["OPENCODE_API_KEY"],
+  "kimi-coding": ["KIMI_API_KEY"],
+  "cloudflare-workers-ai": ["CLOUDFLARE_API_KEY"],
+  "cloudflare-ai-gateway": ["CLOUDFLARE_API_KEY"],
+  xiaomi: ["XIAOMI_API_KEY"],
+  "xiaomi-token-plan-cn": ["XIAOMI_TOKEN_PLAN_CN_API_KEY"],
+  "xiaomi-token-plan-ams": ["XIAOMI_TOKEN_PLAN_AMS_API_KEY"],
+  "xiaomi-token-plan-sgp": ["XIAOMI_TOKEN_PLAN_SGP_API_KEY"],
 };
+
+/**
+ * Additional credential groups required to construct provider request URLs.
+ * At least one name in every group must resolve. A multi-name group represents
+ * accepted aliases for one required value.
+ */
+const PROVIDER_CREDENTIAL_GROUPS: Readonly<
+  Record<string, readonly (readonly string[])[]>
+> = {
+  "cloudflare-workers-ai": [["CLOUDFLARE_ACCOUNT_ID"]],
+  "cloudflare-ai-gateway": [
+    ["CLOUDFLARE_ACCOUNT_ID"],
+    ["CLOUDFLARE_GATEWAY_ID"],
+  ],
+};
+
+/** Return the ordered SecretManager names supported for a provider. */
+export function getProviderSecretNames(provider: string): readonly string[] {
+  return PROVIDER_SECRET_KEYS[provider] ?? [];
+}
+
+/** Return missing provider credential groups as operator-readable names. */
+export function getMissingProviderCredentialNames(
+  provider: string,
+  hasCredential: (name: string) => boolean,
+): string[] {
+  const groups = PROVIDER_CREDENTIAL_GROUPS[provider] ?? [];
+  return groups
+    .filter((group) => !group.some((name) => hasCredential(name)))
+    .map((group) => group.join(" or "));
+}
+
+function getProviderCredentialNames(provider: string): string[] {
+  return (PROVIDER_CREDENTIAL_GROUPS[provider] ?? []).flatMap((group) => group);
+}
+
+/** Return every provider affected when a credential or auxiliary value changes. */
+export function getProvidersForSecretName(name: string): string[] {
+  const providers: string[] = [];
+  for (const [provider, secretNames] of Object.entries(PROVIDER_SECRET_KEYS)) {
+    const auxiliaryNames = getProviderCredentialNames(provider);
+    if (secretNames.includes(name) || auxiliaryNames.includes(name)) providers.push(provider);
+  }
+  return providers;
+}
+
+function resolveSecret(
+  secretManager: SecretManager,
+  names: readonly string[],
+): string | undefined {
+  for (const name of names) {
+    const value = secretManager.get(name);
+    if (value !== undefined) return value;
+  }
+  return undefined;
+}
+
+function providerCredentialEnv(
+  secretManager: SecretManager,
+  provider: string,
+): Record<string, string> | undefined {
+  const names = getProviderCredentialNames(provider);
+  if (names.length === 0) return undefined;
+
+  const env: Record<string, string> = {};
+  for (const name of names) {
+    const value = secretManager.get(name);
+    if (value !== undefined) env[name] = value;
+  }
+  return Object.keys(env).length > 0 ? env : undefined;
+}
+
+function syncProviderCredentialForNames(
+  storage: AuthStorage,
+  secretManager: SecretManager,
+  provider: string,
+  secretNames: readonly string[],
+): boolean {
+  const apiKey = resolveSecret(secretManager, secretNames);
+  const credentialNames = getProviderCredentialNames(provider);
+
+  if (credentialNames.length > 0) {
+    storage.removeRuntimeApiKey(provider);
+    if (storage.get(provider)?.type === "api_key") storage.remove(provider);
+    const missing = getMissingProviderCredentialNames(
+      provider,
+      (name) => secretManager.has(name),
+    );
+    if (apiKey === undefined || missing.length > 0) {
+      return false;
+    }
+    const env = providerCredentialEnv(secretManager, provider);
+    storage.set(provider, { type: "api_key", key: apiKey, ...(env ? { env } : {}) });
+    return true;
+  }
+
+  if (apiKey === undefined) {
+    storage.removeRuntimeApiKey(provider);
+    return false;
+  }
+  storage.setRuntimeApiKey(provider, apiKey);
+  return true;
+}
+
+/** Refresh one provider from the live SecretManager after credential rotation. */
+export function syncProviderCredential(
+  storage: AuthStorage,
+  secretManager: SecretManager,
+  provider: string,
+): boolean {
+  return syncProviderCredentialForNames(
+    storage,
+    secretManager,
+    provider,
+    getProviderSecretNames(provider),
+  );
+}
 
 /**
  * Custom YAML provider entry projection used to populate AuthStorage with
@@ -53,50 +204,98 @@ export interface AuthStorageAdapterOptions {
   /**
    * Custom YAML provider entries (`providers.entries.*`). Each entry's
    * `apiKeyName` is resolved through `secretManager` and registered as a
-   * runtime override on the returned AuthStorage. Disabled entries and
-   * entries with empty `apiKeyName` are skipped silently.
+   * runtime override on the returned AuthStorage. Disabled entries are
+   * skipped; keyless entries without a resolved key receive the shared
+   * keyless sentinel.
    */
   customProviderEntries?: Record<string, CustomProviderAuth>;
+}
+
+function applyCustomProviderCredential(
+  storage: AuthStorage,
+  secretManager: SecretManager,
+  provider: string,
+  entry: CustomProviderAuth,
+): boolean {
+  if (!entry.enabled) return false;
+
+  // A non-empty apiKeyName is an explicit credential selection, including
+  // when the entry reuses a built-in provider id. Clear the built-in value
+  // before applying it so a missing selected secret cannot reactivate another
+  // alias (for example an Anthropic API key after selecting an OAuth token).
+  if (entry.apiKeyName) {
+    storage.removeRuntimeApiKey(provider);
+    if (storage.get(provider)?.type === "api_key") storage.remove(provider);
+  }
+
+  const apiKey = entry.apiKeyName ? secretManager.get(entry.apiKeyName) : undefined;
+  if (apiKey) {
+    storage.setRuntimeApiKey(provider, apiKey);
+    return true;
+  }
+  if (!entry.apiKeyName && entry.type && KEYLESS_PROVIDER_TYPES.has(entry.type)) {
+    storage.setRuntimeApiKey(provider, KEYLESS_API_KEY_SENTINEL);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Rebuild every built-in or custom provider affected by a secret change.
+ * Static credentials are restored first, then an enabled provider entry with
+ * an explicit apiKeyName authoritatively replaces or clears that value.
+ */
+export function syncCredentialsForSecretChange(
+  storage: AuthStorage,
+  secretManager: SecretManager,
+  changedName: string,
+  customProviderEntries: Readonly<Record<string, CustomProviderAuth>> = {},
+): string[] {
+  const affectedProviders = new Set(getProvidersForSecretName(changedName));
+  for (const [provider, entry] of Object.entries(customProviderEntries)) {
+    if (entry.apiKeyName === changedName) affectedProviders.add(provider);
+  }
+
+  for (const provider of affectedProviders) {
+    syncProviderCredential(storage, secretManager, provider);
+    const customEntry = Object.entries(customProviderEntries)
+      .find(([candidate]) => candidate === provider)?.[1];
+    if (customEntry) {
+      applyCustomProviderCredential(storage, secretManager, provider, customEntry);
+    }
+  }
+  return [...affectedProviders];
 }
 
 /**
  * Create an AuthStorage populated with API keys from SecretManager.
  *
  * Uses InMemoryAuthStorageBackend (no filesystem writes). Iterates all
- * provider keys, queries SecretManager for each, and calls
- * setRuntimeApiKey() for found keys. Missing keys are silently skipped.
+ * provider keys and copies the first available secret into AuthStorage.
+ * Missing keys are silently skipped.
  */
 export function createAuthStorageAdapter(options: AuthStorageAdapterOptions): AuthStorage {
   const { secretManager, additionalProviderKeys, customProviderEntries } = options;
   const storage = AuthStorage.fromStorage(new InMemoryAuthStorageBackend());
 
-  const allProviderKeys = { ...DEFAULT_PROVIDER_KEYS, ...additionalProviderKeys };
-
-  for (const [provider, envKey] of Object.entries(allProviderKeys)) {
-    const apiKey = secretManager.get(envKey);
-    if (apiKey) {
-      storage.setRuntimeApiKey(provider, apiKey);
+  const allProviderKeys: Record<string, readonly string[]> = { ...PROVIDER_SECRET_KEYS };
+  if (additionalProviderKeys) {
+    for (const [provider, secretName] of Object.entries(additionalProviderKeys)) {
+      allProviderKeys[provider] = [secretName];
     }
   }
 
+  for (const [provider, secretNames] of Object.entries(allProviderKeys)) {
+    syncProviderCredentialForNames(storage, secretManager, provider, secretNames);
+  }
+
   // Custom YAML providers (providers.entries.*). Runtime overrides take
-  // priority over auth.json and env-var fallback in pi-coding-agent, so
-  // YAML config wins over any stray env keys (e.g., GEMINI_API_KEY) that
-  // might otherwise satisfy hasAuth() for an unrelated built-in provider.
+  // priority over auth.json in pi-coding-agent. Per-call resolution also
+  // disables ambient fallback when apiKeyName is explicit, so YAML selection
+  // remains authoritative even if another provider env key exists.
   if (customProviderEntries) {
     for (const [providerName, entry] of Object.entries(customProviderEntries)) {
-      if (!entry.enabled) continue;
-      const apiKey = entry.apiKeyName ? secretManager.get(entry.apiKeyName) : undefined;
-      if (apiKey) {
-        storage.setRuntimeApiKey(providerName, apiKey);
-      } else if (entry.type && KEYLESS_PROVIDER_TYPES.has(entry.type)) {
-        // Keyless local provider (Ollama / LM Studio) with no resolvable key:
-        // register the sentinel so resolveProviderApiKey -> authStorage.getApiKey
-        // yields it (parity with the baked model key in model-registry-adapter).
-        // A non-keyless type with no key stays skipped — a real misconfiguration
-        // should fail loud, not be masked by a sentinel.
-        storage.setRuntimeApiKey(providerName, KEYLESS_API_KEY_SENTINEL);
-      }
+      applyCustomProviderCredential(storage, secretManager, providerName, entry);
     }
   }
 

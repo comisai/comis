@@ -47,8 +47,8 @@ Per-session command serialization keeps inbound flow ordered + bounded:
 
 ### Session Key Builder
 
-- **`buildScopedSessionKey`** -- Builds DM-scoped session keys (none / per-peer / per-channel-peer / agent-prefix / thread-isolation).
-- **`extractThreadId`** -- Pulls the thread identifier from a scoped key.
+- **`buildScopedSessionKey`** -- Builds session keys using `main`, `per-peer`, `per-channel-peer`, or `per-account-channel-peer` DM scope, with optional thread isolation.
+- **`extractThreadId`** -- Reads supported thread metadata from a `NormalizedMessage`.
 
 ### Cross-Session Messaging
 

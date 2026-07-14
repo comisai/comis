@@ -286,11 +286,10 @@ function getUserRoPaths(home: string): string[] {
 /**
  * Per-user XDG paths that need read-write access for language package managers.
  *
- * These paths MUST match the systemd ReadWritePaths in
- * packages/daemon/systemd/comis.service.template. Without RW access here,
- * package managers writing to standard XDG paths (npm, uv, pipx, cargo, go,
- * deno, bun) fail with EROFS at the bwrap mount layer even when the outer
- * systemd sandbox permits the write.
+ * The installer-generated systemd unit grants the service home at the outer
+ * sandbox boundary. These narrower bwrap binds define which parts of that home
+ * an individual agent command can write. Without them, package managers using
+ * standard XDG paths fail with EROFS inside the command sandbox.
  *
  * Why these specific paths:
  * - ~/.npm     -- npm/npx default cache + global modules root.
@@ -410,7 +409,7 @@ export class BwrapProvider implements SandboxProvider {
     // MUST come after getUserRoPaths above so the RW bind for ~/.local/share
     // overrides the RO bind for ~/.local. MUST come before the discovery
     // readOnlyPaths loop below so caller-supplied RO can't shadow these.
-    // Mirror of systemd ReadWritePaths in comis.service.template.
+    // Inner write exceptions within the installer-generated unit's writable home.
     //
     // When secureCredentialHome is true, skip
     // ~/.local/share entirely — a RW bind over this parent directory would

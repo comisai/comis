@@ -1,16 +1,15 @@
 ---
-title: "Install on a VPS"
-description: "Deploy Comis as a systemd service on a supported Ubuntu VPS"
+title: "Install on a Linux server"
+description: "Run Comis under a managed systemd service on a Linux host"
 icon: "server"
 ---
 
-This guide walks you through deploying Comis on a fresh VPS (Virtual Private
-Server). By the end you will have a running daemon managed by systemd, with your
-AI agent reachable through Telegram, Discord, or any supported channel.
+The managed-host installer can install supported host dependencies, create a
+dedicated `comis` account, install the package, and register a hardened systemd
+service. Use this path on a Linux server where you control the operating system.
 
-The instructions work on **any provider** that gives you an Ubuntu server with
-root SSH access -- Hostinger, DigitalOcean, Hetzner, Vultr, Linode, AWS
-Lightsail, and others.
+For a user-scoped install that does not change system services, use the [npm
+guide](/installation/install-linux).
 
 import NonTechnicalNote from '/snippets/non-technical-note.mdx';
 
@@ -18,424 +17,265 @@ import NonTechnicalNote from '/snippets/non-technical-note.mdx';
 
 <Snippet file="invocation-modes.mdx" />
 
-## What you need
+## Before you begin
 
-Before you start, have these ready:
+You need:
 
-| Item | Where to get it |
-|---|---|
-| A VPS running **Ubuntu 22.04+** with at least 1 GB RAM | Your hosting provider's dashboard |
-| **Root SSH access** to the server | Your provider sends credentials after purchase |
-| A model path: **provider API credential**, supported OAuth account, or local provider | Provider account or a model service you operate |
-| A **chat channel bot token** (optional) | See the [Channels](/channels/index) section for setup guides |
+- a Linux host with a working systemd installation;
+- root access or a user that can run `sudo`;
+- outbound HTTPS for system and npm packages;
+- one usable model path: a provider credential, supported OAuth login, or a
+  local provider; and
+- enough memory and disk for your chosen channels, tools, browser runtime, and
+  local models.
 
-<Tip>
-Most providers offer an Ubuntu image by default. If you have a choice, pick
-**Ubuntu 24.04 LTS** -- it has the best compatibility with Comis.
-</Tip>
+Channels are optional. Keep the gateway on loopback unless you have configured
+authentication, TLS, and network controls for remote access.
 
-## Step 1: Connect to your server
+## Install Comis
 
-Open a terminal on your computer and SSH into your VPS. Replace the IP address
-with your server's address.
+<Steps>
+  <Step title="Connect to the host">
+    ```bash
+    ssh root@your-server-ip
+    ```
 
-```bash
-ssh root@your-server-ip
-```
+    Use the account and SSH-key policy defined by your hosting provider or
+    organization.
+  </Step>
 
-Your provider may give you a password or an SSH key. Hostinger, for example,
-shows the password in the VPS dashboard under **SSH Access**.
+  <Step title="Download and review the installer">
+    ```bash
+    curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh -o comis-install.sh
+    less comis-install.sh
+    bash comis-install.sh --dry-run
+    ```
 
-<Tip>
-If your provider gives you a password, you will be prompted to enter it after
-running the SSH command. You can also set up SSH keys later for passwordless
-login.
-</Tip>
+    The dry run prints the intended package, account, file, and service changes
+    without applying them. Review `bash comis-install.sh --help` for service,
+    browser, and non-interactive options.
+  </Step>
 
-## Step 2: Install Comis
+  <Step title="Run the reviewed installer">
+    ```bash
+    bash comis-install.sh
+    ```
 
-Run the one-line installer. It handles everything: Node.js, system packages, a
-dedicated `comis` user, systemd service, and the Comis package itself.
+    On a root-run Linux systemd host, the default layout installs Comis for a
+    dedicated `comis` user and writes an installer-managed
+    `/etc/systemd/system/comis.service`. A regular-user run offers to elevate;
+    `--no-user` is the explicit current-user alternative.
 
-```bash
-curl -fsSL https://comis.ai/install.sh | bash
-```
+    The installer must finish with a verified CLI and successful service setup.
+    Treat any warning or nonzero exit as incomplete installation and inspect the
+    command output before continuing.
+  </Step>
 
-The installer reports each system, package, user, and service step. Review any
-warning before continuing; duration depends on the host and package mirrors.
+  <Step title="Initialize as the service user">
+    ```bash
+    su - comis
+    comis init
+    ```
 
-```
-  COMIS Installer
-  An open-source, security-first platform for AI agent teams.
+    The wizard reviews storage, model authentication, agents, optional channels,
+    gateway access, workspace, tools, media, and recall before writing files.
 
-  [1/4] Preparing system (as root)
-  ✓ Node.js v22 installed
-  ✓ System dependencies ready
-  ✓ User 'comis' created
+    Encrypted credential storage is the default. Back up
+    `/home/comis/.comis/.env`; its master key is required to recover
+    `/home/comis/.comis/secrets.db`.
+  </Step>
 
-  [2/4] Installing Comis
-  ✓ Comis npm package installed
+  <Step title="Verify the service">
+    ```bash
+    comis status
+    comis health
+    comis doctor
+    ```
 
-  [2/4] Registering daemon as a service
-  ✓ comis.service started
-  ✓ Daemon is responding on the gateway port
+    Do not infer readiness from a running process alone. Resolve reported model,
+    channel, gateway, storage, or sandbox findings before exposing the service.
+  </Step>
+</Steps>
 
-  Comis installed successfully!
-```
+## Browser choices
 
-<Warning>
-Run the installer as `root` (the standard VPS login). If you run it as a
-regular user instead, it asks to re-run itself with `sudo` -- either way it
-creates a dedicated `comis` user with restricted permissions and runs the
-daemon under that user. This is the secure default; pass `--no-user` only if
-you explicitly want the daemon running as your login user.
-</Warning>
+On Linux, the managed installer attempts to provision Chrome and Xvfb by
+default. Provisioning is best-effort: failure to install a browser does not
+pretend the browser tool is usable, and a user-scoped systemd install runs the
+browser headless because it cannot manage the system Xvfb companion.
 
-### Browser tool
-
-The browser tool ships **enabled by default**, so the default install already provisions
-Chrome + the headless libs + the headed Xvfb stack (best-effort — see the Linux install
-guide's fallback note). You only need a flag to opt out or to switch to the stealth build:
-
-```bash
-# Default install — browser tool + headed stack provisioned best-effort
-curl -fsSL https://comis.ai/install.sh | bash
-
-# Minimal footprint — skip the browser runtime entirely
-curl -fsSL https://comis.ai/install.sh | bash -s -- --without-browser
-
-# Optional CloakBrowser runtime
-curl -fsSL https://comis.ai/install.sh | bash -s -- --with-cloakbrowser
-```
-
-<Warning>
-CloakBrowser does not include a proxy and cannot change a VPS's IP reputation.
-It is an optional compatibility runtime, not a guarantee of access. Review its
-separate binary license and every target site's terms before enabling it.
-</Warning>
-
-See [agent-tools/browser](/agent-tools/browser#stealth-mode-anti-bot-detection) for the full flag matrix, sandbox details, and license terms (CloakBrowser's binary is free for self-hosted use; OEM license needed for redistributing to third-party customers).
-
-### Optional: DuckDB for SQL/JSONPath result queries
-
-The [`orchestrate`](/agent-tools/orchestrate#resultref-high-volume-returns) tool's
-`ResultRef.sql()` / `ResultRef.jsonpath()` helpers run the **DuckDB** CLI
-daemon-side to query a high-volume tabular result without re-entering the whole
-payload into context. DuckDB is **optional**: if it is absent, `sql`/`jsonpath`
-honest-degrade to an `{ error }` and the other extraction methods
-(`read`/`grep`/`jq`) keep working.
-
-DuckDB is **not** in the Debian/Ubuntu apt repositories (`apt-get install duckdb`
-fails), so fetch the pinned **static binary** from the DuckDB release page and put
-it on the daemon's `PATH`:
+Run the reviewed local installer with the option you need:
 
 ```bash
-# Fetch the pinned DuckDB static CLI (amd64 shown; use the aarch64 asset on arm64).
-curl -fsSL -o /tmp/duckdb.zip \
-  https://github.com/duckdb/duckdb/releases/download/v1.5.4/duckdb_cli-linux-amd64.zip
-sudo unzip -o /tmp/duckdb.zip -d /usr/local/bin && rm /tmp/duckdb.zip
-duckdb --version   # confirm it is on PATH
+# Minimal host footprint: no browser runtime
+bash comis-install.sh --without-browser
+
+# Chrome without the Xvfb companion
+bash comis-install.sh --without-xvfb
+
+# Optional alternative Chromium runtime
+bash comis-install.sh --with-cloakbrowser
 ```
 
-The official Docker image already provisions this static binary, so containerized
-deployments need no extra step. The query surface is hardened to a read-only
-slicer (`--readonly :memory:`, extension auto-load off, extension/file-write/network
-statements refused before spawn) -- see the
-[orchestrate tool reference](/agent-tools/orchestrate#resultref-high-volume-returns).
+CloakBrowser does not provide a proxy or guarantee access to any site. Review
+its separate binary license and the target site's terms before using it. See
+[Browser tool](/agent-tools/browser) for configuration and isolation details.
 
-## Step 3: Switch to the comis user
+## Optional egress diagnostics
 
-The daemon runs under its own system user. Switch to it for all Comis commands:
+The installer does not change iptables by default. On a Linux systemd install
+that creates the dedicated `comis` user, you can explicitly enable outbound
+packet logging after reviewing it:
 
 ```bash
-su - comis
+COMIS_ENABLE_EGRESS_LOGGING=1 bash comis-install.sh --dry-run
+COMIS_ENABLE_EGRESS_LOGGING=1 bash comis-install.sh
 ```
 
-Verify the installation:
+This creates a uid-scoped `COMIS_EGRESS` iptables chain with `LOG+ACCEPT`
+rules. It records outbound packet metadata, including remote destinations, in
+the kernel journal under the `comis-egress:` prefix. Logging is limited to 10
+entries per minute with a burst of 20. It does not inspect packet content and
+does not block or restrict traffic. Destination metadata can be sensitive, so
+egress logging is disabled by default.
+
+Review captured entries with:
 
 ```bash
-comis --version
+journalctl -k | grep 'comis-egress:'
 ```
 
-The command prints the installed package version.
+`--uninstall --purge` removes an installer-created `COMIS_EGRESS` chain even
+when the opt-in flag is not present on the uninstall command.
 
-## Step 4: Run the setup wizard
+## Codex OAuth on headless hosts
 
-The interactive wizard configures storage, model access, the agent, optional
-channels, gateway, workspace, tools, media, and recall. It shows a review before
-writing files or starting the daemon.
-
-```bash
-comis init
-```
-
-New installations default to encrypted credential storage. Credentials are
-written to `~/.comis/secrets.db`; the master key is stored as
-`SECRETS_MASTER_KEY` in the owner-readable `~/.comis/.env`. Back up that key in
-a secure credential manager. Losing it makes the encrypted store unrecoverable.
-
-<Tip>
-When the wizard asks to restart the daemon, choose **Restart (recommended)**.
-This ensures the daemon reads the new configuration and credentials.
-</Tip>
-
-### Codex OAuth on headless hosts
-
-If you pick `openai-codex` as your provider on a VPS, the wizard's auto-default for the login method is `Device code (phone)` -- the recommended path on headless hosts. This is because VPS images typically lack a default browser, and SSH sessions usually have no clipboard or scrollback that the browser-paste flow relies on.
-
-The wizard detects headless hosts using standard environment signals:
-
-- `SSH_CLIENT` or `SSH_TTY` set, **or**
-- `DISPLAY` unset
-
-When detected, the picker pre-selects `Device code (phone)`. The wizard prints
-a short code and `https://auth.openai.com/codex/device`. Open it on another
-device, sign in, enter the code, and return to the terminal when authorization
-completes.
-
-<Tip>
-You can re-run the OAuth login at any time, with or without finishing the wizard. From a TTY:
+For OpenAI Codex, use device-code login from the service user's TTY:
 
 ```bash
 comis auth login --provider openai-codex --method device-code
 ```
 
-This is the same flow the wizard runs and writes to the same OAuth credential store. Use it if you picked `Skip for now` in the wizard or want to add a second ChatGPT account (multi-account is supported -- see [OAuth concepts -> Multi-account profiles](/security/oauth#multi-account-profiles)).
-</Tip>
+Open the displayed URL on another device, enter the short code, and return to
+the terminal when authorization completes. Tokens are stored according to the
+configured credential-storage mode. See [OAuth security](/security/oauth) for
+the storage and trust boundaries.
 
-For the supported Codex path, see [Quickstart: OpenAI Codex OAuth](/get-started/quickstart#openai-codex-oauth).
-For the OAuth threat model and storage backends, see [OAuth concepts](/security/oauth).
+## Operate the service
 
-## Step 5: Verify everything works
-
-```bash
-comis status
-```
-
-You should see all systems online:
-
-```
-  Daemon
-     Status    online
-     Uptime    12s
-
-  Gateway
-     Status     online
-     Address    127.0.0.1:4766
-
-  Agents
-  ┌─────────┬───────────┬─────────────────┐
-  │ Name    │ Provider  │ Model           │
-  ├─────────┼───────────┼─────────────────┤
-  │ default │ anthropic │ claude-opus-4-6 │
-  └─────────┴───────────┴─────────────────┘
-```
-
-Run the doctor to check for any issues:
+The CLI detects the installer-managed supervisor:
 
 ```bash
-comis doctor
+comis daemon status
+comis daemon restart
+comis daemon logs --follow
 ```
 
-## Managing the daemon
-
-The comis user has full control over the daemon:
+As an administrator, the equivalent system commands are:
 
 ```bash
-comis daemon status    # Check if running
-comis daemon start     # Start the daemon
-comis daemon stop      # Stop the daemon
-comis daemon logs      # View recent logs
-comis daemon logs -f   # Follow logs in real-time
+sudo systemctl status comis.service
+sudo systemctl restart comis.service
+journalctl -u comis.service -f
 ```
 
-The daemon runs under systemd and starts automatically on boot. If you ever need
-to restart it as root:
+The installer-generated unit is the source of truth for the supported Node.js
+permission flags, filesystem access, Bubblewrap namespaces, browser paths, and
+restart behavior. Inspect the deployed unit with:
 
 ```bash
-sudo systemctl restart comis
+sudo systemctl cat comis.service
 ```
 
-## Common tasks
+See [systemd operations](/operations/systemd) before adding a drop-in or taking
+ownership of the unit.
 
-### Change the AI model
+## Upgrade
+
+Download the current installer to a new file, inspect it again, and preview the
+upgrade before running it:
 
 ```bash
-comis models list --provider anthropic
-comis models set default claude-sonnet-4-6
+curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh -o comis-install.next.sh
+less comis-install.next.sh
+bash comis-install.next.sh --dry-run
+bash comis-install.next.sh
 ```
 
-### Add a Telegram bot
-
-1. Create a bot with [@BotFather](https://t.me/BotFather) on Telegram
-2. Copy the bot token
-3. Run the setup wizard for channels:
-
-```bash
-comis configure --section channels
-```
-
-Or edit the config directly:
-
-```bash
-comis config show channels
-```
-
-See the [Telegram channel guide](/channels/telegram) for detailed instructions.
-
-### Check memory and sessions
-
-```bash
-comis memory stats          # Memory database statistics
-comis memory search "topic" # Search stored memories
-comis sessions list         # List active sessions
-```
-
-### Run a security audit
-
-```bash
-comis security audit        # Check for security issues
-comis secrets audit         # Scan for plaintext secrets
-```
-
-## Provider-specific notes
-
-<AccordionGroup>
-  <Accordion title="Hostinger">
-    Hostinger VPS plans come with Ubuntu and root SSH access by default.
-
-    1. In the Hostinger dashboard, go to **VPS** and find your server's IP and password
-    2. SSH in: `ssh root@your-ip`
-    3. Run the installer as shown above
-
-    Hostinger's KVM plans (starting at 1 GB RAM) work well with Comis. The
-    installer handles all dependencies automatically.
-  </Accordion>
-
-  <Accordion title="DigitalOcean">
-    Create a Droplet with **Ubuntu 24.04**, minimum **1 GB / 1 vCPU**.
-
-    1. In the DigitalOcean dashboard, create a new Droplet
-    2. Choose Ubuntu 24.04 LTS
-    3. Select the $6/month plan (1 GB RAM) or higher
-    4. Add your SSH key or choose password authentication
-    5. SSH in and run the installer
-
-    DigitalOcean Droplets work out of the box -- no extra configuration needed.
-  </Accordion>
-
-  <Accordion title="Hetzner">
-    Create a server with **Ubuntu 24.04**, minimum **CX22** (2 GB RAM).
-
-    1. In the Hetzner Cloud console, create a new server
-    2. Choose Ubuntu 24.04
-    3. Select CX22 or higher
-    4. Add your SSH key
-    5. SSH in and run the installer
-
-    Hetzner offers excellent value for Comis deployments, especially the
-    ARM-based CAX servers.
-  </Accordion>
-
-  <Accordion title="Vultr / Linode / AWS Lightsail">
-    Any provider that offers Ubuntu 22.04+ with root access works identically:
-
-    1. Create an Ubuntu instance with at least 1 GB RAM
-    2. SSH in as root
-    3. Run the one-line installer
-
-    The installer auto-detects the environment and handles everything.
-  </Accordion>
-</AccordionGroup>
+The installer preserves Comis data and refuses to overwrite a service unit that
+no longer carries its valid managed checksum. Back up the data directory and
+master key before upgrading.
 
 ## Troubleshooting
 
 <AccordionGroup>
-  <Accordion title="Installer fails with 'npm install' errors">
-    Clear the npm cache and retry:
+  <Accordion title="The installer reports incomplete service setup">
+    Do not continue from the success path. Inspect:
 
     ```bash
-    npm cache clean --force
-    curl -fsSL https://comis.ai/install.sh | bash
+    sudo systemctl status comis.service --no-pager
+    journalctl -u comis.service -n 100 --no-pager
     ```
+
+    Correct the reported package, permission, configuration, or port problem,
+    then rerun the same reviewed installer.
   </Accordion>
 
-  <Accordion title="Daemon won't start after comis init">
-    The daemon may need a restart to pick up the new configuration:
-
-    ```bash
-    comis daemon stop
-    comis daemon start
-    comis daemon logs --lines 20
-    ```
-
-    If the logs show startup errors, check your API key is valid:
-
-    ```bash
-    comis doctor
-    ```
+  <Accordion title="The daemon starts but health checks fail">
+    Run `comis doctor` as the service user and inspect recent logs. Confirm the
+    selected model has working authentication and the gateway host and port are
+    not already in use.
   </Accordion>
 
-  <Accordion title="'comis status' shows offline but daemon is running">
-    This usually means the gateway token is not loaded. Restart the daemon:
-
-    ```bash
-    comis daemon stop
-    comis daemon start
-    ```
-
-    If that doesn't help, re-run the setup wizard:
-
-    ```bash
-    comis init
-    ```
+  <Accordion title="The exec sandbox is unavailable">
+    Linux tool isolation requires Bubblewrap plus host support for unprivileged
+    user namespaces. Check the daemon's sandbox-detection log and follow
+    [Production hardening](/security/hardening); do not assume commands are
+    isolated merely because the daemon itself runs under systemd.
   </Accordion>
 
-  <Accordion title="Cannot stop/start daemon as comis user">
-    If you see a permissions error, the sudoers rule may be missing. As root:
-
-    ```bash
-    echo 'comis ALL=(root) NOPASSWD: /usr/bin/systemctl start comis, /usr/bin/systemctl stop comis, /usr/bin/systemctl restart comis' > /etc/sudoers.d/comis
-    chmod 0440 /etc/sudoers.d/comis
-    ```
-
-    Then switch back to the comis user and try again.
-  </Accordion>
-
-  <Accordion title="Server runs out of memory">
-    Comis uses around 300-500 MB of RAM. If your server has only 1 GB, consider:
-
-    - Adding swap space: `fallocate -l 1G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile`
-    - Upgrading to a 2 GB plan
-    - Using a smaller model (e.g., `claude-haiku-4-5` instead of `claude-opus-4-6`)
+  <Accordion title="The browser tool is unavailable">
+    Run `comis doctor`, inspect browser-related logs, and verify a supported
+    browser binary can launch as the service user. Re-run the installer only
+    after reviewing the requested browser option and its dry-run output.
   </Accordion>
 </AccordionGroup>
 
-## Uninstalling
+## Uninstall
 
-To completely remove Comis from the server:
+The default uninstall removes the managed service and CLI but preserves data:
 
 ```bash
-# As root
-curl -fsSL https://comis.ai/install.sh | bash -s -- --uninstall --remove-user
+bash comis-install.sh --uninstall
 ```
 
-This stops the daemon, removes the systemd service, deletes the comis user, and
-cleans up all data.
+For the default dedicated-user install, the preserved directory is
+`/home/comis/.comis` (or the selected user's home). The installer prints the
+resolved path in the confirmation and completion messages.
+
+<Warning>
+`--remove-user` implies `--purge`: it deletes the dedicated account and Comis
+data. Back up the data directory and encryption key, then inspect the displayed
+uninstall plan before confirming.
+</Warning>
+
+```bash
+bash comis-install.sh --uninstall --remove-user
+```
 
 ## Next steps
 
 <CardGroup cols={2}>
-  <Card title="Connect Channels" icon="comments" href="/channels/index">
-    Add Telegram, Discord, Slack, or other messaging platforms.
+  <Card title="Connect channels" icon="comments" href="/channels/index">
+    Add only the messaging adapters your deployment needs.
   </Card>
-  <Card title="Configure Your Agent" icon="robot" href="/agents/index">
-    Customize your agent's personality, tools, and behavior.
+  <Card title="Configure agents" icon="robot" href="/agents/index">
+    Set models, tools, budgets, memory, and routing.
   </Card>
-  <Card title="Set Up Security" icon="shield" href="/security/index">
-    Enable encrypted secrets, TLS, and approval gates.
+  <Card title="Production hardening" icon="shield" href="/security/hardening">
+    Review host, gateway, tool, credential, and approval boundaries.
   </Card>
-  <Card title="Monitor Operations" icon="chart-line" href="/operations/index">
-    Logs, metrics, and the web dashboard.
+  <Card title="Operations" icon="chart-line" href="/operations/index">
+    Monitor health, logs, metrics, and background work.
   </Card>
 </CardGroup>

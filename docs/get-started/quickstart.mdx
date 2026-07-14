@@ -147,9 +147,19 @@ provider or local configuration, then complete OAuth from a TTY.
 
 ## Docker quick path
 
-The published image can run without host Node.js:
+The published image can run without host Node.js. Initialize the persistent
+volume in a one-shot container first; when the wizard asks whether to start the
+daemon, choose **No** because the long-running container starts it in the next
+command:
 
 ```bash
+docker volume create comis-data
+
+docker run --rm -it \
+  -v comis-data:/home/comis/.comis \
+  comisai/comis:latest-slim \
+  comis init
+
 docker run -d \
   --name comis \
   --restart unless-stopped \
@@ -157,7 +167,6 @@ docker run -d \
   -v comis-data:/home/comis/.comis \
   comisai/comis:latest-slim
 
-docker exec -it comis comis init
 curl http://127.0.0.1:4766/health
 ```
 

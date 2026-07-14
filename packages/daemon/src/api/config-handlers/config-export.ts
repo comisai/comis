@@ -356,7 +356,11 @@ export function bindConfigExportHandlers(
       const userParams = stripInternalFields(rawParams);
       GatewayRestartContract.request.parse(userParams);
 
-      const isSystemd = !!systemGetEnv("NOTIFY_SOCKET");
+      // INVOCATION_ID is present for installer-managed Type=exec services.
+      // NOTIFY_SOCKET keeps custom Type=notify units detectable as well.
+      const isSystemd = Boolean(
+        systemGetEnv("INVOCATION_ID") || systemGetEnv("NOTIFY_SOCKET"),
+      );
 
       // Use setTimeout to allow the rpcCall response to flush over WebSocket before shutdown begins.
       // setImmediate fires too early and can race with the RPC response write.

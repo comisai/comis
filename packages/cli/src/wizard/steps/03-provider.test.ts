@@ -189,7 +189,7 @@ describe("providerStep", () => {
     expect(selectCall.options[selectCall.options.length - 1]).toEqual({
       value: "custom",
       label: "Custom endpoint",
-      hint: "OpenAI-compatible API",
+      hint: "OpenAI- or Anthropic-compatible API",
     });
   });
 

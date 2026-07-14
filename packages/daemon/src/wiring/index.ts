@@ -40,6 +40,10 @@ export { setupTools, type ToolsResult } from "./setup-tools.js";
 export { setupHeartbeat, type HeartbeatSetupDeps, type HeartbeatSetupResult } from "./setup-heartbeat.js";
 export { setupShutdown, type ShutdownResult } from "./setup-shutdown.js";
 export { setupGateway, type GatewayDeps, type GatewayResult, setupRpcBridge, type RpcBridgeResult } from "./setup-gateway/index.js";
+export {
+  createGatewayAttachmentPersister,
+  type GatewayAttachmentPersister,
+} from "./gateway-attachment-persistence.js";
 export { setupDeliveryQueue, type DeliveryQueueResult, setupDeliveryMirror, type DeliveryMirrorResult } from "./setup-delivery.js";
 // The durable-run + resume engine wiring (stores + boot recovery +
 // watchdog + shutdown) + the daemon composition helpers. Gated behind

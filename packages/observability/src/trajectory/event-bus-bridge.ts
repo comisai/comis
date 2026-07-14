@@ -184,8 +184,8 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
 
   // The background-completion FALLBACK-NOTICE decision — makes the
   // "did a raw 'Background task \"…\" completed.' message fire, and was it
-  // correct?" question answerable from `comis explain` in ONE call (previously
-  // wire-grep-only; the F-8 leak class). Agent-emitted (completion-dispatcher.ts),
+  // correct?" question answerable from `comis explain` in one call. Agent-emitted
+  // (completion-dispatcher.ts),
   // routed to the ORIGIN session's trajectory via the payload sessionKey.
   // Content-free (translate-payload.ts): taskId + tool NAME + the notified bool
   // + closed-union reason ONLY — NEVER the notice body.

@@ -39,15 +39,7 @@ jobs:
           registry-url: https://registry.npmjs.org/
 
       - name: Verify release tag matches package version
-        shell: bash
-        run: |
-          set -euo pipefail
-          package_version="$(node -p "require('./packages/comis/package.json').version")"
-          expected_tag="v${package_version}"
-          if [[ "${RELEASE_TAG}" != "${expected_tag}" ]]; then
-            echo "Release tag ${RELEASE_TAG} does not match comisai package version ${package_version}." >&2
-            exit 1
-          fi
+        run: node .github/scripts/verify-release-tag.mjs "${RELEASE_TAG}"
 
       - name: Install system dependencies (ffmpeg, bubblewrap)
         # The release validation below includes the Linux-gated terminal-driver

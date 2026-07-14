@@ -42,7 +42,7 @@ The browser tool supports **16 actions**, verified against `BROWSER_TOOL_ACTIONS
     | `action` | string | Yes | `"navigate"` |
     | `targetUrl` | string | No | The URL to navigate to |
 
-    The browser loads the page and waits for it to finish loading before returning. SSRF validation prevents navigation to internal network addresses (see [Security](#security) below).
+    The browser loads the page and waits for it to finish loading before returning. The request guard screens the destination before navigation (see [Security](#security) below).
   </Accordion>
 
   <Accordion title="screenshot -- Capture a screenshot" icon="camera">
@@ -100,7 +100,7 @@ The browser tool supports **16 actions**, verified against `BROWSER_TOOL_ACTIONS
     | `action` | string | Yes | `"open"` |
     | `targetUrl` | string | No | The URL to open in the new tab |
 
-    SSRF validation applies to the URL (same as `navigate`).
+    The same request guard used by `navigate` applies before the new tab loads its URL.
   </Accordion>
 
   <Accordion title="pdf -- Save page as PDF" icon="file-pdf">
@@ -183,7 +183,7 @@ Profiles create isolated browser contexts with separate cookies, local storage, 
 
 Use the `profiles` action to create, list, and switch between browser profiles.
 
-## Stealth mode (anti-bot detection)
+## Browser runtime options
 
 The Linux installer provisions **stock Chrome running headed via Xvfb** when
 `--with-browser` and `--with-xvfb` are enabled (both are installer defaults).
@@ -197,7 +197,7 @@ The install-time flags compose. They're available in both the bare-metal install
 | Flag | What it adds | Default |
 |---|---|---|
 | `--with-browser` | Stock Google Chrome + headless shared libs. Sandbox `ReadWritePaths` widened for Chrome's out-of-profile writes (`~/.config/google-chrome`, `~/.local/share/applications`). | **On** (opt out with `--without-browser`). The browser tool needs a Chrome binary to launch. |
-| `--with-xvfb` | Adds Xvfb + a `comis-xvfb.service` systemd companion that runs a virtual display on `:99`. The main daemon unit joins its `/tmp` namespace so the X11 socket is reachable. Config is seeded with `headless: false` **only when Xvfb actually installed** (otherwise it uses headless mode — see [install-linux](/installation/install-linux#browser-tool-provisioning)). | **On** (opt out with `--without-xvfb`). |
+| `--with-xvfb` | Adds the system-scope `comis-xvfb.service` companion on a managed Linux install. Both units bind the shared `/run/comis-x11` socket directory into their private `/tmp`; config is seeded with `headless: false` only when the companion is available. User-scoped systemd installs downshift to headless mode. | **On** for the managed system service (opt out with `--without-xvfb`). |
 | `--with-cloakbrowser` | Installs the optional CloakBrowser Chromium runtime. `findChrome()` probes it before the stock Chrome paths. | **Opt-in.** Compatibility and detection outcomes vary by site and network. |
 
 <Warning>
@@ -209,8 +209,11 @@ site access controls. Follow each site's terms and automation policies.
 ### Install examples
 
 ```bash
-# Bare-metal: stealth + headed for the hardest tier
-curl -fsSL https://comis.ai/install.sh | bash -s -- --with-cloakbrowser --with-xvfb
+# Managed Linux host: download, inspect, preview, then run the selected option
+curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh -o comis-install.sh
+less comis-install.sh
+bash comis-install.sh --dry-run --with-cloakbrowser --with-xvfb
+bash comis-install.sh --with-cloakbrowser --with-xvfb
 
 # Docker: same matrix via build args
 docker build \
@@ -218,29 +221,59 @@ docker build \
   --build-arg COMIS_WITH_XVFB=1 \
   -t comisai/comis:cloak-xvfb .
 
-# Docker: validate via install.sh-based image (same end state, exercises
-# the actual installer path)
+# Docker: exercise the installer's non-interactive package/browser branches
 docker build -f Dockerfile.install \
   --build-arg COMIS_WITH_CLOAKBROWSER=1 \
   --build-arg COMIS_WITH_XVFB=1 \
   -t comis-installed:cloak-xvfb .
 ```
 
-No runtime config change required — `findChrome()` probes `~/.cloakbrowser/chromium-*/chrome` first, then platform-specific Chrome paths. Whatever was installed wins.
+Comis probes the configured and supported browser paths at runtime. Confirm the
+selected binary and launch mode with `comis doctor` and the daemon logs after
+installation.
 
 ### License note
 
-CloakBrowser's wrapper is MIT-licensed; the compiled binary is under a separate license — **free for self-hosted use** (including bringing it into your own VPS / Docker deploys), but **bundling into a service you distribute to third-party customers requires a separate OEM license** from CloakHQ. See the [CloakBrowser binary license](https://github.com/CloakHQ/CloakBrowser/blob/main/BINARY-LICENSE.md) for the full terms.
+CloakBrowser's compiled binary has a separate license. Review the current
+[CloakBrowser binary license](https://github.com/CloakHQ/CloakBrowser/blob/main/BINARY-LICENSE.md)
+before using or redistributing it.
 
 ## Security
 
 The browser includes built-in security protections:
 
-- **SSRF validation** -- The `navigate` and `open` actions reject URLs that
-  resolve to known localhost, private-network, or cloud-metadata destinations
-  before loading them. Treat this as one defense layer and keep the browser
-  isolated from sensitive internal networks.
-- **Screenshot sanitization** -- Screenshots are processed and sanitized before being stored or sent.
+- **HTTP(S) request validation** -- The requested destination, every HTTP(S)
+  redirect hop, subresources, and page fetches in guarded tabs are checked
+  against localhost, private-network, link-local, reserved, and cloud-metadata
+  address ranges before Chromium continues them.
+- **Fail-closed new tabs** -- Tabs opened with the browser tool are guarded
+  before navigation. A page-created popup whose first request arrives before a
+  page guard exists is blocked; use the browser `open` action when a workflow
+  needs a new tab.
+- **Connected-page service-worker bypass** -- Each connected page bypasses an
+  existing service worker before request interception is enabled. Chromium does
+  not disable workers for the whole persistent profile, so workers outside a
+  connected page remain outside this page-level control.
+- **Unintercepted transport lockdown** -- Dedicated and shared workers,
+  WebTransport, WebSocketStream, and WebRTC are disabled in guarded page
+  contexts because their traffic cannot be validated by the page request
+  interceptor. New service-worker registrations are rejected. Sites that
+  require these APIs will have reduced functionality.
+- **Window WebSocket validation** -- WebSocket connections created by guarded
+  page scripts receive the same hostname and IP-range checks before Playwright
+  connects to the server. If a document was already loaded when Comis attached
+  its guard, WebSocket remains disabled in that document until the next
+  navigation.
+- **Network-isolation boundary** -- Chromium performs its own DNS resolution
+  after validation, so browser traffic is not connection-level DNS-pinned. A
+  persistent profile can also contain browser-managed background state outside
+  the connected page. These controls are not a host firewall: keep the browser
+  isolated from sensitive internal networks and use `web_fetch` for static
+  retrieval that does not require browser interaction.
+- **Screenshot sanitization** -- The standard daemon validates screenshot
+  dimensions and format, and resizes or re-encodes captures when required. If
+  the configured sanitizer rejects a capture, the action fails and does not
+  return the original image bytes.
 
 For more details on network security protections, see [Security](/get-started/security).
 

@@ -5659,12 +5659,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("daemo
     "type": "string"
   },
   {
-    "default": 500,
-    "immutable": false,
-    "path": "daemon.eventLoopDelayThresholdMs",
-    "type": "number"
-  },
-  {
     "default": {},
     "immutable": false,
     "path": "daemon.logLevels",
@@ -5781,12 +5775,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("daemo
     "default": 30000,
     "immutable": false,
     "path": "daemon.shutdownTimeoutMs",
-    "type": "integer"
-  },
-  {
-    "default": 30000,
-    "immutable": false,
-    "path": "daemon.watchdogIntervalMs",
     "type": "integer"
   }
 ]"
@@ -11206,7 +11194,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       "configWebhook": {
         "timeoutMs": 5000
       },
-      "eventLoopDelayThresholdMs": 500,
       "logLevels": {},
       "logging": {
         "compress": false,
@@ -11224,8 +11211,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         }
       },
       "metricsIntervalMs": 30000,
-      "shutdownTimeoutMs": 30000,
-      "watchdogIntervalMs": 30000
+      "shutdownTimeoutMs": 30000
     },
     "immutable": false,
     "path": "daemon",
@@ -11269,12 +11255,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": false,
     "path": "daemon.configWebhook.url",
     "type": "string"
-  },
-  {
-    "default": 500,
-    "immutable": false,
-    "path": "daemon.eventLoopDelayThresholdMs",
-    "type": "number"
   },
   {
     "default": {},
@@ -11393,12 +11373,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "default": 30000,
     "immutable": false,
     "path": "daemon.shutdownTimeoutMs",
-    "type": "integer"
-  },
-  {
-    "default": 30000,
-    "immutable": false,
-    "path": "daemon.watchdogIntervalMs",
     "type": "integer"
   },
   {
@@ -23504,11 +23478,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dae
       ],
       "type": "object"
     },
-    "eventLoopDelayThresholdMs": {
-      "default": 500,
-      "exclusiveMinimum": 0,
-      "type": "number"
-    },
     "logLevels": {
       "additionalProperties": {
         "enum": [
@@ -23652,19 +23621,11 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dae
       "exclusiveMinimum": 0,
       "maximum": 9007199254740991,
       "type": "integer"
-    },
-    "watchdogIntervalMs": {
-      "default": 30000,
-      "maximum": 9007199254740991,
-      "minimum": 0,
-      "type": "integer"
     }
   },
   "required": [
-    "watchdogIntervalMs",
     "shutdownTimeoutMs",
     "metricsIntervalMs",
-    "eventLoopDelayThresholdMs",
     "logLevels",
     "logging",
     "configWebhook"
@@ -35228,7 +35189,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "configWebhook": {
           "timeoutMs": 5000
         },
-        "eventLoopDelayThresholdMs": 500,
         "logLevels": {},
         "logging": {
           "compress": false,
@@ -35246,8 +35206,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           }
         },
         "metricsIntervalMs": 30000,
-        "shutdownTimeoutMs": 30000,
-        "watchdogIntervalMs": 30000
+        "shutdownTimeoutMs": 30000
       },
       "properties": {
         "configWebhook": {
@@ -35306,11 +35265,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "timeoutMs"
           ],
           "type": "object"
-        },
-        "eventLoopDelayThresholdMs": {
-          "default": 500,
-          "exclusiveMinimum": 0,
-          "type": "number"
         },
         "logLevels": {
           "additionalProperties": {
@@ -35455,19 +35409,11 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991,
           "type": "integer"
-        },
-        "watchdogIntervalMs": {
-          "default": 30000,
-          "maximum": 9007199254740991,
-          "minimum": 0,
-          "type": "integer"
         }
       },
       "required": [
-        "watchdogIntervalMs",
         "shutdownTimeoutMs",
         "metricsIntervalMs",
-        "eventLoopDelayThresholdMs",
         "logLevels",
         "logging",
         "configWebhook"

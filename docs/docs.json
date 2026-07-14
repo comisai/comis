@@ -172,8 +172,7 @@
               "web-dashboard/scheduler-view",
               "web-dashboard/security-view",
               "web-dashboard/media",
-              "web-dashboard/config-editor",
-              "web-dashboard/setup-wizard"
+              "web-dashboard/config-editor"
             ]
           }
         ]

@@ -95,10 +95,10 @@ function probePrometheusExemplarSupport(): { supported: boolean; note: string } 
       serializerProtoHasAffordance;
 
     const note = supported
-      ? `OpenMetrics/exemplar affordance DETECTED on @opentelemetry/exporter-prometheus (option keys: [${optionKeys.join(", ")}]) — Plan 03 may write a strict exemplar-presence test on /metrics.`
+      ? `OpenMetrics/exemplar affordance detected on @opentelemetry/exporter-prometheus (option keys: [${optionKeys.join(", ")}]); strict exemplar-presence checks may be enabled for /metrics.`
       : `No OpenMetrics/exemplar affordance on @opentelemetry/exporter-prometheus (ExporterConfig keys: [${optionKeys.join(
           ", ",
-        )}]); the /metrics pull surface renders counters/histograms WITHOUT exemplars. Plan 03 must document this limitation and realize the chart→explain drill-down via a panel data-link (the OTLP→collector path carries exemplars).`;
+        )}]); /metrics renders counters and histograms without exemplars. Use an OTLP collector for exemplar transport and a dashboard data link for trace drill-down.`;
 
     return { supported, note };
   } catch (err) {

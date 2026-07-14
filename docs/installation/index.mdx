@@ -14,7 +14,7 @@ for development and local evaluation.
   <Card title="npm on Linux or macOS" icon="terminal" href="/installation/install-linux">
     Install the CLI with Node.js 22.19.0 or newer, then run the setup wizard.
   </Card>
-  <Card title="Linux VPS" icon="server" href="/installation/install-vps">
+  <Card title="Managed Linux server" icon="server" href="/installation/install-vps">
     Use the Linux installer to create a dedicated service account and systemd unit.
   </Card>
   <Card title="Docker on Linux" icon="docker" href="/installation/install-docker">
@@ -39,14 +39,17 @@ can install system dependencies, create a dedicated `comis` user, and register
 a systemd service:
 
 ```bash
-curl -fsSL https://comis.ai/install.sh | bash
+curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh -o comis-install.sh
+less comis-install.sh
+bash comis-install.sh --dry-run
+bash comis-install.sh
 ```
 
 <Warning>
-Piping a remote script to a shell grants it host-level authority. Review
-`https://comis.ai/install.sh` first and use the [npm guide](/installation/install-linux)
-for a user-scoped installation. On macOS, use the npm path; systemd and the
-dedicated Linux service-user flow do not apply.
+The installer can make host-level changes. Inspect the downloaded file and its
+dry-run output before executing it. Use the [npm guide](/installation/install-linux)
+for a smaller, user-scoped installation. On macOS, the npm path avoids the
+Linux-only systemd and dedicated service-user flow.
 </Warning>
 
 ## What setup creates

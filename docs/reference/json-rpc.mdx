@@ -453,7 +453,7 @@ Gateway server status, process information, and restart.
     "pid": 12345,
     "uptime": 3600.5,
     "memoryUsage": 104857600,
-    "nodeVersion": "v22.12.0",
+    "nodeVersion": "v22.19.0",
     "configPaths": ["/home/user/.comis/config.yaml"],
     "sections": ["tenantId", "logLevel", "dataDir", "agents", "channels", "gateway"]
   },
@@ -2140,17 +2140,17 @@ Export the entire memory database as a portable JSON snapshot. Useful for backup
 
 <Accordion title="models (3 methods)">
 
-Model catalog inspection and connectivity testing. The catalog is sourced live from the [`@earendil-works/pi-ai`](https://www.npmjs.com/package/@earendil-works/pi-ai) SDK — `getProviders()` for the provider list, `getModels(provider)` for per-provider model details. No hardcoded provider/model tables on the comis side.
+Model catalog and configuration inspection. The catalog comes from the installed [`@earendil-works/pi-ai`](https://www.npmjs.com/package/@earendil-works/pi-ai) SDK — `getProviders()` for the provider list and `getModels(provider)` for per-provider model details. These methods do not query provider APIs.
 
 | Method | Scope | Description |
 |--------|-------|-------------|
 | `models.list_providers` | `admin` | List all providers known to the pi-ai catalog |
 | `models.list` | `admin` | List available models from the catalog (optionally filtered to one provider) |
-| `models.test` | `admin` | Test connectivity to a specific model |
+| `models.test` | `admin` | Inspect one provider's local catalog and agent configuration |
 
 ### `models.list_providers`
 
-List all providers in the pi-ai SDK catalog. Returns provider ids and a count. Use this to populate provider pickers (the web wizard's Provider step and CLI wizard's `03-provider` step both consume this).
+List all providers in the pi-ai SDK catalog. Returns provider ids and a count. The CLI setup flow uses this list for provider selection.
 
 | Property | Value |
 |----------|-------|
@@ -2171,14 +2171,16 @@ List all providers in the pi-ai SDK catalog. Returns provider ids and a count. U
   "jsonrpc": "2.0",
   "result": {
     "providers": [
-      "amazon-bedrock", "anthropic", "azure-openai-responses", "cerebras",
+      "amazon-bedrock", "ant-ling", "anthropic", "azure-openai-responses", "cerebras",
       "cloudflare-ai-gateway", "cloudflare-workers-ai", "deepseek", "fireworks",
       "github-copilot", "google", "google-vertex", "groq", "huggingface",
       "kimi-coding", "minimax", "minimax-cn", "mistral", "moonshotai",
-      "moonshotai-cn", "openai", "openai-codex", "opencode", "opencode-go",
-      "openrouter", "vercel-ai-gateway", "xai", "zai"
+      "moonshotai-cn", "nvidia", "openai", "openai-codex", "opencode",
+      "opencode-go", "openrouter", "together", "vercel-ai-gateway", "xai",
+      "xiaomi", "xiaomi-token-plan-ams", "xiaomi-token-plan-cn",
+      "xiaomi-token-plan-sgp", "zai", "zai-coding-cn"
     ],
-    "count": 27
+    "count": 35
   },
   "id": 1
 }
@@ -2229,20 +2231,20 @@ List all models available across the pi-ai catalog (optionally filtered to one p
 
 ### `models.test`
 
-Test connectivity to a specific model by sending a minimal prompt and measuring the round-trip latency. Useful for verifying that your API keys and network path are working before assigning a model to an agent.
+Inspect whether a provider is used by configured agents and whether its models exist in the local catalog (or a configured custom-provider entry). No network request, credential verification, or inference is performed.
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ model: string, provider?: string }` |
-| **Returns** | `{ ok: boolean, latencyMs: number, provider: string, error?: string }` |
+| **Parameters** | `{ provider: string }` |
+| **Returns** | Provider status such as `{ provider, status, modelsAvailable?, validatedModels?, agentsUsing?, hint? }` |
 
 <CodeGroup>
 ```json Request
 {
   "jsonrpc": "2.0",
   "method": "models.test",
-  "params": { "model": "claude-sonnet-4-5-20250929", "provider": "anthropic" },
+  "params": { "provider": "anthropic" },
   "id": 1
 }
 ```
@@ -2250,9 +2252,13 @@ Test connectivity to a specific model by sending a minimal prompt and measuring 
 {
   "jsonrpc": "2.0",
   "result": {
-    "ok": true,
-    "latencyMs": 312,
-    "provider": "anthropic"
+    "provider": "anthropic",
+    "status": "available",
+    "modelsAvailable": 14,
+    "validatedModels": 0,
+    "agentsUsing": [
+      { "agentId": "default", "model": "claude-sonnet-4-5-20250929" }
+    ]
   },
   "id": 1
 }
@@ -4261,16 +4267,22 @@ Check how many messages are currently sitting at each stage of the delivery queu
 
 <Accordion title="env (2 methods)">
 
-Runtime secret management. Write secrets to the encrypted store (or `.env` file fallback) and list configured secret names. Values are never returned by any method — only names and metadata.
+Runtime secret management. Write secrets through the configured writable secret
+store and list configured secret names. Values are never returned by either
+method.
 
 | Method | Scope | Description |
 |--------|-------|-------------|
-| `env.set` | `admin` | Write a secret to the encrypted store (triggers daemon restart) |
+| `env.set` | `admin` | Persist and live-apply a secret without restarting the daemon |
 | `env.list` | `admin` | List configured secret names (values never returned) |
 
 ### `env.set`
 
-Write a secret value to the encrypted secrets store (`~/.comis/secrets.db` via AES-256-GCM) or the `.env` file fallback when no master key is configured. The daemon restarts automatically after a successful write so the new value is available to all subsystems.
+Write a secret through the active `SecretStorePort`. The default `encrypted`
+mode stores it in `~/.comis/secrets.db`; `file` mode stores it in the
+owner-readable `secrets.json` file. The read-only `env` storage mode rejects
+writes—there is no `.env` fallback. A successful write updates the daemon's
+in-memory secret view without restarting it.
 
 Rate-limited to 5 writes per minute. The value is never logged at any level.
 
@@ -4278,7 +4290,7 @@ Rate-limited to 5 writes per minute. The value is never logged at any level.
 |----------|-------|
 | **Scope** | `admin` |
 | **Parameters** | `{ key: string, value: string }` |
-| **Returns** | `{ set: true, key: string, storage: "encrypted" \| "envfile", restarting: true }` |
+| **Returns** | `{ set: true, key: string, storage: "encrypted" \| "file", restarting: false }` |
 
 `key` must start with an uppercase letter and contain only uppercase letters, digits, and underscores (e.g. `OPENAI_API_KEY`). Max length: 256 characters. `value` max length: 8192 characters. Passing the literal string `[REDACTED]` is rejected to prevent session-redaction poisoning.
 
@@ -4287,7 +4299,7 @@ Rate-limited to 5 writes per minute. The value is never logged at any level.
 {
   "jsonrpc": "2.0",
   "method": "env.set",
-  "params": { "key": "OPENAI_API_KEY", "value": "sk-..." },
+  "params": { "key": "OPENAI_API_KEY", "value": "test-key" },
   "id": 1
 }
 ```
@@ -4298,16 +4310,15 @@ Rate-limited to 5 writes per minute. The value is never logged at any level.
     "set": true,
     "key": "OPENAI_API_KEY",
     "storage": "encrypted",
-    "restarting": true
+    "restarting": false
   },
   "id": 1
 }
 ```
 </CodeGroup>
 
-<Warning>
-`env.set` triggers a daemon restart (`SIGUSR2`) approximately 200ms after returning. Your WebSocket connection will drop and reconnect. Active sessions are preserved via restart continuations.
-</Warning>
+The response is returned after persistence and the in-memory update succeed.
+Existing WebSocket connections remain open.
 
 ### `env.list`
 
@@ -4319,7 +4330,7 @@ Rate-limited to 30 calls per minute.
 |----------|-------|
 | **Scope** | `admin` |
 | **Parameters** | `{ filter?: string, limit?: number }` |
-| **Returns** | `{ secrets: Array<{ name, source: "encrypted" \| "envfile", provider?, createdAt?, updatedAt?, usageCount? }>, total: number, truncated: boolean }` |
+| **Returns** | `{ secrets: Array<{ name, source: "secretstore" \| "envfile", provider?, description?, createdAt?, updatedAt?, expiresAt? }>, total: number, truncated: boolean }` |
 
 `filter` supports glob-style patterns (e.g. `OPENAI_*`). `limit` defaults to 100, max 500.
 
@@ -4337,7 +4348,7 @@ Rate-limited to 30 calls per minute.
   "jsonrpc": "2.0",
   "result": {
     "secrets": [
-      { "name": "OPENAI_API_KEY", "source": "encrypted", "updatedAt": 1773313498000, "usageCount": 142 }
+      { "name": "OPENAI_API_KEY", "source": "secretstore", "updatedAt": 1773313498000 }
     ],
     "total": 1,
     "truncated": false

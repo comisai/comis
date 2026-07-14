@@ -7,7 +7,16 @@ import { createMessageHandlers as createMessageHandlersRaw, type MessageHandlerD
 import type { RpcHandler } from "./types.js";
 import { withHeldCapabilities } from "../../../../test/support/held-capabilities.js";
 import { ok, err } from "@comis/shared";
-import type { ChannelPort, AttachmentPayload, ChannelPluginPort, ChannelCapability, DeliveryService } from "@comis/core";
+import {
+  formatSessionKey,
+  runWithContext,
+  type AttachmentPayload,
+  type ChannelCapability,
+  type ChannelPluginPort,
+  type ChannelPort,
+  type DeliveryService,
+  type SessionKey,
+} from "@comis/core";
 import type { BoundedAutonomy } from "../autonomy/bounded-autonomy.js";
 
 // The orch:message-gated handlers are message.send/
@@ -261,24 +270,40 @@ describe("message.attach gateway channel_type", () => {
     rmSync(workspaceDir, { recursive: true, force: true });
   });
 
-  it("copies file to mediaDir and broadcasts notification", async () => {
-    const mockBroadcast = vi.fn(() => true);
+  it("copies media and notifies only the authenticated client for the active session", async () => {
+    const sendToClientId = vi.fn(() => true);
+    const broadcast = vi.fn(() => true);
+    const persistAttachment = vi.fn();
     const deps = createMockDeps(workspaceDir);
-    deps.wsConnections = { broadcast: mockBroadcast };
+    deps.wsConnections = { sendToClientId, broadcast } as unknown as NonNullable<MessageHandlerDeps["wsConnections"]>;
     deps.mediaDir = mediaDir;
+    deps.onGatewayAttachment = persistAttachment;
 
     const handlers = createMessageHandlers(deps);
     const filePath = join(workspaceDir, "photo.png");
+    const requestSessionKey: SessionKey = {
+      tenantId: "tenant-a",
+      userId: "user_a",
+      channelId: "web-chat",
+    };
 
-    const result = await handlers["message.attach"]({
-      channel_type: "gateway",
-      channel_id: "web-chat",
-      attachment_url: filePath,
-      attachment_type: "image",
-      mime_type: "image/png",
-      file_name: "photo.png",
-      caption: "A nice photo",
-    });
+    const result = await runWithContext({
+      tenantId: requestSessionKey.tenantId,
+      userId: requestSessionKey.userId,
+      sessionKey: formatSessionKey(requestSessionKey),
+      traceId: "550e8400-e29b-41d4-a716-446655440000",
+      startedAt: 1_700_000_000_000,
+      trustLevel: "user",
+      clientId: "dashboard-a",
+    }, () => handlers["message.attach"]({
+        channel_type: "gateway",
+        channel_id: "web-chat",
+        attachment_url: filePath,
+        attachment_type: "image",
+        mime_type: "image/png",
+        file_name: "photo.png",
+        caption: "A nice photo",
+      }));
 
     // Returns mediaId and channelId
     expect(result).toHaveProperty("messageId");
@@ -298,14 +323,103 @@ describe("message.attach gateway channel_type", () => {
     expect(meta.contentType).toBe("image/png");
     expect(meta.size).toBe(Buffer.from("fake-png-content").length);
 
-    // WebSocket broadcast was called with correct params
-    expect(mockBroadcast).toHaveBeenCalledWith("notification.attachment", expect.objectContaining({
+    expect(sendToClientId).toHaveBeenCalledWith("dashboard-a", "notification.attachment", expect.objectContaining({
+      sessionKey: "tenant-a:user_a:web-chat",
+      channelId: "web-chat",
       url: `/media/${messageId}`,
       type: "image",
       mimeType: "image/png",
       fileName: "photo.png",
       caption: "A nice photo",
     }));
+    expect(broadcast).not.toHaveBeenCalled();
+
+    expect(persistAttachment).toHaveBeenCalledOnce();
+    const [persistedSessionKey, persistedContent] = persistAttachment.mock.calls[0] as [SessionKey, string];
+    expect(persistedSessionKey).toEqual(requestSessionKey);
+    const markerMatch = persistedContent.match(/^A nice photo\n\n<!-- attachment:(\{.*\}) -->$/s);
+    expect(markerMatch).not.toBeNull();
+    expect(JSON.parse(markerMatch![1])).toEqual({
+      url: `/media/${messageId}`,
+      type: "image",
+      mimeType: "image/png",
+      fileName: "photo.png",
+    });
+  });
+
+  it("delivers gateway media without misfiling history when request context is absent", async () => {
+    const persistAttachment = vi.fn();
+    const sendToClientId = vi.fn(() => true);
+    const broadcast = vi.fn(() => true);
+    const deps = createMockDeps(workspaceDir);
+    deps.wsConnections = { sendToClientId, broadcast } as unknown as NonNullable<MessageHandlerDeps["wsConnections"]>;
+    deps.mediaDir = mediaDir;
+    deps.onGatewayAttachment = persistAttachment;
+    const handlers = createMessageHandlers(deps);
+
+    const result = await handlers["message.attach"]({
+      channel_type: "gateway",
+      channel_id: "web-chat",
+      attachment_url: join(workspaceDir, "photo.png"),
+      attachment_type: "image",
+      mime_type: "image/png",
+      file_name: "photo.png",
+    });
+
+    expect(result).toEqual(expect.objectContaining({ channelId: "web-chat" }));
+    expect(sendToClientId).not.toHaveBeenCalled();
+    expect(broadcast).not.toHaveBeenCalled();
+    expect(persistAttachment).not.toHaveBeenCalled();
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelId: "web-chat",
+        hint: expect.any(String),
+        errorKind: "precondition",
+      }),
+      "Gateway attachment delivered without persistent session history",
+    );
+  });
+
+  it("delivers gateway media without writing into a mismatched request session", async () => {
+    const persistAttachment = vi.fn();
+    const sendToClientId = vi.fn(() => true);
+    const broadcast = vi.fn(() => true);
+    const deps = createMockDeps(workspaceDir);
+    deps.wsConnections = { sendToClientId, broadcast } as unknown as NonNullable<MessageHandlerDeps["wsConnections"]>;
+    deps.mediaDir = mediaDir;
+    deps.onGatewayAttachment = persistAttachment;
+    const handlers = createMessageHandlers(deps);
+    const otherSession: SessionKey = {
+      tenantId: "tenant-a",
+      userId: "user_a",
+      channelId: "another-chat",
+    };
+
+    const result = await runWithContext({
+      tenantId: otherSession.tenantId,
+      userId: otherSession.userId,
+      sessionKey: formatSessionKey(otherSession),
+      traceId: "550e8400-e29b-41d4-a716-446655440000",
+      startedAt: 1_700_000_000_000,
+      trustLevel: "user",
+      clientId: "dashboard-a",
+    }, () => handlers["message.attach"]({
+        channel_type: "gateway",
+        channel_id: "web-chat",
+        attachment_url: join(workspaceDir, "photo.png"),
+        attachment_type: "image",
+        mime_type: "image/png",
+        file_name: "photo.png",
+      }));
+
+    expect(result).toEqual(expect.objectContaining({ channelId: "web-chat" }));
+    expect(sendToClientId).not.toHaveBeenCalled();
+    expect(broadcast).not.toHaveBeenCalled();
+    expect(persistAttachment).not.toHaveBeenCalled();
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ channelId: "web-chat", errorKind: "precondition" }),
+      "Gateway attachment delivered without persistent session history",
+    );
   });
 
   it("throws when wsConnections is missing for gateway", async () => {
@@ -327,7 +441,7 @@ describe("message.attach gateway channel_type", () => {
 
   it("throws when mediaDir is missing for gateway", async () => {
     const deps = createMockDeps(workspaceDir);
-    deps.wsConnections = { broadcast: vi.fn(() => true) };
+    deps.wsConnections = { sendToClientId: vi.fn(() => true) } as unknown as NonNullable<MessageHandlerDeps["wsConnections"]>;
     // mediaDir is undefined
 
     const handlers = createMessageHandlers(deps);
@@ -344,7 +458,7 @@ describe("message.attach gateway channel_type", () => {
 
   it("non-gateway channel_type still uses resolveAdapter", async () => {
     const deps = createMockDeps(workspaceDir);
-    deps.wsConnections = { broadcast: vi.fn() };
+    deps.wsConnections = { sendToClientId: vi.fn() } as unknown as NonNullable<MessageHandlerDeps["wsConnections"]>;
     deps.mediaDir = mediaDir;
 
     const handlers = createMessageHandlers(deps);

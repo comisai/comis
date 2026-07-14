@@ -216,18 +216,25 @@ describe("DaemonConfigSchema", () => {
     });
   });
 
-  describe("existing daemon fields preserved", () => {
-    it("preserves existing defaults alongside logging", () => {
+  describe("active daemon runtime fields", () => {
+    it("keeps runtime defaults without unused systemd watchdog controls", () => {
       const result = DaemonConfigSchema.safeParse({});
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.watchdogIntervalMs).toBe(30_000);
         expect(result.data.shutdownTimeoutMs).toBe(30_000);
         expect(result.data.metricsIntervalMs).toBe(30_000);
-        expect(result.data.eventLoopDelayThresholdMs).toBe(500);
         expect(result.data.logLevels).toEqual({});
         expect(result.data.logging).toBeDefined();
+        expect(result.data).not.toHaveProperty("watchdogIntervalMs");
+        expect(result.data).not.toHaveProperty("eventLoopDelayThresholdMs");
       }
+
+      expect(
+        DaemonConfigSchema.safeParse({ watchdogIntervalMs: 30_000 }).success,
+      ).toBe(false);
+      expect(
+        DaemonConfigSchema.safeParse({ eventLoopDelayThresholdMs: 500 }).success,
+      ).toBe(false);
     });
   });
 });

@@ -100,7 +100,7 @@ Read [THREAT_MODEL.md](THREAT_MODEL.md) before enabling shell, browser, network,
 
 - Code extensions currently require source changes through ports, adapters, hooks, and tools. Prompt skills can be uploaded or imported, but Comis does not yet provide a stable third-party code-plugin ecosystem.
 - Deterministic tests cover the core runtime extensively, but not every provider, channel, model, or deployment combination is validated live.
-- Backward compatibility is not supported during active development; releases may include breaking API or configuration changes.
+- APIs and configuration may change during active development; review release notes before upgrading.
 
 ## Architecture
 

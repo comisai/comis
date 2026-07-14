@@ -292,7 +292,7 @@ export function resolveImageApiKey(
       return secretManager.get("OPENAI_API_KEY");
     case "google-images":
       // GOOGLE_API_KEY — the SAME key the completion path
-      // (DEFAULT_PROVIDER_KEYS.google), the vision provider registry, and the
+      // (PROVIDER_SECRET_KEYS.google), the vision provider registry, and the
       // env-vars docs all use for the `google` provider. Do NOT read
       // GEMINI_API_KEY here: a GOOGLE_API_KEY-only agent would then be reported
       // image-unavailable.

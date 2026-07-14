@@ -1,12 +1,15 @@
 ---
-title: "Install on Linux"
-description: "Step-by-step installation guide for Ubuntu, Fedora, and Arch Linux"
+title: "Install with npm on Linux"
+description: "Install Comis as your current user without changing system services"
 icon: "linux"
 ---
 
-This guide walks you through installing Comis on a Linux server or workstation.
-Every command is copy-paste ready, and each step shows the expected output so
-you know things are working.
+This path installs the Comis CLI and runtime for your current user. It does not
+create a service account, register systemd units, or install host tools such as
+Bubblewrap, ffmpeg, Chrome, or Xvfb.
+
+Use the [VPS installer](/installation/install-vps) when you want Comis to manage
+those host dependencies and run as a dedicated Linux service.
 
 import NonTechnicalNote from '/snippets/non-technical-note.mdx';
 
@@ -14,327 +17,170 @@ import NonTechnicalNote from '/snippets/non-technical-note.mdx';
 
 <Snippet file="invocation-modes.mdx" />
 
-<Warning>
-Make sure you have Node.js 22.19.0 or newer, Python 3, and native build tools.
-You also need a provider API credential, a supported OAuth login, or a running
-local model. See [Requirements](/installation/requirements).
-</Warning>
+## Prerequisites
 
-## Installation
+Install:
+
+- Node.js `22.19.0` or newer;
+- npm;
+- Python 3; and
+- the compiler toolchain used by native Node modules.
+
+Use your distribution's package manager or the [official Node.js download
+instructions](https://nodejs.org/en/download). Common build-tool packages are:
+
+<Tabs>
+  <Tab title="Ubuntu / Debian">
+    ```bash
+    sudo apt-get update
+    sudo apt-get install -y build-essential python3
+    ```
+  </Tab>
+  <Tab title="Fedora / RHEL">
+    ```bash
+    sudo dnf install -y gcc-c++ make python3
+    ```
+  </Tab>
+  <Tab title="Arch">
+    ```bash
+    sudo pacman -S --needed base-devel python nodejs npm
+    ```
+  </Tab>
+</Tabs>
+
+Verify the runtime before installing Comis:
+
+```bash
+node --version
+npm --version
+```
+
+The Node.js version must be at least `v22.19.0`.
+
+## Install and initialize
 
 <Steps>
-  <Step title="Install Node.js 22.19.0 or newer">
-    <Tabs>
-      <Tab title="Ubuntu / Debian">
-        ```bash
-        curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-        sudo apt-get install -y nodejs
-        ```
-      </Tab>
-      <Tab title="Fedora / RHEL">
-        ```bash
-        curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo -E bash -
-        sudo dnf install -y nodejs
-        ```
-      </Tab>
-      <Tab title="Arch">
-        ```bash
-        sudo pacman -S nodejs npm
-        ```
-      </Tab>
-    </Tabs>
-
-    Verify the installation:
-
-    ```bash
-    node --version
-    ```
-
-    Confirm that the reported version is at least `v22.19.0`.
-  </Step>
-
-  <Step title="Install build tools">
-    These tools compile native modules during the Comis installation.
-
-    <Tabs>
-      <Tab title="Ubuntu / Debian">
-        ```bash
-        sudo apt-get install -y build-essential python3
-        ```
-      </Tab>
-      <Tab title="Fedora / RHEL">
-        ```bash
-        sudo dnf install -y gcc-c++ make python3
-        ```
-      </Tab>
-      <Tab title="Arch">
-        ```bash
-        sudo pacman -S --needed base-devel python
-        ```
-      </Tab>
-    </Tabs>
-  </Step>
-
   <Step title="Install Comis">
     ```bash
-    npm install -g comisai
-    ```
-
-    Verify:
-
-    ```bash
+    npm install --global comisai
     comis --version
     ```
 
-    The command prints the installed package version.
-
-    <Tip>
-    If you get an `EACCES` permission error, see the "Permission denied during
-    npm install" section in Common Issues below.
-    </Tip>
+    If the global install reports `EACCES`, configure a user-owned npm prefix as
+    shown under [Permission denied during npm install](#permission-denied-during-npm-install).
   </Step>
 
-  <Step title="Run the setup wizard">
+  <Step title="Run setup">
     ```bash
     comis init
     ```
 
-    The staged wizard detects existing state, lets you choose storage and model
-    authentication, configures the agent, channels, gateway, workspace, tools,
-    media and recall, then shows a review before writing files and optionally
-    starting the daemon.
+    The wizard reviews storage, model authentication, agents, optional channels,
+    gateway access, workspace, tools, media, and recall before writing files.
 
-    New installations default to encrypted credential storage:
-
-    - `~/.comis/config.yaml` contains non-secret configuration;
-    - `~/.comis/secrets.db` contains encrypted credentials; and
-    - `~/.comis/.env` contains `SECRETS_MASTER_KEY`.
-
-    Back up the master key securely. It is required to recover `secrets.db`.
+    Encrypted storage is the default. Back up `~/.comis/.env`; it contains the
+    master key required to recover credentials stored in `~/.comis/secrets.db`.
   </Step>
 
-  <Step title="Start the daemon">
+  <Step title="Start and verify the daemon">
     ```bash
     comis daemon start
+    comis status
+    comis health
     ```
 
-    Confirm the result with `comis status`. The daemon manages configured agents,
-    channels, and the local gateway.
-
-    <Tip>
-    You can close this terminal and the daemon will keep running. To stop it
-    later, run `comis daemon stop`.
-    </Tip>
+    `comis daemon start` launches a detached user process. It is not registered
+    as an operating-system service and does not automatically start after reboot.
   </Step>
 
-  <Step title="Open the web dashboard">
-    Open your browser and go to:
-
-    ```
-    http://localhost:4766
-    ```
-
-    The web dashboard provides a chat interface where you can talk directly to
-    your agent. It also shows your agent's status, memory usage, and
-    configuration. Type a message and press Enter to start a conversation.
+  <Step title="Open the dashboard">
+    Open `http://127.0.0.1:4766` on the same host. Keep the gateway bound to
+    loopback unless you have configured authentication, TLS, and network access
+    controls for a remote deployment.
   </Step>
 </Steps>
 
 ## Browser tool provisioning
 
-The agent browser tool ships **enabled by default**, so the installer provisions its
-runtime by default too: **stock Chrome + headless shared libs, plus Xvfb + a headed
-companion unit**. Provisioning is **strictly best-effort** — if Chromium or Xvfb can't
-install on this host (arm64, locked-down apt, rootless), the install never aborts; the
-browser tool simply falls back to what's available (see the fallback note below). Opt
-out for a minimal footprint, or add the stealth variant, with these flags:
+The npm package includes the browser-tool code, but this installation path does
+not install a browser binary or virtual display. Install a supported Chrome or
+Chromium runtime yourself, or use the reviewed [managed-host
+installer](/installation/install-vps), which provisions Chrome and Xvfb on Linux
+on a best-effort basis.
 
-| Flag | Effect | Use when |
-|---|---|---|
-| `--with-browser` | **On by default.** Google Chrome + headless shared libs + a widened systemd sandbox so the daemon can launch a browser. Handles Ubuntu 24.04's t64-renamed libs and falls back to Google's official apt repo when the `chromium` deb isn't available. | Kept on unless you opt out — the browser tool needs a Chrome binary to launch. |
-| `--without-browser` | Opt out of the **whole** browser stack (skips Chromium, headless libs, and the Xvfb unit) for a minimal footprint. The browser tool stays enabled in config but fails honestly at use for lack of a runtime. Same as `COMIS_WITH_BROWSER=0`. | You don't use the browser tool and want the smallest install. |
-| `--with-xvfb` | **On by default (implies `--with-browser`).** Adds Xvfb and a `comis-xvfb.service` companion unit that runs a virtual display on `:99`; both units bind a shared `/run/comis-x11` dir onto `/tmp/.X11-unix` so the daemon reaches the X11 socket despite `PrivateTmp=yes`. Seeds `headless: false` in `config.yaml` **only when Xvfb actually installed**. | Use when a workflow requires a headed browser session. Site compatibility is not guaranteed. |
-| `--without-xvfb` | Keep the (default) headless browser but drop the heavier Xvfb headed stack + companion unit. Same as `COMIS_WITH_XVFB=0`. | You want the browser tool but not headed mode / the extra unit. |
-| `--with-cloakbrowser` | **Opt-in (implies `--with-browser`).** Installs CloakBrowser instead of stock Chrome; the daemon auto-detects the binary. | Use only after reviewing its separate binary license and your target sites' terms. It does not guarantee access or change IP reputation. |
+See [Browser tool](/agent-tools/browser) for runtime detection, configuration,
+isolation requirements, and optional browser variants. A configured browser tool
+reports an actionable unavailable result when no compatible runtime can launch.
 
-```bash
-# Default install — browser tool + headed (Xvfb) stack provisioned best-effort
-curl -fsSL https://comis.ai/install.sh | bash
+## Non-interactive setup
 
-# Minimal footprint — no browser runtime at all
-curl -fsSL https://comis.ai/install.sh | bash -s -- --without-browser
-
-# Headless-only — keep the browser tool, drop the heavier headed Xvfb stack
-curl -fsSL https://comis.ai/install.sh | bash -s -- --without-xvfb
-
-# Optional CloakBrowser runtime
-curl -fsSL https://comis.ai/install.sh | bash -s -- --with-cloakbrowser
-```
-
-<Note>
-**Headed provisioning degrades gracefully to headless.** Chromium always installs
-*before* Xvfb, and the headed decision keys off ground truth — whether the `Xvfb`
-binary is actually present — not the flag. So if the Xvfb package or its companion
-unit can't install (e.g. a rootless install can't register a system unit), the
-installer downshifts to headless: it skips the companion unit and seeds
-`headless: true`, and the browser tool works on the installed Chromium. You never
-end up configured headed against a display that isn't there.
-</Note>
-
-<Info>
-Run as a regular user, these one-liners ask to re-run themselves with `sudo`
-and install under a dedicated `comis` system user -- the secure default on
-Linux. Pass `--no-user` (or set `COMIS_NO_USER=1`) for a current-user install;
-non-interactive runs without root require one of the two choices explicitly.
-</Info>
-
-<Warning>
-CloakBrowser does not include a proxy and cannot change a host's IP reputation.
-Website policies and detection behavior change over time; do not describe this
-option as a bypass guarantee. Its compiled binary has a separate license. Review
-the [binary license](https://github.com/CloakHQ/CloakBrowser/blob/main/BINARY-LICENSE.md)
-and the target site's terms before use.
-</Warning>
-
-The corresponding environment variables work too, useful in CI / non-interactive flows: `COMIS_WITH_BROWSER=0|1` and `COMIS_WITH_XVFB=0|1` (both default `1` — set `0` for the opt-outs above), and `COMIS_WITH_CLOAKBROWSER=1`. The installer pre-creates browser profile dirs, seeds a `browser:` block in `config.yaml`, and (when Xvfb installed) enables + starts the companion unit before the main daemon — no manual systemd surgery needed.
-
-## Non-Interactive Install
-
-For CI pipelines, scripting, or Docker containers, you can skip the interactive
-wizard entirely:
+For controlled automation, the setup command can run without prompts:
 
 ```bash
+export ANTHROPIC_API_KEY="<set-in-your-secret-runner>"
 comis init --non-interactive --accept-risk \
   --provider anthropic \
   --api-key "$ANTHROPIC_API_KEY" \
   --agent-name "Atlas"
 ```
 
-This writes the same configuration and encrypted storage layout without
-prompting. Replace `anthropic` with your API-key provider and set the matching
-protected environment variable first.
+`--accept-risk` acknowledges that command arguments may be visible through
+process inspection, shell history, or CI logs. Prefer interactive setup or a
+secret-aware runner, and never save a literal credential in a script.
 
-<Info>
-`--accept-risk` acknowledges that the expanded `--api-key` value can be exposed
-through process inspection, shell history, or CI logs. Prefer the interactive
-wizard or tightly controlled automation, and never paste a literal key into a
-saved command. Run `comis init --help` for the current flags.
-</Info>
-
-<Tip>
-**OpenAI Codex on a headless server?** If you are setting up on an SSH-only Linux
-server and pick `openai-codex` as your provider, the wizard auto-selects
-Device code login (no browser needed). You can also run it manually at any time:
+For OpenAI Codex on a headless host, use device-code login instead of a static
+key:
 
 ```bash
 comis auth login --provider openai-codex --method device-code
 ```
 
-The CLI prints a short code and the URL `https://auth.openai.com/codex/device`.
-Open that URL on a phone or laptop browser, sign into ChatGPT, and enter the code.
-The CLI waits for the authorization flow to complete or expire.
-For the full walkthrough including multi-account profiles, see
-[Install on a VPS](/installation/install-vps#codex-oauth-on-headless-hosts).
-</Tip>
-
-## Common Issues
+## Common issues
 
 <AccordionGroup>
   <Accordion title="Permission denied during npm install">
-    **Symptom:** `EACCES: permission denied` when running `npm install -g comisai`
-
-    **Fix:** Configure npm to use a directory you own instead of the
-    system-level global directory:
+    Configure npm to install global packages in your home directory:
 
     ```bash
     mkdir -p ~/.npm-global
     npm config set prefix '~/.npm-global'
-    echo 'export PATH=~/.npm-global/bin:$PATH' >> ~/.bashrc
+    echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.bashrc
     source ~/.bashrc
-    ```
-
-    Then retry the install:
-
-    ```bash
-    npm install -g comisai
+    npm install --global comisai
     ```
   </Accordion>
 
-  <Accordion title="node-gyp build errors">
-    **Symptom:** Errors mentioning `node-gyp`, `gyp ERR!`, or `make: g++: not
-    found` during installation.
-
-    **Cause:** Missing build tools required for compiling native modules.
-
-    **Fix:** Install the build tools for your distribution (Step 2 above), then
-    retry:
-
-    ```bash
-    npm install -g comisai
-    ```
-
-    If the problem persists, check that Python 3 is installed and accessible as
-    `python3`. See the [Requirements](/installation/requirements) page for the
-    full list of build dependencies.
+  <Accordion title="Native module build fails">
+    Confirm Python 3 and your distribution's compiler toolchain are installed,
+    then retry `npm install --global comisai`. See
+    [Requirements](/installation/requirements) for the supported runtime floor.
   </Accordion>
 
-  <Accordion title="Port 4766 already in use">
-    **Symptom:** The daemon starts but reports that port 4766 is already in use.
-
-    **Diagnose:** Find what is using the port:
-
-    ```bash
-    lsof -i :4766
-    ```
-
-    **Fix:** Either stop the other process, or change the Comis gateway port in
-    `~/.comis/config.yaml`:
-
-    ```yaml
-    gateway:
-      port: 4800
-    ```
-
-    Then restart the daemon:
-
-    ```bash
-    comis daemon stop
-    comis daemon start
-    ```
+  <Accordion title="Port 4766 is already in use">
+    Identify the listener with `lsof -i :4766`, or choose a different
+    `gateway.port` in `~/.comis/config.yaml`, then restart the daemon.
   </Accordion>
 
-  <Accordion title="Daemon starts but no web dashboard">
-    **Symptom:** `comis daemon start` succeeds but `http://localhost:4766` does
-    not load in your browser.
-
-    **Diagnose:** Run the built-in diagnostic tool:
-
-    ```bash
-    comis doctor
-    ```
-
-    This checks five categories: config, daemon, gateway, channels, and
-    workspace. Look for failures in the "gateway" category.
-
-    **Common causes:**
-    - The gateway is disabled in your config. Make sure `gateway.enabled` is not
-      set to `false`.
-    - The gateway is bound to a different host. Check the `gateway.host` setting
-      in your config file.
-    - A firewall is blocking the port.
+  <Accordion title="The dashboard does not open">
+    Run `comis doctor` and inspect the gateway findings. Confirm the daemon is
+    running, `gateway.enabled` is true, and the configured host and port match
+    the URL you opened.
   </Accordion>
 </AccordionGroup>
 
-## Next Steps
+## Next steps
 
 <CardGroup cols={2}>
-  <Card title="Configuration Guide" icon="sliders" href="/installation/configuration">
-    Customize your agent's settings, add channels, and fine-tune behavior.
+  <Card title="Configuration" icon="sliders" href="/installation/configuration">
+    Configure models, agents, credentials, tools, and channels.
   </Card>
   <Card title="Verification" icon="circle-check" href="/installation/verify">
-    Run diagnostic checks to confirm everything is working.
+    Validate the daemon and its configured integrations.
   </Card>
-  <Card title="Connect a Channel" icon="messages" href="/channels/index">
-    Add Discord, Telegram, Slack, or any of the 10 supported platforms.
+  <Card title="Production hardening" icon="shield" href="/security/hardening">
+    Restrict tools and secure gateway and host boundaries.
+  </Card>
+  <Card title="VPS installation" icon="server" href="/installation/install-vps">
+    Use a dedicated service account and managed systemd unit.
   </Card>
 </CardGroup>

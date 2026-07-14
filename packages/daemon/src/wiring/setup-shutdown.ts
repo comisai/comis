@@ -741,9 +741,9 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     }
 
     systemClearTimeout(timer);
-    // Exit code: SIGUSR2 ⇒ 42 (restart hint — systemd Restart=on-failure /
-    // docker unless-stopped / pm2 default treat non-zero as crash and
-    // restart). SIGTERM/SIGINT ⇒ 0 (operator-initiated stop).
+    // Exit code: SIGUSR2 ⇒ 42. The installer-generated systemd unit names 42
+    // in RestartForceExitStatus; Docker and PM2 treat it as a restartable
+    // non-zero exit. SIGTERM/SIGINT ⇒ 0 (operator-initiated stop).
     const isRestartSignal = signal === "SIGUSR2";
     try {
       exitFnLocal(isRestartSignal ? 42 : 0);

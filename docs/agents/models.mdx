@@ -12,7 +12,9 @@ provider has a hiccup.
 covers picking a default; the reference section covers per-agent overrides,
 fallback chains, and key rotation.
 
-Comis ships with native support for **every provider in the [`@earendil-works/pi-ai`](https://www.npmjs.com/package/@earendil-works/pi-ai) catalog** — currently 35 hosted providers (Anthropic, OpenAI, Google, Mistral, Groq, OpenRouter, DeepSeek, xAI, Cerebras, Amazon Bedrock, Azure OpenAI Responses, Vercel AI Gateway, Cloudflare AI Gateway / Workers AI, GitHub Copilot, Hugging Face, Fireworks, Together (via OpenRouter), Moonshot, Minimax, Z.ai, Kimi, OpenCode, and more). The catalog is queried at runtime — adding a new provider to pi-ai automatically lights it up across the daemon, web wizard, CLI wizard, and `comis models list` with **zero comis code changes**.
+Comis reads provider and model metadata from the [`@earendil-works/pi-ai`](https://www.npmjs.com/package/@earendil-works/pi-ai) catalog — currently 35 providers, including Anthropic, OpenAI, Google, Mistral, Groq, OpenRouter, DeepSeek, xAI, Cerebras, Amazon Bedrock, Azure OpenAI Responses, Vercel AI Gateway, Cloudflare AI Gateway / Workers AI, GitHub Copilot, Hugging Face, Fireworks, Together AI, Moonshot, Minimax, Z.ai, Kimi, OpenCode, and more. Every static-key scheme in the current catalog is bridged through Comis's Secret Manager; OAuth and ambient cloud credentials use their provider-specific paths.
+
+Catalog discovery and runtime authentication are separate. A provider added by a future pi-ai release appears automatically in model lists and pickers, but a new credential scheme may still require a Comis update before the provider can make requests. Amazon Bedrock uses the host AWS credential chain. For Google Vertex AI, use `GOOGLE_CLOUD_API_KEY` with `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`; ADC-only Vertex authentication is not currently bridged through the daemon's scrubbed environment.
 
 Plus you can register custom OpenAI-compatible endpoints (any HTTP service that speaks the OpenAI chat-completions API) for proxies and self-hosted gateways.
 
@@ -40,12 +42,10 @@ comis models list --format json
 Each command tries the daemon's `models.list_providers` / `models.list` RPC first, and falls back to the local pi-ai static catalog when the daemon isn't running (so the wizard still works pre-init).
 
 In the web dashboard, the same catalog drives:
-- **Setup Wizard › Provider step** — provider grid populated from `models.list_providers`
-- **Setup Wizard › Model dropdown** — per-provider model list from `models.list`
 - **Models view › Catalog tab** — full searchable model catalog
 - **Agents view › Edit agent** — provider and model dropdowns
 
-There is no hardcoded provider/model list in comis source. The pi-ai catalog is the single source of truth, accessed via `getProviders()` and `getModels(provider)` from `@earendil-works/pi-ai`.
+Provider and model discovery is not hardcoded in Comis source. The pi-ai catalog is the source of truth, accessed via `getProviders()` and `getModels(provider)`. Credential names are an explicit, tested mapping because Comis removes provider secrets from `process.env` after loading them.
 
 ## Custom providers (proxies and self-hosted)
 

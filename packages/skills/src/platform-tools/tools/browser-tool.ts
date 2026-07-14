@@ -38,7 +38,7 @@ registerActivityLabelSpec("browser", {
 export interface BrowserToolDeps {
   /** RPC function for daemon communication. */
   rpcCall: RpcCall;
-  /** Optional image sanitizer (when provided, screenshots are sanitized before return). */
+  /** Optional image sanitizer; when provided, screenshots are sanitized or rejected before return. */
   sanitizeImage?: (buffer: Buffer, mimeType: string) => Promise<Result<SanitizedImage, string>>;
   /** Optional media persistence service (when provided, screenshots are saved to workspace). */
   persistMedia?: MediaPersistenceService;
@@ -123,7 +123,13 @@ export function createBrowserTool(deps: BrowserToolDeps): AgentTool<typeof Brows
                 // No persistence deps -- return sanitized imageResult (still a win: smaller base64)
                 return imageResult(sanitizedBase64, sanitized.value.mimeType);
               }
-              // Sanitization failed -- fall back to raw imageResult
+              // A configured sanitizer is a security boundary. Never return the
+              // original bytes when it rejects or cannot process the capture.
+              throwToolError(
+                "invalid_value",
+                "Screenshot sanitization failed; the raw image was not returned.",
+                { hint: "Retry the capture or inspect the image-sanitizer diagnostics" },
+              );
             }
             // No sanitize deps -- return raw imageResult
             return imageResult(r.base64, r.mimeType);

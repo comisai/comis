@@ -182,7 +182,7 @@ For per-provider setup, model defaults, and configuration, see the [Media & Voic
     |--------------------------|-------------|------------------|---------------|------------|
     | `openai` | OpenAI Images API | `auto` or `openai` | `gpt-image-1` | `OPENAI_API_KEY` |
     | `openai-codex` | ChatGPT/Codex (Responses) | `auto` or `openai-codex` | `gpt-image-1` | ChatGPT/Codex OAuth (no key) |
-    | `google` / `google-vertex` | Gemini (`generateContent`) | `auto` or `google` | `gemini-2.5-flash-image` | `GOOGLE_API_KEY` |
+    | `google` / `google-vertex` | Gemini (`generateContent`) | `auto` or `google` | `gemini-2.5-flash-image` | `GOOGLE_API_KEY` (separate from Vertex's `GOOGLE_CLOUD_API_KEY`) |
     | `openrouter` | OpenRouter (built-in) | `auto` or `openrouter` | `black-forest-labs/flux.2-pro` | `OPENROUTER_API_KEY` |
     | _(explicit only)_ | fal.ai | `fal` | provider preset | `FAL_KEY` |
     | `anthropic` and other image-incapable mains | — | — | — | honest "unavailable" (never a silent reroute) |
@@ -205,7 +205,7 @@ For per-provider setup, model defaults, and configuration, see the [Media & Voic
     **Observability.** Each generation logs a single INFO completion line carrying the executing image provider, the agent's main provider, the model, `durationMs`, `costUsd`, `sizeBytes`, and the mime type; every failure branch logs an `errorKind` + an actionable `hint` (never the raw provider message, a key, or a bearer). The image turn is reconstructable from observability: `comis explain <sessionKey>` surfaces the image block (provider / model / `costUsd` / outcome / delivered) from the session trajectory, and the cost also flows into the per-session cost rollups (`comis fleet`).
 
     <Note>
-    When following a Codex main provider, Comis identifies itself to the ChatGPT backend as the official Codex client -- it sends the same first-party client headers (`originator: codex_cli_rs`, a Codex-shaped `User-Agent`, a `ChatGPT-Account-ID` decoded from your token, and per-request `session-id`/`x-client-request-id` identifiers) that the official Codex CLI sends. This is a **first-party-client compatibility shim** using **your own** ChatGPT/Codex OAuth credentials against the **same endpoint** the official Codex CLI uses -- so Cloudflare does not 403 requests from non-residential IPs. It is authorized reuse of your own credentials, **not detection evasion**. If a future change to the ChatGPT backend rejects this image path, set `integrations.media.imageGeneration.provider: openrouter` (with `OPENROUTER_API_KEY`) as the explicit fallback.
+    When following a Codex main provider, Comis sends the authenticated header shape used by the Codex text transport, including `originator`, a Codex-shaped `User-Agent`, the account ID decoded from the same OAuth token, and per-request identifiers. This path uses your own credentials, but backend acceptance can vary or change. If the endpoint rejects the image request, set `integrations.media.imageGeneration.provider: openrouter` with `OPENROUTER_API_KEY` as an explicit fallback.
     </Note>
   </Accordion>
 

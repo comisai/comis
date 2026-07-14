@@ -14,7 +14,7 @@ import {
   resolveOperationModel,
   resolveProviderFamily,
   OPERATION_TIER_MAP,
-  DEFAULT_PROVIDER_KEYS,
+  getProviderSecretNames,
 } from "@comis/agent";
 
 // ---------------------------------------------------------------------------
@@ -104,8 +104,9 @@ export function logOperationModelDryRun(params: {
         // verify the cross-provider key exists in SecretManager.
         const resolvedFamily = resolveProviderFamily(resolution.provider);
         if (resolvedFamily !== providerFamily) {
-          const keyName = DEFAULT_PROVIDER_KEYS[resolvedFamily];
-          if (keyName && !secretManager.has(keyName)) {
+          const secretNames = getProviderSecretNames(resolvedFamily);
+          if (secretNames.length > 0 && !secretNames.some((name) => secretManager.has(name))) {
+            const keyName = secretNames[0]!;
             logger.warn({
               agentId,
               operationType: resolution.operationType,

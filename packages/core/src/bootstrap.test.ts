@@ -242,6 +242,33 @@ describe("bootstrap", () => {
       );
     }
   });
+
+  it("includes custom provider apiKeyName values on the platform secret deny surface", () => {
+    const dir = makeTmpDir();
+    const configPath = writeYaml(
+      dir,
+      "config.yaml",
+      [
+        "providers:",
+        "  entries:",
+        "    private-gateway:",
+        "      type: openai",
+        "      apiKeyName: PRIVATE_GATEWAY_API_KEY",
+        "",
+      ].join("\n"),
+    );
+
+    const result = bootstrap({
+      configPaths: [configPath],
+      env: { PRIVATE_GATEWAY_API_KEY: "test-key" },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      containers.push(result.value);
+      expect(result.value.platformSecretNames.has("PRIVATE_GATEWAY_API_KEY")).toBe(true);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

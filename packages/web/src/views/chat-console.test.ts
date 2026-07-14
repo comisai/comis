@@ -632,6 +632,64 @@ describe("IcChatConsole", () => {
     expect(message?.shadowRoot?.innerHTML).not.toContain("test-media-token");
   });
 
+  it("appends attachment notifications only for the active gateway session", async () => {
+    let notificationHandler: ((method: string, params: unknown) => void) | undefined;
+    const rpc = createMockRpcClient();
+    (rpc.onNotification as ReturnType<typeof vi.fn>).mockImplementation((handler) => {
+      notificationHandler = handler;
+      return vi.fn();
+    });
+    const el = await createElement<IcChatConsole>("ic-chat-console", {
+      rpcClient: rpc,
+      apiClient: createMockApiClient(),
+      eventDispatcher: createMockEventDispatcher(),
+    });
+    (el as any)._activeSession = "tenant-a:user_a:active-chat";
+    (el as any)._messages = [];
+
+    notificationHandler?.("notification.attachment", {
+      sessionKey: "tenant-a:user_a:other-chat",
+      channelId: "other-chat",
+      url: "/media/other.png",
+      type: "image",
+      mimeType: "image/png",
+      fileName: "other.png",
+    });
+    expect((el as any)._messages).toHaveLength(0);
+
+    notificationHandler?.("notification.attachment", {
+      sessionKey: "tenant-a:other-user:active-chat",
+      channelId: "active-chat",
+      url: "/media/wrong-user.png",
+      type: "image",
+      mimeType: "image/png",
+      fileName: "wrong-user.png",
+    });
+    expect((el as any)._messages).toHaveLength(0);
+
+    notificationHandler?.("notification.attachment", {
+      sessionKey: "tenant-b:user_a:active-chat",
+      channelId: "active-chat",
+      url: "/media/wrong-tenant.png",
+      type: "image",
+      mimeType: "image/png",
+      fileName: "wrong-tenant.png",
+    });
+    expect((el as any)._messages).toHaveLength(0);
+
+    notificationHandler?.("notification.attachment", {
+      sessionKey: "tenant-a:user_a:active-chat",
+      channelId: "active-chat",
+      url: "/media/active.png",
+      type: "image",
+      mimeType: "image/png",
+      fileName: "active.png",
+    });
+    expect((el as any)._messages).toEqual([
+      expect.objectContaining({ content: expect.stringContaining("/media/active.png") }),
+    ]);
+  });
+
   it("Enter key triggers _sendMessage (calls apiClient.chat)", async () => {
     const api = createMockApiClient();
 

@@ -66,7 +66,7 @@ vi.mock("../../util/offline-secrets-store.js", () => ({
 }));
 
 import { existsSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
-import { loadEnvFile } from "@comis/core";
+import { AppConfigSchema, loadEnvFile } from "@comis/core";
 import { offlineSecretSet } from "../../util/offline-secrets-store.js";
 import type { WizardPrompter, WizardState, Spinner } from "../index.js";
 import { writeConfigStep } from "./10-write-config.js";
@@ -176,6 +176,144 @@ describe("writeConfigStep", () => {
     // Content should contain ANTHROPIC_API_KEY
     const envContent = envWriteCall![1] as string;
     expect(envContent).toContain("ANTHROPIC_API_KEY=sk-test-key-123");
+  });
+
+  it("persists a catalog provider credential that is outside the recommended list", async () => {
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(
+      {
+        ...populatedState(),
+        provider: { id: "nvidia", apiKey: "nvidia-test-key" },
+      },
+      prompter,
+    );
+
+    const envWriteCall = vi.mocked(writeFileSync).mock.calls.find(
+      ([path]) => typeof path === "string" && path.includes(".env"),
+    );
+    expect(envWriteCall?.[1]).toContain("NVIDIA_API_KEY=nvidia-test-key");
+  });
+
+  it("persists an Anthropic OAuth token under its OAuth credential name", async () => {
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(
+      {
+        ...populatedState(),
+        provider: {
+          id: "anthropic",
+          apiKey: "oauth-test-token",
+          authMethod: "oauth",
+        },
+      },
+      prompter,
+    );
+
+    const envWriteCall = vi.mocked(writeFileSync).mock.calls.find(
+      ([path]) => typeof path === "string" && path.includes(".env"),
+    );
+    expect(envWriteCall?.[1]).toContain("ANTHROPIC_OAUTH_TOKEN=oauth-test-token");
+    expect(envWriteCall?.[1]).not.toContain("ANTHROPIC_API_KEY=oauth-test-token");
+
+    const configWriteCall = vi.mocked(writeFileSync).mock.calls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    const configContent = JSON.parse(configWriteCall![1] as string);
+    expect(configContent.providers.entries.anthropic).toMatchObject({
+      type: "anthropic",
+      apiKeyName: "ANTHROPIC_OAUTH_TOKEN",
+    });
+  });
+
+  it("writes the selected Anthropic API key as the authoritative provider credential", async () => {
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(populatedState(), prompter);
+
+    const configWriteCall = vi.mocked(writeFileSync).mock.calls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    const configContent = JSON.parse(configWriteCall![1] as string);
+    expect(configContent.providers.entries.anthropic).toMatchObject({
+      type: "anthropic",
+      apiKeyName: "ANTHROPIC_API_KEY",
+    });
+  });
+
+  it("removes the inactive Anthropic credential from an existing env file", async () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(loadEnvFile).mockImplementation(
+      (_path: string, env: Record<string, string | undefined>) => {
+        env.ANTHROPIC_API_KEY = "inactive-api-key";
+      },
+    );
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(
+      {
+        ...populatedState(),
+        provider: {
+          id: "anthropic",
+          apiKey: "selected-oauth-token",
+          authMethod: "oauth",
+        },
+      },
+      prompter,
+    );
+
+    const envWriteCall = vi.mocked(writeFileSync).mock.calls.find(
+      ([path]) => typeof path === "string" && path.includes(".env"),
+    );
+    expect(envWriteCall?.[1]).toContain("ANTHROPIC_OAUTH_TOKEN=selected-oauth-token");
+    expect(envWriteCall?.[1]).not.toContain("ANTHROPIC_API_KEY=");
+  });
+
+  it("writes a custom endpoint through the provider-entry config contract", async () => {
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(
+      {
+        ...populatedState(),
+        provider: {
+          id: "custom",
+          apiKey: "custom-test-key",
+          customEndpoint: "https://gateway.example.com/v1",
+          compatMode: "anthropic",
+          validated: false,
+        },
+        model: "custom-model-a",
+        channels: [],
+        gateway: undefined,
+      },
+      prompter,
+    );
+
+    const writeCalls = vi.mocked(writeFileSync).mock.calls;
+    const configWriteCall = writeCalls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    const configContent = JSON.parse(configWriteCall![1] as string);
+    expect(configContent.agents.default).not.toHaveProperty("customEndpoint");
+    expect(configContent.agents.default).not.toHaveProperty("compatMode");
+    expect(configContent.providers.entries.custom).toMatchObject({
+      type: "anthropic",
+      name: "Custom endpoint",
+      baseUrl: "https://gateway.example.com/v1",
+      apiKeyName: "CUSTOM_PROVIDER_API_KEY",
+      enabled: true,
+      models: [{ id: "custom-model-a" }],
+    });
+    const parsedConfig = AppConfigSchema.safeParse(configContent);
+    expect(
+      parsedConfig.success,
+      parsedConfig.success ? undefined : parsedConfig.error.message,
+    ).toBe(true);
+
+    const envWriteCall = writeCalls.find(
+      ([path]) => typeof path === "string" && path.includes(".env"),
+    );
+    expect(envWriteCall?.[1]).toContain("CUSTOM_PROVIDER_API_KEY=custom-test-key");
   });
 
   it("a keyless-default install (keyless main, omitted audio providers) writes no OPENAI_API_KEY to the env file", async () => {

@@ -110,7 +110,7 @@ describe("path validation", () => {
     ).rejects.toThrow("[path_traversal]");
   });
 
-  it("normalizes a leading ~/ to the workspace root instead of a literal ~ dir (F-10)", async () => {
+  it("normalizes a leading ~/ to the workspace root instead of a literal ~ directory", async () => {
     const tool = createTool();
     // Live: model wrote `~/Desktop/notes.md` thinking it hit the real Desktop; safePath
     // would create `<ws>/~/Desktop/notes.md` (unfindable). Normalize → `<ws>/Desktop/notes.md`.
@@ -122,7 +122,7 @@ describe("path validation", () => {
     await expect(fs.access(tildeJunk)).rejects.toThrow(); // no literal ~ dir created
   });
 
-  it("path-traversal error names the workspace-relative remedy so the model self-corrects (F-10)", async () => {
+  it("path-traversal error names the workspace-relative remedy so the model self-corrects", async () => {
     const tool = createTool();
     // Live shape: a small model wrote to an out-of-workspace path (an expanded
     // ~/Desktop/report.md → /Users/.../Desktop/...), hit the bare error, couldn't

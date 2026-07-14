@@ -1,11 +1,8 @@
 // Installer guard — a purge uninstall must remove the COMIS_EGRESS iptables chain.
 //
-// install_egress_logging() wires every outbound packet from the comis uid through
-// a COMIS_EGRESS LOG chain hooked into OUTPUT. The uninstall flow never touched it:
-// after `--uninstall --purge --remove-user` the chain (and its uid-scoped OUTPUT
-// jump) stayed behind, and a later reinstall reported "Egress logging already
-// configured" against a rule referencing a recreated uid. System state created by
-// the installer must be removed by its uninstaller.
+// install_egress_logging() wires outbound traffic from the comis uid through a
+// COMIS_EGRESS LOG chain hooked into OUTPUT. A purge must remove both the chain
+// and its uid-scoped jump before removing the service user.
 //
 // The contract under test (real bash extracted from install.sh, fake iptables):
 //   1. uninstall_egress_chain() exists and is invoked by uninstall_main on the

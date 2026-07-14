@@ -342,17 +342,17 @@ describe("IcChatMessage", () => {
   /* ==================== Secure Media Attachment Tests ==================== */
 
   it("renderMarkdown defers relative media URLs instead of putting credentials in markup", () => {
-    const json = JSON.stringify({ url: "/media/abc123", type: "image", mimeType: "image/png", fileName: "photo.png" });
+    const json = JSON.stringify({ url: "/media/abc123def4567890.png", type: "image", mimeType: "image/png", fileName: "photo.png" });
     const result = renderMarkdown(`<!-- attachment:${json} -->`);
-    expect(result).toContain('data-media-url="/media/abc123"');
+    expect(result).toContain('data-media-url="/media/abc123def4567890.png"');
+    expect(result).toContain('alt="photo.png"');
     expect(result).not.toContain("?token=");
   });
 
-  it("renders external attachment URLs directly without credential parameters", () => {
+  it("rejects external attachment URLs to prevent automatic third-party requests", () => {
     const json = JSON.stringify({ url: "https://cdn.example.com/img.png", type: "image", mimeType: "image/png", fileName: "img.png" });
     const result = renderMarkdown(`<!-- attachment:${json} -->`);
-    expect(result).toContain('src="https://cdn.example.com/img.png"');
-    expect(result).not.toContain("token=");
+    expect(result).toBe("");
   });
 
   it("loads relative media without an Authorization header when no token is configured", async () => {

@@ -19,8 +19,8 @@ Canonical documentation index. Security controls are configuration- and platform
 
 - [Installation](https://docs.comis.ai/installation): Choose a supported way to install and operate Comis
 - [Requirements](https://docs.comis.ai/installation/requirements): Platform, runtime, and model prerequisites for Comis
-- [Install on Linux](https://docs.comis.ai/installation/install-linux): Step-by-step installation guide for Ubuntu, Fedora, and Arch Linux
-- [Install on a VPS](https://docs.comis.ai/installation/install-vps): Deploy Comis as a systemd service on a supported Ubuntu VPS
+- [Install with npm on Linux](https://docs.comis.ai/installation/install-linux): Install Comis as your current user without changing system services
+- [Install on a Linux server](https://docs.comis.ai/installation/install-vps): Run Comis under a managed systemd service on a Linux host
 - [Install with Docker](https://docs.comis.ai/installation/install-docker): Run Comis in a Docker container with Docker Compose
 - [Install on Render](https://docs.comis.ai/installation/install-render): Deploy Comis to Render.com from Docker Hub — managed Linux host, automatic HTTPS, persistent storage
 - [Configuration Guide](https://docs.comis.ai/installation/configuration): Set up your config.yaml with required settings, channels, and customization
@@ -129,7 +129,6 @@ Canonical documentation index. Security controls are configuration- and platform
 - [Security](https://docs.comis.ai/web-dashboard/security-view): Manage security settings, audit logs, approval gates, and gateway tokens
 - [Media](https://docs.comis.ai/web-dashboard/media): Test media processing capabilities and configure media providers
 - [Config Editor](https://docs.comis.ai/web-dashboard/config-editor): Edit your Comis configuration from the browser -- changes save to disk and survive restarts
-- [Setup Wizard](https://docs.comis.ai/web-dashboard/setup-wizard): Re-run the guided onboarding flow from inside the dashboard
 
 ## Operate Comis
 

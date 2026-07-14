@@ -409,6 +409,12 @@ describe("launchChrome", () => {
     expect(args).toContain("--no-first-run");
     expect(args).toContain("--no-default-browser-check");
     expect(args).toContain("--disable-sync");
+    expect(args).toContain("--disable-features=Translate,MediaRouter");
+    expect(args.some((arg) => arg.includes("ServiceWorker"))).toBe(false);
+    expect(args).toContain("--disable-quic");
+    expect(args).toContain("--disable-extensions");
+    expect(args).toContain("--dns-prefetch-disable");
+    expect(args).toContain("--disable-preconnect");
     expect(args).toContain("--password-store=basic");
     expect(args[args.length - 1]).toBe("about:blank");
   });

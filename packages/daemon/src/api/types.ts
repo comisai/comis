@@ -22,6 +22,7 @@ import type {
   TtsOutputFormat,
   TtsAutoMode,
   AppContainer,
+  SessionKey,
   PerAgentConfig,
   ProviderEntry,
   MemoryWriteValidationResult,
@@ -251,9 +252,9 @@ export interface ChannelsApiDeps {
   inboundMessageIdResolver?: import("../wiring/inbound-message-id-resolver.js").InboundMessageIdResolver;
   channelConfig: Record<string, { enabled: boolean }>;
   // Gateway attachment deps -- set after gateway init via mutable ref
-  wsConnections?: { broadcast(method: string, params: unknown): boolean };
+  wsConnections?: { sendToClientId(clientId: string, method: string, params: unknown): boolean };
   mediaDir?: string;
-  onGatewayAttachment?: (channelId: string, marker: string) => void;
+  onGatewayAttachment?: (sessionKey: SessionKey, marker: string) => void;
   // Delivery queue + service
   deliveryQueue?: import("@comis/core").DeliveryQueuePort;
   /** DeliveryService constructed once at the composition root (setup-channels.ts); createMessageHandlers calls `deps.deliveryService.deliverToChannel(...)`. */

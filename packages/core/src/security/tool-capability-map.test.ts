@@ -171,7 +171,9 @@ describe("assertToolMapSoundness", () => {
     const poisonedRoute = { ...TOOL_ROUTE_MAP, gateway: { kind: "executor" } };
     expect(() =>
       assertToolMapSoundness(poisonedCap, poisonedRoute, SUB_AGENT_TOOL_DENYLIST),
-    ).toThrow(/SUB_AGENT_TOOL_DENYLIST/);
+    ).toThrow(
+      'TOOL_CAPABILITY_MAP invariant violated: "gateway" is in SUB_AGENT_TOOL_DENYLIST — a denylisted (admin/destructive) tool must never be on the curated tool.invoke surface.',
+    );
   });
 
   it("throws when a cap-mapped tool has no route entry (completeness)", () => {

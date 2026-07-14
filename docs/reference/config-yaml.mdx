@@ -1632,14 +1632,12 @@ Action approval workflow. Rules are evaluated in order (first match wins).
 
 <Accordion title="daemon">
 
-Daemon process configuration for watchdog, shutdown, metrics, logging, and config change webhooks.
+Daemon process configuration for shutdown, metrics, logging, and config change webhooks.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `watchdogIntervalMs` | `number` | `30000` | Watchdog interval in ms (0 to disable) |
 | `shutdownTimeoutMs` | `number` | `30000` | Graceful shutdown timeout in ms |
 | `metricsIntervalMs` | `number` | `30000` | Process metrics collection interval in ms |
-| `eventLoopDelayThresholdMs` | `number` | `500` | Event loop delay threshold -- skip watchdog if exceeded |
 | `logLevels` | `Record<string, LogLevel>` | `{}` | Per-module log level overrides |
 
 **Logging (daemon.logging)**
@@ -1808,10 +1806,10 @@ External service integrations for search, MCP servers, media processing, and aut
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `name` | `string` | _(required)_ | Unique server name |
-| `transport` | `enum` | _(required)_ | Transport: `stdio` or `sse` |
+| `transport` | `enum` | _(inferred)_ | `stdio`, `http`, or legacy `sse`; omitted values infer `stdio` from `command` or `http` from `url` |
 | `command` | `string` | _(unset)_ | Command for stdio transport |
 | `args` | `string[]` | _(unset)_ | Arguments for stdio command |
-| `url` | `string (URL)` | _(unset)_ | URL for SSE transport |
+| `url` | `string (URL)` | _(unset)_ | URL for HTTP or SSE transport |
 | `env` | `Record<string, string>` | _(unset)_ | Environment variables for stdio process |
 | `enabled` | `boolean` | `true` | Whether this server is enabled |
 
@@ -1897,7 +1895,7 @@ Controls the `image_generate` tool. By default (`provider: auto`) image generati
 In the common `auto` case, four follow-main image paths are wired, each reusing the agent main provider's own credentials:
 
 - **OpenAI** (key-auth) — a key-auth `openai` main (with `OPENAI_API_KEY`) generates via the OpenAI Images API, default `gpt-image-1`. Pin explicitly with `provider: openai`.
-- **Google Gemini** (key-auth) — a `google` (or `google-vertex`) main (with `GOOGLE_API_KEY`) generates via Gemini (`generateContent`), default `gemini-2.5-flash-image`. Pin explicitly with `provider: google`. (The key is `GOOGLE_API_KEY` — the same key the completion path and vision use, **not** `GEMINI_API_KEY`.)
+- **Google Gemini** (key-auth) — a `google` main generates via Gemini (`generateContent`) with `GOOGLE_API_KEY`, default `gemini-2.5-flash-image`. A `google-vertex` main follows this same media route but still needs a separate `GOOGLE_API_KEY`; its `GOOGLE_CLOUD_API_KEY` authenticates Vertex model calls, not the Gemini image API. Pin explicitly with `provider: google`.
 - **OpenRouter** — a main on the OpenRouter proxy, or explicit `provider: openrouter` + `OPENROUTER_API_KEY`.
 - **Codex (ChatGPT-login)** — when the main provider is `openai-codex` (or you set `provider: openai-codex`), `image_generate` reuses the agent's **ChatGPT/Codex OAuth credentials** — there is **no image-specific API key** to set; the OAuth bearer is resolved per call and refreshes automatically (bootstrapped from `OAUTH_OPENAI_CODEX` or `comis auth login --provider openai-codex`). If the agent is not logged in, the tool returns an honest "unavailable" with a `comis auth login --provider openai-codex` hint. The Codex request's top-level model must be a **current codex chat model** (the hosted `image_generation` tool picks the actual image model server-side): the request uses your `model` override when set, otherwise the agent's own chat model **when the main provider is `openai-codex`**, otherwise the built-in codex chat default — so pinning `provider: openai-codex` on a non-codex main (e.g. an Anthropic agent) works out of the box and never sends the foreign main model to the ChatGPT backend.
 
@@ -1930,7 +1928,7 @@ integrations:
 ```
 
 <Note>
-A Codex main provider's image request identifies itself to the ChatGPT backend as the official Codex client (`originator: codex_cli_rs`, a Codex-shaped `User-Agent`, and a `ChatGPT-Account-ID` decoded from your token) — a **first-party-client compatibility shim** using **your own** OAuth credentials against the **same endpoint** the official Codex CLI uses (so Cloudflare does not 403 non-residential IPs). It is authorized reuse of your own credentials, **not detection evasion**.
+A Codex image request reuses the authenticated header shape of the Codex text transport, including `originator`, a Codex-shaped `User-Agent`, and the account ID decoded from the same OAuth token. This compatibility path uses your own credentials, but backend acceptance can vary or change. Configure an explicit supported image provider if the endpoint rejects the request.
 </Note>
 
 **Video Generation (integrations.media.videoGeneration)**

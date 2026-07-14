@@ -2466,8 +2466,8 @@ describe("no-finalizer rule: body pass-through byte-identical", () => {
   }, 15_000);
 });
 
-describe("awsSigV4 no-op: body and headers unchanged, deferral logged", () => {
-  it("upstream sees original body and custom header; deferral log emitted", async () => {
+describe("AWS SigV4 unavailable: body and headers remain unchanged", () => {
+  it("forwards the original request and logs clearly that it was not signed", async () => {
     const upstream = await makeBodyUpstreamFixture();
     const clock = createFakeClock(1_700_000_000_000);
     const secretManager = createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" });
@@ -2512,11 +2512,12 @@ describe("awsSigV4 no-op: body and headers unchanged, deferral logged", () => {
     expect(upstream.receivedHeaders.length).toBeGreaterThan(0);
     expect(upstream.receivedHeaders[0]?.["x-custom"]).toBe("val");
 
-    // Deferral log must be present
+    // The operator-facing log must state that signing did not happen.
     const debugCalls = mockLogger._calls("debug");
     const deferralLogs = debugCalls.filter((c) => c.payload["step"] === "finalizer_skipped");
     expect(deferralLogs).toHaveLength(1);
-    expect(deferralLogs[0]!.payload["hint"]).toBe("sigv4 deferred");
+    expect(deferralLogs[0]!.payload["hint"]).toBe("AWS SigV4 request signing is unavailable");
+    expect(deferralLogs[0]!.msg).toBe("AWS SigV4 finalizer skipped; request was not signed");
   }, 15_000);
 });
 
@@ -2925,7 +2926,8 @@ describe("fail-closed ordering: unlisted host must NOT get a cert minted before 
 describe("WebSocket upgrade guard", () => {
   it("inner request with Upgrade: websocket → 501, broker:denied emitted, no upstream reached", async () => {
     const upstream = await makeUpstreamFixture();
-    const deps = makeDeps();
+    const logger = makeMockLogger();
+    const deps = makeDeps({ logger: logger as unknown as MitmBrokerDeps["logger"] });
     const broker = createMitmBroker(deps);
     runningBrokers.push(broker);
     const brokerPort = await broker.start();
@@ -2960,6 +2962,16 @@ describe("WebSocket upgrade guard", () => {
 
     // Assert upstream received ZERO requests — guard fires before secret resolution
     expect(upstream.receivedHeaders).toHaveLength(0);
+
+    expect(logger._calls("warn")).toContainEqual({
+      level: "warn",
+      payload: expect.objectContaining({
+        step: "ws-guard",
+        errorKind: "precondition",
+        hint: "WebSocket upgrades are not supported; use an HTTPS REST endpoint instead.",
+      }),
+      msg: "WebSocket upgrade rejected by credential broker",
+    });
 
     upstream.server.close();
   });

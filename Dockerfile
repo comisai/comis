@@ -105,11 +105,13 @@ ARG COMIS_DOCKER_APT_PACKAGES=""
 # build time:
 #   docker build --build-arg COMIS_WITH_BROWSER=1            (stock Chrome)
 #   docker build --build-arg COMIS_WITH_XVFB=1               (+ headed via Xvfb)
-#   docker build --build-arg COMIS_WITH_CLOAKBROWSER=1       (stealth Chromium)
+#   docker build --build-arg COMIS_WITH_CLOAKBROWSER=1       (alternative Chromium runtime)
 # Setting XVFB or CLOAKBROWSER implies BROWSER (shared libs are required).
 ARG COMIS_WITH_BROWSER=0
 ARG COMIS_WITH_XVFB=0
 ARG COMIS_WITH_CLOAKBROWSER=0
+ARG CLOAKBROWSER_NPM_VERSION="0.4.10"
+ARG PLAYWRIGHT_CORE_NPM_VERSION="1.61.1"
 
 WORKDIR /app
 
@@ -158,53 +160,78 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # Install the DuckDB CLI for the orchestrate `sql`/`jsonpath` ResultRef query
 # engine. DuckDB is a single static binary — NOT in the Debian apt
 # repos (`apt-get install duckdb` would FAIL) and NOT an npm package, so we fetch
-# the pinned release-page static binary (verified against the duckdb releases
-# page: v1.5.4 is the latest stable 1.x). `dpkg --print-architecture` yields
-# `amd64`/`arm64`, which match DuckDB's `duckdb_cli-linux-<arch>.zip` asset names
-# (the image builds for both via buildx). Non-fatal: if the GitHub release CDN is
-# unreachable at build time the image still works — the daemon-side `sql` core
-# honest-degrades with errorKind:"precondition" ("duckdb is not installed") when
-# the binary is absent, exactly like the `jq` core's ENOENT path.
+# the pinned, checksummed release-page static binary. `dpkg --print-architecture`
+# yields `amd64`/`arm64`, which match DuckDB's release asset names. A failed
+# download or checksum fails the image build so published images have the
+# runtime capabilities they declare.
 ARG COMIS_DUCKDB_VERSION="1.5.4"
 RUN set -eu; \
     arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) sha256="1f2fa724fb054b3dbe1a9cbd13de5b76997d850e7087ec762ba88db04e0180cf" ;; \
+      arm64) sha256="377f03fb9f17ab5a78f28f829cbfcb5333da8ab3c2d0788f27694f81df77ed29" ;; \
+      *) echo "No verified DuckDB artifact for $arch" >&2; exit 1 ;; \
+    esac; \
     url="https://github.com/duckdb/duckdb/releases/download/v${COMIS_DUCKDB_VERSION}/duckdb_cli-linux-${arch}.zip"; \
-    ( curl -LsSf "$url" -o /tmp/duckdb_cli.zip \
-        && unzip -o /tmp/duckdb_cli.zip -d /usr/local/bin duckdb \
-        && chmod 755 /usr/local/bin/duckdb \
-        && rm -f /tmp/duckdb_cli.zip \
-        && /usr/local/bin/duckdb --version ) \
-    || echo "duckdb install failed — the orchestrate sql/jsonpath query engine will honest-degrade (precondition)"
+    curl -LsSf "$url" -o /tmp/duckdb_cli.zip; \
+    printf '%s  %s\n' "$sha256" /tmp/duckdb_cli.zip | sha256sum -c -; \
+    unzip -o /tmp/duckdb_cli.zip -d /usr/local/bin duckdb; \
+    chmod 755 /usr/local/bin/duckdb; \
+    rm -f /tmp/duckdb_cli.zip; \
+    /usr/local/bin/duckdb --version
 
-# Install uv/uvx for Python-based MCP servers (e.g. nanobanana). Mirrors
-# install_uv() in install.sh. UV_UNMANAGED_INSTALL=/usr/local/bin puts the
-# binaries on PATH system-wide and disables the self-updater (image is
-# immutable; updates arrive via rebuild). Non-fatal: if the Astral CDN is
-# unreachable during build, the image still works for non-Python MCP servers.
-RUN curl -LsSf https://astral.sh/uv/install.sh \
-        | env UV_UNMANAGED_INSTALL=/usr/local/bin sh \
-    || echo "uv install failed — Python-based MCP servers will be unavailable"
+# Install uv/uvx for Python-based MCP servers from a pinned, checksummed release.
+ARG COMIS_UV_VERSION="0.11.8"
+RUN set -eu; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) target="x86_64-unknown-linux-gnu"; sha256="56dd1b66701ecb62fe896abb919444e4b83c5e8645cca953e6ddd496ff8a0feb" ;; \
+      arm64) target="aarch64-unknown-linux-gnu"; sha256="eee8dd658d20e5ac85fec9c2326b6cbc9d83a1eef09ef07433e58698ac849591" ;; \
+      *) echo "No verified uv artifact for $arch" >&2; exit 1 ;; \
+    esac; \
+    archive="/tmp/uv.tar.gz"; \
+    url="https://github.com/astral-sh/uv/releases/download/${COMIS_UV_VERSION}/uv-${target}.tar.gz"; \
+    curl -LsSf "$url" -o "$archive"; \
+    printf '%s  %s\n' "$sha256" "$archive" | sha256sum -c -; \
+    tar -xzf "$archive" -C /tmp; \
+    install -m 0755 "/tmp/uv-${target}/uv" "/tmp/uv-${target}/uvx" /usr/local/bin/; \
+    rm -rf "$archive" "/tmp/uv-${target}"; \
+    uv --version
 
-# Install rust toolchain. Mirrors install_rust() in install.sh. CARGO_HOME and
+# Install rustup from a pinned, checksummed binary, then install a pinned Rust
+# toolchain. Mirrors install_rust() in install.sh. CARGO_HOME and
 # RUSTUP_HOME are placed at /usr/local/{cargo,rustup} so they live under the
 # image's read-only system tree. Symlinks into /usr/local/bin put cargo/rustc/
 # rustup on PATH for any user. /etc/profile.d/rustup.sh exports the env vars
 # for login shells (bare-metal install.sh writes the same file). --profile
-# minimal keeps the install lean (~150MB instead of ~500MB). Non-fatal: if the
-# rustup CDN is unreachable, the image still works for non-Rust toolchains.
-RUN curl -LsSf https://sh.rustup.rs \
-        | env CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup \
-            sh -s -- -y --no-modify-path --default-toolchain stable --profile minimal \
-    && for bin in cargo rustc rustup; do \
+# minimal keeps the install lean (~150MB instead of ~500MB). Installation and
+# checksum failures stop the image build.
+ARG COMIS_RUSTUP_VERSION="1.28.2"
+ARG COMIS_RUST_TOOLCHAIN_VERSION="1.95.0"
+RUN set -eu; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) target="x86_64-unknown-linux-gnu"; sha256="20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c" ;; \
+      arm64) target="aarch64-unknown-linux-gnu"; sha256="e3853c5a252fca15252d07cb23a1bdd9377a8c6f3efa01531109281ae47f841c" ;; \
+      *) echo "No verified rustup artifact for $arch" >&2; exit 1 ;; \
+    esac; \
+    rustup_init=/tmp/rustup-init; \
+    url="https://static.rust-lang.org/rustup/archive/${COMIS_RUSTUP_VERSION}/${target}/rustup-init"; \
+    curl -LsSf "$url" -o "$rustup_init"; \
+    printf '%s  %s\n' "$sha256" "$rustup_init" | sha256sum -c -; \
+    chmod 0755 "$rustup_init"; \
+    env CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup \
+        "$rustup_init" -y --no-modify-path --default-toolchain "$COMIS_RUST_TOOLCHAIN_VERSION" --profile minimal; \
+    for bin in cargo rustc rustup; do \
         ln -sf "/usr/local/cargo/bin/$bin" "/usr/local/bin/$bin"; \
-       done \
-    && printf '%s\n%s\n%s\n' \
+    done; \
+    printf '%s\n%s\n%s\n' \
         '# Comis-managed: makes the system rustup install discoverable to all login shells.' \
         'export RUSTUP_HOME=/usr/local/rustup' \
         'export CARGO_HOME=/usr/local/cargo' \
-        > /etc/profile.d/rustup.sh \
-    && chmod 644 /etc/profile.d/rustup.sh \
-    || echo "rustup install failed — Rust-based tools will be unavailable"
+        > /etc/profile.d/rustup.sh; \
+    chmod 644 /etc/profile.d/rustup.sh; \
+    env CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup rustc --version
 
 # Daemon process must see RUSTUP_HOME / CARGO_HOME as well so cargo works for
 # any agent flow that goes through the daemon (mirrors the systemd unit's
@@ -239,13 +266,12 @@ RUN if getent passwd 1000 >/dev/null 2>&1; then \
 #      to worry about on the base image used here.)
 #   2. The browser binary:
 #        * --with-browser   → Google Chrome from Google's official apt repo
-#        * --with-cloakbrowser → CloakBrowser stealth Chromium via npm (the
+#        * --with-cloakbrowser → CloakBrowser Chromium via npm (the
 #          binary auto-downloads to ~/.cloakbrowser/ on first launch; we
 #          pre-pull it at build time so the container's first browser tool
 #          call doesn't stall on a 200 MB fetch).
 #   3. Xvfb when --with-xvfb is on, so the daemon can run headed against a
-#      virtual display (needed for the hardest anti-bot tier — DataDome,
-#      Kasada, some Cloudflare-managed challenges).
+#      virtual display for workflows that require a visible display server.
 #
 # Skipped entirely when all three args are 0 (the default) — keeps the
 # baseline image lean.
@@ -289,11 +315,16 @@ RUN if [ "${COMIS_WITH_BROWSER}" = "1" ] || [ "${COMIS_WITH_XVFB}" = "1" ] || [ 
             printf '%s\n' '{"name":"cloakbrowser-wrapper","version":"0.0.0","private":true}' \
                 > /opt/cloakbrowser-wrapper/package.json; \
             chown comis:comis /opt/cloakbrowser-wrapper/package.json; \
-            su - comis -c "cd /opt/cloakbrowser-wrapper && npm install --no-audit --no-fund --silent cloakbrowser playwright-core"; \
-            # Pre-pull the stealth Chromium binary (~140-210 MB depending on
+            su - comis -c "cd /opt/cloakbrowser-wrapper && npm install --no-audit --no-fund --silent --save-exact cloakbrowser@${CLOAKBROWSER_NPM_VERSION} playwright-core@${PLAYWRIGHT_CORE_NPM_VERSION}"; \
+            # Pre-pull the Chromium binary (~140-210 MB depending on
             # release). Filter the per-MB progress chatter so the build log
             # stays readable.
-            su - comis -c "/opt/cloakbrowser-wrapper/node_modules/.bin/cloakbrowser install 2>&1 | grep -vE 'Download progress:' || true"; \
+            if ! su - comis -c "/opt/cloakbrowser-wrapper/node_modules/.bin/cloakbrowser install" > /tmp/cloakbrowser-install.log 2>&1; then \
+                sed -E '/Download progress:/d' /tmp/cloakbrowser-install.log >&2; \
+                exit 1; \
+            fi; \
+            sed -E '/Download progress:/d' /tmp/cloakbrowser-install.log; \
+            rm -f /tmp/cloakbrowser-install.log; \
             mkdir -p /home/comis/.config/comis/browser /home/comis/.config/chromium; \
             chown -R comis:comis /home/comis/.cloakbrowser /home/comis/.config; \
         fi; \

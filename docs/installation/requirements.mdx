@@ -25,18 +25,19 @@ import NonTechnicalNote from '/snippets/non-technical-note.mdx';
 - a C/C++ build toolchain for native dependencies
 - outbound HTTPS for the package registry and any networked providers or tools
 
-On Debian or Ubuntu, for example:
+Install Node.js from your distribution or the [official Node.js download
+instructions](https://nodejs.org/en/download), then add the native build tools
+for your platform. On Debian or Ubuntu:
 
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt-get install -y nodejs build-essential python3
+sudo apt-get update
+sudo apt-get install -y build-essential python3
 ```
 
 On Fedora or RHEL:
 
 ```bash
-curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo -E bash -
-sudo dnf install -y nodejs gcc-c++ make python3
+sudo dnf install -y gcc-c++ make python3
 ```
 
 On macOS:

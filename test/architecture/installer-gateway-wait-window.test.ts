@@ -19,7 +19,7 @@
 // These tests run the REAL bash function extracted from install.sh with a fake
 // curl standing in for the gateway.
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -46,12 +46,15 @@ interface WaitScenario {
   respondAfter: number;
   /** COMIS_GATEWAY_WAIT_SECS override for the run. */
   waitSecs: number;
+  /** Optional config used to verify gateway-only host/port discovery. */
+  configYaml?: string;
 }
 
-function runWait({ respondAfter, waitSecs }: WaitScenario): {
+function runWait({ respondAfter, waitSecs, configYaml }: WaitScenario): {
   code: number;
   out: string;
   elapsedMs: number;
+  requests: string[];
 } {
   const work = mkdtempSync(join(tmpdir(), "comis-installer-wait-"));
   cleanups.push(work);
@@ -63,6 +66,7 @@ function runWait({ respondAfter, waitSecs }: WaitScenario): {
     '[[ -f "$start_file" ]] || date +%s > "$start_file"',
     'now=$(date +%s); t0=$(cat "$start_file")',
     `ready=${respondAfter}`,
+    `printf '%s\n' "$*" >> "${work}/curl-calls"`,
     '[[ "$ready" -ge 0 ]] && [[ $((now - t0)) -ge "$ready" ]] && exit 0',
     "exit 7",
     "",
@@ -72,12 +76,15 @@ function runWait({ respondAfter, waitSecs }: WaitScenario): {
   writeFileSync(join(binDir, "curl"), curl);
   execFileSync("chmod", ["+x", join(binDir, "curl")]);
 
+  const configPath = join(work, "config.yaml");
+  if (configYaml !== undefined) writeFileSync(configPath, configYaml);
+
   const harness = [
     "#!/usr/bin/env bash",
     "set -u",
     `export PATH="${binDir}:$PATH"`,
     `export COMIS_GATEWAY_WAIT_SECS=${waitSecs}`,
-    'COMIS_CONFIG_FILE="/nonexistent/config.yaml"',
+    `COMIS_CONFIG_FILE="${configYaml === undefined ? "/nonexistent/config.yaml" : configPath}"`,
     'ui_info() { echo "INFO: $*"; }',
     'ui_warn() { echo "WARN: $*"; }',
     extractFn("wait_for_daemon_ready"),
@@ -89,13 +96,22 @@ function runWait({ respondAfter, waitSecs }: WaitScenario): {
   const startedAt = Date.now();
   try {
     const out = execFileSync("bash", [harnessPath], { stdio: "pipe" }).toString();
-    return { code: 0, out, elapsedMs: Date.now() - startedAt };
+    const calls = join(work, "curl-calls");
+    return {
+      code: 0,
+      out,
+      elapsedMs: Date.now() - startedAt,
+      requests: existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n") : [],
+    };
   } catch (err) {
     const e = err as { status?: number; stdout?: Buffer; stderr?: Buffer };
     return {
       code: e.status ?? -1,
       out: `${e.stdout?.toString() ?? ""}${e.stderr?.toString() ?? ""}`,
       elapsedMs: Date.now() - startedAt,
+      requests: existsSync(join(work, "curl-calls"))
+        ? readFileSync(join(work, "curl-calls"), "utf8").trim().split("\n")
+        : [],
     };
   }
 }
@@ -127,10 +143,61 @@ describe("install.sh wait_for_daemon_ready window sizing", () => {
     expect(result.code).not.toBe(0);
     expect(result.out).toMatch(/embedding model/i);
   });
+
+  it("reads host and port only from the gateway section of the YAML config", () => {
+    const result = runWait({
+      respondAfter: 0,
+      waitSecs: 2,
+      configYaml: [
+        "observability:",
+        "  otel:",
+        "    host: collector.example.com",
+        "    port: 4317",
+        "gateway:",
+        "  host: 127.0.0.1",
+        "  port: 8877",
+        "",
+      ].join("\n"),
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.requests[0]).toContain("http://127.0.0.1:8877/health");
+  });
+
+  it("normalizes a wildcard IPv6 gateway bind to a bracketed loopback probe", () => {
+    const result = runWait({
+      respondAfter: 0,
+      waitSecs: 2,
+      configYaml: "gateway:\n  host: '::'\n  port: 8878\n",
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.requests[0]).toContain("http://[::1]:8878/health");
+  });
 });
 
 describe("install.sh gateway-wait warn messages state the real window", () => {
   it("no caller hardcodes the stale 'within 20s' text after the window became configurable", () => {
     expect(installSh).not.toContain("within 20s");
+  });
+
+  it("every started service path fails the install when the gateway never becomes ready", () => {
+    const serviceFunctions = [
+      ["register_service_systemd()", "register_service_systemd_user()"],
+      ["register_service_systemd_user()", "ensure_pm2_installed()"],
+      ["register_service_pm2()", "register_service()"],
+    ] as const;
+
+    for (const [startMarker, endMarker] of serviceFunctions) {
+      const start = installSh.indexOf(startMarker);
+      const end = installSh.indexOf(endMarker, start + startMarker.length);
+      const body = installSh.slice(start, end);
+      expect(start, `${startMarker} must exist`).toBeGreaterThanOrEqual(0);
+      expect(end, `${endMarker} must follow ${startMarker}`).toBeGreaterThan(start);
+      expect(body, `${startMarker} must poll gateway readiness`).toContain("if wait_for_daemon_ready; then");
+      expect(body, `${startMarker} must report readiness timeout as an install error`).toMatch(
+        /else[\s\S]*ui_error[^\n]*gateway[^\n]*respond[\s\S]*return 1/,
+      );
+    }
   });
 });

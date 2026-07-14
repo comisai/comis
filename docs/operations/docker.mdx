@@ -68,10 +68,10 @@ ARG COMIS_WITH_CLOAKBROWSER=0
   system packages into the final image.
 - **Browser tool** -- three independent flags mirror the bare-VPS installer:
   `COMIS_WITH_BROWSER=1` installs Google Chrome + headless shared libs;
-  `COMIS_WITH_XVFB=1` adds Xvfb (entrypoint shim starts it on `:99` before the
-  daemon); `COMIS_WITH_CLOAKBROWSER=1` installs CloakBrowser (stealth Chromium)
-  instead of stock Chrome. All implications and the datacenter-IP caveat are
-  documented in [agent-tools/browser](/agent-tools/browser#stealth-mode-anti-bot-detection).
+  `COMIS_WITH_XVFB=1` adds Xvfb (the entrypoint verifies its `:99` socket before
+  starting the daemon and exits if the display fails); `COMIS_WITH_CLOAKBROWSER=1` installs CloakBrowser as an alternative
+  Chromium runtime instead of stock Chrome. Runtime limitations and licensing are
+  documented in [Browser runtime options](/agent-tools/browser#browser-runtime-options).
 
 ### Installer-built variant (`Dockerfile.install`)
 

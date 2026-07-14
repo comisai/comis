@@ -333,9 +333,14 @@ export const SUPPORTED_CHANNELS: readonly SupportedChannel[] = [
 
 /** Map provider identifier to the environment variable key for the API key. */
 export const PROVIDER_ENV_KEYS: Record<string, string> = {
+  "github-copilot": "COPILOT_GITHUB_TOKEN",
   anthropic: "ANTHROPIC_API_KEY",
+  "ant-ling": "ANT_LING_API_KEY",
   openai: "OPENAI_API_KEY",
+  "azure-openai-responses": "AZURE_OPENAI_API_KEY",
+  nvidia: "NVIDIA_API_KEY",
   google: "GOOGLE_API_KEY",
+  "google-vertex": "GOOGLE_CLOUD_API_KEY",
   groq: "GROQ_API_KEY",
   mistral: "MISTRAL_API_KEY",
   deepseek: "DEEPSEEK_API_KEY",
@@ -343,6 +348,34 @@ export const PROVIDER_ENV_KEYS: Record<string, string> = {
   together: "TOGETHER_API_KEY",
   cerebras: "CEREBRAS_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
+  "vercel-ai-gateway": "AI_GATEWAY_API_KEY",
+  zai: "ZAI_API_KEY",
+  "zai-coding-cn": "ZAI_CODING_CN_API_KEY",
+  minimax: "MINIMAX_API_KEY",
+  "minimax-cn": "MINIMAX_CN_API_KEY",
+  moonshotai: "MOONSHOT_API_KEY",
+  "moonshotai-cn": "MOONSHOT_API_KEY",
+  huggingface: "HF_TOKEN",
+  fireworks: "FIREWORKS_API_KEY",
+  opencode: "OPENCODE_API_KEY",
+  "opencode-go": "OPENCODE_API_KEY",
+  "kimi-coding": "KIMI_API_KEY",
+  xiaomi: "XIAOMI_API_KEY",
+  "xiaomi-token-plan-cn": "XIAOMI_TOKEN_PLAN_CN_API_KEY",
+  "xiaomi-token-plan-ams": "XIAOMI_TOKEN_PLAN_AMS_API_KEY",
+  "xiaomi-token-plan-sgp": "XIAOMI_TOKEN_PLAN_SGP_API_KEY",
+};
+
+/** Providers whose usable credential consists of multiple independently stored values. */
+export const MULTI_VALUE_PROVIDER_CREDENTIAL_NAMES: Readonly<
+  Record<string, readonly string[]>
+> = {
+  "cloudflare-workers-ai": ["CLOUDFLARE_API_KEY", "CLOUDFLARE_ACCOUNT_ID"],
+  "cloudflare-ai-gateway": [
+    "CLOUDFLARE_API_KEY",
+    "CLOUDFLARE_ACCOUNT_ID",
+    "CLOUDFLARE_GATEWAY_ID",
+  ],
 };
 
 // ---------- Tool Provider Constants ----------

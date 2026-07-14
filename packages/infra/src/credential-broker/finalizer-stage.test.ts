@@ -160,7 +160,7 @@ describe("runFinalizer / runAwsSigV4Finalizer", () => {
     );
   });
 
-  it("runAwsSigV4Finalizer returns body+headers unchanged and logs step=finalizer_skipped hint=sigv4 deferred", () => {
+  it("reports clearly that the unchanged AWS request was not signed", () => {
     const log = makeMockLogger();
     const body = Buffer.from("payload");
     const headers = new Headers({ authorization: "Bearer token" });
@@ -172,7 +172,8 @@ describe("runFinalizer / runAwsSigV4Finalizer", () => {
     const debugCalls = log._calls("debug");
     const finalizerLogs = debugCalls.filter((c) => c.payload["step"] === "finalizer_skipped");
     expect(finalizerLogs).toHaveLength(1);
-    expect(finalizerLogs[0]!.payload["hint"]).toBe("sigv4 deferred");
+    expect(finalizerLogs[0]!.payload["hint"]).toBe("AWS SigV4 request signing is unavailable");
+    expect(finalizerLogs[0]!.msg).toBe("AWS SigV4 finalizer skipped; request was not signed");
   });
 });
 

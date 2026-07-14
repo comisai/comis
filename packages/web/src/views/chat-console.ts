@@ -397,7 +397,17 @@ export class IcChatConsole extends LitElement {
   private _handleNotificationAttachment(params: unknown): void {
     const p = params as Record<string, unknown> | undefined;
     const url = typeof p?.url === "string" ? p.url : "";
-    if (!url) return;
+    const channelId = typeof p?.channelId === "string" ? p.channelId : "";
+    const notificationSessionKey = typeof p?.sessionKey === "string" ? p.sessionKey : "";
+    const activeSession = parseSessionKeyString(this._activeSession);
+    const notifiedSession = parseSessionKeyString(notificationSessionKey);
+    const isActiveSession = notificationSessionKey === this._activeSession
+      || (activeSession !== undefined
+        && notifiedSession !== undefined
+        && activeSession.tenantId === "web"
+        && activeSession.userId === notifiedSession.userId
+        && activeSession.channelId === notifiedSession.channelId);
+    if (!url || !channelId || !isActiveSession || notifiedSession?.channelId !== channelId) return;
     console.debug("[chat] notification.attachment received:", p?.type, p?.fileName);
     const type = (p?.type as string) ?? "file";
     const fileName = (p?.fileName as string) ?? "attachment";

@@ -20,8 +20,7 @@
  *        - `{ ok: true }` → silent (operators do not want noise on boot).
  *
  * The 4000 ms timeout is intentionally tighter than the CLI doctor variant's
- * 5000 ms — boot must stay under PM2 / systemd watchdog windows even on the
- * worst case.
+ * 5000 ms so this optional network probe cannot delay startup diagnostics.
  *
  * Distro detection (`/etc/os-release` parser + 5-distro install-hint switch)
  * is duplicated inline from `packages/cli/src/doctor/checks/oauth-health.ts`.
@@ -39,7 +38,7 @@ import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import type { ComisLogger } from "@comis/infra";
 import type { PerAgentConfig } from "@comis/core";
 
-/** Boot-tighter timeout — keeps the preflight inside PM2/systemd watchdog windows. */
+/** Bounded timeout for the optional boot-time network probe. */
 const PREFLIGHT_TIMEOUT_MS = 4000;
 
 /** Pino `module` field — operators grep on this to isolate preflight logs. */
@@ -113,9 +112,8 @@ function caCertificatesInstallHint(os: OsRelease | null): string {
  * fails. Never throws — `runOAuthTlsPreflight` returns a discriminated union
  * and this function only reads-and-logs.
  *
- * Caller is expected to invoke this fire-and-forget (`void`) AFTER the
- * `"Comis daemon started"` banner so the daemon already counts as healthy
- * to PM2/systemd by the time the probe resolves.
+ * Caller invokes this fire-and-forget (`void`) after the
+ * `"Comis daemon started"` banner so it never blocks gateway startup.
  */
 export async function emitOAuthTlsPreflightWarn(logger: ComisLogger): Promise<void> {
   const result = await runOAuthTlsPreflight({ timeoutMs: PREFLIGHT_TIMEOUT_MS });

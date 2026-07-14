@@ -187,7 +187,7 @@ export function assertToolMapSoundness(
     if (denylist.has(tool)) {
       throw new Error(
         `TOOL_CAPABILITY_MAP invariant violated: "${tool}" is in SUB_AGENT_TOOL_DENYLIST — ` +
-          `a denylisted (admin/destructive) tool must never be on the curated tool.invoke surface (DISPATCH-03).`,
+          `a denylisted (admin/destructive) tool must never be on the curated tool.invoke surface.`,
       );
     }
     if (!(tool in routeMap)) {

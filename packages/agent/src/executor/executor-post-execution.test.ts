@@ -1554,7 +1554,7 @@ describe("LCD afterTurn deferred compaction + serializer interlock", () => {
     const deferred = store.runOnConversation("conv-c4", async () => {
       deferredDone = true;
     });
-    suppressError(deferred, "deferred LCD compaction (R3 serializer)");
+    suppressError(deferred, "postExecution deferred LCD compaction");
 
     // The caller (afterTurn) continues here WITHOUT awaiting `deferred`. The
     // deferred unit's queue slot is still held by the latch → not yet complete.
@@ -2505,8 +2505,9 @@ describe("degraded-reply chokepoint resolves language once + passes the tag", ()
         cause: "oversized_input",
       }),
     );
-    // …and carries the knob path + incident ref verbatim.
-    expect(reply).toContain("contextEngine.budget.effectiveContextCapSmall");
+    // …and keeps internal config paths out of the user-visible reply while
+    // preserving the incident reference for operator correlation.
+    expect(reply).not.toContain("contextEngine.");
     expect(reply).toContain("(incident tid-he)");
   });
 

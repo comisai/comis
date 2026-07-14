@@ -94,6 +94,21 @@ describe("resolveProviderCredential", () => {
     expect(r.source).toBe("keyless");
   });
 
+  it("requires a configured key name even when the provider type can be keyless", () => {
+    const r = resolveProviderCredential("secured-ollama", {
+      providerEntries: {
+        "secured-ollama": makeEntry({
+          type: "ollama",
+          apiKeyName: "OLLAMA_API_KEY",
+        }),
+      },
+      secretManager: { has: () => false },
+    });
+
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain('apiKeyName is "OLLAMA_API_KEY"');
+  });
+
   // ---------------------------------------------------------------------
   // Source A: providers.entries with secret-manager-resolvable apiKeyName
   // ---------------------------------------------------------------------
@@ -105,6 +120,18 @@ describe("resolveProviderCredential", () => {
     });
     expect(r.ok).toBe(true);
     expect(r.source).toBe("providers_entry");
+  });
+
+  it("does not fall back to an opposite Anthropic credential when the configured name is missing", () => {
+    const r = resolveProviderCredential("anthropic", {
+      providerEntries: {
+        anthropic: makeEntry({ type: "anthropic", apiKeyName: "ANTHROPIC_OAUTH_TOKEN" }),
+      },
+      secretManager: { has: (name) => name === "ANTHROPIC_API_KEY" },
+    });
+
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain('apiKeyName is "ANTHROPIC_OAUTH_TOKEN"');
   });
 
   // ---------------------------------------------------------------------
@@ -137,23 +164,14 @@ describe("resolveProviderCredential", () => {
   });
 
   // ---------------------------------------------------------------------
-  // Source: secret-store canonical (encrypted-storage mode)
+  // Source: secret-store static mapping (encrypted-storage mode)
   //
-  // Live finding 2026-06-12 (agent-tools run): in `security.storage: encrypted`
-  // mode the canonical key (e.g. ANTHROPIC_API_KEY) lives in the encrypted
-  // secret store, NOT process.env. The runtime hydrates the DEFAULT_PROVIDER_KEYS
-  // providers into AuthStorage via secretManager.get(canonicalKey)
-  // (setup-agents-runtime.ts createAuthStorageAdapter), so a bare
-  // `provider: anthropic` agent with no providers.entries block works. The
-  // pre-write resolver previously only consulted the secret store via Source A
-  // (which requires a providers.entries.apiKeyName mapping) then fell to
-  // getEnvApiKey (process.env) — false-rejecting an agent whose key IS present,
-  // and (worse) telling the operator to env_set a key that already exists.
+  // In encrypted mode a provider key lives in the secret store rather than
+  // process.env. The pre-write resolver and runtime AuthStorage bridge must use
+  // the same provider mapping so both accept the same configuration.
   // ---------------------------------------------------------------------
 
-  it("passes via secret store when a bare DEFAULT_PROVIDER_KEYS provider's canonical key is in secretManager but not env", () => {
-    // The live encrypted-store case: ANTHROPIC_API_KEY in the secret store,
-    // not in env, and NO providers.entries.anthropic block.
+  it("passes via secret store when a bare provider's static key is not ambient", () => {
     const r = resolveProviderCredential("anthropic", {
       providerEntries: {},
       secretManager: { has: (k) => k === "ANTHROPIC_API_KEY" },
@@ -163,7 +181,7 @@ describe("resolveProviderCredential", () => {
     expect(r.resolvedProvider).toBe("anthropic");
   });
 
-  it("resolves provider:default → DEFAULT_PROVIDER_KEYS provider from the secret store", () => {
+  it("resolves provider default to a statically mapped secret-store provider", () => {
     const r = resolveProviderCredential("default", {
       providerEntries: {},
       modelsConfig: { defaultProvider: "anthropic" },
@@ -174,16 +192,43 @@ describe("resolveProviderCredential", () => {
     expect(r.resolvedProvider).toBe("anthropic");
   });
 
-  it("does NOT apply secret-store canonical to non-DEFAULT_PROVIDER_KEYS providers (runtime does not hydrate them)", () => {
-    // openrouter is not in DEFAULT_PROVIDER_KEYS, so the runtime only hydrates
-    // it from the secret store via a providers.entries.apiKeyName mapping. A
-    // bare openrouter with the key loose in the store must still reject —
-    // matching what the runtime would actually do.
+  it("applies secret-store canonical resolution to OpenRouter without a provider entry", () => {
     const r = resolveProviderCredential("openrouter", {
       providerEntries: {},
       secretManager: { has: (k) => k === "OPENROUTER_API_KEY" },
     });
+    expect(r.ok).toBe(true);
+    expect(r.source).toBe("secret_store_canonical");
+  });
+
+  it("accepts a catalog alias from the secret store without a provider entry", () => {
+    const r = resolveProviderCredential("google", {
+      providerEntries: {},
+      secretManager: { has: (k) => k === "GEMINI_API_KEY" },
+    });
+    expect(r.ok).toBe(true);
+    expect(r.source).toBe("secret_store_canonical");
+  });
+
+  it("accepts an encrypted Vertex API key without ADC routing values", () => {
+    const r = resolveProviderCredential("google-vertex", {
+      providerEntries: {},
+      secretManager: { has: (name) => name === "GOOGLE_CLOUD_API_KEY" },
+    });
+
+    expect(r.ok).toBe(true);
+    expect(r.source).toBe("secret_store_canonical");
+  });
+
+  it("rejects encrypted Cloudflare Gateway credentials without a gateway identifier", () => {
+    const configured = new Set(["CLOUDFLARE_API_KEY", "CLOUDFLARE_ACCOUNT_ID"]);
+    const r = resolveProviderCredential("cloudflare-ai-gateway", {
+      providerEntries: {},
+      secretManager: { has: (name) => configured.has(name) },
+    });
+
     expect(r.ok).toBe(false);
+    expect(r.reason).toContain("CLOUDFLARE_GATEWAY_ID");
   });
 
   it("prefers Source A (providers_entry) over secret-store canonical when both match", () => {
@@ -220,6 +265,8 @@ describe("resolveProviderCredential", () => {
     });
     expect(r.ok).toBe(false);
     expect(r.reason).toContain('apiKeyName is "OR_KEY"');
+    expect(r.reason).toContain("credential store");
+    expect(r.reason).not.toContain("not in env");
     expect(r.reason).toContain("env_set");
     expect(r.reason).toContain('"OR_KEY"');
   });
@@ -320,6 +367,7 @@ describe("resolveProviderCredential — Source C (oauth_profile)", () => {
     });
     expect(r.ok).toBe(false);
     expect(r.reason).toContain('OAuth profile "openai-codex:user_a@example.com" is configured but not found');
+    expect(r.reason).not.toContain("auth-profiles.json");
     expect(r.reason).toContain("comis auth login --provider openai-codex");
     expect(r.reason).toContain("comis auth list");
     // Crucially: no API-key recovery copy when this is an OAuth-shaped failure
@@ -376,16 +424,10 @@ describe("resolveProviderCredential — Source C (oauth_profile)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SA5 tests — canonicalEnvKeyHint messaging contract
+// Static provider key hint messaging
 // ---------------------------------------------------------------------------
-// NOTE (SA5 deviation): The plan proposed replacing canonicalEnvKeyHint with
-// findEnvKeys(provider)?.[0] from @earendil-works/pi-ai. However, findEnvKeys
-// only returns env-var names that are CURRENTLY SET in process.env — it cannot
-// return canonical names for the "no credential found" error path where
-// canonicalEnvKeyHint is called. The local hardcoded map is therefore retained.
-// The tests below verify the messaging contract instead of the internal impl.
 
-describe("SA5 canonicalEnvKeyHint — messaging contract", () => {
+describe("static provider key hint messaging", () => {
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(() => {
@@ -398,53 +440,38 @@ describe("SA5 canonicalEnvKeyHint — messaging contract", () => {
     process.env = originalEnv;
   });
 
-  it("SA5 canonicalEnvKeyHint includes ANTHROPIC_API_KEY hint in rejection message", () => {
-    // canonicalEnvKeyHint returns "ANTHROPIC_API_KEY" for "anthropic" —
-    // the rejection message must include this hint for operator guidance.
-    // MESSAGING-ONLY: the hint is in the error message, never used for resolution.
+  it("includes the preferred Anthropic key in the rejection message", () => {
     const r = resolveProviderCredential("anthropic", {
       providerEntries: {},
       secretManager: { has: () => false },
     });
     expect(r.ok).toBe(false);
     expect(r.reason).toContain("ANTHROPIC_API_KEY");
+    expect(r.reason).not.toContain("canonical env key");
   });
 
-  it("SA5 canonicalEnvKeyHint safe-fallback for unknown provider", () => {
-    // For a completely unknown provider, canonicalEnvKeyHint returns undefined.
-    // The rejection message is still actionable (env_list fallback), just without a hint.
+  it("keeps the rejection actionable when a provider has no static key mapping", () => {
     const r = resolveProviderCredential("my-custom-provider", {
       providerEntries: {},
       secretManager: { has: () => false },
     });
     expect(r.ok).toBe(false);
-    // Must not throw — safe fallback
     expect(r.reason).toContain('Cannot set agent provider to "my-custom-provider"');
-    // No env-key hint expected for unknown provider
     expect(r.reason).not.toContain("MY_CUSTOM_PROVIDER_API_KEY");
   });
 });
 
 // ---------------------------------------------------------------------------
-// SA6 RED tests — KEYLESS_PROVIDER_TYPES shared source
+// KEYLESS_PROVIDER_TYPES shared source
 // ---------------------------------------------------------------------------
 
-describe("SA6 KEYLESS_PROVIDER_TYPES shared source", () => {
-  it("SA6 credential-resolver KEYLESS_PROVIDER_TYPES source is shared — includes both ollama and lm-studio", () => {
-    // Verify that the KEYLESS_PROVIDER_TYPES imported from @comis/core
-    // (the shared canonical source after SA6b) includes both "ollama" and "lm-studio".
-    // PASSES even on current code because @comis/core now exports the correct set
-    // — the RED failure is in the agent-side (model-registry-adapter) test above,
-    // and in the production code that still has local Sets that don't import from core.
+describe("KEYLESS_PROVIDER_TYPES shared source", () => {
+  it("includes both Ollama and LM Studio provider types", () => {
     expect(KEYLESS_PROVIDER_TYPES.has("ollama")).toBe(true);
     expect(KEYLESS_PROVIDER_TYPES.has("lm-studio")).toBe(true);
   });
 
-  it("SA6 lm-studio keyless pass through credential-resolver when shared set is used", () => {
-    // After SA6b, credential-resolver imports KEYLESS_PROVIDER_TYPES from @comis/core.
-    // This test verifies the keyless path works for lm-studio via the resolver.
-    // PASSES today (lm-studio is already in credential-resolver's local set).
-    // Regression test: after SA6b the shared set must still include lm-studio.
+  it("passes LM Studio through the keyless credential path", () => {
     const r = resolveProviderCredential("my-lmstudio", {
       providerEntries: { "my-lmstudio": makeEntry({ type: "lm-studio" }) },
       secretManager: { has: () => false },

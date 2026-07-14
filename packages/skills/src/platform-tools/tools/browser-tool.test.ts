@@ -315,7 +315,7 @@ describe("browser-tool screenshot pipeline", () => {
     expect(imageBlock.mimeType).toBe("image/jpeg");
   });
 
-  it("screenshot falls back to raw imageResult when sanitize fails", async () => {
+  it("screenshot fails closed without returning raw bytes when sanitization fails", async () => {
     const rpcCall = createScreenshotRpcCall();
     const deps: BrowserToolDeps = {
       rpcCall,
@@ -334,14 +334,11 @@ describe("browser-tool screenshot pipeline", () => {
     };
     const tool = createBrowserTool(deps);
 
-    const result = await tool.execute("call-sanitize-fail", { action: "screenshot" });
+    await expect(
+      tool.execute("call-sanitize-fail", { action: "screenshot" }),
+    ).rejects.toThrow(/Screenshot sanitization failed/);
 
-    // Should fall back to single image content block with raw data
-    expect(result.content).toHaveLength(1);
-    expect(result.content[0].type).toBe("image");
-    const imageBlock = result.content[0] as { type: string; data: string; mimeType: string };
-    expect(imageBlock.data).toBe("rawbase64data");
-    expect(imageBlock.mimeType).toBe("image/png");
+    expect(deps.persistMedia?.persist).not.toHaveBeenCalled();
   });
 
   it("screenshot falls back to raw imageResult when no deps", async () => {

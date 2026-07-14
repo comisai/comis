@@ -1457,6 +1457,82 @@ describe("config.gc", () => {
 });
 
 // ---------------------------------------------------------------------------
+// gateway.restart service-manager detection
+// ---------------------------------------------------------------------------
+
+describe("gateway.restart service-manager detection", () => {
+  let killSpy: ReturnType<typeof vi.spyOn>;
+  let tempConfig: ReturnType<typeof createTempConfig>;
+  let originalInvocationId: string | undefined;
+  let originalNotifySocket: string | undefined;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+    tempConfig = createTempConfig();
+    originalInvocationId = process.env.INVOCATION_ID;
+    originalNotifySocket = process.env.NOTIFY_SOCKET;
+    delete process.env.INVOCATION_ID;
+    delete process.env.NOTIFY_SOCKET;
+  });
+
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    tempConfig.cleanup();
+    if (originalInvocationId === undefined) {
+      delete process.env.INVOCATION_ID;
+    } else {
+      process.env.INVOCATION_ID = originalInvocationId;
+    }
+    if (originalNotifySocket === undefined) {
+      delete process.env.NOTIFY_SOCKET;
+    } else {
+      process.env.NOTIFY_SOCKET = originalNotifySocket;
+    }
+  });
+
+  it("recognizes the installer-managed Type=exec service from INVOCATION_ID", async () => {
+    process.env.INVOCATION_ID = "test-invocation";
+    const handlers = createConfigHandlers(makeDeps(tempConfig.configPath));
+
+    const result = (await handlers["gateway.restart"]!({
+      _trustLevel: "admin",
+    })) as { restarting: true; systemd: boolean; warning?: string };
+
+    expect(result).toEqual({ restarting: true, systemd: true });
+    vi.advanceTimersByTime(200);
+    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR2");
+  });
+
+  it("retains NOTIFY_SOCKET detection for custom Type=notify units", async () => {
+    process.env.NOTIFY_SOCKET = "/run/systemd/notify";
+    const handlers = createConfigHandlers(makeDeps(tempConfig.configPath));
+
+    const result = (await handlers["gateway.restart"]!({
+      _trustLevel: "admin",
+    })) as { restarting: true; systemd: boolean; warning?: string };
+
+    expect(result).toEqual({ restarting: true, systemd: true });
+  });
+
+  it("warns when no service manager will restart the daemon", async () => {
+    const handlers = createConfigHandlers(makeDeps(tempConfig.configPath));
+
+    const result = (await handlers["gateway.restart"]!({
+      _trustLevel: "admin",
+    })) as { restarting: true; systemd: boolean; warning?: string };
+
+    expect(result).toEqual({
+      restarting: true,
+      systemd: false,
+      warning: "Not running under systemd. Process will exit and require manual restart.",
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Trust-level enforcement on read handlers
 // ---------------------------------------------------------------------------
 

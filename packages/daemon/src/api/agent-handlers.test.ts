@@ -99,13 +99,13 @@ vi.mock("@comis/agent", () => ({
     taskExtraction: "fast",
     condensation: "fast",
   },
-  DEFAULT_PROVIDER_KEYS: {
-    anthropic: "ANTHROPIC_API_KEY",
-    openai: "OPENAI_API_KEY",
-    google: "GOOGLE_API_KEY",
-    groq: "GROQ_API_KEY",
-    mistral: "MISTRAL_API_KEY",
-  },
+  getProviderSecretNames: vi.fn((provider: string) => ({
+    anthropic: ["ANTHROPIC_API_KEY", "ANTHROPIC_OAUTH_TOKEN"],
+    openai: ["OPENAI_API_KEY"],
+    google: ["GOOGLE_API_KEY", "GEMINI_API_KEY"],
+    groq: ["GROQ_API_KEY"],
+    mistral: ["MISTRAL_API_KEY"],
+  })[provider] ?? []),
 }));
 
 import { persistToConfig } from "./shared/persist-to-config.js";
@@ -1992,7 +1992,7 @@ describe("createAgentHandlers", () => {
 
   // Operator-only security-posture fields (sandbox/jail/terminal-allow escape
   // switches) must be refused by agents_manage TOO — not just config.patch.
-  // The unsandboxed marathon (BL-1, 2026-07-12) confirmed an admin-trust agent
+  // An admin-trust agent
   // could flip its own skills.execSandbox.enabled never→always via agents.update
   // because the persist path skipped the immutable-key check. These lock that.
   describe("operator-only agent security-posture fields", () => {

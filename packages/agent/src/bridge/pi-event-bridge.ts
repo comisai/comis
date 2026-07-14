@@ -510,7 +510,7 @@ export interface PiEventBridgeDeps {
   activeToolGroups?: string[];
   /** Names of the tools actually assembled for this turn. When provided,
    *  "Tool X not found" errors are enriched with a `Did you mean "<closest>"?`
-   *  hint (F-13) so a small model that hallucinated a tool name (e.g.
+   *  hint so a small model that hallucinated a tool name (e.g.
    *  `mcp__memory_manage--delete` for the builtin `memory_manage`) self-corrects
    *  instead of looping. Fires for top-level AND sub-agents. */
   allToolNames?: readonly string[];
