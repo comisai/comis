@@ -483,6 +483,14 @@ export class IcDashboard extends LitElement {
   private _rpcRefreshInterval: ReturnType<typeof setInterval> | null = null;
   private _reloadDebounce: ReturnType<typeof setTimeout> | null = null;
   private _rpcStatusUnsub: (() => void) | null = null;
+  private _agentRosterRequestRevision = 0;
+  private _agentBillingRequestRevision = 0;
+  private _agentMutationRevision = 0;
+  private readonly _agentStatusMutations = new Map<
+    string,
+    { revision: number; status: string }
+  >();
+  private readonly _agentDeletionMutations = new Map<string, number>();
 
   override connectedCallback(): void {
     super.connectedCallback();
@@ -593,6 +601,8 @@ export class IcDashboard extends LitElement {
       // action changes. A full dashboard reload fans out into many unrelated
       // metric calls and can exhaust the per-connection WebSocket budget.
       const status = action === "resume" ? "active" : "suspended";
+      const revision = ++this._agentMutationRevision;
+      this._agentStatusMutations.set(agentId, { revision, status });
       this._agents = this._agents.map((agent) =>
         agent.id === agentId ? { ...agent, status } : agent,
       );
@@ -616,6 +626,9 @@ export class IcDashboard extends LitElement {
       await this.rpcClient.call("agents.delete", { agentId });
       // Deletion only changes the fleet cards and their cached billing entry;
       // the remaining dashboard datasets do not need to be reloaded.
+      const revision = ++this._agentMutationRevision;
+      this._agentDeletionMutations.set(agentId, revision);
+      this._agentStatusMutations.delete(agentId);
       this._agents = this._agents.filter((agent) => agent.id !== agentId);
       const billing = new Map(this._agentBilling);
       billing.delete(agentId);
@@ -663,10 +676,45 @@ export class IcDashboard extends LitElement {
 
   private async _loadAgents(): Promise<void> {
     if (!this.apiClient) return;
+    const requestRevision = ++this._agentRosterRequestRevision;
+    const mutationRevision = this._agentMutationRevision;
     // Keep the last known roster when the targeted refresh fails. A later
     // lifecycle event or full dashboard refresh will retry the REST read.
     const agents = await this.apiClient.getAgents().catch(() => null);
-    if (agents !== null) this._agents = agents;
+    if (agents !== null && requestRevision === this._agentRosterRequestRevision) {
+      this._applyAgentRoster(agents, mutationRevision);
+    }
+  }
+
+  private _applyAgentRoster(agents: AgentInfo[], readMutationRevision: number): void {
+    const nextAgents = agents
+      .filter((agent) => {
+        const deletionRevision = this._agentDeletionMutations.get(agent.id);
+        return deletionRevision === undefined || deletionRevision <= readMutationRevision;
+      })
+      .map((agent) => {
+        const mutation = this._agentStatusMutations.get(agent.id);
+        return mutation !== undefined && mutation.revision > readMutationRevision
+          ? { ...agent, status: mutation.status }
+          : agent;
+      });
+
+    this._agents = nextAgents;
+    const agentIds = new Set(nextAgents.map((agent) => agent.id));
+    this._agentBilling = new Map(
+      [...this._agentBilling].filter(([agentId]) => agentIds.has(agentId)),
+    );
+
+    for (const [agentId, mutation] of this._agentStatusMutations) {
+      if (mutation.revision <= readMutationRevision) {
+        this._agentStatusMutations.delete(agentId);
+      }
+    }
+    for (const [agentId, revision] of this._agentDeletionMutations) {
+      if (revision <= readMutationRevision) {
+        this._agentDeletionMutations.delete(agentId);
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -841,18 +889,27 @@ export class IcDashboard extends LitElement {
   // ---------------------------------------------------------------------------
 
   private async _loadAgentBilling(): Promise<void> {
-    if (!this.rpcClient || this._agents.length === 0) return;
+    if (!this.rpcClient) return;
+    const requestRevision = ++this._agentBillingRequestRevision;
+    const agentIds = this._agents.slice(0, 20).map((agent) => agent.id);
+    if (agentIds.length === 0) {
+      this._agentBilling = new Map();
+      return;
+    }
 
     const results = await Promise.allSettled(
-      this._agents.slice(0, 20).map((agent) =>
-        this.rpcClient!.call<BillingTotalResult>("obs.billing.byAgent", { agentId: agent.id }),
+      agentIds.map((agentId) =>
+        this.rpcClient!.call<BillingTotalResult>("obs.billing.byAgent", { agentId }),
       ),
     );
 
+    if (requestRevision !== this._agentBillingRequestRevision) return;
+    const currentAgentIds = new Set(this._agents.map((agent) => agent.id));
     const billing = new Map<string, { cost: number; tokens: number }>();
     results.forEach((result, i) => {
-      if (result.status === "fulfilled") {
-        billing.set(this._agents[i].id, {
+      const agentId = agentIds[i];
+      if (result.status === "fulfilled" && agentId !== undefined && currentAgentIds.has(agentId)) {
+        billing.set(agentId, {
           cost: result.value.totalCost ?? 0,
           tokens: result.value.totalTokens ?? 0,
         });
@@ -867,6 +924,8 @@ export class IcDashboard extends LitElement {
 
   private async _loadData(): Promise<void> {
     if (!this.apiClient) return;
+    const requestRevision = ++this._agentRosterRequestRevision;
+    const mutationRevision = this._agentMutationRevision;
 
     this._loadState = "loading";
     this._error = "";
@@ -878,7 +937,9 @@ export class IcDashboard extends LitElement {
         this.apiClient.getActivity(50).catch(() => [] as ActivityEntry[]),
       ]);
 
-      this._agents = agents;
+      if (requestRevision === this._agentRosterRequestRevision) {
+        this._applyAgentRoster(agents, mutationRevision);
+      }
       this._channels = channels;
       this._activity = activity;
       this._loadState = "loaded";
