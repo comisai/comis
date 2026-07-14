@@ -107,6 +107,56 @@ function runStep({ gum, commandExit }: Scenario): { code: number; ran: boolean; 
   }
 }
 
+function supportsNodeVersion(version: string): boolean {
+  const work = mkdtempSync(join(tmpdir(), "comis-installer-node-version-"));
+  cleanups.push(work);
+  const harness = [
+    "#!/usr/bin/env bash",
+    "set -u",
+    'MIN_NODE_VERSION="22.19.0"',
+    extractFn("node_version_is_supported"),
+    `node_version_is_supported "${version}"`,
+  ].join("\n");
+  const harnessPath = join(work, "harness.sh");
+  writeFileSync(harnessPath, harness);
+
+  try {
+    execFileSync("bash", [harnessPath], { stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function runArgumentParser(args: string[]): { code: number; out: string } {
+  const work = mkdtempSync(join(tmpdir(), "comis-installer-args-"));
+  cleanups.push(work);
+  const harness = [
+    "#!/usr/bin/env bash",
+    "set -u",
+    'GUM=""',
+    'ERROR=""',
+    'NC=""',
+    'ui_error() { echo "ERROR: $*"; }',
+    extractFn("require_option_value"),
+    extractFn("parse_args"),
+    'parse_args "$@"',
+  ].join("\n");
+  const harnessPath = join(work, "harness.sh");
+  writeFileSync(harnessPath, harness);
+
+  try {
+    const out = execFileSync("bash", [harnessPath, ...args], { stdio: "pipe" }).toString();
+    return { code: 0, out };
+  } catch (error) {
+    const failure = error as { status?: number; stdout?: Buffer; stderr?: Buffer };
+    return {
+      code: failure.status ?? -1,
+      out: `${failure.stdout?.toString() ?? ""}${failure.stderr?.toString() ?? ""}`,
+    };
+  }
+}
+
 describe("install.sh run_quiet_step under a gum that exits 0 without running the command", () => {
   it("still actually runs the command (the live NodeSource no-op shape)", () => {
     const result = runStep({ gum: LYING_GUM, commandExit: 0 });
@@ -132,5 +182,68 @@ describe("install.sh run_quiet_step under a well-behaved gum", () => {
     const result = runStep({ gum: HONEST_GUM, commandExit: 7 });
     expect(result.ran).toBe(true);
     expect(result.code).not.toBe(0);
+  });
+});
+
+describe("install.sh public install contract", () => {
+  it("enforces the complete Node.js >=22.19.0 minimum instead of accepting every Node 22 release", () => {
+    expect(supportsNodeVersion("v22.18.9")).toBe(false);
+    expect(supportsNodeVersion("22.19.0-rc.1")).toBe(false);
+    expect(supportsNodeVersion("22.19.0")).toBe(true);
+    expect(supportsNodeVersion("v22.19.1")).toBe(true);
+    expect(supportsNodeVersion("23.0.0")).toBe(true);
+    expect(supportsNodeVersion("not-a-version")).toBe(false);
+
+    expect(installSh).toContain('MIN_NODE_VERSION="22.19.0"');
+    expect(extractFn("node_is_supported_binary")).toContain("node_version_is_supported");
+    expect(extractFn("check_node")).toContain("has_supported_node");
+  });
+
+  it("uses the canonical public tagline throughout the installer", () => {
+    expect(installSh).toContain(
+      'DEFAULT_TAGLINE="An open-source, security-first platform for AI agent teams."',
+    );
+    expect(installSh).not.toContain("Friendly by nature. Powerful by design.");
+  });
+
+  it("shows the install target and host changes before any optional bootstrap download", () => {
+    const plan = extractFn("show_install_plan");
+    expect(plan).toContain('ui_kv "Package target"');
+    expect(plan).toContain('ui_kv "Node.js requirement" ">=${MIN_NODE_VERSION}"');
+    expect(plan).toContain('ui_kv "Host changes"');
+    expect(plan).toContain('ui_kv "Browser runtime"');
+
+    const main = extractFn("main");
+    expect(main.indexOf("show_install_plan")).toBeGreaterThan(-1);
+    expect(main.indexOf("bootstrap_gum_temp")).toBeGreaterThan(main.indexOf("show_install_plan"));
+  });
+
+  it("refuses a success banner when the CLI is unavailable or service registration fails", () => {
+    const main = extractFn("main");
+    expect(main).toMatch(/COMIS_BIN="\$\(resolve_comis_bin \|\| true\)"[\s\S]{0,240}\[\[ -z "\$COMIS_BIN" \]\]/);
+    expect(main).toMatch(/verified_cli_version="\$\("\$COMIS_BIN" --version/);
+    expect(main).not.toMatch(/register_service\s*\|\|\s*ui_warn/);
+    expect(main).toMatch(/if ! register_service; then[\s\S]{0,240}return 1/);
+  });
+
+  it("fails closed on unknown options and documents a review-first invocation", () => {
+    const result = runArgumentParser(["--definitely-not-a-real-option"]);
+    expect(result.code).toBe(2);
+    expect(result.out).toContain("Unknown option: --definitely-not-a-real-option");
+
+    const missingValue = runArgumentParser(["--version"]);
+    expect(missingValue.code).toBe(2);
+    expect(missingValue.out).toContain("Missing value for --version");
+
+    const usage = extractFn("print_usage");
+    expect(usage).toContain("-o comis-install.sh");
+    expect(usage).toContain("bash comis-install.sh --dry-run");
+  });
+
+  it("does not claim a source update succeeded when git pull or auto-stash fails", () => {
+    const sourceInstall = extractFn("install_comis_from_git");
+    expect(sourceInstall).not.toMatch(/git -C "\$repo_dir" pull --rebase \|\| true/);
+    expect(sourceInstall).toContain("update_rc");
+    expect(sourceInstall).toMatch(/if ! git -C "\$repo_dir" stash push/);
   });
 });

@@ -2,7 +2,8 @@
 set -euo pipefail
 
 # Comis Installer for macOS and Linux
-# Usage: curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash
+# Usage: curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh -o comis-install.sh
+#        bash comis-install.sh --dry-run
 
 BOLD='\033[1m'
 ACCENT='\033[38;2;255;107;74m'       # coral         #FF6B4A
@@ -15,7 +16,8 @@ ERROR='\033[38;2;229;89;58m'         # coral-dark    #E5593A
 MUTED='\033[38;2;100;116;139m'       # slate         #64748B
 NC='\033[0m' # No Color
 
-DEFAULT_TAGLINE="Friendly by nature. Powerful by design."
+DEFAULT_TAGLINE="An open-source, security-first platform for AI agent teams."
+MIN_NODE_VERSION="22.19.0"
 
 ORIGINAL_PATH="${PATH:-}"
 
@@ -275,7 +277,7 @@ print_installer_banner() {
 
     echo ""
     echo -e "  ${BOLD}${SUCCESS}C${ACCENT}O${SUCCESS}M${ACCENT}I${SUCCESS}S${NC} ${MUTED}Installer${NC}"
-    echo -e "  ${SUCCESS}Friendly${NC} by nature. ${ACCENT}Powerful${NC} by design."
+    echo -e "  ${MUTED}${TAGLINE}${NC}"
     echo ""
 }
 
@@ -295,7 +297,7 @@ detect_os_or_die() {
     elif [[ "$OSTYPE" == cygwin* ]] || [[ "$OSTYPE" == msys* ]] || [[ "$OSTYPE" == mingw* ]]; then
         ui_error "Windows detected"
         echo "This installer is for macOS and Linux."
-        echo "On Windows, install Node.js 22+ from https://nodejs.org, then run:"
+        echo "On Windows, install Node.js >=${MIN_NODE_VERSION} from https://nodejs.org, then run:"
         echo "  npm install -g comisai"
         exit 1
     fi
@@ -390,21 +392,34 @@ ui_panel() {
 
 show_install_plan() {
     local detected_checkout="$1"
+    local package_target=""
+    local browser_runtime="disabled"
 
     ui_section "Install plan"
     ui_kv "OS" "$OS"
     ui_kv "Install method" "$INSTALL_METHOD"
     if [[ -n "$COMIS_TARBALL" ]]; then
-        ui_kv "Tarball" "$COMIS_TARBALL"
+        package_target="local tarball: ${COMIS_TARBALL}"
+    elif [[ "$INSTALL_METHOD" == "npm" && "$USE_BETA" == "1" ]]; then
+        package_target="comisai@beta (falls back to comisai@latest)"
+    elif [[ "$INSTALL_METHOD" == "npm" ]]; then
+        package_target="comisai@${COMIS_VERSION}"
+    elif [[ -n "$detected_checkout" ]]; then
+        package_target="local source checkout: ${detected_checkout}"
     else
-        ui_kv "Requested version" "$COMIS_VERSION"
+        package_target="https://github.com/comisai/comis.git -> ${GIT_DIR}"
     fi
+    ui_kv "Package target" "$package_target"
+    ui_kv "Node.js requirement" ">=${MIN_NODE_VERSION}"
     if [[ "$USE_BETA" == "1" ]]; then
         ui_kv "Beta channel" "enabled"
     fi
     if [[ "$INSTALL_METHOD" == "git" ]]; then
         ui_kv "Git directory" "$GIT_DIR"
         ui_kv "Git update" "$GIT_UPDATE"
+        if [[ "$GIT_UPDATE" == "1" ]]; then
+            ui_kv "Local changes" "auto-stashed before pull, then restored"
+        fi
     fi
     if [[ -n "$detected_checkout" ]]; then
         ui_kv "Detected checkout" "$detected_checkout"
@@ -415,6 +430,17 @@ show_install_plan() {
     if [[ -n "${RESOLVED_SERVICE_MANAGER:-}" ]]; then
         ui_kv "Service manager" "$RESOLVED_SERVICE_MANAGER"
     fi
+    if [[ "$WITH_BROWSER" == "1" && "$WITH_CLOAKBROWSER" == "1" ]]; then
+        browser_runtime="CloakBrowser"
+    elif [[ "$WITH_BROWSER" == "1" && "$WITH_XVFB" == "1" ]]; then
+        browser_runtime="Chromium + Xvfb headed runtime"
+    elif [[ "$WITH_BROWSER" == "1" ]]; then
+        browser_runtime="Chromium headless runtime"
+    fi
+    ui_kv "Browser runtime" "$browser_runtime"
+    ui_kv "Data directory" "${HOME}/.comis"
+    ui_kv "Host changes" "CLI, dependencies, runtime, and selected service as needed"
+    ui_kv "Downloads" "npm/GitHub and OS/runtime package sources as needed"
     if [[ "$NO_AUTOSTART" == "1" ]]; then
         ui_kv "Boot persistence" "disabled (--no-autostart)"
     fi
@@ -424,6 +450,7 @@ show_install_plan() {
     if [[ "$NO_INIT" == "1" ]]; then
         ui_kv "Init" "skipped"
     fi
+    ui_info "No installation changes have been made. Use --dry-run to stop after this plan."
 }
 
 show_footer_links() {
@@ -1731,7 +1758,12 @@ print_usage() {
 Comis installer (macOS + Linux)
 
 Usage:
-  curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash -s -- [options]
+  curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh -o comis-install.sh
+  bash comis-install.sh [options]
+
+Review before installing:
+  less comis-install.sh
+  bash comis-install.sh --dry-run
 
 Install options:
   --install-method, --method npm|git   Install via npm (default) or from a git checkout
@@ -1827,11 +1859,21 @@ Environment variables:
   SHARP_IGNORE_GLOBAL_LIBVIPS=0|1    Default: 1
 
 Examples:
-  curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash
-  curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash -s -- --no-init
-  curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash -s -- --service none
-  curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash -s -- --uninstall --purge --yes
+  bash comis-install.sh --dry-run
+  bash comis-install.sh --no-init
+  bash comis-install.sh --service none
+  bash comis-install.sh --uninstall --purge --yes
 EOF
+}
+
+require_option_value() {
+    local option="$1"
+    local value="${2:-}"
+    if [[ -z "$value" || "$value" == --* ]]; then
+        ui_error "Missing value for ${option}"
+        echo "Run: bash comis-install.sh --help"
+        exit 2
+    fi
 }
 
 parse_args() {
@@ -1862,10 +1904,12 @@ parse_args() {
                 shift
                 ;;
             --install-method|--method)
+                require_option_value "$1" "${2:-}"
                 INSTALL_METHOD="$2"
                 shift 2
                 ;;
             --version)
+                require_option_value "$1" "${2:-}"
                 COMIS_VERSION="$2"
                 shift 2
                 ;;
@@ -1882,6 +1926,7 @@ parse_args() {
                 shift
                 ;;
             --git-dir|--dir)
+                require_option_value "$1" "${2:-}"
                 GIT_DIR="$2"
                 shift 2
                 ;;
@@ -1890,6 +1935,7 @@ parse_args() {
                 shift
                 ;;
             --user)
+                require_option_value "$1" "${2:-}"
                 COMIS_USER="$2"
                 shift 2
                 ;;
@@ -1898,6 +1944,7 @@ parse_args() {
                 shift
                 ;;
             --tarball)
+                require_option_value "$1" "${2:-}"
                 COMIS_TARBALL="$2"
                 INSTALL_METHOD="npm"
                 shift 2
@@ -1908,6 +1955,7 @@ parse_args() {
                 shift
                 ;;
             --service)
+                require_option_value "$1" "${2:-}"
                 SERVICE_MANAGER="$2"
                 shift 2
                 ;;
@@ -1973,7 +2021,9 @@ parse_args() {
                 shift
                 ;;
             *)
-                shift
+                ui_error "Unknown option: $1"
+                echo "Run: bash comis-install.sh --help"
+                exit 2
                 ;;
         esac
     done
@@ -2100,7 +2150,9 @@ print_homebrew_admin_fix() {
     echo "  2) Ask an Administrator to grant admin rights, then sign out/in:"
     echo "     sudo dseditgroup -o edit -a ${current_user} -t user admin"
     echo "Then retry:"
-    echo "  curl -fsSL https://comis.ai/install.sh | bash"
+    echo "  curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh -o comis-install.sh"
+    echo "  bash comis-install.sh --dry-run"
+    echo "  bash comis-install.sh"
 }
 
 install_homebrew() {
@@ -2126,19 +2178,33 @@ install_homebrew() {
     fi
 }
 
-node_major_version() {
-    if ! command -v node &> /dev/null; then
+node_version_is_supported() {
+    local version="${1:-}"
+    version="${version#v}"
+    if [[ ! "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)([-+].*)?$ ]]; then
         return 1
     fi
-    local version major
-    version="$(node -v 2>/dev/null || true)"
-    major="${version#v}"
-    major="${major%%.*}"
-    if [[ "$major" =~ ^[0-9]+$ ]]; then
-        echo "$major"
-        return 0
+
+    local major="${BASH_REMATCH[1]}"
+    local minor="${BASH_REMATCH[2]}"
+    local patch="${BASH_REMATCH[3]}"
+    local suffix="${BASH_REMATCH[4]:-}"
+    local min_major min_minor min_patch
+    IFS=. read -r min_major min_minor min_patch <<<"$MIN_NODE_VERSION"
+
+    if (( 10#$major != 10#$min_major )); then
+        (( 10#$major > 10#$min_major ))
+        return $?
     fi
-    return 1
+    if (( 10#$minor != 10#$min_minor )); then
+        (( 10#$minor > 10#$min_minor ))
+        return $?
+    fi
+    if (( 10#$patch != 10#$min_patch )); then
+        (( 10#$patch > 10#$min_patch ))
+        return $?
+    fi
+    [[ "$suffix" != -* ]]
 }
 
 print_active_node_paths() {
@@ -2175,9 +2241,7 @@ ensure_macos_node22_active() {
         fi
     fi
 
-    local major=""
-    major="$(node_major_version || true)"
-    if [[ -n "$major" && "$major" -ge 22 ]]; then
+    if has_supported_node; then
         return 0
     fi
 
@@ -2185,7 +2249,7 @@ ensure_macos_node22_active() {
     active_path="$(command -v node 2>/dev/null || echo "not found")"
     active_version="$(node -v 2>/dev/null || echo "missing")"
 
-    ui_error "Node.js v22 was installed but this shell is using ${active_version} (${active_path})"
+    ui_error "Node.js >=${MIN_NODE_VERSION} is required, but this shell is using ${active_version} (${active_path})"
     if [[ -n "$brew_node_prefix" ]]; then
         echo "Add this to your shell profile and restart shell:"
         echo "  export PATH=\"${brew_node_prefix}/bin:\$PATH\""
@@ -2197,41 +2261,41 @@ ensure_macos_node22_active() {
 
 check_node() {
     if command -v node &> /dev/null; then
-        NODE_VERSION="$(node_major_version || true)"
-        if [[ -n "$NODE_VERSION" && "$NODE_VERSION" -ge 22 ]]; then
-            ui_success "Node.js v$(node -v | cut -d'v' -f2) found"
+        local active_version=""
+        active_version="$(node -v 2>/dev/null || true)"
+        if has_supported_node; then
+            ui_success "Node.js ${active_version} found"
             print_active_node_paths || true
             return 0
-        else
-            if [[ -n "$NODE_VERSION" ]]; then
-                ui_info "Node.js $(node -v) found, upgrading to v22+"
-            else
-                ui_info "Node.js found but version could not be parsed; reinstalling v22+"
-            fi
-            return 1
         fi
+        if [[ -n "$active_version" ]]; then
+            ui_info "Node.js ${active_version} found; Comis requires >=${MIN_NODE_VERSION}"
+        else
+            ui_info "Node.js version could not be parsed; installing >=${MIN_NODE_VERSION}"
+        fi
+        return 1
     else
         ui_info "Node.js not found, installing it now"
         return 1
     fi
 }
 
-node_major_from_binary() {
+node_version_from_binary() {
     local node_bin="$1"
     if [[ -z "$node_bin" || ! -x "$node_bin" ]]; then
         return 1
     fi
-    "$node_bin" -p 'process.versions.node.split(".")[0]' 2>/dev/null || true
+    "$node_bin" -p 'process.versions.node' 2>/dev/null || true
 }
 
 node_is_supported_binary() {
     local node_bin="$1"
-    local major=""
-    major="$(node_major_from_binary "$node_bin")"
-    if [[ ! "$major" =~ ^[0-9]+$ ]]; then
+    local version=""
+    version="$(node_version_from_binary "$node_bin")"
+    if [[ -z "$version" ]]; then
         return 1
     fi
-    [[ "$major" -ge 22 ]]
+    node_version_is_supported "$version"
 }
 
 has_supported_node() {
@@ -2364,7 +2428,7 @@ exec "$node_bin" "$entry_path" "\$@"
 EOF
     chmod +x "$shim_path"
     refresh_shell_command_cache
-    ui_warn "Configured comis shim at ${shim_path} for Node $("$node_bin" -v 2>/dev/null || echo '22+')"
+    ui_warn "Configured comis shim at ${shim_path} for Node $("$node_bin" -v 2>/dev/null || echo ">=${MIN_NODE_VERSION}")"
     return 0
 }
 
@@ -2463,7 +2527,7 @@ install_node() {
                 ui_warn "Homebrew node@22 not active; trying standalone download from nodejs.org"
                 if ! install_node_standalone; then
                     ui_error "Could not install Node.js"
-                    echo "Please install Node.js 22+ manually: https://nodejs.org"
+                    echo "Please install Node.js >=${MIN_NODE_VERSION} manually: https://nodejs.org"
                     exit 1
                 fi
             fi
@@ -2471,7 +2535,7 @@ install_node() {
             ui_warn "Homebrew install failed; trying standalone download from nodejs.org"
             if ! install_node_standalone; then
                 ui_error "Could not install Node.js"
-                echo "Please install Node.js 22+ manually: https://nodejs.org"
+                echo "Please install Node.js >=${MIN_NODE_VERSION} manually: https://nodejs.org"
                 exit 1
             fi
         fi
@@ -2544,7 +2608,7 @@ install_node() {
             ui_warn "NodeSource install unavailable or failed; trying standalone download from nodejs.org"
             if ! install_node_standalone; then
                 ui_error "Could not install Node.js"
-                echo "Please install Node.js 22+ manually: https://nodejs.org"
+                echo "Please install Node.js >=${MIN_NODE_VERSION} manually: https://nodejs.org"
                 exit 1
             fi
         fi
@@ -2569,13 +2633,11 @@ detect_nvm_and_warn() {
     if [[ -n "$node_path" && "$node_path" == *".nvm"* ]]; then
         local current_version
         current_version="$(node -v 2>/dev/null || true)"
-        local major="${current_version#v}"
-        major="${major%%.*}"
 
-        if [[ -n "$major" && "$major" -lt 22 ]]; then
+        if ! node_version_is_supported "$current_version"; then
             ui_warn ""
             ui_warn "NVM detected with old default Node version"
-            ui_warn "   Your shell is using NVM's Node ${current_version}, but Comis requires Node 22+"
+            ui_warn "   Your shell is using NVM's Node ${current_version}, but Comis requires >=${MIN_NODE_VERSION}"
             ui_warn ""
             ui_info "To fix this, run:"
             ui_info "  nvm install 22"
@@ -3272,25 +3334,47 @@ install_comis_from_git() {
         local porcelain=""
         porcelain="$(git -C "$repo_dir" status --porcelain 2>/dev/null || true)"
         if [[ -z "$porcelain" ]]; then
-            run_quiet_step "Updating repository" git -C "$repo_dir" pull --rebase || true
+            if ! run_quiet_step "Updating repository" git -C "$repo_dir" pull --rebase; then
+                git -C "$repo_dir" rebase --abort >/dev/null 2>&1 || true
+                ui_error "Could not update the source checkout; installation stopped"
+                return 1
+            fi
         else
             # Auto-stash local changes, pull, then restore
-            local stash_name="comis-install-autostash-$(date -u +%Y%m%d-%H%M%S)"
+            local stash_name=""
+            stash_name="comis-install-autostash-$(date -u +%Y%m%d-%H%M%S)"
+            local previous_stash=""
+            previous_stash="$(git -C "$repo_dir" rev-parse --verify refs/stash 2>/dev/null || true)"
             ui_info "Local changes detected; stashing before update"
-            git -C "$repo_dir" stash push --include-untracked -m "$stash_name" >/dev/null 2>&1 || true
+            if ! git -C "$repo_dir" stash push --include-untracked -m "$stash_name" >/dev/null 2>&1; then
+                ui_error "Could not preserve local changes; refusing to update the checkout"
+                return 1
+            fi
             local stash_ref=""
             stash_ref="$(git -C "$repo_dir" rev-parse --verify refs/stash 2>/dev/null || true)"
+            if [[ -z "$stash_ref" || "$stash_ref" == "$previous_stash" ]]; then
+                ui_error "Git did not create the expected safety stash; refusing to update the checkout"
+                return 1
+            fi
 
-            run_quiet_step "Updating repository" git -C "$repo_dir" pull --rebase || true
+            local update_rc=0
+            if ! run_quiet_step "Updating repository" git -C "$repo_dir" pull --rebase; then
+                update_rc=1
+                git -C "$repo_dir" rebase --abort >/dev/null 2>&1 || true
+            fi
 
-            if [[ -n "$stash_ref" ]]; then
-                ui_info "Restoring stashed local changes"
-                if git -C "$repo_dir" stash pop >/dev/null 2>&1; then
-                    ui_success "Local changes restored"
-                else
-                    ui_warn "Could not auto-restore local changes (conflict?)"
-                    ui_info "Your changes are preserved in: git -C ${repo_dir} stash list"
-                fi
+            ui_info "Restoring stashed local changes"
+            if git -C "$repo_dir" stash pop --index 'stash@{0}' >/dev/null 2>&1; then
+                ui_success "Local changes restored"
+            else
+                ui_error "Could not restore local changes cleanly; installation stopped"
+                ui_info "Your safety stash is preserved in: git -C ${repo_dir} stash list"
+                return 1
+            fi
+
+            if [[ "$update_rc" -ne 0 ]]; then
+                ui_error "Could not update the source checkout; local changes were restored"
+                return 1
             fi
         fi
     fi
@@ -5056,7 +5140,6 @@ uninstall_remove_user() {
 }
 
 uninstall_main() {
-    bootstrap_gum_temp || true
     print_installer_banner
     detect_os_or_die
 
@@ -5066,7 +5149,14 @@ uninstall_main() {
     [[ "$REMOVE_USER_FLAG" == "1" ]] && ui_kv "Remove user" "yes"
     [[ "$DRY_RUN" == "1" ]] && ui_kv "Dry run" "yes"
 
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_success "Dry run complete (no changes made)"
+        return 0
+    fi
+
     confirm_uninstall
+    bootstrap_gum_temp || true
+    print_gum_status
 
     ui_stage "Stopping and unregistering services"
 
@@ -5119,7 +5209,6 @@ main() {
         return $?
     fi
 
-    bootstrap_gum_temp || true
     if [[ "$COMIS_REEXEC" == "1" ]]; then
         detect_os_or_die
         echo ""
@@ -5129,7 +5218,6 @@ main() {
         SERVICE_MANAGER="none"
     else
         print_installer_banner
-        print_gum_status
         detect_os_or_die
     fi
 
@@ -5185,6 +5273,9 @@ main() {
         return 0
     fi
 
+    bootstrap_gum_temp || true
+    print_gum_status
+
     # On Linux as root: install system deps, create dedicated user, install CLI
     # as comis user (re-exec), then return here (still root) and register the
     # systemd system-scope service pointing at the comis user's install.
@@ -5203,7 +5294,11 @@ main() {
         fi
 
         # Still root. Register the service on the parent's behalf.
-        register_service || ui_warn "Service registration encountered errors (see above)"
+        if ! register_service; then
+            ui_error "Comis CLI was installed, but service setup failed"
+            ui_info "Review the error above, then rerun the installer or use --service none"
+            return 1
+        fi
 
         # Resolve version from the comis user's install (root can't see their PATH)
         local installed_version=""
@@ -5252,10 +5347,10 @@ main() {
     fi
     ensure_supported_node_on_path || true
     if ! has_supported_node; then
-        ui_error "Node.js v22+ is required but could not be activated on PATH"
+        ui_error "Node.js >=${MIN_NODE_VERSION} is required but could not be activated on PATH"
         echo "Detected node: $(command -v node 2>/dev/null || echo '(not found)')"
         echo "Current version: $(node -v 2>/dev/null || echo 'unknown')"
-        echo "Install Node.js 22+ manually: https://nodejs.org"
+        echo "Install Node.js >=${MIN_NODE_VERSION} manually: https://nodejs.org"
         exit 1
     fi
 
@@ -5300,6 +5395,18 @@ main() {
     ui_stage "Finalizing setup"
 
     COMIS_BIN="$(resolve_comis_bin || true)"
+    if [[ -z "$COMIS_BIN" ]]; then
+        ui_error "Comis installation finished without an executable CLI on PATH"
+        ui_info "Review the npm output above and rerun with --verbose"
+        return 1
+    fi
+    local verified_cli_version=""
+    verified_cli_version="$("$COMIS_BIN" --version 2>/dev/null | head -n 1 | tr -d '\r' || true)"
+    if [[ -z "$verified_cli_version" ]]; then
+        ui_error "The installed Comis CLI could not start"
+        ui_info "Rerun with --verbose and inspect the package installation errors above"
+        return 1
+    fi
 
     # Restart daemon if already running under any manager
     restart_service_if_running
@@ -5345,7 +5452,11 @@ main() {
         if [[ "$OS" == "linux" ]]; then
             install_browser_deps_linux || true
         fi
-        register_service || ui_warn "Service registration encountered errors (see above)"
+        if ! register_service; then
+            ui_error "Comis CLI was installed, but service setup failed"
+            ui_info "Review the error above, then rerun the installer or use --service none"
+            return 1
+        fi
     fi
 
     # Re-exec'd children exit here — the root parent handles the success
@@ -5355,8 +5466,8 @@ main() {
         return 0
     fi
 
-    local installed_version
-    installed_version=$(resolve_comis_version)
+    local installed_version=""
+    installed_version="$verified_cli_version"
 
     echo ""
     if [[ -n "$installed_version" ]]; then
