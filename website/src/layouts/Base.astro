@@ -1,31 +1,39 @@
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 ---
+// SPDX-License-Identifier: Apache-2.0
 import Nav from "../components/Nav.astro";
-import { FACTS } from "../data/facts";
+import { SITE } from "../data/site";
+import "../styles/global.css";
 
 interface Props {
   title?: string;
   description?: string;
-  ogTitle?: string;
-  ogDescription?: string;
 }
 
-const {
-  title = "Comis - Self-hosted AI agents for teams | Open Source",
-  description = `${FACTS.spine}. Messaging-native agents, learning memory, sandboxed tools, encrypted secrets, and audit trails across ${FACTS.channelList.slice(0, -1).join(", ")} and ${FACTS.channelList[FACTS.channelList.length - 1]}.`,
-  ogTitle,
-  ogDescription,
-} = Astro.props;
-
-const canonicalURL = new URL(Astro.url.pathname, Astro.site);
-const resolvedOgTitle = ogTitle || title;
-const resolvedOgDescription = ogDescription || description;
-const isHome = Astro.url.pathname === "/";
-
-const breadcrumbSegments = Astro.url.pathname
-  .split("/")
-  .filter(Boolean)
-  .map((seg) => seg.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()));
+const { title = SITE.title, description = SITE.description } = Astro.props;
+const canonicalUrl = new URL(Astro.url.pathname, Astro.site ?? SITE.url);
+const socialImageUrl = new URL("/images/comis-social-card.png", Astro.site ?? SITE.url);
+const structuredData = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": `${SITE.url}/#organization`,
+      name: SITE.name,
+      url: SITE.url,
+      logo: `${SITE.url}/android-chrome-512x512.png`,
+      description: SITE.positioning,
+      sameAs: [SITE.githubOrganization],
+    },
+    {
+      "@type": "WebSite",
+      "@id": `${SITE.url}/#website`,
+      name: SITE.name,
+      url: SITE.url,
+      description: SITE.description,
+      publisher: { "@id": `${SITE.url}/#organization` },
+    },
+  ],
+};
 ---
 
 <!doctype html>
@@ -33,82 +41,42 @@ const breadcrumbSegments = Astro.url.pathname
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0F172A" />
+    <meta name="robots" content="index, follow" />
+
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonicalUrl.href} />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content={SITE.name} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonicalUrl.href} />
+    <meta property="og:image" content={socialImageUrl.href} />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Comis — self-hosted infrastructure for auditable AI-agent teams" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={socialImageUrl.href} />
+    <meta name="twitter:image:alt" content="Comis — self-hosted infrastructure for auditable AI-agent teams" />
+
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
-    <meta name="theme-color" content="#0F172A" />
 
-    <title>{title}</title>
-    <meta name="description" content={description} />
-    <link rel="canonical" href={canonicalURL.href} />
-
-    <!-- Open Graph -->
-    <meta property="og:type" content="website" />
-    <meta property="og:title" content={resolvedOgTitle} />
-    <meta property="og:description" content={resolvedOgDescription} />
-    <meta property="og:image" content="https://comis.ai/images/comis-social-card.png" />
-    <meta property="og:url" content={canonicalURL.href} />
-    <meta property="og:site_name" content="Comis" />
-
-    <!-- Twitter -->
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:site" content="@comis_ai" />
-    <meta name="twitter:title" content={resolvedOgTitle} />
-    <meta name="twitter:description" content={resolvedOgDescription} />
-    <meta name="twitter:image" content="https://comis.ai/images/comis-social-card.png" />
-
-    <!-- Structured Data -->
-    <script type="application/ld+json" set:html={JSON.stringify({
-      "@context": "https://schema.org",
-      "@type": "Organization",
-      "name": "Comis",
-      "url": "https://comis.ai",
-      "logo": "https://comis.ai/images/comis-logo.png",
-      "description": `${FACTS.spine}. Messaging-native agents, learning memory, sandboxed tools, encrypted secrets, and audit trails on infrastructure you control.`,
-      "sameAs": [
-        "https://github.com/comisai/comis",
-        "https://twitter.com/comis_ai",
-        "https://discord.gg/FsqgJkpp"
-      ]
-    })} />
-    {isHome && (
-      <script type="application/ld+json" set:html={JSON.stringify({
-        "@context": "https://schema.org",
-        "@type": "WebSite",
-        "name": "Comis",
-        "url": "https://comis.ai",
-        "description": `${FACTS.spine}.`
-      })} />
-    )}
-    {!isHome && breadcrumbSegments.length > 0 && (
-      <script type="application/ld+json" set:html={JSON.stringify({
-        "@context": "https://schema.org",
-        "@type": "BreadcrumbList",
-        "itemListElement": [
-          { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://comis.ai/" },
-          ...breadcrumbSegments.map((name, i) => ({
-            "@type": "ListItem",
-            "position": i + 2,
-            "name": name,
-            "item": `https://comis.ai/${Astro.url.pathname.split("/").filter(Boolean).slice(0, i + 1).join("/")}/`
-          }))
-        ]
-      })} />
-    )}
-
-    <!-- Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <script type="application/ld+json" set:html={JSON.stringify(structuredData)} />
   </head>
-  <body class="min-h-screen">
+  <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
     <Nav />
     <slot />
   </body>
 </html>
-
-<style is:global>
-  @import "../styles/global.css";
-</style>

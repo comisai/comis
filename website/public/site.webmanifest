@@ -1,7 +1,9 @@
 {
   "name": "Comis",
   "short_name": "Comis",
-  "description": "The open-source AI assistant you can actually trust.",
+  "description": "Self-hosted infrastructure for auditable AI-agent teams.",
+  "start_url": "/",
+  "scope": "/",
   "icons": [
     {
       "src": "/android-chrome-192x192.png",

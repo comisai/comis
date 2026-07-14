@@ -1,0 +1,41 @@
+---
+// SPDX-License-Identifier: Apache-2.0
+import { SITE } from "../data/site";
+
+const boundaries = [
+  ["Isolation", "Linux with Bubblewrap is the recommended target. macOS isolation is best-effort and does not provide the same boundary."],
+  ["Host execution", "The ordinary exec tool can run directly on the host when its sandbox is disabled or unavailable."],
+  ["Streaming", "Streaming consumers can receive deltas before the completed response passes its final output scan."],
+  ["Approvals", "Approval requests are available on explicitly wired paths when enabled; they are not a universal policy engine."],
+] as const;
+---
+
+<section class="surface-section" data-section="security" aria-labelledby="security-heading">
+  <div class="container security-grid">
+    <div>
+      <p class="eyebrow">Security and deployment</p>
+      <h2 id="security-heading">Controls with explicit boundaries.</h2>
+      <p class="lead">
+        Comis treats external content and model output as untrusted. It includes encrypted secret storage by default, configurable per-agent secret allowlists, SSRF defenses, external-content wrapping, prompt-injection detection, memory-write validation, completed-response output guards, tool policy, and an audit trail persisted by default.
+      </p>
+      <div class="inline-links">
+        <a class="text-link" href={SITE.threatModel}>Read the threat model</a>
+        <a class="text-link" href={SITE.security}>Report a vulnerability</a>
+      </div>
+    </div>
+
+    <div>
+      <div class="boundary-list">
+        {boundaries.map(([title, body]) => (
+          <article class="boundary-item">
+            <h3>{title}</h3>
+            <p>{body}</p>
+          </article>
+        ))}
+      </div>
+      <p class="development-note">
+        <strong>Current development:</strong> APIs and configuration may change. The OpenAI-shaped API is experimental, not every provider and channel combination is validated live, code extensions currently require source changes, and backward compatibility is not guaranteed during active development.
+      </p>
+    </div>
+  </div>
+</section>

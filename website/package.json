@@ -2,18 +2,20 @@
   "name": "comis-website",
   "type": "module",
   "version": "1.0.0",
-  "description": "Marketing website for the Comis platform",
+  "description": "Public launch website for Comis",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "private": true,
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
-    "preview": "astro preview"
+    "preview": "astro preview",
+    "check": "node scripts/check-site.mjs",
+    "validate": "npm run build && npm run check"
   },
   "dependencies": {
     "@astrojs/sitemap": "3.7.3",
-    "astro": "6.4.8"
+    "astro": "7.0.9"
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.3.2",
