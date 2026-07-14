@@ -2268,6 +2268,45 @@ describe("config.patch credential guard", () => {
     expect(result).toMatchObject({ patched: true });
   });
 
+  it("accepts an unpinned OAuth provider when its store has a fallback profile", async () => {
+    const deps = makeDeps(tempConfig.configPath);
+    const list = vi.fn(async () => ({
+      ok: true as const,
+      value: [{
+        provider: "openai-codex",
+        profileId: "openai-codex:user_a@example.com",
+        access: "test-key",
+        refresh: "test-key",
+        expires: 1_900_000_000_000,
+        version: 1 as const,
+      }],
+    }));
+    (deps as ConfigHandlerDeps).oauthCredentialStore = {
+      has: async () => ({ ok: true, value: false }),
+      get: async () => ({ ok: true, value: undefined }),
+      set: async () => ({ ok: true, value: undefined }),
+      delete: async () => ({ ok: true, value: false }),
+      list,
+    } as unknown as ConfigHandlerDeps["oauthCredentialStore"];
+    (deps.container.config as { agents: Record<string, unknown> }).agents["default"] = {
+      name: "Codex",
+      model: "claude-sonnet-4-5-20250929",
+      provider: "anthropic",
+      maxSteps: 25,
+    };
+    const handlers = createConfigHandlers(deps);
+
+    const result = await handlers["config.patch"]!({
+      section: "agents",
+      key: "default.provider",
+      value: "openai-codex",
+      _trustLevel: "admin",
+    });
+
+    expect(result).toMatchObject({ patched: true });
+    expect(list).toHaveBeenCalledWith({ provider: "openai-codex" });
+  });
+
   it("rejects with OAuth-aware copy when OAuth profile is configured but loader reports missing", async () => {
     const deps = makeDeps(tempConfig.configPath);
     (deps as ConfigHandlerDeps).oauthCredentialStore = {

@@ -4,7 +4,7 @@ import { createAgentHandlers } from "./agent-handlers.js";
 import type { AgentHandlerDeps } from "./agent-handlers.js";
 import type { PersistToConfigDeps } from "./shared/persist-to-config.js";
 import type { ProviderEntry, OAuthCredentialStorePort } from "@comis/core";
-import { ok } from "@comis/shared";
+import { err, ok } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Mock persist-to-config module to avoid real filesystem operations
@@ -106,6 +106,18 @@ vi.mock("@comis/agent", () => ({
     groq: ["GROQ_API_KEY"],
     mistral: ["MISTRAL_API_KEY"],
   })[provider] ?? []),
+  oauthEnvSecretKey: vi.fn((provider: string) =>
+    `OAUTH_${provider.toUpperCase().replace(/-/g, "_")}`
+  ),
+  isValidOAuthEnvSeed: vi.fn((raw: string | undefined) => {
+    if (!raw) return false;
+    try {
+      const value = JSON.parse(raw) as Record<string, unknown>;
+      return typeof value.access === "string" && typeof value.refresh === "string";
+    } catch {
+      return false;
+    }
+  }),
 }));
 
 import { persistToConfig } from "./shared/persist-to-config.js";
@@ -1649,6 +1661,25 @@ describe("createAgentHandlers", () => {
       expect(deps.agents["default"]).toBe(originalRef);
     });
 
+    it("reports OAuth store inspection errors separately from missing profiles", async () => {
+      const store = makeStoreMock(() => err(new Error("OAuth store unavailable")));
+      const deps = makeDeps({ oauthCredentialStore: store });
+      const originalRef = deps.agents["default"]!;
+      const handlers = createAgentHandlers(deps);
+
+      const rejection = handlers["agents.update"]!({
+        agentId: "default",
+        config: {
+          oauthProfiles: { "openai-codex": "openai-codex:user_a@example.com" },
+        },
+        _trustLevel: "admin",
+      });
+
+      await expect(rejection).rejects.toThrow(/Failed to inspect OAuth credential store/);
+      await expect(rejection).rejects.not.toThrow(/not found in store/);
+      expect(deps.agents["default"]).toBe(originalRef);
+    });
+
     it("does NOT call oauthCredentialStore.has when oauthProfiles is absent from the patch", async () => {
       const store = makeStoreMock(() => ok(true));
       const deps = makeDeps({ oauthCredentialStore: store });
@@ -1869,6 +1900,39 @@ describe("createAgentHandlers", () => {
       expect(result.config.provider).toBe("openai-codex");
     });
 
+    it("agents.update accepts an unpinned OAuth provider when its store has a fallback profile", async () => {
+      const list = vi.fn(async () => ok([{
+        provider: "openai-codex",
+        profileId: "openai-codex:user_a@example.com",
+        access: "test-key",
+        refresh: "test-key",
+        expires: 1_900_000_000_000,
+        version: 1 as const,
+      }]));
+      const deps = makeDeps({
+        providerEntries: {},
+        secretManager: { has: () => false, get: () => undefined },
+        oauthCredentialStore: {
+          has: async () => ok(false),
+          get: async () => ok(undefined),
+          set: async () => ok(undefined),
+          delete: async () => ok(false),
+          list,
+        } as unknown as OAuthCredentialStorePort,
+      });
+      const handlers = createAgentHandlers(deps);
+
+      const result = (await handlers["agents.update"]!({
+        agentId: "default",
+        config: { provider: "openai-codex", model: "gpt-5.3-codex" },
+        _trustLevel: "admin",
+      })) as { updated: boolean; config: Record<string, unknown> };
+
+      expect(result.updated).toBe(true);
+      expect(result.config.provider).toBe("openai-codex");
+      expect(list).toHaveBeenCalledTimes(1);
+    });
+
     it("agents.update with non-provider/model patch (skills) does not invoke guard", async () => {
       // No providerEntries / no secretManager — guard would reject if it ran.
       // Skills updates must NOT trigger the guard.
@@ -1913,14 +1977,83 @@ describe("createAgentHandlers", () => {
           config: { name: "New Bot", provider: "openrouter", model: "qwen/qwen3-coder" },
           _trustLevel: "admin",
         }),
-      ).rejects.toThrow(/Cannot set agent provider to "openrouter"/);
+      ).rejects.toMatchObject({
+        name: "PreconditionError",
+        message: expect.stringMatching(/Cannot set agent provider to "openrouter"/),
+      });
 
       // In-memory commit and persist must NOT have happened
       expect(deps.agents["new-bot"]).toBeUndefined();
       expect(mockPersistToConfig).not.toHaveBeenCalled();
     });
 
+    it("agents.create accepts an unpinned OAuth provider when its store has a fallback profile", async () => {
+      const list = vi.fn(async () => ok([{
+        provider: "openai-codex",
+        profileId: "openai-codex:user_a@example.com",
+        access: "test-key",
+        refresh: "test-key",
+        expires: 1_900_000_000_000,
+        version: 1 as const,
+      }]));
+      const deps = makeDeps({
+        providerEntries: {},
+        secretManager: { has: () => false, get: () => undefined },
+        oauthCredentialStore: {
+          has: async () => ok(false),
+          get: async () => ok(undefined),
+          set: async () => ok(undefined),
+          delete: async () => ok(false),
+          list,
+        } as unknown as OAuthCredentialStorePort,
+      });
+      const handlers = createAgentHandlers(deps);
+
+      const result = (await handlers["agents.create"]!({
+        agentId: "codex-bot",
+        config: {
+          name: "Codex Bot",
+          provider: "openai-codex",
+          model: "gpt-5.3-codex",
+        },
+        _trustLevel: "admin",
+      })) as { created: boolean; agentId: string };
+
+      expect(result).toMatchObject({ created: true, agentId: "codex-bot" });
+      expect(list).toHaveBeenCalledWith({ provider: "openai-codex" });
+      expect(deps.agents["codex-bot"]?.oauthProfiles).toBeUndefined();
+    });
+
+    it("agents.create without a stored OAuth profile returns the login recovery action", async () => {
+      const deps = makeDeps({
+        providerEntries: {},
+        secretManager: { has: () => false, get: () => undefined },
+        oauthCredentialStore: {
+          has: async () => ok(false),
+          get: async () => ok(undefined),
+          set: async () => ok(undefined),
+          delete: async () => ok(false),
+          list: async () => ok([]),
+        } as unknown as OAuthCredentialStorePort,
+      });
+      const handlers = createAgentHandlers(deps);
+
+      await expect(handlers["agents.create"]!({
+        agentId: "codex-bot",
+        config: {
+          name: "Codex Bot",
+          provider: "openai-codex",
+          model: "gpt-5.3-codex",
+        },
+        _trustLevel: "admin",
+      })).rejects.toMatchObject({
+        name: "PreconditionError",
+        message: expect.stringMatching(/comis auth login --provider openai-codex/),
+      });
+    });
+
     it("agents.create with authenticated provider (Source A) succeeds", async () => {
+      const list = vi.fn(async () => err(new Error("oauth store unavailable")));
       const deps = makeDeps({
         providerEntries: {
           openrouter: {
@@ -1940,6 +2073,13 @@ describe("createAgentHandlers", () => {
           has: (k) => k === "OPENROUTER_API_KEY",
           get: (k) => k === "OPENROUTER_API_KEY" ? "sk-or-v1-xxx" : undefined,
         },
+        oauthCredentialStore: {
+          has: async () => ok(false),
+          get: async () => ok(undefined),
+          set: async () => ok(undefined),
+          delete: async () => ok(false),
+          list,
+        } as unknown as OAuthCredentialStorePort,
       });
       const handlers = createAgentHandlers(deps);
 
@@ -1952,6 +2092,35 @@ describe("createAgentHandlers", () => {
       expect(result.created).toBe(true);
       expect(deps.agents["new-bot"]).toBeDefined();
       expect(deps.agents["new-bot"]!.provider).toBe("openrouter");
+      expect(list).not.toHaveBeenCalled();
+    });
+
+    it("agents.create reports an OAuth store list failure without mutating the agent map", async () => {
+      const deps = makeDeps({
+        providerEntries: {},
+        secretManager: { has: () => false, get: () => undefined },
+        oauthCredentialStore: {
+          has: async () => ok(false),
+          get: async () => ok(undefined),
+          set: async () => ok(undefined),
+          delete: async () => ok(false),
+          list: async () => err(new Error("oauth store unavailable")),
+        } as unknown as OAuthCredentialStorePort,
+      });
+      const handlers = createAgentHandlers(deps);
+
+      await expect(handlers["agents.create"]!({
+        agentId: "codex-bot",
+        config: {
+          name: "Codex Bot",
+          provider: "openai-codex",
+          model: "gpt-5.3-codex",
+        },
+        _trustLevel: "admin",
+      })).rejects.toThrow(/Failed to inspect OAuth credential store/);
+
+      expect(deps.agents["codex-bot"]).toBeUndefined();
+      expect(mockPersistToConfig).not.toHaveBeenCalled();
     });
 
     it("agents.create with OAuth-only provider + missing profile rejects with auth-login recovery copy", async () => {
@@ -1986,6 +2155,36 @@ describe("createAgentHandlers", () => {
           _trustLevel: "admin",
         }),
       ).rejects.toThrow(/comis auth login --provider openai-codex/);
+      expect(deps.agents["codex-bot"]).toBeUndefined();
+    });
+
+    it("agents.create reports an explicit-profile store failure instead of claiming the profile is missing", async () => {
+      const deps = makeDeps({
+        providerEntries: {},
+        secretManager: { has: () => false, get: () => undefined },
+        oauthCredentialStore: {
+          has: async () => err(new Error("oauth store unavailable")),
+          get: async () => ok(undefined),
+          set: async () => ok(undefined),
+          delete: async () => ok(false),
+          list: async () => ok([]),
+        } as unknown as OAuthCredentialStorePort,
+      });
+      const handlers = createAgentHandlers(deps);
+
+      const rejection = handlers["agents.create"]!({
+        agentId: "codex-bot",
+        config: {
+          name: "Codex Bot",
+          provider: "openai-codex",
+          model: "gpt-5.3-codex",
+          oauthProfiles: { "openai-codex": "openai-codex:user_a@example.com" },
+        },
+        _trustLevel: "admin",
+      });
+
+      await expect(rejection).rejects.toThrow(/Failed to inspect OAuth credential store/);
+      await expect(rejection).rejects.not.toThrow(/comis auth login/);
       expect(deps.agents["codex-bot"]).toBeUndefined();
     });
   });
