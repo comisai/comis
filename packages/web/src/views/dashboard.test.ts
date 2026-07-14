@@ -82,6 +82,7 @@ function priv(el: IcDashboard) {
     _costSparklineData: number[];
     _agentBilling: Map<string, { cost: number; tokens: number }>;
     _loadData(): Promise<void>;
+    _loadAgents(): Promise<void>;
     _loadRpcData(): Promise<void>;
     _loadSparklineData(): Promise<void>;
     _loadAgentBilling(): Promise<void>;
@@ -303,6 +304,35 @@ describe("IcDashboard", () => {
       expect(priv(el)._channels).toHaveLength(1);
       expect(priv(el)._activity).toEqual([]);
       expect(priv(el)._loadState).toBe("loaded");
+    });
+
+    it("does not let an older full load overwrite a newer lifecycle roster", async () => {
+      let resolveFullRoster!: (agents: DashboardTestAgent[]) => void;
+      let resolveLifecycleRoster!: (agents: DashboardTestAgent[]) => void;
+      const fullRoster = new Promise<DashboardTestAgent[]>((resolve) => {
+        resolveFullRoster = resolve;
+      });
+      const lifecycleRoster = new Promise<DashboardTestAgent[]>((resolve) => {
+        resolveLifecycleRoster = resolve;
+      });
+      priv(el).apiClient = createMockApiClient({
+        getAgents: vi.fn()
+          .mockReturnValueOnce(fullRoster)
+          .mockReturnValueOnce(lifecycleRoster),
+      });
+
+      const fullLoad = priv(el)._loadData();
+      const lifecycleLoad = priv(el)._loadAgents();
+      resolveLifecycleRoster([
+        { id: "agent-new", provider: "openai", model: "gpt-4", status: "active" },
+      ]);
+      await lifecycleLoad;
+      resolveFullRoster([
+        { id: "agent-stale", provider: "anthropic", model: "claude", status: "active" },
+      ]);
+      await fullLoad;
+
+      expect(priv(el)._agents.map((agent) => agent.id)).toEqual(["agent-new"]);
     });
 
     it("resets to loading state and clears error at start of _loadData", async () => {
@@ -613,6 +643,81 @@ describe("IcDashboard", () => {
         expect(apiClient.getActivity).not.toHaveBeenCalled();
         expect(rpcClient.call).not.toHaveBeenCalled();
       }
+    });
+
+    it("keeps the newest agent roster when lifecycle refreshes resolve out of order", async () => {
+      let resolveFirst!: (agents: DashboardTestAgent[]) => void;
+      let resolveSecond!: (agents: DashboardTestAgent[]) => void;
+      const first = new Promise<DashboardTestAgent[]>((resolve) => {
+        resolveFirst = resolve;
+      });
+      const second = new Promise<DashboardTestAgent[]>((resolve) => {
+        resolveSecond = resolve;
+      });
+      const apiClient = createMockApiClient({
+        getAgents: vi.fn()
+          .mockReturnValueOnce(first)
+          .mockReturnValueOnce(second),
+      });
+      priv(el).apiClient = apiClient;
+
+      const firstLoad = priv(el)._loadAgents();
+      const secondLoad = priv(el)._loadAgents();
+      resolveSecond([
+        { id: "agent-new", provider: "openai", model: "gpt-4", status: "active" },
+      ]);
+      await secondLoad;
+      resolveFirst([
+        { id: "agent-stale", provider: "anthropic", model: "claude", status: "active" },
+      ]);
+      await firstLoad;
+
+      expect(priv(el)._agents.map((agent) => agent.id)).toEqual(["agent-new"]);
+    });
+
+    it("keeps a successful status mutation when an older roster refresh finishes later", async () => {
+      let resolveRoster!: (agents: DashboardTestAgent[]) => void;
+      const pendingRoster = new Promise<DashboardTestAgent[]>((resolve) => {
+        resolveRoster = resolve;
+      });
+      priv(el).apiClient = createMockApiClient({
+        getAgents: vi.fn().mockReturnValue(pendingRoster),
+      });
+      priv(el).rpcClient = createMockRpcClient();
+      priv(el)._agents = [
+        { id: "agent-alpha", provider: "anthropic", model: "claude", status: "active" },
+      ];
+
+      const rosterLoad = priv(el)._loadAgents();
+      await priv(el)._changeAgentStatus("suspend", "agent-alpha");
+      resolveRoster([
+        { id: "agent-alpha", provider: "anthropic", model: "claude", status: "active" },
+      ]);
+      await rosterLoad;
+
+      expect(priv(el)._agents[0]?.status).toBe("suspended");
+    });
+
+    it("removes billing entries for agents missing from a lifecycle roster refresh", async () => {
+      priv(el).apiClient = createMockApiClient({
+        getAgents: vi.fn().mockResolvedValue([
+          { id: "agent-beta", provider: "openai", model: "gpt-4", status: "active" },
+        ]),
+      });
+      priv(el)._agents = [
+        { id: "agent-alpha", provider: "anthropic", model: "claude", status: "active" },
+        { id: "agent-beta", provider: "openai", model: "gpt-4", status: "active" },
+      ];
+      priv(el)._agentBilling = new Map([
+        ["agent-alpha", { cost: 1, tokens: 10 }],
+        ["agent-beta", { cost: 2, tokens: 20 }],
+      ]);
+
+      await priv(el)._loadAgents();
+
+      expect([...priv(el)._agentBilling.entries()]).toEqual([
+        ["agent-beta", { cost: 2, tokens: 20 }],
+      ]);
     });
   });
 
@@ -1160,6 +1265,40 @@ describe("IcDashboard", () => {
       expect(priv(el)._agentBilling.size).toBe(1);
       expect(priv(el)._agentBilling.has("a1")).toBe(true);
       expect(priv(el)._agentBilling.has("a2")).toBe(false);
+    });
+
+    it("attributes in-flight billing results to the roster that started each request", async () => {
+      let resolveA1!: (value: { totalCost: number; totalTokens: number }) => void;
+      let resolveA2!: (value: { totalCost: number; totalTokens: number }) => void;
+      const a1Result = new Promise<{ totalCost: number; totalTokens: number }>((resolve) => {
+        resolveA1 = resolve;
+      });
+      const a2Result = new Promise<{ totalCost: number; totalTokens: number }>((resolve) => {
+        resolveA2 = resolve;
+      });
+      const mockRpc = createMockRpcClient(undefined, {
+        call: vi.fn().mockImplementation((_method: string, params?: unknown) =>
+          (params as { agentId: string }).agentId === "a1" ? a1Result : a2Result,
+        ),
+      });
+      priv(el).rpcClient = mockRpc;
+      priv(el)._agents = [
+        { id: "a1", provider: "anthropic", model: "claude", status: "active" },
+        { id: "a2", provider: "openai", model: "gpt-4", status: "active" },
+      ];
+
+      const billingLoad = priv(el)._loadAgentBilling();
+      priv(el)._agents = [
+        { id: "a2", provider: "openai", model: "gpt-4", status: "active" },
+        { id: "a3", provider: "openai", model: "gpt-4", status: "active" },
+      ];
+      resolveA1({ totalCost: 1, totalTokens: 10 });
+      resolveA2({ totalCost: 2, totalTokens: 20 });
+      await billingLoad;
+
+      expect([...priv(el)._agentBilling.entries()]).toEqual([
+        ["a2", { cost: 2, tokens: 20 }],
+      ]);
     });
 
     it("_loadAgentBilling does nothing when agents array is empty", async () => {
