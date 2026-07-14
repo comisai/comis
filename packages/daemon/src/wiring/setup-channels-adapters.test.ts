@@ -1074,7 +1074,11 @@ describe("bootstrapAdapters", () => {
   // config missing its audience fails fast at registration.
   // -------------------------------------------------------------------------
 
-  it("registers a documented webhook config (real validator, no subscriptionName) and mounts the ingress", async () => {
+  // 30s: the first vi.importActual("@comis/channels") is a cold import of the
+  // full real channels graph — well over the 5s default under coverage
+  // instrumentation. An abort here leaks the still-running bootstrapAdapters
+  // call into the next test's createGoogleChatIngress spy.
+  it("registers a documented webhook config (real validator, no subscriptionName) and mounts the ingress", { timeout: 30_000 }, async () => {
     const actual = await vi.importActual<typeof import("@comis/channels")>("@comis/channels");
     vi.mocked(validateGoogleChatCredentials).mockImplementationOnce((opts) =>
       actual.validateGoogleChatCredentials(opts),
@@ -1090,7 +1094,7 @@ describe("bootstrapAdapters", () => {
     expect(createGoogleChatIngress).toHaveBeenCalledTimes(1);
   });
 
-  it("refuses to register a webhook config missing audience (real validator) and WARNs config naming channels.googlechat.audience", async () => {
+  it("refuses to register a webhook config missing audience (real validator) and WARNs config naming channels.googlechat.audience", { timeout: 30_000 }, async () => {
     const actual = await vi.importActual<typeof import("@comis/channels")>("@comis/channels");
     vi.mocked(validateGoogleChatCredentials).mockImplementationOnce((opts) =>
       actual.validateGoogleChatCredentials(opts),

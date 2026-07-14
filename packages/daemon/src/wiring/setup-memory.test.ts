@@ -301,7 +301,11 @@ describe("setupMemory", () => {
   // 1. Creates basic memory services without embedding
   // -------------------------------------------------------------------------
 
-  it("creates memoryAdapter, sessionStore, memoryApi without embedding when disabled", async () => {
+  // 30s: getSetupMemory()'s first dynamic import pulls the cold setup-memory
+  // module graph (memory package + better-sqlite3) — over the 5s default under
+  // coverage instrumentation. An abort here leaks the still-running setupMemory
+  // call into the next test's buildProvenanceReadStore call count.
+  it("creates memoryAdapter, sessionStore, memoryApi without embedding when disabled", { timeout: 30_000 }, async () => {
     const container = createMinimalContainer({
       embedding: { enabled: false },
     });
@@ -333,7 +337,7 @@ describe("setupMemory", () => {
   //     the prompt-assembly + setup-agents wiring guards (the last links).
   // -------------------------------------------------------------------------
 
-  it("builds buildProvenanceReadStore on the shared db and returns it as provenanceStore", async () => {
+  it("builds buildProvenanceReadStore on the shared db and returns it as provenanceStore", { timeout: 30_000 }, async () => {
     const container = createMinimalContainer({ embedding: { enabled: false } });
     const setupMemory = await getSetupMemory();
 
