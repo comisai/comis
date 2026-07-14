@@ -106,7 +106,7 @@ function createMockRpcClient(callImpl?: (...args: unknown[]) => unknown): RpcCli
       (async (method: string) => {
         if (method === "config.read") return { config: structuredClone(MOCK_CONFIG), sections: ["providers", "models"] };
         if (method === "models.list") return structuredClone(MOCK_MODELS_LIST);
-        if (method === "models.test") return { status: "ok", modelsAvailable: 3, validatedModels: 2 };
+        if (method === "models.test") return { status: "available", modelsAvailable: 3, validatedModels: 2 };
         if (method === "config.patch") return { ok: true };
         return {};
       }),
@@ -264,6 +264,8 @@ describe("IcModelsView", () => {
       const calls = (mockRpc.call as ReturnType<typeof vi.fn>).mock.calls;
       const testCall = calls.find((c: unknown[]) => c[0] === "models.test");
       expect(testCall).toBeTruthy();
+      await el.updateComplete;
+      expect(cards![0].shadowRoot?.textContent).toContain("Provider available");
     });
 
     it("Add Provider button shows editor form", async () => {

@@ -49,10 +49,30 @@ interface ModelAlias {
 }
 
 interface TestResult {
-  status: string;
+  status: "available" | "not_configured" | "no_models" | "error";
   modelsAvailable?: number;
   validatedModels?: number;
+  modelsInCatalog?: number;
   agentsUsing?: Array<{ agentId: string; model: string }>;
+}
+
+type ToastVariant = "success" | "error" | "warning" | "info";
+
+function providerStatusMessage(name: string, status: TestResult["status"]): [string, ToastVariant] {
+  switch (status) {
+    case "available":
+      return [`Provider "${name}" is available`, "success"];
+    case "not_configured":
+      return [`Provider "${name}" is not assigned to an agent`, "info"];
+    case "no_models":
+      return [`Provider "${name}" has no available models`, "warning"];
+    case "error":
+      return [`Provider "${name}" status check failed`, "error"];
+    default: {
+      const _exhaustive: never = status;
+      return _exhaustive;
+    }
+  }
 }
 
 interface AgentOverride {
@@ -688,7 +708,8 @@ export class IcModelsView extends LitElement {
       const newResults = new Map(this._providerTestResults);
       newResults.set(name, result);
       this._providerTestResults = newResults;
-      IcToast.show(`Provider "${name}" test: ${result.status}`, result.status === "ok" ? "success" : "warning");
+      const [message, variant] = providerStatusMessage(name, result.status);
+      IcToast.show(message, variant);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Test failed";
       const newResults = new Map(this._providerTestResults);

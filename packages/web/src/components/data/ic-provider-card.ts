@@ -9,9 +9,27 @@ import "./ic-tag.js";
 
 /** Test result from models.test RPC. */
 interface TestResult {
-  status: string;
+  status: "available" | "not_configured" | "no_models" | "error";
   modelsAvailable?: number;
   validatedModels?: number;
+  modelsInCatalog?: number;
+}
+
+function testResultLabel(status: TestResult["status"]): string {
+  switch (status) {
+    case "available":
+      return "Provider available";
+    case "not_configured":
+      return "Not used by an agent";
+    case "no_models":
+      return "No models available";
+    case "error":
+      return "Status check failed";
+    default: {
+      const _exhaustive: never = status;
+      return _exhaustive;
+    }
+  }
 }
 
 /**
@@ -190,16 +208,20 @@ export class IcProviderCard extends LitElement {
   private _renderTestResult() {
     if (!this.testResult) return nothing;
     const r = this.testResult;
+    const available = r.status === "available";
     return html`
-      <div class="test-result">
+      <div class="test-result" role="status" aria-live="polite">
         <div class="test-result-line">
           <ic-icon
-            name=${r.status === "ok" ? "check" : "x"}
+            name=${available ? "check" : "x"}
             size="12px"
-            color=${r.status === "ok" ? "var(--ic-success)" : "var(--ic-error)"}
+            color=${available ? "var(--ic-success)" : "var(--ic-error)"}
           ></ic-icon>
-          <span>${r.status === "ok" ? "Connection OK" : `Status: ${r.status}`}</span>
+          <span>${testResultLabel(r.status)}</span>
         </div>
+        ${r.modelsInCatalog != null
+          ? html`<div class="test-result-line">Models in catalog: ${r.modelsInCatalog}</div>`
+          : nothing}
         ${r.modelsAvailable != null
           ? html`<div class="test-result-line">Models available: ${r.modelsAvailable}</div>`
           : nothing}
@@ -242,7 +264,7 @@ export class IcProviderCard extends LitElement {
           >
             ${this.testing
               ? html`<span class="spinner-inline"></span>`
-              : "Test"}
+              : "Check status"}
           </button>
           <button
             class="btn btn-edit"
