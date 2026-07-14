@@ -66,6 +66,10 @@ export default tseslint.config(
       "packages/*/src/**/scripts/**/*.mjs",
       "scripts/**/*.js",
       "scripts/**/*.mjs",
+      // The standalone public-site verifier runs under Node rather than in
+      // Astro's browser bundle.
+      "website/scripts/**/*.js",
+      "website/scripts/**/*.mjs",
       "skills/*/scripts/**/*.js",
       "skills/*/scripts/**/*.mjs",
       // CI workflow runner scripts (e.g. check-pr-description.mjs) run under Node.
@@ -84,9 +88,15 @@ export default tseslint.config(
     },
   },
 
-  // Browser-facing web package uses DOM + browser globals.
+  // Browser-facing application code and standalone public-site assets use DOM
+  // globals. Astro copies website/public into website/dist without bundling,
+  // so lint the generated copy under the same narrowly scoped environment.
   {
-    files: ["packages/web/src/**/*.ts"],
+    files: [
+      "packages/web/src/**/*.ts",
+      "website/public/**/*.js",
+      "website/dist/**/*.js",
+    ],
     languageOptions: {
       globals: {
         ...globals.browser,
