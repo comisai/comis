@@ -95,7 +95,6 @@ Read [THREAT_MODEL.md](THREAT_MODEL.md) before enabling shell, browser, network,
 ## Current Limitations
 
 - Code extensions currently require source changes through ports, adapters, hooks, and tools. Prompt skills can be uploaded or imported, but Comis does not yet provide a stable third-party code-plugin ecosystem.
-- The OpenAI-shaped API is experimental and does not promise complete drop-in OpenAI semantics.
 - Deterministic tests cover the core runtime extensively, but not every provider, channel, model, or deployment combination is validated live.
 - Backward compatibility is not guaranteed during active development.
 
