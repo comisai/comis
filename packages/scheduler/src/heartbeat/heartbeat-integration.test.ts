@@ -180,6 +180,60 @@ describe("Integration: heartbeat subsystem wiring", () => {
     runner.stop();
   });
 
+  it("executor rejection reaches runner backoff state and alert signaling", async () => {
+    const now = 1_000;
+    const logger = makeLogger();
+    const eventBus = makeEventBus();
+    const executor = {
+      execute: vi.fn().mockRejectedValue(new Error("Connection timeout")),
+    };
+    const queue = createSystemEventQueue({ logger, nowMs: () => now });
+    const config = makeConfig({ intervalMs: 100, alertThreshold: 1 });
+    const deliveryBridge: DeliveryBridgeDeps = {
+      adaptersByType: new Map(),
+      duplicateDetector: createDuplicateDetector({ nowMs: () => now }),
+      eventBus,
+      logger,
+    };
+    const source = createAgentHeartbeatSource({
+      getExecutor: vi.fn().mockReturnValue(executor),
+      assembleToolsForAgent: vi.fn().mockResolvedValue([]),
+      getEffectiveConfig: vi.fn().mockReturnValue(config),
+      getAgentConfig: vi.fn().mockReturnValue({ model: "claude-sonnet", tenantId: "default" }),
+      checkFileGate: vi.fn().mockResolvedValue(false),
+      systemEventQueue: queue,
+      deliveryBridge,
+      logger,
+    });
+    const agents = new Map<string, HeartbeatAgentState>();
+    agents.set("agent-1", makeAgentState("agent-1", 100, { config }));
+    const runner = createPerAgentHeartbeatRunner({
+      agents,
+      eventBus,
+      logger,
+      onTick: source.onTick,
+      nowMs: () => now,
+    });
+
+    await runner.runAgentOnce("agent-1");
+
+    expect(runner.getAgentStates().get("agent-1")).toEqual(
+      expect.objectContaining({
+        consecutiveErrors: 1,
+        backoffUntilMs: 31_000,
+        lastErrorKind: "transient",
+      }),
+    );
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "scheduler:heartbeat_alert",
+      expect.objectContaining({
+        agentId: "agent-1",
+        consecutiveErrors: 1,
+        classification: "transient",
+      }),
+    );
+  });
+
   // -------------------------------------------------------------------------
   // Cron-triggered heartbeat flow
   // -------------------------------------------------------------------------

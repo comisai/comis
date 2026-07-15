@@ -430,6 +430,7 @@ export function createAgentHeartbeatSource(
         },
         "Heartbeat execution failed",
       );
+      return Promise.reject(err);
     }
   }
 
