@@ -936,6 +936,7 @@ maximum_uncompressed_bytes = int(sys.argv[4])
 seen = set()
 symlinks = set()
 declared_directories = set()
+directory_members = {}
 metadata = []
 entry_count = 0
 total_bytes = 0
@@ -1040,6 +1041,20 @@ def mtime_ns(member):
         fail("mtime is not representable in nanoseconds")
     return int(value)
 
+def extraction_member(member, destination):
+    filtered = tarfile.data_filter(member, destination)
+    if filtered is None:
+        fail("archive member was rejected")
+    filtered = filtered.replace(
+        mode=member.mode & 0o1777,
+        uid=member.uid,
+        gid=member.gid,
+        uname=None,
+        gname=None,
+        mtime=member.mtime,
+    )
+    return filtered
+
 def filter_member(member, destination):
     global entry_count, total_bytes
     name = member.name
@@ -1056,7 +1071,12 @@ def filter_member(member, destination):
     components = [] if canonical == "." else canonical.split("/")
     if len(components) > MAXIMUM_PATH_COMPONENTS:
         fail("archive path exceeds 256 components")
-    if canonical in seen:
+    is_directory_refilter = (
+        canonical in seen
+        and member.isdir()
+        and directory_members.get(canonical) is member
+    )
+    if canonical in seen and not is_directory_refilter:
         fail("duplicate archive path")
     if member.islnk():
         fail("hard link is not supported")
@@ -1089,6 +1109,8 @@ def filter_member(member, destination):
         allowed_pax_keys.add("linkpath")
     if any(key not in allowed_pax_keys for key in member.pax_headers):
         fail("unsupported pax key for archive member")
+    if is_directory_refilter:
+        return extraction_member(member, destination)
     entry_count += 1
     if entry_count > expected_entry_count:
         fail("expected_entry_count exceeded")
@@ -1096,21 +1118,12 @@ def filter_member(member, destination):
         total_bytes += member.size
         if total_bytes > expected_bytes:
             fail("expected_bytes exceeded")
-    filtered = tarfile.data_filter(member, destination)
-    if filtered is None:
-        fail("archive member was rejected")
-    filtered = filtered.replace(
-        mode=member.mode & 0o1777,
-        uid=member.uid,
-        gid=member.gid,
-        uname=None,
-        gname=None,
-        mtime=member.mtime,
-    )
+    filtered = extraction_member(member, destination)
     metadata.append((canonical, member.isdir(), member.isreg(), member.issym(), member.mode & 0o1777, member.uid, member.gid, mtime_ns(member)))
     seen.add(canonical)
     if member.isdir():
         declared_directories.add(canonical)
+        directory_members[canonical] = member
     return filtered
 
 with tarfile.open(

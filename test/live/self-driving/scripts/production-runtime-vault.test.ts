@@ -793,6 +793,64 @@ describe("production runtime content addressed vault", () => {
     }
   });
 
+  it("accepts repeated safety filtering of the same extracted directory objects", () => {
+    const result = buildProductionRuntimeVaultPlan({
+      runId: "runtime-directory-refilter-a1",
+      profile,
+      attemptId,
+      authorityDigestSha256,
+      sourceRuntime,
+      targetRuntime,
+      sourceTree: { ...sourceTree, entryCount: 4, bytes: 7 },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const workspace = mkdtempSync(join(tmpdir(), "comis-runtime-refilter-"));
+    try {
+      const extractorPath = join(workspace, "extract.py");
+      const payloadPath = join(workspace, "payload");
+      const archivePath = join(workspace, "payload.tar");
+      writeFileSync(
+        extractorPath,
+        heredoc(result.value.targetPrepare.stdin, "COMIS_RUNTIME_SAFE_EXTRACTOR"),
+        { mode: 0o700 },
+      );
+      const currentIdentity = lstatSync(workspace);
+      const archive = spawnSync(
+        "python3",
+        [
+          "-c",
+          buildMetadataArchiveProgram(),
+          archivePath,
+          String(currentIdentity.uid),
+          String(currentIdentity.gid),
+        ],
+        { encoding: "utf8" },
+      );
+      expect(archive.status, archive.stderr).toBe(0);
+
+      const extracted = spawnSync(
+        "python3",
+        [
+          "-c",
+          buildDirectoryRefilterProgram(),
+          extractorPath,
+          payloadPath,
+          "4",
+          "7",
+          "65536",
+        ],
+        { input: readFileSync(archivePath), encoding: "utf8" },
+      );
+
+      expect(extracted.status, extracted.stderr).toBe(0);
+      expect(existsSync(join(payloadPath, "nested/file.txt"))).toBe(true);
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("rejects decompressed archive overhead before a compact stream can expand without bound", () => {
     const result = buildProductionRuntimeVaultPlan({
       runId: "runtime-expand-limit-a1",
@@ -906,6 +964,12 @@ describe("production runtime content addressed vault", () => {
           entryCount: 2,
           bytes: 1,
           error: "archive parent directory was not declared",
+        },
+        {
+          scenario: "duplicate_directory",
+          entryCount: 3,
+          bytes: 0,
+          error: "duplicate archive path",
         },
       ] as const;
 
@@ -2751,6 +2815,47 @@ function metadata(path: string): { readonly mode: number; readonly mtimeNs: bigi
   return { mode: Number(value.mode & 0o7777n), mtimeNs: value.mtimeNs };
 }
 
+function buildDirectoryRefilterProgram(): string {
+  return String.raw`import runpy
+import sys
+import tarfile
+
+extractor_path = sys.argv[1]
+extractor_args = sys.argv[2:]
+original_extractall = tarfile.TarFile.extractall
+
+def extractall_with_directory_refilter(
+    archive,
+    path=".",
+    members=None,
+    *,
+    numeric_owner=False,
+    filter=None,
+):
+    directories = []
+
+    def record(member, destination):
+        filtered = filter(member, destination)
+        if member.isdir():
+            directories.append(member)
+        return filtered
+
+    original_extractall(
+        archive,
+        path,
+        members,
+        numeric_owner=numeric_owner,
+        filter=record,
+    )
+    for directory in directories:
+        filter(directory, path)
+
+tarfile.TarFile.extractall = extractall_with_directory_refilter
+sys.argv = [extractor_path, *extractor_args]
+runpy.run_path(extractor_path, run_name="__main__")
+`;
+}
+
 function buildMetadataArchiveProgram(globalHeaderBytes = 0): string {
   return String.raw`import io
 import os
@@ -2854,6 +2959,9 @@ with tarfile.open(archive_path, "w", format=tarfile.PAX_FORMAT) as archive:
         )
     elif scenario == "undeclared_parent":
         add(archive, "missing/file", tarfile.REGTYPE, data=b"x")
+    elif scenario == "duplicate_directory":
+        add(archive, "directory", tarfile.DIRTYPE)
+        add(archive, "directory", tarfile.DIRTYPE)
     elif scenario == "supported_pax":
         directory = "d" * 120
         add(archive, directory, tarfile.DIRTYPE)
