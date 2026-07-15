@@ -4847,6 +4847,8 @@ StandardError=journal
 SyslogIdentifier=comis
 
 Environment=NODE_ENV=production
+Environment=RUSTUP_HOME=/usr/local/rustup
+Environment=CARGO_HOME=/usr/local/cargo
 ${COMIS_BROWSER_ENV_LINES}
 EnvironmentFile=-${COMIS_ENV_FILE}
 

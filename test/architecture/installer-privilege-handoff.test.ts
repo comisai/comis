@@ -3,6 +3,7 @@ import {
   chmodSync,
   existsSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -225,6 +226,34 @@ describe("install.sh privileged preparation", () => {
     expect(existsSync(marker), result.out).toBe(true);
     expect(result.out).not.toContain("unknown proxy name");
     expect(result.out).not.toContain("rustup install failed");
+  });
+
+  it("exports system Rust homes into the daemon service environment", () => {
+    const work = makeWorkDir();
+    const unitPath = join(work, "comis.service");
+    const result = runHarness(
+      [
+        "WITH_BROWSER=0",
+        "WITH_XVFB=0",
+        "WITH_CLOAKBROWSER=0",
+        'COMIS_SVC_USER="comis"',
+        'COMIS_SVC_GROUP="comis"',
+        'COMIS_SVC_HOME="/home/comis"',
+        'COMIS_WORKING_DIR="/home/comis"',
+        'COMIS_NODE_BIN="/usr/bin/node"',
+        'COMIS_DATA_DIR="/home/comis/.comis"',
+        'COMIS_DAEMON_JS="/home/comis/daemon-entrypoint.js"',
+        'COMIS_ENV_FILE="/etc/comis/env"',
+        'maybe_sudo() { "$@"; }',
+        'render_systemd_unit "$UNIT_PATH" system',
+      ].join("\n"),
+      { UNIT_PATH: unitPath },
+    );
+
+    expect(result.code, result.out).toBe(0);
+    const unit = readFileSync(unitPath, "utf8");
+    expect(unit).toContain("Environment=RUSTUP_HOME=/usr/local/rustup");
+    expect(unit).toContain("Environment=CARGO_HOME=/usr/local/cargo");
   });
 
   it("keeps headed-browser intent during the CLI-only user handoff", () => {
