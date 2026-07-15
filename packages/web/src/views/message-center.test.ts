@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { RpcClient } from "../api/rpc-client.js";
 import type { IcBreadcrumb } from "../components/nav/ic-breadcrumb.js";
 import type { IcMessageCenter } from "./message-center.js";
 import "./message-center.js";
@@ -26,6 +27,14 @@ function state(el: IcMessageCenter) {
     _selectedChatId: string;
     _autoSelectAttempted: boolean;
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }
 
 afterEach(() => {
@@ -94,15 +103,51 @@ describe("IcMessageCenter breadcrumb navigation", () => {
       { label: "Channels", route: "channels" },
       { label: "Messages" },
     ]);
-    expect(state(el)).toMatchObject({
-      _loadState: "idle",
-      _messages: [],
-      _effectiveChannel: "",
-      _capabilities: null,
-      _botName: "",
-      _chatList: [],
-      _selectedChatId: "",
-      _autoSelectAttempted: false,
+    const current = state(el);
+    expect(current._loadState).toBe("idle");
+    expect(current._messages).toEqual([]);
+    expect(current._effectiveChannel).toBe("");
+    expect(current._capabilities).toBeNull();
+    expect(current._botName).toBe("");
+    expect(current._chatList).toEqual([]);
+    expect(current._selectedChatId).toBe("");
+    expect(current._autoSelectAttempted).toBe(false);
+  });
+
+  it("ignores channel data resolved after the route drops its channel", async () => {
+    const channelList = deferred<{ channels: []; total: number }>();
+    const capabilities = deferred<{ channelType: string; features: { fetchHistory: boolean } }>();
+    const channelConfig = deferred<{ botName: string }>();
+    const call = vi.fn((method: string) => {
+      switch (method) {
+        case "channels.list": return channelList.promise;
+        case "channels.capabilities": return capabilities.promise;
+        case "channels.get": return channelConfig.promise;
+        case "obs.channels.all": return Promise.resolve({ channels: [] });
+        case "session.list": return Promise.resolve({ sessions: [] });
+        default: return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
+      }
     });
+    const rpcClient = { status: "connected", call } as unknown as RpcClient;
+    const el = await createElement({ channelType: "telegram", rpcClient });
+
+    el.channelType = "";
+    await el.updateComplete;
+    channelList.resolve({ channels: [], total: 0 });
+    capabilities.resolve({ channelType: "telegram", features: { fetchHistory: false } });
+    channelConfig.resolve({ botName: "old-bot" });
+    await Promise.all([channelList.promise, capabilities.promise, channelConfig.promise]);
+    for (let update = 0; update < 4; update += 1) {
+      await Promise.resolve();
+      await el.updateComplete;
+    }
+
+    const current = state(el);
+    expect(current._messages).toEqual([]);
+    expect(current._effectiveChannel).toBe("");
+    expect(current._capabilities).toBeNull();
+    expect(current._botName).toBe("");
+    expect(current._chatList).toEqual([]);
+    expect(current._selectedChatId).toBe("");
   });
 });
