@@ -21,6 +21,7 @@ function state(el: IcMessageCenter) {
     _loadState: "idle" | "loading" | "loaded" | "error";
     _messages: Array<{ id: string; senderId: string; text: string; timestamp: number }>;
     _effectiveChannel: string;
+    _channelIsRunning: boolean;
     _capabilities: Record<string, unknown> | null;
     _botName: string;
     _chatList: Array<{ chatId: string; label: string }>;
@@ -92,6 +93,7 @@ describe("IcMessageCenter", () => {
     const el = await createElement({ channelType: "telegram" });
     Object.assign(state(el), {
       _loadState: "loaded",
+      _channelIsRunning: true,
       _messages: [{ id: "message-old", senderId: "user_a", text: "old", timestamp: 1 }],
       _capabilities: { fetchHistory: true },
       _botName: "old-bot",
@@ -176,6 +178,7 @@ describe("IcMessageCenter", () => {
     const el = await createElement({ channelType: "telegram" });
     Object.assign(state(el), {
       _loadState: "loaded",
+      _channelIsRunning: true,
       _capabilities: { fetchHistory: true },
       _chatList: [
         { chatId: "chat-a", label: "Chat A" },
@@ -223,6 +226,7 @@ describe("IcMessageCenter", () => {
     const current = state(el);
     Object.assign(current, {
       _loadState: "loaded",
+      _channelIsRunning: true,
       _capabilities: { fetchHistory: true },
       _selectedChatId: "chat-a",
       _hasLoaded: true,
@@ -253,7 +257,11 @@ describe("IcMessageCenter", () => {
       return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
     });
     const el = await createElement({ channelType: "telegram" });
-    Object.assign(state(el), { _loadState: "loaded", _hasLoaded: true });
+    Object.assign(state(el), {
+      _loadState: "loaded",
+      _channelIsRunning: true,
+      _hasLoaded: true,
+    });
     el.rpcClient = { status: "connected", call } as unknown as RpcClient;
     await el.updateComplete;
 
@@ -289,6 +297,7 @@ describe("IcMessageCenter", () => {
     const current = state(el);
     Object.assign(current, {
       _loadState: "loaded",
+      _channelIsRunning: true,
       _messages: [{ id: "message-old", senderId: "user_a", text: "old", timestamp: 1 }],
       _capabilities: { deleteMessages: true },
       _hasLoaded: true,
@@ -314,6 +323,7 @@ describe("IcMessageCenter", () => {
     await el.updateComplete;
     Object.assign(current, {
       _loadState: "loaded",
+      _channelIsRunning: true,
       _messages: [{ id: "message-new", senderId: "user_a", text: "new", timestamp: 2 }],
       _deleteTargetId: "message-new",
     });
@@ -336,6 +346,7 @@ describe("IcMessageCenter", () => {
     const current = state(el);
     Object.assign(current, {
       _loadState: "loaded",
+      _channelIsRunning: true,
       _messages: [{ id: "message-1", senderId: "user_a", text: "hello", timestamp: 1 }],
       _capabilities: { reactions: true },
       _hasLoaded: true,
@@ -430,7 +441,11 @@ describe("IcMessageCenter", () => {
     const send = deferred<{ ok: boolean }>();
     const firstCall = vi.fn(() => send.promise);
     const el = await createElement({ channelType: "telegram" });
-    Object.assign(state(el), { _loadState: "loaded", _hasLoaded: true });
+    Object.assign(state(el), {
+      _loadState: "loaded",
+      _channelIsRunning: true,
+      _hasLoaded: true,
+    });
     el.rpcClient = { status: "connected", call: firstCall } as unknown as RpcClient;
     await el.updateComplete;
 
@@ -473,6 +488,7 @@ describe("IcMessageCenter", () => {
     const current = state(el);
     Object.assign(current, {
       _loadState: "loaded",
+      _channelIsRunning: true,
       _capabilities: { fetchHistory: true },
       _selectedChatId: "chat-a",
       _hasLoaded: true,

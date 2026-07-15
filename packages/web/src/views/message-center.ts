@@ -273,6 +273,7 @@ export class IcMessageCenter extends LitElement {
   @state() private _messages: FetchedMessage[] = [];
   /** Effective channel type - equals channelType when set, or auto-selected first running channel. */
   @state() private _effectiveChannel = "";
+  @state() private _channelIsRunning = false;
   @state() private _capabilities: PlatformCapabilities | null = null;
   @state() private _channelList: ChannelListEntry[] = [];
   @state() private _sendText = "";
@@ -347,6 +348,7 @@ export class IcMessageCenter extends LitElement {
     this._loadState = "idle";
     this._error = "";
     this._messages = [];
+    this._channelIsRunning = false;
     this._capabilities = null;
     this._botName = "";
     this._invalidateActionContext();
@@ -458,9 +460,11 @@ export class IcMessageCenter extends LitElement {
       const running = channels.filter((ch) => ch.status === "running");
       if (running.length > 0) {
         this._effectiveChannel = running[0].channelType;
+        this._channelIsRunning = true;
         void this._loadChats();
         void this._loadData();
       } else {
+        this._channelIsRunning = false;
         this._loadState = "loaded";
       }
     } catch {
@@ -503,6 +507,17 @@ export class IcMessageCenter extends LitElement {
       // Channel list
       if (listResult.status === "fulfilled" && listResult.value) {
         this._channelList = listResult.value;
+        this._channelIsRunning = listResult.value.some(
+          (entry) => entry.channelType === channel && entry.status === "running",
+        );
+      } else {
+        this._channelIsRunning = false;
+      }
+
+      if (!this._channelIsRunning) {
+        this._loadState = "loaded";
+        this._hasLoaded = true;
+        return;
       }
 
       // Capabilities
@@ -1129,7 +1144,13 @@ export class IcMessageCenter extends LitElement {
             ${this._channelList.length === 0
               ? html`<option value=${this._effectiveChannel}>${this._effectiveChannel}</option>`
               : this._channelList.map(
-                  (ch) => html`<option value=${ch.channelType} ?selected=${ch.channelType === this._effectiveChannel}>${ch.channelType}</option>`,
+                  (ch) => html`
+                    <option
+                      value=${ch.channelType}
+                      ?selected=${ch.channelType === this._effectiveChannel}
+                      ?disabled=${ch.status !== "running"}
+                    >${ch.channelType}</option>
+                  `,
                 )}
           </select>
         </div>
@@ -1171,6 +1192,14 @@ export class IcMessageCenter extends LitElement {
             <ic-empty-state
               message="No running channels"
               description="Start a channel to view and send messages."
+            ></ic-empty-state>
+          `;
+        }
+        if (!this._channelIsRunning) {
+          return html`
+            <ic-empty-state
+              message="Channel is not running"
+              description="Start this channel to view and send messages."
             ></ic-empty-state>
           `;
         }
