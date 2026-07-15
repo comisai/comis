@@ -21,6 +21,7 @@ function state(el: IcMessageCenter) {
   return el as unknown as {
     _loadState: "idle" | "loading" | "loaded" | "error";
     _messages: Array<{ id: string; senderId: string; text: string; timestamp: number }>;
+    _messagesAreActionable: boolean;
     _effectiveChannel: string;
     _channelIsRunning: boolean;
     _channelList: Array<{ channelType: string; status: string }>;
@@ -130,6 +131,7 @@ describe("IcMessageCenter", () => {
       _loadState: "loaded",
       _channelIsRunning: true,
       _messages: [{ id: "message-old", senderId: "user_a", text: "old", timestamp: 1 }],
+      _messagesAreActionable: true,
       _capabilities: { fetchHistory: true },
       _botName: "old-bot",
       _chatList: [{ chatId: "chat-old", label: "Old chat" }],
@@ -383,6 +385,7 @@ describe("IcMessageCenter", () => {
       _loadState: "loaded",
       _channelIsRunning: true,
       _messages: [{ id: "message-old", senderId: "user_a", text: "old", timestamp: 1 }],
+      _messagesAreActionable: true,
       _capabilities: { deleteMessages: true },
       _hasLoaded: true,
     });
@@ -409,6 +412,7 @@ describe("IcMessageCenter", () => {
       _loadState: "loaded",
       _channelIsRunning: true,
       _messages: [{ id: "message-new", senderId: "user_a", text: "new", timestamp: 2 }],
+      _messagesAreActionable: true,
       _deleteTargetId: "message-new",
     });
     el.requestUpdate();
@@ -432,6 +436,7 @@ describe("IcMessageCenter", () => {
       _loadState: "loaded",
       _channelIsRunning: true,
       _messages: [{ id: "message-1", senderId: "user_a", text: "hello", timestamp: 1 }],
+      _messagesAreActionable: true,
       _capabilities: { deleteMessages: true, reactions: true },
       _hasLoaded: true,
     });
@@ -462,6 +467,7 @@ describe("IcMessageCenter", () => {
       _loadState: "loaded",
       _channelIsRunning: true,
       _messages: [{ id: "message-1", senderId: "user_a", text: "hello", timestamp: 1 }],
+      _messagesAreActionable: true,
       _capabilities: { reactions: true },
       _hasLoaded: true,
     });

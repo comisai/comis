@@ -270,6 +270,7 @@ export class IcMessageCenter extends LitElement {
   @state() private _loadState: LoadState = "idle";
   @state() private _error = "";
   @state() private _messages: FetchedMessage[] = [];
+  @state() private _messagesAreActionable = false;
   /** Effective channel type - equals channelType when set, or auto-selected first running channel. */
   @state() private _effectiveChannel = "";
   @state() private _channelIsRunning = false;
@@ -349,6 +350,7 @@ export class IcMessageCenter extends LitElement {
     this._loadState = "idle";
     this._error = "";
     this._messages = [];
+    this._messagesAreActionable = false;
     this._channelIsRunning = false;
     this._channelList = [];
     this._capabilities = null;
@@ -634,6 +636,7 @@ export class IcMessageCenter extends LitElement {
         });
         if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatId)) return;
         this._messages = fetchResult?.messages ?? [];
+        this._messagesAreActionable = true;
       } catch {
         if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatId)) return;
         // Non-fatal
@@ -654,6 +657,8 @@ export class IcMessageCenter extends LitElement {
 
       if (matching.length === 0) {
         this._messages = [];
+        this._messagesAreActionable = false;
+        this._selectedMessageId = "";
         return;
       }
 
@@ -676,10 +681,14 @@ export class IcMessageCenter extends LitElement {
         text: msg.content,
         timestamp: msg.timestamp,
       } as FetchedMessage));
+      this._messagesAreActionable = false;
+      this._selectedMessageId = "";
     } catch {
       if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatId)) return;
       // Non-fatal - leave messages empty
       this._messages = [];
+      this._messagesAreActionable = false;
+      this._selectedMessageId = "";
     }
   }
 
@@ -767,7 +776,7 @@ export class IcMessageCenter extends LitElement {
   // ---- Reply ----
 
   private _handleReplyClick(messageId: string): void {
-    if (this._actionPending) return;
+    if (this._actionPending || !this._messagesAreActionable) return;
     this._replyToId = messageId;
     this._replyText = "";
     // Focus the reply input after render
@@ -790,7 +799,7 @@ export class IcMessageCenter extends LitElement {
   }
 
   private async _handleReplyConfirm(): Promise<void> {
-    if (this._actionPending) return;
+    if (this._actionPending || !this._messagesAreActionable) return;
     this._showReplyConfirm = false;
     const context = this._captureActionContext();
     const text = this._replyText.trim();
@@ -836,7 +845,7 @@ export class IcMessageCenter extends LitElement {
   // ---- Edit ----
 
   private _handleEditClick(msg: FetchedMessage): void {
-    if (this._actionPending) return;
+    if (this._actionPending || !this._messagesAreActionable) return;
     this._editingId = msg.id;
     this._editText = msg.text;
     // Focus the edit textarea after render
@@ -853,7 +862,7 @@ export class IcMessageCenter extends LitElement {
   }
 
   private async _handleEditSave(): Promise<void> {
-    if (this._actionPending) return;
+    if (this._actionPending || !this._messagesAreActionable) return;
     const context = this._captureActionContext();
     const text = this._editText.trim();
     const messageId = this._editingId;
@@ -894,13 +903,13 @@ export class IcMessageCenter extends LitElement {
   // ---- Delete ----
 
   private _handleDeleteClick(messageId: string): void {
-    if (this._actionPending) return;
+    if (this._actionPending || !this._messagesAreActionable) return;
     this._deleteTargetId = messageId;
     this._showDeleteConfirm = true;
   }
 
   private async _handleDeleteConfirm(): Promise<void> {
-    if (this._actionPending) return;
+    if (this._actionPending || !this._messagesAreActionable) return;
     this._showDeleteConfirm = false;
     const context = this._captureActionContext();
     const messageId = this._deleteTargetId;
@@ -938,7 +947,7 @@ export class IcMessageCenter extends LitElement {
   // ---- React ----
 
   private _handleReactClick(messageId: string): void {
-    if (this._actionPending) return;
+    if (this._actionPending || !this._messagesAreActionable) return;
     if (this._reactTargetId === messageId && this._showEmojiPicker) {
       // Toggle off if clicking same message
       this._closeEmojiPicker();
@@ -951,7 +960,7 @@ export class IcMessageCenter extends LitElement {
   }
 
   private async _handleEmojiSelect(emoji: string): Promise<void> {
-    if (this._actionPending) return;
+    if (this._actionPending || !this._messagesAreActionable) return;
     const context = this._captureActionContext();
     const messageId = this._reactTargetId;
     if (!context || !messageId) return;
@@ -1053,6 +1062,7 @@ export class IcMessageCenter extends LitElement {
   // ---- Message selection ----
 
   private _handleMessageClick(messageId: string): void {
+    if (!this._messagesAreActionable) return;
     this._selectedMessageId = this._selectedMessageId === messageId ? "" : messageId;
   }
 
@@ -1068,6 +1078,7 @@ export class IcMessageCenter extends LitElement {
 
   private async _handlePlatformAction(platformAction: PlatformAction): Promise<void> {
     if (this._platformActionPending) return;
+    if (platformAction.needsMessageId && !this._messagesAreActionable) return;
     const context = this._captureActionContext();
     if (!context) return;
 
@@ -1254,9 +1265,10 @@ export class IcMessageCenter extends LitElement {
 
     // Sort by timestamp ascending (oldest first)
     const sorted = [...this._messages].sort((a, b) => a.timestamp - b.timestamp);
-    const canEdit = this._capabilities?.editMessages === true;
-    const canDelete = this._capabilities?.deleteMessages === true;
-    const canReact = this._capabilities?.reactions === true;
+    const canReply = this._messagesAreActionable;
+    const canEdit = canReply && this._capabilities?.editMessages === true;
+    const canDelete = canReply && this._capabilities?.deleteMessages === true;
+    const canReact = canReply && this._capabilities?.reactions === true;
 
     return html`
       <div class="section">
@@ -1270,7 +1282,9 @@ export class IcMessageCenter extends LitElement {
                 : html`<span class="msg-text">${msg.text}</span>`}
               <span class="msg-time"><ic-relative-time .timestamp=${msg.timestamp}></ic-relative-time></span>
               <span class="msg-actions">
-                <button class="msg-action-btn" title="Reply" @click=${() => this._handleReplyClick(msg.id)} ?disabled=${this._actionPending}>Reply</button>
+                ${canReply ? html`
+                  <button class="msg-action-btn" title="Reply" @click=${() => this._handleReplyClick(msg.id)} ?disabled=${this._actionPending}>Reply</button>
+                ` : nothing}
                 ${canEdit ? html`
                   <button class="msg-action-btn" title="Edit" @click=${() => this._handleEditClick(msg)} ?disabled=${this._actionPending}>Edit</button>
                 ` : nothing}
@@ -1476,7 +1490,8 @@ export class IcMessageCenter extends LitElement {
           <div class="action-buttons">
             ${group.actions.map((action) => {
               const inputKey = this._getActionInputKey("", action.action);
-              const needsMessageAndMissing = action.needsMessageId && !this._selectedMessageId;
+              const needsMessageAndMissing = action.needsMessageId
+                && (!this._messagesAreActionable || !this._selectedMessageId);
               return html`
                 ${action.needsInput ? html`
                   <input
