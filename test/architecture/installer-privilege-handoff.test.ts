@@ -385,6 +385,39 @@ describe("install.sh privileged preparation", () => {
     expect(existsSync(marker), result.out).toBe(false);
   });
 
+  it("rejects invalid dedicated user names before host preparation", () => {
+    const work = makeWorkDir();
+    const mutationMarker = join(work, "host-preparation-ran");
+    const result = runHarness(
+      [
+        'COMIS_USER="../bad"',
+        "COMIS_REEXEC=0",
+        "DRY_RUN=0",
+        "NO_PROMPT=1",
+        'INSTALL_METHOD="npm"',
+        'SERVICE_MANAGER="systemd"',
+        'detect_os_or_die() { OS="linux"; }',
+        'print_installer_banner() { :; }',
+        'validate_local_tarball_preflight() { :; }',
+        'enforce_dedicated_user_default() { :; }',
+        'detect_comis_checkout() { return 1; }',
+        'resolve_service_manager() { RESOLVED_SERVICE_MANAGER="systemd"; }',
+        'downshift_xvfb_for_service_manager() { :; }',
+        'show_install_plan() { :; }',
+        'bootstrap_gum_temp() { :; }',
+        'print_gum_status() { :; }',
+        'should_create_dedicated_user() { return 0; }',
+        'install_system_deps_as_root() { touch "$MUTATION_MARKER"; return 77; }',
+        "main",
+      ].join("\n"),
+      { MUTATION_MARKER: mutationMarker },
+    );
+
+    expect(result.code).not.toBe(0);
+    expect(result.out).toContain("Invalid dedicated Linux user name");
+    expect(existsSync(mutationMarker), result.out).toBe(false);
+  });
+
   it("keeps headed-browser intent during the CLI-only user handoff", () => {
     const result = runHarness(
       [

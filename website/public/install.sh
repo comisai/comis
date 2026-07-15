@@ -2896,6 +2896,13 @@ is_root() {
     [[ "$(id -u)" -eq 0 ]]
 }
 
+validate_comis_user_name() {
+    if [[ ! "$COMIS_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || [[ "${#COMIS_USER}" -gt 32 ]]; then
+        ui_error "Invalid dedicated Linux user name"
+        return 1
+    fi
+}
+
 has_sudo() {
     command -v sudo >/dev/null 2>&1
 }
@@ -6830,6 +6837,10 @@ main() {
     else
         print_installer_banner
         detect_os_or_die
+    fi
+
+    if [[ "$OS" == "linux" ]] && ! validate_comis_user_name; then
+        return 1
     fi
 
     # Reject an impossible local package source before sudo prompts, dependency
