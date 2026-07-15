@@ -15,6 +15,7 @@ import {
 import {
   TRANSCRIPT_EVENT_KINDS,
   TRANSCRIPT_EXACT_SOURCE_KINDS,
+  TRANSCRIPT_ORIGINS,
   TRANSCRIPT_SOURCE_EVENT_PREFIXES,
   TRANSCRIPT_SOURCE_KINDS,
   classifyTranscriptCompleteness,
@@ -186,31 +187,7 @@ const ACTOR_KIND_VALUES = new Set<string>([
   "operator",
 ]);
 const TRUST_VALUES = new Set<string>(["guest", "user", "admin", "system", "external"]);
-const ORIGIN_VALUES = new Set<string>([
-  "channel",
-  "orchestrator",
-  "scheduler",
-  "heartbeat",
-  "proactive",
-  "system",
-  "internal",
-  "subagent",
-  "model",
-  "tool",
-  "mcp",
-  "web",
-  "media",
-  "cache",
-  "memory",
-  "learning",
-  "context",
-  "session",
-  "lcd",
-  "delivery",
-  "state",
-  "daemon",
-  "replay",
-]);
+const ORIGIN_VALUES = new Set<string>(TRANSCRIPT_ORIGINS);
 const REPLAY_POLICY_VALUES = new Set<string>(["inject", "stub", "assert", "execute", "observe", "skip"]);
 const GAP_ORDER = [
   "missing_artifact",
@@ -289,6 +266,17 @@ export const PRODUCTION_ACTIVITY_SOURCE_AUTHORITY = {
   diagnostics: { evidenceIds: ["diagnostics", "system_prompt_reports"], intrinsicGaps: [] },
   background: { evidenceIds: ["background_tasks", "video_jobs"], intrinsicGaps: [] },
   runtime_artifact: { evidenceIds: [], intrinsicGaps: [] },
+  operator: { evidenceIds: [], intrinsicGaps: [] },
+  rpc: { evidenceIds: [], intrinsicGaps: [] },
+  admin: { evidenceIds: [], intrinsicGaps: [] },
+  deterministic_clock: { evidenceIds: [], intrinsicGaps: [] },
+  deterministic_random: { evidenceIds: [], intrinsicGaps: [] },
+  deterministic_identifier: { evidenceIds: [], intrinsicGaps: [] },
+  dependency: { evidenceIds: [], intrinsicGaps: [] },
+  channel_outbound: { evidenceIds: [], intrinsicGaps: [] },
+  filesystem: { evidenceIds: [], intrinsicGaps: [] },
+  environment: { evidenceIds: [], intrinsicGaps: [] },
+  external_io: { evidenceIds: [], intrinsicGaps: [] },
   replay: { evidenceIds: [], intrinsicGaps: [] },
 } as const satisfies Record<TranscriptSourceKind, SourceAuthoritySpec>;
 

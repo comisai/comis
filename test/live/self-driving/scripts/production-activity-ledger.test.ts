@@ -30,6 +30,12 @@ import {
   type ProductionActivityLedgerKeys,
   type ProductionActivitySourceAuthority,
 } from "./production-activity-ledger.js";
+import type {
+  TranscriptActorKind,
+  TranscriptEventKind,
+  TranscriptOrigin,
+  TranscriptReplayPolicy,
+} from "./production-transcript.js";
 
 const SEAL_KEY = Buffer.from("0123456789abcdef0123456789abcdef", "utf8");
 const COMMITMENT_KEY = Buffer.from("abcdef0123456789abcdef0123456789", "utf8");
@@ -302,6 +308,129 @@ function mutableLedger(): DeepMutable<ProductionActivityLedger> {
   return structuredClone(result.ok ? result.value : (undefined as never)) as DeepMutable<ProductionActivityLedger>;
 }
 
+function singleEntryDraft(input: {
+  readonly sourceKind: ProductionActivityLedgerEntryDraft["source"]["kind"];
+  readonly eventKind: TranscriptEventKind;
+  readonly origin: TranscriptOrigin;
+  readonly actorKind?: TranscriptActorKind;
+  readonly policy?: TranscriptReplayPolicy;
+}): DeepMutable<ProductionActivityLedgerDraft> {
+  const draft = mutableDraft();
+  const authority = draft.sourceAuthorities.find(
+    (candidate) => candidate.kind === input.sourceKind,
+  )!;
+  for (const candidate of draft.sourceAuthorities) candidate.epochs = [];
+  const epochId = opaqueId();
+  const entryId = opaqueId();
+  draft.entries = [{
+    sequence: 1,
+    entryId,
+    eventIdentityCommitmentSha256: commitment("event", `single:${input.eventKind}`),
+    source: {
+      kind: input.sourceKind,
+      sourceIdCommitmentSha256: authority.sourceIdCommitmentSha256,
+      epochId,
+      sequence: 1,
+    },
+    kind: input.eventKind,
+    timing: {
+      wallTimeMs: 1_000,
+      monotonicTimeNs: "10000",
+      clockId: opaqueId(),
+    },
+    causality: {
+      parentEntryIds: [],
+      traceCommitmentSha256: null,
+      sessionCommitmentSha256: null,
+      runCommitmentSha256: null,
+      jobCommitmentSha256: null,
+    },
+    actor: {
+      kind: input.actorKind ?? "service",
+      identityCommitmentSha256: commitment("actor", `single:${input.origin}`),
+      trust: input.actorKind === "operator" ? "admin" : "system",
+      origin: input.origin,
+    },
+    payload: artifact(`single:${input.eventKind}`),
+    replay: {
+      policy: input.policy ?? "observe",
+      cassetteId: null,
+      cassetteRole: null,
+    },
+  }];
+  draft.cassettes = [];
+  authority.epochs = [{
+    ordinal: 1,
+    epochId,
+    startWatermark: 0,
+    endWatermark: 1,
+    observedCount: 1,
+    lossCount: 0,
+    firstLedgerSequence: 1,
+    lastLedgerSequence: 1,
+    monotonicStartNs: "10000",
+    monotonicEndNs: "10000",
+  }];
+  return draft;
+}
+
+function cassetteLifecycleDraft(input: {
+  readonly sourceKind: ProductionActivityLedgerEntryDraft["source"]["kind"];
+  readonly requestKind: TranscriptEventKind;
+  readonly terminalKind: TranscriptEventKind;
+  readonly origin: TranscriptOrigin;
+  readonly cassetteKind: ProductionActivityCassette["kind"];
+  readonly withContext?: boolean;
+}): DeepMutable<ProductionActivityLedgerDraft> {
+  const draft = singleEntryDraft({
+    sourceKind: input.sourceKind,
+    eventKind: input.requestKind,
+    origin: input.origin,
+    policy: "stub",
+  });
+  const request = draft.entries[0]!;
+  const cassetteId = opaqueId();
+  const terminalId = opaqueId();
+  const context = input.withContext ? commitment("context", `context:${input.sourceKind}`) : null;
+  request.causality.traceCommitmentSha256 = context;
+  request.causality.sessionCommitmentSha256 = context;
+  request.replay = { policy: "stub", cassetteId, cassetteRole: "request" };
+  const terminal = structuredClone(request);
+  terminal.sequence = 2;
+  terminal.entryId = terminalId;
+  terminal.eventIdentityCommitmentSha256 = commitment("event", `terminal:${input.terminalKind}`);
+  terminal.source.sequence = 2;
+  terminal.kind = input.terminalKind;
+  terminal.timing.wallTimeMs = 1_001;
+  terminal.timing.monotonicTimeNs = "10001";
+  terminal.causality.parentEntryIds = [request.entryId];
+  terminal.payload = artifact(`terminal:${input.terminalKind}`);
+  terminal.replay = { policy: "assert", cassetteId, cassetteRole: "terminal" };
+  draft.entries = [request, terminal];
+  const authority = draft.sourceAuthorities.find(
+    (candidate) => candidate.kind === input.sourceKind,
+  )!;
+  const epoch = authority.epochs[0]!;
+  epoch.endWatermark = 2;
+  epoch.observedCount = 2;
+  epoch.lastLedgerSequence = 2;
+  epoch.monotonicEndNs = "10001";
+  draft.cassettes = [{
+    cassetteId,
+    kind: input.cassetteKind,
+    ordinal: 1,
+    requestEntryId: request.entryId,
+    terminalEntryId: terminal.entryId,
+    requestPayloadCommitmentSha256: request.payload.contentCommitmentSha256,
+    responsePayloadCommitmentSha256: terminal.payload.contentCommitmentSha256,
+    requestBlobDigestSha256: request.payload.vaultBlob!.digestSha256,
+    responseBlobDigestSha256: terminal.payload.vaultBlob!.digestSha256,
+    outcome: "success",
+    latencyMs: 1,
+  }];
+  return draft;
+}
+
 function envelope(value: unknown, canonical = false): string {
   const payload = canonical ? JSON.stringify(value) : JSON.stringify(value, null, 0);
   return `${PRODUCTION_ACTIVITY_LEDGER_BEGIN}\n${payload}\n${PRODUCTION_ACTIVITY_LEDGER_END}\n`;
@@ -315,6 +444,14 @@ describe("prospective production activity ledger", () => {
     expect(Object.keys(PRODUCTION_ACTIVITY_EVENT_SOURCES)).toEqual(TRANSCRIPT_EVENT_KINDS);
     for (const kind of TRANSCRIPT_EVENT_KINDS) {
       expect(PRODUCTION_ACTIVITY_EVENT_SOURCES[kind].length).toBeGreaterThan(0);
+      if (kind.startsWith("channel.normalized.")) {
+        expect(PRODUCTION_ACTIVITY_EVENT_SOURCES[kind]).toEqual([
+          "offline_messages",
+          "channel_normalized",
+        ]);
+      } else {
+        expect(PRODUCTION_ACTIVITY_EVENT_SOURCES[kind]).toHaveLength(1);
+      }
     }
     expect(PRODUCTION_ACTIVITY_SOURCE_KINDS).toEqual(expect.arrayContaining([
       "heartbeat",
@@ -332,6 +469,114 @@ describe("prospective production activity ledger", () => {
     expect(PRODUCTION_ACTIVITY_EVENT_SOURCES["ingress.queue.enqueued"]).toContain("orchestrator");
     expect(PRODUCTION_ACTIVITY_EVENT_SOURCES["outbound.retry.scheduled"]).toContain("delivery");
     expect(PRODUCTION_ACTIVITY_EVENT_SOURCES["daemon.shutdown.completed"]).toContain("daemon");
+  });
+
+  it("maps explicit authority families without cross-authority aliases", () => {
+    const owners = {
+      "config.write.rejected": "config",
+      "trajectory.pointer.updated": "trajectory",
+      "audit.capability.denied": "audit",
+      "diagnostics.event.dropped": "diagnostics",
+      "background.task.completed": "background",
+      "runtime.artifact.promoted": "runtime_artifact",
+      "operator.action.completed": "operator",
+      "rpc.request.completed": "rpc",
+      "admin.action.authorized": "admin",
+      "determinism.clock.consumed": "deterministic_clock",
+      "determinism.random.consumed": "deterministic_random",
+      "determinism.identifier.consumed": "deterministic_identifier",
+      "dependency.request.completed": "dependency",
+      "channel.outbound.request.completed": "channel_outbound",
+      "filesystem.read.completed": "filesystem",
+      "environment.read.completed": "environment",
+      "external.io.network.completed": "external_io",
+    } as const;
+
+    for (const [eventKind, sourceKind] of Object.entries(owners)) {
+      expect(PRODUCTION_ACTIVITY_EVENT_SOURCES[eventKind as TranscriptEventKind]).toEqual([
+        sourceKind,
+      ]);
+    }
+  });
+
+  it("accepts owned control, evidence, and deterministic entries with closed actor origins", () => {
+    const specifications = [
+      ["config", "config.write.rejected", "config"],
+      ["trajectory", "trajectory.pointer.updated", "trajectory"],
+      ["audit", "audit.capability.denied", "audit"],
+      ["diagnostics", "diagnostics.event.dropped", "diagnostics"],
+      ["background", "background.timer.scheduled", "background"],
+      ["runtime_artifact", "runtime.artifact.discovered", "runtime_artifact"],
+      ["operator", "operator.action.requested", "operator", "operator", "inject"],
+      ["rpc", "rpc.request.received", "rpc", "operator"],
+      ["admin", "admin.action.authorized", "admin", "operator"],
+      ["deterministic_clock", "determinism.clock.consumed", "determinism"],
+      ["deterministic_random", "determinism.random.consumed", "determinism"],
+      ["deterministic_identifier", "determinism.identifier.consumed", "determinism"],
+      ["filesystem", "filesystem.write.completed", "filesystem"],
+    ] as const;
+
+    for (const [sourceKind, eventKind, origin, actorKind, policy] of specifications) {
+      expect(createProductionActivityLedger(singleEntryDraft({
+        sourceKind,
+        eventKind,
+        origin,
+        ...(actorKind === undefined ? {} : { actorKind }),
+        ...(policy === undefined ? {} : { policy }),
+      }), KEYS).ok, `${sourceKind}:${eventKind}`).toBe(true);
+    }
+  });
+
+  it("rejects representative events attributed to a different exact authority", () => {
+    const mismatches = [
+      ["config.write.committed", "trajectory"],
+      ["trajectory.append.completed", "audit"],
+      ["audit.command.blocked", "diagnostics"],
+      ["diagnostics.snapshot.created", "background"],
+      ["background.task.started", "runtime_artifact"],
+      ["runtime.artifact.discovered", "operator"],
+      ["operator.action.requested", "rpc"],
+      ["rpc.request.received", "admin"],
+      ["admin.action.authorized", "operator"],
+      ["determinism.clock.consumed", "deterministic_random"],
+      ["dependency.request.started", "channel_outbound"],
+      ["channel.outbound.request.started", "dependency"],
+      ["filesystem.read.started", "environment"],
+      ["environment.read.started", "external_io"],
+      ["external.io.network.started", "filesystem"],
+    ] as const;
+
+    for (const [eventKind, sourceKind] of mismatches) {
+      const draft = mutableDraft();
+      draft.entries[0]!.kind = eventKind;
+      draft.entries[0]!.source.kind = sourceKind;
+      expect(createProductionActivityLedger(draft, KEYS)).toMatchObject({
+        ok: false,
+        error: { kind: "invalid_ledger", field: "entries" },
+      });
+    }
+  });
+
+  it("accepts dependency and channel outbound request-terminal cassettes", () => {
+    for (const input of [
+      {
+        sourceKind: "dependency",
+        requestKind: "dependency.request.started",
+        terminalKind: "dependency.request.completed",
+        origin: "dependency",
+        cassetteKind: "external_io",
+      },
+      {
+        sourceKind: "channel_outbound",
+        requestKind: "channel.outbound.request.started",
+        terminalKind: "channel.outbound.request.completed",
+        origin: "channel_outbound",
+        cassetteKind: "channel",
+        withContext: true,
+      },
+    ] as const) {
+      expect(createProductionActivityLedger(cassetteLifecycleDraft(input), KEYS).ok).toBe(true);
+    }
   });
 
   it("authenticates only a bounded capture assertion after canonical round trip", () => {

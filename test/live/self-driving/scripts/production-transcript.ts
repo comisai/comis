@@ -160,6 +160,117 @@ export const TRANSCRIPT_EVENT_KINDS = [
   "state.mutation.requested",
   "state.mutation.committed",
   "state.mutation.failed",
+  "config.read.started",
+  "config.read.completed",
+  "config.read.failed",
+  "config.write.requested",
+  "config.write.committed",
+  "config.write.rejected",
+  "config.write.failed",
+  "config.reload.started",
+  "config.reload.completed",
+  "config.reload.failed",
+  "trajectory.append.started",
+  "trajectory.append.completed",
+  "trajectory.append.failed",
+  "trajectory.offload.started",
+  "trajectory.offload.completed",
+  "trajectory.offload.failed",
+  "trajectory.pointer.resolved",
+  "trajectory.pointer.updated",
+  "trajectory.pointer.rejected",
+  "trajectory.checkpoint.started",
+  "trajectory.checkpoint.created",
+  "trajectory.checkpoint.failed",
+  "audit.secret.access.granted",
+  "audit.secret.access.denied",
+  "audit.authentication.accepted",
+  "audit.authentication.rejected",
+  "audit.injection.allowed",
+  "audit.injection.blocked",
+  "audit.capability.granted",
+  "audit.capability.denied",
+  "audit.command.allowed",
+  "audit.command.blocked",
+  "diagnostics.snapshot.started",
+  "diagnostics.snapshot.created",
+  "diagnostics.snapshot.failed",
+  "diagnostics.event.persisted",
+  "diagnostics.event.dropped",
+  "background.task.enqueued",
+  "background.task.started",
+  "background.task.completed",
+  "background.task.failed",
+  "background.task.cancelled",
+  "background.timer.scheduled",
+  "background.timer.fired",
+  "background.timer.cancelled",
+  "runtime.artifact.discovered",
+  "runtime.artifact.verification.started",
+  "runtime.artifact.verified",
+  "runtime.artifact.promoted",
+  "runtime.artifact.rejected",
+  "runtime.artifact.promotion.failed",
+  "operator.action.requested",
+  "operator.action.completed",
+  "operator.action.rejected",
+  "operator.action.failed",
+  "rpc.request.received",
+  "rpc.request.completed",
+  "rpc.request.rejected",
+  "rpc.request.failed",
+  "admin.action.requested",
+  "admin.action.authorized",
+  "admin.action.rejected",
+  "admin.action.completed",
+  "admin.action.failed",
+  "determinism.clock.consumed",
+  "determinism.clock.exhausted",
+  "determinism.random.consumed",
+  "determinism.random.exhausted",
+  "determinism.identifier.consumed",
+  "determinism.identifier.exhausted",
+  "dependency.request.started",
+  "dependency.request.completed",
+  "dependency.request.failed",
+  "dependency.request.cancelled",
+  "channel.outbound.request.started",
+  "channel.outbound.request.completed",
+  "channel.outbound.request.failed",
+  "channel.outbound.request.cancelled",
+  "filesystem.read.started",
+  "filesystem.read.completed",
+  "filesystem.read.failed",
+  "filesystem.write.started",
+  "filesystem.write.completed",
+  "filesystem.write.failed",
+  "filesystem.list.started",
+  "filesystem.list.completed",
+  "filesystem.list.failed",
+  "filesystem.metadata.started",
+  "filesystem.metadata.completed",
+  "filesystem.metadata.failed",
+  "filesystem.rename.started",
+  "filesystem.rename.completed",
+  "filesystem.rename.failed",
+  "filesystem.remove.started",
+  "filesystem.remove.completed",
+  "filesystem.remove.failed",
+  "environment.read.started",
+  "environment.read.completed",
+  "environment.read.rejected",
+  "external.io.network.started",
+  "external.io.network.completed",
+  "external.io.network.failed",
+  "external.io.process.started",
+  "external.io.process.completed",
+  "external.io.process.failed",
+  "external.io.stream.started",
+  "external.io.stream.completed",
+  "external.io.stream.failed",
+  "external.io.ipc.started",
+  "external.io.ipc.completed",
+  "external.io.ipc.failed",
 ] as const;
 
 export const TRANSCRIPT_SOURCE_KINDS = [
@@ -196,6 +307,17 @@ export const TRANSCRIPT_SOURCE_KINDS = [
   "diagnostics",
   "background",
   "runtime_artifact",
+  "operator",
+  "rpc",
+  "admin",
+  "deterministic_clock",
+  "deterministic_random",
+  "deterministic_identifier",
+  "dependency",
+  "channel_outbound",
+  "filesystem",
+  "environment",
+  "external_io",
   "replay",
 ] as const;
 
@@ -212,30 +334,47 @@ export type TranscriptActorKind =
   | "provider"
   | "operator";
 export type TranscriptTrust = "guest" | "user" | "admin" | "system" | "external";
-export type TranscriptOrigin =
-  | "channel"
-  | "orchestrator"
-  | "scheduler"
-  | "heartbeat"
-  | "proactive"
-  | "system"
-  | "internal"
-  | "subagent"
-  | "model"
-  | "tool"
-  | "mcp"
-  | "web"
-  | "media"
-  | "cache"
-  | "memory"
-  | "learning"
-  | "context"
-  | "session"
-  | "lcd"
-  | "delivery"
-  | "state"
-  | "daemon"
-  | "replay";
+export const TRANSCRIPT_ORIGINS = [
+  "channel",
+  "orchestrator",
+  "scheduler",
+  "heartbeat",
+  "proactive",
+  "system",
+  "internal",
+  "subagent",
+  "model",
+  "tool",
+  "mcp",
+  "web",
+  "media",
+  "cache",
+  "memory",
+  "learning",
+  "context",
+  "session",
+  "lcd",
+  "delivery",
+  "state",
+  "config",
+  "trajectory",
+  "audit",
+  "diagnostics",
+  "background",
+  "runtime_artifact",
+  "operator",
+  "rpc",
+  "admin",
+  "determinism",
+  "dependency",
+  "channel_outbound",
+  "filesystem",
+  "environment",
+  "external_io",
+  "daemon",
+  "replay",
+] as const;
+export type TranscriptOrigin = (typeof TRANSCRIPT_ORIGINS)[number];
 
 export const TRANSCRIPT_SOURCE_EVENT_PREFIXES = {
   offline_messages: ["channel.normalized."],
@@ -265,28 +404,24 @@ export const TRANSCRIPT_SOURCE_EVENT_PREFIXES = {
   lcd: ["lcd."],
   delivery: ["outbound."],
   state: ["state."],
-  config: ["state."],
-  trajectory: [
-    "subagent.",
-    "graph.",
-    "model.",
-    "tool.call.",
-    "mcp.call.",
-    "web.fetch.",
-    "media.",
-    "cache.",
-    "memory.",
-    "learning.",
-    "context.",
-    "session.",
-    "lcd.",
-    "outbound.",
-  ],
-  audit: ["state.", "memory.", "learning."],
-  diagnostics: ["daemon.", "context.", "cache."],
-  background: ["subagent.", "tool.call.", "media."],
-  runtime_artifact: ["daemon."],
-  replay: ["daemon."],
+  config: ["config."],
+  trajectory: ["trajectory."],
+  audit: ["audit."],
+  diagnostics: ["diagnostics."],
+  background: ["background."],
+  runtime_artifact: ["runtime.artifact."],
+  operator: ["operator."],
+  rpc: ["rpc."],
+  admin: ["admin."],
+  deterministic_clock: ["determinism.clock."],
+  deterministic_random: ["determinism.random."],
+  deterministic_identifier: ["determinism.identifier."],
+  dependency: ["dependency."],
+  channel_outbound: ["channel.outbound."],
+  filesystem: ["filesystem."],
+  environment: ["environment."],
+  external_io: ["external.io."],
+  replay: ["replay."],
 } as const satisfies Record<TranscriptSourceKind, readonly string[]>;
 
 export interface CanonicalProductionEvent {
@@ -462,10 +597,26 @@ export const TRANSCRIPT_EXACT_SOURCE_KINDS = [
   "diagnostics",
   "background",
   "runtime_artifact",
+  "operator",
+  "rpc",
+  "admin",
+  "deterministic_clock",
+  "deterministic_random",
+  "deterministic_identifier",
+  "dependency",
+  "channel_outbound",
+  "filesystem",
+  "environment",
+  "external_io",
 ] as const satisfies readonly TranscriptSourceKind[];
 
 const EVENT_KIND_VALUES = new Set<string>(TRANSCRIPT_EVENT_KINDS);
 const SOURCE_KIND_VALUES = new Set<string>(TRANSCRIPT_SOURCE_KINDS);
+const SOURCE_EVENT_PREFIXES = new Map<TranscriptSourceKind, readonly string[]>(
+  Object.entries(TRANSCRIPT_SOURCE_EVENT_PREFIXES) as Array<
+    [TranscriptSourceKind, readonly string[]]
+  >,
+);
 const REPLAY_POLICY_VALUES = new Set<string>(["inject", "stub", "assert", "execute", "observe", "skip"]);
 const ACTOR_KIND_VALUES = new Set<string>([
   "user",
@@ -478,31 +629,7 @@ const ACTOR_KIND_VALUES = new Set<string>([
   "operator",
 ]);
 const TRUST_VALUES = new Set<string>(["guest", "user", "admin", "system", "external"]);
-const ORIGIN_VALUES = new Set<string>([
-  "channel",
-  "orchestrator",
-  "scheduler",
-  "heartbeat",
-  "proactive",
-  "system",
-  "internal",
-  "subagent",
-  "model",
-  "tool",
-  "mcp",
-  "web",
-  "media",
-  "cache",
-  "memory",
-  "learning",
-  "context",
-  "session",
-  "lcd",
-  "delivery",
-  "state",
-  "daemon",
-  "replay",
-]);
+const ORIGIN_VALUES = new Set<string>(TRANSCRIPT_ORIGINS);
 const AUTHORITY_STATUS_VALUES = new Set<string>([
   "available",
   "missing",
@@ -657,7 +784,7 @@ function validateEvent(raw: unknown): Result<CanonicalProductionEvent, Canonical
   }
   const sourceKind = raw.source.kind as TranscriptSourceKind;
   const eventKind = raw.kind as TranscriptEventKind;
-  if (!TRANSCRIPT_SOURCE_EVENT_PREFIXES[sourceKind].some((prefix) => eventKind.startsWith(prefix))) {
+  if (!(SOURCE_EVENT_PREFIXES.get(sourceKind) ?? []).some((prefix) => eventKind.startsWith(prefix))) {
     return malformed("events", "Transcript event kind is incompatible with its authority source");
   }
   if (

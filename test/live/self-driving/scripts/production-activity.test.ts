@@ -11,6 +11,7 @@ import {
   type ProductionEvidenceReport,
 } from "./production-evidence.js";
 import {
+  PRODUCTION_ACTIVITY_SOURCE_AUTHORITY,
   buildTargetLocalActivityBlobVaultPlan,
   buildTargetLocalActivityBlobVaultScript,
   compileProductionActivity,
@@ -22,6 +23,7 @@ import type {
   TranscriptEventKind,
   TranscriptSourceKind,
 } from "./production-transcript.js";
+import { TRANSCRIPT_SOURCE_KINDS } from "./production-transcript.js";
 
 const digest = (value: string): string => createHash("sha256").update(value).digest("hex");
 
@@ -122,6 +124,10 @@ function makeInput(sources: readonly ProductionActivitySourceBatch[]): Productio
 }
 
 describe("production historical activity compiler", () => {
+  it("declares one historical authority policy for every closed transcript source", () => {
+    expect(Object.keys(PRODUCTION_ACTIVITY_SOURCE_AUTHORITY)).toEqual(TRANSCRIPT_SOURCE_KINDS);
+  });
+
   it("compiles every persisted activity family into one causal digest-only transcript", () => {
     const cases = [
       ["offline_messages", "channel.normalized.text_received", "user-input"],
@@ -192,7 +198,7 @@ describe("production historical activity compiler", () => {
   });
 
   it("deduplicates identical retained records and assigns contiguous output source sequences", () => {
-    const first = makeRecord("trajectory", "tool.call.started", "same-entry", 100, {
+    const first = makeRecord("trajectory", "trajectory.append.started", "same-entry", 100, {
       sourceSeq: 1,
       runId: "run-a",
       traceId: "trace-a",

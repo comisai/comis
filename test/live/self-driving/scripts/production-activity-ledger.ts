@@ -10,6 +10,7 @@ import {
 import {
   TRANSCRIPT_EVENT_KINDS,
   TRANSCRIPT_EXACT_SOURCE_KINDS,
+  TRANSCRIPT_ORIGINS,
   TRANSCRIPT_SOURCE_EVENT_PREFIXES,
   type TranscriptActorKind,
   type TranscriptEventKind,
@@ -307,31 +308,7 @@ const ACTOR_KIND_VALUES = new Set<string>([
   "operator",
 ]);
 const TRUST_VALUES = new Set<string>(["guest", "user", "admin", "system", "external"]);
-const ORIGIN_VALUES = new Set<string>([
-  "channel",
-  "orchestrator",
-  "scheduler",
-  "heartbeat",
-  "proactive",
-  "system",
-  "internal",
-  "subagent",
-  "model",
-  "tool",
-  "mcp",
-  "web",
-  "media",
-  "cache",
-  "memory",
-  "learning",
-  "context",
-  "session",
-  "lcd",
-  "delivery",
-  "state",
-  "daemon",
-  "replay",
-]);
+const ORIGIN_VALUES = new Set<string>(TRANSCRIPT_ORIGINS);
 const REPLAY_POLICY_VALUES = new Set<string>([
   "inject",
   "stub",
@@ -377,6 +354,16 @@ const LIFECYCLES = new Map<TranscriptEventKind, CassetteLifecycle>([
   ["media.analysis.started", { kind: "media", terminals: ["media.analysis.completed", "media.analysis.failed"] }],
   ["media.generation.started", { kind: "media", terminals: ["media.generation.completed", "media.generation.failed"] }],
   ["outbound.attempt.started", { kind: "channel", terminals: ["outbound.delivered", "outbound.failed"] }],
+  ["dependency.request.started", { kind: "external_io", terminals: ["dependency.request.completed", "dependency.request.failed", "dependency.request.cancelled"] }],
+  ["channel.outbound.request.started", { kind: "channel", terminals: ["channel.outbound.request.completed", "channel.outbound.request.failed", "channel.outbound.request.cancelled"] }],
+  ["filesystem.read.started", { kind: "external_io", terminals: ["filesystem.read.completed", "filesystem.read.failed"] }],
+  ["filesystem.list.started", { kind: "external_io", terminals: ["filesystem.list.completed", "filesystem.list.failed"] }],
+  ["filesystem.metadata.started", { kind: "external_io", terminals: ["filesystem.metadata.completed", "filesystem.metadata.failed"] }],
+  ["environment.read.started", { kind: "external_io", terminals: ["environment.read.completed", "environment.read.rejected"] }],
+  ["external.io.network.started", { kind: "external_io", terminals: ["external.io.network.completed", "external.io.network.failed"] }],
+  ["external.io.process.started", { kind: "external_io", terminals: ["external.io.process.completed", "external.io.process.failed"] }],
+  ["external.io.stream.started", { kind: "external_io", terminals: ["external.io.stream.completed", "external.io.stream.failed"] }],
+  ["external.io.ipc.started", { kind: "external_io", terminals: ["external.io.ipc.completed", "external.io.ipc.failed"] }],
 ]);
 
 const REQUEST_KINDS_BY_TERMINAL = new Map<TranscriptEventKind, readonly TranscriptEventKind[]>(
@@ -891,7 +878,8 @@ function isInjectableRoot(kind: TranscriptEventKind): boolean {
     kind === "cron.fire.started" ||
     kind === "heartbeat.requested" ||
     kind === "proactive.triggered" ||
-    kind === "system.dispatch.enqueued"
+    kind === "system.dispatch.enqueued" ||
+    kind === "operator.action.requested"
   );
 }
 
@@ -926,8 +914,13 @@ function validateActorAndContext(entry: ProductionActivityLedgerEntryDraft): boo
   }
   if (requiresRun(kind) && causality.runCommitmentSha256 === null) return false;
   if (kind.startsWith("cron.") && causality.jobCommitmentSha256 === null) return false;
-  if (kind.startsWith("channel.")) {
+  if (/^channel\.(?:native|normalized)\./u.test(kind)) {
     if ((actor.kind !== "user" && actor.kind !== "provider") || actor.origin !== "channel") return false;
+  }
+  if (kind.startsWith("channel.outbound.")) {
+    if ((actor.kind !== "service" && actor.kind !== "provider") || actor.origin !== "channel_outbound") {
+      return false;
+    }
   }
   const originByPrefix: readonly [string, TranscriptOrigin][] = [
     ["ingress.", "orchestrator"],
@@ -950,6 +943,21 @@ function validateActorAndContext(entry: ProductionActivityLedgerEntryDraft): boo
     ["lcd.", "lcd"],
     ["outbound.", "delivery"],
     ["state.", "state"],
+    ["config.", "config"],
+    ["trajectory.", "trajectory"],
+    ["audit.", "audit"],
+    ["diagnostics.", "diagnostics"],
+    ["background.", "background"],
+    ["runtime.artifact.", "runtime_artifact"],
+    ["operator.", "operator"],
+    ["rpc.", "rpc"],
+    ["admin.", "admin"],
+    ["determinism.", "determinism"],
+    ["dependency.", "dependency"],
+    ["channel.outbound.", "channel_outbound"],
+    ["filesystem.", "filesystem"],
+    ["environment.", "environment"],
+    ["external.io.", "external_io"],
     ["daemon.", "daemon"],
   ];
   const expectedOrigin = originByPrefix.find(([prefix]) => kind.startsWith(prefix))?.[1];
@@ -978,7 +986,12 @@ function validateActorAndContext(entry: ProductionActivityLedgerEntryDraft): boo
     actor.origin !== "model" &&
     actor.origin !== "mcp" &&
     actor.origin !== "web" &&
-    actor.origin !== "media"
+    actor.origin !== "media" &&
+    actor.origin !== "dependency" &&
+    actor.origin !== "channel_outbound" &&
+    actor.origin !== "filesystem" &&
+    actor.origin !== "environment" &&
+    actor.origin !== "external_io"
   ) {
     return false;
   }

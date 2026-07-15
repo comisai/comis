@@ -42,8 +42,9 @@ import {
   parseCanonicalProductionTranscript,
   type CanonicalProductionEvent,
   type CanonicalProductionTranscript,
-  type TranscriptSourceKind,
 } from "./production-transcript.js";
+
+type ExactTranscriptSourceKind = (typeof TRANSCRIPT_EXACT_SOURCE_KINDS)[number];
 
 const BUNDLE_SEAL_KEY = Buffer.alloc(32, 41);
 const RESULT_SEAL_KEY = Buffer.alloc(32, 42);
@@ -164,7 +165,7 @@ function stateDigest(records: readonly ReplayObservedRecord[]): string {
 }
 
 function eventKindForSource(
-  source: TranscriptSourceKind,
+  source: ExactTranscriptSourceKind,
 ): CanonicalProductionEvent["kind"] {
   switch (source) {
     case "offline_messages":
@@ -220,18 +221,41 @@ function eventKindForSource(
     case "delivery":
       return "outbound.attempt.started";
     case "state":
-    case "config":
-    case "audit":
       return "state.mutation.committed";
+    case "config":
+      return "config.read.completed";
+    case "audit":
+      return "audit.command.allowed";
     case "trajectory":
-      return "graph.checkpointed";
+      return "trajectory.checkpoint.created";
     case "diagnostics":
-    case "replay":
-      return "daemon.recovery.completed";
+      return "diagnostics.snapshot.created";
     case "background":
-      return "subagent.completed";
+      return "background.task.completed";
     case "runtime_artifact":
-      return "daemon.shutdown.completed";
+      return "runtime.artifact.verified";
+    case "operator":
+      return "operator.action.completed";
+    case "rpc":
+      return "rpc.request.completed";
+    case "admin":
+      return "admin.action.completed";
+    case "deterministic_clock":
+      return "determinism.clock.consumed";
+    case "deterministic_random":
+      return "determinism.random.consumed";
+    case "deterministic_identifier":
+      return "determinism.identifier.consumed";
+    case "dependency":
+      return "dependency.request.completed";
+    case "channel_outbound":
+      return "channel.outbound.request.completed";
+    case "filesystem":
+      return "filesystem.read.completed";
+    case "environment":
+      return "environment.read.completed";
+    case "external_io":
+      return "external.io.network.completed";
     default: {
       const exhaustive: never = source;
       return exhaustive;
@@ -241,7 +265,7 @@ function eventKindForSource(
 
 function makeEvent(
   seq: number,
-  sourceKind: TranscriptSourceKind,
+  sourceKind: ExactTranscriptSourceKind,
   triggerPayloadDigestSha256: string,
   triggerBlobDigestSha256: string,
 ): CanonicalProductionEvent {
@@ -333,7 +357,7 @@ function makeFixture(): OperationalFixture {
   const orderedSources = [
     "channel_native",
     ...TRANSCRIPT_EXACT_SOURCE_KINDS.filter((kind) => kind !== "channel_native"),
-  ] as const satisfies readonly TranscriptSourceKind[];
+  ] as const satisfies readonly ExactTranscriptSourceKind[];
   const events = orderedSources.map((sourceKind, index) =>
     makeEvent(index + 1, sourceKind, sha256(triggerPayload), cassetteRequest),
   );

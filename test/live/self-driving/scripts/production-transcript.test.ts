@@ -6,6 +6,7 @@ import {
   MAX_CANONICAL_TRANSCRIPT_BYTES,
   TRANSCRIPT_EVENT_KINDS,
   TRANSCRIPT_EXACT_SOURCE_KINDS,
+  TRANSCRIPT_SOURCE_EVENT_PREFIXES,
   buildOfflineMessagesSourcePlan,
   classifyTranscriptCompleteness,
   parseCanonicalProductionTranscript,
@@ -125,7 +126,7 @@ function exactTranscriptAndAuthorities(): {
     memory: "memory.recall.completed",
     durable_run: "durable.run.resumed",
     state: "state.mutation.committed",
-    config: "state.mutation.committed",
+    config: "config.write.committed",
     channel_native: "channel.native.text_received",
     channel_normalized: "channel.normalized.text_received",
     orchestrator: "ingress.coalesce.flushed",
@@ -141,11 +142,22 @@ function exactTranscriptAndAuthorities(): {
     cache: "cache.read.hit",
     learning: "learning.outcome.recorded",
     context: "context.compacted",
-    trajectory: "tool.call.completed",
-    audit: "state.mutation.committed",
-    diagnostics: "daemon.restart.detected",
-    background: "subagent.completed",
-    runtime_artifact: "daemon.restart.detected",
+    trajectory: "trajectory.append.completed",
+    audit: "audit.command.blocked",
+    diagnostics: "diagnostics.snapshot.created",
+    background: "background.task.completed",
+    runtime_artifact: "runtime.artifact.promoted",
+    operator: "operator.action.completed",
+    rpc: "rpc.request.completed",
+    admin: "admin.action.authorized",
+    deterministic_clock: "determinism.clock.consumed",
+    deterministic_random: "determinism.random.consumed",
+    deterministic_identifier: "determinism.identifier.consumed",
+    dependency: "dependency.request.completed",
+    channel_outbound: "channel.outbound.request.completed",
+    filesystem: "filesystem.read.completed",
+    environment: "environment.read.completed",
+    external_io: "external.io.network.completed",
   } as const satisfies Record<(typeof TRANSCRIPT_EXACT_SOURCE_KINDS)[number], CanonicalProductionEvent["kind"]>;
   const events = TRANSCRIPT_EXACT_SOURCE_KINDS.map((kind, index) =>
     makeEvent(index + 1, {
@@ -229,6 +241,174 @@ describe("canonical production transcript contract", () => {
       "state.mutation.committed",
     ]) {
       expect(TRANSCRIPT_EVENT_KINDS).toContain(kind);
+    }
+  });
+
+  it("enumerates exact authority events for control, determinism, artifacts, and external boundaries", () => {
+    expect(TRANSCRIPT_EVENT_KINDS as readonly string[]).toEqual(expect.arrayContaining([
+      "config.read.completed",
+      "config.write.committed",
+      "config.write.rejected",
+      "config.reload.completed",
+      "trajectory.append.completed",
+      "trajectory.offload.completed",
+      "trajectory.pointer.updated",
+      "trajectory.checkpoint.created",
+      "audit.secret.access.granted",
+      "audit.authentication.rejected",
+      "audit.injection.blocked",
+      "audit.capability.denied",
+      "audit.command.blocked",
+      "diagnostics.snapshot.created",
+      "diagnostics.event.persisted",
+      "diagnostics.event.dropped",
+      "background.task.started",
+      "background.task.completed",
+      "runtime.artifact.discovered",
+      "runtime.artifact.promoted",
+      "runtime.artifact.rejected",
+      "operator.action.requested",
+      "operator.action.completed",
+      "rpc.request.received",
+      "rpc.request.completed",
+      "admin.action.authorized",
+      "admin.action.rejected",
+      "determinism.clock.consumed",
+      "determinism.random.consumed",
+      "determinism.identifier.consumed",
+      "dependency.request.started",
+      "dependency.request.completed",
+      "channel.outbound.request.started",
+      "channel.outbound.request.completed",
+      "filesystem.read.started",
+      "filesystem.read.completed",
+      "environment.read.started",
+      "environment.read.completed",
+      "external.io.network.started",
+      "external.io.network.completed",
+      "external.io.process.started",
+      "external.io.process.completed",
+    ]));
+
+    expect(TRANSCRIPT_EXACT_SOURCE_KINDS as readonly string[]).toEqual(expect.arrayContaining([
+      "operator",
+      "rpc",
+      "admin",
+      "deterministic_clock",
+      "deterministic_random",
+      "deterministic_identifier",
+      "dependency",
+      "channel_outbound",
+      "filesystem",
+      "environment",
+      "external_io",
+    ]));
+  });
+
+  it("assigns every exact authority a real event family without state or daemon aliases", () => {
+    const mappings = TRANSCRIPT_SOURCE_EVENT_PREFIXES as unknown as Readonly<
+      Record<string, readonly string[]>
+    >;
+    const eventKinds = TRANSCRIPT_EVENT_KINDS as readonly string[];
+
+    for (const sourceKind of TRANSCRIPT_EXACT_SOURCE_KINDS as readonly string[]) {
+      const prefixes = mappings[sourceKind] ?? [];
+      expect(prefixes.length, sourceKind).toBeGreaterThan(0);
+      expect(
+        eventKinds.some((eventKind) => prefixes.some((prefix) => eventKind.startsWith(prefix))),
+        sourceKind,
+      ).toBe(true);
+    }
+
+    expect(mappings.config).toEqual(["config."]);
+    expect(mappings.trajectory).toEqual(["trajectory."]);
+    expect(mappings.audit).toEqual(["audit."]);
+    expect(mappings.diagnostics).toEqual(["diagnostics."]);
+    expect(mappings.background).toEqual(["background."]);
+    expect(mappings.runtime_artifact).toEqual(["runtime.artifact."]);
+    expect(mappings.deterministic_clock).toEqual(["determinism.clock."]);
+    expect(mappings.deterministic_random).toEqual(["determinism.random."]);
+    expect(mappings.deterministic_identifier).toEqual(["determinism.identifier."]);
+  });
+
+  it("accepts representative events from each newly explicit exact authority", () => {
+    const specifications = [
+      ["config", "config.write.rejected", "config"],
+      ["trajectory", "trajectory.pointer.updated", "trajectory"],
+      ["audit", "audit.capability.denied", "audit"],
+      ["diagnostics", "diagnostics.event.dropped", "diagnostics"],
+      ["background", "background.task.completed", "background"],
+      ["runtime_artifact", "runtime.artifact.promoted", "runtime_artifact"],
+      ["operator", "operator.action.completed", "operator"],
+      ["rpc", "rpc.request.completed", "rpc"],
+      ["admin", "admin.action.authorized", "admin"],
+      ["deterministic_clock", "determinism.clock.consumed", "determinism"],
+      ["deterministic_random", "determinism.random.consumed", "determinism"],
+      ["deterministic_identifier", "determinism.identifier.consumed", "determinism"],
+      ["dependency", "dependency.request.completed", "dependency"],
+      ["channel_outbound", "channel.outbound.request.completed", "channel_outbound"],
+      ["filesystem", "filesystem.read.completed", "filesystem"],
+      ["environment", "environment.read.completed", "environment"],
+      ["external_io", "external.io.network.completed", "external_io"],
+    ] as const;
+    const events = specifications.map(([sourceKind, kind, origin], index) => {
+      const event = structuredClone(makeEvent(index + 1)) as unknown as Record<string, unknown>;
+      event.source = { kind: sourceKind, id: `${sourceKind}-source`, seq: 1 };
+      event.kind = kind;
+      event.eventId = `new-authority-event-${index + 1}`;
+      event.traceId = sourceKind === "channel_outbound" ? `trace-${index + 1}` : null;
+      event.sessionId = sourceKind === "channel_outbound" ? `session-${index + 1}` : null;
+      event.runId = null;
+      event.causalParentEventId = index === 0 ? null : `new-authority-event-${index}`;
+      event.actor = {
+        kind: sourceKind === "operator" || sourceKind === "admin" ? "operator" : "service",
+        id: null,
+        trust: sourceKind === "operator" || sourceKind === "admin" ? "admin" : "system",
+        origin,
+      };
+      return event as unknown as CanonicalProductionEvent;
+    });
+
+    expect(parseCanonicalProductionTranscript(encode(transcript(events))).ok).toBe(true);
+  });
+
+  it("rejects cross-family assignments for each newly explicit exact authority", () => {
+    const mismatches = [
+      ["config", "trajectory.append.completed"],
+      ["trajectory", "audit.command.blocked"],
+      ["audit", "diagnostics.snapshot.created"],
+      ["diagnostics", "background.task.started"],
+      ["background", "runtime.artifact.discovered"],
+      ["runtime_artifact", "config.reload.completed"],
+      ["operator", "rpc.request.received"],
+      ["rpc", "admin.action.authorized"],
+      ["admin", "operator.action.requested"],
+      ["deterministic_clock", "determinism.random.consumed"],
+      ["deterministic_random", "determinism.identifier.consumed"],
+      ["deterministic_identifier", "determinism.clock.consumed"],
+      ["dependency", "channel.outbound.request.started"],
+      ["channel_outbound", "dependency.request.started"],
+      ["filesystem", "environment.read.started"],
+      ["environment", "external.io.network.started"],
+      ["external_io", "filesystem.read.started"],
+    ] as const;
+
+    for (const [sourceKind, kind] of mismatches) {
+      const event = structuredClone(makeEvent(1)) as unknown as Record<string, unknown>;
+      event.source = { kind: sourceKind, id: `${sourceKind}-source`, seq: 1 };
+      event.kind = kind;
+      event.eventId = `mismatched-${sourceKind}`;
+      event.traceId = null;
+      event.sessionId = null;
+      event.runId = null;
+      event.causalParentEventId = null;
+
+      expect(parseCanonicalProductionTranscript(encode(transcript([
+        event as unknown as CanonicalProductionEvent,
+      ])))).toMatchObject({
+        ok: false,
+        error: { kind: "malformed_transcript", field: "events" },
+      });
     }
   });
 

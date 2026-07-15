@@ -38,8 +38,9 @@ import {
   parseCanonicalProductionTranscript,
   type CanonicalProductionEvent,
   type CanonicalProductionTranscript,
-  type TranscriptSourceKind,
 } from "./production-transcript.js";
+
+type ExactTranscriptSourceKind = (typeof TRANSCRIPT_EXACT_SOURCE_KINDS)[number];
 
 const SEAL_KEY = Buffer.alloc(32, 23);
 const MAX_EVENT_LAG_MS = 500;
@@ -163,7 +164,7 @@ interface ReplayFixture {
 
 function event(
   seq: number,
-  sourceKind: TranscriptSourceKind,
+  sourceKind: ExactTranscriptSourceKind,
   kind: CanonicalProductionEvent["kind"],
   replay: CanonicalProductionEvent["replay"],
 ): CanonicalProductionEvent {
@@ -193,7 +194,7 @@ function event(
   };
 }
 
-function eventKindForSource(source: TranscriptSourceKind): CanonicalProductionEvent["kind"] {
+function eventKindForSource(source: ExactTranscriptSourceKind): CanonicalProductionEvent["kind"] {
   switch (source) {
     case "offline_messages": return "channel.normalized.text_received";
     case "channel_native": return "channel.native.text_received";
@@ -222,13 +223,23 @@ function eventKindForSource(source: TranscriptSourceKind): CanonicalProductionEv
     case "lcd": return "lcd.message.appended";
     case "delivery": return "outbound.attempt.started";
     case "state": return "state.mutation.committed";
-    case "config": return "state.mutation.committed";
-    case "trajectory": return "graph.checkpointed";
-    case "audit": return "state.mutation.committed";
-    case "diagnostics": return "daemon.recovery.completed";
-    case "background": return "subagent.completed";
-    case "runtime_artifact": return "daemon.shutdown.completed";
-    case "replay": return "daemon.recovery.completed";
+    case "config": return "config.read.completed";
+    case "trajectory": return "trajectory.checkpoint.created";
+    case "audit": return "audit.command.allowed";
+    case "diagnostics": return "diagnostics.snapshot.created";
+    case "background": return "background.task.completed";
+    case "runtime_artifact": return "runtime.artifact.verified";
+    case "operator": return "operator.action.completed";
+    case "rpc": return "rpc.request.completed";
+    case "admin": return "admin.action.completed";
+    case "deterministic_clock": return "determinism.clock.consumed";
+    case "deterministic_random": return "determinism.random.consumed";
+    case "deterministic_identifier": return "determinism.identifier.consumed";
+    case "dependency": return "dependency.request.completed";
+    case "channel_outbound": return "channel.outbound.request.completed";
+    case "filesystem": return "filesystem.read.completed";
+    case "environment": return "environment.read.completed";
+    case "external_io": return "external.io.network.completed";
     default: {
       const exhaustive: never = source;
       return exhaustive;
@@ -264,7 +275,7 @@ function makeFixture(options: FixtureOptions = {}): ReplayFixture {
   const orderedSources = [
     "channel_native",
     ...TRANSCRIPT_EXACT_SOURCE_KINDS.filter((kind) => kind !== "channel_native"),
-  ] as const satisfies readonly TranscriptSourceKind[];
+  ] as const satisfies readonly ExactTranscriptSourceKind[];
   const events = orderedSources.map((sourceKind, index) =>
     event(index + 1, sourceKind, eventKindForSource(sourceKind), {
       policy:
