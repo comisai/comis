@@ -615,8 +615,8 @@ export class IcMessageCenter extends LitElement {
     if (newType && newType !== this._effectiveChannel) {
       this.dispatchEvent(new CustomEvent("navigate", {
         detail: `messages/${newType}`,
-        bubbles: true,
-        composed: true,
+        bubbles: false,
+        composed: false,
       }));
     }
   }
