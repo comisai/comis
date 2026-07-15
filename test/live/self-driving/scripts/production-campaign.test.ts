@@ -238,21 +238,22 @@ function makeArtifacts(identity: ProductionCampaignIdentity): Map<string, Produc
     { ...baseArtifact("bundle_manifest", "artifact:bundle", 1), bundleId: identity.bundleId, manifestDigestSha256: identity.bundleManifestDigestSha256 },
     { ...baseArtifact("capture_episode", "artifact:episode", 2), bundleId: identity.bundleId, episodeId: identity.episodeId, blobDigestSha256: identity.episodeBlobDigestSha256, contentDigestSha256: identity.episodeContentDigestSha256 },
     { ...baseArtifact("clean_restore", "artifact:restore-red", 3), restoreId: "restore-red", bundleId: identity.bundleId, episodeId: identity.episodeId, targetMachineIdSha256: target, snapshotManifestDigestSha256: identity.initialSnapshotManifestDigestSha256, stateTreeDigestSha256: identity.initialStateTreeDigestSha256, result: "exact", completedAtMs: T0 + 70_000 },
-    { ...baseArtifact("replay_report", "artifact:replay-red", 4), runId: "run-red", caseId: "case-a", bundleId: identity.bundleId, episodeId: identity.episodeId, restoreId: "restore-red", targetMachineIdSha256: target, runtimeDigestSha256: identity.sourceRuntimeDigestSha256, inputSetDigestSha256: identity.inputSetDigestSha256, fidelity: "matched", result: "completed", startedAtMs: T0 + 71_000, completedAtMs: T0 + 72_000 },
+    { ...baseArtifact("replay_report", "artifact:replay-red", 4), runId: "run-red", caseId: "case-a", bundleId: identity.bundleId, episodeId: identity.episodeId, restoreId: "restore-red", targetMachineIdSha256: target, runtimeDigestSha256: identity.sourceRuntimeDigestSha256, inputSetDigestSha256: identity.inputSetDigestSha256, engineKind: "comis_operational", engineReportDigestSha256: digest(30), exact: true, exactBlockers: [], fidelity: "matched", result: "completed", startedAtMs: T0 + 71_000, completedAtMs: T0 + 72_000 },
     { ...baseArtifact("replay_observation", "artifact:observation-red", 5), runId: "run-red", caseId: "case-a", phase: "reproduction", observerMode: "independent", observationDigestSha256: identity.productionObservationDigestSha256, verdict: "fail", observedAtMs: T0 + 72_100 },
     { ...baseArtifact("oracle_report", "artifact:oracle-red", 6), runId: "run-red", caseId: "case-a", phase: "reproduction", oracleSetDigestSha256: identity.oracleSetDigestSha256, verdict: "fail", evaluatedAtMs: T0 + 72_200 },
     { ...baseArtifact("source_checkout", "artifact:checkout", 7), checkoutId: "checkout-a", treeDigestSha256: digest(20), baselineRuntimeDigestSha256: identity.sourceRuntimeDigestSha256, clean: true, capturedAtMs: T0 + 72_300 },
     { ...baseArtifact("diagnosis", "artifact:diagnosis", 8), defectId: "defect-a", replayRunId: "run-red", sourceCheckoutId: "checkout-a", rootCauseDigestSha256: digest(22), authoritativeLayer: "orchestrator-ingress", recordedAtMs: T0 + 72_400 },
     { ...baseArtifact("regression_gate", "artifact:regression-red", 9), gateId: "gate-red", phase: "pre_patch", subjectId: "checkout-a", runtimeDigestSha256: identity.sourceRuntimeDigestSha256, testPath: "packages/agent/src/example.test.ts", commandDigestSha256: digest(23), result: "fail", failureShapeDigestSha256: digest(24), completedAtMs: T0 + 72_500 },
-    { ...baseArtifact("patch_build", "artifact:build", 10), buildId: "build-a", sourceCheckoutId: "checkout-a", sourceTreeDigestSha256: digest(20), patchDigestSha256: digest(25), runtimeDigestSha256: digest(26), result: "success", builtAtMs: T0 + 73_000 },
-    { ...baseArtifact("regression_gate", "artifact:regression-green", 11), gateId: "gate-green", phase: "post_patch", subjectId: "build-a", runtimeDigestSha256: digest(26), testPath: "packages/agent/src/example.test.ts", commandDigestSha256: digest(23), result: "pass", failureShapeDigestSha256: null, completedAtMs: T0 + 73_100 },
-    { ...baseArtifact("deployment", "artifact:deployment", 12), deploymentId: "deployment-a", buildId: "build-a", targetMachineIdSha256: target, runtimeDigestSha256: digest(26), result: "complete", completedAtMs: T0 + 74_000 },
-    { ...baseArtifact("clean_restore", "artifact:restore-green", 13), restoreId: "restore-green", bundleId: identity.bundleId, episodeId: identity.episodeId, targetMachineIdSha256: target, snapshotManifestDigestSha256: identity.initialSnapshotManifestDigestSha256, stateTreeDigestSha256: identity.initialStateTreeDigestSha256, result: "exact", completedAtMs: T0 + 75_000 },
-    { ...baseArtifact("replay_report", "artifact:replay-green", 14), runId: "run-green", caseId: "case-a", bundleId: identity.bundleId, episodeId: identity.episodeId, restoreId: "restore-green", targetMachineIdSha256: target, runtimeDigestSha256: digest(26), inputSetDigestSha256: identity.inputSetDigestSha256, fidelity: "matched", result: "completed", startedAtMs: T0 + 75_100, completedAtMs: T0 + 76_000 },
-    { ...baseArtifact("replay_observation", "artifact:observation-green", 15), runId: "run-green", caseId: "case-a", phase: "verification", observerMode: "independent", observationDigestSha256: identity.desiredObservationDigestSha256, verdict: "pass", observedAtMs: T0 + 76_100 },
-    { ...baseArtifact("oracle_report", "artifact:oracle-green", 16), runId: "run-green", caseId: "case-a", phase: "verification", oracleSetDigestSha256: identity.oracleSetDigestSha256, verdict: "pass", evaluatedAtMs: T0 + 76_200 },
-    { ...baseArtifact("forced_failure_proof", "artifact:forced-failure", 17), runId: "run-green", deploymentId: "deployment-a", observerMode: "independent", expectedFailureObserved: true, logProofDigestSha256: digest(27), eventProofDigestSha256: digest(28), hintProofDigestSha256: digest(29), completedAtMs: T0 + 76_300 },
-    { ...baseArtifact("regression_gate", "artifact:regression-deployed", 18), gateId: "gate-deployed", phase: "deployed", subjectId: "deployment-a", runtimeDigestSha256: digest(26), testPath: "packages/agent/src/example.test.ts", commandDigestSha256: digest(23), result: "pass", failureShapeDigestSha256: null, completedAtMs: T0 + 76_400 },
+    { ...baseArtifact("source_patch", "artifact:patch", 10), patchId: "patch-a", sourceCheckoutId: "checkout-a", baseTreeDigestSha256: digest(20), patchedTreeDigestSha256: digest(21), patchDigestSha256: digest(25), producedAtMs: T0 + 72_700 },
+    { ...baseArtifact("patch_build", "artifact:build", 11), buildId: "build-a", sourceCheckoutId: "checkout-a", patchArtifactRef: "artifact:patch", sourceTreeDigestSha256: digest(21), patchDigestSha256: digest(25), runtimeDigestSha256: digest(26), result: "success", builtAtMs: T0 + 73_000 },
+    { ...baseArtifact("regression_gate", "artifact:regression-green", 12), gateId: "gate-green", phase: "post_patch", subjectId: "build-a", runtimeDigestSha256: digest(26), testPath: "packages/agent/src/example.test.ts", commandDigestSha256: digest(23), result: "pass", failureShapeDigestSha256: null, completedAtMs: T0 + 73_100 },
+    { ...baseArtifact("deployment", "artifact:deployment", 13), deploymentId: "deployment-a", buildId: "build-a", targetMachineIdSha256: target, runtimeDigestSha256: digest(26), result: "complete", completedAtMs: T0 + 74_000 },
+    { ...baseArtifact("clean_restore", "artifact:restore-green", 14), restoreId: "restore-green", bundleId: identity.bundleId, episodeId: identity.episodeId, targetMachineIdSha256: target, snapshotManifestDigestSha256: identity.initialSnapshotManifestDigestSha256, stateTreeDigestSha256: identity.initialStateTreeDigestSha256, result: "exact", completedAtMs: T0 + 75_000 },
+    { ...baseArtifact("replay_report", "artifact:replay-green", 15), runId: "run-green", caseId: "case-a", bundleId: identity.bundleId, episodeId: identity.episodeId, restoreId: "restore-green", targetMachineIdSha256: target, runtimeDigestSha256: digest(26), inputSetDigestSha256: identity.inputSetDigestSha256, engineKind: "comis_operational", engineReportDigestSha256: digest(31), exact: true, exactBlockers: [], fidelity: "matched", result: "completed", startedAtMs: T0 + 75_100, completedAtMs: T0 + 76_000 },
+    { ...baseArtifact("replay_observation", "artifact:observation-green", 16), runId: "run-green", caseId: "case-a", phase: "verification", observerMode: "independent", observationDigestSha256: identity.desiredObservationDigestSha256, verdict: "pass", observedAtMs: T0 + 76_100 },
+    { ...baseArtifact("oracle_report", "artifact:oracle-green", 17), runId: "run-green", caseId: "case-a", phase: "verification", oracleSetDigestSha256: identity.oracleSetDigestSha256, verdict: "pass", evaluatedAtMs: T0 + 76_200 },
+    { ...baseArtifact("forced_failure_proof", "artifact:forced-failure", 18), runId: "run-green", deploymentId: "deployment-a", observerMode: "independent", expectedFailureObserved: true, logProofDigestSha256: digest(27), eventProofDigestSha256: digest(28), hintProofDigestSha256: digest(29), completedAtMs: T0 + 76_300 },
+    { ...baseArtifact("regression_gate", "artifact:regression-deployed", 19), gateId: "gate-deployed", phase: "deployed", subjectId: "deployment-a", runtimeDigestSha256: digest(26), testPath: "packages/agent/src/example.test.ts", commandDigestSha256: digest(23), result: "pass", failureShapeDigestSha256: null, completedAtMs: T0 + 76_400 },
   ];
   return new Map(artifacts.map((artifact) => [artifact.artifactRef, artifact]));
 }
@@ -381,6 +382,84 @@ describe("authenticated production feedback campaign", () => {
     expect(campaign.defects[0]).toMatchObject({ status: "red_reproduced", replayRunId: "run-red" });
   });
 
+  it("rejects opaque replay completion as exact campaign evidence", () => {
+    const { campaign, resolver, artifacts } = createFixture();
+    const replay = artifacts.get("artifact:replay-red");
+    if (replay?.kind !== "replay_report") throw new Error("replay fixture is absent");
+    const opaque = { ...replay } as Record<string, unknown>;
+    delete opaque.engineKind;
+    delete opaque.engineReportDigestSha256;
+    delete opaque.exact;
+    delete opaque.exactBlockers;
+    artifacts.set("artifact:replay-red", opaque as unknown as ProductionCampaignArtifact);
+    const running = advance(campaign, {
+      kind: "begin_case",
+      caseId: "case-a",
+      replayRunId: "run-red",
+      restoreArtifactRef: "artifact:restore-red",
+      startedAtMs: T0 + 71_000,
+    }, resolver);
+
+    const result = advanceProductionCampaign(running, {
+      kind: "record_reproduction",
+      caseId: "case-a",
+      defectId: "defect-a",
+      failureClass: "false_success",
+      replayReportArtifactRef: "artifact:replay-red",
+      observationArtifactRef: "artifact:observation-red",
+      oracleReportArtifactRef: "artifact:oracle-red",
+      completedAtMs: T0 + 72_200,
+    }, resolver);
+
+    expect(result).toMatchObject({ ok: false, error: { kind: "artifact_mismatch" } });
+  });
+
+  it.each([
+    {
+      label: "generic contract",
+      engineKind: "generic_contract" as const,
+      exact: false,
+      exactBlockers: ["generic_contract_is_not_operational_attestation"],
+    },
+    {
+      label: "non-exact operational run",
+      engineKind: "comis_operational" as const,
+      exact: false,
+      exactBlockers: ["dependency_cassette_missing"],
+    },
+    {
+      label: "operational run with an unresolved blocker",
+      engineKind: "comis_operational" as const,
+      exact: true,
+      exactBlockers: ["dependency_cassette_missing"],
+    },
+  ])("rejects $label replay evidence from an exact campaign", ({ engineKind, exact, exactBlockers }) => {
+    const { campaign, resolver, artifacts } = createFixture();
+    const replay = artifacts.get("artifact:replay-red");
+    if (replay?.kind !== "replay_report") throw new Error("replay fixture is absent");
+    artifacts.set("artifact:replay-red", { ...replay, engineKind, exact, exactBlockers });
+    const running = advance(campaign, {
+      kind: "begin_case",
+      caseId: "case-a",
+      replayRunId: "run-red",
+      restoreArtifactRef: "artifact:restore-red",
+      startedAtMs: T0 + 71_000,
+    }, resolver);
+
+    const result = advanceProductionCampaign(running, {
+      kind: "record_reproduction",
+      caseId: "case-a",
+      defectId: "defect-a",
+      failureClass: "false_success",
+      replayReportArtifactRef: "artifact:replay-red",
+      observationArtifactRef: "artifact:observation-red",
+      oracleReportArtifactRef: "artifact:oracle-red",
+      completedAtMs: T0 + 72_200,
+    }, resolver);
+
+    expect(result).toMatchObject({ ok: false, error: { kind: "artifact_mismatch" } });
+  });
+
   it("rejects caller-supplied matching digest strings as campaign proof", () => {
     const { campaign, resolver } = createFixture();
     const arbitrary = digest(888);
@@ -421,6 +500,71 @@ describe("authenticated production feedback campaign", () => {
     expect(earlyGreen).toMatchObject({ ok: false, error: { kind: "invalid_transition" } });
   });
 
+  it("rejects a no-op patch even when its authenticated regression gate says pass", () => {
+    const fixture = createFixture();
+    let campaign = beginAndReproduceRed(fixture.campaign, fixture.resolver);
+    campaign = advance(campaign, {
+      kind: "record_diagnosis",
+      defectId: "defect-a",
+      sourceCheckoutArtifactRef: "artifact:checkout",
+      diagnosisArtifactRef: "artifact:diagnosis",
+      prePatchRegressionArtifactRef: "artifact:regression-red",
+      recordedAtMs: T0 + 72_500,
+    }, fixture.resolver);
+    const patch = fixture.artifacts.get("artifact:patch");
+    const build = fixture.artifacts.get("artifact:build");
+    if (patch?.kind !== "source_patch" || build?.kind !== "patch_build") {
+      throw new Error("patch provenance fixture is absent");
+    }
+    fixture.artifacts.set("artifact:patch", {
+      ...patch,
+      patchedTreeDigestSha256: patch.baseTreeDigestSha256,
+    });
+    fixture.artifacts.set("artifact:build", {
+      ...build,
+      sourceTreeDigestSha256: patch.baseTreeDigestSha256,
+    });
+
+    const result = advanceProductionCampaign(campaign, {
+      kind: "record_green",
+      defectId: "defect-a",
+      patchBuildArtifactRef: "artifact:build",
+      regressionGateArtifactRef: "artifact:regression-green",
+      recordedAtMs: T0 + 73_100,
+    }, fixture.resolver);
+
+    expect(result).toMatchObject({ ok: false, error: { kind: "artifact_mismatch" } });
+  });
+
+  it("rejects a build that is not derived from its authenticated source patch", () => {
+    const fixture = createFixture();
+    let campaign = beginAndReproduceRed(fixture.campaign, fixture.resolver);
+    campaign = advance(campaign, {
+      kind: "record_diagnosis",
+      defectId: "defect-a",
+      sourceCheckoutArtifactRef: "artifact:checkout",
+      diagnosisArtifactRef: "artifact:diagnosis",
+      prePatchRegressionArtifactRef: "artifact:regression-red",
+      recordedAtMs: T0 + 72_500,
+    }, fixture.resolver);
+    const build = fixture.artifacts.get("artifact:build");
+    if (build?.kind !== "patch_build") throw new Error("build fixture is absent");
+    fixture.artifacts.set("artifact:build", {
+      ...build,
+      patchDigestSha256: digest(999),
+    });
+
+    const result = advanceProductionCampaign(campaign, {
+      kind: "record_green",
+      defectId: "defect-a",
+      patchBuildArtifactRef: "artifact:build",
+      regressionGateArtifactRef: "artifact:regression-green",
+      recordedAtMs: T0 + 73_100,
+    }, fixture.resolver);
+
+    expect(result).toMatchObject({ ok: false, error: { kind: "artifact_mismatch" } });
+  });
+
   it("verifies GREEN against desired correctness even when it intentionally differs from production", () => {
     const { campaign: deployed, resolver } = campaignAtDeployment();
     const result = advanceProductionCampaign(deployed, {
@@ -440,6 +584,32 @@ describe("authenticated production feedback campaign", () => {
     expect(result.value.cases[0]).toMatchObject({ status: "passed_after_fix", verificationCorrectness: "green_verified" });
     expect(result.value.defects[0]).toMatchObject({ status: "verified" });
     expect(result.value.activeRuntimeDigestSha256).toBe(digest(26));
+  });
+
+  it("rejects generic replay evidence during deployed verification", () => {
+    const { campaign, resolver, artifacts } = campaignAtDeployment();
+    const replay = artifacts.get("artifact:replay-green");
+    if (replay?.kind !== "replay_report") throw new Error("replay fixture is absent");
+    artifacts.set("artifact:replay-green", {
+      ...replay,
+      engineKind: "generic_contract",
+      exact: false,
+      exactBlockers: ["generic_contract_is_not_operational_attestation"],
+    });
+
+    const result = advanceProductionCampaign(campaign, {
+      kind: "verify_fix",
+      defectId: "defect-a",
+      restoreArtifactRef: "artifact:restore-green",
+      replayReportArtifactRef: "artifact:replay-green",
+      observationArtifactRef: "artifact:observation-green",
+      oracleReportArtifactRef: "artifact:oracle-green",
+      forcedFailureArtifactRef: "artifact:forced-failure",
+      regressionGateArtifactRef: "artifact:regression-deployed",
+      verifiedAtMs: T0 + 76_400,
+    }, resolver);
+
+    expect(result).toMatchObject({ ok: false, error: { kind: "artifact_mismatch" } });
   });
 
   it("cannot pass verification when deployment or the post-deployment clean restore is skipped", () => {

@@ -15,6 +15,7 @@ import {
 const MAX_CAMPAIGN_BYTES = 4 * 1024 * 1024;
 const MAX_CASES = 100_000;
 const MAX_EVIDENCE = 1_000_000;
+const MAX_EXACT_BLOCKERS = 1_000;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,255}$/u;
 const SAFE_LABEL = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,511}$/u;
 const SAFE_TEST_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._@+/-]{1,512}$/u;
@@ -59,6 +60,7 @@ export type ProductionCampaignArtifactKind =
   | "replay_observation"
   | "oracle_report"
   | "source_checkout"
+  | "source_patch"
   | "diagnosis"
   | "regression_gate"
   | "patch_build"
@@ -101,6 +103,10 @@ export interface ProductionCampaignReplayArtifact extends ProductionCampaignArti
   readonly targetMachineIdSha256: string;
   readonly runtimeDigestSha256: string;
   readonly inputSetDigestSha256: string;
+  readonly engineKind: "comis_operational" | "generic_contract";
+  readonly engineReportDigestSha256: string;
+  readonly exact: boolean;
+  readonly exactBlockers: readonly string[];
   readonly fidelity: "matched" | "diverged";
   readonly result: "completed" | "failed";
   readonly startedAtMs: number;
@@ -137,6 +143,16 @@ export interface ProductionCampaignSourceCheckoutArtifact extends ProductionCamp
   readonly capturedAtMs: number;
 }
 
+export interface ProductionCampaignSourcePatchArtifact extends ProductionCampaignArtifactBase {
+  readonly kind: "source_patch";
+  readonly patchId: string;
+  readonly sourceCheckoutId: string;
+  readonly baseTreeDigestSha256: string;
+  readonly patchedTreeDigestSha256: string;
+  readonly patchDigestSha256: string;
+  readonly producedAtMs: number;
+}
+
 export interface ProductionCampaignDiagnosisArtifact extends ProductionCampaignArtifactBase {
   readonly kind: "diagnosis";
   readonly defectId: string;
@@ -164,6 +180,7 @@ export interface ProductionCampaignBuildArtifact extends ProductionCampaignArtif
   readonly kind: "patch_build";
   readonly buildId: string;
   readonly sourceCheckoutId: string;
+  readonly patchArtifactRef: string;
   readonly sourceTreeDigestSha256: string;
   readonly patchDigestSha256: string;
   readonly runtimeDigestSha256: string;
@@ -201,6 +218,7 @@ export type ProductionCampaignArtifact =
   | ProductionCampaignObservationArtifact
   | ProductionCampaignOracleArtifact
   | ProductionCampaignSourceCheckoutArtifact
+  | ProductionCampaignSourcePatchArtifact
   | ProductionCampaignDiagnosisArtifact
   | ProductionCampaignRegressionArtifact
   | ProductionCampaignBuildArtifact
@@ -404,13 +422,14 @@ const ARTIFACT_SPECIFIC_KEYS: Record<ProductionCampaignArtifactKind, readonly st
   bundle_manifest: ["bundleId", "manifestDigestSha256"],
   capture_episode: ["bundleId", "episodeId", "blobDigestSha256", "contentDigestSha256"],
   clean_restore: ["restoreId", "bundleId", "episodeId", "targetMachineIdSha256", "snapshotManifestDigestSha256", "stateTreeDigestSha256", "result", "completedAtMs"],
-  replay_report: ["runId", "caseId", "bundleId", "episodeId", "restoreId", "targetMachineIdSha256", "runtimeDigestSha256", "inputSetDigestSha256", "fidelity", "result", "startedAtMs", "completedAtMs"],
+  replay_report: ["runId", "caseId", "bundleId", "episodeId", "restoreId", "targetMachineIdSha256", "runtimeDigestSha256", "inputSetDigestSha256", "engineKind", "engineReportDigestSha256", "exact", "exactBlockers", "fidelity", "result", "startedAtMs", "completedAtMs"],
   replay_observation: ["runId", "caseId", "phase", "observerMode", "observationDigestSha256", "verdict", "observedAtMs"],
   oracle_report: ["runId", "caseId", "phase", "oracleSetDigestSha256", "verdict", "evaluatedAtMs"],
   source_checkout: ["checkoutId", "treeDigestSha256", "baselineRuntimeDigestSha256", "clean", "capturedAtMs"],
+  source_patch: ["patchId", "sourceCheckoutId", "baseTreeDigestSha256", "patchedTreeDigestSha256", "patchDigestSha256", "producedAtMs"],
   diagnosis: ["defectId", "replayRunId", "sourceCheckoutId", "rootCauseDigestSha256", "authoritativeLayer", "recordedAtMs"],
   regression_gate: ["gateId", "phase", "subjectId", "runtimeDigestSha256", "testPath", "commandDigestSha256", "result", "failureShapeDigestSha256", "completedAtMs"],
-  patch_build: ["buildId", "sourceCheckoutId", "sourceTreeDigestSha256", "patchDigestSha256", "runtimeDigestSha256", "result", "builtAtMs"],
+  patch_build: ["buildId", "sourceCheckoutId", "patchArtifactRef", "sourceTreeDigestSha256", "patchDigestSha256", "runtimeDigestSha256", "result", "builtAtMs"],
   deployment: ["deploymentId", "buildId", "targetMachineIdSha256", "runtimeDigestSha256", "result", "completedAtMs"],
   forced_failure_proof: ["runId", "deploymentId", "observerMode", "expectedFailureObserved", "logProofDigestSha256", "eventProofDigestSha256", "hintProofDigestSha256", "completedAtMs"],
 };
@@ -606,19 +625,21 @@ function validateArtifact(raw: unknown): raw is ProductionCampaignArtifact {
     case "clean_restore":
       return isId(raw.restoreId) && isId(raw.bundleId) && isId(raw.episodeId) && isDigest(raw.targetMachineIdSha256) && isDigest(raw.snapshotManifestDigestSha256) && isDigest(raw.stateTreeDigestSha256) && (raw.result === "exact" || raw.result === "mismatch" || raw.result === "failed") && isTime(raw.completedAtMs);
     case "replay_report":
-      return isId(raw.runId) && isId(raw.caseId) && isId(raw.bundleId) && isId(raw.episodeId) && isId(raw.restoreId) && isDigest(raw.targetMachineIdSha256) && isDigest(raw.runtimeDigestSha256) && isDigest(raw.inputSetDigestSha256) && (raw.fidelity === "matched" || raw.fidelity === "diverged") && (raw.result === "completed" || raw.result === "failed") && isTime(raw.startedAtMs) && isTime(raw.completedAtMs) && raw.completedAtMs >= raw.startedAtMs;
+      return isId(raw.runId) && isId(raw.caseId) && isId(raw.bundleId) && isId(raw.episodeId) && isId(raw.restoreId) && isDigest(raw.targetMachineIdSha256) && isDigest(raw.runtimeDigestSha256) && isDigest(raw.inputSetDigestSha256) && (raw.engineKind === "comis_operational" || raw.engineKind === "generic_contract") && isDigest(raw.engineReportDigestSha256) && typeof raw.exact === "boolean" && Array.isArray(raw.exactBlockers) && raw.exactBlockers.length <= MAX_EXACT_BLOCKERS && raw.exactBlockers.every((blocker) => typeof blocker === "string" && SAFE_LABEL.test(blocker)) && new Set(raw.exactBlockers).size === raw.exactBlockers.length && (raw.fidelity === "matched" || raw.fidelity === "diverged") && (raw.result === "completed" || raw.result === "failed") && isTime(raw.startedAtMs) && isTime(raw.completedAtMs) && raw.completedAtMs >= raw.startedAtMs;
     case "replay_observation":
       return isId(raw.runId) && isId(raw.caseId) && (raw.phase === "reproduction" || raw.phase === "verification") && (raw.observerMode === "independent" || raw.observerMode === "replay_driver") && isDigest(raw.observationDigestSha256) && (raw.verdict === "pass" || raw.verdict === "fail") && isTime(raw.observedAtMs);
     case "oracle_report":
       return isId(raw.runId) && isId(raw.caseId) && (raw.phase === "reproduction" || raw.phase === "verification") && isDigest(raw.oracleSetDigestSha256) && (raw.verdict === "pass" || raw.verdict === "fail") && isTime(raw.evaluatedAtMs);
     case "source_checkout":
       return isId(raw.checkoutId) && isDigest(raw.treeDigestSha256) && isDigest(raw.baselineRuntimeDigestSha256) && typeof raw.clean === "boolean" && isTime(raw.capturedAtMs);
+    case "source_patch":
+      return isId(raw.patchId) && isId(raw.sourceCheckoutId) && isDigest(raw.baseTreeDigestSha256) && isDigest(raw.patchedTreeDigestSha256) && isDigest(raw.patchDigestSha256) && isTime(raw.producedAtMs);
     case "diagnosis":
       return isId(raw.defectId) && isId(raw.replayRunId) && isId(raw.sourceCheckoutId) && isDigest(raw.rootCauseDigestSha256) && typeof raw.authoritativeLayer === "string" && SAFE_LABEL.test(raw.authoritativeLayer) && isTime(raw.recordedAtMs);
     case "regression_gate":
       return isId(raw.gateId) && (raw.phase === "pre_patch" || raw.phase === "post_patch" || raw.phase === "deployed") && isId(raw.subjectId) && isDigest(raw.runtimeDigestSha256) && typeof raw.testPath === "string" && SAFE_TEST_PATH.test(raw.testPath) && isDigest(raw.commandDigestSha256) && (raw.result === "pass" || raw.result === "fail") && (raw.failureShapeDigestSha256 === null || isDigest(raw.failureShapeDigestSha256)) && isTime(raw.completedAtMs) && ((raw.result === "fail") === (raw.failureShapeDigestSha256 !== null));
     case "patch_build":
-      return isId(raw.buildId) && isId(raw.sourceCheckoutId) && isDigest(raw.sourceTreeDigestSha256) && isDigest(raw.patchDigestSha256) && isDigest(raw.runtimeDigestSha256) && (raw.result === "success" || raw.result === "failed") && isTime(raw.builtAtMs);
+      return isId(raw.buildId) && isId(raw.sourceCheckoutId) && isRef(raw.patchArtifactRef) && isDigest(raw.sourceTreeDigestSha256) && isDigest(raw.patchDigestSha256) && isDigest(raw.runtimeDigestSha256) && (raw.result === "success" || raw.result === "failed") && isTime(raw.builtAtMs);
     case "deployment":
       return isId(raw.deploymentId) && isId(raw.buildId) && isDigest(raw.targetMachineIdSha256) && isDigest(raw.runtimeDigestSha256) && (raw.result === "complete" || raw.result === "failed") && isTime(raw.completedAtMs);
     case "forced_failure_proof":
@@ -810,6 +831,10 @@ function validateRestore(campaign: ProductionCampaign, artifact: ProductionCampa
   return artifact.bundleId === campaign.bundleId && artifact.episodeId === campaign.episodeId && artifact.targetMachineIdSha256 === campaign.targetMachineIdSha256 && artifact.snapshotManifestDigestSha256 === campaign.initialSnapshotManifestDigestSha256 && artifact.stateTreeDigestSha256 === campaign.initialStateTreeDigestSha256 && artifact.result === "exact";
 }
 
+function isOperationalExactReplay(artifact: ProductionCampaignReplayArtifact): boolean {
+  return artifact.engineKind === "comis_operational" && artifact.exact && artifact.exactBlockers.length === 0;
+}
+
 export function advanceProductionCampaign(
   campaign: ProductionCampaign,
   rawAction: ProductionCampaignAction,
@@ -849,7 +874,7 @@ export function advanceProductionCampaign(
     if (!observation.ok) return observation;
     const oracle = resolveArtifact(resolver, action.oracleReportArtifactRef, "oracle_report");
     if (!oracle.ok) return oracle;
-    const linkedReplay = replay.value.runId === item.replayRunId && replay.value.caseId === item.caseId && replay.value.bundleId === campaign.bundleId && replay.value.episodeId === campaign.episodeId && replay.value.restoreId === restore.value.restoreId && replay.value.targetMachineIdSha256 === campaign.targetMachineIdSha256 && replay.value.runtimeDigestSha256 === campaign.activeRuntimeDigestSha256 && replay.value.inputSetDigestSha256 === campaign.inputSetDigestSha256 && replay.value.fidelity === "matched" && replay.value.result === "completed" && replay.value.startedAtMs >= restore.value.completedAtMs && replay.value.completedAtMs <= timestamp;
+    const linkedReplay = isOperationalExactReplay(replay.value) && replay.value.runId === item.replayRunId && replay.value.caseId === item.caseId && replay.value.bundleId === campaign.bundleId && replay.value.episodeId === campaign.episodeId && replay.value.restoreId === restore.value.restoreId && replay.value.targetMachineIdSha256 === campaign.targetMachineIdSha256 && replay.value.runtimeDigestSha256 === campaign.activeRuntimeDigestSha256 && replay.value.inputSetDigestSha256 === campaign.inputSetDigestSha256 && replay.value.fidelity === "matched" && replay.value.result === "completed" && replay.value.startedAtMs >= restore.value.completedAtMs && replay.value.completedAtMs <= timestamp;
     const linkedObservation = observation.value.runId === item.replayRunId && observation.value.caseId === item.caseId && observation.value.phase === "reproduction" && observation.value.observerMode === "independent" && observation.value.observedAtMs >= replay.value.completedAtMs && observation.value.observedAtMs <= timestamp;
     const linkedOracle = oracle.value.runId === item.replayRunId && oracle.value.caseId === item.caseId && oracle.value.phase === "reproduction" && oracle.value.oracleSetDigestSha256 === campaign.oracleSetDigestSha256 && oracle.value.evaluatedAtMs >= observation.value.observedAtMs && oracle.value.evaluatedAtMs <= timestamp;
     if (!linkedReplay || !linkedObservation || !linkedOracle) return artifactMismatch();
@@ -890,10 +915,12 @@ export function advanceProductionCampaign(
     if (!redGate.ok) return redGate;
     const build = resolveArtifact(resolver, action.patchBuildArtifactRef, "patch_build");
     if (!build.ok) return build;
+    const patch = resolveArtifact(resolver, build.value.patchArtifactRef, "source_patch");
+    if (!patch.ok) return patch;
     const gate = resolveArtifact(resolver, action.regressionGateArtifactRef, "regression_gate");
     if (!gate.ok) return gate;
-    if (build.value.sourceCheckoutId !== checkout.value.checkoutId || build.value.sourceTreeDigestSha256 !== checkout.value.treeDigestSha256 || build.value.result !== "success" || build.value.builtAtMs > timestamp || gate.value.phase !== "post_patch" || gate.value.subjectId !== build.value.buildId || gate.value.runtimeDigestSha256 !== build.value.runtimeDigestSha256 || gate.value.testPath !== redGate.value.testPath || gate.value.commandDigestSha256 !== redGate.value.commandDigestSha256 || gate.value.result !== "pass" || gate.value.failureShapeDigestSha256 !== null || gate.value.completedAtMs < build.value.builtAtMs || gate.value.completedAtMs > timestamp) return artifactMismatch();
-    const evidence = appendEvidence(campaign.evidence, [build.value, gate.value]);
+    if (patch.value.sourceCheckoutId !== checkout.value.checkoutId || patch.value.baseTreeDigestSha256 !== checkout.value.treeDigestSha256 || patch.value.patchedTreeDigestSha256 === patch.value.baseTreeDigestSha256 || patch.value.producedAtMs < checkout.value.capturedAtMs || patch.value.producedAtMs > build.value.builtAtMs || build.value.sourceCheckoutId !== checkout.value.checkoutId || build.value.patchArtifactRef !== patch.value.artifactRef || build.value.patchDigestSha256 !== patch.value.patchDigestSha256 || build.value.sourceTreeDigestSha256 !== patch.value.patchedTreeDigestSha256 || build.value.result !== "success" || build.value.builtAtMs > timestamp || gate.value.phase !== "post_patch" || gate.value.subjectId !== build.value.buildId || gate.value.runtimeDigestSha256 !== build.value.runtimeDigestSha256 || gate.value.testPath !== redGate.value.testPath || gate.value.commandDigestSha256 !== redGate.value.commandDigestSha256 || gate.value.result !== "pass" || gate.value.failureShapeDigestSha256 !== null || gate.value.completedAtMs < build.value.builtAtMs || gate.value.completedAtMs > timestamp) return artifactMismatch();
+    const evidence = appendEvidence(campaign.evidence, [patch.value, build.value, gate.value]);
     if (!evidence.ok) return evidence;
     return ok(replaceDefect(campaign, defectIndex, { ...defect, status: "green_built", patchBuildArtifactRef: build.value.artifactRef, greenRegressionArtifactRef: gate.value.artifactRef, updatedAtMs: timestamp }, timestamp, evidence.value));
   }
@@ -933,7 +960,7 @@ export function advanceProductionCampaign(
     const caseIndex = campaign.cases.findIndex((candidate) => candidate.caseId === defect.caseId);
     const item = campaign.cases.at(caseIndex);
     if (item === undefined) return invalidCampaign();
-    const valid = validateRestore(campaign, restore.value) && restore.value.completedAtMs >= deployment.value.completedAtMs && restore.value.completedAtMs <= timestamp && replay.value.runId !== defect.replayRunId && replay.value.caseId === defect.caseId && replay.value.bundleId === campaign.bundleId && replay.value.episodeId === campaign.episodeId && replay.value.restoreId === restore.value.restoreId && replay.value.targetMachineIdSha256 === campaign.targetMachineIdSha256 && replay.value.runtimeDigestSha256 === deployment.value.runtimeDigestSha256 && replay.value.inputSetDigestSha256 === campaign.inputSetDigestSha256 && replay.value.fidelity === "matched" && replay.value.result === "completed" && replay.value.startedAtMs >= restore.value.completedAtMs && replay.value.completedAtMs <= timestamp && observation.value.runId === replay.value.runId && observation.value.caseId === defect.caseId && observation.value.phase === "verification" && observation.value.observerMode === "independent" && observation.value.observationDigestSha256 === campaign.desiredObservationDigestSha256 && observation.value.verdict === campaign.desiredVerdict && observation.value.observedAtMs >= replay.value.completedAtMs && observation.value.observedAtMs <= timestamp && oracle.value.runId === replay.value.runId && oracle.value.caseId === defect.caseId && oracle.value.phase === "verification" && oracle.value.oracleSetDigestSha256 === campaign.oracleSetDigestSha256 && oracle.value.verdict === "pass" && oracle.value.evaluatedAtMs >= observation.value.observedAtMs && oracle.value.evaluatedAtMs <= timestamp && forced.value.runId === replay.value.runId && forced.value.deploymentId === deployment.value.deploymentId && forced.value.observerMode === "independent" && forced.value.expectedFailureObserved && new Set([forced.value.logProofDigestSha256, forced.value.eventProofDigestSha256, forced.value.hintProofDigestSha256]).size === 3 && forced.value.completedAtMs >= oracle.value.evaluatedAtMs && forced.value.completedAtMs <= timestamp && regression.value.phase === "deployed" && regression.value.subjectId === deployment.value.deploymentId && regression.value.runtimeDigestSha256 === deployment.value.runtimeDigestSha256 && regression.value.testPath === greenGate.value.testPath && regression.value.commandDigestSha256 === greenGate.value.commandDigestSha256 && regression.value.result === "pass" && regression.value.failureShapeDigestSha256 === null && regression.value.completedAtMs >= deployment.value.completedAtMs && regression.value.completedAtMs <= timestamp;
+    const valid = validateRestore(campaign, restore.value) && restore.value.completedAtMs >= deployment.value.completedAtMs && restore.value.completedAtMs <= timestamp && isOperationalExactReplay(replay.value) && replay.value.runId !== defect.replayRunId && replay.value.caseId === defect.caseId && replay.value.bundleId === campaign.bundleId && replay.value.episodeId === campaign.episodeId && replay.value.restoreId === restore.value.restoreId && replay.value.targetMachineIdSha256 === campaign.targetMachineIdSha256 && replay.value.runtimeDigestSha256 === deployment.value.runtimeDigestSha256 && replay.value.inputSetDigestSha256 === campaign.inputSetDigestSha256 && replay.value.fidelity === "matched" && replay.value.result === "completed" && replay.value.startedAtMs >= restore.value.completedAtMs && replay.value.completedAtMs <= timestamp && observation.value.runId === replay.value.runId && observation.value.caseId === defect.caseId && observation.value.phase === "verification" && observation.value.observerMode === "independent" && observation.value.observationDigestSha256 === campaign.desiredObservationDigestSha256 && observation.value.verdict === campaign.desiredVerdict && observation.value.observedAtMs >= replay.value.completedAtMs && observation.value.observedAtMs <= timestamp && oracle.value.runId === replay.value.runId && oracle.value.caseId === defect.caseId && oracle.value.phase === "verification" && oracle.value.oracleSetDigestSha256 === campaign.oracleSetDigestSha256 && oracle.value.verdict === "pass" && oracle.value.evaluatedAtMs >= observation.value.observedAtMs && oracle.value.evaluatedAtMs <= timestamp && forced.value.runId === replay.value.runId && forced.value.deploymentId === deployment.value.deploymentId && forced.value.observerMode === "independent" && forced.value.expectedFailureObserved && new Set([forced.value.logProofDigestSha256, forced.value.eventProofDigestSha256, forced.value.hintProofDigestSha256]).size === 3 && forced.value.completedAtMs >= oracle.value.evaluatedAtMs && forced.value.completedAtMs <= timestamp && regression.value.phase === "deployed" && regression.value.subjectId === deployment.value.deploymentId && regression.value.runtimeDigestSha256 === deployment.value.runtimeDigestSha256 && regression.value.testPath === greenGate.value.testPath && regression.value.commandDigestSha256 === greenGate.value.commandDigestSha256 && regression.value.result === "pass" && regression.value.failureShapeDigestSha256 === null && regression.value.completedAtMs >= deployment.value.completedAtMs && regression.value.completedAtMs <= timestamp;
     if (!valid) return artifactMismatch();
     const evidence = appendEvidence(campaign.evidence, [restore.value, replay.value, observation.value, oracle.value, forced.value, regression.value]);
     if (!evidence.ok) return evidence;
