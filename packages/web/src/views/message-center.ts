@@ -1151,6 +1151,14 @@ export class IcMessageCenter extends LitElement {
           </div>
         `;
       case "loaded":
+        if (!this._effectiveChannel) {
+          return html`
+            <ic-empty-state
+              message="No running channels"
+              description="Start a channel to view and send messages."
+            ></ic-empty-state>
+          `;
+        }
         return html`
           ${this._renderMessageList()}
           ${this._renderSendForm()}
