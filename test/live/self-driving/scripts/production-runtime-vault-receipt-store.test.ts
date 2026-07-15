@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import {
   chmodSync,
@@ -39,6 +40,11 @@ import {
 } from "./production-runtime-vault-receipt-store.js";
 
 const AUTHORITY_KEY = Uint8Array.from({ length: 32 }, (_, index) => index + 11);
+const PRODUCTION_AUTHORITY_KEY_FILE = "runtime-vault-authority.key";
+const PRODUCTION_AUTHORITY_KEY_INCOMING_FILE = ".runtime-vault-authority.key.incoming";
+const PRODUCTION_AUTHORITY_MARKER_FILE = "runtime-vault-authority.id";
+const PRODUCTION_AUTHORITY_MARKER_INCOMING_FILE = ".runtime-vault-authority.id.incoming";
+const AUTHORITY_KEY_ID_DOMAIN = "comis-runtime-vault-recovery-authority-key-v1\0";
 const roots: string[] = [];
 const linuxHelperToolchainAvailable = (() => {
   if (process.platform !== "linux") return false;
@@ -160,6 +166,13 @@ function makeRoot(): string {
   return root;
 }
 
+function authorityMarker(key: Uint8Array): Buffer {
+  return Buffer.from(
+    `${createHash("sha256").update(AUTHORITY_KEY_ID_DOMAIN).update(key).digest("hex")}\n`,
+    "ascii",
+  );
+}
+
 function mutateTestXattr(path: string, operation: "set" | "remove"): void {
   const command =
     operation === "set"
@@ -181,7 +194,7 @@ function makeStore(
   const created = createProductionRuntimeVaultReceiptStoreForTests({
     stateRoot: root,
     authorityKey: AUTHORITY_KEY,
-    io: options,
+    ...(options !== undefined ? { io: options } : {}),
   });
   expect(created.ok).toBe(true);
   if (!created.ok) throw new Error("test receipt store construction failed");
@@ -224,8 +237,14 @@ describe("production runtime vault controller receipt store", () => {
     expect(primary).toContain("invokeLinuxDirfdHelper");
     expect(primary).toContain("rootGuard.descriptor");
     expect(primary).toContain("dispose");
+    expect(primary).toContain("authorityKey.fill(0)");
     expect(primary).not.toMatch(/\b(?:mkdirSync|linkSync|unlinkSync)\(/u);
     expect(primary).not.toContain("persistReceipt");
+    expect(source).toContain("OP_LOAD_AUTHORITY");
+    expect(source).toContain("def load_or_create_authority(root_fd):");
+    expect(source).not.toContain(
+      "export interface CreateProductionRuntimeVaultReceiptStoreOptions {\n  readonly stateRoot: string;\n  readonly authorityKey:",
+    );
     expect(source).toContain('const PINNED_INTERPRETER_PATH = "/proc/self/fd/4"');
     expect(source).toContain("computeDescriptorSha256");
   });
@@ -236,7 +255,6 @@ describe("production runtime vault controller receipt store", () => {
       expect(
         createProductionRuntimeVaultReceiptStore({
           stateRoot: makeRoot(),
-          authorityKey: AUTHORITY_KEY,
         }),
       ).toMatchObject({
         ok: false,
@@ -251,7 +269,6 @@ describe("production runtime vault controller receipt store", () => {
       expect(
         createProductionRuntimeVaultReceiptStore({
           stateRoot: makeRoot(),
-          authorityKey: AUTHORITY_KEY,
         }),
       ).toMatchObject({
         ok: false,
@@ -265,7 +282,6 @@ describe("production runtime vault controller receipt store", () => {
     () => {
       const createdStore = createProductionRuntimeVaultReceiptStore({
         stateRoot: makeRoot(),
-        authorityKey: AUTHORITY_KEY,
       });
       expect(createdStore.ok).toBe(true);
       if (!createdStore.ok) return;
@@ -300,12 +316,317 @@ describe("production runtime vault controller receipt store", () => {
   );
 
   it.runIf(linuxHelperToolchainAvailable)(
+    "creates one private authority key and reopens receipts with the same identity",
+    () => {
+      const root = makeRoot();
+      const authorityPath = resolve(root, PRODUCTION_AUTHORITY_KEY_FILE);
+      const firstStore = createProductionRuntimeVaultReceiptStore({ stateRoot: root });
+      expect(firstStore.ok).toBe(true);
+      if (!firstStore.ok) return;
+      const authorityBefore = readFileSync(authorityPath);
+      const markerPath = resolve(root, PRODUCTION_AUTHORITY_MARKER_FILE);
+      const authorityStat = lstatSync(authorityPath);
+      expect(authorityBefore).toHaveLength(32);
+      expect(authorityBefore.equals(Buffer.alloc(32))).toBe(false);
+      expect(authorityStat.mode & 0o777).toBe(0o600);
+      expect(authorityStat.nlink).toBe(1);
+      expect(authorityStat.uid).toBe(process.geteuid?.());
+      expect(readFileSync(markerPath)).toEqual(authorityMarker(authorityBefore));
+      expect(lstatSync(markerPath).mode & 0o777).toBe(0o600);
+      expect(lstatSync(markerPath).nlink).toBe(1);
+      expect(lstatSync(markerPath).uid).toBe(process.geteuid?.());
+
+      const input = makeReceiptInput();
+      const created = firstStore.value.createAndPersistReceipt(input);
+      expect(created.ok).toBe(true);
+      if (!created.ok) return;
+      expect(created.value.receipt.seal.authorityKeyIdSha256).toBe(
+        readFileSync(markerPath, "ascii").trimEnd(),
+      );
+      expect(firstStore.value.dispose()).toEqual({ ok: true, value: undefined });
+
+      const reopenedStore = createProductionRuntimeVaultReceiptStore({ stateRoot: root });
+      expect(reopenedStore.ok).toBe(true);
+      if (!reopenedStore.ok) return;
+      expect(readFileSync(authorityPath)).toEqual(authorityBefore);
+      expect(reopenedStore.value.readReceipt(input.runId, input.attemptId)).toEqual({
+        ok: true,
+        value: created.value.receipt,
+      });
+      expect(reopenedStore.value.dispose()).toEqual({ ok: true, value: undefined });
+    },
+  );
+
+  it.runIf(linuxHelperToolchainAvailable)(
+    "refuses to recreate a missing authority identity marker after initialization",
+    () => {
+      const root = makeRoot();
+      const store = createProductionRuntimeVaultReceiptStore({ stateRoot: root });
+      expect(store.ok).toBe(true);
+      if (!store.ok) return;
+      expect(store.value.dispose()).toEqual({ ok: true, value: undefined });
+      const markerPath = resolve(root, PRODUCTION_AUTHORITY_MARKER_FILE);
+      unlinkSync(markerPath);
+
+      expect(createProductionRuntimeVaultReceiptStore({ stateRoot: root })).toMatchObject({
+        ok: false,
+        error: { kind: "conflict", field: "authorityKey" },
+      });
+      expect(existsSync(markerPath)).toBe(false);
+    },
+  );
+
+  it.runIf(linuxHelperToolchainAvailable)(
+    "rejects compliant authority key substitution after initialization without receipts",
+    () => {
+      const root = makeRoot();
+      const store = createProductionRuntimeVaultReceiptStore({ stateRoot: root });
+      expect(store.ok).toBe(true);
+      if (!store.ok) return;
+      expect(store.value.dispose()).toEqual({ ok: true, value: undefined });
+      const authorityPath = resolve(root, PRODUCTION_AUTHORITY_KEY_FILE);
+      const markerBefore = readFileSync(resolve(root, PRODUCTION_AUTHORITY_MARKER_FILE));
+      writeFileSync(authorityPath, Buffer.alloc(32, 0xa7), { mode: 0o600 });
+
+      expect(createProductionRuntimeVaultReceiptStore({ stateRoot: root })).toMatchObject({
+        ok: false,
+        error: { kind: "conflict", field: "authorityKey" },
+      });
+      expect(readFileSync(resolve(root, PRODUCTION_AUTHORITY_MARKER_FILE))).toEqual(markerBefore);
+    },
+  );
+
+  it.runIf(linuxHelperToolchainAvailable)(
+    "rejects compliant authority key substitution after receipts are persisted",
+    () => {
+      const root = makeRoot();
+      const store = createProductionRuntimeVaultReceiptStore({ stateRoot: root });
+      expect(store.ok).toBe(true);
+      if (!store.ok) return;
+      expect(store.value.createAndPersistReceipt(makeReceiptInput()).ok).toBe(true);
+      expect(store.value.dispose()).toEqual({ ok: true, value: undefined });
+      writeFileSync(
+        resolve(root, PRODUCTION_AUTHORITY_KEY_FILE),
+        Buffer.alloc(32, 0xb8),
+        { mode: 0o600 },
+      );
+
+      expect(createProductionRuntimeVaultReceiptStore({ stateRoot: root })).toMatchObject({
+        ok: false,
+        error: { kind: "conflict", field: "authorityKey" },
+      });
+    },
+  );
+
+  it.runIf(linuxHelperToolchainAvailable)(
+    "finishes crash-interrupted authority identity marker publication",
+    () => {
+      for (const linkedBeforeCrash of [false, true]) {
+        const root = makeRoot();
+        const authorityPath = resolve(root, PRODUCTION_AUTHORITY_KEY_FILE);
+        const markerPath = resolve(root, PRODUCTION_AUTHORITY_MARKER_FILE);
+        const markerIncomingPath = resolve(root, PRODUCTION_AUTHORITY_MARKER_INCOMING_FILE);
+        const expectedMarker = authorityMarker(AUTHORITY_KEY);
+        writeFileSync(authorityPath, Buffer.from(AUTHORITY_KEY), { flag: "wx", mode: 0o600 });
+        writeFileSync(
+          markerIncomingPath,
+          linkedBeforeCrash ? expectedMarker : expectedMarker.subarray(0, 11),
+          { flag: "wx", mode: 0o600 },
+        );
+        if (linkedBeforeCrash) linkSync(markerIncomingPath, markerPath);
+
+        const store = createProductionRuntimeVaultReceiptStore({ stateRoot: root });
+
+        expect(store.ok).toBe(true);
+        if (!store.ok) continue;
+        expect(readFileSync(authorityPath)).toEqual(Buffer.from(AUTHORITY_KEY));
+        expect(readFileSync(markerPath)).toEqual(expectedMarker);
+        expect(lstatSync(markerPath).nlink).toBe(1);
+        expect(existsSync(markerIncomingPath)).toBe(false);
+        expect(store.value.dispose()).toEqual({ ok: true, value: undefined });
+      }
+    },
+  );
+
+  it.runIf(linuxHelperToolchainAvailable)(
+    "rejects unsafe authority identity marker links modes symlinks and extended metadata",
+    () => {
+      const makeInitializedMarker = (): { readonly root: string; readonly path: string } => {
+        const root = makeRoot();
+        const store = createProductionRuntimeVaultReceiptStore({ stateRoot: root });
+        expect(store.ok).toBe(true);
+        if (store.ok) expect(store.value.dispose()).toEqual({ ok: true, value: undefined });
+        return { root, path: resolve(root, PRODUCTION_AUTHORITY_MARKER_FILE) };
+      };
+
+      const broad = makeInitializedMarker();
+      chmodSync(broad.path, 0o644);
+      expect(createProductionRuntimeVaultReceiptStore({ stateRoot: broad.root })).toMatchObject({
+        ok: false,
+        error: { kind: "unsafe_file", field: "authorityMarkerFile" },
+      });
+
+      const linked = makeInitializedMarker();
+      linkSync(linked.path, resolve(linked.root, "authority-marker-extra-link"));
+      expect(createProductionRuntimeVaultReceiptStore({ stateRoot: linked.root })).toMatchObject({
+        ok: false,
+        error: { kind: "unsafe_file", field: "authorityMarkerFile" },
+      });
+
+      const symlinked = makeInitializedMarker();
+      const original = resolve(symlinked.root, "authority-marker-original");
+      renameSync(symlinked.path, original);
+      symlinkSync(original, symlinked.path);
+      expect(createProductionRuntimeVaultReceiptStore({ stateRoot: symlinked.root })).toMatchObject({
+        ok: false,
+        error: { kind: "unsafe_file", field: "authorityMarkerFile" },
+      });
+
+      const attributed = makeInitializedMarker();
+      mutateTestXattr(attributed.path, "set");
+      expect(createProductionRuntimeVaultReceiptStore({ stateRoot: attributed.root })).toMatchObject({
+        ok: false,
+        error: { kind: "unsafe_file", field: "authorityMarkerFile" },
+      });
+
+      if (typeof process.geteuid === "function" && process.geteuid() === 0) {
+        const foreign = makeInitializedMarker();
+        chownSync(foreign.path, 65_534, 65_534);
+        expect(createProductionRuntimeVaultReceiptStore({ stateRoot: foreign.root })).toMatchObject({
+          ok: false,
+          error: { kind: "unsafe_file", field: "authorityMarkerFile" },
+        });
+      }
+    },
+  );
+
+  it.runIf(linuxHelperToolchainAvailable)(
+    "refuses to replace a missing authority key after receipt state exists",
+    () => {
+      const root = makeRoot();
+      const store = createProductionRuntimeVaultReceiptStore({ stateRoot: root });
+      expect(store.ok).toBe(true);
+      if (!store.ok) return;
+      expect(store.value.createAndPersistReceipt(makeReceiptInput()).ok).toBe(true);
+      expect(store.value.dispose()).toEqual({ ok: true, value: undefined });
+      unlinkSync(resolve(root, PRODUCTION_AUTHORITY_KEY_FILE));
+
+      expect(createProductionRuntimeVaultReceiptStore({ stateRoot: root })).toMatchObject({
+        ok: false,
+        error: { kind: "conflict", field: "authorityKey" },
+      });
+      expect(existsSync(resolve(root, PRODUCTION_AUTHORITY_KEY_FILE))).toBe(false);
+    },
+  );
+
+  it.runIf(linuxHelperToolchainAvailable)(
+    "refuses to mint a new authority after initialization before any receipt exists",
+    () => {
+      const root = makeRoot();
+      const store = createProductionRuntimeVaultReceiptStore({ stateRoot: root });
+      expect(store.ok).toBe(true);
+      if (!store.ok) return;
+      expect(store.value.dispose()).toEqual({ ok: true, value: undefined });
+      unlinkSync(resolve(root, PRODUCTION_AUTHORITY_KEY_FILE));
+
+      expect(createProductionRuntimeVaultReceiptStore({ stateRoot: root })).toMatchObject({
+        ok: false,
+        error: { kind: "conflict", field: "authorityKey" },
+      });
+      expect(existsSync(resolve(root, PRODUCTION_AUTHORITY_KEY_FILE))).toBe(false);
+    },
+  );
+
+  it.runIf(linuxHelperToolchainAvailable)(
+    "rejects malformed or unsafe persisted authority key files",
+    () => {
+      const malformedRoot = makeRoot();
+      writeFileSync(
+        resolve(malformedRoot, PRODUCTION_AUTHORITY_KEY_FILE),
+        Buffer.alloc(31, 1),
+        { flag: "wx", mode: 0o600 },
+      );
+      expect(createProductionRuntimeVaultReceiptStore({ stateRoot: malformedRoot })).toMatchObject({
+        ok: false,
+        error: { kind: "unsafe_file", field: "authorityKeyFile" },
+      });
+
+      const broadRoot = makeRoot();
+      const broadPath = resolve(broadRoot, PRODUCTION_AUTHORITY_KEY_FILE);
+      writeFileSync(broadPath, Buffer.from(AUTHORITY_KEY), { flag: "wx", mode: 0o600 });
+      chmodSync(broadPath, 0o644);
+      expect(createProductionRuntimeVaultReceiptStore({ stateRoot: broadRoot })).toMatchObject({
+        ok: false,
+        error: { kind: "unsafe_file", field: "authorityKeyFile" },
+      });
+
+      const linkedRoot = makeRoot();
+      const linkedPath = resolve(linkedRoot, PRODUCTION_AUTHORITY_KEY_FILE);
+      writeFileSync(linkedPath, Buffer.from(AUTHORITY_KEY), { flag: "wx", mode: 0o600 });
+      linkSync(linkedPath, resolve(linkedRoot, "authority-key-extra-link"));
+      expect(createProductionRuntimeVaultReceiptStore({ stateRoot: linkedRoot })).toMatchObject({
+        ok: false,
+        error: { kind: "unsafe_file", field: "authorityKeyFile" },
+      });
+    },
+  );
+
+  it.runIf(linuxHelperToolchainAvailable)(
+    "finishes crash-interrupted authority key publication without changing the key",
+    () => {
+      for (const linkBeforeCrash of [false, true]) {
+        const root = makeRoot();
+        const incomingPath = resolve(root, PRODUCTION_AUTHORITY_KEY_INCOMING_FILE);
+        const authorityPath = resolve(root, PRODUCTION_AUTHORITY_KEY_FILE);
+        writeFileSync(incomingPath, Buffer.from(AUTHORITY_KEY), {
+          flag: "wx",
+          mode: 0o600,
+        });
+        if (linkBeforeCrash) linkSync(incomingPath, authorityPath);
+
+        const store = createProductionRuntimeVaultReceiptStore({ stateRoot: root });
+
+        expect(store.ok).toBe(true);
+        if (!store.ok) continue;
+        expect(readFileSync(authorityPath)).toEqual(Buffer.from(AUTHORITY_KEY));
+        expect(lstatSync(authorityPath).nlink).toBe(1);
+        expect(existsSync(incomingPath)).toBe(false);
+        expect(store.value.createAndPersistReceipt(makeReceiptInput()).ok).toBe(true);
+        expect(store.value.dispose()).toEqual({ ok: true, value: undefined });
+      }
+    },
+  );
+
+  it.runIf(linuxHelperToolchainAvailable)(
+    "recovers an incomplete first authority write only before receipt state exists",
+    () => {
+      const root = makeRoot();
+      const incomingPath = resolve(root, PRODUCTION_AUTHORITY_KEY_INCOMING_FILE);
+      writeFileSync(incomingPath, Buffer.from(AUTHORITY_KEY).subarray(0, 8), {
+        flag: "wx",
+        mode: 0o600,
+      });
+
+      const store = createProductionRuntimeVaultReceiptStore({ stateRoot: root });
+
+      expect(store.ok).toBe(true);
+      if (!store.ok) return;
+      expect(readFileSync(resolve(root, PRODUCTION_AUTHORITY_KEY_FILE))).toHaveLength(32);
+      expect(existsSync(incomingPath)).toBe(false);
+      expect(store.value.dispose()).toEqual({ ok: true, value: undefined });
+      expect(store.value.readReceipt("runtime-vault-a1", "4".repeat(32))).toMatchObject({
+        ok: false,
+        error: { kind: "invalid_request", field: "store" },
+      });
+    },
+  );
+
+  it.runIf(linuxHelperToolchainAvailable)(
     "functionally probes private dirfd lock link unlink and durability primitives",
     () => {
       const root = makeRoot();
       const createdStore = createProductionRuntimeVaultReceiptStore({
         stateRoot: root,
-        authorityKey: AUTHORITY_KEY,
       });
       expect(createdStore.ok).toBe(true);
       if (!createdStore.ok) return;
@@ -327,7 +648,6 @@ describe("production runtime vault controller receipt store", () => {
       const root = makeRoot();
       const createdStore = createProductionRuntimeVaultReceiptStore({
         stateRoot: root,
-        authorityKey: AUTHORITY_KEY,
       });
       expect(createdStore.ok).toBe(true);
       if (!createdStore.ok) return;
@@ -342,7 +662,7 @@ describe("production runtime vault controller receipt store", () => {
         error: { kind: "unsafe_state_root" },
       });
       expect(existsSync(resolve(root, "runtime-vault-receipts"))).toBe(false);
-      expect(existsSync(resolve(displaced, "runtime-vault-receipts"))).toBe(false);
+      expect(existsSync(resolve(displaced, "runtime-vault-receipts"))).toBe(true);
       expect(createdStore.value.dispose()).toEqual({ ok: true, value: undefined });
     },
   );
@@ -354,7 +674,6 @@ describe("production runtime vault controller receipt store", () => {
       const original = lstatSync(root);
       const createdStore = createProductionRuntimeVaultReceiptStore({
         stateRoot: root,
-        authorityKey: AUTHORITY_KEY,
       });
       expect(createdStore.ok).toBe(true);
       if (!createdStore.ok) return;
@@ -394,14 +713,12 @@ describe("production runtime vault controller receipt store", () => {
       expect(
         createProductionRuntimeVaultReceiptStore({
           stateRoot: rootWithMetadata,
-          authorityKey: AUTHORITY_KEY,
         }),
       ).toMatchObject({ ok: false, error: { kind: "unsafe_state_root" } });
 
       const root = makeRoot();
       const createdStore = createProductionRuntimeVaultReceiptStore({
         stateRoot: root,
-        authorityKey: AUTHORITY_KEY,
       });
       expect(createdStore.ok).toBe(true);
       if (!createdStore.ok) return;
@@ -429,7 +746,6 @@ describe("production runtime vault controller receipt store", () => {
       const lockRoot = makeRoot();
       const lockStore = createProductionRuntimeVaultReceiptStore({
         stateRoot: lockRoot,
-        authorityKey: AUTHORITY_KEY,
       });
       expect(lockStore.ok).toBe(true);
       if (!lockStore.ok) return;
@@ -438,7 +754,6 @@ describe("production runtime vault controller receipt store", () => {
       expect(
         createProductionRuntimeVaultReceiptStore({
           stateRoot: lockRoot,
-          authorityKey: AUTHORITY_KEY,
         }),
       ).toMatchObject({ ok: false, error: { kind: "unsafe_directory" } });
     },
@@ -450,7 +765,6 @@ describe("production runtime vault controller receipt store", () => {
       const root = makeRoot();
       const createdStore = createProductionRuntimeVaultReceiptStore({
         stateRoot: root,
-        authorityKey: AUTHORITY_KEY,
       });
       expect(createdStore.ok).toBe(true);
       if (!createdStore.ok) return;
@@ -480,9 +794,8 @@ describe("production runtime vault controller receipt store", () => {
         holder.once("error", rejectReady);
         holder.stdout.once("data", (value: Buffer) => {
           clearTimeout(timer);
-          value.toString("utf8") === "locked\n"
-            ? resolveReady()
-            : rejectReady(new Error("lock holder emitted an unexpected readiness frame"));
+          if (value.toString("utf8") === "locked\n") resolveReady();
+          else rejectReady(new Error("lock holder emitted an unexpected readiness frame"));
         });
       });
       try {
@@ -1053,5 +1366,36 @@ describe("production runtime vault controller receipt store", () => {
       error: { kind: "invalid_request", field: "store" },
     });
     expect(existsSync(resolve(root, "runtime-vault-receipts"))).toBe(false);
+  });
+
+  it("caches a portable receipt-store disposal failure as its terminal result", () => {
+    const root = makeRoot();
+    let disposalCalls = 0;
+    const created = createProductionRuntimeVaultReceiptStoreForTests({
+      stateRoot: root,
+      authorityKey: AUTHORITY_KEY,
+      onDispose: () => {
+        disposalCalls += 1;
+        return {
+          ok: false as const,
+          error: {
+            kind: "io_failure" as const,
+            operation: "close_test_authority",
+            message: "Controller receipt store filesystem operation failed",
+          },
+        };
+      },
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const first = created.value.dispose();
+    expect(first).toMatchObject({ ok: false, error: { kind: "io_failure" } });
+    expect(created.value.dispose()).toEqual(first);
+    expect(disposalCalls).toBe(1);
+    expect(created.value.readReceipt("runtime-vault-a1", "4".repeat(32))).toMatchObject({
+      ok: false,
+      error: { kind: "invalid_request", field: "store" },
+    });
   });
 });

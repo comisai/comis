@@ -37,7 +37,8 @@ const TERMINAL_FILE = "terminal.json";
 const TERMINAL_INCOMING_FILE = ".terminal.json.incoming";
 const MAX_RECEIPT_BYTES = 64 * 1024;
 const MAX_TERMINAL_BYTES = 4096;
-const MIN_AUTHORITY_KEY_BYTES = 32;
+const AUTHORITY_KEY_BYTES = 32;
+const MIN_AUTHORITY_KEY_BYTES = AUTHORITY_KEY_BYTES;
 const SAFE_RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u;
 const ATTEMPT_ID_RE = /^[a-f0-9]{32}$/u;
 const SHA256_RE = /^[a-f0-9]{64}$/u;
@@ -58,6 +59,7 @@ const HELPER_OPERATION = {
   readReceipt: 2,
   publishTerminal: 3,
   readPair: 4,
+  loadAuthority: 5,
 } as const;
 
 const HELPER_STATUS = {
@@ -66,6 +68,7 @@ const HELPER_STATUS = {
   receipt: 3,
   pair: 4,
   probed: 5,
+  authority: 6,
   badProtocol: 0x80,
   unsafeRoot: 0x81,
   unsafeDirectory: 0x82,
@@ -76,6 +79,9 @@ const HELPER_STATUS = {
   terminalConflict: 0x87,
   lockTimeout: 0x88,
   ioFailure: 0x89,
+  unsafeAuthority: 0x8a,
+  authorityConflict: 0x8b,
+  unsafeAuthorityMarker: 0x8c,
 } as const;
 
 type HelperOperation = (typeof HELPER_OPERATION)[keyof typeof HELPER_OPERATION];
@@ -97,6 +103,7 @@ interface TrustedPythonInterpreterGuard {
 // complete transaction so no security decision is made from an absolute descendant path.
 const LINUX_DIRFD_TRANSACTION_HELPER = String.raw`
 import fcntl
+import hashlib
 import os
 import re
 import stat
@@ -115,6 +122,14 @@ RECEIPT_FILE = "recovery-receipt.json"
 RECEIPT_INCOMING_FILE = ".recovery-receipt.json.incoming"
 TERMINAL_FILE = "terminal.json"
 TERMINAL_INCOMING_FILE = ".terminal.json.incoming"
+AUTHORITY_KEY_FILE = "runtime-vault-authority.key"
+AUTHORITY_KEY_INCOMING_FILE = ".runtime-vault-authority.key.incoming"
+AUTHORITY_MARKER_FILE = "runtime-vault-authority.id"
+AUTHORITY_MARKER_INCOMING_FILE = ".runtime-vault-authority.id.incoming"
+AUTHORITY_LOCK_FILE = ".runtime-vault-authority.lock"
+AUTHORITY_KEY_BYTES = 32
+AUTHORITY_MARKER_BYTES = 65
+AUTHORITY_KEY_ID_DOMAIN = b"comis-runtime-vault-recovery-authority-key-v1\0"
 LOCK_FILE = ".receipt-store.lock"
 PROBE_DIRECTORY = ".receipt-store-probe"
 PROBE_FINAL_FILE = "probe-final"
@@ -128,12 +143,14 @@ OP_PUBLISH_RECEIPT = 1
 OP_READ_RECEIPT = 2
 OP_PUBLISH_TERMINAL = 3
 OP_READ_PAIR = 4
+OP_LOAD_AUTHORITY = 5
 
 CREATED = 1
 ALREADY_PRESENT = 2
 RECEIPT = 3
 PAIR = 4
 PROBED = 5
+AUTHORITY = 6
 BAD_PROTOCOL = 0x80
 UNSAFE_ROOT = 0x81
 UNSAFE_DIRECTORY = 0x82
@@ -144,6 +161,9 @@ RECEIPT_CONFLICT = 0x86
 TERMINAL_CONFLICT = 0x87
 LOCK_TIMEOUT = 0x88
 IO_FAILURE = 0x89
+UNSAFE_AUTHORITY = 0x8A
+AUTHORITY_CONFLICT = 0x8B
+UNSAFE_AUTHORITY_MARKER = 0x8C
 
 DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 READ_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -291,8 +311,8 @@ class Hierarchy:
             raise primary
 
 
-def validate_lock(attempt_fd, descriptor):
-    named = named_stat(attempt_fd, LOCK_FILE, False, UNSAFE_DIRECTORY)
+def validate_lock(attempt_fd, lock_file, descriptor, status_code):
+    named = named_stat(attempt_fd, lock_file, False, status_code)
     opened = os.fstat(descriptor)
     for value in (named, opened):
         if (
@@ -302,17 +322,17 @@ def validate_lock(attempt_fd, descriptor):
             or value.st_nlink != 1
             or value.st_size != 0
         ):
-            fail(UNSAFE_DIRECTORY)
+            fail(status_code)
     if not same_inode(named, opened):
-        fail(UNSAFE_DIRECTORY)
-    validate_xattrs(descriptor, UNSAFE_DIRECTORY)
+        fail(status_code)
+    validate_xattrs(descriptor, status_code)
 
 
-def acquire_lock(hierarchy):
+def acquire_lock(hierarchy, lock_file=LOCK_FILE, status_code=UNSAFE_DIRECTORY):
     created = False
     try:
         descriptor = os.open(
-            LOCK_FILE,
+            lock_file,
             os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
             0o600,
             dir_fd=hierarchy.attempt_fd,
@@ -321,12 +341,12 @@ def acquire_lock(hierarchy):
     except FileExistsError:
         try:
             descriptor = os.open(
-                LOCK_FILE,
+                lock_file,
                 os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC,
                 dir_fd=hierarchy.attempt_fd,
             )
         except OSError:
-            fail(UNSAFE_DIRECTORY)
+            fail(status_code)
     except OSError:
         fail(IO_FAILURE)
     try:
@@ -334,7 +354,7 @@ def acquire_lock(hierarchy):
             os.fchmod(descriptor, 0o600)
             os.fsync(descriptor)
             os.fsync(hierarchy.attempt_fd)
-        validate_lock(hierarchy.attempt_fd, descriptor)
+        validate_lock(hierarchy.attempt_fd, lock_file, descriptor, status_code)
         deadline = time.monotonic() + 2.0
         while True:
             try:
@@ -344,7 +364,7 @@ def acquire_lock(hierarchy):
                 if time.monotonic() >= deadline:
                     fail(LOCK_TIMEOUT)
                 time.sleep(0.02)
-        validate_lock(hierarchy.attempt_fd, descriptor)
+        validate_lock(hierarchy.attempt_fd, lock_file, descriptor, status_code)
         hierarchy.validate()
         return descriptor
     except BaseException:
@@ -352,10 +372,10 @@ def acquire_lock(hierarchy):
         raise
 
 
-def release_lock(hierarchy, descriptor):
+def release_lock(hierarchy, descriptor, lock_file=LOCK_FILE, status_code=UNSAFE_DIRECTORY):
     primary = None
     try:
-        validate_lock(hierarchy.attempt_fd, descriptor)
+        validate_lock(hierarchy.attempt_fd, lock_file, descriptor, status_code)
         hierarchy.validate()
     except BaseException as value:
         primary = value
@@ -656,6 +676,219 @@ def read_published(parent_fd, final_name, incoming_name, status_code, maximum, m
     return normalized[0]
 
 
+def receipt_state_exists(root_fd):
+    value = named_stat(root_fd, STORE_DIRECTORY, True, UNSAFE_DIRECTORY)
+    if value is None:
+        return False
+    descriptor = open_child_directory(root_fd, STORE_DIRECTORY, False)
+    try:
+        validate_named_directory(root_fd, STORE_DIRECTORY, descriptor)
+        return True
+    finally:
+        os.close(descriptor)
+
+
+def generate_authority_key():
+    chunks = []
+    remaining = AUTHORITY_KEY_BYTES
+    while remaining:
+        try:
+            chunk = os.getrandom(remaining)
+        except OSError:
+            fail(IO_FAILURE)
+        if not chunk:
+            fail(IO_FAILURE)
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def authority_marker(authority):
+    return hashlib.sha256(AUTHORITY_KEY_ID_DOMAIN + authority).hexdigest().encode("ascii") + b"\n"
+
+
+def load_or_create_authority(root_fd):
+    hierarchy = Hierarchy(root_fd, (), False)
+    lock_fd = None
+    primary = None
+    authority = None
+    try:
+        hierarchy.validate()
+        lock_fd = acquire_lock(hierarchy, AUTHORITY_LOCK_FILE, UNSAFE_AUTHORITY)
+        final_file = read_file(
+            root_fd,
+            AUTHORITY_KEY_FILE,
+            UNSAFE_AUTHORITY,
+            AUTHORITY_KEY_BYTES,
+            (1, 2),
+            True,
+            True,
+        )
+        incoming_file = read_file(
+            root_fd,
+            AUTHORITY_KEY_INCOMING_FILE,
+            UNSAFE_AUTHORITY,
+            AUTHORITY_KEY_BYTES,
+            (1, 2),
+            True,
+            True,
+        )
+        marker_file = read_file(
+            root_fd,
+            AUTHORITY_MARKER_FILE,
+            UNSAFE_AUTHORITY_MARKER,
+            AUTHORITY_MARKER_BYTES,
+            (1, 2),
+            True,
+            True,
+        )
+        marker_incoming_file = read_file(
+            root_fd,
+            AUTHORITY_MARKER_INCOMING_FILE,
+            UNSAFE_AUTHORITY_MARKER,
+            AUTHORITY_MARKER_BYTES,
+            (1, 2),
+            True,
+            True,
+        )
+        receipts_exist = receipt_state_exists(root_fd)
+        if final_file is not None:
+            final_raw, final_value = final_file
+            if len(final_raw) != AUTHORITY_KEY_BYTES:
+                fail(UNSAFE_AUTHORITY)
+            if final_value.st_nlink == 1:
+                if incoming_file is not None:
+                    fail(UNSAFE_AUTHORITY)
+                synchronize_named(
+                    root_fd,
+                    AUTHORITY_KEY_FILE,
+                    final_value,
+                    UNSAFE_AUTHORITY,
+                    AUTHORITY_KEY_BYTES,
+                    (1,),
+                )
+                os.fsync(root_fd)
+                authority = final_raw
+            else:
+                if incoming_file is None:
+                    fail(UNSAFE_AUTHORITY)
+                incoming_raw, incoming_value = incoming_file
+                if (
+                    len(incoming_raw) != AUTHORITY_KEY_BYTES
+                    or incoming_value.st_nlink != 2
+                    or not same_inode(final_value, incoming_value)
+                    or incoming_raw != final_raw
+                ):
+                    fail(UNSAFE_AUTHORITY)
+                synchronize_named(
+                    root_fd,
+                    AUTHORITY_KEY_FILE,
+                    final_value,
+                    UNSAFE_AUTHORITY,
+                    AUTHORITY_KEY_BYTES,
+                    (2,),
+                )
+                unlink_paired(
+                    root_fd,
+                    AUTHORITY_KEY_FILE,
+                    AUTHORITY_KEY_INCOMING_FILE,
+                    final_value,
+                    UNSAFE_AUTHORITY,
+                    AUTHORITY_KEY_BYTES,
+                )
+                authority = final_raw
+        else:
+            if receipts_exist:
+                fail(AUTHORITY_CONFLICT)
+            if marker_file is not None or marker_incoming_file is not None:
+                fail(AUTHORITY_CONFLICT)
+            if incoming_file is not None:
+                incoming_raw, incoming_value = incoming_file
+                if incoming_value.st_nlink != 1:
+                    fail(UNSAFE_AUTHORITY)
+                if len(incoming_raw) == AUTHORITY_KEY_BYTES:
+                    authority = incoming_raw
+                else:
+                    try:
+                        os.unlink(AUTHORITY_KEY_INCOMING_FILE, dir_fd=root_fd)
+                    except OSError:
+                        fail(IO_FAILURE)
+                    os.fsync(root_fd)
+            if authority is None:
+                authority = generate_authority_key()
+            status_code = publish(
+                root_fd,
+                AUTHORITY_KEY_FILE,
+                AUTHORITY_KEY_INCOMING_FILE,
+                authority,
+                UNSAFE_AUTHORITY,
+                AUTHORITY_CONFLICT,
+                AUTHORITY_KEY_BYTES,
+            )
+            if status_code not in (CREATED, ALREADY_PRESENT):
+                fail(IO_FAILURE)
+        normalized = read_file(
+            root_fd,
+            AUTHORITY_KEY_FILE,
+            UNSAFE_AUTHORITY,
+            AUTHORITY_KEY_BYTES,
+            (1,),
+            False,
+        )
+        if normalized is None or len(normalized[0]) != AUTHORITY_KEY_BYTES:
+            fail(UNSAFE_AUTHORITY)
+        authority = normalized[0]
+        expected_marker = authority_marker(authority)
+        if len(expected_marker) != AUTHORITY_MARKER_BYTES:
+            fail(IO_FAILURE)
+        if marker_file is None and receipts_exist:
+            fail(AUTHORITY_CONFLICT)
+        marker_status = publish(
+            root_fd,
+            AUTHORITY_MARKER_FILE,
+            AUTHORITY_MARKER_INCOMING_FILE,
+            expected_marker,
+            UNSAFE_AUTHORITY_MARKER,
+            AUTHORITY_CONFLICT,
+            AUTHORITY_MARKER_BYTES,
+        )
+        if marker_status not in (CREATED, ALREADY_PRESENT):
+            fail(IO_FAILURE)
+        normalized_marker = read_file(
+            root_fd,
+            AUTHORITY_MARKER_FILE,
+            UNSAFE_AUTHORITY_MARKER,
+            AUTHORITY_MARKER_BYTES,
+            (1,),
+            False,
+        )
+        if normalized_marker is None or normalized_marker[0] != expected_marker:
+            fail(AUTHORITY_CONFLICT)
+        state_fd = open_child_directory(root_fd, STORE_DIRECTORY, True)
+        os.close(state_fd)
+        hierarchy.validate()
+    except BaseException as value:
+        primary = value
+    cleanup = None
+    if lock_fd is not None:
+        try:
+            release_lock(
+                hierarchy,
+                lock_fd,
+                AUTHORITY_LOCK_FILE,
+                UNSAFE_AUTHORITY,
+            )
+        except BaseException as value:
+            cleanup = value
+    if primary is not None:
+        raise primary
+    if cleanup is not None:
+        raise cleanup
+    if authority is None:
+        fail(IO_FAILURE)
+    return authority
+
+
 def run_probe(root_fd):
     hierarchy = None
     lock_fd = None
@@ -721,7 +954,7 @@ def validate_capabilities():
         fail(BAD_PROTOCOL)
     if os.stat not in os.supports_follow_symlinks or os.link not in os.supports_follow_symlinks:
         fail(BAD_PROTOCOL)
-    for name in ("O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC"):
+    for name in ("O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC", "getrandom"):
         if not hasattr(os, name):
             fail(BAD_PROTOCOL)
     if not hasattr(os, "listxattr"):
@@ -740,6 +973,7 @@ def parse_request():
     second = raw[first_end:]
     valid_shape = (
         (operation == OP_PROBE and not first and not second)
+        or (operation == OP_LOAD_AUTHORITY and not first and not second)
         or (operation == OP_PUBLISH_RECEIPT and 0 < len(first) <= MAX_RECEIPT and not second)
         or (operation == OP_READ_RECEIPT and not first and not second)
         or (
@@ -774,6 +1008,9 @@ def execute():
         if operation == OP_PROBE:
             run_probe(root_fd)
             result = PROBED, b"", b""
+        elif operation == OP_LOAD_AUTHORITY:
+            authority = load_or_create_authority(root_fd)
+            result = AUTHORITY, authority, b""
         else:
             hierarchy = Hierarchy(
                 root_fd,
@@ -943,12 +1180,13 @@ export interface ProductionRuntimeVaultReceiptStoreIo {
 
 export interface CreateProductionRuntimeVaultReceiptStoreOptions {
   readonly stateRoot: string;
-  readonly authorityKey: Uint8Array;
 }
 
 export interface CreateProductionRuntimeVaultReceiptStoreTestOptions
   extends CreateProductionRuntimeVaultReceiptStoreOptions {
+  readonly authorityKey: Uint8Array;
   readonly io?: ProductionRuntimeVaultReceiptStoreIo;
+  readonly onDispose?: () => Result<void, ProductionRuntimeVaultReceiptStoreError>;
 }
 
 export interface ProductionRuntimeVaultReceiptPersistence {
@@ -1012,7 +1250,11 @@ export type ProductionRuntimeVaultReceiptStoreError =
     }
   | {
       readonly kind: "unsafe_file";
-      readonly field: "receiptFile" | "terminalFile";
+      readonly field:
+        | "authorityKeyFile"
+        | "authorityMarkerFile"
+        | "receiptFile"
+        | "terminalFile";
       readonly message: string;
     }
   | {
@@ -1032,7 +1274,7 @@ export type ProductionRuntimeVaultReceiptStoreError =
     }
   | {
       readonly kind: "conflict";
-      readonly field: "receipt" | "terminalRecord";
+      readonly field: "authorityKey" | "receipt" | "terminalRecord";
       readonly message: string;
     }
   | {
@@ -1117,12 +1359,20 @@ function unsafeDirectory(): Result<never, ProductionRuntimeVaultReceiptStoreErro
 }
 
 function unsafeFile(
-  field: "receiptFile" | "terminalFile",
+  field: "authorityKeyFile" | "authorityMarkerFile" | "receiptFile" | "terminalFile",
 ): Result<never, ProductionRuntimeVaultReceiptStoreError> {
   return failure({
     kind: "unsafe_file",
     field,
     message: "Stored file failed its regular private single-link invariant",
+  });
+}
+
+function authorityConflict(): Result<never, ProductionRuntimeVaultReceiptStoreError> {
+  return failure({
+    kind: "conflict",
+    field: "authorityKey",
+    message: "Controller receipt state exists without its durable authority key",
   });
 }
 
@@ -2364,6 +2614,10 @@ function mapHelperFailure(
       return unsafeFile("receiptFile");
     case HELPER_STATUS.unsafeTerminal:
       return unsafeFile("terminalFile");
+    case HELPER_STATUS.unsafeAuthority:
+      return unsafeFile("authorityKeyFile");
+    case HELPER_STATUS.unsafeAuthorityMarker:
+      return unsafeFile("authorityMarkerFile");
     case HELPER_STATUS.receiptNotFound:
       return failure({
         kind: "not_found",
@@ -2382,6 +2636,8 @@ function mapHelperFailure(
         field: "terminalRecord",
         message: "A different authenticated terminal disposition already exists",
       });
+    case HELPER_STATUS.authorityConflict:
+      return authorityConflict();
     case HELPER_STATUS.lockTimeout:
       return operationLocked();
     case HELPER_STATUS.badProtocol:
@@ -2468,6 +2724,9 @@ function runLinuxDirfdHelper(
     (status === HELPER_STATUS.receipt &&
       response.first.length > 0 &&
       response.second.length === 0) ||
+    (status === HELPER_STATUS.authority &&
+      response.first.length === AUTHORITY_KEY_BYTES &&
+      response.second.length === 0) ||
     (status === HELPER_STATUS.pair && response.first.length > 0);
   return validShape ? ok(response) : ioFailure("dirfd_helper_protocol");
 }
@@ -2513,12 +2772,6 @@ export function createProductionRuntimeVaultReceiptStore(
   ) {
     return unsafeRoot();
   }
-  if (
-    !(options.authorityKey instanceof Uint8Array) ||
-    options.authorityKey.byteLength < MIN_AUTHORITY_KEY_BYTES
-  ) {
-    return invalidRequest("authorityKey", "Receipt authority key must contain at least 32 bytes");
-  }
   if (process.platform !== "linux") return unsupportedPlatform("platform");
   const effectiveUid = currentEffectiveUid();
   if (!effectiveUid.ok) return effectiveUid;
@@ -2532,18 +2785,57 @@ export function createProductionRuntimeVaultReceiptStore(
   const rootGuard = initialRoot.value;
   const interpreterGuard = interpreter.value;
 
+  const probe = invokeLinuxDirfdHelper(
+    rootGuard,
+    effectiveUid.value,
+    interpreterGuard,
+    HELPER_OPERATION.probe,
+    "probe",
+    "0".repeat(32),
+  );
+  if (!probe.ok || probe.value.status !== HELPER_STATUS.probed) {
+    closeDescriptor(rootGuard.descriptor);
+    closeDescriptor(interpreterGuard.descriptor);
+    return probe.ok ? unsupportedPlatform("toolchain") : probe;
+  }
+  const loadedAuthority = invokeLinuxDirfdHelper(
+    rootGuard,
+    effectiveUid.value,
+    interpreterGuard,
+    HELPER_OPERATION.loadAuthority,
+    "authority",
+    "0".repeat(32),
+  );
+  if (!loadedAuthority.ok) {
+    closeDescriptor(rootGuard.descriptor);
+    closeDescriptor(interpreterGuard.descriptor);
+    return loadedAuthority;
+  }
+  if (
+    loadedAuthority.value.status !== HELPER_STATUS.authority ||
+    loadedAuthority.value.first.length !== AUTHORITY_KEY_BYTES ||
+    loadedAuthority.value.second.length !== 0
+  ) {
+    loadedAuthority.value.first.fill(0);
+    closeDescriptor(rootGuard.descriptor);
+    closeDescriptor(interpreterGuard.descriptor);
+    return ioFailure("dirfd_helper_load_authority_status");
+  }
+
   const stateRoot = options.stateRoot;
-  const authorityKey = Uint8Array.from(options.authorityKey);
+  const authorityKey = Uint8Array.from(loadedAuthority.value.first);
+  loadedAuthority.value.first.fill(0);
   let disposed = false;
+  let disposalResult: Result<void, ProductionRuntimeVaultReceiptStoreError> | undefined;
 
   function dispose(): Result<void, ProductionRuntimeVaultReceiptStoreError> {
-    if (disposed) return ok(undefined);
+    if (disposalResult !== undefined) return disposalResult;
     disposed = true;
     authorityKey.fill(0);
     const rootClosed = closeDescriptor(rootGuard.descriptor);
     const interpreterClosed = closeDescriptor(interpreterGuard.descriptor);
-    if (!rootClosed.ok) return rootClosed;
-    return interpreterClosed;
+    disposalResult = rootClosed.ok ? interpreterClosed : rootClosed;
+    return disposalResult;
   }
 
   const invoke = (
@@ -2565,16 +2857,6 @@ export function createProductionRuntimeVaultReceiptStore(
       second,
     );
   };
-
-  const probe = invoke(HELPER_OPERATION.probe, "probe", "0".repeat(32));
-  if (!probe.ok) {
-    dispose();
-    return probe;
-  }
-  if (probe.value.status !== HELPER_STATUS.probed) {
-    dispose();
-    return unsupportedPlatform("toolchain");
-  }
 
   function paths(
     runId: string,
@@ -2718,6 +3000,9 @@ export function createProductionRuntimeVaultReceiptStoreForTests(
   if (options.io !== undefined && typeof options.io.write !== "function") {
     return invalidRequest("io", "Receipt store I/O dependency is invalid");
   }
+  if (options.onDispose !== undefined && typeof options.onDispose !== "function") {
+    return invalidRequest("onDispose", "Receipt store disposal dependency is invalid");
+  }
   const effectiveUid = currentEffectiveUid();
   if (!effectiveUid.ok) return effectiveUid;
   const uid = effectiveUid.value;
@@ -2729,6 +3014,7 @@ export function createProductionRuntimeVaultReceiptStoreForTests(
   const stateRoot = options.stateRoot;
   const authorityKey = Uint8Array.from(options.authorityKey);
   let disposed = false;
+  let disposalResult: Result<void, ProductionRuntimeVaultReceiptStoreError> | undefined;
   const io: ProductionRuntimeVaultReceiptStoreIo =
     options.io ?? {
       write(descriptor, data, offset, length) {
@@ -2737,10 +3023,12 @@ export function createProductionRuntimeVaultReceiptStoreForTests(
     };
 
   function dispose(): Result<void, ProductionRuntimeVaultReceiptStoreError> {
-    if (disposed) return ok(undefined);
+    if (disposalResult !== undefined) return disposalResult;
     disposed = true;
     authorityKey.fill(0);
-    return ok(undefined);
+    const boundary = tryCatch(() => options.onDispose?.() ?? ok(undefined));
+    disposalResult = boundary.ok ? boundary.value : ioFailure("dispose_test_receipt_store");
+    return disposalResult;
   }
 
   function paths(
