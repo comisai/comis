@@ -2059,6 +2059,14 @@ require_option_value() {
     fi
 }
 
+validate_local_tarball_preflight() {
+    [[ -z "$COMIS_TARBALL" ]] && return 0
+    if [[ ! -f "$COMIS_TARBALL" ]]; then
+        ui_error "--tarball path does not exist: ${COMIS_TARBALL}"
+        return 1
+    fi
+}
+
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -6788,6 +6796,13 @@ main() {
     else
         print_installer_banner
         detect_os_or_die
+    fi
+
+    # Reject an impossible local package source before sudo prompts, dependency
+    # installation, account creation, or any other host mutation. install_comis()
+    # checks again in case the path changes after this preflight.
+    if ! validate_local_tarball_preflight; then
+        return 1
     fi
 
     # Linux non-root: the dedicated-user layout is the default. Ask to elevate

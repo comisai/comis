@@ -46,6 +46,39 @@ function runHarness(body: string, env: Record<string, string> = {}): { code: num
 }
 
 describe("install.sh privileged preparation", () => {
+  it("rejects a missing local tarball before privileged host preparation", () => {
+    const work = makeWorkDir();
+    const missingTarball = join(work, "missing-comisai.tgz");
+    const mutationMarker = join(work, "host-preparation-ran");
+    const result = runHarness(
+      [
+        "COMIS_REEXEC=0",
+        "DRY_RUN=0",
+        "NO_PROMPT=1",
+        'INSTALL_METHOD="npm"',
+        'SERVICE_MANAGER="systemd"',
+        'COMIS_TARBALL="$MISSING_TARBALL"',
+        'detect_os_or_die() { OS="linux"; }',
+        'print_installer_banner() { :; }',
+        'enforce_dedicated_user_default() { :; }',
+        'detect_comis_checkout() { return 1; }',
+        'resolve_service_manager() { RESOLVED_SERVICE_MANAGER="systemd"; }',
+        'downshift_xvfb_for_service_manager() { :; }',
+        'show_install_plan() { :; }',
+        'bootstrap_gum_temp() { :; }',
+        'print_gum_status() { :; }',
+        'should_create_dedicated_user() { return 0; }',
+        'install_system_deps_as_root() { touch "$MUTATION_MARKER"; return 77; }',
+        "main",
+      ].join("\n"),
+      { MISSING_TARBALL: missingTarball, MUTATION_MARKER: mutationMarker },
+    );
+
+    expect(result.code).not.toBe(0);
+    expect(result.out).toContain("--tarball path does not exist");
+    expect(existsSync(mutationMarker), result.out).toBe(false);
+  });
+
   it("executes the verified Rust installer under its rustup-init proxy name", () => {
     const work = makeWorkDir();
     const fakeRustup = join(work, "verified-rustup-artifact");
