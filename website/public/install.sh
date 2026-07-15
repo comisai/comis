@@ -2061,8 +2061,12 @@ require_option_value() {
 
 validate_local_tarball_preflight() {
     [[ -z "$COMIS_TARBALL" ]] && return 0
-    if [[ ! -f "$COMIS_TARBALL" ]]; then
+    if [[ ! -e "$COMIS_TARBALL" ]]; then
         ui_error "--tarball path does not exist: ${COMIS_TARBALL}"
+        return 1
+    fi
+    if [[ ! -f "$COMIS_TARBALL" ]]; then
+        ui_error "--tarball must be a regular file: ${COMIS_TARBALL}"
         return 1
     fi
 }
