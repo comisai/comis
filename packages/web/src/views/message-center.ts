@@ -309,6 +309,7 @@ export class IcMessageCenter extends LitElement {
 
   private _hasLoaded = false;
   private _previousChannelType = "";
+  private _channelRevision = 0;
 
   /** Bound click-outside handler for emoji picker. */
   private _boundEmojiOutsideClick: ((e: MouseEvent) => void) | null = null;
@@ -318,16 +319,48 @@ export class IcMessageCenter extends LitElement {
     this._removeEmojiOutsideListener();
   }
 
+  override willUpdate(changedProperties: Map<string, unknown>): void {
+    if (changedProperties.has("channelType")) {
+      this._channelRevision += 1;
+      this._resetChannelState();
+    }
+  }
+
+  private _resetChannelState(): void {
+    this._effectiveChannel = this.channelType;
+    this._loadState = "idle";
+    this._error = "";
+    this._messages = [];
+    this._capabilities = null;
+    this._botName = "";
+    this._sendText = "";
+    this._showSendConfirm = false;
+    this._replyToId = "";
+    this._replyText = "";
+    this._showReplyConfirm = false;
+    this._editingId = "";
+    this._editText = "";
+    this._deleteTargetId = "";
+    this._showDeleteConfirm = false;
+    this._reactTargetId = "";
+    this._showEmojiPicker = false;
+    this._removeEmojiOutsideListener();
+    this._attachUrl = "";
+    this._attachType = "file";
+    this._attachCaption = "";
+    this._showAttachForm = false;
+    this._chatList = [];
+    this._selectedChatId = "";
+    this._selectedMessageId = "";
+    this._actionResult = "";
+    this._actionInputs = {};
+    this._hasLoaded = false;
+    this._previousChannelType = "";
+    this._autoSelectAttempted = false;
+  }
+
   override updated(changedProperties: Map<string, unknown>): void {
     const rpcReady = this.rpcClient && this.rpcClient.status === "connected";
-
-    // Sync effective channel from parent-provided channelType
-    if (changedProperties.has("channelType") && this.channelType) {
-      this._effectiveChannel = this.channelType;
-      // Reset chat picker state for the new channel type
-      this._selectedChatId = "";
-      this._chatList = [];
-    }
 
     // Reload data when channelType changes or rpcClient becomes available
     if (changedProperties.has("channelType") && this.channelType && this.channelType !== this._previousChannelType) {
@@ -354,6 +387,7 @@ export class IcMessageCenter extends LitElement {
 
   private async _autoSelectChannel(): Promise<void> {
     if (!this.rpcClient) return;
+    const revision = this._channelRevision;
 
     // Wait for the rpcClient to connect (it may still be "connecting")
     const rpc = this.rpcClient;
@@ -367,6 +401,7 @@ export class IcMessageCenter extends LitElement {
         check();
       });
     }
+    if (revision !== this._channelRevision || this.channelType) return;
     if (rpc.status !== "connected") {
       this._loadState = "error";
       this._error = "RPC connection failed";
@@ -375,6 +410,7 @@ export class IcMessageCenter extends LitElement {
 
     try {
       const result = await rpc.call<{ channels: ChannelListEntry[]; total: number }>("channels.list");
+      if (revision !== this._channelRevision || this.channelType) return;
       const channels = result?.channels ?? [];
       this._channelList = channels;
       const running = channels.filter((ch) => ch.status === "running");
@@ -386,6 +422,7 @@ export class IcMessageCenter extends LitElement {
         this._loadState = "loaded";
       }
     } catch {
+      if (revision !== this._channelRevision || this.channelType) return;
       this._loadState = "error";
       this._error = "Failed to load channel list";
     }
@@ -398,6 +435,7 @@ export class IcMessageCenter extends LitElement {
   private async _loadData(): Promise<void> {
     const channel = this._effectiveChannel;
     if (!this.rpcClient || !channel) return;
+    const revision = this._channelRevision;
 
     this._loadState = "loading";
     this._error = "";
@@ -411,6 +449,7 @@ export class IcMessageCenter extends LitElement {
         rpc.call<{ channelType: string; features: PlatformCapabilities }>("channels.capabilities", { channel_type: channel }).then((r) => r?.features ?? null),
         rpc.call<Record<string, unknown>>("channels.get", { channel_type: channel }).then((r) => r ?? null),
       ]);
+      if (!this._isCurrentChannel(revision, channel)) return;
 
       // Channel list
       if (listResult.status === "fulfilled" && listResult.value) {
@@ -430,17 +469,24 @@ export class IcMessageCenter extends LitElement {
       }
 
       // Load chat IDs from session data for the chat picker
-      await this._loadChats();
+      await this._loadChats(revision, channel);
+      if (!this._isCurrentChannel(revision, channel)) return;
 
       // Fetch messages - uses session history fallback for non-fetchHistory platforms
-      await this._refetchMessages();
+      await this._refetchMessages(revision, channel);
+      if (!this._isCurrentChannel(revision, channel)) return;
 
       this._loadState = "loaded";
       this._hasLoaded = true;
     } catch (err) {
+      if (!this._isCurrentChannel(revision, channel)) return;
       this._loadState = "error";
       this._error = err instanceof Error ? err.message : "Failed to load message center data";
     }
+  }
+
+  private _isCurrentChannel(revision: number, channel: string): boolean {
+    return revision === this._channelRevision && channel === this._effectiveChannel;
   }
 
   // -------------------------------------------------------------------------
@@ -451,17 +497,21 @@ export class IcMessageCenter extends LitElement {
    * Load available chat IDs for the current channel type from obs.channels.all
    * (channel activity tracker) which tracks actual chat IDs the bot has interacted with.
    */
-  private async _loadChats(): Promise<void> {
-    if (!this.rpcClient || !this._effectiveChannel) return;
+  private async _loadChats(
+    revision = this._channelRevision,
+    channel = this._effectiveChannel,
+  ): Promise<void> {
+    if (!this.rpcClient || !channel) return;
 
     try {
       const obsResult = await this.rpcClient.call<{ channels: Array<{ channelId: string; channelType: string; messagesSent: number; messagesReceived: number; lastActiveAt: number }> }>("obs.channels.all");
+      if (!this._isCurrentChannel(revision, channel)) return;
       const channels = obsResult?.channels ?? [];
       const chatMap = new Map<string, string>(); // chatId -> label
 
       // Filter for the current channel type and extract chat IDs
       for (const ch of channels) {
-        if (ch.channelType !== this._effectiveChannel) continue;
+        if (ch.channelType !== channel) continue;
         if (!ch.channelId || ch.channelId === "unknown") continue;
         const msgs = ch.messagesSent + ch.messagesReceived;
         chatMap.set(ch.channelId, `${ch.channelId} (${msgs} msgs)`);
@@ -478,6 +528,7 @@ export class IcMessageCenter extends LitElement {
         this._selectedChatId = this._chatList[0].chatId;
       }
     } catch {
+      if (!this._isCurrentChannel(revision, channel)) return;
       // Non-fatal -- chat list simply stays empty
     }
   }
@@ -488,19 +539,25 @@ export class IcMessageCenter extends LitElement {
 
   /** Re-fetch message list - uses message.fetch when the platform supports fetchHistory,
    *  otherwise falls back to stored session history via session.list + session.history. */
-  private async _refetchMessages(): Promise<void> {
-    if (!this.rpcClient) return;
+  private async _refetchMessages(
+    revision = this._channelRevision,
+    channel = this._effectiveChannel,
+  ): Promise<void> {
+    if (!this.rpcClient || !channel) return;
+    const selectedChatId = this._selectedChatId;
 
     // Path 1: Platform supports native fetchHistory - use message.fetch as before
     if (this._capabilities?.fetchHistory) {
       try {
         const fetchResult = await this.rpcClient.call<{ messages: FetchedMessage[]; channelId: string }>("message.fetch", {
-          channel_type: this._effectiveChannel,
-          channel_id: this._selectedChatId || this._effectiveChannel,
+          channel_type: channel,
+          channel_id: selectedChatId || channel,
           limit: 50,
         });
+        if (!this._isCurrentChannel(revision, channel)) return;
         this._messages = fetchResult?.messages ?? [];
       } catch {
+        if (!this._isCurrentChannel(revision, channel)) return;
         // Non-fatal
       }
       return;
@@ -509,9 +566,10 @@ export class IcMessageCenter extends LitElement {
     // Path 2: No fetchHistory - fall back to stored session data
     try {
       const sessionsResult = await this.rpcClient.call<{ sessions: Array<{ sessionKey: string; channelId: string; updatedAt: number }> }>("session.list", { kind: "all" });
+      if (!this._isCurrentChannel(revision, channel)) return;
       const sessions = sessionsResult?.sessions ?? [];
       // Filter to sessions whose channelId matches the currently selected chat
-      const chatId = this._selectedChatId;
+      const chatId = selectedChatId;
       const matching = chatId
         ? sessions.filter((s) => s.channelId === chatId)
         : [];
@@ -530,6 +588,7 @@ export class IcMessageCenter extends LitElement {
         session_key: bestSession.sessionKey,
         limit: 50,
       });
+      if (!this._isCurrentChannel(revision, channel)) return;
       const histMessages = histResult?.messages ?? [];
 
       // Map session history messages to FetchedMessage shape
@@ -540,6 +599,7 @@ export class IcMessageCenter extends LitElement {
         timestamp: msg.timestamp,
       } as FetchedMessage));
     } catch {
+      if (!this._isCurrentChannel(revision, channel)) return;
       // Non-fatal - leave messages empty
       this._messages = [];
     }
