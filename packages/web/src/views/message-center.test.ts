@@ -1062,6 +1062,77 @@ describe("IcMessageCenter", () => {
     await action.promise;
   });
 
+  it("keeps the mutation lock when a channel change is requested", async () => {
+    const action = deferred<string>();
+    const call = vi.fn((method: string) => {
+      if (method === "telegram.action") return action.promise;
+      return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
+    });
+    const el = await createElement({ channelType: "telegram" });
+    const current = state(el);
+    Object.assign(current, {
+      _loadState: "loaded",
+      _channelIsRunning: true,
+      _channelList: [
+        { channelType: "telegram", status: "running" },
+        { channelType: "discord", status: "running" },
+      ],
+      _hasLoaded: true,
+    });
+    el.rpcClient = createStatusRpcClient(call, "connected").client;
+    const navigate = vi.fn();
+    el.addEventListener("navigate", navigate);
+    await el.updateComplete;
+
+    const chatInfoButton = Array.from(
+      el.shadowRoot?.querySelectorAll<HTMLButtonElement>(".platform-actions button") ?? [],
+    ).find((button) => button.textContent?.trim() === "Chat Info");
+    chatInfoButton!.click();
+    await el.updateComplete;
+    expect(current._platformActionPending).toBe(true);
+
+    const channelSelect = el.shadowRoot?.querySelector<HTMLSelectElement>("#channel-select");
+    expect(channelSelect!.disabled).toBe(true);
+    channelSelect!.value = "discord";
+    channelSelect!.dispatchEvent(new Event("change"));
+
+    expect(navigate).not.toHaveBeenCalled();
+    expect(current._platformActionPending).toBe(true);
+    action.resolve("done");
+    await action.promise;
+  });
+
+  it("does not subscribe a replacement RPC client while detached", async () => {
+    const firstRpc = createStatusRpcClient(vi.fn(), "reconnecting");
+    const secondRpc = createStatusRpcClient(vi.fn(), "reconnecting");
+    const el = await createElement({ rpcClient: firstRpc.client });
+
+    document.body.removeChild(el);
+    el.rpcClient = secondRpc.client;
+    await el.updateComplete;
+
+    expect(firstRpc.listenerCount()).toBe(0);
+    expect(secondRpc.listenerCount()).toBe(0);
+  });
+
+  it("loads once when an RPC replacement is queued across reattachment", async () => {
+    const firstRpc = createStatusRpcClient(vi.fn(), "reconnecting");
+    const secondCall = vi.fn(() => Promise.resolve({ channels: [], total: 0 }));
+    const secondRpc = createStatusRpcClient(secondCall, "connected");
+    const el = await createElement({ rpcClient: firstRpc.client });
+
+    document.body.removeChild(el);
+    el.rpcClient = secondRpc.client;
+    document.body.appendChild(el);
+    for (let update = 0; update < 4; update += 1) {
+      await Promise.resolve();
+      await el.updateComplete;
+    }
+
+    expect(secondRpc.listenerCount()).toBe(1);
+    expect(secondCall.mock.calls.filter(([method]) => method === "channels.list")).toHaveLength(1);
+  });
+
   it("unsubscribes from RPC status changes after disconnect", async () => {
     const call = vi.fn(() => Promise.reject(new Error("not connected")));
     const rpc = createStatusRpcClient(call, "reconnecting");
