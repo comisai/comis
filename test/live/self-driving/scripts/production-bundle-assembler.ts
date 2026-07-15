@@ -16,8 +16,9 @@ import {
 } from "./production-evidence.js";
 import { parseProductionCaptureEpisode } from "./production-episode.js";
 import {
+  deriveProductionSnapshotTreeIdentity,
   parseProductionSnapshotManifest,
-  type ProductionSnapshotEntry,
+  type ProductionSnapshotManifest,
 } from "./production-snapshot.js";
 import { parseCanonicalProductionTranscript } from "./production-transcript.js";
 import {
@@ -166,33 +167,34 @@ function decodePrivateText(plaintext: Uint8Array): Result<string, ProductionRepl
   return ok(decoded.value);
 }
 
-function stateIdentity(entries: readonly ProductionSnapshotEntry[]): ReplayStateIdentity | null {
+function stateIdentity(
+  manifest: Pick<
+    ProductionSnapshotManifest,
+    "entries" | "metadataIdentity" | "treeIdentitySha256"
+  >,
+): ReplayStateIdentity | null {
   let bytes = 0;
-  for (const entry of entries) {
+  for (const entry of manifest.entries) {
+    if (entry.type !== "file") continue;
     bytes += entry.size;
     if (!Number.isSafeInteger(bytes)) return null;
   }
-  const normalized = [...entries]
-    .sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0))
-    .map((entry) => ({
-      path: entry.path,
-      type: entry.type,
-      mode: entry.mode,
-      size: entry.size,
-      sha256: entry.sha256 ?? null,
-      linkTarget: entry.linkTarget ?? null,
-    }));
+  const treeDigestSha256 = deriveProductionSnapshotTreeIdentity(manifest);
+  if (!equalDigest(treeDigestSha256, manifest.treeIdentitySha256)) return null;
   return {
-    treeDigestSha256: createHash("sha256").update(JSON.stringify(normalized)).digest("hex"),
-    entryCount: entries.length,
+    treeDigestSha256,
+    entryCount: manifest.entries.length,
     bytes,
   };
 }
 
 export function deriveProductionSnapshotStateIdentity(
-  entries: readonly ProductionSnapshotEntry[],
+  manifest: Pick<
+    ProductionSnapshotManifest,
+    "entries" | "metadataIdentity" | "treeIdentitySha256"
+  >,
 ): Result<ReplayStateIdentity, ProductionReplayBundleAssemblyError> {
-  const identity = stateIdentity(entries);
+  const identity = stateIdentity(manifest);
   return identity === null ? reconciliationFailed("state") : ok(identity);
 }
 
@@ -310,6 +312,12 @@ function reconcileAuthorities(
   if (!episodeBlob.ok) return episodeBlob;
   const episodeText = decodePrivateText(episodeBlob.value.plaintext);
   if (!episodeText.ok) return invalidAuthority("capture_episode");
+  if (
+    createHash("sha256").update(episodeBlob.value.plaintext).digest("hex") !==
+    request.unsignedManifest.episode.contentDigestSha256
+  ) {
+    return reconciliationFailed("episode");
+  }
   const episode = parseProductionCaptureEpisode(episodeText.value);
   if (!episode.ok) return invalidAuthority("capture_episode");
 
@@ -354,13 +362,21 @@ function reconcileAuthorities(
   ) {
     return reconciliationFailed("snapshot");
   }
-  const computedState = deriveProductionSnapshotStateIdentity(snapshot.value.entries);
+  const computedState = deriveProductionSnapshotStateIdentity(snapshot.value);
   if (!computedState.ok) return computedState;
   if (!stateIdentitiesEqual(computedState.value, request.unsignedManifest.attestations.state.source)) {
     return reconciliationFailed("state");
   }
 
   const manifestEpisode = request.unsignedManifest.episode;
+  if (
+    snapshot.value.metadataIdentity.gaps.length > 0 &&
+    (episode.value.replayInput.exactEligible ||
+      manifestEpisode.exactEligible ||
+      request.unsignedManifest.fidelity.exactEligible)
+  ) {
+    return reconciliationFailed("snapshot");
+  }
   const checkpoint = episode.value.initialCheckpoint;
   const finalObservation = episode.value.finalObservation;
   const episodeSourceAuthorities = new Map(

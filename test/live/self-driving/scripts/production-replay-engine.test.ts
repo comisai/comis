@@ -8,6 +8,7 @@ import {
   CASSETTE_KINDS,
   DETERMINISTIC_SEQUENCE_KINDS,
   formatProductionReplayBundleManifest,
+  parseProductionReplayBundleManifest,
   sealProductionReplayBundleManifest,
   type ProductionReplayBundleUnsignedManifest,
   type ReplayBundleBlob,
@@ -139,6 +140,7 @@ interface FixtureOptions {
   readonly target?: "deterministic_cassette" | "live_provider";
   readonly sequenceCountMismatch?: boolean;
   readonly duplicateExpectedState?: boolean;
+  readonly injectableRootPolicy?: "inject" | "observe" | "skip";
 }
 
 interface StoredArtifact {
@@ -264,10 +266,18 @@ function makeFixture(options: FixtureOptions = {}): ReplayFixture {
   ] as const satisfies readonly TranscriptSourceKind[];
   const events = orderedSources.map((sourceKind, index) =>
     event(index + 1, sourceKind, eventKindForSource(sourceKind), {
-      policy: index === 0 ? "inject" : index % 2 === 0 ? "assert" : "observe",
+      policy:
+        index === 0
+          ? (options.injectableRootPolicy ?? "inject")
+          : index % 2 === 0
+            ? "assert"
+            : "observe",
       idempotencyKey: sha256(`idempotency-${index + 1}`),
       payloadDigest: index === 0 ? sha256(triggerPayload) : sha256(`payload-${index + 1}`),
-      blobDigest: index === 0 ? requestDigest : null,
+      blobDigest:
+        index === 0 && (options.injectableRootPolicy ?? "inject") === "inject"
+          ? requestDigest
+          : null,
     }),
   );
   const transcript: CanonicalProductionTranscript = {
@@ -470,6 +480,7 @@ function makeFixture(options: FixtureOptions = {}): ReplayFixture {
     },
     episode: {
       blobDigestSha256: episodeDigest,
+      contentDigestSha256: createHash("sha256").update(episodeEnvelope.value).digest("hex"),
       episodeId: transcript.captureId,
       captureMode: "prospective_window",
       windowStartAtMs,
@@ -549,7 +560,6 @@ function makeFixture(options: FixtureOptions = {}): ReplayFixture {
   return {
     request: {
       sealedBundleEnvelope: formatProductionReplayBundleManifest(sealed.value),
-      sealKey: SEAL_KEY,
       maxEventLagMs: MAX_EVENT_LAG_MS,
     },
     manifestDigestSha256: sealed.value.seal.manifestDigestSha256,
@@ -571,6 +581,7 @@ interface PortOptions {
   readonly observedOutputs?: readonly ReplayObservedRecord[];
   readonly observedState?: readonly ReplayObservedRecord[];
   readonly hardOraclePassed?: boolean;
+  readonly hardOracleSetDigestSha256?: string;
 }
 
 function consumingDriver(
@@ -609,6 +620,9 @@ function makePorts(
   readonly triggers: ProductionReplayTrigger[];
   readonly deadlines: number[];
   readonly resolver: ProductionReplayArtifactResolverPort;
+  readonly bundleAuthority: {
+    readonly verify: ReturnType<typeof vi.fn>;
+  };
 } {
   const driverCalls: string[] = [];
   const triggers: ProductionReplayTrigger[] = [];
@@ -623,6 +637,17 @@ function makePorts(
         digestSha256: artifact.digestSha256,
         bytes: artifact.bytes,
         plaintext: Uint8Array.from(artifact.plaintext),
+      });
+    }),
+  };
+  const bundleAuthority = {
+    verify: vi.fn((sealedBundleEnvelope: string) => {
+      const parsed = parseProductionReplayBundleManifest(sealedBundleEnvelope, SEAL_KEY);
+      if (!parsed.ok) throw new Error("test bundle authentication failed");
+      return ok({
+        authentication: "verified" as const,
+        authorityKeyIdSha256: parsed.value.seal.keyIdSha256,
+        manifest: parsed.value,
       });
     }),
   };
@@ -655,6 +680,7 @@ function makePorts(
   const hardOracle: ProductionReplayHardOraclePort = {
     evaluate: () =>
       ok({
+        oracleSetDigestSha256: options.hardOracleSetDigestSha256 ?? fakeDigest(29),
         checks: [
           {
             oracleIdSha256: sha256("delivery-hard-oracle"),
@@ -667,6 +693,7 @@ function makePorts(
   const driverFactory = options.driver ?? consumingDriver;
   return {
     ports: {
+      bundleAuthority,
       artifacts: resolver,
       checkpoint,
       driver: driverFactory(driverCalls, triggers),
@@ -677,11 +704,12 @@ function makePorts(
     triggers,
     deadlines,
     resolver,
+    bundleAuthority,
   };
 }
 
 describe("independent production replay engine contract", () => {
-  it("injects only a causal-root input and independently observes the full exact transcript", async () => {
+  it("injects only a causal-root input without treating the generic contract as an exact attestation", async () => {
     const fixture = makeFixture();
     const harness = makePorts(fixture);
 
@@ -694,7 +722,8 @@ describe("independent production replay engine contract", () => {
       status: "accepted",
       fidelityMatched: true,
       correctness: "passed",
-      exact: true,
+      exact: false,
+      exactBlockers: ["generic_contract_is_not_operational_attestation"],
       injectedTriggerCount: 1,
       expectedEventCount: fixture.transcript.events.length,
       observedEventCount: fixture.transcript.events.length,
@@ -727,6 +756,10 @@ describe("independent production replay engine contract", () => {
     expect(harness.resolver.resolve).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "capture_episode" }),
     );
+    expect(harness.bundleAuthority.verify).toHaveBeenCalledWith(
+      fixture.request.sealedBundleEnvelope,
+    );
+    expect(fixture.request).not.toHaveProperty("sealKey");
   });
 
   it("cannot match when a no-op driver and independent observer produce no activity", async () => {
@@ -764,6 +797,22 @@ describe("independent production replay engine contract", () => {
     expect(result.ok).toBe(true);
     expect(harness.triggers).toHaveLength(1);
     expect(harness.triggers.map(({ kind }) => kind)).toEqual(["channel.native.text_received"]);
+  });
+
+  it("rejects an exact-eligible transcript that does not inject its causal root", async () => {
+    const fixture = makeFixture({ injectableRootPolicy: "observe" });
+    const harness = makePorts(fixture);
+
+    const result = await replayProductionTranscript(fixture.request, harness.ports);
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        kind: "invalid_replay_policy",
+        expectedEventSeq: 1,
+      },
+    });
+    expect(harness.driverCalls).toEqual([]);
   });
 
   it("fails when a captured cassette is not consumed by the target", async () => {
@@ -900,9 +949,24 @@ describe("independent production replay engine contract", () => {
       status: "correctness_failed",
       fidelityMatched: true,
       correctness: "failed",
-      exact: true,
+      exact: false,
+      exactBlockers: ["generic_contract_is_not_operational_attestation"],
       hardOracleCheckCount: 1,
       hardOracleFailedCount: 1,
+    });
+  });
+
+  it("rejects hard-oracle evidence that is not bound to the sealed episode definition", async () => {
+    const fixture = makeFixture();
+    const harness = makePorts(fixture, {
+      hardOracleSetDigestSha256: fakeDigest(999),
+    });
+
+    const result = await replayProductionTranscript(fixture.request, harness.ports);
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { kind: "hard_oracle_invalid" },
     });
   });
 

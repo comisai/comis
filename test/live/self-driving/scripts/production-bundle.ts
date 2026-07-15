@@ -152,6 +152,8 @@ export type ReplayEpisodeClassification =
 
 export interface ReplayBundleEpisode {
   readonly blobDigestSha256: string;
+  /** SHA-256 of the strict plaintext episode envelope, sealed by the bundle manifest. */
+  readonly contentDigestSha256: string;
   readonly episodeId: string;
   readonly captureMode: ReplayEpisodeCaptureMode;
   readonly windowStartAtMs: number;
@@ -637,6 +639,7 @@ function validateEpisode(
     !isRecord(raw) ||
     !hasExactKeys(raw, [
       "blobDigestSha256",
+      "contentDigestSha256",
       "episodeId",
       "captureMode",
       "windowStartAtMs",
@@ -648,6 +651,7 @@ function validateEpisode(
       "exactEligible",
     ]) ||
     !isDigest(raw.blobDigestSha256) ||
+    !isDigest(raw.contentDigestSha256) ||
     !isSafeId(raw.episodeId) ||
     (raw.captureMode !== "prospective_window" &&
       raw.captureMode !== "historical_final_state_only") ||

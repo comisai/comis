@@ -5,7 +5,7 @@ import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 
 import {
   CASSETTE_KINDS,
-  parseProductionReplayBundleManifest,
+  formatProductionReplayBundleManifest,
   type DeterministicSequenceKind,
   type ProductionReplayBundleManifest,
   type ReplayBundleBlobKind,
@@ -40,6 +40,18 @@ export interface ProductionReplayPortFailure {
 export interface ProductionReplayArtifactRequest {
   readonly kind: ReplayBundleBlobKind;
   readonly digestSha256: string;
+}
+
+export interface ProductionReplayVerifiedBundle {
+  readonly authentication: "verified";
+  readonly authorityKeyIdSha256: string;
+  readonly manifest: ProductionReplayBundleManifest;
+}
+
+export interface ProductionReplayBundleAuthorityPort {
+  verify(
+    sealedBundleEnvelope: string,
+  ): MaybePromise<Result<ProductionReplayVerifiedBundle, ProductionReplayPortFailure>>;
 }
 
 export interface ProductionReplayResolvedArtifact {
@@ -137,6 +149,7 @@ export interface ProductionReplayHardOracleCheck {
 }
 
 export interface ProductionReplayHardOracleResult {
+  readonly oracleSetDigestSha256: string;
   readonly checks: readonly ProductionReplayHardOracleCheck[];
 }
 
@@ -149,6 +162,7 @@ export interface ProductionReplayHardOraclePort {
 }
 
 export interface ProductionReplayEnginePorts {
+  readonly bundleAuthority: ProductionReplayBundleAuthorityPort;
   readonly artifacts: ProductionReplayArtifactResolverPort;
   readonly checkpoint: ProductionReplayCheckpointPort;
   readonly driver: ProductionReplayDriverPort;
@@ -158,7 +172,6 @@ export interface ProductionReplayEnginePorts {
 
 export interface ProductionReplayEngineRequest {
   readonly sealedBundleEnvelope: string;
-  readonly sealKey: Uint8Array;
   readonly maxEventLagMs: number;
 }
 
@@ -168,7 +181,8 @@ export interface ProductionReplayEngineReport {
   readonly fidelity: TranscriptFidelity;
   readonly fidelityMatched: true;
   readonly correctness: "passed" | "failed";
-  readonly exact: boolean;
+  readonly exact: false;
+  readonly exactBlockers: readonly ["generic_contract_is_not_operational_attestation"];
   readonly manifestDigestSha256: string;
   readonly expectedTranscriptDigestSha256: string;
   readonly actualTranscriptDigestSha256: string;
@@ -415,6 +429,31 @@ function mapPortError(
         failureDigestSha256: error.digestSha256,
         expectedEventSeq,
       };
+}
+
+function validateVerifiedBundle(
+  value: unknown,
+  sealedBundleEnvelope: string,
+): ProductionReplayBundleManifest | null {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["authentication", "authorityKeyIdSha256", "manifest"]) ||
+    value.authentication !== "verified" ||
+    !isDigest(value.authorityKeyIdSha256) ||
+    !isRecord(value.manifest) ||
+    !isRecord(value.manifest.seal) ||
+    value.manifest.seal.keyIdSha256 !== value.authorityKeyIdSha256
+  ) {
+    return null;
+  }
+  const formatted = tryCatch(() =>
+    formatProductionReplayBundleManifest(
+      value.manifest as unknown as ProductionReplayBundleManifest,
+    ),
+  );
+  return formatted.ok && formatted.value === sealedBundleEnvelope
+    ? (value.manifest as unknown as ProductionReplayBundleManifest)
+    : null;
 }
 
 function decodeUtf8Json(
@@ -898,6 +937,13 @@ async function loadReplayArtifacts(
   }
 
   for (const event of transcript.events) {
+    if (isInjectableRoot(event) && event.replay.policy !== "inject") {
+      return err({
+        kind: "invalid_replay_policy",
+        expectedEventSeq: event.seq,
+        evidenceDigestSha256: evidenceDigest("causal-root-policy"),
+      });
+    }
     if (event.replay.policy !== "inject") continue;
     if (!isInjectableRoot(event) || event.replay.blobDigest === null) {
       return err({ kind: "invalid_replay_policy", expectedEventSeq: event.seq, evidenceDigestSha256: evidenceDigest("inject-policy") });
@@ -956,11 +1002,17 @@ function validateObserverResult(value: unknown): value is ProductionReplayObserv
   );
 }
 
-function validateHardOracles(value: unknown): value is ProductionReplayHardOracleResult {
+function validateHardOracles(
+  value: unknown,
+  expectedOracleSetDigestSha256: string,
+  expectedOracleCount: number,
+): value is ProductionReplayHardOracleResult {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["checks"]) &&
+    hasExactKeys(value, ["oracleSetDigestSha256", "checks"]) &&
+    value.oracleSetDigestSha256 === expectedOracleSetDigestSha256 &&
     Array.isArray(value.checks) &&
+    value.checks.length === expectedOracleCount &&
     value.checks.length <= MAX_HARD_ORACLES &&
     value.checks.every(
       (check) =>
@@ -979,18 +1031,31 @@ export async function replayProductionTranscript(
   ports: ProductionReplayEnginePorts,
 ): Promise<Result<ProductionReplayEngineReport, ProductionReplayEngineError>> {
   if (
+    !isRecord(request) ||
+    !hasExactKeys(request, ["sealedBundleEnvelope", "maxEventLagMs"]) ||
     typeof request?.sealedBundleEnvelope !== "string" ||
-    !(request?.sealKey instanceof Uint8Array) ||
     !isCount(request?.maxEventLagMs) ||
     request.maxEventLagMs === 0
   ) {
     return err({ kind: "authentication_failed", component: "bundle", evidenceDigestSha256: evidenceDigest("request") });
   }
-  const parsedBundleAttempt = tryCatch(() => parseProductionReplayBundleManifest(request.sealedBundleEnvelope, request.sealKey));
-  if (!parsedBundleAttempt.ok || !parsedBundleAttempt.value.ok) {
+  const verifiedBundleAttempt = await invokePort(() =>
+    ports.bundleAuthority.verify(request.sealedBundleEnvelope),
+  );
+  if (!verifiedBundleAttempt.ok) {
     return err({ kind: "authentication_failed", component: "bundle", evidenceDigestSha256: evidenceDigest("bundle") });
   }
-  const manifest = parsedBundleAttempt.value.value;
+  const manifest = validateVerifiedBundle(
+    verifiedBundleAttempt.value,
+    request.sealedBundleEnvelope,
+  );
+  if (manifest === null) {
+    return err({
+      kind: "authentication_failed",
+      component: "bundle",
+      evidenceDigestSha256: evidenceDigest("bundle-authority"),
+    });
+  }
   const episodeResult = await loadEpisode(manifest, ports.artifacts);
   if (!episodeResult.ok) return episodeResult;
   const episode = episodeResult.value;
@@ -1154,30 +1219,31 @@ export async function replayProductionTranscript(
     }),
   );
   if (!hardOracleAttempt.ok) return err(mapPortError(hardOracleAttempt.error, "hard_oracle"));
-  if (!validateHardOracles(hardOracleAttempt.value)) {
+  if (
+    !validateHardOracles(
+      hardOracleAttempt.value,
+      episode.correctness.oracleSetDigestSha256,
+      episode.correctness.oracleCount,
+    )
+  ) {
     return err({ kind: "hard_oracle_invalid", evidenceDigestSha256: evidenceDigest("hard-oracle-result") });
   }
   const failedChecks = hardOracleAttempt.value.checks.filter(({ passed }) => !passed).length;
   const correctness = hardOracleAttempt.value.checks.length > 0 && failedChecks === 0 ? "passed" : "failed";
-  const exact =
-    checkpoint.value.prospective &&
-    episode.replayInput.exactEligible &&
-    manifest.fidelity.target === "deterministic_cassette" &&
-    manifest.fidelity.exactEligible;
-
   return ok({
     engineKind: "generic_contract",
     status: correctness === "passed" ? "accepted" : "correctness_failed",
     fidelity: manifest.fidelity.classification,
     fidelityMatched: true,
     correctness,
-    exact,
+    exact: false,
+    exactBlockers: ["generic_contract_is_not_operational_attestation"],
     manifestDigestSha256: manifest.seal.manifestDigestSha256,
     expectedTranscriptDigestSha256: compared.value.expectedTranscriptDigest,
     actualTranscriptDigestSha256: compared.value.actualTranscriptDigest,
     expectedStateDigestSha256: expectedFinalStateDigest,
     actualStateDigestSha256: observedRecordsDigest(observerFinished.value.state),
-    hardOracleDigestSha256: digestCanonical(hardOracleAttempt.value.checks),
+    hardOracleDigestSha256: digestCanonical(hardOracleAttempt.value),
     expectedEventCount: transcript.events.length,
     observedEventCount: actualEvents.length,
     injectedTriggerCount,

@@ -23,7 +23,10 @@ import {
   EVIDENCE_FACTS_END,
   PRODUCTION_EVIDENCE_IDS,
 } from "./production-evidence.js";
-import type { ProductionSnapshotManifest } from "./production-snapshot.js";
+import {
+  deriveProductionSnapshotTreeIdentity,
+  type ProductionSnapshotManifest,
+} from "./production-snapshot.js";
 import {
   CANONICAL_TRANSCRIPT_BEGIN,
   CANONICAL_TRANSCRIPT_END,
@@ -77,8 +80,31 @@ function evidence(observedAtMs: number, memoryBytes = 1): string {
   return `${EVIDENCE_FACTS_BEGIN}\n${JSON.stringify(report)}\n${EVIDENCE_FACTS_END}\n`;
 }
 
-function snapshot(): ProductionSnapshotManifest {
-  return {
+function snapshot(metadataFidelity: "exact" | "gapped" = "exact"): ProductionSnapshotManifest {
+  const metadata = { uid: 1001, gid: 1001, mtimeNs: "1752560000123456789" } as const;
+  const metadataDigests = {
+    aclSha256: "1".repeat(64),
+    xattrSha256: "2".repeat(64),
+    capabilitySha256: "3".repeat(64),
+  } as const;
+  const entries = [
+    { path: "data", type: "directory", mode: "0700", size: 0, ...metadata, ...metadataDigests },
+    { path: "system", type: "directory", mode: "0700", size: 0, uid: 0, gid: 0, mtimeNs: metadata.mtimeNs, ...metadataDigests },
+    { path: "system/etc", type: "directory", mode: "0755", size: 0, uid: 0, gid: 0, mtimeNs: metadata.mtimeNs, ...metadataDigests },
+    { path: "system/etc/comis", type: "directory", mode: "0755", size: 0, uid: 0, gid: 0, mtimeNs: metadata.mtimeNs, ...metadataDigests },
+    {
+      path: "system/etc/comis/env",
+      type: "file",
+      mode: "0640",
+      size: 72,
+      sha256: FILE_DIGEST,
+      uid: 0,
+      gid: 1001,
+      mtimeNs: metadata.mtimeNs,
+      ...metadataDigests,
+    },
+  ] as const;
+  const value: ProductionSnapshotManifest = {
     schemaVersion: 1,
     runId: "capture-20260715-a",
     sourceMachineIdSha256: SOURCE_MACHINE,
@@ -87,21 +113,34 @@ function snapshot(): ProductionSnapshotManifest {
     captureStartedAtMs: 1_752_560_000_000,
     captureCompletedAtMs: 1_752_560_004_000,
     freezeDurationMs: 0,
-    entries: [
-      { path: "data", type: "directory", mode: "0700", size: 4096 },
-      { path: "system", type: "directory", mode: "0700", size: 4096 },
-      { path: "system/etc", type: "directory", mode: "0755", size: 4096 },
-      { path: "system/etc/comis", type: "directory", mode: "0755", size: 4096 },
-      {
-        path: "system/etc/comis/env",
-        type: "file",
-        mode: "0640",
-        size: 72,
-        sha256: FILE_DIGEST,
-      },
-    ],
+    metadataIdentity:
+      metadataFidelity === "exact"
+        ? { acl: "captured", xattr: "captured", capability: "captured", gaps: [] }
+        : {
+            acl: "unavailable",
+            xattr: "unavailable",
+            capability: "unavailable",
+            gaps: [
+              { kind: "acl", reason: "source_tool_unavailable" },
+              { kind: "xattr", reason: "source_tool_unavailable" },
+              { kind: "capability", reason: "source_tool_unavailable" },
+            ],
+          },
+    treeIdentitySha256: "0".repeat(64),
+    entries:
+      metadataFidelity === "exact"
+        ? entries
+        : entries.map(
+            ({
+              aclSha256: _aclSha256,
+              xattrSha256: _xattrSha256,
+              capabilitySha256: _capabilitySha256,
+              ...entry
+            }) => entry,
+          ),
     exclusions: [],
   };
+  return { ...value, treeIdentitySha256: deriveProductionSnapshotTreeIdentity(value) };
 }
 
 function transcript(captureId = "capture-20260715-a"): string {
@@ -269,38 +308,19 @@ function facts(artifact: EncryptedProductionVaultBlob, kind: ReplayBundleBlobKin
 }
 
 function makeRequest(): ProductionReplayBundleAssemblyRequest {
-  const stateEntries = snapshot().entries;
-  const stateBytes = stateEntries.reduce((total, entry) => total + entry.size, 0);
-  const stateIdentity = {
-    treeDigestSha256: digest(
-      JSON.stringify(
-        [...stateEntries]
-          .sort((left, right) => left.path.localeCompare(right.path))
-          .map((entry) => ({
-            path: entry.path,
-            type: entry.type,
-            mode: entry.mode,
-            size: entry.size,
-            sha256: entry.sha256 ?? null,
-            linkTarget: entry.linkTarget ?? null,
-          })),
-      ),
-    ),
-    entryCount: stateEntries.length,
-    bytes: stateBytes,
-  } as const;
+  const stateIdentityResult = deriveProductionSnapshotStateIdentity(snapshot());
+  if (!stateIdentityResult.ok) throw new Error("test state identity fixture is invalid");
+  const stateIdentity = stateIdentityResult.value;
   const snapshotArtifact = encrypt("snapshot_manifest", JSON.stringify(snapshot()));
   const snapshotFacts = facts(snapshotArtifact, "snapshot_manifest");
+  const episodeEnvelope = captureEpisode(snapshotFacts.digestSha256, stateIdentity);
   const artifacts = [
     encrypt("runtime_archive", Buffer.from([1, 2, 3])),
     encrypt("state_archive", Buffer.from([4, 5, 6])),
     snapshotArtifact,
     encrypt("source_evidence", evidence(1_752_560_005_000)),
     encrypt("target_evidence", evidence(1_752_560_006_000)),
-    encrypt(
-      "capture_episode",
-      captureEpisode(snapshotFacts.digestSha256, stateIdentity),
-    ),
+    encrypt("capture_episode", episodeEnvelope),
     encrypt("canonical_transcript", transcript()),
     ...DETERMINISTIC_SEQUENCE_KINDS.map((kind) =>
       encrypt(`${kind}_sequence`, JSON.stringify([{ kind }])),
@@ -378,6 +398,7 @@ function makeRequest(): ProductionReplayBundleAssemblyRequest {
     },
     episode: {
       blobDigestSha256: blob("capture_episode").digestSha256,
+      contentDigestSha256: createHash("sha256").update(episodeEnvelope).digest("hex"),
       episodeId: "capture-20260715-a",
       captureMode: "prospective_window",
       windowStartAtMs: 1_752_560_005_000,
@@ -443,9 +464,51 @@ function mutableRequest(): Mutable<ProductionReplayBundleAssemblyRequest> {
 }
 
 describe("production replay bundle assembler", () => {
+  it("derives replay state from canonical metadata identity and counts file content once", () => {
+    const base = snapshot();
+    const dataRoot = base.entries.find(({ path }) => path === "data");
+    if (dataRoot === undefined) throw new Error("test snapshot data root is missing");
+    const file = {
+      ...dataRoot,
+      path: "data/a-canonical.bin",
+      type: "file" as const,
+      mode: "0600",
+      size: 11,
+      sha256: "4".repeat(64),
+    };
+    const hardlink = {
+      ...dataRoot,
+      path: "data/z-canonical-copy.bin",
+      type: "hardlink" as const,
+      mode: "0600",
+      size: 11,
+      hardlinkTarget: "data/a-canonical.bin",
+    };
+    const unsigned = {
+      ...base,
+      treeIdentitySha256: "0".repeat(64),
+      entries: [dataRoot, file, hardlink, ...base.entries.filter(({ path }) => path !== "data")],
+    };
+    const manifest = {
+      ...unsigned,
+      treeIdentitySha256: deriveProductionSnapshotTreeIdentity(unsigned),
+    };
+
+    const result = deriveProductionSnapshotStateIdentity(manifest);
+
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        treeDigestSha256: manifest.treeIdentitySha256,
+        entryCount: 7,
+        bytes: 83,
+      },
+    });
+  });
+
   it("decrypts and cross-validates every private artifact before sealing the manifest", () => {
     const result = assembleProductionReplayBundle(makeRequest());
-    const derivedState = deriveProductionSnapshotStateIdentity(snapshot().entries);
+    const derivedState = deriveProductionSnapshotStateIdentity(snapshot());
 
     expect(result.ok).toBe(true);
     expect(derivedState.ok).toBe(true);
@@ -479,6 +542,67 @@ describe("production replay bundle assembler", () => {
     expect(JSON.stringify(result.value)).not.toContain("SECRETS_MASTER_KEY");
   });
 
+  it("rejects exact episode eligibility when snapshot metadata identity has gaps", () => {
+    const request = mutableRequest();
+    const replacementSnapshot = snapshot("gapped");
+    const replacementState = deriveProductionSnapshotStateIdentity(replacementSnapshot);
+    if (!replacementState.ok) throw new Error("test snapshot state is invalid");
+
+    const oldSnapshotBlob = request.unsignedManifest.vault.blobs.find(
+      ({ kind }) => kind === "snapshot_manifest",
+    );
+    if (oldSnapshotBlob === undefined) throw new Error("test snapshot blob is missing");
+    const snapshotIndex = request.encryptedBlobs.findIndex((artifact) =>
+      artifact.envelope.includes(oldSnapshotBlob.digestSha256),
+    );
+    if (snapshotIndex < 0) throw new Error("test snapshot artifact is missing");
+    const replacementSnapshotArtifact = encrypt(
+      "snapshot_manifest",
+      JSON.stringify(replacementSnapshot),
+    );
+    const replacementSnapshotFacts = facts(replacementSnapshotArtifact, "snapshot_manifest");
+    request.encryptedBlobs.splice(snapshotIndex, 1, replacementSnapshotArtifact);
+    oldSnapshotBlob.digestSha256 = replacementSnapshotFacts.digestSha256;
+    oldSnapshotBlob.bytes = replacementSnapshotFacts.bytes;
+    request.unsignedManifest.attestations.state.snapshotManifestBlobDigestSha256 =
+      replacementSnapshotFacts.digestSha256;
+    request.unsignedManifest.attestations.state.source = replacementState.value;
+    request.unsignedManifest.attestations.state.target = replacementState.value;
+
+    const oldEpisodeBlob = request.unsignedManifest.vault.blobs.find(
+      ({ kind }) => kind === "capture_episode",
+    );
+    if (oldEpisodeBlob === undefined) throw new Error("test episode blob is missing");
+    const episodeIndex = request.encryptedBlobs.findIndex((artifact) =>
+      artifact.envelope.includes(oldEpisodeBlob.digestSha256),
+    );
+    if (episodeIndex < 0) throw new Error("test episode artifact is missing");
+    const replacementEpisodeEnvelope = captureEpisode(
+      replacementSnapshotFacts.digestSha256,
+      replacementState.value,
+    );
+    const replacementEpisodeArtifact = encrypt("capture_episode", replacementEpisodeEnvelope);
+    const replacementEpisodeFacts = facts(replacementEpisodeArtifact, "capture_episode");
+    request.encryptedBlobs.splice(episodeIndex, 1, replacementEpisodeArtifact);
+    oldEpisodeBlob.digestSha256 = replacementEpisodeFacts.digestSha256;
+    oldEpisodeBlob.bytes = replacementEpisodeFacts.bytes;
+    request.unsignedManifest.episode.blobDigestSha256 = replacementEpisodeFacts.digestSha256;
+    request.unsignedManifest.episode.contentDigestSha256 = createHash("sha256")
+      .update(replacementEpisodeEnvelope)
+      .digest("hex");
+    request.unsignedManifest.episode.initialCheckpointSnapshotManifestDigestSha256 =
+      replacementSnapshotFacts.digestSha256;
+
+    expect(assembleProductionReplayBundle(request)).toEqual({
+      ok: false,
+      error: {
+        kind: "artifact_reconciliation_failed",
+        field: "snapshot",
+        message: "Production authority facts do not reconcile with the bundle manifest",
+      },
+    });
+  });
+
   it("seals historical final-state capture only as ineligible best effort", () => {
     const request = mutableRequest();
     const oldBlob = request.unsignedManifest.vault.blobs.find(
@@ -489,17 +613,15 @@ describe("production replay bundle assembler", () => {
       artifact.envelope.includes(oldBlob.digestSha256),
     );
     if (artifactIndex < 0) throw new Error("test capture episode artifact is incomplete");
-    const state = deriveProductionSnapshotStateIdentity(snapshot().entries);
+    const state = deriveProductionSnapshotStateIdentity(snapshot());
     if (!state.ok) throw new Error("test state fixture is invalid");
-    const replacement = encrypt(
-      "capture_episode",
-      captureEpisode(
-        request.unsignedManifest.attestations.state.snapshotManifestBlobDigestSha256,
-        state.value,
-        "capture-20260715-a",
-        "historical_final_state_only",
-      ),
+    const replacementEnvelope = captureEpisode(
+      request.unsignedManifest.attestations.state.snapshotManifestBlobDigestSha256,
+      state.value,
+      "capture-20260715-a",
+      "historical_final_state_only",
     );
+    const replacement = encrypt("capture_episode", replacementEnvelope);
     const replacementFacts = facts(replacement, "capture_episode");
     request.encryptedBlobs.splice(artifactIndex, 1, replacement);
     oldBlob.digestSha256 = replacementFacts.digestSha256;
@@ -507,6 +629,7 @@ describe("production replay bundle assembler", () => {
     request.unsignedManifest.episode = {
       ...request.unsignedManifest.episode,
       blobDigestSha256: replacementFacts.digestSha256,
+      contentDigestSha256: createHash("sha256").update(replacementEnvelope).digest("hex"),
       captureMode: "historical_final_state_only",
       initialCheckpointSnapshotManifestDigestSha256: null,
       classification: "historical_best_effort",
@@ -619,6 +742,7 @@ describe("production replay bundle assembler", () => {
     }
     if (kind === "capture_episode") {
       references.episode.blobDigestSha256 = replacementFacts.digestSha256;
+      references.episode.contentDigestSha256 = createHash("sha256").update(body).digest("hex");
     }
 
     const result = assembleProductionReplayBundle(request);
@@ -661,7 +785,7 @@ describe("production replay bundle assembler", () => {
       artifact.envelope.includes(oldBlob.digestSha256),
     );
     if (artifactIndex < 0) throw new Error("test capture episode artifact is incomplete");
-    const state = deriveProductionSnapshotStateIdentity(snapshot().entries);
+    const state = deriveProductionSnapshotStateIdentity(snapshot());
     if (!state.ok) throw new Error("test state fixture is invalid");
     const replacement = encrypt(
       "capture_episode",

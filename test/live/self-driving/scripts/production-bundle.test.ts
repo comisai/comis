@@ -112,6 +112,7 @@ function makeUnsignedBundle(): ProductionReplayBundleUnsignedManifest {
     },
     episode: {
       blobDigestSha256: captureEpisode,
+      contentDigestSha256: digest(8),
       episodeId: "capture-20260715-a",
       captureMode: "prospective_window",
       windowStartAtMs: 1_752_559_999_000,
