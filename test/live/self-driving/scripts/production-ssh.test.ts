@@ -217,6 +217,36 @@ describe("production replay SSH boundary", () => {
     }
   });
 
+  it("preserves a remote stage exit code as bounded forensic evidence", async () => {
+    vi.useFakeTimers();
+    try {
+      const child = makeChild();
+      const executor = createProductionSshExecutor({ spawnProcess: vi.fn(() => child) });
+      const running = executor.run({
+        label: "guarded-stage",
+        host: "test-host",
+        args: ["bash", "-s"],
+        stdin: "probe",
+        timeoutMs: 100,
+      });
+
+      child.stdout.write("COMIS_STAGE_FAILURE_V1\nreason=lease_busy\n");
+      child.emitEvent("close", 84);
+
+      await expect(running).resolves.toEqual({
+        ok: true,
+        value: {
+          stdout: "COMIS_STAGE_FAILURE_V1\nreason=lease_busy\n",
+          exitCode: 84,
+        },
+      });
+      expect(child.stderr.destroyed).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not leave an escalation timer when SIGTERM closes the process synchronously", async () => {
     vi.useFakeTimers();
     try {

@@ -215,15 +215,6 @@ function runSsh(
         return;
       }
       const exitCode = typeof rawCode === "number" ? rawCode : -1;
-      if (exitCode !== 0) {
-        finish(
-          err({
-            kind: "remote",
-            message: `SSH stage ${invocation.label} exited unsuccessfully`,
-          }),
-        );
-        return;
-      }
       finish(ok({ stdout, exitCode }));
     });
     child.stdin.on("error", () => {
