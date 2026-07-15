@@ -120,7 +120,8 @@ export interface ProductionEvidenceReport {
 }
 
 export interface ProductionEvidenceParityReport {
-  readonly exact: true;
+  /** The two retained inventories match field-for-field; this is not a completeness claim. */
+  readonly parityMatched: true;
   readonly itemCount: number;
   readonly gapCount: number;
 }
@@ -394,7 +395,7 @@ export function compareProductionEvidenceReports(
   }
 
   return ok({
-    exact: true,
+    parityMatched: true,
     itemCount: source.items.length,
     gapCount: source.items.filter((item) => item.gapReason !== undefined).length,
   });

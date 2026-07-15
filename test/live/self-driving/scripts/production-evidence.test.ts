@@ -283,7 +283,7 @@ describe("production evidence inventory", () => {
     expect(JSON.stringify(malformed)).not.toContain("PRIVATE_REMOTE_OUTPUT");
   });
 
-  it("attests source and target evidence parity while ignoring probe observation time", () => {
+  it("reports matching evidence inventories without claiming exact replay completeness", () => {
     const fixture = makeEvidenceFixture();
     const source = parseReport(runProbe(fixture.dataDir));
     const target = { ...source, observedAtMs: source.observedAtMs + 250 };
@@ -293,11 +293,12 @@ describe("production evidence inventory", () => {
     expect(result).toEqual({
       ok: true,
       value: {
-        exact: true,
+        parityMatched: true,
         itemCount: source.items.length,
         gapCount: source.items.filter((candidate) => candidate.gapReason !== undefined).length,
       },
     });
+    expect(result.ok && Object.hasOwn(result.value, "exact")).toBe(false);
   });
 
   it("reports the first evidence divergence without disclosing compared values", () => {
