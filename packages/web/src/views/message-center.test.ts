@@ -389,6 +389,43 @@ describe("IcMessageCenter", () => {
     expect(call).toHaveBeenCalledTimes(1);
   });
 
+  it("hides message actions for an explicitly stopped channel", async () => {
+    const call = vi.fn((method: string) => {
+      switch (method) {
+        case "channels.list":
+          return Promise.resolve({
+            channels: [{ channelType: "telegram", status: "stopped" }],
+            total: 1,
+          });
+        case "channels.capabilities":
+          return Promise.resolve({ channelType: "telegram", features: { fetchHistory: false } });
+        case "channels.get":
+          return Promise.resolve({ botName: "test-bot" });
+        case "obs.channels.all":
+          return Promise.resolve({ channels: [] });
+        case "session.list":
+          return Promise.resolve({ sessions: [] });
+        default:
+          return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
+      }
+    });
+    const el = await createElement({
+      channelType: "telegram",
+      rpcClient: { status: "connected", call } as unknown as RpcClient,
+    });
+    for (let update = 0; update < 5; update += 1) {
+      await Promise.resolve();
+      await el.updateComplete;
+    }
+
+    const emptyState = el.shadowRoot?.querySelector("ic-empty-state");
+    expect(emptyState?.getAttribute("message")).toBe("Channel is not running");
+    expect(el.shadowRoot?.querySelector(".send-input")).toBeNull();
+    expect(el.shadowRoot?.querySelector(".platform-actions")).toBeNull();
+    expect(el.shadowRoot?.querySelector<HTMLOptionElement>('option[value="telegram"]')?.disabled)
+      .toBe(true);
+  });
+
   it("releases a pending action when the RPC client is replaced", async () => {
     const send = deferred<{ ok: boolean }>();
     const firstCall = vi.fn(() => send.promise);
