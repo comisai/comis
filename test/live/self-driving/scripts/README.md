@@ -1,16 +1,43 @@
 # Live-test helper scripts — VPS + channel emulators (Telegram, Microsoft Teams)
 
-Ready-to-run versions of every helper used in the live-test, targeting the **production installation**
+Ready-to-run versions of every helper used in the live-test, targeting the **installer-created layout**
 (the systemd + npm-global layout `website/public/install.sh` creates — the same thing users get).
 Read **`../01-SETUP.md`** for the full setup playbook and **`../03-OBSERVABILITY.md`** for the traps —
 this folder is the copy-paste toolkit those docs refer to. (Driven by `../00-MISSION.md`.)
 
-## Config — ALL per-box values live in `.live-env` (gitignored)
+## Production forensic controller
 
-`cp .live-env.example .live-env` and edit. The LOCAL scripts auto-source it; `deploy-scripts.sh`
+Use `production-replay.ts` only for a pinned production → isolated-test investigation. Read
+`../06-PRODUCTION-FORENSIC-REPLAY.md` first. It validates distinct machine identities and roles, installs a
+fresh target without starting it, applies the test-role quarantine, clones and seals state/runtime
+artifacts, and compares offline message and evidence inventories.
+
+```bash
+CTRL='pnpm exec tsx test/live/self-driving/scripts/production-replay.ts'
+
+$CTRL profile
+$CTRL doctor
+$CTRL prepare-target
+$CTRL runtime-attest
+$CTRL clone-state --run-id unique-state-run --capture-mode offline --agent-id main
+$CTRL clone-runtime --run-id unique-runtime-run
+$CTRL messages-attest --channel telegram
+$CTRL evidence-parity
+```
+
+The current controller stops at verified preparation and attestation. It does not yet drive the live Comis
+composition root or claim exact replay. Keep the target stopped unless the trusted test-role entrypoint,
+restore seal, exact unit launcher, and quarantine controls all pass. The ordinary emulator scripts below
+operate on `VPS`; `VPS` must never point at the production source.
+
+## Config — all host values live in `.live-env` (gitignored)
+
+`cp .live-env.example .live-env`, set mode `0600`, and edit. The local scripts auto-source it; `deploy-scripts.sh`
 renders it to **`/root/comis-rig.env`** on the box, where the box-side `.sh` scripts source it and the
-`.mjs` helpers read it via **`_rig.mjs`** (explicit env always wins). Only `VPS` is mandatory — the
-rest ARE the standard install.sh layout:
+`.mjs` helpers read it via **`_rig.mjs`** (explicit env always wins). The production controller requires
+the `SOURCE_*` and `TARGET_*` fields documented in `.live-env.example`. The synthetic emulator helpers
+require `VPS`, which must select the test machine. The remaining fields describe the standard installer
+layout:
 
 | Var | Default | Meaning |
 |---|---|---|

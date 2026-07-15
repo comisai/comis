@@ -1,4 +1,5 @@
-# Per-box live-test rig config. THIS is where your VPS ssh target + the gateway token go.
+# Production-capture and test-replay host profile. The controller refuses mutation unless both
+# machines have distinct pinned identities and the configured roles are production -> test.
 #
 #   Setup:  cp .live-env.example .live-env   &&  $EDITOR .live-env   (it's gitignored — never committed)
 #
@@ -11,7 +12,27 @@
 # /root/comis-rig.env ON the box, where the box-side scripts source them and the .mjs helpers read
 # them via _rig.mjs. For ad-hoc one-liners, `source .live-env` first.
 #
-# Only VPS is mandatory — every other value below IS the standard install.sh layout; override per box.
+# These fields are mandatory for production capture/replay. Obtain each digest with the read-only
+# command `sha256sum /etc/machine-id`; do not use abbreviated values.
+
+export SOURCE_HOST="user@production-host"
+export TARGET_HOST="user@test-host"
+# Optional when an SSH endpoint does not use port 22. Keep the port separate from the host value.
+# export SOURCE_SSH_PORT="2222"
+# export TARGET_SSH_PORT="2202"
+export SOURCE_ROLE="production"
+export TARGET_ROLE="test"
+export SOURCE_COMIS_USER="comis"
+export TARGET_COMIS_USER="comis"
+export SOURCE_DATA="/home/comis/.comis"
+export TARGET_DATA="/home/comis/.comis"
+export SOURCE_SERVICE="comis"
+export TARGET_SERVICE="comis"
+export SOURCE_MACHINE_ID_SHA256="REPLACE-WITH-64-CHAR-PRODUCTION-MACHINE-SHA256"
+export TARGET_MACHINE_ID_SHA256="REPLACE-WITH-64-CHAR-TEST-MACHINE-SHA256"
+
+# The remaining single-box fields support the existing synthetic live-test scripts while they are
+# migrated onto the production replay controller. Point VPS only at the test machine.
 
 export VPS="user@your-vps-host-or-ip" # ssh target — how you reach the test VPS (ssh KEY lives in ~/.ssh)
 export COMIS_USER="comis"             # the dedicated service user install.sh creates
@@ -23,10 +44,5 @@ export GW_PORT="4766"                 # gateway port (config.yaml gateway.port)
 export CHATID="678314278"             # emulator chat/sender id to drive
 export EMU_DIR="/root/comis-emu"      # emulator tree on the box (deploy-emu.sh rsyncs test/live/ here)
 
-# Gateway bearer token for the RPC helpers (revoke.mjs & co). Under a production install `comis init`
-# stores it in the encrypted secrets store and config.yaml references ${COMIS_GATEWAY_TOKEN} — fetch
-# the RESOLVED literal once per box:
-#   ssh $VPS "su - comis -c 'comis secrets get COMIS_GATEWAY_TOKEN'"
-# (If your config.yaml carries a literal token instead, copy that. Fresh box with no config yet:
-# generate a fresh ≥32-char token and put the SAME literal in config.yaml gateway.tokens[].secret.)
-export GWTOKEN="REPLACE-WITH-THE-BOX-GATEWAY-TOKEN-min-32-chars"
+# Do not store gateway tokens or other credentials in this controller file. Box-side RPC helpers
+# resolve their credential from the target's encrypted secret store for the duration of a command.
