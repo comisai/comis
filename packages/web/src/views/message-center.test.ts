@@ -28,6 +28,8 @@ function state(el: IcMessageCenter) {
     _autoSelectAttempted: boolean;
     _hasLoaded: boolean;
     _actionResult: string;
+    _actionPending: boolean;
+    _sendText: string;
     _deleteTargetId: string;
     _refetchMessages(): Promise<void>;
   };
@@ -384,5 +386,46 @@ describe("IcMessageCenter", () => {
     expect(el.shadowRoot?.querySelector(".send-input")).toBeNull();
     expect(el.shadowRoot?.querySelector(".platform-actions")).toBeNull();
     expect(call).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases a pending action when the RPC client is replaced", async () => {
+    const send = deferred<{ ok: boolean }>();
+    const firstCall = vi.fn(() => send.promise);
+    const el = await createElement({ channelType: "telegram" });
+    Object.assign(state(el), { _loadState: "loaded", _hasLoaded: true });
+    el.rpcClient = { status: "connected", call: firstCall } as unknown as RpcClient;
+    await el.updateComplete;
+
+    const input = el.shadowRoot?.querySelector<HTMLTextAreaElement>(".send-input");
+    const sendButton = el.shadowRoot?.querySelector<HTMLButtonElement>(".send-form .btn-primary");
+    expect(input).not.toBeNull();
+    expect(sendButton).not.toBeNull();
+    input!.value = "hello";
+    input!.dispatchEvent(new Event("input"));
+    await el.updateComplete;
+    el.shadowRoot?.querySelector<HTMLButtonElement>(".send-form .btn-primary")?.click();
+    await el.updateComplete;
+    el.shadowRoot?.querySelector("ic-confirm-dialog")?.dispatchEvent(new CustomEvent("confirm"));
+    expect(firstCall).toHaveBeenCalledWith("message.send", {
+      channel_type: "telegram",
+      channel_id: "telegram",
+      text: "hello",
+    });
+    expect(state(el)._actionPending).toBe(true);
+
+    el.rpcClient = {
+      status: "disconnected",
+      call: vi.fn(() => Promise.reject(new Error("not connected"))),
+    } as unknown as RpcClient;
+    await el.updateComplete;
+    send.resolve({ ok: true });
+    await send.promise;
+    for (let update = 0; update < 3; update += 1) {
+      await Promise.resolve();
+      await el.updateComplete;
+    }
+
+    expect(state(el)._actionPending).toBe(false);
+    expect(state(el)._sendText).toBe("");
   });
 });
