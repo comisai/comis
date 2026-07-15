@@ -16,7 +16,7 @@ ERROR='\033[38;2;229;89;58m'         # coral-dark    #E5593A
 MUTED='\033[38;2;100;116;139m'       # slate         #64748B
 NC='\033[0m' # No Color
 
-DEFAULT_TAGLINE="Open-source governed agent runtime for inspectable, constrained, and recoverable multi-agent systems."
+DEFAULT_TAGLINE="Open-source agent runtime for governed execution."
 MIN_NODE_VERSION="22.19.0"
 NODE_STANDALONE_VERSION="22.19.0"
 NODESOURCE_DEB_SETUP_SHA256="575583bbac2fccc0b5edd0dbc03e222d9f9dc8d724da996d22754d6411104fd1"

@@ -3,7 +3,7 @@
   "version": "1.0.53",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
-  "description": "Open-source governed agent runtime for inspectable, constrained, and recoverable multi-agent systems.",
+  "description": "Open-source agent runtime for governed execution.",
   "keywords": [
     "comis",
     "ai",

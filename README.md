@@ -3,9 +3,9 @@
 </p>
 
 <p align="center">
-  <strong>Govern the execution, memory, security, authority, and cost of every agent.</strong>
+  <strong>Run AI agents you can constrain, inspect, and recover.</strong>
   <br />
-  <sub>Open-source governed agent runtime for inspectable, constrained, and recoverable multi-agent systems.</sub>
+  <sub>Open-source agent runtime for governed execution.</sub>
 </p>
 
 <p align="center">
@@ -26,11 +26,11 @@
 
 # Comis
 
-Comis is an Apache-2.0 governed agent runtime for operators who need multi-agent systems they can inspect, constrain, recover, and run on infrastructure they control.
+Comis gives AI platform and security teams an Apache-2.0, self-hosted runtime for governed multi-agent workflows, with scoped authority, bounded spend, recoverable context, provenance-aware memory, and operational evidence.
 
-**Comis's advantage is coherence.** Formal execution, recoverable context, provenance-aware memory, scoped authority, bounded spend, and operational evidence work as one system.
+**Govern execution, memory, security, authority, and cost as one system.** Formal workflows, recoverable context, provenance-aware memory, scoped authority, bounded spend, and operational evidence share one governance model.
 
-It is built for AI platform engineers, self-hosted operators, security-conscious builders, and technical teams moving persistent agents onto real tools and data.
+It is also built for self-hosted operators and security-conscious builders moving persistent agents onto real tools and data.
 
 The controls apply to agents executing through Comis-controlled paths.
 

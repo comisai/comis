@@ -1,7 +1,7 @@
 {
   "name": "comis-workspace",
   "private": true,
-  "description": "Open-source governed agent runtime for inspectable, constrained, and recoverable multi-agent systems.",
+  "description": "Open-source agent runtime for governed execution.",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "type": "module",

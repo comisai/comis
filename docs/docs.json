@@ -2,7 +2,7 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "maple",
   "name": "Comis",
-  "description": "Open-source governed agent runtime for inspectable, constrained, and recoverable multi-agent systems.",
+  "description": "Open-source agent runtime for governed execution.",
   "colors": {
     "primary": "#4F46E5",
     "light": "#A78BFA",

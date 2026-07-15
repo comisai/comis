@@ -3,9 +3,9 @@
 </p>
 
 <p align="center">
-  <strong>Govern the execution, memory, security, authority, and cost of every agent.</strong>
+  <strong>Run AI agents you can constrain, inspect, and recover.</strong>
   <br />
-  <sub>Open-source governed agent runtime for inspectable, constrained, and recoverable multi-agent systems.</sub>
+  <sub>Open-source agent runtime for governed execution.</sub>
 </p>
 
 <p align="center">
@@ -26,9 +26,9 @@
 
 `comisai` is the public npm distribution of Comis. It installs the `comis` CLI and exposes ESM entry points for the platform's public package namespaces.
 
-Comis is an Apache-2.0 governed agent runtime for operators who need multi-agent systems they can inspect, constrain, recover, and run on infrastructure they control.
+Comis gives AI platform and security teams an Apache-2.0, self-hosted runtime for governed multi-agent workflows, with scoped authority, bounded spend, recoverable context, provenance-aware memory, and operational evidence.
 
-**Comis's advantage is coherence.** Formal execution, recoverable context, provenance-aware memory, scoped authority, bounded spend, and operational evidence work as one system.
+**Govern execution, memory, security, authority, and cost as one system.** Formal workflows, recoverable context, provenance-aware memory, scoped authority, bounded spend, and operational evidence share one governance model.
 
 Comis runs on infrastructure you control. Network access depends on the models, channels, tools, and media services you configure.
 

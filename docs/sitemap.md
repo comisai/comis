@@ -6,7 +6,7 @@ A navigation index generated from the five documentation sections in docs.json. 
 
 ### Understand Comis
 
-- [Welcome to Comis](https://docs.comis.ai/get-started) — Open-source governed agent runtime for inspectable, constrained, and recoverable multi-agent systems
+- [Welcome to Comis](https://docs.comis.ai/get-started) — Open-source agent runtime for governed execution
 - [Quickstart](https://docs.comis.ai/get-started/quickstart) — Install Comis, configure an agent, and verify your first conversation
 - [Use Cases](https://docs.comis.ai/get-started/use-cases) — Governed workflows that make Comis's execution, state, authority, cost, and evidence concrete
 - [How It Works](https://docs.comis.ai/get-started/how-it-works) — How Comis routes, constrains, records, and recovers multi-agent work

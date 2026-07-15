@@ -62,8 +62,8 @@ function metaContent(html, key) {
   return undefined;
 }
 
-const expectedTitle = "Comis: Open-source governed agent runtime";
-const expectedDescription = "Inspect, constrain, recover, and operate multi-agent systems with scoped authority, bounded spend, and operational evidence.";
+const expectedTitle = "Comis: Open-source agent runtime for governed execution";
+const expectedDescription = "Self-hosted runtime for governed multi-agent workflows with scoped authority, bounded spend, recoverable context, and operational evidence.";
 const expectedInstallCommand = "curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash";
 const approvedExternalLinks = new Set([
   "https://docs.comis.ai",
@@ -111,7 +111,7 @@ for (const section of tags(mainHtml, "section")) {
 const headings = [...html.matchAll(/<h2\b[^>]*>([\s\S]*?)<\/h2>/gi)].map((match) => textContent(match[1]));
 sameValues(headings, [
   "From request to inspectable result.",
-  "Govern the whole agent lifecycle as one system.",
+  "Govern execution, memory, security, authority, and cost as one system.",
   "Use Comis when agent work needs evidence, boundaries, and recovery.",
   "Operate agents across channels, tools, state, and schedules.",
   "Layered security with explicit boundaries.",
@@ -142,10 +142,10 @@ check(wordCount <= 750, `Visible homepage copy must remain at or below 750 words
 
 for (const requiredText of [
   "Apache-2.0 | Active development",
-  "Govern the execution, memory, security, authority, and cost of every agent.",
-  "Comis is an Apache-2.0 governed agent runtime for operators who need multi-agent systems they can inspect, constrain, recover, and run on infrastructure they control.",
-  "The controls apply to agents executing through Comis-controlled paths.",
-  "Comis's advantage is coherence. Execution, context, memory, authority, cost, and evidence share one governance model.",
+  "Run AI agents you can constrain, inspect, and recover.",
+  "Comis gives AI platform and security teams a self-hosted runtime for governed multi-agent workflows, with scoped authority, bounded spend, recoverable context, provenance-aware memory, and operational evidence.",
+  "Controls apply only to agents executing through Comis-controlled paths.",
+  "Comis's advantage is coherence. Formal workflows, recoverable context, provenance-aware memory, scoped authority, bounded spend, and operational evidence share one governance model.",
   "Coordinate sequential and parallel DAG nodes with barriers, retries, budgets, and configured recovery.",
   "Keep messages and tool results available beneath summaries, then recover selected detail on demand.",
   "Rank and revise learned state using provenance, corroboration, trust ceilings, outcomes, and corrections.",

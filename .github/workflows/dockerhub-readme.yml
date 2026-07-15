@@ -32,7 +32,7 @@ jobs:
         include:
           - repo: comisai/comis
             readme: docker/README-comis.md
-            short: "Open-source governed agent runtime for inspectable multi-agent systems"
+            short: "Open-source agent runtime for governed execution"
           - repo: comisai/comis-web
             readme: docker/README-comis-web.md
             short: "Comis web dashboard SPA (Nginx + reverse proxy)"

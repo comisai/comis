@@ -63,7 +63,7 @@ comis agent configure my-agent
 
 Run `comis --help` or `comis <command> --help` for the authoritative command surface.
 
-This package is part of [Comis](https://github.com/comisai/comis), an open-source governed agent runtime for inspectable, constrained, and recoverable multi-agent systems.
+This package is part of [Comis](https://github.com/comisai/comis), an open-source agent runtime for governed execution.
 
 ## License
 
