@@ -940,7 +940,15 @@ export class IcMessageCenter extends LitElement {
         { label: "Channels", route: "channels" },
         { label: this._effectiveChannel || "...", route: `channels/${this._effectiveChannel}` },
         { label: "Messages" },
-      ]}></ic-breadcrumb>
+      ]}
+        @navigate=${(e: CustomEvent<string>) => {
+          this.dispatchEvent(new CustomEvent("navigate", {
+            detail: e.detail,
+            bubbles: false,
+            composed: false,
+          }));
+        }}
+      ></ic-breadcrumb>
     `;
   }
 
