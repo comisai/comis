@@ -491,6 +491,43 @@ describe("IcMessageCenter", () => {
     expect(pinButton!.disabled).toBe(true);
   });
 
+  it("does not overlap platform and message mutation actions", async () => {
+    const platformAction = deferred<string>();
+    const call = vi.fn((method: string) => {
+      if (method === "telegram.action") return platformAction.promise;
+      if (method === "message.delete") return Promise.resolve({ ok: true });
+      return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
+    });
+    const el = await createElement({ channelType: "telegram" });
+    Object.assign(state(el), {
+      _loadState: "loaded",
+      _channelIsRunning: true,
+      _messages: [{ id: "message-1", senderId: "user_a", text: "hello", timestamp: 1 }],
+      _messagesAreActionable: true,
+      _capabilities: { deleteMessages: true },
+      _hasLoaded: true,
+    });
+    el.rpcClient = createStatusRpcClient(call, "connected").client;
+    await el.updateComplete;
+
+    const chatInfoButton = Array.from(
+      el.shadowRoot?.querySelectorAll<HTMLButtonElement>(".platform-actions button") ?? [],
+    ).find((button) => button.textContent?.trim() === "Chat Info");
+    expect(chatInfoButton).toBeDefined();
+    chatInfoButton!.click();
+    await el.updateComplete;
+
+    const deleteButton = el.shadowRoot?.querySelector<HTMLButtonElement>('button[title="Delete"]');
+    expect(deleteButton).not.toBeNull();
+    deleteButton!.click();
+    await el.updateComplete;
+    el.shadowRoot?.querySelector("ic-confirm-dialog")?.dispatchEvent(new CustomEvent("confirm"));
+    await Promise.resolve();
+
+    expect(call.mock.calls.map(([method]) => method)).toEqual(["telegram.action"]);
+    expect(deleteButton!.disabled).toBe(true);
+  });
+
   it("sends a reaction with the selected message target", async () => {
     const call = vi.fn(() => Promise.resolve({ ok: true }));
     const el = await createElement({ channelType: "telegram" });
