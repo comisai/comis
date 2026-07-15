@@ -1,20 +1,45 @@
 import { spawnSync } from "node:child_process";
+import {
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import {
   buildProductionSnapshotPlan,
+  deriveProductionSnapshotTreeIdentity,
   parseProductionSnapshotManifest,
   type ProductionSnapshotManifest,
 } from "./production-snapshot.js";
 
 const SOURCE_MACHINE = "a".repeat(64);
 const FILE_HASH = "b".repeat(64);
+const ACL_HASH = "c".repeat(64);
+const XATTR_HASH = "d".repeat(64);
+const CAPABILITY_HASH = "e".repeat(64);
+
+const entryMetadata = {
+  uid: 1001,
+  gid: 1002,
+  mtimeNs: "1752560000123456789",
+  aclSha256: ACL_HASH,
+  xattrSha256: XATTR_HASH,
+  capabilitySha256: CAPABILITY_HASH,
+} as const;
 
 function makeManifest(
   overrides: Partial<ProductionSnapshotManifest> = {},
 ): ProductionSnapshotManifest {
-  return {
+  const base: ProductionSnapshotManifest = {
     schemaVersion: 1,
     runId: "capture-20260715-a1",
     sourceMachineIdSha256: SOURCE_MACHINE,
@@ -23,14 +48,22 @@ function makeManifest(
     captureStartedAtMs: 1_752_560_000_000,
     captureCompletedAtMs: 1_752_560_004_000,
     freezeDurationMs: 2_500,
+    metadataIdentity: {
+      acl: "captured",
+      xattr: "captured",
+      capability: "captured",
+      gaps: [],
+    },
+    treeIdentitySha256: "0".repeat(64),
     entries: [
-      { path: "data", type: "directory", mode: "0700", size: 4096 },
+      { path: "data", type: "directory", mode: "0700", size: 0, ...entryMetadata },
       {
         path: "data/.env",
         type: "file",
         mode: "0600",
         size: 84,
         sha256: FILE_HASH,
+        ...entryMetadata,
       },
       {
         path: "data/memory.db",
@@ -38,6 +71,7 @@ function makeManifest(
         mode: "0600",
         size: 4096,
         sha256: FILE_HASH,
+        ...entryMetadata,
       },
       {
         path: "data/memory.db-wal",
@@ -45,23 +79,39 @@ function makeManifest(
         mode: "0600",
         size: 2048,
         sha256: FILE_HASH,
+        ...entryMetadata,
+      },
+      {
+        path: "data/memory.db.copy",
+        type: "hardlink",
+        mode: "0600",
+        size: 4096,
+        hardlinkTarget: "data/memory.db",
+        ...entryMetadata,
       },
       {
         path: "data/models/python",
         type: "symlink",
         mode: "0777",
-        size: 16,
-        linkTarget: "/usr/bin/python3",
+        size: 10,
+        linkTarget: "../python3",
+        ...entryMetadata,
       },
-      { path: "system", type: "directory", mode: "0700", size: 4096 },
-      { path: "system/etc", type: "directory", mode: "0700", size: 4096 },
-      { path: "system/etc/comis", type: "directory", mode: "0700", size: 4096 },
+      { path: "system", type: "directory", mode: "0700", size: 0, uid: 0, gid: 0, mtimeNs: entryMetadata.mtimeNs, aclSha256: ACL_HASH, xattrSha256: XATTR_HASH, capabilitySha256: CAPABILITY_HASH },
+      { path: "system/etc", type: "directory", mode: "0700", size: 0, uid: 0, gid: 0, mtimeNs: entryMetadata.mtimeNs, aclSha256: ACL_HASH, xattrSha256: XATTR_HASH, capabilitySha256: CAPABILITY_HASH },
+      { path: "system/etc/comis", type: "directory", mode: "0700", size: 0, uid: 0, gid: 0, mtimeNs: entryMetadata.mtimeNs, aclSha256: ACL_HASH, xattrSha256: XATTR_HASH, capabilitySha256: CAPABILITY_HASH },
       {
         path: "system/etc/comis/env",
         type: "file",
         mode: "0640",
         size: 72,
         sha256: FILE_HASH,
+        uid: 0,
+        gid: 1002,
+        mtimeNs: entryMetadata.mtimeNs,
+        aclSha256: ACL_HASH,
+        xattrSha256: XATTR_HASH,
+        capabilitySha256: CAPABILITY_HASH,
       },
     ],
     exclusions: [
@@ -87,7 +137,12 @@ function makeManifest(
         reason: "runtime_socket",
       },
     ],
-    ...overrides,
+  };
+  const merged = { ...base, ...overrides };
+  return {
+    ...merged,
+    treeIdentitySha256:
+      overrides.treeIdentitySha256 ?? deriveProductionSnapshotTreeIdentity(merged),
   };
 }
 
@@ -116,7 +171,7 @@ describe("production source snapshot seam", () => {
     expect(result.value.stream.stdin).toContain("--acls");
     expect(result.value.stream.stdin).toContain("--xattrs");
     expect(result.value.stream.stdin).toContain("--numeric-owner");
-    expect(result.value.stream.stdin).toContain("--hard-dereference");
+    expect(result.value.stream.stdin).not.toContain("--hard-dereference");
     expect(result.value.stream.stdin).toContain("manifest.json");
     expect(result.value.stream.stdin).toContain("trap cleanup_stream EXIT HUP INT TERM");
     expect(result.value.stream.stdin).toContain('rm -rf -- "$stage_dir"');
@@ -155,9 +210,15 @@ describe("production source snapshot seam", () => {
     expect(script).toContain("/etc/comis/env");
     expect(script).toContain("--acls");
     expect(script).toContain("--xattrs");
+    expect(script).toContain("--xattrs-include='*'");
     expect(script).toContain("--numeric-owner");
     expect(script).toContain("--no-recursion");
     expect(script).toContain("--sparse");
+    expect(script).toContain("stat.mtimeNs.toString()");
+    expect(script).toContain("stat.dev.toString()");
+    expect(script).toContain("hardlinkTarget");
+    expect(script).toContain('commandAvailable("getfacl")');
+    expect(script).toContain('reason: "source_tool_unavailable"');
     expect(script).not.toContain("snapshot.tar.tmp");
     expect(script).toContain("required_bytes=$(( data_bytes + env_bytes + 67108864 ))");
   });
@@ -275,7 +336,14 @@ describe("production source snapshot seam", () => {
     );
     expect(result.value.entries.find(({ path }) => path === "data/models/python")).toMatchObject({
       type: "symlink",
-      linkTarget: "/usr/bin/python3",
+      linkTarget: "../python3",
+    });
+    expect(result.value.entries.find(({ path }) => path === "data/memory.db.copy")).toMatchObject({
+      type: "hardlink",
+      hardlinkTarget: "data/memory.db",
+      uid: 1001,
+      gid: 1002,
+      mtimeNs: "1752560000123456789",
     });
   });
 
@@ -290,14 +358,33 @@ describe("production source snapshot seam", () => {
     ]) {
       const manifest = makeManifest({
         entries: [
-          { path: "data", type: "directory", mode: "0700", size: 4096 },
-          { path, type: "file", mode: "0600", size: 1, sha256: FILE_HASH },
+          {
+            path: "data",
+            type: "directory",
+            mode: "0700",
+            size: 0,
+            ...entryMetadata,
+          },
+          {
+            path,
+            type: "file",
+            mode: "0600",
+            size: 1,
+            sha256: FILE_HASH,
+            ...entryMetadata,
+          },
           {
             path: "system/etc/comis/env",
             type: "file",
             mode: "0640",
             size: 1,
             sha256: FILE_HASH,
+            uid: 0,
+            gid: 1002,
+            mtimeNs: entryMetadata.mtimeNs,
+            aclSha256: ACL_HASH,
+            xattrSha256: XATTR_HASH,
+            capabilitySha256: CAPABILITY_HASH,
           },
         ],
       });
@@ -305,6 +392,68 @@ describe("production source snapshot seam", () => {
       expect(result.ok, path).toBe(false);
       if (!result.ok) expect(result.error.kind).toBe("unsafe_manifest_path");
     }
+  });
+
+  it("rejects absolute and root-escaping symlink targets", () => {
+    for (const linkTarget of ["/usr/bin/python3", "../../../system/etc/comis/env"]) {
+      const manifest = makeManifest({
+        entries: makeManifest().entries.map((entry) =>
+          entry.path === "data/models/python" && entry.type === "symlink"
+            ? { ...entry, linkTarget }
+            : entry,
+        ),
+      });
+
+      expect(parseProductionSnapshotManifest(JSON.stringify(manifest)).ok, linkTarget).toBe(
+        false,
+      );
+    }
+  });
+
+  it("rejects hardlink and metadata divergence from the canonical tree identity", () => {
+    const mismatchedHardlink = makeManifest({
+      entries: makeManifest().entries.map((entry) =>
+        entry.path === "data/memory.db.copy" ? { ...entry, uid: entry.uid + 1 } : entry,
+      ),
+    });
+    expect(parseProductionSnapshotManifest(JSON.stringify(mismatchedHardlink)).ok).toBe(false);
+
+    const metadataChanged = makeManifest();
+    const forged = {
+      ...metadataChanged,
+      entries: metadataChanged.entries.map((entry) =>
+        entry.path === "data/.env" ? { ...entry, mtimeNs: "1752560000123456790" } : entry,
+      ),
+    };
+    expect(parseProductionSnapshotManifest(JSON.stringify(forged)).ok).toBe(false);
+  });
+
+  it("declares unavailable metadata capabilities as explicit fidelity gaps", () => {
+    const withoutOptionalMetadata = makeManifest({
+      metadataIdentity: {
+        acl: "unavailable",
+        xattr: "unavailable",
+        capability: "unavailable",
+        gaps: [
+          { kind: "acl", reason: "source_tool_unavailable" },
+          { kind: "xattr", reason: "source_tool_unavailable" },
+          { kind: "capability", reason: "source_tool_unavailable" },
+        ],
+      },
+      entries: makeManifest().entries.map(
+        ({ aclSha256: _acl, xattrSha256: _xattr, capabilitySha256: _capability, ...entry }) =>
+          entry,
+      ),
+    });
+
+    const result = parseProductionSnapshotManifest(JSON.stringify(withoutOptionalMetadata));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.metadataIdentity.gaps.map(({ kind }) => kind).sort()).toEqual([
+      "acl",
+      "capability",
+      "xattr",
+    ]);
   });
 
   it("rejects duplicate overlapping and content-bearing manifest records", () => {
@@ -416,6 +565,110 @@ describe("production source snapshot seam", () => {
         });
         expect(checked.status, checked.stderr).toBe(0);
       }
+    }
+  });
+
+  it("inventories a real nested session tree without dereferencing hardlinks", () => {
+    const plan = buildProductionSnapshotPlan({
+      runId: "capture-real-layout-a1",
+      expectedMachineIdSha256: SOURCE_MACHINE,
+      service: "comis",
+      dataDir: "/home/comis/.comis",
+      captureMode: "offline",
+    });
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    const marker = "cat > \"$builder\" <<'NODE'\n";
+    const start = plan.value.prepare.stdin.indexOf(marker);
+    const end = plan.value.prepare.stdin.indexOf("\nNODE\n", start);
+    expect(start).toBeGreaterThan(0);
+    expect(end).toBeGreaterThan(start);
+    const builder = plan.value.prepare.stdin.slice(start + marker.length, end);
+    const syntax = spawnSync(process.execPath, ["--input-type=module", "--check", "-"], {
+      input: builder,
+      encoding: "utf8",
+    });
+    expect(syntax.status, syntax.stderr).toBe(0);
+
+    const stage = mkdtempSync(join(tmpdir(), "comis-snapshot-layout-"));
+    try {
+      const sessionDir = join(
+        stage,
+        "tree",
+        "data",
+        "workspace",
+        "sessions",
+        "tenant_a",
+        "telegram",
+      );
+      const systemDir = join(stage, "tree", "system", "etc", "comis");
+      mkdirSync(sessionDir, { recursive: true, mode: 0o700 });
+      mkdirSync(systemDir, { recursive: true, mode: 0o755 });
+      const sessionPath = join(sessionDir, "session.jsonl");
+      writeFileSync(sessionPath, '{"role":"user"}\n', { mode: 0o600 });
+      linkSync(sessionPath, join(sessionDir, "session.jsonl.copy"));
+      symlinkSync("session.jsonl", join(sessionDir, "latest"));
+      writeFileSync(join(systemDir, "env"), "COMIS_DATA_DIR=/tmp/test\n", { mode: 0o640 });
+      writeFileSync(join(stage, "exclusions.nul"), "", { mode: 0o600 });
+
+      const built = spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-",
+          stage,
+          "capture-real-layout-a1",
+          SOURCE_MACHINE,
+          "comis",
+          "offline",
+          "1752560000000",
+          "1752560000100",
+          "0",
+        ],
+        { input: builder, encoding: "utf8" },
+      );
+      expect(built.status, built.stderr).toBe(0);
+      const parsed = parseProductionSnapshotManifest(
+        readFileSync(join(stage, "manifest.json"), "utf8"),
+      );
+      expect(parsed.ok).toBe(true);
+      if (!parsed.ok) return;
+      expect(
+        parsed.value.entries.find(({ path }) => path.endsWith("session.jsonl.copy")),
+      ).toMatchObject({
+        type: "hardlink",
+        hardlinkTarget: expect.stringMatching(/session\.jsonl$/u),
+      });
+      expect(
+        parsed.value.entries.filter(({ type }) => type === "directory").every(({ size }) => size === 0),
+      ).toBe(true);
+      expect(parsed.value.treeIdentitySha256).toBe(
+        deriveProductionSnapshotTreeIdentity(parsed.value),
+      );
+
+      unlinkSync(join(stage, "manifest.json"));
+      unlinkSync(join(sessionDir, "latest"));
+      symlinkSync("/usr/bin/python3", join(sessionDir, "latest"));
+      const escaping = spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-",
+          stage,
+          "capture-real-layout-a1",
+          SOURCE_MACHINE,
+          "comis",
+          "offline",
+          "1752560000000",
+          "1752560000100",
+          "0",
+        ],
+        { input: builder, encoding: "utf8" },
+      );
+      expect(escaping.status).not.toBe(0);
+      expect(() => readFileSync(join(stage, "manifest.json"), "utf8")).toThrow();
+    } finally {
+      rmSync(stage, { recursive: true, force: true });
     }
   });
 });

@@ -16,6 +16,7 @@ import type { ProductionReplayProfile } from "./production-profile.js";
 import { buildReplayQuarantineOverlay } from "./production-quarantine.js";
 import {
   buildProductionSnapshotPlan,
+  deriveProductionSnapshotTreeIdentity,
   parseProductionSnapshotManifest,
   type ProductionSnapshotManifest,
   type ProductionSnapshotPlan,
@@ -127,7 +128,6 @@ const ARCHIVE_ENTRY_OVERHEAD_BYTES = 64 * 1024;
 const ARCHIVE_FIXED_OVERHEAD_BYTES = 64 * 1024 * 1024;
 const MAXIMUM_RESTORE_BYTES = 8 * 1024 * 1024 * 1024 * 1024;
 const DATA_DIR_DIGEST_DOMAIN = "comis-replay-data-dir-v1\0";
-const RESTORED_TREE_DIGEST_DOMAIN = "comis-replay-restored-tree-v1\0";
 
 function invalidRequest(
   field: string,
@@ -214,26 +214,6 @@ function calculateMaximumArchiveBytes(
   return ok(maximumBytes);
 }
 
-function buildRestoredTreeDigest(manifest: ProductionSnapshotManifest): string {
-  const digest = createHash("sha256").update(RESTORED_TREE_DIGEST_DOMAIN);
-  const entries = [...manifest.entries].sort((left, right) => left.path.localeCompare(right.path));
-  for (const entry of entries) {
-    digest
-      .update(entry.type)
-      .update("\0")
-      .update(entry.path)
-      .update("\0")
-      .update(entry.mode)
-      .update("\0")
-      .update(String(entry.size))
-      .update("\0");
-    if (entry.type === "file") digest.update(entry.sha256);
-    if (entry.type === "symlink") digest.update(entry.linkTarget);
-    digest.update("\0");
-  }
-  return digest.digest("hex");
-}
-
 function buildRestoreAttestation(
   dataDir: string,
   manifest: ProductionSnapshotManifest,
@@ -247,7 +227,7 @@ function buildRestoreAttestation(
       .update(dataDir)
       .digest("hex"),
     snapshotManifestSha256: manifestSha256,
-    restoredTreeDigestSha256: buildRestoredTreeDigest(manifest),
+    restoredTreeDigestSha256: deriveProductionSnapshotTreeIdentity(manifest),
     entryCount: manifest.entries.length,
     bytes: manifest.entries.reduce(
       (total, entry) => total + (entry.type === "file" ? entry.size : 0),
@@ -512,9 +492,9 @@ try:
             if name in seen or name not in expected_names:
                 fail()
             seen.add(name)
-            if member.isdev() or member.isfifo() or member.islnk():
+            if member.isdev() or member.isfifo():
                 fail()
-            if not (member.isfile() or member.isdir() or member.issym()):
+            if not (member.isfile() or member.isdir() or member.issym() or member.islnk()):
                 fail()
             if name == "manifest.json":
                 if not member.isfile() or member.size != len(expected_raw) or member.mode != 0o600:
@@ -524,11 +504,26 @@ try:
                     fail()
                 continue
             record = records[name]
-            actual_type = "file" if member.isfile() else "directory" if member.isdir() else "symlink"
-            if actual_type != record["type"] or member.mode != int(record["mode"], 8):
+            if member.isfile() or member.islnk():
+                if record["type"] not in ("file", "hardlink"):
+                    fail()
+            else:
+                actual_type = "directory" if member.isdir() else "symlink"
+                if actual_type != record["type"]:
+                    fail()
+            if member.mode != int(record["mode"], 8) or member.uid != record["uid"] or member.gid != record["gid"]:
                 fail()
             if member.isfile() and member.size != record["size"]:
                 fail()
+            if member.islnk():
+                target_name = safe_path(member.linkname)
+                target = records.get(target_name)
+                if target is None or target["type"] not in ("file", "hardlink"):
+                    fail()
+                canonical = record.get("hardlinkTarget", name)
+                target_canonical = target.get("hardlinkTarget", target_name)
+                if canonical != target_canonical:
+                    fail()
             if member.issym():
                 if member.linkname != record["linkTarget"]:
                     fail()
@@ -542,14 +537,16 @@ except (OSError, KeyError, TypeError, ValueError, tarfile.TarError):
     fail()
 PYTHON_ARCHIVE
 if [ -n "$(find "$extract_dir" -mindepth 1 -print -quit)" ]; then exit 92; fi
-tar --extract --file="$archive" --directory="$extract_dir" --acls --xattrs \
+tar --extract --file="$archive" --directory="$extract_dir" --acls --xattrs --xattrs-include='*' \
   --numeric-owner --same-owner --same-permissions --delay-directory-restore --no-overwrite-dir
 python3 - "$extract_dir" "$expected_manifest" <<'PYTHON_VERIFY'
 import hashlib
 import json
 import os
+import shutil
 import sqlite3
 import stat
+import subprocess
 import sys
 from urllib.parse import quote
 
@@ -570,23 +567,68 @@ def file_hash(path):
                 return digest.hexdigest()
             digest.update(chunk)
 
+def command_output(command, arguments):
+    completed = subprocess.run(
+        [command, *arguments], check=False, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+    )
+    if completed.returncode != 0:
+        fail()
+    return completed.stdout.decode("utf8")
+
+def metadata_digests(path, is_symlink, identity):
+    result = {}
+    if identity["acl"] == "captured":
+        value = "" if is_symlink else command_output("getfacl", ["-cEn", "--", path])
+        result["aclSha256"] = hashlib.sha256(value.encode("utf8")).hexdigest()
+    if identity["xattr"] == "captured":
+        arguments = ["--absolute-names", "--dump", "--encoding=hex", "-m", "-"]
+        if is_symlink:
+            arguments.append("-h")
+        output = command_output("getfattr", [*arguments, "--", path])
+        lines = [line for line in output.split("\n") if line and not line.startswith("#")]
+        canonical = "\n".join(sorted(lines, key=lambda line: line.encode("utf8")))
+        result["xattrSha256"] = hashlib.sha256(canonical.encode("utf8")).hexdigest()
+    if identity["capability"] == "captured":
+        canonical = ""
+        if not is_symlink:
+            output = command_output("getcap", ["-n", path]).strip()
+            prefix = path + " "
+            canonical = output[len(prefix):] if output.startswith(prefix) else output
+        result["capabilitySha256"] = hashlib.sha256(canonical.encode("utf8")).hexdigest()
+    return result
+
 try:
     manifest = json.load(open(manifest_path, "r", encoding="utf8"))
     records = {entry["path"]: entry for entry in manifest["entries"]}
     expected_paths = set(records)
     actual_paths = set()
+    actual_stats = {}
+    identity = manifest["metadataIdentity"]
+    for kind, command in (("acl", "getfacl"), ("xattr", "getfattr"), ("capability", "getcap")):
+        if identity[kind] == "captured" and shutil.which(command) is None:
+            fail()
 
     def walk(relative):
         absolute = os.path.join(root, relative)
         value = os.lstat(absolute)
         actual_paths.add(relative)
+        actual_stats[relative] = value
         record = records.get(relative)
-        if record is None or mode_of(value) != record["mode"]:
+        if (
+            record is None
+            or mode_of(value) != record["mode"]
+            or value.st_uid != record["uid"]
+            or value.st_gid != record["gid"]
+            or str(value.st_mtime_ns) != record["mtimeNs"]
+        ):
+            fail()
+        metadata = metadata_digests(absolute, stat.S_ISLNK(value.st_mode), identity)
+        if any(record.get(field) != digest for field, digest in metadata.items()):
             fail()
         if stat.S_ISREG(value.st_mode):
-            if record["type"] != "file" or value.st_size != record["size"]:
+            if record["type"] not in ("file", "hardlink") or value.st_size != record["size"]:
                 fail()
-            if file_hash(absolute) != record["sha256"]:
+            if record["type"] == "file" and file_hash(absolute) != record["sha256"]:
                 fail()
             return
         if stat.S_ISLNK(value.st_mode):
@@ -597,20 +639,34 @@ try:
             return
         if not stat.S_ISDIR(value.st_mode) or record["type"] != "directory":
             fail()
-        for child in sorted(os.listdir(absolute)):
+        for child in sorted(os.listdir(absolute), key=lambda name: name.encode("utf8")):
             walk(relative + "/" + child)
 
     walk("data")
     walk("system")
     if actual_paths != expected_paths:
         fail()
+    canonical_inodes = {}
+    for relative in sorted(expected_paths, key=lambda path: path.encode("utf8")):
+        record = records[relative]
+        if record["type"] == "file":
+            inode = (actual_stats[relative].st_dev, actual_stats[relative].st_ino)
+            if inode in canonical_inodes:
+                fail()
+            canonical_inodes[inode] = relative
+        elif record["type"] == "hardlink":
+            target = record["hardlinkTarget"]
+            value = actual_stats[relative]
+            target_value = actual_stats.get(target)
+            if target_value is None or (value.st_dev, value.st_ino) != (target_value.st_dev, target_value.st_ino):
+                fail()
     excluded_paths = {entry["path"] for entry in manifest["exclusions"]}
     for relative in excluded_paths:
         if os.path.lexists(os.path.join(root, relative)):
             fail()
 
     databases = []
-    for relative in sorted(expected_paths):
+    for relative in sorted(expected_paths, key=lambda path: path.encode("utf8")):
         record = records[relative]
         if record["type"] != "file" or not relative.startswith("data/"):
             continue
@@ -646,25 +702,14 @@ manifest_path, data_dir, manifest_sha256, output_path = sys.argv[1:]
 
 try:
     manifest = json.load(open(manifest_path, "r", encoding="utf8"))
-    digest = hashlib.sha256(b"comis-replay-restored-tree-v1\0")
-    total_bytes = 0
-    for entry in sorted(manifest["entries"], key=lambda item: item["path"]):
-        for value in (entry["type"], entry["path"], entry["mode"], str(entry["size"])):
-            digest.update(value.encode("utf8"))
-            digest.update(b"\0")
-        if entry["type"] == "file":
-            digest.update(entry["sha256"].encode("utf8"))
-            total_bytes += entry["size"]
-        elif entry["type"] == "symlink":
-            digest.update(entry["linkTarget"].encode("utf8"))
-        digest.update(b"\0")
+    total_bytes = sum(entry["size"] for entry in manifest["entries"] if entry["type"] == "file")
     data_digest = hashlib.sha256(b"comis-replay-data-dir-v1\0" + data_dir.encode("utf8"))
     attestation = {
         "schemaVersion": 1,
         "state": "committed",
         "dataDirSha256": data_digest.hexdigest(),
         "snapshotManifestSha256": manifest_sha256,
-        "restoredTreeDigestSha256": digest.hexdigest(),
+        "restoredTreeDigestSha256": manifest["treeIdentitySha256"],
         "entryCount": len(manifest["entries"]),
         "bytes": total_bytes,
     }
@@ -685,7 +730,6 @@ chattr +i "$source_env_copy"
 case "$(lsattr -d "$source_env_copy" | awk '{print $1}')" in *i*) ;; *) exit 95 ;; esac
 service_group="$(id -gn "$service_user")"
 mv -- "$extract_dir/data" "$incoming_data"
-chown -hR "$service_user:$service_group" "$incoming_data"
 cp --archive --no-dereference -- "$source_env" "$env_incoming"
 printf '\n\nCOMIS_CONFIG_PATHS=%s/config.yaml:%s\n' "$data_dir" "$overlay_path" >> "$env_incoming"
 chown root:"$service_group" "$env_incoming"

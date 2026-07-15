@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { isAbsolute } from "node:path";
+import { createHash, type Hash } from "node:crypto";
 
 import { err, ok, tryCatch, type Result } from "@comis/shared";
 
-export type ProductionSnapshotEntryType = "file" | "directory" | "symlink";
+export type ProductionSnapshotEntryType = "file" | "directory" | "symlink" | "hardlink";
 
 export type ProductionSnapshotExcludedType =
   | ProductionSnapshotEntryType
@@ -24,8 +25,32 @@ export interface ProductionSnapshotEntry {
   readonly type: ProductionSnapshotEntryType;
   readonly mode: string;
   readonly size: number;
+  readonly uid: number;
+  readonly gid: number;
+  /** Signed decimal nanoseconds since the Unix epoch. */
+  readonly mtimeNs: string;
   readonly sha256?: string;
   readonly linkTarget?: string;
+  readonly hardlinkTarget?: string;
+  readonly aclSha256?: string;
+  readonly xattrSha256?: string;
+  readonly capabilitySha256?: string;
+}
+
+export type ProductionSnapshotMetadataKind = "acl" | "xattr" | "capability";
+
+export type ProductionSnapshotMetadataStatus = "captured" | "unavailable";
+
+export interface ProductionSnapshotMetadataGap {
+  readonly kind: ProductionSnapshotMetadataKind;
+  readonly reason: "source_tool_unavailable";
+}
+
+export interface ProductionSnapshotMetadataIdentity {
+  readonly acl: ProductionSnapshotMetadataStatus;
+  readonly xattr: ProductionSnapshotMetadataStatus;
+  readonly capability: ProductionSnapshotMetadataStatus;
+  readonly gaps: readonly ProductionSnapshotMetadataGap[];
 }
 
 export interface ProductionSnapshotExclusion {
@@ -45,6 +70,8 @@ export interface ProductionSnapshotManifest {
   readonly captureStartedAtMs: number;
   readonly captureCompletedAtMs: number;
   readonly freezeDurationMs: number;
+  readonly metadataIdentity: ProductionSnapshotMetadataIdentity;
+  readonly treeIdentitySha256: string;
   readonly entries: readonly ProductionSnapshotEntry[];
   readonly exclusions: readonly ProductionSnapshotExclusion[];
 }
@@ -102,12 +129,60 @@ const SHA256_RE = /^[a-f0-9]{64}$/u;
 const SAFE_RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u;
 const SAFE_SERVICE_RE = /^[A-Za-z_][A-Za-z0-9_.@-]*$/u;
 const MODE_RE = /^[0-7]{4}$/u;
+const MTIME_NS_RE = /^-?(?:0|[1-9][0-9]{0,29})$/u;
 const DEFAULT_WATCHDOG_SECONDS = 60;
 const MIN_WATCHDOG_SECONDS = 5;
 const MAX_WATCHDOG_SECONDS = 300;
 const MAX_MANIFEST_BYTES = 64 * 1024 * 1024;
 const MAX_MANIFEST_RECORDS = 2_000_000;
 const STAGE_ROOT = "/run/comis-self-driving";
+const TREE_IDENTITY_DOMAIN = "comis-snapshot-tree-v1\0";
+
+function compareUtf8(left: string, right: string): number {
+  return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
+}
+
+function updateIdentityField(hash: Hash, value: string): void {
+  hash.update(value).update("\0");
+}
+
+/** Canonical content and filesystem-metadata identity shared by capture and restore. */
+export function deriveProductionSnapshotTreeIdentity(
+  manifest: Pick<ProductionSnapshotManifest, "entries" | "metadataIdentity">,
+): string {
+  const hash = createHash("sha256").update(TREE_IDENTITY_DOMAIN);
+  updateIdentityField(hash, manifest.metadataIdentity.acl);
+  updateIdentityField(hash, manifest.metadataIdentity.xattr);
+  updateIdentityField(hash, manifest.metadataIdentity.capability);
+  for (const gap of [...manifest.metadataIdentity.gaps].sort((left, right) =>
+    compareUtf8(left.kind, right.kind),
+  )) {
+    updateIdentityField(hash, gap.kind);
+    updateIdentityField(hash, gap.reason);
+  }
+  for (const entry of [...manifest.entries].sort((left, right) =>
+    compareUtf8(left.path, right.path),
+  )) {
+    for (const value of [
+      entry.path,
+      entry.type,
+      entry.mode,
+      String(entry.size),
+      String(entry.uid),
+      String(entry.gid),
+      entry.mtimeNs ?? "",
+      entry.sha256 ?? "",
+      entry.linkTarget ?? "",
+      entry.hardlinkTarget ?? "",
+      entry.aclSha256 ?? "",
+      entry.xattrSha256 ?? "",
+      entry.capabilitySha256 ?? "",
+    ]) {
+      updateIdentityField(hash, value);
+    }
+  }
+  return hash.digest("hex");
+}
 
 function hasControlCharacters(value: string): boolean {
   for (const character of value) {
@@ -229,7 +304,7 @@ fi
 tree_fingerprint() {
   (
     cd -- "$data_dir"
-    find -P . -printf '%P\t%y\t%m\t%s\t%T@\t%C@\0' \
+    find -P . -printf '%P\t%y\t%m\t%U\t%G\t%s\t%T@\t%C@\t%D:%i:%n\0' \
       | LC_ALL=C sort -z \
       | sha256sum \
       | awk '{print $1}'
@@ -281,15 +356,15 @@ chmod 0600 "$exclusion_list"
     done
 )
 
-tar --create --file=- --acls --xattrs --numeric-owner --atime-preserve=system --sparse \
+tar --create --file=- --format=posix --acls --xattrs --xattrs-include='*' --numeric-owner --atime-preserve=system --sparse \
   --no-recursion --null --verbatim-files-from --directory="$data_dir" \
   --files-from="$include_list" \
-  | tar --extract --file=- --acls --xattrs --numeric-owner --same-owner \
+  | tar --extract --file=- --acls --xattrs --xattrs-include='*' --numeric-owner --same-owner \
       --same-permissions --directory="$tree_dir/data"
 
-tar --create --file=- --acls --xattrs --numeric-owner --atime-preserve=system \
+tar --create --file=- --format=posix --acls --xattrs --xattrs-include='*' --numeric-owner --atime-preserve=system \
   --directory=/ etc/comis/env \
-  | tar --extract --file=- --acls --xattrs --numeric-owner --same-owner \
+  | tar --extract --file=- --acls --xattrs --xattrs-include='*' --numeric-owner --same-owner \
       --same-permissions --directory="$tree_dir/system"
 
 tree_fingerprint_after="$(tree_fingerprint)"
@@ -317,6 +392,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
 const [stageDir, runId, machineId, service, captureMode, startedRaw, completedRaw, freezeRaw] = process.argv.slice(2);
@@ -328,6 +404,11 @@ const exclusionsPath = join(stageDir, "exclusions.nul");
 const manifestPath = join(stageDir, "manifest.json");
 const manifestTmp = manifestPath + ".tmp";
 const controlPattern = /[\u0000-\u001f\u007f]/u;
+const emptySha256 = createHash("sha256").update("").digest("hex");
+
+function compareUtf8(left, right) {
+  return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
+}
 
 function safePath(value) {
   if (value.length === 0 || value.startsWith("/") || value.includes("\\") || controlPattern.test(value)) {
@@ -357,36 +438,155 @@ function hashFile(path) {
 }
 
 function modeOf(stat) {
-  return (stat.mode & 0o7777).toString(8).padStart(4, "0");
+  return Number(stat.mode & 0o7777n).toString(8).padStart(4, "0");
 }
 
-const entries = [];
+function safeNumber(value, field) {
+  const result = Number(value);
+  if (!Number.isSafeInteger(result) || result < 0) throw new Error(field + " is unsafe");
+  return result;
+}
+
+function safeLinkTarget(entryPath, target) {
+  if (
+    target.length === 0 ||
+    target.startsWith("/") ||
+    target.includes("\\") ||
+    controlPattern.test(target)
+  ) {
+    throw new Error("symlink target is unsafe for the manifest");
+  }
+  const resolved = entryPath.split("/").slice(0, -1);
+  const rootDepth = 1;
+  for (const segment of target.split("/")) {
+    if (segment === "" || segment === ".") {
+      if (segment === "") throw new Error("symlink target is unsafe for the manifest");
+      continue;
+    }
+    if (segment === "..") {
+      if (resolved.length <= rootDepth) {
+        throw new Error("symlink target escapes its restorable root");
+      }
+      resolved.pop();
+      continue;
+    }
+    resolved.push(segment);
+  }
+  return target;
+}
+
+function commandAvailable(name) {
+  const checked = spawnSync("/bin/sh", ["-c", "command -v " + name + " >/dev/null 2>&1"]);
+  return checked.status === 0;
+}
+
+const metadataIdentity = {
+  acl: commandAvailable("getfacl") ? "captured" : "unavailable",
+  xattr: commandAvailable("getfattr") ? "captured" : "unavailable",
+  capability: commandAvailable("getcap") ? "captured" : "unavailable",
+  gaps: [],
+};
+for (const kind of ["acl", "xattr", "capability"]) {
+  if (metadataIdentity[kind] === "unavailable") {
+    metadataIdentity.gaps.push({ kind, reason: "source_tool_unavailable" });
+  }
+}
+
+function commandOutput(command, args) {
+  const result = spawnSync(command, args, { encoding: "utf8", maxBuffer: 1024 * 1024 });
+  if (result.status !== 0 || result.error) throw new Error(command + " metadata capture failed");
+  return result.stdout;
+}
+
+function metadataDigests(path, isSymlink) {
+  const result = {};
+  if (metadataIdentity.acl === "captured") {
+    const value = isSymlink ? "" : commandOutput("getfacl", ["-cEn", "--", path]);
+    result.aclSha256 = createHash("sha256").update(value).digest("hex");
+  }
+  if (metadataIdentity.xattr === "captured") {
+    const output = commandOutput("getfattr", [
+      "--absolute-names",
+      "--dump",
+      "--encoding=hex",
+      "-m",
+      "-",
+      ...(isSymlink ? ["-h"] : []),
+      "--",
+      path,
+    ]);
+    const canonical = output
+      .split("\n")
+      .filter((line) => line.length > 0 && !line.startsWith("#"))
+      .sort(compareUtf8)
+      .join("\n");
+    result.xattrSha256 = createHash("sha256").update(canonical).digest("hex");
+  }
+  if (metadataIdentity.capability === "captured") {
+    let canonical = "";
+    if (!isSymlink) {
+      const output = commandOutput("getcap", ["-n", path]).trim();
+      canonical = output.startsWith(path + " ") ? output.slice(path.length + 1) : output;
+    }
+    result.capabilitySha256 = canonical.length === 0
+      ? emptySha256
+      : createHash("sha256").update(canonical).digest("hex");
+  }
+  return result;
+}
+
+const candidates = [];
 function walk(absolutePath, relativePath) {
   const safeRelative = safePath(relativePath);
-  const stat = lstatSync(absolutePath, { bigint: false });
-  if (!Number.isSafeInteger(stat.size) || stat.size < 0) throw new Error("entry size is unsafe");
-  const base = { path: safeRelative, mode: modeOf(stat), size: stat.size };
+  const stat = lstatSync(absolutePath, { bigint: true });
+  const base = {
+    path: safeRelative,
+    mode: modeOf(stat),
+    size: safeNumber(stat.size, "entry size"),
+    uid: safeNumber(stat.uid, "entry uid"),
+    gid: safeNumber(stat.gid, "entry gid"),
+    mtimeNs: stat.mtimeNs.toString(),
+    ...metadataDigests(absolutePath, stat.isSymbolicLink()),
+  };
   if (stat.isFile()) {
-    entries.push({ ...base, type: "file", sha256: hashFile(absolutePath) });
+    candidates.push({
+      ...base,
+      type: "file",
+      absolutePath,
+      inodeKey: stat.dev.toString() + ":" + stat.ino.toString(),
+    });
     return;
   }
   if (stat.isSymbolicLink()) {
-    const linkTarget = readlinkSync(absolutePath);
-    if (linkTarget.length === 0 || controlPattern.test(linkTarget)) {
-      throw new Error("symlink target is unsafe for the manifest");
-    }
-    entries.push({ ...base, type: "symlink", linkTarget });
+    const linkTarget = safeLinkTarget(safeRelative, readlinkSync(absolutePath));
+    candidates.push({ ...base, type: "symlink", linkTarget });
     return;
   }
   if (!stat.isDirectory()) throw new Error("staging tree contains an unsupported entry");
-  entries.push({ ...base, type: "directory" });
-  for (const name of readdirSync(absolutePath).sort((left, right) => left.localeCompare(right))) {
+  candidates.push({ ...base, type: "directory", size: 0 });
+  for (const name of readdirSync(absolutePath).sort(compareUtf8)) {
     walk(join(absolutePath, name), safeRelative + "/" + name);
   }
 }
 walk(join(treeDir, "data"), "data");
 walk(join(treeDir, "system"), "system");
-entries.sort((left, right) => left.path.localeCompare(right.path));
+candidates.sort((left, right) => compareUtf8(left.path, right.path));
+const canonicalInodes = new Map();
+const entries = [];
+for (const candidate of candidates) {
+  if (candidate.type !== "file") {
+    entries.push(candidate);
+    continue;
+  }
+  const { absolutePath, inodeKey, ...base } = candidate;
+  const canonicalPath = canonicalInodes.get(inodeKey);
+  if (canonicalPath !== undefined) {
+    entries.push({ ...base, type: "hardlink", hardlinkTarget: canonicalPath });
+    continue;
+  }
+  canonicalInodes.set(inodeKey, candidate.path);
+  entries.push({ ...base, sha256: hashFile(absolutePath) });
+}
 
 const exclusionBuffer = readFileSync(exclusionsPath);
 const exclusionParts = exclusionBuffer.toString("utf8").split("\0");
@@ -406,7 +606,40 @@ for (let index = 0; index < exclusionParts.length; index += 5) {
   if (!Number.isSafeInteger(size)) throw new Error("exclusion size is unsafe");
   exclusions.push({ path, type, mode: rawMode.padStart(4, "0"), size, reason });
 }
-exclusions.sort((left, right) => left.path.localeCompare(right.path));
+exclusions.sort((left, right) => compareUtf8(left.path, right.path));
+
+function updateIdentityField(hash, value) {
+  hash.update(value).update("\0");
+}
+
+function treeIdentity() {
+  const hash = createHash("sha256").update("comis-snapshot-tree-v1\0");
+  updateIdentityField(hash, metadataIdentity.acl);
+  updateIdentityField(hash, metadataIdentity.xattr);
+  updateIdentityField(hash, metadataIdentity.capability);
+  for (const gap of [...metadataIdentity.gaps].sort((left, right) => compareUtf8(left.kind, right.kind))) {
+    updateIdentityField(hash, gap.kind);
+    updateIdentityField(hash, gap.reason);
+  }
+  for (const entry of entries) {
+    for (const value of [
+      entry.path,
+      entry.type,
+      entry.mode,
+      String(entry.size),
+      String(entry.uid),
+      String(entry.gid),
+      entry.mtimeNs,
+      entry.sha256 ?? "",
+      entry.linkTarget ?? "",
+      entry.hardlinkTarget ?? "",
+      entry.aclSha256 ?? "",
+      entry.xattrSha256 ?? "",
+      entry.capabilitySha256 ?? "",
+    ]) updateIdentityField(hash, value);
+  }
+  return hash.digest("hex");
+}
 
 const manifest = {
   schemaVersion: 1,
@@ -417,6 +650,8 @@ const manifest = {
   captureStartedAtMs: Number(startedRaw),
   captureCompletedAtMs: Number(completedRaw),
   freezeDurationMs: Number(freezeRaw),
+  metadataIdentity,
+  treeIdentitySha256: treeIdentity(),
   entries,
   exclusions,
 };
@@ -560,7 +795,7 @@ cleanup_stream() {
   exit "$rc"
 }
 trap cleanup_stream EXIT HUP INT TERM
-tar --create --file=- --format=posix --acls --xattrs --numeric-owner --hard-dereference \
+tar --create --file=- --format=posix --acls --xattrs --xattrs-include='*' --numeric-owner \
   --atime-preserve=system --sparse --directory="$stage_dir" \
   --transform='flags=rh;s|^tree/||' manifest.json tree/data tree/system
 `;
@@ -798,18 +1033,114 @@ function readNonNegativeInteger(
   return ok(value);
 }
 
-function parseEntry(value: unknown): Result<ProductionSnapshotEntry, ProductionSnapshotError> {
+function isSafeLinkTarget(entryPath: string, target: string): boolean {
+  if (
+    target.length === 0 ||
+    target.length > 8192 ||
+    target.startsWith("/") ||
+    target.includes("\\") ||
+    hasControlCharacters(target)
+  ) {
+    return false;
+  }
+  const resolved = entryPath.split("/").slice(0, -1);
+  for (const segment of target.split("/")) {
+    if (segment === "") return false;
+    if (segment === ".") continue;
+    if (segment === "..") {
+      if (resolved.length <= 1) return false;
+      resolved.pop();
+      continue;
+    }
+    resolved.push(segment);
+  }
+  return true;
+}
+
+function parseMetadataIdentity(
+  value: unknown,
+): Result<ProductionSnapshotMetadataIdentity, ProductionSnapshotError> {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, ["acl", "xattr", "capability", "gaps"])
+  ) {
+    return malformedManifest(
+      "metadataIdentity",
+      "Snapshot metadata identity declaration is malformed",
+    );
+  }
+  const statuses = [value["acl"], value["xattr"], value["capability"]];
+  if (statuses.some((status) => status !== "captured" && status !== "unavailable")) {
+    return malformedManifest(
+      "metadataIdentity",
+      "Snapshot metadata identity status is invalid",
+    );
+  }
+  if (!Array.isArray(value["gaps"]) || value["gaps"].length > 3) {
+    return malformedManifest("metadataIdentity.gaps", "Snapshot metadata gaps are invalid");
+  }
+  const gaps: ProductionSnapshotMetadataGap[] = [];
+  const seen = new Set<ProductionSnapshotMetadataKind>();
+  for (const gap of value["gaps"]) {
+    if (
+      !isRecord(gap) ||
+      !hasOnlyKeys(gap, ["kind", "reason"]) ||
+      (gap["kind"] !== "acl" && gap["kind"] !== "xattr" && gap["kind"] !== "capability") ||
+      gap["reason"] !== "source_tool_unavailable" ||
+      seen.has(gap["kind"])
+    ) {
+      return malformedManifest("metadataIdentity.gaps", "Snapshot metadata gap is invalid");
+    }
+    seen.add(gap["kind"]);
+    gaps.push({ kind: gap["kind"], reason: "source_tool_unavailable" });
+  }
+  const metadataIdentity: ProductionSnapshotMetadataIdentity = {
+    acl: value["acl"] as ProductionSnapshotMetadataStatus,
+    xattr: value["xattr"] as ProductionSnapshotMetadataStatus,
+    capability: value["capability"] as ProductionSnapshotMetadataStatus,
+    gaps,
+  };
+  for (const kind of ["acl", "xattr", "capability"] as const) {
+    const hasGap = seen.has(kind);
+    if ((metadataIdentity[kind] === "unavailable") !== hasGap) {
+      return malformedManifest(
+        "metadataIdentity.gaps",
+        "Snapshot metadata gaps do not match capture availability",
+      );
+    }
+  }
+  return ok(metadataIdentity);
+}
+
+function parseEntry(
+  value: unknown,
+  metadataIdentity: ProductionSnapshotMetadataIdentity,
+): Result<ProductionSnapshotEntry, ProductionSnapshotError> {
   if (!isRecord(value)) return malformedManifest("entries", "Snapshot entry must be an object");
   const type = value["type"];
-  if (type !== "file" && type !== "directory" && type !== "symlink") {
+  if (type !== "file" && type !== "directory" && type !== "symlink" && type !== "hardlink") {
     return malformedManifest("entries.type", "Snapshot entry type is not recognized");
   }
-  const keys =
+  const keys = [
+    "path",
+    "type",
+    "mode",
+    "size",
+    "uid",
+    "gid",
+    "mtimeNs",
+    ...(metadataIdentity.acl === "captured" ? ["aclSha256"] : []),
+    ...(metadataIdentity.xattr === "captured" ? ["xattrSha256"] : []),
+    ...(metadataIdentity.capability === "captured" ? ["capabilitySha256"] : []),
+    ...(
     type === "file"
-      ? ["path", "type", "mode", "size", "sha256"]
+      ? ["sha256"]
       : type === "symlink"
-        ? ["path", "type", "mode", "size", "linkTarget"]
-        : ["path", "type", "mode", "size"];
+        ? ["linkTarget"]
+        : type === "hardlink"
+          ? ["hardlinkTarget"]
+          : []),
+  ];
   if (!hasOnlyKeys(value, keys)) {
     return malformedManifest(
       "entries",
@@ -822,32 +1153,73 @@ function parseEntry(value: unknown): Result<ProductionSnapshotEntry, ProductionS
   if (!mode.ok) return mode;
   const size = readNonNegativeInteger(value["size"], "entries.size");
   if (!size.ok) return size;
+  const uid = readNonNegativeInteger(value["uid"], "entries.uid");
+  if (!uid.ok) return uid;
+  const gid = readNonNegativeInteger(value["gid"], "entries.gid");
+  if (!gid.ok) return gid;
+  const mtimeNs = value["mtimeNs"];
+  if (typeof mtimeNs !== "string" || !MTIME_NS_RE.test(mtimeNs)) {
+    return malformedManifest(
+      "entries.mtimeNs",
+      "Snapshot modification time must be signed decimal nanoseconds",
+    );
+  }
+  const metadata: {
+    aclSha256?: string;
+    xattrSha256?: string;
+    capabilitySha256?: string;
+  } = {};
+  for (const [status, field] of [
+    [metadataIdentity.acl, "aclSha256"],
+    [metadataIdentity.xattr, "xattrSha256"],
+    [metadataIdentity.capability, "capabilitySha256"],
+  ] as const) {
+    if (status !== "captured") continue;
+    const digest = value[field];
+    if (typeof digest !== "string" || !SHA256_RE.test(digest)) {
+      return malformedManifest(`entries.${field}`, "Snapshot metadata digest is invalid");
+    }
+    metadata[field] = digest;
+  }
+  const base = {
+    path: path.value,
+    mode: mode.value,
+    size: size.value,
+    uid: uid.value,
+    gid: gid.value,
+    mtimeNs,
+    ...metadata,
+  };
+  if (type === "directory" && size.value !== 0) {
+    return malformedManifest(
+      "entries.size",
+      "Snapshot directory size must use the portable canonical zero value",
+    );
+  }
   if (type === "file") {
     const sha256 = value["sha256"];
     if (typeof sha256 !== "string" || !SHA256_RE.test(sha256)) {
       return malformedManifest("entries.sha256", "Snapshot file digest is invalid");
     }
-    return ok({ path: path.value, type, mode: mode.value, size: size.value, sha256 });
+    return ok({ ...base, type, sha256 });
   }
   if (type === "symlink") {
     const linkTarget = value["linkTarget"];
     if (
       typeof linkTarget !== "string" ||
-      linkTarget.length === 0 ||
-      linkTarget.length > 8192 ||
-      hasControlCharacters(linkTarget)
+      !isSafeLinkTarget(path.value, linkTarget) ||
+      size.value !== Buffer.byteLength(linkTarget, "utf8")
     ) {
       return malformedManifest("entries.linkTarget", "Snapshot symlink target is invalid");
     }
-    return ok({
-      path: path.value,
-      type,
-      mode: mode.value,
-      size: size.value,
-      linkTarget,
-    });
+    return ok({ ...base, type, linkTarget });
   }
-  return ok({ path: path.value, type, mode: mode.value, size: size.value });
+  if (type === "hardlink") {
+    const hardlinkTarget = validatePath(value["hardlinkTarget"]);
+    if (!hardlinkTarget.ok) return hardlinkTarget;
+    return ok({ ...base, type, hardlinkTarget: hardlinkTarget.value });
+  }
+  return ok({ ...base, type });
 }
 
 const EXCLUDED_TYPES = new Set<ProductionSnapshotExcludedType>([
@@ -946,6 +1318,8 @@ function validateManifestObject(
       "captureStartedAtMs",
       "captureCompletedAtMs",
       "freezeDurationMs",
+      "metadataIdentity",
+      "treeIdentitySha256",
       "entries",
       "exclusions",
     ])
@@ -988,6 +1362,12 @@ function validateManifestObject(
   ) {
     return malformedManifest("captureCompletedAtMs", "Snapshot capture timing is inconsistent");
   }
+  const metadataIdentity = parseMetadataIdentity(value["metadataIdentity"]);
+  if (!metadataIdentity.ok) return metadataIdentity;
+  const treeIdentitySha256 = value["treeIdentitySha256"];
+  if (typeof treeIdentitySha256 !== "string" || !SHA256_RE.test(treeIdentitySha256)) {
+    return malformedManifest("treeIdentitySha256", "Snapshot tree identity is invalid");
+  }
 
   const entryValues = value["entries"];
   const exclusionValues = value["exclusions"];
@@ -1002,7 +1382,7 @@ function validateManifestObject(
   }
   const entries: ProductionSnapshotEntry[] = [];
   for (const entryValue of entryValues) {
-    const entry = parseEntry(entryValue);
+    const entry = parseEntry(entryValue, metadataIdentity.value);
     if (!entry.ok) return entry;
     if (
       entry.value.path !== "data" &&
@@ -1058,6 +1438,29 @@ function validateManifestObject(
     }
     exclusionPaths.add(exclusion.path);
   }
+  const entriesByPath = new Map(entries.map((entry) => [entry.path, entry]));
+  for (const entry of entries) {
+    if (entry.type !== "hardlink") continue;
+    const target = entriesByPath.get(entry.hardlinkTarget ?? "");
+    if (
+      target?.type !== "file" ||
+      compareUtf8(target.path, entry.path) >= 0 ||
+      target.path.split("/", 1)[0] !== entry.path.split("/", 1)[0] ||
+      target.mode !== entry.mode ||
+      target.size !== entry.size ||
+      target.uid !== entry.uid ||
+      target.gid !== entry.gid ||
+      target.mtimeNs !== entry.mtimeNs ||
+      target.aclSha256 !== entry.aclSha256 ||
+      target.xattrSha256 !== entry.xattrSha256 ||
+      target.capabilitySha256 !== entry.capabilitySha256
+    ) {
+      return err({
+        kind: "inconsistent_manifest",
+        message: "Snapshot hardlink does not reference its canonical file identity",
+      });
+    }
+  }
   const dataRoot = entries.find(({ path }) => path === "data");
   const environment = entries.find(({ path }) => path === "system/etc/comis/env");
   if (dataRoot?.type !== "directory" || environment?.type !== "file") {
@@ -1078,7 +1481,7 @@ function validateManifestObject(
     }
   }
 
-  return ok({
+  const manifest: ProductionSnapshotManifest = {
     schemaVersion: 1,
     runId,
     sourceMachineIdSha256: machineId,
@@ -1087,9 +1490,18 @@ function validateManifestObject(
     captureStartedAtMs: started.value,
     captureCompletedAtMs: completed.value,
     freezeDurationMs: freezeDuration.value,
+    metadataIdentity: metadataIdentity.value,
+    treeIdentitySha256,
     entries,
     exclusions,
-  });
+  };
+  if (deriveProductionSnapshotTreeIdentity(manifest) !== treeIdentitySha256) {
+    return err({
+      kind: "inconsistent_manifest",
+      message: "Snapshot tree identity does not match its canonical records",
+    });
+  }
+  return ok(manifest);
 }
 
 export function parseProductionSnapshotManifest(

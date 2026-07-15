@@ -15,7 +15,10 @@ import {
 import {
   buildProductionSnapshotPlan,
   parseProductionSnapshotManifest,
+  type ProductionSnapshotMetadataKind,
+  type ProductionSnapshotMetadataStatus,
   type ProductionSnapshotCaptureMode,
+  type ProductionSnapshotManifest,
   type ProductionSnapshotPlan,
 } from "./production-snapshot.js";
 
@@ -39,6 +42,16 @@ export interface ProductionStateCloneReport {
   readonly bytesTransferred: number;
   readonly entries: number;
   readonly exclusions: number;
+  readonly treeIdentitySha256: string;
+  /** Canonical payload bytes count each regular file once and exclude directory and hardlink sizes. */
+  readonly fileContentBytes: number;
+  readonly metadataIdentity: {
+    readonly fidelity: "exact" | "gapped";
+    readonly acl: ProductionSnapshotMetadataStatus;
+    readonly xattr: ProductionSnapshotMetadataStatus;
+    readonly capability: ProductionSnapshotMetadataStatus;
+    readonly gapKinds: readonly ProductionSnapshotMetadataKind[];
+  };
 }
 
 export type ProductionStateCloneError =
@@ -175,6 +188,18 @@ function restoreError(error: ProductionRestoreError): ProductionStateCloneError 
   };
 }
 
+function snapshotFileContentBytes(manifest: ProductionSnapshotManifest): number | null {
+  let bytes = 0;
+  for (const entry of manifest.entries) {
+    if (entry.type !== "file") continue;
+    bytes += entry.size;
+    if (!Number.isSafeInteger(bytes)) return null;
+  }
+  return bytes;
+}
+
+const METADATA_KINDS = ["acl", "xattr", "capability"] as const;
+
 export async function cloneProductionState(
   request: ProductionStateCloneRequest,
   deps: ProductionStateCloneDeps,
@@ -215,6 +240,12 @@ export async function cloneProductionState(
     if (!cleanup.ok) return cleanup;
     return err({ kind: "manifest_failure", message: "Production snapshot manifest is invalid" });
   }
+  const fileContentBytes = snapshotFileContentBytes(manifest.value);
+  if (fileContentBytes === null) {
+    const cleanup = await cleanupSnapshot(request, snapshot.value, deps.executor);
+    if (!cleanup.ok) return cleanup;
+    return err({ kind: "manifest_failure", message: "Production snapshot manifest is invalid" });
+  }
 
   const pending = await prepareProductionRestore(
     {
@@ -249,5 +280,16 @@ export async function cloneProductionState(
     bytesTransferred: pending.value.bytesTransferred,
     entries: manifest.value.entries.length,
     exclusions: manifest.value.exclusions.length,
+    treeIdentitySha256: manifest.value.treeIdentitySha256,
+    fileContentBytes,
+    metadataIdentity: {
+      fidelity: manifest.value.metadataIdentity.gaps.length === 0 ? "exact" : "gapped",
+      acl: manifest.value.metadataIdentity.acl,
+      xattr: manifest.value.metadataIdentity.xattr,
+      capability: manifest.value.metadataIdentity.capability,
+      gapKinds: METADATA_KINDS.filter((kind) =>
+        manifest.value.metadataIdentity.gaps.some((gap) => gap.kind === kind),
+      ),
+    },
   });
 }

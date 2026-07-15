@@ -1,4 +1,20 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+  chmodSync,
+  linkSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { err, ok } from "@comis/shared";
 import { describe, expect, it, vi } from "vitest";
@@ -16,12 +32,105 @@ import {
 } from "./production-restore.js";
 import {
   buildProductionSnapshotPlan,
+  deriveProductionSnapshotTreeIdentity,
   type ProductionSnapshotManifest,
 } from "./production-snapshot.js";
 
 const SOURCE_MACHINE = "a".repeat(64);
 const TARGET_MACHINE = "b".repeat(64);
 const FILE_HASH = "c".repeat(64);
+const ACL_HASH = "d".repeat(64);
+const XATTR_HASH = "e".repeat(64);
+const CAPABILITY_HASH = "f".repeat(64);
+
+const entryMetadata = {
+  uid: 1001,
+  gid: 1002,
+  mtimeNs: "1752560000123456789",
+  aclSha256: ACL_HASH,
+  xattrSha256: XATTR_HASH,
+  capabilitySha256: CAPABILITY_HASH,
+} as const;
+
+function manifestFromRealLayout(root: string): ProductionSnapshotManifest {
+  const candidates: Array<
+    ProductionSnapshotManifest["entries"][number] & {
+      readonly absolutePath?: string;
+      readonly inodeKey?: string;
+    }
+  > = [];
+  const walk = (relative: string): void => {
+    const absolutePath = join(root, ...relative.split("/"));
+    const value = lstatSync(absolutePath, { bigint: true });
+    const common = {
+      path: relative,
+      mode: Number(value.mode & 0o7777n).toString(8).padStart(4, "0"),
+      size: Number(value.size),
+      uid: Number(value.uid),
+      gid: Number(value.gid),
+      mtimeNs: value.mtimeNs.toString(),
+    };
+    if (value.isFile()) {
+      candidates.push({
+        ...common,
+        type: "file",
+        sha256: createHash("sha256").update(readFileSync(absolutePath)).digest("hex"),
+        absolutePath,
+        inodeKey: `${value.dev}:${value.ino}`,
+      });
+      return;
+    }
+    if (value.isSymbolicLink()) {
+      candidates.push({ ...common, type: "symlink", linkTarget: readlinkSync(absolutePath) });
+      return;
+    }
+    if (!value.isDirectory()) throw new Error("real layout fixture contains a special file");
+    candidates.push({ ...common, type: "directory", size: 0 });
+    for (const child of readdirSync(absolutePath).sort((left, right) =>
+      Buffer.compare(Buffer.from(left), Buffer.from(right)),
+    )) {
+      walk(`${relative}/${child}`);
+    }
+  };
+  walk("data");
+  walk("system");
+  candidates.sort((left, right) => Buffer.compare(Buffer.from(left.path), Buffer.from(right.path)));
+  const inodeTargets = new Map<string, string>();
+  const entries = candidates.map(({ absolutePath: _absolutePath, inodeKey, ...entry }) => {
+    if (entry.type !== "file" || inodeKey === undefined) return entry;
+    const target = inodeTargets.get(inodeKey);
+    if (target === undefined) {
+      inodeTargets.set(inodeKey, entry.path);
+      return entry;
+    }
+    const { sha256: _sha256, ...hardlink } = entry;
+    return { ...hardlink, type: "hardlink" as const, hardlinkTarget: target };
+  });
+  const value: ProductionSnapshotManifest = {
+    schemaVersion: 1,
+    runId: "restore-real-layout-a1",
+    sourceMachineIdSha256: SOURCE_MACHINE,
+    service: "comis",
+    captureMode: "offline",
+    captureStartedAtMs: 1_752_560_000_000,
+    captureCompletedAtMs: 1_752_560_000_100,
+    freezeDurationMs: 0,
+    metadataIdentity: {
+      acl: "unavailable",
+      xattr: "unavailable",
+      capability: "unavailable",
+      gaps: [
+        { kind: "acl", reason: "source_tool_unavailable" },
+        { kind: "xattr", reason: "source_tool_unavailable" },
+        { kind: "capability", reason: "source_tool_unavailable" },
+      ],
+    },
+    treeIdentitySha256: "0".repeat(64),
+    entries,
+    exclusions: [],
+  };
+  return { ...value, treeIdentitySha256: deriveProductionSnapshotTreeIdentity(value) };
+}
 
 const profile: ProductionReplayProfile = {
   source: {
@@ -47,7 +156,7 @@ const profile: ProductionReplayProfile = {
 function makeManifest(
   overrides: Partial<ProductionSnapshotManifest> = {},
 ): ProductionSnapshotManifest {
-  return {
+  const base: ProductionSnapshotManifest = {
     schemaVersion: 1,
     runId: "restore-a1",
     sourceMachineIdSha256: SOURCE_MACHINE,
@@ -56,14 +165,22 @@ function makeManifest(
     captureStartedAtMs: 1_752_560_000_000,
     captureCompletedAtMs: 1_752_560_004_000,
     freezeDurationMs: 0,
+    metadataIdentity: {
+      acl: "captured",
+      xattr: "captured",
+      capability: "captured",
+      gaps: [],
+    },
+    treeIdentitySha256: "0".repeat(64),
     entries: [
-      { path: "data", type: "directory", mode: "0700", size: 4096 },
+      { path: "data", type: "directory", mode: "0700", size: 0, ...entryMetadata },
       {
         path: "data/config.yaml",
         type: "file",
         mode: "0600",
         size: 128,
         sha256: FILE_HASH,
+        ...entryMetadata,
       },
       {
         path: "data/memory.db",
@@ -71,6 +188,7 @@ function makeManifest(
         mode: "0600",
         size: 4096,
         sha256: FILE_HASH,
+        ...entryMetadata,
       },
       {
         path: "data/memory.db-wal",
@@ -78,23 +196,39 @@ function makeManifest(
         mode: "0600",
         size: 2048,
         sha256: FILE_HASH,
+        ...entryMetadata,
+      },
+      {
+        path: "data/memory.db.copy",
+        type: "hardlink",
+        mode: "0600",
+        size: 4096,
+        hardlinkTarget: "data/memory.db",
+        ...entryMetadata,
       },
       {
         path: "data/runtime/python",
         type: "symlink",
         mode: "0777",
-        size: 16,
-        linkTarget: "/usr/bin/python3",
+        size: 10,
+        linkTarget: "../python3",
+        ...entryMetadata,
       },
-      { path: "system", type: "directory", mode: "0700", size: 4096 },
-      { path: "system/etc", type: "directory", mode: "0755", size: 4096 },
-      { path: "system/etc/comis", type: "directory", mode: "0755", size: 4096 },
+      { path: "system", type: "directory", mode: "0700", size: 0, uid: 0, gid: 0, mtimeNs: entryMetadata.mtimeNs, aclSha256: ACL_HASH, xattrSha256: XATTR_HASH, capabilitySha256: CAPABILITY_HASH },
+      { path: "system/etc", type: "directory", mode: "0755", size: 0, uid: 0, gid: 0, mtimeNs: entryMetadata.mtimeNs, aclSha256: ACL_HASH, xattrSha256: XATTR_HASH, capabilitySha256: CAPABILITY_HASH },
+      { path: "system/etc/comis", type: "directory", mode: "0755", size: 0, uid: 0, gid: 0, mtimeNs: entryMetadata.mtimeNs, aclSha256: ACL_HASH, xattrSha256: XATTR_HASH, capabilitySha256: CAPABILITY_HASH },
       {
         path: "system/etc/comis/env",
         type: "file",
         mode: "0640",
         size: 72,
         sha256: FILE_HASH,
+        uid: 0,
+        gid: 1002,
+        mtimeNs: entryMetadata.mtimeNs,
+        aclSha256: ACL_HASH,
+        xattrSha256: XATTR_HASH,
+        capabilitySha256: CAPABILITY_HASH,
       },
     ],
     exclusions: [
@@ -120,7 +254,12 @@ function makeManifest(
         reason: "runtime_socket",
       },
     ],
-    ...overrides,
+  };
+  const merged = { ...base, ...overrides };
+  return {
+    ...merged,
+    treeIdentitySha256:
+      overrides.treeIdentitySha256 ?? deriveProductionSnapshotTreeIdentity(merged),
   };
 }
 
@@ -198,7 +337,7 @@ describe("production snapshot restore transaction", () => {
       state: "committed",
       dataDirSha256: "ef4e180fa56124fe7af6dcb50b03994870d4d25d5ad3f9198f1d24373be1c6cf",
       snapshotManifestSha256: plan.manifestSha256,
-      restoredTreeDigestSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      restoredTreeDigestSha256: makeManifest().treeIdentitySha256,
       entryCount: makeManifest().entries.length,
       bytes: 6_344,
     });
@@ -302,17 +441,73 @@ describe("production snapshot restore transaction", () => {
     expect(script).toContain("member.isdev()");
     expect(script).toContain("member.isfifo()");
     expect(script).toContain("member.islnk()");
+    expect(script).toContain('record["hardlinkTarget"]');
+    expect(script).toContain('member.uid != record["uid"]');
     expect(script).toContain("symlink_prefixes");
     expect(script).toContain("expected-manifest.json");
     expect(script).toContain("sha256sum");
     expect(script).toContain("lstat");
     expect(script).toContain("readlink");
+    expect(script).toContain("st_mtime_ns");
+    expect(script).toContain("st_uid");
+    expect(script).toContain("getfacl");
+    expect(script).toContain("getfattr");
+    expect(script).toContain("getcap");
+    expect(script).toContain("st_ino");
     expect(script).toContain("excluded_paths");
     expect(script).toContain("SQLite format 3\\0");
     expect(script).toContain("PRAGMA quick_check");
     expect(script).toContain("PRAGMA integrity_check");
     expect(script).toContain("PRAGMA foreign_key_check");
     expect(script).not.toContain("print(row");
+  });
+
+  it("verifies a real nested session layout with hardlinks and rejects metadata divergence", () => {
+    const temporary = mkdtempSync(join(tmpdir(), "comis-restore-layout-"));
+    try {
+      const root = join(temporary, "extracted");
+      const sessionDir = join(root, "data", "workspace", "sessions", "tenant_a", "telegram");
+      const systemDir = join(root, "system", "etc", "comis");
+      mkdirSync(sessionDir, { recursive: true, mode: 0o700 });
+      mkdirSync(systemDir, { recursive: true, mode: 0o755 });
+      const sessionPath = join(sessionDir, "session.jsonl");
+      const hardlinkPath = join(sessionDir, "session.jsonl.copy");
+      writeFileSync(sessionPath, '{"role":"user"}\n', { mode: 0o600 });
+      linkSync(sessionPath, hardlinkPath);
+      symlinkSync("session.jsonl", join(sessionDir, "latest"));
+      writeFileSync(join(systemDir, "env"), "COMIS_DATA_DIR=/tmp/test\n", { mode: 0o640 });
+
+      const manifest = manifestFromRealLayout(root);
+      expect(
+        manifest.entries.find(({ path }) => path.endsWith("session.jsonl.copy")),
+      ).toMatchObject({ type: "hardlink", hardlinkTarget: expect.stringMatching(/session\.jsonl$/u) });
+      const plan = buildProductionRestorePlan(makeRequest(manifest));
+      expect(plan.ok).toBe(true);
+      if (!plan.ok) return;
+      const marker = "<<'PYTHON_VERIFY'\n";
+      const start = plan.value.targetVerifyAndPromote.stdin.indexOf(marker);
+      const end = plan.value.targetVerifyAndPromote.stdin.indexOf("\nPYTHON_VERIFY", start);
+      expect(start).toBeGreaterThan(0);
+      expect(end).toBeGreaterThan(start);
+      const verifier = plan.value.targetVerifyAndPromote.stdin.slice(start + marker.length, end);
+      const manifestPath = join(temporary, "manifest.json");
+      writeFileSync(manifestPath, JSON.stringify(manifest), { mode: 0o600 });
+
+      const verified = spawnSync("python3", ["-", root, manifestPath], {
+        input: verifier,
+        encoding: "utf8",
+      });
+      expect(verified.status, verified.stderr).toBe(0);
+
+      chmodSync(sessionPath, 0o640);
+      const divergent = spawnSync("python3", ["-", root, manifestPath], {
+        input: verifier,
+        encoding: "utf8",
+      });
+      expect(divergent.status).not.toBe(0);
+    } finally {
+      rmSync(temporary, { recursive: true, force: true });
+    }
   });
 
   it("keeps the source environment immutable and promotes data and quarantine config atomically", () => {
@@ -326,7 +521,7 @@ describe("production snapshot restore transaction", () => {
     expect(script).toContain("chattr +i");
     expect(script).toContain("COMIS_CONFIG_PATHS=");
     expect(script).toContain("replay-quarantine.yaml");
-    expect(script).toContain("chown -hR");
+    expect(script).not.toContain("chown -hR");
     expect(script).toContain('mv -- "$data_dir" "$rollback_data"');
     expect(script).toContain('mv -- "$incoming_data" "$data_dir"');
     expect(script).toContain("trap rollback_promote EXIT HUP INT TERM");

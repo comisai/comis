@@ -9,6 +9,10 @@ import {
   cloneProductionState,
   type ProductionStateCloneDeps,
 } from "./production-state-clone.js";
+import {
+  deriveProductionSnapshotTreeIdentity,
+  type ProductionSnapshotManifest,
+} from "./production-snapshot.js";
 
 const SOURCE_MACHINE = "a".repeat(64);
 const TARGET_MACHINE = "b".repeat(64);
@@ -37,7 +41,8 @@ function profile() {
 }
 
 function manifest(runId = "state-a1"): string {
-  return JSON.stringify({
+  const metadata = { uid: 1001, gid: 1001, mtimeNs: "1752560000123456789" } as const;
+  const value: ProductionSnapshotManifest = {
     schemaVersion: 1,
     runId,
     sourceMachineIdSha256: SOURCE_MACHINE,
@@ -46,24 +51,39 @@ function manifest(runId = "state-a1"): string {
     captureStartedAtMs: 1_752_560_000_000,
     captureCompletedAtMs: 1_752_560_000_100,
     freezeDurationMs: 0,
+    metadataIdentity: {
+      acl: "unavailable",
+      xattr: "unavailable",
+      capability: "unavailable",
+      gaps: [
+        { kind: "acl", reason: "source_tool_unavailable" },
+        { kind: "xattr", reason: "source_tool_unavailable" },
+        { kind: "capability", reason: "source_tool_unavailable" },
+      ],
+    },
+    treeIdentitySha256: "0".repeat(64),
     entries: [
-      { path: "data", type: "directory", mode: "0700", size: 0 },
+      { path: "data", type: "directory", mode: "0700", size: 0, ...metadata },
       {
         path: "data/memory.db",
         type: "file",
         mode: "0600",
         size: 4096,
         sha256: "c".repeat(64),
+        ...metadata,
       },
-      { path: "system", type: "directory", mode: "0700", size: 0 },
-      { path: "system/etc", type: "directory", mode: "0755", size: 0 },
-      { path: "system/etc/comis", type: "directory", mode: "0755", size: 0 },
+      { path: "system", type: "directory", mode: "0700", size: 0, uid: 0, gid: 0, mtimeNs: metadata.mtimeNs },
+      { path: "system/etc", type: "directory", mode: "0755", size: 0, uid: 0, gid: 0, mtimeNs: metadata.mtimeNs },
+      { path: "system/etc/comis", type: "directory", mode: "0755", size: 0, uid: 0, gid: 0, mtimeNs: metadata.mtimeNs },
       {
         path: "system/etc/comis/env",
         type: "file",
         mode: "0640",
         size: 200,
         sha256: "d".repeat(64),
+        uid: 0,
+        gid: 1001,
+        mtimeNs: metadata.mtimeNs,
       },
     ],
     exclusions: [
@@ -75,6 +95,10 @@ function manifest(runId = "state-a1"): string {
         reason: "sqlite_shm",
       },
     ],
+  };
+  return JSON.stringify({
+    ...value,
+    treeIdentitySha256: deriveProductionSnapshotTreeIdentity(value),
   });
 }
 
@@ -124,6 +148,17 @@ describe("production state clone transaction", () => {
         bytesTransferred: 500_000,
         entries: 6,
         exclusions: 1,
+        treeIdentitySha256: deriveProductionSnapshotTreeIdentity(
+          JSON.parse(manifest()) as ProductionSnapshotManifest,
+        ),
+        fileContentBytes: 4296,
+        metadataIdentity: {
+          fidelity: "gapped",
+          acl: "unavailable",
+          xattr: "unavailable",
+          capability: "unavailable",
+          gapKinds: ["acl", "xattr", "capability"],
+        },
       },
     });
     expect(labels).toEqual([
