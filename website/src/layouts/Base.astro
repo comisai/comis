@@ -3,6 +3,7 @@
 import Nav from "../components/Nav.astro";
 import { SITE } from "../data/site";
 import "../styles/global.css";
+import socialImage from "../../../assets/comis-social-preview.png";
 
 interface Props {
   title?: string;
@@ -11,7 +12,7 @@ interface Props {
 
 const { title = SITE.title, description = SITE.description } = Astro.props;
 const canonicalUrl = new URL(Astro.url.pathname, Astro.site ?? SITE.url);
-const socialImageUrl = new URL("/images/comis-social-card.png", Astro.site ?? SITE.url);
+const socialImageUrl = new URL(socialImage.src, Astro.site ?? SITE.url);
 const structuredData = {
   "@context": "https://schema.org",
   "@graph": [
@@ -80,15 +81,15 @@ const structuredData = {
     <meta property="og:url" content={canonicalUrl.href} />
     <meta property="og:image" content={socialImageUrl.href} />
     <meta property="og:image:type" content="image/png" />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Comis — an open-source, security-first platform for AI agent teams" />
+    <meta property="og:image:width" content="1280" />
+    <meta property="og:image:height" content="640" />
+    <meta property="og:image:alt" content="Comis logo" />
 
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={socialImageUrl.href} />
-    <meta name="twitter:image:alt" content="Comis — an open-source, security-first platform for AI agent teams" />
+    <meta name="twitter:image:alt" content="Comis logo" />
 
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />

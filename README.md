@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="assets/comis-readme-banner.png" alt="Comis — an open-source, security-first platform for AI agent teams" width="100%" />
+  <img src="assets/comis-social-preview.png" alt="Comis" width="100%" />
 </p>
 
 <p align="center">
-  <strong>An open-source, security-first platform for AI agent teams.</strong>
+  <strong>Govern the execution, memory, security, authority, and cost of every agent.</strong>
   <br />
-  <sub>Messaging, durable workflows, recoverable context, scoped secrets, and operational visibility.</sub>
+  <sub>Comis unifies typed execution, recoverable context, trust-aware learning, layered security, scoped authority, cost governance, and operational evidence on your infrastructure.</sub>
 </p>
 
 <p align="center">
@@ -26,7 +26,9 @@
 
 # Comis
 
-Comis is an Apache-2.0 platform for running multiple AI agents across messaging channels, APIs, scheduled work, and auditable execution graphs. Each agent can have its own model, scoped memory and context, tools, budget, and secret policy; routing bindings direct traffic to agents.
+Comis is an Apache-2.0 platform for governed multi-agent operations across messaging channels, APIs, scheduled work, and auditable execution graphs. Each agent can have its own model, scoped memory and context, tools, budget, and secret policy; routing bindings direct traffic to agents.
+
+**Comis's advantage is coherence.** Execution, memory, security, authority, cost, and operational evidence operate as one governed system, so operators can control how agents execute, what they remember, what they can access, how much they can spend, and how outcomes are reconstructed.
 
 Comis runs on infrastructure you control. Network access depends on the models, channels, tools, and media services you configure.
 
@@ -77,17 +79,18 @@ For containers and production hosts, see the [installation guides](https://docs.
 
 | Capability | What it provides |
 | --- | --- |
-| **Auditable multi-agent workflows** | Persistent DAGs with parallel nodes, barriers, retries, budgets, approval nodes, debate, voting, refinement, and map-reduce. |
-| **Recoverable context** | Canonical messages and tool results can be recovered through DAG-backed summaries and `ctx_search`, `ctx_inspect`, and `ctx_expand`. |
-| **Outcome-gated learning** | Trust-aware learning can distill corroborated successful strategies into reusable Mental Models with source-trajectory provenance; profile and topic revisions retain prior bodies. |
-| **Scoped operation** | Agent-facing memory and context are tenant- and agent-scoped; agents can have separate models, budgets, tool policies, and configurable secret allowlists, while global routing bindings direct traffic to them. |
-| **Operational visibility** | Traces, incident reports, delivery health, cache diagnostics, provider usage and cost accounting with 1-hour cache-write correction, best-effort tool attribution, opt-in spend ceilings, security audit records, and optional OpenTelemetry/Prometheus export. |
-| **Model flexibility** | Cloud providers, local Ollama and LM Studio models, fallback chains, provider-specific caching, and capability-aware scaffolding for smaller models. |
+| **Formal multi-agent execution** | Typed DAGs coordinate sequential and parallel nodes with barriers, retries, budgets, approval nodes, debate, voting, refinement, and map-reduce; configured durable runs add checkpoints and node-boundary recovery. |
+| **Lossless context by default** | Canonical messages and tool results remain recoverable through the default DAG-backed context engine and `ctx_search`, `ctx_inspect`, and `ctx_expand`. |
+| **Trust-aware memory and learning** | Learning combines source provenance, configurable corroboration policies, trust ceilings, outcome gates, correction-driven skill demotion, and usefulness feedback; profile and topic revisions preserve prior bodies. |
+| **Security and scoped authority** | Comis treats model output and external content as untrusted, with scoped stores, capability gates, deny-by-origin controls, encrypted secrets, credential brokering, memory/input/output guards, and audit events. |
+| **Integrated observability and cost governance** | Traces, trajectories, incident explanation, fleet and delivery health, recall/cache diagnostics, audit records, provider cost accounting, and opt-in spend ceilings connect evidence to operations. |
+| **Architecture built to evolve safely** | Hexagonal ports and adapters, a composition root, `Result` discipline, strict schemas, typed events, dependency rules, targeted test-neighbor gates, cycle checks, security linting, and shrink-only architecture gates keep change contained. |
+| **Per-agent operational control** | Assign each agent its own model, memory/context scopes, tools, budgets, policies, configurable secret allowlist, and routing bindings across channels and APIs. |
 
 ## Capabilities
 
 - **Messaging:** Telegram, Discord, Slack, WhatsApp, Signal, iMessage, LINE, IRC, Email, and Microsoft Teams, with platform-specific media and interaction support.
-- **Tools and MCP:** Browser, files, web, media, scheduling, memory, infrastructure, MCP client integrations, and a permission-gated MCP server.
+- **Models, tools, and MCP:** Cloud providers, local Ollama and LM Studio models, fallback chains, browser, files, web, media, scheduling, memory, infrastructure, MCP client integrations, and a permission-gated MCP server.
 - **Media:** Speech-to-text, text-to-speech, image and video analysis, image generation, and document extraction.
 - **Automation:** Cron, heartbeat monitoring, background work, sub-agents, and durable execution graphs.
 - **Interfaces:** Web dashboard, CLI, JSON-RPC, WebSocket, ACP bridge primitives, and experimental OpenAI-shaped HTTP endpoints.

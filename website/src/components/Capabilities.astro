@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 const capabilities = [
   ["Messaging", "Connect Telegram, Discord, Slack, WhatsApp, Signal, iMessage, LINE, IRC, Email, and Microsoft Teams."],
-  ["Models, tools, and MCP", "Use cloud providers, local Ollama or LM Studio models, built-in tools, MCP client integrations with per-server tool filters, and a permission-gated MCP server."],
+  ["Models, tools, and MCP", "Use cloud or local models, built-in tools, filtered MCP clients, and a permission-gated MCP server."],
   ["Automation", "Schedule cron and heartbeat work, run background tasks and sub-agents, and persist execution graphs."],
   ["Media", "Transcribe speech, synthesize voice, analyze images and video, generate images, and extract documents."],
   ["Interfaces", "Operate through the web dashboard, CLI, JSON-RPC, WebSocket, ACP bridge primitives, and experimental OpenAI-shaped HTTP endpoints."],
-  ["Storage and visibility", "Use local SQLite for sessions, context, memory, delivery queues, and operational records; credential storage defaults to encrypted SQLite, with file and environment modes available. Optional OpenTelemetry and Prometheus export extend visibility."],
+  ["Storage and visibility", "Store sessions, context, memory, delivery, and operational records in local SQLite. Credentials are encrypted by default; optional OpenTelemetry and Prometheus extend visibility."],
 ] as const;
 ---
 
@@ -14,7 +14,7 @@ const capabilities = [
   <div class="container">
     <div class="section-intro">
       <p class="eyebrow">Core capabilities</p>
-      <h2 id="capabilities-heading">The operating surface for an agent team.</h2>
+      <h2 id="capabilities-heading">The operating surface for governed agents.</h2>
       <p class="lead">
         Comis runs on infrastructure you control. Network access depends on the models, channels, tools, and media services you configure.
       </p>

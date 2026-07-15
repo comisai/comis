@@ -3,11 +3,11 @@
 import { SITE } from "../data/site";
 
 const workflow = [
-  ["Receive", "A channel or API submits work."],
-  ["Route", "A binding selects the configured agent."],
-  ["Coordinate", "A durable execution graph runs sequential or parallel work."],
-  ["Use tools", "Policies and configured approvals govern supported tool paths."],
-  ["Deliver", "Comis returns the result and records operational evidence."],
+  ["Receive", "A channel or API submits scoped work."],
+  ["Route", "A binding selects an agent with configured policies."],
+  ["Execute", "A typed graph coordinates sequential or parallel work."],
+  ["Govern", "Capability gates, budgets, policies, and configured approvals constrain supported paths."],
+  ["Record", "Comis records the result, cost, and operational evidence."],
 ] as const;
 ---
 
@@ -15,9 +15,9 @@ const workflow = [
   <div class="container hero-grid">
     <div class="hero-copy">
       <p class="eyebrow status-line"><span aria-hidden="true"></span>{SITE.status}</p>
-      <h1 id="hero-heading">An open-source, security-first platform for AI agent teams.</h1>
+      <h1 id="hero-heading">Govern the execution, memory, security, authority, and cost of every agent.</h1>
       <p class="lead hero-lead">
-        Run specialized agents across messaging, APIs, schedules, and durable workflows on infrastructure you control, with recoverable context and operational visibility.
+        Comis unifies typed execution, recoverable context, trust-aware learning, layered security, scoped authority, cost governance, and operational evidence on your infrastructure.
       </p>
       <div class="hero-actions" role="group" aria-label="Get started">
         <a class="button button-primary" href="#install">Get started</a>
@@ -27,8 +27,8 @@ const workflow = [
     </div>
 
     <figure class="workflow-panel">
-      <p class="technical-label">Example execution</p>
-      <h2>From message to traceable result</h2>
+      <p class="technical-label">Governed execution</p>
+      <h2>From request to governed result</h2>
       <ol class="workflow-list">
         {workflow.map(([title, description], index) => (
           <li class="workflow-step">

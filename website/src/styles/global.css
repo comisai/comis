@@ -439,6 +439,10 @@ main > section {
   color: var(--teal);
 }
 
+.advantage-item:last-child p:last-child {
+  max-width: 680px;
+}
+
 .surface-section {
   border-block: 1px solid var(--border);
   background: var(--navy-secondary);
@@ -659,8 +663,12 @@ main > section {
     padding-block: var(--space-16);
   }
 
-  .editorial-grid-three {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+  .advantage-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .advantage-item:last-child {
+    grid-column: 1 / -1;
   }
 
   .editorial-grid-two {
@@ -682,6 +690,10 @@ main > section {
 }
 
 @media (min-width: 1024px) {
+  .advantage-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .hero-grid {
     grid-template-columns: minmax(0, 11fr) minmax(0, 9fr);
     align-items: center;

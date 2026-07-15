@@ -1,7 +1,7 @@
 {
   "name": "Comis",
   "short_name": "Comis",
-  "description": "An open-source, security-first platform for AI agent teams.",
+  "description": "An open-source foundation for governed multi-agent operations.",
   "start_url": "/",
   "scope": "/",
   "icons": [

@@ -2,17 +2,32 @@
 // SPDX-License-Identifier: Apache-2.0
 const differentiators = [
   {
-    title: "Auditable workflows",
-    body: "Run persistent execution graphs with parallel nodes, barriers, retries, budgets, approval nodes, debate, voting, refinement, and map-reduce.",
+    title: "Formal multi-agent execution",
+    body: "Coordinate typed DAGs with parallelism, barriers, retries, budgets, approval nodes, and configurable checkpoint recovery.",
   },
   {
-    title: "Recoverable context",
-    body: "Keep canonical messages and tool results recoverable through DAG-backed summaries and ctx_search, ctx_inspect, and ctx_expand.",
-    technical: true,
+    title: "Lossless context by default",
+    body: "Retain canonical messages and tool results beneath summaries; recover them with on-demand context tools.",
   },
   {
-    title: "Scoped operation",
-    body: "Scope agent-facing memory and context by tenant and agent. Configure separate models, budgets, tool policies, and secret allowlists.",
+    title: "Trust-aware memory and learning",
+    body: "Govern learning with provenance, corroboration, trust ceilings, outcome gates, correction, and usefulness feedback.",
+  },
+  {
+    title: "Security and scoped authority",
+    body: "Treat models as untrusted with scoped data, capability gates, encrypted secrets, and layered input, memory, and output guards.",
+  },
+  {
+    title: "Integrated observability and cost governance",
+    body: "Connect traces, incidents, fleet health, audits, provider costs, and opt-in spend ceilings.",
+  },
+  {
+    title: "Architecture built to evolve safely",
+    body: "Evolve through typed ports, strict contracts, targeted test gates, dependency rules, and architecture ratchets.",
+  },
+  {
+    title: "Per-agent operational control",
+    body: "Assign each agent its own model, context, memory, tools, budgets, policies, and routing.",
   },
 ] as const;
 ---
@@ -21,22 +36,18 @@ const differentiators = [
   <div class="container">
     <div class="section-intro">
       <p class="eyebrow">Why Comis</p>
-      <h2 id="why-heading">Orchestration, context, and operations in one self-hosted platform.</h2>
+      <h2 id="why-heading">One system for execution, memory, security, authority, and cost.</h2>
       <p class="lead">
-        Comis combines the infrastructure needed to coordinate agent teams without hiding how work was routed, executed, or delivered.
+        <strong>Comis’s advantage is coherence.</strong> Execution, memory, security, authority, cost, and evidence operate as one governed system.
       </p>
     </div>
 
-    <div class="editorial-grid editorial-grid-three">
+    <div class="editorial-grid advantage-grid">
       {differentiators.map((item, index) => (
-        <article class="editorial-item">
-          <p class="technical-label">0{index + 1}</p>
+        <article class="editorial-item advantage-item">
+          <p class="technical-label" aria-hidden="true">0{index + 1}</p>
           <h3>{item.title}</h3>
-          {item.technical ? (
-            <p>Keep canonical messages and tool results recoverable through DAG-backed summaries and <code>ctx_search</code>, <code>ctx_inspect</code>, and <code>ctx_expand</code>.</p>
-          ) : (
-            <p>{item.body}</p>
-          )}
+          <p>{item.body}</p>
         </article>
       ))}
     </div>
