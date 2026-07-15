@@ -2061,6 +2061,10 @@ require_option_value() {
 
 validate_local_tarball_preflight() {
     [[ -z "$COMIS_TARBALL" ]] && return 0
+    if [[ -L "$COMIS_TARBALL" ]]; then
+        ui_error "--tarball must not be a symbolic link: ${COMIS_TARBALL}"
+        return 1
+    fi
     if [[ ! -e "$COMIS_TARBALL" ]]; then
         ui_error "--tarball path does not exist: ${COMIS_TARBALL}"
         return 1

@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdtempSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -108,6 +109,46 @@ describe("install.sh privileged preparation", () => {
 
     expect(result.code).not.toBe(0);
     expect(result.out).toContain("--tarball must be a regular file");
+    expect(existsSync(mutationMarker), result.out).toBe(false);
+  });
+
+  it("rejects a symbolic-link tarball before privileged host preparation", () => {
+    const work = makeWorkDir();
+    const payload = join(work, "package.txt");
+    const actualTarball = join(work, "actual-comisai.tgz");
+    const linkedTarball = join(work, "linked-comisai.tgz");
+    const mutationMarker = join(work, "host-preparation-ran");
+    writeFileSync(payload, "fixture package");
+    const archive = spawnSync("tar", ["-czf", actualTarball, "-C", work, "package.txt"]);
+    expect(archive.status).toBe(0);
+    symlinkSync(actualTarball, linkedTarball);
+
+    const result = runHarness(
+      [
+        "COMIS_REEXEC=0",
+        "DRY_RUN=0",
+        "NO_PROMPT=1",
+        'INSTALL_METHOD="npm"',
+        'SERVICE_MANAGER="systemd"',
+        'COMIS_TARBALL="$LINKED_TARBALL"',
+        'detect_os_or_die() { OS="linux"; }',
+        'print_installer_banner() { :; }',
+        'enforce_dedicated_user_default() { :; }',
+        'detect_comis_checkout() { return 1; }',
+        'resolve_service_manager() { RESOLVED_SERVICE_MANAGER="systemd"; }',
+        'downshift_xvfb_for_service_manager() { :; }',
+        'show_install_plan() { :; }',
+        'bootstrap_gum_temp() { :; }',
+        'print_gum_status() { :; }',
+        'should_create_dedicated_user() { return 0; }',
+        'install_system_deps_as_root() { touch "$MUTATION_MARKER"; return 77; }',
+        "main",
+      ].join("\n"),
+      { LINKED_TARBALL: linkedTarball, MUTATION_MARKER: mutationMarker },
+    );
+
+    expect(result.code).not.toBe(0);
+    expect(result.out).toContain("--tarball must not be a symbolic link");
     expect(existsSync(mutationMarker), result.out).toBe(false);
   });
 
