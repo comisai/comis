@@ -161,18 +161,61 @@ describe("createMappedWebhookEndpoint", () => {
     expect(json.error).toBe("Invalid JSON body");
   });
 
-  it("returns 500 with generic error when handler throws", async () => {
+  it("acks on receipt without awaiting the agent turn (background dispatch)", async () => {
+    let turnCompleted = false;
+    let releaseTurn!: () => void;
+    const turnGate = new Promise<void>((resolve) => {
+      releaseTurn = resolve;
+    });
+    const onAgentAction = vi.fn(async () => {
+      await turnGate;
+      turnCompleted = true;
+    });
+    const { app } = createMappedApp({ onAgentAction });
+    const body = JSON.stringify({ messageId: "m1", from: "a", subject: "b" });
+
+    // The endpoint must respond BEFORE the (still-in-flight) turn completes. An agent
+    // turn can run for minutes; awaiting it here would hang the caller and — at its
+    // request timeout — trigger a re-delivery storm.
+    const res = await makeMappedRequest(app, "gmail", body);
+    expect(res.status).toBe(200);
+    expect((await res.json()).received).toBe(true);
+    expect(onAgentAction).toHaveBeenCalledOnce();
+    expect(turnCompleted).toBe(false); // the ack did not wait for the turn
+
+    // Let the background turn finish so the test leaves no dangling promise.
+    releaseTurn();
+    await turnGate;
+  });
+
+  it("agent action acks 200 even when the background turn rejects (failure logged, not returned)", async () => {
     const { app } = createMappedApp({
       onAgentAction: vi.fn().mockRejectedValue(new Error("Handler failed: connection refused at 10.0.0.1:5432")),
     });
     const body = JSON.stringify({ messageId: "x", from: "a", subject: "b" });
 
     const res = await makeMappedRequest(app, "gmail", body);
+    // The turn runs in the background; its failure never becomes this request's status.
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.received).toBe(true);
+    // And it must never leak handler internals into the ack.
+    expect(JSON.stringify(json)).not.toContain("Handler failed");
+    expect(JSON.stringify(json)).not.toContain("10.0.0.1");
+  });
+
+  it("wake action returns 500 with generic error when onWake throws", async () => {
+    const { app } = createMappedApp({
+      onWake: vi.fn().mockRejectedValue(new Error("Wake failed: connection refused at 10.0.0.1:5432")),
+    });
+    const body = JSON.stringify({ ping: true });
+
+    const res = await makeMappedRequest(app, "wake", body);
     expect(res.status).toBe(500);
     const json = await res.json();
     expect(json.error).toBe("Internal error");
     // Must NOT leak handler internals
-    expect(JSON.stringify(json)).not.toContain("Handler failed");
+    expect(JSON.stringify(json)).not.toContain("Wake failed");
     expect(JSON.stringify(json)).not.toContain("10.0.0.1");
   });
 
