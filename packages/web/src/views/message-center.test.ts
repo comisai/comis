@@ -28,6 +28,7 @@ function state(el: IcMessageCenter) {
     _autoSelectAttempted: boolean;
     _hasLoaded: boolean;
     _actionResult: string;
+    _deleteTargetId: string;
     _refetchMessages(): Promise<void>;
   };
 }
@@ -273,5 +274,90 @@ describe("IcMessageCenter", () => {
     }
 
     expect(state(el)._actionResult).toBe("");
+  });
+
+  it("does not let an old delete completion mutate the new channel", async () => {
+    const deletion = deferred<{ ok: boolean }>();
+    const call = vi.fn((method: string) => {
+      if (method === "message.delete") return deletion.promise;
+      return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
+    });
+    const el = await createElement({ channelType: "telegram" });
+    const current = state(el);
+    Object.assign(current, {
+      _loadState: "loaded",
+      _messages: [{ id: "message-old", senderId: "user_a", text: "old", timestamp: 1 }],
+      _capabilities: { deleteMessages: true },
+      _hasLoaded: true,
+    });
+    el.rpcClient = { status: "connected", call } as unknown as RpcClient;
+    await el.updateComplete;
+
+    const deleteButton = el.shadowRoot?.querySelector<HTMLButtonElement>('button[title="Delete"]');
+    expect(deleteButton).not.toBeNull();
+    deleteButton!.click();
+    await el.updateComplete;
+    const dialog = el.shadowRoot?.querySelector("ic-confirm-dialog");
+    expect(dialog).not.toBeNull();
+    dialog!.dispatchEvent(new CustomEvent("confirm"));
+    expect(call).toHaveBeenCalledWith("message.delete", {
+      channel_type: "telegram",
+      channel_id: "telegram",
+      message_id: "message-old",
+    });
+
+    el.rpcClient = null;
+    el.channelType = "discord";
+    await el.updateComplete;
+    Object.assign(current, {
+      _loadState: "loaded",
+      _messages: [{ id: "message-new", senderId: "user_a", text: "new", timestamp: 2 }],
+      _deleteTargetId: "message-new",
+    });
+    el.requestUpdate();
+    await el.updateComplete;
+    deletion.resolve({ ok: true });
+    await deletion.promise;
+    for (let update = 0; update < 3; update += 1) {
+      await Promise.resolve();
+      await el.updateComplete;
+    }
+
+    expect(current._messages.map((message) => message.id)).toEqual(["message-new"]);
+    expect(current._deleteTargetId).toBe("message-new");
+  });
+
+  it("sends a reaction with the selected message target", async () => {
+    const call = vi.fn(() => Promise.resolve({ ok: true }));
+    const el = await createElement({ channelType: "telegram" });
+    const current = state(el);
+    Object.assign(current, {
+      _loadState: "loaded",
+      _messages: [{ id: "message-1", senderId: "user_a", text: "hello", timestamp: 1 }],
+      _capabilities: { reactions: true },
+      _hasLoaded: true,
+    });
+    el.rpcClient = { status: "connected", call } as unknown as RpcClient;
+    await el.updateComplete;
+
+    const reactButton = el.shadowRoot?.querySelector<HTMLButtonElement>('button[title="React"]');
+    expect(reactButton).not.toBeNull();
+    reactButton!.click();
+    await el.updateComplete;
+    const emojiButton = el.shadowRoot?.querySelector<HTMLButtonElement>(".emoji-btn");
+    expect(emojiButton).not.toBeNull();
+    const emoji = emojiButton!.title;
+    emojiButton!.click();
+    for (let update = 0; update < 3; update += 1) {
+      await Promise.resolve();
+      await el.updateComplete;
+    }
+
+    expect(call).toHaveBeenCalledWith("message.react", {
+      channel_type: "telegram",
+      channel_id: "telegram",
+      message_id: "message-1",
+      emoji,
+    });
   });
 });
