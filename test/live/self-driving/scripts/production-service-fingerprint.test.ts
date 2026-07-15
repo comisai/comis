@@ -96,13 +96,16 @@ describe("production service execution fingerprint", () => {
       host: "source.example",
       port: 2222,
       args: [
-        "sudo",
-        "env",
+        "/usr/bin/sudo",
+        "/usr/bin/env",
         "-i",
-        "PATH=/usr/sbin:/usr/bin:/sbin:/bin",
+        "PATH=/usr/bin:/bin",
         "LC_ALL=C",
-        "TZ=UTC",
-        "python3",
+        "TZ=Etc/UTC",
+        "/usr/bin/python3",
+        "-I",
+        "-S",
+        "-B",
         "-",
         MACHINE,
         "comis@tenant.service",
@@ -163,6 +166,18 @@ describe("production service execution fingerprint", () => {
 
     expect(buildProductionServiceFingerprintInvocation({ ...base, host: "bad host" }).ok).toBe(false);
     expect(buildProductionServiceFingerprintInvocation({ ...base, port: 0 }).ok).toBe(false);
+    expect(
+      buildProductionServiceFingerprintInvocation({
+        ...base,
+        expectedMachineIdSha256: [MACHINE] as unknown as string,
+      }).ok,
+    ).toBe(false);
+    expect(
+      buildProductionServiceFingerprintInvocation({
+        ...base,
+        service: ["comis"] as unknown as string,
+      }).ok,
+    ).toBe(false);
     expect(
       buildProductionServiceFingerprintInvocation({
         ...base,

@@ -615,8 +615,14 @@ export function buildProductionServiceFingerprintInvocation(
   ) {
     return unsafeInput("port");
   }
-  if (!SHA256_RE.test(input.expectedMachineIdSha256)) return unsafeInput("machineIdSha256");
   if (
+    typeof input.expectedMachineIdSha256 !== "string" ||
+    !SHA256_RE.test(input.expectedMachineIdSha256)
+  ) {
+    return unsafeInput("machineIdSha256");
+  }
+  if (
+    typeof input.service !== "string" ||
     !SERVICE_RE.test(input.service) ||
     input.service.includes("..") ||
     NON_SERVICE_SUFFIX_RE.test(input.service)
@@ -631,13 +637,16 @@ export function buildProductionServiceFingerprintInvocation(
     host: input.host,
     ...(input.port !== undefined ? { port: input.port } : {}),
     args: [
-      "sudo",
-      "env",
+      "/usr/bin/sudo",
+      "/usr/bin/env",
       "-i",
-      "PATH=/usr/sbin:/usr/bin:/sbin:/bin",
+      "PATH=/usr/bin:/bin",
       "LC_ALL=C",
-      "TZ=UTC",
-      "python3",
+      "TZ=Etc/UTC",
+      "/usr/bin/python3",
+      "-I",
+      "-S",
+      "-B",
       "-",
       input.expectedMachineIdSha256,
       input.service,
