@@ -3,7 +3,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { RpcClient } from "../api/rpc-client.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
-import type { FetchedMessage, PlatformCapabilities } from "../api/types/index.js";
+import type { ConnectionStatus, FetchedMessage, PlatformCapabilities } from "../api/types/index.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
 
@@ -320,6 +320,7 @@ export class IcMessageCenter extends LitElement {
   private _messageRequestRevision = 0;
   private _actionContextRevision = 0;
   private _rpcStatusUnsub: (() => void) | null = null;
+  private _rpcStatusClient: RpcClient | null = null;
 
   private get _mutationPending(): boolean {
     return this._actionPending || this._platformActionPending;
@@ -328,11 +329,18 @@ export class IcMessageCenter extends LitElement {
   /** Bound click-outside handler for emoji picker. */
   private _boundEmojiOutsideClick: ((e: MouseEvent) => void) | null = null;
 
+  override connectedCallback(): void {
+    super.connectedCallback();
+    if (this.hasUpdated) this._bindRpcStatus();
+  }
+
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     this._rpcStatusUnsub?.();
     this._rpcStatusUnsub = null;
-    this._removeEmojiOutsideListener();
+    this._rpcStatusClient = null;
+    this._channelRevision += 1;
+    this._resetChannelState();
   }
 
   override willUpdate(changedProperties: Map<string, unknown>): void {
@@ -403,7 +411,8 @@ export class IcMessageCenter extends LitElement {
   }
 
   private _isCurrentActionContext(context: MessageActionContext): boolean {
-    return context.revision === this._actionContextRevision
+    return this.isConnected
+      && context.revision === this._actionContextRevision
       && context.rpcClient === this.rpcClient
       && context.channel === this._effectiveChannel
       && context.chatId === (this._selectedChatId || this._effectiveChannel);
@@ -413,7 +422,7 @@ export class IcMessageCenter extends LitElement {
     const rpcChanged = changedProperties.has("rpcClient");
     const channelChanged = changedProperties.has("channelType");
     if (rpcChanged) this._bindRpcStatus();
-    if ((rpcChanged || channelChanged) && this.rpcClient?.status === "connected") {
+    if (!rpcChanged && channelChanged && this.rpcClient?.status === "connected") {
       this._loadCurrentRoute();
     }
   }
@@ -421,24 +430,34 @@ export class IcMessageCenter extends LitElement {
   private _autoSelectAttempted = false;
 
   private _bindRpcStatus(): void {
+    const rpc = this.rpcClient;
+    if (this.isConnected && rpc === this._rpcStatusClient && this._rpcStatusUnsub) return;
     this._rpcStatusUnsub?.();
     this._rpcStatusUnsub = null;
-    const rpc = this.rpcClient;
-    if (!rpc) return;
+    this._rpcStatusClient = null;
+    if (!rpc || !this.isConnected) return;
 
+    this._rpcStatusClient = rpc;
     this._rpcStatusUnsub = rpc.onStatusChange((status) => {
-      if (rpc !== this.rpcClient || !this.isConnected) return;
+      this._applyRpcStatus(status, rpc, true);
+    });
+    this._applyRpcStatus(rpc.status, rpc, false);
+  }
+
+  private _applyRpcStatus(status: ConnectionStatus, rpc: RpcClient, reset: boolean): void {
+    if (rpc !== this.rpcClient || !this.isConnected) return;
+    if (reset) {
       this._channelRevision += 1;
       this._resetChannelState();
-      if (status === "connected") {
-        this._loadCurrentRoute();
-      } else if (status === "disconnected") {
-        this._loadState = "error";
-        this._error = "RPC connection failed";
-      } else {
-        this._loadState = "loading";
-      }
-    });
+    }
+    if (status === "connected") {
+      this._loadCurrentRoute();
+    } else if (status === "disconnected") {
+      this._loadState = "error";
+      this._error = "RPC connection failed";
+    } else {
+      this._loadState = "loading";
+    }
   }
 
   private _loadCurrentRoute(): void {
@@ -569,7 +588,9 @@ export class IcMessageCenter extends LitElement {
   }
 
   private _isCurrentChannel(revision: number, channel: string): boolean {
-    return revision === this._channelRevision && channel === this._effectiveChannel;
+    return this.isConnected
+      && revision === this._channelRevision
+      && channel === this._effectiveChannel;
   }
 
   // -------------------------------------------------------------------------
@@ -639,8 +660,15 @@ export class IcMessageCenter extends LitElement {
           limit: 50,
         });
         if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatId)) return;
-        this._messages = fetchResult?.messages ?? [];
+        const messages = fetchResult?.messages ?? [];
+        this._messages = messages;
         this._messagesAreActionable = true;
+        if (
+          this._selectedMessageId
+          && !messages.some((message) => message.id === this._selectedMessageId)
+        ) {
+          this._selectedMessageId = "";
+        }
       } catch {
         if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatId)) return;
         // Non-fatal
@@ -712,6 +740,7 @@ export class IcMessageCenter extends LitElement {
   // -------------------------------------------------------------------------
 
   private _handleChannelChange(e: Event): void {
+    if (this._mutationPending) return;
     const select = e.target as HTMLSelectElement;
     const newType = select.value;
     if (newType && newType !== this._effectiveChannel) {
@@ -724,6 +753,7 @@ export class IcMessageCenter extends LitElement {
   }
 
   private _handleChatChange(e: Event): void {
+    if (this._mutationPending) return;
     const select = e.target as HTMLSelectElement;
     const chatId = select.value;
     if (chatId === this._selectedChatId) return;
@@ -1183,6 +1213,7 @@ export class IcMessageCenter extends LitElement {
             class="channel-select"
             .value=${this._effectiveChannel}
             @change=${this._handleChannelChange}
+            ?disabled=${this._mutationPending}
           >
             ${this._channelList.length === 0
               ? html`<option value=${this._effectiveChannel}>${this._effectiveChannel}</option>`
@@ -1204,7 +1235,7 @@ export class IcMessageCenter extends LitElement {
             class="channel-select"
             .value=${this._selectedChatId}
             @change=${this._handleChatChange}
-            ?disabled=${this._chatList.length === 0}
+            ?disabled=${this._chatList.length === 0 || this._mutationPending}
           >
             ${this._chatList.length === 0
               ? html`<option value="">No chats found</option>`
@@ -1226,7 +1257,9 @@ export class IcMessageCenter extends LitElement {
         return html`
           <div class="error-container">
             <div class="error-text">${this._error || "Failed to load"}</div>
-            <button class="retry-btn" @click=${this._handleRetry}>Retry</button>
+            ${this.rpcClient?.status === "connected"
+              ? html`<button class="retry-btn" @click=${this._handleRetry}>Retry</button>`
+              : nothing}
           </div>
         `;
       case "loaded":

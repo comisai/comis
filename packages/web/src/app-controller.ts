@@ -298,6 +298,7 @@ export function createAppController(
 
     // STEP 6: Subscribe globalState to host mirror fields.
     host._stateUnsubscribe = subscribeGlobalStateToHost(host._globalState);
+    host._globalState.update({ connectionStatus: host._rpcClient.status });
 
     // STEP 7+8: Construct PollingController (after rpcClient exists) and
     // kick off first poll (host is already connected by now).

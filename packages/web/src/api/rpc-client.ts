@@ -188,7 +188,7 @@ export function createRpcClient(): RpcClient {
   function openConnection(url: string, token: string): void {
     const wsUrl = `${url}?token=${encodeURIComponent(token)}`;
     ws = new globalThis.WebSocket(wsUrl);
-
+    setStatus("reconnecting");
     ws.onopen = () => {
       reconnectAttempt = 0;
       setStatus("connected");
