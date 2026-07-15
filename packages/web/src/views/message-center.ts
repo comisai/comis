@@ -33,6 +33,13 @@ interface ChannelListEntry {
   status: string;
 }
 
+interface MessageActionContext {
+  revision: number;
+  rpcClient: RpcClient;
+  channel: string;
+  chatId: string;
+}
+
 /** Attachment type options for message.attach RPC. */
 type AttachmentType = "image" | "file" | "audio" | "video";
 
@@ -311,6 +318,7 @@ export class IcMessageCenter extends LitElement {
   private _previousChannelType = "";
   private _channelRevision = 0;
   private _messageRequestRevision = 0;
+  private _actionContextRevision = 0;
 
   /** Bound click-outside handler for emoji picker. */
   private _boundEmojiOutsideClick: ((e: MouseEvent) => void) | null = null;
@@ -334,6 +342,19 @@ export class IcMessageCenter extends LitElement {
     this._messages = [];
     this._capabilities = null;
     this._botName = "";
+    this._invalidateActionContext();
+    this._chatList = [];
+    this._selectedChatId = "";
+    this._hasLoaded = false;
+    this._previousChannelType = "";
+    this._autoSelectAttempted = false;
+    this._messageRequestRevision += 1;
+  }
+
+  private _invalidateActionContext(): void {
+    this._actionContextRevision += 1;
+    this._actionPending = false;
+    this._platformActionPending = false;
     this._sendText = "";
     this._showSendConfirm = false;
     this._replyToId = "";
@@ -350,15 +371,26 @@ export class IcMessageCenter extends LitElement {
     this._attachType = "file";
     this._attachCaption = "";
     this._showAttachForm = false;
-    this._chatList = [];
-    this._selectedChatId = "";
     this._selectedMessageId = "";
     this._actionResult = "";
     this._actionInputs = {};
-    this._hasLoaded = false;
-    this._previousChannelType = "";
-    this._autoSelectAttempted = false;
-    this._messageRequestRevision += 1;
+  }
+
+  private _captureActionContext(): MessageActionContext | null {
+    if (!this.rpcClient || !this._effectiveChannel) return null;
+    return {
+      revision: this._actionContextRevision,
+      rpcClient: this.rpcClient,
+      channel: this._effectiveChannel,
+      chatId: this._selectedChatId || this._effectiveChannel,
+    };
+  }
+
+  private _isCurrentActionContext(context: MessageActionContext): boolean {
+    return context.revision === this._actionContextRevision
+      && context.rpcClient === this.rpcClient
+      && context.channel === this._effectiveChannel
+      && context.chatId === (this._selectedChatId || this._effectiveChannel);
   }
 
   override updated(changedProperties: Map<string, unknown>): void {
@@ -637,7 +669,11 @@ export class IcMessageCenter extends LitElement {
 
   private _handleChatChange(e: Event): void {
     const select = e.target as HTMLSelectElement;
-    this._selectedChatId = select.value;
+    const chatId = select.value;
+    if (chatId === this._selectedChatId) return;
+    this._invalidateActionContext();
+    this._selectedChatId = chatId;
+    this._messages = [];
     void this._refetchMessages();
   }
 
@@ -648,23 +684,27 @@ export class IcMessageCenter extends LitElement {
 
   private async _handleSendConfirm(): Promise<void> {
     this._showSendConfirm = false;
-    if (!this.rpcClient || !this._sendText.trim()) return;
+    const context = this._captureActionContext();
+    const text = this._sendText.trim();
+    if (!context || !text) return;
 
     this._actionPending = true;
     try {
-      await this.rpcClient.call("message.send", {
-        channel_type: this._effectiveChannel,
-        channel_id: this._selectedChatId || this._effectiveChannel,
-        text: this._sendText.trim(),
+      await context.rpcClient.call("message.send", {
+        channel_type: context.channel,
+        channel_id: context.chatId,
+        text,
       });
+      if (!this._isCurrentActionContext(context)) return;
       IcToast.show("Message sent", "success");
       this._sendText = "";
       await this._refetchMessages();
     } catch (err) {
+      if (!this._isCurrentActionContext(context)) return;
       const msg = err instanceof Error ? err.message : "Failed to send message";
       IcToast.show(msg, "error");
     } finally {
-      this._actionPending = false;
+      if (this._isCurrentActionContext(context)) this._actionPending = false;
     }
   }
 
@@ -705,25 +745,30 @@ export class IcMessageCenter extends LitElement {
 
   private async _handleReplyConfirm(): Promise<void> {
     this._showReplyConfirm = false;
-    if (!this.rpcClient || !this._replyText.trim() || !this._replyToId) return;
+    const context = this._captureActionContext();
+    const text = this._replyText.trim();
+    const messageId = this._replyToId;
+    if (!context || !text || !messageId) return;
 
     this._actionPending = true;
     try {
-      await this.rpcClient.call("message.reply", {
-        channel_type: this._effectiveChannel,
-        channel_id: this._selectedChatId || this._effectiveChannel,
-        text: this._replyText.trim(),
-        message_id: this._replyToId,
+      await context.rpcClient.call("message.reply", {
+        channel_type: context.channel,
+        channel_id: context.chatId,
+        text,
+        message_id: messageId,
       });
+      if (!this._isCurrentActionContext(context)) return;
       IcToast.show("Reply sent", "success");
       this._replyToId = "";
       this._replyText = "";
       await this._refetchMessages();
     } catch (err) {
+      if (!this._isCurrentActionContext(context)) return;
       const msg = err instanceof Error ? err.message : "Failed to send reply";
       IcToast.show(msg, "error");
     } finally {
-      this._actionPending = false;
+      if (this._isCurrentActionContext(context)) this._actionPending = false;
     }
   }
 
@@ -759,25 +804,30 @@ export class IcMessageCenter extends LitElement {
   }
 
   private async _handleEditSave(): Promise<void> {
-    if (!this.rpcClient || !this._editText.trim() || !this._editingId) return;
+    const context = this._captureActionContext();
+    const text = this._editText.trim();
+    const messageId = this._editingId;
+    if (!context || !text || !messageId) return;
 
     this._actionPending = true;
     try {
-      await this.rpcClient.call("message.edit", {
-        channel_type: this._effectiveChannel,
-        channel_id: this._selectedChatId || this._effectiveChannel,
-        message_id: this._editingId,
-        text: this._editText.trim(),
+      await context.rpcClient.call("message.edit", {
+        channel_type: context.channel,
+        channel_id: context.chatId,
+        message_id: messageId,
+        text,
       });
+      if (!this._isCurrentActionContext(context)) return;
       IcToast.show("Message edited", "success");
       this._editingId = "";
       this._editText = "";
       await this._refetchMessages();
     } catch (err) {
+      if (!this._isCurrentActionContext(context)) return;
       const msg = err instanceof Error ? err.message : "Failed to edit message";
       IcToast.show(msg, "error");
     } finally {
-      this._actionPending = false;
+      if (this._isCurrentActionContext(context)) this._actionPending = false;
     }
   }
 
@@ -800,27 +850,31 @@ export class IcMessageCenter extends LitElement {
 
   private async _handleDeleteConfirm(): Promise<void> {
     this._showDeleteConfirm = false;
-    if (!this.rpcClient || !this._deleteTargetId) return;
+    const context = this._captureActionContext();
+    const messageId = this._deleteTargetId;
+    if (!context || !messageId) return;
 
     this._actionPending = true;
     try {
-      await this.rpcClient.call("message.delete", {
-        channel_type: this._effectiveChannel,
-        channel_id: this._selectedChatId || this._effectiveChannel,
-        message_id: this._deleteTargetId,
+      await context.rpcClient.call("message.delete", {
+        channel_type: context.channel,
+        channel_id: context.chatId,
+        message_id: messageId,
       });
+      if (!this._isCurrentActionContext(context)) return;
       IcToast.show("Message deleted", "success");
       // Optimistic local removal
-      this._messages = this._messages.filter((m) => m.id !== this._deleteTargetId);
+      this._messages = this._messages.filter((m) => m.id !== messageId);
       this._deleteTargetId = "";
     } catch (err) {
+      if (!this._isCurrentActionContext(context)) return;
       const msg = err instanceof Error ? err.message : "Failed to delete message";
       IcToast.show(msg, "error");
       this._deleteTargetId = "";
       // Re-fetch to restore state on error
       await this._refetchMessages();
     } finally {
-      this._actionPending = false;
+      if (this._isCurrentActionContext(context)) this._actionPending = false;
     }
   }
 
@@ -844,24 +898,30 @@ export class IcMessageCenter extends LitElement {
   }
 
   private async _handleEmojiSelect(emoji: string): Promise<void> {
-    if (!this.rpcClient || !this._reactTargetId) return;
+    const context = this._captureActionContext();
+    const messageId = this._reactTargetId;
+    if (!context || !messageId) return;
 
     this._closeEmojiPicker();
     this._actionPending = true;
     try {
-      await this.rpcClient.call("message.react", {
-        channel_type: this._effectiveChannel,
-        channel_id: this._selectedChatId || this._effectiveChannel,
-        message_id: this._reactTargetId,
+      await context.rpcClient.call("message.react", {
+        channel_type: context.channel,
+        channel_id: context.chatId,
+        message_id: messageId,
         emoji,
       });
+      if (!this._isCurrentActionContext(context)) return;
       IcToast.show("Reaction added", "success");
     } catch (err) {
+      if (!this._isCurrentActionContext(context)) return;
       const msg = err instanceof Error ? err.message : "Failed to add reaction";
       IcToast.show(msg, "error");
     } finally {
-      this._actionPending = false;
-      this._reactTargetId = "";
+      if (this._isCurrentActionContext(context)) {
+        this._actionPending = false;
+        this._reactTargetId = "";
+      }
     }
   }
 
@@ -904,27 +964,33 @@ export class IcMessageCenter extends LitElement {
   }
 
   private async _handleAttachSend(): Promise<void> {
-    if (!this.rpcClient || !this._attachUrl.trim()) return;
+    const context = this._captureActionContext();
+    const attachmentUrl = this._attachUrl.trim();
+    const attachmentType = this._attachType;
+    const caption = this._attachCaption.trim() || undefined;
+    if (!context || !attachmentUrl) return;
 
     this._actionPending = true;
     try {
-      await this.rpcClient.call("message.attach", {
-        channel_type: this._effectiveChannel,
-        channel_id: this._selectedChatId || this._effectiveChannel,
-        attachment_url: this._attachUrl.trim(),
-        attachment_type: this._attachType,
-        caption: this._attachCaption.trim() || undefined,
+      await context.rpcClient.call("message.attach", {
+        channel_type: context.channel,
+        channel_id: context.chatId,
+        attachment_url: attachmentUrl,
+        attachment_type: attachmentType,
+        caption,
       });
+      if (!this._isCurrentActionContext(context)) return;
       IcToast.show("Attachment sent", "success");
       this._attachUrl = "";
       this._attachType = "file";
       this._attachCaption = "";
       this._showAttachForm = false;
     } catch (err) {
+      if (!this._isCurrentActionContext(context)) return;
       const msg = err instanceof Error ? err.message : "Failed to send attachment";
       IcToast.show(msg, "error");
     } finally {
-      this._actionPending = false;
+      if (this._isCurrentActionContext(context)) this._actionPending = false;
     }
   }
 
@@ -945,21 +1011,22 @@ export class IcMessageCenter extends LitElement {
   }
 
   private async _handlePlatformAction(platformAction: PlatformAction): Promise<void> {
-    if (!this.rpcClient) return;
+    const context = this._captureActionContext();
+    if (!context) return;
 
-    const rpcMethod = PLATFORM_RPC_METHOD[this._effectiveChannel];
+    const rpcMethod = PLATFORM_RPC_METHOD[context.channel];
     if (!rpcMethod) return;
 
     // Build params
     const params: Record<string, unknown> = { action: platformAction.action };
 
     // Add channel/chat/group identifier based on platform
-    if (this._effectiveChannel === "telegram") {
-      params.chat_id = this._selectedChatId || this._effectiveChannel;
-    } else if (this._effectiveChannel === "whatsapp") {
-      params.group_jid = this._selectedChatId || this._effectiveChannel;
+    if (context.channel === "telegram") {
+      params.chat_id = context.chatId;
+    } else if (context.channel === "whatsapp") {
+      params.group_jid = context.chatId;
     } else {
-      params.channel_id = this._selectedChatId || this._effectiveChannel;
+      params.channel_id = context.chatId;
     }
 
     // Add message_id if needed
@@ -979,15 +1046,17 @@ export class IcMessageCenter extends LitElement {
     this._platformActionPending = true;
     this._actionResult = "";
     try {
-      const result = await this.rpcClient.call(rpcMethod, params);
+      const result = await context.rpcClient.call(rpcMethod, params);
+      if (!this._isCurrentActionContext(context)) return;
       IcToast.show("Action completed", "success");
       this._actionResult = typeof result === "string" ? result : JSON.stringify(result, null, 2);
     } catch (err) {
+      if (!this._isCurrentActionContext(context)) return;
       const msg = err instanceof Error ? err.message : "Action failed";
       IcToast.show(msg, "error");
       this._actionResult = "";
     } finally {
-      this._platformActionPending = false;
+      if (this._isCurrentActionContext(context)) this._platformActionPending = false;
     }
   }
 
