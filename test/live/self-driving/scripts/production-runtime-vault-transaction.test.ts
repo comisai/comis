@@ -5,6 +5,7 @@ import {
   RUNTIME_VAULT_TRANSACTION_STATUS_BEGIN,
   RUNTIME_VAULT_TRANSACTION_STATUS_END,
   classifyProductionRuntimeVaultTransaction,
+  computeProductionRuntimeVaultTransactionIdentity,
   parseProductionRuntimeVaultTransactionObservation,
   validateProductionRuntimeVaultJournal,
   type ProductionRuntimeVaultJournalPhase,
@@ -30,6 +31,26 @@ function classify(
 }
 
 describe("production runtime vault transaction journal", () => {
+  it("derives one language-independent identity from every transaction binding", () => {
+    expect(
+      computeProductionRuntimeVaultTransactionIdentity([
+        "target",
+        "source",
+        "run",
+        "1".repeat(32),
+        "a".repeat(64),
+        "comis",
+        "/var/lib/café",
+        "/opt/😀/node_modules/comisai",
+        "b".repeat(64),
+        "10",
+        "20",
+        "1.0.0",
+        "30",
+      ]),
+    ).toBe("48f0a7d111dcac21d6189482705184e7531f9fcda4ecfe93162b6a50f38fe592");
+  });
+
   it("accepts every durable forward prefix and both terminal histories", () => {
     for (let length = 0; length <= RUNTIME_VAULT_FORWARD_PHASES.length; length += 1) {
       const phases = RUNTIME_VAULT_FORWARD_PHASES.slice(0, length);

@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+import { createHash } from "node:crypto";
+
 import { err, ok, type Result } from "@comis/shared";
 
 export const RUNTIME_VAULT_FORWARD_PHASES = [
@@ -89,6 +91,26 @@ const PHASES = new Set<string>([
 const SHA256_RE = /^[a-f0-9]{64}$/u;
 const MAX_TRANSACTION_STATUS_BYTES = 4_096;
 const FINAL_STATES = new Set<string>(["absent", "exact", "conflict"]);
+const TRANSACTION_IDENTITY_DOMAIN = "comis-runtime-vault-transaction-v1\0";
+
+export function computeProductionRuntimeVaultTransactionIdentity(
+  bindings: readonly string[],
+): string {
+  const serialized = JSON.stringify(bindings);
+  let canonical = "";
+  for (let index = 0; index < serialized.length; index += 1) {
+    const character = serialized.charAt(index);
+    const codeUnit = serialized.charCodeAt(index);
+    canonical +=
+      codeUnit < 128
+        ? character
+        : `\\u${codeUnit.toString(16).padStart(4, "0")}`;
+  }
+  return createHash("sha256")
+    .update(TRANSACTION_IDENTITY_DOMAIN)
+    .update(canonical, "ascii")
+    .digest("hex");
+}
 
 function invalidJournal(): Result<never, ProductionRuntimeVaultJournalError> {
   return err({
