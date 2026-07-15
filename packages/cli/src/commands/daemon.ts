@@ -300,7 +300,7 @@ async function startDirectMode(): Promise<void> {
   }
 
   info("Starting daemon in direct mode...");
-  const daemonPath = new URL("../../../daemon/dist/daemon.js", import.meta.url).pathname;
+  const daemonPath = new URL("../../../daemon/dist/daemon-entrypoint.js", import.meta.url).pathname;
   if (!existsSync(daemonPath)) {
     error("Daemon binary not found. Run `pnpm build` first.");
     process.exit(1);

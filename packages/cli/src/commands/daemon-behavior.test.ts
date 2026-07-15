@@ -125,7 +125,7 @@ describe("daemon start", () => {
     const [cmd, args, opts] = vi.mocked(childProcess.spawn).mock.calls[0]!;
     expect(cmd).toBe("node");
     expect(args).toBeInstanceOf(Array);
-    expect((args as string[])[0]).toContain("daemon");
+    expect((args as string[])[0]).toContain("daemon-entrypoint.js");
     expect(opts).toMatchObject({
       detached: true,
       stdio: ["ignore", 99, 99],

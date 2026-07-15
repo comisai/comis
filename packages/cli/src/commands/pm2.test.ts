@@ -59,4 +59,20 @@ describe("pm2 status failure semantics", () => {
     expect(exitSpy.spy).toHaveBeenCalledWith(1);
     expect(getSpyOutput(consoleSpy.error)).toContain("Daemon is not managed by pm2");
   });
+
+  it("writes an ecosystem file that launches the role-gated daemon entrypoint", async () => {
+    const fs = await import("node:fs");
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    promisifiedExec.mockResolvedValue({ stdout: "6.0.0\n", stderr: "" });
+    const program = createTestProgram();
+    registerPm2Command(program);
+
+    await program.parseAsync(["node", "test", "pm2", "setup"]);
+
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.stringContaining("daemon-entrypoint.js"),
+      { mode: 0o600 },
+    );
+  });
 });
