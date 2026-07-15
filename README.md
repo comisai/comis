@@ -35,14 +35,19 @@ Comis runs on infrastructure you control. Network access depends on the models, 
 
 ## Quick Start
 
-Install the CLI with Node.js **22.19+**, then run the setup wizard:
+### One-line install
+
+For a managed macOS or Linux host:
 
 ```bash
-npm install --global comisai
-comis init
+curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash
 ```
 
-For a managed macOS or Linux host setup, download and inspect the installer before running it:
+This downloads and runs the installer immediately. The managed-host installer can install Node.js and host dependencies, initialize Comis data, and register the daemon with systemd or PM2. On Linux, it also attempts to provision Chromium and Xvfb by default and can create a dedicated `comis` user for a systemd service.
+
+### Additional options
+
+To inspect the installer and preview its changes before running it:
 
 ```bash
 curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh -o comis-install.sh
@@ -51,7 +56,14 @@ bash comis-install.sh --dry-run
 bash comis-install.sh
 ```
 
-The managed-host installer can install Node.js and host dependencies, initialize Comis data, and register the daemon with systemd or PM2. On Linux, it also attempts to provision Chromium and Xvfb by default and can create a dedicated `comis` user for a systemd service. Use `bash comis-install.sh --help` to review opt-outs and service choices. Direct npm installation does not make those host-level changes.
+If Node.js **22.19+** is already installed, install directly from npm:
+
+```bash
+npm install --global comisai
+comis init
+```
+
+Direct npm installation does not install host tools, create a service account, or register a system service. Use `bash comis-install.sh --help` to review managed-installer opt-outs and service choices.
 
 Complete the setup wizard and start the daemon when prompted. If you choose to start it later, run `comis daemon start`. Then open `http://127.0.0.1:4766`, or connect a messaging channel during setup. Verify the daemon with:
 

@@ -64,6 +64,7 @@ function metaContent(html, key) {
 
 const expectedTitle = "Comis — Open-source, security-first AI agent teams";
 const expectedDescription = "Run AI agent teams across messaging, APIs, schedules, and durable workflows on infrastructure you control, with recoverable context and operational visibility.";
+const expectedInstallCommand = "curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash";
 const approvedExternalLinks = new Set([
   "https://docs.comis.ai",
   "https://docs.comis.ai/installation",
@@ -141,7 +142,9 @@ for (const requiredText of [
   check(mainText.includes(requiredText), `Required verified copy is missing: ${requiredText}`);
 }
 
-check(mainText.includes("curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh -o comis-install.sh"), "Review-first installer download command is missing");
+const installCommand = mainHtml.match(/<code\b[^>]*data-install-command[^>]*>([\s\S]*?)<\/code>/i)?.[1] ?? "";
+check(textContent(installCommand) === expectedInstallCommand, "Primary installer command must be the hardened one-line install");
+check(mainText.includes("curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh -o comis-install.sh"), "Review-first installer alternative is missing");
 check(mainText.includes("bash comis-install.sh --dry-run"), "Installer dry-run command is missing");
 check(mainText.includes("npm install --global comisai"), "Direct npm installation path is missing");
 for (const pattern of [
@@ -261,7 +264,7 @@ check(executableScripts.length === 1, `Homepage must contain one executable clip
 check(attributes(executableScripts[0] ?? "").get("src") === "/copy-command.js", "Clipboard enhancement must load from the local static script");
 
 const quickStartSource = await readFile(path.join(websiteDir, "public", "copy-command.js"), "utf8");
-for (const label of ["Copy command", "Copied", "Copy failed", "Installer download command copied.", "Couldn’t copy. Select the command and copy it manually."]) {
+for (const label of ["Copy command", "Copied", "Copy failed", "One-line installer command copied.", "Couldn’t copy. Select the command and copy it manually."]) {
   check(quickStartSource.includes(label), `Clipboard state is missing: ${label}`);
 }
 const cssSource = await readFile(path.join(sourceDir, "styles", "global.css"), "utf8");
