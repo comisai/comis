@@ -460,7 +460,6 @@ export class IcMessageCenter extends LitElement {
       if (running.length > 0) {
         this._effectiveChannel = running[0].channelType;
         this._channelIsRunning = true;
-        void this._loadChats();
         void this._loadData();
       } else {
         this._channelIsRunning = false;
