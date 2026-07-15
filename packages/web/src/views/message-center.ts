@@ -332,6 +332,13 @@ export class IcMessageCenter extends LitElement {
     if (changedProperties.has("channelType")) {
       this._channelRevision += 1;
       this._resetChannelState();
+    } else if (
+      changedProperties.has("rpcClient")
+      && changedProperties.get("rpcClient") !== null
+      && changedProperties.get("rpcClient") !== undefined
+    ) {
+      this._channelRevision += 1;
+      this._resetChannelState();
     }
   }
 
@@ -428,6 +435,7 @@ export class IcMessageCenter extends LitElement {
     if (rpc.status !== "connected") {
       await new Promise<void>((resolve) => {
         const check = () => {
+          if (!this._isCurrentAutoSelect(revision, rpc)) { resolve(); return; }
           if (rpc.status === "connected") { resolve(); return; }
           if (rpc.status === "disconnected") { resolve(); return; }
           systemSetTimeout(check, 100);
@@ -435,7 +443,7 @@ export class IcMessageCenter extends LitElement {
         check();
       });
     }
-    if (revision !== this._channelRevision || this.channelType) return;
+    if (!this._isCurrentAutoSelect(revision, rpc)) return;
     if (rpc.status !== "connected") {
       this._loadState = "error";
       this._error = "RPC connection failed";
@@ -444,7 +452,7 @@ export class IcMessageCenter extends LitElement {
 
     try {
       const result = await rpc.call<{ channels: ChannelListEntry[]; total: number }>("channels.list");
-      if (revision !== this._channelRevision || this.channelType) return;
+      if (!this._isCurrentAutoSelect(revision, rpc)) return;
       const channels = result?.channels ?? [];
       this._channelList = channels;
       const running = channels.filter((ch) => ch.status === "running");
@@ -456,10 +464,17 @@ export class IcMessageCenter extends LitElement {
         this._loadState = "loaded";
       }
     } catch {
-      if (revision !== this._channelRevision || this.channelType) return;
+      if (!this._isCurrentAutoSelect(revision, rpc)) return;
       this._loadState = "error";
       this._error = "Failed to load channel list";
     }
+  }
+
+  private _isCurrentAutoSelect(revision: number, rpcClient: RpcClient): boolean {
+    return this.isConnected
+      && revision === this._channelRevision
+      && !this.channelType
+      && rpcClient === this.rpcClient;
   }
 
   // -------------------------------------------------------------------------
