@@ -135,6 +135,27 @@ describe("SystemEventQueue", () => {
 
   // ---- Logging ----
   describe("logging", () => {
+    it("never includes system event bodies in structured log fields", () => {
+      const q = createSystemEventQueue({
+        logger,
+        maxCapacity: 1,
+        nowMs: () => clock++,
+      });
+
+      q.enqueue("first event body", { contextKey: "test:1", sessionKey: "s1" });
+      q.enqueue("first event body", { contextKey: "test:2", sessionKey: "s1" });
+      q.enqueue("second event body", { contextKey: "test:3", sessionKey: "s1" });
+
+      const structuredFields = [...logger.debug.mock.calls, ...logger.warn.mock.calls]
+        .map(([fields]) => fields)
+        .filter((fields): fields is Record<string, unknown> => typeof fields === "object" && fields !== null);
+
+      for (const fields of structuredFields) {
+        expect(fields).not.toHaveProperty("text");
+        expect(fields).not.toHaveProperty("droppedText");
+      }
+    });
+
     it("logs at DEBUG on enqueue", () => {
       queue.enqueue("hello", { contextKey: "test:1", sessionKey: "s1" });
 
@@ -142,7 +163,6 @@ describe("SystemEventQueue", () => {
         expect.objectContaining({
           sessionKey: "s1",
           contextKey: "test:1",
-          text: "hello",
           queueSize: 1,
         }),
         "System event enqueued",
@@ -176,7 +196,9 @@ describe("SystemEventQueue", () => {
       expect(logger.warn).toHaveBeenCalledWith(
         expect.objectContaining({
           sessionKey: "s1",
-          droppedText: "first",
+          contextKey: "test:3",
+          droppedContextKey: "test:1",
+          maxCapacity: 2,
           hint: expect.stringContaining("oldest event dropped"),
           errorKind: "resource",
         }),
@@ -193,7 +215,8 @@ describe("SystemEventQueue", () => {
       expect(logger.debug).toHaveBeenCalledWith(
         expect.objectContaining({
           sessionKey: "s1",
-          text: "dup",
+          contextKey: "test:d2",
+          queueSize: 1,
         }),
         "Consecutive duplicate collapsed",
       );
