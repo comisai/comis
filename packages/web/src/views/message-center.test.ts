@@ -360,4 +360,29 @@ describe("IcMessageCenter", () => {
       emoji,
     });
   });
+
+  it("hides message actions when no channel is running", async () => {
+    const call = vi.fn((method: string) => {
+      if (method === "channels.list") {
+        return Promise.resolve({
+          channels: [{ channelType: "telegram", status: "stopped" }],
+          total: 1,
+        });
+      }
+      return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
+    });
+    const el = await createElement({
+      rpcClient: { status: "connected", call } as unknown as RpcClient,
+    });
+    for (let update = 0; update < 4; update += 1) {
+      await Promise.resolve();
+      await el.updateComplete;
+    }
+
+    const emptyState = el.shadowRoot?.querySelector("ic-empty-state");
+    expect(emptyState?.getAttribute("message")).toBe("No running channels");
+    expect(el.shadowRoot?.querySelector(".send-input")).toBeNull();
+    expect(el.shadowRoot?.querySelector(".platform-actions")).toBeNull();
+    expect(call).toHaveBeenCalledTimes(1);
+  });
 });
