@@ -95,8 +95,12 @@ export function buildBinarySshArgs(endpoint: BinarySshEndpoint): readonly string
     ...(endpoint.port !== undefined ? ["-p", String(endpoint.port)] : []),
     "--",
     endpoint.host,
-    ...endpoint.args,
+    ...endpoint.args.map(quoteSshRemoteArgument),
   ];
+}
+
+function quoteSshRemoteArgument(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 interface ExitObservation {

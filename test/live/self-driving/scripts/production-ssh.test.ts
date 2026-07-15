@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 
@@ -56,14 +57,42 @@ describe("production replay SSH boundary", () => {
       "ServerAliveCountMax=2",
       "--",
       "ubuntu@comis-harel",
-      "bash",
-      "-s",
-      "--",
-      "comis",
-      "/home/comis/.comis",
-      "comis",
+      "'bash'",
+      "'-s'",
+      "'--'",
+      "'comis'",
+      "'/home/comis/.comis'",
+      "'comis'",
     ]);
     expect(args).not.toContain("sh -c");
+  });
+
+  it("preserves every remote argument through the SSH remote shell boundary", () => {
+    const literalArguments = [
+      "space separated",
+      "single'quote",
+      "$(printf command-substitution)",
+      "semicolon;printf injected",
+      "line one\nline two",
+    ];
+    const args = buildSshProcessArgs({
+      label: "literal-arguments",
+      host: "test-host",
+      args: [
+        "sh",
+        "-c",
+        "printf '%s\\037' \"$@\"",
+        "remote-command",
+        ...literalArguments,
+      ],
+      stdin: "",
+    });
+    const remoteCommand = args.slice(args.indexOf("test-host") + 1).join(" ");
+
+    const execution = spawnSync("sh", ["-c", remoteCommand], { encoding: "utf8" });
+
+    expect(execution.status).toBe(0);
+    expect(execution.stdout.split("\u001f").slice(0, -1)).toEqual(literalArguments);
   });
 
   it("models a non-default SSH port as an option before the endpoint", () => {
@@ -75,7 +104,7 @@ describe("production replay SSH boundary", () => {
       stdin: "probe",
     });
 
-    expect(args.slice(-6)).toEqual(["-p", "2222", "--", "test-host", "bash", "-s"]);
+    expect(args.slice(-6)).toEqual(["-p", "2222", "--", "test-host", "'bash'", "'-s'"]);
   });
 
   it("allows an explicit bounded manifest output limit without making it unbounded", () => {
@@ -159,7 +188,8 @@ describe("production replay SSH boundary", () => {
     vi.useFakeTimers();
     try {
       const child = makeChild();
-      const executor = createProductionSshExecutor({ spawnProcess: vi.fn(() => child) });
+      const spawnProcess = vi.fn(() => child);
+      const executor = createProductionSshExecutor({ spawnProcess });
       const running = executor.run({
         label: "normal-stage",
         host: "test-host",
@@ -176,6 +206,11 @@ describe("production replay SSH boundary", () => {
         value: { stdout: "manifest\n", exitCode: 0 },
       });
       expect(child.kill).not.toHaveBeenCalled();
+      expect(spawnProcess).toHaveBeenCalledWith(
+        "ssh",
+        expect.any(Array),
+        expect.objectContaining({ shell: false }),
+      );
       expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();

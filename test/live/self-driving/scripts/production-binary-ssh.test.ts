@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { PassThrough } from "node:stream";
 
 import { describe, expect, it, vi } from "vitest";
@@ -51,11 +52,37 @@ describe("production binary SSH bridge", () => {
       "2202",
       "--",
       "source-host",
-      "sudo",
-      "dd",
-      "if=/run/capture/snapshot.tar",
-      "status=none",
+      "'sudo'",
+      "'dd'",
+      "'if=/run/capture/snapshot.tar'",
+      "'status=none'",
     ]);
+  });
+
+  it("preserves every binary endpoint argument through the SSH remote shell boundary", () => {
+    const literalArguments = [
+      "space separated",
+      "single'quote",
+      "$(printf command-substitution)",
+      "semicolon;printf injected",
+      "line one\nline two",
+    ];
+    const args = buildBinarySshArgs({
+      host: "target-host",
+      args: [
+        "sh",
+        "-c",
+        "printf '%s\\037' \"$@\"",
+        "remote-command",
+        ...literalArguments,
+      ],
+    });
+    const remoteCommand = args.slice(args.indexOf("target-host") + 1).join(" ");
+
+    const execution = spawnSync("sh", ["-c", remoteCommand], { encoding: "utf8" });
+
+    expect(execution.status).toBe(0);
+    expect(execution.stdout.split("\u001f").slice(0, -1)).toEqual(literalArguments);
   });
 
   it("bounds the default and configurable deadline for long binary transfers", () => {
@@ -90,6 +117,18 @@ describe("production binary SSH bridge", () => {
     expect(result).toEqual({ ok: true, value: { bytesTransferred: 17 } });
     expect(Buffer.concat(received).toString("utf8")).toBe("encrypted-by-ssh!");
     expect(spawnProcess).toHaveBeenCalledTimes(2);
+    expect(spawnProcess).toHaveBeenNthCalledWith(
+      1,
+      "ssh",
+      expect.any(Array),
+      expect.objectContaining({ shell: false }),
+    );
+    expect(spawnProcess).toHaveBeenNthCalledWith(
+      2,
+      "ssh",
+      expect.any(Array),
+      expect.objectContaining({ shell: false }),
+    );
   });
 
   it("fails closed and terminates both processes when byte count differs", async () => {

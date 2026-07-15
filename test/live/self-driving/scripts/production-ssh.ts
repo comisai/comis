@@ -100,8 +100,12 @@ export function buildSshProcessArgs(
     ...(invocation.port !== undefined ? ["-p", String(invocation.port)] : []),
     "--",
     invocation.host,
-    ...invocation.args,
+    ...invocation.args.map(quoteSshRemoteArgument),
   ];
+}
+
+function quoteSshRemoteArgument(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 function runSsh(
