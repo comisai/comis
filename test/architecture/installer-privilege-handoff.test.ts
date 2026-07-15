@@ -335,6 +335,56 @@ describe("install.sh privileged preparation", () => {
     expect(existsSync(handoffDir), result.out).toBe(false);
   });
 
+  it("preserves forwarded argument boundaries across the user handoff", () => {
+    const work = makeWorkDir();
+    const localTarball = join(work, "comisai.tgz");
+    const handoffDir = join(work, "secure-handoff");
+    const captureScript = join(work, "capture.sh");
+    const captureFile = join(work, "captured-argv");
+    const marker = join(work, "injection-marker");
+    const maliciousVersion = `edge value; touch -- ${marker} #`;
+    writeFileSync(localTarball, "fixture tarball");
+    writeFileSync(
+      captureScript,
+      "#!/usr/bin/env bash\nprintf '%s\\0' \"$@\" > \"$CAPTURE_FILE\"\n",
+    );
+    chmodSync(captureScript, 0o755);
+
+    const result = runHarness(
+      [
+        'COMIS_USER="$(id -un)"',
+        'COMIS_TARBALL="$LOCAL_TARBALL"',
+        'COMIS_VERSION="$MALICIOUS_VERSION"',
+        'INSTALL_METHOD="npm"',
+        'eval() { printf "%s\\n" "$COMIS_HOME"; }',
+        'mktemp() { command mkdir "$HANDOFF_DIR"; printf "%s\\n" "$HANDOFF_DIR"; }',
+        'stage_install_script() { cp "$CAPTURE_SCRIPT" "$1"; chmod +x "$1"; }',
+        'chown() { :; }',
+        'su() { bash -c "$4"; }',
+        'ui_info() { :; }',
+        "reexec_as_comis_user",
+      ].join("\n"),
+      {
+        CAPTURE_FILE: captureFile,
+        CAPTURE_SCRIPT: captureScript,
+        COMIS_HOME: work,
+        HANDOFF_DIR: handoffDir,
+        LOCAL_TARBALL: localTarball,
+        MALICIOUS_VERSION: maliciousVersion,
+      },
+    );
+
+    expect(result.code, result.out).toBe(0);
+    const capturedArgs = readFileSync(captureFile, "utf8").split("\0").filter(Boolean);
+    const versionIndex = capturedArgs.indexOf("--version");
+    expect(versionIndex).toBeGreaterThanOrEqual(0);
+    expect(capturedArgs.slice(versionIndex, versionIndex + 2)).toEqual([
+      "--version",
+      maliciousVersion,
+    ]);
+    expect(existsSync(marker), result.out).toBe(false);
+  });
+
   it("keeps headed-browser intent during the CLI-only user handoff", () => {
     const result = runHarness(
       [

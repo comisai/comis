@@ -3509,8 +3509,15 @@ reexec_as_comis_user() {
     echo ""
 
     # Re-exec as the comis user with COMIS_REEXEC=1 to skip the handoff loop
+    local escaped_arg escaped_script forwarded_command
+    printf -v escaped_script '%q' "$script_copy"
+    forwarded_command="COMIS_REEXEC=1 bash $escaped_script"
+    for arg in "${forwarded_args[@]}"; do
+        printf -v escaped_arg '%q' "$arg"
+        forwarded_command+=" $escaped_arg"
+    done
     local rc=0
-    if su - "$COMIS_USER" -c "COMIS_REEXEC=1 bash '$script_copy' ${forwarded_args[*]}"; then
+    if su - "$COMIS_USER" -c "$forwarded_command"; then
         rc=0
     else
         rc=$?
