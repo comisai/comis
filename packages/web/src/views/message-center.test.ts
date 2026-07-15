@@ -27,6 +27,7 @@ function state(el: IcMessageCenter) {
     _selectedChatId: string;
     _autoSelectAttempted: boolean;
     _hasLoaded: boolean;
+    _actionResult: string;
   };
 }
 
@@ -42,7 +43,7 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-describe("IcMessageCenter breadcrumb navigation", () => {
+describe("IcMessageCenter", () => {
   it("forwards breadcrumb navigation to the app router", async () => {
     const el = await createElement({ channelType: "telegram" });
     const navigate = vi.fn();
@@ -202,5 +203,38 @@ describe("IcMessageCenter breadcrumb navigation", () => {
 
     expect(state(el)._selectedChatId).toBe("chat-a");
     expect(state(el)._messages.map((message) => message.id)).toEqual(["new-a"]);
+  });
+
+  it("discards an action result after the route changes channel", async () => {
+    const action = deferred<string>();
+    const call = vi.fn((method: string) => {
+      if (method === "telegram.action") return action.promise;
+      return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
+    });
+    const el = await createElement({ channelType: "telegram" });
+    Object.assign(state(el), { _loadState: "loaded", _hasLoaded: true });
+    el.rpcClient = { status: "connected", call } as unknown as RpcClient;
+    await el.updateComplete;
+
+    const actionButton = Array.from(
+      el.shadowRoot?.querySelectorAll<HTMLButtonElement>(".action-buttons button") ?? [],
+    ).find((button) => button.title === "Chat Info");
+    expect(actionButton).toBeDefined();
+    actionButton!.click();
+    expect(call).toHaveBeenCalledWith("telegram.action", {
+      action: "chat_info",
+      chat_id: "telegram",
+    });
+
+    el.channelType = "discord";
+    await el.updateComplete;
+    action.resolve("telegram-result");
+    await action.promise;
+    for (let update = 0; update < 3; update += 1) {
+      await Promise.resolve();
+      await el.updateComplete;
+    }
+
+    expect(state(el)._actionResult).toBe("");
   });
 });
