@@ -31,6 +31,18 @@ PLAYWRIGHT_CORE_NPM_VERSION="1.61.1"
 
 ORIGINAL_PATH="${PATH:-}"
 
+# Automation launchers may omit HOME. Bash can still resolve the invoking
+# account's home through tilde expansion, which keeps all user-scoped paths
+# anchored to the operating-system account instead of an arbitrary fallback.
+if [[ -z "${HOME:-}" ]]; then
+    resolved_invoking_home="$(cd ~ 2>/dev/null && pwd -P)" || true
+    if [[ -z "$resolved_invoking_home" || "$resolved_invoking_home" != /* ]]; then
+        printf 'Unable to resolve the invoking account home directory\n' >&2
+        exit 1
+    fi
+    export HOME="$resolved_invoking_home"
+fi
+
 INSTALLER_TMPDIR="$(mktemp -d)"
 chmod 0700 "$INSTALLER_TMPDIR"
 TMPFILES=("$INSTALLER_TMPDIR")

@@ -48,6 +48,19 @@ function runHarness(body: string, env: Record<string, string> = {}): { code: num
 }
 
 describe("install.sh privileged preparation", () => {
+  it("starts successfully when automation omits HOME", () => {
+    const env = { ...process.env };
+    delete env.HOME;
+
+    const result = spawnSync("bash", [installerPath, "--help"], {
+      encoding: "utf8",
+      env,
+    });
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain("Usage:");
+  });
+
   it("rejects a missing local tarball before privileged host preparation", () => {
     const work = makeWorkDir();
     const missingTarball = join(work, "missing-comisai.tgz");
