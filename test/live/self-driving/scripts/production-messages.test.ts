@@ -112,7 +112,7 @@ describe("production offline channel message attestation", () => {
     expect(malformed.ok).toBe(false);
   });
 
-  it("attests identical source and target histories using each SSH port", async () => {
+  it("attests identical retained histories without claiming complete activity replay", async () => {
     const invocations: Array<{ label: string; host: string; port?: number }> = [];
 
     const result = await executeProductionMessagesAttestation(
@@ -133,10 +133,11 @@ describe("production offline channel message attestation", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value).toEqual({
-      exact: true,
+      historyMatched: true,
       source: expect.objectContaining({ count: 36, digestSha256: HISTORY_DIGEST }),
       target: expect.objectContaining({ count: 36, digestSha256: HISTORY_DIGEST }),
     });
+    expect(Object.hasOwn(result.value, "exact")).toBe(false);
     expect(invocations).toEqual([
       { label: "messages-attest-source", host: "source-box", port: 2222 },
       { label: "messages-attest-target", host: "test-box", port: 2202 },

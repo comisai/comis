@@ -37,7 +37,8 @@ export interface ProductionMessagesAttestation {
 }
 
 export interface ProductionMessagesParityReport {
-  readonly exact: true;
+  /** The bounded retained message exports match; other activity sources are outside this claim. */
+  readonly historyMatched: true;
   readonly source: ProductionMessagesAttestation;
   readonly target: ProductionMessagesAttestation;
 }
@@ -273,5 +274,5 @@ export async function executeProductionMessagesAttestation(
       message: "Restored offline message history does not match the production source",
     });
   }
-  return ok({ exact: true, source: source.value, target: target.value });
+  return ok({ historyMatched: true, source: source.value, target: target.value });
 }
