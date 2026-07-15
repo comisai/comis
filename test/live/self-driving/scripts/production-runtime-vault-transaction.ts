@@ -18,6 +18,11 @@ export const RUNTIME_VAULT_ROLLBACK_PHASES = [
   "rolled_back",
 ] as const;
 
+export const RUNTIME_VAULT_TRANSACTION_STATUS_BEGIN =
+  "COMIS_RUNTIME_VAULT_TRANSACTION_STATUS_V1_BEGIN";
+export const RUNTIME_VAULT_TRANSACTION_STATUS_END =
+  "COMIS_RUNTIME_VAULT_TRANSACTION_STATUS_V1_END";
+
 export type ProductionRuntimeVaultJournalPhase =
   | (typeof RUNTIME_VAULT_FORWARD_PHASES)[number]
   | (typeof RUNTIME_VAULT_ROLLBACK_PHASES)[number];
@@ -82,6 +87,8 @@ const PHASES = new Set<string>([
   ...RUNTIME_VAULT_ROLLBACK_PHASES,
 ]);
 const SHA256_RE = /^[a-f0-9]{64}$/u;
+const MAX_TRANSACTION_STATUS_BYTES = 4_096;
+const FINAL_STATES = new Set<string>(["absent", "exact", "conflict"]);
 
 function invalidJournal(): Result<never, ProductionRuntimeVaultJournalError> {
   return err({
@@ -91,7 +98,120 @@ function invalidJournal(): Result<never, ProductionRuntimeVaultJournalError> {
 }
 
 function isForwardPrefix(phases: readonly string[]): boolean {
-  return phases.every((phase, index) => RUNTIME_VAULT_FORWARD_PHASES[index] === phase);
+  return phases.every((phase, index) => RUNTIME_VAULT_FORWARD_PHASES.at(index) === phase);
+}
+
+function parseFinalState(
+  line: string | undefined,
+): "absent" | "exact" | "conflict" | undefined {
+  if (line === undefined || !line.startsWith("finalState=")) return undefined;
+  const value = line.slice("finalState=".length);
+  if (!FINAL_STATES.has(value)) return undefined;
+  return value as "absent" | "exact" | "conflict";
+}
+
+export function parseProductionRuntimeVaultTransactionObservation(
+  raw: string,
+  expectedAuthorityDigestSha256: string,
+  expectedTransactionIdentitySha256: string,
+): Result<
+  ProductionRuntimeVaultTransactionObservation,
+  ProductionRuntimeVaultJournalError
+> {
+  if (
+    !SHA256_RE.test(expectedAuthorityDigestSha256) ||
+    !SHA256_RE.test(expectedTransactionIdentitySha256) ||
+    Buffer.byteLength(raw, "utf8") > MAX_TRANSACTION_STATUS_BYTES ||
+    raw.includes("\r") ||
+    !raw.endsWith("\n")
+  ) {
+    return invalidJournal();
+  }
+
+  const lines = raw.split("\n");
+  if (
+    lines.at(-1) !== "" ||
+    lines[0] !== RUNTIME_VAULT_TRANSACTION_STATUS_BEGIN ||
+    lines.at(-2) !== RUNTIME_VAULT_TRANSACTION_STATUS_END
+  ) {
+    return invalidJournal();
+  }
+  const body = lines.slice(1, -2);
+  if (body[0] === "transactionState=absent") {
+    if (body.length !== 2) return invalidJournal();
+    const finalState = parseFinalState(body[1]);
+    if (finalState === undefined) return invalidJournal();
+    return ok({
+      transactionState: "absent",
+      expectedAuthorityDigestSha256,
+      expectedTransactionIdentitySha256,
+      finalState,
+    });
+  }
+  if (body[0] !== "transactionState=present") return invalidJournal();
+
+  if (body[1] === "manifestState=corrupt") {
+    if (body.length !== 3) return invalidJournal();
+    const finalState = parseFinalState(body[2]);
+    if (finalState === undefined) return invalidJournal();
+    return ok({
+      transactionState: "present",
+      manifestState: "corrupt",
+      expectedAuthorityDigestSha256,
+      expectedTransactionIdentitySha256,
+      phases: [],
+      finalState,
+    });
+  }
+  if (body[1] !== "manifestState=valid" || body.length < 5) {
+    return invalidJournal();
+  }
+
+  const authorityLine = body[2];
+  const identityLine = body[3];
+  if (
+    authorityLine === undefined ||
+    identityLine === undefined ||
+    !authorityLine.startsWith("authorityDigestSha256=") ||
+    !identityLine.startsWith("transactionIdentitySha256=")
+  ) {
+    return invalidJournal();
+  }
+  const authorityDigestSha256 = authorityLine.slice(
+    "authorityDigestSha256=".length,
+  );
+  const transactionIdentitySha256 = identityLine.slice(
+    "transactionIdentitySha256=".length,
+  );
+  if (
+    !SHA256_RE.test(authorityDigestSha256) ||
+    !SHA256_RE.test(transactionIdentitySha256)
+  ) {
+    return invalidJournal();
+  }
+
+  const finalState = parseFinalState(body.at(-1));
+  if (finalState === undefined) return invalidJournal();
+  const phaseLines = body.slice(4, -1);
+  const phases: ProductionRuntimeVaultJournalPhase[] = [];
+  for (const line of phaseLines) {
+    if (!line.startsWith("phase=")) return invalidJournal();
+    const phase = line.slice("phase=".length);
+    if (!PHASES.has(phase)) return invalidJournal();
+    phases.push(phase as ProductionRuntimeVaultJournalPhase);
+  }
+  const journal = validateProductionRuntimeVaultJournal(phases);
+  if (!journal.ok) return journal;
+  return ok({
+    transactionState: "present",
+    manifestState: "valid",
+    authorityDigestSha256,
+    transactionIdentitySha256,
+    expectedAuthorityDigestSha256,
+    expectedTransactionIdentitySha256,
+    phases: journal.value,
+    finalState,
+  });
 }
 
 export function validateProductionRuntimeVaultJournal(

@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   RUNTIME_VAULT_FORWARD_PHASES,
+  RUNTIME_VAULT_TRANSACTION_STATUS_BEGIN,
+  RUNTIME_VAULT_TRANSACTION_STATUS_END,
   classifyProductionRuntimeVaultTransaction,
+  parseProductionRuntimeVaultTransactionObservation,
   validateProductionRuntimeVaultJournal,
   type ProductionRuntimeVaultJournalPhase,
 } from "./production-runtime-vault-transaction.js";
@@ -181,6 +184,100 @@ describe("production runtime vault transaction journal", () => {
     expect(classify(["prepare_intent", "verified"] as const, "absent")).toMatchObject({
       ok: false,
       error: { kind: "blocked_corrupt" },
+    });
+  });
+
+  it("parses only the bounded canonical target transaction observation", () => {
+    const raw = [
+      RUNTIME_VAULT_TRANSACTION_STATUS_BEGIN,
+      "transactionState=present",
+      "manifestState=valid",
+      `authorityDigestSha256=${authorityDigestSha256}`,
+      `transactionIdentitySha256=${transactionIdentitySha256}`,
+      "phase=prepare_intent",
+      "phase=prepared",
+      "finalState=absent",
+      RUNTIME_VAULT_TRANSACTION_STATUS_END,
+      "",
+    ].join("\n");
+    expect(
+      parseProductionRuntimeVaultTransactionObservation(
+        raw,
+        authorityDigestSha256,
+        transactionIdentitySha256,
+      ),
+    ).toEqual({
+      ok: true,
+      value: {
+        transactionState: "present",
+        manifestState: "valid",
+        authorityDigestSha256,
+        transactionIdentitySha256,
+        expectedAuthorityDigestSha256: authorityDigestSha256,
+        expectedTransactionIdentitySha256: transactionIdentitySha256,
+        phases: ["prepare_intent", "prepared"],
+        finalState: "absent",
+      },
+    });
+
+    for (const malformed of [
+      raw.slice(0, -1),
+      raw.replace("phase=prepared\n", "phase=prepared\nphase=prepared\n"),
+      raw.replace("phase=prepared", "phase=unknown"),
+      raw.replace("finalState=absent", "finalState=maybe"),
+      raw.replace("manifestState=valid", "manifestState=corrupt"),
+      `${raw}${"x".repeat(4097)}`,
+    ]) {
+      expect(
+        parseProductionRuntimeVaultTransactionObservation(
+          malformed,
+          authorityDigestSha256,
+          transactionIdentitySha256,
+        ).ok,
+      ).toBe(false);
+    }
+  });
+
+  it("parses absent and explicitly corrupt target transaction states", () => {
+    const absent = [
+      RUNTIME_VAULT_TRANSACTION_STATUS_BEGIN,
+      "transactionState=absent",
+      "finalState=exact",
+      RUNTIME_VAULT_TRANSACTION_STATUS_END,
+      "",
+    ].join("\n");
+    expect(
+      parseProductionRuntimeVaultTransactionObservation(
+        absent,
+        authorityDigestSha256,
+        transactionIdentitySha256,
+      ),
+    ).toMatchObject({
+      ok: true,
+      value: { transactionState: "absent", finalState: "exact" },
+    });
+
+    const corrupt = [
+      RUNTIME_VAULT_TRANSACTION_STATUS_BEGIN,
+      "transactionState=present",
+      "manifestState=corrupt",
+      "finalState=absent",
+      RUNTIME_VAULT_TRANSACTION_STATUS_END,
+      "",
+    ].join("\n");
+    expect(
+      parseProductionRuntimeVaultTransactionObservation(
+        corrupt,
+        authorityDigestSha256,
+        transactionIdentitySha256,
+      ),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        transactionState: "present",
+        manifestState: "corrupt",
+        finalState: "absent",
+      },
     });
   });
 });
