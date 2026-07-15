@@ -44,6 +44,7 @@ function deferred<T>() {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   document.body.innerHTML = "";
 });
 
@@ -427,5 +428,56 @@ describe("IcMessageCenter", () => {
 
     expect(state(el)._actionPending).toBe(false);
     expect(state(el)._sendText).toBe("");
+  });
+
+  it("discards a message response from a replaced RPC client", async () => {
+    const fetch = deferred<{ messages: Array<{ id: string; senderId: string; text: string; timestamp: number }>; channelId: string }>();
+    const el = await createElement({ channelType: "telegram" });
+    const current = state(el);
+    Object.assign(current, {
+      _loadState: "loaded",
+      _capabilities: { fetchHistory: true },
+      _selectedChatId: "chat-a",
+      _hasLoaded: true,
+    });
+    el.rpcClient = {
+      status: "connected",
+      call: vi.fn(() => fetch.promise),
+    } as unknown as RpcClient;
+    await el.updateComplete;
+    const oldRequest = current._refetchMessages();
+
+    el.rpcClient = {
+      status: "disconnected",
+      call: vi.fn(() => Promise.reject(new Error("not connected"))),
+    } as unknown as RpcClient;
+    await el.updateComplete;
+    fetch.resolve({
+      channelId: "chat-a",
+      messages: [{ id: "old-client", senderId: "user_a", text: "old", timestamp: 1 }],
+    });
+    await oldRequest;
+
+    expect(current._messages).toEqual([]);
+  });
+
+  it("restarts channel auto-selection with a replacement RPC client", async () => {
+    vi.useFakeTimers();
+    const firstClient = {
+      status: "connecting",
+      call: vi.fn(() => Promise.reject(new Error("not connected"))),
+    };
+    const secondCall = vi.fn(() => Promise.resolve({ channels: [], total: 0 }));
+    const el = await createElement({ rpcClient: firstClient as unknown as RpcClient });
+
+    el.rpcClient = { status: "connected", call: secondCall } as unknown as RpcClient;
+    await el.updateComplete;
+    await Promise.resolve();
+    firstClient.status = "disconnected";
+    await vi.advanceTimersByTimeAsync(100);
+    await el.updateComplete;
+
+    expect(secondCall).toHaveBeenCalledTimes(1);
+    expect(secondCall).toHaveBeenCalledWith("channels.list");
   });
 });
