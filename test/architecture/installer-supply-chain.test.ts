@@ -45,6 +45,22 @@ describe("installer supply-chain downloads are versioned and integrity checked",
     expect(installer).toMatch(/verify_file_sha256 "\$tmp_dir\/\$tarball_name" "\$node_sha256"/);
   });
 
+  it("isolates NodeSource repository file modes from a restrictive caller umask", () => {
+    const helper = installer.match(/run_nodesource_setup\(\) \{[\s\S]*?\n\}/)?.[0] ?? "";
+    expect(helper, "NodeSource setup must have a dedicated umask boundary").not.toBe("");
+    expect(helper, "root setup must create public apt metadata under umask 022").toMatch(
+      /\(\s*umask 022;\s*exec bash "\$setup_script"\s*\)/,
+    );
+    expect(helper, "sudo setup must create public apt metadata under umask 022").toMatch(
+      /sudo -E bash -c 'umask 022; exec bash "\$1"'/,
+    );
+
+    const setupCalls = installer.match(
+      /run_quiet_step "Configuring NodeSource repository" run_nodesource_setup "\$tmp"/g,
+    );
+    expect(setupCalls, "every root and sudo apt, dnf, and yum path must use the umask boundary").toHaveLength(6);
+  });
+
   it("pins optional browser npm packages in both host and container installers", () => {
     for (const source of [installer, dockerfile]) {
       expect(source).toMatch(/cloakbrowser@\$?\{?CLOAKBROWSER_NPM_VERSION\}?/);

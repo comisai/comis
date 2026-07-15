@@ -100,6 +100,20 @@ describe("install.sh provisions the browser runtime with explicit Xvfb fallback"
     expect(installSh).toMatch(/install_browser_deps_linux\(\)\s*\{[\s\S]{0,160}WITH_BROWSER"\s*==\s*"1"\s*\]\]\s*\|\|\s*return 0/);
   });
 
+  it("sets public Google apt metadata modes independently of the caller umask", () => {
+    const body = fnBody("install_browser_deps_linux");
+    expect(body, "browser dependency installation must exist").not.toBe("");
+    expect(body, "the Google signing key must be readable by apt's unprivileged worker").toMatch(
+      /chmod 0644 \/etc\/apt\/keyrings\/google-chrome\.gpg/,
+    );
+    expect(body, "the Google repository declaration must remain readable by apt").toMatch(
+      /chmod 0644 \/etc\/apt\/sources\.list\.d\/google-chrome\.list/,
+    );
+    expect(body, "repository update failures must not be silently discarded").not.toMatch(
+      /apt-get update -qq 2>\/dev\/null \|\| true/,
+    );
+  });
+
   // Xvfb (headed) is a best-effort UPGRADE over headless Chromium — never a hard
   // requirement. If the Xvfb stack fails to install, the daemon must fall back to
   // the (already-installed) headless Chromium instead of a headed-but-broken tool.
