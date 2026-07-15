@@ -604,6 +604,39 @@ function combinedFingerprint(value: {
   return hash.digest("hex");
 }
 
+export function computeProductionServiceRecoveryDigest(
+  value: ProductionServiceFingerprint,
+): Result<string, ProductionServiceFingerprintError> {
+  if (
+    value.schema !== "comis-production-service-fingerprint" ||
+    value.schemaVersion !== 1 ||
+    (value.role !== "source" && value.role !== "target") ||
+    ![
+      value.machineIdSha256,
+      value.unitSha256,
+      value.executionDefinitionSha256,
+    ].every((field) => typeof field === "string" && SHA256_RE.test(field)) ||
+    value.fingerprintSha256 !== combinedFingerprint(value)
+  ) {
+    return err({
+      kind: "malformed_fingerprint",
+      message: "Service fingerprint cannot authorize crash recovery",
+    });
+  }
+  const hash = createHash("sha256");
+  hash.update("comis-production-service-recovery-v1\0", "utf8");
+  for (const field of [
+    value.role,
+    value.machineIdSha256,
+    value.unitSha256,
+    value.executionDefinitionSha256,
+  ]) {
+    hash.update(field, "utf8");
+    hash.update("\0", "utf8");
+  }
+  return ok(hash.digest("hex"));
+}
+
 export function buildProductionServiceFingerprintInvocation(
   input: ProductionServiceFingerprintInput,
 ): Result<ProductionRemoteInvocation, ProductionServiceFingerprintError> {

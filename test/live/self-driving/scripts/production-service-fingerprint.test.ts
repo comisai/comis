@@ -10,6 +10,7 @@ import {
   PRODUCTION_SERVICE_FINGERPRINT_END,
   buildProductionServiceFingerprintInvocation,
   compareProductionServiceFingerprints,
+  computeProductionServiceRecoveryDigest,
   executeProductionServiceFingerprint,
   parseProductionServiceFingerprint,
   type ProductionServiceFingerprint,
@@ -356,6 +357,28 @@ describe("production service execution fingerprint", () => {
       ok: false,
       error: { kind: "fingerprint_mismatch", field: "bootIdSha256" },
     });
+  });
+
+  it("derives a reboot-stable recovery identity from immutable service definition", () => {
+    const baseline = computeProductionServiceRecoveryDigest(makeFingerprint());
+    expect(baseline.ok).toBe(true);
+    if (!baseline.ok) return;
+    expect(
+      computeProductionServiceRecoveryDigest(
+        makeFingerprint({
+          bootIdSha256: "2".repeat(64),
+          propertySnapshotSha256: "3".repeat(64),
+        }),
+      ),
+    ).toEqual({ ok: true, value: baseline.value });
+    expect(
+      computeProductionServiceRecoveryDigest(
+        makeFingerprint({ executionDefinitionSha256: "4".repeat(64) }),
+      ),
+    ).not.toEqual({ ok: true, value: baseline.value });
+    expect(
+      computeProductionServiceRecoveryDigest(makeFingerprint({ role: "target" })),
+    ).not.toEqual({ ok: true, value: baseline.value });
   });
 
   it("binds target service samples to a distinct invocation and digest role", () => {
