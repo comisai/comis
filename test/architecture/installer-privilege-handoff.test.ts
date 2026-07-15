@@ -305,6 +305,36 @@ describe("install.sh privileged preparation", () => {
     expect(existsSync(scriptStage)).toBe(true);
   });
 
+  it("removes secure handoff artifacts when the child fails", () => {
+    const work = makeWorkDir();
+    const localTarball = join(work, "comisai.tgz");
+    const handoffDir = join(work, "secure-handoff");
+    writeFileSync(localTarball, "fixture tarball");
+
+    const result = runHarness(
+      [
+        'COMIS_USER="$(id -un)"',
+        'COMIS_TARBALL="$LOCAL_TARBALL"',
+        'INSTALL_METHOD="npm"',
+        'COMIS_VERSION="latest"',
+        'eval() { printf "%s\\n" "$COMIS_HOME"; }',
+        'mktemp() { command mkdir "$HANDOFF_DIR"; printf "%s\\n" "$HANDOFF_DIR"; }',
+        'chown() { :; }',
+        'su() { return 37; }',
+        'ui_info() { :; }',
+        "reexec_as_comis_user",
+      ].join("\n"),
+      {
+        COMIS_HOME: work,
+        HANDOFF_DIR: handoffDir,
+        LOCAL_TARBALL: localTarball,
+      },
+    );
+
+    expect(result.code, result.out).toBe(37);
+    expect(existsSync(handoffDir), result.out).toBe(false);
+  });
+
   it("keeps headed-browser intent during the CLI-only user handoff", () => {
     const result = runHarness(
       [

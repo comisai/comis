@@ -3509,8 +3509,12 @@ reexec_as_comis_user() {
     echo ""
 
     # Re-exec as the comis user with COMIS_REEXEC=1 to skip the handoff loop
-    su - "$COMIS_USER" -c "COMIS_REEXEC=1 bash '$script_copy' ${forwarded_args[*]}"
-    local rc=$?
+    local rc=0
+    if su - "$COMIS_USER" -c "COMIS_REEXEC=1 bash '$script_copy' ${forwarded_args[*]}"; then
+        rc=0
+    else
+        rc=$?
+    fi
 
     rm -rf "$handoff_dir" 2>/dev/null || true
 
