@@ -440,15 +440,22 @@ describe("createPiEventBridge", () => {
       expect(toolExecutedCalls).toHaveLength(0);
     });
 
-    it("logs DEBUG with tool name and args preview", () => {
+    it("logs DEBUG with content-free tool metadata and never the argument values", () => {
       const { listener } = createPiEventBridge(deps);
 
-      listener(makeToolExecutionStartEvent("read") as any);
+      const privateBody = "PRIVATE-CRON-PAYLOAD-DO-NOT-LOG";
+      listener({
+        type: "tool_execution_start",
+        toolName: "cron",
+        toolCallId: "tc-private",
+        args: { action: "add", payload_text: privateBody },
+      } as any);
 
       expect(deps.logger.debug).toHaveBeenCalledWith(
-        expect.objectContaining({ toolName: "read", argsPreview: expect.any(String) }),
-        expect.stringContaining("Tool execution started"),
+        { toolName: "cron", argumentCount: 2 },
+        "Tool execution started",
       );
+      expect(JSON.stringify((deps.logger.debug as ReturnType<typeof vi.fn>).mock.calls)).not.toContain(privateBody);
     });
 
     it("logs DEBUG without argsPreview when args is undefined", () => {

@@ -429,8 +429,9 @@ describe("runMemoryReview", () => {
   it("skips storing when memoryPort.search finds existing match above dedupThreshold", async () => {
     const deps = makeDeps();
     arrangeOneSession(deps, 2000, "I like dark mode");
+    const privateMemory = "PRIVATE-EXTRACTED-MEMORY-DO-NOT-LOG";
     (completeSimple as Mock).mockResolvedValue(structuredResponse({
-      memories: [{ content: "User likes dark mode", entities: [{ name: "user" }] }],
+      memories: [{ content: privateMemory, entities: [{ name: "user" }] }],
     }));
     // Search returns a match (above dedupThreshold)
     (deps.memoryPort.search as Mock).mockResolvedValue(ok([{
@@ -444,6 +445,11 @@ describe("runMemoryReview", () => {
       duplicatesSkipped: 1,
       memoriesExtracted: 0,
     }));
+    expect(JSON.stringify((deps.logger.debug as Mock).mock.calls)).not.toContain(privateMemory);
+    expect(deps.logger.debug).toHaveBeenCalledWith(
+      { agentId: "test-agent", contentLength: privateMemory.length },
+      "Skipping duplicate memory",
+    );
   });
 
   it("stores when memoryPort.search returns no matches", async () => {
