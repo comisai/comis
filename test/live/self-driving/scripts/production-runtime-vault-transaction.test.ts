@@ -158,7 +158,7 @@ describe("production runtime vault transaction journal", () => {
     });
   });
 
-  it("recognizes rolled-back authority and blocks impossible rollback evidence", () => {
+  it("keeps a completed rollback attempt-scoped when a later attempt publishes the same payload", () => {
     const rolledBack = [
       "prepare_intent",
       "prepared",
@@ -169,13 +169,29 @@ describe("production runtime vault transaction journal", () => {
       ok: true,
       value: { disposition: "already_rolled_back" },
     });
-    expect(classify(rolledBack, "exact")).toMatchObject({
+    expect(classify(rolledBack, "exact")).toEqual({
+      ok: true,
+      value: { disposition: "already_rolled_back" },
+    });
+    expect(classify(rolledBack, "conflict")).toMatchObject({
       ok: false,
       error: { kind: "blocked_corrupt" },
     });
     expect(classify(rolledBack.slice(0, -1), "absent")).toEqual({
       ok: true,
       value: { disposition: "transaction_active", nextAction: "finish_rollback" },
+    });
+    expect(classify(rolledBack.slice(0, -1), "exact")).toEqual({
+      ok: true,
+      value: { disposition: "transaction_active", nextAction: "finish_rollback" },
+    });
+    expect(classify([], "exact")).toEqual({
+      ok: true,
+      value: { disposition: "transaction_active", nextAction: "roll_back" },
+    });
+    expect(classify(["prepare_intent", "prepared"], "exact")).toEqual({
+      ok: true,
+      value: { disposition: "transaction_active", nextAction: "roll_back" },
     });
   });
 

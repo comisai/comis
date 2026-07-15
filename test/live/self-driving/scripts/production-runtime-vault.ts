@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: Apache-2.0
-import { createHash } from "node:crypto";
 import { basename, dirname, isAbsolute } from "node:path";
 
 import { err, ok, type Result } from "@comis/shared";
@@ -27,10 +26,11 @@ import {
   type ProductionRemoteInvocation,
 } from "./production-bootstrap.js";
 import type { ProductionReplayProfile } from "./production-profile.js";
+import type { RuntimeArtifactAttestation } from "./production-runtime.js";
 import {
-  inspectRuntimeArtifactAttestations,
-  type RuntimeArtifactAttestation,
-} from "./production-runtime.js";
+  compareProductionServiceFingerprints,
+  computeProductionServiceRecoveryDigest,
+} from "./production-service-fingerprint.js";
 import {
   RUNTIME_TREE_FACTS_BEGIN,
   RUNTIME_TREE_FACTS_END,
@@ -42,7 +42,25 @@ import {
 import {
   TOOLCHAIN_ROOT_SHELL_PREFIX,
   buildToolchainRootScriptCommand,
+  compareToolchainContracts,
+  type ToolchainCompatibilityReportV1,
 } from "./production-toolchain-contract.js";
+import {
+  serializeProductionRuntimeVaultRecoveryReceipt,
+  type ProductionRuntimeVaultRecoveryReceipt,
+  type ProductionRuntimeVaultRecoveryReceiptInput,
+} from "./production-runtime-vault-authority.js";
+import {
+  createProductionRuntimeVaultEvidencePort,
+  type ProductionRuntimeVaultCaptureEvidence,
+  type ProductionRuntimeVaultTargetEvidence,
+} from "./production-runtime-vault-evidence.js";
+import type {
+  ProductionRuntimeVaultReceiptStore,
+  ProductionRuntimeVaultReceiptStoreError,
+  ProductionRuntimeVaultTerminalDisposition,
+  ProductionRuntimeVaultTerminalRecord,
+} from "./production-runtime-vault-receipt-store.js";
 
 export const RUNTIME_VAULT_STATUS_BEGIN = "COMIS_RUNTIME_VAULT_STATUS_V1_BEGIN";
 export const RUNTIME_VAULT_STATUS_END = "COMIS_RUNTIME_VAULT_STATUS_V1_END";
@@ -109,7 +127,6 @@ export interface ProductionRuntimeVaultPlan {
   readonly targetRollback: ProductionRemoteInvocation;
   readonly targetTransactionStatus: ProductionRemoteInvocation;
   readonly targetFinishPublish: ProductionRemoteInvocation;
-  readonly targetReconcile: ProductionRemoteInvocation;
 }
 
 export interface ProductionRuntimeVaultStatusAbsent {
@@ -137,25 +154,27 @@ export interface InspectProductionRuntimeVaultRequest {
 export interface SealProductionRuntimeRequest {
   readonly runId: string;
   readonly attemptId: string;
-  readonly authorityDigestSha256: string;
+  readonly createdAtMs: number;
   readonly profile: ProductionReplayProfile;
   readonly executor: ProductionRemoteExecutor;
   readonly bridge: ProductionBinarySshBridge;
   readonly leaseClient: ProductionRemoteLeaseClient;
+  readonly receiptStore: ProductionRuntimeVaultReceiptStore;
 }
 
 export interface RecoverProductionRuntimeVaultRequest {
   readonly runId: string;
   readonly attemptId: string;
-  readonly authorityDigestSha256: string;
   readonly profile: ProductionReplayProfile;
   readonly executor: ProductionRemoteExecutor;
+  readonly leaseClient: ProductionRemoteLeaseClient;
+  readonly receiptStore: ProductionRuntimeVaultReceiptStore;
 }
 
-export interface ReconcileProductionRuntimeVaultTargetRequest {
+interface ReconcileProductionRuntimeVaultTargetWithHeldLeaseRequest {
   readonly plan: ProductionRuntimeVaultPlan;
   readonly executor: ProductionRemoteExecutor;
-  readonly leaseClient: ProductionRemoteLeaseClient;
+  readonly terminal?: ProductionRuntimeVaultTerminalRecord;
 }
 
 export interface ProductionRuntimeVaultTargetReconciliationReport {
@@ -167,17 +186,15 @@ export interface ProductionRuntimeVaultTargetReconciliationReport {
 }
 
 export interface ProductionRuntimeVaultReport {
-  readonly disposition: "published" | "reused";
+  readonly disposition: "published" | "reused_existing";
   readonly bytesTransferred: number;
   readonly payload: RuntimePayloadIdentity;
   readonly payloadPath: string;
-  readonly importReceiptDigestSha256: string;
-  readonly compatibility: {
-    readonly status: "unsupported";
-    readonly reason: "no_digest_pinned_adapter";
-  };
+  readonly recoveryAuthorityDigestSha256: string;
+  readonly recoveryAuthorityKeyIdSha256: string;
+  readonly compatibility: ToolchainCompatibilityReportV1;
   readonly sourceConsistency: {
-    readonly method: "bounded_double_scan";
+    readonly method: "bounded_multi_scan";
     readonly atomicSnapshot: false;
   };
   readonly targetInstallationPreserved: true;
@@ -185,11 +202,17 @@ export interface ProductionRuntimeVaultReport {
 }
 
 export interface ProductionRuntimeVaultRecoveryReport {
-  readonly disposition: "staging_rolled_back" | "published_recovered";
+  readonly disposition:
+    | "not_started"
+    | "reused_existing"
+    | "rolled_back"
+    | "published";
   readonly payload: RuntimePayloadIdentity;
   readonly payloadPath: string;
+  readonly recoveryAuthorityDigestSha256: string;
+  readonly recoveryAuthorityKeyIdSha256: string;
   readonly sourceConsistency: {
-    readonly method: "bounded_double_scan";
+    readonly method: "authenticated_receipt_only";
     readonly atomicSnapshot: false;
   };
   readonly targetInstallationPreserved: true;
@@ -231,19 +254,32 @@ export type ProductionRuntimeVaultPrimaryError =
       readonly stage: "acquire-runtime-vault-lease";
       readonly message: string;
       readonly outcome: ProductionRemoteLeaseError;
+    }
+  | {
+      readonly kind: "foreign_transaction" | "blocked_corrupt";
+      readonly stage: "classify-runtime-vault-transaction";
+      readonly message: string;
     };
 
 export type ProductionRuntimeVaultError =
   | ProductionRuntimeVaultPrimaryError
   | {
-      readonly kind: "rollback_failure";
-      readonly stage: "rollback-runtime-vault";
+      readonly kind: "receipt_failure";
+      readonly stage:
+        | "persist-runtime-vault-receipt"
+        | "read-runtime-vault-receipt"
+        | "read-runtime-vault-terminal"
+        | "record-runtime-vault-terminal";
       readonly message: string;
-      readonly primary: ProductionRuntimeVaultPrimaryError;
-      readonly rollback: {
-        readonly stage: "rollback-runtime-vault-target";
-        readonly outcome: ProductionRuntimeVaultRemoteOutcome;
-      };
+      readonly outcome: ProductionRuntimeVaultReceiptStoreError;
+      readonly primary: ProductionRuntimeVaultError | null;
+    }
+  | {
+      readonly kind: "reconciliation_failure";
+      readonly stage: "reconcile-runtime-vault-target";
+      readonly message: string;
+      readonly primary: ProductionRuntimeVaultError;
+      readonly reconciliation: ProductionRuntimeVaultError;
     }
   | {
       readonly kind: "lease_release_failure";
@@ -1467,16 +1503,10 @@ printf '%s\n' published
 `;
 }
 
-function buildTargetRollbackScript(
-  leaseMode: "held" | "acquire",
-): string {
-  const controllerGuard =
-    leaseMode === "held"
-      ? TARGET_CONTROLLER_LEASE_HELD_GUARD
-      : TARGET_CONTROLLER_LEASE_ACQUIRE_GUARD;
+function buildTargetRollbackScript(): string {
   return String.raw`set -euo pipefail
 ${targetVariablePrelude()}${TARGET_GUARD}${TARGET_PATH_ASSIGNMENTS}${TARGET_CANONICAL_PATH_GUARD}${TARGET_MOUNT_GUARD}${TARGET_ANCESTOR_GUARD}${TARGET_DYNAMIC_MOUNT_GUARD}
-${controllerGuard}
+${TARGET_CONTROLLER_LEASE_HELD_GUARD}
 if [ ! -e "$operation_lock" ] && [ ! -L "$operation_lock" ]; then
   if [ -e "$final_root" ] || [ -L "$final_root" ] || \
      [ -e "$transaction_dir" ] || [ -L "$transaction_dir" ] || \
@@ -1489,7 +1519,6 @@ if [ ! -e "$operation_lock" ] && [ ! -L "$operation_lock" ]; then
 fi
 ${TARGET_OPERATION_LOCK_GUARD}
 ${probeFunction()}${TARGET_RECOVERY_FINAL_GUARD}
-if [ -e "$final_root" ] || [ -L "$final_root" ]; then exit 91; fi
 if [ ! -e "$identity_path" ] && [ ! -L "$identity_path" ] && \
    [ ! -e "$identity_incoming" ] && [ ! -L "$identity_incoming" ] && \
    [ ! -e "$active_capture" ] && [ ! -L "$active_capture" ] && \
@@ -1787,7 +1816,7 @@ export function buildProductionRuntimeVaultPlan(
       "rollback-runtime-vault-target",
       request.profile.target,
       rootShellArgs(args),
-      buildTargetRollbackScript("held"),
+      buildTargetRollbackScript(),
     ),
     targetTransactionStatus: invocation(
       "observe-runtime-vault-transaction-target",
@@ -1800,12 +1829,6 @@ export function buildProductionRuntimeVaultPlan(
       request.profile.target,
       rootShellArgs(args),
       buildTargetFinishPublishScript(),
-    ),
-    targetReconcile: invocation(
-      "reconcile-runtime-vault-target",
-      request.profile.target,
-      rootShellArgs(args),
-      buildTargetRollbackScript("acquire"),
     ),
   });
 }
@@ -1906,39 +1929,6 @@ export async function inspectProductionRuntimeVault(
   return parseVaultStatus(remote.value.stdout, request.runtimeDigestSha256);
 }
 
-async function executeSourceTreeProbe(
-  profile: ProductionReplayProfile,
-  root: string,
-  executor: ProductionRemoteExecutor,
-): Promise<Result<RuntimeTreeAttestation, ProductionRuntimeVaultError>> {
-  const command = invocation(
-    "runtime-tree-attest-source",
-    profile.source,
-    rootShellArgs([root]),
-    buildRuntimeTreeProbeScript(),
-  );
-  const remote = await executor.run(command);
-  if (!remote.ok || remote.value.exitCode !== 0) {
-    return err({
-      kind: "remote_failure",
-      stage: command.label,
-      message: "Source runtime tree probe failed",
-      outcome: remote.ok
-        ? { kind: "remote_exit", exitCode: remote.value.exitCode }
-        : { kind: "transport_failure" },
-    });
-  }
-  const parsed = parseRuntimeTreeFacts(remote.value.stdout);
-  if (!parsed.ok || parsed.value.root !== root) {
-    return err({
-      kind: "attestation_failure",
-      stage: command.label,
-      message: "Source runtime tree facts are invalid",
-    });
-  }
-  return parsed;
-}
-
 async function runStage(
   executor: ProductionRemoteExecutor,
   command: ProductionRemoteInvocation,
@@ -1958,7 +1948,7 @@ async function runStage(
 }
 
 async function observeTargetTransaction(
-  request: ReconcileProductionRuntimeVaultTargetRequest,
+  request: ReconcileProductionRuntimeVaultTargetWithHeldLeaseRequest,
 ): Promise<
   Result<ProductionRuntimeVaultTransactionDisposition, ProductionRuntimeVaultError>
 > {
@@ -1982,9 +1972,12 @@ async function observeTargetTransaction(
   const classified = classifyProductionRuntimeVaultTransaction(parsed.value);
   if (!classified.ok) {
     return err({
-      kind: "attestation_failure",
+      kind: classified.error.kind,
       stage: "classify-runtime-vault-transaction",
-      message: "Runtime vault transaction cannot be recovered safely",
+      message:
+        classified.error.kind === "foreign_transaction"
+          ? "Runtime vault transaction belongs to a different authenticated authority"
+          : "Runtime vault transaction is corrupt or impossible",
     });
   }
   return classified;
@@ -2019,26 +2012,46 @@ function terminalReconciliationReport(
   }
 }
 
-export async function reconcileProductionRuntimeVaultTarget(
-  request: ReconcileProductionRuntimeVaultTargetRequest,
+async function reconcileProductionRuntimeVaultTargetWithHeldLease(
+  request: ReconcileProductionRuntimeVaultTargetWithHeldLeaseRequest,
 ): Promise<
   Result<ProductionRuntimeVaultTargetReconciliationReport, ProductionRuntimeVaultError>
 > {
-  const acquired = await request.leaseClient.acquire(request.plan.controllerLease);
-  if (!acquired.ok) {
-    return err({
-      kind: "lease_failure",
-      stage: "acquire-runtime-vault-lease",
-      message: "Runtime vault controller lease could not be acquired",
-      outcome: acquired.error,
-    });
+  const initial = await observeTargetTransaction(request);
+  if (request.terminal !== undefined) {
+    if (!initial.ok) {
+      if (
+        request.terminal.disposition === "blocked_corrupt" &&
+        initial.error.kind === "blocked_corrupt"
+      ) {
+        return initial;
+      }
+      return attestationFailure(
+        "verify-runtime-vault-terminal-before-reconciliation",
+        "Authenticated terminal record contradicts current target transaction authority",
+      );
+    }
+    const observed = terminalReconciliationReport(initial.value);
+    const terminalMatches =
+      request.terminal.disposition === "not_started"
+        ? initial.value.disposition === "not_started" ||
+          initial.value.disposition === "reused_existing"
+        : observed.ok &&
+          request.terminal.disposition !== "blocked_corrupt" &&
+          request.terminal.disposition === observed.value.disposition;
+    if (
+      !terminalMatches
+    ) {
+      return attestationFailure(
+        "verify-runtime-vault-terminal-before-reconciliation",
+        "Authenticated terminal record contradicts current target transaction state",
+      );
+    }
+    return request.terminal.disposition === "not_started"
+      ? ok({ disposition: "not_started" })
+      : observed;
   }
-
-  const primary = await (async (): Promise<
-    Result<ProductionRuntimeVaultTargetReconciliationReport, ProductionRuntimeVaultError>
-  > => {
-    const initial = await observeTargetTransaction(request);
-    if (!initial.ok) return initial;
+  if (!initial.ok) return initial;
     if (
       initial.value.disposition !== "transaction_active" &&
       initial.value.disposition !== "published_recovered"
@@ -2079,89 +2092,175 @@ export async function reconcileProductionRuntimeVaultTarget(
         message: "Runtime vault recovery reached the wrong terminal state",
       });
     }
-    return report;
-  })();
-
-  const released = await acquired.value.release();
-  if (!released.ok) {
-    return err({
-      kind: "lease_release_failure",
-      stage: "release-runtime-vault-lease",
-      message: "Runtime vault controller lease could not be released",
-      outcome: released.error,
-      primary: primary.ok ? null : primary.error,
-    });
-  }
-  return primary;
+  return report;
 }
 
-async function rollback(
-  executor: ProductionRemoteExecutor,
-  plan: ProductionRuntimeVaultPlan,
-): Promise<Result<void, ProductionRuntimeVaultRemoteFailure>> {
-  const result = await runStage(executor, plan.targetRollback);
-  if (!result.ok) {
-    if (result.error.kind === "remote_failure") return err(result.error);
-    return err({
-      kind: "remote_failure",
-      stage: plan.targetRollback.label,
-      message: "Runtime vault rollback returned an unexpected failure",
-      outcome: { kind: "transport_failure" },
-    });
-  }
-  return ok(undefined);
+function attestationError(
+  stage: string,
+  message: string,
+): ProductionRuntimeVaultPrimaryError {
+  return { kind: "attestation_failure", stage, message };
 }
 
-async function failAfterRollback(
-  executor: ProductionRemoteExecutor,
-  plan: ProductionRuntimeVaultPlan,
-  failure: ProductionRuntimeVaultPrimaryError,
-): Promise<Result<never, ProductionRuntimeVaultError>> {
-  const rolledBack = await rollback(executor, plan);
-  if (rolledBack.ok) return err(failure);
+function attestationFailure(
+  stage: string,
+  message: string,
+): Result<never, ProductionRuntimeVaultError> {
+  return err(attestationError(stage, message));
+}
+
+function receiptFailure(
+  stage:
+    | "persist-runtime-vault-receipt"
+    | "read-runtime-vault-receipt"
+    | "read-runtime-vault-terminal"
+    | "record-runtime-vault-terminal",
+  outcome: ProductionRuntimeVaultReceiptStoreError,
+  primary: ProductionRuntimeVaultError | null = null,
+): Result<never, ProductionRuntimeVaultError> {
   return err({
-    kind: "rollback_failure",
-    stage: "rollback-runtime-vault",
-    message: "Runtime vault staging could not be rolled back",
-    primary: failure,
-    rollback: {
-      stage: "rollback-runtime-vault-target",
-      outcome: rolledBack.error.outcome,
-    },
+    kind: "receipt_failure",
+    stage,
+    message: "Authenticated runtime-vault controller state could not be persisted or verified",
+    outcome,
+    primary,
   });
 }
 
-function report(
-  disposition: "published" | "reused",
-  bytesTransferred: number,
-  runId: string,
+function sameCaptureEvidence(
+  expected: ProductionRuntimeVaultCaptureEvidence,
+  actual: ProductionRuntimeVaultCaptureEvidence,
+): boolean {
+  return (
+    runtimeArtifactEqual(expected.sourceRuntime, actual.sourceRuntime) &&
+    runtimeArtifactEqual(expected.targetRuntime, actual.targetRuntime) &&
+    compareRuntimeTreeAttestations(expected.sourceTree, actual.sourceTree).ok &&
+    compareToolchainContracts(expected.sourceToolchain, actual.sourceToolchain).ok &&
+    compareToolchainContracts(expected.targetToolchain, actual.targetToolchain).ok &&
+    compareProductionServiceFingerprints(
+      expected.sourceServiceFingerprint,
+      actual.sourceServiceFingerprint,
+    ).ok &&
+    compareProductionServiceFingerprints(
+      expected.targetServiceFingerprint,
+      actual.targetServiceFingerprint,
+    ).ok
+  );
+}
+
+function sameTargetEvidence(
+  expected: ProductionRuntimeVaultTargetEvidence,
+  actual: ProductionRuntimeVaultTargetEvidence,
+): boolean {
+  return (
+    runtimeArtifactEqual(expected.targetRuntime, actual.targetRuntime) &&
+    compareToolchainContracts(expected.targetToolchain, actual.targetToolchain).ok &&
+    compareProductionServiceFingerprints(
+      expected.targetServiceFingerprint,
+      actual.targetServiceFingerprint,
+    ).ok
+  );
+}
+
+function receiptMatchesProfile(
+  receipt: ProductionRuntimeVaultRecoveryReceipt,
+  request: Pick<RecoverProductionRuntimeVaultRequest, "runId" | "attemptId" | "profile">,
+): boolean {
+  return (
+    receipt.runId === request.runId &&
+    receipt.attemptId === request.attemptId &&
+    receipt.sourceMachineIdSha256 === request.profile.source.expectedMachineIdSha256 &&
+    receipt.targetMachineIdSha256 === request.profile.target.expectedMachineIdSha256 &&
+    receipt.sourceService === request.profile.source.service &&
+    receipt.targetService === request.profile.target.service &&
+    receipt.sourceDataDir === request.profile.source.dataDir &&
+    receipt.targetDataDir === request.profile.target.dataDir
+  );
+}
+
+function receiptMatchesInput(
+  receipt: ProductionRuntimeVaultRecoveryReceipt,
+  input: ProductionRuntimeVaultRecoveryReceiptInput,
+): boolean {
+  const expected: ProductionRuntimeVaultRecoveryReceipt = {
+    ...input,
+    schema: "comis-runtime-vault-recovery-receipt",
+    seal: receipt.seal,
+  };
+  return (
+    serializeProductionRuntimeVaultRecoveryReceipt(expected) ===
+    serializeProductionRuntimeVaultRecoveryReceipt(receipt)
+  );
+}
+
+function targetEvidenceAuthorizesRecovery(
+  receipt: ProductionRuntimeVaultRecoveryReceipt,
+  evidence: ProductionRuntimeVaultTargetEvidence,
+): boolean {
+  const serviceRecovery = computeProductionServiceRecoveryDigest(
+    evidence.targetServiceFingerprint,
+  );
+  return (
+    runtimeArtifactEqual(receipt.targetRuntimeArtifact, evidence.targetRuntime) &&
+    evidence.targetToolchain.toolchainRecoveryDigestSha256 ===
+      receipt.targetToolchainRecoveryDigestSha256 &&
+    serviceRecovery.ok &&
+    serviceRecovery.value === receipt.targetServiceRecoveryDigestSha256
+  );
+}
+
+function planFromReceipt(
+  receipt: ProductionRuntimeVaultRecoveryReceipt,
   profile: ProductionReplayProfile,
-  sourceTree: RuntimeTreeAttestation,
+): Result<ProductionRuntimeVaultPlan, ProductionRuntimeVaultError> {
+  const base = buildProductionRuntimeVaultPlanBase({
+    runId: receipt.runId,
+    attemptId: receipt.attemptId,
+    profile,
+    sourceRuntime: receipt.sourceRuntimeArtifact,
+    targetRuntime: receipt.targetRuntimeArtifact,
+    sourceTree: receipt.runtimeTreeAttestation,
+  });
+  if (!base.ok) return base;
+  if (
+    base.value.payloadPath !== receipt.payloadPath ||
+    base.value.maximumArchiveBytes !== receipt.maximumArchiveBytes ||
+    base.value.targetControlDir !== receipt.targetControlDir ||
+    base.value.targetIncomingRoot !== receipt.targetIncomingRoot ||
+    base.value.targetTransactionDir !== receipt.targetTransactionDir ||
+    receipt.targetPackageRoot !== receipt.targetRuntimeArtifact.packageRoot
+  ) {
+    return attestationFailure(
+      "bind-runtime-vault-receipt-layout",
+      "Authenticated runtime-vault receipt does not match the derived target layout",
+    );
+  }
+  return buildProductionRuntimeVaultPlan({
+    runId: receipt.runId,
+    attemptId: receipt.attemptId,
+    authorityDigestSha256: receipt.seal.authorityDigestSha256,
+    profile,
+    sourceRuntime: receipt.sourceRuntimeArtifact,
+    targetRuntime: receipt.targetRuntimeArtifact,
+    sourceTree: receipt.runtimeTreeAttestation,
+  });
+}
+
+function sealReport(
+  disposition: ProductionRuntimeVaultReport["disposition"],
+  bytesTransferred: number,
+  receipt: ProductionRuntimeVaultRecoveryReceipt,
+  compatibility: ToolchainCompatibilityReportV1,
 ): ProductionRuntimeVaultReport {
-  const importReceiptDigestSha256 = createHash("sha256")
-    .update("comis-runtime-vault-import-receipt-v1\0")
-    .update(runId)
-    .update("\0")
-    .update(profile.source.expectedMachineIdSha256)
-    .update("\0")
-    .update(profile.target.expectedMachineIdSha256)
-    .update("\0")
-    .update(sourceTree.digestSha256)
-    .digest("hex");
   return {
     disposition,
     bytesTransferred,
-    payload: payloadIdentity(sourceTree),
-    payloadPath: `${RUNTIME_VAULT_ROOT}/${sourceTree.digestSha256}/payload`,
-    importReceiptDigestSha256,
-    compatibility: {
-      status: "unsupported",
-      reason: "no_digest_pinned_adapter",
-    },
-    sourceConsistency: {
-      method: "bounded_double_scan",
-      atomicSnapshot: false,
-    },
+    payload: payloadIdentity(receipt.runtimeTreeAttestation),
+    payloadPath: receipt.payloadPath,
+    recoveryAuthorityDigestSha256: receipt.seal.authorityDigestSha256,
+    recoveryAuthorityKeyIdSha256: receipt.seal.authorityKeyIdSha256,
+    compatibility,
+    sourceConsistency: { method: "bounded_multi_scan", atomicSnapshot: false },
     targetInstallationPreserved: true,
     normalServiceTouched: false,
   };
@@ -2169,19 +2268,127 @@ function report(
 
 function recoveryReport(
   disposition: ProductionRuntimeVaultRecoveryReport["disposition"],
-  sourceTree: RuntimeTreeAttestation,
+  receipt: ProductionRuntimeVaultRecoveryReceipt,
 ): ProductionRuntimeVaultRecoveryReport {
   return {
     disposition,
-    payload: payloadIdentity(sourceTree),
-    payloadPath: `${RUNTIME_VAULT_ROOT}/${sourceTree.digestSha256}/payload`,
-    sourceConsistency: {
-      method: "bounded_double_scan",
-      atomicSnapshot: false,
-    },
+    payload: payloadIdentity(receipt.runtimeTreeAttestation),
+    payloadPath: receipt.payloadPath,
+    recoveryAuthorityDigestSha256: receipt.seal.authorityDigestSha256,
+    recoveryAuthorityKeyIdSha256: receipt.seal.authorityKeyIdSha256,
+    sourceConsistency: { method: "authenticated_receipt_only", atomicSnapshot: false },
     targetInstallationPreserved: true,
     normalServiceTouched: false,
   };
+}
+
+function terminalDisposition(
+  disposition: ProductionRuntimeVaultTargetReconciliationReport["disposition"],
+): ProductionRuntimeVaultTerminalDisposition {
+  return disposition;
+}
+
+function terminalRecordEqual(
+  expected: ProductionRuntimeVaultTerminalRecord,
+  actual: ProductionRuntimeVaultTerminalRecord,
+): boolean {
+  return (
+    expected.schema === actual.schema &&
+    expected.schemaVersion === actual.schemaVersion &&
+    expected.runId === actual.runId &&
+    expected.attemptId === actual.attemptId &&
+    expected.disposition === actual.disposition &&
+    expected.authorityKeyIdSha256 === actual.authorityKeyIdSha256 &&
+    expected.receiptAuthorityDigestSha256 ===
+      actual.receiptAuthorityDigestSha256 &&
+    expected.receiptDigestSha256 === actual.receiptDigestSha256 &&
+    expected.authenticationTagSha256 === actual.authenticationTagSha256
+  );
+}
+
+function terminalAdvancedConsistently(
+  beforeLease: ProductionRuntimeVaultTerminalRecord | undefined,
+  underLease: ProductionRuntimeVaultTerminalRecord | undefined,
+): boolean {
+  return (
+    beforeLease === undefined ||
+    (underLease !== undefined && terminalRecordEqual(beforeLease, underLease))
+  );
+}
+
+function recordTerminal(
+  store: ProductionRuntimeVaultReceiptStore,
+  receipt: ProductionRuntimeVaultRecoveryReceipt,
+  disposition: ProductionRuntimeVaultTerminalDisposition,
+  primary: ProductionRuntimeVaultError | null = null,
+): Result<void, ProductionRuntimeVaultError> {
+  const recorded = store.recordTerminal(receipt, disposition);
+  return recorded.ok
+    ? ok(undefined)
+    : receiptFailure("record-runtime-vault-terminal", recorded.error, primary);
+}
+
+async function verifyTargetDisposition(
+  profile: ProductionReplayProfile,
+  executor: ProductionRemoteExecutor,
+  receipt: ProductionRuntimeVaultRecoveryReceipt,
+  disposition: ProductionRuntimeVaultTargetReconciliationReport["disposition"],
+  attemptClosureIsDurable = false,
+): Promise<Result<void, ProductionRuntimeVaultError>> {
+  const status = await inspectProductionRuntimeVault(
+    { profile, runtimeDigestSha256: receipt.runtimeTreeAttestation.digestSha256 },
+    executor,
+  );
+  if (!status.ok) return status;
+  const shouldBePresent = disposition === "published" || disposition === "reused_existing";
+  if (shouldBePresent) {
+    if (
+      status.value.state !== "present" ||
+      !compareRuntimeTreeAttestations(
+        receipt.runtimeTreeAttestation,
+        status.value.payload,
+      ).ok
+    ) {
+      return attestationFailure(
+        "verify-runtime-vault-target-disposition",
+        "Runtime-vault target payload does not match the authenticated terminal state",
+      );
+    }
+    return ok(undefined);
+  }
+  if (status.value.state === "absent") return ok(undefined);
+  return attemptClosureIsDurable &&
+    compareRuntimeTreeAttestations(
+      receipt.runtimeTreeAttestation,
+      status.value.payload,
+    ).ok
+    ? ok(undefined)
+    : attestationFailure(
+        "verify-runtime-vault-target-disposition",
+        "Runtime-vault target payload contradicts the attempt terminal state",
+      );
+}
+
+async function reconcilePrimaryFailure(
+  plan: ProductionRuntimeVaultPlan,
+  executor: ProductionRemoteExecutor,
+  primary: ProductionRuntimeVaultError,
+): Promise<
+  Result<ProductionRuntimeVaultTargetReconciliationReport, ProductionRuntimeVaultError>
+> {
+  const reconciled = await reconcileProductionRuntimeVaultTargetWithHeldLease({
+    plan,
+    executor,
+  });
+  return reconciled.ok
+    ? reconciled
+    : err({
+        kind: "reconciliation_failure",
+        stage: "reconcile-runtime-vault-target",
+        message: "Runtime-vault failure could not be classified and reconciled safely",
+        primary,
+        reconciliation: reconciled.error,
+      });
 }
 
 export async function recoverProductionRuntimeVault(
@@ -2191,78 +2398,133 @@ export async function recoverProductionRuntimeVault(
     return invalid("invalid_request", "runId", "Runtime vault run ID contains unsafe characters");
   }
   if (!ATTEMPT_ID_RE.test(request.attemptId)) {
-    return invalid(
-      "invalid_request",
-      "attemptId",
-      "Runtime vault attempt ID is malformed",
+    return invalid("invalid_request", "attemptId", "Runtime vault attempt ID is malformed");
+  }
+  const storedReceipt = request.receiptStore.readReceipt(request.runId, request.attemptId);
+  if (!storedReceipt.ok) {
+    return receiptFailure("read-runtime-vault-receipt", storedReceipt.error);
+  }
+  const receipt = storedReceipt.value;
+  if (!receiptMatchesProfile(receipt, request)) {
+    return attestationFailure(
+      "bind-runtime-vault-recovery-profile",
+      "Recovery profile does not match the authenticated runtime-vault receipt",
     );
   }
-  const before = await inspectRuntimeArtifactAttestations(request.profile, request.executor);
-  if (!before.ok) {
-    return err({
-      kind: "attestation_failure",
-      stage: "attest-installed-runtime-before-vault-recovery",
-      message: "Installed runtimes could not be attested before recovery",
-    });
+  const storedTerminal = request.receiptStore.readTerminal(request.runId, request.attemptId);
+  if (!storedTerminal.ok) {
+    return receiptFailure("read-runtime-vault-terminal", storedTerminal.error);
   }
-  const sourceTree = await executeSourceTreeProbe(
-    request.profile,
-    before.value.source.packageRoot,
-    request.executor,
-  );
-  if (!sourceTree.ok) return sourceTree;
-  if (sourceTree.value.version !== before.value.source.version) {
-    return err({
-      kind: "attestation_failure",
-      stage: "bind-source-runtime-tree-for-recovery",
-      message: "Source runtime tree does not match its launcher artifact",
-    });
+  const evidencePort = createProductionRuntimeVaultEvidencePort();
+  const targetBefore = await evidencePort.captureTarget(request.profile, request.executor);
+  if (!targetBefore.ok || !targetEvidenceAuthorizesRecovery(receipt, targetBefore.value)) {
+    return attestationFailure(
+      "authorize-runtime-vault-target-recovery",
+      "Current target evidence does not match the authenticated recovery identity",
+    );
   }
-  const plan = buildProductionRuntimeVaultPlan({
-    runId: request.runId,
-    attemptId: request.attemptId,
-    authorityDigestSha256: request.authorityDigestSha256,
-    profile: request.profile,
-    sourceRuntime: before.value.source,
-    targetRuntime: before.value.target,
-    sourceTree: sourceTree.value,
-  });
+  const plan = planFromReceipt(receipt, request.profile);
   if (!plan.ok) return plan;
-  const reconciled = await runStage(request.executor, plan.value.targetReconcile);
-  if (!reconciled.ok) return reconciled;
-  const [after, sourceTreeAfter, finalStatus] = await Promise.all([
-    inspectRuntimeArtifactAttestations(request.profile, request.executor),
-    executeSourceTreeProbe(request.profile, before.value.source.packageRoot, request.executor),
-    inspectProductionRuntimeVault(
-      { profile: request.profile, runtimeDigestSha256: sourceTree.value.digestSha256 },
-      request.executor,
-    ),
-  ]);
-  if (
-    !after.ok ||
-    !sourceTreeAfter.ok ||
-    !finalStatus.ok ||
-    !runtimeArtifactEqual(before.value.source, after.value.source) ||
-    !runtimeArtifactEqual(before.value.target, after.value.target) ||
-    !compareRuntimeTreeAttestations(sourceTree.value, sourceTreeAfter.value).ok
-  ) {
+  const acquired = await request.leaseClient.acquire(plan.value.controllerLease);
+  if (!acquired.ok) {
     return err({
-      kind: "attestation_failure",
-      stage: "verify-runtime-vault-recovery",
-      message: "Source or installed target runtime changed during recovery",
+      kind: "lease_failure",
+      stage: "acquire-runtime-vault-lease",
+      message: "Runtime vault controller lease could not be acquired",
+      outcome: acquired.error,
     });
   }
-  if (finalStatus.value.state === "present") {
-    if (!compareRuntimeTreeAttestations(sourceTree.value, finalStatus.value.payload).ok) {
-      return err({
-        kind: "attestation_failure",
-        stage: "verify-runtime-vault-recovery",
-        message: "Recovered runtime vault payload conflicts with the source",
-      });
+  const recovered = await (async (): Promise<
+    Result<ProductionRuntimeVaultRecoveryReport, ProductionRuntimeVaultError>
+  > => {
+    const terminalUnderLease = request.receiptStore.readTerminal(
+      request.runId,
+      request.attemptId,
+    );
+    if (!terminalUnderLease.ok) {
+      return receiptFailure("read-runtime-vault-terminal", terminalUnderLease.error);
     }
-    return ok(recoveryReport("published_recovered", sourceTree.value));
+    if (
+      !terminalAdvancedConsistently(
+        storedTerminal.value,
+        terminalUnderLease.value,
+      )
+    ) {
+      return attestationFailure(
+        "verify-runtime-vault-terminal-under-lease",
+        "Authenticated terminal state changed inconsistently before lease acquisition",
+      );
+    }
+    const targetUnderLease = await evidencePort.captureTarget(
+      request.profile,
+      request.executor,
+    );
+    if (!targetUnderLease.ok || !sameTargetEvidence(targetBefore.value, targetUnderLease.value)) {
+      return attestationFailure(
+        "verify-runtime-vault-target-before-recovery",
+        "Target evidence changed while recovery authority was acquired",
+      );
+    }
+    const reconciled = await reconcileProductionRuntimeVaultTargetWithHeldLease({
+      plan: plan.value,
+      executor: request.executor,
+      ...(terminalUnderLease.value !== undefined
+        ? { terminal: terminalUnderLease.value }
+        : {}),
+    });
+    if (!reconciled.ok) {
+      if (reconciled.error.kind === "blocked_corrupt") {
+        const recorded = recordTerminal(
+          request.receiptStore,
+          receipt,
+          "blocked_corrupt",
+          reconciled.error,
+        );
+        if (!recorded.ok) return recorded;
+      }
+      return reconciled;
+    }
+    const targetVerified = await verifyTargetDisposition(
+      request.profile,
+      request.executor,
+      receipt,
+      reconciled.value.disposition,
+      terminalUnderLease.value !== undefined ||
+        reconciled.value.disposition === "rolled_back",
+    );
+    if (!targetVerified.ok) return targetVerified;
+    const targetAfter = await evidencePort.captureTarget(request.profile, request.executor);
+    if (!targetAfter.ok || !sameTargetEvidence(targetUnderLease.value, targetAfter.value)) {
+      return attestationFailure(
+        "verify-runtime-vault-target-after-recovery",
+        "Target installation or recovery toolchain changed during recovery",
+      );
+    }
+    const expectedTerminal = terminalDisposition(reconciled.value.disposition);
+    if (
+      terminalUnderLease.value !== undefined &&
+      terminalUnderLease.value.disposition !== expectedTerminal
+    ) {
+      return attestationFailure(
+        "verify-runtime-vault-terminal-consistency",
+        "Authenticated terminal record contradicts current target evidence",
+      );
+    }
+    const recorded = recordTerminal(request.receiptStore, receipt, expectedTerminal);
+    if (!recorded.ok) return recorded;
+    return ok(recoveryReport(reconciled.value.disposition, receipt));
+  })();
+  const released = await acquired.value.release();
+  if (!released.ok) {
+    return err({
+      kind: "lease_release_failure",
+      stage: "release-runtime-vault-lease",
+      message: "Runtime vault controller lease could not be released",
+      outcome: released.error,
+      primary: recovered.ok ? null : recovered.error,
+    });
   }
-  return ok(recoveryReport("staging_rolled_back", sourceTree.value));
+  return recovered;
 }
 
 export async function sealProductionRuntime(
@@ -2271,80 +2533,84 @@ export async function sealProductionRuntime(
   if (!SAFE_RUN_ID_RE.test(request.runId)) {
     return invalid("invalid_request", "runId", "Runtime vault run ID contains unsafe characters");
   }
-  const before = await inspectRuntimeArtifactAttestations(request.profile, request.executor);
-  if (!before.ok) {
-    return err({
-      kind: "attestation_failure",
-      stage: "attest-installed-runtime-before-vault",
-      message: "Installed runtimes could not be attested before capture",
-    });
+  if (!ATTEMPT_ID_RE.test(request.attemptId)) {
+    return invalid("invalid_request", "attemptId", "Runtime vault attempt ID is malformed");
   }
-  const sourceTree = await executeSourceTreeProbe(
-    request.profile,
-    before.value.source.packageRoot,
-    request.executor,
+  const evidencePort = createProductionRuntimeVaultEvidencePort();
+  const evidenceBefore = await evidencePort.capture(request.profile, request.executor);
+  if (!evidenceBefore.ok) {
+    return attestationFailure(
+      `capture-runtime-vault-evidence-before-receipt:${evidenceBefore.error.stage}`,
+      "Complete source and target evidence could not be captured before receipt creation",
+    );
+  }
+  const sourceServiceRecovery = computeProductionServiceRecoveryDigest(
+    evidenceBefore.value.sourceServiceFingerprint,
   );
-  if (!sourceTree.ok) return sourceTree;
-  if (sourceTree.value.version !== before.value.source.version) {
-    return err({
-      kind: "attestation_failure",
-      stage: "bind-source-runtime-tree",
-      message: "Source runtime tree does not match its launcher artifact",
-    });
-  }
-  const initialStatus = await inspectProductionRuntimeVault(
-    {
-      profile: request.profile,
-      runtimeDigestSha256: sourceTree.value.digestSha256,
-    },
-    request.executor,
+  const targetServiceRecovery = computeProductionServiceRecoveryDigest(
+    evidenceBefore.value.targetServiceFingerprint,
   );
-  if (!initialStatus.ok) return initialStatus;
-  if (initialStatus.value.state === "present") {
-    const existing = compareRuntimeTreeAttestations(sourceTree.value, initialStatus.value.payload);
-    if (!existing.ok) {
-      return err({
-        kind: "attestation_failure",
-        stage: "reuse-runtime-vault",
-        message: "Existing runtime vault payload conflicts with the source",
-      });
-    }
-    const [after, sourceTreeAfter, finalStatus] = await Promise.all([
-      inspectRuntimeArtifactAttestations(request.profile, request.executor),
-      executeSourceTreeProbe(request.profile, before.value.source.packageRoot, request.executor),
-      inspectProductionRuntimeVault(
-        { profile: request.profile, runtimeDigestSha256: sourceTree.value.digestSha256 },
-        request.executor,
-      ),
-    ]);
-    if (
-      !after.ok ||
-      !sourceTreeAfter.ok ||
-      !finalStatus.ok ||
-      finalStatus.value.state !== "present" ||
-      !runtimeArtifactEqual(before.value.source, after.value.source) ||
-      !runtimeArtifactEqual(before.value.target, after.value.target) ||
-      !compareRuntimeTreeAttestations(sourceTree.value, sourceTreeAfter.value).ok ||
-      !compareRuntimeTreeAttestations(sourceTree.value, finalStatus.value.payload).ok
-    ) {
-      return err({
-        kind: "attestation_failure",
-        stage: "verify-runtime-vault-reuse",
-        message: "Runtime or target installation changed while validating reuse",
-      });
-    }
-    return ok(report("reused", 0, request.runId, request.profile, sourceTree.value));
+  if (!sourceServiceRecovery.ok || !targetServiceRecovery.ok) {
+    return attestationFailure(
+      "derive-runtime-vault-service-recovery-identity",
+      "Service evidence cannot authorize crash recovery",
+    );
   }
-
-  const plan = buildProductionRuntimeVaultPlan({
+  const base = buildProductionRuntimeVaultPlanBase({
     runId: request.runId,
     attemptId: request.attemptId,
-    authorityDigestSha256: request.authorityDigestSha256,
     profile: request.profile,
-    sourceRuntime: before.value.source,
-    targetRuntime: before.value.target,
-    sourceTree: sourceTree.value,
+    sourceRuntime: evidenceBefore.value.sourceRuntime,
+    targetRuntime: evidenceBefore.value.targetRuntime,
+    sourceTree: evidenceBefore.value.sourceTree,
   });
+  if (!base.ok) return base;
+  const receiptInput: ProductionRuntimeVaultRecoveryReceiptInput = {
+    schemaVersion: 1,
+    runId: request.runId,
+    attemptId: request.attemptId,
+    sourceMachineIdSha256: request.profile.source.expectedMachineIdSha256,
+    targetMachineIdSha256: request.profile.target.expectedMachineIdSha256,
+    sourceRuntimeArtifact: evidenceBefore.value.sourceRuntime,
+    targetRuntimeArtifact: evidenceBefore.value.targetRuntime,
+    runtimeTreeAttestation: evidenceBefore.value.sourceTree,
+    maximumArchiveBytes: base.value.maximumArchiveBytes,
+    payloadPath: base.value.payloadPath,
+    sourceService: request.profile.source.service,
+    sourceDataDir: request.profile.source.dataDir,
+    targetService: request.profile.target.service,
+    targetDataDir: request.profile.target.dataDir,
+    targetPackageRoot: evidenceBefore.value.targetRuntime.packageRoot,
+    targetControlDir: base.value.targetControlDir,
+    targetIncomingRoot: base.value.targetIncomingRoot,
+    targetTransactionDir: base.value.targetTransactionDir,
+    sourceToolchainRecoveryDigestSha256:
+      evidenceBefore.value.sourceToolchain.toolchainRecoveryDigestSha256,
+    targetToolchainRecoveryDigestSha256:
+      evidenceBefore.value.targetToolchain.toolchainRecoveryDigestSha256,
+    sourceServiceRecoveryDigestSha256: sourceServiceRecovery.value,
+    targetServiceRecoveryDigestSha256: targetServiceRecovery.value,
+    createdAtMs: request.createdAtMs,
+  };
+  const persisted = request.receiptStore.createAndPersistReceipt(receiptInput);
+  if (!persisted.ok) {
+    return receiptFailure("persist-runtime-vault-receipt", persisted.error);
+  }
+  const receipt = persisted.value.receipt;
+  if (!receiptMatchesInput(receipt, receiptInput)) {
+    return attestationFailure(
+      "bind-runtime-vault-receipt-input",
+      "Persisted runtime-vault receipt does not match the measured seal input",
+    );
+  }
+  const storedTerminal = request.receiptStore.readTerminal(
+    request.runId,
+    request.attemptId,
+  );
+  if (!storedTerminal.ok) {
+    return receiptFailure("read-runtime-vault-terminal", storedTerminal.error);
+  }
+  const plan = planFromReceipt(receipt, request.profile);
   if (!plan.ok) return plan;
   const acquired = await request.leaseClient.acquire(plan.value.controllerLease);
   if (!acquired.ok) {
@@ -2358,51 +2624,266 @@ export async function sealProductionRuntime(
   const captured = await (async (): Promise<
     Result<ProductionRuntimeVaultReport, ProductionRuntimeVaultError>
   > => {
+    const terminalUnderLease = request.receiptStore.readTerminal(
+      request.runId,
+      request.attemptId,
+    );
+    if (!terminalUnderLease.ok) {
+      return receiptFailure("read-runtime-vault-terminal", terminalUnderLease.error);
+    }
+    if (
+      !terminalAdvancedConsistently(
+        storedTerminal.value,
+        terminalUnderLease.value,
+      )
+    ) {
+      return attestationFailure(
+        "verify-runtime-vault-terminal-under-lease",
+        "Authenticated terminal state changed inconsistently before lease acquisition",
+      );
+    }
+    const evidenceUnderLease = await evidencePort.capture(request.profile, request.executor);
+    if (
+      !evidenceUnderLease.ok ||
+      !sameCaptureEvidence(evidenceBefore.value, evidenceUnderLease.value)
+    ) {
+      return attestationFailure(
+        "verify-runtime-vault-evidence-under-lease",
+        "Source or target evidence changed before target mutation",
+      );
+    }
+
+    const finalizeSuccess = async (
+      disposition: "published" | "reused_existing",
+      bytesTransferred: number,
+    ): Promise<Result<ProductionRuntimeVaultReport, ProductionRuntimeVaultError>> => {
+      const reconciledDisposition = disposition === "published" ? "published" : "reused_existing";
+      const targetVerified = await verifyTargetDisposition(
+        request.profile,
+        request.executor,
+        receipt,
+        reconciledDisposition,
+      );
+      if (!targetVerified.ok) return targetVerified;
+      const targetAfter = await evidencePort.captureTarget(request.profile, request.executor);
+      const expectedTarget: ProductionRuntimeVaultTargetEvidence = {
+        targetRuntime: evidenceUnderLease.value.targetRuntime,
+        targetToolchain: evidenceUnderLease.value.targetToolchain,
+        targetServiceFingerprint: evidenceUnderLease.value.targetServiceFingerprint,
+      };
+      if (!targetAfter.ok || !sameTargetEvidence(expectedTarget, targetAfter.value)) {
+        return attestationFailure(
+          "verify-runtime-vault-target-after-publication",
+          "Target installation or recovery toolchain changed during publication",
+        );
+      }
+      const recorded = recordTerminal(
+        request.receiptStore,
+        receipt,
+        disposition,
+      );
+      if (!recorded.ok) return recorded;
+      return ok(
+        sealReport(
+          disposition,
+          bytesTransferred,
+          receipt,
+          evidenceBefore.value.toolchainCompatibility,
+        ),
+      );
+    };
+
+    const finishFailure = async (
+      primary: ProductionRuntimeVaultError,
+      bytesTransferred: number,
+      publicationMayHaveCommitted: boolean,
+    ): Promise<Result<ProductionRuntimeVaultReport, ProductionRuntimeVaultError>> => {
+      const reconciled = await reconcilePrimaryFailure(
+        plan.value,
+        request.executor,
+        primary,
+      );
+      if (!reconciled.ok) {
+        if (
+          reconciled.error.kind === "reconciliation_failure" &&
+          reconciled.error.reconciliation.kind === "blocked_corrupt"
+        ) {
+          const recorded = recordTerminal(
+            request.receiptStore,
+            receipt,
+            "blocked_corrupt",
+            reconciled.error,
+          );
+          if (!recorded.ok) return recorded;
+        }
+        return reconciled;
+      }
+      const targetVerified = await verifyTargetDisposition(
+        request.profile,
+        request.executor,
+        receipt,
+        reconciled.value.disposition,
+        reconciled.value.disposition === "rolled_back",
+      );
+      if (!targetVerified.ok) {
+        return err({
+          kind: "reconciliation_failure",
+          stage: "reconcile-runtime-vault-target",
+          message: "Reconciled target state failed independent verification",
+          primary,
+          reconciliation: targetVerified.error,
+        });
+      }
+      if (reconciled.value.disposition === "published") {
+        if (publicationMayHaveCommitted) {
+          return finalizeSuccess("published", bytesTransferred);
+        }
+        return err({
+          kind: "reconciliation_failure",
+          stage: "reconcile-runtime-vault-target",
+          message: "Target publication exists before this attempt reached publication",
+          primary,
+          reconciliation: attestationError(
+            "verify-runtime-vault-reconciliation-stage",
+            "Pre-publication failure cannot reconcile to a published target",
+          ),
+        });
+      }
+      if (reconciled.value.disposition === "reused_existing") {
+        return err({
+          kind: "reconciliation_failure",
+          stage: "reconcile-runtime-vault-target",
+          message: "Target reuse appeared after this attempt started mutation",
+          primary,
+          reconciliation: attestationError(
+            "verify-runtime-vault-reconciliation-stage",
+            "Reuse is valid only during initial target classification",
+          ),
+        });
+      }
+      const recorded = recordTerminal(
+        request.receiptStore,
+        receipt,
+        terminalDisposition(reconciled.value.disposition),
+        primary,
+      );
+      return recorded.ok ? err(primary) : recorded;
+    };
+
+    const initial = await reconcileProductionRuntimeVaultTargetWithHeldLease({
+      plan: plan.value,
+      executor: request.executor,
+      ...(terminalUnderLease.value !== undefined
+        ? { terminal: terminalUnderLease.value }
+        : {}),
+    });
+    if (!initial.ok) {
+      if (initial.error.kind === "blocked_corrupt") {
+        const recorded = recordTerminal(
+          request.receiptStore,
+          receipt,
+          "blocked_corrupt",
+          initial.error,
+        );
+        if (!recorded.ok) return recorded;
+      }
+      return initial;
+    }
+    if (
+      initial.value.disposition === "published" ||
+      initial.value.disposition === "reused_existing"
+    ) {
+      return finalizeSuccess(initial.value.disposition, 0);
+    }
+    if (terminalUnderLease.value !== undefined) {
+      const targetVerified = await verifyTargetDisposition(
+        request.profile,
+        request.executor,
+        receipt,
+        initial.value.disposition,
+        true,
+      );
+      if (!targetVerified.ok) return targetVerified;
+      return attestationFailure(
+        "resume-runtime-vault-seal",
+        "Authenticated terminal record closes this runtime-vault attempt",
+      );
+    }
+    if (initial.value.disposition === "rolled_back") {
+      const failure = attestationError(
+        "resume-runtime-vault-seal",
+        "Authenticated runtime-vault attempt is already rolled back",
+      );
+      const recorded = recordTerminal(
+        request.receiptStore,
+        receipt,
+        "rolled_back",
+        failure,
+      );
+      return recorded.ok ? err(failure) : recorded;
+    }
+    const absent = await verifyTargetDisposition(
+      request.profile,
+      request.executor,
+      receipt,
+      "not_started",
+    );
+    if (!absent.ok) return absent;
+
     const prepared = await runStage(request.executor, plan.value.targetPrepare);
-    if (!prepared.ok) return prepared;
+    if (!prepared.ok) return finishFailure(prepared.error, 0, false);
     const transferred = await request.bridge.transfer(plan.value.stream);
     if (!transferred.ok) {
-      return failAfterRollback(request.executor, plan.value, {
-        kind: "transfer_failure",
-        stage: "stream-runtime-vault",
-        message: "Runtime vault stream failed",
-      });
+      return finishFailure(
+        {
+          kind: "transfer_failure",
+          stage: "stream-runtime-vault",
+          message: "Runtime vault stream failed",
+        },
+        0,
+        false,
+      );
     }
     const staged = await runStage(request.executor, plan.value.targetVerify);
-    if (!staged.ok) return failAfterRollback(request.executor, plan.value, staged.error);
+    if (!staged.ok) {
+      return finishFailure(staged.error, transferred.value.bytesTransferred, false);
+    }
     const stagedFacts = parseRuntimeTreeFacts(staged.value);
     if (
       !stagedFacts.ok ||
-      !compareRuntimeTreeAttestations(sourceTree.value, stagedFacts.value).ok
+      !compareRuntimeTreeAttestations(receipt.runtimeTreeAttestation, stagedFacts.value).ok
     ) {
-      return failAfterRollback(request.executor, plan.value, {
-        kind: "attestation_failure",
-        stage: "verify-runtime-vault-target",
-        message: "Staged runtime payload does not match the source",
-      });
+      return finishFailure(
+        {
+          kind: "attestation_failure",
+          stage: "verify-runtime-vault-target",
+          message: "Staged runtime payload does not match the authenticated source tree",
+        },
+        transferred.value.bytesTransferred,
+        false,
+      );
     }
-    const [after, sourceTreeAfter] = await Promise.all([
-      inspectRuntimeArtifactAttestations(request.profile, request.executor),
-      executeSourceTreeProbe(request.profile, before.value.source.packageRoot, request.executor),
-    ]);
+    const evidenceBeforePublish = await evidencePort.capture(
+      request.profile,
+      request.executor,
+    );
     if (
-      !after.ok ||
-      !sourceTreeAfter.ok ||
-      !runtimeArtifactEqual(before.value.source, after.value.source) ||
-      !runtimeArtifactEqual(before.value.target, after.value.target) ||
-      !compareRuntimeTreeAttestations(sourceTree.value, sourceTreeAfter.value).ok
+      !evidenceBeforePublish.ok ||
+      !sameCaptureEvidence(evidenceBefore.value, evidenceBeforePublish.value)
     ) {
-      return failAfterRollback(request.executor, plan.value, {
-        kind: "attestation_failure",
-        stage: "verify-runtime-vault-stability",
-        message: "Source or target installation changed during runtime capture",
-      });
+      return finishFailure(
+        {
+          kind: "attestation_failure",
+          stage: "verify-runtime-vault-evidence-before-publication",
+          message: "Source or target evidence changed during runtime capture",
+        },
+        transferred.value.bytesTransferred,
+        false,
+      );
     }
     const published = await runStage(request.executor, plan.value.targetPublish);
     if (!published.ok || published.value !== "published\n") {
-      return failAfterRollback(
-        request.executor,
-        plan.value,
+      return finishFailure(
         published.ok
           ? {
               kind: "attestation_failure",
@@ -2410,32 +2891,24 @@ export async function sealProductionRuntime(
               message: "Runtime vault publication acknowledgement is invalid",
             }
           : published.error,
+        transferred.value.bytesTransferred,
+        true,
       );
     }
-    const finalStatus = await inspectProductionRuntimeVault(
-      { profile: request.profile, runtimeDigestSha256: sourceTree.value.digestSha256 },
-      request.executor,
-    );
-    if (
-      !finalStatus.ok ||
-      finalStatus.value.state !== "present" ||
-      !compareRuntimeTreeAttestations(sourceTree.value, finalStatus.value.payload).ok
-    ) {
-      return err({
-        kind: "attestation_failure",
-        stage: "attest-published-runtime-vault",
-        message: "Published runtime vault payload is not exact",
-      });
+    const terminal = await reconcileProductionRuntimeVaultTargetWithHeldLease({
+      plan: plan.value,
+      executor: request.executor,
+    });
+    if (!terminal.ok || terminal.value.disposition !== "published") {
+      const failure = terminal.ok
+        ? attestationError(
+            "verify-runtime-vault-transaction-terminal",
+            "Published runtime vault did not reach its authenticated terminal state",
+          )
+        : terminal.error;
+      return err(failure);
     }
-    return ok(
-      report(
-        "published",
-        transferred.value.bytesTransferred,
-        request.runId,
-        request.profile,
-        sourceTree.value,
-      ),
-    );
+    return finalizeSuccess("published", transferred.value.bytesTransferred);
   })();
   const released = await acquired.value.release();
   if (!released.ok) {

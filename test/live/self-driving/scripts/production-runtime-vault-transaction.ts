@@ -322,8 +322,9 @@ export function classifyProductionRuntimeVaultTransaction(
   const cleanupComplete = phases.includes("cleanup_complete");
 
   if (rollbackStarted) {
-    if (observation.finalState !== "absent") return blocked();
-    if (rolledBack) return ok({ disposition: "already_rolled_back" });
+    if (rolledBack) {
+      return ok({ disposition: "already_rolled_back" });
+    }
     return ok({ disposition: "transaction_active", nextAction: "finish_rollback" });
   }
   if (observation.finalState === "exact") {
@@ -331,7 +332,7 @@ export function classifyProductionRuntimeVaultTransaction(
     if (publishIntent || published) {
       return ok({ disposition: "published_recovered", nextAction: "finish_publish" });
     }
-    return blocked();
+    return ok({ disposition: "transaction_active", nextAction: "roll_back" });
   }
   if (published || cleanupComplete) return blocked();
   return ok({ disposition: "transaction_active", nextAction: "roll_back" });
