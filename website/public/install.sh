@@ -3456,6 +3456,16 @@ reexec_as_comis_user() {
     local comis_home
     comis_home="$(eval echo "~$COMIS_USER")"
 
+    # Keep privileged staging outside the service user's writable home. A
+    # root-owned randomized directory prevents pre-existing paths from
+    # redirecting either copy through a symbolic link.
+    local handoff_dir
+    if ! handoff_dir="$(mktemp -d /tmp/comis-install.XXXXXXXXXX)"; then
+        ui_error "Could not create a secure installer handoff directory"
+        return 1
+    fi
+    chmod 0711 "$handoff_dir"
+
     # Forward relevant args and env to the re-exec
     local -a forwarded_args=()
     [[ "$NO_INIT" == "1" ]] && forwarded_args+=(--no-init)
@@ -3469,17 +3479,16 @@ reexec_as_comis_user() {
     # runs as the unprivileged comis user) can read it. Operators commonly place
     # the tarball under /root or another path the comis user cannot read; the
     # forwarded path would then fail with "--tarball path does not exist". Copy
-    # it into the comis home (mirrors the install-script copy below) and forward
-    # that path instead.
+    # it into the secure handoff directory and forward that path instead.
     local staged_tarball=""
     if [[ -n "$COMIS_TARBALL" ]]; then
-        staged_tarball="${comis_home}/.comis-install-tarball.tgz"
+        staged_tarball="${handoff_dir}/comisai.tgz"
         if cp "$COMIS_TARBALL" "$staged_tarball" 2>/dev/null; then
             chown "$COMIS_USER:$COMIS_USER" "$staged_tarball" 2>/dev/null || true
-            chmod 0644 "$staged_tarball" 2>/dev/null || true
+            chmod 0600 "$staged_tarball" 2>/dev/null || true
             forwarded_args+=(--tarball "$staged_tarball")
         else
-            ui_warn "Could not stage tarball into ${comis_home}; forwarding original path"
+            ui_warn "Could not stage tarball for the user handoff; forwarding original path"
             forwarded_args+=(--tarball "$COMIS_TARBALL")
         fi
     fi
@@ -3491,9 +3500,10 @@ reexec_as_comis_user() {
     [[ "$WITH_CLOAKBROWSER" == "1" ]] && forwarded_args+=(--with-cloakbrowser)
 
     # Copy the install script to a location the comis user can read
-    local script_copy="${comis_home}/.comis-install.sh"
+    local script_copy="${handoff_dir}/install.sh"
     stage_install_script "$script_copy"
     chown "$COMIS_USER:$COMIS_USER" "$script_copy"
+    chmod 0700 "$script_copy"
 
     ui_info "Handing off to user '$COMIS_USER'"
     echo ""
@@ -3502,8 +3512,7 @@ reexec_as_comis_user() {
     su - "$COMIS_USER" -c "COMIS_REEXEC=1 bash '$script_copy' ${forwarded_args[*]}"
     local rc=$?
 
-    rm -f "$script_copy" 2>/dev/null || true
-    [[ -n "$staged_tarball" ]] && rm -f "$staged_tarball" 2>/dev/null || true
+    rm -rf "$handoff_dir" 2>/dev/null || true
 
     return "$rc"
 }

@@ -270,6 +270,41 @@ describe("install.sh privileged preparation", () => {
     expect(doctorBlock).toContain("run_doctor");
   });
 
+  it("does not follow a pre-existing script staging symlink", () => {
+    const work = makeWorkDir();
+    const sentinel = join(work, "external-sentinel");
+    const scriptStage = join(work, ".comis-install.sh");
+    const localTarball = join(work, "comisai.tgz");
+    const handoffDir = join(work, "secure-handoff");
+    writeFileSync(sentinel, "sentinel must remain unchanged");
+    writeFileSync(localTarball, "fixture tarball");
+    symlinkSync(sentinel, scriptStage);
+
+    const result = runHarness(
+      [
+        'COMIS_USER="$(id -un)"',
+        'COMIS_TARBALL="$LOCAL_TARBALL"',
+        'INSTALL_METHOD="npm"',
+        'COMIS_VERSION="latest"',
+        'eval() { printf "%s\\n" "$COMIS_HOME"; }',
+        'mktemp() { command mkdir "$HANDOFF_DIR"; printf "%s\\n" "$HANDOFF_DIR"; }',
+        'chown() { :; }',
+        'su() { return 0; }',
+        'ui_info() { :; }',
+        "reexec_as_comis_user",
+      ].join("\n"),
+      {
+        COMIS_HOME: work,
+        HANDOFF_DIR: handoffDir,
+        LOCAL_TARBALL: localTarball,
+      },
+    );
+
+    expect(result.code, result.out).toBe(0);
+    expect(readFileSync(sentinel, "utf8")).toBe("sentinel must remain unchanged");
+    expect(existsSync(scriptStage)).toBe(true);
+  });
+
   it("keeps headed-browser intent during the CLI-only user handoff", () => {
     const result = runHarness(
       [
