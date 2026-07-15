@@ -310,6 +310,7 @@ export class IcMessageCenter extends LitElement {
   private _hasLoaded = false;
   private _previousChannelType = "";
   private _channelRevision = 0;
+  private _messageRequestRevision = 0;
 
   /** Bound click-outside handler for emoji picker. */
   private _boundEmojiOutsideClick: ((e: MouseEvent) => void) | null = null;
@@ -357,6 +358,7 @@ export class IcMessageCenter extends LitElement {
     this._hasLoaded = false;
     this._previousChannelType = "";
     this._autoSelectAttempted = false;
+    this._messageRequestRevision += 1;
   }
 
   override updated(changedProperties: Map<string, unknown>): void {
@@ -545,6 +547,7 @@ export class IcMessageCenter extends LitElement {
   ): Promise<void> {
     if (!this.rpcClient || !channel) return;
     const selectedChatId = this._selectedChatId;
+    const requestRevision = ++this._messageRequestRevision;
 
     // Path 1: Platform supports native fetchHistory - use message.fetch as before
     if (this._capabilities?.fetchHistory) {
@@ -554,10 +557,10 @@ export class IcMessageCenter extends LitElement {
           channel_id: selectedChatId || channel,
           limit: 50,
         });
-        if (!this._isCurrentChannel(revision, channel)) return;
+        if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatId)) return;
         this._messages = fetchResult?.messages ?? [];
       } catch {
-        if (!this._isCurrentChannel(revision, channel)) return;
+        if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatId)) return;
         // Non-fatal
       }
       return;
@@ -566,7 +569,7 @@ export class IcMessageCenter extends LitElement {
     // Path 2: No fetchHistory - fall back to stored session data
     try {
       const sessionsResult = await this.rpcClient.call<{ sessions: Array<{ sessionKey: string; channelId: string; updatedAt: number }> }>("session.list", { kind: "all" });
-      if (!this._isCurrentChannel(revision, channel)) return;
+      if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatId)) return;
       const sessions = sessionsResult?.sessions ?? [];
       // Filter to sessions whose channelId matches the currently selected chat
       const chatId = selectedChatId;
@@ -588,7 +591,7 @@ export class IcMessageCenter extends LitElement {
         session_key: bestSession.sessionKey,
         limit: 50,
       });
-      if (!this._isCurrentChannel(revision, channel)) return;
+      if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatId)) return;
       const histMessages = histResult?.messages ?? [];
 
       // Map session history messages to FetchedMessage shape
@@ -599,10 +602,21 @@ export class IcMessageCenter extends LitElement {
         timestamp: msg.timestamp,
       } as FetchedMessage));
     } catch {
-      if (!this._isCurrentChannel(revision, channel)) return;
+      if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatId)) return;
       // Non-fatal - leave messages empty
       this._messages = [];
     }
+  }
+
+  private _isCurrentMessageRequest(
+    channelRevision: number,
+    requestRevision: number,
+    channel: string,
+    selectedChatId: string,
+  ): boolean {
+    return this._isCurrentChannel(channelRevision, channel)
+      && requestRevision === this._messageRequestRevision
+      && selectedChatId === this._selectedChatId;
   }
 
   // -------------------------------------------------------------------------
