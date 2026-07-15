@@ -933,12 +933,16 @@ install_browser_deps_linux() {
             if curl -fsSL --proto '=https' --tlsv1.2 \
                 https://dl.google.com/linux/linux_signing_key.pub \
                 | $sudo_cmd gpg --dearmor --yes -o /etc/apt/keyrings/google-chrome.gpg 2>/dev/null; then
+                $sudo_cmd chmod 0644 /etc/apt/keyrings/google-chrome.gpg
                 echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
                     | $sudo_cmd tee /etc/apt/sources.list.d/google-chrome.list >/dev/null
-                $sudo_cmd apt-get update -qq 2>/dev/null || true
-                if run_quiet_step "Installing Google Chrome" \
-                    $sudo_cmd apt-get install -y -qq google-chrome-stable; then
-                    installed_browser="google-chrome"
+                $sudo_cmd chmod 0644 /etc/apt/sources.list.d/google-chrome.list
+                if run_quiet_step "Updating Google Chrome repository" \
+                    $sudo_cmd apt-get update -qq; then
+                    if run_quiet_step "Installing Google Chrome" \
+                        $sudo_cmd apt-get install -y -qq google-chrome-stable; then
+                        installed_browser="google-chrome"
+                    fi
                 fi
             fi
         fi
@@ -2710,6 +2714,17 @@ install_node_standalone() {
     return 0
 }
 
+run_nodesource_setup() {
+    local setup_script="$1"
+
+    if is_root; then
+        ( umask 022; exec bash "$setup_script" )
+        return $?
+    fi
+
+    sudo -E bash -c 'umask 022; exec bash "$1"' _ "$setup_script"
+}
+
 install_node() {
     if [[ "$OS" == "macos" ]]; then
         ui_info "Installing Node.js via Homebrew"
@@ -2756,11 +2771,11 @@ install_node() {
                 if download_file "https://deb.nodesource.com/setup_22.x" "$tmp" \
                     && verify_file_sha256 "$tmp" "$NODESOURCE_DEB_SETUP_SHA256"; then
                     if is_root; then
-                        run_quiet_step "Configuring NodeSource repository" bash "$tmp" && \
+                        run_quiet_step "Configuring NodeSource repository" run_nodesource_setup "$tmp" && \
                         run_quiet_step "Installing Node.js" apt-get install -y -qq nodejs && \
                         nodesource_ok=true
                     else
-                        run_quiet_step "Configuring NodeSource repository" sudo -E bash "$tmp" && \
+                        run_quiet_step "Configuring NodeSource repository" run_nodesource_setup "$tmp" && \
                         run_quiet_step "Installing Node.js" sudo apt-get install -y -qq nodejs && \
                         nodesource_ok=true
                     fi
@@ -2771,11 +2786,11 @@ install_node() {
                 if download_file "https://rpm.nodesource.com/setup_22.x" "$tmp" \
                     && verify_file_sha256 "$tmp" "$NODESOURCE_RPM_SETUP_SHA256"; then
                     if is_root; then
-                        run_quiet_step "Configuring NodeSource repository" bash "$tmp" && \
+                        run_quiet_step "Configuring NodeSource repository" run_nodesource_setup "$tmp" && \
                         run_quiet_step "Installing Node.js" dnf install -y nodejs && \
                         nodesource_ok=true
                     else
-                        run_quiet_step "Configuring NodeSource repository" sudo bash "$tmp" && \
+                        run_quiet_step "Configuring NodeSource repository" run_nodesource_setup "$tmp" && \
                         run_quiet_step "Installing Node.js" sudo dnf install -y nodejs && \
                         nodesource_ok=true
                     fi
@@ -2786,11 +2801,11 @@ install_node() {
                 if download_file "https://rpm.nodesource.com/setup_22.x" "$tmp" \
                     && verify_file_sha256 "$tmp" "$NODESOURCE_RPM_SETUP_SHA256"; then
                     if is_root; then
-                        run_quiet_step "Configuring NodeSource repository" bash "$tmp" && \
+                        run_quiet_step "Configuring NodeSource repository" run_nodesource_setup "$tmp" && \
                         run_quiet_step "Installing Node.js" yum install -y nodejs && \
                         nodesource_ok=true
                     else
-                        run_quiet_step "Configuring NodeSource repository" sudo bash "$tmp" && \
+                        run_quiet_step "Configuring NodeSource repository" run_nodesource_setup "$tmp" && \
                         run_quiet_step "Installing Node.js" sudo yum install -y nodejs && \
                         nodesource_ok=true
                     fi
