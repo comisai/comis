@@ -3,6 +3,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { ApiClient } from "./api/api-client.js";
 import "./app.js";
 import type { IcApp } from "./app.js";
+import type { IcMessageCenter } from "./views/message-center.js";
+import "./views/message-center.js";
 
 // Mock sessionStorage
 const mockStorage: Record<string, string> = {};
@@ -496,6 +498,33 @@ describe("IcApp", () => {
     it("renders placeholder for unknown view", () => {
       priv(el)._currentView = "ic-unknown-view";
       expect(() => priv(el)._renderView()).not.toThrow();
+    });
+
+    it("routes a message channel selection exactly once", async () => {
+      const navigate = vi.fn();
+      priv(el)._authenticated = true;
+      priv(el)._currentView = "ic-message-center";
+      priv(el)._currentRoute = "messages/telegram";
+      priv(el)._routeParams = { type: "telegram" };
+      priv(el)._loadedViews.add("ic-message-center");
+      priv(el)._router = { navigate, start: vi.fn(), stop: vi.fn() };
+      document.body.appendChild(el);
+      await el.updateComplete;
+
+      const messageCenter = el.shadowRoot?.querySelector<IcMessageCenter>("ic-message-center");
+      expect(messageCenter).not.toBeNull();
+      await messageCenter!.updateComplete;
+      const select = messageCenter!.shadowRoot?.querySelector<HTMLSelectElement>("#channel-select");
+      expect(select).not.toBeNull();
+      const option = document.createElement("option");
+      option.value = "discord";
+      option.textContent = "discord";
+      select!.appendChild(option);
+      select!.value = "discord";
+      select!.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+
+      expect(navigate).toHaveBeenCalledTimes(1);
+      expect(navigate).toHaveBeenCalledWith("messages/discord");
     });
   });
 });
