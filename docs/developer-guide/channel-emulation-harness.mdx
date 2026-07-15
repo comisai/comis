@@ -195,7 +195,7 @@ COMIS_CHANLIVE_DIR=/tmp/my-rig node --import tsx test/live/bin/chan.ts --channel
 
 `tg up --detached` spawns a **detached-subprocess rig** (`harness/rig-daemon.ts`) that survives
 the launching process. It runs its own emulator + a real Comis daemon (booted as a grandchild
-from `packages/daemon/dist/daemon.js`, the production entrypoint) + a loopback-only,
+from `packages/daemon/dist/daemon-entrypoint.js`, the production entrypoint) + a loopback-only,
 token-owner-checked **rig-control HTTP surface**, and records a handle carrying a real **`pid`**
 and a dedicated `rigControlEndpoint` (≠ the gateway). A separate-shell `tg send` / `tg rpc`
 reaches the surviving rig via that handle. The cold-shell lifecycle verbs drive it for real:

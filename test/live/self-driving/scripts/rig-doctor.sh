@@ -37,8 +37,8 @@ FACTS_SCRIPT="$(mktemp)"
 trap 'rm -f "$FACTS_SCRIPT"' EXIT
 cat > "$FACTS_SCRIPT" <<'FACTS'
 echo "service=$(systemctl is-active "$SERVICE" 2>/dev/null)"
-echo "unitexec=$(systemctl show -p ExecStart "$SERVICE" 2>/dev/null | grep -oE '[^ ]*daemon\.js' | head -1)"
-echo "pkg=$([ -f "$PKG/node_modules/@comis/daemon/dist/daemon.js" ] && echo ok || echo missing)"
+echo "unitexec=$(systemctl show -p ExecStart "$SERVICE" 2>/dev/null | grep -oE '[^ ]*daemon-entrypoint\.js' | head -1)"
+echo "pkg=$([ -f "$PKG/node_modules/@comis/daemon/dist/daemon-entrypoint.js" ] && echo ok || echo missing)"
 echo "kit=$([ -f /root/_rig.mjs ] && [ -f /root/revoke.mjs ] && echo ok || echo missing)"
 echo "rigenv=$([ -f /root/comis-rig.env ] && echo ok || echo missing)"
 echo "boxtoken=$(. /root/comis-rig.env 2>/dev/null; printf %s "${GWTOKEN:-}" | wc -c | tr -d ' ')"

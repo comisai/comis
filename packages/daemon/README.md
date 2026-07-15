@@ -37,7 +37,7 @@ comis daemon status
 comis daemon logs
 
 # Direct development run
-COMIS_CONFIG_PATHS="$HOME/.comis/config.yaml" node packages/daemon/dist/daemon.js
+COMIS_CONFIG_PATHS="$HOME/.comis/config.yaml" node packages/daemon/dist/daemon-entrypoint.js
 ```
 
 ## Part of Comis

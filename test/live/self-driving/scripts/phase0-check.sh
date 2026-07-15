@@ -36,10 +36,10 @@ warn() { printf '  \033[33mWARN\033[0m  %-22s %s\n' "$1" "$2"; }
 echo "=== phase0 preflight (DATA=$DATA, gateway=$GW_HOST:$GW_PORT, hook=$WH_BASE/$WH_PATH) ==="
 
 # 1) daemon process alive + the systemd unit healthy (the production install runs under comis.service)
-if pgrep -f 'node.*daemon\.js' >/dev/null 2>&1; then
-  pass "daemon-process" "node …/daemon.js is running (pid $(pgrep -f 'node.*daemon\.js' | head -1))"
+if pgrep -f 'node.*daemon-entrypoint\.js' >/dev/null 2>&1; then
+  pass "daemon-process" "node …/daemon-entrypoint.js is running (pid $(pgrep -f 'node.*daemon-entrypoint\.js' | head -1))"
 else
-  fail "daemon-process" "no 'node …/daemon.js' — start it (restart-daemon.sh / clean-restart.sh)"
+  fail "daemon-process" "no 'node …/daemon-entrypoint.js' — start it (restart-daemon.sh / clean-restart.sh)"
 fi
 if command -v systemctl >/dev/null 2>&1 && [ -f "/etc/systemd/system/$SERVICE.service" ]; then
   state=$(systemctl is-active "$SERVICE" 2>/dev/null)

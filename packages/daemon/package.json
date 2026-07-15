@@ -12,7 +12,7 @@
     "bundled-skills"
   ],
   "bin": {
-    "comis-daemon": "./dist/daemon.js"
+    "comis-daemon": "./dist/daemon-entrypoint.js"
   },
   "type": "module",
   "main": "./dist/index.js",

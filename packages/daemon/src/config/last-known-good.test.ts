@@ -151,7 +151,8 @@ describe("last-known-good config", () => {
 
       const result = buildRollbackSuggestion(configPath);
       expect(result).not.toBeNull();
-      expect(result!.hint).toContain("--restore-last-good");
+      expect(result!.hint).toContain("node daemon-entrypoint.js --restore-last-good");
+      expect(result!.hint).not.toContain("node daemon.js");
       expect(result!.diff).toContain("- key: good");
       expect(result!.diff).toContain("+ key: bad");
     });
