@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
+  copyFileSync,
   linkSync,
   lstatSync,
   mkdirSync,
@@ -17,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { err, ok } from "@comis/shared";
+import Database from "better-sqlite3";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ProductionBinarySshBridge } from "./production-binary-ssh.js";
@@ -26,11 +28,16 @@ import type {
 } from "./production-bootstrap.js";
 import { TARGET_REPLAY_QUARANTINE_SHA256 } from "./production-bootstrap.js";
 import type { ProductionReplayProfile } from "./production-profile.js";
+import { buildReplayQuarantineOverlay } from "./production-quarantine.js";
 import {
   buildProductionRestorePlan,
   commitProductionRestore,
+  inspectProductionRestore,
+  parseProductionRestoreStatus,
   parseProductionReplayRestoreAttestation,
   prepareProductionRestore,
+  rollbackProductionRestoreRecovery,
+  resumeProductionRestore,
 } from "./production-restore.js";
 import {
   buildProductionSnapshotPlan,
@@ -294,10 +301,70 @@ function makeRequest(manifest: ProductionSnapshotManifest = makeManifest()) {
   } as const;
 }
 
+function replayOverlaySha256(agentIds: readonly string[]): string {
+  const overlay = buildReplayQuarantineOverlay(agentIds);
+  if (!overlay.ok) throw new Error("replay overlay fixture must be valid");
+  return createHash("sha256").update(overlay.value).digest("hex");
+}
+
+interface RestoreStatusFixtureOptions {
+  readonly runId?: string;
+  readonly targetMachineIdSha256?: string;
+  readonly bytesTransferred?: number;
+  readonly attestationOverrides?: Readonly<Record<string, unknown>>;
+  readonly reencodeAttestation?: boolean;
+}
+
+function restoreStatusFixture(
+  state: "promoted" | "authorized" | "finalizing" | "finalized",
+  options: RestoreStatusFixtureOptions = {},
+): string {
+  const plan = buildProductionRestorePlan(makeRequest());
+  if (!plan.ok) throw new Error("restore plan fixture must be valid");
+  const runId = options.runId ?? "restore-a1";
+  const targetMachineIdSha256 = options.targetMachineIdSha256 ?? TARGET_MACHINE;
+  const attestation = {
+    ...plan.value.restoreAttestationExpectation,
+    runId,
+    targetMachineIdSha256,
+    effectiveEnvironmentContentSha256: "e".repeat(64),
+    ...options.attestationOverrides,
+  };
+  const attestationRaw = options.reencodeAttestation
+    ? `${JSON.stringify(attestation, null, 1)}\n`
+    : `${JSON.stringify(attestation)}\n`;
+  return `${JSON.stringify({
+    schemaVersion: 1,
+    runId,
+    targetMachineIdSha256,
+    state,
+    bytesTransferred: options.bytesTransferred ?? 8192,
+    restoreAttestationBase64: Buffer.from(attestationRaw).toString("base64"),
+    restoreAttestationSha256: createHash("sha256").update(attestationRaw).digest("hex"),
+  })}\n`;
+}
+
+function restorePhaseStatusFixture(
+  state: "promoting" | "rolling_back" | "rolled_back",
+): string {
+  return `${JSON.stringify({
+    schemaVersion: 1,
+    runId: "restore-a1",
+    targetMachineIdSha256: TARGET_MACHINE,
+    state,
+    bytesTransferred: state === "rolled_back" ? null : 8192,
+    restoreAttestationBase64: null,
+    restoreAttestationSha256: null,
+  })}\n`;
+}
+
 function makeDeps(options: {
   readonly failLabel?: string;
   readonly failTransfer?: boolean;
   readonly stdoutLabel?: string;
+  readonly restoreAttestationStdout?: string;
+  readonly restoreStatusState?: "promoted" | "authorized" | "finalizing" | "finalized";
+  readonly restoreStatusStdout?: string;
 } = {}): {
   readonly executor: ProductionRemoteExecutor;
   readonly bridge: ProductionBinarySshBridge;
@@ -307,6 +374,27 @@ function makeDeps(options: {
   const run = vi.fn(async (invocation: ProductionRemoteInvocation) => {
     if (invocation.label === options.failLabel) {
       return err({ kind: "remote" as const, message: "remote command failed" });
+    }
+    if (invocation.label === "read-promoted-snapshot-attestation") {
+      const plan = buildProductionRestorePlan(makeRequest());
+      if (!plan.ok) throw new Error("restore plan fixture must be valid");
+      return ok({
+        stdout:
+          options.restoreAttestationStdout ??
+          `${JSON.stringify({
+            ...plan.value.restoreAttestationExpectation,
+            effectiveEnvironmentContentSha256: "e".repeat(64),
+          })}\n`,
+        exitCode: 0,
+      });
+    }
+    if (invocation.label === "inspect-snapshot-target") {
+      return ok({
+        stdout:
+          options.restoreStatusStdout ??
+          restoreStatusFixture(options.restoreStatusState ?? "authorized"),
+        exitCode: 0,
+      });
     }
     return ok({
       stdout: invocation.label === options.stdoutLabel ? "unexpected" : "",
@@ -339,6 +427,17 @@ describe("production snapshot restore transaction", () => {
     expect(plan.stream.source).toMatchObject({ host: "source-host", port: 2222 });
     expect(plan.stream.target).toMatchObject({ host: "target-host", port: 2202 });
     expect(plan.stream.maximumBytes).toBeGreaterThan(8192);
+    expect(plan.minimumTargetFreeBytes).toBeGreaterThan(
+      plan.stream.maximumBytes + plan.restoreAttestationExpectation.dataBytes,
+    );
+    expect(plan.targetPrepare.args).toContain(String(plan.minimumTargetFreeBytes));
+    expect(plan.targetPrepare.stdin).toContain('minimum_free_bytes="$7"');
+    expect(plan.targetPrepare.stdin).toContain('minimum_free_inodes="$8"');
+    expect(plan.targetPrepare.stdin).toContain('minimum_etc_free_bytes="$9"');
+    expect(plan.targetPrepare.stdin).toContain('minimum_etc_free_inodes="${10}"');
+    expect(plan.targetPrepare.stdin).toContain(
+      '[ "$available_bytes" -lt "$minimum_free_bytes" ]',
+    );
     expect(plan.stream.source.args).toContain(
       "/run/comis-self-driving/restore-a1/stream-restore.sh",
     );
@@ -348,11 +447,15 @@ describe("production snapshot restore transaction", () => {
     expect(plan.restoreAttestationExpectation).toEqual({
       schemaVersion: 1,
       state: "committed",
+      runId: "restore-a1",
+      targetMachineIdSha256: "b".repeat(64),
+      baselineImmutable: true,
       dataDirSha256: "ef4e180fa56124fe7af6dcb50b03994870d4d25d5ad3f9198f1d24373be1c6cf",
       snapshotManifestSha256: plan.manifestSha256,
       restoredDataTreeDigestSha256: makeManifest().dataTreeIdentitySha256,
       sourceEnvironmentEvidenceIdentitySha256:
         makeManifest().sourceEnvironmentEvidenceIdentitySha256,
+      replayOverlayContentSha256: replayOverlaySha256(["default", "research"]),
       dataEntryCount: 6,
       dataBytes: 6_272,
     });
@@ -360,8 +463,8 @@ describe("production snapshot restore transaction", () => {
     for (const command of [
       plan.targetPrepare,
       plan.targetVerifyAndPromote,
-      plan.targetRollback,
       plan.targetCommit,
+      plan.targetFinalize,
     ]) {
       expect(command.stdin).toContain("sha256sum /etc/machine-id");
       expect(command.stdin).toContain("environment-role");
@@ -371,11 +474,59 @@ describe("production snapshot restore transaction", () => {
       expect(command.stdin).toContain("exec 1>/dev/null");
       expect(command.stdin).not.toMatch(/systemctl\s+(start|restart|enable)\b/u);
     }
+    expect(plan.targetRollback.stdin).toContain("sha256sum /etc/machine-id");
+    expect(plan.targetRollback.stdin).toContain('systemctl stop "$unit"');
+    expect(plan.targetRollback.stdin).toContain('systemctl disable "$unit"');
+    expect(plan.targetRollback.stdin).not.toContain(TARGET_REPLAY_QUARANTINE_SHA256);
     expect(plan.targetPrepare.stdin).toContain('"$enabled_state" != disabled');
     expect(plan.targetPrepare.stdin).toContain("install -d -m 0700 -o root -g root");
     expect(plan.targetPrepare.stdin).toContain("maximum_bytes");
     expect(plan.targetPrepare.stdin).toContain("receive.sh");
     expect(plan.targetPrepare.stdin).not.toContain("COMIS_GATEWAY_TOKEN");
+  });
+
+  it("reserves every restore copy and executes the tenth preflight argument binding", () => {
+    const request = makeRequest();
+    const result = buildProductionRestorePlan(request);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const captured = JSON.parse(request.manifestJson) as ProductionSnapshotManifest;
+    const extractedFileBytes = captured.entries.reduce(
+      (total, entry) => total + (entry.type === "file" ? entry.size : 0),
+      0,
+    );
+    const environmentBytes = captured.entries.find(
+      (entry) => entry.path === "system/etc/comis/env" && entry.type === "file",
+    )?.size;
+    expect(environmentBytes).toBe(72);
+    expect(result.value.minimumTargetFreeBytes).toBe(
+      result.value.stream.maximumBytes +
+        extractedFileBytes * 2 +
+        (environmentBytes ?? 0) +
+        Buffer.byteLength(request.manifestJson, "utf8") * 2 +
+        64 * 1024 * 1024,
+    );
+    expect(result.value.minimumTargetFreeInodes).toBe(captured.entries.length + 128);
+    expect(result.value.minimumEtcFreeBytes).toBe((environmentBytes ?? 0) + 64 * 1024 * 1024);
+    expect(result.value.minimumEtcFreeInodes).toBe(32);
+    expect(result.value.targetPrepare.stdin).toContain('df -Pi "$control_dir"');
+    expect(result.value.targetPrepare.stdin).toContain("df -PB1 /etc/comis");
+    expect(result.value.targetPrepare.stdin).toContain("df -Pi /etc/comis");
+    expect(result.value.targetPrepare.stdin).toContain(
+      'required_shared_bytes="$(( minimum_free_bytes + minimum_etc_free_bytes ))"',
+    );
+
+    const assignmentEnd = result.value.targetPrepare.stdin.indexOf("exec 1>/dev/null");
+    expect(assignmentEnd).toBeGreaterThan(0);
+    const bindingProbe = `${result.value.targetPrepare.stdin.slice(0, assignmentEnd)}printf '%s\\n' "$minimum_etc_free_inodes"\n`;
+    const bound = spawnSync(
+      "bash",
+      ["-s", "--", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"],
+      { input: bindingProbe, encoding: "utf8" },
+    );
+    expect(bound.status, bound.stderr).toBe(0);
+    expect(bound.stdout).toBe("ten\n");
   });
 
   it("rejects manifest traversal and mismatched capture identities before remote work", () => {
@@ -477,6 +628,66 @@ describe("production snapshot restore transaction", () => {
     expect(script).not.toContain("print(row");
   });
 
+  it("checks a WAL database from transaction-local scratch without mutating captured metadata", () => {
+    const temporary = mkdtempSync(join(tmpdir(), "comis-restore-sqlite-"));
+    let database: Database.Database | undefined;
+    try {
+      const origin = join(temporary, "origin.sqlite");
+      database = new Database(origin);
+      database.pragma("journal_mode = WAL");
+      database.pragma("wal_autocheckpoint = 0");
+      database.exec("CREATE TABLE records (id INTEGER PRIMARY KEY, value TEXT NOT NULL)");
+      database.prepare("INSERT INTO records (value) VALUES (?)").run("fixture");
+      expect(lstatSync(`${origin}-wal`).isFile()).toBe(true);
+
+      const capturedRoot = join(temporary, "captured");
+      const dataDir = join(capturedRoot, "data");
+      const systemDir = join(capturedRoot, "system", "etc", "comis");
+      mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+      mkdirSync(systemDir, { recursive: true, mode: 0o755 });
+      copyFileSync(origin, join(dataDir, "memory.db"));
+      copyFileSync(`${origin}-wal`, join(dataDir, "memory.db-wal"));
+      writeFileSync(join(systemDir, "env"), "COMIS_DATA_DIR=/tmp/test\n", { mode: 0o640 });
+      database.close();
+      database = undefined;
+
+      const manifest = manifestFromRealLayout(capturedRoot);
+      const plan = buildProductionRestorePlan(makeRequest(manifest));
+      expect(plan.ok).toBe(true);
+      if (!plan.ok) return;
+      const marker = "<<'PYTHON_VERIFY'\n";
+      const start = plan.value.targetVerifyAndPromote.stdin.indexOf(marker);
+      const end = plan.value.targetVerifyAndPromote.stdin.indexOf("\nPYTHON_VERIFY", start);
+      expect(start).toBeGreaterThan(0);
+      expect(end).toBeGreaterThan(start);
+      const verifier = plan.value.targetVerifyAndPromote.stdin.slice(
+        start + marker.length,
+        end,
+      );
+      const manifestPath = join(temporary, "manifest.json");
+      writeFileSync(manifestPath, JSON.stringify(manifest), { mode: 0o600 });
+      const dataMtimeBefore = lstatSync(dataDir, { bigint: true }).mtimeNs;
+
+      const verified = spawnSync("python3", ["-", capturedRoot, manifestPath], {
+        input: verifier,
+        encoding: "utf8",
+      });
+
+      expect(verified.status, verified.stderr).toBe(0);
+      expect(lstatSync(dataDir, { bigint: true }).mtimeNs).toBe(dataMtimeBefore);
+      expect(() => lstatSync(join(dataDir, "memory.db-shm"))).toThrow();
+      expect(plan.value.targetVerifyAndPromote.stdin).toContain(
+        'dir=os.path.dirname(root)',
+      );
+      expect(plan.value.targetVerifyAndPromote.stdin).not.toContain(
+        'os.unlink(shared_memory)',
+      );
+    } finally {
+      database?.close();
+      rmSync(temporary, { recursive: true, force: true });
+    }
+  });
+
   it("verifies a real nested session layout with hardlinks and rejects metadata divergence", () => {
     const temporary = mkdtempSync(join(tmpdir(), "comis-restore-layout-"));
     try {
@@ -541,21 +752,104 @@ describe("production snapshot restore transaction", () => {
     expect(script).toContain('mv -- "$incoming_data" "$data_dir"');
     expect(script).toContain("trap rollback_promote EXIT HUP INT TERM");
     expect(script).toContain("replay-restore-attestation.json");
-    expect(script).toContain('mv -- "$seal_incoming" "$seal_path"');
-    expect(result.value.targetCommit.stdin).toContain("source-env.original");
-    expect(result.value.targetCommit.stdin).toContain("committed");
-    expect(result.value.targetCommit.stdin).toContain(
-      "trap rollback_commit EXIT HUP INT TERM",
+    expect(script).not.toContain('mv -- "$seal_incoming" "$seal_path"');
+    expect(script).toContain('mv -- "$seal_path" "$seal_rollback"');
+    expect(script.indexOf('mv -- "$seal_path" "$seal_rollback"')).toBeLessThan(
+      script.indexOf('mv -- "$data_dir" "$rollback_data"'),
     );
-    expect(result.value.targetCommit.stdin).toContain("committed-rollback");
-    expect(result.value.targetCommit.stdin).toContain('"$committed_rollback/seal"');
+    expect(result.value.targetReadAttestation.stdin).toContain(
+      'cat -- "$attestation_path"',
+    );
+    expect(result.value.targetCommit.stdin).toContain("source-env.original");
+    expect(result.value.targetCommit.stdin).toContain("commit-authorized");
     expect(result.value.targetCommit.stdin).not.toContain('rm -rf -- "$rollback_data"');
+    expect(result.value.targetFinalize.stdin).toContain("finalizing");
+    expect(result.value.targetFinalize.stdin).toContain("finalized");
+    expect(result.value.targetFinalize.stdin).toContain('chattr -i "$source_env_copy"');
+    expect(result.value.targetFinalize.stdin).toContain('rm -rf -- "$rollback_data"');
+    expect(result.value.targetFinalize.stdin).toContain('rm -f -- "$source_env_copy"');
+    expect(result.value.targetFinalize.stdin).toContain('rm -f -- "$expected_manifest"');
+    expect(result.value.targetFinalize.stdin).toContain('rm -f -- "$reattest_script"');
+    expect(result.value.targetFinalize.stdin).toContain("commit-attestation.json");
+    expect(result.value.targetFinalize.stdin).toContain(
+      'mv -- "$seal_incoming" "$seal_path"',
+    );
     expect(result.value.targetRollback.stdin).toContain('mv -- "$rollback_data" "$data_dir"');
-    expect(result.value.targetRollback.stdin).toContain('mv -- "$seal_rollback" "$seal_path"');
-    expect(result.value.targetRollback.stdin).toContain("committed-rollback");
+    expect(result.value.targetRollback.stdin).toContain(
+      'mv -- "$seal_rollback" "$seal_path"',
+    );
+    expect(result.value.targetRollback.stdin).toContain("finalizing");
+    expect(result.value.targetRollback.stdin).toContain("finalized");
     expect(result.value.targetRollback.stdin).toContain("transaction_marker");
     expect(result.value.targetRollback.stdin.indexOf("transaction_marker")).toBeLessThan(
       result.value.targetRollback.stdin.indexOf('rm -rf -- "$incoming_data"'),
+    );
+  });
+
+  it("journals promotion and rollback before every recoverable destructive phase", () => {
+    const result = buildProductionRestorePlan(makeRequest());
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const promote = result.value.targetVerifyAndPromote.stdin;
+    const rollback = result.value.targetRollback.stdin;
+    const status = result.value.targetStatus.stdin;
+    expect(promote.indexOf("promoting.tmp")).toBeGreaterThan(0);
+    expect(promote.indexOf("promoting.tmp")).toBeLessThan(
+      promote.indexOf('mv -- "$seal_path" "$seal_rollback"'),
+    );
+    expect(promote.indexOf('rm -f -- "$promoting_marker"')).toBeGreaterThan(
+      promote.indexOf('mv -- "$control_dir/installed.tmp" "$control_dir/installed"'),
+    );
+    expect(rollback.indexOf("rolling-back.tmp")).toBeGreaterThan(0);
+    expect(rollback.indexOf("rolling-back.tmp")).toBeLessThan(
+      rollback.indexOf('rm -rf -- "$data_dir"'),
+    );
+    expect(rollback).toContain('! -path "$rolling_back_marker"');
+    expect(rollback.indexOf('mv -- "$control_dir/rolled-back.tmp" "$rolled_back_marker"')).toBeLessThan(
+      rollback.lastIndexOf('rm -f -- "$active_restore" "$current_restore_incoming" "$owner_marker"'),
+    );
+    expect(
+      rollback.lastIndexOf('rm -f -- "$active_restore" "$current_restore_incoming" "$owner_marker"'),
+    ).toBeLessThan(
+      rollback.lastIndexOf('rm -f -- "$rolling_back_marker"'),
+    );
+    expect(status.indexOf("if rolling_back:")).toBeLessThan(
+      status.indexOf("if rolled_back:"),
+    );
+  });
+
+  it("binds terminal recovery to the requested data path and public seal", () => {
+    const result = buildProductionRestorePlan(makeRequest());
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const status = result.value.targetStatus.stdin;
+    expect(status).toContain("comis-replay-data-dir-v1\\0");
+    expect(status).toContain("seal_path");
+    expect(status).toContain("seal_raw == attestation_raw");
+    expect(status).toContain('attestation.get("dataDirSha256")');
+    expect(status).toContain("transaction-identity");
+    expect(result.value.targetRollback.stdin).toContain("transaction-identity");
+    expect(result.value.targetPrepare.stdin.indexOf("transaction-identity")).toBeLessThan(
+      result.value.targetPrepare.stdin.indexOf('ln -- "$owner_marker" "$active_restore"'),
+    );
+    expect(status).toContain('[ ! -e "$owner_marker" ]');
+    expect(status).toContain('[ ! -e "$current_restore_incoming" ]');
+    for (const artifact of [
+      "runtime_dir",
+      "incoming_data",
+      "env_incoming",
+      "env_rollback",
+      "overlay_incoming",
+      "overlay_rollback",
+      "seal_incoming",
+      "seal_rollback",
+    ]) {
+      expect(status).toContain(`[ ! -e "$${artifact}" ]`);
+    }
+    expect(status.indexOf("flock -n")).toBeLessThan(
+      status.indexOf('rm -f -- "$active_restore" "$current_restore_incoming" "$owner_marker"'),
     );
   });
 
@@ -582,7 +876,9 @@ describe("production snapshot restore transaction", () => {
     expect(promoteScript).toContain("effectiveEnvironmentContentSha256");
     expect(promoteScript).toContain("source_env_copy");
     expect(result.value.targetCommit.stdin).toContain("commit-attestation.json");
-    expect(result.value.targetCommit.stdin).toContain('cmp -s -- "$commit_attestation" "$seal_path"');
+    expect(result.value.targetCommit.stdin).toContain(
+      'cmp -s -- "$commit_attestation" "$attestation_path"',
+    );
   });
 
   it("computes post-promotion identity from the real nested target layout", () => {
@@ -604,12 +900,21 @@ describe("production snapshot restore transaction", () => {
       writeFileSync(sessionPath, '{"role":"user"}\n', { mode: 0o600 });
       linkSync(sessionPath, join(sessionDir, "session.jsonl.copy"));
       symlinkSync("session.jsonl", join(sessionDir, "latest"));
+      const nestedHardlinkDir = join(capturedRoot, "data", "a");
+      mkdirSync(nestedHardlinkDir, { recursive: true, mode: 0o700 });
+      const nestedHardlinkTarget = join(nestedHardlinkDir, "z");
+      writeFileSync(nestedHardlinkTarget, "cross-directory hardlink\n", { mode: 0o600 });
+      linkSync(nestedHardlinkTarget, join(capturedRoot, "data", "a-link"));
       const sourceEnvironment = join(systemDir, "env");
       writeFileSync(sourceEnvironment, "COMIS_DATA_DIR=/tmp/test\n", { mode: 0o640 });
       const effectiveEnvironment = join(temporary, "effective-env");
+      const replayOverlay = join(temporary, "replay-quarantine.yaml");
+      writeFileSync(replayOverlay, "channels:\n  telegram:\n    enabled: false\n", {
+        mode: 0o640,
+      });
       writeFileSync(
         effectiveEnvironment,
-        "COMIS_DATA_DIR=/tmp/test\nCOMIS_CONFIG_PATHS=/tmp/replay.yaml\n",
+        `COMIS_DATA_DIR=/tmp/test\n\n\nCOMIS_CONFIG_PATHS=${join(capturedRoot, "data")}/config.yaml:/etc/comis/replay-quarantine.yaml\n`,
         { mode: 0o640 },
       );
 
@@ -631,7 +936,13 @@ describe("production snapshot restore transaction", () => {
       );
       const manifestPath = join(temporary, "manifest.json");
       const attestationPath = join(temporary, "attestation.json");
+      const expectedOverlayShaPath = join(temporary, "replay-overlay.sha256");
       writeFileSync(manifestPath, JSON.stringify(manifest), { mode: 0o600 });
+      writeFileSync(
+        expectedOverlayShaPath,
+        `${createHash("sha256").update(readFileSync(replayOverlay)).digest("hex")}\n`,
+        { mode: 0o400 },
+      );
 
       const verified = spawnSync(
         "python3",
@@ -640,7 +951,11 @@ describe("production snapshot restore transaction", () => {
           join(capturedRoot, "data"),
           sourceEnvironment,
           effectiveEnvironment,
+          replayOverlay,
+          expectedOverlayShaPath,
           manifestPath,
+          "restore-a1",
+          "b".repeat(64),
           attestationPath,
         ],
         { input: verifier, encoding: "utf8" },
@@ -657,6 +972,9 @@ describe("production snapshot restore transaction", () => {
         effectiveEnvironmentContentSha256: createHash("sha256")
           .update(readFileSync(effectiveEnvironment))
           .digest("hex"),
+        replayOverlayContentSha256: createHash("sha256")
+          .update(readFileSync(replayOverlay))
+          .digest("hex"),
       });
       const extended = {
         ...parsedAttestation.value,
@@ -666,6 +984,30 @@ describe("production snapshot restore transaction", () => {
         false,
       );
 
+      writeFileSync(replayOverlay, "channels:\n  telegram:\n    enabled: true\n", {
+        mode: 0o640,
+      });
+      const divergentOverlay = spawnSync(
+        "python3",
+        [
+          "-",
+          join(capturedRoot, "data"),
+          sourceEnvironment,
+          effectiveEnvironment,
+          replayOverlay,
+          expectedOverlayShaPath,
+          manifestPath,
+          "restore-a1",
+          "b".repeat(64),
+          join(temporary, "divergent-overlay-attestation.json"),
+        ],
+        { input: verifier, encoding: "utf8" },
+      );
+      expect(divergentOverlay.status).not.toBe(0);
+      writeFileSync(replayOverlay, "channels:\n  telegram:\n    enabled: false\n", {
+        mode: 0o640,
+      });
+
       writeFileSync(sessionPath, '{"role":"assistant"}\n', { mode: 0o600 });
       const divergent = spawnSync(
         "python3",
@@ -674,7 +1016,11 @@ describe("production snapshot restore transaction", () => {
           join(capturedRoot, "data"),
           sourceEnvironment,
           effectiveEnvironment,
+          replayOverlay,
+          expectedOverlayShaPath,
           manifestPath,
+          "restore-a1",
+          "b".repeat(64),
           join(temporary, "divergent-attestation.json"),
         ],
         { input: verifier, encoding: "utf8" },
@@ -721,7 +1067,283 @@ describe("production snapshot restore transaction", () => {
       expect(command.stdin).toContain("require_effective_property ProtectSystem strict");
       expect(command.stdin).toContain("require_effective_property CapabilityBoundingSet ''");
       expect(command.stdin).toContain("require_effective_property AmbientCapabilities ''");
+      expect(command.stdin).toContain("require_effective_property SocketBindDeny any");
+      expect(command.stdin).toContain("require_effective_property RestrictNamespaces yes");
+      expect(command.stdin).toContain(
+        "require_effective_property ReadWritePaths /run/comis-replay",
+      );
     }
+  });
+
+  it("serializes every target mutation under one durable restore owner", () => {
+    const result = buildProductionRestorePlan(makeRequest());
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.targetPrepare.stdin).toContain(
+      "coordination_root=/var/lib/comis-self-driving",
+    );
+    expect(result.value.targetPrepare.stdin).toContain(
+      'active_restore="$coordination_root/active-restore"',
+    );
+    expect(result.value.targetPrepare.stdin).toContain(
+      'ln -- "$owner_marker" "$active_restore"',
+    );
+    for (const command of [
+      result.value.targetVerifyAndPromote,
+      result.value.targetReadAttestation,
+      result.value.targetRollback,
+      result.value.targetCommit,
+      result.value.targetFinalize,
+    ]) {
+      expect(command.stdin).toContain('flock -n 9');
+      expect(command.stdin).toContain(
+        'active_restore="$coordination_root/active-restore"',
+      );
+      expect(command.stdin).toContain(
+        'stat -c \'%d:%i\' "$active_restore"',
+      );
+    }
+    expect(result.value.targetRollback.stdin).toContain('rm -f -- "$active_restore"');
+    expect(result.value.targetFinalize.stdin).toContain('rm -f -- "$active_restore"');
+    expect(result.value.targetFinalize.stdin).toContain(
+      'mv -- "$current_restore_incoming" "$current_restore"',
+    );
+  });
+
+  it("publishes durable generation phases before destructive restore transitions", () => {
+    const result = buildProductionRestorePlan(makeRequest());
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const prepare = result.value.targetPrepare.stdin;
+    expect(prepare.indexOf('sync -f "$state_root"')).toBeLessThan(
+      prepare.indexOf('ln -- "$owner_marker" "$active_restore"'),
+    );
+    expect(prepare.indexOf('ln -- "$owner_marker" "$active_restore"')).toBeLessThan(
+      prepare.indexOf('sync -f "$coordination_root"', prepare.indexOf("owner_acquired=1")),
+    );
+
+    const promote = result.value.targetVerifyAndPromote.stdin;
+    expect(promote.indexOf('mv -- "$old_data_unlocked.tmp" "$old_data_unlocked"')).toBeLessThan(
+      promote.indexOf('chattr -i "$data_dir"'),
+    );
+    expect(promote.indexOf('chattr -i "$data_dir"')).toBeLessThan(
+      promote.indexOf('mv -- "$data_dir" "$rollback_data"'),
+    );
+    expect(promote).toContain(
+      '[ -f "$old_data_unlocked" ] && [ ! -L "$old_data_unlocked" ]',
+    );
+    expect(promote.indexOf("chmod 0400 \"$control_dir/installed\"")).toBeLessThan(
+      promote.lastIndexOf('sync -f "$control_dir"'),
+    );
+
+    const finalize = result.value.targetFinalize.stdin;
+    expect(finalize.indexOf('mv -- "$current_restore_incoming" "$current_restore"')).toBeLessThan(
+      finalize.indexOf('rm -f -- "$active_restore"'),
+    );
+    expect(finalize).toContain(
+      'stat -c \'%d:%i\' "$current_restore"',
+    );
+    expect(finalize).toContain("targetMachineIdSha256");
+    expect(finalize).toContain("restoreAttestationSha256");
+  });
+
+  it("contains a drifted target before rollback without depending on activation confinement", () => {
+    const result = buildProductionRestorePlan(makeRequest());
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const rollback = result.value.targetRollback.stdin;
+    expect(rollback).toContain('systemctl stop "$unit"');
+    expect(rollback).toContain('systemctl kill --kill-who=all "$unit"');
+    expect(rollback).toContain('systemctl disable "$unit"');
+    expect(rollback).not.toContain("environment-role");
+    expect(rollback).not.toContain(TARGET_REPLAY_QUARANTINE_SHA256);
+    expect(rollback.indexOf('then exit 0; fi\nsystemctl stop')).toBeLessThan(
+      rollback.indexOf('exec 9<>"$operation_lock"'),
+    );
+    expect(rollback).toContain(
+      'rm -f -- "$active_restore" "$current_restore_incoming" "$owner_marker"',
+    );
+    expect(rollback).toContain('sync -f "$coordination_root"');
+  });
+
+  it("observes and binds the promoted target seal before authorizing commit", async () => {
+    const deps = makeDeps();
+    const result = await prepareProductionRestore(makeRequest(), deps);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.restoreAttestation).toMatchObject({
+      restoredDataTreeDigestSha256: result.value.restoredDataTreeIdentitySha256,
+      sourceEnvironmentEvidenceIdentitySha256:
+        result.value.sourceEnvironmentEvidenceIdentitySha256,
+    });
+    expect(result.value.restoreAttestationSha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(deps.run.mock.calls.map(([invocation]) => invocation.label)).toContain(
+      "read-promoted-snapshot-attestation",
+    );
+
+    const malformedDeps = makeDeps({ restoreAttestationStdout: "{malformed" });
+    const malformed = await prepareProductionRestore(makeRequest(), malformedDeps);
+    expect(malformed.ok).toBe(false);
+    expect(malformedDeps.run.mock.calls.map(([invocation]) => invocation.label)).toContain(
+      "rollback-snapshot-target",
+    );
+
+    const mismatchPlan = buildProductionRestorePlan(makeRequest());
+    expect(mismatchPlan.ok).toBe(true);
+    if (!mismatchPlan.ok) return;
+    const mismatchDeps = makeDeps({
+      restoreAttestationStdout: `${JSON.stringify({
+        ...mismatchPlan.value.restoreAttestationExpectation,
+        restoredDataTreeDigestSha256: "f".repeat(64),
+        effectiveEnvironmentContentSha256: "e".repeat(64),
+      })}\n`,
+    });
+    const mismatch = await prepareProductionRestore(makeRequest(), mismatchDeps);
+    expect(mismatch.ok).toBe(false);
+    expect(mismatchDeps.run.mock.calls.map(([invocation]) => invocation.label)).toContain(
+      "rollback-snapshot-target",
+    );
+  });
+
+  it("parses only authenticated durable restore status with matching generation identity", () => {
+    const plan = buildProductionRestorePlan(makeRequest());
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    const attestationRaw = `${JSON.stringify({
+      ...plan.value.restoreAttestationExpectation,
+      effectiveEnvironmentContentSha256: "e".repeat(64),
+    })}\n`;
+    const status = {
+      schemaVersion: 1,
+      runId: "restore-a1",
+      targetMachineIdSha256: TARGET_MACHINE,
+      state: "finalized",
+      bytesTransferred: 8192,
+      restoreAttestationBase64: Buffer.from(attestationRaw).toString("base64"),
+      restoreAttestationSha256: createHash("sha256").update(attestationRaw).digest("hex"),
+    };
+
+    const parsed = parseProductionRestoreStatus(`${JSON.stringify(status)}\n`);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.value).toMatchObject({
+        state: "finalized",
+        bytesTransferred: 8192,
+        restoreAttestation: { runId: "restore-a1", baselineImmutable: true },
+      });
+    }
+    expect(
+      parseProductionRestoreStatus(
+        JSON.stringify({ ...status, restoreAttestationSha256: "f".repeat(64) }),
+      ).ok,
+    ).toBe(false);
+    expect(
+      parseProductionRestoreStatus(
+        JSON.stringify({ ...status, targetMachineIdSha256: "c".repeat(64) }),
+      ).ok,
+    ).toBe(false);
+    expect(parseProductionRestoreStatus(JSON.stringify({ ...status, secret: "no" })).ok).toBe(
+      false,
+    );
+    expect(plan.value.targetStatus).toMatchObject({
+      label: "inspect-snapshot-target",
+      stdoutLimitBytes: 8192,
+    });
+    expect(parseProductionRestoreStatus(restorePhaseStatusFixture("promoting"))).toMatchObject({
+      ok: true,
+      value: { state: "promoting", bytesTransferred: 8192 },
+    });
+    expect(parseProductionRestoreStatus(restorePhaseStatusFixture("rolling_back"))).toMatchObject({
+      ok: true,
+      value: { state: "rolling_back", bytesTransferred: 8192 },
+    });
+    expect(
+      parseProductionRestoreStatus(
+        `${JSON.stringify({
+          ...status,
+          state: "rolling_back",
+          bytesTransferred: null,
+        })}\n`,
+      ),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        state: "rolling_back",
+        bytesTransferred: null,
+        restoreAttestation: { runId: "restore-a1" },
+      },
+    });
+  });
+
+  it("resumes a durably authorized restore after controller state is discarded", async () => {
+    const labels: string[] = [];
+    let statusReads = 0;
+    const executor: ProductionRemoteExecutor = {
+      run: async (invocation) => {
+        labels.push(invocation.label);
+        if (invocation.label === "inspect-snapshot-target") {
+          statusReads += 1;
+          return ok({
+            stdout: restoreStatusFixture(statusReads === 1 ? "authorized" : "finalized"),
+            exitCode: 0,
+          });
+        }
+        return ok({ stdout: "", exitCode: 0 });
+      },
+    };
+
+    const result = await resumeProductionRestore(
+      { runId: "restore-a1", profile },
+      executor,
+    );
+
+    expect(result).toMatchObject({ ok: true, value: { state: "committed", runId: "restore-a1" } });
+    expect(labels).toEqual([
+      "inspect-snapshot-target",
+      "finalize-snapshot-target",
+      "inspect-snapshot-target",
+    ]);
+    const inspected = await inspectProductionRestore(
+      { runId: "restore-a1", profile },
+      {
+        run: async () => ok({ stdout: restoreStatusFixture("finalized"), exitCode: 0 }),
+      },
+    );
+    expect(inspected).toMatchObject({ ok: true, value: { state: "finalized" } });
+  });
+
+  it("recovers an interrupted promotion by rolling it back from durable identity alone", async () => {
+    const labels: string[] = [];
+    let statusReads = 0;
+    const result = await rollbackProductionRestoreRecovery(
+      { runId: "restore-a1", profile },
+      {
+        run: async (invocation) => {
+          labels.push(invocation.label);
+          if (invocation.label === "inspect-snapshot-target") {
+            statusReads += 1;
+            return ok({
+              stdout: restorePhaseStatusFixture(
+                statusReads === 1 ? "promoting" : "rolled_back",
+              ),
+              exitCode: 0,
+            });
+          }
+          return ok({ stdout: "", exitCode: 0 });
+        },
+      },
+    );
+
+    expect(result).toMatchObject({ ok: true, value: { state: "rolled_back" } });
+    expect(labels).toEqual([
+      "inspect-snapshot-target",
+      "rollback-snapshot-target",
+      "inspect-snapshot-target",
+    ]);
   });
 
   it("streams without controller plaintext and waits for explicit commit attestation", async () => {
@@ -732,6 +1354,12 @@ describe("production snapshot restore transaction", () => {
     if (!result.ok) return;
     expect(result.value.state).toBe("awaiting-attestation");
     expect(result.value.bytesTransferred).toBe(8192);
+    expect(result.value.targetCommit.args.at(-1)).toBe(
+      result.value.restoreAttestationSha256,
+    );
+    expect(result.value.targetCommit.stdin).toContain(
+      'approved_attestation_sha256="$6"',
+    );
     expect(deps.transfer).toHaveBeenCalledWith(
       expect.objectContaining({ label: "snapshot-archive", maximumBytes: expect.any(Number) }),
     );
@@ -739,6 +1367,7 @@ describe("production snapshot restore transaction", () => {
       "prepare-snapshot-restore-target",
       "prepare-snapshot-stream-source",
       "verify-and-promote-snapshot-target",
+      "read-promoted-snapshot-attestation",
       "cleanup-snapshot-source",
     ]);
     for (const [invocation] of deps.run.mock.calls) {
@@ -757,6 +1386,7 @@ describe("production snapshot restore transaction", () => {
         targetMachineIdSha256: result.value.targetMachineIdSha256,
         manifestSha256: "f".repeat(64),
         bytesTransferred: result.value.bytesTransferred,
+        restoreAttestationSha256: result.value.restoreAttestationSha256,
       },
       deps.executor,
     );
@@ -771,6 +1401,7 @@ describe("production snapshot restore transaction", () => {
         targetMachineIdSha256: result.value.targetMachineIdSha256,
         manifestSha256: result.value.manifestSha256,
         bytesTransferred: result.value.bytesTransferred,
+        restoreAttestationSha256: result.value.restoreAttestationSha256,
       },
       deps.executor,
     );
@@ -787,6 +1418,7 @@ describe("production snapshot restore transaction", () => {
     });
     expect(deps.run.mock.calls.map(([invocation]) => invocation.label)).toEqual([
       "commit-snapshot-target",
+      "finalize-snapshot-target",
     ]);
   });
 
@@ -851,12 +1483,15 @@ describe("production snapshot restore transaction", () => {
     }
   });
 
-  it("rolls back a promoted target when the attested commit command faults", async () => {
+  it("never rolls back after an ambiguous attested commit command outcome", async () => {
     const prepareDeps = makeDeps();
     const prepared = await prepareProductionRestore(makeRequest(), prepareDeps);
     expect(prepared.ok).toBe(true);
     if (!prepared.ok) return;
-    const commitDeps = makeDeps({ failLabel: "commit-snapshot-target" });
+    const commitDeps = makeDeps({
+      failLabel: "commit-snapshot-target",
+      restoreStatusState: "promoted",
+    });
 
     const result = await commitProductionRestore(
       prepared.value,
@@ -866,6 +1501,7 @@ describe("production snapshot restore transaction", () => {
         targetMachineIdSha256: prepared.value.targetMachineIdSha256,
         manifestSha256: prepared.value.manifestSha256,
         bytesTransferred: prepared.value.bytesTransferred,
+        restoreAttestationSha256: prepared.value.restoreAttestationSha256,
       },
       commitDeps.executor,
     );
@@ -873,11 +1509,140 @@ describe("production snapshot restore transaction", () => {
     expect(result.ok).toBe(false);
     expect(commitDeps.run.mock.calls.map(([invocation]) => invocation.label)).toEqual([
       "commit-snapshot-target",
-      "rollback-snapshot-target",
+      "inspect-snapshot-target",
+      "commit-snapshot-target",
+    ]);
+    if (!result.ok) expect(result.error.kind).toBe("commit_state_unknown");
+  });
+
+  it("finalizes a durable authorization after the commit response is lost", async () => {
+    const prepared = await prepareProductionRestore(makeRequest(), makeDeps());
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+    const deps = makeDeps({
+      failLabel: "commit-snapshot-target",
+      restoreStatusState: "authorized",
+    });
+
+    const result = await commitProductionRestore(
+      prepared.value,
+      {
+        decision: "commit",
+        runId: prepared.value.runId,
+        targetMachineIdSha256: prepared.value.targetMachineIdSha256,
+        manifestSha256: prepared.value.manifestSha256,
+        bytesTransferred: prepared.value.bytesTransferred,
+        restoreAttestationSha256: prepared.value.restoreAttestationSha256,
+      },
+      deps.executor,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(deps.run.mock.calls.map(([invocation]) => invocation.label)).toEqual([
+      "commit-snapshot-target",
+      "inspect-snapshot-target",
+      "finalize-snapshot-target",
     ]);
   });
 
-  it("emits only syntactically valid silent shell programs", () => {
+  it.each([
+    ["authorized", "run", { runId: "restore-other" }],
+    ["finalized", "run", { runId: "restore-other" }],
+    ["authorized", "target machine", { targetMachineIdSha256: "9".repeat(64) }],
+    ["finalized", "target machine", { targetMachineIdSha256: "9".repeat(64) }],
+    ["authorized", "transferred bytes", { bytesTransferred: 8193 }],
+    ["finalized", "transferred bytes", { bytesTransferred: 8193 }],
+    [
+      "authorized",
+      "snapshot manifest",
+      { attestationOverrides: { snapshotManifestSha256: "8".repeat(64) } },
+    ],
+    [
+      "finalized",
+      "snapshot manifest",
+      { attestationOverrides: { snapshotManifestSha256: "8".repeat(64) } },
+    ],
+    [
+      "authorized",
+      "full restore attestation",
+      { attestationOverrides: { restoredDataTreeDigestSha256: "7".repeat(64) } },
+    ],
+    [
+      "finalized",
+      "full restore attestation",
+      { attestationOverrides: { restoredDataTreeDigestSha256: "7".repeat(64) } },
+    ],
+    ["authorized", "restore attestation digest", { reencodeAttestation: true }],
+    ["finalized", "restore attestation digest", { reencodeAttestation: true }],
+  ] satisfies ReadonlyArray<
+    readonly [
+      "authorized" | "finalized",
+      string,
+      RestoreStatusFixtureOptions,
+    ]
+  >)(
+    "refuses an ambiguous %s status bound to a different %s",
+    async (state, _difference, statusOptions) => {
+      const prepared = await prepareProductionRestore(makeRequest(), makeDeps());
+      expect(prepared.ok).toBe(true);
+      if (!prepared.ok) return;
+      const deps = makeDeps({
+        failLabel: "commit-snapshot-target",
+        restoreStatusStdout: restoreStatusFixture(state, statusOptions),
+      });
+
+      const result = await commitProductionRestore(
+        prepared.value,
+        {
+          decision: "commit",
+          runId: prepared.value.runId,
+          targetMachineIdSha256: prepared.value.targetMachineIdSha256,
+          manifestSha256: prepared.value.manifestSha256,
+          bytesTransferred: prepared.value.bytesTransferred,
+          restoreAttestationSha256: prepared.value.restoreAttestationSha256,
+        },
+        deps.executor,
+      );
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: { kind: "commit_state_unknown" },
+      });
+      expect(deps.run.mock.calls.map(([invocation]) => invocation.label)).toEqual([
+        "commit-snapshot-target",
+        "inspect-snapshot-target",
+      ]);
+    },
+  );
+
+  it("leaves a finalization failure retryable without attempting an unsafe rollback", async () => {
+    const prepareDeps = makeDeps();
+    const prepared = await prepareProductionRestore(makeRequest(), prepareDeps);
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) return;
+    const commitDeps = makeDeps({ failLabel: "finalize-snapshot-target" });
+
+    const result = await commitProductionRestore(
+      prepared.value,
+      {
+        decision: "commit",
+        runId: prepared.value.runId,
+        targetMachineIdSha256: prepared.value.targetMachineIdSha256,
+        manifestSha256: prepared.value.manifestSha256,
+        bytesTransferred: prepared.value.bytesTransferred,
+        restoreAttestationSha256: prepared.value.restoreAttestationSha256,
+      },
+      commitDeps.executor,
+    );
+
+    expect(result).toMatchObject({ ok: false, error: { kind: "finalization_failure" } });
+    expect(commitDeps.run.mock.calls.map(([invocation]) => invocation.label)).toEqual([
+      "commit-snapshot-target",
+      "finalize-snapshot-target",
+    ]);
+  });
+
+  it("emits only syntactically valid non-tracing shell programs", () => {
     const result = buildProductionRestorePlan(makeRequest());
 
     expect(result.ok).toBe(true);
@@ -886,8 +1651,11 @@ describe("production snapshot restore transaction", () => {
       result.value.targetPrepare,
       result.value.sourceStreamPrepare,
       result.value.targetVerifyAndPromote,
+      result.value.targetReadAttestation,
+      result.value.targetStatus,
       result.value.targetRollback,
       result.value.targetCommit,
+      result.value.targetFinalize,
       result.value.sourceCleanup,
     ]) {
       const syntax = spawnSync("bash", ["-n"], { input: command.stdin, encoding: "utf8" });

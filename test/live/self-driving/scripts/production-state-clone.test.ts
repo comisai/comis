@@ -5,6 +5,7 @@ import { err, ok } from "@comis/shared";
 import { describe, expect, it } from "vitest";
 
 import { parseProductionProfile } from "./production-profile.js";
+import { buildReplayQuarantineOverlay } from "./production-quarantine.js";
 import {
   cloneProductionState,
   type ProductionStateCloneDeps,
@@ -106,13 +107,52 @@ function manifest(runId = "state-a1"): string {
   });
 }
 
-function makeDeps(labels: string[], manifestJson = manifest()): ProductionStateCloneDeps {
+function restoreAttestation(manifestJson: string, agentIds: readonly string[]): string {
+  const captured = JSON.parse(manifestJson) as ProductionSnapshotManifest;
+  const overlay = buildReplayQuarantineOverlay(agentIds);
+  if (!overlay.ok) throw new Error("overlay fixture invalid");
+  return `${JSON.stringify({
+    schemaVersion: 1,
+    state: "committed",
+    runId: captured.runId,
+    targetMachineIdSha256: TARGET_MACHINE,
+    baselineImmutable: true,
+    dataDirSha256: createHash("sha256")
+      .update("comis-replay-data-dir-v1\0")
+      .update("/home/comis/.comis")
+      .digest("hex"),
+    snapshotManifestSha256: createHash("sha256").update(manifestJson).digest("hex"),
+    restoredDataTreeDigestSha256: captured.dataTreeIdentitySha256,
+    sourceEnvironmentEvidenceIdentitySha256:
+      captured.sourceEnvironmentEvidenceIdentitySha256,
+    effectiveEnvironmentContentSha256: "e".repeat(64),
+    replayOverlayContentSha256: createHash("sha256").update(overlay.value).digest("hex"),
+    dataEntryCount: captured.entries.filter(
+      ({ path }) => path === "data" || path.startsWith("data/"),
+    ).length,
+    dataBytes: captured.entries.reduce(
+      (total, entry) =>
+        total +
+        (entry.type === "file" && entry.path.startsWith("data/") ? entry.size : 0),
+      0,
+    ),
+  })}\n`;
+}
+
+function makeDeps(
+  labels: string[],
+  manifestJson = manifest(),
+  agentIds: readonly string[] = ["default"],
+): ProductionStateCloneDeps {
   return {
     executor: {
       run: async (invocation) => {
         labels.push(invocation.label);
         if (invocation.label === "read-snapshot-manifest-source") {
           return ok({ stdout: manifestJson, exitCode: 0 });
+        }
+        if (invocation.label === "read-promoted-snapshot-attestation") {
+          return ok({ stdout: restoreAttestation(manifestJson, agentIds), exitCode: 0 });
         }
         return ok({ stdout: "", exitCode: 0 });
       },
@@ -176,8 +216,10 @@ describe("production state clone transaction", () => {
       "prepare-snapshot-restore-target",
       "prepare-snapshot-stream-source",
       "verify-and-promote-snapshot-target",
+      "read-promoted-snapshot-attestation",
       "cleanup-snapshot-source",
       "commit-snapshot-target",
+      "finalize-snapshot-target",
     ]);
   });
 
@@ -188,7 +230,7 @@ describe("production state clone transaction", () => {
       port?: number;
       stdoutLimitBytes?: number;
     }> = [];
-    const deps = makeDeps([]);
+    const deps = makeDeps([], manifest(), []);
 
     const result = await cloneProductionState(
       {
@@ -209,9 +251,13 @@ describe("production state clone transaction", () => {
                 ? { stdoutLimitBytes: invocation.stdoutLimitBytes }
                 : {}),
             });
-            return invocation.label === "read-snapshot-manifest-source"
-              ? ok({ stdout: manifest(), exitCode: 0 })
-              : ok({ stdout: "", exitCode: 0 });
+            if (invocation.label === "read-snapshot-manifest-source") {
+              return ok({ stdout: manifest(), exitCode: 0 });
+            }
+            if (invocation.label === "read-promoted-snapshot-attestation") {
+              return ok({ stdout: restoreAttestation(manifest(), []), exitCode: 0 });
+            }
+            return ok({ stdout: "", exitCode: 0 });
           },
         },
       },

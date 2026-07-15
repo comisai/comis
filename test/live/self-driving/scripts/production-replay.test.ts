@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { err, ok } from "@comis/shared";
 import { describe, expect, it } from "vitest";
 
@@ -16,6 +18,7 @@ import {
   MESSAGES_ATTESTATION_BEGIN,
   MESSAGES_ATTESTATION_END,
 } from "./production-messages.js";
+import { buildReplayQuarantineOverlay } from "./production-quarantine.js";
 import {
   deriveProductionSnapshotDataTreeIdentity,
   deriveProductionSnapshotEnvironmentEvidenceIdentity,
@@ -152,6 +155,61 @@ function snapshotManifest(): string {
     sourceEnvironmentEvidenceIdentitySha256:
       deriveProductionSnapshotEnvironmentEvidenceIdentity(value),
   });
+}
+
+function restoreAttestation(manifestJson: string): string {
+  const captured = JSON.parse(manifestJson) as ProductionSnapshotManifest;
+  const overlay = buildReplayQuarantineOverlay(["default"]);
+  if (!overlay.ok) throw new Error("overlay fixture invalid");
+  return `${JSON.stringify({
+    schemaVersion: 1,
+    state: "committed",
+    runId: captured.runId,
+    targetMachineIdSha256: "b".repeat(64),
+    baselineImmutable: true,
+    dataDirSha256: createHash("sha256")
+      .update("comis-replay-data-dir-v1\0")
+      .update("/home/comis/.comis")
+      .digest("hex"),
+    snapshotManifestSha256: createHash("sha256").update(manifestJson).digest("hex"),
+    restoredDataTreeDigestSha256: captured.dataTreeIdentitySha256,
+    sourceEnvironmentEvidenceIdentitySha256:
+      captured.sourceEnvironmentEvidenceIdentitySha256,
+    effectiveEnvironmentContentSha256: "e".repeat(64),
+    replayOverlayContentSha256: createHash("sha256").update(overlay.value).digest("hex"),
+    dataEntryCount: captured.entries.filter(
+      ({ path }) => path === "data" || path.startsWith("data/"),
+    ).length,
+    dataBytes: captured.entries.reduce(
+      (total, entry) =>
+        total +
+        (entry.type === "file" && entry.path.startsWith("data/") ? entry.size : 0),
+      0,
+    ),
+  })}\n`;
+}
+
+function restoreStatus(
+  state: "promoting" | "authorized" | "finalized" | "rolled_back",
+  manifestJson = snapshotManifest(),
+): string {
+  const attestationRaw =
+    state === "authorized" || state === "finalized"
+      ? restoreAttestation(manifestJson)
+      : null;
+  return `${JSON.stringify({
+    schemaVersion: 1,
+    runId: "state-cli-a1",
+    targetMachineIdSha256: "b".repeat(64),
+    state,
+    bytesTransferred: state === "rolled_back" ? null : 500_000,
+    restoreAttestationBase64:
+      attestationRaw === null ? null : Buffer.from(attestationRaw).toString("base64"),
+    restoreAttestationSha256:
+      attestationRaw === null
+        ? null
+        : createHash("sha256").update(attestationRaw).digest("hex"),
+  })}\n`;
 }
 
 function messagesFacts(): string {
@@ -381,9 +439,13 @@ describe("production replay command controller", () => {
         executor: {
           run: async (invocation) => {
             labels.push(invocation.label);
-            return invocation.label === "read-snapshot-manifest-source"
-              ? ok({ stdout: snapshotManifest(), exitCode: 0 })
-              : ok({ stdout: "", exitCode: 0 });
+            if (invocation.label === "read-snapshot-manifest-source") {
+              return ok({ stdout: snapshotManifest(), exitCode: 0 });
+            }
+            if (invocation.label === "read-promoted-snapshot-attestation") {
+              return ok({ stdout: restoreAttestation(snapshotManifest()), exitCode: 0 });
+            }
+            return ok({ stdout: "", exitCode: 0 });
           },
         },
         binaryBridge: {
@@ -395,7 +457,7 @@ describe("production replay command controller", () => {
     expect(exitCode).toBe(0);
     expect(labels).toContain("capture-snapshot-source");
     expect(labels).toContain("verify-and-promote-snapshot-target");
-    expect(labels.at(-1)).toBe("commit-snapshot-target");
+    expect(labels.at(-1)).toBe("finalize-snapshot-target");
     expect(JSON.parse(output.join("\n"))).toMatchObject({
       ok: true,
       report: {
@@ -646,6 +708,44 @@ describe("production replay command controller", () => {
       },
     });
     expect(output.join("\n")).not.toContain("sensitive-package-content");
+  });
+
+  it("recovers an interrupted state promotion through explicit controller commands", async () => {
+    const output: string[] = [];
+    const labels: string[] = [];
+    let statusReads = 0;
+    const deps = makeDeps(output);
+
+    const exitCode = await runProductionReplayCli(
+      ["restore-rollback", "--run-id", "state-cli-a1"],
+      {
+        ...deps,
+        executor: {
+          run: async (invocation) => {
+            labels.push(invocation.label);
+            if (invocation.label === "inspect-snapshot-target") {
+              statusReads += 1;
+              return ok({
+                stdout: restoreStatus(statusReads === 1 ? "promoting" : "rolled_back"),
+                exitCode: 0,
+              });
+            }
+            return ok({ stdout: "", exitCode: 0 });
+          },
+        },
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(labels).toEqual([
+      "inspect-snapshot-target",
+      "rollback-snapshot-target",
+      "inspect-snapshot-target",
+    ]);
+    expect(JSON.parse(output.join("\n"))).toMatchObject({
+      ok: true,
+      report: { runId: "state-cli-a1", state: "rolled_back" },
+    });
   });
 });
 

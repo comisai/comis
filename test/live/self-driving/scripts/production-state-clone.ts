@@ -269,6 +269,7 @@ export async function cloneProductionState(
       targetMachineIdSha256: pending.value.targetMachineIdSha256,
       manifestSha256: pending.value.manifestSha256,
       bytesTransferred: pending.value.bytesTransferred,
+      restoreAttestationSha256: pending.value.restoreAttestationSha256,
     },
     deps.executor,
   );

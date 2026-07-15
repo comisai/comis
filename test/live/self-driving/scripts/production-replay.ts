@@ -25,6 +25,11 @@ import { cloneProductionRuntime } from "./production-runtime-clone.js";
 import { executeRuntimeArtifactAttestation } from "./production-runtime.js";
 import { cloneProductionState } from "./production-state-clone.js";
 import { createProductionSshExecutor } from "./production-ssh.js";
+import {
+  inspectProductionRestore,
+  resumeProductionRestore,
+  rollbackProductionRestoreRecovery,
+} from "./production-restore.js";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ENV_PATH = resolve(SCRIPT_DIR, ".live-env");
@@ -51,6 +56,9 @@ type CliCommand =
   | "runtime-attest"
   | "clone-runtime"
   | "clone-state"
+  | "restore-status"
+  | "restore-resume"
+  | "restore-rollback"
   | "messages-attest"
   | "evidence-source"
   | "evidence-target"
@@ -80,6 +88,9 @@ function parseCliArgs(argv: readonly string[]): Result<ParsedCliArgs, CliArgErro
     command !== "runtime-attest" &&
     command !== "clone-runtime" &&
     command !== "clone-state" &&
+    command !== "restore-status" &&
+    command !== "restore-resume" &&
+    command !== "restore-rollback" &&
     command !== "messages-attest" &&
     command !== "evidence-source" &&
     command !== "evidence-target" &&
@@ -88,7 +99,7 @@ function parseCliArgs(argv: readonly string[]): Result<ParsedCliArgs, CliArgErro
     return err({
       kind: "unknown_command",
       message:
-        "Expected profile, doctor, prepare-target, runtime-attest, clone-runtime, clone-state, messages-attest, evidence-source, evidence-target, or evidence-parity",
+        "Expected profile, doctor, prepare-target, runtime-attest, clone-runtime, clone-state, restore-status, restore-resume, restore-rollback, messages-attest, evidence-source, evidence-target, or evidence-parity",
     });
   }
   let envPath = DEFAULT_ENV_PATH;
@@ -128,13 +139,19 @@ function parseCliArgs(argv: readonly string[]): Result<ParsedCliArgs, CliArgErro
     if (flag === "--channel") channel = value;
     index += 1;
   }
-  if ((command === "clone-runtime" || command === "clone-state") && runId === undefined) {
+  const requiresRunId =
+    command === "clone-runtime" ||
+    command === "clone-state" ||
+    command === "restore-status" ||
+    command === "restore-resume" ||
+    command === "restore-rollback";
+  if (requiresRunId && runId === undefined) {
     return err({ kind: "invalid_arguments", message: `${command} requires --run-id` });
   }
-  if (command !== "clone-runtime" && command !== "clone-state" && runId !== undefined) {
+  if (!requiresRunId && runId !== undefined) {
     return err({
       kind: "invalid_arguments",
-      message: "--run-id is only valid for clone-runtime or clone-state",
+      message: "--run-id is only valid for clone and restore recovery commands",
     });
   }
   if (command === "clone-state" && captureMode === undefined) {
@@ -206,6 +223,25 @@ export async function runProductionReplayCli(
   }
   if (args.value.command === "doctor") {
     const report = await inspectProductionReplayHosts(profile.value, deps.executor);
+    if (!report.ok) {
+      emit(deps, { ok: false, error: report.error });
+      return 1;
+    }
+    emit(deps, { ok: true, report: report.value });
+    return 0;
+  }
+  if (
+    args.value.command === "restore-status" ||
+    args.value.command === "restore-resume" ||
+    args.value.command === "restore-rollback"
+  ) {
+    const request = { runId: args.value.runId as string, profile: profile.value };
+    const report =
+      args.value.command === "restore-status"
+        ? await inspectProductionRestore(request, deps.executor)
+        : args.value.command === "restore-resume"
+          ? await resumeProductionRestore(request, deps.executor)
+          : await rollbackProductionRestoreRecovery(request, deps.executor);
     if (!report.ok) {
       emit(deps, { ok: false, error: report.error });
       return 1;
