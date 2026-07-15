@@ -321,6 +321,10 @@ export class IcMessageCenter extends LitElement {
   private _actionContextRevision = 0;
   private _rpcStatusUnsub: (() => void) | null = null;
 
+  private get _mutationPending(): boolean {
+    return this._actionPending || this._platformActionPending;
+  }
+
   /** Bound click-outside handler for emoji picker. */
   private _boundEmojiOutsideClick: ((e: MouseEvent) => void) | null = null;
 
@@ -730,12 +734,12 @@ export class IcMessageCenter extends LitElement {
   }
 
   private _handleSendClick(): void {
-    if (this._actionPending || !this._sendText.trim()) return;
+    if (this._mutationPending || !this._sendText.trim()) return;
     this._showSendConfirm = true;
   }
 
   private async _handleSendConfirm(): Promise<void> {
-    if (this._actionPending) return;
+    if (this._mutationPending) return;
     this._showSendConfirm = false;
     const context = this._captureActionContext();
     const text = this._sendText.trim();
@@ -776,7 +780,7 @@ export class IcMessageCenter extends LitElement {
   // ---- Reply ----
 
   private _handleReplyClick(messageId: string): void {
-    if (this._actionPending || !this._messagesAreActionable) return;
+    if (this._mutationPending || !this._messagesAreActionable) return;
     this._replyToId = messageId;
     this._replyText = "";
     // Focus the reply input after render
@@ -787,19 +791,19 @@ export class IcMessageCenter extends LitElement {
   }
 
   private _handleReplyCancelClick(): void {
-    if (this._actionPending) return;
+    if (this._mutationPending) return;
     this._replyToId = "";
     this._replyText = "";
     this._showReplyConfirm = false;
   }
 
   private _handleReplySendClick(): void {
-    if (this._actionPending || !this._replyText.trim() || !this._replyToId) return;
+    if (this._mutationPending || !this._replyText.trim() || !this._replyToId) return;
     this._showReplyConfirm = true;
   }
 
   private async _handleReplyConfirm(): Promise<void> {
-    if (this._actionPending || !this._messagesAreActionable) return;
+    if (this._mutationPending || !this._messagesAreActionable) return;
     this._showReplyConfirm = false;
     const context = this._captureActionContext();
     const text = this._replyText.trim();
@@ -845,7 +849,7 @@ export class IcMessageCenter extends LitElement {
   // ---- Edit ----
 
   private _handleEditClick(msg: FetchedMessage): void {
-    if (this._actionPending || !this._messagesAreActionable) return;
+    if (this._mutationPending || !this._messagesAreActionable) return;
     this._editingId = msg.id;
     this._editText = msg.text;
     // Focus the edit textarea after render
@@ -856,13 +860,13 @@ export class IcMessageCenter extends LitElement {
   }
 
   private _handleEditCancelClick(): void {
-    if (this._actionPending) return;
+    if (this._mutationPending) return;
     this._editingId = "";
     this._editText = "";
   }
 
   private async _handleEditSave(): Promise<void> {
-    if (this._actionPending || !this._messagesAreActionable) return;
+    if (this._mutationPending || !this._messagesAreActionable) return;
     const context = this._captureActionContext();
     const text = this._editText.trim();
     const messageId = this._editingId;
@@ -903,13 +907,13 @@ export class IcMessageCenter extends LitElement {
   // ---- Delete ----
 
   private _handleDeleteClick(messageId: string): void {
-    if (this._actionPending || !this._messagesAreActionable) return;
+    if (this._mutationPending || !this._messagesAreActionable) return;
     this._deleteTargetId = messageId;
     this._showDeleteConfirm = true;
   }
 
   private async _handleDeleteConfirm(): Promise<void> {
-    if (this._actionPending || !this._messagesAreActionable) return;
+    if (this._mutationPending || !this._messagesAreActionable) return;
     this._showDeleteConfirm = false;
     const context = this._captureActionContext();
     const messageId = this._deleteTargetId;
@@ -948,7 +952,7 @@ export class IcMessageCenter extends LitElement {
   // ---- React ----
 
   private _handleReactClick(messageId: string): void {
-    if (this._actionPending || !this._messagesAreActionable) return;
+    if (this._mutationPending || !this._messagesAreActionable) return;
     if (this._reactTargetId === messageId && this._showEmojiPicker) {
       // Toggle off if clicking same message
       this._closeEmojiPicker();
@@ -961,7 +965,7 @@ export class IcMessageCenter extends LitElement {
   }
 
   private async _handleEmojiSelect(emoji: string): Promise<void> {
-    if (this._actionPending || !this._messagesAreActionable) return;
+    if (this._mutationPending || !this._messagesAreActionable) return;
     const context = this._captureActionContext();
     const messageId = this._reactTargetId;
     if (!context || !messageId) return;
@@ -1019,7 +1023,7 @@ export class IcMessageCenter extends LitElement {
   // ---- Attachment ----
 
   private _toggleAttachForm(): void {
-    if (this._actionPending) return;
+    if (this._mutationPending) return;
     this._showAttachForm = !this._showAttachForm;
     if (!this._showAttachForm) {
       this._attachUrl = "";
@@ -1029,7 +1033,7 @@ export class IcMessageCenter extends LitElement {
   }
 
   private async _handleAttachSend(): Promise<void> {
-    if (this._actionPending) return;
+    if (this._mutationPending) return;
     const context = this._captureActionContext();
     const attachmentUrl = this._attachUrl.trim();
     const attachmentType = this._attachType;
@@ -1063,7 +1067,7 @@ export class IcMessageCenter extends LitElement {
   // ---- Message selection ----
 
   private _handleMessageClick(messageId: string): void {
-    if (!this._messagesAreActionable) return;
+    if (this._mutationPending || !this._messagesAreActionable) return;
     this._selectedMessageId = this._selectedMessageId === messageId ? "" : messageId;
   }
 
@@ -1078,7 +1082,7 @@ export class IcMessageCenter extends LitElement {
   }
 
   private async _handlePlatformAction(platformAction: PlatformAction): Promise<void> {
-    if (this._platformActionPending) return;
+    if (this._mutationPending) return;
     if (platformAction.needsMessageId && !this._messagesAreActionable) return;
     const context = this._captureActionContext();
     if (!context) return;
@@ -1284,17 +1288,17 @@ export class IcMessageCenter extends LitElement {
               <span class="msg-time"><ic-relative-time .timestamp=${msg.timestamp}></ic-relative-time></span>
               <span class="msg-actions">
                 ${canReply ? html`
-                  <button class="msg-action-btn" title="Reply" @click=${() => this._handleReplyClick(msg.id)} ?disabled=${this._actionPending}>Reply</button>
+                  <button class="msg-action-btn" title="Reply" @click=${() => this._handleReplyClick(msg.id)} ?disabled=${this._mutationPending}>Reply</button>
                 ` : nothing}
                 ${canEdit ? html`
-                  <button class="msg-action-btn" title="Edit" @click=${() => this._handleEditClick(msg)} ?disabled=${this._actionPending}>Edit</button>
+                  <button class="msg-action-btn" title="Edit" @click=${() => this._handleEditClick(msg)} ?disabled=${this._mutationPending}>Edit</button>
                 ` : nothing}
                 ${canDelete ? html`
-                  <button class="msg-action-btn msg-action-btn--danger" title="Delete" @click=${() => this._handleDeleteClick(msg.id)} ?disabled=${this._actionPending}>Delete</button>
+                  <button class="msg-action-btn msg-action-btn--danger" title="Delete" @click=${() => this._handleDeleteClick(msg.id)} ?disabled=${this._mutationPending}>Delete</button>
                 ` : nothing}
                 ${canReact ? html`
                   <span class="emoji-picker-anchor">
-                    <button class="msg-action-btn" title="React" data-react-id=${msg.id} @click=${() => this._handleReactClick(msg.id)} ?disabled=${this._actionPending}>React</button>
+                    <button class="msg-action-btn" title="React" data-react-id=${msg.id} @click=${() => this._handleReactClick(msg.id)} ?disabled=${this._mutationPending}>React</button>
                     ${this._showEmojiPicker && this._reactTargetId === msg.id ? this._renderEmojiPicker() : nothing}
                   </span>
                 ` : nothing}
@@ -1312,7 +1316,7 @@ export class IcMessageCenter extends LitElement {
       <div class="inline-form">
         <div class="inline-form-label">
           Replying to ${msg.senderId}
-          <button class="inline-form-cancel" title="Cancel reply" @click=${this._handleReplyCancelClick} ?disabled=${this._actionPending}>X</button>
+          <button class="inline-form-cancel" title="Cancel reply" @click=${this._handleReplyCancelClick} ?disabled=${this._mutationPending}>X</button>
         </div>
         <div class="inline-form-row">
           <textarea
@@ -1321,13 +1325,13 @@ export class IcMessageCenter extends LitElement {
             .value=${this._replyText}
             @input=${(e: InputEvent) => { this._replyText = (e.target as HTMLTextAreaElement).value; }}
             @keydown=${this._handleReplyKeydown}
-            ?disabled=${this._actionPending}
+            ?disabled=${this._mutationPending}
             rows="1"
           ></textarea>
           <button
             class="btn-sm btn-sm-primary"
             @click=${this._handleReplySendClick}
-            ?disabled=${this._actionPending || !this._replyText.trim()}
+            ?disabled=${this._mutationPending || !this._replyText.trim()}
           >Send Reply</button>
         </div>
       </div>
@@ -1344,18 +1348,18 @@ export class IcMessageCenter extends LitElement {
               .value=${this._editText}
               @input=${(e: InputEvent) => { this._editText = (e.target as HTMLTextAreaElement).value; }}
               @keydown=${this._handleEditKeydown}
-              ?disabled=${this._actionPending}
+              ?disabled=${this._mutationPending}
               rows="1"
             ></textarea>
             <button
               class="btn-sm btn-sm-primary"
               @click=${() => void this._handleEditSave()}
-              ?disabled=${this._actionPending || !this._editText.trim()}
+              ?disabled=${this._mutationPending || !this._editText.trim()}
             >Save</button>
             <button
               class="btn-sm btn-sm-ghost"
               @click=${this._handleEditCancelClick}
-              ?disabled=${this._actionPending}
+              ?disabled=${this._mutationPending}
             >Cancel</button>
           </div>
         </div>
@@ -1367,7 +1371,7 @@ export class IcMessageCenter extends LitElement {
     return html`
       <div class="emoji-picker">
         ${REACTION_EMOJI.map((emoji) => html`
-          <button class="emoji-btn" title=${emoji} @click=${() => void this._handleEmojiSelect(emoji)} ?disabled=${this._actionPending}>${emoji}</button>
+          <button class="emoji-btn" title=${emoji} @click=${() => void this._handleEmojiSelect(emoji)} ?disabled=${this._mutationPending}>${emoji}</button>
         `)}
       </div>
     `;
@@ -1386,13 +1390,13 @@ export class IcMessageCenter extends LitElement {
             .value=${this._sendText}
             @input=${(e: InputEvent) => { this._sendText = (e.target as HTMLTextAreaElement).value; }}
             @keydown=${this._handleKeydown}
-            ?disabled=${this._actionPending}
+            ?disabled=${this._mutationPending}
             rows="2"
           ></textarea>
           <button
             class="btn btn-primary"
             @click=${this._handleSendClick}
-            ?disabled=${this._actionPending || !this._sendText.trim()}
+            ?disabled=${this._mutationPending || !this._sendText.trim()}
           >
             ${this._actionPending ? "Sending..." : "Send"}
           </button>
@@ -1401,7 +1405,7 @@ export class IcMessageCenter extends LitElement {
               <button
                 class="btn-sm btn-sm-ghost"
                 @click=${this._toggleAttachForm}
-                ?disabled=${this._actionPending}
+                ?disabled=${this._mutationPending}
                 title="Attach File"
               >
                 ${this._showAttachForm ? "Close Attach" : "Attach File"}
@@ -1433,13 +1437,13 @@ export class IcMessageCenter extends LitElement {
               placeholder="File URL or Path"
               .value=${this._attachUrl}
               @input=${(e: InputEvent) => { this._attachUrl = (e.target as HTMLInputElement).value; }}
-              ?disabled=${this._actionPending}
+              ?disabled=${this._mutationPending}
             />
             <select
               class="attach-select"
               .value=${this._attachType}
               @change=${(e: Event) => { this._attachType = (e.target as HTMLSelectElement).value as AttachmentType; }}
-              ?disabled=${this._actionPending}
+              ?disabled=${this._mutationPending}
             >
               <option value="file">File</option>
               <option value="image">Image</option>
@@ -1454,19 +1458,19 @@ export class IcMessageCenter extends LitElement {
               placeholder="Caption (optional)"
               .value=${this._attachCaption}
               @input=${(e: InputEvent) => { this._attachCaption = (e.target as HTMLInputElement).value; }}
-              ?disabled=${this._actionPending}
+              ?disabled=${this._mutationPending}
             />
             <button
               class="btn-sm btn-sm-primary"
               @click=${() => void this._handleAttachSend()}
-              ?disabled=${this._actionPending || !this._attachUrl.trim()}
+              ?disabled=${this._mutationPending || !this._attachUrl.trim()}
             >
               Send Attachment
             </button>
             <button
               class="btn-sm btn-sm-ghost"
               @click=${this._toggleAttachForm}
-              ?disabled=${this._actionPending}
+              ?disabled=${this._mutationPending}
             >Cancel</button>
           </div>
         </div>
@@ -1501,13 +1505,13 @@ export class IcMessageCenter extends LitElement {
                     placeholder=${action.needsInput}
                     .value=${this._actionInputs[inputKey] ?? ""}
                     @input=${(e: InputEvent) => this._handleActionInputChange(inputKey, (e.target as HTMLInputElement).value)}
-                    ?disabled=${this._platformActionPending}
+                    ?disabled=${this._mutationPending}
                   />
                 ` : nothing}
                 <button
                   class="btn-sm btn-sm-ghost"
                   @click=${() => void this._handlePlatformAction(action)}
-                  ?disabled=${this._platformActionPending || needsMessageAndMissing}
+                  ?disabled=${this._mutationPending || needsMessageAndMissing}
                   title=${needsMessageAndMissing ? "Select a message first" : action.label}
                 >
                   ${action.label}
