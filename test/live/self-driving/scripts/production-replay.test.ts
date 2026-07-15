@@ -15,6 +15,14 @@ import {
 } from "./production-evidence.js";
 import { RUNTIME_FACTS_BEGIN, RUNTIME_FACTS_END } from "./production-runtime.js";
 import {
+  RUNTIME_TREE_FACTS_BEGIN,
+  RUNTIME_TREE_FACTS_END,
+} from "./production-runtime-tree.js";
+import {
+  RUNTIME_VAULT_STATUS_BEGIN,
+  RUNTIME_VAULT_STATUS_END,
+} from "./production-runtime-vault.js";
+import {
   MESSAGES_ATTESTATION_BEGIN,
   MESSAGES_ATTESTATION_END,
 } from "./production-messages.js";
@@ -77,6 +85,35 @@ function runtimeFacts(
     RUNTIME_FACTS_END,
     "",
   ].join("\n");
+}
+
+function runtimeTreeFacts(root: string): string {
+  return [
+    RUNTIME_TREE_FACTS_BEGIN,
+    `digestSha256=${"9".repeat(64)}`,
+    "entryCount=153",
+    "bytes=409600",
+    `root=${root}`,
+    "version=1.0.53",
+    RUNTIME_TREE_FACTS_END,
+    "",
+  ].join("\n");
+}
+
+function runtimeVaultStatus(state: "absent" | "present"): string {
+  return state === "absent"
+    ? [RUNTIME_VAULT_STATUS_BEGIN, "state=absent", RUNTIME_VAULT_STATUS_END, ""].join("\n")
+    : [
+        RUNTIME_VAULT_STATUS_BEGIN,
+        "state=present",
+        `digestSha256=${"9".repeat(64)}`,
+        "entryCount=153",
+        "bytes=409600",
+        `root=/opt/comis-replay/runtimes/sha256/${"9".repeat(64)}/payload`,
+        "version=1.0.53",
+        RUNTIME_VAULT_STATUS_END,
+        "",
+      ].join("\n");
 }
 
 function evidenceFacts(): string {
@@ -367,14 +404,14 @@ describe("production replay command controller", () => {
     expect(output.join("\n")).not.toContain("d".repeat(64));
   });
 
-  it("returns a committed exact source artifact after transactional streaming", async () => {
+  it("seals the source runtime without replacing the target installation", async () => {
     const output: string[] = [];
     const labels: string[] = [];
-    let targetProbeCount = 0;
+    let vaultStatusCount = 0;
     const deps = makeDeps(output);
 
     const exitCode = await runProductionReplayCli(
-      ["clone-runtime", "--run-id", "runtime-cli-a1"],
+      ["seal-runtime", "--run-id", "runtime-cli-a1"],
       {
         ...deps,
         executor: {
@@ -384,14 +421,34 @@ describe("production replay command controller", () => {
               return ok({ stdout: runtimeFacts("c".repeat(64)), exitCode: 0 });
             }
             if (invocation.label === "runtime-attest-target") {
-              targetProbeCount += 1;
               return ok({
-                stdout: runtimeFacts(
-                  targetProbeCount === 1 ? "d".repeat(64) : "c".repeat(64),
-                  true,
+                stdout: runtimeFacts("d".repeat(64), true),
+                exitCode: 0,
+              });
+            }
+            if (invocation.label === "runtime-tree-attest-source") {
+              return ok({
+                stdout: runtimeTreeFacts(
+                  "/home/comis/.npm-global/lib/node_modules/comisai",
                 ),
                 exitCode: 0,
               });
+            }
+            if (invocation.label === "runtime-vault-status-target") {
+              const state = vaultStatusCount === 0 ? "absent" : "present";
+              vaultStatusCount += 1;
+              return ok({ stdout: runtimeVaultStatus(state), exitCode: 0 });
+            }
+            if (invocation.label === "verify-runtime-vault-target") {
+              return ok({
+                stdout: runtimeTreeFacts(
+                  `/opt/comis-replay/runtimes/sha256/.incoming-runtime-cli-a1-${"9".repeat(64)}/payload`,
+                ),
+                exitCode: 0,
+              });
+            }
+            if (invocation.label === "publish-runtime-vault-target") {
+              return ok({ stdout: "published\n", exitCode: 0 });
             }
             return ok({ stdout: "", exitCode: 0 });
           },
@@ -400,6 +457,7 @@ describe("production replay command controller", () => {
           transfer: async (request) => {
             expect(request.source).toMatchObject({ host: "comis-harel", port: 2222 });
             expect(request.target).toMatchObject({ host: "comis-test2", port: 2202 });
+            expect(request.sourceStdin).toContain("tar --create");
             return ok({ bytesTransferred: 500_000 });
           },
         },
@@ -407,14 +465,27 @@ describe("production replay command controller", () => {
     );
 
     expect(exitCode).toBe(0);
-    expect(labels).toContain("promote-runtime-target");
-    expect(labels.at(-1)).toBe("commit-runtime-target");
-    expect(JSON.parse(output.join("\n"))).toEqual({
+    expect(labels).toContain("publish-runtime-vault-target");
+    expect(labels).not.toContain("promote-runtime-target");
+    expect(labels).not.toContain("commit-runtime-target");
+    expect(labels.at(-1)).toBe("runtime-vault-status-target");
+    expect(JSON.parse(output.join("\n"))).toMatchObject({
       ok: true,
       report: {
-        changed: true,
+        disposition: "published",
         bytesTransferred: 500_000,
-        digestSha256: "c".repeat(64),
+        payload: {
+          digestSha256: "9".repeat(64),
+          entryCount: 153,
+          bytes: 409600,
+          version: "1.0.53",
+        },
+        compatibility: {
+          status: "unsupported",
+          reason: "no_digest_pinned_adapter",
+        },
+        targetInstallationPreserved: true,
+        normalServiceTouched: false,
       },
     });
   });
