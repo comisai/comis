@@ -938,7 +938,9 @@ export class IcMessageCenter extends LitElement {
     return html`
       <ic-breadcrumb .items=${[
         { label: "Channels", route: "channels" },
-        { label: this._effectiveChannel || "...", route: `channels/${this._effectiveChannel}` },
+        ...(this._effectiveChannel
+          ? [{ label: this._effectiveChannel, route: `channels/${this._effectiveChannel}` }]
+          : []),
         { label: "Messages" },
       ]}
         @navigate=${(e: CustomEvent<string>) => {
