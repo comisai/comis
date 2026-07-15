@@ -46,9 +46,11 @@ function makeRestoreAttestation(cloneRoot: string): ReplayRestoreAttestation {
     state: "committed",
     dataDirSha256: replayDataDirSha256(cloneRoot),
     snapshotManifestSha256: "a".repeat(64),
-    restoredTreeDigestSha256: "b".repeat(64),
-    entryCount: 7,
-    bytes: 64,
+    restoredDataTreeDigestSha256: "b".repeat(64),
+    sourceEnvironmentEvidenceIdentitySha256: "c".repeat(64),
+    effectiveEnvironmentContentSha256: "d".repeat(64),
+    dataEntryCount: 7,
+    dataBytes: 64,
   };
 }
 
@@ -287,14 +289,16 @@ describe("replay quarantine boot intent", () => {
     expect(result.value).not.toHaveProperty("deliveryQueue");
     expect(result.value).not.toHaveProperty("browserServices");
     expect(result.value.attestation).toMatchObject({
-      entryCount: 7,
-      bytes: 64,
+      dataEntryCount: 7,
+      dataBytes: 64,
       snapshotManifestSha256: "a".repeat(64),
-      restoredTreeDigestSha256: "b".repeat(64),
+      restoredDataTreeDigestSha256: "b".repeat(64),
+      sourceEnvironmentEvidenceIdentitySha256: "c".repeat(64),
+      effectiveEnvironmentContentSha256: "d".repeat(64),
     });
     expect(readRestoreAttestation).toHaveBeenCalledTimes(1);
     expect(info).toHaveBeenCalledWith(
-      expect.objectContaining({ durationMs: 7, entryCount: 7 }),
+      expect.objectContaining({ durationMs: 7, dataEntryCount: 7 }),
       "Replay target quarantined",
     );
     const loggedFields = info.mock.calls[0]?.[0] as Record<string, unknown>;
@@ -350,6 +354,8 @@ describe("replay quarantine boot intent", () => {
 
     expect(parseReplayRestoreAttestation(JSON.stringify({ ...attestation, cloneRoot })).ok).toBe(false);
     expect(parseReplayRestoreAttestation(JSON.stringify({ ...attestation, state: "pending" })).ok).toBe(false);
-    expect(parseReplayRestoreAttestation(JSON.stringify({ ...attestation, bytes: -1 })).ok).toBe(false);
+    expect(
+      parseReplayRestoreAttestation(JSON.stringify({ ...attestation, dataBytes: -1 })).ok,
+    ).toBe(false);
   });
 });

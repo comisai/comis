@@ -71,7 +71,10 @@ export interface ProductionSnapshotManifest {
   readonly captureCompletedAtMs: number;
   readonly freezeDurationMs: number;
   readonly metadataIdentity: ProductionSnapshotMetadataIdentity;
-  readonly treeIdentitySha256: string;
+  /** Canonical identity of the restorable Comis data tree only. */
+  readonly dataTreeIdentitySha256: string;
+  /** Canonical identity of the captured source environment-file evidence. */
+  readonly sourceEnvironmentEvidenceIdentitySha256: string;
   readonly entries: readonly ProductionSnapshotEntry[];
   readonly exclusions: readonly ProductionSnapshotExclusion[];
 }
@@ -136,7 +139,9 @@ const MAX_WATCHDOG_SECONDS = 300;
 const MAX_MANIFEST_BYTES = 64 * 1024 * 1024;
 const MAX_MANIFEST_RECORDS = 2_000_000;
 const STAGE_ROOT = "/run/comis-self-driving";
-const TREE_IDENTITY_DOMAIN = "comis-snapshot-tree-v1\0";
+const DATA_TREE_IDENTITY_DOMAIN = "comis-snapshot-data-tree-v1\0";
+const SOURCE_ENVIRONMENT_IDENTITY_DOMAIN =
+  "comis-snapshot-source-environment-v1\0";
 
 function compareUtf8(left: string, right: string): number {
   return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
@@ -146,11 +151,12 @@ function updateIdentityField(hash: Hash, value: string): void {
   hash.update(value).update("\0");
 }
 
-/** Canonical content and filesystem-metadata identity shared by capture and restore. */
-export function deriveProductionSnapshotTreeIdentity(
+function deriveProductionSnapshotEntryIdentity(
   manifest: Pick<ProductionSnapshotManifest, "entries" | "metadataIdentity">,
+  domain: string,
+  includeEntry: (entry: ProductionSnapshotEntry) => boolean,
 ): string {
-  const hash = createHash("sha256").update(TREE_IDENTITY_DOMAIN);
+  const hash = createHash("sha256").update(domain);
   updateIdentityField(hash, manifest.metadataIdentity.acl);
   updateIdentityField(hash, manifest.metadataIdentity.xattr);
   updateIdentityField(hash, manifest.metadataIdentity.capability);
@@ -160,9 +166,9 @@ export function deriveProductionSnapshotTreeIdentity(
     updateIdentityField(hash, gap.kind);
     updateIdentityField(hash, gap.reason);
   }
-  for (const entry of [...manifest.entries].sort((left, right) =>
-    compareUtf8(left.path, right.path),
-  )) {
+  for (const entry of [...manifest.entries]
+    .filter(includeEntry)
+    .sort((left, right) => compareUtf8(left.path, right.path))) {
     for (const value of [
       entry.path,
       entry.type,
@@ -182,6 +188,28 @@ export function deriveProductionSnapshotTreeIdentity(
     }
   }
   return hash.digest("hex");
+}
+
+/** Canonical content and filesystem-metadata identity of the promoted Comis data tree. */
+export function deriveProductionSnapshotDataTreeIdentity(
+  manifest: Pick<ProductionSnapshotManifest, "entries" | "metadataIdentity">,
+): string {
+  return deriveProductionSnapshotEntryIdentity(
+    manifest,
+    DATA_TREE_IDENTITY_DOMAIN,
+    (entry) => entry.path === "data" || entry.path.startsWith("data/"),
+  );
+}
+
+/** Canonical identity of source environment evidence, which is transformed before activation. */
+export function deriveProductionSnapshotEnvironmentEvidenceIdentity(
+  manifest: Pick<ProductionSnapshotManifest, "entries" | "metadataIdentity">,
+): string {
+  return deriveProductionSnapshotEntryIdentity(
+    manifest,
+    SOURCE_ENVIRONMENT_IDENTITY_DOMAIN,
+    (entry) => entry.path === "system/etc/comis/env",
+  );
 }
 
 function hasControlCharacters(value: string): boolean {
@@ -612,8 +640,8 @@ function updateIdentityField(hash, value) {
   hash.update(value).update("\0");
 }
 
-function treeIdentity() {
-  const hash = createHash("sha256").update("comis-snapshot-tree-v1\0");
+function entryIdentity(domain, includeEntry) {
+  const hash = createHash("sha256").update(domain);
   updateIdentityField(hash, metadataIdentity.acl);
   updateIdentityField(hash, metadataIdentity.xattr);
   updateIdentityField(hash, metadataIdentity.capability);
@@ -621,7 +649,7 @@ function treeIdentity() {
     updateIdentityField(hash, gap.kind);
     updateIdentityField(hash, gap.reason);
   }
-  for (const entry of entries) {
+  for (const entry of entries.filter(includeEntry)) {
     for (const value of [
       entry.path,
       entry.type,
@@ -641,6 +669,20 @@ function treeIdentity() {
   return hash.digest("hex");
 }
 
+function dataTreeIdentity() {
+  return entryIdentity(
+    "comis-snapshot-data-tree-v1\0",
+    (entry) => entry.path === "data" || entry.path.startsWith("data/"),
+  );
+}
+
+function sourceEnvironmentEvidenceIdentity() {
+  return entryIdentity(
+    "comis-snapshot-source-environment-v1\0",
+    (entry) => entry.path === "system/etc/comis/env",
+  );
+}
+
 const manifest = {
   schemaVersion: 1,
   runId,
@@ -651,7 +693,8 @@ const manifest = {
   captureCompletedAtMs: Number(completedRaw),
   freezeDurationMs: Number(freezeRaw),
   metadataIdentity,
-  treeIdentitySha256: treeIdentity(),
+  dataTreeIdentitySha256: dataTreeIdentity(),
+  sourceEnvironmentEvidenceIdentitySha256: sourceEnvironmentEvidenceIdentity(),
   entries,
   exclusions,
 };
@@ -1319,7 +1362,8 @@ function validateManifestObject(
       "captureCompletedAtMs",
       "freezeDurationMs",
       "metadataIdentity",
-      "treeIdentitySha256",
+      "dataTreeIdentitySha256",
+      "sourceEnvironmentEvidenceIdentitySha256",
       "entries",
       "exclusions",
     ])
@@ -1364,9 +1408,26 @@ function validateManifestObject(
   }
   const metadataIdentity = parseMetadataIdentity(value["metadataIdentity"]);
   if (!metadataIdentity.ok) return metadataIdentity;
-  const treeIdentitySha256 = value["treeIdentitySha256"];
-  if (typeof treeIdentitySha256 !== "string" || !SHA256_RE.test(treeIdentitySha256)) {
-    return malformedManifest("treeIdentitySha256", "Snapshot tree identity is invalid");
+  const dataTreeIdentitySha256 = value["dataTreeIdentitySha256"];
+  if (
+    typeof dataTreeIdentitySha256 !== "string" ||
+    !SHA256_RE.test(dataTreeIdentitySha256)
+  ) {
+    return malformedManifest(
+      "dataTreeIdentitySha256",
+      "Snapshot data-tree identity is invalid",
+    );
+  }
+  const sourceEnvironmentEvidenceIdentitySha256 =
+    value["sourceEnvironmentEvidenceIdentitySha256"];
+  if (
+    typeof sourceEnvironmentEvidenceIdentitySha256 !== "string" ||
+    !SHA256_RE.test(sourceEnvironmentEvidenceIdentitySha256)
+  ) {
+    return malformedManifest(
+      "sourceEnvironmentEvidenceIdentitySha256",
+      "Snapshot source-environment evidence identity is invalid",
+    );
   }
 
   const entryValues = value["entries"];
@@ -1491,14 +1552,26 @@ function validateManifestObject(
     captureCompletedAtMs: completed.value,
     freezeDurationMs: freezeDuration.value,
     metadataIdentity: metadataIdentity.value,
-    treeIdentitySha256,
+    dataTreeIdentitySha256,
+    sourceEnvironmentEvidenceIdentitySha256,
     entries,
     exclusions,
   };
-  if (deriveProductionSnapshotTreeIdentity(manifest) !== treeIdentitySha256) {
+  if (
+    deriveProductionSnapshotDataTreeIdentity(manifest) !== dataTreeIdentitySha256
+  ) {
     return err({
       kind: "inconsistent_manifest",
-      message: "Snapshot tree identity does not match its canonical records",
+      message: "Snapshot data-tree identity does not match its canonical records",
+    });
+  }
+  if (
+    deriveProductionSnapshotEnvironmentEvidenceIdentity(manifest) !==
+    sourceEnvironmentEvidenceIdentitySha256
+  ) {
+    return err({
+      kind: "inconsistent_manifest",
+      message: "Snapshot environment evidence identity does not match its canonical record",
     });
   }
   return ok(manifest);

@@ -24,7 +24,8 @@ import {
   PRODUCTION_EVIDENCE_IDS,
 } from "./production-evidence.js";
 import {
-  deriveProductionSnapshotTreeIdentity,
+  deriveProductionSnapshotDataTreeIdentity,
+  deriveProductionSnapshotEnvironmentEvidenceIdentity,
   type ProductionSnapshotManifest,
 } from "./production-snapshot.js";
 import {
@@ -89,6 +90,15 @@ function snapshot(metadataFidelity: "exact" | "gapped" = "exact"): ProductionSna
   } as const;
   const entries = [
     { path: "data", type: "directory", mode: "0700", size: 0, ...metadata, ...metadataDigests },
+    {
+      path: "data/config.yaml",
+      type: "file",
+      mode: "0600",
+      size: 11,
+      sha256: FILE_DIGEST,
+      ...metadata,
+      ...metadataDigests,
+    },
     { path: "system", type: "directory", mode: "0700", size: 0, uid: 0, gid: 0, mtimeNs: metadata.mtimeNs, ...metadataDigests },
     { path: "system/etc", type: "directory", mode: "0755", size: 0, uid: 0, gid: 0, mtimeNs: metadata.mtimeNs, ...metadataDigests },
     { path: "system/etc/comis", type: "directory", mode: "0755", size: 0, uid: 0, gid: 0, mtimeNs: metadata.mtimeNs, ...metadataDigests },
@@ -126,7 +136,8 @@ function snapshot(metadataFidelity: "exact" | "gapped" = "exact"): ProductionSna
               { kind: "capability", reason: "source_tool_unavailable" },
             ],
           },
-    treeIdentitySha256: "0".repeat(64),
+    dataTreeIdentitySha256: "0".repeat(64),
+    sourceEnvironmentEvidenceIdentitySha256: "0".repeat(64),
     entries:
       metadataFidelity === "exact"
         ? entries
@@ -140,7 +151,12 @@ function snapshot(metadataFidelity: "exact" | "gapped" = "exact"): ProductionSna
           ),
     exclusions: [],
   };
-  return { ...value, treeIdentitySha256: deriveProductionSnapshotTreeIdentity(value) };
+  return {
+    ...value,
+    dataTreeIdentitySha256: deriveProductionSnapshotDataTreeIdentity(value),
+    sourceEnvironmentEvidenceIdentitySha256:
+      deriveProductionSnapshotEnvironmentEvidenceIdentity(value),
+  };
 }
 
 function transcript(captureId = "capture-20260715-a"): string {
@@ -486,12 +502,15 @@ describe("production replay bundle assembler", () => {
     };
     const unsigned = {
       ...base,
-      treeIdentitySha256: "0".repeat(64),
+      dataTreeIdentitySha256: "0".repeat(64),
+      sourceEnvironmentEvidenceIdentitySha256: "0".repeat(64),
       entries: [dataRoot, file, hardlink, ...base.entries.filter(({ path }) => path !== "data")],
     };
     const manifest = {
       ...unsigned,
-      treeIdentitySha256: deriveProductionSnapshotTreeIdentity(unsigned),
+      dataTreeIdentitySha256: deriveProductionSnapshotDataTreeIdentity(unsigned),
+      sourceEnvironmentEvidenceIdentitySha256:
+        deriveProductionSnapshotEnvironmentEvidenceIdentity(unsigned),
     };
 
     const result = deriveProductionSnapshotStateIdentity(manifest);
@@ -499,9 +518,9 @@ describe("production replay bundle assembler", () => {
     expect(result).toEqual({
       ok: true,
       value: {
-        treeDigestSha256: manifest.treeIdentitySha256,
-        entryCount: 7,
-        bytes: 83,
+        treeDigestSha256: manifest.dataTreeIdentitySha256,
+        entryCount: 4,
+        bytes: 22,
       },
     });
   });
@@ -529,7 +548,7 @@ describe("production replay bundle assembler", () => {
     expect(result.value.snapshot).toMatchObject({
       runId: "capture-20260715-a",
       captureMode: "offline",
-      entryCount: 5,
+      entryCount: 2,
       treeDigestSha256: derivedState.value.treeDigestSha256,
     });
     expect(result.value.evidence).toEqual({

@@ -1,22 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 import { createHash } from "node:crypto";
 
-import { err, fromPromise, ok, type Result } from "@comis/shared";
+import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 
 import type {
   BinarySshEndpoint,
   ProductionBinarySshBridge,
 } from "./production-binary-ssh.js";
-import type {
-  ProductionRemoteExecutor,
-  ProductionRemoteInvocation,
-  ProductionRemoteResult,
+import {
+  TARGET_REPLAY_QUARANTINE_SHA256,
+  type ProductionRemoteExecutor,
+  type ProductionRemoteInvocation,
+  type ProductionRemoteResult,
 } from "./production-bootstrap.js";
 import type { ProductionReplayProfile } from "./production-profile.js";
 import { buildReplayQuarantineOverlay } from "./production-quarantine.js";
 import {
   buildProductionSnapshotPlan,
-  deriveProductionSnapshotTreeIdentity,
+  deriveProductionSnapshotDataTreeIdentity,
+  deriveProductionSnapshotEnvironmentEvidenceIdentity,
   parseProductionSnapshotManifest,
   type ProductionSnapshotManifest,
   type ProductionSnapshotPlan,
@@ -40,7 +42,7 @@ export interface ProductionRestoreStreamPlan {
 export interface ProductionRestorePlan {
   readonly manifest: ProductionSnapshotManifest;
   readonly manifestSha256: string;
-  readonly restoreAttestation: ProductionReplayRestoreAttestation;
+  readonly restoreAttestationExpectation: ProductionReplayRestoreAttestationExpectation;
   readonly sourceStreamPrepare: ProductionRemoteInvocation;
   readonly targetPrepare: ProductionRemoteInvocation;
   readonly stream: ProductionRestoreStreamPlan;
@@ -50,14 +52,84 @@ export interface ProductionRestorePlan {
   readonly sourceCleanup: ProductionRemoteInvocation;
 }
 
-export interface ProductionReplayRestoreAttestation {
+export interface ProductionReplayRestoreAttestationExpectation {
   readonly schemaVersion: 1;
   readonly state: "committed";
   readonly dataDirSha256: string;
   readonly snapshotManifestSha256: string;
-  readonly restoredTreeDigestSha256: string;
-  readonly entryCount: number;
-  readonly bytes: number;
+  readonly restoredDataTreeDigestSha256: string;
+  readonly sourceEnvironmentEvidenceIdentitySha256: string;
+  readonly dataEntryCount: number;
+  readonly dataBytes: number;
+}
+
+/** Strict content-free seal emitted from the promoted target filesystem. */
+export interface ProductionReplayRestoreAttestation
+  extends ProductionReplayRestoreAttestationExpectation {
+  readonly effectiveEnvironmentContentSha256: string;
+}
+
+export interface ProductionReplayRestoreAttestationError {
+  readonly kind: "malformed_restore_attestation";
+  readonly message: string;
+}
+
+const RESTORE_ATTESTATION_KEYS = [
+  "schemaVersion",
+  "state",
+  "dataDirSha256",
+  "snapshotManifestSha256",
+  "restoredDataTreeDigestSha256",
+  "sourceEnvironmentEvidenceIdentitySha256",
+  "effectiveEnvironmentContentSha256",
+  "dataEntryCount",
+  "dataBytes",
+] as const;
+
+/** Parses the root-only target seal without accepting content-bearing extensions. */
+export function parseProductionReplayRestoreAttestation(
+  raw: string,
+): Result<ProductionReplayRestoreAttestation, ProductionReplayRestoreAttestationError> {
+  if (Buffer.byteLength(raw, "utf8") > 4096) {
+    return err({
+      kind: "malformed_restore_attestation",
+      message: "Production restore attestation exceeds the size limit",
+    });
+  }
+  const parsed = tryCatch<unknown>(() => JSON.parse(raw));
+  const value = parsed.ok ? parsed.value : undefined;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return err({
+      kind: "malformed_restore_attestation",
+      message: "Production restore attestation is not a strict object",
+    });
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  const expectedKeys = [...RESTORE_ATTESTATION_KEYS].sort();
+  const digests = [
+    record["dataDirSha256"],
+    record["snapshotManifestSha256"],
+    record["restoredDataTreeDigestSha256"],
+    record["sourceEnvironmentEvidenceIdentitySha256"],
+    record["effectiveEnvironmentContentSha256"],
+  ];
+  if (
+    keys.join("\0") !== expectedKeys.join("\0") ||
+    record["schemaVersion"] !== 1 ||
+    record["state"] !== "committed" ||
+    digests.some((digest) => typeof digest !== "string" || !SHA256_RE.test(digest)) ||
+    !Number.isSafeInteger(record["dataEntryCount"]) ||
+    (record["dataEntryCount"] as number) <= 0 ||
+    !Number.isSafeInteger(record["dataBytes"]) ||
+    (record["dataBytes"] as number) < 0
+  ) {
+    return err({
+      kind: "malformed_restore_attestation",
+      message: "Production restore attestation fields are invalid",
+    });
+  }
+  return ok(record as unknown as ProductionReplayRestoreAttestation);
 }
 
 export interface PendingProductionRestore {
@@ -66,6 +138,8 @@ export interface PendingProductionRestore {
   readonly targetMachineIdSha256: string;
   readonly manifestSha256: string;
   readonly bytesTransferred: number;
+  readonly restoredDataTreeIdentitySha256: string;
+  readonly sourceEnvironmentEvidenceIdentitySha256: string;
   readonly targetCommit: ProductionRemoteInvocation;
   readonly targetRollback: ProductionRemoteInvocation;
 }
@@ -81,6 +155,8 @@ export interface ProductionRestoreCommitAttestation {
 export interface CommittedProductionRestore {
   readonly runId: string;
   readonly state: "committed";
+  readonly restoredDataTreeIdentitySha256: string;
+  readonly sourceEnvironmentEvidenceIdentitySha256: string;
 }
 
 export interface ProductionRestoreDeps {
@@ -214,11 +290,11 @@ function calculateMaximumArchiveBytes(
   return ok(maximumBytes);
 }
 
-function buildRestoreAttestation(
+function buildRestoreAttestationExpectation(
   dataDir: string,
   manifest: ProductionSnapshotManifest,
   manifestSha256: string,
-): ProductionReplayRestoreAttestation {
+): ProductionReplayRestoreAttestationExpectation {
   return {
     schemaVersion: 1,
     state: "committed",
@@ -227,10 +303,16 @@ function buildRestoreAttestation(
       .update(dataDir)
       .digest("hex"),
     snapshotManifestSha256: manifestSha256,
-    restoredTreeDigestSha256: deriveProductionSnapshotTreeIdentity(manifest),
-    entryCount: manifest.entries.length,
-    bytes: manifest.entries.reduce(
-      (total, entry) => total + (entry.type === "file" ? entry.size : 0),
+    restoredDataTreeDigestSha256: deriveProductionSnapshotDataTreeIdentity(manifest),
+    sourceEnvironmentEvidenceIdentitySha256:
+      deriveProductionSnapshotEnvironmentEvidenceIdentity(manifest),
+    dataEntryCount: manifest.entries.filter(
+      (entry) => entry.path === "data" || entry.path.startsWith("data/"),
+    ).length,
+    dataBytes: manifest.entries.reduce(
+      (total, entry) =>
+        total +
+        (entry.type === "file" && entry.path.startsWith("data/") ? entry.size : 0),
       0,
     ),
   };
@@ -253,7 +335,32 @@ if [ "$load_state" != loaded ] || [ "$active_state" != inactive ] || \
 quarantine="/etc/systemd/system/$unit.d/90-comis-replay-quarantine.conf"
 if [ -L "$quarantine" ] || [ ! -f "$quarantine" ] || \
    [ "$(stat -c '%u:%g:%a' "$quarantine" 2>/dev/null || true)" != 0:0:644 ] || \
-   ! grep -Fqx 'IPAddressDeny=any' "$quarantine"; then exit 74; fi
+   [ "$(sha256sum "$quarantine" 2>/dev/null | awk '{print $1}')" != ${TARGET_REPLAY_QUARANTINE_SHA256} ]; then
+  exit 74
+fi
+drop_in_paths="$(systemctl show "$unit" --property=DropInPaths --value 2>/dev/null || true)"
+quarantine_seen=0
+last_drop_in=
+for drop_in in $drop_in_paths; do
+  last_drop_in="$drop_in"
+  if [ "$drop_in" = "$quarantine" ]; then quarantine_seen=1; fi
+done
+if [ "$quarantine_seen" -ne 1 ] || [ "$last_drop_in" != "$quarantine" ]; then exit 74; fi
+require_effective_property() {
+  property="$1"
+  expected="$2"
+  actual="$(systemctl show "$unit" --property="$property" --value 2>/dev/null || true)"
+  if [ "$actual" != "$expected" ]; then exit 74; fi
+}
+require_effective_property PrivateNetwork yes
+require_effective_property RestrictAddressFamilies AF_UNIX
+require_effective_property PrivateDevices yes
+require_effective_property PrivateMounts yes
+require_effective_property ProtectSystem strict
+require_effective_property ProtectHome read-only
+require_effective_property NoNewPrivileges yes
+require_effective_property CapabilityBoundingSet ''
+require_effective_property AmbientCapabilities ''
 if [ -L /etc/comis ] || [ "$(stat -c '%u:%g' /etc/comis 2>/dev/null || true)" != 0:0 ]; then
   exit 75
 fi
@@ -303,6 +410,21 @@ overlay_rollback="/etc/comis/.replay-quarantine.rollback-$run_id"
 seal_path=/etc/comis/replay-restore-attestation.json
 seal_incoming="/etc/comis/.replay-restore-attestation.incoming-$run_id"
 seal_rollback="/etc/comis/.replay-restore-attestation.rollback-$run_id"
+reattest_script="$control_dir/reattest-restored-state.py"
+if [ -f "$expected_manifest" ] && [ ! -L "$expected_manifest" ]; then
+  expected_service_identity="$(python3 -c '
+import json
+import sys
+manifest = json.load(open(sys.argv[1], "r", encoding="utf8"))
+entry = next(entry for entry in manifest["entries"] if entry["path"] == "data")
+print(str(entry["uid"]) + ":" + str(entry["gid"]))
+' "$expected_manifest")"
+  actual_service_identity="$(id -u "$service_user"):$(id -g "$service_user")"
+  case "$expected_service_identity" in
+    ''|*[!0-9:]*) exit 78 ;;
+  esac
+  if [ "$actual_service_identity" != "$expected_service_identity" ]; then exit 78; fi
+fi
 `;
 
 function buildSourceStreamPrepareScript(streamScript: string): string {
@@ -691,37 +813,6 @@ try:
 except (OSError, KeyError, TypeError, ValueError, sqlite3.Error):
     fail(94)
 PYTHON_VERIFY
-python3 - "$expected_manifest" "$data_dir" "$manifest_sha256" \
-  "$control_dir/replay-attestation.json" <<'PYTHON_ATTESTATION'
-import hashlib
-import json
-import os
-import sys
-
-manifest_path, data_dir, manifest_sha256, output_path = sys.argv[1:]
-
-try:
-    manifest = json.load(open(manifest_path, "r", encoding="utf8"))
-    total_bytes = sum(entry["size"] for entry in manifest["entries"] if entry["type"] == "file")
-    data_digest = hashlib.sha256(b"comis-replay-data-dir-v1\0" + data_dir.encode("utf8"))
-    attestation = {
-        "schemaVersion": 1,
-        "state": "committed",
-        "dataDirSha256": data_digest.hexdigest(),
-        "snapshotManifestSha256": manifest_sha256,
-        "restoredTreeDigestSha256": manifest["treeIdentitySha256"],
-        "entryCount": len(manifest["entries"]),
-        "bytes": total_bytes,
-    }
-    descriptor = os.open(output_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o400)
-    with os.fdopen(descriptor, "w", encoding="utf8") as handle:
-        json.dump(attestation, handle, separators=(",", ":"))
-        handle.write("\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-except (KeyError, OSError, TypeError, ValueError):
-    raise SystemExit(95)
-PYTHON_ATTESTATION
 source_env="$extract_dir/system/etc/comis/env"
 if [ ! -f "$source_env" ] || [ -L "$source_env" ]; then exit 95; fi
 cp --archive --no-dereference -- "$source_env" "$source_env_copy"
@@ -736,8 +827,6 @@ chown root:"$service_group" "$env_incoming"
 chmod 0640 "$env_incoming"
 install -o root -g "$service_group" -m 0640 \
   "$control_dir/replay-overlay.yaml" "$overlay_incoming"
-install -o root -g root -m 0444 \
-  "$control_dir/replay-attestation.json" "$seal_incoming"
 
 ${TARGET_GUARD}
 
@@ -777,6 +866,191 @@ if [ "$(cat "$control_dir/overlay-existed")" = true ]; then
   mv -- "$overlay_path" "$overlay_rollback"
 fi
 mv -- "$overlay_incoming" "$overlay_path"
+if [ -e "$reattest_script" ] || [ -L "$reattest_script" ]; then exit 95; fi
+cat > "$reattest_script" <<'PYTHON_REATTEST'
+import hashlib
+import json
+import os
+import shutil
+import stat
+import subprocess
+import sys
+
+data_dir, source_env_path, effective_env_path, manifest_path, output_path = sys.argv[1:]
+
+def fail():
+    raise SystemExit(95)
+
+def hash_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                return digest.hexdigest()
+            digest.update(chunk)
+
+def command_output(command, arguments):
+    completed = subprocess.run(
+        [command, *arguments], check=False, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+    )
+    if completed.returncode != 0:
+        fail()
+    return completed.stdout.decode("utf8")
+
+def metadata_digests(path, is_symlink, identity):
+    result = {}
+    if identity["acl"] == "captured":
+        value = "" if is_symlink else command_output("getfacl", ["-cEn", "--", path])
+        result["aclSha256"] = hashlib.sha256(value.encode("utf8")).hexdigest()
+    if identity["xattr"] == "captured":
+        arguments = ["--absolute-names", "--dump", "--encoding=hex", "-m", "-"]
+        if is_symlink:
+            arguments.append("-h")
+        output = command_output("getfattr", [*arguments, "--", path])
+        lines = [line for line in output.split("\n") if line and not line.startswith("#")]
+        canonical = "\n".join(sorted(lines, key=lambda line: line.encode("utf8")))
+        result["xattrSha256"] = hashlib.sha256(canonical.encode("utf8")).hexdigest()
+    if identity["capability"] == "captured":
+        canonical = ""
+        if not is_symlink:
+            output = command_output("getcap", ["-n", path]).strip()
+            prefix = path + " "
+            canonical = output[len(prefix):] if output.startswith(prefix) else output
+        result["capabilitySha256"] = hashlib.sha256(canonical.encode("utf8")).hexdigest()
+    return result
+
+def entry_record(path, relative, identity, inode_targets):
+    value = os.lstat(path)
+    record = {
+        "path": relative,
+        "mode": format(stat.S_IMODE(value.st_mode), "04o"),
+        "size": value.st_size,
+        "uid": value.st_uid,
+        "gid": value.st_gid,
+        "mtimeNs": str(value.st_mtime_ns),
+        **metadata_digests(path, stat.S_ISLNK(value.st_mode), identity),
+    }
+    if stat.S_ISREG(value.st_mode):
+        inode = (value.st_dev, value.st_ino)
+        target = inode_targets.get(inode)
+        if target is not None:
+            return {**record, "type": "hardlink", "hardlinkTarget": target}
+        inode_targets[inode] = relative
+        return {**record, "type": "file", "sha256": hash_file(path)}
+    if stat.S_ISLNK(value.st_mode):
+        return {**record, "type": "symlink", "linkTarget": os.readlink(path)}
+    if stat.S_ISDIR(value.st_mode):
+        return {**record, "type": "directory", "size": 0}
+    fail()
+
+def scan_data(identity):
+    records = []
+    inode_targets = {}
+    def walk(path, relative):
+        record = entry_record(path, relative, identity, inode_targets)
+        records.append(record)
+        if record["type"] != "directory":
+            return
+        for child in sorted(os.listdir(path), key=lambda name: name.encode("utf8")):
+            walk(os.path.join(path, child), relative + "/" + child)
+    walk(data_dir, "data")
+    return records
+
+def update_field(digest, value):
+    digest.update(str(value).encode("utf8"))
+    digest.update(b"\0")
+
+def identity_digest(domain, records, identity):
+    digest = hashlib.sha256(domain)
+    update_field(digest, identity["acl"])
+    update_field(digest, identity["xattr"])
+    update_field(digest, identity["capability"])
+    for gap in sorted(identity["gaps"], key=lambda item: item["kind"].encode("utf8")):
+        update_field(digest, gap["kind"])
+        update_field(digest, gap["reason"])
+    fields = (
+        "path", "type", "mode", "size", "uid", "gid", "mtimeNs", "sha256",
+        "linkTarget", "hardlinkTarget", "aclSha256", "xattrSha256", "capabilitySha256",
+    )
+    for record in sorted(records, key=lambda item: item["path"].encode("utf8")):
+        for field in fields:
+            update_field(digest, record.get(field, ""))
+    return digest.hexdigest()
+
+try:
+    manifest_raw = open(manifest_path, "rb").read()
+    manifest = json.loads(manifest_raw)
+    identity = manifest["metadataIdentity"]
+    for kind, command in (("acl", "getfacl"), ("xattr", "getfattr"), ("capability", "getcap")):
+        if identity[kind] == "captured" and shutil.which(command) is None:
+            fail()
+
+    expected_data = {
+        entry["path"]: entry
+        for entry in manifest["entries"]
+        if entry["path"] == "data" or entry["path"].startswith("data/")
+    }
+    actual_data = scan_data(identity)
+    if {entry["path"]: entry for entry in actual_data} != expected_data:
+        fail()
+    for exclusion in manifest["exclusions"]:
+        relative = exclusion["path"]
+        if relative.startswith("data/") and os.path.lexists(
+            os.path.join(data_dir, relative[len("data/"):])
+        ):
+            fail()
+
+    restored_data_identity = identity_digest(
+        b"comis-snapshot-data-tree-v1\0", actual_data, identity
+    )
+    if restored_data_identity != manifest["dataTreeIdentitySha256"]:
+        fail()
+
+    expected_environment = next(
+        entry for entry in manifest["entries"] if entry["path"] == "system/etc/comis/env"
+    )
+    actual_environment = entry_record(
+        source_env_path, "system/etc/comis/env", identity, {}
+    )
+    if actual_environment != expected_environment:
+        fail()
+    source_environment_identity = identity_digest(
+        b"comis-snapshot-source-environment-v1\0", [actual_environment], identity
+    )
+    if source_environment_identity != manifest["sourceEnvironmentEvidenceIdentitySha256"]:
+        fail()
+
+    data_dir_identity = hashlib.sha256(
+        b"comis-replay-data-dir-v1\0" + data_dir.encode("utf8")
+    ).hexdigest()
+    attestation = {
+        "schemaVersion": 1,
+        "state": "committed",
+        "dataDirSha256": data_dir_identity,
+        "snapshotManifestSha256": hashlib.sha256(manifest_raw).hexdigest(),
+        "restoredDataTreeDigestSha256": restored_data_identity,
+        "sourceEnvironmentEvidenceIdentitySha256": source_environment_identity,
+        "effectiveEnvironmentContentSha256": hash_file(effective_env_path),
+        "dataEntryCount": len(actual_data),
+        "dataBytes": sum(
+            entry["size"] for entry in actual_data if entry["type"] == "file"
+        ),
+    }
+    descriptor = os.open(output_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o400)
+    with os.fdopen(descriptor, "w", encoding="utf8") as handle:
+        json.dump(attestation, handle, separators=(",", ":"))
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+except (KeyError, OSError, StopIteration, TypeError, UnicodeError, ValueError):
+    fail()
+PYTHON_REATTEST
+chmod 0500 "$reattest_script"
+attestation_path="$control_dir/replay-attestation.json"
+python3 "$reattest_script" "$data_dir" "$source_env_copy" "$env_path" \
+  "$expected_manifest" "$attestation_path"
+install -o root -g root -m 0444 "$attestation_path" "$seal_incoming"
 if [ "$(cat "$control_dir/seal-existed")" = true ]; then
   mv -- "$seal_path" "$seal_rollback"
 fi
@@ -861,8 +1135,16 @@ if [ ! -f "$transaction_marker" ] || [ -L "$transaction_marker" ] || \
    [ ! -f "$control_dir/installed" ] || [ -L "$control_dir/installed" ] || \
    [ ! -d "$data_dir" ] || [ ! -e "$rollback_data" ] || \
    [ ! -f "$source_env_copy" ] || [ -L "$source_env_copy" ] || \
+   [ ! -f "$reattest_script" ] || [ -L "$reattest_script" ] || \
+   [ "$(stat -c '%u:%g:%a' "$reattest_script" 2>/dev/null || true)" != 0:0:500 ] || \
    [ ! -f "$seal_path" ] || [ -L "$seal_path" ] || \
    [ "$(stat -c '%u:%g:%a' "$seal_path" 2>/dev/null || true)" != 0:0:444 ]; then exit 96; fi
+commit_attestation="$control_dir/commit-attestation.json"
+if [ -e "$commit_attestation" ] || [ -L "$commit_attestation" ]; then exit 96; fi
+python3 "$reattest_script" "$data_dir" "$source_env_copy" "$env_path" \
+  "$expected_manifest" "$commit_attestation"
+if ! cmp -s -- "$commit_attestation" "$seal_path"; then exit 96; fi
+rm -f -- "$commit_attestation"
 committed_rollback="$control_dir/committed-rollback"
 if [ -e "$committed_rollback" ] || [ -L "$committed_rollback" ] || \
    [ -e "$control_dir/committed" ]; then exit 97; fi
@@ -1032,7 +1314,7 @@ export function buildProductionRestorePlan(
   const maximumBytes = calculateMaximumArchiveBytes(validated.value.manifest, manifestBytes);
   if (!maximumBytes.ok) return maximumBytes;
   const manifestSha256 = createHash("sha256").update(request.manifestJson).digest("hex");
-  const restoreAttestation = buildRestoreAttestation(
+  const restoreAttestationExpectation = buildRestoreAttestationExpectation(
     request.profile.target.dataDir,
     validated.value.manifest,
     manifestSha256,
@@ -1052,7 +1334,7 @@ export function buildProductionRestorePlan(
   return ok({
     manifest: validated.value.manifest,
     manifestSha256,
-    restoreAttestation,
+    restoreAttestationExpectation,
     sourceStreamPrepare: invocation(
       "prepare-snapshot-stream-source",
       request.profile.source,
@@ -1226,6 +1508,10 @@ export async function prepareProductionRestore(
     targetMachineIdSha256: request.profile.target.expectedMachineIdSha256,
     manifestSha256: plan.manifestSha256,
     bytesTransferred,
+    restoredDataTreeIdentitySha256:
+      plan.restoreAttestationExpectation.restoredDataTreeDigestSha256,
+    sourceEnvironmentEvidenceIdentitySha256:
+      plan.restoreAttestationExpectation.sourceEnvironmentEvidenceIdentitySha256,
     targetCommit: plan.targetCommit,
     targetRollback: plan.targetRollback,
   });
@@ -1261,7 +1547,13 @@ export async function commitProductionRestore(
     if (!rolledBack.ok) return rolledBack;
     return committed;
   }
-  return ok({ runId: pending.runId, state: "committed" });
+  return ok({
+    runId: pending.runId,
+    state: "committed",
+    restoredDataTreeIdentitySha256: pending.restoredDataTreeIdentitySha256,
+    sourceEnvironmentEvidenceIdentitySha256:
+      pending.sourceEnvironmentEvidenceIdentitySha256,
+  });
 }
 
 export async function rollbackProductionRestore(

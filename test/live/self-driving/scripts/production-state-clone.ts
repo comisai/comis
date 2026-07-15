@@ -42,9 +42,11 @@ export interface ProductionStateCloneReport {
   readonly bytesTransferred: number;
   readonly entries: number;
   readonly exclusions: number;
-  readonly treeIdentitySha256: string;
+  readonly dataTreeIdentitySha256: string;
+  readonly sourceEnvironmentEvidenceIdentitySha256: string;
+  readonly environmentConfiguration: "source_plus_replay_overlay";
   /** Canonical payload bytes count each regular file once and exclude directory and hardlink sizes. */
-  readonly fileContentBytes: number;
+  readonly dataFileContentBytes: number;
   readonly metadataIdentity: {
     readonly fidelity: "exact" | "gapped";
     readonly acl: ProductionSnapshotMetadataStatus;
@@ -188,10 +190,10 @@ function restoreError(error: ProductionRestoreError): ProductionStateCloneError 
   };
 }
 
-function snapshotFileContentBytes(manifest: ProductionSnapshotManifest): number | null {
+function snapshotDataFileContentBytes(manifest: ProductionSnapshotManifest): number | null {
   let bytes = 0;
   for (const entry of manifest.entries) {
-    if (entry.type !== "file") continue;
+    if (entry.type !== "file" || !entry.path.startsWith("data/")) continue;
     bytes += entry.size;
     if (!Number.isSafeInteger(bytes)) return null;
   }
@@ -240,8 +242,8 @@ export async function cloneProductionState(
     if (!cleanup.ok) return cleanup;
     return err({ kind: "manifest_failure", message: "Production snapshot manifest is invalid" });
   }
-  const fileContentBytes = snapshotFileContentBytes(manifest.value);
-  if (fileContentBytes === null) {
+  const dataFileContentBytes = snapshotDataFileContentBytes(manifest.value);
+  if (dataFileContentBytes === null) {
     const cleanup = await cleanupSnapshot(request, snapshot.value, deps.executor);
     if (!cleanup.ok) return cleanup;
     return err({ kind: "manifest_failure", message: "Production snapshot manifest is invalid" });
@@ -280,8 +282,11 @@ export async function cloneProductionState(
     bytesTransferred: pending.value.bytesTransferred,
     entries: manifest.value.entries.length,
     exclusions: manifest.value.exclusions.length,
-    treeIdentitySha256: manifest.value.treeIdentitySha256,
-    fileContentBytes,
+    dataTreeIdentitySha256: committed.value.restoredDataTreeIdentitySha256,
+    sourceEnvironmentEvidenceIdentitySha256:
+      committed.value.sourceEnvironmentEvidenceIdentitySha256,
+    environmentConfiguration: "source_plus_replay_overlay",
+    dataFileContentBytes,
     metadataIdentity: {
       fidelity: manifest.value.metadataIdentity.gaps.length === 0 ? "exact" : "gapped",
       acl: manifest.value.metadataIdentity.acl,

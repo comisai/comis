@@ -24,15 +24,18 @@ import type {
   ProductionRemoteExecutor,
   ProductionRemoteInvocation,
 } from "./production-bootstrap.js";
+import { TARGET_REPLAY_QUARANTINE_SHA256 } from "./production-bootstrap.js";
 import type { ProductionReplayProfile } from "./production-profile.js";
 import {
   buildProductionRestorePlan,
   commitProductionRestore,
+  parseProductionReplayRestoreAttestation,
   prepareProductionRestore,
 } from "./production-restore.js";
 import {
   buildProductionSnapshotPlan,
-  deriveProductionSnapshotTreeIdentity,
+  deriveProductionSnapshotDataTreeIdentity,
+  deriveProductionSnapshotEnvironmentEvidenceIdentity,
   type ProductionSnapshotManifest,
 } from "./production-snapshot.js";
 
@@ -125,11 +128,17 @@ function manifestFromRealLayout(root: string): ProductionSnapshotManifest {
         { kind: "capability", reason: "source_tool_unavailable" },
       ],
     },
-    treeIdentitySha256: "0".repeat(64),
+    dataTreeIdentitySha256: "0".repeat(64),
+    sourceEnvironmentEvidenceIdentitySha256: "0".repeat(64),
     entries,
     exclusions: [],
   };
-  return { ...value, treeIdentitySha256: deriveProductionSnapshotTreeIdentity(value) };
+  return {
+    ...value,
+    dataTreeIdentitySha256: deriveProductionSnapshotDataTreeIdentity(value),
+    sourceEnvironmentEvidenceIdentitySha256:
+      deriveProductionSnapshotEnvironmentEvidenceIdentity(value),
+  };
 }
 
 const profile: ProductionReplayProfile = {
@@ -171,7 +180,8 @@ function makeManifest(
       capability: "captured",
       gaps: [],
     },
-    treeIdentitySha256: "0".repeat(64),
+    dataTreeIdentitySha256: "0".repeat(64),
+    sourceEnvironmentEvidenceIdentitySha256: "0".repeat(64),
     entries: [
       { path: "data", type: "directory", mode: "0700", size: 0, ...entryMetadata },
       {
@@ -258,8 +268,11 @@ function makeManifest(
   const merged = { ...base, ...overrides };
   return {
     ...merged,
-    treeIdentitySha256:
-      overrides.treeIdentitySha256 ?? deriveProductionSnapshotTreeIdentity(merged),
+    dataTreeIdentitySha256:
+      overrides.dataTreeIdentitySha256 ?? deriveProductionSnapshotDataTreeIdentity(merged),
+    sourceEnvironmentEvidenceIdentitySha256:
+      overrides.sourceEnvironmentEvidenceIdentitySha256 ??
+      deriveProductionSnapshotEnvironmentEvidenceIdentity(merged),
   };
 }
 
@@ -332,14 +345,16 @@ describe("production snapshot restore transaction", () => {
     expect(plan.stream.target.args).toContain(
       "/run/comis-self-driving/restore-restore-a1/receive.sh",
     );
-    expect(plan.restoreAttestation).toEqual({
+    expect(plan.restoreAttestationExpectation).toEqual({
       schemaVersion: 1,
       state: "committed",
       dataDirSha256: "ef4e180fa56124fe7af6dcb50b03994870d4d25d5ad3f9198f1d24373be1c6cf",
       snapshotManifestSha256: plan.manifestSha256,
-      restoredTreeDigestSha256: makeManifest().treeIdentitySha256,
-      entryCount: makeManifest().entries.length,
-      bytes: 6_344,
+      restoredDataTreeDigestSha256: makeManifest().dataTreeIdentitySha256,
+      sourceEnvironmentEvidenceIdentitySha256:
+        makeManifest().sourceEnvironmentEvidenceIdentitySha256,
+      dataEntryCount: 6,
+      dataBytes: 6_272,
     });
 
     for (const command of [
@@ -350,7 +365,7 @@ describe("production snapshot restore transaction", () => {
     ]) {
       expect(command.stdin).toContain("sha256sum /etc/machine-id");
       expect(command.stdin).toContain("environment-role");
-      expect(command.stdin).toContain("IPAddressDeny=any");
+      expect(command.stdin).toContain(TARGET_REPLAY_QUARANTINE_SHA256);
       expect(command.stdin).toContain("systemctl is-active");
       expect(command.stdin).toContain("systemctl is-enabled");
       expect(command.stdin).toContain("exec 1>/dev/null");
@@ -544,6 +559,171 @@ describe("production snapshot restore transaction", () => {
     );
   });
 
+  it("re-attests promoted data separately from transformed environment configuration", () => {
+    const result = buildProductionRestorePlan(makeRequest());
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.restoreAttestationExpectation).not.toHaveProperty(
+      "restoredTreeDigestSha256",
+    );
+    expect(result.value.restoreAttestationExpectation).toMatchObject({
+      restoredDataTreeDigestSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      sourceEnvironmentEvidenceIdentitySha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    });
+
+    const promoteScript = result.value.targetVerifyAndPromote.stdin;
+    const promotionIndex = promoteScript.indexOf('mv -- "$incoming_data" "$data_dir"');
+    const reattestationIndex = promoteScript.indexOf("PYTHON_REATTEST");
+    expect(promotionIndex).toBeGreaterThan(0);
+    expect(reattestationIndex).toBeGreaterThan(promotionIndex);
+    expect(promoteScript).toContain("comis-snapshot-data-tree-v1\\0");
+    expect(promoteScript).toContain("comis-snapshot-source-environment-v1\\0");
+    expect(promoteScript).toContain("effectiveEnvironmentContentSha256");
+    expect(promoteScript).toContain("source_env_copy");
+    expect(result.value.targetCommit.stdin).toContain("commit-attestation.json");
+    expect(result.value.targetCommit.stdin).toContain('cmp -s -- "$commit_attestation" "$seal_path"');
+  });
+
+  it("computes post-promotion identity from the real nested target layout", () => {
+    const temporary = mkdtempSync(join(tmpdir(), "comis-promoted-reattest-"));
+    try {
+      const capturedRoot = join(temporary, "captured");
+      const sessionDir = join(
+        capturedRoot,
+        "data",
+        "workspace",
+        "sessions",
+        "tenant_a",
+        "telegram",
+      );
+      const systemDir = join(capturedRoot, "system", "etc", "comis");
+      mkdirSync(sessionDir, { recursive: true, mode: 0o700 });
+      mkdirSync(systemDir, { recursive: true, mode: 0o755 });
+      const sessionPath = join(sessionDir, "session.jsonl");
+      writeFileSync(sessionPath, '{"role":"user"}\n', { mode: 0o600 });
+      linkSync(sessionPath, join(sessionDir, "session.jsonl.copy"));
+      symlinkSync("session.jsonl", join(sessionDir, "latest"));
+      const sourceEnvironment = join(systemDir, "env");
+      writeFileSync(sourceEnvironment, "COMIS_DATA_DIR=/tmp/test\n", { mode: 0o640 });
+      const effectiveEnvironment = join(temporary, "effective-env");
+      writeFileSync(
+        effectiveEnvironment,
+        "COMIS_DATA_DIR=/tmp/test\nCOMIS_CONFIG_PATHS=/tmp/replay.yaml\n",
+        { mode: 0o640 },
+      );
+
+      const manifest = manifestFromRealLayout(capturedRoot);
+      const plan = buildProductionRestorePlan(makeRequest(manifest));
+      expect(plan.ok).toBe(true);
+      if (!plan.ok) return;
+      const marker = "<<'PYTHON_REATTEST'\n";
+      const start = plan.value.targetVerifyAndPromote.stdin.indexOf(marker);
+      const end = plan.value.targetVerifyAndPromote.stdin.indexOf(
+        "\nPYTHON_REATTEST",
+        start,
+      );
+      expect(start).toBeGreaterThan(0);
+      expect(end).toBeGreaterThan(start);
+      const verifier = plan.value.targetVerifyAndPromote.stdin.slice(
+        start + marker.length,
+        end,
+      );
+      const manifestPath = join(temporary, "manifest.json");
+      const attestationPath = join(temporary, "attestation.json");
+      writeFileSync(manifestPath, JSON.stringify(manifest), { mode: 0o600 });
+
+      const verified = spawnSync(
+        "python3",
+        [
+          "-",
+          join(capturedRoot, "data"),
+          sourceEnvironment,
+          effectiveEnvironment,
+          manifestPath,
+          attestationPath,
+        ],
+        { input: verifier, encoding: "utf8" },
+      );
+      expect(verified.status, verified.stderr).toBe(0);
+      const attestationRaw = readFileSync(attestationPath, "utf8");
+      const parsedAttestation = parseProductionReplayRestoreAttestation(attestationRaw);
+      expect(parsedAttestation.ok).toBe(true);
+      if (!parsedAttestation.ok) return;
+      expect(parsedAttestation.value).toMatchObject({
+        restoredDataTreeDigestSha256: manifest.dataTreeIdentitySha256,
+        sourceEnvironmentEvidenceIdentitySha256:
+          manifest.sourceEnvironmentEvidenceIdentitySha256,
+        effectiveEnvironmentContentSha256: createHash("sha256")
+          .update(readFileSync(effectiveEnvironment))
+          .digest("hex"),
+      });
+      const extended = {
+        ...parsedAttestation.value,
+        sourceEnvironmentBody: "must never enter the content-free seal",
+      };
+      expect(parseProductionReplayRestoreAttestation(JSON.stringify(extended)).ok).toBe(
+        false,
+      );
+
+      writeFileSync(sessionPath, '{"role":"assistant"}\n', { mode: 0o600 });
+      const divergent = spawnSync(
+        "python3",
+        [
+          "-",
+          join(capturedRoot, "data"),
+          sourceEnvironment,
+          effectiveEnvironment,
+          manifestPath,
+          join(temporary, "divergent-attestation.json"),
+        ],
+        { input: verifier, encoding: "utf8" },
+      );
+      expect(divergent.status).not.toBe(0);
+    } finally {
+      rmSync(temporary, { recursive: true, force: true });
+    }
+  });
+
+  it("requires the target service numeric identity to match the captured data owner", () => {
+    const result = buildProductionRestorePlan(makeRequest());
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    for (const command of [
+      result.value.targetVerifyAndPromote,
+      result.value.targetCommit,
+    ]) {
+      expect(command.stdin).toContain("expected_service_identity");
+      expect(command.stdin).toContain('entry["path"] == "data"');
+      expect(command.stdin).toContain('id -u "$service_user"');
+      expect(command.stdin).toContain('id -g "$service_user"');
+    }
+  });
+
+  it("requires the canonical quarantine file and effective systemd confinement", () => {
+    const result = buildProductionRestorePlan(makeRequest());
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    for (const command of [
+      result.value.targetPrepare,
+      result.value.targetVerifyAndPromote,
+      result.value.targetCommit,
+    ]) {
+      expect(command.stdin).toContain(TARGET_REPLAY_QUARANTINE_SHA256);
+      expect(command.stdin).toContain("DropInPaths");
+      expect(command.stdin).toContain('[ "$last_drop_in" != "$quarantine" ]');
+      expect(command.stdin).toContain("require_effective_property PrivateNetwork yes");
+      expect(command.stdin).toContain(
+        "require_effective_property RestrictAddressFamilies AF_UNIX",
+      );
+      expect(command.stdin).toContain("require_effective_property ProtectSystem strict");
+      expect(command.stdin).toContain("require_effective_property CapabilityBoundingSet ''");
+      expect(command.stdin).toContain("require_effective_property AmbientCapabilities ''");
+    }
+  });
+
   it("streams without controller plaintext and waits for explicit commit attestation", async () => {
     const deps = makeDeps();
     const result = await prepareProductionRestore(makeRequest(), deps);
@@ -596,7 +776,14 @@ describe("production snapshot restore transaction", () => {
     );
     expect(committed).toEqual({
       ok: true,
-      value: { runId: "restore-a1", state: "committed" },
+      value: {
+        runId: "restore-a1",
+        state: "committed",
+        restoredDataTreeIdentitySha256:
+          result.value.restoredDataTreeIdentitySha256,
+        sourceEnvironmentEvidenceIdentitySha256:
+          result.value.sourceEnvironmentEvidenceIdentitySha256,
+      },
     });
     expect(deps.run.mock.calls.map(([invocation]) => invocation.label)).toEqual([
       "commit-snapshot-target",

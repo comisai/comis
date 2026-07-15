@@ -10,7 +10,8 @@ import {
   type ProductionStateCloneDeps,
 } from "./production-state-clone.js";
 import {
-  deriveProductionSnapshotTreeIdentity,
+  deriveProductionSnapshotDataTreeIdentity,
+  deriveProductionSnapshotEnvironmentEvidenceIdentity,
   type ProductionSnapshotManifest,
 } from "./production-snapshot.js";
 
@@ -61,7 +62,8 @@ function manifest(runId = "state-a1"): string {
         { kind: "capability", reason: "source_tool_unavailable" },
       ],
     },
-    treeIdentitySha256: "0".repeat(64),
+    dataTreeIdentitySha256: "0".repeat(64),
+    sourceEnvironmentEvidenceIdentitySha256: "0".repeat(64),
     entries: [
       { path: "data", type: "directory", mode: "0700", size: 0, ...metadata },
       {
@@ -98,7 +100,9 @@ function manifest(runId = "state-a1"): string {
   };
   return JSON.stringify({
     ...value,
-    treeIdentitySha256: deriveProductionSnapshotTreeIdentity(value),
+    dataTreeIdentitySha256: deriveProductionSnapshotDataTreeIdentity(value),
+    sourceEnvironmentEvidenceIdentitySha256:
+      deriveProductionSnapshotEnvironmentEvidenceIdentity(value),
   });
 }
 
@@ -148,10 +152,15 @@ describe("production state clone transaction", () => {
         bytesTransferred: 500_000,
         entries: 6,
         exclusions: 1,
-        treeIdentitySha256: deriveProductionSnapshotTreeIdentity(
+        dataTreeIdentitySha256: deriveProductionSnapshotDataTreeIdentity(
           JSON.parse(manifest()) as ProductionSnapshotManifest,
         ),
-        fileContentBytes: 4296,
+        sourceEnvironmentEvidenceIdentitySha256:
+          deriveProductionSnapshotEnvironmentEvidenceIdentity(
+            JSON.parse(manifest()) as ProductionSnapshotManifest,
+          ),
+        environmentConfiguration: "source_plus_replay_overlay",
+        dataFileContentBytes: 4096,
         metadataIdentity: {
           fidelity: "gapped",
           acl: "unavailable",

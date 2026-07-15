@@ -89,9 +89,11 @@ describe("root-owned replay trust anchors", () => {
       state: "committed",
       dataDirSha256: "a".repeat(64),
       snapshotManifestSha256: "b".repeat(64),
-      restoredTreeDigestSha256: "c".repeat(64),
-      entryCount: 1,
-      bytes: 2,
+      restoredDataTreeDigestSha256: "c".repeat(64),
+      sourceEnvironmentEvidenceIdentitySha256: "d".repeat(64),
+      effectiveEnvironmentContentSha256: "e".repeat(64),
+      dataEntryCount: 1,
+      dataBytes: 2,
     });
     openMock.mockResolvedValue(openedFile(attestation, 0o100444));
 

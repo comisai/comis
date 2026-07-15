@@ -108,9 +108,11 @@ export interface ReplayRestoreAttestation {
   readonly state: "committed";
   readonly dataDirSha256: string;
   readonly snapshotManifestSha256: string;
-  readonly restoredTreeDigestSha256: string;
-  readonly entryCount: number;
-  readonly bytes: number;
+  readonly restoredDataTreeDigestSha256: string;
+  readonly sourceEnvironmentEvidenceIdentitySha256: string;
+  readonly effectiveEnvironmentContentSha256: string;
+  readonly dataEntryCount: number;
+  readonly dataBytes: number;
 }
 
 export type ComisEnvironmentRole = "production" | "test";
@@ -409,6 +411,10 @@ function isSafeCount(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
+function isPositiveSafeCount(value: unknown): value is number {
+  return isSafeCount(value) && value > 0;
+}
+
 /** Parse the root-sealed, content-free restore attestation with no extra fields. */
 export function parseReplayRestoreAttestation(
   raw: string,
@@ -422,12 +428,14 @@ export function parseReplayRestoreAttestation(
   }
   const value = parsed.value;
   const expectedKeys = [
-    "bytes",
+    "dataBytes",
     "dataDirSha256",
-    "entryCount",
-    "restoredTreeDigestSha256",
+    "dataEntryCount",
+    "effectiveEnvironmentContentSha256",
+    "restoredDataTreeDigestSha256",
     "schemaVersion",
     "snapshotManifestSha256",
+    "sourceEnvironmentEvidenceIdentitySha256",
     "state",
   ];
   if (Object.keys(value).sort().join("\0") !== expectedKeys.join("\0")) {
@@ -443,10 +451,14 @@ export function parseReplayRestoreAttestation(
     !SHA256_RE.test(value.dataDirSha256) ||
     typeof value.snapshotManifestSha256 !== "string" ||
     !SHA256_RE.test(value.snapshotManifestSha256) ||
-    typeof value.restoredTreeDigestSha256 !== "string" ||
-    !SHA256_RE.test(value.restoredTreeDigestSha256) ||
-    !isSafeCount(value.entryCount) ||
-    !isSafeCount(value.bytes)
+    typeof value.restoredDataTreeDigestSha256 !== "string" ||
+    !SHA256_RE.test(value.restoredDataTreeDigestSha256) ||
+    typeof value.sourceEnvironmentEvidenceIdentitySha256 !== "string" ||
+    !SHA256_RE.test(value.sourceEnvironmentEvidenceIdentitySha256) ||
+    typeof value.effectiveEnvironmentContentSha256 !== "string" ||
+    !SHA256_RE.test(value.effectiveEnvironmentContentSha256) ||
+    !isPositiveSafeCount(value.dataEntryCount) ||
+    !isSafeCount(value.dataBytes)
   ) {
     return err({
       kind: "invalid_restore_attestation",
@@ -458,9 +470,12 @@ export function parseReplayRestoreAttestation(
     state: "committed",
     dataDirSha256: value.dataDirSha256,
     snapshotManifestSha256: value.snapshotManifestSha256,
-    restoredTreeDigestSha256: value.restoredTreeDigestSha256,
-    entryCount: value.entryCount,
-    bytes: value.bytes,
+    restoredDataTreeDigestSha256: value.restoredDataTreeDigestSha256,
+    sourceEnvironmentEvidenceIdentitySha256:
+      value.sourceEnvironmentEvidenceIdentitySha256,
+    effectiveEnvironmentContentSha256: value.effectiveEnvironmentContentSha256,
+    dataEntryCount: value.dataEntryCount,
+    dataBytes: value.dataBytes,
   });
 }
 
@@ -607,8 +622,8 @@ export async function startReplayQuarantine(
   deps.logger.info(
     {
       durationMs: deps.clock.now() - startedAt,
-      entryCount: attestation.value.entryCount,
-      bytes: attestation.value.bytes,
+      dataEntryCount: attestation.value.dataEntryCount,
+      dataBytes: attestation.value.dataBytes,
     },
     "Replay target quarantined",
   );
