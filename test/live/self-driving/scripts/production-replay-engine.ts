@@ -32,6 +32,13 @@ import {
 
 type MaybePromise<T> = T | Promise<T>;
 
+export interface ProductionReplayPortCallContext {
+  /** The engine aborts this signal when the operation reaches its deadline. */
+  readonly signal: AbortSignal;
+  /** Absolute engine-wall-clock deadline for cooperative adapter cancellation. */
+  readonly deadlineAtMs: number;
+}
+
 export interface ProductionReplayPortFailure {
   readonly kind: "port_failure";
   readonly failureDigestSha256: string;
@@ -51,6 +58,7 @@ export interface ProductionReplayVerifiedBundle {
 export interface ProductionReplayBundleAuthorityPort {
   verify(
     sealedBundleEnvelope: string,
+    context: ProductionReplayPortCallContext,
   ): MaybePromise<Result<ProductionReplayVerifiedBundle, ProductionReplayPortFailure>>;
 }
 
@@ -65,6 +73,7 @@ export interface ProductionReplayResolvedArtifact {
 export interface ProductionReplayArtifactResolverPort {
   resolve(
     request: ProductionReplayArtifactRequest,
+    context: ProductionReplayPortCallContext,
   ): MaybePromise<Result<ProductionReplayResolvedArtifact, ProductionReplayPortFailure>>;
 }
 
@@ -78,7 +87,9 @@ export interface ProductionReplayCheckpointAttestation {
 }
 
 export interface ProductionReplayCheckpointPort {
-  attest(): MaybePromise<Result<ProductionReplayCheckpointAttestation, ProductionReplayPortFailure>>;
+  attest(
+    context: ProductionReplayPortCallContext,
+  ): MaybePromise<Result<ProductionReplayCheckpointAttestation, ProductionReplayPortFailure>>;
 }
 
 export interface ProductionReplayDeterminismFailure {
@@ -115,15 +126,25 @@ export interface ProductionReplayTrigger {
 }
 
 export interface ProductionReplayDriverPort {
-  start(input: {
-    readonly determinism: ProductionReplayDeterminismPort;
-    readonly checkpointDigestSha256: string;
-    readonly windowStartMs: number;
-  }): MaybePromise<Result<void, ProductionReplayPortFailure>>;
+  start(
+    input: {
+      readonly determinism: ProductionReplayDeterminismPort;
+      readonly checkpointDigestSha256: string;
+      readonly windowStartMs: number;
+    },
+    context: ProductionReplayPortCallContext,
+  ): MaybePromise<Result<void, ProductionReplayPortFailure>>;
   injectTrigger(
     trigger: ProductionReplayTrigger,
+    context: ProductionReplayPortCallContext,
   ): MaybePromise<Result<void, ProductionReplayPortFailure>>;
-  finish(): MaybePromise<Result<void, ProductionReplayPortFailure>>;
+  finish(
+    context: ProductionReplayPortCallContext,
+  ): MaybePromise<Result<void, ProductionReplayPortFailure>>;
+  stop(
+    input: ProductionReplayCleanupInput,
+    context: ProductionReplayPortCallContext,
+  ): MaybePromise<Result<void, ProductionReplayPortFailure>>;
 }
 
 export interface ProductionReplayObserverResult {
@@ -132,14 +153,28 @@ export interface ProductionReplayObserverResult {
 }
 
 export interface ProductionReplayObserverPort {
-  start(input: {
-    readonly windowStartMs: number;
-  }): MaybePromise<Result<void, ProductionReplayPortFailure>>;
-  nextEvent(input: {
-    readonly ordinal: number;
-    readonly deadlineWallTimeMs: number;
-  }): MaybePromise<Result<CanonicalProductionEvent | null, ProductionReplayPortFailure>>;
-  finish(): MaybePromise<Result<ProductionReplayObserverResult, ProductionReplayPortFailure>>;
+  start(
+    input: {
+      readonly windowStartMs: number;
+    },
+    context: ProductionReplayPortCallContext,
+  ): MaybePromise<Result<void, ProductionReplayPortFailure>>;
+  nextEvent(
+    input: {
+      readonly ordinal: number;
+      readonly deadlineWallTimeMs: number;
+    },
+    context: ProductionReplayPortCallContext,
+  ): MaybePromise<
+    Result<CanonicalProductionEvent | null, ProductionReplayPortFailure>
+  >;
+  finish(
+    context: ProductionReplayPortCallContext,
+  ): MaybePromise<Result<ProductionReplayObserverResult, ProductionReplayPortFailure>>;
+  stop(
+    input: ProductionReplayCleanupInput,
+    context: ProductionReplayPortCallContext,
+  ): MaybePromise<Result<void, ProductionReplayPortFailure>>;
 }
 
 export interface ProductionReplayHardOracleCheck {
@@ -154,11 +189,22 @@ export interface ProductionReplayHardOracleResult {
 }
 
 export interface ProductionReplayHardOraclePort {
-  evaluate(input: {
-    readonly actualTranscript: CanonicalProductionTranscript;
-    readonly outputs: readonly ReplayObservedRecord[];
-    readonly state: readonly ReplayObservedRecord[];
-  }): MaybePromise<Result<ProductionReplayHardOracleResult, ProductionReplayPortFailure>>;
+  evaluate(
+    input: {
+      readonly actualTranscript: CanonicalProductionTranscript;
+      readonly outputs: readonly ReplayObservedRecord[];
+      readonly state: readonly ReplayObservedRecord[];
+    },
+    context: ProductionReplayPortCallContext,
+  ): MaybePromise<
+    Result<ProductionReplayHardOracleResult, ProductionReplayPortFailure>
+  >;
+}
+
+/** Stop is invoked after every attempted start and must be idempotent. */
+export interface ProductionReplayCleanupInput {
+  readonly outcome: "completed" | "failed";
+  readonly primaryErrorDigestSha256: string | null;
 }
 
 export interface ProductionReplayEnginePorts {
@@ -173,6 +219,7 @@ export interface ProductionReplayEnginePorts {
 export interface ProductionReplayEngineRequest {
   readonly sealedBundleEnvelope: string;
   readonly maxEventLagMs: number;
+  readonly portCallTimeoutMs: number;
 }
 
 export interface ProductionReplayEngineReport {
@@ -203,7 +250,32 @@ export interface ProductionReplayEngineReport {
   readonly durationMs: number;
 }
 
-export type ProductionReplayEngineError =
+export type ProductionReplayPortName =
+  | "bundle"
+  | "artifact"
+  | "checkpoint"
+  | "driver"
+  | "observer"
+  | "hard_oracle";
+
+export type ProductionReplayPortOperation =
+  | "verify"
+  | "resolve"
+  | "attest"
+  | "start"
+  | "inject_trigger"
+  | "next_event"
+  | "finish"
+  | "evaluate"
+  | "stop";
+
+export interface ProductionReplayCleanupFailure {
+  readonly port: "driver" | "observer";
+  readonly failureKind: "reported" | "thrown" | "invalid" | "timeout";
+  readonly failureDigestSha256: string;
+}
+
+type ProductionReplayEnginePrimaryError =
   | {
       readonly kind: "authentication_failed";
       readonly component: "bundle";
@@ -225,13 +297,20 @@ export type ProductionReplayEngineError =
     }
   | {
       readonly kind: "port_failure";
-      readonly port: "artifact" | "checkpoint" | "driver" | "observer" | "hard_oracle";
+      readonly port: Exclude<ProductionReplayPortName, "bundle">;
       readonly failureDigestSha256: string;
       readonly expectedEventSeq: number | null;
     }
   | {
       readonly kind: "invalid_port_result";
-      readonly port: "artifact" | "checkpoint" | "driver" | "observer" | "hard_oracle";
+      readonly port: Exclude<ProductionReplayPortName, "bundle">;
+      readonly evidenceDigestSha256: string;
+      readonly expectedEventSeq: number | null;
+    }
+  | {
+      readonly kind: "port_timeout";
+      readonly port: ProductionReplayPortName;
+      readonly operation: ProductionReplayPortOperation;
       readonly evidenceDigestSha256: string;
       readonly expectedEventSeq: number | null;
     }
@@ -259,8 +338,18 @@ export type ProductionReplayEngineError =
       readonly evidenceDigestSha256: string;
     };
 
+export type ProductionReplayEngineError =
+  | (ProductionReplayEnginePrimaryError & {
+      readonly cleanupFailures?: readonly ProductionReplayCleanupFailure[];
+    })
+  | {
+      readonly kind: "cleanup_failed";
+      readonly evidenceDigestSha256: string;
+      readonly cleanupFailures: readonly ProductionReplayCleanupFailure[];
+    };
+
 interface InternalPortError {
-  readonly kind: "reported" | "thrown" | "invalid";
+  readonly kind: "reported" | "thrown" | "invalid" | "timeout";
   readonly digestSha256: string;
 }
 
@@ -309,6 +398,8 @@ const MAX_ARTIFACT_BYTES = 32 * 1024 * 1024;
 const MAX_SEQUENCE_RECORDS = 1_000_000;
 const MAX_OBSERVED_RECORDS = 1_000_000;
 const MAX_HARD_ORACLES = 10_000;
+const MAX_PORT_CALL_TIMEOUT_MS = 5 * 60 * 1_000;
+const PORT_CALL_TIMED_OUT = Symbol("production-replay-port-call-timed-out");
 const OBSERVED_SURFACES = new Set<string>([
   "wire",
   "sqlite",
@@ -384,11 +475,38 @@ function evidenceDigest(code: string): string {
 }
 
 async function invokePort<T>(
-  operation: () => MaybePromise<Result<T, ProductionReplayPortFailure>>,
+  operation: (
+    context: ProductionReplayPortCallContext,
+  ) => MaybePromise<Result<T, ProductionReplayPortFailure>>,
+  timeoutMs: number,
+  operationName: ProductionReplayPortOperation,
 ): Promise<Result<T, InternalPortError>> {
-  const attempted = await fromPromise(Promise.resolve().then(operation));
+  const controller = new AbortController();
+  const deadlineAtMs = Date.now() + timeoutMs;
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  const timedOut = new Promise<typeof PORT_CALL_TIMED_OUT>((resolve) => {
+    timeoutHandle = setTimeout(() => {
+      controller.abort();
+      resolve(PORT_CALL_TIMED_OUT);
+    }, timeoutMs);
+  });
+  const attempted = await fromPromise(
+    Promise.race([
+      Promise.resolve().then(() =>
+        operation({ signal: controller.signal, deadlineAtMs }),
+      ),
+      timedOut,
+    ]),
+  );
+  if (timeoutHandle !== null) clearTimeout(timeoutHandle);
   if (!attempted.ok) {
     return err({ kind: "thrown", digestSha256: safeThrownDigest(attempted.error) });
+  }
+  if (attempted.value === PORT_CALL_TIMED_OUT) {
+    return err({
+      kind: "timeout",
+      digestSha256: evidenceDigest(`port-timeout-${operationName}`),
+    });
   }
   const result = attempted.value as unknown;
   if (!isRecord(result) || typeof result.ok !== "boolean") {
@@ -413,9 +531,19 @@ async function invokePort<T>(
 
 function mapPortError(
   error: InternalPortError,
-  port: Extract<ProductionReplayEngineError, { kind: "port_failure" }>["port"],
+  port: Exclude<ProductionReplayPortName, "bundle">,
+  operation: ProductionReplayPortOperation,
   expectedEventSeq: number | null = null,
 ): ProductionReplayEngineError {
+  if (error.kind === "timeout") {
+    return {
+      kind: "port_timeout",
+      port,
+      operation,
+      evidenceDigestSha256: error.digestSha256,
+      expectedEventSeq,
+    };
+  }
   return error.kind === "invalid"
     ? {
         kind: "invalid_port_result",
@@ -480,13 +608,20 @@ async function resolveArtifact(
   resolver: ProductionReplayArtifactResolverPort,
   digestSha256: string,
   kind: ReplayBundleBlobKind,
+  portCallTimeoutMs: number,
 ): Promise<Result<ProductionReplayResolvedArtifact, ProductionReplayEngineError>> {
   const declared = manifest.vault.blobs.find((blob) => blob.digestSha256 === digestSha256);
   if (declared?.kind !== kind) {
     return err({ kind: "artifact_invalid", artifact: kind, evidenceDigestSha256: evidenceDigest("reference") });
   }
-  const resolved = await invokePort(() => resolver.resolve({ kind, digestSha256 }));
-  if (!resolved.ok) return err(mapPortError(resolved.error, "artifact"));
+  const resolved = await invokePort(
+    (context) => resolver.resolve({ kind, digestSha256 }, context),
+    portCallTimeoutMs,
+    "resolve",
+  );
+  if (!resolved.ok) {
+    return err(mapPortError(resolved.error, "artifact", "resolve"));
+  }
   const value = resolved.value;
   if (
     !isRecord(value) ||
@@ -763,8 +898,15 @@ function createDeterminismTracker(
 async function loadTranscript(
   manifest: ProductionReplayBundleManifest,
   resolver: ProductionReplayArtifactResolverPort,
+  portCallTimeoutMs: number,
 ): Promise<Result<{ transcript: CanonicalProductionTranscript; artifactCount: number }, ProductionReplayEngineError>> {
-  const artifact = await resolveArtifact(manifest, resolver, manifest.transcript.blobDigestSha256, "canonical_transcript");
+  const artifact = await resolveArtifact(
+    manifest,
+    resolver,
+    manifest.transcript.blobDigestSha256,
+    "canonical_transcript",
+    portCallTimeoutMs,
+  );
   if (!artifact.ok) return artifact;
   const decoded = tryCatch(() => new TextDecoder("utf-8", { fatal: true }).decode(artifact.value.plaintext));
   if (!decoded.ok) return err({ kind: "artifact_invalid", artifact: "canonical_transcript", evidenceDigestSha256: evidenceDigest("transcript-encoding") });
@@ -778,12 +920,14 @@ async function loadTranscript(
 async function loadEpisode(
   manifest: ProductionReplayBundleManifest,
   resolver: ProductionReplayArtifactResolverPort,
+  portCallTimeoutMs: number,
 ): Promise<Result<ProductionCaptureEpisode, ProductionReplayEngineError>> {
   const artifact = await resolveArtifact(
     manifest,
     resolver,
     manifest.episode.blobDigestSha256,
     "capture_episode",
+    portCallTimeoutMs,
   );
   if (!artifact.ok) return artifact;
   const decoded = tryCatch(() =>
@@ -882,6 +1026,7 @@ async function loadReplayArtifacts(
   manifest: ProductionReplayBundleManifest,
   resolver: ProductionReplayArtifactResolverPort,
   transcript: CanonicalProductionTranscript,
+  portCallTimeoutMs: number,
 ): Promise<Result<{ sequences: ParsedSequences; cassettes: readonly ParsedCassette[]; expected: ParsedExpectedRecords; triggerPayloads: ReadonlyMap<string, Uint8Array>; artifactCount: number }, ProductionReplayEngineError>> {
   const parsedSequenceEntries: Partial<ParsedSequences> = {};
   let artifactCount = 0;
@@ -889,7 +1034,13 @@ async function loadReplayArtifacts(
     if (sequence.status !== "captured" || sequence.blobDigestSha256 === null) {
       return err({ kind: "artifact_invalid", artifact: `${sequence.kind}_sequence`, evidenceDigestSha256: evidenceDigest("sequence-missing") });
     }
-    const artifact = await resolveArtifact(manifest, resolver, sequence.blobDigestSha256, `${sequence.kind}_sequence`);
+    const artifact = await resolveArtifact(
+      manifest,
+      resolver,
+      sequence.blobDigestSha256,
+      `${sequence.kind}_sequence`,
+      portCallTimeoutMs,
+    );
     if (!artifact.ok) return artifact;
     artifactCount += 1;
     const parsed = parseSequence(artifact.value.plaintext, sequence.kind, sequence.recordCount);
@@ -905,9 +1056,21 @@ async function loadReplayArtifacts(
   const cassettes: ParsedCassette[] = [];
   const requestPayloads = new Map<string, Uint8Array>();
   for (const cassette of manifest.determinism.cassettes) {
-    const request = await resolveArtifact(manifest, resolver, cassette.requestBlobDigestSha256, "cassette_request");
+    const request = await resolveArtifact(
+      manifest,
+      resolver,
+      cassette.requestBlobDigestSha256,
+      "cassette_request",
+      portCallTimeoutMs,
+    );
     if (!request.ok) return request;
-    const response = await resolveArtifact(manifest, resolver, cassette.responseBlobDigestSha256, "cassette_response");
+    const response = await resolveArtifact(
+      manifest,
+      resolver,
+      cassette.responseBlobDigestSha256,
+      "cassette_response",
+      portCallTimeoutMs,
+    );
     if (!response.ok) return response;
     artifactCount += 2;
     const parsedRequest = parseCassetteRequest(request.value.plaintext, cassette);
@@ -923,9 +1086,21 @@ async function loadReplayArtifacts(
     });
   }
 
-  const outputsArtifact = await resolveArtifact(manifest, resolver, manifest.expected.outputBlobDigestSha256, "expected_outputs");
+  const outputsArtifact = await resolveArtifact(
+    manifest,
+    resolver,
+    manifest.expected.outputBlobDigestSha256,
+    "expected_outputs",
+    portCallTimeoutMs,
+  );
   if (!outputsArtifact.ok) return outputsArtifact;
-  const stateArtifact = await resolveArtifact(manifest, resolver, manifest.expected.finalStateBlobDigestSha256, "expected_state");
+  const stateArtifact = await resolveArtifact(
+    manifest,
+    resolver,
+    manifest.expected.finalStateBlobDigestSha256,
+    "expected_state",
+    portCallTimeoutMs,
+  );
   if (!stateArtifact.ok) return stateArtifact;
   artifactCount += 2;
   const outputs = parseExpectedRecords(outputsArtifact.value.plaintext, "expected_outputs");
@@ -1026,23 +1201,88 @@ function validateHardOracles(
   );
 }
 
+async function stopReplayPort(
+  port: "driver" | "observer",
+  stop: (
+    input: ProductionReplayCleanupInput,
+    context: ProductionReplayPortCallContext,
+  ) => MaybePromise<Result<void, ProductionReplayPortFailure>>,
+  input: ProductionReplayCleanupInput,
+  portCallTimeoutMs: number,
+): Promise<ProductionReplayCleanupFailure | null> {
+  const stopped = await invokePort(
+    (context) => stop(input, context),
+    portCallTimeoutMs,
+    "stop",
+  );
+  if (!stopped.ok) {
+    return {
+      port,
+      failureKind: stopped.error.kind,
+      failureDigestSha256: stopped.error.digestSha256,
+    };
+  }
+  if (stopped.value !== undefined) {
+    return {
+      port,
+      failureKind: "invalid",
+      failureDigestSha256: evidenceDigest(`${port}-stop-result`),
+    };
+  }
+  return null;
+}
+
+function attachCleanupFailures(
+  result: Result<ProductionReplayEngineReport, ProductionReplayEngineError>,
+  cleanupFailures: readonly ProductionReplayCleanupFailure[],
+): Result<ProductionReplayEngineReport, ProductionReplayEngineError> {
+  if (cleanupFailures.length === 0) return result;
+  if (!result.ok) {
+    return err({ ...result.error, cleanupFailures });
+  }
+  return err({
+    kind: "cleanup_failed",
+    evidenceDigestSha256: evidenceDigest("cleanup-failed"),
+    cleanupFailures,
+  });
+}
+
 export async function replayProductionTranscript(
   request: ProductionReplayEngineRequest,
   ports: ProductionReplayEnginePorts,
 ): Promise<Result<ProductionReplayEngineReport, ProductionReplayEngineError>> {
   if (
     !isRecord(request) ||
-    !hasExactKeys(request, ["sealedBundleEnvelope", "maxEventLagMs"]) ||
+    !hasExactKeys(request, [
+      "sealedBundleEnvelope",
+      "maxEventLagMs",
+      "portCallTimeoutMs",
+    ]) ||
     typeof request?.sealedBundleEnvelope !== "string" ||
     !isCount(request?.maxEventLagMs) ||
-    request.maxEventLagMs === 0
+    request.maxEventLagMs === 0 ||
+    !isCount(request?.portCallTimeoutMs) ||
+    request.portCallTimeoutMs === 0 ||
+    request.portCallTimeoutMs > MAX_PORT_CALL_TIMEOUT_MS
   ) {
     return err({ kind: "authentication_failed", component: "bundle", evidenceDigestSha256: evidenceDigest("request") });
   }
-  const verifiedBundleAttempt = await invokePort(() =>
-    ports.bundleAuthority.verify(request.sealedBundleEnvelope),
+  const verifiedBundleAttempt = await invokePort(
+    (context) =>
+      ports.bundleAuthority.verify(request.sealedBundleEnvelope, context),
+    request.portCallTimeoutMs,
+    "verify",
   );
   if (!verifiedBundleAttempt.ok) {
+    if (verifiedBundleAttempt.error.kind === "timeout") {
+      return err({
+        kind: "port_timeout",
+        port: "bundle",
+        operation: "verify",
+        evidenceDigestSha256: verifiedBundleAttempt.error.digestSha256,
+        expectedEventSeq: null,
+      });
+    }
     return err({ kind: "authentication_failed", component: "bundle", evidenceDigestSha256: evidenceDigest("bundle") });
   }
   const manifest = validateVerifiedBundle(
@@ -1056,10 +1296,18 @@ export async function replayProductionTranscript(
       evidenceDigestSha256: evidenceDigest("bundle-authority"),
     });
   }
-  const episodeResult = await loadEpisode(manifest, ports.artifacts);
+  const episodeResult = await loadEpisode(
+    manifest,
+    ports.artifacts,
+    request.portCallTimeoutMs,
+  );
   if (!episodeResult.ok) return episodeResult;
   const episode = episodeResult.value;
-  const transcriptResult = await loadTranscript(manifest, ports.artifacts);
+  const transcriptResult = await loadTranscript(
+    manifest,
+    ports.artifacts,
+    request.portCallTimeoutMs,
+  );
   if (!transcriptResult.ok) return transcriptResult;
   const transcript = transcriptResult.value.transcript;
   const windowStartMs = episode.window.startAtMs;
@@ -1076,10 +1324,21 @@ export async function replayProductionTranscript(
     });
   }
 
-  const loaded = await loadReplayArtifacts(manifest, ports.artifacts, transcript);
+  const loaded = await loadReplayArtifacts(
+    manifest,
+    ports.artifacts,
+    transcript,
+    request.portCallTimeoutMs,
+  );
   if (!loaded.ok) return loaded;
-  const checkpointAttempt = await invokePort(() => ports.checkpoint.attest());
-  if (!checkpointAttempt.ok) return err(mapPortError(checkpointAttempt.error, "checkpoint"));
+  const checkpointAttempt = await invokePort(
+    (context) => ports.checkpoint.attest(context),
+    request.portCallTimeoutMs,
+    "attest",
+  );
+  if (!checkpointAttempt.ok) {
+    return err(mapPortError(checkpointAttempt.error, "checkpoint", "attest"));
+  }
   const checkpoint = validateCheckpoint(checkpointAttempt.value, manifest, windowStartMs);
   if (!checkpoint.ok) return checkpoint;
 
@@ -1088,173 +1347,316 @@ export async function replayProductionTranscript(
     return err({ kind: "artifact_invalid", artifact: "expected_state", evidenceDigestSha256: evidenceDigest("state-digest") });
   }
 
-  const determinism = createDeterminismTracker(loaded.value.sequences, loaded.value.cassettes);
-  const observerStarted = await invokePort(() => ports.observer.start({ windowStartMs }));
-  if (!observerStarted.ok) return err(mapPortError(observerStarted.error, "observer"));
-  if (observerStarted.value !== undefined) return err({ kind: "invalid_port_result", port: "observer", evidenceDigestSha256: evidenceDigest("observer-start"), expectedEventSeq: null });
-
-  const driverStarted = await invokePort(() =>
-    ports.driver.start({
-      determinism: determinism.port,
-      checkpointDigestSha256: digestCanonical(checkpoint.value.attestation),
-      windowStartMs,
-    }),
+  const determinism = createDeterminismTracker(
+    loaded.value.sequences,
+    loaded.value.cassettes,
   );
-  if (!driverStarted.ok) return err(mapPortError(driverStarted.error, "driver"));
-  if (driverStarted.value !== undefined) return err({ kind: "invalid_port_result", port: "driver", evidenceDigestSha256: evidenceDigest("driver-start"), expectedEventSeq: null });
-  const startViolation = determinism.violation();
-  if (startViolation !== null) return err(startViolation);
+  let observerStartAttempted = false;
+  let driverStartAttempted = false;
+  const replayResult = await (async (): Promise<
+    Result<ProductionReplayEngineReport, ProductionReplayEngineError>
+  > => {
+    observerStartAttempted = true;
+    const observerStarted = await invokePort(
+      (context) => ports.observer.start({ windowStartMs }, context),
+      request.portCallTimeoutMs,
+      "start",
+    );
+    if (!observerStarted.ok) {
+      return err(mapPortError(observerStarted.error, "observer", "start"));
+    }
+    if (observerStarted.value !== undefined) {
+      return err({ kind: "invalid_port_result", port: "observer", evidenceDigestSha256: evidenceDigest("observer-start"), expectedEventSeq: null });
+    }
 
-  const actualEvents: CanonicalProductionEvent[] = [];
-  let injectedTriggerCount = 0;
-  let priorDeadline = windowStartMs;
-  for (const expectedEvent of transcript.events) {
-    if (expectedEvent.replay.policy === "inject") {
-      const blobDigest = expectedEvent.replay.blobDigest as string;
-      const payload = loaded.value.triggerPayloads.get(blobDigest) as Uint8Array;
-      const trigger: ProductionReplayTrigger = {
-        kind: expectedEvent.kind,
-        sourceKind: expectedEvent.source.kind,
-        sourceId: expectedEvent.source.id,
-        wallTimeMs: expectedEvent.wallTimeMs,
-        idempotencyKeySha256: expectedEvent.replay.idempotencyKey,
-        payloadDigestSha256: sha256(payload),
-        payload: Uint8Array.from(payload),
-      };
-      const injected = await invokePort(() => ports.driver.injectTrigger(trigger));
-      if (!injected.ok) return err(mapPortError(injected.error, "driver", expectedEvent.seq));
-      if (injected.value !== undefined) return err({ kind: "invalid_port_result", port: "driver", evidenceDigestSha256: evidenceDigest("trigger-result"), expectedEventSeq: expectedEvent.seq });
-      injectedTriggerCount += 1;
-      const triggerViolation = determinism.violation();
-      if (triggerViolation !== null) return err(triggerViolation);
+    driverStartAttempted = true;
+    const driverStarted = await invokePort(
+      (context) =>
+        ports.driver.start(
+          {
+            determinism: determinism.port,
+            checkpointDigestSha256: digestCanonical(checkpoint.value.attestation),
+            windowStartMs,
+          },
+          context,
+        ),
+      request.portCallTimeoutMs,
+      "start",
+    );
+    if (!driverStarted.ok) {
+      return err(mapPortError(driverStarted.error, "driver", "start"));
     }
-    const deadlineWallTimeMs = Math.max(priorDeadline, expectedEvent.wallTimeMs + request.maxEventLagMs);
-    priorDeadline = deadlineWallTimeMs;
-    const observed = await invokePort(() => ports.observer.nextEvent({ ordinal: expectedEvent.seq, deadlineWallTimeMs }));
-    if (!observed.ok) return err(mapPortError(observed.error, "observer", expectedEvent.seq));
-    if (observed.value === null) {
+    if (driverStarted.value !== undefined) {
+      return err({ kind: "invalid_port_result", port: "driver", evidenceDigestSha256: evidenceDigest("driver-start"), expectedEventSeq: null });
+    }
+    const startViolation = determinism.violation();
+    if (startViolation !== null) return err(startViolation);
+
+    const actualEvents: CanonicalProductionEvent[] = [];
+    let injectedTriggerCount = 0;
+    let priorDeadline = windowStartMs;
+    for (const expectedEvent of transcript.events) {
+      if (expectedEvent.replay.policy === "inject") {
+        const blobDigest = expectedEvent.replay.blobDigest as string;
+        const payload = loaded.value.triggerPayloads.get(blobDigest) as Uint8Array;
+        const trigger: ProductionReplayTrigger = {
+          kind: expectedEvent.kind,
+          sourceKind: expectedEvent.source.kind,
+          sourceId: expectedEvent.source.id,
+          wallTimeMs: expectedEvent.wallTimeMs,
+          idempotencyKeySha256: expectedEvent.replay.idempotencyKey,
+          payloadDigestSha256: sha256(payload),
+          payload: Uint8Array.from(payload),
+        };
+        const injected = await invokePort(
+          (context) => ports.driver.injectTrigger(trigger, context),
+          request.portCallTimeoutMs,
+          "inject_trigger",
+        );
+        if (!injected.ok) {
+          return err(
+            mapPortError(
+              injected.error,
+              "driver",
+              "inject_trigger",
+              expectedEvent.seq,
+            ),
+          );
+        }
+        if (injected.value !== undefined) {
+          return err({ kind: "invalid_port_result", port: "driver", evidenceDigestSha256: evidenceDigest("trigger-result"), expectedEventSeq: expectedEvent.seq });
+        }
+        injectedTriggerCount += 1;
+        const triggerViolation = determinism.violation();
+        if (triggerViolation !== null) return err(triggerViolation);
+      }
+      const deadlineWallTimeMs = Math.max(
+        priorDeadline,
+        expectedEvent.wallTimeMs + request.maxEventLagMs,
+      );
+      priorDeadline = deadlineWallTimeMs;
+      const observed = await invokePort(
+        (context) =>
+          ports.observer.nextEvent(
+            { ordinal: expectedEvent.seq, deadlineWallTimeMs },
+            context,
+          ),
+        request.portCallTimeoutMs,
+        "next_event",
+      );
+      if (!observed.ok) {
+        return err(
+          mapPortError(
+            observed.error,
+            "observer",
+            "next_event",
+            expectedEvent.seq,
+          ),
+        );
+      }
+      if (observed.value === null) {
+        return err({
+          kind: "divergence",
+          phase: "event_missing",
+          divergenceKind: "event_missing",
+          expectedEventSeq: expectedEvent.seq,
+          observedEventCount: actualEvents.length,
+          expectedDigestSha256: digestCanonical(expectedEvent),
+          actualDigestSha256: digestCanonical(actualEvents),
+        });
+      }
+      if (!strictObservedEvent(observed.value)) {
+        return err({ kind: "invalid_port_result", port: "observer", evidenceDigestSha256: evidenceDigest("observed-event"), expectedEventSeq: expectedEvent.seq });
+      }
+      const expectedDigestSha256 = digestCanonical(expectedEvent);
+      const actualDigestSha256 = digestCanonical(observed.value);
+      if (expectedDigestSha256 !== actualDigestSha256) {
+        return err({
+          kind: "divergence",
+          phase: "event_changed",
+          divergenceKind: "event_changed",
+          expectedEventSeq: expectedEvent.seq,
+          observedEventCount: actualEvents.length + 1,
+          expectedDigestSha256,
+          actualDigestSha256,
+        });
+      }
+      actualEvents.push(observed.value);
+    }
+
+    const driverFinished = await invokePort(
+      (context) => ports.driver.finish(context),
+      request.portCallTimeoutMs,
+      "finish",
+    );
+    if (!driverFinished.ok) {
+      return err(mapPortError(driverFinished.error, "driver", "finish"));
+    }
+    if (driverFinished.value !== undefined) {
+      return err({ kind: "invalid_port_result", port: "driver", evidenceDigestSha256: evidenceDigest("driver-finish"), expectedEventSeq: null });
+    }
+    const usage = determinism.audit();
+    if (!usage.ok) return usage;
+
+    const extra = await invokePort(
+      (context) =>
+        ports.observer.nextEvent(
+          {
+            ordinal: transcript.events.length + 1,
+            deadlineWallTimeMs: priorDeadline,
+          },
+          context,
+        ),
+      request.portCallTimeoutMs,
+      "next_event",
+    );
+    if (!extra.ok) {
+      return err(mapPortError(extra.error, "observer", "next_event"));
+    }
+    if (extra.value !== null) {
       return err({
         kind: "divergence",
-        phase: "event_missing",
-        divergenceKind: "event_missing",
-        expectedEventSeq: expectedEvent.seq,
-        observedEventCount: actualEvents.length,
-        expectedDigestSha256: digestCanonical(expectedEvent),
-        actualDigestSha256: digestCanonical(actualEvents),
-      });
-    }
-    if (!strictObservedEvent(observed.value)) {
-      return err({ kind: "invalid_port_result", port: "observer", evidenceDigestSha256: evidenceDigest("observed-event"), expectedEventSeq: expectedEvent.seq });
-    }
-    const expectedDigestSha256 = digestCanonical(expectedEvent);
-    const actualDigestSha256 = digestCanonical(observed.value);
-    if (expectedDigestSha256 !== actualDigestSha256) {
-      return err({
-        kind: "divergence",
-        phase: "event_changed",
-        divergenceKind: "event_changed",
-        expectedEventSeq: expectedEvent.seq,
+        phase: "event_unexpected",
+        divergenceKind: "event_unexpected",
+        expectedEventSeq: null,
         observedEventCount: actualEvents.length + 1,
-        expectedDigestSha256,
-        actualDigestSha256,
+        expectedDigestSha256: digestCanonical(transcript.events),
+        actualDigestSha256: digestCanonical([...actualEvents, extra.value]),
       });
     }
-    actualEvents.push(observed.value);
-  }
 
-  const driverFinished = await invokePort(() => ports.driver.finish());
-  if (!driverFinished.ok) return err(mapPortError(driverFinished.error, "driver"));
-  if (driverFinished.value !== undefined) return err({ kind: "invalid_port_result", port: "driver", evidenceDigestSha256: evidenceDigest("driver-finish"), expectedEventSeq: null });
-  const usage = determinism.audit();
-  if (!usage.ok) return usage;
-
-  const extra = await invokePort(() => ports.observer.nextEvent({ ordinal: transcript.events.length + 1, deadlineWallTimeMs: priorDeadline }));
-  if (!extra.ok) return err(mapPortError(extra.error, "observer"));
-  if (extra.value !== null) {
-    return err({
-      kind: "divergence",
-      phase: "event_unexpected",
-      divergenceKind: "event_unexpected",
-      expectedEventSeq: null,
-      observedEventCount: actualEvents.length + 1,
-      expectedDigestSha256: digestCanonical(transcript.events),
-      actualDigestSha256: digestCanonical([...actualEvents, extra.value]),
-    });
-  }
-
-  const observerFinished = await invokePort(() => ports.observer.finish());
-  if (!observerFinished.ok) return err(mapPortError(observerFinished.error, "observer"));
-  if (!validateObserverResult(observerFinished.value)) {
-    return err({ kind: "invalid_port_result", port: "observer", evidenceDigestSha256: evidenceDigest("observer-finish"), expectedEventSeq: null });
-  }
-  const actualTranscript: CanonicalProductionTranscript = { ...transcript, events: actualEvents };
-  const expectedRecords = [...loaded.value.expected.outputs, ...loaded.value.expected.state];
-  const actualRecords = [...observerFinished.value.outputs, ...observerFinished.value.state];
-  const compared = diffProductionReplay({
-    expectedTranscript: transcript,
-    actualTranscript,
-    expectedRecords,
-    actualRecords,
-  });
-  if (!compared.ok) {
-    return err({ kind: "invalid_port_result", port: "observer", evidenceDigestSha256: evidenceDigest("observed-record-contract"), expectedEventSeq: null });
-  }
-  if (!compared.value.matched) {
-    return err({
-      kind: "divergence",
-      phase: "observed_records",
-      divergenceKind: compared.value.divergence?.kind ?? null,
-      expectedEventSeq: compared.value.divergence?.causalSeq ?? null,
-      observedEventCount: actualEvents.length,
-      expectedDigestSha256: compared.value.expectedStateDigest,
-      actualDigestSha256: compared.value.actualStateDigest,
-    });
-  }
-
-  const hardOracleAttempt = await invokePort(() =>
-    ports.hardOracle.evaluate({
+    const observerFinished = await invokePort(
+      (context) => ports.observer.finish(context),
+      request.portCallTimeoutMs,
+      "finish",
+    );
+    if (!observerFinished.ok) {
+      return err(mapPortError(observerFinished.error, "observer", "finish"));
+    }
+    if (!validateObserverResult(observerFinished.value)) {
+      return err({ kind: "invalid_port_result", port: "observer", evidenceDigestSha256: evidenceDigest("observer-finish"), expectedEventSeq: null });
+    }
+    const actualTranscript: CanonicalProductionTranscript = {
+      ...transcript,
+      events: actualEvents,
+    };
+    const expectedRecords = [
+      ...loaded.value.expected.outputs,
+      ...loaded.value.expected.state,
+    ];
+    const actualRecords = [
+      ...observerFinished.value.outputs,
+      ...observerFinished.value.state,
+    ];
+    const compared = diffProductionReplay({
+      expectedTranscript: transcript,
       actualTranscript,
-      outputs: observerFinished.value.outputs,
-      state: observerFinished.value.state,
-    }),
-  );
-  if (!hardOracleAttempt.ok) return err(mapPortError(hardOracleAttempt.error, "hard_oracle"));
-  if (
-    !validateHardOracles(
-      hardOracleAttempt.value,
-      episode.correctness.oracleSetDigestSha256,
-      episode.correctness.oracleCount,
-    )
-  ) {
-    return err({ kind: "hard_oracle_invalid", evidenceDigestSha256: evidenceDigest("hard-oracle-result") });
+      expectedRecords,
+      actualRecords,
+    });
+    if (!compared.ok) {
+      return err({ kind: "invalid_port_result", port: "observer", evidenceDigestSha256: evidenceDigest("observed-record-contract"), expectedEventSeq: null });
+    }
+    if (!compared.value.matched) {
+      return err({
+        kind: "divergence",
+        phase: "observed_records",
+        divergenceKind: compared.value.divergence?.kind ?? null,
+        expectedEventSeq: compared.value.divergence?.causalSeq ?? null,
+        observedEventCount: actualEvents.length,
+        expectedDigestSha256: compared.value.expectedStateDigest,
+        actualDigestSha256: compared.value.actualStateDigest,
+      });
+    }
+
+    const hardOracleAttempt = await invokePort(
+      (context) =>
+        ports.hardOracle.evaluate(
+          {
+            actualTranscript,
+            outputs: observerFinished.value.outputs,
+            state: observerFinished.value.state,
+          },
+          context,
+        ),
+      request.portCallTimeoutMs,
+      "evaluate",
+    );
+    if (!hardOracleAttempt.ok) {
+      return err(
+        mapPortError(hardOracleAttempt.error, "hard_oracle", "evaluate"),
+      );
+    }
+    if (
+      !validateHardOracles(
+        hardOracleAttempt.value,
+        episode.correctness.oracleSetDigestSha256,
+        episode.correctness.oracleCount,
+      )
+    ) {
+      return err({ kind: "hard_oracle_invalid", evidenceDigestSha256: evidenceDigest("hard-oracle-result") });
+    }
+    const failedChecks = hardOracleAttempt.value.checks.filter(
+      ({ passed }) => !passed,
+    ).length;
+    const correctness =
+      hardOracleAttempt.value.checks.length > 0 && failedChecks === 0
+        ? "passed"
+        : "failed";
+    return ok({
+      engineKind: "generic_contract",
+      status: correctness === "passed" ? "accepted" : "correctness_failed",
+      fidelity: manifest.fidelity.classification,
+      fidelityMatched: true,
+      correctness,
+      exact: false,
+      exactBlockers: ["generic_contract_is_not_operational_attestation"],
+      manifestDigestSha256: manifest.seal.manifestDigestSha256,
+      expectedTranscriptDigestSha256: compared.value.expectedTranscriptDigest,
+      actualTranscriptDigestSha256: compared.value.actualTranscriptDigest,
+      expectedStateDigestSha256: expectedFinalStateDigest,
+      actualStateDigestSha256: observedRecordsDigest(observerFinished.value.state),
+      hardOracleDigestSha256: digestCanonical(hardOracleAttempt.value),
+      expectedEventCount: transcript.events.length,
+      observedEventCount: actualEvents.length,
+      injectedTriggerCount,
+      outputCount: observerFinished.value.outputs.length,
+      finalStateRecordCount: observerFinished.value.state.length,
+      deterministicConsumptionCount: usage.value,
+      hardOracleCheckCount: hardOracleAttempt.value.checks.length,
+      hardOracleFailedCount: failedChecks,
+      artifactCount:
+        1 + transcriptResult.value.artifactCount + loaded.value.artifactCount,
+      windowStartedAtMs: windowStartMs,
+      windowCompletedAtMs,
+      durationMs: windowCompletedAtMs - windowStartMs,
+    });
+  })();
+
+  const cleanupInput: ProductionReplayCleanupInput = {
+    outcome: replayResult.ok ? "completed" : "failed",
+    primaryErrorDigestSha256: replayResult.ok
+      ? null
+      : digestCanonical(replayResult.error),
+  };
+  const cleanupFailures: ProductionReplayCleanupFailure[] = [];
+  if (driverStartAttempted) {
+    const failure = await stopReplayPort(
+      "driver",
+      (input, context) => ports.driver.stop(input, context),
+      cleanupInput,
+      request.portCallTimeoutMs,
+    );
+    if (failure !== null) cleanupFailures.push(failure);
   }
-  const failedChecks = hardOracleAttempt.value.checks.filter(({ passed }) => !passed).length;
-  const correctness = hardOracleAttempt.value.checks.length > 0 && failedChecks === 0 ? "passed" : "failed";
-  return ok({
-    engineKind: "generic_contract",
-    status: correctness === "passed" ? "accepted" : "correctness_failed",
-    fidelity: manifest.fidelity.classification,
-    fidelityMatched: true,
-    correctness,
-    exact: false,
-    exactBlockers: ["generic_contract_is_not_operational_attestation"],
-    manifestDigestSha256: manifest.seal.manifestDigestSha256,
-    expectedTranscriptDigestSha256: compared.value.expectedTranscriptDigest,
-    actualTranscriptDigestSha256: compared.value.actualTranscriptDigest,
-    expectedStateDigestSha256: expectedFinalStateDigest,
-    actualStateDigestSha256: observedRecordsDigest(observerFinished.value.state),
-    hardOracleDigestSha256: digestCanonical(hardOracleAttempt.value),
-    expectedEventCount: transcript.events.length,
-    observedEventCount: actualEvents.length,
-    injectedTriggerCount,
-    outputCount: observerFinished.value.outputs.length,
-    finalStateRecordCount: observerFinished.value.state.length,
-    deterministicConsumptionCount: usage.value,
-    hardOracleCheckCount: hardOracleAttempt.value.checks.length,
-    hardOracleFailedCount: failedChecks,
-    artifactCount: 1 + transcriptResult.value.artifactCount + loaded.value.artifactCount,
-    windowStartedAtMs: windowStartMs,
-    windowCompletedAtMs,
-    durationMs: windowCompletedAtMs - windowStartMs,
-  });
+  if (observerStartAttempted) {
+    const failure = await stopReplayPort(
+      "observer",
+      (input, context) => ports.observer.stop(input, context),
+      cleanupInput,
+      request.portCallTimeoutMs,
+    );
+    if (failure !== null) cleanupFailures.push(failure);
+  }
+  return attachCleanupFailures(replayResult, cleanupFailures);
 }

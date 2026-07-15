@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { createHash } from "node:crypto";
 
-import { ok } from "@comis/shared";
+import { err, ok } from "@comis/shared";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -43,6 +43,7 @@ import {
 
 const SEAL_KEY = Buffer.alloc(32, 23);
 const MAX_EVENT_LAG_MS = 500;
+const PORT_CALL_TIMEOUT_MS = 10;
 
 function sha256(value: string | Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
@@ -561,6 +562,7 @@ function makeFixture(options: FixtureOptions = {}): ReplayFixture {
     request: {
       sealedBundleEnvelope: formatProductionReplayBundleManifest(sealed.value),
       maxEventLagMs: MAX_EVENT_LAG_MS,
+      portCallTimeoutMs: PORT_CALL_TIMEOUT_MS,
     },
     manifestDigestSha256: sealed.value.seal.manifestDigestSha256,
     transcript,
@@ -608,6 +610,7 @@ function consumingDriver(
       calls.push("finish");
       return ok(undefined);
     },
+    stop: () => ok(undefined),
   };
 }
 
@@ -676,6 +679,7 @@ function makePorts(
         outputs: structuredClone(options.observedOutputs ?? fixture.outputs),
         state: structuredClone(options.observedState ?? fixture.state),
       }),
+    stop: () => ok(undefined),
   };
   const hardOracle: ProductionReplayHardOraclePort = {
     evaluate: () =>
@@ -709,6 +713,146 @@ function makePorts(
 }
 
 describe("independent production replay engine contract", () => {
+  it("aborts a hanging observer call at its port deadline and unwinds both started ports", async () => {
+    const fixture = makeFixture();
+    const harness = makePorts(fixture);
+    const cleanupCalls: string[] = [];
+    let callContext:
+      | { readonly signal: AbortSignal; readonly deadlineAtMs: number }
+      | undefined;
+    Object.assign(harness.ports.driver, {
+      stop: () => {
+        cleanupCalls.push("driver");
+        return ok(undefined);
+      },
+    });
+    Object.assign(harness.ports.observer, {
+      nextEvent: (
+        _input: unknown,
+        context: { readonly signal: AbortSignal; readonly deadlineAtMs: number },
+      ) => {
+        callContext = context;
+        return new Promise(() => undefined);
+      },
+      stop: () => {
+        cleanupCalls.push("observer");
+        return ok(undefined);
+      },
+    });
+
+    const result = await replayProductionTranscript(
+      {
+        ...fixture.request,
+        portCallTimeoutMs: PORT_CALL_TIMEOUT_MS,
+      },
+      harness.ports,
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        kind: "port_timeout",
+        port: "observer",
+        operation: "next_event",
+        expectedEventSeq: 1,
+      },
+    });
+    expect(callContext?.signal.aborted).toBe(true);
+    expect(callContext?.deadlineAtMs).toBeGreaterThan(0);
+    expect(cleanupCalls).toEqual(["driver", "observer"]);
+  });
+
+  it("preserves replay divergence while reporting digest-only cleanup failures", async () => {
+    const fixture = makeFixture();
+    const harness = makePorts(fixture, { observedEvents: [] });
+    const cleanupCalls: string[] = [];
+    const driverCleanupDigest = fakeDigest(800);
+    const privateCleanupFailure = "PRIVATE_CLEANUP_FAILURE";
+    Object.assign(harness.ports.driver, {
+      stop: () => {
+        cleanupCalls.push("driver");
+        return err({
+          kind: "port_failure" as const,
+          failureDigestSha256: driverCleanupDigest,
+        });
+      },
+    });
+    Object.assign(harness.ports.observer, {
+      stop: () => {
+        cleanupCalls.push("observer");
+        throw new Error(privateCleanupFailure);
+      },
+    });
+
+    const result = await replayProductionTranscript(
+      {
+        ...fixture.request,
+        portCallTimeoutMs: PORT_CALL_TIMEOUT_MS,
+      },
+      harness.ports,
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        kind: "divergence",
+        phase: "event_missing",
+        cleanupFailures: [
+          {
+            port: "driver",
+            failureKind: "reported",
+            failureDigestSha256: driverCleanupDigest,
+          },
+          {
+            port: "observer",
+            failureKind: "thrown",
+          },
+        ],
+      },
+    });
+    expect(cleanupCalls).toEqual(["driver", "observer"]);
+    expect(JSON.stringify(result)).not.toContain(privateCleanupFailure);
+  });
+
+  it("unwinds the observer and a partially started driver after a driver start failure", async () => {
+    const fixture = makeFixture();
+    const cleanupCalls: string[] = [];
+    const driverFailureDigest = fakeDigest(801);
+    const harness = makePorts(fixture, {
+      driver: () => ({
+        start: () =>
+          err({
+            kind: "port_failure",
+            failureDigestSha256: driverFailureDigest,
+          }),
+        injectTrigger: () => ok(undefined),
+        finish: () => ok(undefined),
+        stop: () => {
+          cleanupCalls.push("driver");
+          return ok(undefined);
+        },
+      }),
+    });
+    Object.assign(harness.ports.observer, {
+      stop: () => {
+        cleanupCalls.push("observer");
+        return ok(undefined);
+      },
+    });
+
+    const result = await replayProductionTranscript(fixture.request, harness.ports);
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        kind: "port_failure",
+        port: "driver",
+        failureDigestSha256: driverFailureDigest,
+      },
+    });
+    expect(cleanupCalls).toEqual(["driver", "observer"]);
+  });
+
   it("injects only a causal-root input without treating the generic contract as an exact attestation", async () => {
     const fixture = makeFixture();
     const harness = makePorts(fixture);
@@ -755,9 +899,11 @@ describe("independent production replay engine contract", () => {
     );
     expect(harness.resolver.resolve).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "capture_episode" }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(harness.bundleAuthority.verify).toHaveBeenCalledWith(
       fixture.request.sealedBundleEnvelope,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(fixture.request).not.toHaveProperty("sealKey");
   });
@@ -772,6 +918,7 @@ describe("independent production replay engine contract", () => {
         start: () => ok(undefined),
         injectTrigger: () => ok(undefined),
         finish: () => ok(undefined),
+        stop: () => ok(undefined),
       }),
     });
 
@@ -828,6 +975,7 @@ describe("independent production replay engine contract", () => {
         },
         injectTrigger: () => ok(undefined),
         finish: () => ok(undefined),
+        stop: () => ok(undefined),
       }),
     });
 
@@ -862,6 +1010,7 @@ describe("independent production replay engine contract", () => {
             calls.push("finish");
             return ok(undefined);
           },
+          stop: () => ok(undefined),
         };
       },
     });
