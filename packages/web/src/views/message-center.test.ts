@@ -480,4 +480,19 @@ describe("IcMessageCenter", () => {
     expect(secondCall).toHaveBeenCalledTimes(1);
     expect(secondCall).toHaveBeenCalledWith("channels.list");
   });
+
+  it("stops channel auto-selection polling after disconnect", async () => {
+    vi.useFakeTimers();
+    const el = await createElement({
+      rpcClient: {
+        status: "connecting",
+        call: vi.fn(() => Promise.reject(new Error("not connected"))),
+      } as unknown as RpcClient,
+    });
+
+    document.body.removeChild(el);
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });
