@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { createHash } from "node:crypto";
 import { err, ok } from "@comis/shared";
 import { describe, expect, it } from "vitest";
 
@@ -127,6 +128,8 @@ function makeEpisode(): ProductionCaptureEpisode {
 }
 
 function makeUnsignedBundle(episode: ProductionCaptureEpisode): ProductionReplayBundleUnsignedManifest {
+  const episodeEnvelope = formatProductionCaptureEpisode(episode);
+  if (!episodeEnvelope.ok) throw new Error("episode fixture was invalid");
   let nextDigest = 700;
   const blobs: ReplayBundleBlob[] = [];
   const addBlob = (kind: ReplayBundleBlob["kind"], fixed?: string): string => {
@@ -171,6 +174,7 @@ function makeUnsignedBundle(episode: ProductionCaptureEpisode): ProductionReplay
     vault: { format: "aes-256-gcm-detached-v1", encryptionKeyIdSha256: digest(41), blobs },
     episode: {
       blobDigestSha256: captureEpisode,
+      contentDigestSha256: createHash("sha256").update(episodeEnvelope.value).digest("hex"),
       episodeId: episode.episodeId,
       captureMode: episode.captureMode,
       windowStartAtMs: episode.window.startAtMs,
@@ -214,7 +218,11 @@ function makeIdentity(): ProductionCampaignIdentity {
   return identity.value;
 }
 
-function baseArtifact(kind: ProductionCampaignArtifact["kind"], artifactRef: string, index: number) {
+function baseArtifact<Kind extends ProductionCampaignArtifact["kind"]>(
+  kind: Kind,
+  artifactRef: string,
+  index: number,
+) {
   return {
     kind,
     artifactRef,
@@ -228,7 +236,7 @@ function makeArtifacts(identity: ProductionCampaignIdentity): Map<string, Produc
   const target = identity.targetMachineIdSha256;
   const artifacts: ProductionCampaignArtifact[] = [
     { ...baseArtifact("bundle_manifest", "artifact:bundle", 1), bundleId: identity.bundleId, manifestDigestSha256: identity.bundleManifestDigestSha256 },
-    { ...baseArtifact("capture_episode", "artifact:episode", 2), bundleId: identity.bundleId, episodeId: identity.episodeId, blobDigestSha256: identity.episodeBlobDigestSha256 },
+    { ...baseArtifact("capture_episode", "artifact:episode", 2), bundleId: identity.bundleId, episodeId: identity.episodeId, blobDigestSha256: identity.episodeBlobDigestSha256, contentDigestSha256: identity.episodeContentDigestSha256 },
     { ...baseArtifact("clean_restore", "artifact:restore-red", 3), restoreId: "restore-red", bundleId: identity.bundleId, episodeId: identity.episodeId, targetMachineIdSha256: target, snapshotManifestDigestSha256: identity.initialSnapshotManifestDigestSha256, stateTreeDigestSha256: identity.initialStateTreeDigestSha256, result: "exact", completedAtMs: T0 + 70_000 },
     { ...baseArtifact("replay_report", "artifact:replay-red", 4), runId: "run-red", caseId: "case-a", bundleId: identity.bundleId, episodeId: identity.episodeId, restoreId: "restore-red", targetMachineIdSha256: target, runtimeDigestSha256: identity.sourceRuntimeDigestSha256, inputSetDigestSha256: identity.inputSetDigestSha256, fidelity: "matched", result: "completed", startedAtMs: T0 + 71_000, completedAtMs: T0 + 72_000 },
     { ...baseArtifact("replay_observation", "artifact:observation-red", 5), runId: "run-red", caseId: "case-a", phase: "reproduction", observerMode: "independent", observationDigestSha256: identity.productionObservationDigestSha256, verdict: "fail", observedAtMs: T0 + 72_100 },
@@ -312,6 +320,53 @@ describe("authenticated production feedback campaign", () => {
       activeRuntimeDigestSha256: digest(1),
     });
     expect(campaign.evidence.map(({ kind }) => kind)).toEqual(["bundle_manifest", "capture_episode"]);
+  });
+
+  it("rejects a copied identity that did not come directly from authenticated parsing", () => {
+    const parsed = makeIdentity();
+    const copied = { ...parsed };
+    const artifacts = makeArtifacts(parsed);
+    const result = createProductionCampaign({
+      campaignId: "campaign-forged",
+      identity: copied,
+      bundleArtifactRef: "artifact:bundle",
+      episodeArtifactRef: "artifact:episode",
+      caseIds: ["case-a"],
+      createdAtMs: T0 + 69_000,
+    }, makeResolver(artifacts));
+
+    expect(result).toMatchObject({ ok: false, error: { kind: "invalid_identity" } });
+  });
+
+  it("rejects an episode envelope whose correctness contract is not bound to the signed bundle", () => {
+    const episode = makeEpisode();
+    const sealed = sealProductionReplayBundleManifest(makeUnsignedBundle(episode), SEAL_KEY);
+    const tampered = formatProductionCaptureEpisode({
+      ...episode,
+      correctness: {
+        ...episode.correctness,
+        desired: { ...episode.correctness.desired, observationDigestSha256: digest(999) },
+      },
+    });
+    expect(sealed.ok).toBe(true);
+    expect(tampered.ok).toBe(true);
+    if (!sealed.ok || !tampered.ok) return;
+
+    expect(parseProductionCampaignIdentity({
+      bundleEnvelope: formatProductionReplayBundleManifest(sealed.value),
+      bundleSealKey: SEAL_KEY,
+      episodeEnvelope: tampered.value,
+    })).toMatchObject({ ok: false, error: { kind: "invalid_identity" } });
+  });
+
+  it("returns an immutable authenticated identity", () => {
+    const identity = makeIdentity();
+    const original = identity.desiredObservationDigestSha256;
+    const changed = Reflect.set(identity, "desiredObservationDigestSha256", digest(999));
+
+    expect(changed).toBe(false);
+    expect(Object.isFrozen(identity)).toBe(true);
+    expect(identity.desiredObservationDigestSha256).toBe(original);
   });
 
   it("records RED only when exact inputs reproduce production and the desired oracle fails", () => {
@@ -466,5 +521,28 @@ describe("authenticated production feedback campaign", () => {
     const result = parseProductionCampaign(JSON.stringify(appended));
     expect(result).toMatchObject({ ok: false, error: { kind: "malformed_campaign" } });
     expect(JSON.stringify(result)).not.toContain("PRIVATE_USER_PROMPT");
+  });
+
+  it("rejects a forged completed case that has no restore replay observation or oracle evidence", () => {
+    const { campaign } = createFixture();
+    const forged = structuredClone(campaign) as {
+      status: string;
+      cursor: number;
+      updatedAtMs: number;
+      cases: Array<Record<string, unknown>>;
+    };
+    forged.status = "completed";
+    forged.cursor = 1;
+    forged.updatedAtMs = campaign.createdAtMs + 1;
+    forged.cases[0] = {
+      ...forged.cases[0],
+      status: "passed",
+      completedAtMs: campaign.createdAtMs + 1,
+    };
+
+    expect(parseProductionCampaign(JSON.stringify(forged))).toMatchObject({
+      ok: false,
+      error: { kind: "malformed_campaign" },
+    });
   });
 });

@@ -15,6 +15,10 @@ import {
   MESSAGES_ATTESTATION_BEGIN,
   MESSAGES_ATTESTATION_END,
 } from "./production-messages.js";
+import {
+  deriveProductionSnapshotTreeIdentity,
+  type ProductionSnapshotManifest,
+} from "./production-snapshot.js";
 
 const PROFILE = `
 SOURCE_HOST=comis-harel
@@ -42,6 +46,24 @@ function runtimeFacts(digestSha256 = "c".repeat(64)): string {
     "bytes=409600",
     "packageRoot=/home/comis/.npm-global/lib/node_modules/comisai",
     "version=1.0.53",
+    "osId=ubuntu",
+    "osVersion=24.04",
+    "architecture=x86_64",
+    "kernelRelease=6.8.0-71-generic",
+    "libcKind=glibc",
+    "libcVersion=2.39",
+    "nodeVersion=22.17.1",
+    "nodeAbi=127",
+    "timezone=Asia/Jerusalem",
+    `tzdataSha256=${"d".repeat(64)}`,
+    "launcherKind=systemd",
+    `launcherSha256=${"e".repeat(64)}`,
+    "browserStatus=available",
+    `browserSha256=${"f".repeat(64)}`,
+    "mediaStatus=available",
+    `mediaSha256=${"1".repeat(64)}`,
+    "nativeToolsStatus=available",
+    `nativeToolsSha256=${"2".repeat(64)}`,
     RUNTIME_FACTS_END,
     "",
   ].join("\n");
@@ -69,7 +91,8 @@ function evidenceFacts(): string {
 }
 
 function snapshotManifest(): string {
-  return JSON.stringify({
+  const metadata = { uid: 1001, gid: 1001, mtimeNs: "1752560000123456789" } as const;
+  const value: ProductionSnapshotManifest = {
     schemaVersion: 1,
     runId: "state-cli-a1",
     sourceMachineIdSha256: "a".repeat(64),
@@ -78,27 +101,46 @@ function snapshotManifest(): string {
     captureStartedAtMs: 1_752_560_000_000,
     captureCompletedAtMs: 1_752_560_000_100,
     freezeDurationMs: 0,
+    metadataIdentity: {
+      acl: "unavailable",
+      xattr: "unavailable",
+      capability: "unavailable",
+      gaps: [
+        { kind: "acl", reason: "source_tool_unavailable" },
+        { kind: "xattr", reason: "source_tool_unavailable" },
+        { kind: "capability", reason: "source_tool_unavailable" },
+      ],
+    },
+    treeIdentitySha256: "0".repeat(64),
     entries: [
-      { path: "data", type: "directory", mode: "0700", size: 0 },
+      { path: "data", type: "directory", mode: "0700", size: 0, ...metadata },
       {
         path: "data/memory.db",
         type: "file",
         mode: "0600",
         size: 4096,
         sha256: "c".repeat(64),
+        ...metadata,
       },
-      { path: "system", type: "directory", mode: "0700", size: 0 },
-      { path: "system/etc", type: "directory", mode: "0755", size: 0 },
-      { path: "system/etc/comis", type: "directory", mode: "0755", size: 0 },
+      { path: "system", type: "directory", mode: "0700", size: 0, uid: 0, gid: 0, mtimeNs: metadata.mtimeNs },
+      { path: "system/etc", type: "directory", mode: "0755", size: 0, uid: 0, gid: 0, mtimeNs: metadata.mtimeNs },
+      { path: "system/etc/comis", type: "directory", mode: "0755", size: 0, uid: 0, gid: 0, mtimeNs: metadata.mtimeNs },
       {
         path: "system/etc/comis/env",
         type: "file",
         mode: "0640",
         size: 200,
         sha256: "d".repeat(64),
+        uid: 0,
+        gid: 1001,
+        mtimeNs: metadata.mtimeNs,
       },
     ],
     exclusions: [],
+  };
+  return JSON.stringify({
+    ...value,
+    treeIdentitySha256: deriveProductionSnapshotTreeIdentity(value),
   });
 }
 
@@ -345,6 +387,17 @@ describe("production replay command controller", () => {
         bytesTransferred: 500_000,
         entries: 6,
         exclusions: 0,
+        treeIdentitySha256: deriveProductionSnapshotTreeIdentity(
+          JSON.parse(snapshotManifest()) as ProductionSnapshotManifest,
+        ),
+        fileContentBytes: 4296,
+        metadataIdentity: {
+          fidelity: "gapped",
+          acl: "unavailable",
+          xattr: "unavailable",
+          capability: "unavailable",
+          gapKinds: ["acl", "xattr", "capability"],
+        },
       },
     });
     expect(output.join("\n")).not.toContain("memory.db");
@@ -577,5 +630,23 @@ function parseRuntimeReportFacts(): Record<string, unknown> {
     bytes: 409600,
     packageRoot: "/home/comis/.npm-global/lib/node_modules/comisai",
     version: "1.0.53",
+    osId: "ubuntu",
+    osVersion: "24.04",
+    architecture: "x86_64",
+    kernelRelease: "6.8.0-71-generic",
+    libcKind: "glibc",
+    libcVersion: "2.39",
+    nodeVersion: "22.17.1",
+    nodeAbi: "127",
+    timezone: "Asia/Jerusalem",
+    tzdataSha256: "d".repeat(64),
+    launcherKind: "systemd",
+    launcherSha256: "e".repeat(64),
+    browserStatus: "available",
+    browserSha256: "f".repeat(64),
+    mediaStatus: "available",
+    mediaSha256: "1".repeat(64),
+    nativeToolsStatus: "available",
+    nativeToolsSha256: "2".repeat(64),
   };
 }
