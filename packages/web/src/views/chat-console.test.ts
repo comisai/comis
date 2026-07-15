@@ -1315,6 +1315,26 @@ describe("IcChatConsole", () => {
     expect(messages[0].content).toContain("/help");
   });
 
+  it("renders /help output when no session is selected", async () => {
+    const el = await createElement<IcChatConsole>("ic-chat-console", {
+      rpcClient: createMockRpcClient(),
+      apiClient: createMockApiClient(),
+      eventDispatcher: createMockEventDispatcher(),
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect((el as any)._activeSession).toBe("");
+    await (el as any)._executeSlashCommand("/help");
+    await (el as any).updateComplete;
+
+    const renderer = el.shadowRoot?.querySelector("ic-message-renderer") as any;
+    await renderer?.updateComplete;
+    const message = rendererQuery(el, "ic-chat-message") as any;
+
+    expect(message).toBeTruthy();
+    expect(message?.content).toContain("/help");
+  });
+
   /* ==================== Streaming Tests ==================== */
 
   it("streaming indicator hidden by default", async () => {
