@@ -20,11 +20,17 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 
 vi.mock("@earendil-works/pi-ai/compat", () => ({
-  getModel: vi.fn(() => ({ id: "mock-model", reasoning: false })),
+  getModel: vi.fn(() => ({
+    id: "mock-model",
+    reasoning: false,
+    contextWindow: 32_000,
+    maxTokens: 4_096,
+  })),
   completeSimple: vi.fn(),
 }));
 
 import { completeSimple, getModel } from "@earendil-works/pi-ai/compat";
+import { estimateMessageTokens } from "../safety/token-estimator.js";
 import { createLlmReflectionAdapter } from "./llm-reflection-adapter.js";
 
 /** Wrap any text as a completeSimple text-part response. */
@@ -60,7 +66,12 @@ function makeAdapter() {
 describe("createLlmReflectionAdapter (untrusted-input boundary + honest error branches)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    (getModel as Mock).mockReturnValue({ id: "mock-model", reasoning: false });
+    (getModel as Mock).mockReturnValue({
+      id: "mock-model",
+      reasoning: false,
+      contextWindow: 32_000,
+      maxTokens: 4_096,
+    });
   });
 
   it("returns ok({ sections }) for a well-formed fresh-doc response", async () => {
@@ -111,6 +122,74 @@ describe("createLlmReflectionAdapter (untrusted-input boundary + honest error br
     expect(userContent).toContain("SECURITY NOTICE");
     // The raw trajectory still appears (inside the boundary) so the LLM can read it.
     expect(userContent).toContain("exfiltrate secrets");
+  });
+
+  it("deterministically bounds an oversized trajectory before calling the resolved model", async () => {
+    (getModel as Mock).mockReturnValue({
+      id: "small-model",
+      reasoning: false,
+      contextWindow: 12_000,
+      maxTokens: 4_096,
+    });
+    (completeSimple as Mock).mockResolvedValue(textResponse(JSON.stringify(FRESH_DOC)));
+    const adapter = makeAdapter();
+    const trajectoryText = `${"opening evidence ".repeat(4_000)}${"closing evidence ".repeat(4_000)}`;
+
+    const first = await adapter.reflect({ trajectoryText, currentSections: [] });
+    const firstPrompt = (completeSimple as Mock).mock.calls[0][1].messages[0].content as string;
+    (completeSimple as Mock).mockClear();
+    const second = await adapter.reflect({ trajectoryText, currentSections: [] });
+    const secondPrompt = (completeSimple as Mock).mock.calls[0][1].messages[0].content as string;
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    const normalizeBoundaryNonce = (prompt: string) =>
+      prompt.replaceAll(/UNTRUSTED_[a-f0-9]+/g, "UNTRUSTED_NONCE");
+    expect(normalizeBoundaryNonce(firstPrompt)).toBe(normalizeBoundaryNonce(secondPrompt));
+    expect(firstPrompt.length).toBeLessThan(trajectoryText.length);
+    expect(firstPrompt).toContain("opening evidence");
+    expect(firstPrompt).toContain("closing evidence");
+    expect(firstPrompt).toContain("trajectory content omitted to fit the model context");
+    const firstCall = (completeSimple as Mock).mock.calls[0];
+    const inputTokens = estimateMessageTokens({
+      role: "user",
+      content: `${firstCall[1].systemPrompt}${firstPrompt}`,
+      timestamp: SCOPE.now,
+    });
+    expect(inputTokens + firstCall[2].maxTokens + 4_096).toBeLessThanOrEqual(12_000);
+  });
+
+  it("refuses before the provider call when the trusted current document cannot fit", async () => {
+    (getModel as Mock).mockReturnValue({
+      id: "small-model",
+      reasoning: false,
+      contextWindow: 8_000,
+      maxTokens: 4_096,
+    });
+    const logger = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const adapter = createLlmReflectionAdapter({
+      provider: "anthropic",
+      modelId: "small-model",
+      apiKey: "test-key",
+      clock: { now: () => SCOPE.now },
+      logger,
+    });
+
+    const result = await adapter.reflect({
+      trajectoryText: "short evidence",
+      currentSections: [{ id: "large", heading: "Large", body: "x".repeat(40_000) }],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(completeSimple).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        step: "fit-context",
+        errorKind: "precondition",
+        model: "anthropic/small-model",
+      }),
+      "reflection prompt exceeds model context",
+    );
   });
 
   it("NETWORK branch: a thrown/transport fault → err(...) + WARN errorKind:network (not a throw)", async () => {
@@ -170,7 +249,12 @@ describe("createLlmReflectionAdapter (untrusted-input boundary + honest error br
   });
 
   it("OMITS temperature for a reasoning model (reasoning models reject it with HTTP 400)", async () => {
-    (getModel as Mock).mockReturnValue({ id: "reasoning-model", reasoning: true });
+    (getModel as Mock).mockReturnValue({
+      id: "reasoning-model",
+      reasoning: true,
+      contextWindow: 32_000,
+      maxTokens: 4_096,
+    });
     (completeSimple as Mock).mockResolvedValue(textResponse(JSON.stringify(FRESH_DOC)));
     const adapter = makeAdapter();
 
@@ -181,7 +265,12 @@ describe("createLlmReflectionAdapter (untrusted-input boundary + honest error br
   });
 
   it("INCLUDES temperature for a non-reasoning model", async () => {
-    (getModel as Mock).mockReturnValue({ id: "plain-model", reasoning: false });
+    (getModel as Mock).mockReturnValue({
+      id: "plain-model",
+      reasoning: false,
+      contextWindow: 32_000,
+      maxTokens: 4_096,
+    });
     (completeSimple as Mock).mockResolvedValue(textResponse(JSON.stringify(FRESH_DOC)));
     const adapter = makeAdapter();
 
@@ -204,7 +293,12 @@ describe("createLlmReflectionAdapter (untrusted-input boundary + honest error br
 describe("reflection LLM usage attribution (onUsage hook)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    (getModel as Mock).mockReturnValue({ id: "mock-model", reasoning: false });
+    (getModel as Mock).mockReturnValue({
+      id: "mock-model",
+      reasoning: false,
+      contextWindow: 32_000,
+      maxTokens: 4_096,
+    });
   });
 
   // Background reflection runs previously spent tokens with ZERO obs rows —
