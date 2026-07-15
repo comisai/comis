@@ -15,10 +15,16 @@ give it a name, a personality, and a set of tools -- then it goes to work. It
 can answer questions, search the web, manage your schedule, send messages across
 platforms, and remember your preferences over time.
 
-Every agent runs independently. It has its own conversation history, its own
-memory, and its own set of instructions. You can have one agent handling your
-Discord server and another managing your Telegram chats -- each behaving
-differently based on how you set them up.
+Each agent has a logical identity and normally uses agent-scoped session keys,
+memory and context queries, workspace paths, instructions, budgets, and tool
+policy. You can have one agent handling your Discord server and another
+managing your Telegram chats, each behaving differently based on its
+configuration.
+
+This scoping is not process isolation. Agents share the same trusted daemon and
+host, and explicitly authorized cross-agent operations can cross those logical
+boundaries. Use separate deployments when agents belong to mutually hostile
+security domains.
 
 ## What agents can do
 
@@ -94,9 +100,11 @@ For example, you might run:
 - A **research agent** on Telegram that finds and summarizes information
 - A **scheduler agent** on Discord that manages reminders and recurring tasks
 
-Each agent only sees messages meant for it. Routing rules control which agent
-handles which channels, platforms, or users. See
-[Routing](/agents/routing) for details.
+Routing rules decide which agent receives each ordinary inbound message, and
+agent/tenant identifiers scope normal storage queries. Misconfiguration or an
+explicitly authorized cross-agent operation can still cross those logical
+scopes, so routing should not be treated as a process or host security
+boundary. See [Routing](/agents/routing) for details.
 
 ## Explore agents
 

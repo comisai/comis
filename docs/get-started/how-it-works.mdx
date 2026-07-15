@@ -1,136 +1,110 @@
 ---
 title: "How It Works"
-description: "A plain-language guide to how Comis processes messages and connects your agents"
+description: "How Comis routes, constrains, records, and recovers multi-agent work"
 icon: "diagram-project"
 ---
 
-Comis is a system that connects AI agents to your messaging apps. This page
-explains how it all fits together -- no technical background required.
+Comis is a governed agent runtime. It connects requests from channels, APIs,
+schedules, and the web dashboard to agents with explicit state, tools, budgets,
+and policy.
 
 import NonTechnicalNote from '/snippets/non-technical-note.mdx';
 
 <NonTechnicalNote />
 
-## The journey of a message
-
-When someone sends a message to your agent, it goes through a simple pipeline.
-Think of Comis as a mail sorting office: messages arrive from different platforms,
-get routed to the right agent, and responses get delivered back.
+## From request to accountable result
 
 ```mermaid
 flowchart LR
-    A["You send a message"] --> B["Comis receives it"]
-    B --> C["Routes to the right agent"]
-    C --> D["Agent thinks + uses tools"]
-    D --> E["Reply sent back to you"]
+    A["Request arrives"] --> B["Route to a scoped agent"]
+    B --> C["Run an agent turn or execution graph"]
+    C --> D["Apply authority, budget, and content controls"]
+    D --> E["Deliver the result"]
+    E --> F["Inspect state, cost, and evidence"]
 ```
 
-Here is what each step means:
+1. **Receive:** a channel, API, schedule, or dashboard submits work inside a
+   request context.
+2. **Route:** bindings select an agent with its own model, workspace, context,
+   memory, tools, budget, secret policy, and channel rules.
+3. **Coordinate:** the agent can answer directly, use tools, delegate work, or
+   run a typed execution graph with sequential and parallel nodes.
+4. **Constrain:** capability gates, origin checks, tool policy, configured
+   budgets, input and memory validation, output guards, and supported approval
+   paths limit the work.
+5. **Record:** sessions, canonical context, memory provenance, traces, costs,
+   audit events, and execution state provide evidence for later inspection.
+6. **Deliver:** the result returns through the originating interface or a
+   configured delivery path.
 
-- **You send a message** -- This could be a Discord message, a Telegram chat, a
-  Slack DM, or even a message typed in the web dashboard. It does not matter
-  which platform you use.
-- **Comis receives it** -- The gateway (Comis's front door) accepts the message
-  and figures out where it came from.
-- **Routes to the right agent** -- If you have multiple agents, Comis checks its
-  routing rules to decide which one should respond. You can set up rules based on
-  the platform, the channel, or even specific users.
-- **Agent thinks and uses tools** -- Your agent reads the message, checks its
-  memory, and decides how to respond. It might also use tools -- like searching
-  the web, checking a schedule, or reading a document.
-- **Reply sent back to you** -- The response travels back through Comis and
-  appears in the same chat where you sent the original message.
+## The governance layers
 
-The whole process takes just a few seconds.
+| Layer | What Comis controls |
+|---|---|
+| **Execution** | Agent turns, sub-agents, typed DAGs, dependencies, retries, barriers, configured budgets, and durable checkpoints |
+| **Context** | Bounded active prompts backed by canonical messages and tool results that can be searched, inspected, and selectively expanded |
+| **Memory** | Trust labels, provenance, corroboration, outcome gates, supersession, corrections, and ranked recall |
+| **Authority** | Per-agent tools and secrets, capability membership, origin checks, scoped storage, credential brokering, and audit events |
+| **Cost** | Provider accounting, per-run graph budgets, and opt-in spend ceilings |
+| **Evidence** | Traces, trajectories, incident explanation, fleet health, delivery state, recall diagnostics, and security decisions |
 
-## The building blocks
+These layers are useful individually. Comis's design advantage is that they are
+wired into one runtime instead of being separate controls around an agent loop.
 
-Comis is made up of a few key building blocks that work together. You do not
-need to understand all of them to get started, but knowing what they are helps
-you make sense of the rest of the documentation.
+## How context stays recoverable
 
-| Building Block | What It Does | Analogy |
-|---|---|---|
-| **Channels** | Connect to Discord, Telegram, Slack, WhatsApp, Signal, iMessage, IRC, LINE, Email, and Microsoft Teams | Phone lines to different networks |
-| **Agents** | The AI brains that read messages and write replies | Employees who handle customer requests |
-| **Memory** | Stores what agents learn and remember across conversations | A filing cabinet for each agent |
-| **Skills** | Extra abilities agents can use (web search, scheduling, file management) | Tools in a toolbox |
-| **Gateway** | Allows the web dashboard and other apps to talk to Comis | A reception desk at the front of the office |
-| **Security** | Applies encrypted storage, access controls, validation, and audit signals within documented boundaries | Locks, alarms, and access badges |
+Models have finite context windows, so older material cannot remain in every
+active prompt. The default DAG context engine summarizes older regions while
+retaining canonical messages and tool results in the context store. The agent
+can use `ctx_search`, `ctx_inspect`, and `ctx_expand` to recover selected detail
+without loading the entire history.
 
-Each building block is independent. You can start with just one agent on one
-channel and add more pieces as your needs grow.
-
-## How agents think
-
-When a message reaches your agent, it does not just fire off a quick reply. It
-goes through a thoughtful process to give you the best possible response.
-
-```mermaid
-flowchart TD
-    A["Message arrives"] --> B["Check memory for context"]
-    B --> C["Build a prompt with instructions"]
-    C --> D["Send to AI provider"]
-    D --> E{"Need to use a tool?"}
-    E -- Yes --> F["Use tool and get result"]
-    F --> D
-    E -- No --> G["Format and send reply"]
-```
-
-Here is what is happening:
-
-1. **Check memory** -- Your agent looks back at previous conversations to
-   understand context. If you mentioned a project last week, it remembers.
-2. **Build a prompt** -- The agent combines the message, its memory, and its
-   instructions into a single request for the AI provider.
-   The [context engine](/agents/compaction) automatically optimizes the prompt by
-   trimming older content to fit within the AI model's limits.
-3. **Send to AI provider** -- The request goes to your configured provider
-   (Anthropic, OpenAI, Google, etc.), which generates a response.
-4. **Use tools if needed** -- Sometimes the agent needs more information. It
-   might search the web, check a calendar, or read a file. After getting the
-   result, it sends another request to the AI provider with the new information.
-   This can happen several times in a row.
-5. **Send the reply** -- Once the agent has a final answer, it formats the
-   response for your platform and sends it back to you.
-
-Your agent does not just answer -- it can think in steps, use tools, and remember
-what it learns for next time. The more you use it, the more helpful it becomes.
+This is active-workflow recoverability. It does not mean every configured
+provider, external service, or generated artifact is stored by Comis.
 
 ## How multiple agents work together
 
-If you run more than one agent, each one operates independently with its own
-memory, tools, and personality. Comis routes each incoming message to the right
-agent based on rules you define.
+Agents can have separate identities, workspaces, model settings, context and
+memory scopes, tool policies, budgets, secret rules, and routing bindings.
+Execution graphs can coordinate sub-agent tasks in sequence or parallel and
+persist state for configured durable runs.
 
-For example, you might have:
+Agent and tenant scopes are logical runtime boundaries. The daemon and host
+remain trusted infrastructure, so operators must still harden the host and
+verify the execution sandbox they rely on.
 
-- A **support agent** in your Slack workspace that answers customer questions
-- A **research agent** in Telegram that searches the web and summarizes findings
-- A **scheduler agent** in Discord that manages reminders and recurring tasks
+## Security and provider boundaries
 
-Each agent only sees messages meant for it. They do not interfere with each
-other, and they each have their own memory and conversation history.
+Comis treats external content and model output as untrusted, but controls are
+not universal isolation:
 
-For advanced use cases, agents can delegate tasks to other agents using
-[sub-agent sessions](/agent-tools/sessions), or orchestrate entire multi-agent
-workflows using [execution graphs](/agents/execution-graphs) -- declarative
-DAG pipelines where each node is a sub-agent task that can run in parallel,
-wait for dependencies, and share data.
+- Linux with Bubblewrap is the recommended tool-execution target. Ordinary
+  `exec` can run on the host when its sandbox is disabled or unavailable.
+- The default agent tool-policy profile is `full`, and an empty
+  `secrets.allow` list is unrestricted. Narrow both before accepting untrusted
+  input.
+- Approval requests are available only on explicitly wired paths when enabled.
+- Streaming consumers can receive deltas before the completed output scan.
+- Configured model, channel, media, MCP, and tool providers can receive data
+  deliberately routed to them.
 
-## Want to go deeper?
+Read the [security boundaries](/get-started/security) and
+[threat model](/security/threat-model) before granting broad tool or network
+access.
+
+## Go deeper
 
 <CardGroup cols={2}>
-  <Card title="Architecture (for developers)" icon="code" href="/developer-guide/architecture">
-    The full technical architecture with code-level details.
+  <Card title="Execution Graphs" icon="diagram-project" href="/agents/execution-graphs">
+    Define, persist, and inspect multi-agent DAG workflows.
   </Card>
-  <Card title="Packages" icon="boxes-stacked" href="/developer-guide/packages">
-    Explore the individual packages that make up Comis.
+  <Card title="Context Management" icon="brain" href="/agents/context-management">
+    Understand prompt bounds, canonical storage, summaries, and recovery tools.
   </Card>
-  <Card title="Agent Lifecycle" icon="arrows-spin" href="/agents/lifecycle">
-    How an agent processes a message from start to finish.
+  <Card title="Capability Model" icon="shield-check" href="/security/capability-model">
+    See how privileged runtime operations are gated.
   </Card>
-  <Card title="Glossary" icon="book" href="/get-started/glossary">
-    Definitions of every term used in the documentation.
+  <Card title="Observability" icon="gauge" href="/operations/observability">
+    Trace activity, investigate incidents, and inspect operational evidence.
   </Card>
 </CardGroup>

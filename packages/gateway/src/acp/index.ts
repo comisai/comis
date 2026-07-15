@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// ACP (Agent Communication Protocol) — IDE integration via ndJson/stdio
+// ACP (Agent Client Protocol): client integration via ndJson/stdio
 export { createAcpAgent, startAcpServer } from "./acp-server.js";
 export type { AcpServerDeps, AcpAgentHandle } from "./acp-server.js";
 

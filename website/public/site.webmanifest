@@ -1,7 +1,7 @@
 {
   "name": "Comis",
   "short_name": "Comis",
-  "description": "An open-source foundation for governed multi-agent operations.",
+  "description": "Open-source governed agent runtime for inspectable, constrained, and recoverable multi-agent systems.",
   "start_url": "/",
   "scope": "/",
   "icons": [

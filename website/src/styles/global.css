@@ -439,10 +439,6 @@ main > section {
   color: var(--teal);
 }
 
-.advantage-item:last-child p:last-child {
-  max-width: 680px;
-}
-
 .surface-section {
   border-block: 1px solid var(--border);
   background: var(--navy-secondary);
@@ -483,6 +479,27 @@ main > section {
 
 .development-note {
   margin-top: var(--space-6);
+  color: var(--text-secondary);
+}
+
+.install-copy {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.install-options {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.install-option {
+  display: grid;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+  gap: var(--space-2);
+}
+
+.install-option p {
   color: var(--text-secondary);
 }
 
@@ -665,10 +682,6 @@ main > section {
 
   .advantage-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .advantage-item:last-child {
-    grid-column: 1 / -1;
   }
 
   .editorial-grid-two {

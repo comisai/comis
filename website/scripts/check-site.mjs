@@ -62,8 +62,8 @@ function metaContent(html, key) {
   return undefined;
 }
 
-const expectedTitle = "Comis: Governed multi-agent operations";
-const expectedDescription = "Govern AI agents with typed execution, recoverable context, trust-aware memory, layered security, scoped authority, and integrated cost visibility.";
+const expectedTitle = "Comis: Open-source governed agent runtime";
+const expectedDescription = "Inspect, constrain, recover, and operate multi-agent systems with scoped authority, bounded spend, and operational evidence.";
 const expectedInstallCommand = "curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash";
 const approvedExternalLinks = new Set([
   "https://docs.comis.ai",
@@ -94,7 +94,7 @@ check(Boolean(mainMatch), "Homepage must contain a main landmark");
 const mainHtml = mainMatch?.[0] ?? "";
 
 const sectionOrder = tags(mainHtml, "section").map((tag) => attributes(tag).get("data-section"));
-sameValues(sectionOrder, ["hero", "why-comis", "capabilities", "security", "install", "community"], "Homepage section order");
+sameValues(sectionOrder, ["hero", "why-comis", "workflows", "capabilities", "security", "install", "community"], "Homepage section order");
 
 check(tags(html, "header").length === 1, "Homepage must contain one header landmark");
 check(tags(html, "main").length === 1, "Homepage must contain one main landmark");
@@ -110,24 +110,24 @@ for (const section of tags(mainHtml, "section")) {
 
 const headings = [...html.matchAll(/<h2\b[^>]*>([\s\S]*?)<\/h2>/gi)].map((match) => textContent(match[1]));
 sameValues(headings, [
-  "From request to governed result",
-  "One system for execution, memory, security, authority, and cost.",
-  "The operating surface for governed agents.",
-  "Security controls with explicit boundaries.",
+  "From request to inspectable result.",
+  "Govern the whole agent lifecycle as one system.",
+  "Use Comis when agent work needs evidence, boundaries, and recovery.",
+  "Operate agents across channels, tools, state, and schedules.",
+  "Layered security with explicit boundaries.",
   "Install Comis on your infrastructure.",
-  "Help shape Comis while it is still early.",
+  "Help make agent governance reproducible.",
 ], "Homepage h2 hierarchy");
 
 const whySectionHtml = mainHtml.match(/<section\b[^>]*data-section="why-comis"[^>]*>[\s\S]*?<\/section>/i)?.[0] ?? "";
 const advantageHeadings = [...whySectionHtml.matchAll(/<h3\b[^>]*>([\s\S]*?)<\/h3>/gi)].map((match) => textContent(match[1]));
 sameValues(advantageHeadings, [
-  "Formal multi-agent execution",
-  "Lossless context by default",
-  "Trust-aware memory and learning",
-  "Security and scoped authority",
-  "Integrated observability and cost governance",
-  "Architecture built to evolve safely",
-  "Per-agent operational control",
+  "Typed execution",
+  "Recoverable canonical context",
+  "Provenance-aware memory",
+  "Scoped authority and layered security",
+  "Bounded spend",
+  "Operational evidence",
 ], "Verified advantage hierarchy");
 
 const mainText = textContent(mainHtml
@@ -141,23 +141,27 @@ const wordCount = visibleMainText.match(/[\p{L}\p{N}]+(?:[’'-][\p{L}\p{N}]+)*/
 check(wordCount <= 750, `Visible homepage copy must remain at or below 750 words; received ${wordCount}`);
 
 for (const requiredText of [
-  "Apache-2.0 · Active development",
+  "Apache-2.0 | Active development",
   "Govern the execution, memory, security, authority, and cost of every agent.",
-  "Comis unifies typed execution, recoverable context, trust-aware learning, layered security, scoped authority, cost governance, and operational evidence on your infrastructure.",
-  "Comis’s advantage is coherence. Execution, memory, security, authority, cost, and evidence operate as one governed system.",
-  "Coordinate typed DAGs with parallelism, barriers, retries, budgets, approval nodes, and configurable checkpoint recovery.",
-  "Retain canonical messages and tool results beneath summaries; recover them with on-demand context tools.",
-  "Govern learning with provenance, corroboration, trust ceilings, outcome gates, correction, and usefulness feedback.",
-  "Treat models as untrusted with scoped data, capability gates, encrypted secrets, and layered input, memory, and output guards.",
-  "Connect traces, incidents, fleet health, audits, provider costs, and opt-in spend ceilings.",
-  "Evolve through typed ports, strict contracts, targeted test gates, dependency rules, and architecture ratchets.",
-  "Assign each agent its own model, context, memory, tools, budgets, policies, and routing.",
-  "The managed-host path can install Node.js and host dependencies, initialize Comis data, and register the daemon with systemd or PM2. On Linux, it also attempts to provision Chromium and Xvfb by default and can create a dedicated comis user for a systemd service.",
+  "Comis is an Apache-2.0 governed agent runtime for operators who need multi-agent systems they can inspect, constrain, recover, and run on infrastructure they control.",
+  "The controls apply to agents executing through Comis-controlled paths.",
+  "Comis's advantage is coherence. Execution, context, memory, authority, cost, and evidence share one governance model.",
+  "Coordinate sequential and parallel DAG nodes with barriers, retries, budgets, and configured recovery.",
+  "Keep messages and tool results available beneath summaries, then recover selected detail on demand.",
+  "Rank and revise learned state using provenance, corroboration, trust ceilings, outcomes, and corrections.",
+  "Treat models as untrusted with scoped state, capability gates, encrypted secrets, and content guards.",
+  "Combine provider cost accounting, graph budgets, and opt-in spend ceilings.",
+  "Connect traces, incident explanation, audits, fleet health, and recall diagnostics for investigation.",
+  "Governed research and analysis",
+  "Read-only operational investigation",
+  "The installer can add Node.js and host dependencies, initialize data, and register systemd or PM2. On Linux it can also provision Chromium, Xvfb, and a dedicated service user.",
   "Linux with Bubblewrap is the recommended target. macOS isolation is best-effort and does not provide the same boundary.",
   "The ordinary exec tool can run directly on the host when its sandbox is disabled or unavailable.",
+  "The default tool profile is full, and an empty per-agent secret allowlist is unrestricted. Narrow both before accepting untrusted input.",
   "Streaming consumers can receive deltas before the completed response passes its final output scan.",
   "Approval requests are available on explicitly wired paths when enabled; they are not a universal policy engine.",
-  "Star the repository to help others discover Comis.",
+  "Skill-declared permissions are advisory unless the same limits are enforced through runtime tool policy and deployment controls.",
+  "Enterprise-oriented foundation, under active development:",
 ]) {
   check(mainText.includes(requiredText), `Required verified copy is missing: ${requiredText}`);
 }
@@ -276,7 +280,7 @@ check(tags(html, "img").every((tag) => attributes(tag).get("width") === "838" &&
 const workflowList = mainHtml.match(/<ol\b[^>]*class="[^"]*workflow-list[^"]*"[^>]*>[\s\S]*?<\/ol>/i)?.[0] ?? "";
 check(tags(workflowList, "li").length === 5, "Workflow must be an ordered list with five steps");
 const workflowHeadings = [...workflowList.matchAll(/<h3\b[^>]*>([\s\S]*?)<\/h3>/gi)].map((match) => textContent(match[1]));
-sameValues(workflowHeadings, ["Receive", "Route", "Execute", "Govern", "Record"], "Governed workflow hierarchy");
+sameValues(workflowHeadings, ["Receive", "Route", "Coordinate", "Constrain", "Explain"], "Governed workflow hierarchy");
 check(!/\bautoplay\b/i.test(html), "Autoplay media is prohibited");
 check(!/\btarget="_blank"/i.test(html), "New-window links are prohibited");
 check(!/\btabindex="[1-9]/i.test(html), "Positive tabindex is prohibited");
@@ -307,7 +311,7 @@ check(socialImage.readUInt32BE(16) === 1280 && socialImage.readUInt32BE(20) === 
 check((await stat(socialImagePath)).size < 250_000, "Social image must remain under 250 KB");
 
 const imageAssets = (await listFiles(path.join(distDir, "images"))).map((file) => path.basename(file)).sort();
-sameValues(imageAssets, ["comis-logo.png", "comis-social-card.png"], "Generated image assets");
+sameValues(imageAssets, ["comis-logo.png"], "Generated image assets");
 check(!distFiles.some((file) => /\.(?:jpe?g|mp4|webm)$/i.test(file)), "Removed image or video formats remain in the build");
 for (const requiredAsset of [
   "favicon-16x16.png",
@@ -355,5 +359,5 @@ if (failures.length > 0) {
   for (const failure of failures) console.error(`- ${failure}`);
   process.exitCode = 1;
 } else {
-  console.log(`Website validation passed: one route, six sections, ${wordCount} visible words, verified metadata and assets.`);
+  console.log(`Website validation passed: one route, seven sections, ${wordCount} visible words, verified metadata and assets.`);
 }

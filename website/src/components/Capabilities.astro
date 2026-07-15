@@ -1,12 +1,9 @@
 ---
 // SPDX-License-Identifier: Apache-2.0
 const capabilities = [
-  ["Messaging", "Connect Telegram, Discord, Slack, WhatsApp, Signal, iMessage, LINE, IRC, Email, and Microsoft Teams."],
-  ["Models, tools, and MCP", "Use cloud or local models, built-in tools, filtered MCP clients, and a permission-gated MCP server."],
-  ["Automation", "Schedule cron and heartbeat work, run background tasks and sub-agents, and persist execution graphs."],
-  ["Media", "Transcribe speech, synthesize voice, analyze images and video, generate images, and extract documents."],
-  ["Interfaces", "Operate through the web dashboard, CLI, JSON-RPC, WebSocket, ACP bridge primitives, and experimental OpenAI-shaped HTTP endpoints."],
-  ["Storage and visibility", "Store sessions, context, memory, delivery, and operational records in local SQLite. Credentials are encrypted by default; optional OpenTelemetry and Prometheus extend visibility."],
+  ["Connect", "Use ten messaging adapters, cloud or local models, built-in tools, filtered MCP clients, and media providers."],
+  ["Operate", "Route agents through the dashboard, CLI, JSON-RPC, WebSocket, schedules, sub-agents, and durable graphs."],
+  ["Store and observe", "Keep runtime state in local SQLite, encrypt credentials by default, and extend visibility with optional OpenTelemetry and Prometheus."],
 ] as const;
 ---
 
@@ -14,9 +11,9 @@ const capabilities = [
   <div class="container">
     <div class="section-intro">
       <p class="eyebrow">Core capabilities</p>
-      <h2 id="capabilities-heading">The operating surface for governed agents.</h2>
+      <h2 id="capabilities-heading">Operate agents across channels, tools, state, and schedules.</h2>
       <p class="lead">
-        Comis runs on infrastructure you control. Network access depends on the models, channels, tools, and media services you configure.
+        The runtime and operational stores can run locally. Configured model, embedding, channel, tool, and media providers may receive routed data.
       </p>
     </div>
 

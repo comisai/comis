@@ -300,7 +300,10 @@ Set each feature flag honestly. The system trusts your declared capabilities to 
 
 <Step title="Create the ChannelPluginPort wrapper">
 
-Wrap your adapter in a `ChannelPluginPort` for registration with the plugin system. The plugin provides metadata (ID, name, capabilities) and lifecycle hooks (activate, deactivate).
+Wrap your adapter in a `ChannelPluginPort` to provide channel metadata,
+capabilities, and lifecycle methods to the channel bootstrap path. Production
+channel lifecycle is wired directly by the daemon; it does not register these
+wrappers through the generic `PluginRegistry`.
 
 Reference `packages/channels/src/echo/echo-plugin.ts` for the simplest real example:
 
@@ -326,8 +329,8 @@ export function createMyPlatformPlugin(config: MyPlatformConfig): ChannelPluginP
     capabilities,
     adapter,
 
-    register(registry: PluginRegistryApi): Result<void, Error> {
-      // Register hooks if needed (e.g., before_send, after_tool_call)
+    register(_registry: PluginRegistryApi): Result<void, Error> {
+      // Channel bootstrap owns adapter lifecycle. Register no generic hooks here.
       return ok(undefined);
     },
 
@@ -346,7 +349,13 @@ export function createMyPlatformPlugin(config: MyPlatformConfig): ChannelPluginP
 
 <Step title="Register and test">
 
-The plugin is registered through the `PluginRegistry` during bootstrap. The channel registry validates your declared capabilities against the `ChannelCapabilitySchema` at registration time.
+Import the adapter factory in the daemon's channel setup and add the adapter to
+the channel map used by `setup-channels-adapters.ts`. The production channel
+bootstrap owns activation and shutdown directly. It does not discover channel
+packages or pass channel plugins through the generic `PluginRegistry`.
+
+Keep the declared capabilities conformant to `ChannelCapabilitySchema` and pin
+them in the adapter's co-located tests.
 
 For testing, use the co-located test pattern. Create `myplatform-adapter.test.ts` alongside the adapter and test:
 
@@ -403,7 +412,7 @@ Each production adapter follows the same file structure pattern, with additional
 </Card>
 
 <Card title="Plugins" icon="puzzle-piece" href="/developer-guide/plugins">
-  General plugin system (hooks, tools, routes)
+  Source-integrated lifecycle hooks
 </Card>
 
 <Card title="Event Bus" icon="tower-broadcast" href="/developer-guide/event-bus">

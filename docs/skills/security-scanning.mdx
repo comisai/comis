@@ -4,11 +4,11 @@ description: "What Comis checks for when loading custom skills"
 icon: "shield-check"
 ---
 
-Before any custom skill reaches your agents, Comis scans its contents for dangerous patterns. This automatic security check catches common threats like command injection, data exfiltration, and crypto mining -- protecting your system even if you load a skill from an untrusted source.
+When Comis loads a Markdown prompt skill, it sanitizes the skill body and, by default, scans that sanitized text for known dangerous patterns. Critical findings can block that prompt skill from loading. This is a heuristic content filter, not malware analysis, code isolation, or a guarantee that an untrusted skill is safe.
 
 ## What Gets Scanned
 
-The content scanner checks skill bodies for six categories of dangerous patterns. Each scan looks for specific techniques that attackers use to abuse AI agent systems.
+The content scanner checks sanitized **prompt-skill bodies** for six categories of dangerous patterns. It does not scan or confine arbitrary code, MCP server executables, browser processes, or other integrations. Pattern matching can have false positives and false negatives, so operators must still review third-party skills and everything they instruct an agent to invoke.
 
 <AccordionGroup>
   <Accordion title="Command Injection" icon="terminal">
@@ -109,8 +109,16 @@ The scanner classifies each finding by severity:
 - **WARN findings:** The skill **loads normally**, but a warning is logged. Review the warning and decide whether the skill is safe. Obfuscated encoding, for example, may be legitimate -- some skills include base64 data for valid reasons.
 
 <Info>
-Even if a skill passes content scanning, it still goes through the full sanitization pipeline. Scanning catches known dangerous patterns, while sanitization removes entire classes of hidden content. Together, they provide layered protection.
+  Even if a prompt skill passes content scanning, it still goes through the sanitization pipeline. These controls reduce specific prompt-content risks, but they do not establish a process sandbox or prove that the skill's instructions are trustworthy.
 </Info>
+
+<Warning>
+The `permissions` and `allowedTools` fields in SKILL.md are currently parsed as
+manifest metadata; they are not an enforced per-skill runtime authorization
+boundary. Configure the agent's `toolPolicy` and the underlying tool-specific
+controls for actual enforcement. The default agent tool-policy profile is
+`full`, so narrow it before exposing an agent to untrusted content.
+</Warning>
 
 ## Configuration
 
@@ -129,19 +137,20 @@ Disabling content scanning or setting `blockOnCritical` to `false` removes an im
 
 ## How Scanning Fits into the Security Stack
 
-Content scanning is one layer in the Comis [defense-in-depth](/security/defense-in-depth) security model:
+Prompt-skill scanning is one layer in the Comis [defense-in-depth](/security/defense-in-depth) security model:
 
-1. **Content scanning** catches malicious patterns before a skill loads (this page)
-2. **Sanitization** removes hidden or obfuscated content from all skills (this page)
-3. **The sandbox** isolates skill execution with memory, time, and access limits ([Sandbox](/security/sandbox))
-4. **Tool policy** controls which tools a skill can access ([Tool Policy](/skills/tool-policy))
-5. **Output scanning** catches leaked secrets in agent responses before they reach the chat
+1. **Content scanning** flags known patterns before a prompt skill loads (this page)
+2. **Sanitization** removes selected hidden or obfuscated content from prompt-skill bodies (this page)
+3. **Agent tool policy** filters registered tools by the configured profile and allow/deny rules ([Tool Policy](/skills/tool-policy))
+4. **Tool-specific validation** constrains the particular operation being requested
+5. **Exec sandboxing**, when a supported provider is active, confines only child processes launched through ordinary `exec`; MCP servers, browsers, and in-process tools are outside it ([Sandbox](/security/sandbox))
+6. **Completed-response scanning** can catch secret-shaped content before non-streaming delivery; already-emitted streaming deltas cannot be retracted
 
-Each layer works independently, so even if one is bypassed, the others still protect you.
+These layers have different scopes. Verify the controls that apply to the exact skill, tool, host, and delivery mode you deploy.
 
 <CardGroup cols={2}>
   <Card title="Sandbox" icon="lock" href="/security/sandbox">
-    How skill execution is isolated
+    Where process isolation applies, and where it does not
   </Card>
   <Card title="Defense in Depth" icon="shield" href="/security/defense-in-depth">
     All security layers explained

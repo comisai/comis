@@ -5,6 +5,8 @@ import { SITE } from "../data/site";
 const boundaries = [
   ["Isolation", "Linux with Bubblewrap is the recommended target. macOS isolation is best-effort and does not provide the same boundary."],
   ["Host execution", "The ordinary exec tool can run directly on the host when its sandbox is disabled or unavailable."],
+  ["Authority defaults", "The default tool profile is full, and an empty per-agent secret allowlist is unrestricted. Narrow both before accepting untrusted input."],
+  ["Skill permissions", "Skill-declared permissions are advisory unless the same limits are enforced through runtime tool policy and deployment controls."],
   ["Streaming", "Streaming consumers can receive deltas before the completed response passes its final output scan."],
   ["Approvals", "Approval requests are available on explicitly wired paths when enabled; they are not a universal policy engine."],
 ] as const;
@@ -14,9 +16,9 @@ const boundaries = [
   <div class="container security-grid">
     <div>
       <p class="eyebrow">Security and deployment</p>
-      <h2 id="security-heading">Security controls with explicit boundaries.</h2>
+      <h2 id="security-heading">Layered security with explicit boundaries.</h2>
       <p class="lead">
-        Comis treats external content and model output as untrusted. It includes encrypted secret storage by default, configurable per-agent secret allowlists, SSRF defenses, external-content wrapping, prompt-injection detection, memory-write validation, completed-response output guards, tool policy, and an audit trail persisted by default.
+        Comis treats external content and model output as untrusted. Controls include encrypted secrets, scoped authority, SSRF defenses, content wrapping, memory validation, output guards, tool policy, and audit events.
       </p>
       <div class="inline-links">
         <a class="text-link" href={SITE.threatModel}>Read the threat model</a>
@@ -34,7 +36,7 @@ const boundaries = [
         ))}
       </div>
       <p class="development-note">
-        <strong>Current development:</strong> APIs and configuration may change. The OpenAI-shaped API is experimental, not every provider and channel combination is validated live, and code extensions currently require source changes.
+        <strong>Enterprise-oriented foundation, under active development:</strong> evaluate identity, tenant isolation, availability, backup and restore, upgrades, and support before critical or regulated deployment. General exact replay remains incomplete.
       </p>
     </div>
   </div>

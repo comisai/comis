@@ -1,43 +1,49 @@
 ---
 title: "Welcome to Comis"
-description: "An open-source, security-first platform for AI agent teams"
+description: "Open-source governed agent runtime for inspectable, constrained, and recoverable multi-agent systems"
 icon: "hand-wave"
 ---
 
-Comis is an open-source, security-first platform for AI agent teams. It runs on
-infrastructure you control and connects agents to a web dashboard and ten
-documented messaging adapters: Discord, Telegram, Slack, WhatsApp, Signal,
-iMessage, LINE, IRC, Email, and Microsoft Teams.
+Comis is an Apache-2.0 governed agent runtime for operators who need
+multi-agent systems they can inspect, constrain, recover, and run on
+infrastructure they control.
 
-Comis is under active development. Start with one agent and one interaction
-surface, verify the security posture for your host, and expand only after the
-basic path is working.
+It is built for AI platform engineers, self-hosted operators,
+security-conscious builders, and technical teams moving persistent agents onto
+real tools and data. Comis is under active development, so start with one agent
+and one bounded workflow, verify the deployment on your host, and expand
+authority only after the controls are tested.
 
-## What Comis provides
+## Why Comis
+
+**Comis's advantage is coherence.** Formal execution, recoverable context,
+provenance-aware memory, scoped authority, bounded spend, and operational
+evidence work as one system.
 
 <CardGroup cols={2}>
-  <Card title="Agent Teams" icon="robot" href="/agents/index">
-    Run multiple agents with separate identities, workspaces, model settings,
-    memory scopes, and tool policies.
+  <Card title="Formal execution" icon="robot" href="/agents/execution-graphs">
+    Coordinate typed execution graphs with parallel work, barriers, retries,
+    budgets, approval nodes, and configured checkpoint recovery.
   </Card>
-  <Card title="Messaging Channels" icon="messages" href="/channels/index">
-    Receive and deliver messages through ten platform adapters with a common
-    channel interface.
+  <Card title="Recoverable context" icon="brain" href="/agents/context-management">
+    Keep canonical messages and tool results available beneath summaries, then
+    recover detail with in-session context tools.
   </Card>
-  <Card title="Memory and Context" icon="brain" href="/agents/memory">
-    Store and retrieve selected conversation knowledge with trust-aware recall,
-    configurable retention, and explicit reset controls.
+  <Card title="Provenance-aware memory" icon="puzzle-piece" href="/agents/memory">
+    Combine source provenance, trust labels, corroboration, outcome gates,
+    supersession, corrections, and usefulness feedback.
   </Card>
-  <Card title="Tools and Skills" icon="puzzle-piece" href="/skills/index">
-    Use built-in tools, Markdown skills, and configured MCP integrations within
-    the permissions and runtime boundaries you select.
+  <Card title="Scoped authority" icon="shield-check" href="/security/capability-model">
+    Constrain agent access with scoped stores, capability gates, deny-by-origin
+    controls, tool policy, encrypted secrets, and audit events.
   </Card>
-  <Card title="Automation" icon="clock" href="/agent-tools/scheduling">
-    Configure scheduled jobs, heartbeats, and multi-agent execution workflows.
+  <Card title="Cost and evidence" icon="gauge" href="/operations/observability">
+    Connect traces, incident explanation, provider cost accounting, audit
+    records, and configured spend ceilings to operations.
   </Card>
-  <Card title="Security Controls" icon="shield-check" href="/get-started/security">
-    Combine encrypted credential storage, content guards, audit events,
-    capability gates, optional approvals, and platform-dependent isolation.
+  <Card title="Channels and interfaces" icon="messages" href="/channels/index">
+    Operate agents through messaging adapters, the web dashboard, CLI,
+    JSON-RPC, WebSocket, schedules, and configured integrations.
   </Card>
 </CardGroup>
 
@@ -49,23 +55,26 @@ comis init
 comis daemon start
 ```
 
-The setup wizard has several stages and optional integrations. It defaults to
-encrypted credential storage; back up the generated master key. Follow the
-[Quickstart](/get-started/quickstart) for the complete, verified workflow.
+The setup wizard defaults to encrypted credential storage. Back up the
+generated master key separately, then follow the [Quickstart](/get-started/quickstart)
+to verify the daemon, your first agent, and the security posture.
+
+Comis runs on infrastructure you control. Configured model, embedding, channel,
+media, and tool providers can still receive data routed to them.
 
 ## Explore the documentation
 
 <CardGroup cols={2}>
-  <Card title="Quickstart" icon="rocket" href="/get-started/quickstart">
-    Install, configure, start, and verify Comis.
-  </Card>
   <Card title="How It Works" icon="diagram-project" href="/get-started/how-it-works">
-    Understand message routing, agent execution, and delivery.
+    Follow a request through routing, execution, controls, state, and evidence.
+  </Card>
+  <Card title="Use Cases" icon="lightbulb" href="/get-started/use-cases">
+    Start with workflows where governance matters more than surface breadth.
   </Card>
   <Card title="Security Boundaries" icon="shield-check" href="/get-started/security">
-    Review defaults, opt-in controls, and known limitations.
+    Review defaults, opt-in controls, deployment assumptions, and residual risk.
   </Card>
   <Card title="Operations" icon="gauge" href="/operations/index">
-    Deploy, monitor, back up, and troubleshoot the daemon.
+    Deploy, monitor, back up, recover, and troubleshoot the daemon.
   </Card>
 </CardGroup>

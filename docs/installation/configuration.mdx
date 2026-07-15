@@ -190,7 +190,14 @@ tenantId: "default"
 |---------|---------|-------------|
 | `logLevel` | `"debug"` | Log verbosity. Options: `"trace"`, `"debug"`, `"info"`, `"warn"`, `"error"`, `"fatal"` |
 | `dataDir` | `"~/.comis"` | Base directory for databases, logs, and models |
-| `tenantId` | `"default"` | Isolates data between environments. Change when running multiple instances. |
+| `tenantId` | `"default"` | Default logical scope attached to tenant-aware requests and stored records. |
+
+<Warning>
+`tenantId` and agent IDs provide logical routing and storage scope inside one
+trusted Comis deployment. They do not create separate processes, filesystems,
+daemon accounts, or host boundaries for mutually hostile tenants. Use separate
+deployments when you require process or host isolation.
+</Warning>
 
 ## Secrets and API keys
 
@@ -202,6 +209,23 @@ unrecoverable.
 
 Plain environment variables and the `file` storage mode are explicit
 alternatives. They do not provide the encrypted store's at-rest protection.
+
+<Warning>
+Per-agent secret access is unrestricted unless you configure a **non-empty**
+`agents.<id>.secrets.allow` list. An omitted or empty list means the agent's
+scoped secret manager may resolve every secret available through the base
+manager; it does not mean "deny all." Configure explicit glob patterns for
+least privilege:
+
+```yaml
+agents:
+  default:
+    secrets:
+      allow:
+        - "ANTHROPIC_API_KEY"
+        - "GITHUB_*"
+```
+</Warning>
 
 Common static-key providers use these names. See [Environment Variables](/reference/environment-variables#llm-provider-keys) for the complete catalog, aliases, and multi-value provider requirements.
 
@@ -286,12 +310,14 @@ agents:
 ```
 
 <Note>
-  The DAG mode (the `dag` engine version) — the Lossless Context DAG
-  engine — is the **default**: `version` defaults to `"dag"` (set
-  `"pipeline"` to opt into the simpler engine). DAG keeps the full faithful
-  history losslessly (a verbatim fresh tail + transcript repair), zoomably
-  compresses the oldest history under a token budget, and exposes the in-session
-  `ctx_*` expansion tools. See [Compaction](/agents/compaction) for details.
+  The DAG mode (the `dag` engine version) is the **default**: `version`
+  defaults to `"dag"` (set `"pipeline"` to opt into the simpler engine).
+  Canonical messages and tool results remain recoverable, but the active model
+  prompt is still token-budgeted. It keeps a verbatim fresh tail and represents
+  older regions with selected raw steps or explicitly lossy summaries. The
+  in-session `ctx_*` tools recover underlying detail on demand; they do not put
+  the full canonical transcript into every provider call. See
+  [Compaction](/agents/compaction) for details.
 </Note>
 
 See [Config Reference](/reference/config-yaml) for the complete list of all 27

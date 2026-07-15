@@ -585,7 +585,7 @@ Per-agent configuration for Gemini explicit CachedContent caching. On by default
 
 #### Context Engine (agents.*.contextEngine)
 
-Context engine configuration. Controls the system that manages what your agent sees each turn. The default is **dag** (the lossless LCD engine). The **pipeline** value (the simpler sequential layered engine) is the first-class **opt-in** — set `version: "pipeline"` to use it. DAG does lossless verbatim assembly (full faithful history + a verbatim fresh tail of the most recent steps + transcript repair), zoomably compresses the oldest history under a token budget, and exposes the in-session `ctx_*` expansion tools. See [Compaction](/agents/compaction) for a user-friendly explanation.
+Context engine configuration. Controls the system that manages what your agent sees each turn. The default is **dag** (the LCD engine). The **pipeline** value (the simpler sequential layered engine) is the first-class **opt-in** — set `version: "pipeline"` to use it. DAG keeps canonical messages and tool results recoverable while assembling a budget-bounded active prompt with a verbatim fresh tail, provider-valid transcript repair, selected older material, and explicitly lossy summaries. The in-session `ctx_*` expansion tools recover underlying detail on demand. See [Compaction](/agents/compaction) for a user-friendly explanation.
 
 **Core fields**
 
@@ -617,7 +617,7 @@ Context engine configuration. Controls the system that manages what your agent s
 | `observationDeactivationChars` | `number` | `80000` | Character threshold to deactivate observation masking entirely (20K-500K) |
 | `ephemeralKeepWindow` | `number` | `10` | Recent ephemeral tool results to keep unmasked (1-50) |
 
-**DAG mode fields** (`version: "dag"`) — `freshTailTurns`, the leaf/condense summarization fields, and budget-bounded eviction are **active** (lossless verbatim assembly + threshold-triggered leaf summarization + multi-tier condensation + budget eviction); only the on-demand `ctx_*` recall keys (`maxExpandTokens`, `maxRecallsPerDay`, `recallTimeoutMs`) are **reserved** for the planned recall tools and not yet consumed:
+**DAG mode fields** (`version: "dag"`) — `freshTailTurns`, the leaf/condense summarization fields, and budget-bounded eviction are **active**. Canonical records remain recoverable while the active prompt uses threshold-triggered leaf summarization, multi-tier condensation, and budget eviction. The on-demand `ctx_*` recall keys (`maxExpandTokens`, `maxRecallsPerDay`, `recallTimeoutMs`) are **reserved** and not yet consumed by those tools:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -1598,18 +1598,19 @@ security:
 
 <Accordion title="approvals">
 
-Action approval workflow. Rules are evaluated in order (first match wins).
+Action approval workflow for execution paths that explicitly call the approval
+gate. Enabling this section does not wrap every action, tool, or RPC method.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | `boolean` | `true` | Enable the approval workflow |
-| `defaultMode` | `enum` | `"auto"` | Default mode for unmatched actions: `auto`, `require`, `deny` |
-| `rules` | `ApprovalRule[]` | `[]` | Ordered approval rules |
+| `enabled` | `boolean` | `false` | Wire the approval gate into supported execution paths |
+| `defaultMode` | `enum` | `"auto"` | Schema value for unmatched actions; no general runtime evaluator currently consumes it |
+| `rules` | `ApprovalRule[]` | `[]` | Schema values; no general runtime evaluator currently consumes them |
 | `defaultTimeoutMs` | `number` | `300000` | Approval request timeout in ms (5 min) |
 | `denialCacheTtlMs` | `number` | `60000` | How long denied actions are cached before re-prompting (ms). Set to 0 to disable denial caching. |
 | `batchApprovalTtlMs` | `number` | `30000` | How long approved actions are cached for automatic re-approval in batch operations (ms). Set to 0 to disable batch approval caching. |
 
-<Info>Batch approval caching (`batchApprovalTtlMs`) allows sequential identical tool calls to auto-approve within the TTL window, reducing approval fatigue during batch operations. The cache persists across daemon restarts.</Info>
+<Info>Batch approval caching (`batchApprovalTtlMs`) allows sequential requests with the same session key and action name to auto-approve within the TTL window. Parameters are not part of the cache key. The cache persists across managed daemon restarts.</Info>
 
 **Approval Rule (approvals.rules[])**
 
@@ -1620,7 +1621,12 @@ Action approval workflow. Rules are evaluated in order (first match wins).
 | `timeoutMs` | `number` | `300000` | Timeout for human approval (0 = no timeout) |
 | `minTrustLevel` | `enum` | `"verified"` | Trust level for auto-approve: `untrusted`, `basic`, `verified`, `admin` |
 
-<Info>See [Approvals](/security/approvals) for approval workflow configuration patterns.</Info>
+<Warning>
+  `defaultMode`, `rules`, and `security.actionConfirmation` are not a universal
+  action-policy engine. Only an explicit `ApprovalGate.requestApproval()` call
+  creates a human approval pause. See [Approvals](/security/approvals) for the
+  currently guarded paths and runtime configuration.
+</Warning>
 
 </Accordion>
 
@@ -2107,22 +2113,30 @@ Browser automation via Chrome DevTools Protocol (CDP).
 
 <Accordion title="plugins">
 
-Plugin system configuration.
+Schema-backed metadata for source-integrated lifecycle plugins. These values do
+not discover, import, or load plugin code. The generic registry exposes
+`registerHook` only, so each plugin must be imported and wired in application
+source, and that wiring must explicitly honor this configuration.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | `boolean` | `true` | Global plugin system toggle |
-| `plugins` | `Record<string, PluginEntry>` | `{}` | Per-plugin configuration keyed by plugin ID |
+| `enabled` | `boolean` | `true` | Global value available to source integration wiring |
+| `plugins` | `Record<string, PluginEntry>` | `{}` | Metadata keyed by the ID used by source-integrated plugin wiring |
 
 **Plugin Entry (plugins.plugins.{id})**
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | `boolean` | `true` | Whether this plugin is active |
-| `priority` | `number` | `0` | Hook execution priority (-100 to 100, higher runs first) |
-| `config` | `Record<string, unknown>` | `{}` | Plugin-specific configuration (opaque) |
+| `enabled` | `boolean` | `true` | Whether source wiring should register this plugin |
+| `priority` | `number` | `0` | Priority value available to hook registration (-100 to 100, higher runs first) |
+| `config` | `Record<string, unknown>` | `{}` | Opaque values interpreted by the source integration |
 
-<Info>See [Plugins](/developer-guide/plugins) for the plugin system and hook reference.</Info>
+<Warning>
+The generic registry does not automatically consume this section. Setting an
+entry without corresponding source wiring has no runtime effect.
+</Warning>
+
+<Info>See [Plugins](/developer-guide/plugins) for the supported hook surface.</Info>
 
 </Accordion>
 

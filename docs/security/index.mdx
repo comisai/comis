@@ -19,7 +19,7 @@ human-approved or every tool process is kernel-confined.
 |---|---|---|
 | Secrets | Encrypted store; master key in `~/.comis/.env` | Back up and protect the key separately |
 | Gateway | Loopback bind | Add authentication and TLS before network exposure |
-| Approvals | Disabled; unmatched mode `auto` | Enable and define rules if confirmation is required |
+| Approvals | Disabled; only explicitly wired paths can request approval | Enable and test every guarded path that requires confirmation |
 | Tool policy | `full` profile | Select a narrower profile and explicit denies |
 | Exec isolation | Enabled when a provider is available | Use Linux + Bubblewrap and verify startup logs |
 | MCP stdio | Outside the exec sandbox | Review each server as third-party process code |

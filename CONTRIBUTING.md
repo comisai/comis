@@ -1,6 +1,16 @@
 # Contributing to Comis
 
-Thank you for your interest in contributing to Comis. Every contribution helps improve the platform, whether it is a bug report, feature request, documentation update, or code change. We appreciate your time and effort.
+Thank you for your interest in contributing to Comis, an open-source governed
+agent runtime. Every contribution helps improve execution, context, memory,
+authority, cost controls, operational evidence, integrations, or documentation.
+We appreciate your time and effort.
+
+## Where Help Matters
+
+- Governance and security scenarios, policy behavior, secret handling, and adversarial tests
+- Standards and interoperability work across MCP, ACP, A2A, and OpenTelemetry
+- Runtime reliability across graphs, recovery, context, memory, delivery, and cost enforcement
+- Hardened deployment recipes, integrations, operator experience, and documentation
 
 ## Code of Conduct
 

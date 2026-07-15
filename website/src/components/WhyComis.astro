@@ -2,32 +2,28 @@
 // SPDX-License-Identifier: Apache-2.0
 const differentiators = [
   {
-    title: "Formal multi-agent execution",
-    body: "Coordinate typed DAGs with parallelism, barriers, retries, budgets, approval nodes, and configurable checkpoint recovery.",
+    title: "Typed execution",
+    body: "Coordinate sequential and parallel DAG nodes with barriers, retries, budgets, and configured recovery.",
   },
   {
-    title: "Lossless context by default",
-    body: "Retain canonical messages and tool results beneath summaries; recover them with on-demand context tools.",
+    title: "Recoverable canonical context",
+    body: "Keep messages and tool results available beneath summaries, then recover selected detail on demand.",
   },
   {
-    title: "Trust-aware memory and learning",
-    body: "Govern learning with provenance, corroboration, trust ceilings, outcome gates, correction, and usefulness feedback.",
+    title: "Provenance-aware memory",
+    body: "Rank and revise learned state using provenance, corroboration, trust ceilings, outcomes, and corrections.",
   },
   {
-    title: "Security and scoped authority",
-    body: "Treat models as untrusted with scoped data, capability gates, encrypted secrets, and layered input, memory, and output guards.",
+    title: "Scoped authority and layered security",
+    body: "Treat models as untrusted with scoped state, capability gates, encrypted secrets, and content guards.",
   },
   {
-    title: "Integrated observability and cost governance",
-    body: "Connect traces, incidents, fleet health, audits, provider costs, and opt-in spend ceilings.",
+    title: "Bounded spend",
+    body: "Combine provider cost accounting, graph budgets, and opt-in spend ceilings.",
   },
   {
-    title: "Architecture built to evolve safely",
-    body: "Evolve through typed ports, strict contracts, targeted test gates, dependency rules, and architecture ratchets.",
-  },
-  {
-    title: "Per-agent operational control",
-    body: "Assign each agent its own model, context, memory, tools, budgets, policies, and routing.",
+    title: "Operational evidence",
+    body: "Connect traces, incident explanation, audits, fleet health, and recall diagnostics for investigation.",
   },
 ] as const;
 ---
@@ -36,9 +32,9 @@ const differentiators = [
   <div class="container">
     <div class="section-intro">
       <p class="eyebrow">Why Comis</p>
-      <h2 id="why-heading">One system for execution, memory, security, authority, and cost.</h2>
+      <h2 id="why-heading">Govern the whole agent lifecycle as one system.</h2>
       <p class="lead">
-        <strong>Comis’s advantage is coherence.</strong> Execution, memory, security, authority, cost, and evidence operate as one governed system.
+        <strong>Comis's advantage is coherence.</strong> Execution, context, memory, authority, cost, and evidence share one governance model.
       </p>
     </div>
 

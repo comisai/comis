@@ -5,7 +5,7 @@
 <p align="center">
   <strong>Govern the execution, memory, security, authority, and cost of every agent.</strong>
   <br />
-  <sub>Comis unifies typed execution, recoverable context, trust-aware learning, layered security, scoped authority, cost governance, and operational evidence on your infrastructure.</sub>
+  <sub>Open-source governed agent runtime for inspectable, constrained, and recoverable multi-agent systems.</sub>
 </p>
 
 <p align="center">
@@ -26,9 +26,13 @@
 
 # Comis
 
-Comis is an Apache-2.0 platform for governed multi-agent operations across messaging channels, APIs, scheduled work, and auditable execution graphs. Each agent can have its own model, scoped memory and context, tools, budget, and secret policy; routing bindings direct traffic to agents.
+Comis is an Apache-2.0 governed agent runtime for operators who need multi-agent systems they can inspect, constrain, recover, and run on infrastructure they control.
 
-**Comis's advantage is coherence.** Execution, memory, security, authority, cost, and operational evidence operate as one governed system, so operators can control how agents execute, what they remember, what they can access, how much they can spend, and how outcomes are reconstructed.
+**Comis's advantage is coherence.** Formal execution, recoverable context, provenance-aware memory, scoped authority, bounded spend, and operational evidence work as one system.
+
+It is built for AI platform engineers, self-hosted operators, security-conscious builders, and technical teams moving persistent agents onto real tools and data.
+
+The controls apply to agents executing through Comis-controlled paths.
 
 Comis runs on infrastructure you control. Network access depends on the models, channels, tools, and media services you configure.
 
@@ -77,15 +81,23 @@ For containers and production hosts, see the [installation guides](https://docs.
 
 ## Why Comis
 
+Comis does not compete on feature count alone. Its strength is one governance model across the agent lifecycle.
+
 | Capability | What it provides |
 | --- | --- |
 | **Formal multi-agent execution** | Typed DAGs coordinate sequential and parallel nodes with barriers, retries, budgets, approval nodes, debate, voting, refinement, and map-reduce; configured durable runs add checkpoints and node-boundary recovery. |
-| **Lossless context by default** | Canonical messages and tool results remain recoverable through the default DAG-backed context engine and `ctx_search`, `ctx_inspect`, and `ctx_expand`. |
-| **Trust-aware memory and learning** | Learning combines source provenance, configurable corroboration policies, trust ceilings, outcome gates, correction-driven skill demotion, and usefulness feedback; profile and topic revisions preserve prior bodies. |
-| **Security and scoped authority** | Comis treats model output and external content as untrusted, with scoped stores, capability gates, deny-by-origin controls, encrypted secrets, credential brokering, memory/input/output guards, and audit events. |
-| **Integrated observability and cost governance** | Traces, trajectories, incident explanation, fleet and delivery health, recall/cache diagnostics, audit records, provider cost accounting, and opt-in spend ceilings connect evidence to operations. |
-| **Architecture built to evolve safely** | Hexagonal ports and adapters, a composition root, `Result` discipline, strict schemas, typed events, dependency rules, targeted test-neighbor gates, cycle checks, security linting, and shrink-only architecture gates keep change contained. |
+| **Recoverable context by default** | Canonical messages and tool results remain available beneath summaries in the default DAG-backed context engine and can be recovered with `ctx_search`, `ctx_inspect`, and `ctx_expand`. |
+| **Provenance-aware memory and learning** | Learning combines source provenance, configurable corroboration, trust ceilings, outcome gates, correction-driven demotion, supersession, and usefulness feedback. |
+| **Security for adversarial models** | Comis treats model output and external content as untrusted, with scoped stores, capability gates, deny-by-origin controls, encrypted secrets, credential brokering, memory/input/output guards, and audit events. |
+| **Bounded spend and operational evidence** | Traces, trajectories, incident explanation, fleet and delivery health, recall/cache diagnostics, audit records, provider cost accounting, and opt-in spend ceilings connect enforcement to investigation. |
 | **Per-agent operational control** | Assign each agent its own model, memory/context scopes, tools, budgets, policies, configurable secret allowlist, and routing bindings across channels and APIs. |
+| **Architecture built to evolve safely** | Hexagonal ports and adapters, a composition root, `Result` discipline, strict schemas, typed events, dependency rules, targeted test-neighbor gates, cycle checks, security linting, and shrink-only architecture gates keep change contained. |
+
+## Where Comis Fits
+
+- **Governed research and analysis:** coordinate parallel source gathering, synthesis, criticism, context recovery, provenance-aware memory, and a configured budget while retaining evidence for review.
+- **Controlled operational investigation:** collect read-only system evidence, correlate events, and produce an incident report with cost and audit records. Keep privileged remediation behind tested approval and isolation boundaries.
+- **Routed support and knowledge operations:** give specialized agents separate context, memory, tools, budgets, and routing while keeping the operator's control model consistent.
 
 ## Capabilities
 
@@ -93,20 +105,20 @@ For containers and production hosts, see the [installation guides](https://docs.
 - **Models, tools, and MCP:** Cloud providers, local Ollama and LM Studio models, fallback chains, browser, files, web, media, scheduling, memory, infrastructure, MCP client integrations, and a permission-gated MCP server.
 - **Media:** Speech-to-text, text-to-speech, image and video analysis, image generation, and document extraction.
 - **Automation:** Cron, heartbeat monitoring, background work, sub-agents, and durable execution graphs.
-- **Interfaces:** Web dashboard, CLI, JSON-RPC, WebSocket, ACP bridge primitives, and experimental OpenAI-shaped HTTP endpoints.
+- **Interfaces:** Web dashboard, CLI, JSON-RPC, WebSocket, early Agent Client Protocol (ACP) bridge work, and experimental OpenAI-shaped HTTP endpoints.
 - **Storage:** Local SQLite stores with FTS5, optional vectors, session history, delivery queues, and encrypted-by-default secret storage.
-
-Typical workflows include routing support conversations to specialized agents, coordinating parallel research and synthesis, and running scheduled operational checks with a traceable result.
 
 ## Security and Deployment
 
-Comis treats model output and external content as untrusted. The platform includes AES-256-GCM encrypted secret storage by default, configurable per-agent secret allowlists, SSRF defenses, external-content wrapping, prompt-injection detection, memory-write validation, completed-response output guards, tool policy, and an audit trail persisted by default. Streaming consumers receive deltas before the final-response scan.
+Comis treats model output and external content as untrusted. The runtime includes AES-256-GCM encrypted secret storage by default, configurable per-agent secret allowlists, SSRF defenses, external-content wrapping, prompt-injection detection, memory-write validation, completed-response output guards, tool policy, and an audit trail persisted by default. Streaming consumers receive deltas before the final-response scan.
 
 Isolation depends on the host:
 
 - **Linux with Bubblewrap** provides the strongest supported tool isolation.
 - **macOS `sandbox-exec`** is best-effort and does not provide the same boundary as Linux.
 - By default, the interactive terminal driver refuses to spawn without its jail; an explicit operator-only setting can bypass that jail. The ordinary `exec` tool can run directly on the host when its sandbox is disabled or unavailable. Disable `exec` or deploy with Bubblewrap where this risk is unacceptable.
+- The default agent tool-policy profile is `full`, and an empty `secrets.allow` list is unrestricted. Narrow both before accepting untrusted input.
+- Skill-declared permissions are advisory unless the same limits are enforced through runtime tool policy and deployment controls.
 - Approval requests are available on explicitly wired paths when approvals are enabled; configured rules and default modes are not yet a universal policy engine.
 
 Read [THREAT_MODEL.md](THREAT_MODEL.md) before enabling shell, browser, network, or third-party integrations.
@@ -114,7 +126,10 @@ Read [THREAT_MODEL.md](THREAT_MODEL.md) before enabling shell, browser, network,
 ## Current Limitations
 
 - Code extensions currently require source changes through ports, adapters, hooks, and tools. Prompt skills can be uploaded or imported, but Comis does not yet provide a stable third-party code-plugin ecosystem.
+- ACP support is early library-level bridge work. A daemon entrypoint and complete approval round-trip are not yet shipped.
+- Durable graphs support configured checkpoint recovery, but general exact replay remains incomplete.
 - Deterministic tests cover the core runtime extensively, but not every provider, channel, model, or deployment combination is validated live.
+- Comis is an enterprise-oriented foundation under active development. Evaluate identity integration, tenant isolation, availability, backup and restore, upgrades, and support before critical or regulated deployment.
 - APIs and configuration may change during active development; review release notes before upgrading.
 
 ## Architecture
@@ -142,11 +157,13 @@ Start with the [architecture guide](https://docs.comis.ai/developer-guide/archit
 
 ## Contributing
 
-Contributors can start in any of three tracks:
+Contributors can start in any of these tracks:
 
-- **Core runtime:** orchestration, memory, context, security, observability, and reliability.
-- **Integrations:** channels, model and media providers, MCP connections, tools, and deployment targets.
-- **Documentation and DX:** onboarding, examples, troubleshooting, dashboard workflows, accessibility, and translations.
+- **Governance and security:** threat scenarios, policy, secret brokering, approval behavior, memory validation, and adversarial tests.
+- **Standards and interoperability:** MCP authorization, ACP, A2A, OpenTelemetry semantics, and conformance fixtures.
+- **Runtime reliability:** graphs, recovery, context, memory, delivery, incident reconstruction, and cost enforcement.
+- **Integrations and deployments:** channels, providers, tools, hardened Linux profiles, containers, backup, and restore.
+- **Operator experience and documentation:** evidence views, provenance, budgets, approvals, failure explanation, tutorials, and accessibility.
 
 Browse [open issues](https://github.com/comisai/comis/issues) or discuss a proposal in [GitHub Discussions](https://github.com/comisai/comis/discussions). Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request; behavior changes follow test-first development and the full architecture and security validation gates.
 

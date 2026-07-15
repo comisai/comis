@@ -3,11 +3,11 @@
 export const SITE = {
   name: "Comis",
   url: "https://comis.ai",
-  title: "Comis: Governed multi-agent operations",
+  title: "Comis: Open-source governed agent runtime",
   description:
-    "Govern AI agents with typed execution, recoverable context, trust-aware memory, layered security, scoped authority, and integrated cost visibility.",
-  positioning: "An open-source foundation for governed multi-agent operations.",
-  status: "Apache-2.0 · Active development",
+    "Inspect, constrain, recover, and operate multi-agent systems with scoped authority, bounded spend, and operational evidence.",
+  positioning: "Open-source governed agent runtime for inspectable, constrained, and recoverable multi-agent systems.",
+  status: "Apache-2.0 | Active development",
   installCommand: "curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash",
   npm: "https://www.npmjs.com/package/comisai",
   docs: "https://docs.comis.ai",

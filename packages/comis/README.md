@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/comisai/comis/main/assets/comis-readme-banner.png" alt="Comis — an open-source, security-first platform for AI agent teams" width="100%" />
+  <img src="https://raw.githubusercontent.com/comisai/comis/main/assets/comis-social-preview.png" alt="Comis" width="100%" />
 </p>
 
 <p align="center">
-  <strong>An open-source, security-first platform for AI agent teams.</strong>
+  <strong>Govern the execution, memory, security, authority, and cost of every agent.</strong>
   <br />
-  <sub>Messaging, durable workflows, recoverable context, scoped secrets, and operational visibility.</sub>
+  <sub>Open-source governed agent runtime for inspectable, constrained, and recoverable multi-agent systems.</sub>
 </p>
 
 <p align="center">
@@ -26,7 +26,9 @@
 
 `comisai` is the public npm distribution of Comis. It installs the `comis` CLI and exposes ESM entry points for the platform's public package namespaces.
 
-Comis is an Apache-2.0 platform for running multiple AI agents across messaging channels, APIs, scheduled work, and auditable execution graphs. Each agent can have its own model, scoped memory and context, tools, budget, and secret policy; routing bindings direct traffic to agents.
+Comis is an Apache-2.0 governed agent runtime for operators who need multi-agent systems they can inspect, constrain, recover, and run on infrastructure they control.
+
+**Comis's advantage is coherence.** Formal execution, recoverable context, provenance-aware memory, scoped authority, bounded spend, and operational evidence work as one system.
 
 Comis runs on infrastructure you control. Network access depends on the models, channels, tools, and media services you configure.
 
@@ -68,7 +70,7 @@ See the [installation guide](https://docs.comis.ai/installation) for supported h
 
 | Area | Capabilities |
 | --- | --- |
-| **Agent teams** | Per-agent models, context, memory, tools, budgets, secret policies, routing bindings, and isolated sub-agent work. |
+| **Per-agent control** | Per-agent models, context, memory, tools, budgets, secret policies, routing bindings, and scoped sub-agent work. |
 | **Durable workflows** | Persistent execution graphs with dependency-based sequential or parallel work, barriers, retries, budgets, debate, voting, refinement, approval nodes, and map-reduce. |
 | **Context and memory** | Recoverable canonical conversation and tool records, bounded prompt assembly, local SQLite, FTS5, and optional vector retrieval. |
 | **Messaging** | Telegram, Discord, Slack, WhatsApp, Signal, iMessage, LINE, IRC, Email, and Microsoft Teams. Media and interaction support varies by platform. |
@@ -86,6 +88,8 @@ These controls have explicit boundaries:
 
 - Linux with Bubblewrap is the recommended target for isolated tool execution. macOS isolation is best-effort and does not provide the same boundary.
 - The ordinary `exec` tool can run directly on the host when its sandbox is disabled or unavailable.
+- The default agent tool-policy profile is `full`, and an empty `secrets.allow` list is unrestricted. Narrow both before accepting untrusted input.
+- Skill-declared permissions are advisory unless the same limits are enforced through runtime tool policy and deployment controls.
 - Streaming consumers can receive deltas before the completed response passes its final output scan.
 - Approval requests are available on explicitly wired paths when enabled; they are not a universal policy engine.
 
@@ -114,7 +118,10 @@ Public subpaths cover the core runtime, infrastructure, memory, gateway, skills,
 ## Current Limitations
 
 - Code extensions currently require source changes through ports, adapters, hooks, and tools. Prompt skills can be uploaded or imported, but Comis does not yet provide a stable third-party code-plugin ecosystem.
+- ACP support is early library-level bridge work. A daemon entrypoint and complete approval round-trip are not yet shipped.
+- Durable graphs support configured checkpoint recovery, but general exact replay remains incomplete.
 - Deterministic tests cover the core runtime extensively, but not every provider, channel, model, or deployment combination is validated live.
+- Comis is an enterprise-oriented foundation under active development. Evaluate identity integration, tenant isolation, availability, backup and restore, upgrades, and support before critical or regulated deployment.
 - APIs and configuration may change during active development; review release notes before upgrading.
 
 ## Project Links

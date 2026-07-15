@@ -44,7 +44,7 @@ pnpm test         # Unit tests (Vitest + Happy DOM)
 
 ## Part of Comis
 
-This package is part of [Comis](https://github.com/comisai/comis), an open-source, security-first platform for AI agent teams.
+This package is part of [Comis](https://github.com/comisai/comis), an open-source governed agent runtime for inspectable, constrained, and recoverable multi-agent systems.
 
 ## License
 

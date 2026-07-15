@@ -1,90 +1,117 @@
 ---
 title: "Known Limitations"
-description: "Candid listing of current platform limitations operators should factor into production deployments"
+description: "Current runtime, security, interoperability, and operational limits to evaluate before deployment"
 icon: "triangle-exclamation"
 ---
 
+Comis is an enterprise-oriented open-source foundation under active
+development. This page summarizes limits that matter when deciding what
+authority to grant and where to deploy it.
+
 <Info>
-  **Source:** `THREAT_MODEL.md` §7 — G1, G2, G3, G4, G5, G6. These items are candid self-disclosures
-  tracked in the project's living threat model; they are documented gaps, not defects. See
-  [`THREAT_MODEL.md`](https://github.com/comisai/comis/blob/main/THREAT_MODEL.md) for full context and
-  per-item severity ratings.
+Read the repository
+[threat model](https://github.com/comisai/comis/blob/main/THREAT_MODEL.md)
+for the complete trust boundaries, defended threats, residual risks, and
+operator checklist.
 </Info>
 
-## Linux-only kernel sandbox
+## Execution isolation depends on the path and host
 
-The kernel sandbox (`bwrap`) that confines tool execution is **Linux-only**. macOS falls back to
-best-effort `sandbox-exec` (SBPL); Docker Desktop and Windows run the `exec` and `terminal` tools
-without kernel-level confinement. Linux is the documented production target.
+Linux with a working Bubblewrap provider is the strongest supported execution
+boundary. macOS `sandbox-exec` is best-effort and does not provide the same
+boundary.
 
-<Warning>
-  Operators on non-Linux hosts should treat `exec` and `terminal` tool invocations as unconfined.
-  Running Comis in production on macOS or Windows is unsupported.
-</Warning>
+The ordinary `exec` tool can run directly on the host when its sandbox is
+disabled or unavailable. Some terminal and durable orchestration paths fail
+closed or downshift when their jail cannot be established, but that stronger
+behavior does not apply to every tool.
 
-## `exec` tool fails open; `terminal` fails closed
+MCP stdio servers, in-process Node tools, and browser processes are outside the
+ordinary exec sandbox. Verify the exact path used by each integration instead
+of describing the whole deployment as sandboxed.
 
-When no kernel sandbox provider is detected (e.g. `bwrap` absent from `PATH`), the `exec` tool
-**fails open** and runs `/bin/bash -c` directly — it does not refuse the command. The `terminal`
-driver has the opposite behavior: it **fails closed** (refuses to start) when the sandbox is absent.
+## Least-privilege defaults require operator configuration
 
-Operators on hosts without `bwrap` should treat every `exec` tool invocation as unconfined shell
-access. Ensure `bwrap` is installed and accessible before enabling exec-capable agents in production.
+- The default agent tool-policy profile is `full`.
+- An empty per-agent `secrets.allow` list is unrestricted.
+- Human approvals are disabled by default and run only on explicitly wired
+  paths when enabled.
+- Action classification informs policy and audit; classification alone does
+  not pause an action.
 
-## Credential broker scope
+Narrow tool policy and secret patterns before accepting untrusted input. If a
+workflow requires human confirmation, verify that the specific action reaches
+an enabled approval gate.
 
-The credential broker injects API keys and bearer tokens for configured host + path bindings.
-**OAuth-flow CLIs** (tools that run their own browser-redirect or device-flow auth) are not
-brokered — they receive their own token outside the broker's per-request injection path.
+## Skill and code extensions
 
-Only `apiKey` and `bearer`-type bindings defined in `security.credentialBroker.bindings` are
-intercepted and rewritten at the network boundary. OAuth-authenticated CLIs manage their own
-credential stores.
+Prompt-skill manifests can declare permissions and allowed tools, but those
+fields are advisory metadata unless the same limits are enforced through
+runtime tool policy and deployment controls.
 
-## DNS-rebinding TOCTOU window in `validateUrl`
+The core plugin registry currently exposes lifecycle hook registration to
+source-integrated plugins. Comis does not yet ship a stable third-party code
+plugin loader or marketplace. Adding code-level tools, routes, adapters, or
+configuration normally requires a source change and composition-root wiring.
 
-`validateUrl` resolves the target hostname and then performs the fetch in a separate
-step. A DNS rebinding attack can change the resolved address between the check and the
-fetch, bypassing the private-range SSRF guard. For tool paths running under broker-only
-egress this window is eliminated; non-sandboxed `web.fetch` paths retain a narrow
-exposure.
+## API and protocol coverage
 
-## File-size governance debt
+The OpenAI-shaped HTTP surface implements selected request and response shapes.
+It is experimental and is not a complete compatibility layer.
 
-The project enforces a `≤800`-line cap on production TypeScript files, tracked by
-`test/architecture/file-size.test.ts`. Approximately 35 files carry `deferred` allowlist entries
-that exceed the cap — most are Lit web views with tightly DOM-coupled state, plus the daemon
-composition root (`daemon.ts`, ~2,900 lines) and several executor-adjacent files.
+Agent Client Protocol support is early, library-level bridge work. Comis does
+not yet ship a daemon entrypoint, non-text prompt support, complete capability
+negotiation, in-flight cancellation, or a complete approval response round
+trip.
 
-These are tracked as shrink-only entries and are not regressions; **new files must stay under 800
-lines**. The allowlist in `test/support/architecture-allowlist.ts` is governed by the
-shrink-only allowlists contribution rule: adding a new `deferred` entry will not be accepted.
+No external A2A protocol implementation is currently shipped. Internal
+agent-to-agent routing and delegation are not the same as implementing the A2A
+standard.
 
-## Self-reported benchmark caveats
+## Context recovery is not an unbounded active prompt
 
-Memory accuracy numbers are **self-authored, small-N (N=8 for the head-to-head run), and graded by
-LLM judges** — directional indicators, not independently verified guarantees.
+The default DAG context engine keeps canonical messages and tool results
+recoverable beneath budget-bounded summaries. The active prompt can still
+contain lossy summaries of older regions. `ctx_search`, `ctx_inspect`, and
+`ctx_expand` recover selected detail on demand.
 
-The headline result is a **tie with mem0** (both 7/8 at N=8), not a win. The documented
-differentiator is cost and locality: Comis recall is LLM-free and runs on-device at $0; mem0 uses
-paid OpenAI fact-extraction at ingest. This is an economics advantage, not a measured accuracy edge.
+Configured durable graphs can resume from node-boundary checkpoints. General
+exact replay of arbitrary agent, provider, network, and tool behavior remains
+incomplete.
 
-The benchmark is self-reported with a disclosed conflict of interest (Comis authored it; vendor-reported
-competitor numbers are non-comparable across protocols). See [Memory Benchmarks](/agents/memory-benchmarks)
-for the full methodology, conflict-of-interest disclosure, and reproducible harness.
+## Observability has deployment boundaries
 
-## Documentation accuracy
+Comis provides traces, trajectories, audit events, incident explanation,
+delivery and fleet health, memory diagnostics, provider cost accounting, and
+opt-in spend ceilings. This evidence is broad but does not guarantee that every
+external side effect can be reconstructed exactly.
 
-Two claims are easy to get wrong about this codebase, and are stated precisely in
-[`THREAT_MODEL.md`](https://github.com/comisai/comis/blob/main/THREAT_MODEL.md):
+The standalone Prometheus endpoint has no built-in authentication. Keep it on a
+trusted interface or protect it with an authenticated proxy. OpenTelemetry
+model-call export exists, while standard agent, workflow, and tool semantic
+spans remain incomplete.
 
-1. **Skill sandboxing mechanism.** Skills run under OS-level `bwrap` (Linux) or `sandbox-exec`
-   (macOS) — the Node.js `vm` module (`isolated-vm`) is not used for skill or tool confinement.
+## Self-hosting does not mean offline
 
-2. **Agent-execution dependency.** The agent runtime is built
-   on `@earendil-works/pi-coding-agent` (exact-pinned, bundled, part of the supply-chain threat model —
-   see [`THREAT_MODEL.md §5.8`](https://github.com/comisai/comis/blob/main/THREAT_MODEL.md)) — it is
-   not SDK-free.
+The runtime and stored operational data can run on infrastructure you control.
+Configured model, embedding, messaging, media, MCP, and tool providers may
+still receive data deliberately routed to them. Review each provider's data
+handling and the credentials granted to it.
 
-A CI guard (`test/architecture/security-doc-claims.test.ts`)
-prevents regressions by statically checking this text in `SECURITY.md`.
+## Enterprise readiness is not claimed
+
+Comis does not yet provide proof of a complete enterprise identity stack,
+independently audited tenant isolation, high availability, Kubernetes
+operations, compliance controls, or commercial support commitments.
+
+Before critical or regulated deployment, evaluate identity integration,
+authorization defaults, host isolation, retention, backup and restore,
+upgrades, rollback, availability, metrics protection, support, and external
+security review.
+
+## Provider and deployment coverage
+
+Deterministic tests cover the core runtime extensively, but not every model,
+provider, channel, media service, tool, or host combination is validated live.
+APIs and configuration can change during active development. Pin versions,
+test the exact deployment profile, and review release notes before upgrading.
