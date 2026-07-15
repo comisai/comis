@@ -33,6 +33,7 @@ function state(el: IcMessageCenter) {
     _hasLoaded: boolean;
     _actionResult: string;
     _actionPending: boolean;
+    _platformActionPending: boolean;
     _sendText: string;
     _deleteTargetId: string;
     _selectedMessageId: string;
@@ -491,6 +492,43 @@ describe("IcMessageCenter", () => {
     expect(pinButton!.disabled).toBe(true);
   });
 
+  it("clears a platform target missing from refreshed native history", async () => {
+    const call = vi.fn((method: string) => {
+      if (method === "message.fetch") {
+        return Promise.resolve({
+          channelId: "chat-a",
+          messages: [{ id: "message-new", senderId: "user_a", text: "new", timestamp: 2 }],
+        });
+      }
+      return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
+    });
+    const el = await createElement({ channelType: "telegram" });
+    const current = state(el);
+    Object.assign(current, {
+      _loadState: "loaded",
+      _channelIsRunning: true,
+      _messages: [{ id: "message-old", senderId: "user_a", text: "old", timestamp: 1 }],
+      _messagesAreActionable: true,
+      _capabilities: { fetchHistory: true },
+      _selectedChatId: "chat-a",
+      _selectedMessageId: "message-old",
+      _hasLoaded: true,
+    });
+    el.rpcClient = createStatusRpcClient(call, "connected").client;
+    await el.updateComplete;
+
+    await current._refetchMessages();
+    await el.updateComplete;
+
+    expect(current._messages.map((message) => message.id)).toEqual(["message-new"]);
+    expect(current._selectedMessageId).toBe("");
+    const pinButton = Array.from(
+      el.shadowRoot?.querySelectorAll<HTMLButtonElement>(".platform-actions button") ?? [],
+    ).find((button) => button.textContent?.trim() === "Pin Message");
+    expect(pinButton).toBeDefined();
+    expect(pinButton!.disabled).toBe(true);
+  });
+
   it("does not overlap platform and message mutation actions", async () => {
     const platformAction = deferred<string>();
     const call = vi.fn((method: string) => {
@@ -676,7 +714,7 @@ describe("IcMessageCenter", () => {
           return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
       }
     });
-    const rpc = createStatusRpcClient(call, "disconnected");
+    const rpc = createStatusRpcClient(call, "reconnecting");
     const el = await createElement({ channelType: "telegram", rpcClient: rpc.client });
 
     expect(call).not.toHaveBeenCalled();
@@ -689,6 +727,17 @@ describe("IcMessageCenter", () => {
     expect(call).toHaveBeenCalledWith("channels.list");
     expect(state(el)._channelIsRunning).toBe(true);
     expect(el.shadowRoot?.querySelector(".send-input")).not.toBeNull();
+  });
+
+  it("shows a terminal RPC disconnect without an inert retry control", async () => {
+    const call = vi.fn(() => Promise.reject(new Error("not connected")));
+    const rpc = createStatusRpcClient(call, "disconnected");
+    const el = await createElement({ channelType: "telegram", rpcClient: rpc.client });
+
+    expect(state(el)._loadState).toBe("error");
+    expect(el.shadowRoot?.textContent).toContain("RPC connection failed");
+    expect(el.shadowRoot?.querySelector(".retry-btn")).toBeNull();
+    expect(call).not.toHaveBeenCalled();
   });
 
   it("shows a retryable error when the channel list request fails", async () => {
@@ -893,6 +942,124 @@ describe("IcMessageCenter", () => {
 
     expect(secondCall).toHaveBeenCalledTimes(1);
     expect(secondCall).toHaveBeenCalledWith("channels.list");
+  });
+
+  it("rebinds RPC status changes when the same view is reattached", async () => {
+    const call = vi.fn(() => Promise.resolve({ channels: [], total: 0 }));
+    const rpc = createStatusRpcClient(call, "reconnecting");
+    const el = await createElement({ rpcClient: rpc.client });
+    expect(rpc.listenerCount()).toBe(1);
+
+    document.body.removeChild(el);
+    expect(rpc.listenerCount()).toBe(0);
+    document.body.appendChild(el);
+    await el.updateComplete;
+
+    expect(rpc.listenerCount()).toBe(1);
+    rpc.setStatus("connected");
+    await Promise.resolve();
+    await el.updateComplete;
+    expect(call).toHaveBeenCalledWith("channels.list");
+  });
+
+  it("invalidates a pending message action when the view detaches", async () => {
+    const send = deferred<{ ok: boolean }>();
+    const methods: string[] = [];
+    const call = vi.fn((method: string) => {
+      methods.push(method);
+      if (method === "message.send") return send.promise;
+      if (method === "session.list") return Promise.resolve({ sessions: [] });
+      return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
+    });
+    const el = await createElement({ channelType: "telegram" });
+    Object.assign(state(el), {
+      _loadState: "loaded",
+      _channelIsRunning: true,
+      _hasLoaded: true,
+    });
+    el.rpcClient = createStatusRpcClient(call, "connected").client;
+    await el.updateComplete;
+
+    const input = el.shadowRoot?.querySelector<HTMLTextAreaElement>(".send-input");
+    input!.value = "hello";
+    input!.dispatchEvent(new Event("input"));
+    await el.updateComplete;
+    el.shadowRoot?.querySelector<HTMLButtonElement>(".send-form .btn-primary")?.click();
+    await el.updateComplete;
+    el.shadowRoot?.querySelector("ic-confirm-dialog")?.dispatchEvent(new CustomEvent("confirm"));
+    expect(state(el)._actionPending).toBe(true);
+
+    document.body.removeChild(el);
+    send.resolve({ ok: true });
+    await send.promise;
+    await Promise.resolve();
+
+    expect(methods).toEqual(["message.send"]);
+    expect(state(el)._actionPending).toBe(false);
+  });
+
+  it("discards an explicit channel load that finishes after detachment", async () => {
+    const list = deferred<{ channels: Array<{ channelType: string; status: string }> }>();
+    const capabilities = deferred<{ channelType: string; features: Record<string, boolean> }>();
+    const config = deferred<Record<string, unknown>>();
+    const call = vi.fn((method: string) => {
+      if (method === "channels.list") return list.promise;
+      if (method === "channels.capabilities") return capabilities.promise;
+      if (method === "channels.get") return config.promise;
+      return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
+    });
+    const rpc = createStatusRpcClient(call, "connected");
+    const el = await createElement({ channelType: "telegram", rpcClient: rpc.client });
+    expect(call).toHaveBeenCalledTimes(3);
+
+    document.body.removeChild(el);
+    list.resolve({ channels: [{ channelType: "telegram", status: "stopped" }] });
+    capabilities.resolve({ channelType: "telegram", features: {} });
+    config.resolve({ botName: "test-bot" });
+    await Promise.all([list.promise, capabilities.promise, config.promise]);
+    await Promise.resolve();
+
+    expect(state(el)._hasLoaded).toBe(false);
+    expect(state(el)._loadState).toBe("idle");
+  });
+
+  it("keeps the mutation lock when a chat change is requested", async () => {
+    const action = deferred<string>();
+    const call = vi.fn((method: string) => {
+      if (method === "telegram.action") return action.promise;
+      return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
+    });
+    const el = await createElement({ channelType: "telegram" });
+    const current = state(el);
+    Object.assign(current, {
+      _loadState: "loaded",
+      _channelIsRunning: true,
+      _chatList: [
+        { chatId: "chat-a", label: "Chat A" },
+        { chatId: "chat-b", label: "Chat B" },
+      ],
+      _selectedChatId: "chat-a",
+      _hasLoaded: true,
+    });
+    el.rpcClient = createStatusRpcClient(call, "connected").client;
+    await el.updateComplete;
+
+    const chatInfoButton = Array.from(
+      el.shadowRoot?.querySelectorAll<HTMLButtonElement>(".platform-actions button") ?? [],
+    ).find((button) => button.textContent?.trim() === "Chat Info");
+    chatInfoButton!.click();
+    await el.updateComplete;
+    expect(current._platformActionPending).toBe(true);
+
+    const chatSelect = el.shadowRoot?.querySelector<HTMLSelectElement>("#chat-select");
+    expect(chatSelect!.disabled).toBe(true);
+    chatSelect!.value = "chat-b";
+    chatSelect!.dispatchEvent(new Event("change"));
+
+    expect(current._selectedChatId).toBe("chat-a");
+    expect(current._platformActionPending).toBe(true);
+    action.resolve("done");
+    await action.promise;
   });
 
   it("unsubscribes from RPC status changes after disconnect", async () => {
