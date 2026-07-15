@@ -545,9 +545,9 @@ export class IcMessageCenter extends LitElement {
     revision = this._channelRevision,
     channel = this._effectiveChannel,
   ): Promise<void> {
-    if (!this.rpcClient || !channel) return;
-    const selectedChatId = this._selectedChatId;
     const requestRevision = ++this._messageRequestRevision;
+    const selectedChatId = this._selectedChatId;
+    if (!this.rpcClient || !channel) return;
 
     // Path 1: Platform supports native fetchHistory - use message.fetch as before
     if (this._capabilities?.fetchHistory) {
