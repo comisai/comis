@@ -591,6 +591,15 @@ export async function inspectRuntimeArtifactAttestations(
   return ok({ source: source.value, target: target.value });
 }
 
+export async function inspectTargetRuntimeArtifactAttestation(
+  profile: ProductionReplayProfile,
+  executor: ProductionRemoteExecutor,
+  options: RuntimeArtifactAttestationOptions = SYSTEMD_STRICT_RUNTIME_ATTESTATION,
+): Promise<Result<RuntimeArtifactAttestation, RuntimeArtifactAttestationError>> {
+  const plan = buildRuntimeArtifactAttestationPlan(profile, options);
+  return executeRuntimeProbe(executor, plan.target, "runtime-attest-target");
+}
+
 export async function executeRuntimeArtifactAttestation(
   profile: ProductionReplayProfile,
   executor: ProductionRemoteExecutor,

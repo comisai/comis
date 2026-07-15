@@ -27,6 +27,7 @@ import {
   compareRuntimePackageArtifacts,
   compareRuntimeArtifacts,
   inspectRuntimeArtifactAttestations,
+  inspectTargetRuntimeArtifactAttestation,
   parseRuntimeArtifactFacts,
 } from "./production-runtime.js";
 import type { RuntimeArtifactAttestation } from "./production-runtime.js";
@@ -554,5 +555,44 @@ describe("production runtime artifact attestation", () => {
     if (!result.ok) return;
     expect(result.value.source.digestSha256).toBe("a".repeat(64));
     expect(result.value.target.digestSha256).toBe("b".repeat(64));
+  });
+
+  it("attests only the target runtime when source recovery authority is offline", async () => {
+    const targetFacts = validFacts({
+      digestSha256: "b".repeat(64),
+      confinementKind: "target_quarantine",
+      confinementSha256: TARGET_REPLAY_QUARANTINE_SHA256,
+    });
+    const planProfile: ProductionReplayProfile = {
+      source: {
+        ssh: "offline-source.example.com",
+        role: "production",
+        comisUser: "comis",
+        dataDir: "/home/comis/.comis",
+        service: "comis",
+        expectedMachineIdSha256: "a".repeat(64),
+      },
+      target: {
+        ssh: "target.example.com",
+        role: "test",
+        comisUser: "comis",
+        dataDir: "/home/comis/.comis",
+        service: "comis",
+        expectedMachineIdSha256: "b".repeat(64),
+      },
+    };
+    const labels: string[] = [];
+
+    const result = await inspectTargetRuntimeArtifactAttestation(planProfile, {
+      run: async (invocation) => {
+        labels.push(invocation.label);
+        return ok({ stdout: targetFacts, exitCode: 0 });
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.digestSha256).toBe("b".repeat(64));
+    expect(labels).toEqual(["runtime-attest-target"]);
   });
 });
