@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RpcClient } from "../api/rpc-client.js";
+import type { ConnectionStatus } from "../api/types/index.js";
 import type { IcBreadcrumb } from "../components/nav/ic-breadcrumb.js";
 import type { IcMessageCenter } from "./message-center.js";
 import "./message-center.js";
@@ -22,6 +23,7 @@ function state(el: IcMessageCenter) {
     _messages: Array<{ id: string; senderId: string; text: string; timestamp: number }>;
     _effectiveChannel: string;
     _channelIsRunning: boolean;
+    _channelList: Array<{ channelType: string; status: string }>;
     _capabilities: Record<string, unknown> | null;
     _botName: string;
     _chatList: Array<{ chatId: string; label: string }>;
@@ -42,6 +44,35 @@ function deferred<T>() {
     resolve = resolvePromise;
   });
   return { promise, resolve };
+}
+
+function createStatusRpcClient(
+  call: (method: string, params?: unknown) => Promise<unknown>,
+  initialStatus: ConnectionStatus,
+) {
+  let status = initialStatus;
+  const handlers = new Set<(nextStatus: ConnectionStatus) => void>();
+  const client = {
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+    call,
+    onStatusChange(handler: (nextStatus: ConnectionStatus) => void) {
+      handlers.add(handler);
+      return () => handlers.delete(handler);
+    },
+    onNotification: vi.fn(() => () => {}),
+    get status() {
+      return status;
+    },
+  } as unknown as RpcClient;
+
+  return {
+    client,
+    setStatus(nextStatus: ConnectionStatus) {
+      status = nextStatus;
+      for (const handler of handlers) handler(nextStatus);
+    },
+  };
 }
 
 afterEach(() => {
@@ -465,6 +496,153 @@ describe("IcMessageCenter", () => {
     expect(el.shadowRoot?.querySelector(".platform-actions")).toBeNull();
     expect(el.shadowRoot?.querySelector<HTMLOptionElement>('option[value="telegram"]')?.disabled)
       .toBe(true);
+  });
+
+  it("waits for the RPC connection before loading an explicit channel route", async () => {
+    const call = vi.fn((method: string) => {
+      switch (method) {
+        case "channels.list":
+          return Promise.resolve({
+            channels: [{ channelType: "telegram", status: "running" }],
+            total: 1,
+          });
+        case "channels.capabilities":
+          return Promise.resolve({ channelType: "telegram", features: { fetchHistory: false } });
+        case "channels.get":
+          return Promise.resolve({ botName: "test-bot" });
+        case "obs.channels.all":
+          return Promise.resolve({ channels: [] });
+        case "session.list":
+          return Promise.resolve({ sessions: [] });
+        default:
+          return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
+      }
+    });
+    const rpc = createStatusRpcClient(call, "disconnected");
+    const el = await createElement({ channelType: "telegram", rpcClient: rpc.client });
+
+    expect(call).not.toHaveBeenCalled();
+    rpc.setStatus("connected");
+    for (let update = 0; update < 5; update += 1) {
+      await Promise.resolve();
+      await el.updateComplete;
+    }
+
+    expect(call).toHaveBeenCalledWith("channels.list");
+    expect(state(el)._channelIsRunning).toBe(true);
+    expect(el.shadowRoot?.querySelector(".send-input")).not.toBeNull();
+  });
+
+  it("shows a retryable error when the channel list request fails", async () => {
+    let listAttempts = 0;
+    const call = vi.fn((method: string) => {
+      switch (method) {
+        case "channels.list":
+          listAttempts += 1;
+          return listAttempts === 1
+            ? Promise.reject(new Error("list unavailable"))
+            : Promise.resolve({
+                channels: [{ channelType: "telegram", status: "running" }],
+                total: 1,
+              });
+        case "channels.capabilities":
+          return Promise.resolve({ channelType: "telegram", features: { fetchHistory: false } });
+        case "channels.get":
+          return Promise.resolve({ botName: "test-bot" });
+        case "obs.channels.all":
+          return Promise.resolve({ channels: [] });
+        case "session.list":
+          return Promise.resolve({ sessions: [] });
+        default:
+          return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
+      }
+    });
+    const rpc = createStatusRpcClient(call, "connected");
+    const el = await createElement({ channelType: "telegram", rpcClient: rpc.client });
+    for (let update = 0; update < 3; update += 1) {
+      await Promise.resolve();
+      await el.updateComplete;
+    }
+
+    expect(state(el)._loadState).toBe("error");
+    const retry = el.shadowRoot?.querySelector<HTMLButtonElement>(".retry-btn");
+    expect(retry).not.toBeNull();
+    retry!.click();
+    for (let update = 0; update < 5; update += 1) {
+      await Promise.resolve();
+      await el.updateComplete;
+    }
+
+    expect(listAttempts).toBe(2);
+    expect(state(el)._channelIsRunning).toBe(true);
+  });
+
+  it("retries channel discovery when the bare messages route fails", async () => {
+    let listAttempts = 0;
+    const call = vi.fn((method: string) => {
+      switch (method) {
+        case "channels.list":
+          listAttempts += 1;
+          return listAttempts === 1
+            ? Promise.reject(new Error("list unavailable"))
+            : Promise.resolve({
+                channels: [{ channelType: "telegram", status: "running" }],
+                total: 1,
+              });
+        case "channels.capabilities":
+          return Promise.resolve({ channelType: "telegram", features: { fetchHistory: false } });
+        case "channels.get":
+          return Promise.resolve({ botName: "test-bot" });
+        case "obs.channels.all":
+          return Promise.resolve({ channels: [] });
+        case "session.list":
+          return Promise.resolve({ sessions: [] });
+        default:
+          return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
+      }
+    });
+    const rpc = createStatusRpcClient(call, "connected");
+    const el = await createElement({ rpcClient: rpc.client });
+    for (let update = 0; update < 3; update += 1) {
+      await Promise.resolve();
+      await el.updateComplete;
+    }
+
+    expect(state(el)._loadState).toBe("error");
+    el.shadowRoot?.querySelector<HTMLButtonElement>(".retry-btn")?.click();
+    for (let update = 0; update < 6; update += 1) {
+      await Promise.resolve();
+      await el.updateComplete;
+    }
+
+    expect(listAttempts).toBe(3);
+    expect(state(el)._effectiveChannel).toBe("telegram");
+    expect(state(el)._channelIsRunning).toBe(true);
+  });
+
+  it("clears channel options when the RPC client is replaced", async () => {
+    const firstCall = vi.fn((method: string) => {
+      if (method === "channels.list") {
+        return Promise.resolve({
+          channels: [{ channelType: "telegram", status: "stopped" }],
+          total: 1,
+        });
+      }
+      return Promise.resolve({});
+    });
+    const firstRpc = createStatusRpcClient(firstCall, "connected");
+    const el = await createElement({ channelType: "telegram", rpcClient: firstRpc.client });
+    for (let update = 0; update < 3; update += 1) {
+      await Promise.resolve();
+      await el.updateComplete;
+    }
+    expect(state(el)._channelList).toHaveLength(1);
+
+    const replacementRpc = createStatusRpcClient(vi.fn(() => Promise.resolve({})), "disconnected");
+    el.rpcClient = replacementRpc.client;
+    await el.updateComplete;
+
+    expect(state(el)._channelList).toEqual([]);
   });
 
   it("releases a pending action when the RPC client is replaced", async () => {
