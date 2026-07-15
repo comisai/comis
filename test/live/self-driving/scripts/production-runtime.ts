@@ -3,11 +3,15 @@ import { basename, dirname, isAbsolute } from "node:path";
 
 import { err, ok, type Result } from "@comis/shared";
 
-import type {
-  ProductionRemoteExecutor,
-  ProductionRemoteInvocation,
+import {
+  TARGET_REPLAY_QUARANTINE_SHA256,
+  type ProductionRemoteExecutor,
+  type ProductionRemoteInvocation,
 } from "./production-bootstrap.js";
-import type { ProductionHostProfile, ProductionReplayProfile } from "./production-profile.js";
+import type {
+  ProductionHostProfile,
+  ProductionReplayProfile,
+} from "./production-profile.js";
 
 export const RUNTIME_FACTS_BEGIN = "COMIS_RUNTIME_ATTESTATION_V1_BEGIN";
 export const RUNTIME_FACTS_END = "COMIS_RUNTIME_ATTESTATION_V1_END";
@@ -31,7 +35,9 @@ const FACT_FIELDS = [
   "timezone",
   "tzdataSha256",
   "launcherKind",
-  "launcherSha256",
+  "applicationLauncherSha256",
+  "confinementKind",
+  "confinementSha256",
   "browserStatus",
   "browserSha256",
   "mediaStatus",
@@ -45,6 +51,7 @@ type RuntimeIdentityField = Exclude<RuntimeFactField, "packageRoot">;
 export type RuntimeCapabilityRequirement = "required" | "declared_unsupported";
 export type RuntimeCapabilityStatus = "available" | "unavailable";
 export type RuntimeLauncherKind = "systemd" | "unsupported";
+export type RuntimeConfinementKind = "source" | "target_quarantine";
 
 export interface RuntimeParityRequirements {
   readonly launcher: RuntimeCapabilityRequirement;
@@ -99,7 +106,11 @@ export interface RuntimeArtifactAttestation {
   readonly timezone: string;
   readonly tzdataSha256: string;
   readonly launcherKind: RuntimeLauncherKind;
-  readonly launcherSha256: string;
+  /** Systemd application-launch semantics with target-only replay settings removed. */
+  readonly applicationLauncherSha256: string;
+  /** Orthogonal role attestation: production source or canonical confined replay target. */
+  readonly confinementKind: RuntimeConfinementKind;
+  readonly confinementSha256: string;
   readonly browserStatus: RuntimeCapabilityStatus;
   readonly browserSha256: string;
   readonly mediaStatus: RuntimeCapabilityStatus;
@@ -201,7 +212,11 @@ function isSafeFactToken(value: string, maximumLength = 256): boolean {
 function validateDigestIdentity(
   status: RuntimeCapabilityStatus | RuntimeLauncherKind,
   digest: string,
-  field: "launcherSha256" | "browserSha256" | "mediaSha256" | "nativeToolsSha256",
+  field:
+    | "applicationLauncherSha256"
+    | "browserSha256"
+    | "mediaSha256"
+    | "nativeToolsSha256",
   availableValue: "available" | "systemd",
 ): Result<string, ProductionRuntimeError> {
   if (status === availableValue && SHA256_RE.test(digest)) return ok(digest);
@@ -261,7 +276,9 @@ export function parseRuntimeArtifactFacts(
   const timezone = parsed.get("timezone") as string;
   const tzdataSha256 = parsed.get("tzdataSha256") as string;
   const launcherKind = parsed.get("launcherKind") as RuntimeLauncherKind;
-  const launcherSha256 = parsed.get("launcherSha256") as string;
+  const applicationLauncherSha256 = parsed.get("applicationLauncherSha256") as string;
+  const confinementKind = parsed.get("confinementKind") as RuntimeConfinementKind;
+  const confinementSha256 = parsed.get("confinementSha256") as string;
   const browserStatus = parsed.get("browserStatus") as RuntimeCapabilityStatus;
   const browserSha256 = parsed.get("browserSha256") as string;
   const mediaStatus = parsed.get("mediaStatus") as RuntimeCapabilityStatus;
@@ -313,11 +330,20 @@ export function parseRuntimeArtifactFacts(
   }
   const launcherIdentity = validateDigestIdentity(
     launcherKind,
-    launcherSha256,
-    "launcherSha256",
+    applicationLauncherSha256,
+    "applicationLauncherSha256",
     "systemd",
   );
   if (!launcherIdentity.ok) return launcherIdentity;
+  if (confinementKind !== "source" && confinementKind !== "target_quarantine") {
+    return malformed("confinementKind", "confinementKind is not recognized");
+  }
+  if (
+    (confinementKind === "source" && confinementSha256 !== "none") ||
+    (confinementKind === "target_quarantine" && !SHA256_RE.test(confinementSha256))
+  ) {
+    return malformed("confinementSha256", "confinementSha256 does not match confinementKind");
+  }
   for (const [statusField, digestField, status, digest] of [
     ["browserStatus", "browserSha256", browserStatus, browserSha256],
     ["mediaStatus", "mediaSha256", mediaStatus, mediaSha256],
@@ -347,7 +373,9 @@ export function parseRuntimeArtifactFacts(
     timezone,
     tzdataSha256,
     launcherKind,
-    launcherSha256,
+    applicationLauncherSha256,
+    confinementKind,
+    confinementSha256,
     browserStatus,
     browserSha256,
     mediaStatus,
@@ -446,12 +474,21 @@ export function compareRuntimeArtifacts(
       return runtimeMismatch("launcherKind");
     }
     if (
-      !SHA256_RE.test(source.launcherSha256) ||
-      !SHA256_RE.test(target.launcherSha256) ||
-      source.launcherSha256 !== target.launcherSha256
+      !SHA256_RE.test(source.applicationLauncherSha256) ||
+      !SHA256_RE.test(target.applicationLauncherSha256) ||
+      source.applicationLauncherSha256 !== target.applicationLauncherSha256
     ) {
-      return runtimeMismatch("launcherSha256");
+      return runtimeMismatch("applicationLauncherSha256");
     }
+  }
+  if (source.confinementKind !== "source" || source.confinementSha256 !== "none") {
+    return runtimeMismatch("confinementKind");
+  }
+  if (target.confinementKind !== "target_quarantine") {
+    return runtimeMismatch("confinementKind");
+  }
+  if (target.confinementSha256 !== TARGET_REPLAY_QUARANTINE_SHA256) {
+    return runtimeMismatch("confinementSha256");
   }
   for (const [requirement, statusField, digestField] of [
     [requirements.browser, "browserStatus", "browserSha256"],
@@ -483,11 +520,12 @@ function buildRuntimeProbeInvocation(
     launcher.kind === "systemd"
       ? []
       : ["declared_unsupported", launcher.nodePath, launcher.packageRoot];
+  const confinementKind = stage === "runtime-attest-source" ? "source" : "target_quarantine";
   return {
     label: stage,
     host: host.ssh,
     ...(host.sshPort !== undefined ? { port: host.sshPort } : {}),
-    args: ["sudo", "bash", "-s", "--", host.service, ...launcherArgs],
+    args: ["sudo", "bash", "-s", "--", host.service, confinementKind, ...launcherArgs],
     stdin,
   };
 }
@@ -569,6 +607,60 @@ export async function executeRuntimeArtifactAttestation(
   return report;
 }
 
+const APPLICATION_LAUNCHER_SCANNER = String.raw`
+const { createHash } = require("node:crypto");
+const fs = require("node:fs");
+
+const [nodePath, packageRoot, daemonPath, confinementKind] = process.argv.slice(2);
+const rawFacts = fs.readFileSync(3, "utf8");
+for (const value of [nodePath, packageRoot, daemonPath, confinementKind, rawFacts]) {
+  if (!value || value.includes("\0")) throw new Error("Invalid application launcher fact");
+}
+if (confinementKind !== "source" && confinementKind !== "target_quarantine") {
+  throw new Error("Invalid application launcher confinement kind");
+}
+const daemonRelative = daemonPath.startsWith(packageRoot + "/")
+  ? daemonPath.slice(packageRoot.length)
+  : "";
+if (!/^\/node_modules\/@comis\/daemon\/dist\/[A-Za-z0-9._-]+\.js$/.test(daemonRelative)) {
+  throw new Error("Invalid Comis daemon entrypoint");
+}
+
+function stripReplayEnvironment(line) {
+  const environmentPrefix = "Environment" + "=";
+  if (confinementKind !== "target_quarantine" || !line.startsWith(environmentPrefix)) {
+    return line;
+  }
+  const retained = line
+    .slice(environmentPrefix.length)
+    .split(" ")
+    .filter((token) => {
+      const unquoted = token.replace(/^"|"$/g, "");
+      return unquoted !== "COMIS_REPLAY_TARGET=1" &&
+        unquoted !== "COMIS_REPLAY_RUNTIME_DIR=/run/comis-replay";
+    });
+  return environmentPrefix + retained.join(" ");
+}
+
+const normalizedFacts = rawFacts
+  .split("\n")
+  .map(stripReplayEnvironment)
+  .join("\n")
+  .split(nodePath)
+  .join("<NODE_EXECUTABLE>")
+  .split(packageRoot)
+  .join("<PACKAGE_ROOT>");
+const nodeExecutable = fs.realpathSync(nodePath);
+const nodeSha256 = createHash("sha256").update(fs.readFileSync(nodeExecutable)).digest("hex");
+const material = [
+  "comis-application-launcher",
+  nodeSha256,
+  daemonRelative,
+  normalizedFacts,
+].join("\0");
+process.stdout.write(createHash("sha256").update(material, "utf8").digest("hex"));
+`;
+
 const NODE_SCANNER = String.raw`
 const { createHash } = require("node:crypto");
 const fs = require("node:fs");
@@ -588,7 +680,9 @@ const semanticFieldNames = [
   "timezone",
   "tzdataSha256",
   "launcherKind",
-  "launcherSha256",
+  "applicationLauncherSha256",
+  "confinementKind",
+  "confinementSha256",
   "browserStatus",
   "browserSha256",
   "mediaStatus",
@@ -691,7 +785,9 @@ function updateUint64(value) {
     "timezone=" + semanticFacts.get("timezone"),
     "tzdataSha256=" + semanticFacts.get("tzdataSha256"),
     "launcherKind=" + semanticFacts.get("launcherKind"),
-    "launcherSha256=" + semanticFacts.get("launcherSha256"),
+    "applicationLauncherSha256=" + semanticFacts.get("applicationLauncherSha256"),
+    "confinementKind=" + semanticFacts.get("confinementKind"),
+    "confinementSha256=" + semanticFacts.get("confinementSha256"),
     "browserStatus=" + semanticFacts.get("browserStatus"),
     "browserSha256=" + semanticFacts.get("browserSha256"),
     "mediaStatus=" + semanticFacts.get("mediaStatus"),
@@ -711,12 +807,13 @@ function updateUint64(value) {
 /**
  * Build the read-only program sent to a host over SSH.
  *
- * The service name is argv[1]. By default its systemd ExecStart is the authority
- * for the Node executable and installed package root. A caller that explicitly
+ * The service name is argv[1] and its source/target confinement role is argv[2].
+ * By default systemd ExecStart is the authority for the Node executable and
+ * installed package root. A caller that explicitly
  * declares the launcher unsupported must supply both absolute paths. The
  * program emits a bounded, content-free attestation envelope only after hashing
- * the package tree, effective launcher semantics, host runtime, and capability
- * identities.
+ * the package tree, application-launch semantics, host runtime, capabilities,
+ * and the target-only canonical confinement identity.
  */
 export function buildRuntimeArtifactProbeScript(): string {
   return [
@@ -724,9 +821,12 @@ export function buildRuntimeArtifactProbeScript(): string {
     "LC_ALL=C",
     "export LC_ALL",
     'service="${1:?service name is required}"',
-    'launcher_declaration="${2:-systemd}"',
+    'confinement_declaration="${2:?confinement declaration is required}"',
+    'launcher_declaration="${3:-systemd}"',
     "launcher_kind=unsupported",
-    "launcher_sha=none",
+    "application_launcher_sha=none",
+    "confinement_kind=source",
+    "confinement_sha=none",
     "node_path=",
     "package_root=",
     'case "$launcher_declaration" in',
@@ -737,14 +837,18 @@ export function buildRuntimeArtifactProbeScript(): string {
     '    daemon_path="$(printf "%s\\n" "$exec_start" | grep -oE "/[^ ;{}]+/node_modules/@comis/daemon/dist/[A-Za-z0-9._-]+\\.js" | tail -1)"',
     '    [ -n "$daemon_path" ] || { printf "%s\\n" "Comis daemon path is unavailable" >&2; exit 66; }',
     '    package_root="${daemon_path%%/node_modules/@comis/daemon/dist/*}"',
-    '    launcher_facts="$(systemctl show "$service" --no-pager --property=FragmentPath,DropInPaths,ExecStart,ExecStartPre,ExecStartPost,ExecCondition,User,Group,WorkingDirectory,RootDirectory,UMask,Environment,EnvironmentFiles,PassEnvironment,UnsetEnvironment,RuntimeDirectory,RestrictAddressFamilies,IPAddressDeny,NoNewPrivileges,ProtectSystem,ProtectHome,PrivateTmp,PrivateDevices,PrivateUsers,ProtectKernelTunables,ProtectControlGroups,ReadOnlyPaths,ReadWritePaths 2>/dev/null)"',
-    '    [ -n "$launcher_facts" ] || { printf "%s\\n" "Comis launcher facts are unavailable" >&2; exit 68; }',
-    '    launcher_sha="$(printf "%s" "$launcher_facts" | sha256sum | awk \'{print $1}\')"',
+    '    application_launcher_facts="$(systemctl show "$service" --no-pager --property=ExecStart,ExecStartPre,ExecStartPost,ExecCondition,User,Group,WorkingDirectory,RootDirectory,Environment,EnvironmentFiles,PassEnvironment,UnsetEnvironment,Type,NotifyAccess,Restart,RestartUSec,TimeoutStartUSec,TimeoutStopUSec,KillMode,KillSignal,SuccessExitStatus 2>/dev/null)"',
+    '    [ -n "$application_launcher_facts" ] || { printf "%s\\n" "Comis application launcher facts are unavailable" >&2; exit 68; }',
+    '    application_launcher_sha="$("$node_path" - "$node_path" "$package_root" "$daemon_path" "$confinement_declaration" 3<<<"$application_launcher_facts" <<\'COMIS_APPLICATION_LAUNCHER_NODE\'',
+    APPLICATION_LAUNCHER_SCANNER.trimStart(),
+    "COMIS_APPLICATION_LAUNCHER_NODE",
+    ')"',
+    '    case "$application_launcher_sha" in ""|*[!a-f0-9]*) printf "%s\\n" "Comis application launcher identity is unavailable" >&2; exit 68 ;; esac',
     "    launcher_kind=systemd",
     "    ;;",
     "  declared_unsupported)",
-    '    node_path="${3:-}"',
-    '    package_root="${4:-}"',
+    '    node_path="${4:-}"',
+    '    package_root="${5:-}"',
     '    case "$node_path" in /*) ;; *) printf "%s\\n" "Explicit Node path must be absolute" >&2; exit 65 ;; esac',
     '    case "$package_root" in /*) ;; *) printf "%s\\n" "Explicit package root must be absolute" >&2; exit 67 ;; esac',
     "    ;;",
@@ -753,6 +857,46 @@ export function buildRuntimeArtifactProbeScript(): string {
     '[ -n "$node_path" ] && [ -x "$node_path" ] || { printf "%s\\n" "Comis Node executable is unavailable" >&2; exit 65; }',
     'package_root="$(readlink -f "$package_root")"',
     '[ -d "$package_root" ] && [ -r "$package_root/package.json" ] || { printf "%s\\n" "Comis package root is unreadable" >&2; exit 67; }',
+    'case "$service" in *.service) unit="$service" ;; *) unit="$service.service" ;; esac',
+    'case "$confinement_declaration" in',
+    "  source)",
+    "    confinement_kind=source",
+    "    confinement_sha=none",
+    "    ;;",
+    "  target_quarantine)",
+    '    [ "$launcher_kind" = systemd ] || { printf "%s\\n" "Replay confinement requires a systemd launcher" >&2; exit 70; }',
+    '    quarantine="/etc/systemd/system/$unit.d/90-comis-replay-quarantine.conf"',
+    '    [ -f "$quarantine" ] && [ ! -L "$quarantine" ] || { printf "%s\\n" "Replay quarantine is unavailable" >&2; exit 70; }',
+    '    [ "$(stat -c \'%u:%g:%a\' "$quarantine" 2>/dev/null || true)" = 0:0:644 ] || { printf "%s\\n" "Replay quarantine ownership is invalid" >&2; exit 70; }',
+    '    confinement_sha="$(sha256sum "$quarantine" 2>/dev/null | awk \'{print $1}\')"',
+    `    [ "$confinement_sha" = ${TARGET_REPLAY_QUARANTINE_SHA256} ] || { printf "%s\\n" "Replay quarantine policy identity is invalid" >&2; exit 70; }`,
+    '    systemctl is-active --quiet "$unit" 2>/dev/null && { printf "%s\\n" "Replay target service is active" >&2; exit 70; }',
+    '    systemctl is-enabled --quiet "$unit" 2>/dev/null && { printf "%s\\n" "Replay target service is enabled" >&2; exit 70; }',
+    '    drop_in_paths="$(systemctl show "$unit" --property=DropInPaths --value 2>/dev/null)"',
+    "    quarantine_seen=0",
+    "    last_drop_in=",
+    '    for drop_in in $drop_in_paths; do last_drop_in="$drop_in"; if [ "$drop_in" = "$quarantine" ]; then quarantine_seen=1; fi; done',
+    '    [ "$quarantine_seen" -eq 1 ] && [ "$last_drop_in" = "$quarantine" ] || { printf "%s\\n" "Replay quarantine is not the final effective drop-in" >&2; exit 70; }',
+    '    require_effective_property() { property="$1"; expected="$2"; actual="$(systemctl show "$unit" --property="$property" --value 2>/dev/null)"; [ "$actual" = "$expected" ] || { printf "%s\\n" "Replay quarantine effective property is invalid" >&2; exit 70; }; }',
+    '    require_effective_property PrivateNetwork yes',
+    '    require_effective_property PrivateDevices yes',
+    '    require_effective_property PrivateTmp yes',
+    '    require_effective_property ProtectSystem strict',
+    '    require_effective_property ProtectHome read-only',
+    '    require_effective_property NoNewPrivileges yes',
+    '    require_effective_property ProtectKernelTunables yes',
+    '    require_effective_property ProtectControlGroups yes',
+    '    require_effective_property RestrictAddressFamilies AF_UNIX',
+    '    require_effective_property SocketBindDeny any',
+    '    require_effective_property CapabilityBoundingSet ""',
+    '    require_effective_property AmbientCapabilities ""',
+    '    require_effective_property RestrictNamespaces yes',
+    '    require_effective_property ReadWritePaths /run/comis-replay',
+    '    require_effective_property UMask 0077',
+    "    confinement_kind=target_quarantine",
+    "    ;;",
+    "  *) printf '%s\\n' 'Runtime confinement declaration is not recognized' >&2; exit 70 ;;",
+    "esac",
     "os_id=unknown",
     "os_version=unknown",
     "if [ -r /etc/os-release ]; then",
@@ -840,7 +984,7 @@ export function buildRuntimeArtifactProbeScript(): string {
     "done",
     "native_tools_sha=none",
     'if [ "$native_tools_status" = available ]; then native_tools_sha="$(printf "native-tools-v1\\n%s" "$native_tools_material" | sha256sum | awk \'{print $1}\')"; fi',
-    '"$node_path" - "$package_root" "$os_id" "$os_version" "$architecture" "$kernel_release" "$libc_kind" "$libc_version" "$timezone" "$tzdata_sha" "$launcher_kind" "$launcher_sha" "$browser_status" "$browser_sha" "$media_status" "$media_sha" "$native_tools_status" "$native_tools_sha" <<\'COMIS_RUNTIME_NODE\'',
+    '"$node_path" - "$package_root" "$os_id" "$os_version" "$architecture" "$kernel_release" "$libc_kind" "$libc_version" "$timezone" "$tzdata_sha" "$launcher_kind" "$application_launcher_sha" "$confinement_kind" "$confinement_sha" "$browser_status" "$browser_sha" "$media_status" "$media_sha" "$native_tools_status" "$native_tools_sha" <<\'COMIS_RUNTIME_NODE\'',
     NODE_SCANNER.trimStart(),
     "COMIS_RUNTIME_NODE",
     "",

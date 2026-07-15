@@ -7,9 +7,10 @@ import type {
   BinarySshEndpoint,
   ProductionBinarySshBridge,
 } from "./production-binary-ssh.js";
-import type {
-  ProductionRemoteExecutor,
-  ProductionRemoteInvocation,
+import {
+  TARGET_REPLAY_QUARANTINE_SHA256,
+  type ProductionRemoteExecutor,
+  type ProductionRemoteInvocation,
 } from "./production-bootstrap.js";
 import type { ProductionReplayProfile } from "./production-profile.js";
 import {
@@ -213,6 +214,8 @@ if systemctl is-active --quiet "$unit"; then exit 73; fi
 if systemctl is-enabled --quiet "$unit"; then exit 74; fi
 quarantine="/etc/systemd/system/$unit.d/90-comis-replay-quarantine.conf"
 if [ ! -f "$quarantine" ] || [ -L "$quarantine" ] || \
+   [ "$(stat -c '%u:%g:%a' "$quarantine" 2>/dev/null || true)" != 0:0:644 ] || \
+   [ "$(sha256sum "$quarantine" 2>/dev/null | awk '{print $1}')" != ${TARGET_REPLAY_QUARANTINE_SHA256} ] || \
    ! grep -Fqx 'IPAddressDeny=any' "$quarantine" || \
    ! grep -Fqx 'PrivateNetwork=yes' "$quarantine" || \
    ! grep -Fqx 'ProtectSystem=strict' "$quarantine" || \
@@ -275,7 +278,9 @@ if [ "$(cat /etc/comis/environment-role 2>/dev/null || true)" != test ]; then ex
 case "$service" in *.service) unit="$service" ;; *) unit="$service.service" ;; esac
 if systemctl is-active --quiet "$unit" || systemctl is-enabled --quiet "$unit"; then exit 73; fi
 quarantine="/etc/systemd/system/$unit.d/90-comis-replay-quarantine.conf"
-if [ ! -f "$quarantine" ] || \
+ if [ ! -f "$quarantine" ] || [ -L "$quarantine" ] || \
+   [ "$(stat -c '%u:%g:%a' "$quarantine" 2>/dev/null || true)" != 0:0:644 ] || \
+   [ "$(sha256sum "$quarantine" 2>/dev/null | awk '{print $1}')" != ${TARGET_REPLAY_QUARANTINE_SHA256} ] || \
    ! grep -Fqx 'IPAddressDeny=any' "$quarantine" || \
    ! grep -Fqx 'PrivateNetwork=yes' "$quarantine" || \
    ! grep -Fqx 'ProtectSystem=strict' "$quarantine" || \

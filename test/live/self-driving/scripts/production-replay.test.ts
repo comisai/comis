@@ -5,6 +5,7 @@ import {
   runProductionReplayCli,
   type ProductionReplayCliDeps,
 } from "./production-replay.js";
+import { TARGET_REPLAY_QUARANTINE_SHA256 } from "./production-bootstrap.js";
 import {
   EVIDENCE_FACTS_BEGIN,
   EVIDENCE_FACTS_END,
@@ -16,7 +17,8 @@ import {
   MESSAGES_ATTESTATION_END,
 } from "./production-messages.js";
 import {
-  deriveProductionSnapshotTreeIdentity,
+  deriveProductionSnapshotDataTreeIdentity,
+  deriveProductionSnapshotEnvironmentEvidenceIdentity,
   type ProductionSnapshotManifest,
 } from "./production-snapshot.js";
 
@@ -38,7 +40,10 @@ TARGET_MACHINE_ID_SHA256=${"b".repeat(64)}
 GWTOKEN=should-never-appear
 `;
 
-function runtimeFacts(digestSha256 = "c".repeat(64)): string {
+function runtimeFacts(
+  digestSha256 = "c".repeat(64),
+  targetQuarantine = false,
+): string {
   return [
     RUNTIME_FACTS_BEGIN,
     `digestSha256=${digestSha256}`,
@@ -57,7 +62,9 @@ function runtimeFacts(digestSha256 = "c".repeat(64)): string {
     "timezone=Asia/Jerusalem",
     `tzdataSha256=${"d".repeat(64)}`,
     "launcherKind=systemd",
-    `launcherSha256=${"e".repeat(64)}`,
+    `applicationLauncherSha256=${"e".repeat(64)}`,
+    `confinementKind=${targetQuarantine ? "target_quarantine" : "source"}`,
+    `confinementSha256=${targetQuarantine ? TARGET_REPLAY_QUARANTINE_SHA256 : "none"}`,
     "browserStatus=available",
     `browserSha256=${"f".repeat(64)}`,
     "mediaStatus=available",
@@ -111,7 +118,8 @@ function snapshotManifest(): string {
         { kind: "capability", reason: "source_tool_unavailable" },
       ],
     },
-    treeIdentitySha256: "0".repeat(64),
+    dataTreeIdentitySha256: "0".repeat(64),
+    sourceEnvironmentEvidenceIdentitySha256: "0".repeat(64),
     entries: [
       { path: "data", type: "directory", mode: "0700", size: 0, ...metadata },
       {
@@ -140,7 +148,9 @@ function snapshotManifest(): string {
   };
   return JSON.stringify({
     ...value,
-    treeIdentitySha256: deriveProductionSnapshotTreeIdentity(value),
+    dataTreeIdentitySha256: deriveProductionSnapshotDataTreeIdentity(value),
+    sourceEnvironmentEvidenceIdentitySha256:
+      deriveProductionSnapshotEnvironmentEvidenceIdentity(value),
   });
 }
 
@@ -228,7 +238,13 @@ describe("production replay command controller", () => {
       executor: {
         run: async (invocation) => {
           invocations.push(invocation);
-          return ok({ stdout: runtimeFacts(), exitCode: 0 });
+          return ok({
+            stdout: runtimeFacts(
+              "c".repeat(64),
+              invocation.label === "runtime-attest-target",
+            ),
+            exitCode: 0,
+          });
         },
       },
     });
@@ -240,13 +256,13 @@ describe("production replay command controller", () => {
         label: "runtime-attest-source",
         host: "comis-harel",
         port: 2222,
-        args: ["sudo", "bash", "-s", "--", "comis"],
+        args: ["sudo", "bash", "-s", "--", "comis", "source"],
       },
       {
         label: "runtime-attest-target",
         host: "comis-test2",
         port: 2202,
-        args: ["sudo", "bash", "-s", "--", "comis"],
+        args: ["sudo", "bash", "-s", "--", "comis", "target_quarantine"],
       },
     ]);
     expect(invocations[0]?.stdin).toBe(invocations[1]?.stdin);
@@ -255,7 +271,7 @@ describe("production replay command controller", () => {
       ok: true,
       report: {
         source: parseRuntimeReportFacts(),
-        target: parseRuntimeReportFacts(),
+        target: parseRuntimeReportFacts(true),
       },
     });
     expect(output.join("\n")).not.toContain("should-never-appear");
@@ -273,6 +289,7 @@ describe("production replay command controller", () => {
           ok({
             stdout: runtimeFacts(
               invocation.label === "runtime-attest-source" ? "c".repeat(64) : "d".repeat(64),
+              invocation.label === "runtime-attest-target",
             ),
             exitCode: 0,
           }),
@@ -313,6 +330,7 @@ describe("production replay command controller", () => {
               return ok({
                 stdout: runtimeFacts(
                   targetProbeCount === 1 ? "d".repeat(64) : "c".repeat(64),
+                  true,
                 ),
                 exitCode: 0,
               });
@@ -387,10 +405,15 @@ describe("production replay command controller", () => {
         bytesTransferred: 500_000,
         entries: 6,
         exclusions: 0,
-        treeIdentitySha256: deriveProductionSnapshotTreeIdentity(
+        dataTreeIdentitySha256: deriveProductionSnapshotDataTreeIdentity(
           JSON.parse(snapshotManifest()) as ProductionSnapshotManifest,
         ),
-        fileContentBytes: 4296,
+        sourceEnvironmentEvidenceIdentitySha256:
+          deriveProductionSnapshotEnvironmentEvidenceIdentity(
+            JSON.parse(snapshotManifest()) as ProductionSnapshotManifest,
+          ),
+        environmentConfiguration: "source_plus_replay_overlay",
+        dataFileContentBytes: 4096,
         metadataIdentity: {
           fidelity: "gapped",
           acl: "unavailable",
@@ -539,7 +562,10 @@ describe("production replay command controller", () => {
             labels.push(invocation.label);
             return ok({
               stdout: invocation.label.startsWith("runtime-attest-")
-                ? runtimeFacts()
+                ? runtimeFacts(
+                    "c".repeat(64),
+                    invocation.label === "runtime-attest-target",
+                  )
                 : evidenceFacts(),
               exitCode: 0,
             });
@@ -577,7 +603,7 @@ describe("production replay command controller", () => {
             stdout:
               invocation.label === "runtime-attest-source"
                 ? "unexpected payload=secret-body\n"
-                : runtimeFacts(),
+                : runtimeFacts("c".repeat(64), true),
             exitCode: 0,
           }),
       },
@@ -606,7 +632,7 @@ describe("production replay command controller", () => {
         run: async (invocation) =>
           invocation.label === "runtime-attest-source"
             ? err({ kind: "remote", message: "stderr contained sensitive-package-content" })
-            : ok({ stdout: runtimeFacts(), exitCode: 0 }),
+            : ok({ stdout: runtimeFacts("c".repeat(64), true), exitCode: 0 }),
       },
     });
 
@@ -623,7 +649,7 @@ describe("production replay command controller", () => {
   });
 });
 
-function parseRuntimeReportFacts(): Record<string, unknown> {
+function parseRuntimeReportFacts(targetQuarantine = false): Record<string, unknown> {
   return {
     digestSha256: "c".repeat(64),
     entryCount: 120,
@@ -641,7 +667,9 @@ function parseRuntimeReportFacts(): Record<string, unknown> {
     timezone: "Asia/Jerusalem",
     tzdataSha256: "d".repeat(64),
     launcherKind: "systemd",
-    launcherSha256: "e".repeat(64),
+    applicationLauncherSha256: "e".repeat(64),
+    confinementKind: targetQuarantine ? "target_quarantine" : "source",
+    confinementSha256: targetQuarantine ? TARGET_REPLAY_QUARANTINE_SHA256 : "none",
     browserStatus: "available",
     browserSha256: "f".repeat(64),
     mediaStatus: "available",

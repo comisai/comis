@@ -2,6 +2,8 @@ import { err, ok, type Result } from "@comis/shared";
 import { describe, expect, it } from "vitest";
 
 import {
+  TARGET_REPLAY_QUARANTINE_CONTENT,
+  TARGET_REPLAY_QUARANTINE_SHA256,
   buildTargetQuarantineScript,
   inspectProductionReplayHosts,
   prepareProductionReplayTarget,
@@ -320,6 +322,8 @@ describe("production replay target bootstrap", () => {
   it("installs a root-owned systemd egress deny policy and leaves the service stopped", () => {
     const script = buildTargetQuarantineScript();
 
+    expect(script).toContain(TARGET_REPLAY_QUARANTINE_CONTENT);
+    expect(TARGET_REPLAY_QUARANTINE_SHA256).toMatch(/^[a-f0-9]{64}$/u);
     expect(script).toContain("IPAddressDeny=any");
     expect(script).toContain("RestrictAddressFamilies=AF_UNIX");
     expect(script).toContain("PrivateNetwork=yes");
@@ -332,7 +336,8 @@ describe("production replay target bootstrap", () => {
     expect(script).toContain("ProtectProc=invisible");
     expect(script).toContain("SocketBindDeny=any");
     expect(script).toContain("InaccessiblePaths=-/run/docker.sock");
-    expect(script).toContain("ReadWritePaths=/run/comis-replay");
+    expect(script).toContain("ReadWritePaths=\nReadWritePaths=/run/comis-replay");
+    expect(TARGET_REPLAY_QUARANTINE_CONTENT).not.toContain("ReadWritePaths=/home/");
     expect(script).toContain("RuntimeDirectory=comis-replay");
     expect(script).toContain("RuntimeDirectoryMode=0700");
     expect(script).toContain("Environment=COMIS_REPLAY_RUNTIME_DIR=/run/comis-replay");

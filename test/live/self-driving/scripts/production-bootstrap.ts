@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+import { createHash } from "node:crypto";
+
 import { err, ok, type Result } from "@comis/shared";
 
 import {
@@ -72,6 +74,50 @@ export type ProductionBootstrapError =
   | { readonly kind: "target_not_ready"; readonly message: string };
 
 const MIN_TARGET_HEADROOM_BYTES = 5 * 1024 * 1024 * 1024;
+
+/** Canonical target-only systemd confinement. Runtime parity attests this independently. */
+export const TARGET_REPLAY_QUARANTINE_DIRECTIVES = [
+  "Environment=COMIS_REPLAY_TARGET=1",
+  "Environment=COMIS_REPLAY_RUNTIME_DIR=/run/comis-replay",
+  "RuntimeDirectory=comis-replay",
+  "RuntimeDirectoryMode=0700",
+  "RestrictAddressFamilies=AF_UNIX",
+  "IPAddressDeny=any",
+  "PrivateNetwork=yes",
+  "PrivateIPC=yes",
+  "PrivateDevices=yes",
+  "PrivateTmp=yes",
+  "PrivateMounts=yes",
+  "NoNewPrivileges=yes",
+  "CapabilityBoundingSet=",
+  "AmbientCapabilities=",
+  "ProtectSystem=strict",
+  "ProtectHome=read-only",
+  "ProtectProc=invisible",
+  "ProcSubset=pid",
+  "ProtectControlGroups=yes",
+  "ProtectKernelTunables=yes",
+  "ProtectKernelModules=yes",
+  "ProtectKernelLogs=yes",
+  "ProtectClock=yes",
+  "ProtectHostname=yes",
+  "LockPersonality=yes",
+  "RestrictNamespaces=yes",
+  "RestrictSUIDSGID=yes",
+  "RemoveIPC=yes",
+  "SocketBindDeny=any",
+  "SystemCallArchitectures=native",
+  "UMask=0077",
+  "ReadWritePaths=",
+  "ReadWritePaths=/run/comis-replay",
+  "InaccessiblePaths=-/run/docker.sock -/run/containerd/containerd.sock -/run/podman/podman.sock -/run/dbus/system_bus_socket -/run/systemd/private -/run/user -/var/run/postgresql -/var/run/mysqld",
+] as const;
+
+export const TARGET_REPLAY_QUARANTINE_CONTENT = `[Service]\n${TARGET_REPLAY_QUARANTINE_DIRECTIVES.join("\n")}\n`;
+
+export const TARGET_REPLAY_QUARANTINE_SHA256 = createHash("sha256")
+  .update(TARGET_REPLAY_QUARANTINE_CONTENT, "utf8")
+  .digest("hex");
 
 async function runChecked(
   executor: ProductionRemoteExecutor,
@@ -202,41 +248,7 @@ fi
 install -d -m 0755 "$dropin_dir"
 umask 022
 cat > "$journal/quarantine.new" <<'EOF'
-[Service]
-Environment=COMIS_REPLAY_TARGET=1
-Environment=COMIS_REPLAY_RUNTIME_DIR=/run/comis-replay
-RuntimeDirectory=comis-replay
-RuntimeDirectoryMode=0700
-RestrictAddressFamilies=AF_UNIX
-IPAddressDeny=any
-PrivateNetwork=yes
-PrivateIPC=yes
-PrivateDevices=yes
-PrivateTmp=yes
-PrivateMounts=yes
-NoNewPrivileges=yes
-CapabilityBoundingSet=
-AmbientCapabilities=
-ProtectSystem=strict
-ProtectHome=read-only
-ProtectProc=invisible
-ProcSubset=pid
-ProtectControlGroups=yes
-ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectKernelLogs=yes
-ProtectClock=yes
-ProtectHostname=yes
-LockPersonality=yes
-RestrictNamespaces=yes
-RestrictSUIDSGID=yes
-RemoveIPC=yes
-SocketBindDeny=any
-SystemCallArchitectures=native
-UMask=0077
-ReadWritePaths=/run/comis-replay
-InaccessiblePaths=-/run/docker.sock -/run/containerd/containerd.sock -/run/podman/podman.sock -/run/dbus/system_bus_socket -/run/systemd/private -/run/user -/var/run/postgresql -/var/run/mysqld
-EOF
+${TARGET_REPLAY_QUARANTINE_CONTENT}EOF
 install -o root -g root -m 0644 "$journal/quarantine.new" "$dropin"
 systemctl daemon-reload
 systemctl disable --now "$unit" 2>/dev/null || true

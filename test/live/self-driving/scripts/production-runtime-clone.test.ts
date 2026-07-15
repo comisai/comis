@@ -5,9 +5,10 @@ import { describe, expect, it } from "vitest";
 import { err, ok } from "@comis/shared";
 
 import type { ProductionBinarySshBridge } from "./production-binary-ssh.js";
-import type {
-  ProductionRemoteExecutor,
-  ProductionRemoteInvocation,
+import {
+  TARGET_REPLAY_QUARANTINE_SHA256,
+  type ProductionRemoteExecutor,
+  type ProductionRemoteInvocation,
 } from "./production-bootstrap.js";
 import {
   buildProductionRuntimeClonePlan,
@@ -54,7 +55,9 @@ const source: RuntimeArtifactAttestation = {
   timezone: "Asia/Jerusalem",
   tzdataSha256: "1".repeat(64),
   launcherKind: "systemd",
-  launcherSha256: "2".repeat(64),
+  applicationLauncherSha256: "2".repeat(64),
+  confinementKind: "source",
+  confinementSha256: "none",
   browserStatus: "available",
   browserSha256: "3".repeat(64),
   mediaStatus: "available",
@@ -72,7 +75,8 @@ const target: RuntimeArtifactAttestation = {
   kernelRelease: "6.8.0-72-generic",
   nodeAbi: "128",
   timezone: "Etc/UTC",
-  launcherSha256: "6".repeat(64),
+  confinementKind: "target_quarantine",
+  confinementSha256: TARGET_REPLAY_QUARANTINE_SHA256,
 };
 
 describe("production runtime clone transaction", () => {
@@ -128,6 +132,9 @@ describe("production runtime clone transaction", () => {
     expect(plan.targetPrepare.stdin).toContain("IPAddressDeny=any");
     expect(plan.targetPrepare.stdin).toContain("PrivateNetwork=yes");
     expect(plan.targetPrepare.stdin).toContain("ProtectSystem=strict");
+    expect(plan.targetPrepare.stdin).toContain(TARGET_REPLAY_QUARANTINE_SHA256);
+    expect(plan.targetPrepare.stdin).toContain("stat -c '%u:%g:%a'");
+    expect(plan.targetPrepare.stdin).toContain('[ -L "$quarantine" ]');
     expect(plan.targetPrepare.stdin).toContain("systemctl is-active");
     expect(plan.targetPrepare.stdin).toContain("systemctl is-enabled");
     expect(plan.targetPrepare.stdin).toContain("trap cleanup_target_prepare EXIT HUP INT TERM");
@@ -400,7 +407,9 @@ function runtimeFacts(facts: RuntimeArtifactAttestation): string {
     `timezone=${facts.timezone}`,
     `tzdataSha256=${facts.tzdataSha256}`,
     `launcherKind=${facts.launcherKind}`,
-    `launcherSha256=${facts.launcherSha256}`,
+    `applicationLauncherSha256=${facts.applicationLauncherSha256}`,
+    `confinementKind=${facts.confinementKind}`,
+    `confinementSha256=${facts.confinementSha256}`,
     `browserStatus=${facts.browserStatus}`,
     `browserSha256=${facts.browserSha256}`,
     `mediaStatus=${facts.mediaStatus}`,
