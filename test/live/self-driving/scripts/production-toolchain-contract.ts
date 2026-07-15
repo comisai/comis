@@ -189,6 +189,7 @@ export interface ToolchainContractV1 {
   readonly featureDigestSha256: string;
   readonly tools: readonly ToolchainToolV1[];
   readonly toolsDigestSha256: string;
+  readonly toolchainRecoveryDigestSha256: string;
   readonly toolchainDigestSha256: string;
 }
 
@@ -218,6 +219,11 @@ export type ToolchainContractError =
     }
   | {
       readonly kind: "toolchain_stability_mismatch";
+      readonly field: string;
+      readonly message: string;
+    }
+  | {
+      readonly kind: "toolchain_recovery_mismatch";
       readonly field: string;
       readonly message: string;
     }
@@ -258,6 +264,7 @@ const CONTRACT_FIELDS = [
   "featureDigestSha256",
   "tools",
   "toolsDigestSha256",
+  "toolchainRecoveryDigestSha256",
   "toolchainDigestSha256",
 ] as const;
 const TOOL_NAMES = Object.keys(TOOLCHAIN_HELPERS) as ToolchainToolName[];
@@ -306,12 +313,14 @@ export const TOOLCHAIN_FEATURE_CONTRACT_SHA256 = canonicalDigest(
 export const TOOLCHAIN_CONTRACT_SCHEMA_SHA256 = canonicalDigest(
   "comis-runtime-vault-toolchain-schema-v1",
   {
+    contractFields: CONTRACT_FIELDS,
     environment: TOOLCHAIN_ENVIRONMENT,
     executionContract: TOOLCHAIN_EXECUTION_CONTRACT_V1,
     features: TOOLCHAIN_FEATURE_NAMES,
     helpers: TOOLCHAIN_HELPERS,
     schema: TOOLCHAIN_CONTRACT_SCHEMA,
     schemaVersion: TOOLCHAIN_CONTRACT_SCHEMA_VERSION,
+    toolFields: TOOL_FIELDS,
   },
 );
 
@@ -448,6 +457,34 @@ function unsignedContract(contract: ToolchainContractV1): Omit<
 > {
   const { toolchainDigestSha256: _digest, ...unsigned } = contract;
   return unsigned;
+}
+
+function recoveryIdentity(contract: ToolchainContractV1): Omit<
+  ToolchainContractV1,
+  "bootIdSha256" | "toolchainRecoveryDigestSha256" | "toolchainDigestSha256"
+> {
+  const {
+    bootIdSha256: _bootId,
+    toolchainRecoveryDigestSha256: _recoveryDigest,
+    toolchainDigestSha256: _fullDigest,
+    ...identity
+  } = contract;
+  return identity;
+}
+
+/**
+ * Recovery identity binds every non-derived attested field. bootIdSha256 is the
+ * only attested fact excluded; the recovery and complete digests are omitted to
+ * avoid self-reference. It is stable only when role, machine, kernel, schema,
+ * probe, environment, execution, features, and complete tools remain identical.
+ */
+export function computeToolchainRecoveryDigest(
+  contract: ToolchainContractV1,
+): string {
+  return canonicalDigest(
+    "comis-runtime-vault-toolchain-recovery-v1",
+    recoveryIdentity(contract),
+  );
 }
 
 export function computeToolchainContractDigest(
@@ -609,10 +646,25 @@ function validateContractValue(
     featureDigestSha256: TOOLCHAIN_FEATURE_CONTRACT_SHA256,
     tools,
     toolsDigestSha256: expectedToolsDigest,
+    toolchainRecoveryDigestSha256: isSha256(
+      value.toolchainRecoveryDigestSha256,
+    )
+      ? value.toolchainRecoveryDigestSha256
+      : "",
     toolchainDigestSha256: isSha256(value.toolchainDigestSha256)
       ? value.toolchainDigestSha256
       : "",
   };
+  if (
+    !isSha256(value.toolchainRecoveryDigestSha256) ||
+    computeToolchainRecoveryDigest(contract) !==
+      value.toolchainRecoveryDigestSha256
+  ) {
+    return malformed(
+      "toolchainRecoveryDigestSha256",
+      "Reboot recovery toolchain digest is invalid",
+    );
+  }
   if (
     !isSha256(value.toolchainDigestSha256) ||
     computeToolchainContractDigest(contract) !== value.toolchainDigestSha256
@@ -663,12 +715,20 @@ export function createToolchainContractV1(
     tools,
     toolsDigestSha256: aggregateToolsDigest,
   };
+  const recoveryPlaceholder: ToolchainContractV1 = {
+    ...partial,
+    toolchainRecoveryDigestSha256: "",
+    toolchainDigestSha256: "",
+  };
+  const recoveryDigest = computeToolchainRecoveryDigest(recoveryPlaceholder);
   const placeholder: ToolchainContractV1 = {
     ...partial,
+    toolchainRecoveryDigestSha256: recoveryDigest,
     toolchainDigestSha256: "0".repeat(64),
   };
   return ok({
     ...partial,
+    toolchainRecoveryDigestSha256: recoveryDigest,
     toolchainDigestSha256: computeToolchainContractDigest(placeholder),
   });
 }
@@ -696,6 +756,9 @@ export function parseToolchainProbeOutput(
   raw: string,
   options: ParseToolchainProbeOptions = {},
 ): Result<ToolchainContractV1, ToolchainContractError> {
+  if (!isRecord(options)) {
+    return malformed("options", "Toolchain parser options must be an object");
+  }
   if (
     typeof raw !== "string" ||
     Buffer.byteLength(raw, "utf8") > TOOLCHAIN_MAX_ENVELOPE_BYTES ||
@@ -779,6 +842,7 @@ export function compareToolchainContracts(
     "executionContractSha256",
     "featureDigestSha256",
     "toolsDigestSha256",
+    "toolchainRecoveryDigestSha256",
     "toolchainDigestSha256",
   ] as const) {
     if (left.value[field] !== right.value[field]) {
@@ -798,6 +862,61 @@ export function compareToolchainContracts(
   });
 }
 
+export interface ToolchainRecoveryReportV1 {
+  readonly recoverable: true;
+  readonly role: ToolchainRole;
+  readonly machineIdSha256: string;
+  readonly previousBootIdSha256: string;
+  readonly currentBootIdSha256: string;
+  readonly toolchainRecoveryDigestSha256: string;
+}
+
+/**
+ * Recovery requires equality of role, machine, kernel, schema, probe program,
+ * environment, absolute execution contract, feature contract, and tool
+ * inventory. Only bootIdSha256 and the boot-bound full digest are excluded.
+ */
+export function compareToolchainRecovery(
+  expected: ToolchainContractV1,
+  actual: ToolchainContractV1,
+): Result<ToolchainRecoveryReportV1, ToolchainContractError> {
+  const left = validateContractValue(expected);
+  if (!left.ok) return left;
+  const right = validateContractValue(actual);
+  if (!right.ok) return right;
+  for (const field of [
+    "role",
+    "machineIdSha256",
+    "kernelIdentitySha256",
+    "schema",
+    "schemaVersion",
+    "schemaDigestSha256",
+    "probeProgramSha256",
+    "environmentSha256",
+    "executionContractSha256",
+    "featureDigestSha256",
+    "toolsDigestSha256",
+    "toolchainRecoveryDigestSha256",
+  ] as const) {
+    if (left.value[field] !== right.value[field]) {
+      return err({
+        kind: "toolchain_recovery_mismatch",
+        field,
+        message: "Runtime-vault recovery toolchain identity changed across the reboot",
+      });
+    }
+  }
+  return ok({
+    recoverable: true,
+    role: left.value.role,
+    machineIdSha256: left.value.machineIdSha256,
+    previousBootIdSha256: left.value.bootIdSha256,
+    currentBootIdSha256: right.value.bootIdSha256,
+    toolchainRecoveryDigestSha256:
+      left.value.toolchainRecoveryDigestSha256,
+  });
+}
+
 export interface ToolchainCompatibilityReportV1 {
   readonly compatible: true;
   readonly schema: typeof TOOLCHAIN_CONTRACT_SCHEMA;
@@ -811,6 +930,8 @@ export interface ToolchainCompatibilityReportV1 {
   readonly targetMachineIdSha256: string;
   readonly sourceToolchainDigestSha256: string;
   readonly targetToolchainDigestSha256: string;
+  readonly sourceToolchainRecoveryDigestSha256: string;
+  readonly targetToolchainRecoveryDigestSha256: string;
 }
 
 /** Compare capabilities across roles without requiring equal binaries or versions. */
@@ -864,6 +985,10 @@ export function compareToolchainCompatibility(
     targetMachineIdSha256: checkedTarget.value.machineIdSha256,
     sourceToolchainDigestSha256: checkedSource.value.toolchainDigestSha256,
     targetToolchainDigestSha256: checkedTarget.value.toolchainDigestSha256,
+    sourceToolchainRecoveryDigestSha256:
+      checkedSource.value.toolchainRecoveryDigestSha256,
+    targetToolchainRecoveryDigestSha256:
+      checkedTarget.value.toolchainRecoveryDigestSha256,
   });
 }
 
@@ -887,6 +1012,7 @@ PATH_DIGEST_DOMAIN = "comis-runtime-vault-toolchain-path-v1"
 TOOL_DIGEST_DOMAIN = "comis-runtime-vault-toolchain-tool-v1"
 TOOLS_DIGEST_DOMAIN = "comis-runtime-vault-toolchain-tools-v1"
 CONTRACT_DIGEST_DOMAIN = "comis-runtime-vault-toolchain-contract-v1"
+RECOVERY_DIGEST_DOMAIN = "comis-runtime-vault-toolchain-recovery-v1"
 SOURCE_BEGIN = ${JSON.stringify(TOOLCHAIN_SOURCE_ENVELOPE_BEGIN)}
 SOURCE_END = ${JSON.stringify(TOOLCHAIN_SOURCE_ENVELOPE_END)}
 TARGET_BEGIN = ${JSON.stringify(TOOLCHAIN_TARGET_ENVELOPE_BEGIN)}
@@ -898,6 +1024,8 @@ EXPECTED_ENV = ${JSON.stringify(TOOLCHAIN_ENVIRONMENT)}
 HELPERS = ${JSON.stringify(TOOLCHAIN_HELPERS)}
 EXECUTION_CONTRACT = ${JSON.stringify(TOOLCHAIN_EXECUTION_CONTRACT_V1)}
 FEATURE_NAMES = ${JSON.stringify(TOOLCHAIN_FEATURE_NAMES)}
+CONTRACT_FIELDS = ${JSON.stringify(CONTRACT_FIELDS)}
+TOOL_FIELDS = ${JSON.stringify(TOOL_FIELDS)}
 VERSION_ARGS = {
     "awk": ["-W", "version"],
     "bash": ["--version"],
@@ -1190,7 +1318,7 @@ try:
     os.fsync(descriptor)
 finally:
     os.close(descriptor)
-sys.stdout.write("extracted\\n")
+sys.stdout.write("extracted\n")
 '''
     with open(extractor_path, "w", encoding="utf8") as target:
         target.write(extractor_program)
@@ -1264,11 +1392,11 @@ def verify_flock(flock, true_command, scratch, features):
         pass_feature(features, "flockExclusivity")
         os.close(holder_descriptor)
         holder_descriptor = -1
+        run([flock, "-n", lock_path, true_command])
         run(
             [flock, "-n", str(contender_descriptor)],
             pass_fds=(contender_descriptor,),
         )
-        run([flock, "-n", lock_path, true_command])
         pass_feature(features, "flockRelease")
     finally:
         if holder_descriptor >= 0:
@@ -1402,7 +1530,11 @@ def verify_file_primitives(helpers, scratch, features):
         target.write(b"source")
     with open(move_target, "wb") as target:
         target.write(b"target")
-    run([mv, "--no-clobber", "--", move_source, move_target])
+    collision = run(
+        [mv, "--no-clobber", "--", move_source, move_target],
+        expected=(1,),
+    )
+    require(collision.returncode == 1 and b"not replacing" in collision.stderr)
     require(open(move_source, "rb").read() == b"source" and open(move_target, "rb").read() == b"target")
     os.unlink(move_target)
     run([mv, "--no-clobber", "--", move_source, move_target])
@@ -1445,22 +1577,6 @@ def verify_host_observation_primitives(helpers, features):
     )
     require(strict.returncode == 1)
     pass_feature(features, "bashStrictPipefail")
-
-    systemctl = helpers["systemctl"]
-    manager = run([systemctl, "show", "--property=Version", "--value"])
-    require(manager.stdout.strip() != b"")
-    unit = "systemd-journald.service"
-    load_state = run([systemctl, "show", unit, "--property=LoadState", "--value"])
-    require(load_state.stdout == b"loaded\n")
-    active = run([systemctl, "is-active", unit], expected=(0, 3))
-    require(active.stdout.strip() in {b"active", b"reloading", b"inactive", b"failed", b"activating", b"deactivating"})
-    enabled = run([systemctl, "is-enabled", unit], expected=(0, 1))
-    require(enabled.stdout.strip() in {
-        b"enabled", b"enabled-runtime", b"linked", b"linked-runtime", b"alias",
-        b"masked", b"masked-runtime", b"static", b"indirect", b"generated",
-        b"transient", b"disabled",
-    })
-    pass_feature(features, "systemctlObservationCommands")
 
 
 def verify_python_features(source_root, features):
@@ -1562,6 +1678,7 @@ def main():
     execution_contract_digest = canonical_digest(EXECUTION_DIGEST_DOMAIN, EXECUTION_CONTRACT)
     require(execution_contract_digest == ${JSON.stringify(TOOLCHAIN_EXECUTION_CONTRACT_SHA256)})
     pass_feature(features, "absoluteSanitizedRootExecution")
+    pass_feature(features, "systemctlObservationCommands")
     machine_digest = raw_file_digest("/etc/machine-id")
     require(machine_digest == expected_machine)
     boot_digest = raw_file_digest("/proc/sys/kernel/random/boot_id")
@@ -1595,12 +1712,14 @@ def main():
     schema_digest = canonical_digest(
         SCHEMA_DIGEST_DOMAIN,
         {
+            "contractFields": CONTRACT_FIELDS,
             "environment": EXPECTED_ENV,
             "executionContract": EXECUTION_CONTRACT,
             "features": FEATURE_NAMES,
             "helpers": HELPERS,
             "schema": SCHEMA,
             "schemaVersion": SCHEMA_VERSION,
+            "toolFields": TOOL_FIELDS,
         },
     )
     tools_digest = canonical_digest(
@@ -1623,6 +1742,11 @@ def main():
         "tools": tools,
         "toolsDigestSha256": tools_digest,
     }
+    recovery_identity = {key: value for key, value in contract.items() if key != "bootIdSha256"}
+    contract["toolchainRecoveryDigestSha256"] = canonical_digest(
+        RECOVERY_DIGEST_DOMAIN,
+        recovery_identity,
+    )
     contract["toolchainDigestSha256"] = canonical_digest(CONTRACT_DIGEST_DOMAIN, contract)
     begin, end = (SOURCE_BEGIN, SOURCE_END) if role == "source" else (TARGET_BEGIN, TARGET_END)
     output = begin + "\n" + canonical_json(contract) + "\n" + end + "\n"
@@ -1665,6 +1789,17 @@ exec /usr/bin/sudo -- /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C TZ=Etc/UTC \
   ${role} ${expectedMachineIdSha256} ${TOOLCHAIN_PROBE_PROGRAM_SHA256} ${TOOLCHAIN_ENVIRONMENT_SHA256} \
   <<'COMIS_TOOLCHAIN_ROOT_SHELL_V1'
 set -euo pipefail
+systemd_version="$(/usr/bin/systemctl show --property=Version --value)"
+[ -n "$systemd_version" ]
+[ "$(/usr/bin/systemctl show systemd-journald.service --property=LoadState --value)" = loaded ]
+case "$(/usr/bin/systemctl is-active systemd-journald.service)" in
+  active|reloading|activating) ;;
+  *) exit 70 ;;
+esac
+case "$(/usr/bin/systemctl is-enabled systemd-journald.service)" in
+  enabled|enabled-runtime|linked|linked-runtime|alias|static|indirect|generated|transient) ;;
+  *) exit 70 ;;
+esac
 exec /usr/bin/unshare --mount --propagation private \
   /usr/bin/bash --noprofile --norc -c '
 set -euo pipefail

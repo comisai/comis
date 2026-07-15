@@ -27,6 +27,8 @@ import {
   compareToolchainCompatibility,
   compareToolchainContracts,
   computeToolchainContractDigest,
+  computeToolchainRecoveryDigest,
+  compareToolchainRecovery,
   createToolchainContractV1,
   parseToolchainProbeOutput,
   serializeToolchainContract,
@@ -237,7 +239,9 @@ describe("production runtime vault toolchain contract", () => {
       rootShellPrefix: TOOLCHAIN_ROOT_SHELL_PREFIX,
       rootScriptPrefix: TOOLCHAIN_ROOT_SCRIPT_PREFIX,
     });
-    expect(TOOLCHAIN_EXECUTION_CONTRACT_SHA256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(TOOLCHAIN_EXECUTION_CONTRACT_SHA256).toBe(
+      "5bda852b267c5762ef3bc00e284c99ca0ed4b73f4ce77cdbae3cd32e7a546016",
+    );
 
     expect(buildToolchainRootShellCommand(["machine", "/absolute/path"])).toEqual({
       ok: true,
@@ -382,7 +386,7 @@ describe("production runtime vault toolchain contract", () => {
   it("binds schema role host boot kernel probe features and every tool digest", () => {
     const source = makeContract("source");
     expect(TOOLCHAIN_CONTRACT_SCHEMA_SHA256).toBe(
-      "c74d87f6e694a84f85fd872169babe71a9ca723176b1b81a8d35d28385a4e68f",
+      "f23c67597a0701ed02d03b50714291810fb1de3dc15337b9007b656f10c0531a",
     );
     expect(TOOLCHAIN_ENVIRONMENT_SHA256).toBe(
       "0a5b66483308a2349c5c9d890f1904adcb62ec584d4880dd66bd6baba5c28d58",
@@ -403,6 +407,7 @@ describe("production runtime vault toolchain contract", () => {
       executionContractSha256: TOOLCHAIN_EXECUTION_CONTRACT_SHA256,
       featureDigestSha256: TOOLCHAIN_FEATURE_CONTRACT_SHA256,
     });
+    expect(source.toolchainRecoveryDigestSha256).toMatch(/^[a-f0-9]{64}$/u);
     expect(source.tools).toHaveLength(Object.keys(TOOLCHAIN_HELPERS).length);
     for (const tool of source.tools) {
       expect(tool.path).toBe(TOOLCHAIN_HELPERS[tool.name]);
@@ -536,6 +541,9 @@ describe("production runtime vault toolchain contract", () => {
     const wrongContractDigest = replaceEnvelopeJson(valid, (value) => {
       value.toolchainDigestSha256 = "4".repeat(64);
     });
+    const wrongRecoveryDigest = replaceEnvelopeJson(valid, (value) => {
+      value.toolchainRecoveryDigestSha256 = "5".repeat(64);
+    });
 
     for (const candidate of [
       duplicate,
@@ -555,6 +563,7 @@ describe("production runtime vault toolchain contract", () => {
       wrongToolDigest,
       arrayBinaryDigest,
       wrongContractDigest,
+      wrongRecoveryDigest,
       `${TOOLCHAIN_TARGET_ENVELOPE_BEGIN}\n${lines[1]}\n${TOOLCHAIN_TARGET_ENVELOPE_END}\n`,
       valid.replace("\n", "\r\n"),
       valid.slice(0, -1),
@@ -573,6 +582,12 @@ describe("production runtime vault toolchain contract", () => {
       }).ok,
     ).toBe(false);
     expect(parseToolchainProbeOutput([valid] as unknown as string).ok).toBe(false);
+    expect(
+      parseToolchainProbeOutput(
+        valid,
+        null as unknown as Parameters<typeof parseToolchainProbeOutput>[1],
+      ).ok,
+    ).toBe(false);
 
     const source = makeContract("source");
     const malformedFactory = createToolchainContractV1({
@@ -623,6 +638,59 @@ describe("production runtime vault toolchain contract", () => {
     });
   });
 
+  it("compares reboot recovery identity while excluding only the boot id", () => {
+    const before = makeContract("target");
+    const afterReboot = makeContract("target", { bootIdSha256: "1".repeat(64) });
+
+    expect(afterReboot.toolchainDigestSha256).not.toBe(before.toolchainDigestSha256);
+    expect(afterReboot.toolchainRecoveryDigestSha256).toBe(
+      before.toolchainRecoveryDigestSha256,
+    );
+    expect(computeToolchainRecoveryDigest(afterReboot)).toBe(
+      afterReboot.toolchainRecoveryDigestSha256,
+    );
+    expect(compareToolchainRecovery(before, afterReboot)).toEqual({
+      ok: true,
+      value: {
+        recoverable: true,
+        role: "target",
+        machineIdSha256: TARGET_MACHINE,
+        previousBootIdSha256: TARGET_BOOT,
+        currentBootIdSha256: "1".repeat(64),
+        toolchainRecoveryDigestSha256: before.toolchainRecoveryDigestSha256,
+      },
+    });
+    expect(compareToolchainContracts(before, afterReboot)).toMatchObject({
+      ok: false,
+      error: { kind: "toolchain_stability_mismatch", field: "bootIdSha256" },
+    });
+
+    expect(
+      compareToolchainRecovery(
+        before,
+        makeContract("target", { kernelIdentitySha256: "2".repeat(64) }),
+      ),
+    ).toMatchObject({
+      ok: false,
+      error: { kind: "toolchain_recovery_mismatch", field: "kernelIdentitySha256" },
+    });
+    expect(compareToolchainRecovery(before, makeContract("source"))).toMatchObject({
+      ok: false,
+      error: { kind: "toolchain_recovery_mismatch", field: "role" },
+    });
+    expect(
+      compareToolchainRecovery(
+        before,
+        makeContract("target", {
+          toolOverrides: { zstd: { binarySha256: "3".repeat(64) } },
+        }),
+      ),
+    ).toMatchObject({
+      ok: false,
+      error: { kind: "toolchain_recovery_mismatch", field: "toolsDigestSha256" },
+    });
+  });
+
   it("reports cross-role compatibility without requiring identical tools or kernels", () => {
     const source = makeContract("source");
     const target = makeContract("target", {
@@ -657,6 +725,10 @@ describe("production runtime vault toolchain contract", () => {
         targetMachineIdSha256: TARGET_MACHINE,
         sourceToolchainDigestSha256: source.toolchainDigestSha256,
         targetToolchainDigestSha256: target.toolchainDigestSha256,
+        sourceToolchainRecoveryDigestSha256:
+          source.toolchainRecoveryDigestSha256,
+        targetToolchainRecoveryDigestSha256:
+          target.toolchainRecoveryDigestSha256,
       },
     });
     expect(compareToolchainCompatibility(target, source)).toMatchObject({
