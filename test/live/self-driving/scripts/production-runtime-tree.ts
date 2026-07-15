@@ -404,8 +404,8 @@ def classify_entry(value):
 def validate_stat(value, kind):
     if value.st_mode & (stat.S_ISUID | stat.S_ISGID):
         fail("privileged-mode-rejected")
-    if kind == b"F" and value.st_nlink != 1:
-        fail("hardlinked-file-rejected")
+    if kind in (b"F", b"L") and value.st_nlink != 1:
+        fail("hardlinked-entry-rejected")
     if value.st_size < 0:
         fail("negative-file-size")
 

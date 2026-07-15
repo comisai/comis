@@ -288,7 +288,7 @@ describe("production runtime tree attestation", () => {
   it("accepts live package modes while rejecting privileged permission bits", () => {
     const liveModes = makeRuntimeTreeFixture();
     chmodSync(liveModes.root, 0o700);
-    chmodSync(liveModes.emptyDirectory, 0o777);
+    chmodSync(liveModes.emptyDirectory, 0o1777);
     chmodSync(liveModes.packageJson, 0o600);
     chmodSync(liveModes.tool, 0o666);
     expect(runProbe(liveModes.root).facts.entryCount).toBe(6);
@@ -315,7 +315,28 @@ describe("production runtime tree attestation", () => {
     });
     expect(fifo.status, outputText(fifo.stderr)).toBe(0);
     expectProbeRejection(special.root);
+  });
 
+  it("rejects hardlinked symbolic link inodes", () => {
+    const fixture = makeRuntimeTreeFixture();
+    const linked = spawnSync(
+      "python3",
+      ["-", fixture.link, join(fixture.root, "current-hardlink")],
+      {
+        encoding: "utf8",
+        input: [
+          "import os, sys",
+          "os.link(sys.argv[1], sys.argv[2], follow_symlinks=False)",
+          "",
+        ].join("\n"),
+      },
+    );
+
+    expect(linked.status, outputText(linked.stderr)).toBe(0);
+    expect(lstatSync(fixture.link).nlink).toBe(2);
+    expect(lstatSync(fixture.tool).nlink).toBe(1);
+
+    expectProbeRejection(fixture.root);
   });
 
   it("rejects nonempty extended attributes when the filesystem supports them", () => {
