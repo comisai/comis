@@ -412,6 +412,12 @@ const RESTORE_INODE_OVERHEAD = 128;
 const ETC_RESTORE_OVERHEAD_BYTES = 64 * 1024 * 1024;
 const ETC_RESTORE_INODE_OVERHEAD = 32;
 const DATA_DIR_DIGEST_DOMAIN = "comis-replay-data-dir-v1\0";
+const FIXED_RESTORE_CONTROL_ROOTS = [
+  "/etc/comis",
+  "/var/lib/comis-self-driving",
+  "/run/comis-self-driving",
+  "/.comis-self-driving",
+] as const;
 
 function invalidRequest(
   field: string,
@@ -426,6 +432,10 @@ function isSafeRemotePath(value: string): boolean {
     .slice(1)
     .split("/")
     .some((segment) => segment === "" || segment === "." || segment === "..");
+}
+
+function pathsOverlap(left: string, right: string): boolean {
+  return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
 }
 
 function isSafeSshTarget(value: string): boolean {
@@ -594,6 +604,100 @@ function buildRestoreAttestationExpectation(
   };
 }
 
+const TARGET_MOUNT_OVERLAP_GUARD = String.raw`paths_overlap() {
+  case "$1/" in "$2/"*) return 0 ;; esac
+  case "$2/" in "$1/"*) return 0 ;; esac
+  return 1
+}
+for protected_root in /etc/comis "$coordination_root" "$runtime_root" "$state_root"; do
+  if paths_overlap "$data_dir" "$protected_root"; then exit 77; fi
+done
+mount_overlap_status=0
+python3 - "$data_dir" /etc/comis "$coordination_root" "$runtime_root" "$state_root" \
+  <<'PYTHON_MOUNT_OVERLAP' || mount_overlap_status=$?
+import posixpath
+import re
+import sys
+from typing import NamedTuple
+
+class Mount(NamedTuple):
+    mount_id: int
+    device: str
+    root: str
+    target: str
+
+def decode_mount_path(value: str) -> str:
+    return re.sub(r"\\([0-7]{3})", lambda match: chr(int(match.group(1), 8)), value)
+
+def normalize(path: str) -> str:
+    normalized = posixpath.normpath(path)
+    if not normalized.startswith("/"):
+        raise ValueError("mount path is not absolute")
+    return normalized
+
+def beneath(path: str, root: str) -> bool:
+    return root == "/" or path == root or path.startswith(root + "/")
+
+def coordinate(path: str, mount: Mount) -> str:
+    relative = posixpath.relpath(path, mount.target)
+    if relative == ".":
+        return mount.root
+    result = normalize(posixpath.join(mount.root, relative))
+    if result == ".." or result.startswith("../"):
+        raise ValueError("mount coordinate escaped its filesystem root")
+    return result
+
+try:
+    mounts: list[Mount] = []
+    with open("/proc/self/mountinfo", "r", encoding="utf8") as mountinfo:
+        for raw_line in mountinfo:
+            left, separator, _right = raw_line.rstrip("\n").partition(" - ")
+            fields = left.split()
+            if separator == "" or len(fields) < 6:
+                raise ValueError("malformed mountinfo record")
+            mounts.append(Mount(
+                mount_id=int(fields[0]),
+                device=fields[2],
+                root=normalize(decode_mount_path(fields[3])),
+                target=normalize(decode_mount_path(fields[4])),
+            ))
+    if not mounts:
+        raise ValueError("mountinfo is empty")
+
+    def mount_regions(path: str) -> list[tuple[str, str]]:
+        normalized_path = normalize(path)
+        containing = [mount for mount in mounts if beneath(normalized_path, mount.target)]
+        if not containing:
+            raise ValueError("path has no containing mount")
+        selected = max(containing, key=lambda mount: (len(mount.target), mount.mount_id))
+        regions = [(selected.device, coordinate(normalized_path, selected))]
+        regions.extend(
+            (mount.device, mount.root)
+            for mount in mounts
+            if mount.target != normalized_path and beneath(mount.target, normalized_path)
+        )
+        return regions
+
+    data_regions = mount_regions(sys.argv[1])
+    for protected_path in sys.argv[2:]:
+        for data_device, data_root in data_regions:
+            for protected_device, protected_root in mount_regions(protected_path):
+                if data_device == protected_device and (
+                    beneath(data_root, protected_root) or beneath(protected_root, data_root)
+                ):
+                    raise SystemExit(10)
+except SystemExit:
+    raise
+except Exception:
+    raise SystemExit(11)
+PYTHON_MOUNT_OVERLAP
+case "$mount_overlap_status" in
+  0) ;;
+  10) exit 77 ;;
+  *) exit 79 ;;
+esac
+`;
+
 const TARGET_GUARD = String.raw`if [ "$(id -u)" -ne 0 ] || [ "$(uname -s)" != Linux ]; then exit 70; fi
 actual_machine="$(sha256sum /etc/machine-id | awk '{print $1}')"
 if [ "$actual_machine" != "$expected_machine" ]; then exit 71; fi
@@ -644,7 +748,11 @@ require_effective_property AmbientCapabilities ''
 require_effective_property RestrictNamespaces yes
 require_effective_property ReadWritePaths /run/comis-replay
 require_effective_property UMask 0077
-if [ -L /etc/comis ] || [ "$(stat -c '%u:%g' /etc/comis 2>/dev/null || true)" != 0:0 ]; then
+etc_comis_mode="$(stat -c '%a' /etc/comis 2>/dev/null || true)"
+case "$etc_comis_mode" in ''|*[!0-7]*) exit 75 ;; esac
+if [ ! -d /etc/comis ] || [ -L /etc/comis ] || \
+   [ "$(stat -c '%u:%g' /etc/comis 2>/dev/null || true)" != 0:0 ] || \
+   [ "$(( 0$etc_comis_mode & 0022 ))" -ne 0 ]; then
   exit 75
 fi
 case "$run_id" in [A-Za-z0-9]*) ;; *) exit 76 ;; esac
@@ -653,6 +761,7 @@ if [ "$(printf '%s' "$run_id" | wc -c | tr -d ' ')" -gt 64 ]; then exit 76; fi
 canonical_data_dir="$(realpath -m -- "$data_dir")"
 if [ "$canonical_data_dir" != "$data_dir" ] || [ "$data_dir" = / ]; then exit 77; fi
 if ! id "$service_user" >/dev/null 2>&1; then exit 78; fi
+service_group_id="$(id -g "$service_user")"
 data_parent="$(dirname -- "$data_dir")"
 data_mount="$(findmnt -n -o TARGET --target "$data_parent")"
 if [ -z "$data_mount" ]; then exit 79; fi
@@ -669,8 +778,18 @@ current_restore_incoming="$coordination_root/.current-restore-$run_id"
 operation_lock="$coordination_root/restore-operation.lock"
 owner_marker="$coordination_root/restore-$run_id.owner"
 coordination_identity="$coordination_root/restore-$run_id.identity"
+expected_data_dir_sha256="$(python3 - "$data_dir" <<'PYTHON_DATA_DIR_CANDIDATE'
+import hashlib
+import sys
+
+print(hashlib.sha256(b"comis-replay-data-dir-v1\0" + sys.argv[1].encode("utf8")).hexdigest())
+PYTHON_DATA_DIR_CANDIDATE
+)"
+coordination_identity_scratch="$coordination_root/.restore-$run_id-$expected_data_dir_sha256.identity.scratch"
+coordination_identity_candidate="$coordination_root/.restore-$run_id.identity.incoming"
 runtime_root=/run/comis-self-driving
 runtime_dir="$runtime_root/restore-$run_id"
+${TARGET_MOUNT_OVERLAP_GUARD}
 if [ -L "$state_root" ] || [ -L "$coordination_root" ] || [ -L "$runtime_root" ]; then
   exit 79
 fi
@@ -759,15 +878,7 @@ done
 if ! cmp -s -- "$transaction_identity" "$coordination_identity"; then exit 79; fi
 `;
 
-const TARGET_TRANSACTION_GUARD = String.raw`if [ -L "$operation_lock" ] || \
-   [ ! -f "$operation_lock" ] || \
-   [ "$(stat -c '%u:%g:%a' "$operation_lock" 2>/dev/null || true)" != 0:0:600 ]; then
-  exit 79
-fi
-exec 9<>"$operation_lock"
-if ! flock -n 9; then exit 79; fi
-${TARGET_TRANSACTION_IDENTITY_GUARD}
-if [ -e "$active_restore" ] || [ -L "$active_restore" ]; then
+const TARGET_TRANSACTION_OWNERSHIP_GUARD = String.raw`if [ -e "$active_restore" ] || [ -L "$active_restore" ]; then
   if [ ! -f "$active_restore" ] || [ -L "$active_restore" ] || \
      [ "$(stat -c '%u:%g:%a' "$active_restore" 2>/dev/null || true)" != 0:0:400 ] || \
      [ "$(cat "$active_restore" 2>/dev/null || true)" != "$run_id" ] || \
@@ -798,6 +909,16 @@ else
 fi
 `;
 
+const TARGET_TRANSACTION_GUARD = String.raw`if [ -L "$operation_lock" ] || \
+   [ ! -f "$operation_lock" ] || \
+   [ "$(stat -c '%u:%g:%a' "$operation_lock" 2>/dev/null || true)" != 0:0:600 ]; then
+  exit 79
+fi
+exec 9<>"$operation_lock"
+if ! flock -n 9; then exit 79; fi
+${TARGET_TRANSACTION_IDENTITY_GUARD}
+${TARGET_TRANSACTION_OWNERSHIP_GUARD}`;
+
 const TARGET_RECOVERY_GUARD = String.raw`if [ "$(id -u)" -ne 0 ] || [ "$(uname -s)" != Linux ]; then exit 70; fi
 actual_machine="$(sha256sum /etc/machine-id | awk '{print $1}')"
 if [ "$actual_machine" != "$expected_machine" ]; then exit 71; fi
@@ -808,7 +929,12 @@ if [ "$(printf '%s' "$run_id" | wc -c | tr -d ' ')" -gt 64 ]; then exit 76; fi
 canonical_data_dir="$(realpath -m -- "$data_dir")"
 if [ "$canonical_data_dir" != "$data_dir" ] || [ "$data_dir" = / ]; then exit 77; fi
 if ! id "$service_user" >/dev/null 2>&1; then exit 78; fi
-if [ -L /etc/comis ] || [ "$(stat -c '%u:%g' /etc/comis 2>/dev/null || true)" != 0:0 ]; then
+service_group_id="$(id -g "$service_user")"
+etc_comis_mode="$(stat -c '%a' /etc/comis 2>/dev/null || true)"
+case "$etc_comis_mode" in ''|*[!0-7]*) exit 75 ;; esac
+if [ ! -d /etc/comis ] || [ -L /etc/comis ] || \
+   [ "$(stat -c '%u:%g' /etc/comis 2>/dev/null || true)" != 0:0 ] || \
+   [ "$(( 0$etc_comis_mode & 0022 ))" -ne 0 ]; then
   exit 75
 fi
 data_parent="$(dirname -- "$data_dir")"
@@ -827,8 +953,18 @@ current_restore_incoming="$coordination_root/.current-restore-$run_id"
 operation_lock="$coordination_root/restore-operation.lock"
 owner_marker="$coordination_root/restore-$run_id.owner"
 coordination_identity="$coordination_root/restore-$run_id.identity"
+expected_data_dir_sha256="$(python3 - "$data_dir" <<'PYTHON_DATA_DIR_CANDIDATE'
+import hashlib
+import sys
+
+print(hashlib.sha256(b"comis-replay-data-dir-v1\0" + sys.argv[1].encode("utf8")).hexdigest())
+PYTHON_DATA_DIR_CANDIDATE
+)"
+coordination_identity_scratch="$coordination_root/.restore-$run_id-$expected_data_dir_sha256.identity.scratch"
+coordination_identity_candidate="$coordination_root/.restore-$run_id.identity.incoming"
 runtime_root=/run/comis-self-driving
 runtime_dir="$runtime_root/restore-$run_id"
+${TARGET_MOUNT_OVERLAP_GUARD}
 for guarded_root in "$state_root" "$coordination_root"; do
   if [ -L "$guarded_root" ]; then exit 79; fi
   if [ -e "$guarded_root" ] && \
@@ -957,49 +1093,23 @@ if [ ! -d "$data_dir" ] || [ -L "$data_dir" ] || [ ! -f "$env_path" ] || \
 for required_command in python3 tar base64 chattr lsattr cmp flock; do
   if ! command -v "$required_command" >/dev/null 2>&1; then exit 82; fi
 done
-if [ -e "$control_dir" ] || [ -L "$control_dir" ] || \
-   [ -e "$owner_marker" ] || [ -L "$owner_marker" ] || \
-   [ -e "$coordination_identity" ] || [ -L "$coordination_identity" ] || \
-   [ -e "$current_restore_incoming" ] || [ -L "$current_restore_incoming" ] || \
-   [ -e "$runtime_dir" ] || [ -L "$runtime_dir" ] || \
-   [ -e "$incoming_data" ] || [ -L "$incoming_data" ] || \
-   [ -e "$env_incoming" ] || [ -e "$env_rollback" ] || \
-   [ -e "$overlay_incoming" ] || [ -e "$overlay_rollback" ] || \
-   [ -e "$seal_incoming" ] || [ -e "$seal_rollback" ]; then exit 83; fi
-created=0
-owner_acquired=0
-cleanup_prepare() {
-  rc=$?
-  trap - EXIT HUP INT TERM
-  if [ "$owner_acquired" -eq 1 ]; then rm -f -- "$active_restore"; fi
-  rm -f -- "$current_restore_incoming" "$owner_marker"
-  if [ "$created" -eq 1 ]; then
-    rm -rf -- "$runtime_dir" "$control_dir" "$incoming_data"
-    rm -f -- "$env_incoming" "$env_rollback" \
-      "$overlay_incoming" "$overlay_rollback" \
-      "$seal_incoming" "$seal_rollback"
-  fi
-  if [ -d "$coordination_root" ] && [ ! -L "$coordination_root" ]; then
-    rm -f -- "$coordination_identity"
-    sync -f "$coordination_root"
-  fi
-  exit "$rc"
-}
-trap cleanup_prepare EXIT HUP INT TERM
-install -d -m 0700 -o root -g root \
-  "$state_root" "$control_dir" "$extract_dir" "$coordination_root"
-install -d -m 0700 -o root -g root "$runtime_root" "$runtime_dir"
-created=1
-if [ "$(stat -c '%u:%g:%a' "$state_root")" != 0:0:700 ] || \
-   [ "$(stat -c '%u:%g:%a' "$coordination_root")" != 0:0:700 ] || \
-   [ "$(stat -c '%u:%g:%a' "$control_dir")" != 0:0:700 ] || \
-   [ "$(stat -c '%d' "$control_dir")" != "$(stat -c '%d' "$data_parent")" ] || \
-   [ "$(stat -c '%d' "$control_dir")" != "$(stat -c '%d' "$data_dir")" ]; then
-  exit 84
+service_group_id="$(id -g "$service_user")"
+if [ "$(stat -c '%u:%g:%a:%h' "$env_path" 2>/dev/null || true)" != \
+     "0:$service_group_id:640:1" ]; then exit 81; fi
+if [ -e "$overlay_path" ] || [ -L "$overlay_path" ]; then
+  if [ ! -f "$overlay_path" ] || [ -L "$overlay_path" ] || \
+     [ "$(stat -c '%u:%g:%a:%h' "$overlay_path" 2>/dev/null || true)" != \
+       "0:$service_group_id:640:1" ]; then exit 81; fi
 fi
-printf '%s\n' "$run_id" > "$transaction_marker"
-chmod 0400 "$transaction_marker"
-sync -f "$state_root"
+if [ -e "$seal_path" ] || [ -L "$seal_path" ]; then
+  if [ ! -f "$seal_path" ] || [ -L "$seal_path" ] || \
+     [ "$(stat -c '%u:%g:%a:%h' "$seal_path" 2>/dev/null || true)" != 0:0:444:1 ]; then
+    exit 81
+  fi
+fi
+install -d -m 0700 -o root -g root "$coordination_root"
+sync -f /var/lib
+if [ "$(stat -c '%u:%g:%a' "$coordination_root")" != 0:0:700 ]; then exit 84; fi
 if [ -e "$operation_lock" ] || [ -L "$operation_lock" ]; then
   if [ ! -f "$operation_lock" ] || [ -L "$operation_lock" ] || \
      [ "$(stat -c '%u:%g:%a' "$operation_lock" 2>/dev/null || true)" != 0:0:600 ]; then
@@ -1017,20 +1127,147 @@ if [ ! -f "$operation_lock" ] || [ -L "$operation_lock" ] || \
 fi
 exec 9<>"$operation_lock"
 if ! flock -n 9; then exit 84; fi
-if [ -e "$active_restore" ] || [ -L "$active_restore" ]; then exit 84; fi
+sync -f "$operation_lock"
+sync -f "$coordination_root"
+if [ -e "$control_dir" ] || [ -L "$control_dir" ] || \
+   [ -e "$active_restore" ] || [ -L "$active_restore" ] || \
+   [ -e "$owner_marker" ] || [ -L "$owner_marker" ] || \
+   [ -e "$coordination_identity" ] || [ -L "$coordination_identity" ] || \
+   [ -e "$coordination_identity_scratch" ] || [ -L "$coordination_identity_scratch" ] || \
+   [ -e "$coordination_identity_candidate" ] || [ -L "$coordination_identity_candidate" ] || \
+   [ -e "$current_restore_incoming" ] || [ -L "$current_restore_incoming" ] || \
+   [ -e "$runtime_dir" ] || [ -L "$runtime_dir" ] || \
+   [ -e "$incoming_data" ] || [ -L "$incoming_data" ] || \
+   [ -e "$env_incoming" ] || [ -L "$env_incoming" ] || \
+   [ -e "$env_rollback" ] || [ -L "$env_rollback" ] || \
+   [ -e "$overlay_incoming" ] || [ -L "$overlay_incoming" ] || \
+   [ -e "$overlay_rollback" ] || [ -L "$overlay_rollback" ] || \
+   [ -e "$seal_incoming" ] || [ -L "$seal_incoming" ] || \
+   [ -e "$seal_rollback" ] || [ -L "$seal_rollback" ]; then exit 83; fi
+coordination_identity_scratch_created=0
+coordination_identity_candidate_created=0
+coordination_identity_created=0
+control_created=0
+runtime_created=0
+owner_created=0
+active_created=0
+cleanup_prepare() {
+  rc="$1"
+  trap - EXIT HUP INT TERM
+  if [ "$active_created" -eq 1 ]; then rm -f -- "$active_restore"; fi
+  if [ "$control_created" -eq 1 ]; then
+    chattr -R -i -a "$incoming_data" 2>/dev/null || true
+    rm -rf -- "$incoming_data" "$control_dir"
+    rm -f -- "$env_incoming" "$env_rollback" \
+      "$overlay_incoming" "$overlay_rollback" \
+      "$seal_incoming" "$seal_rollback"
+  fi
+  if [ "$runtime_created" -eq 1 ]; then rm -rf -- "$runtime_dir"; fi
+  if [ "$owner_created" -eq 1 ]; then
+    rm -f -- "$current_restore_incoming" "$owner_marker"
+  fi
+  if [ "$coordination_identity_scratch_created" -eq 1 ]; then
+    rm -f -- "$coordination_identity_scratch"
+  fi
+  if [ "$coordination_identity_candidate_created" -eq 1 ]; then
+    if [ -f "$coordination_identity_candidate" ] && \
+       [ ! -L "$coordination_identity_candidate" ] && \
+       [ "$(stat -c '%u:%g:%a:%h' "$coordination_identity_candidate" \
+         2>/dev/null || true)" = 0:0:400:1 ] && \
+       [ "$(cat "$coordination_identity_candidate" 2>/dev/null || true)" = \
+         "$expected_transaction_identity" ]; then
+      rm -f -- "$coordination_identity_candidate"
+    fi
+  fi
+  sync -f "$state_root"
+  sync -f "$data_mount"
+  sync -f "$runtime_root"
+  sync -f /etc/comis
+  sync -f "$coordination_root"
+  if [ "$coordination_identity_created" -eq 1 ]; then
+    if [ -f "$coordination_identity" ] && [ ! -L "$coordination_identity" ] && \
+       [ "$(stat -c '%u:%g:%a' "$coordination_identity" 2>/dev/null || true)" = 0:0:400 ] && \
+       [ "$(cat "$coordination_identity" 2>/dev/null || true)" = \
+         "$expected_transaction_identity" ]; then
+      rm -f -- "$coordination_identity"
+    fi
+    sync -f "$coordination_root"
+  fi
+  exit "$rc"
+}
+cleanup_prepare_on_exit() {
+  rc=$?
+  cleanup_prepare "$rc"
+}
+trap cleanup_prepare_on_exit EXIT
+trap 'cleanup_prepare 129' HUP
+trap 'cleanup_prepare 130' INT
+trap 'cleanup_prepare 143' TERM
 ${TARGET_TRANSACTION_IDENTITY_EXPECTATION}
+old_umask="$(umask)"
+umask 377
+coordination_identity_scratch_created=1
+(set -C; printf '%s\n' "$expected_transaction_identity" > "$coordination_identity_scratch") \
+  2>/dev/null || exit 84
+umask "$old_umask"
+chmod 0400 "$coordination_identity_scratch"
+sync -f "$coordination_identity_scratch"
+sync -f "$coordination_root"
+coordination_identity_candidate_created=1
+mv --no-clobber -- "$coordination_identity_scratch" "$coordination_identity_candidate"
+if [ -e "$coordination_identity_scratch" ] || [ -L "$coordination_identity_scratch" ] || \
+   [ ! -f "$coordination_identity_candidate" ] || \
+   [ -L "$coordination_identity_candidate" ] || \
+   [ "$(stat -c '%u:%g:%a:%h' "$coordination_identity_candidate" \
+     2>/dev/null || true)" != 0:0:400:1 ] || \
+   [ "$(cat "$coordination_identity_candidate" 2>/dev/null || true)" != \
+     "$expected_transaction_identity" ]; then exit 84; fi
+coordination_identity_scratch_created=0
+chmod 0400 "$coordination_identity_candidate"
+sync -f "$coordination_identity_candidate"
+sync -f "$coordination_root"
+coordination_identity_created=1
+mv --no-clobber -- "$coordination_identity_candidate" "$coordination_identity"
+if [ -e "$coordination_identity_candidate" ] || [ -L "$coordination_identity_candidate" ] || \
+   [ ! -f "$coordination_identity" ] || [ -L "$coordination_identity" ] || \
+   [ "$(stat -c '%u:%g:%a' "$coordination_identity" 2>/dev/null || true)" != 0:0:400 ] || \
+   [ "$(cat "$coordination_identity" 2>/dev/null || true)" != \
+     "$expected_transaction_identity" ]; then exit 84; fi
+coordination_identity_candidate_created=0
+sync -f "$coordination_identity"
+sync -f "$coordination_root"
+install -d -m 0700 -o root -g root "$state_root" "$runtime_root"
+sync -f "$data_mount"
+sync -f /run
+control_created=1
+mkdir -m 0700 -- "$control_dir"
+mkdir -m 0700 -- "$extract_dir"
+sync -f "$state_root"
+runtime_created=1
+mkdir -m 0700 -- "$runtime_dir"
+sync -f "$runtime_root"
+if [ "$(stat -c '%u:%g:%a' "$state_root")" != 0:0:700 ] || \
+   [ "$(stat -c '%u:%g:%a' "$runtime_root")" != 0:0:700 ] || \
+   [ "$(stat -c '%u:%g:%a' "$control_dir")" != 0:0:700 ] || \
+   [ "$(stat -c '%u:%g:%a' "$runtime_dir")" != 0:0:700 ] || \
+   [ "$(stat -c '%d' "$control_dir")" != "$(stat -c '%d' "$data_parent")" ] || \
+   [ "$(stat -c '%d' "$control_dir")" != "$(stat -c '%d' "$data_dir")" ]; then
+  exit 84
+fi
 printf '%s\n' "$expected_transaction_identity" > "$transaction_identity"
 chmod 0400 "$transaction_identity"
 sync -f "$transaction_identity"
-install -o root -g root -m 0400 "$transaction_identity" "$coordination_identity"
-sync -f "$coordination_identity"
+printf '%s\n' "$run_id" > "$transaction_marker"
+chmod 0400 "$transaction_marker"
+sync -f "$transaction_marker"
 sync -f "$control_dir"
-sync -f "$coordination_root"
+owner_created=1
 printf '%s\n' "$run_id" > "$owner_marker"
 chmod 0400 "$owner_marker"
+sync -f "$owner_marker"
 sync -f "$coordination_root"
+active_created=1
 ln -- "$owner_marker" "$active_restore"
-owner_acquired=1
 sync -f "$coordination_root"
 available_bytes="$(df -PB1 "$control_dir" | awk 'NR == 2 {print $4}')"
 available_inodes="$(df -Pi "$control_dir" | awk 'NR == 2 {print $4}')"
@@ -1454,17 +1691,30 @@ rollback_promote() {
        [ -d "$data_dir" ] && [ ! -L "$data_dir" ]; then
     chattr +i "$data_dir"
   fi
-  if [ -e "$env_rollback" ] && [ ! -L "$env_rollback" ]; then
+  if [ -e "$env_rollback" ] || [ -L "$env_rollback" ]; then
+    if ! { [ -f "$env_rollback" ] && [ ! -L "$env_rollback" ] && \
+      [ "$(stat -c '%h' "$env_rollback" 2>/dev/null || true)" = 1 ] && \
+      [ "$(stat -c '%u:%g:%a' "$env_rollback" 2>/dev/null || true)" = \
+        "0:$service_group_id:640" ]; }; then exit 98; fi
     rm -f -- "$env_path"
     mv -- "$env_rollback" "$env_path"
   fi
-  if [ -e "$overlay_rollback" ] && [ ! -L "$overlay_rollback" ]; then
+  if [ -e "$overlay_rollback" ] || [ -L "$overlay_rollback" ]; then
+    if ! { [ -f "$overlay_rollback" ] && [ ! -L "$overlay_rollback" ] && \
+      [ "$(stat -c '%h' "$overlay_rollback" 2>/dev/null || true)" = 1 ] && \
+      [ "$(stat -c '%u:%g:%a' "$overlay_rollback" 2>/dev/null || true)" = \
+        "0:$service_group_id:640" ]; }; then exit 98; fi
     rm -f -- "$overlay_path"
     mv -- "$overlay_rollback" "$overlay_path"
   elif [ "$(cat "$control_dir/overlay-existed" 2>/dev/null || true)" = false ]; then
     rm -f -- "$overlay_path"
   fi
-  if [ -e "$seal_rollback" ] && [ ! -L "$seal_rollback" ]; then
+  if [ -e "$seal_rollback" ] || [ -L "$seal_rollback" ]; then
+    if ! { [ -f "$seal_rollback" ] && [ ! -L "$seal_rollback" ] && \
+      [ "$(stat -c '%h' "$seal_rollback" 2>/dev/null || true)" = 1 ] && \
+      [ "$(stat -c '%u:%g:%a' "$seal_rollback" 2>/dev/null || true)" = 0:0:444 ]; }; then
+      exit 98
+    fi
     rm -f -- "$seal_path"
     mv -- "$seal_rollback" "$seal_path"
   elif [ "$(cat "$control_dir/seal-existed" 2>/dev/null || true)" = false ]; then
@@ -1810,10 +2060,63 @@ emit_absent_status() {
   printf '{"schemaVersion":1,"runId":"%s","targetMachineIdSha256":"%s","state":"absent","bytesTransferred":null,"restoreAttestationBase64":null,"restoreAttestationSha256":null}\n' \
     "$run_id" "$expected_machine"
 }
+cleanup_unpromoted_restore() {
+  if [ -e "$coordination_identity" ] || [ -L "$coordination_identity" ]; then
+    :
+  else
+    exit 79
+  fi
+  if [ -e "$rollback_data" ] || [ -L "$rollback_data" ] || \
+     [ -e "$env_rollback" ] || [ -L "$env_rollback" ] || \
+     [ -e "$overlay_rollback" ] || [ -L "$overlay_rollback" ] || \
+     [ -e "$seal_rollback" ] || [ -L "$seal_rollback" ] || \
+     [ -e "$old_data_unlocked" ] || [ -L "$old_data_unlocked" ] || \
+     [ -e "$promoting_marker" ] || [ -L "$promoting_marker" ] || \
+     [ -e "$rolling_back_marker" ] || [ -L "$rolling_back_marker" ] || \
+     [ -e "$control_dir/installed" ] || [ -L "$control_dir/installed" ] || \
+     [ -e "$commit_authorized" ] || [ -L "$commit_authorized" ] || \
+     [ -e "$finalizing_marker" ] || [ -L "$finalizing_marker" ] || \
+     [ -e "$finalized_marker" ] || [ -L "$finalized_marker" ] || \
+     [ -e "$rolled_back_marker" ] || [ -L "$rolled_back_marker" ]; then exit 79; fi
+  if [ -e "$transaction_identity" ] || [ -L "$transaction_identity" ]; then
+    if [ ! -f "$transaction_identity" ] || [ -L "$transaction_identity" ] || \
+       [ "$(stat -c '%u:%g:%a' "$transaction_identity" 2>/dev/null || true)" != 0:0:400 ] || \
+       [ "$(cat "$transaction_identity" 2>/dev/null || true)" != "$expected_transaction_identity" ]; then
+      transaction_identity_incomplete=1
+    fi
+  fi
+  if [ -e "$transaction_marker" ] || [ -L "$transaction_marker" ]; then
+    if [ ! -f "$transaction_marker" ] || [ -L "$transaction_marker" ] || \
+       [ "$(stat -c '%u:%g:%a' "$transaction_marker" 2>/dev/null || true)" != 0:0:400 ] || \
+       [ "$(cat "$transaction_marker" 2>/dev/null || true)" != "$run_id" ]; then
+      transaction_marker_incomplete=1
+    fi
+  fi
+  chattr -R -i -a "$incoming_data" 2>/dev/null || true
+  rm -rf -- "$runtime_dir" "$incoming_data" "$control_dir"
+  rm -f -- "$env_incoming" "$overlay_incoming" "$seal_incoming"
+  if [ -d "$state_root" ] && [ ! -L "$state_root" ]; then sync -f "$state_root"; fi
+  sync -f "$data_parent"
+  sync -f /etc/comis
+  if [ -d "$runtime_root" ] && [ ! -L "$runtime_root" ]; then sync -f "$runtime_root"; fi
+  rm -f -- "$active_restore" "$current_restore_incoming" "$owner_marker"
+  sync -f "$coordination_root"
+  for prepare_artifact in "$runtime_dir" "$incoming_data" "$control_dir" \
+    "$env_incoming" "$overlay_incoming" "$seal_incoming" \
+    "$active_restore" "$current_restore_incoming" "$owner_marker"; do
+    if [ -e "$prepare_artifact" ] || [ -L "$prepare_artifact" ]; then exit 79; fi
+  done
+  rm -f -- "$coordination_identity"
+  sync -f "$coordination_root"
+  emit_absent_status
+  exit 0
+}
 if { [ ! -e "$control_dir" ] && [ ! -L "$control_dir" ]; } && \
    { [ ! -e "$active_restore" ] && [ ! -L "$active_restore" ]; }; then
   if { [ ! -e "$owner_marker" ] && [ ! -L "$owner_marker" ]; } && \
      { [ ! -e "$coordination_identity" ] && [ ! -L "$coordination_identity" ]; } && \
+     { [ ! -e "$coordination_identity_scratch" ] && [ ! -L "$coordination_identity_scratch" ]; } && \
+     { [ ! -e "$coordination_identity_candidate" ] && [ ! -L "$coordination_identity_candidate" ]; } && \
      { [ ! -e "$current_restore_incoming" ] && [ ! -L "$current_restore_incoming" ]; } && \
      { [ ! -e "$runtime_dir" ] && [ ! -L "$runtime_dir" ]; } && \
      { [ ! -e "$incoming_data" ] && [ ! -L "$incoming_data" ]; } && \
@@ -1839,6 +2142,37 @@ if { [ ! -e "$control_dir" ] && [ ! -L "$control_dir" ]; } && \
     exit 79
   fi
   ${TARGET_TRANSACTION_IDENTITY_EXPECTATION}
+  if [ -e "$coordination_identity_scratch" ] || [ -L "$coordination_identity_scratch" ]; then
+    if [ ! -f "$coordination_identity_scratch" ] || \
+       [ -L "$coordination_identity_scratch" ] || \
+       [ "$(stat -c '%u:%g:%a:%h' "$coordination_identity_scratch" \
+         2>/dev/null || true)" != 0:0:400:1 ]; then exit 79; fi
+    rm -f -- "$coordination_identity_scratch"
+    sync -f "$coordination_root"
+  fi
+  if [ ! -e "$coordination_identity" ] && [ ! -L "$coordination_identity" ]; then
+    for identity_prefix_artifact in "$owner_marker" "$current_restore_incoming" \
+      "$runtime_dir" "$incoming_data" "$env_incoming" "$env_rollback" \
+      "$overlay_incoming" "$overlay_rollback" "$seal_incoming" "$seal_rollback"; do
+      if [ -e "$identity_prefix_artifact" ] || [ -L "$identity_prefix_artifact" ]; then
+        exit 79
+      fi
+    done
+    if [ -e "$coordination_identity_candidate" ] || [ -L "$coordination_identity_candidate" ]; then
+      if [ ! -f "$coordination_identity_candidate" ] || \
+         [ -L "$coordination_identity_candidate" ] || \
+         [ "$(stat -c '%u:%g:%a:%h' "$coordination_identity_candidate" \
+           2>/dev/null || true)" != 0:0:400:1 ] || \
+         [ "$(cat "$coordination_identity_candidate" 2>/dev/null || true)" != \
+           "$expected_transaction_identity" ]; then exit 79; fi
+      rm -f -- "$coordination_identity_candidate"
+      sync -f "$coordination_root"
+    fi
+    emit_absent_status
+    exit 0
+  fi
+  if [ -e "$coordination_identity_candidate" ] || \
+     [ -L "$coordination_identity_candidate" ]; then exit 79; fi
   if [ ! -f "$coordination_identity" ] || [ -L "$coordination_identity" ] || \
      [ "$(stat -c '%u:%g:%a' "$coordination_identity" 2>/dev/null || true)" != 0:0:400 ] || \
      [ "$(cat "$coordination_identity" 2>/dev/null || true)" != "$expected_transaction_identity" ]; then
@@ -1847,7 +2181,9 @@ if { [ ! -e "$control_dir" ] && [ ! -L "$control_dir" ]; } && \
   if [ -e "$owner_marker" ] || [ -L "$owner_marker" ]; then
     if [ ! -f "$owner_marker" ] || [ -L "$owner_marker" ] || \
        [ "$(stat -c '%u:%g:%a' "$owner_marker" 2>/dev/null || true)" != 0:0:400 ] || \
-       [ "$(cat "$owner_marker" 2>/dev/null || true)" != "$run_id" ]; then exit 79; fi
+       [ "$(cat "$owner_marker" 2>/dev/null || true)" != "$run_id" ]; then
+      owner_marker_incomplete=1
+    fi
   fi
   if [ -e "$current_restore_incoming" ] || [ -L "$current_restore_incoming" ]; then
     if [ ! -f "$current_restore_incoming" ] || [ -L "$current_restore_incoming" ] || \
@@ -1888,10 +2224,48 @@ if { [ ! -e "$control_dir" ] && [ ! -L "$control_dir" ]; } && \
   emit_absent_status
   exit 0
 fi
+if { [ -e "$control_dir" ] && [ ! -L "$control_dir" ]; } && \
+   { [ ! -e "$active_restore" ] && [ ! -L "$active_restore" ]; }; then
+  if { [ ! -e "$finalized_marker" ] && [ ! -L "$finalized_marker" ]; } && \
+     { [ ! -e "$rolled_back_marker" ] && [ ! -L "$rolled_back_marker" ]; }; then
+    if [ ! -f "$operation_lock" ] || [ -L "$operation_lock" ] || \
+       [ "$(stat -c '%u:%g:%a' "$operation_lock" 2>/dev/null || true)" != 0:0:600 ]; then
+      exit 79
+    fi
+    exec 8<>"$operation_lock"
+    if ! flock -n 8; then exit 79; fi
+    if [ ! -d "$control_dir" ] || [ -L "$control_dir" ] || \
+       [ -e "$active_restore" ] || [ -L "$active_restore" ]; then exit 79; fi
+    ${TARGET_TRANSACTION_IDENTITY_EXPECTATION}
+    if [ ! -f "$coordination_identity" ] || [ -L "$coordination_identity" ] || \
+       [ "$(stat -c '%u:%g:%a' "$coordination_identity" 2>/dev/null || true)" != 0:0:400 ] || \
+       [ "$(cat "$coordination_identity" 2>/dev/null || true)" != \
+         "$expected_transaction_identity" ]; then exit 79; fi
+    cleanup_unpromoted_restore
+  fi
+fi
 ${TARGET_TRANSACTION_GUARD}
 if [ ! -f "$transaction_marker" ] || [ -L "$transaction_marker" ] || \
    [ "$(stat -c '%u:%g:%a' "$transaction_marker" 2>/dev/null || true)" != 0:0:400 ] || \
    [ "$(cat "$transaction_marker" 2>/dev/null || true)" != "$run_id" ]; then exit 96; fi
+terminal_cleanup_complete=0
+if [ -f "$finalized_marker" ] && [ ! -L "$finalized_marker" ] && \
+   [ ! -e "$finalizing_marker" ] && [ ! -L "$finalizing_marker" ]; then
+  terminal_cleanup_complete=1
+fi
+if [ -f "$rolled_back_marker" ] && [ ! -L "$rolled_back_marker" ] && \
+   [ ! -e "$rolling_back_marker" ] && [ ! -L "$rolling_back_marker" ]; then
+  terminal_cleanup_complete=1
+fi
+if [ "$terminal_cleanup_complete" -eq 1 ]; then
+  for terminal_external_artifact in "$env_incoming" "$env_rollback" \
+    "$overlay_incoming" "$overlay_rollback" "$seal_incoming" "$seal_rollback" \
+    "$runtime_dir" "$incoming_data"; do
+    if [ -e "$terminal_external_artifact" ] || [ -L "$terminal_external_artifact" ]; then
+      exit 96
+    fi
+  done
+fi
 python3 - "$run_id" "$expected_machine" "$data_dir" "$seal_path" \
   "$bytes_received_path" "$attestation_path" "$control_dir/installed" \
   "$promoting_marker" "$rolling_back_marker" "$commit_authorized" \
@@ -2092,6 +2466,8 @@ if { [ ! -e "$control_dir" ] && [ ! -L "$control_dir" ]; } && \
    { [ ! -e "$active_restore" ] && [ ! -L "$active_restore" ]; } && \
    { [ ! -e "$owner_marker" ] && [ ! -L "$owner_marker" ]; } && \
    { [ ! -e "$coordination_identity" ] && [ ! -L "$coordination_identity" ]; } && \
+   { [ ! -e "$coordination_identity_scratch" ] && [ ! -L "$coordination_identity_scratch" ]; } && \
+   { [ ! -e "$coordination_identity_candidate" ] && [ ! -L "$coordination_identity_candidate" ]; } && \
    { [ ! -e "$current_restore_incoming" ] && [ ! -L "$current_restore_incoming" ]; } && \
    { [ ! -e "$runtime_dir" ] && [ ! -L "$runtime_dir" ]; } && \
    { [ ! -e "$incoming_data" ] && [ ! -L "$incoming_data" ]; } && \
@@ -2103,13 +2479,6 @@ if { [ ! -e "$control_dir" ] && [ ! -L "$control_dir" ]; } && \
    { [ ! -e "$seal_rollback" ] && [ ! -L "$seal_rollback" ]; }; then
   exit 0
 fi
-systemctl stop "$unit" >/dev/null 2>&1 || true
-systemctl kill --kill-who=all "$unit" >/dev/null 2>&1 || true
-systemctl disable "$unit" >/dev/null 2>&1 || true
-recovery_active_state="$(systemctl is-active "$unit" 2>/dev/null || true)"
-recovery_enabled_state="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
-case "$recovery_active_state" in inactive|failed|unknown) ;; *) exit 73 ;; esac
-case "$recovery_enabled_state" in disabled|masked|not-found) ;; *) exit 73 ;; esac
 if [ ! -d "$coordination_root" ]; then
   install -d -m 0700 -o root -g root "$coordination_root"
 fi
@@ -2123,8 +2492,52 @@ if [ ! -f "$operation_lock" ] || [ -L "$operation_lock" ] || \
    [ "$(stat -c '%u:%g:%a' "$operation_lock" 2>/dev/null || true)" != 0:0:600 ]; then
   exit 79
 fi
-exec 8<>"$operation_lock"
-if ! flock -n 8; then exit 79; fi
+exec 9<>"$operation_lock"
+if ! flock -n 9; then exit 79; fi
+${TARGET_TRANSACTION_IDENTITY_EXPECTATION}
+if [ -e "$coordination_identity_scratch" ] || [ -L "$coordination_identity_scratch" ]; then
+  if [ ! -f "$coordination_identity_scratch" ] || \
+     [ -L "$coordination_identity_scratch" ] || \
+     [ "$(stat -c '%u:%g:%a:%h' "$coordination_identity_scratch" \
+       2>/dev/null || true)" != 0:0:400:1 ]; then exit 79; fi
+  rm -f -- "$coordination_identity_scratch"
+  sync -f "$coordination_root"
+fi
+if [ ! -e "$coordination_identity" ] && [ ! -L "$coordination_identity" ]; then
+  if [ -e "$control_dir" ] || [ -L "$control_dir" ] || \
+     [ -e "$active_restore" ] || [ -L "$active_restore" ]; then exit 79; fi
+  for identity_prefix_artifact in "$owner_marker" "$current_restore_incoming" \
+    "$runtime_dir" "$incoming_data" "$env_incoming" "$env_rollback" \
+    "$overlay_incoming" "$overlay_rollback" "$seal_incoming" "$seal_rollback"; do
+    if [ -e "$identity_prefix_artifact" ] || [ -L "$identity_prefix_artifact" ]; then
+      exit 79
+    fi
+  done
+  if [ -e "$coordination_identity_candidate" ] || [ -L "$coordination_identity_candidate" ]; then
+    if [ ! -f "$coordination_identity_candidate" ] || \
+       [ -L "$coordination_identity_candidate" ] || \
+       [ "$(stat -c '%u:%g:%a:%h' "$coordination_identity_candidate" \
+         2>/dev/null || true)" != 0:0:400:1 ] || \
+       [ "$(cat "$coordination_identity_candidate" 2>/dev/null || true)" != \
+         "$expected_transaction_identity" ]; then exit 79; fi
+    rm -f -- "$coordination_identity_candidate"
+    sync -f "$coordination_root"
+  fi
+  exit 0
+fi
+if [ -e "$coordination_identity_candidate" ] || \
+   [ -L "$coordination_identity_candidate" ]; then exit 79; fi
+if [ ! -f "$coordination_identity" ] || [ -L "$coordination_identity" ] || \
+   [ "$(stat -c '%u:%g:%a' "$coordination_identity" 2>/dev/null || true)" != 0:0:400 ] || \
+   [ "$(cat "$coordination_identity" 2>/dev/null || true)" != \
+     "$expected_transaction_identity" ]; then exit 79; fi
+systemctl stop "$unit" >/dev/null 2>&1 || true
+systemctl kill --kill-who=all "$unit" >/dev/null 2>&1 || true
+systemctl disable "$unit" >/dev/null 2>&1 || true
+recovery_active_state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+recovery_enabled_state="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+case "$recovery_active_state" in inactive|failed|unknown) ;; *) exit 73 ;; esac
+case "$recovery_enabled_state" in disabled|masked|not-found) ;; *) exit 73 ;; esac
 if [ ! -e "$control_dir" ] && [ ! -L "$control_dir" ]; then
   ${TARGET_TRANSACTION_IDENTITY_EXPECTATION}
   if [ ! -f "$coordination_identity" ] || [ -L "$coordination_identity" ] || \
@@ -2183,9 +2596,10 @@ if [ ! -e "$control_dir" ] && [ ! -L "$control_dir" ]; then
   sync -f "$coordination_root"
   exit 0
 fi
-if { [ ! -e "$active_restore" ] && [ ! -L "$active_restore" ]; } && \
-   { [ ! -e "$finalized_marker" ] && [ ! -L "$finalized_marker" ]; } && \
-   { [ ! -e "$rolled_back_marker" ] && [ ! -L "$rolled_back_marker" ]; }; then
+if { [ -e "$control_dir" ] && [ ! -L "$control_dir" ]; } && \
+   { [ ! -e "$active_restore" ] && [ ! -L "$active_restore" ]; }; then
+  if { [ ! -e "$finalized_marker" ] && [ ! -L "$finalized_marker" ]; } && \
+     { [ ! -e "$rolled_back_marker" ] && [ ! -L "$rolled_back_marker" ]; }; then
   if [ -e "$rollback_data" ] || [ -L "$rollback_data" ] || \
      [ -e "$env_rollback" ] || [ -L "$env_rollback" ] || \
      [ -e "$overlay_rollback" ] || [ -L "$overlay_rollback" ] || \
@@ -2196,31 +2610,23 @@ if { [ ! -e "$active_restore" ] && [ ! -L "$active_restore" ]; } && \
      [ -e "$control_dir/installed" ] || [ -L "$control_dir/installed" ] || \
      [ -e "$commit_authorized" ] || [ -L "$commit_authorized" ] || \
      [ -e "$finalizing_marker" ] || [ -L "$finalizing_marker" ]; then exit 79; fi
-  ${TARGET_TRANSACTION_IDENTITY_GUARD}
-  if [ ! -f "$transaction_marker" ] || [ -L "$transaction_marker" ] || \
-     [ "$(stat -c '%u:%g:%a' "$transaction_marker" 2>/dev/null || true)" != 0:0:400 ] || \
-     [ "$(cat "$transaction_marker" 2>/dev/null || true)" != "$run_id" ]; then exit 79; fi
-  if [ -e "$owner_marker" ] || [ -L "$owner_marker" ]; then
-    if [ ! -f "$owner_marker" ] || [ -L "$owner_marker" ] || \
-       [ "$(stat -c '%u:%g:%a' "$owner_marker" 2>/dev/null || true)" != 0:0:400 ] || \
-       [ "$(cat "$owner_marker" 2>/dev/null || true)" != "$run_id" ]; then exit 79; fi
+  ${TARGET_TRANSACTION_IDENTITY_EXPECTATION}
+  if [ ! -f "$coordination_identity" ] || [ -L "$coordination_identity" ] || \
+     [ "$(stat -c '%u:%g:%a' "$coordination_identity" 2>/dev/null || true)" != 0:0:400 ] || \
+     [ "$(cat "$coordination_identity" 2>/dev/null || true)" != \
+       "$expected_transaction_identity" ]; then exit 79; fi
+  if [ -e "$transaction_identity" ] || [ -L "$transaction_identity" ]; then
+    if [ ! -f "$transaction_identity" ] || [ -L "$transaction_identity" ] || \
+       [ "$(stat -c '%u:%g:%a' "$transaction_identity" 2>/dev/null || true)" != 0:0:400 ] || \
+       [ "$(cat "$transaction_identity" 2>/dev/null || true)" != \
+         "$expected_transaction_identity" ]; then transaction_identity_incomplete=1; fi
   fi
-  if [ -e "$current_restore_incoming" ] || [ -L "$current_restore_incoming" ]; then
-    if [ ! -f "$current_restore_incoming" ] || [ -L "$current_restore_incoming" ] || \
-       [ ! -f "$owner_marker" ] || [ -L "$owner_marker" ] || \
-       [ "$(stat -c '%u:%g:%a' "$current_restore_incoming" 2>/dev/null || true)" != 0:0:400 ] || \
-       [ "$(cat "$current_restore_incoming" 2>/dev/null || true)" != "$run_id" ] || \
-       [ "$(stat -c '%d:%i' "$current_restore_incoming" 2>/dev/null || true)" != \
-         "$(stat -c '%d:%i' "$owner_marker" 2>/dev/null || true)" ]; then exit 79; fi
-  fi
-  if [ -e "$current_restore" ] || [ -L "$current_restore" ]; then
-    if [ ! -f "$current_restore" ] || [ -L "$current_restore" ] || \
-       [ "$(stat -c '%u:%g:%a' "$current_restore" 2>/dev/null || true)" != 0:0:400 ]; then
-      exit 79
+  if [ -e "$transaction_marker" ] || [ -L "$transaction_marker" ]; then
+    if [ ! -f "$transaction_marker" ] || [ -L "$transaction_marker" ] || \
+       [ "$(stat -c '%u:%g:%a' "$transaction_marker" 2>/dev/null || true)" != 0:0:400 ] || \
+       [ "$(cat "$transaction_marker" 2>/dev/null || true)" != "$run_id" ]; then
+      transaction_marker_incomplete=1
     fi
-    if [ -f "$owner_marker" ] && \
-       [ "$(stat -c '%d:%i' "$current_restore")" = \
-         "$(stat -c '%d:%i' "$owner_marker")" ]; then exit 79; fi
   fi
   chattr -R -i -a "$incoming_data" 2>/dev/null || true
   rm -rf -- "$runtime_dir" "$incoming_data"
@@ -2243,9 +2649,10 @@ if { [ ! -e "$active_restore" ] && [ ! -L "$active_restore" ]; } && \
   rm -f -- "$coordination_identity"
   sync -f "$coordination_root"
   exit 0
+  fi
 fi
-exec 8>&-
-${TARGET_TRANSACTION_GUARD}
+${TARGET_TRANSACTION_IDENTITY_GUARD}
+${TARGET_TRANSACTION_OWNERSHIP_GUARD}
 if [ ! -f "$transaction_marker" ] || [ -L "$transaction_marker" ] || \
    [ "$(stat -c '%u:%g:%a' "$transaction_marker" 2>/dev/null || true)" != 0:0:400 ] || \
    [ "$(cat "$transaction_marker" 2>/dev/null || true)" != "$run_id" ]; then
@@ -2307,17 +2714,30 @@ elif [ "$(cat "$data_was_immutable" 2>/dev/null || true)" = true ] && \
      [ -d "$data_dir" ] && [ ! -L "$data_dir" ]; then
   chattr +i "$data_dir"
 fi
-if [ -e "$env_rollback" ] && [ ! -L "$env_rollback" ]; then
+if [ -e "$env_rollback" ] || [ -L "$env_rollback" ]; then
+  if ! { [ -f "$env_rollback" ] && [ ! -L "$env_rollback" ] && \
+    [ "$(stat -c '%h' "$env_rollback" 2>/dev/null || true)" = 1 ] && \
+    [ "$(stat -c '%u:%g:%a' "$env_rollback" 2>/dev/null || true)" = \
+      "0:$service_group_id:640" ]; }; then exit 98; fi
   rm -f -- "$env_path"
   mv -- "$env_rollback" "$env_path"
 fi
-if [ -e "$overlay_rollback" ] && [ ! -L "$overlay_rollback" ]; then
+if [ -e "$overlay_rollback" ] || [ -L "$overlay_rollback" ]; then
+  if ! { [ -f "$overlay_rollback" ] && [ ! -L "$overlay_rollback" ] && \
+    [ "$(stat -c '%h' "$overlay_rollback" 2>/dev/null || true)" = 1 ] && \
+    [ "$(stat -c '%u:%g:%a' "$overlay_rollback" 2>/dev/null || true)" = \
+      "0:$service_group_id:640" ]; }; then exit 98; fi
   rm -f -- "$overlay_path"
   mv -- "$overlay_rollback" "$overlay_path"
 elif [ "$(cat "$control_dir/overlay-existed" 2>/dev/null || true)" = false ]; then
   rm -f -- "$overlay_path"
 fi
-if [ -e "$seal_rollback" ] && [ ! -L "$seal_rollback" ]; then
+if [ -e "$seal_rollback" ] || [ -L "$seal_rollback" ]; then
+  if ! { [ -f "$seal_rollback" ] && [ ! -L "$seal_rollback" ] && \
+    [ "$(stat -c '%h' "$seal_rollback" 2>/dev/null || true)" = 1 ] && \
+    [ "$(stat -c '%u:%g:%a' "$seal_rollback" 2>/dev/null || true)" = 0:0:444 ]; }; then
+    exit 98
+  fi
   rm -f -- "$seal_path"
   mv -- "$seal_rollback" "$seal_path"
 elif [ "$(cat "$control_dir/seal-existed" 2>/dev/null || true)" = false ]; then
@@ -2501,6 +2921,7 @@ if [ "$already_finalized" -eq 0 ]; then
   sync -f "$control_dir/finalized.tmp"
   mv -- "$control_dir/finalized.tmp" "$finalized_marker"
 fi
+sync -f "$control_dir"
 rm -f -- "$finalizing_marker"
 sync -f "$control_dir"
 current_matches_owner=0
@@ -2596,6 +3017,13 @@ function validateRestoreRequest(
       "profile",
       "Restore data paths cannot be represented safely by remote commands",
     );
+  }
+  if (
+    FIXED_RESTORE_CONTROL_ROOTS.some((controlRoot) =>
+      pathsOverlap(request.profile.target.dataDir, controlRoot),
+    )
+  ) {
+    return invalidRequest("profile", "Restore target data path overlaps a control root");
   }
   const parsed = parseProductionSnapshotManifest(request.manifestJson);
   if (!parsed.ok) {

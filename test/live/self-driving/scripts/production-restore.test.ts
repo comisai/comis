@@ -577,6 +577,53 @@ describe("production snapshot restore transaction", () => {
     ).toBe(false);
   });
 
+  it("rejects target data paths that overlap restore control roots", () => {
+    const protectedPathCollisions = [
+      "/etc",
+      "/etc/comis",
+      "/etc/comis/restore-data",
+      "/var",
+      "/var/lib/comis-self-driving",
+      "/var/lib/comis-self-driving/restore-data",
+      "/run",
+      "/run/comis-self-driving",
+      "/run/comis-self-driving/restore-data",
+      "/.comis-self-driving",
+      "/.comis-self-driving/restore-restore-a1",
+    ] as const;
+    const acceptedCollisions = protectedPathCollisions.filter((dataDir) => {
+      const request = makeRequest();
+      return buildProductionRestorePlan({
+        ...request,
+        profile: {
+          ...request.profile,
+          target: { ...request.profile.target, dataDir },
+        },
+      }).ok;
+    });
+
+    expect(acceptedCollisions).toEqual([]);
+  });
+
+  it("checks protected path overlap across the mount namespace", () => {
+    const result = buildProductionRestorePlan(makeRequest());
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    for (const guardedScript of [
+      result.value.targetPrepare.stdin,
+      result.value.targetRollback.stdin,
+    ]) {
+      expect(guardedScript).toContain("/proc/self/mountinfo");
+      expect(guardedScript).toContain("def mount_regions(path: str)");
+      expect(guardedScript).toContain("mount.root");
+      expect(guardedScript).toContain("mount.target");
+      expect(guardedScript).toContain(
+        'python3 - "$data_dir" /etc/comis "$coordination_root" "$runtime_root" "$state_root"',
+      );
+    }
+  });
+
   it("cleans the source stage when strict manifest validation stops restore before target work", async () => {
     const deps = makeDeps();
     const request = makeRequest();
@@ -819,6 +866,37 @@ describe("production snapshot restore transaction", () => {
     );
   });
 
+  it("recovers every prepare identity publication prefix before active ownership", () => {
+    const result = buildProductionRestorePlan(makeRequest());
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const prepare = result.value.targetPrepare.stdin;
+    const status = result.value.targetStatus.stdin;
+    const rollback = result.value.targetRollback.stdin;
+    const coordinationIdentitySync = prepare.indexOf('sync -f "$coordination_identity"');
+    const transactionMarkerWrite = prepare.indexOf('> "$transaction_marker"');
+
+    expect(coordinationIdentitySync).toBeGreaterThan(0);
+    expect(coordinationIdentitySync).toBeLessThan(transactionMarkerWrite);
+    for (const recoveryScript of [status, rollback]) {
+      const preparePrefixBranch = recoveryScript.indexOf(
+        'if { [ -e "$control_dir" ] && [ ! -L "$control_dir" ]; } && \\\n' +
+          '   { [ ! -e "$active_restore" ] && [ ! -L "$active_restore" ]; }; then',
+      );
+      expect(preparePrefixBranch).toBeGreaterThan(0);
+      expect(recoveryScript).toContain(
+        '[ -e "$transaction_identity" ] || [ -L "$transaction_identity" ]',
+      );
+      expect(recoveryScript).toContain(
+        '[ ! -e "$coordination_identity" ] && [ ! -L "$coordination_identity" ]',
+      );
+      expect(recoveryScript).toContain(
+        '[ -e "$coordination_identity_candidate" ] || [ -L "$coordination_identity_candidate" ]',
+      );
+    }
+  });
+
   it("binds terminal recovery to the requested data path and public seal", () => {
     const result = buildProductionRestorePlan(makeRequest());
 
@@ -849,7 +927,7 @@ describe("production snapshot restore transaction", () => {
       expect(status).toContain(`[ ! -e "$${artifact}" ]`);
     }
     expect(status.indexOf("flock -n")).toBeLessThan(
-      status.indexOf('rm -f -- "$active_restore" "$current_restore_incoming" "$owner_marker"'),
+      status.lastIndexOf('rm -f -- "$active_restore" "$current_restore_incoming" "$owner_marker"'),
     );
   });
 
@@ -1075,6 +1153,39 @@ describe("production snapshot restore transaction", () => {
     }
   });
 
+  it("rejects writable control directories and every reserved path alias", () => {
+    const result = buildProductionRestorePlan(makeRequest());
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const prepare = result.value.targetPrepare.stdin;
+    const rollback = result.value.targetRollback.stdin;
+    for (const guardedScript of [prepare, rollback]) {
+      expect(guardedScript).toContain("[ ! -d /etc/comis ]");
+      expect(guardedScript).toContain("etc_comis_mode=\"$(stat -c '%a' /etc/comis");
+      expect(guardedScript).toContain("$(( 0$etc_comis_mode & 0022 ))");
+      expect(guardedScript).not.toContain("find /etc/comis -maxdepth 0 -perm /022");
+    }
+    for (const artifact of [
+      "env_incoming",
+      "env_rollback",
+      "overlay_incoming",
+      "overlay_rollback",
+      "seal_incoming",
+      "seal_rollback",
+    ]) {
+      expect(prepare).toContain(
+        `[ -e "$${artifact}" ] || [ -L "$${artifact}" ]`,
+      );
+    }
+    for (const artifact of ["env_rollback", "overlay_rollback", "seal_rollback"]) {
+      expect(rollback).toContain(
+        `[ -f "$${artifact}" ] && [ ! -L "$${artifact}" ]`,
+      );
+      expect(rollback).toContain(`stat -c '%h' "$${artifact}"`);
+    }
+  });
+
   it("serializes every target mutation under one durable restore owner", () => {
     const result = buildProductionRestorePlan(makeRequest());
 
@@ -1111,17 +1222,224 @@ describe("production snapshot restore transaction", () => {
     );
   });
 
+  it("takes exclusive ownership before checking or creating a restore directory", () => {
+    const result = buildProductionRestorePlan(makeRequest());
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const prepare = result.value.targetPrepare.stdin;
+    const lockIndex = prepare.indexOf("if ! flock -n 9");
+    const preflightIndex = prepare.indexOf(
+      'if [ -e "$control_dir" ] || [ -L "$control_dir" ]',
+    );
+    const controlCreationIndex = prepare.indexOf('mkdir -m 0700 -- "$control_dir"');
+
+    expect(lockIndex).toBeGreaterThan(0);
+    expect(lockIndex).toBeLessThan(preflightIndex);
+    expect(controlCreationIndex).toBeGreaterThan(preflightIndex);
+    expect(prepare).not.toContain(
+      '"$state_root" "$control_dir" "$extract_dir" "$coordination_root"',
+    );
+  });
+
+  it("uses one run scoped global claim across every target data path", () => {
+    const first = buildProductionRestorePlan(makeRequest());
+    const secondRequest = makeRequest();
+    const second = buildProductionRestorePlan({
+      ...secondRequest,
+      profile: {
+        ...secondRequest.profile,
+        target: {
+          ...secondRequest.profile.target,
+          dataDir: "/srv/comis-other",
+        },
+      },
+    });
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    if (!first.ok || !second.ok) return;
+    const claimAssignment = 'coordination_identity="$coordination_root/restore-$run_id.identity"';
+    expect(first.value.targetPrepare.stdin).toContain(claimAssignment);
+    expect(second.value.targetPrepare.stdin).toContain(claimAssignment);
+    expect(first.value.targetPrepare.stdin).not.toContain(
+      'coordination_identity="$coordination_root/restore-$run_id-$expected_data_dir_sha256.identity"',
+    );
+    const candidateAssignment =
+      'coordination_identity_candidate="$coordination_root/.restore-$run_id.identity.incoming"';
+    expect(first.value.targetPrepare.stdin).toContain(candidateAssignment);
+    expect(second.value.targetPrepare.stdin).toContain(candidateAssignment);
+    expect(second.value.targetPrepare.stdin).toContain(
+      'printf \'%s\\n\' "$expected_transaction_identity" > "$coordination_identity_scratch"',
+    );
+    expect(second.value.targetPrepare.stdin).toContain(
+      'mv --no-clobber -- "$coordination_identity_candidate" "$coordination_identity"',
+    );
+  });
+
+  it("publishes only a complete global claim and preserves foreign claims", () => {
+    const result = buildProductionRestorePlan(makeRequest());
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const prepare = result.value.targetPrepare.stdin;
+    const scratch =
+      'coordination_identity_scratch="$coordination_root/.restore-$run_id-$expected_data_dir_sha256.identity.scratch"';
+    const candidate =
+      'coordination_identity_candidate="$coordination_root/.restore-$run_id.identity.incoming"';
+    const scratchSync = prepare.indexOf('sync -f "$coordination_identity_scratch"');
+    const scratchDirectorySync = prepare.indexOf(
+      'sync -f "$coordination_root"',
+      scratchSync,
+    );
+    const candidateMove = prepare.indexOf(
+      'mv --no-clobber -- "$coordination_identity_scratch" "$coordination_identity_candidate"',
+    );
+    const candidateSync = prepare.indexOf('sync -f "$coordination_identity_candidate"');
+    const candidateDirectorySync = prepare.indexOf(
+      'sync -f "$coordination_root"',
+      candidateSync,
+    );
+    const claimMove = prepare.indexOf(
+      'mv --no-clobber -- "$coordination_identity_candidate" "$coordination_identity"',
+    );
+    const claimDirectorySync = prepare.indexOf('sync -f "$coordination_root"', claimMove);
+
+    expect(prepare).toContain(scratch);
+    expect(prepare).toContain(candidate);
+    expect(scratchSync).toBeGreaterThan(0);
+    expect(scratchSync).toBeLessThan(scratchDirectorySync);
+    expect(scratchDirectorySync).toBeLessThan(candidateMove);
+    expect(candidateMove).toBeLessThan(candidateSync);
+    expect(candidateSync).toBeGreaterThan(0);
+    expect(candidateSync).toBeLessThan(candidateDirectorySync);
+    expect(candidateDirectorySync).toBeLessThan(claimMove);
+    expect(claimMove).toBeLessThan(claimDirectorySync);
+    for (const recoveryScript of [
+      result.value.targetStatus.stdin,
+      result.value.targetRollback.stdin,
+    ]) {
+      expect(recoveryScript).toContain(candidate);
+      expect(recoveryScript).toContain(
+        '$(cat "$coordination_identity_candidate" 2>/dev/null || true)',
+      );
+      expect(recoveryScript).toContain('"$expected_transaction_identity" ]; then exit 79; fi');
+      const mismatchStart = recoveryScript.indexOf(
+        '[ "$(cat "$coordination_identity" 2>/dev/null || true)" != "$expected_transaction_identity" ]; then',
+      );
+      const mismatchEnd = recoveryScript.indexOf("\n  fi", mismatchStart);
+      const mismatchBranch = recoveryScript.slice(mismatchStart, mismatchEnd);
+      expect(mismatchStart).toBeGreaterThan(0);
+      expect(mismatchBranch).toContain("exit 79");
+      expect(mismatchBranch).not.toContain('rm -f -- "$coordination_identity"');
+    }
+  });
+
+  it("makes the restore lock durable before publishing a claim candidate", () => {
+    const result = buildProductionRestorePlan(makeRequest());
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const prepare = result.value.targetPrepare.stdin;
+    const lockAcquisition = prepare.indexOf("if ! flock -n 9");
+    const lockSync = prepare.indexOf('sync -f "$operation_lock"', lockAcquisition);
+    const lockDirectorySync = prepare.indexOf('sync -f "$coordination_root"', lockSync);
+    const candidateWrite = prepare.indexOf('> "$coordination_identity_scratch"');
+
+    expect(lockAcquisition).toBeGreaterThan(0);
+    expect(lockAcquisition).toBeLessThan(lockSync);
+    expect(lockSync).toBeLessThan(lockDirectorySync);
+    expect(lockDirectorySync).toBeLessThan(candidateWrite);
+  });
+
+  it("returns a nonzero status for every prepare termination signal", () => {
+    const result = buildProductionRestorePlan(makeRequest());
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const prepare = result.value.targetPrepare.stdin;
+    expect(prepare).toContain('cleanup_prepare() {\n  rc="$1"');
+    expect(prepare).toContain("trap cleanup_prepare_on_exit EXIT");
+    expect(prepare).toContain("trap 'cleanup_prepare 129' HUP");
+    expect(prepare).toContain("trap 'cleanup_prepare 130' INT");
+    expect(prepare).toContain("trap 'cleanup_prepare 143' TERM");
+    expect(prepare).not.toContain("trap cleanup_prepare EXIT HUP INT TERM");
+  });
+
+  it("flushes every cleaned filesystem before removing the global claim", () => {
+    const result = buildProductionRestorePlan(makeRequest());
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const prepare = result.value.targetPrepare.stdin;
+    const cleanupStart = prepare.indexOf("cleanup_prepare() {");
+    const cleanupEnd = prepare.indexOf("cleanup_prepare_on_exit() {", cleanupStart);
+    const cleanup = prepare.slice(cleanupStart, cleanupEnd);
+    const claimRemoval = cleanup.indexOf('rm -f -- "$coordination_identity"');
+
+    expect(cleanupStart).toBeGreaterThan(0);
+    expect(cleanupEnd).toBeGreaterThan(cleanupStart);
+    expect(claimRemoval).toBeGreaterThan(0);
+    for (const [removal, filesystemSync] of [
+      ['rm -rf -- "$incoming_data" "$control_dir"', 'sync -f "$state_root"'],
+      ['rm -rf -- "$incoming_data" "$control_dir"', 'sync -f "$data_mount"'],
+      ['rm -rf -- "$runtime_dir"', 'sync -f "$runtime_root"'],
+      [
+        '"$seal_incoming" "$seal_rollback"',
+        "sync -f /etc/comis",
+      ],
+    ] as const) {
+      const removalIndex = cleanup.indexOf(removal);
+      const syncIndex = cleanup.indexOf(filesystemSync, removalIndex);
+      expect(removalIndex).toBeGreaterThan(0);
+      expect(removalIndex).toBeLessThan(syncIndex);
+      expect(syncIndex).toBeLessThan(claimRemoval);
+    }
+  });
+
+  it("arms cleanup ownership before each prepare namespace mutation", () => {
+    const result = buildProductionRestorePlan(makeRequest());
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const prepare = result.value.targetPrepare.stdin;
+    for (const [ownershipFlag, mutation] of [
+      [
+        "coordination_identity_scratch_created=1",
+        '> "$coordination_identity_scratch"',
+      ],
+      [
+        "coordination_identity_candidate_created=1",
+        'mv --no-clobber -- "$coordination_identity_scratch" "$coordination_identity_candidate"',
+      ],
+      [
+        "coordination_identity_created=1",
+        'mv --no-clobber -- "$coordination_identity_candidate" "$coordination_identity"',
+      ],
+      ["control_created=1", 'mkdir -m 0700 -- "$control_dir"'],
+      ["runtime_created=1", 'mkdir -m 0700 -- "$runtime_dir"'],
+      ["owner_created=1", '> "$owner_marker"'],
+      ["active_created=1", 'ln -- "$owner_marker" "$active_restore"'],
+    ] as const) {
+      expect(prepare.indexOf(ownershipFlag)).toBeGreaterThan(0);
+      expect(prepare.indexOf(ownershipFlag)).toBeLessThan(prepare.indexOf(mutation));
+    }
+  });
+
   it("publishes durable generation phases before destructive restore transitions", () => {
     const result = buildProductionRestorePlan(makeRequest());
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const prepare = result.value.targetPrepare.stdin;
-    expect(prepare.indexOf('sync -f "$state_root"')).toBeLessThan(
-      prepare.indexOf('ln -- "$owner_marker" "$active_restore"'),
+    const activePublicationIndex = prepare.indexOf(
+      'ln -- "$owner_marker" "$active_restore"',
     );
-    expect(prepare.indexOf('ln -- "$owner_marker" "$active_restore"')).toBeLessThan(
-      prepare.indexOf('sync -f "$coordination_root"', prepare.indexOf("owner_acquired=1")),
+    const stateRootSync = prepare.indexOf('sync -f "$state_root"');
+    expect(stateRootSync).toBeGreaterThan(0);
+    expect(stateRootSync).toBeLessThan(activePublicationIndex);
+    expect(activePublicationIndex).toBeLessThan(
+      prepare.indexOf('sync -f "$coordination_root"', activePublicationIndex),
     );
 
     const promote = result.value.targetVerifyAndPromote.stdin;
@@ -1149,20 +1467,95 @@ describe("production snapshot restore transaction", () => {
     expect(finalize).toContain("restoreAttestationSha256");
   });
 
+  it("makes every restore namespace durable before active publication", () => {
+    const result = buildProductionRestorePlan(makeRequest());
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const prepare = result.value.targetPrepare.stdin;
+    const activePublication = prepare.indexOf('ln -- "$owner_marker" "$active_restore"');
+    for (const [creation, parentSync] of [
+      ['install -d -m 0700 -o root -g root "$coordination_root"', 'sync -f /var/lib'],
+      ['install -d -m 0700 -o root -g root "$state_root" "$runtime_root"', 'sync -f "$data_mount"'],
+      ['install -d -m 0700 -o root -g root "$state_root" "$runtime_root"', 'sync -f /run'],
+      ['mkdir -m 0700 -- "$control_dir"', 'sync -f "$state_root"'],
+      ['mkdir -m 0700 -- "$runtime_dir"', 'sync -f "$runtime_root"'],
+    ] as const) {
+      const creationIndex = prepare.indexOf(creation);
+      const syncIndex = prepare.indexOf(parentSync, creationIndex);
+      expect(creationIndex).toBeGreaterThan(0);
+      expect(creationIndex).toBeLessThan(syncIndex);
+      expect(syncIndex).toBeLessThan(activePublication);
+    }
+  });
+
+  it("makes ownership marker contents durable before active publication", () => {
+    const result = buildProductionRestorePlan(makeRequest());
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const prepare = result.value.targetPrepare.stdin;
+    const activePublication = prepare.indexOf('ln -- "$owner_marker" "$active_restore"');
+    for (const [markerWrite, markerSync] of [
+      ['> "$transaction_marker"', 'sync -f "$transaction_marker"'],
+      ['> "$owner_marker"', 'sync -f "$owner_marker"'],
+    ] as const) {
+      const writeIndex = prepare.indexOf(markerWrite);
+      const syncIndex = prepare.indexOf(markerSync, writeIndex);
+      expect(writeIndex).toBeGreaterThan(0);
+      expect(writeIndex).toBeLessThan(syncIndex);
+      expect(syncIndex).toBeLessThan(activePublication);
+    }
+  });
+
+  it("makes each finalized marker transition directory durable", () => {
+    const result = buildProductionRestorePlan(makeRequest());
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const finalize = result.value.targetFinalize.stdin;
+    const finalizedPublication = finalize.indexOf(
+      'mv -- "$control_dir/finalized.tmp" "$finalized_marker"',
+    );
+    const finalizedDirectorySync = finalize.indexOf(
+      'sync -f "$control_dir"',
+      finalizedPublication,
+    );
+    const finalizingRemoval = finalize.indexOf(
+      'rm -f -- "$finalizing_marker"',
+      finalizedPublication,
+    );
+    const removalDirectorySync = finalize.indexOf(
+      'sync -f "$control_dir"',
+      finalizingRemoval,
+    );
+
+    expect(finalizedPublication).toBeGreaterThan(0);
+    expect(finalizedPublication).toBeLessThan(finalizedDirectorySync);
+    expect(finalizedDirectorySync).toBeLessThan(finalizingRemoval);
+    expect(finalizingRemoval).toBeLessThan(removalDirectorySync);
+  });
+
   it("contains a drifted target before rollback without depending on activation confinement", () => {
     const result = buildProductionRestorePlan(makeRequest());
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const rollback = result.value.targetRollback.stdin;
+    const lockAcquisition = rollback.indexOf("if ! flock -n 9");
+    const claimAuthentication = rollback.indexOf(
+      '[ "$(cat "$coordination_identity" 2>/dev/null || true)" != \\',
+      lockAcquisition,
+    );
+    const serviceStop = rollback.indexOf('systemctl stop "$unit"');
+    expect(lockAcquisition).toBeGreaterThan(0);
+    expect(lockAcquisition).toBeLessThan(claimAuthentication);
+    expect(claimAuthentication).toBeLessThan(serviceStop);
     expect(rollback).toContain('systemctl stop "$unit"');
     expect(rollback).toContain('systemctl kill --kill-who=all "$unit"');
     expect(rollback).toContain('systemctl disable "$unit"');
     expect(rollback).not.toContain("environment-role");
     expect(rollback).not.toContain(TARGET_REPLAY_QUARANTINE_SHA256);
-    expect(rollback.indexOf('then exit 0; fi\nsystemctl stop')).toBeLessThan(
-      rollback.indexOf('exec 9<>"$operation_lock"'),
-    );
     expect(rollback).toContain(
       'rm -f -- "$active_restore" "$current_restore_incoming" "$owner_marker"',
     );
