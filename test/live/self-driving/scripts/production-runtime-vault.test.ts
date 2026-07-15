@@ -42,6 +42,7 @@ import {
   RUNTIME_VAULT_STATUS_BEGIN,
   RUNTIME_VAULT_STATUS_END,
   buildProductionRuntimeVaultPlan,
+  buildProductionRuntimeVaultPlanBase,
   inspectProductionRuntimeVault,
   reconcileProductionRuntimeVaultTarget,
   recoverProductionRuntimeVault,
@@ -158,6 +159,32 @@ function makeLeaseClient(
 }
 
 describe("production runtime content addressed vault", () => {
+  it("derives authenticated receipt paths before an authority digest exists", () => {
+    const result = buildProductionRuntimeVaultPlanBase({
+      runId: "runtime-vault-base-a1",
+      profile,
+      attemptId,
+      sourceRuntime,
+      targetRuntime,
+      sourceTree,
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        payloadPath: `/opt/comis-replay/runtimes/sha256/${sourceTree.digestSha256}/payload`,
+        maximumArchiveBytes:
+          sourceTree.bytes + sourceTree.entryCount * 16_384 + 128 * 1024 * 1024,
+        targetControlDir:
+          `/var/lib/comis-self-driving/runtime-vault/capture-runtime-vault-base-a1-${attemptId}`,
+        targetIncomingRoot:
+          `/opt/comis-replay/runtimes/sha256/.incoming-runtime-vault-base-a1-${attemptId}-${sourceTree.digestSha256}`,
+        targetTransactionDir:
+          `/var/lib/comis-self-driving/runtime-vault/transactions/${attemptId}`,
+      },
+    });
+  });
+
   it("builds an additive vault stream without requiring a replay entrypoint", () => {
     const result = buildProductionRuntimeVaultPlan({
       runId: "runtime-vault-a1",

@@ -62,14 +62,26 @@ export interface RuntimePayloadIdentity {
   readonly version: string;
 }
 
-export interface ProductionRuntimeVaultPlanRequest {
+export interface ProductionRuntimeVaultPlanBaseRequest {
   readonly runId: string;
   readonly attemptId: string;
-  readonly authorityDigestSha256: string;
   readonly profile: ProductionReplayProfile;
   readonly sourceRuntime: RuntimeArtifactAttestation;
   readonly targetRuntime: RuntimeArtifactAttestation;
   readonly sourceTree: RuntimeTreeAttestation;
+}
+
+export interface ProductionRuntimeVaultPlanRequest
+  extends ProductionRuntimeVaultPlanBaseRequest {
+  readonly authorityDigestSha256: string;
+}
+
+export interface ProductionRuntimeVaultPlanBase {
+  readonly payloadPath: string;
+  readonly maximumArchiveBytes: number;
+  readonly targetControlDir: string;
+  readonly targetIncomingRoot: string;
+  readonly targetTransactionDir: string;
 }
 
 export interface ProductionRuntimeVaultStreamPlan {
@@ -1609,9 +1621,9 @@ printf '%s\n' '${RUNTIME_VAULT_STATUS_BEGIN}' 'state=present' \
 `;
 }
 
-export function buildProductionRuntimeVaultPlan(
-  request: ProductionRuntimeVaultPlanRequest,
-): Result<ProductionRuntimeVaultPlan, ProductionRuntimeVaultPlanError> {
+export function buildProductionRuntimeVaultPlanBase(
+  request: ProductionRuntimeVaultPlanBaseRequest,
+): Result<ProductionRuntimeVaultPlanBase, ProductionRuntimeVaultPlanError> {
   if (!SAFE_RUN_ID_RE.test(request.runId)) {
     return invalid("invalid_request", "runId", "Runtime vault run ID contains unsafe characters");
   }
@@ -1620,13 +1632,6 @@ export function buildProductionRuntimeVaultPlan(
       "invalid_request",
       "attemptId",
       "Runtime vault attempt ID is malformed",
-    );
-  }
-  if (!SHA256_RE.test(request.authorityDigestSha256)) {
-    return invalid(
-      "invalid_request",
-      "authorityDigestSha256",
-      "Runtime vault recovery authority digest is malformed",
     );
   }
   if (!isSafePackageRoot(request.sourceRuntime.packageRoot)) {
@@ -1667,6 +1672,30 @@ export function buildProductionRuntimeVaultPlan(
   const maximum = maximumStreamBytes(request.sourceTree);
   if (!maximum.ok) return maximum;
   const payloadPath = `${RUNTIME_VAULT_ROOT}/${request.sourceTree.digestSha256}/payload`;
+  return ok({
+    payloadPath,
+    maximumArchiveBytes: maximum.value,
+    targetControlDir:
+      `/var/lib/comis-self-driving/runtime-vault/capture-${request.runId}-${request.attemptId}`,
+    targetIncomingRoot:
+      `${RUNTIME_VAULT_ROOT}/.incoming-${request.runId}-${request.attemptId}-${request.sourceTree.digestSha256}`,
+    targetTransactionDir:
+      `/var/lib/comis-self-driving/runtime-vault/transactions/${request.attemptId}`,
+  });
+}
+
+export function buildProductionRuntimeVaultPlan(
+  request: ProductionRuntimeVaultPlanRequest,
+): Result<ProductionRuntimeVaultPlan, ProductionRuntimeVaultPlanError> {
+  const base = buildProductionRuntimeVaultPlanBase(request);
+  if (!base.ok) return base;
+  if (!SHA256_RE.test(request.authorityDigestSha256)) {
+    return invalid(
+      "invalid_request",
+      "authorityDigestSha256",
+      "Runtime vault recovery authority digest is malformed",
+    );
+  }
   const transactionIdentitySha256 =
     computeProductionRuntimeVaultTransactionIdentity([
       request.profile.target.expectedMachineIdSha256,
@@ -1681,15 +1710,18 @@ export function buildProductionRuntimeVaultPlan(
       String(request.sourceTree.entryCount),
       String(request.sourceTree.bytes),
       request.sourceTree.version,
-      String(maximum.value),
+      String(base.value.maximumArchiveBytes),
     ]);
-  const args = targetArgs(request, maximum.value, transactionIdentitySha256);
-  const controlDir =
-    `/var/lib/comis-self-driving/runtime-vault/capture-${request.runId}-${request.attemptId}`;
+  const args = targetArgs(
+    request,
+    base.value.maximumArchiveBytes,
+    transactionIdentitySha256,
+  );
+  const controlDir = base.value.targetControlDir;
   const readyLine = `COMIS_RUNTIME_VAULT_CONTROLLER_READY_${request.attemptId}`;
   const sourceStdin = buildSourceStreamProgram();
   return ok({
-    payloadPath,
+    payloadPath: base.value.payloadPath,
     authorityDigestSha256: request.authorityDigestSha256,
     transactionIdentitySha256,
     controllerLease: {
@@ -1710,7 +1742,7 @@ export function buildProductionRuntimeVaultPlan(
     ),
     stream: {
       label: "stream-runtime-vault",
-      maximumBytes: maximum.value,
+      maximumBytes: base.value.maximumArchiveBytes,
       sourceStdin,
       source: endpoint(request.profile.source, rootShellArgs([
         request.profile.source.expectedMachineIdSha256,
