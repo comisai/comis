@@ -22,6 +22,7 @@ import {
   createProcessReplaySignalPort,
   createStderrReplayQuarantineLogger,
   createSystemEnvironmentRolePort,
+  createSystemReplayMachineIdentityPort,
   createSystemReplayRestoreAttestationPort,
   isReplayBootFailure,
   replayBootFailure,
@@ -31,6 +32,7 @@ import {
   startReplayQuarantine,
   type ReplayBootIntent,
   type ReplayEnvironmentRolePort,
+  type ReplayMachineIdentityPort,
   type ReplayQuarantineLogPort,
   type ReplayRestoreAttestationPort,
   type ReplaySignalPort,
@@ -47,6 +49,7 @@ interface DaemonLiveModule {
 export interface DaemonEntrypointDeps {
   readonly env?: EnvPort;
   readonly environmentRole?: ReplayEnvironmentRolePort;
+  readonly machineIdentity?: ReplayMachineIdentityPort;
   readonly restoreAttestation?: ReplayRestoreAttestationPort;
   readonly clock?: ClockPort;
   readonly signals?: ReplaySignalPort;
@@ -57,6 +60,7 @@ export interface DaemonEntrypointDeps {
 interface ResolvedDaemonEntrypointDeps {
   readonly env: EnvPort;
   readonly environmentRole: ReplayEnvironmentRolePort;
+  readonly machineIdentity: ReplayMachineIdentityPort;
   readonly restoreAttestation: ReplayRestoreAttestationPort;
   readonly clock: ClockPort;
   readonly signals: ReplaySignalPort;
@@ -73,6 +77,7 @@ function resolveEntrypointDeps(
   return {
     env: deps.env ?? systemEnv,
     environmentRole: deps.environmentRole ?? createSystemEnvironmentRolePort(),
+    machineIdentity: deps.machineIdentity ?? createSystemReplayMachineIdentityPort(),
     restoreAttestation:
       deps.restoreAttestation ?? createSystemReplayRestoreAttestationPort(),
     clock: deps.clock ?? systemClock,
@@ -106,6 +111,7 @@ async function startResolvedDaemon(
     clock: deps.clock,
     signals: deps.signals,
     logger: deps.logger,
+    machineIdentity: deps.machineIdentity,
     restoreAttestation: deps.restoreAttestation,
   });
   if (!quarantine.ok) throw replayBootFailure(quarantine.error);

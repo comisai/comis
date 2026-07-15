@@ -23,8 +23,11 @@ const DATA_DIR = "COMIS_DATA_DIR";
 const DEFAULT_REPLAY_RUNTIME_DIR = "/run/comis-replay";
 const DEFAULT_ENVIRONMENT_ROLE_PATH = "/etc/comis/environment-role";
 const DEFAULT_RESTORE_ATTESTATION_PATH = "/etc/comis/replay-restore-attestation.json";
+const DEFAULT_MACHINE_ID_PATH = "/etc/machine-id";
 const DATA_DIR_DIGEST_DOMAIN = "comis-replay-data-dir-v1\0";
 const SHA256_RE = /^[a-f0-9]{64}$/u;
+const MACHINE_ID_RE = /^[a-f0-9]{32}\n$/u;
+const SAFE_RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u;
 
 type ReplayRootField = "cloneRoot" | "runtimeRoot";
 
@@ -83,6 +86,13 @@ export type ReplayBootError =
 
 export type ReplayAttestationError =
   | {
+      readonly kind:
+        | "machine_identity_unavailable"
+        | "machine_identity_untrusted"
+        | "invalid_machine_identity";
+      readonly message: string;
+    }
+  | {
       readonly kind: "restore_attestation_unavailable";
       readonly message: string;
     }
@@ -106,11 +116,15 @@ export type ReplayAttestationError =
 export interface ReplayRestoreAttestation {
   readonly schemaVersion: 1;
   readonly state: "committed";
+  readonly runId: string;
+  readonly targetMachineIdSha256: string;
+  readonly baselineImmutable: true;
   readonly dataDirSha256: string;
   readonly snapshotManifestSha256: string;
   readonly restoredDataTreeDigestSha256: string;
   readonly sourceEnvironmentEvidenceIdentitySha256: string;
   readonly effectiveEnvironmentContentSha256: string;
+  readonly replayOverlayContentSha256: string;
   readonly dataEntryCount: number;
   readonly dataBytes: number;
 }
@@ -123,6 +137,10 @@ export interface ReplayEnvironmentRolePort {
 
 export interface ReplayRestoreAttestationPort {
   read(): Promise<Result<ReplayRestoreAttestation, ReplayAttestationError>>;
+}
+
+export interface ReplayMachineIdentityPort {
+  readSha256(): Promise<Result<string, ReplayAttestationError>>;
 }
 
 export interface ReplaySignalPort {
@@ -158,6 +176,7 @@ export interface ReplayQuarantineDeps {
   readonly clock: ClockPort;
   readonly signals: ReplaySignalPort;
   readonly logger: ReplayQuarantineLogPort;
+  readonly machineIdentity: ReplayMachineIdentityPort;
   readonly restoreAttestation: ReplayRestoreAttestationPort;
 }
 
@@ -428,15 +447,19 @@ export function parseReplayRestoreAttestation(
   }
   const value = parsed.value;
   const expectedKeys = [
+    "baselineImmutable",
     "dataBytes",
     "dataDirSha256",
     "dataEntryCount",
     "effectiveEnvironmentContentSha256",
+    "replayOverlayContentSha256",
     "restoredDataTreeDigestSha256",
+    "runId",
     "schemaVersion",
     "snapshotManifestSha256",
     "sourceEnvironmentEvidenceIdentitySha256",
     "state",
+    "targetMachineIdSha256",
   ];
   if (Object.keys(value).sort().join("\0") !== expectedKeys.join("\0")) {
     return err({
@@ -447,6 +470,11 @@ export function parseReplayRestoreAttestation(
   if (
     value.schemaVersion !== 1 ||
     value.state !== "committed" ||
+    typeof value.runId !== "string" ||
+    !SAFE_RUN_ID_RE.test(value.runId) ||
+    typeof value.targetMachineIdSha256 !== "string" ||
+    !SHA256_RE.test(value.targetMachineIdSha256) ||
+    value.baselineImmutable !== true ||
     typeof value.dataDirSha256 !== "string" ||
     !SHA256_RE.test(value.dataDirSha256) ||
     typeof value.snapshotManifestSha256 !== "string" ||
@@ -457,6 +485,8 @@ export function parseReplayRestoreAttestation(
     !SHA256_RE.test(value.sourceEnvironmentEvidenceIdentitySha256) ||
     typeof value.effectiveEnvironmentContentSha256 !== "string" ||
     !SHA256_RE.test(value.effectiveEnvironmentContentSha256) ||
+    typeof value.replayOverlayContentSha256 !== "string" ||
+    !SHA256_RE.test(value.replayOverlayContentSha256) ||
     !isPositiveSafeCount(value.dataEntryCount) ||
     !isSafeCount(value.dataBytes)
   ) {
@@ -468,12 +498,16 @@ export function parseReplayRestoreAttestation(
   return ok({
     schemaVersion: 1,
     state: "committed",
+    runId: value.runId,
+    targetMachineIdSha256: value.targetMachineIdSha256,
+    baselineImmutable: true,
     dataDirSha256: value.dataDirSha256,
     snapshotManifestSha256: value.snapshotManifestSha256,
     restoredDataTreeDigestSha256: value.restoredDataTreeDigestSha256,
     sourceEnvironmentEvidenceIdentitySha256:
       value.sourceEnvironmentEvidenceIdentitySha256,
     effectiveEnvironmentContentSha256: value.effectiveEnvironmentContentSha256,
+    replayOverlayContentSha256: value.replayOverlayContentSha256,
     dataEntryCount: value.dataEntryCount,
     dataBytes: value.dataBytes,
   });
@@ -531,6 +565,33 @@ export function createSystemReplayRestoreAttestationPort(
   };
 }
 
+/** Hash the exact bytes of the root-controlled system machine identity. */
+export function createSystemReplayMachineIdentityPort(
+  path = DEFAULT_MACHINE_ID_PATH,
+): ReplayMachineIdentityPort {
+  return {
+    readSha256: async () => {
+      const trusted = await readTrustedRootFile(path, 0o444, 64);
+      if (!trusted.ok) {
+        return err({
+          kind:
+            trusted.error.kind === "untrusted"
+              ? "machine_identity_untrusted"
+              : "machine_identity_unavailable",
+          message: trusted.error.message,
+        });
+      }
+      if (!MACHINE_ID_RE.test(trusted.value) || /^0{32}\n$/u.test(trusted.value)) {
+        return err({
+          kind: "invalid_machine_identity",
+          message: "Machine identity has invalid content",
+        });
+      }
+      return ok(createHash("sha256").update(trusted.value).digest("hex"));
+    },
+  };
+}
+
 /** Start the read-only replay quarantine and its close-only signal lifecycle. */
 export async function startReplayQuarantine(
   intent: Extract<ReplayBootIntent, { readonly kind: "replay_quarantine" }>,
@@ -548,6 +609,33 @@ export async function startReplayQuarantine(
       "Replay target restore attestation failed",
     );
     return attestation;
+  }
+  const machineIdentity = await deps.machineIdentity.readSha256();
+  if (!machineIdentity.ok) {
+    deps.logger.error(
+      {
+        errorKind: "precondition",
+        hint: "Repair the root-controlled target machine identity before starting replay quarantine",
+        reason: machineIdentity.error.kind,
+      },
+      "Replay target machine identity failed",
+    );
+    return machineIdentity;
+  }
+  if (attestation.value.targetMachineIdSha256 !== machineIdentity.value) {
+    const mismatch = err<ReplayAttestationError>({
+      kind: "restore_attestation_mismatch",
+      message: "Replay restore attestation does not match the target machine",
+    });
+    deps.logger.error(
+      {
+        errorKind: "precondition",
+        hint: "Repeat restore and seal it for this target machine",
+        reason: "restore_attestation_mismatch",
+      },
+      "Replay target restore attestation failed",
+    );
+    return mismatch;
   }
   if (attestation.value.dataDirSha256 !== replayDataDirSha256(intent.cloneRoot)) {
     const mismatch = err<ReplayAttestationError>({

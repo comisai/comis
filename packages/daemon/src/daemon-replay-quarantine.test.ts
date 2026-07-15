@@ -17,17 +17,24 @@ describe("daemon replay quarantine dispatch", () => {
   function replayEntrypointDeps() {
     return {
       environmentRole: { read: async () => ({ ok: true as const, value: "test" as const }) },
+      machineIdentity: {
+        readSha256: async () => ({ ok: true as const, value: "e".repeat(64) }),
+      },
       restoreAttestation: {
         read: async () => ({
           ok: true as const,
           value: {
             schemaVersion: 1 as const,
             state: "committed" as const,
+            runId: "restore-a1",
+            targetMachineIdSha256: "e".repeat(64),
+            baselineImmutable: true as const,
             dataDirSha256: replayDataDirSha256(realpathSync(cloneRoot)),
             snapshotManifestSha256: "a".repeat(64),
             restoredDataTreeDigestSha256: "b".repeat(64),
             sourceEnvironmentEvidenceIdentitySha256: "c".repeat(64),
             effectiveEnvironmentContentSha256: "d".repeat(64),
+            replayOverlayContentSha256: "f".repeat(64),
             dataEntryCount: 1,
             dataBytes: 13,
           },

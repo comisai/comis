@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,6 +16,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 import {
   createSystemEnvironmentRolePort,
+  createSystemReplayMachineIdentityPort,
   createSystemReplayRestoreAttestationPort,
 } from "./replay-quarantine.js";
 
@@ -87,11 +89,15 @@ describe("root-owned replay trust anchors", () => {
     const attestation = JSON.stringify({
       schemaVersion: 1,
       state: "committed",
+      runId: "restore-a1",
+      targetMachineIdSha256: "f".repeat(64),
+      baselineImmutable: true,
       dataDirSha256: "a".repeat(64),
       snapshotManifestSha256: "b".repeat(64),
       restoredDataTreeDigestSha256: "c".repeat(64),
       sourceEnvironmentEvidenceIdentitySha256: "d".repeat(64),
       effectiveEnvironmentContentSha256: "e".repeat(64),
+      replayOverlayContentSha256: "0".repeat(64),
       dataEntryCount: 1,
       dataBytes: 2,
     });
@@ -105,5 +111,39 @@ describe("root-owned replay trust anchors", () => {
     const writable = await createSystemReplayRestoreAttestationPort().read();
     expect(writable.ok).toBe(false);
     if (!writable.ok) expect(writable.error.kind).toBe("restore_attestation_untrusted");
+  });
+
+  it("hashes the exact trusted machine-id bytes used by the restore controller", async () => {
+    const machineId = "0123456789abcdef0123456789abcdef\n";
+    const handle = openedFile(machineId, 0o100444);
+    openMock.mockResolvedValue(handle);
+
+    const result = await createSystemReplayMachineIdentityPort().readSha256();
+
+    expect(result).toEqual({
+      ok: true,
+      value: createHash("sha256").update(machineId).digest("hex"),
+    });
+    expect(openMock).toHaveBeenCalledTimes(1);
+    expect(openMock.mock.calls[0]?.[0]).toBe("/etc/machine-id");
+    expect(openMock.mock.calls[0]?.[1] & constants.O_NOFOLLOW).toBe(constants.O_NOFOLLOW);
+    expect(handle.stat).toHaveBeenCalledTimes(2);
+    expect(handle.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects writable or malformed machine identity trust anchors", async () => {
+    const machineId = "0123456789abcdef0123456789abcdef\n";
+    openMock.mockResolvedValue(openedFile(machineId, 0o100644));
+
+    const writable = await createSystemReplayMachineIdentityPort().readSha256();
+
+    expect(writable.ok).toBe(false);
+    if (!writable.ok) expect(writable.error.kind).toBe("machine_identity_untrusted");
+
+    openMock.mockResolvedValue(openedFile("uninitialized\n", 0o100444));
+    const malformed = await createSystemReplayMachineIdentityPort().readSha256();
+
+    expect(malformed.ok).toBe(false);
+    if (!malformed.ok) expect(malformed.error.kind).toBe("invalid_machine_identity");
   });
 });

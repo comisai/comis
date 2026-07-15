@@ -27,10 +27,13 @@ import {
   startReplayQuarantine,
   type ReplayEnvironmentRolePort,
   type ReplayBootIntent,
+  type ReplayMachineIdentityPort,
   type ReplayRestoreAttestation,
   type ReplayRestoreAttestationPort,
   type ReplaySignalPort,
 } from "./replay-quarantine.js";
+
+const MACHINE_ID_SHA256 = "e".repeat(64);
 
 function makeEnv(seed: Readonly<Record<string, string | undefined>>): EnvPort {
   return { get: (key) => seed[key] };
@@ -44,14 +47,24 @@ function makeRestoreAttestation(cloneRoot: string): ReplayRestoreAttestation {
   return {
     schemaVersion: 1,
     state: "committed",
+    runId: "restore-a1",
+    targetMachineIdSha256: MACHINE_ID_SHA256,
+    baselineImmutable: true,
     dataDirSha256: replayDataDirSha256(cloneRoot),
     snapshotManifestSha256: "a".repeat(64),
     restoredDataTreeDigestSha256: "b".repeat(64),
     sourceEnvironmentEvidenceIdentitySha256: "c".repeat(64),
     effectiveEnvironmentContentSha256: "d".repeat(64),
+    replayOverlayContentSha256: "f".repeat(64),
     dataEntryCount: 7,
     dataBytes: 64,
   };
+}
+
+function makeMachineIdentityPort(
+  digest = MACHINE_ID_SHA256,
+): ReplayMachineIdentityPort {
+  return { readSha256: async () => ({ ok: true, value: digest }) };
 }
 
 function makeRestorePort(cloneRoot: string): ReplayRestoreAttestationPort {
@@ -270,6 +283,7 @@ describe("replay quarantine boot intent", () => {
         clock: { now: () => (now += 7), nowDate: () => new Date(now) },
         signals,
         logger: { info, error },
+        machineIdentity: makeMachineIdentityPort(),
         restoreAttestation,
       },
     );
@@ -338,12 +352,41 @@ describe("replay quarantine boot intent", () => {
         clock: { now: () => 1, nowDate: () => new Date(1) },
         signals: createFakeSignals(),
         logger: { info: vi.fn(), error: vi.fn() },
+        machineIdentity: makeMachineIdentityPort(),
         restoreAttestation,
       },
     );
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.kind).toBe("restore_attestation_mismatch");
+  });
+
+  it("rejects a restore seal issued for a different target machine", async () => {
+    const { cloneRoot, runtimeRoot } = makeRoots();
+    const signals = createFakeSignals();
+    const error = vi.fn();
+
+    const result = await startReplayQuarantine(
+      { kind: "replay_quarantine", cloneRoot, runtimeRoot },
+      {
+        clock: { now: () => 1, nowDate: () => new Date(1) },
+        signals,
+        logger: { info: vi.fn(), error },
+        machineIdentity: makeMachineIdentityPort("0".repeat(64)),
+        restoreAttestation: makeRestorePort(cloneRoot),
+      },
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.kind).toBe("restore_attestation_mismatch");
+    expect(signals.handlers.size).toBe(0);
+    expect(error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hint: expect.stringContaining("target machine"),
+        reason: "restore_attestation_mismatch",
+      }),
+      "Replay target restore attestation failed",
+    );
   });
 
   it("strictly parses only content-free committed restore attestations", () => {
@@ -354,6 +397,22 @@ describe("replay quarantine boot intent", () => {
 
     expect(parseReplayRestoreAttestation(JSON.stringify({ ...attestation, cloneRoot })).ok).toBe(false);
     expect(parseReplayRestoreAttestation(JSON.stringify({ ...attestation, state: "pending" })).ok).toBe(false);
+    expect(parseReplayRestoreAttestation(JSON.stringify({ ...attestation, runId: "bad/run" })).ok).toBe(false);
+    expect(
+      parseReplayRestoreAttestation(
+        JSON.stringify({ ...attestation, targetMachineIdSha256: "not-a-digest" }),
+      ).ok,
+    ).toBe(false);
+    expect(
+      parseReplayRestoreAttestation(
+        JSON.stringify({ ...attestation, baselineImmutable: false }),
+      ).ok,
+    ).toBe(false);
+    expect(
+      parseReplayRestoreAttestation(
+        JSON.stringify({ ...attestation, replayOverlayContentSha256: "not-a-digest" }),
+      ).ok,
+    ).toBe(false);
     expect(
       parseReplayRestoreAttestation(JSON.stringify({ ...attestation, dataBytes: -1 })).ok,
     ).toBe(false);
