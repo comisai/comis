@@ -28,6 +28,7 @@ function state(el: IcMessageCenter) {
     _autoSelectAttempted: boolean;
     _hasLoaded: boolean;
     _actionResult: string;
+    _refetchMessages(): Promise<void>;
   };
 }
 
@@ -154,13 +155,19 @@ describe("IcMessageCenter", () => {
   });
 
   it("keeps messages from the latest chat selection", async () => {
-    const chatA = deferred<{ messages: Array<{ id: string; senderId: string; text: string; timestamp: number }>; channelId: string }>();
+    const oldChatA = deferred<{ messages: Array<{ id: string; senderId: string; text: string; timestamp: number }>; channelId: string }>();
     const chatB = deferred<{ messages: Array<{ id: string; senderId: string; text: string; timestamp: number }>; channelId: string }>();
+    const newChatA = deferred<{ messages: Array<{ id: string; senderId: string; text: string; timestamp: number }>; channelId: string }>();
+    let chatACalls = 0;
     const call = vi.fn((method: string, params?: Record<string, unknown>) => {
       if (method !== "message.fetch") {
         return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
       }
-      return params?.["channel_id"] === "chat-b" ? chatB.promise : chatA.promise;
+      if (params?.["channel_id"] === "chat-a") {
+        chatACalls += 1;
+        return chatACalls === 1 ? oldChatA.promise : newChatA.promise;
+      }
+      return chatB.promise;
     });
     const el = await createElement({ channelType: "telegram" });
     Object.assign(state(el), {
@@ -176,33 +183,63 @@ describe("IcMessageCenter", () => {
     el.rpcClient = { status: "connected", call } as unknown as RpcClient;
     await el.updateComplete;
 
-    let select = el.shadowRoot?.querySelector<HTMLSelectElement>("#chat-select");
-    expect(select).not.toBeNull();
-    select!.value = "chat-b";
-    select!.dispatchEvent(new Event("change"));
-    await el.updateComplete;
-    select = el.shadowRoot?.querySelector<HTMLSelectElement>("#chat-select");
-    select!.value = "chat-a";
-    select!.dispatchEvent(new Event("change"));
+    const current = state(el);
+    const oldChatARequest = current._refetchMessages();
+    current._selectedChatId = "chat-b";
+    const chatBRequest = current._refetchMessages();
+    current._selectedChatId = "chat-a";
+    const newChatARequest = current._refetchMessages();
 
-    chatA.resolve({
+    newChatA.resolve({
       channelId: "chat-a",
-      messages: [{ id: "new-a", senderId: "user_a", text: "new", timestamp: 2 }],
+      messages: [{ id: "new-a", senderId: "user_a", text: "new", timestamp: 3 }],
     });
-    await chatA.promise;
-    await Promise.resolve();
+    await newChatARequest;
     chatB.resolve({
       channelId: "chat-b",
-      messages: [{ id: "old-b", senderId: "user_a", text: "old", timestamp: 1 }],
+      messages: [{ id: "old-b", senderId: "user_a", text: "old", timestamp: 2 }],
     });
-    await chatB.promise;
-    for (let update = 0; update < 3; update += 1) {
-      await Promise.resolve();
-      await el.updateComplete;
-    }
+    await chatBRequest;
+    oldChatA.resolve({
+      channelId: "chat-a",
+      messages: [{ id: "old-a", senderId: "user_a", text: "old", timestamp: 1 }],
+    });
+    await oldChatARequest;
 
-    expect(state(el)._selectedChatId).toBe("chat-a");
-    expect(state(el)._messages.map((message) => message.id)).toEqual(["new-a"]);
+    expect(call.mock.calls.map(([, params]) => params?.["channel_id"]))
+      .toEqual(["chat-a", "chat-b", "chat-a"]);
+    expect(current._selectedChatId).toBe("chat-a");
+    expect(current._messages.map((message) => message.id)).toEqual(["new-a"]);
+  });
+
+  it("invalidates an in-flight message request when newer fetches cannot start", async () => {
+    const oldChatA = deferred<{ messages: Array<{ id: string; senderId: string; text: string; timestamp: number }>; channelId: string }>();
+    const call = vi.fn(() => oldChatA.promise);
+    const el = await createElement({ channelType: "telegram" });
+    const current = state(el);
+    Object.assign(current, {
+      _loadState: "loaded",
+      _capabilities: { fetchHistory: true },
+      _selectedChatId: "chat-a",
+      _hasLoaded: true,
+    });
+    el.rpcClient = { status: "connected", call } as unknown as RpcClient;
+    await el.updateComplete;
+    const oldRequest = current._refetchMessages();
+
+    el.rpcClient = null;
+    await el.updateComplete;
+    current._selectedChatId = "chat-b";
+    await current._refetchMessages();
+    current._selectedChatId = "chat-a";
+    await current._refetchMessages();
+    oldChatA.resolve({
+      channelId: "chat-a",
+      messages: [{ id: "old-a", senderId: "user_a", text: "old", timestamp: 1 }],
+    });
+    await oldRequest;
+
+    expect(current._messages).toEqual([]);
   });
 
   it("discards an action result after the route changes channel", async () => {
