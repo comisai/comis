@@ -468,7 +468,14 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
         const sent = await sock.sendMessage(channelId, mediaPayload);
         const attachmentId = sent?.key?.id ?? "";
         deps.logger.debug(
-          { channelType: "whatsapp", messageId: attachmentId, chatId: channelId, preview: (attachment.caption ?? attachment.fileName ?? "").slice(0, 1500) },
+          {
+            channelType: "whatsapp",
+            messageId: attachmentId,
+            chatId: channelId,
+            attachmentType: attachment.type,
+            captionLength: attachment.caption?.length ?? 0,
+            hasFileName: attachment.fileName !== undefined,
+          },
           "Outbound attachment",
         );
         return ok(attachmentId);

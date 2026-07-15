@@ -269,6 +269,44 @@ describe("createIMessageAdapter", () => {
     });
   });
 
+  describe("sendAttachment log privacy", () => {
+    it("keeps attachment captions and filenames out of outbound logs", async () => {
+      const privateCaption = "PRIVATE-IMESSAGE-CAPTION-DO-NOT-LOG";
+      const privateFileName = "PRIVATE-IMESSAGE-FILENAME-DO-NOT-LOG.xlsx";
+      const adapter = createIMessageAdapter({ logger: mockLogger });
+      await adapter.start();
+
+      await adapter.sendAttachment("chat-42", {
+        url: "/tmp/private-caption.xlsx",
+        type: "file",
+        fileName: privateFileName,
+        caption: privateCaption,
+      });
+      await adapter.sendAttachment("chat-42", {
+        url: "/tmp/private-filename.xlsx",
+        type: "file",
+        fileName: privateFileName,
+      });
+
+      const serializedLogs = JSON.stringify([
+        ...vi.mocked(mockLogger.debug).mock.calls,
+        ...vi.mocked(mockLogger.info).mock.calls,
+        ...vi.mocked(mockLogger.warn).mock.calls,
+        ...vi.mocked(mockLogger.error).mock.calls,
+      ]);
+      expect(serializedLogs).not.toContain(privateCaption);
+      expect(serializedLogs).not.toContain(privateFileName);
+      expect(mockLogger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({
+          attachmentType: "file",
+          captionLength: privateCaption.length,
+          hasFileName: true,
+        }),
+        "Outbound attachment",
+      );
+    });
+  });
+
   describe("fetchMessages", () => {
     it("fetches message history via client.request", async () => {
       const adapter = createIMessageAdapter({ logger: mockLogger });

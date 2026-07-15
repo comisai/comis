@@ -371,7 +371,14 @@ export function createIMessageAdapter(deps: IMessageAdapterDeps): ChannelPort {
       }
 
       deps.logger.debug(
-        { channelType: "imessage" as const, messageId: "ok", chatId, preview: (attachment.caption ?? attachment.fileName ?? "").slice(0, 1500) },
+        {
+          channelType: "imessage" as const,
+          messageId: "ok",
+          chatId,
+          attachmentType: attachment.type,
+          captionLength: attachment.caption?.length ?? 0,
+          hasFileName: attachment.fileName !== undefined,
+        },
         "Outbound attachment",
       );
 

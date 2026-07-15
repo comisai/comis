@@ -582,6 +582,47 @@ describe("createDiscordAdapter sendAttachment", () => {
       }),
     );
   });
+
+  it("keeps attachment captions and filenames out of outbound logs", async () => {
+    const privateCaption = "PRIVATE-DISCORD-CAPTION-DO-NOT-LOG";
+    const privateFileName = "PRIVATE-DISCORD-FILENAME-DO-NOT-LOG.xlsx";
+    const deps = makeDeps();
+    const adapter = createDiscordAdapter(deps);
+    await adapter.start();
+    mockChannelsFetch.mockResolvedValue({
+      isTextBased: () => true,
+      send: vi.fn(async () => ({ id: "m-private" })),
+    });
+
+    await adapter.sendAttachment("C123", {
+      url: "https://example.com/private-caption.xlsx",
+      type: "file",
+      fileName: privateFileName,
+      caption: privateCaption,
+    });
+    await adapter.sendAttachment("C123", {
+      url: "https://example.com/private-filename.xlsx",
+      type: "file",
+      fileName: privateFileName,
+    });
+
+    const serializedLogs = JSON.stringify([
+      ...vi.mocked(deps.logger.debug).mock.calls,
+      ...vi.mocked(deps.logger.info).mock.calls,
+      ...vi.mocked(deps.logger.warn).mock.calls,
+      ...vi.mocked(deps.logger.error).mock.calls,
+    ]);
+    expect(serializedLogs).not.toContain(privateCaption);
+    expect(serializedLogs).not.toContain(privateFileName);
+    expect(deps.logger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attachmentType: "file",
+        captionLength: privateCaption.length,
+        hasFileName: true,
+      }),
+      "Outbound attachment",
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

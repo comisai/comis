@@ -297,8 +297,9 @@ export async function sendAttachment(
         {
           channelType: "telegram",
           chatId,
-          fileName: attachment.fileName,
           attachmentType: attachment.type,
+          captionLength: attachment.caption?.length ?? 0,
+          hasFileName: attachment.fileName !== undefined,
           hint: "Telegram media send returned no message_id — the send was not accepted (a non-standard/empty response or a dropped upload); verify the chat exists and that the Bot API method supports this media type",
           errorKind: "platform" as const,
         },
@@ -313,12 +314,26 @@ export async function sendAttachment(
 
     if (isLocalPath) {
       deps.logger.info(
-        { channelType: "telegram", messageId: String(sentMessageId), chatId, fileName: attachment.fileName },
+        {
+          channelType: "telegram",
+          messageId: String(sentMessageId),
+          chatId,
+          attachmentType: attachment.type,
+          captionLength: attachment.caption?.length ?? 0,
+          hasFileName: attachment.fileName !== undefined,
+        },
         "Local file attachment sent",
       );
     }
     deps.logger.debug(
-      { channelType: "telegram", messageId: String(sent.message_id), chatId, preview: (attachment.caption ?? attachment.fileName ?? "").slice(0, 1500) },
+      {
+        channelType: "telegram",
+        messageId: String(sentMessageId),
+        chatId,
+        attachmentType: attachment.type,
+        captionLength: attachment.caption?.length ?? 0,
+        hasFileName: attachment.fileName !== undefined,
+      },
       "Outbound attachment",
     );
     return ok(String(sent.message_id));

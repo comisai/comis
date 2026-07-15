@@ -2281,7 +2281,7 @@ describe("createPiEventBridge", () => {
       expect(result.failedToolCalls).toBe(0);
     });
 
-    it("logs WARN with error text and sanitized args when tool fails", () => {
+    it("logs WARN with error text and content-free argument metadata when tool fails", () => {
       const { listener } = createPiEventBridge(deps);
 
       // Fire start with args
@@ -2301,12 +2301,36 @@ describe("createPiEventBridge", () => {
           toolName: "bash",
           toolCallId: "tc-fail-1",
           errorText: "Something went wrong",
-          toolArgs: { command: "rm -rf /" },
-          hint: "Tool execution failed; check errorText and toolArgs for root cause",
+          argumentCount: 1,
+          hint:
+            "Tool execution failed; inspect the protected trajectory using the trace ID and result digest",
           errorKind: "dependency",
         }),
         "Tool execution failed",
       );
+    });
+
+    it("never logs failed tool argument values", () => {
+      const privateArgument = "PRIVATE-FAILED-TOOL-ARGUMENT-DO-NOT-LOG";
+      const { listener } = createPiEventBridge(deps);
+
+      listener({
+        type: "tool_execution_start",
+        toolName: "bash",
+        toolCallId: "tc-private-args",
+        args: { command: privateArgument, nested: { body: privateArgument } },
+      } as any);
+      listener(
+        makeToolExecutionEndEvent("bash", "tc-private-args", true, "command failed") as any,
+      );
+
+      const warnCalls = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (call) => call[1] === "Tool execution failed",
+      );
+      expect(warnCalls).toHaveLength(1);
+      expect(JSON.stringify(warnCalls)).not.toContain(privateArgument);
+      expect(warnCalls[0][0]).toMatchObject({ argumentCount: 2 });
+      expect(warnCalls[0][0].toolArgs).toBeUndefined();
     });
 
     it("extracts error text from Error instance, object with message, and plain string", () => {
@@ -2368,7 +2392,7 @@ describe("createPiEventBridge", () => {
       expect(result.toolExecResults![1]).toMatchObject({ toolName: "bash", success: false, errorText: "command failed" });
     });
 
-    it("truncates arg values >200 chars to char count placeholder", () => {
+    it("logs only the argument count when failed arguments include large values", () => {
       const { listener } = createPiEventBridge(deps);
 
       listener({
@@ -2384,8 +2408,8 @@ describe("createPiEventBridge", () => {
       const warnCalls = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls
         .filter((c) => c[1] === "Tool execution failed");
       expect(warnCalls).toHaveLength(1);
-      expect(warnCalls[0][0].toolArgs.code).toBe("[300 chars]");
-      expect(warnCalls[0][0].toolArgs.name).toBe("short");
+      expect(warnCalls[0][0].argumentCount).toBe(2);
+      expect(warnCalls[0][0].toolArgs).toBeUndefined();
     });
 
     it("handles tool_execution_end without prior tool_execution_start gracefully", () => {
@@ -2397,7 +2421,8 @@ describe("createPiEventBridge", () => {
       const warnCalls = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls
         .filter((c) => c[1] === "Tool execution failed");
       expect(warnCalls).toHaveLength(1);
-      // sanitizedArgs should be undefined (no prior start)
+      // No prior start means no captured argument metadata.
+      expect(warnCalls[0][0].argumentCount).toBe(0);
       expect(warnCalls[0][0].toolArgs).toBeUndefined();
       // Still counts as a failure
       expect(getResult().failedToolCalls).toBe(1);

@@ -1119,7 +1119,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               m.failedToolNames.push(endEvent.toolName);
             }
 
-            // WARN log with error text + sanitized args
+            // WARN log with error text + content-free argument metadata. Tool
+            // argument values remain in protected execution evidence only;
+            // even short values can contain prompts, credentials, or message
+            // bodies and therefore must never cross into structured logs.
             // Include mcpServer and mcpErrorType for MCP tools
             deps.logger.warn(
               {
@@ -1127,7 +1130,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 toolCallId: endEvent.toolCallId,
                 durationMs,
                 ...(errorText && { errorText: sanitizeLogString(errorText).slice(0, 1500) }),
-                ...(sanitizedArgs && { toolArgs: sanitizedArgs }),
+                argumentCount: sanitizedArgs === undefined ? 0 : Object.keys(sanitizedArgs).length,
                 ...(mcpServer !== undefined && { mcpServer, mcpErrorType: classifyMcpErrorType(errorText) }),
                 errorKind: toolErrorKind ?? ("dependency" as const),
                 // Name the bracketed `[error_code]` the errorText carries

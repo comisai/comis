@@ -10,11 +10,9 @@
  * inside `.content[].text` rather than at the very start — search anywhere for
  * the first snake_case bracketed token.
  *
- * Surfacing that code in the hint names the failure CATEGORY (the AGENTS.md
- * §2.7 "name which knob" rule) instead of the generic "check errorText" — which,
- * in a 2026-06-20 live run, pointed a tmux/macOS dependency diagnosis at
- * what was actually a command-allowlist policy block. `errorKind` is left
- * unchanged (this is an advisory hint enrichment — no obs-classifier ripple).
+ * Surfacing that code in the hint names the failure category and the policy
+ * or configuration surface an operator should inspect. `errorKind` is left
+ * unchanged because this helper only enriches the operator guidance.
  *
  * @module
  */
@@ -32,7 +30,7 @@ const NODE_PATH_TYPE_ERRNO = /\b(EISDIR|ENOTDIR):/;
 
 /** The generic fallback when no recognizable error code is present. */
 export const GENERIC_TOOL_FAILURE_HINT =
-  "Tool execution failed; check errorText and toolArgs for root cause";
+  "Tool execution failed; inspect the protected trajectory using the trace ID and result digest";
 
 /**
  * Build the WARN-log hint for a failed tool call. When `errorText` carries a
@@ -44,12 +42,12 @@ export function toolFailureHint(errorText?: string): string {
     const m = BRACKETED_ERROR_CODE.exec(errorText);
     if (m) {
       const code = m[1];
-      return `Tool failed (${code}) — see errorText for the message; check toolArgs + the policy/config for "${code}" (e.g. command allowlist for permission_denied, the named param for invalid_value)`;
+      return `Tool failed (${code}) — check the policy or configuration for "${code}" using the protected trajectory`;
     }
     const errno = NODE_PATH_TYPE_ERRNO.exec(errorText);
     if (errno) {
       const code = errno[1];
-      return `Tool failed (${code}) — the path in toolArgs is a directory (or a file used as a directory); a file tool cannot operate on a directory. Pass a file path, or use a directory-listing/glob tool to enumerate it.`;
+      return `Tool failed (${code}) — inspect the protected trajectory for the input path, then pass a file path or use a directory-listing tool`;
     }
   }
   return GENERIC_TOOL_FAILURE_HINT;
