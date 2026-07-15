@@ -123,6 +123,7 @@ describe("install.sh provisions the browser runtime with explicit Xvfb fallback"
   });
 
   it("shares the Xvfb X11 socket via a bind-mounted dir, not JoinsNamespaceOf (which doesn't share PrivateTmp on systemd 255)", () => {
+    const renderXvfb = fnBody("render_xvfb_unit");
     // Headed Chrome reaches the Xvfb :99 display through /tmp/.X11-unix/X99.
     // JoinsNamespaceOf=comis-xvfb.service was tried but does NOT share the
     // PrivateTmp /tmp CONTENT (verified: daemon ns gets an empty /tmp/.X11-unix).
@@ -133,17 +134,20 @@ describe("install.sh provisions the browser runtime with explicit Xvfb fallback"
     expect(installSh, "the Xvfb unit must rw-bind the shared socket dir").toContain("BindPaths=/run/comis-x11:/tmp/.X11-unix");
     // Daemon unit: read-only bind so it can connect to the socket.
     expect(installSh, "the daemon unit must ro-bind the shared socket dir").toContain("BindReadOnlyPaths=/run/comis-x11:/tmp/.X11-unix");
-    // The shared dir must be private to the dedicated service account. Xvfb
-    // runs with access control disabled, so a world-traversable socket directory
-    // would let unrelated local users connect to the display.
+    // The shared dir must be private to root plus the dedicated service group.
+    // Root ownership prevents Xvfb from widening it while group write/traverse
+    // keeps the socket usable without exposing it to other local users.
     expect(installSh, "the shared X-socket dir must not be world-accessible").not.toMatch(
       /install -d -m 1777 \/run\/comis-x11/,
     );
-    expect(installSh, "the shared X-socket dir must be owned by the service account").toMatch(
-      /install -d -m 0700 -o "?\$\{COMIS_SVC_USER\}"? -g "?\$\{COMIS_SVC_GROUP\}"? \/run\/comis-x11/,
+    expect(installSh, "the shared X-socket dir must be root-owned and service-group accessible").toMatch(
+      /install -d -m 0770 -o root -g "?\$\{COMIS_SVC_GROUP\}"? \/run\/comis-x11/,
     );
     expect(installSh, "tmpfiles must recreate the private service-owned directory").toMatch(
-      /printf 'd \/run\/comis-x11 0700 %s %s -\\n' "\$\{COMIS_SVC_USER\}" "\$\{COMIS_SVC_GROUP\}"/,
+      /tmpfiles_body="d \/run\/comis-x11 0770 root \$\{COMIS_SVC_GROUP\} -"/,
+    );
+    expect(renderXvfb, "the tmpfiles rule must carry an integrity checksum").toContain(
+      "# checksum: %s",
     );
     expect(installSh, "a tmpfiles entry must recreate the dir on reboot").toMatch(/tmpfiles\.d\/comis-x11\.conf/);
   });
