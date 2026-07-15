@@ -41,4 +41,21 @@ describe("IcMessageCenter breadcrumb navigation", () => {
       navigate.mock.calls.map(([event]) => (event as CustomEvent<string>).detail),
     ).toEqual(["channels", "channels/telegram"]);
   });
+
+  it("omits an empty channel breadcrumb destination", async () => {
+    const el = await createElement();
+    const breadcrumb = el.shadowRoot?.querySelector<IcBreadcrumb>("ic-breadcrumb");
+    expect(breadcrumb).not.toBeNull();
+    await breadcrumb!.updateComplete;
+
+    expect(breadcrumb!.items).toEqual([
+      { label: "Channels", route: "channels" },
+      { label: "Messages" },
+    ]);
+    expect(
+      Array.from(
+        breadcrumb!.shadowRoot?.querySelectorAll<HTMLButtonElement>("button.link") ?? [],
+      ).map((link) => link.textContent?.trim()),
+    ).toEqual(["Channels"]);
+  });
 });
