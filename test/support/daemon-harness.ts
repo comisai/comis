@@ -311,203 +311,234 @@ export async function startTestDaemon(options?: TestDaemonOptions): Promise<Test
 
   const configPath = options?.configPath ?? DEFAULT_CONFIG_PATH;
 
-  // Set config path env var (the daemon reads this)
-  process.env["COMIS_CONFIG_PATHS"] = configPath;
+  // Capture every environment variable the harness mutates so startup failure
+  // and cleanup restore the parent process exactly, including absent and empty
+  // values. Provider credentials may also be scrubbed during daemon bootstrap.
+  const restoreHarnessEnvironmentSnapshot = captureEnvironmentVariables([
+    "COMIS_CONFIG_PATHS",
+    "COMIS_DATA_DIR",
+    ...PROVIDER_API_KEY_ENV_VARS,
+  ]);
+  let cleanupOwnsEnvironment = false;
+  let startedDaemon: DaemonInstance | undefined;
 
-  // Seed dummy provider API keys so the credential guard at agents.create
-  // (packages/daemon/src/api/agent-handlers.ts) does not reject test agents
-  // that never make real LLM calls. Real env values (set by the parent shell)
-  // are preserved untouched.
-  const restoreProviderEnv = seedDummyProviderApiKeys();
-
-  // Build overrides: prevent process.exit, optionally redirect logs
-  const overrides: Record<string, unknown> = {
-    ...options?.overrides,
-    exit: (code: number) => {
-      throw new Error(`Daemon exit with code ${code}`);
-    },
-  };
-
-  // Opt-in fake-timer wiring. When `useFakeTimers` is set, install a
-  // `createFakeTimers()` instance at the composition root via `overrides.timers`
-  // (the daemon honors this on the `timers` line in daemon.ts). The harness
-  // records the instance on the closure so the returned handle can expose the
-  // unrefRecord() snapshot via `getTimerRecord()` (used by the shutdown
-  // integration test). Default-mode tests leave `fakeTimers` undefined and the
-  // daemon falls back to `createSystemTimers()`.
-  const fakeTimers: FakeTimers | undefined = options?.useFakeTimers
-    ? createFakeTimers()
-    : undefined;
-  if (fakeTimers) {
-    overrides["timers"] = fakeTimers;
-  }
-
-  // Test-only renderer-injection seam. Mirrors the useFakeTimers →
-  // overrides["timers"] wiring: thread the typed option into the daemon's
-  // DaemonOverrides.activityRendererFactory so the composition root injects the
-  // spy renderer the activation test retains a reference to. Never set in
-  // production (the typed field keeps the contract honest in the harness type).
-  if (options?.activityRendererFactory) {
-    overrides["activityRendererFactory"] = options.activityRendererFactory;
-  }
-
-  // Compose tracing-logger override based on logStream + disableRedaction.
-  //
-  // Routing rules (single call site — the harness must produce <= 1 invocation
-  // of the tracing-logger factory so the daemon's production code paths emit
-  // to the SAME logger instance the test observes):
-  //
-  //   * Neither set         -> no override; daemon uses production factory.
-  //   * disableRedaction    -> override with `{ disableRedaction: true }` so
-  //                            the @comis/infra LoggerOptions field threads to
-  //                            the SAME logger the daemon's secrets-handlers /
-  //                            auth-handlers / etc. emit to.
-  //   * logStream           -> tee log lines to a vitest-side Writable using
-  //                            pino.multistream. This branch already emits raw
-  //                            payloads (no `redact:` field set on the pino
-  //                            options object), so `disableRedaction` is
-  //                            implicit-true here.
-  //   * Both                -> tee AND raw payloads (residency test that also
-  //                            needs to capture log lines for cross-read
-  //                            isolation).
-  if (options?.logStream || options?.disableRedaction) {
-    overrides["createTracingLogger"] = buildTracingLoggerOverride({
-      logStream: options.logStream,
-      disableRedaction: options.disableRedaction === true,
-    });
-  }
-
-  // Ensure the gateway port is free before starting (prevents EADDRINUSE from zombie processes)
-  const configPort = options?.gatewayPort ?? extractPortFromConfig(configPath);
-  if (configPort) {
-    await waitForPortFree(configPort);
-  }
-
-  // Import daemon dynamically to avoid import-time side effects
-  const { main } = await import("@comis/daemon");
-
-  // Start the daemon with a per-fork COMIS_DATA_DIR (see getForkDataDir) so
-  // parallel test files don't race the D14 .daemon.lock on a shared ~/.comis.
-  // Set just-in-time and restored right after boot: the daemon reads the env
-  // var exactly once at boot, and leaving it set would leak into CLI
-  // subprocesses tests spawn with `...process.env` + a HOME override
-  // (oauth-login et al. expect the child to resolve <tmpHome>/.comis).
-  // Tests that pre-set COMIS_DATA_DIR themselves (credential-storage-modes,
-  // daemon-lifecycle, …) keep their value — we only fill the default.
-  const hadDataDirEnv = process.env["COMIS_DATA_DIR"] !== undefined;
-  if (!hadDataDirEnv) {
-    process.env["COMIS_DATA_DIR"] = getForkDataDir();
-  }
-
-  // Restore real provider keys (captured at module load) before boot so this
-  // daemon's SecretManager snapshot sees them even if a sibling daemon already
-  // scrubbed process.env (fixes 401s on the 2nd+ daemon in a file).
-  reinjectRealProviderKeys();
-
-  // Start the daemon
-  let daemon: DaemonInstance;
   try {
-    daemon = await main(overrides as unknown as Parameters<typeof main>[0]);
-  } finally {
+    // Set config path env var (the daemon reads this)
+    process.env["COMIS_CONFIG_PATHS"] = configPath;
+
+    // Seed dummy provider API keys so the credential guard at agents.create
+    // (packages/daemon/src/api/agent-handlers.ts) does not reject test agents
+    // that never make real LLM calls. Real env values (set by the parent shell)
+    // are preserved untouched.
+    seedDummyProviderApiKeys();
+
+    // Build overrides: prevent process.exit, optionally redirect logs
+    const overrides: Record<string, unknown> = {
+      ...options?.overrides,
+      exit: (code: number) => {
+        throw new Error(`Daemon exit with code ${code}`);
+      },
+    };
+
+    // Opt-in fake-timer wiring. When `useFakeTimers` is set, install a
+    // `createFakeTimers()` instance at the composition root via `overrides.timers`
+    // (the daemon honors this on the `timers` line in daemon.ts). The harness
+    // records the instance on the closure so the returned handle can expose the
+    // unrefRecord() snapshot via `getTimerRecord()` (used by the shutdown
+    // integration test). Default-mode tests leave `fakeTimers` undefined and the
+    // daemon falls back to `createSystemTimers()`.
+    const fakeTimers: FakeTimers | undefined = options?.useFakeTimers
+      ? createFakeTimers()
+      : undefined;
+    if (fakeTimers) {
+      overrides["timers"] = fakeTimers;
+    }
+
+    // Test-only renderer-injection seam. Mirrors the useFakeTimers →
+    // overrides["timers"] wiring: thread the typed option into the daemon's
+    // DaemonOverrides.activityRendererFactory so the composition root injects the
+    // spy renderer the activation test retains a reference to. Never set in
+    // production (the typed field keeps the contract honest in the harness type).
+    if (options?.activityRendererFactory) {
+      overrides["activityRendererFactory"] = options.activityRendererFactory;
+    }
+
+    // Compose tracing-logger override based on logStream + disableRedaction.
+    //
+    // Routing rules (single call site — the harness must produce <= 1 invocation
+    // of the tracing-logger factory so the daemon's production code paths emit
+    // to the SAME logger instance the test observes):
+    //
+    //   * Neither set         -> no override; daemon uses production factory.
+    //   * disableRedaction    -> override with `{ disableRedaction: true }` so
+    //                            the @comis/infra LoggerOptions field threads to
+    //                            the SAME logger the daemon's secrets-handlers /
+    //                            auth-handlers / etc. emit to.
+    //   * logStream           -> tee log lines to a vitest-side Writable using
+    //                            pino.multistream. This branch already emits raw
+    //                            payloads (no `redact:` field set on the pino
+    //                            options object), so `disableRedaction` is
+    //                            implicit-true here.
+    //   * Both                -> tee AND raw payloads (residency test that also
+    //                            needs to capture log lines for cross-read
+    //                            isolation).
+    if (options?.logStream || options?.disableRedaction) {
+      overrides["createTracingLogger"] = buildTracingLoggerOverride({
+        logStream: options.logStream,
+        disableRedaction: options.disableRedaction === true,
+      });
+    }
+
+    // Ensure the gateway port is free before starting (prevents EADDRINUSE from zombie processes)
+    const configPort = options?.gatewayPort ?? extractPortFromConfig(configPath);
+    if (configPort) {
+      await waitForPortFree(configPort);
+    }
+
+    // Import daemon dynamically to avoid import-time side effects
+    const { main } = await import("@comis/daemon");
+
+    // Start the daemon with a per-fork COMIS_DATA_DIR (see getForkDataDir) so
+    // parallel test files don't race the D14 .daemon.lock on a shared ~/.comis.
+    // Set just-in-time and restored right after boot: the daemon reads the env
+    // var exactly once at boot, and leaving it set would leak into CLI
+    // subprocesses tests spawn with `...process.env` + a HOME override
+    // (oauth-login et al. expect the child to resolve <tmpHome>/.comis).
+    // Tests that pre-set COMIS_DATA_DIR themselves (credential-storage-modes,
+    // daemon-lifecycle, …) keep their value — we only fill the default.
+    const hadDataDirEnv = process.env["COMIS_DATA_DIR"] !== undefined;
     if (!hadDataDirEnv) {
-      delete process.env["COMIS_DATA_DIR"];
+      process.env["COMIS_DATA_DIR"] = getForkDataDir();
     }
-  }
 
-  // Re-seed dummy provider keys AFTER boot. The daemon's bootstrap snapshots
-  // sensitive env vars into the SecretManager and then scrubs them from
-  // process.env (scrubProcessEnv in daemon.ts — ANTHROPIC_* et al. match
-  // SENSITIVE_PREFIXES). That deletes the keys seeded above, so the runtime
-  // credential resolver (credential-resolver.ts Source B → getEnvApiKey reads
-  // process.env LIVE at agents.create time) can no longer see them and rejects
-  // agent-CRUD with "no API key found". Re-seeding post-boot restores the
-  // guard-satisfying placeholder for CRUD tests that never make real LLM calls.
-  const restoreProviderEnvPostBoot = seedDummyProviderApiKeys();
+    // Restore real provider keys (captured at module load) before boot so this
+    // daemon's SecretManager snapshot sees them even if a sibling daemon already
+    // scrubbed process.env (fixes 401s on the 2nd+ daemon in a file).
+    reinjectRealProviderKeys();
 
-  // Verify critical subsystems are present (main() awaits all initialization)
-  if (!daemon.container) {
-    throw new Error("Daemon bootstrap failed: container missing");
-  }
-  if (!daemon.container.config?.gateway) {
-    throw new Error("Daemon bootstrap failed: gateway config missing");
-  }
-
-  // Extract gateway port and auth token
-  const port = options?.gatewayPort ?? daemon.container.config.gateway.port;
-  const gatewayUrl = `http://127.0.0.1:${port}`;
-  const authToken = daemon.container.config.gateway.tokens[0]?.secret ?? "";
-
-  // Wait for gateway to be ready
-  await waitForHealth(gatewayUrl);
-
-  // Build cleanup function
-  const cleanup = async (): Promise<void> => {
+    // Start the daemon
+    let daemon: DaemonInstance;
     try {
-      await daemon.shutdownHandle.trigger("test-cleanup");
-      // Brief delay for graceful shutdown to complete
-      await new Promise((resolve) => setTimeout(resolve, ASYNC_SETTLE_MS));
-
-      // WAL cleanup: checkpoint and delete auxiliary SQLite files
-      try {
-        const dbPath = daemon.container.config.memory.dbPath;
-        if (dbPath) {
-          const dataDir = daemon.container.config.dataDir;
-          const resolvedDbPath = dataDir
-            ? resolve(dataDir, dbPath)
-            : resolve(
-                process.env["HOME"] ?? "",
-                ".comis",
-                dbPath,
-              );
-          cleanupDatabase(resolvedDbPath);
-        }
-      } catch {
-        // WAL cleanup is best-effort; config shape may vary
-      }
+      daemon = await main(overrides as unknown as Parameters<typeof main>[0]);
+      startedDaemon = daemon;
     } finally {
-      delete process.env["COMIS_CONFIG_PATHS"];
-      restoreProviderEnv();
-      restoreProviderEnvPostBoot();
-      // Dispose signal handlers to prevent leaks between test suites
-      daemon.shutdownHandle.dispose();
-      // Reset double-start guard
-      activeHandle = null;
+      if (!hadDataDirEnv) {
+        delete process.env["COMIS_DATA_DIR"];
+      }
     }
-  };
 
-  // Resolve the daemon's memory.db path ONCE (same resolution the WAL-cleanup
-  // branch uses): config.dataDir + config.memory.dbPath. The chaos-test probes
-  // open it read-only per call so the chaos test can inspect the durable_runs /
-  // outward_send_ledger rows the daemon persisted (those tables are not exposed
-  // on DaemonInstance). Captured here because `daemon` is in scope.
-  const resolveMemoryDbPath = (): string | undefined => {
-    const dbPath = daemon.container.config.memory.dbPath;
-    if (!dbPath) return undefined;
-    const dataDir = daemon.container.config.dataDir;
-    return dataDir
-      ? resolve(dataDir, dbPath)
-      : resolve(process.env["HOME"] ?? "", ".comis", dbPath);
-  };
+    // Re-seed dummy provider keys AFTER boot. The daemon's bootstrap snapshots
+    // sensitive env vars into the SecretManager and then scrubs them from
+    // process.env (scrubProcessEnv in daemon.ts — ANTHROPIC_* et al. match
+    // SENSITIVE_PREFIXES). That deletes the keys seeded above, so the runtime
+    // credential resolver (credential-resolver.ts Source B → getEnvApiKey reads
+    // process.env LIVE at agents.create time) can no longer see them and rejects
+    // agent-CRUD with "no API key found". Re-seeding post-boot restores the
+    // guard-satisfying placeholder for CRUD tests that never make real LLM calls.
+    seedDummyProviderApiKeys();
 
-  const handle: TestDaemonHandle = {
-    daemon,
-    gatewayUrl,
-    authToken,
-    cleanup,
-    // Expose the fake-timer record only when fake timers are in play.
-    // When `useFakeTimers` is false the daemon ran on `createSystemTimers()`
-    // (no record to expose); returning `undefined` is the correct signal that
-    // the integration assertion is not applicable.
-    getTimerRecord: () => fakeTimers?.unrefRecord(),
-    getDurableRun: (rootRunId: string) => readDurableRun(resolveMemoryDbPath(), rootRunId),
-    getOutwardLedgerRow: (rootRunId: string, stepIndex: number) =>
-      readOutwardLedgerRow(resolveMemoryDbPath(), rootRunId, stepIndex),
-  };
+    // Verify critical subsystems are present (main() awaits all initialization)
+    if (!daemon.container) {
+      throw new Error("Daemon bootstrap failed: container missing");
+    }
+    if (!daemon.container.config?.gateway) {
+      throw new Error("Daemon bootstrap failed: gateway config missing");
+    }
 
-  // Set double-start guard
-  activeHandle = handle;
+    // Extract gateway port and auth token
+    const port = options?.gatewayPort ?? daemon.container.config.gateway.port;
+    const gatewayUrl = `http://127.0.0.1:${port}`;
+    const authToken = daemon.container.config.gateway.tokens[0]?.secret ?? "";
 
-  return handle;
+    // Wait for gateway to be ready
+    await waitForHealth(gatewayUrl);
+
+    // Build cleanup function
+    const cleanup = async (): Promise<void> => {
+      try {
+        await daemon.shutdownHandle.trigger("test-cleanup");
+        // Brief delay for graceful shutdown to complete
+        await new Promise((resolve) => setTimeout(resolve, ASYNC_SETTLE_MS));
+
+        // WAL cleanup: checkpoint and delete auxiliary SQLite files
+        try {
+          const dbPath = daemon.container.config.memory.dbPath;
+          if (dbPath) {
+            const dataDir = daemon.container.config.dataDir;
+            const resolvedDbPath = dataDir
+              ? resolve(dataDir, dbPath)
+              : resolve(
+                  process.env["HOME"] ?? "",
+                  ".comis",
+                  dbPath,
+                );
+            cleanupDatabase(resolvedDbPath);
+          }
+        } catch {
+          // WAL cleanup is best-effort; config shape may vary
+        }
+      } finally {
+        try {
+          // Dispose signal handlers to prevent leaks between test suites.
+          daemon.shutdownHandle.dispose();
+        } finally {
+          restoreHarnessEnvironmentSnapshot();
+          // Reset double-start guard
+          activeHandle = null;
+        }
+      }
+    };
+
+    // Resolve the daemon's memory.db path ONCE (same resolution the WAL-cleanup
+    // branch uses): config.dataDir + config.memory.dbPath. The chaos-test probes
+    // open it read-only per call so the chaos test can inspect the durable_runs /
+    // outward_send_ledger rows the daemon persisted (those tables are not exposed
+    // on DaemonInstance). Captured here because `daemon` is in scope.
+    const resolveMemoryDbPath = (): string | undefined => {
+      const dbPath = daemon.container.config.memory.dbPath;
+      if (!dbPath) return undefined;
+      const dataDir = daemon.container.config.dataDir;
+      return dataDir
+        ? resolve(dataDir, dbPath)
+        : resolve(process.env["HOME"] ?? "", ".comis", dbPath);
+    };
+
+    const handle: TestDaemonHandle = {
+      daemon,
+      gatewayUrl,
+      authToken,
+      cleanup,
+      // Expose the fake-timer record only when fake timers are in play.
+      // When `useFakeTimers` is false the daemon ran on `createSystemTimers()`
+      // (no record to expose); returning `undefined` is the correct signal that
+      // the integration assertion is not applicable.
+      getTimerRecord: () => fakeTimers?.unrefRecord(),
+      getDurableRun: (rootRunId: string) => readDurableRun(resolveMemoryDbPath(), rootRunId),
+      getOutwardLedgerRow: (rootRunId: string, stepIndex: number) =>
+        readOutwardLedgerRow(resolveMemoryDbPath(), rootRunId, stepIndex),
+    };
+
+    // Set double-start guard
+    activeHandle = handle;
+
+    cleanupOwnsEnvironment = true;
+    return handle;
+  } finally {
+    if (!cleanupOwnsEnvironment) {
+      try {
+        if (startedDaemon !== undefined) {
+          try {
+            await startedDaemon.shutdownHandle.trigger("test-startup-failed");
+          } finally {
+            startedDaemon.shutdownHandle.dispose();
+          }
+        }
+      } finally {
+        restoreHarnessEnvironmentSnapshot();
+        activeHandle = null;
+      }
+    }
+  }
 }
 
 /**
@@ -715,6 +746,29 @@ function seedDummyProviderApiKeys(): () => void {
   return () => {
     for (const restore of restorers) restore();
   };
+}
+
+/** Capture exact environment-variable presence and values for harness rollback. */
+export function captureEnvironmentVariables(names: readonly string[]): () => void {
+  const snapshot = new Map<string, { readonly present: boolean; readonly value?: string }>();
+  for (const name of names) {
+    const present = Object.prototype.hasOwnProperty.call(process.env, name);
+    snapshot.set(name, {
+      present,
+      ...(present ? { value: process.env[name] } : {}),
+    });
+  }
+  return () => {
+    for (const [name, entry] of snapshot) {
+      if (entry.present) process.env[name] = entry.value;
+      else delete process.env[name];
+    }
+  };
+}
+
+/** Capture exact provider-variable presence and values for focused tests. */
+export function captureProviderEnvironment(): () => void {
+  return captureEnvironmentVariables(PROVIDER_API_KEY_ENV_VARS);
 }
 
 // ---------------------------------------------------------------------------
