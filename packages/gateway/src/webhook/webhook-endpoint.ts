@@ -8,6 +8,7 @@ import { createHmacMiddleware } from "./hmac-verifier.js";
 import type { WebhookMappingContext } from "./webhook-mapping.js";
 import { resolveWebhookMapping, renderTemplate } from "./webhook-mapping.js";
 import { systemNowDate } from "@comis/core";
+import { suppressError } from "@comis/shared";
 
 /** Default maximum webhook body size: 1MB */
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
@@ -165,10 +166,12 @@ export function createMappedWebhookEndpoint(deps: MappedWebhookEndpointDeps): Ho
         // polling/service-hook caller then times its own request out and re-delivers,
         // producing a duplicate-fire storm. The turn runs in the background; the handler
         // records its own success/failure and must not surface as this request's status.
-        void onAgentAction(mapping, renderedMessage, renderedSessionKey).catch(() => {
-          // The handler logs and emits its own failure diagnostics; swallow here so a
-          // rejected background turn cannot become an unhandled promise rejection.
-        });
+        // The handler logs and emits its own failure diagnostics (diagnostic:webhook_delivered);
+        // suppressError only guards against an unhandled promise rejection from the detached turn.
+        suppressError(
+          onAgentAction(mapping, renderedMessage, renderedSessionKey),
+          "webhook agent turn dispatched in the background",
+        );
       }
     } catch {
       // Error is logged by the handler callback before reaching here
