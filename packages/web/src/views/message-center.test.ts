@@ -464,6 +464,36 @@ describe("IcMessageCenter", () => {
     expect(call).toHaveBeenCalledTimes(1);
   });
 
+  it("loads chats once when a running channel is auto-selected", async () => {
+    const call = vi.fn((method: string) => {
+      switch (method) {
+        case "channels.list":
+          return Promise.resolve({
+            channels: [{ channelType: "telegram", status: "running" }],
+            total: 1,
+          });
+        case "channels.capabilities":
+          return Promise.resolve({ channelType: "telegram", features: { fetchHistory: false } });
+        case "channels.get":
+          return Promise.resolve({ botName: "test-bot" });
+        case "obs.channels.all":
+          return Promise.resolve({ channels: [] });
+        case "session.list":
+          return Promise.resolve({ sessions: [] });
+        default:
+          return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
+      }
+    });
+    const rpc = createStatusRpcClient(call, "connected");
+    const el = await createElement({ rpcClient: rpc.client });
+    for (let update = 0; update < 6; update += 1) {
+      await Promise.resolve();
+      await el.updateComplete;
+    }
+
+    expect(call.mock.calls.filter(([method]) => method === "obs.channels.all")).toHaveLength(1);
+  });
+
   it("hides message actions for an explicitly stopped channel", async () => {
     const call = vi.fn((method: string) => {
       switch (method) {
