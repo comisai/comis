@@ -340,6 +340,36 @@ describe("IcMessageCenter", () => {
     expect(current._deleteTargetId).toBe("message-new");
   });
 
+  it("dispatches a confirmed message action only once while it is pending", async () => {
+    const deletion = deferred<{ ok: boolean }>();
+    const call = vi.fn(() => deletion.promise);
+    const el = await createElement({ channelType: "telegram" });
+    Object.assign(state(el), {
+      _loadState: "loaded",
+      _channelIsRunning: true,
+      _messages: [{ id: "message-1", senderId: "user_a", text: "hello", timestamp: 1 }],
+      _capabilities: { deleteMessages: true, reactions: true },
+      _hasLoaded: true,
+    });
+    el.rpcClient = { status: "connected", call } as unknown as RpcClient;
+    await el.updateComplete;
+
+    el.shadowRoot?.querySelector<HTMLButtonElement>('button[title="Delete"]')?.click();
+    await el.updateComplete;
+    const dialog = el.shadowRoot?.querySelector("ic-confirm-dialog");
+    expect(dialog).not.toBeNull();
+    dialog!.dispatchEvent(new CustomEvent("confirm"));
+    dialog!.dispatchEvent(new CustomEvent("confirm"));
+    await el.updateComplete;
+
+    expect(call).toHaveBeenCalledTimes(1);
+    const rowActionButtons = Array.from(
+      el.shadowRoot?.querySelectorAll<HTMLButtonElement>(".msg-action-btn") ?? [],
+    );
+    expect(rowActionButtons.length).toBeGreaterThan(0);
+    expect(rowActionButtons.every((button) => button.disabled)).toBe(true);
+  });
+
   it("sends a reaction with the selected message target", async () => {
     const call = vi.fn(() => Promise.resolve({ ok: true }));
     const el = await createElement({ channelType: "telegram" });
