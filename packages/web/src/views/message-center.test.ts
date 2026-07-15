@@ -459,6 +459,38 @@ describe("IcMessageCenter", () => {
     expect(rowActionButtons.every((button) => button.disabled)).toBe(true);
   });
 
+  it("clears the selected platform target after deleting that message", async () => {
+    const call = vi.fn(() => Promise.resolve({ ok: true }));
+    const el = await createElement({ channelType: "telegram" });
+    const current = state(el);
+    Object.assign(current, {
+      _loadState: "loaded",
+      _channelIsRunning: true,
+      _messages: [{ id: "message-1", senderId: "user_a", text: "hello", timestamp: 1 }],
+      _messagesAreActionable: true,
+      _capabilities: { deleteMessages: true },
+      _hasLoaded: true,
+    });
+    el.rpcClient = createStatusRpcClient(call, "connected").client;
+    await el.updateComplete;
+
+    el.shadowRoot?.querySelector<HTMLButtonElement>('button[title="Delete"]')?.click();
+    await el.updateComplete;
+    el.shadowRoot?.querySelector("ic-confirm-dialog")?.dispatchEvent(new CustomEvent("confirm"));
+    for (let update = 0; update < 3; update += 1) {
+      await Promise.resolve();
+      await el.updateComplete;
+    }
+
+    expect(current._messages).toEqual([]);
+    expect(current._selectedMessageId).toBe("");
+    const pinButton = Array.from(
+      el.shadowRoot?.querySelectorAll<HTMLButtonElement>(".platform-actions button") ?? [],
+    ).find((button) => button.textContent?.trim() === "Pin Message");
+    expect(pinButton).toBeDefined();
+    expect(pinButton!.disabled).toBe(true);
+  });
+
   it("sends a reaction with the selected message target", async () => {
     const call = vi.fn(() => Promise.resolve({ ok: true }));
     const el = await createElement({ channelType: "telegram" });
