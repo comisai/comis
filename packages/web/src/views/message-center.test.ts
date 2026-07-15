@@ -58,4 +58,19 @@ describe("IcMessageCenter breadcrumb navigation", () => {
       ).map((link) => link.textContent?.trim()),
     ).toEqual(["Channels"]);
   });
+
+  it("clears the breadcrumb when the route drops its channel", async () => {
+    const el = await createElement({ channelType: "telegram" });
+
+    el.channelType = "";
+    await el.updateComplete;
+    await el.updateComplete;
+
+    const breadcrumb = el.shadowRoot?.querySelector<IcBreadcrumb>("ic-breadcrumb");
+    expect(breadcrumb).not.toBeNull();
+    expect(breadcrumb!.items).toEqual([
+      { label: "Channels", route: "channels" },
+      { label: "Messages" },
+    ]);
+  });
 });
