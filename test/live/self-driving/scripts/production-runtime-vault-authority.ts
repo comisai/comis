@@ -25,6 +25,8 @@ const MAX_RECEIPT_BYTES = 64 * 1024;
 const MAX_PATH_BYTES = 4096;
 const MAX_SERVICE_BYTES = 256;
 const MAX_ARCHIVE_BYTES = 128 * 1024 * 1024 * 1024;
+const STREAM_ENTRY_OVERHEAD_BYTES = 16 * 1024;
+const STREAM_FIXED_OVERHEAD_BYTES = 128 * 1024 * 1024;
 const MAX_CREATED_AT_MS = 8_640_000_000_000_000;
 const MIN_AUTHORITY_KEY_BYTES = 32;
 const SAFE_RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u;
@@ -54,10 +56,10 @@ const INPUT_KEYS = [
   "targetControlDir",
   "targetIncomingRoot",
   "targetTransactionDir",
-  "sourceToolchainDigestSha256",
-  "targetToolchainDigestSha256",
-  "sourceServiceFingerprintDigestSha256",
-  "targetServiceFingerprintDigestSha256",
+  "sourceToolchainRecoveryDigestSha256",
+  "targetToolchainRecoveryDigestSha256",
+  "sourceServiceRecoveryDigestSha256",
+  "targetServiceRecoveryDigestSha256",
   "createdAtMs",
 ] as const;
 
@@ -120,10 +122,10 @@ export interface ProductionRuntimeVaultRecoveryReceiptInput {
   readonly targetControlDir: string;
   readonly targetIncomingRoot: string;
   readonly targetTransactionDir: string;
-  readonly sourceToolchainDigestSha256: string;
-  readonly targetToolchainDigestSha256: string;
-  readonly sourceServiceFingerprintDigestSha256: string;
-  readonly targetServiceFingerprintDigestSha256: string;
+  readonly sourceToolchainRecoveryDigestSha256: string;
+  readonly targetToolchainRecoveryDigestSha256: string;
+  readonly sourceServiceRecoveryDigestSha256: string;
+  readonly targetServiceRecoveryDigestSha256: string;
   readonly createdAtMs: number;
 }
 
@@ -358,10 +360,10 @@ function validateRuntimeTree(
 function validateRequiredDigest(
   value: unknown,
   field:
-    | "sourceToolchainDigestSha256"
-    | "targetToolchainDigestSha256"
-    | "sourceServiceFingerprintDigestSha256"
-    | "targetServiceFingerprintDigestSha256",
+    | "sourceToolchainRecoveryDigestSha256"
+    | "targetToolchainRecoveryDigestSha256"
+    | "sourceServiceRecoveryDigestSha256"
+    | "targetServiceRecoveryDigestSha256",
   errorKind: "invalid_request" | "malformed_receipt",
 ): Result<string, ProductionRuntimeVaultRecoveryReceiptError> {
   if (typeof value !== "string" || !SHA256_RE.test(value)) {
@@ -447,16 +449,21 @@ function validateUnsigned(
       "Runtime tree authority does not reconcile with the source runtime artifact",
     );
   }
+  const expectedMaximumArchiveBytes =
+    runtimeTreeAttestation.value.bytes +
+    runtimeTreeAttestation.value.entryCount * STREAM_ENTRY_OVERHEAD_BYTES +
+    STREAM_FIXED_OVERHEAD_BYTES;
   if (
+    !Number.isSafeInteger(expectedMaximumArchiveBytes) ||
     typeof raw.maximumArchiveBytes !== "number" ||
     !Number.isSafeInteger(raw.maximumArchiveBytes) ||
-    raw.maximumArchiveBytes < runtimeTreeAttestation.value.bytes ||
+    raw.maximumArchiveBytes !== expectedMaximumArchiveBytes ||
     raw.maximumArchiveBytes > MAX_ARCHIVE_BYTES
   ) {
     return invalid(
       errorKind,
       "maximumArchiveBytes",
-      "maximumArchiveBytes is outside the bounded runtime archive range",
+      "maximumArchiveBytes does not equal the exact bounded runtime archive layout",
     );
   }
 
@@ -493,7 +500,8 @@ function validateUnsigned(
     `${coordinationRoot}/capture-${raw.runId}-${raw.attemptId}`;
   const expectedTargetIncomingRoot =
     `/opt/comis-replay/runtimes/sha256/.incoming-${raw.runId}-${raw.attemptId}-${runtimeTreeAttestation.value.digestSha256}`;
-  const expectedTargetTransactionDir = `${coordinationRoot}/transactions/${raw.attemptId}`;
+  const expectedTargetTransactionDir =
+    `${coordinationRoot}/transactions/${raw.runId}-${raw.attemptId}`;
   for (const [field, value, expected] of [
     ["targetControlDir", raw.targetControlDir, expectedTargetControlDir],
     ["targetIncomingRoot", raw.targetIncomingRoot, expectedTargetIncomingRoot],
@@ -508,33 +516,37 @@ function validateUnsigned(
     }
   }
 
-  const sourceToolchainDigestSha256 = validateRequiredDigest(
-    raw.sourceToolchainDigestSha256,
-    "sourceToolchainDigestSha256",
+  const sourceToolchainRecoveryDigestSha256 = validateRequiredDigest(
+    raw.sourceToolchainRecoveryDigestSha256,
+    "sourceToolchainRecoveryDigestSha256",
     errorKind,
   );
-  if (!sourceToolchainDigestSha256.ok) return sourceToolchainDigestSha256;
-  const targetToolchainDigestSha256 = validateRequiredDigest(
-    raw.targetToolchainDigestSha256,
-    "targetToolchainDigestSha256",
-    errorKind,
-  );
-  if (!targetToolchainDigestSha256.ok) return targetToolchainDigestSha256;
-  const sourceServiceFingerprintDigestSha256 = validateRequiredDigest(
-    raw.sourceServiceFingerprintDigestSha256,
-    "sourceServiceFingerprintDigestSha256",
-    errorKind,
-  );
-  if (!sourceServiceFingerprintDigestSha256.ok) {
-    return sourceServiceFingerprintDigestSha256;
+  if (!sourceToolchainRecoveryDigestSha256.ok) {
+    return sourceToolchainRecoveryDigestSha256;
   }
-  const targetServiceFingerprintDigestSha256 = validateRequiredDigest(
-    raw.targetServiceFingerprintDigestSha256,
-    "targetServiceFingerprintDigestSha256",
+  const targetToolchainRecoveryDigestSha256 = validateRequiredDigest(
+    raw.targetToolchainRecoveryDigestSha256,
+    "targetToolchainRecoveryDigestSha256",
     errorKind,
   );
-  if (!targetServiceFingerprintDigestSha256.ok) {
-    return targetServiceFingerprintDigestSha256;
+  if (!targetToolchainRecoveryDigestSha256.ok) {
+    return targetToolchainRecoveryDigestSha256;
+  }
+  const sourceServiceRecoveryDigestSha256 = validateRequiredDigest(
+    raw.sourceServiceRecoveryDigestSha256,
+    "sourceServiceRecoveryDigestSha256",
+    errorKind,
+  );
+  if (!sourceServiceRecoveryDigestSha256.ok) {
+    return sourceServiceRecoveryDigestSha256;
+  }
+  const targetServiceRecoveryDigestSha256 = validateRequiredDigest(
+    raw.targetServiceRecoveryDigestSha256,
+    "targetServiceRecoveryDigestSha256",
+    errorKind,
+  );
+  if (!targetServiceRecoveryDigestSha256.ok) {
+    return targetServiceRecoveryDigestSha256;
   }
   if (
     typeof raw.createdAtMs !== "number" ||
@@ -565,10 +577,12 @@ function validateUnsigned(
     targetControlDir: expectedTargetControlDir,
     targetIncomingRoot: expectedTargetIncomingRoot,
     targetTransactionDir: expectedTargetTransactionDir,
-    sourceToolchainDigestSha256: sourceToolchainDigestSha256.value,
-    targetToolchainDigestSha256: targetToolchainDigestSha256.value,
-    sourceServiceFingerprintDigestSha256: sourceServiceFingerprintDigestSha256.value,
-    targetServiceFingerprintDigestSha256: targetServiceFingerprintDigestSha256.value,
+    sourceToolchainRecoveryDigestSha256:
+      sourceToolchainRecoveryDigestSha256.value,
+    targetToolchainRecoveryDigestSha256:
+      targetToolchainRecoveryDigestSha256.value,
+    sourceServiceRecoveryDigestSha256: sourceServiceRecoveryDigestSha256.value,
+    targetServiceRecoveryDigestSha256: targetServiceRecoveryDigestSha256.value,
     createdAtMs: raw.createdAtMs,
   });
 }

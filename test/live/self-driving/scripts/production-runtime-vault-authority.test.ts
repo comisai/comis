@@ -72,7 +72,10 @@ const input: ProductionRuntimeVaultRecoveryReceiptInput = {
   sourceRuntimeArtifact,
   targetRuntimeArtifact,
   runtimeTreeAttestation,
-  maximumArchiveBytes: 7_000_000_000,
+  maximumArchiveBytes:
+    runtimeTreeAttestation.bytes +
+    runtimeTreeAttestation.entryCount * 16_384 +
+    128 * 1024 * 1024,
   payloadPath: `/opt/comis-replay/runtimes/sha256/${runtimeTreeAttestation.digestSha256}/payload`,
   sourceService: "comis-source.service",
   sourceDataDir: "/srv/source/.comis",
@@ -81,11 +84,11 @@ const input: ProductionRuntimeVaultRecoveryReceiptInput = {
   targetPackageRoot: targetRuntimeArtifact.packageRoot,
   targetControlDir: `/var/lib/comis-self-driving/runtime-vault/capture-runtime-vault-a1-${"4".repeat(32)}`,
   targetIncomingRoot: `/opt/comis-replay/runtimes/sha256/.incoming-runtime-vault-a1-${"4".repeat(32)}-${runtimeTreeAttestation.digestSha256}`,
-  targetTransactionDir: `/var/lib/comis-self-driving/runtime-vault/transactions/${"4".repeat(32)}`,
-  sourceToolchainDigestSha256: "7".repeat(64),
-  targetToolchainDigestSha256: "8".repeat(64),
-  sourceServiceFingerprintDigestSha256: "9".repeat(64),
-  targetServiceFingerprintDigestSha256: "0".repeat(64),
+  targetTransactionDir: `/var/lib/comis-self-driving/runtime-vault/transactions/runtime-vault-a1-${"4".repeat(32)}`,
+  sourceToolchainRecoveryDigestSha256: "7".repeat(64),
+  targetToolchainRecoveryDigestSha256: "8".repeat(64),
+  sourceServiceRecoveryDigestSha256: "9".repeat(64),
+  targetServiceRecoveryDigestSha256: "0".repeat(64),
   createdAtMs: 1_752_560_123_456,
 };
 
@@ -165,7 +168,7 @@ describe("production runtime vault recovery receipt authority", () => {
         value.payloadPath = "/opt/comis-replay/runtimes/sha256/decoy/payload";
       },
       (value) => {
-        value.targetToolchainDigestSha256 = "a".repeat(64);
+        value.targetToolchainRecoveryDigestSha256 = "a".repeat(64);
       },
       (value) => {
         value.sourceService = "different-source.service";
@@ -221,6 +224,7 @@ describe("production runtime vault recovery receipt authority", () => {
       { ...input, attemptId: "not-random-hex" },
       { ...input, targetMachineIdSha256: input.sourceMachineIdSha256 },
       { ...input, maximumArchiveBytes: runtimeTreeAttestation.bytes - 1 },
+      { ...input, maximumArchiveBytes: input.maximumArchiveBytes + 1 },
       { ...input, targetPackageRoot: "/opt/decoy/node_modules/comisai" },
       { ...input, sourceDataDir: "relative/source" },
       { ...input, targetControlDir: "/var/lib/comis-self-driving/runtime-vault/other" },
