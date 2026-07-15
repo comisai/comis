@@ -171,6 +171,58 @@ describe("production runtime vault target journal shell", () => {
     expect(lstatSync(final).nlink).toBe(1);
   });
 
+  it("discards an interrupted next phase before durably rolling back", () => {
+    const partialNextPhase = fixture();
+    expect(
+      run(partialNextPhase, [
+        "runtime_journal_initialize",
+        "runtime_journal_append prepare_intent",
+      ]).status,
+    ).toBe(0);
+    const partial = join(partialNextPhase.transactionDir, ".incoming-prepared");
+    writeFileSync(partial, "prep", { mode: 0o400 });
+
+    const rolledBack = run(partialNextPhase, [
+      "runtime_journal_append rollback_intent",
+      "runtime_journal_append rolled_back",
+    ]);
+
+    expect(rolledBack.status, String(rolledBack.stderr)).toBe(0);
+    expect(readdirSync(partialNextPhase.transactionDir).sort()).toEqual(
+      [
+        "100-prepare_intent",
+        "900-rollback_intent",
+        "910-rolled_back",
+        "manifest",
+      ].sort(),
+    );
+
+    const linkedNextPhase = fixture();
+    expect(
+      run(linkedNextPhase, [
+        "runtime_journal_initialize",
+        "runtime_journal_append prepare_intent",
+      ]).status,
+    ).toBe(0);
+    const linkedIncoming = join(linkedNextPhase.transactionDir, ".incoming-prepared");
+    const linkedFinal = join(
+      linkedNextPhase.transactionDir,
+      runtimeVaultJournalPhaseFile("prepared"),
+    );
+    writeFileSync(linkedIncoming, "prepared\n", { mode: 0o400 });
+    linkSync(linkedIncoming, linkedFinal);
+
+    const linkedRollback = run(linkedNextPhase, [
+      "runtime_journal_append rollback_intent",
+      "runtime_journal_append rolled_back",
+    ]);
+    expect(linkedRollback.status, String(linkedRollback.stderr)).toBe(0);
+    expect(readdirSync(linkedNextPhase.transactionDir)).not.toContain(
+      ".incoming-prepared",
+    );
+    expect(lstatSync(linkedFinal).nlink).toBe(1);
+  });
+
   it("rejects foreign, linked, symlinked, and unexpected journal objects", () => {
     const foreign = fixture();
     expect(run(foreign, ["runtime_journal_initialize"]).status).toBe(0);

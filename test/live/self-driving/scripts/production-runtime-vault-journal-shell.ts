@@ -291,6 +291,8 @@ def inspect_inventory(requested=None):
         history.append(phase)
     if not valid_history(history):
         fail()
+    partial_phase = None
+    paired_final = False
     if partials:
         partial_phase = partials[0][len(".incoming-"):]
         paired_final = PHASE_FILE.get(partial_phase) in names
@@ -320,9 +322,14 @@ def inspect_inventory(requested=None):
                 != (final_value.st_dev, final_value.st_ino)
             ):
                 fail()
-        if requested is not None and partial_phase != requested:
+        if (
+            requested is not None
+            and partial_phase != requested
+            and not paired_final
+            and requested != "rollback_intent"
+        ):
             fail()
-    return tuple(history)
+    return tuple(history), partial_phase, paired_final
 
 
 try:
@@ -358,7 +365,16 @@ try:
     else:
         if requested not in PHASE_FILE:
             fail()
-        history = inspect_inventory(requested)
+        history, partial_phase, paired_final = inspect_inventory(requested)
+        if partial_phase is not None and partial_phase != requested:
+            expected = (partial_phase + "\n").encode("ascii")
+            if paired_final:
+                publish_file(partial_phase, PHASE_FILE[partial_phase], expected)
+            elif requested == "rollback_intent":
+                remove_partial(os.path.join(transaction_dir, ".incoming-" + partial_phase), expected)
+            else:
+                fail()
+            history, partial_phase, paired_final = inspect_inventory(requested)
         if requested in history:
             if history[-1] != requested:
                 fail()
