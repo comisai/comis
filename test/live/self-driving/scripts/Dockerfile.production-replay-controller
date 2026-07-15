@@ -1,0 +1,25 @@
+FROM mirror.gcr.io/library/ubuntu@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90
+
+ARG CONTROLLER_SHA256
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends nodejs openssh-client python3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 65532 comis-replay-controller \
+    && useradd --uid 65532 --gid 65532 --create-home --shell /usr/sbin/nologin comis-replay-controller \
+    && install -d -o 65532 -g 65532 -m 0700 /var/lib/comis-replay-controller \
+    && install -d -o 65532 -g 65532 -m 0700 /home/comis-replay-controller/.ssh \
+    && install -d -o root -g root -m 0755 /opt/comis-replay-controller
+
+COPY --chown=0:0 controller.mjs /opt/comis-replay-controller/controller.mjs
+
+RUN printf '%s  %s\n' "$CONTROLLER_SHA256" /opt/comis-replay-controller/controller.mjs \
+      | sha256sum -c - \
+    && chmod 0444 /opt/comis-replay-controller/controller.mjs
+
+USER 65532:65532
+WORKDIR /home/comis-replay-controller
+
+ENTRYPOINT ["/usr/bin/node", "/opt/comis-replay-controller/controller.mjs"]

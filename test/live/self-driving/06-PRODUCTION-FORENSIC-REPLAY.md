@@ -2,7 +2,7 @@
 
 Use this path when the target is activity that already happened on a real Comis machine. It is separate
 from the channel-emulator path: the emulator creates synthetic activity, while forensic replay first
-investigates production evidence, reconstructs a bounded activity episode, restores an isolated test
+investigates production evidence, reconstructs a bounded activity episode, prepares an isolated test
 machine, and compares independently observed behavior.
 
 The governing rule is simple: **never call a replay exact unless the framework can prove the initial
@@ -30,27 +30,24 @@ The controller treats the source and target as different trust domains.
   source machine.
 - A fresh target is installed with `website/public/install.sh` without initialization, autostart, or a
   service start. `/etc/comis/environment-role` must be root-owned and contain exactly `test`.
-- The replay service is disabled and stopped while state or runtime artifacts are promoted.
+- The replay service is disabled and stopped while runtime artifacts are promoted.
 - The test unit must have the quarantine drop-in: `COMIS_REPLAY_TARGET=1`, `AF_UNIX` only, and all IP
   traffic denied. These controls are a startup boundary, not a complete sandbox.
 - The daemon entrypoint resolves the root-owned environment role before importing the live daemon. On a
   test host it validates the committed restore seal and enters a close-only quarantine. It does not load
   channels, schedulers, providers, plugins, or the normal composition root.
-- A cloned runtime is committed only if the trusted entrypoint, exact unit `ExecStart`, role marker, and
+- A runtime is committed only if the trusted entrypoint, exact unit `ExecStart`, role marker, and
   quarantine controls all survive promotion. Any failure rolls back and leaves both services stopped.
-- State restore is accepted only with a root-owned, read-only attestation that binds the data directory,
-  source manifest, entry count, byte count, and independently recomputed target tree digest.
 
-Do not start a target whose unit still points to `daemon.js`, whose trusted entrypoint is absent, or whose
-restore seal does not match the restored tree. A target that cannot pass those gates is evidence to fix,
-not a reason to weaken the gate.
+Do not start a target whose unit still points to `daemon.js` or whose trusted entrypoint is absent. A
+target that cannot pass those gates is evidence to fix, not a reason to weaken the gate.
 
-For the explicitly authorized whole-state workflow, the state clone includes the service user's entire
-Comis data directory and the production service environment, including encrypted secret stores and usable
-credentials. The target must therefore be disposable, single-purpose, network-confined, access-restricted,
-and securely erased after the investigation. The reusable default should instead copy secret references,
-bind them to target-only credentials, and replay external behavior from authenticated cassettes. Copying
-live secret values must remain an explicit exceptional mode, never a hidden default.
+The public controller exposes no state capture, promotion, or recovery command. State transfer remains
+unavailable until `target_bound` can preserve target credentials while importing an explicit inventory of
+non-secret persistence surfaces. A `live_copy` path must remain unavailable until trusted composition can
+verify a signed, expiring authorization bound to both machines and persist only encrypted checkpoints on a
+disposable target with independently verified destruction. A command-line flag alone is never authority
+to copy production credentials.
 
 ## Controller commands
 
@@ -62,42 +59,41 @@ cp test/live/self-driving/scripts/.live-env.example \
 chmod 600 test/live/self-driving/scripts/.live-env
 ```
 
-Run the controller from the repository root:
+Run the controller from the repository root. The wrapper builds the current controller into a pinned
+Ubuntu image, forwards only the operator SSH agent plus explicit SSH configuration, and preserves its
+private recovery authority in the `comis-production-replay-controller-v1` named volume:
 
 ```bash
-CTRL='pnpm exec tsx test/live/self-driving/scripts/production-replay.ts'
+CTRL='test/live/self-driving/scripts/production-replay-controller.sh'
 
 $CTRL profile
 $CTRL doctor
 $CTRL prepare-target
 $CTRL runtime-attest
+$CTRL seal-runtime --run-id runtime-capture-a1 --attempt-id 0123456789abcdef0123456789abcdef
+$CTRL recover-runtime --run-id runtime-capture-a1 --attempt-id 0123456789abcdef0123456789abcdef
 $CTRL evidence-source --package-root /absolute/source/package/root
 $CTRL messages-attest --channel telegram
+$CTRL evidence-parity
 ```
+
+`SSH_AUTH_SOCK` must identify the operator agent. The wrapper uses `~/.ssh/config` and
+`~/.ssh/known_hosts` by default; set `COMIS_REPLAY_SSH_CONFIG` and
+`COMIS_REPLAY_KNOWN_HOSTS` to owner-controlled alternatives when needed. It never places those files,
+the profile, the installer, or an authority key in the image build context. Runtime attempt IDs are
+stable 32-character lowercase hexadecimal values: reuse the same value to reconcile an interrupted
+attempt. Deleting the controller volume destroys the recovery authority and makes existing receipts
+unrecoverable.
 
 `doctor`, the source evidence inventory, and message attestation are read-only. Retrieve user-authored
 channel messages through the offline `comis messages` command embodied by `messages-attest`; never mine
 message bodies from daemon logs.
 
-Capture state only after deciding how source consistency will be obtained:
-
-```bash
-$CTRL clone-state --run-id unique-state-run --capture-mode offline --agent-id main
-$CTRL clone-runtime --run-id unique-runtime-run
-$CTRL runtime-attest
-$CTRL messages-attest --channel telegram
-$CTRL evidence-parity
-```
-
-`offline` requires the production service to already be stopped and is the preferred historical capture.
-`bounded-freeze` may temporarily stop an active production service and must restore its original service
-state even when capture fails. That source mutation requires explicit operator authority; do not infer it
-from a request to inspect production.
-
-These commands prepare, clone, and attest. They do **not** yet constitute an end-to-end exact replay
-command. Until the concrete Comis replay driver and flight recorder are wired into the controller, keep the
-target service stopped after attestation. The test-role daemon is intentionally close-only rather than a
-way to run production adapters with copied credentials.
+These commands prepare, seal, recover, and attest runtime artifacts. They do **not** constitute an
+end-to-end exact replay command. Until a
+state controller, concrete Comis replay driver, and flight recorder are wired into trusted composition,
+keep the target service stopped after attestation. The test-role daemon is intentionally close-only rather
+than a way to run production adapters with copied credentials.
 
 ## Investigation and transcript construction
 
@@ -117,8 +113,8 @@ Build the production baseline before changing code:
    and dangling causal parents.
 5. Derive causality and ordering from durable identifiers. Wall-clock order across unrelated clocks is
    supporting evidence, not authority.
-6. Compare source and target evidence independently after restore. Matching counts and timestamps alone do
-   not establish matching content.
+6. Compare source and target evidence independently after any state transfer and replay. Matching counts
+   and timestamps alone do not establish matching content.
 
 The current activity compiler recognizes channel, scheduler, proactive, system-dispatch, heartbeat,
 subagent, graph, provider, tool, MCP, media, state-mutation, and daemon activity families. Recognition is
@@ -190,6 +186,10 @@ must produce an explicit gap rather than silently disappearing.
 - Streaming chunked authenticated encryption, opaque keyed artifact IDs, bounded-memory assembly,
   target-local decryption, explicit retention, crash cleanup, and secret-canary scans of controller and
   target artifacts.
+- A `target_bound` state path that imports only registered persistence surfaces, preserves target-owned
+  configuration and credentials, rewrites machine-bound paths and ownership, and blocks on unknown
+  surfaces; plus a separately authorized `live_copy` path with encrypted immutable checkpoints and a
+  mandatory destruction receipt.
 - Capability discovery and adapters for installer/systemd, user services, process managers, containers,
   orchestration platforms, source installations, remote stores, and plugin-declared persistence and
   dependency surfaces.

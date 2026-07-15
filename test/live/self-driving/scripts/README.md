@@ -9,26 +9,31 @@ this folder is the copy-paste toolkit those docs refer to. (Driven by `../00-MIS
 
 Use `production-replay.ts` only for a pinned production → isolated-test investigation. Read
 `../06-PRODUCTION-FORENSIC-REPLAY.md` first. It validates distinct machine identities and roles, installs a
-fresh target without starting it, applies the test-role quarantine, clones and seals state/runtime
-artifacts, and compares offline message and evidence inventories.
+fresh target without starting it, applies the test-role quarantine, seals runtime artifacts through
+trusted controller composition, and compares offline message and evidence inventories. The public
+controller exposes no state capture or promotion command.
 
 ```bash
-CTRL='pnpm exec tsx test/live/self-driving/scripts/production-replay.ts'
+CTRL='test/live/self-driving/scripts/production-replay-controller.sh'
 
 $CTRL profile
 $CTRL doctor
 $CTRL prepare-target
 $CTRL runtime-attest
-$CTRL clone-state --run-id unique-state-run --capture-mode offline --agent-id main
-$CTRL clone-runtime --run-id unique-runtime-run
+$CTRL seal-runtime --run-id runtime-capture-a1 --attempt-id 0123456789abcdef0123456789abcdef
+$CTRL recover-runtime --run-id runtime-capture-a1 --attempt-id 0123456789abcdef0123456789abcdef
 $CTRL messages-attest --channel telegram
 $CTRL evidence-parity
 ```
 
+The wrapper runs the controller in a pinned Ubuntu image and keeps its private recovery authority in the
+`comis-production-replay-controller-v1` Docker volume. It requires the operator SSH agent and mounts
+owner-controlled SSH config and known-hosts files read-only; neither those inputs nor `.live-env` enter
+the image build context.
+
 The current controller stops at verified preparation and attestation. It does not yet drive the live Comis
-composition root or claim exact replay. Keep the target stopped unless the trusted test-role entrypoint,
-restore seal, exact unit launcher, and quarantine controls all pass. The ordinary emulator scripts below
-operate on `VPS`; `VPS` must never point at the production source.
+composition root, transfer state, or claim exact replay. Keep the target stopped. The ordinary emulator
+scripts below operate on `VPS`; `VPS` must never point at the production source.
 
 ## Config — all host values live in `.live-env` (gitignored)
 

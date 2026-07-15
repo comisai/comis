@@ -1,11 +1,12 @@
-import { createHash } from "node:crypto";
-
 import { err, ok } from "@comis/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
+  runProductionReplayProcess,
   runProductionReplayCli,
   type ProductionReplayCliDeps,
+  type ProductionReplaySignalPort,
+  type ProductionReplayTerminationSignal,
 } from "./production-replay.js";
 import { TARGET_REPLAY_QUARANTINE_SHA256 } from "./production-bootstrap.js";
 import {
@@ -14,24 +15,18 @@ import {
   PRODUCTION_EVIDENCE_IDS,
 } from "./production-evidence.js";
 import { RUNTIME_FACTS_BEGIN, RUNTIME_FACTS_END } from "./production-runtime.js";
-import {
-  RUNTIME_TREE_FACTS_BEGIN,
-  RUNTIME_TREE_FACTS_END,
-} from "./production-runtime-tree.js";
-import {
-  RUNTIME_VAULT_STATUS_BEGIN,
-  RUNTIME_VAULT_STATUS_END,
+import type {
+  ProductionRuntimeVaultController,
+  ProductionRuntimeVaultControllerRequest,
+} from "./production-runtime-vault-controller.js";
+import type {
+  ProductionRuntimeVaultRecoveryReport,
+  ProductionRuntimeVaultReport,
 } from "./production-runtime-vault.js";
 import {
   MESSAGES_ATTESTATION_BEGIN,
   MESSAGES_ATTESTATION_END,
 } from "./production-messages.js";
-import { buildReplayQuarantineOverlay } from "./production-quarantine.js";
-import {
-  deriveProductionSnapshotDataTreeIdentity,
-  deriveProductionSnapshotEnvironmentEvidenceIdentity,
-  type ProductionSnapshotManifest,
-} from "./production-snapshot.js";
 
 const PROFILE = `
 SOURCE_HOST=comis-harel
@@ -50,6 +45,10 @@ SOURCE_MACHINE_ID_SHA256=${"a".repeat(64)}
 TARGET_MACHINE_ID_SHA256=${"b".repeat(64)}
 GWTOKEN=should-never-appear
 `;
+
+const RUNTIME_ATTEMPT_ID = "0123456789abcdef0123456789abcdef";
+const RECOVERY_AUTHORITY_DIGEST = "7".repeat(64);
+const RECOVERY_AUTHORITY_KEY_ID = "8".repeat(64);
 
 function runtimeFacts(
   digestSha256 = "c".repeat(64),
@@ -87,35 +86,6 @@ function runtimeFacts(
   ].join("\n");
 }
 
-function runtimeTreeFacts(root: string): string {
-  return [
-    RUNTIME_TREE_FACTS_BEGIN,
-    `digestSha256=${"9".repeat(64)}`,
-    "entryCount=153",
-    "bytes=409600",
-    `root=${root}`,
-    "version=1.0.53",
-    RUNTIME_TREE_FACTS_END,
-    "",
-  ].join("\n");
-}
-
-function runtimeVaultStatus(state: "absent" | "present"): string {
-  return state === "absent"
-    ? [RUNTIME_VAULT_STATUS_BEGIN, "state=absent", RUNTIME_VAULT_STATUS_END, ""].join("\n")
-    : [
-        RUNTIME_VAULT_STATUS_BEGIN,
-        "state=present",
-        `digestSha256=${"9".repeat(64)}`,
-        "entryCount=153",
-        "bytes=409600",
-        `root=/opt/comis-replay/runtimes/sha256/${"9".repeat(64)}/payload`,
-        "version=1.0.53",
-        RUNTIME_VAULT_STATUS_END,
-        "",
-      ].join("\n");
-}
-
 function evidenceFacts(): string {
   return [
     EVIDENCE_FACTS_BEGIN,
@@ -135,118 +105,6 @@ function evidenceFacts(): string {
     EVIDENCE_FACTS_END,
     "",
   ].join("\n");
-}
-
-function snapshotManifest(): string {
-  const metadata = { uid: 1001, gid: 1001, mtimeNs: "1752560000123456789" } as const;
-  const value: ProductionSnapshotManifest = {
-    schemaVersion: 1,
-    runId: "state-cli-a1",
-    sourceMachineIdSha256: "a".repeat(64),
-    service: "comis",
-    captureMode: "offline",
-    captureStartedAtMs: 1_752_560_000_000,
-    captureCompletedAtMs: 1_752_560_000_100,
-    freezeDurationMs: 0,
-    metadataIdentity: {
-      acl: "unavailable",
-      xattr: "unavailable",
-      capability: "unavailable",
-      gaps: [
-        { kind: "acl", reason: "source_tool_unavailable" },
-        { kind: "xattr", reason: "source_tool_unavailable" },
-        { kind: "capability", reason: "source_tool_unavailable" },
-      ],
-    },
-    dataTreeIdentitySha256: "0".repeat(64),
-    sourceEnvironmentEvidenceIdentitySha256: "0".repeat(64),
-    entries: [
-      { path: "data", type: "directory", mode: "0700", size: 0, ...metadata },
-      {
-        path: "data/memory.db",
-        type: "file",
-        mode: "0600",
-        size: 4096,
-        sha256: "c".repeat(64),
-        ...metadata,
-      },
-      { path: "system", type: "directory", mode: "0700", size: 0, uid: 0, gid: 0, mtimeNs: metadata.mtimeNs },
-      { path: "system/etc", type: "directory", mode: "0755", size: 0, uid: 0, gid: 0, mtimeNs: metadata.mtimeNs },
-      { path: "system/etc/comis", type: "directory", mode: "0755", size: 0, uid: 0, gid: 0, mtimeNs: metadata.mtimeNs },
-      {
-        path: "system/etc/comis/env",
-        type: "file",
-        mode: "0640",
-        size: 200,
-        sha256: "d".repeat(64),
-        uid: 0,
-        gid: 1001,
-        mtimeNs: metadata.mtimeNs,
-      },
-    ],
-    exclusions: [],
-  };
-  return JSON.stringify({
-    ...value,
-    dataTreeIdentitySha256: deriveProductionSnapshotDataTreeIdentity(value),
-    sourceEnvironmentEvidenceIdentitySha256:
-      deriveProductionSnapshotEnvironmentEvidenceIdentity(value),
-  });
-}
-
-function restoreAttestation(manifestJson: string): string {
-  const captured = JSON.parse(manifestJson) as ProductionSnapshotManifest;
-  const overlay = buildReplayQuarantineOverlay(["default"]);
-  if (!overlay.ok) throw new Error("overlay fixture invalid");
-  return `${JSON.stringify({
-    schemaVersion: 1,
-    state: "committed",
-    runId: captured.runId,
-    targetMachineIdSha256: "b".repeat(64),
-    baselineImmutable: true,
-    dataDirSha256: createHash("sha256")
-      .update("comis-replay-data-dir-v1\0")
-      .update("/home/comis/.comis")
-      .digest("hex"),
-    snapshotManifestSha256: createHash("sha256").update(manifestJson).digest("hex"),
-    restoredDataTreeDigestSha256: captured.dataTreeIdentitySha256,
-    sourceEnvironmentEvidenceIdentitySha256:
-      captured.sourceEnvironmentEvidenceIdentitySha256,
-    effectiveEnvironmentContentSha256: "e".repeat(64),
-    replayOverlayContentSha256: createHash("sha256").update(overlay.value).digest("hex"),
-    dataEntryCount: captured.entries.filter(
-      ({ path }) => path === "data" || path.startsWith("data/"),
-    ).length,
-    dataBytes: captured.entries.reduce(
-      (total, entry) =>
-        total +
-        (entry.type === "file" && entry.path.startsWith("data/") ? entry.size : 0),
-      0,
-    ),
-  })}\n`;
-}
-
-function restoreStatus(
-  state: "promoting" | "authorized" | "finalized" | "rolled_back",
-  manifestJson = snapshotManifest(),
-): string {
-  const attestationRaw =
-    state === "authorized" || state === "finalized"
-      ? restoreAttestation(manifestJson)
-      : null;
-  return `${JSON.stringify({
-    schemaVersion: 1,
-    runId: "state-cli-a1",
-    targetMachineIdSha256: "b".repeat(64),
-    state,
-    bytesTransferred: state === "rolled_back" ? null : 500_000,
-    restoreAttestationBase64:
-      attestationRaw === null ? null : Buffer.from(attestationRaw).toString("base64"),
-    restoreAttestationSha256:
-      attestationRaw === null
-        ? null
-        : createHash("sha256").update(attestationRaw).digest("hex"),
-  })}\n`;
 }
 
 function messagesFacts(): string {
@@ -276,11 +134,100 @@ function makeDeps(output: string[]): ProductionReplayCliDeps {
     executor: {
       run: async () => err({ kind: "remote", message: "remote execution was not expected" }),
     },
-    binaryBridge: {
-      transfer: async () =>
-        err({ kind: "remote_failure", message: "binary transfer was not expected" }),
-    },
+    runtimeVault: () =>
+      err({
+        kind: "invalid_controller_options",
+        stage: "create-runtime-vault-controller",
+        message: "Runtime vault controller dependencies are unavailable",
+      }),
     writeOutput: (line) => output.push(line),
+  };
+}
+
+function sealedRuntimeReport(): ProductionRuntimeVaultReport {
+  return {
+    disposition: "published",
+    bytesTransferred: 500_000,
+    payload: {
+      digestSha256: "9".repeat(64),
+      entryCount: 153,
+      bytes: 409_600,
+      version: "1.0.53",
+    },
+    payloadPath: `/opt/comis-replay/runtimes/sha256/${"9".repeat(64)}/payload`,
+    recoveryAuthorityDigestSha256: RECOVERY_AUTHORITY_DIGEST,
+    recoveryAuthorityKeyIdSha256: RECOVERY_AUTHORITY_KEY_ID,
+    compatibility: {
+      compatible: true,
+      schema: "comis-runtime-vault-toolchain-contract",
+      schemaVersion: 1,
+      schemaDigestSha256: "1".repeat(64),
+      probeProgramSha256: "2".repeat(64),
+      environmentSha256: "3".repeat(64),
+      executionContractSha256: "4".repeat(64),
+      featureDigestSha256: "5".repeat(64),
+      sourceMachineIdSha256: "c".repeat(64),
+      targetMachineIdSha256: "d".repeat(64),
+      sourceToolchainDigestSha256: "e".repeat(64),
+      targetToolchainDigestSha256: "f".repeat(64),
+      sourceToolchainRecoveryDigestSha256: "0".repeat(64),
+      targetToolchainRecoveryDigestSha256: "a".repeat(64),
+    },
+    sourceConsistency: { method: "bounded_multi_scan", atomicSnapshot: false },
+    targetInstallationPreserved: true,
+    normalServiceTouched: false,
+  };
+}
+
+function recoveredRuntimeReport(): ProductionRuntimeVaultRecoveryReport {
+  const sealed = sealedRuntimeReport();
+  return {
+    disposition: "published",
+    payload: sealed.payload,
+    payloadPath: sealed.payloadPath,
+    recoveryAuthorityDigestSha256: RECOVERY_AUTHORITY_DIGEST,
+    recoveryAuthorityKeyIdSha256: RECOVERY_AUTHORITY_KEY_ID,
+    sourceConsistency: {
+      method: "authenticated_receipt_only",
+      atomicSnapshot: false,
+    },
+    targetInstallationPreserved: true,
+    normalServiceTouched: false,
+  };
+}
+
+function makeRuntimeController(overrides: {
+  readonly seal?: ProductionRuntimeVaultController["seal"];
+  readonly recover?: ProductionRuntimeVaultController["recover"];
+  readonly dispose?: ProductionRuntimeVaultController["dispose"];
+} = {}): ProductionRuntimeVaultController {
+  return {
+    seal: overrides.seal ?? (async () => ok(sealedRuntimeReport())),
+    recover: overrides.recover ?? (async () => ok(recoveredRuntimeReport())),
+    dispose: overrides.dispose ?? (() => ok(undefined)),
+  };
+}
+
+function makeSignalPort(): ProductionReplaySignalPort & {
+  readonly emit: (signal: ProductionReplayTerminationSignal) => void;
+  readonly listenerCount: () => number;
+} {
+  const listeners = new Map<ProductionReplayTerminationSignal, Set<() => void>>();
+  return {
+    on(signal, listener) {
+      const current = listeners.get(signal) ?? new Set<() => void>();
+      current.add(listener);
+      listeners.set(signal, current);
+    },
+    off(signal, listener) {
+      listeners.get(signal)?.delete(listener);
+    },
+    emit(signal) {
+      for (const listener of listeners.get(signal) ?? []) listener();
+    },
+    listenerCount() {
+      return [...listeners.values()].reduce((total, current) => total + current.size, 0);
+    },
   };
 }
 
@@ -316,6 +263,63 @@ describe("production replay command controller", () => {
     expect(reads).toBe(0);
     expect(output.join("\n")).toContain("unknown_command");
   });
+
+  it.each([
+    [
+      "clone-state",
+      [
+        "clone-state",
+        "--run-id",
+        "state-cli-a1",
+        "--capture-mode",
+        "offline",
+        "--agent-id",
+        "default",
+      ],
+    ],
+    ["restore-status", ["restore-status", "--run-id", "state-cli-a1"]],
+    ["restore-resume", ["restore-resume", "--run-id", "state-cli-a1"]],
+    ["restore-rollback", ["restore-rollback", "--run-id", "state-cli-a1"]],
+  ] as const)(
+    "rejects unsupported %s command before profile or host I/O",
+    async (_command, argv) => {
+      const output: string[] = [];
+      let reads = 0;
+      let remoteCalls = 0;
+      const deps = makeDeps(output);
+
+      const exitCode = await runProductionReplayCli(argv, {
+        ...deps,
+        readText: async () => {
+          reads += 1;
+          return ok(PROFILE);
+        },
+        executor: {
+          run: async () => {
+            remoteCalls += 1;
+            return err({ kind: "remote", message: "remote execution was not expected" });
+          },
+        },
+      });
+
+      expect(exitCode).toBe(2);
+      expect(reads).toBe(0);
+      expect(remoteCalls).toBe(0);
+      const rendered = output.join("\n");
+      expect(JSON.parse(rendered)).toMatchObject({
+        ok: false,
+        error: { kind: "unknown_command" },
+      });
+      for (const unsupported of [
+        "clone-state",
+        "restore-status",
+        "restore-resume",
+        "restore-rollback",
+      ]) {
+        expect(rendered).not.toContain(unsupported);
+      }
+    },
+  );
 
   it("runtime-attest probes both hosts with their ports and prints content-free matching facts", async () => {
     const output: string[] = [];
@@ -404,160 +408,545 @@ describe("production replay command controller", () => {
     expect(output.join("\n")).not.toContain("d".repeat(64));
   });
 
-  it("seals the source runtime without replacing the target installation", async () => {
+  it("rejects the removed clone-runtime command before controller I/O", async () => {
     const output: string[] = [];
-    const labels: string[] = [];
-    let vaultStatusCount = 0;
+    let reads = 0;
     const deps = makeDeps(output);
 
     const exitCode = await runProductionReplayCli(
-      ["seal-runtime", "--run-id", "runtime-cli-a1"],
+      ["clone-runtime", "--run-id", "runtime-cli-a1"],
       {
         ...deps,
-        executor: {
-          run: async (invocation) => {
-            labels.push(invocation.label);
-            if (invocation.label === "runtime-attest-source") {
-              return ok({ stdout: runtimeFacts("c".repeat(64)), exitCode: 0 });
-            }
-            if (invocation.label === "runtime-attest-target") {
-              return ok({
-                stdout: runtimeFacts("d".repeat(64), true),
-                exitCode: 0,
-              });
-            }
-            if (invocation.label === "runtime-tree-attest-source") {
-              return ok({
-                stdout: runtimeTreeFacts(
-                  "/home/comis/.npm-global/lib/node_modules/comisai",
-                ),
-                exitCode: 0,
-              });
-            }
-            if (invocation.label === "runtime-vault-status-target") {
-              const state = vaultStatusCount === 0 ? "absent" : "present";
-              vaultStatusCount += 1;
-              return ok({ stdout: runtimeVaultStatus(state), exitCode: 0 });
-            }
-            if (invocation.label === "verify-runtime-vault-target") {
-              return ok({
-                stdout: runtimeTreeFacts(
-                  `/opt/comis-replay/runtimes/sha256/.incoming-runtime-cli-a1-${"9".repeat(64)}/payload`,
-                ),
-                exitCode: 0,
-              });
-            }
-            if (invocation.label === "publish-runtime-vault-target") {
-              return ok({ stdout: "published\n", exitCode: 0 });
-            }
-            return ok({ stdout: "", exitCode: 0 });
-          },
+        readText: async () => {
+          reads += 1;
+          return ok(PROFILE);
         },
-        binaryBridge: {
-          transfer: async (request) => {
-            expect(request.source).toMatchObject({ host: "comis-harel", port: 2222 });
-            expect(request.target).toMatchObject({ host: "comis-test2", port: 2202 });
-            expect(request.sourceStdin).toContain("tar --create");
-            return ok({ bytesTransferred: 500_000 });
-          },
+      },
+    );
+
+    expect(exitCode).toBe(2);
+    expect(reads).toBe(0);
+    expect(JSON.parse(output.join("\n"))).toMatchObject({
+      ok: false,
+      error: { kind: "unknown_command" },
+    });
+  });
+
+  it("requires a lowercase fixed-width attempt identity for runtime vault commands", async () => {
+    const cases: readonly (readonly string[])[] = [
+      ["seal-runtime", "--run-id", "runtime-cli-a1"],
+      ["recover-runtime", "--attempt-id", RUNTIME_ATTEMPT_ID],
+      [
+        "seal-runtime",
+        "--run-id",
+        "runtime-cli-a1",
+        "--attempt-id",
+        RUNTIME_ATTEMPT_ID.toUpperCase(),
+      ],
+      [
+        "recover-runtime",
+        "--run-id",
+        "runtime-cli-a1",
+        "--attempt-id",
+        "a".repeat(31),
+      ],
+    ];
+
+    for (const argv of cases) {
+      const output: string[] = [];
+      const exitCode = await runProductionReplayCli(argv, makeDeps(output));
+
+      expect(exitCode).toBe(2);
+      expect(JSON.parse(output.join("\n"))).toMatchObject({
+        ok: false,
+        error: { kind: "invalid_arguments" },
+      });
+    }
+  });
+
+  it("rejects unsafe runtime run identities before profile or controller I/O", async () => {
+    const cases = ["", "../escape", "-leading", "a".repeat(65), "run with spaces"];
+
+    for (const runId of cases) {
+      const output: string[] = [];
+      let reads = 0;
+      let compositions = 0;
+      const deps = makeDeps(output);
+      const argv = [
+        "seal-runtime",
+        "--run-id",
+        runId,
+        "--attempt-id",
+        RUNTIME_ATTEMPT_ID,
+      ];
+
+      const exitCode = await runProductionReplayCli(argv, {
+        ...deps,
+        readText: async () => {
+          reads += 1;
+          return ok(PROFILE);
+        },
+        runtimeVault: () => {
+          compositions += 1;
+          return ok(makeRuntimeController());
+        },
+      });
+
+      expect(exitCode).toBe(2);
+      expect(reads).toBe(0);
+      expect(compositions).toBe(0);
+      expect(output.join("\n")).not.toContain("../escape");
+    }
+  });
+
+  it("rejects duplicate singleton runtime arguments before controller I/O", async () => {
+    const cases: readonly (readonly string[])[] = [
+      [
+        "seal-runtime",
+        "--run-id",
+        "runtime-cli-a1",
+        "--run-id",
+        "runtime-cli-a2",
+        "--attempt-id",
+        RUNTIME_ATTEMPT_ID,
+      ],
+      [
+        "recover-runtime",
+        "--run-id",
+        "runtime-cli-a1",
+        "--attempt-id",
+        RUNTIME_ATTEMPT_ID,
+        "--attempt-id",
+        "f".repeat(32),
+      ],
+      [
+        "recover-runtime",
+        "--run-id",
+        "runtime-cli-a1",
+        "--attempt-id",
+        RUNTIME_ATTEMPT_ID,
+        "--env",
+        "/first/profile",
+        "--env",
+        "/second/profile",
+      ],
+    ];
+
+    for (const argv of cases) {
+      const output: string[] = [];
+      let reads = 0;
+      let compositions = 0;
+      const deps = makeDeps(output);
+      const exitCode = await runProductionReplayCli(argv, {
+        ...deps,
+        readText: async () => {
+          reads += 1;
+          return ok(PROFILE);
+        },
+        runtimeVault: () => {
+          compositions += 1;
+          return ok(makeRuntimeController());
+        },
+      });
+
+      expect(exitCode).toBe(2);
+      expect(reads).toBe(0);
+      expect(compositions).toBe(0);
+      expect(JSON.parse(output.join("\n"))).toMatchObject({
+        ok: false,
+        error: { kind: "invalid_arguments" },
+      });
+    }
+  });
+
+  it("seals a runtime through a lazily composed controller and disposes before output", async () => {
+    const output: string[] = [];
+    const deps = makeDeps(output);
+    const order: string[] = [];
+    let sealRequest: ProductionRuntimeVaultControllerRequest | undefined;
+    const dispose = vi.fn(() => {
+      order.push("dispose");
+      return ok(undefined);
+    });
+
+    const exitCode = await runProductionReplayCli(
+      [
+        "seal-runtime",
+        "--run-id",
+        "runtime-cli-a1",
+        "--attempt-id",
+        RUNTIME_ATTEMPT_ID,
+      ],
+      {
+        ...deps,
+        runtimeVault: () =>
+          ok(
+            makeRuntimeController({
+              seal: async (request) => {
+                order.push("seal");
+                sealRequest = request;
+                return ok(sealedRuntimeReport());
+              },
+              dispose,
+            }),
+          ),
+        writeOutput: (line) => {
+          order.push("output");
+          output.push(line);
         },
       },
     );
 
     expect(exitCode).toBe(0);
-    expect(labels).toContain("publish-runtime-vault-target");
-    expect(labels).not.toContain("promote-runtime-target");
-    expect(labels).not.toContain("commit-runtime-target");
-    expect(labels.at(-1)).toBe("runtime-vault-status-target");
-    expect(JSON.parse(output.join("\n"))).toMatchObject({
+    expect(sealRequest).toMatchObject({
+      runId: "runtime-cli-a1",
+      attemptId: RUNTIME_ATTEMPT_ID,
+      profile: expect.objectContaining({
+        source: expect.objectContaining({ ssh: "comis-harel" }),
+        target: expect.objectContaining({ ssh: "comis-test2" }),
+      }),
+    });
+    expect(Object.keys(sealRequest ?? {}).sort()).toEqual(["attemptId", "profile", "runId"]);
+    expect(sealRequest).not.toHaveProperty("authorityKey");
+    expect(sealRequest).not.toHaveProperty("authorityDigestSha256");
+    expect(order).toEqual(["seal", "dispose", "output"]);
+    expect(dispose).toHaveBeenCalledOnce();
+    const rendered = output.join("\n");
+    expect(JSON.parse(rendered)).toMatchObject({
       ok: true,
+      runId: "runtime-cli-a1",
+      attemptId: RUNTIME_ATTEMPT_ID,
       report: {
         disposition: "published",
         bytesTransferred: 500_000,
-        payload: {
-          digestSha256: "9".repeat(64),
-          entryCount: 153,
-          bytes: 409600,
-          version: "1.0.53",
-        },
-        compatibility: {
-          status: "unsupported",
-          reason: "no_digest_pinned_adapter",
-        },
         targetInstallationPreserved: true,
         normalServiceTouched: false,
       },
     });
+    expect(rendered).not.toContain(RECOVERY_AUTHORITY_DIGEST);
+    expect(rendered).not.toContain(RECOVERY_AUTHORITY_KEY_ID);
+    expect(rendered).not.toContain("recoveryAuthority");
   });
 
-  it("returns a committed full state clone without rendering captured content", async () => {
+  it("recovers a runtime through the controller without exposing its owned dependencies", async () => {
     const output: string[] = [];
-    const labels: string[] = [];
     const deps = makeDeps(output);
+    let recoverRequest: ProductionRuntimeVaultControllerRequest | undefined;
+    const dispose = vi.fn(() => ok(undefined));
 
     const exitCode = await runProductionReplayCli(
       [
-        "clone-state",
+        "recover-runtime",
         "--run-id",
-        "state-cli-a1",
-        "--capture-mode",
-        "offline",
-        "--agent-id",
-        "default",
+        "runtime-cli-a1",
+        "--attempt-id",
+        RUNTIME_ATTEMPT_ID,
       ],
       {
         ...deps,
-        executor: {
-          run: async (invocation) => {
-            labels.push(invocation.label);
-            if (invocation.label === "read-snapshot-manifest-source") {
-              return ok({ stdout: snapshotManifest(), exitCode: 0 });
-            }
-            if (invocation.label === "read-promoted-snapshot-attestation") {
-              return ok({ stdout: restoreAttestation(snapshotManifest()), exitCode: 0 });
-            }
-            return ok({ stdout: "", exitCode: 0 });
-          },
-        },
-        binaryBridge: {
-          transfer: async () => ok({ bytesTransferred: 500_000 }),
-        },
+        runtimeVault: () =>
+          ok(
+            makeRuntimeController({
+              recover: async (request) => {
+                recoverRequest = request;
+                return ok(recoveredRuntimeReport());
+              },
+              dispose,
+            }),
+          ),
       },
     );
 
     expect(exitCode).toBe(0);
-    expect(labels).toContain("capture-snapshot-source");
-    expect(labels).toContain("verify-and-promote-snapshot-target");
-    expect(labels.at(-1)).toBe("finalize-snapshot-target");
-    expect(JSON.parse(output.join("\n"))).toMatchObject({
+    expect(recoverRequest).toMatchObject({
+      runId: "runtime-cli-a1",
+      attemptId: RUNTIME_ATTEMPT_ID,
+      profile: expect.objectContaining({
+        source: expect.objectContaining({ ssh: "comis-harel" }),
+        target: expect.objectContaining({ ssh: "comis-test2" }),
+      }),
+    });
+    expect(Object.keys(recoverRequest ?? {}).sort()).toEqual(["attemptId", "profile", "runId"]);
+    expect(recoverRequest).not.toHaveProperty("bridge");
+    expect(recoverRequest).not.toHaveProperty("authorityKey");
+    expect(recoverRequest).not.toHaveProperty("authorityDigestSha256");
+    expect(dispose).toHaveBeenCalledOnce();
+    const rendered = output.join("\n");
+    expect(JSON.parse(rendered)).toMatchObject({
       ok: true,
+      runId: "runtime-cli-a1",
+      attemptId: RUNTIME_ATTEMPT_ID,
       report: {
-        state: "committed",
-        runId: "state-cli-a1",
-        captureMode: "offline",
-        bytesTransferred: 500_000,
-        entries: 6,
-        exclusions: 0,
-        dataTreeIdentitySha256: deriveProductionSnapshotDataTreeIdentity(
-          JSON.parse(snapshotManifest()) as ProductionSnapshotManifest,
-        ),
-        sourceEnvironmentEvidenceIdentitySha256:
-          deriveProductionSnapshotEnvironmentEvidenceIdentity(
-            JSON.parse(snapshotManifest()) as ProductionSnapshotManifest,
-          ),
-        environmentConfiguration: "source_plus_replay_overlay",
-        dataFileContentBytes: 4096,
-        metadataIdentity: {
-          fidelity: "gapped",
-          acl: "unavailable",
-          xattr: "unavailable",
-          capability: "unavailable",
-          gapKinds: ["acl", "xattr", "capability"],
-        },
+        disposition: "published",
+        targetInstallationPreserved: true,
+        normalServiceTouched: false,
       },
     });
-    expect(output.join("\n")).not.toContain("memory.db");
-    expect(output.join("\n")).not.toContain("COMIS_CONFIG_PATHS");
+    expect(rendered).not.toContain(RECOVERY_AUTHORITY_DIGEST);
+    expect(rendered).not.toContain(RECOVERY_AUTHORITY_KEY_ID);
+    expect(rendered).not.toContain("recoveryAuthority");
+  });
+
+  it("fails runtime vault commands with correlated output when trusted composition is unavailable", async () => {
+    const output: string[] = [];
+    let reads = 0;
+    let compositions = 0;
+    const deps = makeDeps(output);
+
+    const exitCode = await runProductionReplayCli(
+      [
+        "recover-runtime",
+        "--run-id",
+        "runtime-cli-a1",
+        "--attempt-id",
+        RUNTIME_ATTEMPT_ID,
+      ],
+      {
+        ...deps,
+        readText: async () => {
+          reads += 1;
+          return ok(PROFILE);
+        },
+        runtimeVault: () => {
+          compositions += 1;
+          return err({
+            kind: "invalid_controller_options",
+            stage: "create-runtime-vault-controller",
+            message: "Runtime vault controller dependencies are unavailable",
+          });
+        },
+      },
+    );
+
+    expect(exitCode).toBe(1);
+    expect(reads).toBe(1);
+    expect(compositions).toBe(1);
+    expect(JSON.parse(output.join("\n"))).toEqual({
+      ok: false,
+      command: "recover-runtime",
+      runId: "runtime-cli-a1",
+      attemptId: RUNTIME_ATTEMPT_ID,
+      error: {
+        kind: "invalid_controller_options",
+        stage: "create-runtime-vault-controller",
+        message: "Runtime vault controller dependencies are unavailable",
+      },
+    });
+  });
+
+  it("disposes after an operation failure and correlates the safe failure output", async () => {
+    const output: string[] = [];
+    const deps = makeDeps(output);
+    const dispose = vi.fn(() => ok(undefined));
+
+    const exitCode = await runProductionReplayCli(
+      [
+        "seal-runtime",
+        "--run-id",
+        "runtime-cli-a1",
+        "--attempt-id",
+        RUNTIME_ATTEMPT_ID,
+      ],
+      {
+        ...deps,
+        runtimeVault: () =>
+          ok(
+            makeRuntimeController({
+              seal: async () =>
+                err({
+                  kind: "attestation_failure",
+                  stage: "verify-runtime-vault-evidence-under-lease",
+                  message: "Source or target evidence changed before mutation",
+                }),
+              dispose,
+            }),
+          ),
+      },
+    );
+
+    expect(exitCode).toBe(1);
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(JSON.parse(output.join("\n"))).toEqual({
+      ok: false,
+      command: "seal-runtime",
+      runId: "runtime-cli-a1",
+      attemptId: RUNTIME_ATTEMPT_ID,
+      error: {
+        kind: "attestation_failure",
+        stage: "verify-runtime-vault-evidence-under-lease",
+        message: "Source or target evidence changed before mutation",
+      },
+    });
+  });
+
+  it("turns a disposal failure into a correlated secret-free terminal failure", async () => {
+    const output: string[] = [];
+    const deps = makeDeps(output);
+    const sensitiveCause = "controller-private-cause-must-not-render";
+
+    const exitCode = await runProductionReplayCli(
+      [
+        "recover-runtime",
+        "--run-id",
+        "runtime-cli-a1",
+        "--attempt-id",
+        RUNTIME_ATTEMPT_ID,
+      ],
+      {
+        ...deps,
+        runtimeVault: () =>
+          ok(
+            makeRuntimeController({
+              dispose: () =>
+                err({
+                  kind: "receipt_store_failure",
+                  stage: "dispose-runtime-vault-receipt-store",
+                  message: "Runtime vault controller authority state is unavailable",
+                  cause: {
+                    kind: "io_failure",
+                    operation: sensitiveCause,
+                    message: sensitiveCause,
+                  },
+                }),
+            }),
+          ),
+      },
+    );
+
+    expect(exitCode).toBe(1);
+    const rendered = output.join("\n");
+    expect(JSON.parse(rendered)).toEqual({
+      ok: false,
+      command: "recover-runtime",
+      runId: "runtime-cli-a1",
+      attemptId: RUNTIME_ATTEMPT_ID,
+      error: {
+        kind: "receipt_store_failure",
+        stage: "dispose-runtime-vault-receipt-store",
+        message: "Runtime vault controller authority state is unavailable",
+      },
+    });
+    expect(rendered).not.toContain(sensitiveCause);
+    expect(rendered).not.toContain("cause");
+  });
+
+  it("disposes after an unexpected operation rejection without rendering its cause", async () => {
+    const output: string[] = [];
+    const deps = makeDeps(output);
+    const dispose = vi.fn(() => ok(undefined));
+    const sensitiveCause = "unexpected-operation-secret";
+
+    const exitCode = await runProductionReplayCli(
+      [
+        "seal-runtime",
+        "--run-id",
+        "runtime-cli-a1",
+        "--attempt-id",
+        RUNTIME_ATTEMPT_ID,
+      ],
+      {
+        ...deps,
+        runtimeVault: () => ok(makeRuntimeController({
+          seal: async () => Promise.reject(new Error(sensitiveCause)),
+          dispose,
+        })),
+      },
+    );
+
+    expect(exitCode).toBe(1);
+    expect(dispose).toHaveBeenCalledOnce();
+    const rendered = output.join("\n");
+    expect(JSON.parse(rendered)).toMatchObject({
+      ok: false,
+      error: { kind: "runtime_vault_boundary_failure", stage: "operation" },
+    });
+    expect(rendered).not.toContain(sensitiveCause);
+  });
+
+  it("contains an unexpected disposal throw without hiding successful operation reconciliation", async () => {
+    const output: string[] = [];
+    const deps = makeDeps(output);
+    const sensitiveCause = "unexpected-disposal-secret";
+
+    const exitCode = await runProductionReplayCli(
+      [
+        "recover-runtime",
+        "--run-id",
+        "runtime-cli-a1",
+        "--attempt-id",
+        RUNTIME_ATTEMPT_ID,
+      ],
+      {
+        ...deps,
+        runtimeVault: () => ok(makeRuntimeController({
+          dispose: () => {
+            throw new Error(sensitiveCause);
+          },
+        })),
+      },
+    );
+
+    expect(exitCode).toBe(1);
+    const rendered = output.join("\n");
+    expect(JSON.parse(rendered)).toMatchObject({
+      ok: false,
+      error: { kind: "runtime_vault_boundary_failure", stage: "dispose" },
+    });
+    expect(rendered).not.toContain(sensitiveCause);
+    expect(rendered).not.toContain(RECOVERY_AUTHORITY_DIGEST);
+  });
+
+  it("contains an unexpected controller factory throw without rendering its cause", async () => {
+    const output: string[] = [];
+    const deps = makeDeps(output);
+    const sensitiveCause = "unexpected-factory-secret";
+
+    const exitCode = await runProductionReplayCli(
+      [
+        "recover-runtime",
+        "--run-id",
+        "runtime-cli-a1",
+        "--attempt-id",
+        RUNTIME_ATTEMPT_ID,
+      ],
+      {
+        ...deps,
+        runtimeVault: () => {
+          throw new Error(sensitiveCause);
+        },
+      },
+    );
+
+    expect(exitCode).toBe(1);
+    const rendered = output.join("\n");
+    expect(JSON.parse(rendered)).toMatchObject({
+      ok: false,
+      error: { kind: "runtime_vault_boundary_failure", stage: "composition" },
+    });
+    expect(rendered).not.toContain(sensitiveCause);
+  });
+
+  it("rejects caller-supplied runtime authority material without rendering it", async () => {
+    for (const flag of ["--authority-key", "--authority-digest"] as const) {
+      const output: string[] = [];
+      const supplied = `${flag}-must-not-be-rendered`;
+
+      const exitCode = await runProductionReplayCli(
+        [
+          "seal-runtime",
+          "--run-id",
+          "runtime-cli-a1",
+          "--attempt-id",
+          RUNTIME_ATTEMPT_ID,
+          flag,
+          supplied,
+        ],
+        makeDeps(output),
+      );
+
+      expect(exitCode).toBe(2);
+      expect(output.join("\n")).not.toContain(supplied);
+    }
   });
 
   it("returns matching offline channel history attestations without message bodies", async () => {
@@ -781,42 +1170,94 @@ describe("production replay command controller", () => {
     expect(output.join("\n")).not.toContain("sensitive-package-content");
   });
 
-  it("recovers an interrupted state promotion through explicit controller commands", async () => {
-    const output: string[] = [];
-    const labels: string[] = [];
-    let statusReads = 0;
-    const deps = makeDeps(output);
+});
 
-    const exitCode = await runProductionReplayCli(
-      ["restore-rollback", "--run-id", "state-cli-a1"],
-      {
-        ...deps,
-        executor: {
-          run: async (invocation) => {
-            labels.push(invocation.label);
-            if (invocation.label === "inspect-snapshot-target") {
-              statusReads += 1;
-              return ok({
-                stdout: restoreStatus(statusReads === 1 ? "promoting" : "rolled_back"),
-                exitCode: 0,
-              });
-            }
-            return ok({ stdout: "", exitCode: 0 });
-          },
-        },
-      },
+describe("production replay process signal lifecycle", () => {
+  it("waits for runtime reconciliation and disposes exactly once after SIGTERM", async () => {
+    const output: string[] = [];
+    const deps = makeDeps(output);
+    const signals = makeSignalPort();
+    const dispose = vi.fn(() => ok(undefined));
+    let finishSeal: ((result: ReturnType<typeof ok<ProductionRuntimeVaultReport>>) => void) | undefined;
+    const seal = vi.fn(
+      () => new Promise<ReturnType<typeof ok<ProductionRuntimeVaultReport>>>((resolveSeal) => {
+        finishSeal = resolveSeal;
+      }),
     );
 
-    expect(exitCode).toBe(0);
-    expect(labels).toEqual([
-      "inspect-snapshot-target",
-      "rollback-snapshot-target",
-      "inspect-snapshot-target",
-    ]);
+    const running = runProductionReplayProcess(
+      [
+        "seal-runtime",
+        "--run-id",
+        "run_signal_reconciliation",
+        "--attempt-id",
+        RUNTIME_ATTEMPT_ID,
+      ],
+      {
+        ...deps,
+        runtimeVault: () => ok(makeRuntimeController({ seal, dispose })),
+      },
+      signals,
+    );
+    await vi.waitFor(() => expect(seal).toHaveBeenCalledOnce());
+
+    signals.emit("SIGTERM");
+
+    expect(dispose).not.toHaveBeenCalled();
+    expect(signals.listenerCount()).toBe(3);
+    finishSeal?.(ok(sealedRuntimeReport()));
+    await expect(running).resolves.toBe(143);
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(signals.listenerCount()).toBe(0);
     expect(JSON.parse(output.join("\n"))).toMatchObject({
       ok: true,
-      report: { runId: "state-cli-a1", state: "rolled_back" },
+      command: "seal-runtime",
+      runId: "run_signal_reconciliation",
+      attemptId: RUNTIME_ATTEMPT_ID,
     });
+  });
+
+  it.each([
+    ["SIGHUP", 129],
+    ["SIGINT", 130],
+    ["SIGTERM", 143],
+  ] as const)("returns the conventional exit code after %s without leaking listeners", async (signal, expected) => {
+    const output: string[] = [];
+    const deps = makeDeps(output);
+    const signals = makeSignalPort();
+    let releaseRead: ((result: ReturnType<typeof ok<string>>) => void) | undefined;
+    const running = runProductionReplayProcess(
+      ["profile"],
+      {
+        ...deps,
+        readText: () => new Promise((resolveRead) => {
+          releaseRead = resolveRead;
+        }),
+      },
+      signals,
+    );
+
+    signals.emit(signal);
+    releaseRead?.(ok(PROFILE));
+
+    await expect(running).resolves.toBe(expected);
+    expect(signals.listenerCount()).toBe(0);
+  });
+
+  it("removes signal listeners when command dependencies reject unexpectedly", async () => {
+    const output: string[] = [];
+    const deps = makeDeps(output);
+    const signals = makeSignalPort();
+
+    await expect(runProductionReplayProcess(
+      ["profile"],
+      {
+        ...deps,
+        readText: async () => Promise.reject(new Error("dependency failed")),
+      },
+      signals,
+    )).rejects.toThrow("dependency failed");
+    expect(signals.listenerCount()).toBe(0);
   });
 });
 

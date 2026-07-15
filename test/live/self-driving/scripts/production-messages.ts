@@ -62,6 +62,7 @@ const ATTESTATION_KEYS = [
   "digestSha256",
   "truncated",
 ] as const;
+const ATTESTATION_KEY_SET = new Set<string>(ATTESTATION_KEYS);
 
 const MESSAGES_SCRIPT = String.raw`set -euo pipefail
 expected_machine="$1"
@@ -153,7 +154,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function hasExactKeys(value: Record<string, unknown>): boolean {
   const keys = Object.keys(value);
-  return keys.length === ATTESTATION_KEYS.length && keys.every((key) => ATTESTATION_KEYS.includes(key));
+  return keys.length === ATTESTATION_KEYS.length && keys.every((key) => ATTESTATION_KEY_SET.has(key));
 }
 
 function isCount(value: unknown): value is number {
