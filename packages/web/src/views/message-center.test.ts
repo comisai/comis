@@ -15,6 +15,19 @@ async function createElement(
   return el;
 }
 
+function state(el: IcMessageCenter) {
+  return el as unknown as {
+    _loadState: "idle" | "loading" | "loaded" | "error";
+    _messages: Array<{ id: string; senderId: string; text: string; timestamp: number }>;
+    _effectiveChannel: string;
+    _capabilities: Record<string, unknown> | null;
+    _botName: string;
+    _chatList: Array<{ chatId: string; label: string }>;
+    _selectedChatId: string;
+    _autoSelectAttempted: boolean;
+  };
+}
+
 afterEach(() => {
   document.body.innerHTML = "";
 });
@@ -61,6 +74,15 @@ describe("IcMessageCenter breadcrumb navigation", () => {
 
   it("clears the breadcrumb when the route drops its channel", async () => {
     const el = await createElement({ channelType: "telegram" });
+    Object.assign(state(el), {
+      _loadState: "loaded",
+      _messages: [{ id: "message-old", senderId: "user_a", text: "old", timestamp: 1 }],
+      _capabilities: { fetchHistory: true },
+      _botName: "old-bot",
+      _chatList: [{ chatId: "chat-old", label: "Old chat" }],
+      _selectedChatId: "chat-old",
+      _autoSelectAttempted: true,
+    });
 
     el.channelType = "";
     await el.updateComplete;
@@ -72,5 +94,15 @@ describe("IcMessageCenter breadcrumb navigation", () => {
       { label: "Channels", route: "channels" },
       { label: "Messages" },
     ]);
+    expect(state(el)).toMatchObject({
+      _loadState: "idle",
+      _messages: [],
+      _effectiveChannel: "",
+      _capabilities: null,
+      _botName: "",
+      _chatList: [],
+      _selectedChatId: "",
+      _autoSelectAttempted: false,
+    });
   });
 });
