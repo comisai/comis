@@ -138,6 +138,34 @@ export interface TargetLocalActivityBlobVaultPlanError {
   readonly message: string;
 }
 
+export interface TargetLocalActivityBlobVaultCoverage {
+  readonly filesScanned: number;
+  readonly fileCapReached: boolean;
+  readonly filesUnreadable: number;
+  readonly userRecordsSeen: number;
+  readonly unparsedUserRecords: number;
+  readonly recordCappedFiles: number;
+  readonly internalExcluded: number;
+  readonly truncated: boolean;
+}
+
+export interface TargetLocalActivityBlobVaultSummary {
+  readonly schema: "comis-private-activity-vault-summary";
+  readonly schemaVersion: 1;
+  readonly recordCount: number;
+  readonly uniqueBlobCount: number;
+  readonly contentBytes: number;
+  readonly indexDigestSha256: string;
+  readonly privateIndexDigestSha256: string;
+  readonly coverage: TargetLocalActivityBlobVaultCoverage;
+  readonly gapReasons: readonly TranscriptCaptureGapReason[];
+}
+
+export interface TargetLocalActivityBlobVaultSummaryError {
+  readonly kind: "malformed_vault_summary";
+  readonly message: string;
+}
+
 interface ValidatedRecordNode {
   readonly identity: string;
   readonly sourceKind: TranscriptSourceKind;
@@ -224,6 +252,30 @@ const RECORD_KEYS = [
 const PARENT_KEYS = ["sourceKind", "sourceId", "recordId"] as const;
 const ACTOR_KEYS = ["kind", "id", "trust", "origin"] as const;
 const REPLAY_KEYS = ["policy", "payloadDigest", "blobDigest"] as const;
+const VAULT_SUMMARY_KEYS = [
+  "schema",
+  "schemaVersion",
+  "recordCount",
+  "uniqueBlobCount",
+  "contentBytes",
+  "indexDigestSha256",
+  "privateIndexDigestSha256",
+  "coverage",
+  "gapReasons",
+] as const;
+const VAULT_COVERAGE_KEYS = [
+  "filesScanned",
+  "fileCapReached",
+  "filesUnreadable",
+  "userRecordsSeen",
+  "unparsedUserRecords",
+  "recordCappedFiles",
+  "internalExcluded",
+  "truncated",
+] as const;
+const MAX_VAULT_SUMMARY_BYTES = 32_768;
+const MAX_VAULT_RECORDS = 10_000;
+const MAX_VAULT_CONTENT_BYTES = 32 * 1024 * 1024;
 
 /**
  * The real persisted authority matrix. A normalized extractor may join several
@@ -876,6 +928,101 @@ function unsafeVaultInput(
   return err({ kind: "unsafe_input", field, message: "Target-local activity vault input is unsafe" });
 }
 
+function malformedVaultSummary(): Result<never, TargetLocalActivityBlobVaultSummaryError> {
+  return err({
+    kind: "malformed_vault_summary",
+    message: "Target-local activity vault summary is malformed",
+  });
+}
+
+function deriveVaultSummaryGaps(
+  coverage: TargetLocalActivityBlobVaultCoverage,
+): readonly TranscriptCaptureGapReason[] {
+  const gaps = new Set<TranscriptCaptureGapReason>();
+  if (coverage.filesUnreadable > 0) gaps.add("unreadable_artifact");
+  if (
+    coverage.truncated ||
+    coverage.recordCappedFiles > 0 ||
+    coverage.unparsedUserRecords > 0
+  ) {
+    gaps.add("partial_retention");
+  }
+  if (coverage.fileCapReached) gaps.add("count_unknown");
+  if (coverage.internalExcluded !== 0) gaps.add("capture_error");
+  return [...gaps].sort();
+}
+
+/** Parse the content-free stdout summary and rederive every declared coverage gap. */
+export function parseTargetLocalActivityBlobVaultSummary(
+  raw: string,
+): Result<TargetLocalActivityBlobVaultSummary, TargetLocalActivityBlobVaultSummaryError> {
+  if (Buffer.byteLength(raw, "utf8") > MAX_VAULT_SUMMARY_BYTES) {
+    return malformedVaultSummary();
+  }
+  const parsed = tryCatch<unknown>(() => JSON.parse(raw));
+  if (!parsed.ok || !isRecord(parsed.value) || !hasExactKeys(parsed.value, VAULT_SUMMARY_KEYS)) {
+    return malformedVaultSummary();
+  }
+  const value = parsed.value;
+  if (!isRecord(value.coverage) || !hasExactKeys(value.coverage, VAULT_COVERAGE_KEYS)) {
+    return malformedVaultSummary();
+  }
+  const coverage = value.coverage;
+  const numericCoverage = [
+    coverage.filesScanned,
+    coverage.filesUnreadable,
+    coverage.userRecordsSeen,
+    coverage.unparsedUserRecords,
+    coverage.recordCappedFiles,
+    coverage.internalExcluded,
+  ];
+  if (
+    value.schema !== "comis-private-activity-vault-summary" ||
+    value.schemaVersion !== 1 ||
+    !isNonNegativeSafeInteger(value.recordCount) ||
+    value.recordCount > MAX_VAULT_RECORDS ||
+    !isNonNegativeSafeInteger(value.uniqueBlobCount) ||
+    value.uniqueBlobCount > value.recordCount ||
+    !isNonNegativeSafeInteger(value.contentBytes) ||
+    value.contentBytes > MAX_VAULT_CONTENT_BYTES ||
+    !isDigest(value.indexDigestSha256) ||
+    !isDigest(value.privateIndexDigestSha256) ||
+    !numericCoverage.every(isNonNegativeSafeInteger) ||
+    typeof coverage.fileCapReached !== "boolean" ||
+    typeof coverage.truncated !== "boolean" ||
+    !Array.isArray(value.gapReasons) ||
+    value.gapReasons.length > 4 ||
+    value.gapReasons.some((gap) => !GAP_VALUES.has(String(gap)))
+  ) {
+    return malformedVaultSummary();
+  }
+  const normalizedCoverage: TargetLocalActivityBlobVaultCoverage = {
+    filesScanned: coverage.filesScanned as number,
+    fileCapReached: coverage.fileCapReached,
+    filesUnreadable: coverage.filesUnreadable as number,
+    userRecordsSeen: coverage.userRecordsSeen as number,
+    unparsedUserRecords: coverage.unparsedUserRecords as number,
+    recordCappedFiles: coverage.recordCappedFiles as number,
+    internalExcluded: coverage.internalExcluded as number,
+    truncated: coverage.truncated,
+  };
+  const expectedGaps = deriveVaultSummaryGaps(normalizedCoverage);
+  if (JSON.stringify(value.gapReasons) !== JSON.stringify(expectedGaps)) {
+    return malformedVaultSummary();
+  }
+  return ok({
+    schema: "comis-private-activity-vault-summary",
+    schemaVersion: 1,
+    recordCount: value.recordCount,
+    uniqueBlobCount: value.uniqueBlobCount,
+    contentBytes: value.contentBytes,
+    indexDigestSha256: value.indexDigestSha256,
+    privateIndexDigestSha256: value.privateIndexDigestSha256,
+    coverage: normalizedCoverage,
+    gapReasons: expectedGaps,
+  });
+}
+
 function isCanonicalAbsolutePath(value: string): boolean {
   return (
     isAbsolute(value) &&
@@ -983,7 +1130,7 @@ const comisBin = process.env.COMIS_ACTIVITY_COMIS_BIN;
 if (typeof comisBin !== "string" || !comisBin.startsWith("/")) process.exit(74);
 const args = ["messages"];
 if (channel !== "-") args.push("--channel", channel);
-args.push("--limit", "10000", "--include-internal", "--format", "json");
+args.push("--limit", "10000", "--include-internal", "--format", "json-report");
 const extracted = spawnSync(comisBin, args, {
   encoding: "utf8",
   maxBuffer: 32 * 1024 * 1024,
@@ -993,17 +1140,47 @@ if (extracted.status !== 0 || extracted.error !== undefined) {
   process.stderr.write("offline message extraction failed\n");
   process.exit(75);
 }
-let messages;
+let report;
 try {
-  messages = JSON.parse(extracted.stdout);
+  report = JSON.parse(extracted.stdout);
 } catch {
   process.stderr.write("offline message extraction returned malformed JSON\n");
   process.exit(76);
 }
-if (!Array.isArray(messages) || messages.length > 10000) {
+const hasExactKeys = (value, keys) =>
+  value !== null &&
+  typeof value === "object" &&
+  !Array.isArray(value) &&
+  Object.keys(value).length === keys.length &&
+  keys.every((key) => Object.hasOwn(value, key));
+const coverageKeys = [
+  "filesScanned",
+  "fileCapReached",
+  "filesUnreadable",
+  "userRecordsSeen",
+  "unparsedUserRecords",
+  "recordCappedFiles",
+  "internalExcluded",
+  "truncated",
+];
+if (
+  !hasExactKeys(report, ["schema", "schemaVersion", "messages", "coverage"]) ||
+  report.schema !== "comis-offline-channel-messages-report" ||
+  report.schemaVersion !== 1 ||
+  !Array.isArray(report.messages) ||
+  report.messages.length > 10000 ||
+  !hasExactKeys(report.coverage, coverageKeys) ||
+  !coverageKeys.filter((key) => key !== "fileCapReached" && key !== "truncated").every(
+    (key) => Number.isSafeInteger(report.coverage[key]) && report.coverage[key] >= 0,
+  ) ||
+  typeof report.coverage.fileCapReached !== "boolean" ||
+  typeof report.coverage.truncated !== "boolean"
+) {
   process.stderr.write("offline message extraction exceeded its record contract\n");
   process.exit(77);
 }
+const messages = report.messages;
+const coverage = report.coverage;
 const blobsDir = resolve(vaultDir, "blobs");
 writeFileSync(resolve(vaultDir, ".mode-check"), "", { mode: 0o600, flag: "wx" });
 mkdirSync(blobsDir, { mode: 0o700 });
@@ -1094,6 +1271,17 @@ try {
   closeSync(indexFd);
   closeSync(privateIndexFd);
 }
+const gapReasons = new Set();
+if (coverage.filesUnreadable > 0) gapReasons.add("unreadable_artifact");
+if (
+  coverage.truncated ||
+  coverage.recordCappedFiles > 0 ||
+  coverage.unparsedUserRecords > 0
+) {
+  gapReasons.add("partial_retention");
+}
+if (coverage.fileCapReached) gapReasons.add("count_unknown");
+if (coverage.internalExcluded !== 0) gapReasons.add("capture_error");
 process.stdout.write(JSON.stringify({
   schema: "comis-private-activity-vault-summary",
   schemaVersion: 1,
@@ -1102,9 +1290,8 @@ process.stdout.write(JSON.stringify({
   contentBytes,
   indexDigestSha256: indexHash.digest("hex"),
   privateIndexDigestSha256: privateIndexHash.digest("hex"),
-  gapReasons: messages.length === 10000
-    ? ["partial_retention", "count_unknown"]
-    : ["count_unknown"],
+  coverage,
+  gapReasons: [...gapReasons].sort(),
 }) + "\n");
 COMIS_ACTIVITY_VAULT_NODE
 chmod 0600 "$vault_stage"/.mode-check "$vault_stage"/offline-messages.digest.jsonl "$vault_stage"/offline-messages.private.jsonl

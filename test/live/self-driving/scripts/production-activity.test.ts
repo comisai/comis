@@ -15,6 +15,7 @@ import {
   buildTargetLocalActivityBlobVaultPlan,
   buildTargetLocalActivityBlobVaultScript,
   compileProductionActivity,
+  parseTargetLocalActivityBlobVaultSummary,
   type NormalizedProductionActivityRecord,
   type ProductionActivityCompileInput,
   type ProductionActivitySourceBatch,
@@ -491,6 +492,7 @@ describe("production historical activity compiler", () => {
     ]);
     expect(result.value.invocation.stdin).not.toContain("comis-test2");
     expect(result.value.invocation.stdin).toContain("--include-internal");
+    expect(result.value.invocation.stdin).toContain('"json-report"');
     expect(result.value.invocation.stdin).toContain("0o600");
     expect(result.value.invocation.stdin).toContain("0o700");
     expect(result.value.invocation.stdin).toContain("vault_stage");
@@ -505,7 +507,12 @@ describe("production historical activity compiler", () => {
     expect(result.value.invocation.stdin).toContain("recordId");
     expect(result.value.invocation.stdin).toContain("offline message routing metadata is invalid");
     expect(result.value.invocation.stdin).toContain("gapReasons");
-    expect(result.value.invocation.stdin).toContain("count_unknown");
+    expect(result.value.invocation.stdin).toContain("coverage.filesUnreadable");
+    expect(result.value.invocation.stdin).toContain("coverage.fileCapReached");
+    expect(result.value.invocation.stdin).toContain("unreadable_artifact");
+    expect(result.value.invocation.stdin).not.toContain(
+      'messages.length === 10000\n    ? ["partial_retention", "count_unknown"]\n    : ["count_unknown"]',
+    );
     expect(result.value.invocation.stdin).toContain("offline-messages.private.jsonl");
     expect(result.value.invocation.stdin).toContain("privateIndexDigestSha256");
     expect(result.value.stdoutDisposition).toBe("counts_digests_and_gaps_only");
@@ -547,6 +554,46 @@ describe("production historical activity compiler", () => {
 
     expect(syntax.status).toBe(0);
     expect(syntax.stderr).toBe("");
+  });
+
+  it("accepts only a strict vault summary whose gaps match authoritative coverage", () => {
+    const coverage = {
+      filesScanned: 8,
+      fileCapReached: false,
+      filesUnreadable: 0,
+      userRecordsSeen: 4,
+      unparsedUserRecords: 0,
+      recordCappedFiles: 0,
+      internalExcluded: 0,
+      truncated: false,
+    };
+    const summary = {
+      schema: "comis-private-activity-vault-summary",
+      schemaVersion: 1,
+      recordCount: 4,
+      uniqueBlobCount: 3,
+      contentBytes: 120,
+      indexDigestSha256: digest("public-index"),
+      privateIndexDigestSha256: digest("private-index"),
+      coverage,
+      gapReasons: [],
+    };
+
+    const parsed = parseTargetLocalActivityBlobVaultSummary(`${JSON.stringify(summary)}\n`);
+    expect(parsed).toEqual({ ok: true, value: summary });
+
+    const hiddenGap = parseTargetLocalActivityBlobVaultSummary(
+      JSON.stringify({
+        ...summary,
+        coverage: { ...coverage, filesUnreadable: 1 },
+      }),
+    );
+    expect(hiddenGap).toMatchObject({ ok: false, error: { kind: "malformed_vault_summary" } });
+
+    const extension = parseTargetLocalActivityBlobVaultSummary(
+      JSON.stringify({ ...summary, privateBody: "must-not-cross-stdout" }),
+    );
+    expect(extension).toMatchObject({ ok: false, error: { kind: "malformed_vault_summary" } });
   });
 
   it("rejects cyclic activity input before attempting transcript classification", () => {

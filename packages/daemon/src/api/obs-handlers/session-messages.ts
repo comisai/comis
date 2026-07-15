@@ -117,6 +117,8 @@ export interface ExtractedChannelMessage {
 export interface SessionMessagesCoverage {
   /** Session files opened (readable or not). */
   filesScanned: number;
+  /** True when the global file ceiling stopped the tree walk before it completed. */
+  fileCapReached: boolean;
   /** Session files that could not be read (counted, then skipped). */
   filesUnreadable: number;
   /** User-role records seen across all files. */
@@ -262,6 +264,7 @@ export function extractSessionMessages(
 ): SessionMessagesResult {
   const coverage: SessionMessagesCoverage = {
     filesScanned: 0,
+    fileCapReached: false,
     filesUnreadable: 0,
     userRecordsSeen: 0,
     unparsedUserRecords: 0,
@@ -280,7 +283,10 @@ export function extractSessionMessages(
         const channelDir = safePath(tenantDir, channel);
         for (const name of listFiles(channelDir)) {
           if (!name.endsWith(".jsonl") || name.endsWith(".trajectory.jsonl")) continue;
-          if (coverage.filesScanned >= MAX_SESSION_FILES) return finish(matches, coverage, filter);
+          if (coverage.filesScanned >= MAX_SESSION_FILES) {
+            coverage.fileCapReached = true;
+            return finish(matches, coverage, filter);
+          }
           coverage.filesScanned++;
           const filePath = safePath(channelDir, name);
           const key = pathToSessionKey(filePath, sessionsBase);
