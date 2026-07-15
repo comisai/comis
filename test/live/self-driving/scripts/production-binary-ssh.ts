@@ -16,6 +16,8 @@ interface ProductionBinaryTransferBaseRequest {
   readonly label: string;
   readonly source: BinarySshEndpoint;
   readonly target: BinarySshEndpoint;
+  /** A bounded program delivered to the source process without a remote staging file. */
+  readonly sourceStdin?: string;
   readonly timeoutMs?: number;
 }
 
@@ -78,6 +80,7 @@ const DEFAULT_OPERATION_TIMEOUT_MS = 6 * 60 * 60 * 1_000;
 const MAX_OPERATION_TIMEOUT_MS = 24 * 60 * 60 * 1_000;
 const DEFAULT_TERMINATION_GRACE_MS = 5_000;
 const MAX_TERMINATION_GRACE_MS = 30_000;
+const MAX_SOURCE_STDIN_BYTES = 256 * 1024;
 
 export function buildBinarySshArgs(endpoint: BinarySshEndpoint): readonly string[] {
   return [
@@ -193,7 +196,11 @@ function createBridge(
         request.label.length === 0 ||
         !Number.isSafeInteger(byteLimit) ||
         byteLimit < 0 ||
-        operationTimeoutMs === null
+        operationTimeoutMs === null ||
+        (request.sourceStdin !== undefined &&
+          (request.sourceStdin.length === 0 ||
+            request.sourceStdin.includes("\0") ||
+            Buffer.byteLength(request.sourceStdin, "utf8") > MAX_SOURCE_STDIN_BYTES))
       ) {
         return err({
           kind: "invalid_request",
@@ -214,7 +221,7 @@ function createBridge(
 
       const sourceResult = tryCatch(() =>
         deps.spawnProcess("ssh", buildBinarySshArgs(request.source), {
-          stdio: ["ignore", "pipe", "pipe"],
+          stdio: [request.sourceStdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
           shell: false,
         }),
       );
@@ -225,6 +232,7 @@ function createBridge(
       const source = sourceResult.value;
       const sourceExit = observeExit(source);
       source.stderr.resume();
+      if (request.sourceStdin !== undefined) source.stdin.end(request.sourceStdin, "utf8");
 
       const setTimer = deps.setTimer ?? setDefaultTimer;
       const clearTimer = deps.clearTimer ?? clearDefaultTimer;

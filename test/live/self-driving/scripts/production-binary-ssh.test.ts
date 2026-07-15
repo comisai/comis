@@ -142,6 +142,61 @@ describe("production binary SSH bridge", () => {
     expect(result).toEqual({ ok: true, value: { bytesTransferred: 513 } });
   });
 
+  it("delivers a bounded source program over stdin without staging it on production", async () => {
+    const sourceOutput = new PassThrough();
+    const target = makeChild();
+    const source = makeChild({ stdout: sourceOutput });
+    const sourceProgram: Buffer[] = [];
+    source.stdin.on("data", (chunk: Buffer) => sourceProgram.push(chunk));
+    const spawnProcess = vi
+      .fn()
+      .mockReturnValueOnce(target)
+      .mockReturnValueOnce(source);
+    const bridge = createProductionBinarySshBridge({ spawnProcess });
+
+    const running = bridge.transfer({
+      label: "runtime-vault-stream",
+      maximumBytes: 1024,
+      sourceStdin: "set -euo pipefail\nprintf 'archive'\n",
+      source: { host: "source-host", args: ["sudo", "bash", "-s", "--", "arg"] },
+      target: { host: "target-host", args: ["receive"] },
+    });
+    sourceOutput.end(Buffer.from("archive"));
+    const result = await running;
+
+    expect(result).toEqual({ ok: true, value: { bytesTransferred: 7 } });
+    expect(Buffer.concat(sourceProgram).toString("utf8")).toBe(
+      "set -euo pipefail\nprintf 'archive'\n",
+    );
+    expect(spawnProcess).toHaveBeenLastCalledWith(
+      "ssh",
+      expect.any(Array),
+      expect.objectContaining({ stdio: ["pipe", "pipe", "pipe"] }),
+    );
+  });
+
+  it("rejects an unsafe source program before spawning remote processes", async () => {
+    const spawnProcess = vi.fn();
+    const bridge = createProductionBinarySshBridge({ spawnProcess });
+
+    const result = await bridge.transfer({
+      label: "runtime-vault-stream",
+      maximumBytes: 1024,
+      sourceStdin: "unsafe\0program",
+      source: { host: "source-host", args: ["sudo", "bash", "-s"] },
+      target: { host: "target-host", args: ["receive"] },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        kind: "invalid_request",
+        message: "Binary SSH transfer request is invalid",
+      },
+    });
+    expect(spawnProcess).not.toHaveBeenCalled();
+  });
+
   it("terminates an unknown-size stream that exceeds its declared maximum", async () => {
     const sourceOutput = new PassThrough();
     const target = makeChild();
