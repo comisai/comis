@@ -6,7 +6,6 @@ import type { EventDispatcher } from "../state/event-dispatcher.js";
 import type { FetchedMessage, PlatformCapabilities } from "../api/types/index.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
-import { systemSetTimeout } from "@comis/core";
 
 // Side-effect registrations for sub-components
 import "../components/nav/ic-breadcrumb.js";
@@ -316,27 +315,29 @@ export class IcMessageCenter extends LitElement {
   private _actionInputs: Record<string, string> = {};
 
   private _hasLoaded = false;
-  private _previousChannelType = "";
   private _channelRevision = 0;
   private _messageRequestRevision = 0;
   private _actionContextRevision = 0;
+  private _rpcStatusUnsub: (() => void) | null = null;
 
   /** Bound click-outside handler for emoji picker. */
   private _boundEmojiOutsideClick: ((e: MouseEvent) => void) | null = null;
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
+    this._rpcStatusUnsub?.();
+    this._rpcStatusUnsub = null;
     this._removeEmojiOutsideListener();
   }
 
   override willUpdate(changedProperties: Map<string, unknown>): void {
-    if (changedProperties.has("channelType")) {
-      this._channelRevision += 1;
-      this._resetChannelState();
-    } else if (
-      changedProperties.has("rpcClient")
-      && changedProperties.get("rpcClient") !== null
-      && changedProperties.get("rpcClient") !== undefined
+    if (
+      changedProperties.has("channelType")
+      || (
+        changedProperties.has("rpcClient")
+        && changedProperties.get("rpcClient") !== null
+        && changedProperties.get("rpcClient") !== undefined
+      )
     ) {
       this._channelRevision += 1;
       this._resetChannelState();
@@ -349,13 +350,13 @@ export class IcMessageCenter extends LitElement {
     this._error = "";
     this._messages = [];
     this._channelIsRunning = false;
+    this._channelList = [];
     this._capabilities = null;
     this._botName = "";
     this._invalidateActionContext();
     this._chatList = [];
     this._selectedChatId = "";
     this._hasLoaded = false;
-    this._previousChannelType = "";
     this._autoSelectAttempted = false;
     this._messageRequestRevision += 1;
   }
@@ -403,54 +404,52 @@ export class IcMessageCenter extends LitElement {
   }
 
   override updated(changedProperties: Map<string, unknown>): void {
-    const rpcReady = this.rpcClient && this.rpcClient.status === "connected";
-
-    // Reload data when channelType changes or rpcClient becomes available
-    if (changedProperties.has("channelType") && this.channelType && this.channelType !== this._previousChannelType) {
-      this._previousChannelType = this.channelType;
-      this._hasLoaded = false;
-      void this._loadData();
-    } else if (
-      changedProperties.has("rpcClient") &&
-      rpcReady &&
-      this._effectiveChannel &&
-      !this._hasLoaded
-    ) {
-      void this._loadData();
-    }
-
-    // Auto-select the first available channel when no channelType is set
-    if (!this.channelType && this.rpcClient && !this._autoSelectAttempted) {
-      this._autoSelectAttempted = true;
-      void this._autoSelectChannel();
+    const rpcChanged = changedProperties.has("rpcClient");
+    const channelChanged = changedProperties.has("channelType");
+    if (rpcChanged) this._bindRpcStatus();
+    if ((rpcChanged || channelChanged) && this.rpcClient?.status === "connected") {
+      this._loadCurrentRoute();
     }
   }
 
   private _autoSelectAttempted = false;
 
-  private async _autoSelectChannel(): Promise<void> {
-    if (!this.rpcClient) return;
-    const revision = this._channelRevision;
-
-    // Wait for the rpcClient to connect (it may still be "connecting")
+  private _bindRpcStatus(): void {
+    this._rpcStatusUnsub?.();
+    this._rpcStatusUnsub = null;
     const rpc = this.rpcClient;
-    if (rpc.status !== "connected") {
-      await new Promise<void>((resolve) => {
-        const check = () => {
-          if (!this._isCurrentAutoSelect(revision, rpc)) { resolve(); return; }
-          if (rpc.status === "connected") { resolve(); return; }
-          if (rpc.status === "disconnected") { resolve(); return; }
-          systemSetTimeout(check, 100);
-        };
-        check();
-      });
-    }
-    if (!this._isCurrentAutoSelect(revision, rpc)) return;
-    if (rpc.status !== "connected") {
-      this._loadState = "error";
-      this._error = "RPC connection failed";
+    if (!rpc) return;
+
+    this._rpcStatusUnsub = rpc.onStatusChange((status) => {
+      if (rpc !== this.rpcClient || !this.isConnected) return;
+      this._channelRevision += 1;
+      this._resetChannelState();
+      if (status === "connected") {
+        this._loadCurrentRoute();
+      } else if (status === "disconnected") {
+        this._loadState = "error";
+        this._error = "RPC connection failed";
+      } else {
+        this._loadState = "loading";
+      }
+    });
+  }
+
+  private _loadCurrentRoute(): void {
+    if (!this.rpcClient || this.rpcClient.status !== "connected" || this._hasLoaded) return;
+    if (this._effectiveChannel) {
+      void this._loadData();
       return;
     }
+    if (this._autoSelectAttempted) return;
+    this._autoSelectAttempted = true;
+    void this._autoSelectChannel();
+  }
+
+  private async _autoSelectChannel(): Promise<void> {
+    if (!this.rpcClient || this.rpcClient.status !== "connected") return;
+    const revision = this._channelRevision;
+    const rpc = this.rpcClient;
 
     try {
       const result = await rpc.call<{ channels: ChannelListEntry[]; total: number }>("channels.list");
@@ -466,6 +465,7 @@ export class IcMessageCenter extends LitElement {
       } else {
         this._channelIsRunning = false;
         this._loadState = "loaded";
+        this._hasLoaded = true;
       }
     } catch {
       if (!this._isCurrentAutoSelect(revision, rpc)) return;
@@ -478,6 +478,7 @@ export class IcMessageCenter extends LitElement {
     return this.isConnected
       && revision === this._channelRevision
       && !this.channelType
+      && rpcClient.status === "connected"
       && rpcClient === this.rpcClient;
   }
 
@@ -487,7 +488,7 @@ export class IcMessageCenter extends LitElement {
 
   private async _loadData(): Promise<void> {
     const channel = this._effectiveChannel;
-    if (!this.rpcClient || !channel) return;
+    if (!this.rpcClient || this.rpcClient.status !== "connected" || !channel) return;
     const revision = this._channelRevision;
 
     this._loadState = "loading";
@@ -505,13 +506,18 @@ export class IcMessageCenter extends LitElement {
       if (!this._isCurrentChannel(revision, channel)) return;
 
       // Channel list
-      if (listResult.status === "fulfilled" && listResult.value) {
+      if (listResult.status === "fulfilled") {
         this._channelList = listResult.value;
         this._channelIsRunning = listResult.value.some(
           (entry) => entry.channelType === channel && entry.status === "running",
         );
       } else {
+        this._channelList = [];
         this._channelIsRunning = false;
+        this._loadState = "error";
+        this._error = "Failed to load channel list";
+        this._hasLoaded = false;
+        return;
       }
 
       if (!this._channelIsRunning) {
@@ -546,7 +552,15 @@ export class IcMessageCenter extends LitElement {
       if (!this._isCurrentChannel(revision, channel)) return;
       this._loadState = "error";
       this._error = err instanceof Error ? err.message : "Failed to load message center data";
+      this._hasLoaded = false;
     }
+  }
+
+  private _handleRetry(): void {
+    if (!this.rpcClient || this.rpcClient.status !== "connected") return;
+    this._channelRevision += 1;
+    this._resetChannelState();
+    this._loadCurrentRoute();
   }
 
   private _isCurrentChannel(revision: number, channel: string): boolean {
@@ -1197,7 +1211,7 @@ export class IcMessageCenter extends LitElement {
         return html`
           <div class="error-container">
             <div class="error-text">${this._error || "Failed to load"}</div>
-            <button class="retry-btn" @click=${() => void this._loadData()}>Retry</button>
+            <button class="retry-btn" @click=${this._handleRetry}>Retry</button>
           </div>
         `;
       case "loaded":

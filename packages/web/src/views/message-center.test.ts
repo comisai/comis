@@ -47,7 +47,7 @@ function deferred<T>() {
 }
 
 function createStatusRpcClient(
-  call: (method: string, params?: unknown) => Promise<unknown>,
+  call: unknown,
   initialStatus: ConnectionStatus,
 ) {
   let status = initialStatus;
@@ -71,6 +71,9 @@ function createStatusRpcClient(
     setStatus(nextStatus: ConnectionStatus) {
       status = nextStatus;
       for (const handler of handlers) handler(nextStatus);
+    },
+    listenerCount() {
+      return handlers.size;
     },
   };
 }
@@ -168,7 +171,7 @@ describe("IcMessageCenter", () => {
         default: return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
       }
     });
-    const rpcClient = { status: "connected", call } as unknown as RpcClient;
+    const rpcClient = createStatusRpcClient(call, "connected").client;
     const el = await createElement({ channelType: "telegram", rpcClient });
 
     el.channelType = "";
@@ -218,7 +221,7 @@ describe("IcMessageCenter", () => {
       _selectedChatId: "chat-a",
       _hasLoaded: true,
     });
-    el.rpcClient = { status: "connected", call } as unknown as RpcClient;
+    el.rpcClient = createStatusRpcClient(call, "connected").client;
     await el.updateComplete;
 
     const current = state(el);
@@ -262,7 +265,7 @@ describe("IcMessageCenter", () => {
       _selectedChatId: "chat-a",
       _hasLoaded: true,
     });
-    el.rpcClient = { status: "connected", call } as unknown as RpcClient;
+    el.rpcClient = createStatusRpcClient(call, "connected").client;
     await el.updateComplete;
     const oldRequest = current._refetchMessages();
 
@@ -293,7 +296,7 @@ describe("IcMessageCenter", () => {
       _channelIsRunning: true,
       _hasLoaded: true,
     });
-    el.rpcClient = { status: "connected", call } as unknown as RpcClient;
+    el.rpcClient = createStatusRpcClient(call, "connected").client;
     await el.updateComplete;
 
     const actionButton = Array.from(
@@ -333,7 +336,7 @@ describe("IcMessageCenter", () => {
       _capabilities: { deleteMessages: true },
       _hasLoaded: true,
     });
-    el.rpcClient = { status: "connected", call } as unknown as RpcClient;
+    el.rpcClient = createStatusRpcClient(call, "connected").client;
     await el.updateComplete;
 
     const deleteButton = el.shadowRoot?.querySelector<HTMLButtonElement>('button[title="Delete"]');
@@ -382,7 +385,7 @@ describe("IcMessageCenter", () => {
       _capabilities: { deleteMessages: true, reactions: true },
       _hasLoaded: true,
     });
-    el.rpcClient = { status: "connected", call } as unknown as RpcClient;
+    el.rpcClient = createStatusRpcClient(call, "connected").client;
     await el.updateComplete;
 
     el.shadowRoot?.querySelector<HTMLButtonElement>('button[title="Delete"]')?.click();
@@ -412,7 +415,7 @@ describe("IcMessageCenter", () => {
       _capabilities: { reactions: true },
       _hasLoaded: true,
     });
-    el.rpcClient = { status: "connected", call } as unknown as RpcClient;
+    el.rpcClient = createStatusRpcClient(call, "connected").client;
     await el.updateComplete;
 
     const reactButton = el.shadowRoot?.querySelector<HTMLButtonElement>('button[title="React"]');
@@ -447,7 +450,7 @@ describe("IcMessageCenter", () => {
       return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
     });
     const el = await createElement({
-      rpcClient: { status: "connected", call } as unknown as RpcClient,
+      rpcClient: createStatusRpcClient(call, "connected").client,
     });
     for (let update = 0; update < 4; update += 1) {
       await Promise.resolve();
@@ -483,7 +486,7 @@ describe("IcMessageCenter", () => {
     });
     const el = await createElement({
       channelType: "telegram",
-      rpcClient: { status: "connected", call } as unknown as RpcClient,
+      rpcClient: createStatusRpcClient(call, "connected").client,
     });
     for (let update = 0; update < 5; update += 1) {
       await Promise.resolve();
@@ -654,7 +657,7 @@ describe("IcMessageCenter", () => {
       _channelIsRunning: true,
       _hasLoaded: true,
     });
-    el.rpcClient = { status: "connected", call: firstCall } as unknown as RpcClient;
+    el.rpcClient = createStatusRpcClient(firstCall, "connected").client;
     await el.updateComplete;
 
     const input = el.shadowRoot?.querySelector<HTMLTextAreaElement>(".send-input");
@@ -674,10 +677,10 @@ describe("IcMessageCenter", () => {
     });
     expect(state(el)._actionPending).toBe(true);
 
-    el.rpcClient = {
-      status: "disconnected",
-      call: vi.fn(() => Promise.reject(new Error("not connected"))),
-    } as unknown as RpcClient;
+    el.rpcClient = createStatusRpcClient(
+      vi.fn(() => Promise.reject(new Error("not connected"))),
+      "disconnected",
+    ).client;
     await el.updateComplete;
     send.resolve({ ok: true });
     await send.promise;
@@ -701,17 +704,14 @@ describe("IcMessageCenter", () => {
       _selectedChatId: "chat-a",
       _hasLoaded: true,
     });
-    el.rpcClient = {
-      status: "connected",
-      call: vi.fn(() => fetch.promise),
-    } as unknown as RpcClient;
+    el.rpcClient = createStatusRpcClient(vi.fn(() => fetch.promise), "connected").client;
     await el.updateComplete;
     const oldRequest = current._refetchMessages();
 
-    el.rpcClient = {
-      status: "disconnected",
-      call: vi.fn(() => Promise.reject(new Error("not connected"))),
-    } as unknown as RpcClient;
+    el.rpcClient = createStatusRpcClient(
+      vi.fn(() => Promise.reject(new Error("not connected"))),
+      "disconnected",
+    ).client;
     await el.updateComplete;
     fetch.resolve({
       channelId: "chat-a",
@@ -723,37 +723,34 @@ describe("IcMessageCenter", () => {
   });
 
   it("restarts channel auto-selection with a replacement RPC client", async () => {
-    vi.useFakeTimers();
-    const firstClient = {
-      status: "connecting",
-      call: vi.fn(() => Promise.reject(new Error("not connected"))),
-    };
+    const firstRpc = createStatusRpcClient(
+      vi.fn(() => Promise.reject(new Error("not connected"))),
+      "reconnecting",
+    );
     const secondCall = vi.fn(() => Promise.resolve({ channels: [], total: 0 }));
-    const el = await createElement({ rpcClient: firstClient as unknown as RpcClient });
+    const secondRpc = createStatusRpcClient(secondCall, "connected");
+    const el = await createElement({ rpcClient: firstRpc.client });
 
-    el.rpcClient = { status: "connected", call: secondCall } as unknown as RpcClient;
+    el.rpcClient = secondRpc.client;
     await el.updateComplete;
     await Promise.resolve();
-    firstClient.status = "disconnected";
-    await vi.advanceTimersByTimeAsync(100);
     await el.updateComplete;
 
     expect(secondCall).toHaveBeenCalledTimes(1);
     expect(secondCall).toHaveBeenCalledWith("channels.list");
   });
 
-  it("stops channel auto-selection polling after disconnect", async () => {
-    vi.useFakeTimers();
-    const el = await createElement({
-      rpcClient: {
-        status: "connecting",
-        call: vi.fn(() => Promise.reject(new Error("not connected"))),
-      } as unknown as RpcClient,
-    });
+  it("unsubscribes from RPC status changes after disconnect", async () => {
+    const call = vi.fn(() => Promise.reject(new Error("not connected")));
+    const rpc = createStatusRpcClient(call, "reconnecting");
+    const el = await createElement({ rpcClient: rpc.client });
+    expect(rpc.listenerCount()).toBe(1);
 
     document.body.removeChild(el);
-    await vi.advanceTimersByTimeAsync(300);
+    rpc.setStatus("connected");
+    await Promise.resolve();
 
-    expect(vi.getTimerCount()).toBe(0);
+    expect(rpc.listenerCount()).toBe(0);
+    expect(call).not.toHaveBeenCalled();
   });
 });
