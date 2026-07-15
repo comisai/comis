@@ -7020,7 +7020,8 @@ main() {
     restart_service_if_running
 
     # Run doctor on upgrades and git installs
-    if [[ "$is_upgrade" == "true" || "$INSTALL_METHOD" == "git" ]]; then
+    if [[ "$COMIS_REEXEC" != "1" ]] \
+        && [[ "$is_upgrade" == "true" || "$INSTALL_METHOD" == "git" ]]; then
         run_doctor
     fi
 

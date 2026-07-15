@@ -256,6 +256,20 @@ describe("install.sh privileged preparation", () => {
     expect(unit).toContain("Environment=CARGO_HOME=/usr/local/cargo");
   });
 
+  it("skips upgrade doctor inside the pre-service user handoff", () => {
+    const source = readFileSync(installerPath, "utf8");
+    const mainStart = source.indexOf("\nmain() {");
+    const mainEnd = source.indexOf('\nif [[ "${COMIS_INSTALL_SH_NO_RUN:-0}"', mainStart);
+    const main = source.slice(mainStart, mainEnd);
+    const doctorComment = main.indexOf("# Run doctor on upgrades and git installs");
+    const cloakComment = main.indexOf("# CloakBrowser binary provisioning", doctorComment);
+    const doctorBlock = main.slice(doctorComment, cloakComment);
+
+    expect(doctorComment).toBeGreaterThanOrEqual(0);
+    expect(doctorBlock).toContain('[[ "$COMIS_REEXEC" != "1" ]]');
+    expect(doctorBlock).toContain("run_doctor");
+  });
+
   it("keeps headed-browser intent during the CLI-only user handoff", () => {
     const result = runHarness(
       [
