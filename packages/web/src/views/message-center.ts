@@ -926,6 +926,7 @@ export class IcMessageCenter extends LitElement {
       IcToast.show("Message deleted", "success");
       // Optimistic local removal
       this._messages = this._messages.filter((m) => m.id !== messageId);
+      if (this._selectedMessageId === messageId) this._selectedMessageId = "";
       this._deleteTargetId = "";
     } catch (err) {
       if (!this._isCurrentActionContext(context)) return;
