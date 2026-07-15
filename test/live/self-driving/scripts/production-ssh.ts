@@ -13,7 +13,7 @@ import type {
 
 const DEFAULT_STDOUT_BYTES = 8 * 1024 * 1024;
 const MAX_STDOUT_BYTES = 64 * 1024 * 1024;
-const DEFAULT_OPERATION_TIMEOUT_MS = 60 * 60 * 1_000;
+const DEFAULT_OPERATION_TIMEOUT_MS = 6 * 60 * 60 * 1_000;
 const MAX_OPERATION_TIMEOUT_MS = 24 * 60 * 60 * 1_000;
 const DEFAULT_TERMINATION_GRACE_MS = 5_000;
 const MAX_TERMINATION_GRACE_MS = 30_000;
@@ -85,7 +85,9 @@ function resolveTerminationGraceMs(value: number | undefined): number {
   return value;
 }
 
-export function buildSshProcessArgs(invocation: ProductionRemoteInvocation): readonly string[] {
+export function buildSshProcessArgs(
+  invocation: ProductionRemoteInvocation,
+): readonly string[] {
   return [
     "-o",
     "BatchMode=yes",
@@ -115,7 +117,10 @@ function runSsh(
   const operationTimeoutMs = resolveSshOperationTimeout(invocation);
   if (operationTimeoutMs === null) {
     return Promise.resolve(
-      err({ kind: "remote", message: `SSH stage ${invocation.label} has an invalid operation deadline` }),
+      err({
+        kind: "remote",
+        message: `SSH stage ${invocation.label} has an invalid operation deadline`,
+      }),
     );
   }
   const childResult = tryCatch(() =>
@@ -137,7 +142,6 @@ function runSsh(
     let stdout = "";
     let stdoutBytes = 0;
     let settled = false;
-    let exceededLimit = false;
     let terminating = false;
     let terminationResult: Result<ProductionRemoteResult, ProductionRemoteError> | undefined;
     let deadlineTimer: NodeJS.Timeout | undefined;
@@ -185,7 +189,6 @@ function runSsh(
       if (terminating || settled) return;
       stdoutBytes += Buffer.byteLength(chunk);
       if (stdoutBytes > stdoutLimit) {
-        exceededLimit = true;
         terminate(
           err({ kind: "remote", message: `SSH stage ${invocation.label} exceeded output limit` }),
         );
@@ -207,13 +210,14 @@ function runSsh(
         finish(terminationResult);
         return;
       }
-      if (exceededLimit) {
-        finish(err({ kind: "remote", message: `SSH stage ${invocation.label} exceeded output limit` }));
-        return;
-      }
       const exitCode = typeof rawCode === "number" ? rawCode : -1;
       if (exitCode !== 0) {
-        finish(err({ kind: "remote", message: `SSH stage ${invocation.label} exited unsuccessfully` }));
+        finish(
+          err({
+            kind: "remote",
+            message: `SSH stage ${invocation.label} exited unsuccessfully`,
+          }),
+        );
         return;
       }
       finish(ok({ stdout, exitCode }));

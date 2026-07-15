@@ -103,11 +103,13 @@ describe("production replay SSH boundary", () => {
       stdin: "probe",
     };
 
-    expect(resolveSshOperationTimeout(invocation)).toBe(60 * 60 * 1_000);
-    expect(resolveSshOperationTimeout({ ...invocation, timeoutMs: 6 * 60 * 60 * 1_000 })).toBe(
-      6 * 60 * 60 * 1_000,
-    );
-    expect(resolveSshOperationTimeout({ ...invocation, timeoutMs: 24 * 60 * 60 * 1_000 + 1 })).toBeNull();
+    expect(resolveSshOperationTimeout(invocation)).toBe(6 * 60 * 60 * 1_000);
+    expect(
+      resolveSshOperationTimeout({ ...invocation, timeoutMs: 6 * 60 * 60 * 1_000 }),
+    ).toBe(6 * 60 * 60 * 1_000);
+    expect(
+      resolveSshOperationTimeout({ ...invocation, timeoutMs: 24 * 60 * 60 * 1_000 + 1 }),
+    ).toBeNull();
   });
 
   it("settles a connected command that ignores both termination signals", async () => {
@@ -174,6 +176,42 @@ describe("production replay SSH boundary", () => {
         value: { stdout: "manifest\n", exitCode: 0 },
       });
       expect(child.kill).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not leave an escalation timer when SIGTERM closes the process synchronously", async () => {
+    vi.useFakeTimers();
+    try {
+      const child = makeChild();
+      vi.mocked(child.kill).mockImplementation((signal) => {
+        if (signal === "SIGTERM") child.emitEvent("close", 143);
+        return true;
+      });
+      const executor = createProductionSshExecutor({
+        spawnProcess: vi.fn(() => child),
+        terminationGraceMs: 25,
+      });
+      const running = executor.run({
+        label: "responsive-stage",
+        host: "test-host",
+        args: ["bash", "-s"],
+        stdin: "probe",
+        timeoutMs: 100,
+      });
+
+      await vi.advanceTimersByTimeAsync(100);
+      await expect(running).resolves.toEqual({
+        ok: false,
+        error: {
+          kind: "remote",
+          message: "SSH stage responsive-stage exceeded its operation deadline",
+        },
+      });
+      expect(child.kill).toHaveBeenCalledTimes(1);
+      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
       expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();

@@ -115,7 +115,9 @@ function observeExit(child: BinaryChildProcess): ExitObservation {
   };
 }
 
-function resolveOperationTimeout(timeoutMs: number | undefined): number | null {
+export function resolveBinarySshOperationTimeout(
+  timeoutMs: number | undefined,
+): number | null {
   const resolved = timeoutMs ?? DEFAULT_OPERATION_TIMEOUT_MS;
   if (
     !Number.isSafeInteger(resolved) ||
@@ -186,7 +188,7 @@ function createBridge(
     async transfer(request) {
       const exactBytes = request.expectedBytes;
       const byteLimit = exactBytes ?? request.maximumBytes;
-      const operationTimeoutMs = resolveOperationTimeout(request.timeoutMs);
+      const operationTimeoutMs = resolveBinarySshOperationTimeout(request.timeoutMs);
       if (
         request.label.length === 0 ||
         !Number.isSafeInteger(byteLimit) ||

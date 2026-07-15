@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildBinarySshArgs,
   createProductionBinarySshBridge,
+  resolveBinarySshOperationTimeout,
   type BinaryChildProcess,
 } from "./production-binary-ssh.js";
 
@@ -55,6 +56,14 @@ describe("production binary SSH bridge", () => {
       "if=/run/capture/snapshot.tar",
       "status=none",
     ]);
+  });
+
+  it("bounds the default and configurable deadline for long binary transfers", () => {
+    expect(resolveBinarySshOperationTimeout(undefined)).toBe(6 * 60 * 60 * 1_000);
+    expect(resolveBinarySshOperationTimeout(24 * 60 * 60 * 1_000)).toBe(
+      24 * 60 * 60 * 1_000,
+    );
+    expect(resolveBinarySshOperationTimeout(24 * 60 * 60 * 1_000 + 1)).toBeNull();
   });
 
   it("streams secret-bearing bytes directly between SSH processes", async () => {
@@ -258,5 +267,27 @@ describe("production binary SSH bridge", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("rejects an unbounded transfer deadline before spawning either endpoint", async () => {
+    const spawnProcess = vi.fn();
+    const bridge = createProductionBinarySshBridge({ spawnProcess });
+
+    const result = await bridge.transfer({
+      label: "invalid-deadline",
+      maximumBytes: 1024,
+      timeoutMs: 24 * 60 * 60 * 1_000 + 1,
+      source: { host: "source-host", args: ["read"] },
+      target: { host: "target-host", args: ["write"] },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        kind: "invalid_request",
+        message: "Binary SSH transfer request is invalid",
+      },
+    });
+    expect(spawnProcess).not.toHaveBeenCalled();
   });
 });
