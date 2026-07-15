@@ -2069,6 +2069,10 @@ validate_local_tarball_preflight() {
         ui_error "--tarball must be a regular file: ${COMIS_TARBALL}"
         return 1
     fi
+    if ! tar -tzf "$COMIS_TARBALL" >/dev/null 2>&1; then
+        ui_error "--tarball is not a readable gzip archive: ${COMIS_TARBALL}"
+        return 1
+    fi
 }
 
 parse_args() {
