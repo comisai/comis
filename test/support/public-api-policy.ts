@@ -1698,6 +1698,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "DeliveryStrategy",
       "ChunkDeliveryResult",
       "DeliveryResult",
+      // DeliveryService exposes queue durability ambiguity through a closed
+      // Result error contract. External embedders need the class for
+      // instanceof narrowing and the two closed types to inspect transitions;
+      // in-repo production consumers use resolvePlatformDeliveryResult when
+      // they only need platform-send truth.
+      "DeliveryQueueTransition",
+      "DeliveryQueueTransitionFailure",
+      "DeliveryQueueTransitionError",
       // Contract-registry foundation. The registry + its types/helpers are
       // the public surface that handlers, CLI client, and codegen consume.
       // The bidirectional + allowlist + internal-fields architecture tests

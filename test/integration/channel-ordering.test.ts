@@ -35,7 +35,7 @@ import {
   createHookRunner,
   createPluginRegistry,
 } from "@comis/core";
-import type { NormalizedMessage, ChannelPort } from "@comis/core";
+import type { NormalizedMessage, ChannelPort, ComisLogger } from "@comis/core";
 import { ASYNC_SETTLE_MS } from "../support/timeouts.js";
 
 /**
@@ -45,9 +45,22 @@ import { ASYNC_SETTLE_MS } from "../support/timeouts.js";
  * makeMinimalDeps callers below.
  */
 function makeRealDeliveryService(eventBus: any) {
+  const logger = {
+    level: "silent",
+    trace: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    fatal: vi.fn(),
+    audit: vi.fn(),
+    child: vi.fn(),
+  } as unknown as ComisLogger;
+  vi.mocked(logger.child).mockReturnValue(logger);
   return createDeliveryService({
     hookRunner: createHookRunner(createPluginRegistry(), { eventBus, catchErrors: true }),
     deliveryQueue: createNoOpDeliveryQueue(),
+    logger,
     eventBus,
   });
 }

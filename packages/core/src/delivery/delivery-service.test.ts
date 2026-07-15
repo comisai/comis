@@ -37,6 +37,7 @@ import type {
 } from "./types.js";
 import type { RetryEngine } from "./retry-engine.js";
 import type { DeliveryQueuePort } from "../ports/delivery-queue.js";
+import type { ComisLogger } from "../logging/log-fields.js";
 import { makeDeliveryService } from "../../../../test/support/factories.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
 
@@ -85,8 +86,25 @@ function makeDeps(
   return {
     hookRunner: makeNoopHookRunner(),
     deliveryQueue: createNoOpDeliveryQueue(),
+    logger: makeLogger(),
     ...overrides,
   };
+}
+
+function makeLogger(): ComisLogger {
+  const logger = {
+    level: "debug",
+    trace: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    fatal: vi.fn(),
+    audit: vi.fn(),
+    child: vi.fn(),
+  } as unknown as ComisLogger;
+  vi.mocked(logger.child).mockReturnValue(logger);
+  return logger;
 }
 
 describe("createDeliveryService — factory contract (smoke-level)", () => {
@@ -1060,18 +1078,19 @@ describe("DeliveryService — full pipeline behavior", () => {
       expect(queue.fail).not.toHaveBeenCalled();
     });
 
-    it("continues delivery when enqueueInFlight fails (graceful degradation)", async () => {
+    it("continues the platform send but reports enqueueInFlight durability failure", async () => {
       const adapter = createMockAdapter("telegram");
       queue.enqueueInFlight.mockResolvedValue(err(new Error("SQLite busy")));
       const service = makeDeliveryService({ deliveryQueue: queue });
 
       const result = await service.deliverToChannel(adapter, "chat-1", "Hello");
 
-      // Delivery still succeeds even though enqueueInFlight failed
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value.ok).toBe(true);
-        expect(result.value.deliveredChunks).toBe(1);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toMatchObject({
+          kind: "queue_transition_failed",
+          platformResult: { ok: true, deliveredChunks: 1 },
+        });
       }
       expect(adapter.sendMessage).toHaveBeenCalledTimes(1);
 
@@ -1178,15 +1197,243 @@ describe("DeliveryService — full pipeline behavior", () => {
         expect(queue.ack).toHaveBeenCalledWith("entry-42", "platform-msg-1");
       });
 
+      it("reports enqueueInFlight failure without hiding the successful platform send", async () => {
+        queue.enqueueInFlight.mockResolvedValue(err(new Error("SQLite busy")));
+        const adapter = createMockAdapter("telegram");
+        adapter.sendMessage.mockResolvedValue(ok("platform-msg-1"));
+        const logger = makeLogger();
+        const recordOutboundMessage = vi.fn();
+        const service = createDeliveryService({
+          ...makeDeps({ deliveryQueue: queue, eventBus, recordOutboundMessage }),
+          logger,
+        } as DeliveryServiceDeps);
+
+        const result = await runWithContext(
+          {
+            traceId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            tenantId: "default",
+            agentId: "agent-a",
+            sessionKey: "default:user-a:chat-1",
+            startedAt: Date.now(),
+            trustLevel: "admin",
+          },
+          () => service.deliverToChannel(adapter, "chat-1", "Hello", { origin: "test" }),
+        );
+
+        expect(adapter.sendMessage).toHaveBeenCalledOnce();
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.error).toMatchObject({
+            name: "DeliveryQueueTransitionError",
+            kind: "queue_transition_failed",
+            failures: [
+              {
+                transition: "enqueue_in_flight",
+                deliveryId: null,
+                errorKind: "dependency",
+              },
+            ],
+            platformResult: {
+              ok: true,
+              deliveredChunks: 1,
+              failedChunks: 0,
+            },
+          });
+          const retained = result.error as Error & {
+            failures?: readonly unknown[];
+            platformResult?: { chunks: readonly unknown[] };
+          };
+          expect(Object.isFrozen(retained.failures)).toBe(true);
+          expect(Object.isFrozen(retained.platformResult)).toBe(true);
+          expect(Object.isFrozen(retained.platformResult?.chunks)).toBe(true);
+        }
+        expect(logger.warn).toHaveBeenCalledWith(
+          expect.objectContaining({
+            step: "delivery-queue-transition",
+            transition: "enqueue_in_flight",
+            deliveryId: null,
+            channelType: "telegram",
+            err: "SQLite busy",
+            errorKind: "dependency",
+            hint: expect.stringContaining("delivery queue"),
+          }),
+          "Delivery queue transition failed",
+        );
+        const transitionEvents = vi.mocked(eventBus.emit).mock.calls.filter(
+          ([event]) => event === "delivery:queue_transition_failed",
+        );
+        expect(transitionEvents).toHaveLength(1);
+        expect(transitionEvents[0]?.[1]).toEqual({
+          deliveryId: null,
+          transition: "enqueue_in_flight",
+          errorKind: "dependency",
+          channelId: "chat-1",
+          channelType: "telegram",
+          timestamp: expect.any(Number),
+        });
+        expect(JSON.stringify(transitionEvents[0]?.[1])).not.toContain("SQLite busy");
+        expect(recordOutboundMessage).toHaveBeenCalledWith("platform-msg-1", expect.objectContaining({
+          traceId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          agentId: "agent-a",
+        }));
+      });
+
+      it("reports ack failure without emitting ack while preserving the accurate platform-message binding", async () => {
+        queue.ack.mockResolvedValue(err(new Error("ack write failed")));
+        const adapter = createMockAdapter("telegram");
+        adapter.sendMessage.mockResolvedValue(ok("platform-msg-1"));
+        const logger = makeLogger();
+        const recordOutboundMessage = vi.fn();
+        const service = createDeliveryService({
+          ...makeDeps({ deliveryQueue: queue, eventBus, recordOutboundMessage }),
+          logger,
+        } as DeliveryServiceDeps);
+
+        const result = await runWithContext(
+          {
+            traceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            tenantId: "default",
+            agentId: "agent-a",
+            sessionKey: "default:user-a:chat-1",
+            startedAt: Date.now(),
+            trustLevel: "admin",
+          },
+          () => service.deliverToChannel(adapter, "chat-1", "Hello", { origin: "agent" }),
+        );
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.error).toMatchObject({
+            name: "DeliveryQueueTransitionError",
+            failures: [
+              {
+                transition: "ack",
+                deliveryId: "entry-uuid-1",
+                errorKind: "dependency",
+              },
+            ],
+            platformResult: {
+              ok: true,
+              deliveredChunks: 1,
+              failedChunks: 0,
+            },
+          });
+        }
+        const eventNames = vi.mocked(eventBus.emit).mock.calls.map(([event]) => event);
+        expect(eventNames).not.toContain("delivery:acked");
+        expect(eventNames).toContain("delivery:reply_bound");
+        expect(eventNames).toContain("delivery:queue_transition_failed");
+        expect(recordOutboundMessage).toHaveBeenCalledWith("platform-msg-1", expect.objectContaining({
+          traceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          agentId: "agent-a",
+        }));
+        expect(logger.warn).toHaveBeenCalledWith(
+          expect.objectContaining({
+            transition: "ack",
+            deliveryId: "entry-uuid-1",
+            errorKind: "dependency",
+            hint: expect.stringContaining("delivery queue"),
+          }),
+          "Delivery queue transition failed",
+        );
+      });
+
+      it("reports nack failure without emitting a nacked success state", async () => {
+        queue.nack.mockResolvedValue(err(new Error("nack write failed")));
+        const adapter = createMockAdapter("telegram");
+        adapter.sendMessage.mockResolvedValue(err(new Error("500 Server Error")));
+        const logger = makeLogger();
+        const service = createDeliveryService({
+          ...makeDeps({ deliveryQueue: queue, eventBus }),
+          logger,
+        } as DeliveryServiceDeps);
+
+        const result = await service.deliverToChannel(adapter, "chat-1", "Hello");
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.error).toMatchObject({
+            name: "DeliveryQueueTransitionError",
+            failures: [
+              {
+                transition: "nack",
+                deliveryId: "entry-uuid-1",
+                errorKind: "dependency",
+              },
+            ],
+            platformResult: {
+              ok: false,
+              deliveredChunks: 0,
+              failedChunks: 1,
+            },
+          });
+        }
+        const eventNames = vi.mocked(eventBus.emit).mock.calls.map(([event]) => event);
+        expect(eventNames).not.toContain("delivery:nacked");
+        expect(eventNames).toContain("delivery:queue_transition_failed");
+        expect(logger.warn).toHaveBeenCalledWith(
+          expect.objectContaining({
+            transition: "nack",
+            deliveryId: "entry-uuid-1",
+            errorKind: "dependency",
+          }),
+          "Delivery queue transition failed",
+        );
+      });
+
+      it("reports fail transition failure without emitting a failed success state", async () => {
+        queue.fail.mockResolvedValue(err(new Error("fail write failed")));
+        const adapter = createMockAdapter("telegram");
+        adapter.sendMessage.mockResolvedValue(err(new Error("Bad Request: chat not found")));
+        const logger = makeLogger();
+        const service = createDeliveryService({
+          ...makeDeps({ deliveryQueue: queue, eventBus }),
+          logger,
+        } as DeliveryServiceDeps);
+
+        const result = await service.deliverToChannel(adapter, "chat-1", "Hello");
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.error).toMatchObject({
+            name: "DeliveryQueueTransitionError",
+            failures: [
+              {
+                transition: "fail",
+                deliveryId: "entry-uuid-1",
+                errorKind: "dependency",
+              },
+            ],
+            platformResult: {
+              ok: false,
+              deliveredChunks: 0,
+              failedChunks: 1,
+            },
+          });
+        }
+        const eventNames = vi.mocked(eventBus.emit).mock.calls.map(([event]) => event);
+        expect(eventNames).not.toContain("delivery:failed");
+        expect(eventNames).toContain("delivery:queue_transition_failed");
+        expect(logger.warn).toHaveBeenCalledWith(
+          expect.objectContaining({
+            transition: "fail",
+            deliveryId: "entry-uuid-1",
+            errorKind: "dependency",
+          }),
+          "Delivery queue transition failed",
+        );
+      });
+
       it("send proceeds even when enqueueInFlight fails (queue failure must not block delivery)", async () => {
         queue.enqueueInFlight.mockResolvedValue(err(new Error("DB locked")));
         const adapter = createMockAdapter("telegram");
         adapter.sendMessage.mockResolvedValue(ok("msg-1"));
         const service = makeDeliveryService({ deliveryQueue: queue, eventBus });
 
-        await service.deliverToChannel(adapter, "chat-1", "Hello", { origin: "test" });
+        const result = await service.deliverToChannel(adapter, "chat-1", "Hello", { origin: "test" });
 
         expect(adapter.sendMessage).toHaveBeenCalled();
+        expect(result.ok).toBe(false);
         // ack must NOT be called because enqueueInFlight failed -- entryId is null.
         expect(queue.ack).not.toHaveBeenCalled();
       });
@@ -1890,6 +2137,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       const deps = {
         hookRunner: makeNoopHookRunner(),
         deliveryQueue: createNoOpDeliveryQueue(),
+        logger: makeLogger(),
       };
       const _service = createDeliveryService({
         ...deps,

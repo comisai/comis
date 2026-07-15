@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { SessionKey } from "../domain/session-key.js";
 import type { ChannelCapability } from "../domain/channel-capability.js";
+import type { DeliveryQueueTransition } from "../delivery/types.js";
+import type { ErrorKind } from "../logging/log-fields.js";
 
 /**
  * ChannelEvents: Channel, queue, streaming, typing, autoreply, sendpolicy,
@@ -408,6 +410,21 @@ export interface ChannelEvents {
     channelType: string;
     messageId: string;
     durationMs: number;
+    timestamp: number;
+  };
+
+  /**
+   * A delivery-queue transition failed at the persistence boundary. This is a
+   * content-free health/state signal: identifiers and closed classifications
+   * only, never the outbound body or the adapter's error text. `deliveryId` is
+   * null when enqueue failed before the queue assigned an entry ID.
+   */
+  "delivery:queue_transition_failed": {
+    deliveryId: string | null;
+    transition: DeliveryQueueTransition;
+    errorKind: ErrorKind;
+    channelId: string;
+    channelType: string;
     timestamp: number;
   };
 

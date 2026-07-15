@@ -17,7 +17,14 @@ import type {
   FinalDeliveryReceipt,
   DeliveryFailureReceipt,
 } from "@comis/core";
-import { tryGetContext, chunkForDelivery, createBlockRetryGuard, systemNowMs, sanitizeLogString } from "@comis/core";
+import {
+  resolvePlatformDeliveryResult,
+  tryGetContext,
+  chunkForDelivery,
+  createBlockRetryGuard,
+  systemNowMs,
+  sanitizeLogString,
+} from "@comis/core";
 import { ok, err } from "@comis/shared";
 
 import type { ExecutionPipelineDeps } from "./execution-pipeline.js";
@@ -217,15 +224,16 @@ export async function deliverExecutionResponse(
         abortSignal: deliverySignal,
       });
 
-      if (!deliveryResult.ok || !deliveryResult.value.ok) {
+      const platformDelivery = resolvePlatformDeliveryResult(deliveryResult);
+      const platformResult = platformDelivery.ok ? platformDelivery.value : undefined;
+
+      if (platformResult === undefined || !platformResult.ok) {
         failedChunks++;
-        const chunkErr = !deliveryResult.ok ? deliveryResult.error : undefined;
+        const chunkErr = platformDelivery.ok ? undefined : platformDelivery.error;
         // Record the FIRST failure for the DeliveryFailureReceipt.
         // Chat-platform send failures classify as "platform" (AGENTS.md §2.1).
         if (!firstFailure) {
-          const failChunk = deliveryResult.ok
-            ? deliveryResult.value.chunks.find((c) => !c.ok)
-            : undefined;
+          const failChunk = platformResult?.chunks.find((c) => !c.ok);
           const rawMessage =
             chunkErr instanceof Error ? chunkErr.message
               : failChunk?.error instanceof Error ? failChunk.error.message
@@ -255,7 +263,7 @@ export async function deliverExecutionResponse(
         // Capture the real last-chunk message id from the delivery result.
         // The last successful chunk in this group wins; the final group's last
         // chunk is the receipt's lastChunkMessageId.
-        const lastOk = [...deliveryResult.value.chunks].reverse().find((c) => c.ok && c.messageId);
+        const lastOk = [...platformResult.chunks].reverse().find((c) => c.ok && c.messageId);
         if (lastOk?.messageId) lastChunkMessageId = lastOk.messageId;
       }
 

@@ -361,8 +361,9 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
   const deliveryService: DeliveryService = createDeliveryService({
     hookRunner: container.hookRunner,
     deliveryQueue: deps.deliveryQueue ?? createNoOpDeliveryQueue(),
+    logger: channelsLogger,
     eventBus: container.eventBus,
-    // Bind the minted reply id → trajectory on the DIRECT ack
+    // Bind the minted reply id → trajectory on the direct platform-send
     // path too (the primary inbound-reply path sends here, not via the drain).
     // Same callback instance the drain receives (foundation.recordOutboundMessage);
     // undefined when learning-outcome is off for all agents (byte-identity).

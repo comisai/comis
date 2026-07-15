@@ -40,6 +40,7 @@ import {
   formatSessionKey,
   parseFormattedSessionKey,
   tryGetContext,
+  resolvePlatformDeliveryResult,
 } from "@comis/core";
 import { ok } from "@comis/shared";
 import { stat } from "node:fs/promises";
@@ -273,9 +274,10 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
             extra: Object.keys(extra).length > 0 ? extra : undefined,
             origin: "rpc:message.send",
           });
-          if (!dr.ok) return dr;
-          if (dr.value.failedChunks > 0) return { ok: false as const, error: new Error("Message delivery failed") };
-          return ok({ messageId: dr.value.chunks[0]?.messageId ?? "delivered" });
+          const platformDelivery = resolvePlatformDeliveryResult(dr);
+          if (!platformDelivery.ok) return platformDelivery;
+          if (platformDelivery.value.failedChunks > 0) return { ok: false as const, error: new Error("Message delivery failed") };
+          return ok({ messageId: platformDelivery.value.chunks[0]?.messageId ?? "delivered" });
         },
         logger: deps.logger,
       });
@@ -323,9 +325,10 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
             extra: Object.keys(extra).length > 0 ? extra : undefined,
             origin: "rpc:message.reply",
           });
-          if (!dr.ok) return dr;
-          if (dr.value.failedChunks > 0) return { ok: false as const, error: new Error("Message delivery failed") };
-          return ok({ messageId: dr.value.chunks[0]?.messageId ?? "delivered" });
+          const platformDelivery = resolvePlatformDeliveryResult(dr);
+          if (!platformDelivery.ok) return platformDelivery;
+          if (platformDelivery.value.failedChunks > 0) return { ok: false as const, error: new Error("Message delivery failed") };
+          return ok({ messageId: platformDelivery.value.chunks[0]?.messageId ?? "delivered" });
         },
         logger: deps.logger,
       });

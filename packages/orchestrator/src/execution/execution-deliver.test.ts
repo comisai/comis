@@ -16,7 +16,12 @@
  * The receipt assertions read `result.ok` / `result.value.*`, so the stage
  * must return a Result rather than `Promise<void>`.
  */
-import type { ChannelPort, NormalizedMessage } from "@comis/core";
+import {
+  DeliveryQueueTransitionError,
+  type ChannelPort,
+  type DeliveryResult,
+  type NormalizedMessage,
+} from "@comis/core";
 import { ok, err } from "@comis/shared";
 import { describe, it, expect, vi } from "vitest";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
@@ -218,6 +223,47 @@ describe("deliverExecutionResponse — delivery receipt", () => {
     // The id must be the LAST chunk's real id, not a synthetic constant.
     expect(result.value.lastChunkMessageId).toBe(`msg-${counter}`);
     expect(result.value.lastChunkMessageId).not.toBe("block-delivery");
+  });
+
+  it("keeps a successful platform send successful when only queue durability failed", async () => {
+    const platformResult: DeliveryResult = {
+      ok: true,
+      totalChunks: 1,
+      deliveredChunks: 1,
+      failedChunks: 0,
+      chunks: [{ ok: true, messageId: "platform-msg-1", charCount: 5, retried: false }],
+      totalChars: 5,
+    };
+    const queueError = new DeliveryQueueTransitionError([{
+      transition: "ack",
+      deliveryId: "entry-1",
+      errorKind: "dependency",
+      cause: new Error("ack write failed"),
+    }], platformResult);
+    const logger = createMockLogger();
+    const deps = makeDeps({
+      logger,
+      deliveryService: {
+        deliverToChannel: vi.fn(async () => err(queueError)),
+        drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
+      },
+    });
+
+    const result = await deliverExecutionResponse(
+      deps, makeAdapter(), makeMessage(), "hello", makeBlockStreamCfg(),
+      new Set<BlockPacer>(), undefined, new AbortController().signal, NO_TYPING,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toMatchObject({
+      deliveredChunks: 1,
+      lastChunkMessageId: "platform-msg-1",
+    });
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "Delivery failure",
+    );
   });
 
   it("captures deliveredAtMs from the injected clock AFTER the last chunk's send-promise resolves", async () => {

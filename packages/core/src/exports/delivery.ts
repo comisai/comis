@@ -58,6 +58,12 @@ export type {
   DeliverToChannelOptions,
   ChunkDeliveryResult,
   DeliveryResult,
+  DeliveryQueueTransition,
+  DeliveryQueueTransitionFailure,
+} from "../delivery/types.js";
+export {
+  DeliveryQueueTransitionError,
+  resolvePlatformDeliveryResult,
 } from "../delivery/types.js";
 
 // DeliveryService factory + interfaces. Provides a `createDeliveryService(deps):

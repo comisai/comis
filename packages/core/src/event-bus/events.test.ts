@@ -126,4 +126,24 @@ describe("EventMap composition", () => {
     // @ts-expect-error - close but wrong event name
     bus.on("message:receivd", vi.fn());
   });
+
+  it("round-trips a content-free delivery queue transition failure", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["delivery:queue_transition_failed"] = {
+      deliveryId: "entry-1",
+      transition: "ack",
+      errorKind: "dependency",
+      channelId: "channel-1",
+      channelType: "telegram",
+      timestamp: 123,
+    };
+
+    bus.on("delivery:queue_transition_failed", handler);
+    bus.emit("delivery:queue_transition_failed", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    expect(payload).not.toHaveProperty("error");
+    expect(payload).not.toHaveProperty("text");
+  });
 });

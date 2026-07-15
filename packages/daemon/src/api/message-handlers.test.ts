@@ -8,6 +8,7 @@ import type { RpcHandler } from "./types.js";
 import { withHeldCapabilities } from "../../../../test/support/held-capabilities.js";
 import { ok, err } from "@comis/shared";
 import {
+  DeliveryQueueTransitionError,
   formatSessionKey,
   runWithContext,
   type AttachmentPayload,
@@ -15,6 +16,8 @@ import {
   type ChannelPluginPort,
   type ChannelPort,
   type DeliveryService,
+  type DeliveryResult,
+  type OutwardSendLedgerPort,
   type SessionKey,
 } from "@comis/core";
 import type { BoundedAutonomy } from "../autonomy/bounded-autonomy.js";
@@ -61,6 +64,23 @@ function makeFakeDeliveryService(): DeliveryService {
     // semantics override this field.
     drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
   };
+}
+
+function makeQueueTransitionError(messageId = "platform-msg-1"): DeliveryQueueTransitionError {
+  const platformResult: DeliveryResult = {
+    ok: true,
+    totalChunks: 1,
+    deliveredChunks: 1,
+    failedChunks: 0,
+    chunks: [{ ok: true, messageId, charCount: 5, retried: false }],
+    totalChars: 5,
+  };
+  return new DeliveryQueueTransitionError([{
+    transition: "ack",
+    deliveryId: "entry-1",
+    errorKind: "dependency",
+    cause: new Error("ack write failed"),
+  }], platformResult);
 }
 
 // ---------------------------------------------------------------------------
@@ -992,6 +1012,40 @@ describe("outward quota gate", () => {
 
   afterEach(() => {
     rmSync(workspaceDir, { recursive: true, force: true });
+  });
+
+  it("commits outward ledger truth when the platform sent but queue acknowledgement failed", async () => {
+    const deps = createMockDeps(workspaceDir);
+    deps.deliveryService = {
+      deliverToChannel: vi.fn(async () => err(makeQueueTransitionError("platform-msg-7"))),
+      drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
+    };
+    const ledger: OutwardSendLedgerPort = {
+      lookup: vi.fn(async () => ok(undefined)),
+      begin: vi.fn(async () => ok(undefined)),
+      markUnknown: vi.fn(async () => ok(undefined)),
+      commit: vi.fn(async () => ok(undefined)),
+      markFailed: vi.fn(async () => ok(undefined)),
+      resolveReconcile: vi.fn(async () => ok(undefined)),
+      listUnreconciled: vi.fn(async () => ok([])),
+    };
+    deps.outwardLedger = ledger;
+    deps.resolveRootRunId = vi.fn(() => "root-1");
+    const handlers = createMessageHandlers(deps);
+
+    const result = await handlers["message.send"]({
+      channel_type: "telegram",
+      channel_id: "ch-A",
+      text: "hello",
+      _agentId: "agent-1",
+      _callerChannelId: "ch-A",
+      _callerSessionKey: "default:user_a:ch-A",
+      _outwardStepIndex: 7,
+    });
+
+    expect(result).toEqual({ messageId: "platform-msg-7", channelId: "ch-A" });
+    expect(ledger.commit).toHaveBeenCalledWith("root-1", 7, "platform-msg-7");
+    expect(ledger.markFailed).not.toHaveBeenCalled();
   });
 
   it("allows an origin send within quota, then denies before deliver when tryOutward returns per_hour", async () => {
