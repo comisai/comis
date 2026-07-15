@@ -613,10 +613,21 @@ export function computeProductionServiceRecoveryDigest(
     (value.role !== "source" && value.role !== "target") ||
     ![
       value.machineIdSha256,
+      value.bootIdSha256,
       value.unitSha256,
+      value.propertySnapshotSha256,
       value.executionDefinitionSha256,
+      value.fingerprintSha256,
     ].every((field) => typeof field === "string" && SHA256_RE.test(field)) ||
-    value.fingerprintSha256 !== combinedFingerprint(value)
+    value.fingerprintSha256 !== combinedFingerprint(value) ||
+    value.loadState !== "loaded" ||
+    value.activeState !== "inactive" ||
+    value.subState !== "dead" ||
+    value.mainPid !== 0 ||
+    value.controlPid !== 0 ||
+    value.execMainPid !== 0 ||
+    value.stabilityMethod !== "bounded_double_scan" ||
+    value.stable !== true
   ) {
     return err({
       kind: "malformed_fingerprint",
@@ -830,6 +841,7 @@ export function compareProductionServiceFingerprints(
     ["subState", before.subState === after.subState],
     ["mainPid", before.mainPid === after.mainPid],
     ["controlPid", before.controlPid === after.controlPid],
+    ["execMainPid", before.execMainPid === after.execMainPid],
     ["stabilityMethod", before.stabilityMethod === after.stabilityMethod],
     ["stable", before.stable === after.stable],
   ];

@@ -357,6 +357,15 @@ describe("production service execution fingerprint", () => {
       ok: false,
       error: { kind: "fingerprint_mismatch", field: "bootIdSha256" },
     });
+
+    const executionPidChanged = compareProductionServiceFingerprints(
+      makeFingerprint(),
+      makeFingerprint({ execMainPid: 1 as unknown as 0 }),
+    );
+    expect(executionPidChanged).toMatchObject({
+      ok: false,
+      error: { kind: "fingerprint_mismatch", field: "execMainPid" },
+    });
   });
 
   it("derives a reboot-stable recovery identity from immutable service definition", () => {
@@ -379,6 +388,17 @@ describe("production service execution fingerprint", () => {
     expect(
       computeProductionServiceRecoveryDigest(makeFingerprint({ role: "target" })),
     ).not.toEqual({ ok: true, value: baseline.value });
+
+    for (const invalid of [
+      makeFingerprint({ activeState: "active" as unknown as "inactive" }),
+      makeFingerprint({ execMainPid: 1 as unknown as 0 }),
+      makeFingerprint({ stable: false as unknown as true }),
+    ]) {
+      expect(computeProductionServiceRecoveryDigest(invalid)).toMatchObject({
+        ok: false,
+        error: { kind: "malformed_fingerprint" },
+      });
+    }
   });
 
   it("binds target service samples to a distinct invocation and digest role", () => {
