@@ -31,7 +31,10 @@ import {
 import type { ProductionReplayProfile } from "./production-profile.js";
 import type { RuntimeArtifactAttestation } from "./production-runtime.js";
 import type { RuntimeTreeAttestation } from "./production-runtime-tree.js";
-import { TOOLCHAIN_ROOT_SHELL_PREFIX } from "./production-toolchain-contract.js";
+import {
+  TOOLCHAIN_ROOT_SCRIPT_PREFIX,
+  TOOLCHAIN_ROOT_SHELL_PREFIX,
+} from "./production-toolchain-contract.js";
 import {
   RUNTIME_VAULT_FORWARD_PHASES,
   RUNTIME_VAULT_TRANSACTION_STATUS_BEGIN,
@@ -180,7 +183,7 @@ describe("production runtime content addressed vault", () => {
         targetIncomingRoot:
           `/opt/comis-replay/runtimes/sha256/.incoming-runtime-vault-base-a1-${attemptId}-${sourceTree.digestSha256}`,
         targetTransactionDir:
-          `/var/lib/comis-self-driving/runtime-vault/transactions/${attemptId}`,
+          `/var/lib/comis-self-driving/runtime-vault/transactions/runtime-vault-base-a1-${attemptId}`,
       },
     });
   });
@@ -213,6 +216,14 @@ describe("production runtime content addressed vault", () => {
     expect(plan.controllerLease.args).toContain(plan.transactionIdentitySha256);
     expect(plan.controllerLease.remoteProgram).toContain("COMIS_RUNTIME_CONTROLLER_LOCK");
     expect(plan.controllerLease.remoteProgram).toContain("flock -n 8");
+    expect(plan.controllerLease.remoteProgram).toContain(
+      'install -d -m 0700 -o root -g root "$transaction_parent"',
+    );
+    expect(
+      plan.controllerLease.remoteProgram.indexOf(
+        'install -d -m 0700 -o root -g root "$transaction_parent"',
+      ),
+    ).toBeLessThan(plan.controllerLease.remoteProgram.indexOf(plan.controllerLease.readyLine));
     expect(plan.controllerLease.args.slice(0, TOOLCHAIN_ROOT_SHELL_PREFIX.length)).toEqual(
       TOOLCHAIN_ROOT_SHELL_PREFIX,
     );
@@ -243,8 +254,34 @@ describe("production runtime content addressed vault", () => {
     expect(plan.stream.target.args).toContain(
       `/var/lib/comis-self-driving/runtime-vault/capture-runtime-vault-a1-${attemptId}/receive.sh`,
     );
+    expect(plan.stream.target.args.slice(0, TOOLCHAIN_ROOT_SCRIPT_PREFIX.length)).toEqual(
+      TOOLCHAIN_ROOT_SCRIPT_PREFIX,
+    );
+    expect(plan.stream.target.args.slice(0, 2)).not.toEqual(["sudo", "bash"]);
     expect(plan.targetPrepare.args).toContain(targetRuntime.packageRoot);
     expect(plan.targetPrepare.stdin).toContain("environment-role");
+    expect(plan.targetPrepare.stdin).toContain(
+      'transaction_dir="$transaction_parent/$run_id-$attempt_id"',
+    );
+    expect(plan.targetFinishPublish.stdin).toContain(
+      "runtime_journal_finish_forward published",
+    );
+    expect(plan.targetFinishPublish.stdin).toContain(
+      "runtime_journal_finish_forward cleanup_complete",
+    );
+    expect(plan.targetFinishPublish.stdin).not.toContain(
+      "runtime_journal_append published",
+    );
+    expect(
+      plan.targetFinishPublish.stdin.indexOf(
+        "runtime_journal_finish_forward published",
+      ),
+    ).toBeLessThan(plan.targetFinishPublish.stdin.indexOf('rm -rf -- "$control_dir"'));
+    expect(plan.targetFinishPublish.stdin.indexOf('rm -rf -- "$control_dir"')).toBeLessThan(
+      plan.targetFinishPublish.stdin.lastIndexOf(
+        "runtime_journal_finish_forward cleanup_complete",
+      ),
+    );
     expect(plan.targetPrepare.stdin).toContain("systemctl is-active");
     expect(plan.targetPrepare.stdin).toContain("systemctl is-enabled");
     expect(plan.targetPrepare.stdin).toContain(TARGET_REPLAY_QUARANTINE_SHA256);
@@ -280,10 +317,6 @@ describe("production runtime content addressed vault", () => {
       "COMIS_RUNTIME_VAULT_TRANSACTION_STATUS_V1_BEGIN",
     );
     expect(plan.targetTransactionStatus.stdin).toContain("final_state=conflict");
-    expect(plan.targetFinishPublish.stdin).toContain("runtime_journal_append published");
-    expect(plan.targetFinishPublish.stdin).toContain(
-      "runtime_journal_append cleanup_complete",
-    );
     expect(plan.targetFinishPublish.stdin).not.toContain('rm -rf -- "$final_root"');
     expect(plan.targetPrepare.stdin).toContain(
       "install -d -m 0700 -o root -g root /opt/comis-replay",

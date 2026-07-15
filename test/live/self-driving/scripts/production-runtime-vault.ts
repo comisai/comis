@@ -39,7 +39,10 @@ import {
   parseRuntimeTreeFacts,
   type RuntimeTreeAttestation,
 } from "./production-runtime-tree.js";
-import { TOOLCHAIN_ROOT_SHELL_PREFIX } from "./production-toolchain-contract.js";
+import {
+  TOOLCHAIN_ROOT_SHELL_PREFIX,
+  buildToolchainRootScriptCommand,
+} from "./production-toolchain-contract.js";
 
 export const RUNTIME_VAULT_STATUS_BEGIN = "COMIS_RUNTIME_VAULT_STATUS_V1_BEGIN";
 export const RUNTIME_VAULT_STATUS_END = "COMIS_RUNTIME_VAULT_STATUS_V1_END";
@@ -498,11 +501,11 @@ payload_path="$final_root/payload"
 coordination_parent=/var/lib/comis-self-driving
 coordination_root="$coordination_parent/runtime-vault"
 transaction_parent="$coordination_root/transactions"
-transaction_dir="$transaction_parent/$attempt_id"
+transaction_dir="$transaction_parent/$run_id-$attempt_id"
 control_dir="$coordination_root/capture-$run_id-$attempt_id"
 incoming_root="$vault_root/.incoming-$run_id-$attempt_id-$expected_digest"
 operation_lock="$coordination_root/operation.lock"
-controller_lock="$coordination_root/controller-$attempt_id.lock"
+controller_lock="$coordination_root/controller-$run_id-$attempt_id.lock"
 identity_path="$coordination_root/capture-$run_id-$attempt_id.identity"
 identity_incoming="$coordination_root/.capture-$run_id-$attempt_id.identity.incoming"
 active_capture="$coordination_root/active-capture"
@@ -1166,6 +1169,8 @@ install -d -m 0700 -o root -g root "$coordination_parent"
 sync -f /var/lib
 install -d -m 0700 -o root -g root "$coordination_root"
 sync -f "$coordination_parent"
+install -d -m 0700 -o root -g root "$transaction_parent"
+sync -f "$coordination_root"
 python3 - "$controller_lock" <<'COMIS_RUNTIME_CONTROLLER_LOCK_CREATE'
 import os
 import stat
@@ -1539,12 +1544,12 @@ ${probeFunction()}${TARGET_RECOVERY_FINAL_GUARD}
 if [ ! -d "$final_root" ] || [ -L "$final_root" ]; then exit 91; fi
 ${TARGET_PARTIAL_CLAIM_GUARD}
 ${TARGET_JOURNAL_LIBRARY}
-runtime_journal_append published
+runtime_journal_finish_forward published
 rm -rf -- "$control_dir"
 sync -f "$coordination_root"
 rm -f -- "$identity_incoming" "$active_capture" "$identity_path"
 sync -f "$coordination_root"
-runtime_journal_append cleanup_complete
+runtime_journal_finish_forward cleanup_complete
 printf '%s\n' published_recovered
 `;
 }
@@ -1680,7 +1685,7 @@ export function buildProductionRuntimeVaultPlanBase(
     targetIncomingRoot:
       `${RUNTIME_VAULT_ROOT}/.incoming-${request.runId}-${request.attemptId}-${request.sourceTree.digestSha256}`,
     targetTransactionDir:
-      `/var/lib/comis-self-driving/runtime-vault/transactions/${request.attemptId}`,
+      `/var/lib/comis-self-driving/runtime-vault/transactions/${request.runId}-${request.attemptId}`,
   });
 }
 
@@ -1718,6 +1723,17 @@ export function buildProductionRuntimeVaultPlan(
     transactionIdentitySha256,
   );
   const controlDir = base.value.targetControlDir;
+  const receiverCommand = buildToolchainRootScriptCommand(
+    `${controlDir}/receive.sh`,
+    args,
+  );
+  if (!receiverCommand.ok) {
+    return invalid(
+      "invalid_request",
+      "receiverCommand",
+      "Runtime vault receiver command is outside the attested toolchain contract",
+    );
+  }
   const readyLine = `COMIS_RUNTIME_VAULT_CONTROLLER_READY_${request.attemptId}`;
   const sourceStdin = buildSourceStreamProgram();
   return ok({
@@ -1753,12 +1769,7 @@ export function buildProductionRuntimeVaultPlan(
         String(request.sourceTree.bytes),
         request.sourceTree.version,
       ])),
-      target: endpoint(request.profile.target, [
-        "sudo",
-        "bash",
-        `${controlDir}/receive.sh`,
-        ...args,
-      ]),
+      target: endpoint(request.profile.target, receiverCommand.value),
     },
     targetVerify: invocation(
       "verify-runtime-vault-target",

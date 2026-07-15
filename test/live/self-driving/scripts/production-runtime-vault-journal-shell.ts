@@ -337,7 +337,7 @@ try:
         fail()
     action, requested, transaction_parent, transaction_dir, authority, identity = sys.argv[1:]
     if (
-        action not in ("initialize", "append")
+        action not in ("initialize", "append", "finish_forward")
         or not SHA256.fullmatch(authority)
         or not SHA256.fullmatch(identity)
         or not os.path.isabs(transaction_parent)
@@ -361,6 +361,34 @@ try:
     secure_directory(transaction_dir)
     publish_file("manifest", "manifest", MANIFEST)
     if action == "initialize":
+        inspect_inventory()
+    elif action == "finish_forward":
+        history, partial_phase, _paired_final = inspect_inventory()
+        if requested not in ("published", "cleanup_complete"):
+            fail()
+        minimum = FORWARD.index("publish_intent") + 1
+        if (
+            "rollback_intent" in history
+            or len(history) < minimum
+            or tuple(history[:minimum]) != FORWARD[:minimum]
+            or (
+                requested == "published"
+                and partial_phase not in (None, "published", "cleanup_complete")
+            )
+            or (
+                requested == "cleanup_complete"
+                and (
+                    "published" not in history
+                    or partial_phase not in (None, "cleanup_complete")
+                )
+            )
+        ):
+            fail()
+        publish_file(
+            requested,
+            PHASE_FILE[requested],
+            (requested + "\n").encode("ascii"),
+        )
         inspect_inventory()
     else:
         if requested not in PHASE_FILE:
@@ -395,6 +423,9 @@ runtime_journal_initialize() {
 }
 runtime_journal_append() {
   runtime_journal_manage append "$1"
+}
+runtime_journal_finish_forward() {
+  runtime_journal_manage finish_forward "$1"
 }
 `;
 }

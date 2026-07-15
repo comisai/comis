@@ -223,6 +223,55 @@ describe("production runtime vault target journal shell", () => {
     expect(lstatSync(linkedFinal).nlink).toBe(1);
   });
 
+  it("finishes publication through every terminal forward crash prefix", () => {
+    for (const phase of ["published", "cleanup_complete"] as const) {
+      for (const topology of ["partial", "linked"] as const) {
+        const target = fixture();
+        const prefix = [
+          "runtime_journal_initialize",
+          "runtime_journal_append prepare_intent",
+          "runtime_journal_append prepared",
+          "runtime_journal_append receive_intent",
+          "runtime_journal_append received",
+          "runtime_journal_append verify_intent",
+          "runtime_journal_append verified",
+          "runtime_journal_append publish_intent",
+          ...(phase === "cleanup_complete"
+            ? ["runtime_journal_append published"]
+            : []),
+        ];
+        expect(run(target, prefix).status).toBe(0);
+
+        const incoming = join(target.transactionDir, `.incoming-${phase}`);
+        const expected = `${phase}\n`;
+        writeFileSync(incoming, topology === "partial" ? expected.slice(0, 3) : expected, {
+          mode: 0o400,
+        });
+        if (topology === "linked") {
+          linkSync(
+            incoming,
+            join(target.transactionDir, runtimeVaultJournalPhaseFile(phase)),
+          );
+        }
+
+        const recovered = run(target, [
+          "runtime_journal_finish_forward published",
+          "runtime_journal_finish_forward cleanup_complete",
+        ]);
+        expect(recovered.status, `${phase}/${topology}: ${String(recovered.stderr)}`).toBe(0);
+        expect(readdirSync(target.transactionDir)).not.toContain(`.incoming-${phase}`);
+        for (const terminalPhase of ["published", "cleanup_complete"] as const) {
+          const final = join(
+            target.transactionDir,
+            runtimeVaultJournalPhaseFile(terminalPhase),
+          );
+          expect(readFileSync(final, "utf8")).toBe(`${terminalPhase}\n`);
+          expect(lstatSync(final).nlink).toBe(1);
+        }
+      }
+    }
+  });
+
   it("rejects foreign, linked, symlinked, and unexpected journal objects", () => {
     const foreign = fixture();
     expect(run(foreign, ["runtime_journal_initialize"]).status).toBe(0);
